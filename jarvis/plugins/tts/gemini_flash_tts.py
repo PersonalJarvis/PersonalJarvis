@@ -1,8 +1,8 @@
-"""Gemini 3.1 Flash TTS Plugin (Public Preview, seit 2026-04-16).
+"""Gemini 3.1 Flash TTS Plugin (Public Preview, since 2026-04-16).
 
-Nutzt AI-Studio / `google-genai` mit einfachem API-Key-Auth. Gemini liefert
-`audio/l16; rate=24000; channels=1` — Raw Linear-PCM, kein Header, kein
-ffmpeg-Decoding nötig.
+Uses AI-Studio / `google-genai` with simple API-key auth. Gemini returns
+`audio/l16; rate=24000; channels=1` — raw linear PCM, no header, no
+ffmpeg decoding needed.
 
 Streaming (since 2026-06-10): with ``streaming=True`` the first sentence is
 synthesized via ``client.aio.models.generate_content_stream`` and its PCM
@@ -10,7 +10,7 @@ pieces are yielded AS THEY ARRIVE — measured time-to-first-audio drops from
 2.4–8.1 s (blocking full generation) to 0.6–1.3 s on the same model/voice.
 It is still ONE generation per sentence (seed/temperature apply unchanged),
 so voice consistency is identical to the blocking path. The historical note
-"AI-Studio liefert nur komplette Responses" was disproven empirically
+"AI Studio only returns complete responses" was disproven empirically
 (114 incremental chunks over Vertex, scripts/probe_tts_streaming.py).
 
 Pseudo-streaming via sentence-by-sentence synthesis also remains: with
@@ -30,24 +30,24 @@ from typing import Any
 from jarvis.core import config as cfg
 from jarvis.core.protocols import AudioChunk
 
-# Gemini 3.1 Flash TTS Output-Format ist fest: 24 kHz mono int16 PCM
+# Gemini 3.1 Flash TTS output format is fixed: 24 kHz mono int16 PCM
 GEMINI_TTS_SAMPLE_RATE = 24_000
 
-# Default quota cooldown wenn Googles 429-Response keinen retryDelay liefert.
-# 1h ist konservativ — Daily-Caps resetten zur UTC-Mitternacht, ein laenger
-# als realer Reset-Delay wartender Cooldown ist harmloser als Hammering.
+# Default quota cooldown when Google's 429 response doesn't supply a retryDelay.
+# 1h is conservative — daily caps reset at UTC midnight, a cooldown that waits
+# longer than the real reset delay is more harmless than hammering.
 _QUOTA_COOLDOWN_S = 3600.0
 
-# Regex zum Auslesen von ``retryDelay: '17270s'`` aus Google-Error-Strings.
+# Regex to read ``retryDelay: '17270s'`` out of Google error strings.
 _RETRY_DELAY_RE = re.compile(r"retryDelay['\"]?\s*:\s*['\"]?(\d+)s")
-# Regex fuer ``quotaValue: '100'`` — nur fuer's Log, zeigt User wie eng der Cap ist.
+# Regex for ``quotaValue: '100'`` — just for the log, shows the user how tight the cap is.
 _QUOTA_VALUE_RE = re.compile(r"quotaValue['\"]?\s*:\s*['\"]?(\d+)")
 
 
 def _parse_retry_delay(error_msg: str) -> float:
-    """Liest ``retryDelay`` aus Googles 429-Error in Sekunden.
+    """Reads ``retryDelay`` in seconds out of Google's 429 error.
 
-    Fallback ist ``_QUOTA_COOLDOWN_S`` (1h) wenn nichts erkannt wird.
+    Falls back to ``_QUOTA_COOLDOWN_S`` (1h) when nothing is recognized.
     """
     m = _RETRY_DELAY_RE.search(error_msg)
     if m:
@@ -59,39 +59,40 @@ def _parse_retry_delay(error_msg: str) -> float:
 
 
 def _parse_quota_cap(error_msg: str) -> str | None:
-    """Liest ``quotaValue`` aus Googles 429-Error. Nur fuer Logs."""
+    """Reads ``quotaValue`` out of Google's 429 error. Log-only."""
     m = _QUOTA_VALUE_RE.search(error_msg)
     return m.group(1) if m else None
 
-# SAPI5-Fallback: Windows-native, keine Quota, Hedda (DE) + Zira (EN) preinstalled
+# SAPI5 fallback: Windows-native, no quota, Hedda (DE) + Zira (EN) preinstalled
 SAPI5_SAMPLE_RATE = 22_050
 _SAPI5_FORMAT_22K_16MONO = 22  # SPSF_22kHz16BitMono
 
-# 30 Prebuilt Voices laut Launch-Blog — wir whitelisten eine kuratierte Handvoll.
-# Stimmen sind sprachagnostisch; `language_code` bzw. Inline-Text bestimmt die Sprache.
-# JARVIS-Mode: tiefe, formale, männliche Stimmen bevorzugt.
+# 30 prebuilt voices per the launch blog — we whitelist a curated handful.
+# Voices are language-agnostic; `language_code` or inline text determines the language.
+# JARVIS mode: deep, formal, male voices preferred.
 DEFAULT_VOICES: tuple[str, ...] = (
-    "Charon",     # JARVIS-Default — informativ, ruhig, Butler-Ton
-    "Orus",       # firm, autoritär — JARVIS-Alternative 1
-    "Iapetus",    # clear, präzise — JARVIS-Alternative 2
-    "Rasalgethi", # informativ, wärmer
-    "Algenib",    # gravelly, tiefer
-    "Algieba",    # neutral, vorheriger Default
-    "Kore",       # warm, weiblich
-    "Fenrir",     # tief, männlich (excitable)
-    "Aoede",      # lyrisch, weiblich
+    "Charon",     # JARVIS default — informative, calm, butler tone
+    "Orus",       # firm, authoritative — JARVIS alternative 1
+    "Iapetus",    # clear, precise — JARVIS alternative 2
+    "Rasalgethi", # informative, warmer
+    "Algenib",    # gravelly, deeper
+    "Algieba",    # neutral, previous default
+    "Kore",       # warm, female
+    "Fenrir",     # deep, male (excitable)
+    "Aoede",      # lyrical, female
 )
 
-# Satz-Splitter: haengt an .!?… an — mit Lookbehind um Abkuerzungen (z.B. "z.B.")
-# nicht zu brechen. 2026-04-24 zurueck auf engen Split: Semikolon/Doppelpunkt/
-# Newlines als Grenzen fragmentierten zu aggressiv und triggerten SAPI5-Fallback
-# haeufiger — die verschiedene Sample-Rate (22050 vs 24000) erzwang Resample-
-# Flushs mid-stream, was Knarzen und robotische Artefakte erzeugte.
+# Sentence splitter: hooks onto .!?… — with a lookbehind so abbreviations
+# (e.g. "e.g.") aren't broken. 2026-04-24 reverted to a narrower split:
+# semicolon/colon/newlines as boundaries fragmented too aggressively and
+# triggered the SAPI5 fallback more often — the different sample rate
+# (22050 vs 24000) forced mid-stream resample flushes, producing crackling
+# and robotic artifacts.
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-ZÄÖÜ])")
 
 
 class GeminiFlashTTS:
-    """TTS-Provider für Googles Gemini 3.1 Flash TTS (AI-Studio-API-Key)."""
+    """TTS provider for Google's Gemini 3.1 Flash TTS (AI-Studio API key)."""
 
     name = "gemini-flash-tts"
     supports_streaming = True  # pseudo-streaming via sentence-chunking
@@ -101,7 +102,7 @@ class GeminiFlashTTS:
         model: str = "gemini-3.1-flash-tts-preview",
         default_voice: str = "Charon",  # JARVIS-Butler-Voice
         language_code: str = "en-US",
-        style_prompt: str | None = None,  # Gemini-TTS verträgt keinen Inline-Stil — deaktiviert
+        style_prompt: str | None = None,  # Gemini TTS doesn't tolerate an inline style — disabled
         chunk_by_sentence: bool = True,
         streaming: bool = False,
         allow_sapi5_fallback: bool = False,
@@ -145,8 +146,8 @@ class GeminiFlashTTS:
         self._seed = seed
         self._temperature = temperature
         self._client: Any = None  # lazy
-        # Circuit-Breaker: wenn Tagesquota 429'd, skippen wir Gemini bis _quota_until.
-        # Vermeidet lange tenacity-Retries + unnoetige Latenz auf SAPI5-Pfad.
+        # Circuit breaker: if the daily quota 429'd, we skip Gemini until _quota_until.
+        # Avoids long tenacity retries + unnecessary latency on the SAPI5 path.
         self._quota_blocked_until: float = 0.0
         # Sibling-Bridge: when the configured model returns RESOURCE_EXHAUSTED
         # (typical case 2026-05: gemini-3.1-flash-tts-preview is hard-capped
@@ -165,17 +166,17 @@ class GeminiFlashTTS:
         self._sibling_bridge_announced = False
 
     def _resolve_api_key(self) -> str:
-        """Key-Lookup mit .env-Alias-Support.
+        """Key lookup with .env alias support.
 
-        `.env` verwendet `GOOGLE_AIStudio_API_KEY` (User-spezifisch), google-genai
-        sucht aber `GEMINI_API_KEY` / `GOOGLE_API_KEY`. Wir brücken das.
+        `.env` uses `GOOGLE_AIStudio_API_KEY` (user-specific), but google-genai
+        looks for `GEMINI_API_KEY` / `GOOGLE_API_KEY`. We bridge that.
         """
         for env_var in ("GEMINI_API_KEY", "GOOGLE_AIStudio_API_KEY", "GOOGLE_API_KEY"):
             val = cfg.get_secret(env_var.lower(), env_fallback=env_var)
             if val:
                 return val
         raise RuntimeError(
-            "Gemini-API-Key nicht gefunden. Setze GEMINI_API_KEY oder "
+            "Gemini API key not found. Set GEMINI_API_KEY or "
             "GOOGLE_AIStudio_API_KEY in .env / Credential Manager."
         )
 
@@ -304,10 +305,10 @@ class GeminiFlashTTS:
         self, text: str, voice: str | None = None,
         language_code: str | None = None,
     ) -> AsyncIterator[AudioChunk]:
-        """Synthetisiert Audio, yielded AudioChunks (je nach chunk_by_sentence).
+        """Synthesizes audio, yielding AudioChunks (depending on chunk_by_sentence).
 
-        `language_code` kann pro Call überschrieben werden (z.B. "de-DE" / "en-US"),
-        damit Multi-Language-Pipeline die Voice-Aussprache passend wechseln kann.
+        `language_code` can be overridden per call (e.g. "de-DE" / "en-US"),
+        so the multi-language pipeline can switch the voice pronunciation accordingly.
         """
         self._ensure_client()
         voice = voice or self._default_voice
@@ -324,9 +325,9 @@ class GeminiFlashTTS:
         if not text:
             return
 
-        # Style-Prompt via Style-Direktive vor dem eigentlichen Text —
-        # "Say the following <style>: ..." ist das offizielle Gemini-Pattern.
-        # Inline-Prefix in Klammern triggert manchmal Safety-Filter → candidates=None.
+        # Style prompt via a style directive placed before the actual text —
+        # "Say the following <style>: ..." is the official Gemini pattern.
+        # An inline prefix in parentheses sometimes triggers the safety filter → candidates=None.
         if self._style_prompt:
             text = f"Say the following in a {self._style_prompt} tone: {text}"
 
@@ -375,10 +376,10 @@ class GeminiFlashTTS:
                 if not sentences:
                     return
 
-        # 2026-04-24: Alle Saetze parallel in Flight, in Original-Reihenfolge
-        # yielden. Satz 1 gleich schnell wie vorher, Saetze 2..N aber bereits
-        # synthetisiert wenn Satz 1 abgespielt ist — keine seriellen Netzwerk-
-        # Waits mehr zwischen Saetzen (F6 im Fluss-Plan).
+        # 2026-04-24: all sentences in flight in parallel, yielded in original
+        # order. Sentence 1 as fast as before, but sentences 2..N are already
+        # synthesized by the time sentence 1 finishes playing — no more serial
+        # network waits between sentences (F6 in the flow plan).
         tasks = [
             asyncio.create_task(self._synthesize_one(s, voice, language_code))
             for s in sentences
@@ -394,21 +395,22 @@ class GeminiFlashTTS:
                 )
                 continue
 
-            # Gemini-Call leer (429, safety-block, quota): Default ist SCHWEIGEN
-            # statt Silent-Switch auf Windows-SAPI5. Der Root-Cause steht im Log
-            # (siehe `_synthesize_one`), und der User merkt am stummen TTS dass
-            # etwas kaputt ist — statt einer roboterhaften Ersatzstimme.
+            # Gemini call came back empty (429, safety block, quota): default is
+            # SILENCE instead of a silent switch to Windows SAPI5. The root
+            # cause is in the log (see `_synthesize_one`), and the user notices
+            # from the muted TTS that something is broken — instead of a
+            # robotic stand-in voice.
             if not self._allow_sapi5_fallback:
                 log.error(
-                    "Gemini-TTS lieferte kein Audio fuer Satz %d/%d (%r) — "
-                    "SAPI5-Fallback per Config deaktiviert (tts.allow_sapi5_fallback=false). "
-                    "Audio bleibt fuer diesen Satz stumm.",
+                    "Gemini TTS returned no audio for sentence %d/%d (%r) — "
+                    "SAPI5 fallback disabled via config (tts.allow_sapi5_fallback=false). "
+                    "Audio stays silent for this sentence.",
                     i + 1, len(tasks), sentences[i][:80],
                 )
                 continue
 
             log.warning(
-                "Gemini-TTS leer fuer Satz %d/%d — SAPI5-Notbremse aktiv (Config-Opt-in).",
+                "Gemini TTS empty for sentence %d/%d — SAPI5 emergency brake active (config opt-in).",
                 i + 1, len(tasks),
             )
             # SAPI5 deliberately DOES fall back to ``self._language_code`` here
@@ -434,25 +436,25 @@ class GeminiFlashTTS:
     async def _synthesize_one(
         self, text: str, voice: str, language_code: str | None = None
     ) -> bytes:
-        """Ein einzelner TTS-Call — in Thread-Pool weil google-genai sync ist.
+        """A single TTS call — in a thread pool because google-genai is sync.
 
-        Faengt API-Errors (429 / Netzwerk / Safety) ab und returnt b"".
-        Caller sieht leeres PCM → SAPI5-Fallback greift. Bei RESOURCE_EXHAUSTED
-        (Tagesquota) aktivieren wir den Cooldown-Breaker.
+        Catches API errors (429 / network / safety) and returns b"".
+        The caller sees empty PCM → the SAPI5 fallback kicks in. On
+        RESOURCE_EXHAUSTED (daily quota) we arm the cooldown breaker.
 
-        Sibling-Bridge: wenn das konfigurierte primary Modell 429'd UND ein
-        ``sibling_bridge_model`` gesetzt ist (Default: gemini-2.5-flash-preview-tts),
-        wird der gleiche Satz EINMAL gegen das Sibling-Modell synthetisiert.
-        Begründung: 2026-05-14 Live-Diagnose — gemini-3.1-flash-tts-preview ist
-        Free-Tier-capped (100 RPD) auf Pay-as-you-go-Konten; das ältere
-        gemini-2.5-flash-preview-tts laeuft mit identischem Voice-Katalog
-        (Charon, Orus, …) auf normaler bezahlter Quota.
+        Sibling bridge: if the configured primary model 429'd AND a
+        ``sibling_bridge_model`` is set (default: gemini-2.5-flash-preview-tts),
+        the same sentence is synthesized ONCE against the sibling model.
+        Rationale: 2026-05-14 live diagnosis — gemini-3.1-flash-tts-preview is
+        free-tier-capped (100 RPD) on pay-as-you-go accounts; the older
+        gemini-2.5-flash-preview-tts runs with an identical voice catalogue
+        (Charon, Orus, …) on the normal paid quota.
         """
         import logging
         log = logging.getLogger("jarvis.tts")
 
-        # Cooldown aktiv? Wenn ja, gleich auf Sibling-Bridge gehen statt
-        # sinnloser API-Call gegen das geblockte Modell.
+        # Cooldown active? If so, go straight to the sibling bridge instead of
+        # a pointless API call against the blocked model.
         primary_blocked = bool(
             self._quota_blocked_until and time.monotonic() < self._quota_blocked_until
         )
@@ -470,8 +472,8 @@ class GeminiFlashTTS:
                     retry_s = _parse_retry_delay(msg)
                     self._quota_blocked_until = time.monotonic() + retry_s
                     log.warning(
-                        "Gemini-TTS Quota erschoepft auf %s (cap=%s, retry in %.0f min). "
-                        "Versuche Sibling-Bridge %s …",
+                        "Gemini TTS quota exhausted on %s (cap=%s, retry in %.0f min). "
+                        "Trying sibling bridge %s …",
                         self._model_name,
                         _parse_quota_cap(msg) or "?",
                         retry_s / 60,
@@ -479,10 +481,10 @@ class GeminiFlashTTS:
                     )
                     primary_blocked = True
                 else:
-                    log.warning("Gemini-TTS Fehler (%s) — SAPI5-Fallback.", exc.__class__.__name__)
+                    log.warning("Gemini TTS error (%s) — SAPI5 fallback.", exc.__class__.__name__)
                     return b""
 
-        # Sibling-Bridge nur wenn (a) konfiguriert, (b) selbst nicht geblockt.
+        # Sibling bridge only if (a) configured, (b) not blocked itself.
         if not primary_blocked:
             return b""
         if not self._sibling_bridge_model:
@@ -500,12 +502,12 @@ class GeminiFlashTTS:
                 retry_s = _parse_retry_delay(msg)
                 self._sibling_blocked_until = time.monotonic() + retry_s
                 log.warning(
-                    "Sibling-Bridge %s ebenfalls quota-blockiert (retry in %.0f min) — silence.",
+                    "Sibling bridge %s also quota-blocked (retry in %.0f min) — silence.",
                     self._sibling_bridge_model, retry_s / 60,
                 )
             else:
                 log.warning(
-                    "Sibling-Bridge %s Fehler (%s) — silence.",
+                    "Sibling bridge %s error (%s) — silence.",
                     self._sibling_bridge_model, exc.__class__.__name__,
                 )
             return b""
@@ -513,9 +515,9 @@ class GeminiFlashTTS:
         if pcm and not self._sibling_bridge_announced:
             self._sibling_bridge_announced = True
             log.warning(
-                "Gemini-TTS Sibling-Bridge aktiv: primary=%s gedrosselt → sprich "
-                "ueber %s. Voice (%s) ist sprachagnostisch identisch. Sobald die "
-                "primary-Quota wieder offen ist, switcht der Code automatisch zurueck.",
+                "Gemini TTS sibling bridge active: primary=%s throttled → speaking "
+                "via %s. Voice (%s) is language-agnostic and identical. As soon as the "
+                "primary quota reopens, the code switches back automatically.",
                 self._model_name, self._sibling_bridge_model, voice,
             )
         return pcm
@@ -605,7 +607,7 @@ class GeminiFlashTTS:
             contents=text,
             config=self._build_config(voice, language_code),
         )
-        # Robust gegen leere Antworten (Safety-Filter, Rate-Limit, etc.)
+        # Robust against empty responses (safety filter, rate limit, etc.)
         if not resp.candidates:
             finish = "unknown"
             try:
@@ -613,41 +615,41 @@ class GeminiFlashTTS:
                 finish = f"block_reason={pf.block_reason}"
             except Exception:  # noqa: BLE001
                 pass
-            log.warning("Gemini-TTS lieferte keine candidates (%s) — voice=%s text=%r",
+            log.warning("Gemini TTS returned no candidates (%s) — voice=%s text=%r",
                         finish, voice, text[:80])
             return b""
         cand = resp.candidates[0]
         if not cand.content or not cand.content.parts:
-            log.warning("Gemini-TTS candidate ohne parts — voice=%s text=%r",
+            log.warning("Gemini TTS candidate without parts — voice=%s text=%r",
                         voice, text[:80])
             return b""
         part = cand.content.parts[0]
         if not part.inline_data or not part.inline_data.data:
-            log.warning("Gemini-TTS part ohne inline_data — voice=%s text=%r",
+            log.warning("Gemini TTS part without inline_data — voice=%s text=%r",
                         voice, text[:80])
             return b""
         return part.inline_data.data
 
     def list_voices(self, language: str | None = None) -> list[str]:
-        """30 Prebuilt-Voices sind sprachagnostisch — wir returnen unsere Whitelist."""
+        """30 prebuilt voices are language-agnostic — we return our whitelist."""
         return list(DEFAULT_VOICES)
 
 
 def _split_sentences(text: str) -> list[str]:
-    """Heuristischer Satz-Splitter. Kleiner Overhead, deutlich bessere Perceived-Latency."""
+    """Heuristic sentence splitter. Small overhead, notably better perceived latency."""
     parts = _SENTENCE_END.split(text)
     return [p.strip() for p in parts if p.strip()]
 
 
 # ----------------------------------------------------------------------
-# SAPI5-Emergency-Fallback (Windows native, keine Quota)
+# SAPI5 emergency fallback (Windows native, no quota)
 # ----------------------------------------------------------------------
 
 def _sapi5_synthesize(text: str, language_code: str = "de-DE") -> bytes:
-    """Blockt SAPI5-Call, liefert rohes PCM (22050Hz 16-bit mono).
+    """Blocking SAPI5 call, returns raw PCM (22050Hz 16-bit mono).
 
-    Wird aufgerufen wenn Gemini-TTS-Call leer zurückkommt (429 / safety-block).
-    Qualität ist mittelmäßig, aber: Quota-frei, <100ms Latenz, User hört IMMER was.
+    Called when the Gemini TTS call comes back empty (429 / safety block).
+    Quality is mediocre, but: no quota, <100ms latency, the user ALWAYS hears something.
     """
     import logging
     log = logging.getLogger("jarvis.tts.sapi5")
@@ -655,7 +657,7 @@ def _sapi5_synthesize(text: str, language_code: str = "de-DE") -> bytes:
         import pythoncom  # type: ignore
         import win32com.client  # type: ignore
     except ImportError:
-        log.warning("pywin32 nicht installiert — SAPI5-Fallback nicht verfügbar.")
+        log.warning("pywin32 not installed — SAPI5 fallback not available.")
         return b""
 
     # pywin32 braucht CoInitialize in jedem Thread neu
@@ -667,7 +669,7 @@ def _sapi5_synthesize(text: str, language_code: str = "de-DE") -> bytes:
     try:
         voice = win32com.client.Dispatch("SAPI.SpVoice")
         voices = voice.GetVoices()
-        # Wähle eine Stimme je Sprache
+        # Pick a voice per language
         pick_substring = "German" if language_code.lower().startswith("de") else "English"
         picked = None
         for i in range(voices.Count):
@@ -689,5 +691,5 @@ def _sapi5_synthesize(text: str, language_code: str = "de-DE") -> bytes:
         raw = stream.GetData()
         return bytes(raw) if raw else b""
     except Exception as exc:  # noqa: BLE001
-        log.warning("SAPI5-Fallback fehlgeschlagen: %s", exc)
+        log.warning("SAPI5 fallback failed: %s", exc)
         return b""
