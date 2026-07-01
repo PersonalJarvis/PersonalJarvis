@@ -277,22 +277,30 @@ class JarvisBarOverlay:
 
         from PIL import ImageTk  # noqa: F401 — fail fast here if Pillow missing
 
-        # Per-monitor DPI awareness MUST be set before THIS surface's Tk root is
-        # created — exactly like the orb (ui/orb/overlay.py). Without it, on a
-        # scaled display (e.g. 150%) the window's geometry coordinate space and
-        # the pointer-event space (``event.x_root``) drift apart, so dragging the
-        # bar makes it run AWAY from the cursor toward the bottom-right and become
-        # uncontrollable (the HiDPI "drag-teleport"). The bar boots in its own
-        # thread, often before any other code has set process DPI awareness, so
-        # it must assert it here itself. ``ensure_dpi_awareness`` is idempotent
-        # and a no-op off Windows, so this is safe even when the process is
-        # already aware.
+        # DPI handling — two steps that TOGETHER keep the bar at its normal size
+        # and stop it shrinking/jumping mid-session, WITHOUT changing how it looks:
+        #
+        # 1. Make the PROCESS DPI-aware. The bar boots in its own thread, often
+        #    before anything else claims awareness; doing it here means pywebview's
+        #    later ``SetProcessDPIAware`` (inside ``webview.start()``) is a no-op
+        #    rather than a RUNTIME awareness flip. Idempotent, no-op off Windows.
+        # 2. Pin THIS thread's window to per-window UNAWARE (``_pin_bar_window_``
+        #    ``unaware``). With the process aware but the WINDOW explicitly
+        #    unaware, Windows bitmap-upscales the small pill to its normal physical
+        #    size — the exact look it has always had, renderer untouched — and,
+        #    because the window's context differs from the aware process, that
+        #    upscaling is PINNED: a later process-wide flip can no longer strip it.
+        #    This is the fix for the recurring "bar shrank to ~2/3 and jumped, only
+        #    a restart helps" bug. Geometry and pointer events stay in one
+        #    virtualized space, so only the user drags it (and it follows the
+        #    cursor); it never repositions itself.
         try:
             from jarvis.core.win32_dpi import ensure_dpi_awareness
 
             ensure_dpi_awareness()
         except Exception:  # noqa: BLE001 — never block the bar on a DPI hiccup
             log.debug("jarvisbar DPI-awareness setup skipped", exc_info=True)
+        _pin_bar_window_unaware()
 
         self._tk_thread_id = threading.get_ident()
         self._renderer = renderer.JarvisBarRenderer(accent=self._accent)

@@ -1,16 +1,23 @@
-"""The JarvisBar makes its Tk window per-monitor DPI aware BEFORE creating it.
+"""The JarvisBar fixes its window DPI handling BEFORE creating the Tk root.
 
-Regression (HiDPI "drag-teleport"): the bar's Tk root used to be created without
-``ensure_dpi_awareness()`` — the orb sets it (ui/orb/overlay.py), the bar did
-not. On a scaled display (e.g. 150%) the window's geometry coordinate space and
-the pointer-event space then drift apart, so dragging the bar makes it run AWAY
-from the cursor toward the bottom-right and become uncontrollable. The fix
-mirrors the orb: assert DPI awareness in ``start()`` BEFORE ``tk.Tk()``.
+Two ordered steps in ``start()``, both BEFORE ``tk.Tk()``:
+
+1. ``ensure_dpi_awareness()`` makes the PROCESS DPI-aware, so pywebview's later
+   ``SetProcessDPIAware`` (in ``webview.start()``) is a no-op instead of a
+   runtime awareness flip.
+2. ``_pin_bar_window_unaware()`` pins THIS thread's window to per-window
+   UNAWARE, so Windows keeps bitmap-upscaling the small pill to its normal
+   physical size AND that upscaling is pinned against any later flip.
+
+Together they stop the recurring "bar shrank to ~2/3 and jumped mid-session,
+only a restart helps" bug WITHOUT changing how the bar looks. This test locks in
+that both run, in order, before the Tk root exists (a consolidate-revert guard).
 """
 from __future__ import annotations
 
 import tkinter
 
+import jarvis.ui.jarvisbar.overlay as overlay_mod
 from jarvis.ui.jarvisbar.overlay import JarvisBarOverlay
 
 
@@ -41,12 +48,15 @@ class _FakeCanvas:
     def bind(self, *a, **k) -> None: ...
 
 
-def test_start_sets_dpi_awareness_before_creating_tk_root(monkeypatch) -> None:
+def test_start_fixes_dpi_before_creating_tk_root(monkeypatch) -> None:
     order: list[str] = []
 
     monkeypatch.setattr(
         "jarvis.core.win32_dpi.ensure_dpi_awareness",
         lambda: order.append("dpi"),
+    )
+    monkeypatch.setattr(
+        overlay_mod, "_pin_bar_window_unaware", lambda: order.append("pin")
     )
 
     def _fake_tk(*_a, **_k) -> _FakeTkRoot:
@@ -65,9 +75,12 @@ def test_start_sets_dpi_awareness_before_creating_tk_root(monkeypatch) -> None:
 
     bar.start()
 
-    assert "dpi" in order, "start() must set DPI awareness"
+    assert "dpi" in order, "start() must make the process DPI-aware"
+    assert "pin" in order, "start() must pin the bar window UNAWARE (anti-shrink)"
     assert "tk" in order, "start() must create the Tk root"
-    assert order.index("dpi") < order.index("tk"), (
-        "DPI awareness must be set BEFORE the Tk root is created "
-        "(HiDPI drag-teleport fix)"
+    # process-aware THEN window-unaware-pin THEN the Tk window: the pin only holds
+    # because the process is already aware, and both must precede tk.Tk().
+    assert order.index("dpi") < order.index("pin") < order.index("tk"), (
+        "order must be ensure_dpi_awareness → pin-unaware → tk.Tk() "
+        "(the bar-shrink/jump fix)"
     )
