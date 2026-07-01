@@ -20,33 +20,33 @@ import re
 # kept specific on purpose: a false negative is recoverable (the brain can call
 # the screenshot tool), a false positive re-introduces the per-turn image tax
 # this change exists to remove. Deliberately NOT included: bare "tab", "dort",
-# "warum ist das" (without a colour), "was ist das" (without "hier") — too broad,
+# "warum ist das" (without a colour), "was ist das" (without "hier") — too broad,  # i18n-allow: quoted German input examples deliberately excluded from the matcher
 # they fire on non-visual turns.
 _VISUAL_MARKERS: tuple[str, ...] = (
     # deictic / pointing
-    "das hier", "das da", "hier auf", "da auf", "hier oben", "hier unten",
+    "das hier", "das da", "hier auf", "da auf", "hier oben", "hier unten",  # i18n-allow: German visual-reference input-matching vocabulary
     "hier links", "hier rechts", "hier im", "hier in der",
     # look / show verbs
     "schau", "sieh", "siehst", "guck", "zeig mir", "zeig mal",
     # screen / window / page nouns
     "auf dem bildschirm", "am bildschirm", "im bild", "auf dem screen",
-    "bildschirm", "dieses fenster", "das fenster", "diese seite",
-    "die seite hier", "fehlermeldung", "knopf", "button", "menü", "menue",
+    "bildschirm", "dieses fenster", "das fenster", "diese seite",  # i18n-allow: German visual-reference input-matching vocabulary
+    "die seite hier", "fehlermeldung", "knopf", "button", "menü", "menue",  # i18n-allow: German visual-reference input-matching vocabulary
     # "dialog" alone is a false positive in DE (= a conversation); require the
     # UI sense explicitly. Missed UI dialogs are caught by the on-demand tool.
     "dialogfeld", "dialog box",
     # actions on the screen
-    "klick", "markier", "scroll", "öffne das", "oeffne das", "mach das zu",
-    "mach das fenster", "schließ das fenster", "schliess das fenster",
+    "klick", "markier", "scroll", "öffne das", "oeffne das", "mach das zu",  # i18n-allow: German visual-reference input-matching vocabulary
+    "mach das fenster", "schließ das fenster", "schliess das fenster",  # i18n-allow: German visual-reference input-matching vocabulary
     # spatial screen references — a quadrant/position implies "on the screen"
     "oben links", "oben rechts", "unten links", "unten rechts",
     "links oben", "rechts oben", "links unten", "rechts unten",
     "da oben", "da unten",
     # diagnosis / read-out — what is written there. "steht da"/"da steht" are
     # screen read-outs; "steht an" (scheduled) deliberately does NOT match.
-    "warum ist das rot", "warum ist das grau", "warum ist das blau",
+    "warum ist das rot", "warum ist das grau", "warum ist das blau",  # i18n-allow: German visual-reference input-matching vocabulary
     "was steht da", "was steht hier", "steht da", "da steht", "steht oben",
-    "steht hier", "steht dort", "was ist das hier", "lies", "vorlesen",
+    "steht hier", "steht dort", "was ist das hier", "lies", "vorlesen",  # i18n-allow: German visual-reference input-matching vocabulary
     "fehlermeldung vor",
     # English
     "this here", "that there", "look at", "see this", "on screen",
