@@ -1,13 +1,13 @@
-"""First-Run Setup-Wizard (CLI).
+"""First-run setup wizard (CLI).
 
-Der Wizard läuft einmal beim allerersten `python -m jarvis`. Er:
-1. Zeigt Hardware-Analyse + Whisper-Empfehlung.
-2. Fragt API-Keys ab und speichert im Windows Credential Manager.
-3. Prüft Mikrofon-Verfügbarkeit.
-4. Bestätigt Hotkey-Wahl.
-5. Schreibt `.setup-complete`-Marker.
+The wizard runs once on the very first `python -m jarvis`. It:
+1. Shows hardware analysis + Whisper recommendation.
+2. Asks for API keys and stores them in the Windows Credential Manager.
+3. Checks microphone availability.
+4. Confirms the hotkey choice.
+5. Writes the `.setup-complete` marker.
 
-Der Wizard ist idempotent — Re-Run überschreibt nur User-bestätigte Werte.
+The wizard is idempotent — a re-run only overwrites user-confirmed values.
 
 Headless / non-interactive mode
 --------------------------------
@@ -73,11 +73,11 @@ def _is_noninteractive() -> bool:
 
 @dataclass(slots=True, frozen=True)
 class SecretSpec:
-    key: str              # Name im Credential Manager
-    env_fallback: str     # ENV-Variable als Alternative
-    label: str            # Anzeigename
-    help_url: str         # Wo den Key holen
-    required_for: str     # Menschen-lesbar: "Brain (Claude)" etc.
+    key: str              # Name in the Credential Manager
+    env_fallback: str     # ENV variable as an alternative
+    label: str            # Display name
+    help_url: str         # Where to get the key
+    required_for: str     # Human-readable: "Brain (Claude)" etc.
     optional: bool = True
     # When False, the slot is whitelisted for the API (so it CAN be stored from
     # the app) but is NOT asked in the interactive first-run wizard. Used for
@@ -87,46 +87,46 @@ class SecretSpec:
 
 
 SECRETS: list[SecretSpec] = [
-    # Brain-Provider, die GLEICHZEITIG OpenClaw-Bridge aktivieren.
-    # OpenClaw liest die Standard-Provider-ENV-Vars (siehe AD-6 Mapping in
-    # docs/openclaw-bridge.md §2). Es gibt KEIN separates OPENCLAW_*-Namespace
-    # — der Wizard pflegt einen Key, OpenClaw nutzt ihn beim Subprocess-Spawn.
-    # Vollständige Mapping-Tabelle: jarvis/missions/worker_runtime/provider_map.py.
+    # Brain providers that SIMULTANEOUSLY enable the OpenClaw bridge.
+    # OpenClaw reads the standard provider ENV vars (see the AD-6 mapping in
+    # docs/openclaw-bridge.md §2). There is NO separate OPENCLAW_* namespace
+    # — the wizard maintains one key, OpenClaw uses it on subprocess spawn.
+    # Full mapping table: jarvis/missions/worker_runtime/provider_map.py.
     SecretSpec(
         key="anthropic_api_key",
         env_fallback="ANTHROPIC_API_KEY",
         label="Anthropic API Key (Claude)",
         help_url="https://console.anthropic.com/settings/keys",
-        required_for="Brain (Claude via API-Key) + OpenClaw-Bridge (anthropic-Provider)",
+        required_for="Brain (Claude via API key) + OpenClaw bridge (anthropic provider)",
         optional=True,
     ),
     SecretSpec(
         key="openrouter_api_key",
         env_fallback="OPENROUTER_API_KEY",
-        label="OpenRouter API Key (Universal-Gateway)",
+        label="OpenRouter API Key (universal gateway)",
         help_url="https://openrouter.ai/keys",
-        required_for="Brain (Universal: Zugriff auf alle Modelle über einen Key) + OpenClaw-Bridge (openrouter-Provider)",
+        required_for="Brain (universal: access to all models via one key) + OpenClaw bridge (openrouter provider)",
     ),
     SecretSpec(
         key="openai_api_key",
         env_fallback="OPENAI_API_KEY",
         label="OpenAI API Key",
         help_url="https://platform.openai.com/api-keys",
-        required_for="Brain (GPT), Whisper API (STT), TTS + OpenClaw-Bridge (openai-Provider)",
+        required_for="Brain (GPT), Whisper API (STT), TTS + OpenClaw bridge (openai provider)",
     ),
     SecretSpec(
         key="codex_openai_api_key",
         env_fallback="CODEX_OPENAI_API_KEY",
         label="OpenAI Codex API Key",
         help_url="https://platform.openai.com/api-keys",
-        required_for="OpenAI Codex API-Key-Modus (getrennt vom OpenAI Brain-Provider)",
+        required_for="OpenAI Codex API-key mode (separate from the OpenAI Brain provider)",
     ),
     SecretSpec(
         key="gemini_api_key",
         env_fallback="GEMINI_API_KEY",
         label="Google AI Studio / Gemini API Key",
         help_url="https://aistudio.google.com/app/apikey",
-        required_for="Brain (Gemini) + OpenClaw-Bridge (google-Provider)",
+        required_for="Brain (Gemini) + OpenClaw bridge (google provider)",
     ),
     SecretSpec(
         key="grok_api_key",
@@ -138,51 +138,51 @@ SECRETS: list[SecretSpec] = [
     SecretSpec(
         key="google_tts_credentials_path",
         env_fallback="GOOGLE_APPLICATION_CREDENTIALS",
-        label="Pfad zur Google Cloud Service-Account JSON (für TTS)",
+        label="Path to the Google Cloud service-account JSON (for TTS)",
         help_url="https://console.cloud.google.com/apis/credentials",
-        required_for="TTS (Google Neural2 — hochqualitative Sprachausgabe)",
+        required_for="TTS (Google Neural2 — high-quality voice output)",
     ),
     SecretSpec(
         key="deepgram_api_key",
         env_fallback="DEEPGRAM_API_KEY",
-        label="Deepgram API Key (schnelles STT)",
+        label="Deepgram API Key (fast STT)",
         help_url="https://console.deepgram.com/",
-        required_for="STT (Deepgram — Cloud-Alternative zu Whisper)",
+        required_for="STT (Deepgram — cloud alternative to Whisper)",
     ),
     SecretSpec(
         key="groq_api_key",
         env_fallback="GROQ_API_KEY",
-        label="Groq API Key (ultra-schnelles Whisper)",
+        label="Groq API Key (ultra-fast Whisper)",
         help_url="https://console.groq.com/keys",
-        required_for="STT (Groq Whisper — <50ms Latenz)",
+        required_for="STT (Groq Whisper — <50ms latency)",
     ),
     SecretSpec(
         key="picovoice_access_key",
         env_fallback="PICOVOICE_ACCESS_KEY",
-        label="Picovoice Access Key (Porcupine Wake-Word)",
+        label="Picovoice Access Key (Porcupine wake word)",
         help_url="https://console.picovoice.ai/",
-        required_for="Wake-Word-Detection (Porcupine)",
+        required_for="Wake-word detection (Porcupine)",
     ),
     SecretSpec(
         key="tavily_api_key",
         env_fallback="TAVILY_API_KEY",
-        label="Tavily API Key (Web-Search für Agents)",
+        label="Tavily API Key (web search for agents)",
         help_url="https://app.tavily.com/home",
         required_for="Tool (search_web)",
     ),
     SecretSpec(
         key="elevenlabs_api_key",
         env_fallback="ELEVENLABS_API_KEY",
-        label="ElevenLabs API Key (Premium TTS, Multi-Language)",
+        label="ElevenLabs API Key (premium TTS, multi-language)",
         help_url="https://elevenlabs.io/app/settings/api-keys",
-        required_for="TTS (ElevenLabs — Jarvis-Butler-Stimme mit DE+EN Auto-Detect)",
+        required_for="TTS (ElevenLabs — Jarvis butler voice with DE+EN auto-detect)",
     ),
     SecretSpec(
         key="cartesia_api_key",
         env_fallback="CARTESIA_API_KEY",
-        label="Cartesia.ai API Key (Sonic 3.5 TTS, 42 Sprachen)",
+        label="Cartesia.ai API Key (Sonic 3.5 TTS, 42 languages)",
         help_url="https://play.cartesia.ai/keys",
-        required_for="TTS (Cartesia Sonic 3.5 — multilingual incl. Deutsch, ~90ms TTFB)",
+        required_for="TTS (Cartesia Sonic 3.5 — multilingual incl. German, ~90ms TTFB)",
     ),
     # Team / hosted-proxy mode (2026-06-20 spec). The per-user token a client
     # presents to the shared key proxy instead of holding a real vendor key.
@@ -196,29 +196,29 @@ SECRETS: list[SecretSpec] = [
         required_for="Team mode — per-user token for the shared key proxy",
         optional=True,
     ),
-    # Phase 5 — Admin-Helper HMAC-Key. Wird NICHT interaktiv abgefragt:
-    # beim ersten Helper-Start generiert der `jarvis.admin.launcher` 32
-    # zufaellige Bytes und persistiert sie base64-URL-safe-encoded im
-    # Credential Manager. Der Wizard listet den Eintrag nur auf, damit er
-    # in der Secrets-Uebersicht sichtbar ist (Re-Run zeigt "bereits hinterlegt").
+    # Phase 5 — admin-helper HMAC key. NOT asked interactively:
+    # on the helper's first start, `jarvis.admin.launcher` generates 32
+    # random bytes and persists them base64-URL-safe-encoded in the
+    # Credential Manager. The wizard only lists the entry so it is
+    # visible in the secrets overview (a re-run shows "already stored").
     SecretSpec(
         key="jarvis_admin_hmac",
         env_fallback="JARVIS_ADMIN_HMAC",
-        label="Admin-Helper HMAC-Key (auto-generated)",
+        label="Admin-Helper HMAC Key (auto-generated)",
         help_url="",
-        required_for="Phase 5 — Admin-Ops (winget, services, registry, firewall)",
+        required_for="Phase 5 — admin ops (winget, services, registry, firewall)",
         optional=True,
     ),
     # === F-FRIENDS [F1] · feature/friends-section · ruben-2026-04-30 ===
-    # Phase F1 — Telegram-Channel-Bot-Token. User legt einen Bot via
-    # @BotFather an, bekommt ein Token wie ``123456:ABC-DEF...``, traegt es
-    # hier ein. ``getMe``-Validation passiert beim TelegramChannel.start().
+    # Phase F1 — Telegram-channel bot token. The user creates a bot via
+    # @BotFather, gets a token like ``123456:ABC-DEF...``, and enters it
+    # here. ``getMe`` validation happens in TelegramChannel.start().
     SecretSpec(
         key="telegram_bot_token",
         env_fallback="TELEGRAM_BOT_TOKEN",
         label="Telegram Bot Token (@BotFather)",
         help_url="https://t.me/BotFather",
-        required_for="Channel (Telegram) — bidirektionaler Chat mit Friends",
+        required_for="Channel (Telegram) — two-way chat with friends",
         optional=True,
     ),
     # Twilio telephony — the user calls a phone number and talks to Jarvis
@@ -326,18 +326,18 @@ def _ask_yesno(prompt: str, default: bool = True) -> bool:
 def step_hardware_check() -> detection.HardwareReport:
     _println()
     _println("=" * 60)
-    _println(" Schritt 1 / 8 — Hardware-Analyse")
+    _println(" Step 1 / 8 — Hardware analysis")
     _println("=" * 60)
     report = detection.analyze()
     rec = detection.recommend_whisper(report)
     _println(detection._format_report(report, rec))
 
     if report.ffmpeg_version is None:
-        _println("⚠  WARNUNG: ffmpeg wurde nicht gefunden. Whisper-STT wird nicht funktionieren.")
-        _println("   Installation: https://www.gyan.dev/ffmpeg/builds/ (dann ffmpeg-PATH setzen)")
+        _println("⚠  WARNING: ffmpeg was not found. Whisper STT will not work.")
+        _println("   Install: https://www.gyan.dev/ffmpeg/builds/ (then add ffmpeg to PATH)")
     if not report.torch_cuda_available and report.has_nvidia_gpu:
-        _println("⚠  Hinweis: NVIDIA-GPU erkannt aber PyTorch-CUDA nicht aktiv.")
-        _println("   PyTorch mit CUDA installieren für lokale Whisper-Beschleunigung.")
+        _println("⚠  Note: NVIDIA GPU detected but PyTorch CUDA is not active.")
+        _println("   Install PyTorch with CUDA for local Whisper acceleration.")
 
     return report
 
@@ -345,10 +345,10 @@ def step_hardware_check() -> detection.HardwareReport:
 def step_api_keys() -> dict[str, str]:
     _println()
     _println("=" * 60)
-    _println(" Schritt 2 / 8 — API-Keys einrichten")
+    _println(" Step 2 / 8 — Set up API keys")
     _println("=" * 60)
-    _println("Keys werden im Windows Credential Manager gespeichert (verschlüsselt).")
-    _println("Leer lassen = überspringen. Mindestens ein Brain-Provider nötig.")
+    _println("Keys are stored (encrypted) in the Windows Credential Manager.")
+    _println("Leave empty to skip. At least one Brain provider is needed.")
     _println()
 
     stored: dict[str, str] = {}
@@ -358,17 +358,17 @@ def step_api_keys() -> dict[str, str]:
             # for the API but intentionally not asked here to keep onboarding short.
             continue
         existing = cfg.get_secret(spec.key)
-        marker = "✓ bereits hinterlegt" if existing else "–"
+        marker = "✓ already stored" if existing else "–"
         _println(f"• {spec.label}  [{marker}]")
-        _println(f"  Für: {spec.required_for}")
-        _println(f"  Keys holen: {spec.help_url}")
-        val = _ask("  Key/Pfad eingeben (Enter = überspringen)", default="")
+        _println(f"  For: {spec.required_for}")
+        _println(f"  Get a key: {spec.help_url}")
+        val = _ask("  Enter key/path (Enter = skip)", default="")
         if val:
             if cfg.set_secret(spec.key, val):
                 stored[spec.key] = val
-                _println("  → gespeichert im Credential Manager.")
+                _println("  → saved in the Credential Manager.")
             else:
-                _println("  ⚠  Credential Manager nicht verfügbar, verwende .env-Fallback.")
+                _println("  ⚠  Credential Manager not available, using the .env fallback.")
         _println()
     return stored
 
@@ -376,37 +376,37 @@ def step_api_keys() -> dict[str, str]:
 def step_mic_check() -> None:
     _println()
     _println("=" * 60)
-    _println(" Schritt 3 / 8 — Mikrofon-Check")
+    _println(" Step 3 / 8 — Microphone check")
     _println("=" * 60)
     try:
         import sounddevice as sd  # type: ignore[import-untyped]
     except ImportError:
-        _println("⚠  sounddevice nicht installiert. `pip install -r requirements.txt` ausführen.")
+        _println("⚠  sounddevice not installed. Run `pip install -r requirements.txt`.")
         return
 
     devices = sd.query_devices()
     inputs = [d for d in devices if d["max_input_channels"] > 0]
     if not inputs:
-        _println("⚠  Kein Mikrofon erkannt. Headset einstecken und erneut starten.")
+        _println("⚠  No microphone detected. Plug in a headset and restart.")
         return
 
-    _println("Verfügbare Eingabegeräte:")
+    _println("Available input devices:")
     for idx, dev in enumerate(inputs):
         _println(f"  [{idx}] {dev['name']}  (Channels: {dev['max_input_channels']})")
     _println()
-    _println("Default wird 'auto-headset' — Jarvis erkennt Headsets automatisch.")
-    _println("Manuelle Wahl jederzeit möglich über jarvis.toml → [audio] input_device.")
+    _println("Default is 'auto-headset' — Jarvis detects headsets automatically.")
+    _println("Manual selection is always possible via jarvis.toml → [audio] input_device.")
 
 
 def step_hotkey_check(default_hotkey: str) -> str:
     _println()
     _println("=" * 60)
-    _println(" Schritt 4 / 8 — Hotkey-Konfiguration")
+    _println(" Step 4 / 8 — Hotkey configuration")
     _println("=" * 60)
-    _println(f"Aktueller Default: {default_hotkey}")
-    _println("Sichere Kombinationen: ctrl+right_alt+<buchstabe>, ctrl+shift+<buchstabe>")
-    _println("Meiden: alt+f4 (schließt Apps), ctrl+c (copy), win+* (Windows-Shortcuts)")
-    choice = _ask("Hotkey anpassen? (leer = Default übernehmen)", default=default_hotkey)
+    _println(f"Current default: {default_hotkey}")
+    _println("Safe combinations: ctrl+right_alt+<letter>, ctrl+shift+<letter>")
+    _println("Avoid: alt+f4 (closes apps), ctrl+c (copy), win+* (Windows shortcuts)")
+    choice = _ask("Customize the hotkey? (empty = keep the default)", default=default_hotkey)
     return choice
 
 
@@ -486,7 +486,7 @@ def step_dependency_check() -> None:
 
     _println()
     _println("=" * 60)
-    _println(" Schritt 6 / 8 — Externe CLI-Dependencies")
+    _println(" Step 6 / 8 — External CLI dependencies")
     _println("=" * 60)
     _println()
 
@@ -496,11 +496,11 @@ def step_dependency_check() -> None:
     if node.present:
         _println(f"✓ node {node.version}")
     else:
-        _println(f"–  node fehlt. {node.install_hint}")
+        _println(f"–  node missing. {node.install_hint}")
     if npm.present:
         _println(f"✓ npm {npm.version}")
     else:
-        _println(f"–  npm fehlt. {npm.install_hint}")
+        _println(f"–  npm missing. {npm.install_hint}")
 
     # 2. claude CLI — the canonical worker/critic backend since
     #    BUG-023 + CRIT-1. Auto-install if missing AND npm is usable.
@@ -508,23 +508,23 @@ def step_dependency_check() -> None:
     if claude.present:
         _println(f"✓ claude {claude.version} ({claude.path})")
     elif not npm.present:
-        _println("–  claude fehlt — npm muss erst da sein. Manuell installieren:")
+        _println("–  claude missing — npm must be available first. Install manually:")
         _println("   npm i -g @anthropic-ai/claude-code")
     else:
-        _println("–  claude CLI fehlt — installiere via npm (non-destructive)...")
+        _println("–  claude CLI missing — installing via npm (non-destructive)...")
         ok, claude_after = deps.install_claude_cli()
         if ok:
-            _println(f"✓ claude {claude_after.version} installiert ({claude_after.path})")
+            _println(f"✓ claude {claude_after.version} installed ({claude_after.path})")
         else:
-            _println(f"✗ Auto-Install fehlgeschlagen: {claude_after.install_hint}")
-            _println("   Bitte manuell: npm i -g @anthropic-ai/claude-code")
+            _println(f"✗ Auto-install failed: {claude_after.install_hint}")
+            _println("   Please install manually: npm i -g @anthropic-ai/claude-code")
 
     # 3. openclaw — explicitly optional now.
     openclaw = deps.check_openclaw()
     if openclaw.present:
         _println(f"✓ openclaw {openclaw.version} ({openclaw.path})")
     else:
-        _println("–  openclaw fehlt (optional).")
+        _println("–  openclaw missing (optional).")
         _println(f"   {openclaw.install_hint}")
 
     _println()
@@ -532,44 +532,44 @@ def step_dependency_check() -> None:
     # state the worker path is in.
     if claude.present or (not claude.present and npm.present):
         _println(
-            "Worker/Critic-Pfad: claude CLI (OAuth via Claude Max) — "
-            "bevorzugt seit Welle-4 + CRIT-1."
+            "Worker/critic path: claude CLI (OAuth via Claude Max) — "
+            "preferred since Welle-4 + CRIT-1."
         )
     else:
         _println(
-            "⚠  Worker-Pfad NICHT bereit. Voice-Missions werden mit "
-            "'claude binary not found' fehlschlagen bis claude installiert ist."
+            "⚠  Worker path NOT ready. Voice missions will fail with "
+            "'claude binary not found' until claude is installed."
         )
 
 
 def step_openclaw_check() -> None:
-    """OpenClaw-Bridge-Status — informativ, kein Key-Eingabe-Schritt.
+    """OpenClaw bridge status — informational, not a key-entry step.
 
-    Vertrag (docs/openclaw-bridge.md §4.3, Amendment 2026-05-09): Es werden
-    KEINE neuen ``OPENCLAW_*``-Secrets im Credential Manager angelegt.
-    OpenClaw nutzt die Standard-Provider-ENV-Vars (``GEMINI_API_KEY``,
-    ``ANTHROPIC_API_KEY``, ...). Dieser Schritt zeigt dem User nur:
+    Contract (docs/openclaw-bridge.md §4.3, Amendment 2026-05-09): NO new
+    ``OPENCLAW_*`` secrets are created in the Credential Manager.
+    OpenClaw uses the standard provider ENV vars (``GEMINI_API_KEY``,
+    ``ANTHROPIC_API_KEY``, ...). This step only shows the user:
 
-    1. Ob die ``openclaw``-Binary auf PATH liegt (``npm i -g openclaw``).
-    2. Welche Personal-Jarvis-Brain-Provider damit Subagent-fähig sind
-       (= welche der oben eingegebenen API-Keys auch OpenClaw aktivieren).
-    3. Hinweis auf das Mapping ``Personal-Jarvis-Slug → OpenClaw-Slug``.
+    1. Whether the ``openclaw`` binary is on PATH (``npm i -g openclaw``).
+    2. Which Personal-Jarvis brain providers are thereby Jarvis-Agent-capable
+       (= which of the API keys entered above also enable OpenClaw).
+    3. A pointer to the ``Personal-Jarvis slug → OpenClaw slug`` mapping.
     """
     import shutil
 
     _println()
     _println("=" * 60)
-    _println(" Schritt 7 / 8 — OpenClaw-Bridge (optional Heavy-Tasks Subagent)")
+    _println(" Step 7 / 8 — OpenClaw bridge (optional heavy-tasks Jarvis-Agent)")
     _println("=" * 60)
     _println()
-    _println("OpenClaw ist der externe Subagent für komplexe Multi-Step-Aufgaben")
-    _println("('lies diesen Repo + baue X', 'reproduziere den Bug + schlage Fix vor').")
-    _println("Personal Jarvis dispatcht via 'spawn_worker'-Tool an einen kurzlebigen")
-    _println("OpenClaw-Subprocess; LLM-Output landet erst nach Kontrollierer-Signatur")
-    _println("im Voice-Pfad (siehe docs/openclaw-bridge.md §3 Architektur-Bild).")
+    _println("OpenClaw is the external Jarvis-Agent for complex multi-step tasks")
+    _println("('read this repo + build X', 'reproduce the bug + propose a fix').")
+    _println("Personal Jarvis dispatches via the 'spawn_worker' tool to a short-lived")
+    _println("OpenClaw subprocess; the LLM output only lands in the voice path after")
+    _println("the Kontrollierer signature (see docs/openclaw-bridge.md §3 architecture diagram).")
     _println()
 
-    # 1. Binary-Check (B-7 Befund: .cmd/.ps1-Wrapper auf Windows zaehlen mit).
+    # 1. Binary check (B-7 finding: .cmd/.ps1 wrappers on Windows count too).
     binary = shutil.which("openclaw")
     if not binary:
         for ext in (".cmd", ".ps1", ".exe"):
@@ -578,20 +578,20 @@ def step_openclaw_check() -> None:
                 break
 
     if binary:
-        _println(f"✓ OpenClaw-Binary gefunden: {binary}")
+        _println(f"✓ OpenClaw binary found: {binary}")
     else:
-        _println("–  OpenClaw-Binary nicht auf PATH.")
-        _println("   Installation: npm i -g openclaw   (Pin: 2026.5.7, siehe AD-21)")
-        _println("   Bridge bleibt inaktiv bis Binary verfügbar ist — kein Crash.")
+        _println("–  OpenClaw binary not on PATH.")
+        _println("   Install: npm i -g openclaw   (pin: 2026.5.7, see AD-21)")
+        _println("   The bridge stays inactive until the binary is available — no crash.")
 
-    # 2. Provider-Mapping anzeigen (lazy import — Wizard soll auch ohne
-    #    voll-installierte Module laufen).
+    # 2. Show the provider mapping (lazy import — the wizard should also run
+    #    without the fully installed modules).
     _println()
-    _println("Provider-Mapping (Personal-Jarvis → OpenClaw-CLI):")
+    _println("Provider mapping (Personal-Jarvis → OpenClaw CLI):")
     try:
         from jarvis.missions.worker_runtime.provider_map import MAPPINGS
     except Exception:  # noqa: BLE001
-        _println("   (Provider-Map nicht geladen — überspringe Mapping-Anzeige.)")
+        _println("   (Provider map not loaded — skipping the mapping display.)")
         return
 
     secret_key_overrides = {
@@ -615,15 +615,15 @@ def step_openclaw_check() -> None:
         )
 
     _println()
-    _println("Zum Aktivieren: 'enabled = true' in jarvis.toml [harness.openclaw]")
-    _println("setzen UND 'binary_path' prüfen. Bridge folgt automatisch der")
-    _println("Provider-Wahl unter [brain].primary — kein Anthropic-Lock.")
+    _println("To activate: set 'enabled = true' in jarvis.toml [harness.openclaw]")
+    _println("AND check 'binary_path'. The bridge automatically follows the")
+    _println("provider choice under [brain].primary — no Anthropic lock.")
 
 
 def step_finalize() -> None:
     _println()
     _println("=" * 60)
-    _println(" Schritt 8 / 8 — Setup abschließen")
+    _println(" Step 8 / 8 — Finish setup")
     _println("=" * 60)
 
     # Default Yes per the maintainer mandate ("start at boot unless explicitly
@@ -635,11 +635,11 @@ def step_finalize() -> None:
 
     cfg.mark_setup_complete()
     _println()
-    _println("✓ Setup abgeschlossen. Viel Spaß mit Jarvis!")
+    _println("✓ Setup complete. Enjoy Jarvis!")
     _println()
-    _println("Nächste Schritte:")
-    _println("  1. Phase 1 des Plans implementieren (Voice I/O mit Hotkey).")
-    _println("  2. `python -m jarvis` erneut aufrufen → Tray-Icon erscheint.")
+    _println("Next steps:")
+    _println("  1. Implement Phase 1 of the plan (voice I/O with hotkey).")
+    _println("  2. Run `python -m jarvis` again → the tray icon appears.")
 
 
 def _apply_autostart_choice(enabled: bool) -> None:
@@ -691,7 +691,7 @@ def run() -> int:
     _println()
     _println("╔══════════════════════════════════════════════════════════╗")
     _println("║  Personal Jarvis — First-Run Setup                       ║")
-    _println("║  Dauer: ~5 Minuten, einmalig                             ║")
+    _println("║  Duration: ~5 minutes, one-time                          ║")
     _println("╚══════════════════════════════════════════════════════════╝")
 
     # Non-interactive path: headless VPS, CI, or JARVIS_NONINTERACTIVE=1.
@@ -715,18 +715,18 @@ def run() -> int:
         step_mic_check()
         new_hotkey = step_hotkey_check(default_hotkey="ctrl+right_alt+j")
         if new_hotkey != "ctrl+right_alt+j":
-            _println(f"→ Hotkey '{new_hotkey}' notiert — bitte in jarvis.toml eintragen.")
-            # Persistence-Note: wizard schreibt Hotkey erst in Phase 1 aktiv in die Config
+            _println(f"→ Hotkey '{new_hotkey}' noted — please enter it in jarvis.toml.")
+            # Persistence note: the wizard only writes the hotkey into the config actively in Phase 1
         step_wake_word_setup()
         step_dependency_check()
         step_openclaw_check()
         step_finalize()
         return 0
     except KeyboardInterrupt:
-        _println("\n\n⚠  Setup abgebrochen. Re-run: `python -m jarvis`")
+        _println("\n\n⚠  Setup aborted. Re-run: `python -m jarvis`")
         return 130
     except Exception as exc:  # noqa: BLE001
-        _println(f"\n✗ Setup-Fehler: {exc}")
+        _println(f"\n✗ Setup error: {exc}")
         return 1
 
 
