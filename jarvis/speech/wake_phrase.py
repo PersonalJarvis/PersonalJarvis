@@ -37,6 +37,7 @@ from jarvis.speech.wake_constants import (
     phrase_core,
     phrase_core_for_match,
     resolve_oww_model_path,
+    sound_fold,
 )
 
 log = logging.getLogger("jarvis.wake.phrase")
@@ -99,7 +100,9 @@ class WakeMatcher:
         is_jarvis_default: bool = False,
     ) -> None:
         self._pattern = pattern
-        self._core = core_tokens or []
+        # Sound-fold the core so a sound-equivalent ASR spelling of the wake word
+        # ("Nico" -> "Niko"/"Nicko"/"Nikko") compares equal (see ``sound_fold``).
+        self._core = [sound_fold(c) for c in (core_tokens or [])]
         self._ratio = fuzzy_ratio
         self._is_jarvis = is_jarvis_default
 
@@ -133,22 +136,29 @@ class WakeMatcher:
             return None
         if self._pattern is not None:
             return self._pattern.search(text)
-        tokens = normalize_phrase_for_match(text)
+        # Compare on sound-FOLDED tokens so a sound-equivalent ASR spelling of the
+        # wake word lines up with the (also folded) core, but return the ORIGINAL
+        # heard text as the match so the yielded keyword / logs are unchanged.
+        # Prefix stripping already happened for the core, and the transcript is
+        # only window-scanned for the core token, so folding here has no prefix
+        # side effect.
+        orig = normalize_phrase_for_match(text)
+        folded = [sound_fold(t) for t in orig]
         n = len(self._core)
-        if n == 0 or len(tokens) < n:
+        if n == 0 or len(folded) < n:
             return None
         # Length-aware threshold: average the per-core-token required ratios so a
         # short name tolerates a little pronunciation drift while a longer one
         # (or a multi-word phrase with long tokens) keeps the strict bar.
         threshold = sum(self._effective_ratio(c) for c in self._core) / n
-        for i in range(0, len(tokens) - n + 1):
-            window = tokens[i : i + n]
+        for i in range(0, len(folded) - n + 1):
+            window = folded[i : i + n]
             score = sum(
                 SequenceMatcher(None, c, w).ratio()
                 for c, w in zip(self._core, window, strict=False)
             ) / n
             if score >= threshold:
-                return _FuzzyMatch(" ".join(window))
+                return _FuzzyMatch(" ".join(orig[i : i + n]))
         return None
 
 
