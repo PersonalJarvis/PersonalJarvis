@@ -1,8 +1,8 @@
-# Voice-Session — 2026-06-30 17:58:02
+# Voice-Session — 2026-06-30 17:58:02 <!-- i18n-allow: voice session transcript -->
 
 - **Dauer:** 2 min 43 s
 - **Turns:** 3
-- **Sprache:** de
+- **Sprache:** de <!-- i18n-allow: voice session transcript -->
 - **Wake-Word:** nico
 - **Beendet durch:** Hotkey (F1+F2)
 - **Tokens:** 77596 in · 2080 out

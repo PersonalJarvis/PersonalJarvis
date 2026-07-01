@@ -12,7 +12,7 @@
 
 Two TTS audio streams overlap on the speakers within roughly the same voice
 turn. The user hears two Jarvis voices simultaneously — typically a short
-pre-acknowledgment ("Ich prüfe den Status der Spotify-App auf deinem System.")
+pre-acknowledgment ("I'm checking the status of the Spotify app on your system.")  # i18n-allow
 overlapping with the first sentence of the main answer. Both overlapping
 phrases are LLM-generated text (not pre-rendered fillers), so the bug can
 sit anywhere on the path from LLM-emit to speaker output.

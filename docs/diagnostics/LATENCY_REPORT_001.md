@@ -146,8 +146,8 @@ real baseline data:
    log.
 
 3. **Speak 10 turns**, mixed:
-   - 3 × short ("Was ist die Uhrzeit?" / "What time is it?" / "Wie spät?")
-   - 4 × medium (typical tool routings — "Wie spät ist es in Tokio?")
+   - 3 × short ("What time is it?" / "What time is it?" / "What time?")  # i18n-allow
+   - 4 × medium (typical tool routings — "What time is it in Tokyo?")  # i18n-allow
    - 3 × longer / complex (a request that triggers Jarvis-Agent-Spawn or a long
      reasoning answer)
 

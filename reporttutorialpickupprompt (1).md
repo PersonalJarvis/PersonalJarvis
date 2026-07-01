@@ -32,7 +32,7 @@ commit, push, or run the public ship gate. Artifacts stay English (§1).
 8. Does it embed real data: logs, transcripts, console output, screenshots,
    file paths, example API responses, mission/worker outputs?
 9. Search it for each of these and report every hit with path:line:
-   - maintainer real name (Lütke / Luetke + first name)
+   - maintainer real name (Lütke / Luetke + first name) <!-- i18n-allow: proper name example -->
    - personal email(s) (e.g. *@gmail.com that isn't an intentional contact)
    - C:\Users\<name> or other personal filesystem paths
    - machine/user identifiers, Windows SIDs (S-1-5-21-...)

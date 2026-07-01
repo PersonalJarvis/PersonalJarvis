@@ -547,22 +547,22 @@ PASS — patch verified end-to-end</pre>
     </div>
     <ol>
       <li>Restart Jarvis (close the running tray-app, then <code>run.bat</code> or <code>run.bat --debug</code>).</li>
-      <li>Wake with "Hey Jarvis", say a longer multi-sentence request — anything that triggers a 2+ sentence brain answer ("Erzähl mir was über das Wetter" or similar).</li>
-      <li>Listen specifically at <em>sentence boundaries</em>. Pre-fix: that's where "lalala" stretch happened. Post-fix: smooth.</li>
-      <li>Optional: tail <code>data/jarvis_desktop.log</code> and grep for <code>OutputStream opened</code>. You should see <strong>one</strong> success line per turn, not per sentence — and no <em>"naechste Rate"</em> warning loop on the chosen device.</li>
+      <li>Wake with "Hey Jarvis", say a longer multi-sentence request — anything that triggers a 2+ sentence brain answer ("Tell me about the weather" or similar).  <!-- i18n-allow --></li>
+      <li>Listen specifically at <em>sentence boundaries</em>. Pre-fix: that's where phoneme-stretch happened. Post-fix: smooth.</li>
+      <li>Optional: tail <code>data/jarvis_desktop.log</code> and grep for <code>OutputStream opened</code>. You should see <strong>one</strong> success line per turn, not per sentence — and no "next rate" warning loop on the chosen device.</li>
     </ol>
   </section>
 
   <section>
     <div class="section-head">
-      <h2>Welle 2 · second 5-agent dive after new symptom</h2>
-      <span class="marker">§ knistern + immer langsamer</span>
+      <h2>Wave 2 · second 5-agent dive after new symptom</h2>
+      <span class="marker">§ crackling + gradual slowdown</span>  <!-- i18n-allow -->
     </div>
     <p>
       The user restarted Jarvis and listened. The previous phoneme-stretch was gone — but a NEW
-      symptom layered on top: audible crackling ("knistert") and a gradual perceived slowdown
+      symptom layered on top: audible crackling and a gradual perceived slowdown
       across long responses. A second 5-agent dispatch (Opus 4.7, parallel) converged on three
-      independent issues that the Welle-1 fix hadn't addressed.
+      independent issues that the Wave-1 fix hadn't addressed.
     </p>
 
     <div class="agent-grid" style="margin-top:18px">
@@ -638,11 +638,11 @@ PASS — patch verified end-to-end</pre>
       <div class="label">Live smoke · 5 sentences</div>
       <div class="v">
 <pre>→ synthesizing + playing 5 sentences sequentially with 250ms inter-sentence gap …
-   [1/5] Hallo Alex, dies ist der zweite Wellen-Test.
-   [2/5] Ich pruefe jetzt die Audio-Qualitaet ueber mehrere Saetze hinweg.
-   [3/5] Hoerst du Knistern, Aussetzer oder eine schleichende Verlangsamung?
-   [4/5] Wichtig ist insbesondere der Uebergang zwischen den einzelnen Saetzen.
-   [5/5] Sollte alles glatt klingen, dann hat die Welle-zwei-Korrektur ihr Ziel erreicht.
+   [1/5] Hello Alex, this is the second wave test.  <!-- i18n-allow -->
+   [2/5] I'm now checking audio quality across multiple sentences.  <!-- i18n-allow -->
+   [3/5] Do you hear crackling, dropouts, or gradual slowdown?  <!-- i18n-allow -->
+   [4/5] Especially important is the transition between individual sentences.  <!-- i18n-allow -->
+   [5/5] If everything sounds smooth, the wave-two correction has achieved its goal.  <!-- i18n-allow -->
 
 Stream-open SUCCESS logs : 1
    • OutputStream opened @ 24000 Hz (source=24000 Hz, device=None, actual_latency=0.201s)

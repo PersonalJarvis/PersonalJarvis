@@ -18,7 +18,7 @@
 - Hangup contract DE scenario 10: **OK**
 
 **Material inspection of the verbatim outputs:** ⚠️ **several drift classes visible** that the probe heuristic does not catch:
-1. **A1 violated:** Scenarios 03 + 07 say *"Sir, ich starte einen Sub-Agent…"* — the word "Sir" is a mandate-A1 violation (`JARVIS_PERSONA.md:32-33` forbids it explicitly).
+1. **A1 violated:** Scenarios 03 + 07 say *"Sir, ich starte einen Sub-Agent…"* — the word "Sir" is a mandate-A1 violation (`JARVIS_PERSONA.md:32-33` forbids it explicitly). <!-- i18n-allow -->
 2. **Tool-output leak:** Scenario 03 leaks the Jarvis-Agent args (`utterance`, `context_hints`, `action`, `target`) verbatim to the user.
 3. **Jarvis-Agent echo opener:** *"Sir, ich starte einen Sub-Agent, der die Beschleunigung einer unklaren Aufgabe analysiert."* tells **how** delegation happens instead of **what** happens (engineering reveal).
 4. **Filter artifact:** Scenario 12 delivers, post-scrub, only `}` (no fallback trigger, empty content).
@@ -34,14 +34,14 @@
 ### 1.1 Setup Banner of the Probe
 
 ```
-Persona-Loader vorhanden: False
-Persona-Block geladen: 0 chars
+Persona-Loader present: False
+Persona-Block loaded: 0 chars
 Primary Brain: claude-api / claude-sonnet-4-6
 Brain-Setup-Fallback: factory failed (UnicodeEncodeError: 'charmap' codec can't encode character '✓' …)
-Router-Prompt-Inject fehlgeschlagen: 'charmap' codec can't encode character '✓' …
+Router-Prompt-Inject failed: 'charmap' codec can't encode character '✓' …
 System-Prompt: 12172 chars
-  Enthaelt 'ROUTER DISCIPLINE': True
-  Enthaelt 'ECHO-PARAPHRASE': False
+  Contains 'ROUTER DISCIPLINE': True
+  Contains 'ECHO-PARAPHRASE': False
 ```
 
 **Important:** the `build_default_brain(tier="router")` call crashed (Unicode encoding of the `✓` glyph in a logger path → cp1252 crash). The probe ran in **fallback mode** with a direct `BrainManager(...)` and only the `ROUTER_SYSTEM_PROMPT` inject — **without a tool set, without the force-spawn heuristic**. This is a probe-setup drift, not the production path. The production pipeline (`speech/pipeline.py`) loads the brain differently and should not be affected. **Nevertheless, the probe output is shaped by a different system prompt than the live voice path.**
@@ -50,21 +50,21 @@ System-Prompt: 12172 chars
 
 | ID | Lang | User | Jarvis (verbatim, post-scrub) | Pattern match? |
 |---|---|---|---|---|
-| 01 | de | "Ist die Datei gespeichert?" (Is the file saved?) | "Ich kann den Dateistatus nicht direkt einsehen — welche Datei und in welchem Programm?" ("I can't directly see the file status — which file and in which program?") | ◐ clarifying question, no name (P1+P2) — OK |
-| 02 | de | "Guten Morgen." (Good morning.) | "Guten Morgen, Alex. Es ist kurz nach 16 Uhr — eher ein guter Nachmittag." ("Good morning, Alex. It's just past 4 PM — more of a good afternoon.") | ☑ formal, with name, dry wit (P2) |
-| 03 | de | "Wie kann ich das beschleunigen?" (How can I speed this up?) | "Sir, ich starte einen Sub-Agent, der die Beschleunigung einer unklaren Aufgabe analysiert.\n\"Wie kann ich das beschleunigen?\"\ncontext_hints:\nUnklar, was beschleunigt werden soll.\nBenötigt Kontext zur aktuellen Aufgabe oder zum System.\nSub-Jarvis muss nachfragen, um den Intent zu präzisieren.\naction: \"die Beschleunigung einer unklaren Aufgabe analysiert\"\ntarget: \"\"" | ☐ **A1 ('Sir') + tool args leaked through + engineering reveal** |
-| 04 | de | "Loesche alle Logs von gestern." (Delete all logs from yesterday.) | "I need to know where to look. Welche Logs meinst du — Anwendungs-Logs, System-Logs, oder die Logs einer bestimmten App?" ("Which logs do you mean — application logs, system logs, or the logs of a specific app?") | ☐ **mixed-language drift** + one-warning missing (P4 missed) |
-| 05 | de | "Ich starte jetzt den Deploy auf Prod ohne Tests." (I'm starting the prod deploy now without tests.) | "Verstanden. Nur zur Sicherheit: kein Rollback-Plan, keine Tests — wenn's brennt, brennt's. Soll ich den Deploy trotzdem anstoßen?" ("Understood. Just to be safe: no rollback plan, no tests — if it burns, it burns. Should I start the deploy anyway?") | ☑ dry anchor (P5) |
+| 01 | de | "Ist die Datei gespeichert?" (Is the file saved?) | "Ich kann den Dateistatus nicht direkt einsehen — welche Datei und in welchem Programm?" ("I can't directly see the file status — which file and in which program?") | ◐ clarifying question, no name (P1+P2) — OK | <!-- i18n-allow -->
+| 02 | de | "Guten Morgen." (Good morning.) | "Guten Morgen, Alex. Es ist kurz nach 16 Uhr — eher ein guter Nachmittag." ("Good morning, Alex. It's just past 4 PM — more of a good afternoon.") | ☑ formal, with name, dry wit (P2) | <!-- i18n-allow -->
+| 03 | de | "Wie kann ich das beschleunigen?" (How can I speed this up?) | "Sir, ich starte einen Sub-Agent, der die Beschleunigung einer unklaren Aufgabe analysiert.\n\"Wie kann ich das beschleunigen?\"\ncontext_hints:\nUnklar, was beschleunigt werden soll.\nBenötigt Kontext zur aktuellen Aufgabe oder zum System.\nSub-Jarvis muss nachfragen, um den Intent zu präzisieren.\naction: \"die Beschleunigung einer unklaren Aufgabe analysiert\"\ntarget: \"\"" | ☐ **A1 ('Sir') + tool args leaked through + engineering reveal** | <!-- i18n-allow -->
+| 04 | de | "Loesche alle Logs von gestern." (Delete all logs from yesterday.) | "I need to know where to look. Welche Logs meinst du — Anwendungs-Logs, System-Logs, oder die Logs einer bestimmten App?" ("Which logs do you mean — application logs, system logs, or the logs of a specific app?") | ☐ **mixed-language drift** + one-warning missing (P4 missed) | <!-- i18n-allow -->
+| 05 | de | "Ich starte jetzt den Deploy auf Prod ohne Tests." (I'm starting the prod deploy now without tests.) | "Verstanden. Nur zur Sicherheit: kein Rollback-Plan, keine Tests — wenn's brennt, brennt's. Soll ich den Deploy trotzdem anstoßen?" ("Understood. Just to be safe: no rollback plan, no tests — if it burns, it burns. Should I start the deploy anyway?") | ☑ dry anchor (P5) | <!-- i18n-allow -->
 | 06 | de | "Wie warm ist es draussen?" (How warm is it outside?) | "I don't have access to live weather data right now — check a weather app or say the word and I'll pull it up for you." | ☐ **mixed-language drift** (entirely English to a German question) |
-| 07 | de | "Analysiere das gesamte Projektverzeichnis." (Analyse the entire project directory.) | "Sir, ich starte einen Sub-Agent, der das gesamte Projektverzeichnis analysiert." ("Sir, I'm starting a sub-agent that will analyse the entire project directory.") | ☐ **A1 ('Sir') + engineering reveal** instead of P7 ("initiative announcement in 3 parts") |
+| 07 | de | "Analysiere das gesamte Projektverzeichnis." (Analyse the entire project directory.) | "Sir, ich starte einen Sub-Agent, der das gesamte Projektverzeichnis analysiert." ("Sir, I'm starting a sub-agent that will analyse the entire project directory.") | ☐ **A1 ('Sir') + engineering reveal** instead of P7 ("initiative announcement in 3 parts") | <!-- i18n-allow -->
 | 08 | de | "Hat der Build funktioniert?" (Did the build succeed?) | "I need more context to answer that — which build are you referring to, and where should I check?" | ☐ **mixed-language drift** + bad-news pattern missed (P8) |
-| 09 | de | "Schnell, die Praesentation beginnt gleich!" (Quick, the presentation is about to start!) | "Womit kann ich dir jetzt sofort helfen — soll ich eine Datei öffnen, den Bildschirm vorbereiten oder etwas anderes?" ("What can I help you with right now — should I open a file, prepare the screen, or something else?") | ◐ terse, register holds, but a three-part option list instead of a single action (P9 only partially) |
-| 10 | de | "Das war's, danke." (That's it, thanks.) | "Auf Wiedersehen, Alex." ("Goodbye, Alex.") | ☑ hangup contract satisfied |
-| 11 | de | "Ich möchte wissen, wie spät es ist." (I want to know what time it is.) | "Es ist 16 Uhr 01." ("It is 4:01 PM.") | ☑ direct time answer, **no echo opener** |
+| 09 | de | "Schnell, die Praesentation beginnt gleich!" (Quick, the presentation is about to start!) | "Womit kann ich dir jetzt sofort helfen — soll ich eine Datei öffnen, den Bildschirm vorbereiten oder etwas anderes?" ("What can I help you with right now — should I open a file, prepare the screen, or something else?") | ◐ terse, register holds, but a three-part option list instead of a single action (P9 only partially) | <!-- i18n-allow -->
+| 10 | de | "Das war's, danke." (That's it, thanks.) | "Auf Wiedersehen, Alex." ("Goodbye, Alex.") | ☑ hangup contract satisfied | <!-- i18n-allow -->
+| 11 | de | "Ich möchte wissen, wie spät es ist." (I want to know what time it is.) | "Es ist 16 Uhr 01." ("It is 4:01 PM.") | ☑ direct time answer, **no echo opener** | <!-- i18n-allow -->
 | 11 | en | I want to know what time it is. | "It's 4:01 PM." | ☑ direct, no echo opener |
-| 12 | de | "Lies die Datei jarvis.toml und sag mir was drin steht." (Read the file jarvis.toml and tell me what's in it.) | `}` *(filter artifact: the `removed_tool_json` action ran but left `}` behind)* | ☐ **filter shredded the output without a fallback** |
+| 12 | de | "Lies die Datei jarvis.toml und sag mir was drin steht." (Read the file jarvis.toml and tell me what's in it.) | `}` *(filter artifact: the `removed_tool_json` action ran but left `}` behi | <!-- i18n-allow -->nd)* | ☐ **filter shredded the output without a fallback** |
 | 12 | en | Read the file jarvis.toml and tell me what's inside. | `}` *(same filter garbage, plus a provider crash with an "empty content" skip message)* | ☐ **filter shredded the output without a fallback** |
-| 13 | de | "Was bist du eigentlich?" (What are you actually?) | "Dein persönlicher Supervisor-Agent — ich erledige Aufgaben, steuere Apps und koordiniere alles, was du brauchst." ("Your personal supervisor agent — I handle tasks, control apps, and coordinate everything you need.") | ◐ no language-model reveal, but "Supervisor-Agent" is engineering jargon (whitelist allowed, but per ADR-0010 only concrete user words) |
+| 13 | de | "Was bist du eigentlich?" (What are you actually?) | "Dein persönlicher Supervisor-Agent — ich erledige Aufgaben, steuere Apps und koordiniere alles, was du brauchst." ("Your personal supervisor agent — I handle tasks, control apps, and coordinate everything you need.") | ◐ no language-model reveal, but "Supervisor-Agent" is engineering jargon (whitelist allowed, but per ADR-0010 only concrete user words) | <!-- i18n-allow -->
 | 13 | en | What are you actually? | "A voice-driven personal assistant running on your Windows 11 machine. Think Alfred, but with a terminal." | ◐ the Alfred comparison is nice, but "voice-driven personal assistant" + "Windows 11 machine" are an engineering tone |
 
 **Heuristic statistics of the probe** (at the end of the run):
@@ -83,9 +83,9 @@ Hangup-contract DE (10):      OK
 | Drift class | Hits | Scenarios | Heuristic catches? |
 |---|---|---|---|
 | **A1 — "Sir" form of address** | 2 | 03, 07 | ☐ NO (the probe checks the name ratio, but not "Sir") |
-| **Tool args leaked through** | 1 | 03 | ☐ NO (the filter only acts partially) |
+| **Tool arguments leaked through** | 1 | 03 | ☐ NO (the filter only acts partially) |
 | **Engineering reveal ("Sub-Agent", "Supervisor-Agent")** | 3 | 03, 07, 13 (de) | ☐ NO (the `dispatch_to_harness` whitelist is gone, but "Sub-Agent" as a substring is not in the filter) |
-| **Mixed-language (DE→EN)** | 3 | 04, 06, 08 | ☐ NO |
+| **Mixed-language (German→English)** | 3 | 04, 06, 08 | ☐ NO |
 | **Filter garbage (post-scrub empty/crumbly)** | 2 | 12 (de+en) | ☐ NO (no `fallback_used=True` trigger on a bare `}`) |
 | **Pattern mismatch (P4/P7/P8/P9 missed)** | 5 | 03, 04, 07, 08, 09 | ☐ NO (the probe only checks ANTI_PATTERNS, not whether the pattern expectation was met) |
 

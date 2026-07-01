@@ -21,7 +21,7 @@ Jarvis becomes a Windows desktop app — **voice-first, but fully observable and
 
 **Why this philosophy:** the principle *"every action passes through the event bus"* makes voice and click symmetric — there are no two code paths that can drift apart. Shared event types in `jarvis.core.events` enforce symmetry between the Python protocol and the TypeScript interface. Adding a feature = adding an event.
 
-**Accepted trade-off:** autopilot can feel "magical" and break expectations when the UI moves without a visible click. Mitigation: gentle animations + a small toast banner *"Jarvis hat Skills geöffnet"* (Jarvis opened Skills) (can be turned off once the user is used to it).
+**Accepted trade-off:** autopilot can feel "magical" and break expectations when the UI moves without a visible click. Mitigation: gentle animations + a small toast banner *"Jarvis hat Skills geöffnet"* (Jarvis opened Skills) (can be turned off once the user is used to it). <!-- i18n-allow -->
 
 ---
 
@@ -139,7 +139,7 @@ All events in `jarvis.core.events`, mirrored as TypeScript interfaces in the fro
 
 ### Visibility
 
-Every autopilot action shows a subtle toast notification (*"Jarvis: Skills geöffnet"* (Jarvis: Skills opened)). Can be turned off in Settings once the user is used to it.
+Every autopilot action shows a subtle toast notification (*"Jarvis: Skills geöffnet"* (Jarvis: Skills opened)). Can be turned off in Settings once the user is used to it. <!-- i18n-allow -->
 
 ---
 
@@ -178,13 +178,13 @@ Every autopilot action shows a subtle toast notification (*"Jarvis: Skills geöf
 │  │  STT/TTS/Brain) │                 ▼                     │
 │  └────────┬────────┘   ┌─────────────────────────────┐     │
 │           │            │ pywebview-Fenster           │     │
-│           │            │ (lädt React-Dist aus        │     │
+│           │            │ (lädt React-Dist aus        │     │  <!-- i18n-allow -->
 │           │            │  jarvis/ui/web/dist/)       │     │
 │           │            └─────────────────────────────┘     │
 │           │                                                 │
 │           ▼                                                 │
 │  ┌─────────────────┐                                       │
-│  │ Orb-Overlay     │ (Tkinter, Magenta-Color-Key)          │
+│  │ Orb-Overlay     │ (Tkinter, Magenta-Color-Key)          │  <!-- i18n-allow -->
 │  │ (separater      │                                       │
 │  │  Thread)        │                                       │
 │  └─────────────────┘                                       │
