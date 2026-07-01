@@ -15,7 +15,7 @@ requires_num2words = pytest.mark.skipif(
 
 @requires_num2words
 def test_no_bare_digit_survives_german():
-    out = spell_out_numbers("Der Mond entfernt sich 3,8 Zentimeter pro Jahr.", "de")
+    out = spell_out_numbers("Der Mond entfernt sich 3,8 Zentimeter pro Jahr.", "de")  # i18n-allow
     assert not any(c.isdigit() for c in out)
     assert "drei Komma acht" in out
 
@@ -47,14 +47,14 @@ def test_decimal_english_uses_point():
 def test_time_german():
     out = spell_out_numbers("Wir treffen uns um 20:30.", "de")
     assert not any(c.isdigit() for c in out)
-    assert "zwanzig Uhr dreißig" in out
+    assert "zwanzig Uhr dreißig" in out  # i18n-allow
 
 
 @requires_num2words
 def test_full_hour_german():
     out = spell_out_numbers("Es ist 15:00.", "de")
     assert not any(c.isdigit() for c in out)
-    assert "fünfzehn Uhr" in out
+    assert "fünfzehn Uhr" in out  # i18n-allow
 
 
 @requires_num2words

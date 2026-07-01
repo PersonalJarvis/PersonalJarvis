@@ -1,14 +1,14 @@
-"""openWakeWord-Plugin — detektiert "Hey Jarvis" / "Jarvis" im Audio-Stream.
+"""openWakeWord plugin — detects "Hey Jarvis" / "Jarvis" in the audio stream.
 
-openWakeWord ist ein freies, Open-Source Wake-Word-System (MIT), nutzt
-ONNX-Runtime und hat "hey_jarvis" als vortrainiertes Model eingebaut —
-Null API-Key nötig.
+openWakeWord is a free, open-source wake-word system (MIT), uses the
+ONNX runtime, and ships "hey_jarvis" as a built-in pretrained model —
+zero API key needed.
 
-Input-Format: 16 kHz mono int16 PCM, Frame-Größe muss 1280 Samples (80 ms)
-sein. Wir pufern Mic-Chunks rein und splitten auf Frame-Grenze.
+Input format: 16 kHz mono int16 PCM, frame size must be 1280 samples (80 ms).
+We buffer mic chunks and split on the frame boundary.
 
-Output: Continuous Score [0, 1] pro Keyword — wir filtern auf
-`activation_threshold` und debouncen (kein Re-Trigger innerhalb Cooldown).
+Output: continuous score [0, 1] per keyword — we filter on
+`activation_threshold` and debounce (no re-trigger within the cooldown).
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ log = logging.getLogger("jarvis.wake")
 
 
 OWW_SAMPLE_RATE = 16_000
-OWW_FRAME_SAMPLES = 1280  # openWakeWord erwartet genau diese Frame-Länge
+OWW_FRAME_SAMPLES = 1280  # openWakeWord expects exactly this frame length
 
 # After the pipeline's STT prefix-verifier REJECTS a candidate, the detector
 # stays deaf only this long (not the full cooldown). Short enough that a real
@@ -133,11 +133,11 @@ class WakeGainNormalizer:
 
 
 class OpenWakeWordProvider:
-    """Wake-Word-Detector — strukturell `WakeWordProvider`-kompatibel.
+    """Wake-word detector — structurally compatible with `WakeWordProvider`.
 
-    Standardmäßig lauscht er auf "hey_jarvis" — das vortrainierte Modell
-    reagiert aus meinem Test heraus sowohl auf "Hey Jarvis" als auch auf
-    "Jarvis" allein, wenn der Threshold niedrig genug ist (0.5 tauglich).
+    By default it listens for "hey_jarvis" — in my testing the pretrained
+    model reacts to both "Hey Jarvis" and "Jarvis" alone, as long as the
+    threshold is low enough (0.5 works).
     """
 
     name = "openwakeword"
@@ -156,9 +156,10 @@ class OpenWakeWordProvider:
         activation_threshold: float = PRODUCTION_WAKE_THRESHOLD,
         cooldown_s: float = 2.0,
         inference_framework: str = "onnx",
-        # Diagnose-Log: alles >= diesem Wert loggen. 0.05 ist bewusst niedrig,
-        # damit beim Testen Scores überhaupt sichtbar sind (sonst silent wenn
-        # User zu leise spricht oder Model deutsche Aussprache nicht gut trifft).
+        # Diagnostic log: log everything >= this value. 0.05 is deliberately low
+        # so scores are visible at all during testing (otherwise silent when
+        # the user speaks too quietly, or the model doesn't handle German
+        # pronunciation well).
         score_log_threshold: float = 0.05,
         # Explicit ONNX wake-model path. When set (custom-wake-word feature: a
         # pretrained alexa/mycroft/rhasspy from the openWakeWord package, or a
@@ -307,10 +308,10 @@ class OpenWakeWordProvider:
     def _ensure_model(self) -> None:
         if self._model is None:
             from openwakeword.model import Model
-            # wakeword_models=[...] akzeptiert entweder Built-in-Namen oder
-            # Pfade zu .onnx / .tflite Dateien. Wir bevorzugen die gebündelten
-            # lokalen ONNX-Pfade (siehe _model_kwargs) — kein Runtime-Download,
-            # offline-fähig beim ersten Start.
+            # wakeword_models=[...] accepts either built-in names or paths to
+            # .onnx / .tflite files. We prefer the bundled local ONNX paths
+            # (see _model_kwargs) — no runtime download, offline-capable on
+            # first boot.
             self._model = Model(**self._model_kwargs())
 
     def _warmup_model(self) -> None:
@@ -333,7 +334,7 @@ class OpenWakeWordProvider:
             log.debug("OWW warm-up inference skipped: %s", exc)
 
     async def start(self) -> None:
-        """Pre-load AND warm the model — spart Kaltstart-Latenz beim ersten Frame."""
+        """Pre-load AND warm the model — saves cold-start latency on the first frame."""
         await asyncio.to_thread(self._ensure_model)
         await asyncio.to_thread(self._warmup_model)
 
@@ -369,10 +370,10 @@ class OpenWakeWordProvider:
     async def detect(
         self, chunks: AsyncIterator[AudioChunk]
     ) -> AsyncIterator[str]:
-        """Konsumiert Audio-Chunks, yielded Keyword-Namen bei Detection.
+        """Consumes audio chunks, yields keyword names on detection.
 
-        Das ist die Convenience-API — intern nutzen wir `stream()` für
-        rohe Confidence-Werte (Protocol-Anforderung).
+        This is the convenience API — internally we use `stream()` for
+        raw confidence values (protocol requirement).
         """
         self._ensure_model()
         assert self._model is not None
@@ -390,11 +391,11 @@ class OpenWakeWordProvider:
         self._reset_session_stats()
 
         async for chunk in chunks:
-            # Int16-View auf die Bytes — openWakeWord erwartet int16 arrays
+            # Int16 view over the bytes — openWakeWord expects int16 arrays
             int16 = np.frombuffer(chunk.pcm, dtype=np.int16)
             buf = np.concatenate([self._residual, int16])
 
-            # In 1280-Sample-Frames splitten, Rest aufheben
+            # Split into 1280-sample frames, keep the remainder
             n_full = len(buf) // OWW_FRAME_SAMPLES
             if n_full == 0:
                 self._residual = buf
@@ -407,7 +408,7 @@ class OpenWakeWordProvider:
                 # so a normal-volume "Hey Jarvis" reaches the score band the
                 # threshold expects (no shouting). Amplify-only + noise-floor gated.
                 norm_frame = self._gain.process(frame) if self._gain is not None else frame
-                # predict() gibt dict zurück: {"hey_jarvis": score_float, ...}
+                # predict() returns a dict: {"hey_jarvis": score_float, ...}
                 scores = await asyncio.to_thread(self._model.predict, norm_frame)
                 self._frames_seen += 1
                 frame_max = max(scores.values()) if scores else 0.0
@@ -415,8 +416,8 @@ class OpenWakeWordProvider:
                 if frame_max > self._max_score:
                     self._max_score = frame_max
                 for keyword, score in scores.items():
-                    # Live-Debugging: alles über `score_log_threshold` loggen,
-                    # damit der User beim Testen sieht wie nah er am Hit dran ist.
+                    # Live debugging: log everything above `score_log_threshold`,
+                    # so during testing the user can see how close they are to a hit.
                     if score >= self._score_log_threshold:
                         log.info("wake score  %s = %.3f  (threshold %.2f)",
                                  keyword, score, self._threshold)
@@ -448,9 +449,9 @@ class OpenWakeWordProvider:
                 self._maybe_log_stats_heartbeat()
 
     async def stream(self) -> AsyncIterator[float]:
-        """Protocol-Pflicht: Confidence-Stream. Nicht die primäre API hier."""
-        # Placeholder — wir nutzen `detect()` intern. Für Protocol-Konformität
-        # müsste der Consumer sein eigenes Audio einspeisen.
+        """Protocol requirement: confidence stream. Not the primary API here."""
+        # Placeholder — we use `detect()` internally. For protocol conformance
+        # the consumer would need to feed in its own audio.
         if False:
             yield 0.0
         return
