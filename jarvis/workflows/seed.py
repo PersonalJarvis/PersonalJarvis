@@ -1,14 +1,14 @@
-"""Seed-Workflows — die werden beim ersten Startup in die DB gepflanzt.
+"""Seed workflows — planted into the DB on first startup.
 
-Philosophie: **klein, sofort funktionsfaehig, demo-bar.** Wir wollen, dass
-der User nach dem ersten Start die WorkflowsView oeffnet und 3 sinnvolle
-Beispiele sieht, auf "Run" klicken kann und sofort ein Resultat bekommt.
+Philosophy: **small, immediately functional, demoable.** We want the
+user, after the first launch, to open the WorkflowsView and see 3
+meaningful examples, be able to click "Run", and get a result right away.
 
-- *Morgen-Briefing* (cron 30 7 * * *) — brain_prompt → speak-Chain. Produziert
-  eine Mini-Standup-Ansage. Kein externer Service noetig.
-- *Code-Review* (manual) — harness_dispatch an OpenClaw.
-- *URL-Zusammenfassung* (manual, Input-Feld ``url``) — brain_prompt mit
-  Template-Variable {{input.url}}. Demoed Input-Binding.
+- *Morning Briefing* (cron 30 7 * * *) — brain_prompt → speak chain. Produces
+  a mini standup announcement. No external service needed.
+- *Code Review* (manual) — harness_dispatch to OpenClaw.
+- *URL Summary* (manual, input field ``url``) — brain_prompt with the
+  template variable {{input.url}}. Demos input binding.
 """
 from __future__ import annotations
 
@@ -31,9 +31,9 @@ from .store import WorkflowStore
 log = logging.getLogger(__name__)
 
 
-# Fixe UUIDs, damit wiederholtes Seeding idempotent ist — wir erkennen
-# bestehende Seed-Eintraege an der ID und lassen User-Modifikationen
-# ueberleben (kein Force-Overwrite).
+# Fixed UUIDs, so repeated seeding is idempotent — we recognize
+# existing seed entries by their ID and let user modifications
+# survive (no force overwrite).
 _WF_MORGEN_BRIEFING = UUID("4a0f9e01-5c11-4c57-9c1d-10aabb000001")
 _WF_CODE_REVIEW = UUID("4a0f9e01-5c11-4c57-9c1d-10aabb000002")
 _WF_URL_SUMMARY = UUID("4a0f9e01-5c11-4c57-9c1d-10aabb000003")
@@ -45,31 +45,31 @@ def _morgen_briefing() -> WorkflowDef:
     now_ns = time.time_ns()
     return WorkflowDef(
         id=_WF_MORGEN_BRIEFING,
-        name="Morgen-Briefing",
+        name="Morning Briefing",
         description=(
-            "Taegliche 7:30-Ansage: Aktuelle Uhrzeit, Wochentag und eine kurze, "
-            "freundliche Begruessung. Demonstriert brain_prompt → speak-Chain."
+            "Daily 7:30 announcement: current time, day of week, and a short, "
+            "friendly greeting. Demonstrates a brain_prompt → speak chain."
         ),
         trigger=CronTrigger(expression="30 7 * * *"),
         steps=(
             BrainPromptStep(
-                label="Tages-Zusammenfassung generieren",
+                label="Generate daily summary",
                 prompt=(
-                    "Du bist Jarvis. Es ist jetzt Morgen. Formuliere eine kurze, "
-                    "freundliche Morgen-Ansage (max 3 Saetze, Deutsch). Beziehe "
-                    "Wochentag und eine motivierende Randbemerkung ein. KEINE "
-                    "Emojis, KEINE Uhrzeit-Nennung — der User sieht sie eh."
+                    "You are Jarvis. It's currently morning. Compose a short, "
+                    "friendly morning announcement (max 3 sentences, in German). Include "
+                    "the day of the week and a short motivating remark. NO "
+                    "emojis, NO stating the time — the user can already see that."
                 ),
                 max_output_chars=500,
             ),
             SpeakStep(
-                label="Ansage abspielen",
+                label="Play announcement",
                 text="{{prev.output}}",
                 priority="normal",
                 language="de",
             ),
         ),
-        enabled=False,  # Cron-Default off — User soll bewusst aktivieren
+        enabled=False,  # cron default off — user must enable deliberately
         created_at_ns=now_ns,
         created_by="seed",
         tags=("demo", "brain", "speak"),
@@ -80,10 +80,10 @@ def _code_review() -> WorkflowDef:
     now_ns = time.time_ns()
     return WorkflowDef(
         id=_WF_CODE_REVIEW,
-        name="Code-Review",
+        name="Code Review",
         description=(
-            "Analysiert die offenen Changes auf dem aktuellen Git-Branch via "
-            "OpenClaw-Harness."
+            "Analyzes the open changes on the current git branch via the "
+            "OpenClaw harness."
         ),
         trigger=ManualTrigger(),
         steps=(
@@ -98,8 +98,8 @@ def _code_review() -> WorkflowDef:
                 allow_computer_use=False,
             ),
             SpeakStep(
-                label="Review-Resultat ansagen",
-                text="Code-Review fertig. {{prev.output}}",
+                label="Announce review result",
+                text="Code-Review fertig. {{prev.output}}",  # i18n-allow
                 priority="normal",
                 language="de",
             ),
@@ -115,22 +115,22 @@ def _url_summary() -> WorkflowDef:
     now_ns = time.time_ns()
     return WorkflowDef(
         id=_WF_URL_SUMMARY,
-        name="URL-Zusammenfassung",
+        name="URL Summary",
         description=(
-            "Nimmt eine URL als Input, laesst den Brain eine kurze Analyse "
-            "erzeugen (KEIN echter Fetch — der Brain kommentiert was er aus "
-            "der URL schliessen kann). Demoed Input-Binding via {{input.url}}."
+            "Takes a URL as input, has the brain generate a short analysis "
+            "(NO real fetch — the brain comments on what it can infer "
+            "from the URL). Demos input binding via {{input.url}}."
         ),
         trigger=ManualTrigger(),
         steps=(
             BrainPromptStep(
-                label="URL analysieren",
+                label="Analyze URL",
                 prompt=(
-                    "Der User moechte die folgende URL zusammengefasst haben: "
+                    "The user wants the following URL summarized: "
                     "{{input.url}}\n\n"
-                    "Erklaere in 3-5 Saetzen auf Deutsch, welche Art von Seite "
-                    "das vermutlich ist (Domain-Analyse, Pfad-Heuristik). Wenn "
-                    "die URL leer ist, sage das klar."
+                    "Explain in 3-5 sentences, in German, what kind of page "
+                    "this likely is (domain analysis, path heuristics). If "
+                    "the URL is empty, say so clearly."
                 ),
                 max_output_chars=1200,
             ),
@@ -143,58 +143,58 @@ def _url_summary() -> WorkflowDef:
 
 
 def _email_digest_telegram() -> WorkflowDef:
-    """Die User-Story aus der Session: 5x am Tag Gmail-Inbox triagen, zu
-    einer kompakten Zusammenfassung verdichten, via Telegram pushen.
+    """The user story from the session: triage the Gmail inbox 5x a day,
+    condense it into a compact summary, and push it via Telegram.
 
-    Kette:
-      1. ``shell_cmd``    → ``gws gmail +triage`` → JSON mit Unread-Mails
-      2. ``brain_prompt`` → fasse Mails zu 3-5 Bullet-Points auf Deutsch
-      3. ``telegram_send`` → Push an den Default-Chat aus der Config
+    Chain:
+      1. ``shell_cmd``    → ``gws gmail +triage`` → JSON with unread emails
+      2. ``brain_prompt`` → summarize the emails into 3-5 bullet points, in German
+      3. ``telegram_send`` → push to the default chat from the config
 
-    ``gws``-CLI ist systemweit installiert + authentifiziert (steht in der
-    globalen CLAUDE.md). Telegram-Bot-Token + Chat-ID muss der User einmalig
-    konfigurieren; bis dahin bleibt der Workflow disabled.
+    The ``gws`` CLI is installed and authenticated system-wide (documented in the
+    global CLAUDE.md). The Telegram bot token + chat ID must be configured once
+    by the user; until then the workflow stays disabled.
 
     Cron ``0 8,11,14,17,20 * * *`` → 8:00, 11:00, 14:00, 17:00, 20:00.
     """
     now_ns = time.time_ns()
     return WorkflowDef(
         id=_WF_EMAIL_DIGEST,
-        name="Email-Digest via Telegram",
+        name="Email Digest via Telegram",
         description=(
-            "5x täglich Gmail-Inbox triagen, KI-Zusammenfassung der "
-            "ungelesenen Mails erstellen und per Telegram pushen. "
-            "Demonstriert die Gmail+Brain+Telegram-Integration. "
-            "Braucht konfigurierten Telegram-Bot — siehe "
+            "Triages the Gmail inbox 5x a day, creates an AI summary of the "
+            "unread emails, and pushes it via Telegram. "
+            "Demonstrates the Gmail+Brain+Telegram integration. "
+            "Needs a configured Telegram bot — see "
             "[integrations.telegram] in jarvis.toml."
         ),
         trigger=CronTrigger(expression="0 8,11,14,17,20 * * *"),
         steps=(
             ShellCmdStep(
-                label="Gmail Inbox triagen",
+                label="Triage Gmail inbox",
                 command="gws gmail +triage",
                 timeout_s=30.0,
                 max_output_chars=12000,
             ),
             BrainPromptStep(
-                label="Mails zusammenfassen",
+                label="Summarize emails",
                 prompt=(
-                    "Du bekommst die Ausgabe eines Gmail-Triage-Tools. "
-                    "Erstelle eine kompakte Zusammenfassung der ungelesenen "
-                    "Mails auf Deutsch:\n"
-                    "- max. 5 Bullet-Points, sortiert nach Dringlichkeit.\n"
-                    "- Jeder Punkt: *Absender*: Betreff (in 1 Satz worum es geht).\n"
-                    "- Wenn 0 Mails: nur '✅ Inbox leer' zurückgeben.\n\n"
-                    "Rohdaten:\n{{prev.output}}"
+                    "You receive the output of a Gmail triage tool. "
+                    "Create a compact summary of the unread "
+                    "emails in German:\n"
+                    "- max. 5 bullet points, sorted by urgency.\n"
+                    "- Each point: *Sender*: subject (in 1 sentence what it's about).\n"
+                    "- If 0 emails: just return '✅ Inbox leer'.\n\n"
+                    "Raw data:\n{{prev.output}}"
                 ),
                 max_output_chars=2000,
             ),
             TelegramSendStep(
-                label="An Telegram pushen",
+                label="Push to Telegram",
                 text="📬 *Email-Digest*\n\n{{prev.output}}",
             ),
         ),
-        enabled=False,  # erst aktivieren wenn Telegram konfiguriert
+        enabled=False,  # enable only once Telegram is configured
         created_at_ns=now_ns,
         created_by="seed",
         tags=("demo", "gmail", "telegram", "cron"),
@@ -202,42 +202,42 @@ def _email_digest_telegram() -> WorkflowDef:
 
 
 def _git_standup_telegram() -> WorkflowDef:
-    """Wochentags 9:00 — Git-Status + commit-Log ueber Telegram an den
-    Nutzer pushen. Demoed ``shell_cmd`` mit Input-Variable + Chaining.
+    """Weekdays at 9:00 — pushes the git status + commit log to the
+    user via Telegram. Demos ``shell_cmd`` with an input variable + chaining.
     """
     now_ns = time.time_ns()
     return WorkflowDef(
         id=_WF_GIT_STANDUP,
-        name="Git-Standup via Telegram",
+        name="Git Standup via Telegram",
         description=(
-            "Werktags 9:00: Zeigt die letzten 5 Commits im aktuellen "
-            "Verzeichnis, lässt den Brain eine Stand-up-taugliche "
-            "Zusammenfassung ('was wurde gestern gemacht') schreiben "
-            "und schickt sie per Telegram."
+            "Weekdays at 9:00: shows the last 5 commits in the current "
+            "directory, has the brain write a standup-ready "
+            "summary ('what got done yesterday') "
+            "and sends it via Telegram."
         ),
         trigger=CronTrigger(expression="0 9 * * 1-5"),
         steps=(
             ShellCmdStep(
-                label="Letzte Commits holen",
+                label="Fetch latest commits",
                 command="git log --since=24.hours --pretty=format:%h_%s",
                 timeout_s=10.0,
                 max_output_chars=4000,
             ),
             BrainPromptStep(
-                label="Standup formulieren",
+                label="Compose standup",
                 prompt=(
-                    "Das hier sind die Commits der letzten 24 Stunden:\n"
+                    "Here are the commits from the last 24 hours:\n"
                     "{{prev.output}}\n\n"
-                    "Schreibe eine 3-Satz-Zusammenfassung auf Deutsch im "
-                    "Stand-up-Stil (Was hab ich gemacht? Was kommt? "
-                    "Blocker?). Wenn keine Commits: sag das kurz und "
-                    "freundlich."
+                    "Write a 3-sentence summary in German, standup-style "
+                    "(What did I do? What's next? "
+                    "Blockers?). If there are no commits, say so briefly and "
+                    "kindly."
                 ),
                 max_output_chars=1000,
             ),
             TelegramSendStep(
-                label="Standup pushen",
-                text="🧑‍💻 *Dein Standup*\n\n{{prev.output}}",
+                label="Push standup",
+                text="🧑‍💻 *Dein Standup*\n\n{{prev.output}}",  # i18n-allow
             ),
         ),
         enabled=False,
@@ -257,11 +257,11 @@ SEED_WORKFLOWS: tuple[WorkflowDef, ...] = (
 
 
 async def ensure_seed_workflows(store: WorkflowStore) -> int:
-    """Pflanzt fehlende Seed-Workflows. Returnt die Anzahl Neuanlagen.
+    """Plants any missing seed workflows. Returns the number of newly created ones.
 
-    Idempotent — wenn ein Seed-Workflow (per UUID) bereits existiert, lassen
-    wir ihn unberuehrt, auch wenn der User Name/Steps geaendert hat. Das
-    verhindert dass Updates am Seed-Code die User-Edits ueberschreiben.
+    Idempotent — if a seed workflow (by UUID) already exists, we leave it
+    untouched, even if the user has changed the name/steps. This prevents
+    updates to the seed code from overwriting user edits.
     """
     added = 0
     for wf in SEED_WORKFLOWS:
@@ -271,5 +271,5 @@ async def ensure_seed_workflows(store: WorkflowStore) -> int:
         await store.upsert_workflow(wf)
         added += 1
     if added:
-        log.info("Seed-Workflows geschrieben: %d neu", added)
+        log.info("Seed workflows written: %d new", added)
     return added
