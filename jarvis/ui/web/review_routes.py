@@ -1,17 +1,17 @@
-"""REST-API für die Review-Pipeline (Phase 8.5).
+"""REST API for the review pipeline (Phase 8.5).
 
-Plan-§6.5 Endpoints (alle GET, alle read-only — Plan-§Verboten):
+Plan §6.5 endpoints (all GET, all read-only — Plan §forbidden otherwise):
 - ``GET /api/review/runs?limit=&offset=``       → RunSummary[]
 - ``GET /api/review/runs/{run_id}``             → RunDetail
 - ``GET /api/review/audit?since=&limit=``       → AuditEntry[]
-- ``GET /api/review/stats?window_days=``        → aggregiertes Stats-Dict
+- ``GET /api/review/stats?window_days=``        → aggregated stats dict
 
-Stats werden 60 Sekunden gecached, weil Aggregation über das Audit-Log
-einen linearen Scan erfordert (Plan §6.5).
+Stats are cached for 60 seconds because aggregating over the audit log
+requires a linear scan (Plan §6.5).
 
-Worker-Outputs werden auf 500 Chars excerpt (XSS-Vector + Performance).
-Das volle Artefakt liegt nur als File auf Disk (`data/review/runs/<id>/iter-N/worker.out`)
-und wird vom UI per Pfad-Link referenziert, nie inline gerendert.
+Worker outputs are excerpted to 500 chars (XSS vector + performance).
+The full artifact lives only as a file on disk (`data/review/runs/<id>/iter-N/worker.out`)
+and is referenced by the UI via a path link, never rendered inline.
 """
 from __future__ import annotations
 
@@ -38,12 +38,12 @@ WORKER_OUTPUT_EXCERPT_CHARS = 500
 
 
 # ----------------------------------------------------------------------
-# Pydantic-Response-Modelle
+# Pydantic response models
 # ----------------------------------------------------------------------
 
 
 class RunSummary(BaseModel):
-    """Aggregat eines Pipeline-Runs aus dem Audit-Log."""
+    """Aggregate of one pipeline run from the audit log."""
 
     run_id: str
     ts: str
@@ -56,7 +56,7 @@ class RunSummary(BaseModel):
 
 
 class IterationDetail(BaseModel):
-    """Eine Iteration im Run-Detail-View."""
+    """One iteration in the run-detail view."""
 
     iteration: int
     worker_output_excerpt: str = ""
@@ -66,7 +66,7 @@ class IterationDetail(BaseModel):
 
 
 class RunDetail(BaseModel):
-    """Vollständiger Run-View mit Iterationen + finalem Artefakt."""
+    """Full run view with iterations + final artifact."""
 
     run_id: str
     ts: str
@@ -80,7 +80,7 @@ class RunDetail(BaseModel):
 
 
 class AuditEntryModel(BaseModel):
-    """Roh-Audit-Eintrag aus data/review.log."""
+    """Raw audit entry from data/review.log."""
 
     ts: str | None = None
     run_id: str = ""
@@ -96,7 +96,7 @@ class AuditEntryModel(BaseModel):
 
 
 class StatsResponse(BaseModel):
-    """Aggregat-Statistiken über Pipeline-Runs."""
+    """Aggregate statistics over pipeline runs."""
 
     window_days: int
     runs_total: int = 0
@@ -128,7 +128,7 @@ def _get_runs_root(request: Request) -> Path:
 
 
 # ----------------------------------------------------------------------
-# Stats-Cache (60s TTL, Plan §6.5)
+# Stats cache (60s TTL, Plan §6.5)
 # ----------------------------------------------------------------------
 
 _STATS_CACHE: dict[int, tuple[float, StatsResponse]] = {}
@@ -154,13 +154,13 @@ def _store_stats(window_days: int, payload: StatsResponse) -> None:
 
 
 # ----------------------------------------------------------------------
-# Audit-Reader
+# Audit reader
 # ----------------------------------------------------------------------
 
 
 def _read_audit_entries(audit: ReviewAudit, n: int = 5000) -> list[dict[str, Any]]:
-    """Liest die letzten N Audit-Einträge. Default 5000 ist großzügig
-    bemessen (~50 Iter pro Run × 100 Runs).
+    """Reads the last N audit entries. Default of 5000 is generously
+    sized (~50 iterations per run × 100 runs).
     """
     return audit.tail(n=n)
 
@@ -169,7 +169,7 @@ def _parse_ts(raw: Any) -> datetime | None:
     if not isinstance(raw, str) or not raw:
         return None
     try:
-        # ReviewAudit schreibt ISO-8601 mit "Z"-Suffix
+        # ReviewAudit writes ISO-8601 with a "Z" suffix
         text = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
         return datetime.fromisoformat(text)
     except ValueError:
@@ -177,13 +177,13 @@ def _parse_ts(raw: Any) -> datetime | None:
 
 
 def _aggregate_runs(entries: list[dict[str, Any]]) -> dict[str, RunSummary]:
-    """Aggregiert Audit-Einträge zu RunSummaries (one per run_id).
+    """Aggregates audit entries into RunSummaries (one per run_id).
 
-    Final-Status-Logik:
-    - Wenn ein reviewer_spawn-Eintrag mit status=pass existiert → "pass"
-    - Wenn nur reviewer_spawn-Einträge mit needs_revision existieren → "cap_fired"
-    - Wenn ein reviewer_spawn mit status=fail existiert → "fail"
-    - Wenn precheck_fail → "precheck_fail"
+    Final-status logic:
+    - If a reviewer_spawn entry with status=pass exists → "pass"
+    - If only reviewer_spawn entries with needs_revision exist → "cap_fired"
+    - If a reviewer_spawn with status=fail exists → "fail"
+    - If precheck_fail → "precheck_fail"
     """
     by_run: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for entry in entries:
@@ -193,12 +193,12 @@ def _aggregate_runs(entries: list[dict[str, Any]]) -> dict[str, RunSummary]:
 
     summaries: dict[str, RunSummary] = {}
     for run_id, run_entries in by_run.items():
-        # Sortiere nach iteration; precheck=0 zuerst
+        # Sort by iteration; precheck=0 first
         sorted_entries = sorted(
             run_entries, key=lambda e: (int(e.get("iteration", 0) or 0), str(e.get("phase", "")))
         )
         ts = sorted_entries[0].get("ts", "") if sorted_entries else ""
-        # Iterationen = Anzahl distinkter `iteration > 0` Werte
+        # Iterations = count of distinct `iteration > 0` values
         iters = {int(e.get("iteration", 0) or 0) for e in sorted_entries}
         iters.discard(0)
         iter_count = len(iters)
@@ -252,21 +252,21 @@ def list_runs(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> list[RunSummary]:
-    """Liste der Pipeline-Runs, neueste zuerst."""
+    """List of pipeline runs, newest first."""
     audit = _get_audit(request)
     entries = _read_audit_entries(audit)
     summaries = list(_aggregate_runs(entries).values())
-    # Neueste zuerst — sortiere nach ts absteigend
+    # Newest first — sort by ts descending
     summaries.sort(key=lambda s: s.ts, reverse=True)
     return summaries[offset : offset + limit]
 
 
 @router.get("/runs/{run_id}", response_model=RunDetail)
 def get_run_detail(request: Request, run_id: str) -> RunDetail:
-    """Vollständiger Run-View aus Filesystem + Audit.
+    """Full run view from filesystem + audit.
 
-    Worker-Output wird auf 500 Chars excerpt (Plan §6.5 — XSS-Vector und
-    Performance). Volles Artefakt nur per Pfad-Link.
+    Worker output is excerpted to 500 chars (Plan §6.5 — XSS vector and
+    performance). Full artifact only via a path link.
     """
     audit = _get_audit(request)
     entries = _read_audit_entries(audit)
@@ -356,9 +356,9 @@ def get_audit_entries(
     since: str | None = Query(default=None),
     limit: int = Query(default=200, ge=1, le=2000),
 ) -> list[AuditEntryModel]:
-    """Roh-Audit-Einträge, neueste zuerst, optional ab `since`-Timestamp."""
+    """Raw audit entries, newest first, optionally starting at `since` timestamp."""
     audit = _get_audit(request)
-    entries = _read_audit_entries(audit, n=limit * 5)  # großzügig sampeln
+    entries = _read_audit_entries(audit, n=limit * 5)  # sample generously
 
     since_dt = _parse_ts(since) if since else None
     filtered: list[dict[str, Any]] = []
@@ -369,7 +369,7 @@ def get_audit_entries(
                 continue
         filtered.append(entry)
 
-    # Neueste zuerst — entries kommt als chronologisch from tail(); reverse
+    # Newest first — entries come chronologically from tail(); reverse
     filtered.reverse()
     return [AuditEntryModel(**e) for e in filtered[:limit]]
 
@@ -379,7 +379,7 @@ def get_stats(
     request: Request,
     window_days: int = Query(default=7, ge=1, le=365),
 ) -> StatsResponse:
-    """Aggregierte Stats über window_days. Result ist 60s gecached."""
+    """Aggregated stats over window_days. Result is cached for 60s."""
     cached = _cached_stats(window_days)
     if cached is not None:
         return cached
@@ -420,7 +420,7 @@ def get_stats(
             return float(values[n // 2])
         return (values[n // 2 - 1] + values[n // 2]) / 2.0
 
-    # Pass-Rate by Rubric: braucht task.json pro Run; nur Best-Effort.
+    # Pass rate by rubric: needs task.json per run; best-effort only.
     by_rubric_total: dict[str, int] = defaultdict(int)
     by_rubric_pass: dict[str, int] = defaultdict(int)
     runs_root = _get_runs_root(request)
