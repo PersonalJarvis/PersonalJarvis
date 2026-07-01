@@ -1,3 +1,3 @@
-"""Personal Jarvis — voice-driven meta-orchestrator for Windows 11."""
+"""Personal Jarvis — a voice-driven, cross-platform meta-orchestrator."""
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"

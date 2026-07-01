@@ -3,7 +3,8 @@
     "show_in_folder": "Im Ordner zeigen",
     "open": "Öffnen",
     "reveal_failed": "Ordner konnte nicht geöffnet werden",
-    "open_failed": "Datei konnte nicht geöffnet werden"
+    "open_failed": "Datei konnte nicht geöffnet werden",
+    "drag_hint": "Zieh mich überallhin — in einen Ordner, auf eine Website, in einen Chat"
   },
   "jarvis_dock": {
     "aria": "{name} — zieh eine Mission hierher, um darüber zu sprechen",

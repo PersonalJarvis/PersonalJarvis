@@ -152,6 +152,21 @@ if [ -f "$reqsync_gate" ]; then
     fi
 fi
 
+# --- 6b) LOCKFILE UNIVERSAL + GPU-FREE gate (FAIL-CLOSED) ----------------------
+# Companion to the sync gate above: inspects the compiled requirements.txt itself
+# and blocks a lockfile that was regenerated the wrong way — one missing the
+# `uv pip compile --universal` marker (pins a single OS) or one that re-baked the
+# maintainer's nvidia-*/torch/CUDA wheels into the base file every downloader
+# installs (AP-23). Stdlib only, so it runs anywhere the hook does.
+lockfile_gate="scripts/ci/check_lockfile_universal.py"
+if [ -f "$lockfile_gate" ]; then
+    "$PY" "$lockfile_gate" </dev/null
+    if [ "$?" -ne 0 ]; then
+        status=1
+        lockfile_hit=1
+    fi
+fi
+
 rm -f "$refs_file"
 
 if [ "$status" -ne 0 ]; then
@@ -180,6 +195,11 @@ if [ "$status" -ne 0 ]; then
     if [ "${reqsync_hit:-0}" -ne 0 ]; then
         echo "pre-push BLOCKED: REQUIREMENTS SYNC gate (requirements.in != pyproject deps)."
         echo "  See the diff above. Fix requirements.in, then regenerate the lockfile:"
+        echo "    uv pip compile --universal --generate-hashes --python-version 3.11 --output-file=requirements.txt requirements.in"
+    fi
+    if [ "${lockfile_hit:-0}" -ne 0 ]; then
+        echo "pre-push BLOCKED: LOCKFILE gate (requirements.txt not universal or has GPU/CUDA/torch wheels)."
+        echo "  See the findings above. Regenerate the platform-universal lockfile with:"
         echo "    uv pip compile --universal --generate-hashes --python-version 3.11 --output-file=requirements.txt requirements.in"
     fi
     echo "Bypass once with:  git push --no-verify   (layer-3 CI is the backstop)."

@@ -242,6 +242,13 @@ jobs:
           python -m pip install --upgrade packaging
           python scripts/ci/check_requirements_sync.py
 
+      # Companion gate: the compiled requirements.txt itself must stay
+      # `--universal` and free of nvidia-*/torch/CUDA wheels, so a lockfile
+      # regenerated the wrong way cannot silently re-brick non-maintainer
+      # installs (AP-23). Stdlib only — no extra install needed.
+      - name: Lockfile universal + GPU-free gate (BLOCKING)
+        run: python scripts/ci/check_lockfile_universal.py
+
   # Output Language Policy enforcement (CLAUDE.md, HIGHEST PRIORITY): block any
   # NEWLY ADDED German text from reaching GitHub. Diff-based, so the in-flight
   # DE->EN translation backlog (pre-existing German) does NOT turn this red - only
