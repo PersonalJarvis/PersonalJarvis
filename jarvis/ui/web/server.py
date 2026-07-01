@@ -2606,13 +2606,13 @@ class WebServer:
                 await mission_manager.stop()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "MissionManager.stop() fehlgeschlagen"
+                    "MissionManager.stop() failed"
                 )
             self.app.state.mission_manager = None
             self.app.state.kontrollierer = None
 
-        # Phase-5 Task-Stack runterfahren: Scheduler-Loop cancellen, laufende
-        # Runner-Tasks abwarten (max 2s), Store schliessen.
+        # Shut down the Phase-5 task stack: cancel the scheduler loop, wait
+        # for running runner tasks (max 2s), close the store.
         if self._task_scheduler is not None and self._task_cancel_token is not None:
             try:
                 self._task_cancel_token.cancel("server_shutdown")
@@ -2625,7 +2625,7 @@ class WebServer:
             except (TimeoutError, asyncio.CancelledError):
                 pass
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning("TaskScheduler-Loop Shutdown-Fehler: {}", exc)
+                logger.opt(exception=exc).warning("TaskScheduler loop shutdown error: {}", exc)
             self._task_scheduler_task = None
         if self._task_scheduler is not None:
             try:
@@ -2636,7 +2636,7 @@ class WebServer:
             try:
                 await self._task_store.close()
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning("TaskStore.close() fehlgeschlagen")
+                logger.opt(exception=exc).warning("TaskStore.close() failed")
         self._task_scheduler = None
         self._task_store = None
         self._task_runner = None
@@ -2645,7 +2645,7 @@ class WebServer:
         self.app.state.task_scheduler = None
         self.app.state.task_runner = None
 
-        # Voice-Session-Recorder vom Bus detachen + DB-Connection schliessen.
+        # Detach the voice-session recorder from the bus + close the DB connection.
         recorder = getattr(self, "_session_recorder", None)
         store = getattr(self.app.state, "session_store", None)
         if recorder is not None or store is not None:
@@ -2654,7 +2654,7 @@ class WebServer:
                 shutdown_sessions({"store": store, "recorder": recorder})
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "SessionRecorder-Shutdown fehlgeschlagen"
+                    "SessionRecorder shutdown failed"
                 )
             self._session_recorder = None
             self.app.state.session_store = None
@@ -2683,7 +2683,7 @@ class WebServer:
                     await friend_registry.close()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "ChannelStack-Shutdown fehlgeschlagen"
+                    "ChannelStack shutdown failed"
                 )
             self.app.state.channel_manager = None
             self.app.state.friend_registry = None
