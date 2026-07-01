@@ -1092,6 +1092,12 @@ class SpeechPipeline:
                 keywords=(wake_plan.oww_keyword,),
                 activation_threshold=wake_plan.threshold,
                 model_path=wake_plan.oww_model_path,
+                # A user-trained custom_onnx model fires on normal-volume speech
+                # (~0.9) and must NOT be fed the amplify-only AGC: it lifts quiet
+                # BREATH to full scale, which the model then fires on at ~1.0 (live
+                # 2026-07-01 "triggers on breathing"). Raw audio scores breath ~0.
+                # The pretrained OWW models DO need the AGC (they fire at 0.15-0.23).
+                gain_normalization=getattr(wake_plan, "engine", "") != "custom_onnx",
             )
         else:
             self._wake = OpenWakeWordProvider(
@@ -1636,6 +1642,9 @@ class SpeechPipeline:
                 keywords=(plan.oww_keyword,),
                 activation_threshold=plan.threshold,
                 model_path=plan.oww_model_path,
+                # No amplify-only AGC for a user-trained custom model — it lifts
+                # quiet breath to full scale and false-fires (see the ctor site).
+                gain_normalization=engine != "custom_onnx",
             )
             self._openwakeword_enabled = True
             # OWW stands alone for a live switch (lightweight default). The heavy
