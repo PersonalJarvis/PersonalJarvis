@@ -18,13 +18,15 @@ function Harness() {
 
 describe("useAssistantNameSeed mount seed", () => {
   beforeEach(() => {
-    useEventStore.setState({ assistantName: "Jarvis" });
+    localStorage.clear();
+    useEventStore.setState({ assistantName: "Assistant" });
   });
 
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    localStorage.clear();
   });
 
   it("seeds assistantName from GET /api/settings/assistant-name { resolved }", async () => {
@@ -75,7 +77,7 @@ describe("useAssistantNameSeed mount seed", () => {
     render(<Harness />);
     await Promise.resolve();
 
-    expect(useEventStore.getState().assistantName).toBe("Jarvis");
+    expect(useEventStore.getState().assistantName).toBe("Assistant");
   });
 
   it("ignores an empty resolved value (does not blank the wordmark)", async () => {
@@ -91,6 +93,21 @@ describe("useAssistantNameSeed mount seed", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(useEventStore.getState().assistantName).toBe("Jarvis");
+    expect(useEventStore.getState().assistantName).toBe("Assistant");
+  });
+
+  it("caches the resolved name in localStorage for an instant next-boot paint", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ resolved: "Nico" }),
+      })) as unknown as typeof fetch,
+    );
+
+    render(<Harness />);
+
+    await waitFor(() => expect(useEventStore.getState().assistantName).toBe("Nico"));
+    expect(localStorage.getItem("jarvis.assistantName")).toBe("Nico");
   });
 });

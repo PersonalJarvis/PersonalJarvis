@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useEventStore } from "@/store/events";
+import { writeCachedAssistantName } from "@/lib/assistantNameCache";
 
 /**
  * Seed the resolved assistant name into the global store on mount.
@@ -29,7 +30,12 @@ export function useAssistantNameSeed(): void {
           if (cancelled || !data) return;
           const resolved =
             typeof data.resolved === "string" ? data.resolved.trim() : "";
-          if (resolved) setAssistantName(resolved);
+          if (resolved) {
+            setAssistantName(resolved);
+            // Mirror into localStorage so the next boot can paint this name
+            // instantly (store seed + index.html splash) with no fetch wait.
+            writeCachedAssistantName(resolved);
+          }
         })
         .catch(() => {
           // Network/timeout/headless — keep the store value; a later rename

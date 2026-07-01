@@ -3,7 +3,8 @@
     "show_in_folder": "Show in folder",
     "open": "Open",
     "reveal_failed": "Could not open the folder",
-    "open_failed": "Could not open the file"
+    "open_failed": "Could not open the file",
+    "drag_hint": "Drag me anywhere — to a folder, a website, a chat"
   },
   "jarvis_dock": {
     "aria": "{name} — drop a mission here to talk about it",

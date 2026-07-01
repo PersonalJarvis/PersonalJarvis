@@ -184,7 +184,6 @@ Inside `jarvis/`, the layout mirrors the 8-layer model above — `jarvis/brain/`
   skills as reviewable drafts (never auto-activated).
 
 <p align="center">
-  <img src="assets/screenshots/view-outputs.png" alt="Outputs — mission deliverables" width="410" />
   <img src="assets/screenshots/view-wiki.png" alt="Knowledge Wiki" width="410" />
 </p>
 

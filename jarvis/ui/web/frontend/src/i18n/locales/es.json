@@ -3,7 +3,8 @@
     "show_in_folder": "Mostrar en la carpeta",
     "open": "Abrir",
     "reveal_failed": "No se pudo abrir la carpeta",
-    "open_failed": "No se pudo abrir el archivo"
+    "open_failed": "No se pudo abrir el archivo",
+    "drag_hint": "Arrástrame a cualquier sitio: a una carpeta, una web, un chat"
   },
   "jarvis_dock": {
     "aria": "{name} — suelta una misión aquí para hablar de ella",

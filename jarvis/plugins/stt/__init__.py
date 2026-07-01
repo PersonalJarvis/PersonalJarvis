@@ -164,9 +164,13 @@ def _build_local_fallback(stt_cfg: Any, language: str | None) -> Any:
     from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
 
     return FasterWhisperProvider(
+        # CPU-safe defaults: a stranger with no NVIDIA GPU is the baseline, not
+        # the maintainer's card. If a real STTConfig is passed its explicit
+        # device/compute_type win; the getattr defaults only bite duck-typed
+        # stubs, and they must presume no GPU (fwhisper still self-heals to CPU).
         model=getattr(stt_cfg, "model", "distil-large-v3"),
-        device=getattr(stt_cfg, "device", "cuda"),
-        compute_type=getattr(stt_cfg, "compute_type", "int8_float16"),
+        device=getattr(stt_cfg, "device", "cpu"),
+        compute_type=getattr(stt_cfg, "compute_type", "int8"),
         language=language,
     )
 
@@ -384,12 +388,16 @@ def build_wake_whisper(
         # on base/cpu — far less likely to blow the wedge timeout under app CPU
         # load, and snappier. The phrase bias + sound-folding matcher keep recall.
         beam_size=1,
-        # Bound ctranslate2's thread pool so it cannot deadlock against PyTorch's
-        # OpenMP pool in the shared process — the root of the intermittent 8 s
-        # ``model.transcribe`` HANG that wedged the wake on BOTH cpu and cuda
-        # (live-log evidence 2026-06-30). Only the always-on wake model, which
-        # coexists with torch, sets this.
-        cpu_threads=4,
+        # Run ctranslate2 fully SINGLE-THREADED for the wake model so it cannot
+        # deadlock against PyTorch's OpenMP pool in the shared process — the root
+        # of the intermittent 8 s ``model.transcribe`` HANG that wedged the wake on
+        # BOTH cpu and cuda (live-log 2026-06-30). cpu_threads=4 only REDUCED the
+        # hang (11 wedges / 16 min); 1 removes ctranslate2's internal thread pool
+        # entirely. Slightly slower per window (base+beam1 stays well under the 8 s
+        # timeout) but no thread contention. Only the always-on wake model, which
+        # coexists with torch, sets this. NOTE: transcription wake still cannot
+        # reach 100% here — the definitive fix is a neural KWS model (AP-25).
+        cpu_threads=1,
     )
 
 

@@ -108,4 +108,4 @@ Before that flip:
 - CI smoke workflow `.github/workflows/install-test.yml` — fresh runner per platform, fakes API keys, asserts exit code 0.
 - `personal-jarvis update` console script — opencode parity.
 - Vercel shortener `jarvis-install.vercel.app` → raw.githubusercontent.com.
-- `pyproject.toml` extras split (base / `[desktop]` / `[voice-local]`) so the headless Linux path doesn't drag in `pywin32`.
+- `pyproject.toml` extras split (base / `[desktop]` / `[local-voice]`) so the headless Linux path doesn't drag in `pywin32`.

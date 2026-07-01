@@ -12,6 +12,7 @@ go through the getters defined here.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 
@@ -128,11 +129,14 @@ def desktop_mirror_dir() -> Path:
 
 
 def ensure_session_output_dir(slug: str) -> tuple[Path, Path]:
-    """Create the canonical session directory and a Desktop junction (mirror).
+    """Create the canonical session directory and (on Windows) a Desktop junction.
 
     Returns:
-        (canonical, mirror) — mirror is a Windows directory junction.
-        If creating the junction fails, canonical is still returned.
+        (canonical, mirror) — on Windows ``mirror`` is a directory junction into
+        ``canonical`` for one-click Desktop access. On macOS/Linux (including a
+        headless server with no Desktop) the junction is skipped and ``mirror``
+        equals ``canonical``, so callers always receive a usable path and no
+        stray ``~/Desktop/Jarvis-Output`` folder is created.
     """
     import subprocess
 
@@ -140,6 +144,13 @@ def ensure_session_output_dir(slug: str) -> tuple[Path, Path]:
 
     canonical = user_outputs_dir() / slug
     canonical.mkdir(parents=True, exist_ok=True)
+
+    # The Desktop mirror is a Windows directory junction (``mklink /J``) — a
+    # convenience, never a core path. Skip it entirely off Windows so a headless
+    # VPS or a Mac never grows an empty ``~/Desktop/Jarvis-Output`` directory.
+    if sys.platform != "win32":
+        return canonical, canonical
+
     mirror_root = desktop_mirror_dir()
     mirror_root.mkdir(parents=True, exist_ok=True)
     mirror = mirror_root / slug
