@@ -1,17 +1,17 @@
-"""REST-API für die Self-Mod-Pipeline (Phase 7.6).
+"""REST API for the self-mod pipeline (Phase 7.6).
 
-Plan-§7.6 Endpoints (alle read-only außer `restore`):
-- ``GET  /api/self-mod/audit``    → paginiertes Audit-Log mit Filter.
+Plan §7.6 endpoints (all read-only except `restore`):
+- ``GET  /api/self-mod/audit``    → paginated audit log with filters.
 - ``GET  /api/self-mod/mutable``  → SelfModRegistry.list_all().
 - ``GET  /api/self-mod/backups``  → AtomicConfigWriter.list_backups().
-- ``POST /api/self-mod/restore``  → Restore aus Backup, admin_password.
+- ``POST /api/self-mod/restore``  → restore from backup, admin_password required.
 
-Plan-§AP-2 Defense-in-Depth: jede Audit-Response wird auf Sensitive-
-Pfade re-redacted (auch wenn der Schreiber das schon getan hat —
-zweite Schicht für Maskierung in der UI).
+Plan §AP-2 defense-in-depth: every audit response has sensitive paths
+re-redacted (even if the writer already did it — a second masking layer
+in the UI).
 
-Audit-Log wird **streamend** gelesen (Tail-then-skim): kein Full-File-
-Load, weil das Log über Monate wachsen kann (Plan-§AD-6 keine Rotation).
+The audit log is read **streaming** (tail-then-skim): no full-file load,
+because the log can grow over months (Plan §AD-6, no rotation).
 """
 from __future__ import annotations
 
@@ -38,8 +38,8 @@ _LOG = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/self-mod", tags=["self-mod"])
 
-# Defense-in-Depth-Maskierung: zweite Schicht in der API-Response.
-# Plan-§AP-2-konform; Pfad-Pattern hartcodiert hier (nicht User-config).
+# Defense-in-depth masking: second layer in the API response.
+# Plan §AP-2 compliant; path pattern hardcoded here (not user config).
 _SENSITIVE_PATH_MARKERS: tuple[str, ...] = (
     "api_key",
     "api-key",
@@ -64,10 +64,10 @@ def _is_sensitive_audit_path(path: Any) -> bool:
 
 
 def _redact_audit_event(event: dict[str, Any]) -> dict[str, Any]:
-    """Maskiert old/new_value für sensitive Pfade.
+    """Masks old/new_value for sensitive paths.
 
-    Auch wenn `SelfModAudit._redact` das schon beim Schreiben gemacht hat —
-    second-layer für Defense-in-Depth in der UI-Response.
+    Even though `SelfModAudit._redact` already did this at write time —
+    this is the second layer for defense-in-depth in the UI response.
     """
     if not _is_sensitive_audit_path(event.get("path")):
         return event
@@ -88,7 +88,7 @@ def _redact_audit_event(event: dict[str, Any]) -> dict[str, Any]:
 def _get_audit(request: Request) -> SelfModAudit:
     audit = getattr(request.app.state, "self_mod_audit", None)
     if audit is None:
-        # Fallback: SelfModAudit() nutzt Default-Pfad data/self_mod.log.
+        # Fallback: SelfModAudit() uses the default path data/self_mod.log.
         audit = SelfModAudit()
     return audit
 
@@ -105,7 +105,7 @@ def _security_cfg(request: Request) -> Any:
 
 
 def _check_admin_pass(provided: str | None, security_cfg: Any) -> bool:
-    """Identisch zu skills_routes._check_admin_pass — wiederverwendet."""
+    """Identical to skills_routes._check_admin_pass — reused here."""
     if security_cfg is None:
         return False
     expected = getattr(security_cfg, "admin_password_hash", "")
@@ -135,18 +135,18 @@ def _decode_cursor(cursor: str) -> int:
 
 
 # ----------------------------------------------------------------------
-# Audit-Reader (streamend, neueste zuerst)
+# Audit reader (streaming, newest first)
 # ----------------------------------------------------------------------
 
 
 def _stream_audit_lines(audit_path: Path) -> list[tuple[int, str]]:
-    """Liest jarvis.toml-Audit-File rückwärts, liefert (offset, line) je Eintrag.
+    """Reads the jarvis.toml audit file backwards, yielding (offset, line) per entry.
 
-    Tail-then-skim-Pattern: rückwärts iterieren, weil neueste Einträge
-    am Ende stehen und Pagination "neueste oben" sein soll. Für die
-    initiale Implementierung lesen wir das ganze File (single-pass)
-    und reverse — bei sehr großen Logs (>100MB) ist das nicht ideal,
-    aber Plan-§7.10-Backlog spezifiziert das als Optimierung.
+    Tail-then-skim pattern: iterate backwards because the newest entries
+    are at the end and pagination should be "newest on top". For the
+    initial implementation we read the whole file (single pass) and
+    reverse it — not ideal for very large logs (>100MB), but the
+    Plan §7.10 backlog specifies that as an optimization.
     """
     if not audit_path.exists():
         return []
@@ -154,24 +154,24 @@ def _stream_audit_lines(audit_path: Path) -> list[tuple[int, str]]:
         with audit_path.open("rb") as fh:
             content = fh.read()
     except OSError as exc:
-        _LOG.warning("Audit-Read fehlgeschlagen: %s", exc)
+        _LOG.warning("Audit read failed: %s", exc)
         return []
 
-    # Splitten nach Newline, wir merken uns die Byte-Offsets der
-    # Zeilenanfänge, damit der Cursor stabil ist.
+    # Split on newline; we remember the byte offsets of the line starts
+    # so the cursor stays stable.
     lines_with_offset: list[tuple[int, str]] = []
     offset = 0
     for raw_line in content.split(b"\n"):
         line = raw_line.decode("utf-8", errors="replace")
         if line.strip():
             lines_with_offset.append((offset, line))
-        offset += len(raw_line) + 1  # +1 für das gestrippte \n
-    # Reverse → neueste zuerst
+        offset += len(raw_line) + 1  # +1 for the stripped \n
+    # Reverse → newest first
     return list(reversed(lines_with_offset))
 
 
 # ----------------------------------------------------------------------
-# Response-Schemas
+# Response schemas
 # ----------------------------------------------------------------------
 
 
@@ -216,10 +216,10 @@ async def get_audit(
     date_to: str | None = Query(default=None),
     success_only: bool = Query(default=False),
 ) -> AuditQueryResponse:
-    """Read-only paginiertes Audit-Log (Plan-§7.6).
+    """Read-only paginated audit log (Plan §7.6).
 
-    Cursor ist opaque (base64-encoded byte-offset). Filter sind
-    server-seitig — kein full-table-scan im Client.
+    Cursor is opaque (base64-encoded byte offset). Filters run
+    server-side — no full-table scan on the client.
     """
     audit = _get_audit(request)
     all_lines = _stream_audit_lines(audit.path)
@@ -228,7 +228,7 @@ async def get_audit(
     if cursor:
         skip_until_offset = _decode_cursor(cursor)
 
-    # Filter parsen
+    # Parse filters
     date_from_dt: datetime | None = None
     date_to_dt: datetime | None = None
     try:
@@ -242,14 +242,14 @@ async def get_audit(
     selected: list[dict[str, Any]] = []
     last_offset: int | None = None
     for offset, line in all_lines:
-        # Cursor: skippen alle Einträge >= cursor-offset (rückwärts iteriert,
-        # also "vor diesem Punkt"-Logik in time)
+        # Cursor: skip all entries >= cursor offset (iterated backwards,
+        # so this is "before this point in time" logic)
         if skip_until_offset is not None and offset >= skip_until_offset:
             continue
         try:
             entry = json.loads(line)
         except json.JSONDecodeError:
-            _LOG.warning("Korrupte Audit-Zeile übersprungen (offset=%d)", offset)
+            _LOG.warning("Skipped corrupt audit line (offset=%d)", offset)
             continue
 
         # Filter
@@ -289,9 +289,9 @@ async def get_audit(
 
 @router.get("/mutable", response_model=MutableSpecsResponse)
 async def get_mutable_specs(request: Request) -> MutableSpecsResponse:  # noqa: ARG001
-    """Read-only Liste der `SelfModRegistry.ALLOWED`-Einträge.
+    """Read-only list of `SelfModRegistry.ALLOWED` entries.
 
-    Phase-7.6-Frontend: füllt die "Mutable Settings"-Tab.
+    Phase 7.6 frontend: fills the "Mutable Settings" tab.
     """
     specs = [spec.model_dump(mode="json") for spec in SelfModRegistry.list_all()]
     return MutableSpecsResponse(specs=specs)
@@ -301,10 +301,10 @@ async def get_mutable_specs(request: Request) -> MutableSpecsResponse:  # noqa: 
 async def get_backups(
     request: Request, limit: int = Query(default=20, ge=1, le=100)
 ) -> BackupsResponse:
-    """Read-only Liste der jarvis.toml-Backups.
+    """Read-only list of jarvis.toml backups.
 
-    Wenn der Writer nicht im app.state ist, geben wir eine leere Liste
-    zurück (graceful degradation in Tests / Headless).
+    If the writer isn't in app.state, we return an empty list
+    (graceful degradation in tests / headless).
     """
     writer = _get_writer(request)
     if writer is None:
@@ -315,19 +315,19 @@ async def get_backups(
 
 @router.post("/restore", response_model=RestoreResponse)
 async def post_restore(body: RestoreRequest, request: Request) -> RestoreResponse:
-    """Restore aus einem benannten Backup. Plan-§7.6: admin_password Pflicht.
+    """Restore from a named backup. Plan §7.6: admin_password required.
 
-    Path-Traversal-Schutz im Writer (siehe `AtomicConfigWriter.rollback`).
+    Path-traversal protection lives in the writer (see `AtomicConfigWriter.rollback`).
     """
     if not _check_admin_pass(body.admin_password, _security_cfg(request)):
-        raise HTTPException(status_code=403, detail="admin_password ungültig")
+        raise HTTPException(status_code=403, detail="Invalid admin_password")
     writer = _get_writer(request)
     if writer is None:
-        raise HTTPException(status_code=503, detail="AtomicConfigWriter nicht verfügbar")
+        raise HTTPException(status_code=503, detail="AtomicConfigWriter not available")
     try:
         restored = writer.rollback(body.filename)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=f"Restore fehlgeschlagen: {exc}") from exc
+        raise HTTPException(status_code=400, detail=f"Restore failed: {exc}") from exc
     return RestoreResponse(
         ok=True,
         restored_from=str(restored),
