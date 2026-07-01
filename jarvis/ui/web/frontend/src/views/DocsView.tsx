@@ -8,20 +8,20 @@ import { useDocDetail } from "@/hooks/useDocs";
 import { useRecentDocs } from "@/hooks/useRecentDocs";
 
 /**
- * Top-Level-View fuer die Doc-Sektion. 3-Spalten-Layout (Anthropic/Mintlify-Stil):
- * Left Sidebar = Diataxis-Tree, Mitte = Markdown-Body, Right = TOC mit
- * Active-Heading-Spy.
+ * Top-level view for the docs section. 3-column layout (Anthropic/Mintlify style):
+ * left sidebar = Diataxis tree, middle = Markdown body, right = TOC with
+ * active-heading spy.
  *
- * ``selectedSlug`` ist View-lokal — kein Zustand-Store-Eintrag, weil das Doc
- * nur in dieser View relevant ist. Beim Wechsel der Sektion vergessen wir die
- * Auswahl bewusst.
+ * ``selectedSlug`` is view-local — not a state-store entry, because the doc
+ * only matters within this view. When switching sections we deliberately
+ * forget the selection.
  *
- * ``contentRef`` zeigt auf den scrollbaren Main-Container; der TOC nutzt ihn
- * als Query-Root fuer ``IntersectionObserver``.
+ * ``contentRef`` points at the scrollable main container; the TOC uses it
+ * as the query root for ``IntersectionObserver``.
  *
- * Strg+K oeffnet die Volltextsuche, solange diese View aktiv ist. Globaler
- * Hotkey ist bewusst Section-lokal — er soll nicht in ChatsView/MissionsView
- * o.ae. das Such-Modal aufmachen.
+ * Ctrl+K opens full-text search as long as this view is active. The global
+ * hotkey is deliberately section-local — it should not also open the
+ * search modal in ChatsView/MissionsView etc.
  */
 export function DocsView() {
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
@@ -29,11 +29,11 @@ export function DocsView() {
   const contentRef = useRef<HTMLElement>(null);
   const { push: pushRecent } = useRecentDocs();
 
-  // Headings aus dem aktuell selektierten Doc — fuer den TOC.
+  // Headings from the currently selected doc — for the TOC.
   const detail = useDocDetail(selectedSlug);
   const headings = detail.data?.headings ?? [];
 
-  // Beim erfolgreichen Doc-Load in die Recent-Liste schieben.
+  // Push into the recent list once the doc loads successfully.
   useEffect(() => {
     if (detail.data) {
       pushRecent({
