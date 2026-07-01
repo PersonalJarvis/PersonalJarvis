@@ -2703,6 +2703,20 @@ class DesktopApp:
         gui = "edgechromium" if sys.platform == "win32" else None
         debug = os.environ.get("JARVIS_WEBVIEW_DEBUG") == "1"
 
+        # Native file drag-out: dragging a saved-download toast drops the REAL
+        # file into any app (Explorer, a browser upload zone, a chat). Must be
+        # installed BEFORE webview.start() — it patches the WebView2 UI-thread
+        # message handler so DoDragDrop runs where the mouse press lives. Windows
+        # only for now; a logged no-op elsewhere. Never blocks the window.
+        try:
+            from pathlib import Path as _Path
+
+            from jarvis.ui.native_drag import install_native_drag
+
+            install_native_drag(allowed_base_dirs=[_Path.home() / "Downloads"])
+        except Exception:  # noqa: BLE001 — the drag bridge is never load-bearing
+            pass
+
         # webview.start blocks the main thread. func/args gets called after
         # the first load (pywebview-internal), so evaluate_js hits a
         # DOM-ready context.

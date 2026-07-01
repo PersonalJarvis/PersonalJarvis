@@ -6,10 +6,12 @@ import {
   XCircle,
   FolderOpen,
   ExternalLink,
+  GripVertical,
 } from "lucide-react";
 import { useEventStore, type Toast } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { openDownloadedFile, revealInFolder } from "@/lib/fileActions";
+import { canNativeDrag, startNativeFileDrag } from "@/lib/nativeDrag";
 import { useT } from "@/i18n";
 
 const ICON_FOR_KIND = {
@@ -34,31 +36,62 @@ const ACCENT_FOR_KIND: Record<Toast["kind"], string> = {
 };
 
 export function ToastLayer() {
+  const t = useT();
   const toasts = useEventStore((s) => s.toasts);
   const dismiss = useEventStore((s) => s.dismissToast);
 
   return (
     <div className="pointer-events-none fixed right-4 top-4 z-50 flex w-[320px] flex-col gap-2">
-      {toasts.map((t) => {
-        const Icon = ICON_FOR_KIND[t.kind];
+      {toasts.map((toast) => {
+        const Icon = ICON_FOR_KIND[toast.kind];
+        // A saved-file toast in the desktop shell is a native drag handle: press
+        // and drag it to drop the real file into any app. The buttons stay as a
+        // fallback (and are the only path in a plain browser / on the VPS).
+        const draggable = Boolean(toast.filePath) && canNativeDrag();
         return (
           <div
-            key={t.id}
+            key={toast.id}
             role="status"
+            draggable={false}
+            onDragStart={draggable ? (e) => e.preventDefault() : undefined}
+            onMouseDown={
+              draggable
+                ? (e) => {
+                    if (e.button === 0 && toast.filePath) {
+                      startNativeFileDrag(toast.filePath);
+                    }
+                  }
+                : undefined
+            }
+            title={draggable ? t("file_toast.drag_hint") : undefined}
             className={cn(
               "pointer-events-auto flex items-start gap-3 rounded-lg border px-3 py-2.5 text-sm backdrop-blur",
               "animate-in slide-in-from-right-4 fade-in duration-200",
-              STYLE_FOR_KIND[t.kind],
+              STYLE_FOR_KIND[toast.kind],
+              draggable && "cursor-grab active:cursor-grabbing select-none",
             )}
           >
-            <Icon className={cn("mt-0.5 h-4 w-4 shrink-0", ACCENT_FOR_KIND[t.kind])} />
+            {draggable ? (
+              <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+            ) : (
+              <Icon className={cn("mt-0.5 h-4 w-4 shrink-0", ACCENT_FOR_KIND[toast.kind])} />
+            )}
             <div className="min-w-0 flex-1 text-xs leading-relaxed">
-              <div className="break-words">{t.message}</div>
-              {t.filePath && <FileToastActions path={t.filePath} />}
+              <div className="break-words">{toast.message}</div>
+              {draggable && (
+                <div className="mt-1 text-[11px] font-medium text-primary/80">
+                  {t("file_toast.drag_hint")}
+                </div>
+              )}
+              {toast.filePath && (
+                <FileToastActions path={toast.filePath} />
+              )}
             </div>
             <button
               type="button"
-              onClick={() => dismiss(t.id)}
+              // Don't let a click on the X start a drag.
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={() => dismiss(toast.id)}
               className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
               aria-label="Dismiss"
             >
@@ -73,10 +106,8 @@ export function ToastLayer() {
 
 /**
  * "Show in folder" / "Open" actions for a toast that carries a saved file path.
- *
- * Dragging a file straight out of the embedded WebView is not reliably possible
- * on any OS, so we bring the user to the real file in their file manager (from
- * which a native drag to anywhere works) — or open it directly.
+ * These are the reliable fallback everywhere (and the only path in a plain
+ * browser / on the VPS, where the native drag handle is unavailable).
  */
 function FileToastActions({ path }: { path: string }) {
   const t = useT();
@@ -91,8 +122,9 @@ function FileToastActions({ path }: { path: string }) {
     if (!ok) pushToast("error", t("file_toast.open_failed"));
   };
 
+  // stopPropagation on mousedown so clicking a button never starts a file drag.
   return (
-    <div className="mt-2 flex flex-wrap gap-1.5">
+    <div className="mt-2 flex flex-wrap gap-1.5" onMouseDown={(e) => e.stopPropagation()}>
       <button
         type="button"
         onClick={onReveal}
