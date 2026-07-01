@@ -338,3 +338,5 @@ docs/plans/vision-gating-hybrid-plan.md
 docs/superpowers/plans/2026-06-09-wiki-autonomous-curator-wave1.md
 # quoted de.json i18n-locale value in a code block (bucket 2)
 docs/superpowers/plans/2026-06-20-assistant-name-coupled-to-wake-word.md
+# voice-output scrubber test: asserted German product phrases + simulated German utterances (bucket 4)
+tests/unit/brain/test_output_filter.py
