@@ -43,7 +43,7 @@ _STOPWORDS: frozenset[str] = frozenset({
     "bereits", "bin", "bist", "bitte", "bzw", "dabei", "dadurch", "damit",
     "dann", "dass", "dein", "deine", "deinem", "deinen", "deiner", "deines",
     "denen", "denn", "derer", "dessen", "dies", "diese", "diesem", "diesen",
-    "dieser", "dieses", "doch", "durch", "ein", "eine", "einem", "einen",
+    "dieser", "dieses", "doch", "durch", "ein", "eine", "einem", "einen",  # i18n-allow: same German stopword list
     "einer", "eines", "einig", "einige", "einigem", "einigen", "einiger",
     "einiges", "einmal", "erst", "etwa", "euch", "euer", "eure", "eurem",
     "euren", "eurer", "eures", "falls", "fast", "fuer", "ganz", "gemacht",  # i18n-allow: same German stopword list
