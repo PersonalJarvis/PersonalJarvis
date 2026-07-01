@@ -2726,7 +2726,25 @@ class DesktopApp:
             gui=gui,
             debug=debug,
         )
-        return self.shutdown()
+        # webview.start returns once the window is destroyed. A real quit (the
+        # X, tray "Quit", or a restart) has set ``_user_requested_quit``; in that
+        # case tear every surface down AND guarantee the process dies, so nothing
+        # lingers — the user's "close = close EVERYTHING" mandate. The daemon
+        # timer is the backstop for a wedged teardown; the ``os._exit`` right
+        # after ``shutdown()`` is the fast path for the common case (forensic
+        # 2026-06-27: a hung shutdown kept the old process — and its tray icon —
+        # alive ~30 min). On a boot-failure exit ``_user_requested_quit`` is
+        # False → normal return, so callers still get an exit code.
+        if self._user_requested_quit:
+            self._arm_force_exit(after_s=20.0)
+        code = self.shutdown()
+        if self._user_requested_quit:
+            with suppress(Exception):
+                sys.stdout.flush()
+            with suppress(Exception):
+                sys.stderr.flush()
+            os._exit(code)
+        return code
 
     def _start_icon_setter_thread(self) -> None:
         """Polling thread: sets the taskbar/titlebar icon once the HWND exists.
@@ -2885,23 +2903,24 @@ class DesktopApp:
     # ---- Window close (X) = minimise to tray + clear overlay ---------------
 
     def _on_window_closing(self) -> bool:
-        """pywebview ``closing`` callback: the X minimises to tray, not quit.
+        """pywebview ``closing`` callback: the X (close) fully QUITS Jarvis.
 
-        Returns ``True`` to allow the destroy — a genuine tray "Quit", where the
-        real :meth:`shutdown` tears everything down — and ``False`` to veto it
-        and hide the window instead. On a minimise we ALSO take the overlay bar
-        off the screen so the desktop is actually clean; it returns on the next
-        window-show or voice session.
+        User mandate (2026-07-01): closing the desktop window must tear
+        EVERYTHING down — tray icon, JarvisBar overlay, voice pipeline, backend
+        server, child subprocesses and the process itself — not merely hide to
+        tray. To keep Jarvis running in the background (so "Hey Jarvis" stays
+        live) the user MINIMISES the window instead of closing it.
+
+        We mark the quit and return ``True`` so pywebview destroys the window;
+        ``webview.start()`` then returns and :meth:`run_window_only` runs
+        :meth:`shutdown` (stops every surface) followed by a hard-exit backstop
+        that guarantees the process actually dies even if a native thread
+        (WebView2/Tk teardown, a wedged ctranslate2 transcribe — AP-24) would
+        otherwise keep it — and its tray icon — alive (forensic 2026-06-27: a
+        hung shutdown kept the old process ~30 min).
         """
-        if self._user_requested_quit:
-            return True
-        try:
-            self._window.hide()
-            self._window_visible = False
-            self._suppress_overlay_for_hidden_window()
-        except Exception:  # noqa: BLE001
-            return True
-        return False
+        self._user_requested_quit = True
+        return True
 
     def _suppress_overlay_for_hidden_window(self) -> None:
         """Take a NON-persistent overlay bar off the screen on minimise — but
@@ -2973,6 +2992,28 @@ class DesktopApp:
             )
 
     # ---- Shutdown ----------------------------------------------------------
+
+    def _arm_force_exit(self, *, after_s: float = 20.0) -> None:
+        """Daemon backstop: hard-kill the process if the clean shutdown wedges.
+
+        The mandate is that closing the window closes EVERYTHING. ``shutdown()``
+        is bounded by per-step timeouts, but history shows a teardown can still
+        hang (BUG-031 window-destroy; a pending asyncio task; a wedged native
+        transcribe — AP-24) and leave a windowless process holding the tray icon
+        + admin port for minutes (forensic 2026-06-27). This timer guarantees
+        death regardless. The normal path never reaches it: ``run_window_only``
+        ``os._exit()``s the instant ``shutdown()`` returns, so this daemon dies
+        with the process first. ``after_s`` sits comfortably above ``shutdown()``'s
+        bounded worst case, so it only fires on a genuine infinite hang.
+        """
+
+        def _kill() -> None:
+            time.sleep(after_s)
+            os._exit(0)
+
+        threading.Thread(
+            target=_kill, name="jarvis-force-exit", daemon=True
+        ).start()
 
     def shutdown(self) -> int:
         """Idempotent. Stops the server + backend loop, cleans the meta file."""
