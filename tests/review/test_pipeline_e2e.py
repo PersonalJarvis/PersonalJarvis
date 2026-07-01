@@ -1,15 +1,15 @@
-"""E2E-Test gegen echtes `claude` CLI (Phase 8.3).
+"""E2E test against the real `claude` CLI (Phase 8.3).
 
-Plan-Referenz: §6.3 Akzeptanzkriterium 2 — Single-Iteration-Run mit
-echtem Sub-Jarvis auf Trivial-Task. < 60s p95.
+Plan reference: §6.3 acceptance criterion 2 — single-iteration run with
+the real Sub-Jarvis on a trivial task. < 60s p95.
 
-Skip-Bedingungen:
-- `claude` nicht im PATH → skip (kein CI ohne CLI).
-- Kein Login (bei `--bare` ist nur ANTHROPIC_API_KEY-basierter Auth zulässig)
-  → der Test wird vom claude-CLI selbst mit non-zero exit beendet, was als
-  Pipeline-Failure auftaucht. Wir testen *nicht* die Auth-Konfiguration des
-  Hosts, sondern dass der Pipeline-Pfad bei korrekter Auth grün ist.
-- Markiert mit `pytest.mark.e2e`, läuft NICHT im normalen pytest-Lauf
+Skip conditions:
+- `claude` not in PATH → skip (no CI without the CLI).
+- No login (with `--bare`, only ANTHROPIC_API_KEY-based auth is allowed)
+  → the test is terminated by the claude CLI itself with a non-zero exit, which
+  shows up as a pipeline failure. We are *not* testing the host's auth
+  configuration, but that the pipeline path is green given correct auth.
+- Marked with `pytest.mark.e2e`, does NOT run in the normal pytest run
   (`pytest -m "not e2e"`).
 """
 from __future__ import annotations
@@ -54,10 +54,10 @@ pytestmark = [
 
 
 def test_pipeline_e2e_trivial_task(tmp_path: Path) -> None:
-    """Pipeline-Single-Iteration-Run gegen echten claude-CLI.
+    """Pipeline single-iteration run against the real claude CLI.
 
-    Trivial-Task; Worker schreibt eine Funktion + Test in eine Datei,
-    Reviewer prüft, Pipeline liefert SUCCESS in Iter 1.
+    Trivial task; worker writes a function + test to a file,
+    reviewer checks it, pipeline returns SUCCESS in iter 1.
     """
     runs_root = tmp_path / "review_runs"
     audit = ReviewAudit(path=tmp_path / "review.log")
@@ -84,9 +84,9 @@ def test_pipeline_e2e_trivial_task(tmp_path: Path) -> None:
     )
 
     task = (
-        "Schreibe eine Python-Funktion `add(a, b)` die ihre Argumente "
-        "addiert und gib eine 1-2-Zeilen-Bestätigung auf stdout aus. "
-        "Schreibe das Artefakt in die vorgegebene Pfad-Datei."
+        "Write a Python function `add(a, b)` that adds its arguments "
+        "and prints a 1-2-line confirmation to stdout. "
+        "Write the artifact to the given path file."
     )
 
     t0 = time.monotonic()
@@ -96,18 +96,18 @@ def test_pipeline_e2e_trivial_task(tmp_path: Path) -> None:
     # Plan-Latenz-Anforderung: < 90s lokal (DoD)
     assert elapsed < 90.0, f"e2e run too slow: {elapsed:.1f}s"
 
-    # Pipeline soll mindestens den Worker erfolgreich gespawnt haben.
-    # Reviewer kann pass / needs_revision liefern — Trivial-Task könnte
-    # auch needs_revision werden (z.B. "no tests written"). Wir testen
-    # daher robust: outcome ist SUCCESS oder CAP_FIRED, nicht PRECHECK_FAIL.
+    # Pipeline should have spawned at least the worker successfully.
+    # Reviewer can return pass / needs_revision — a trivial task could
+    # also end up as needs_revision (e.g. "no tests written"). So we test
+    # robustly: outcome is SUCCESS or CAP_FIRED, not PRECHECK_FAIL.
     assert result.outcome in (
         PipelineOutcome.SUCCESS,
         PipelineOutcome.CAP_FIRED,
         PipelineOutcome.FAIL,
     )
     assert len(result.iterations) >= 1
-    # Worker.out muss persistiert sein
+    # worker.out must be persisted
     assert (runs_root / result.run_id / "iter-1" / "worker.out").exists()
-    # Verdict.json muss vorhanden sein, falls Reviewer durchgelaufen ist
+    # verdict.json must exist if the reviewer ran through
     if result.iterations[0].verdict is not None:
         assert (runs_root / result.run_id / "iter-1" / "verdict.json").exists()

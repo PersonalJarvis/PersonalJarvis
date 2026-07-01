@@ -55,7 +55,7 @@ class DestructiveRequiresApproval(Exception):
 
     def __init__(self, op: AdminOperation) -> None:
         super().__init__(
-            f"Op '{op.type}' ist destruktiv und braucht explizite Zustimmung."
+            f"Op '{op.type}' is destructive and requires explicit approval."
         )
         self.op = op
         self.op_id = str(op.op_id)
@@ -63,11 +63,11 @@ class DestructiveRequiresApproval(Exception):
 
 
 class AdminClient:
-    """High-level Interface: ``AdminClient(bus, cancel_token).execute(op)``.
+    """High-level interface: ``AdminClient(bus, cancel_token).execute(op)``.
 
-    Die Transport-Verbindung wird lazy beim ersten Call aufgebaut. ``AdminClient``
-    ist bewusst leichtgewichtig — kein Connection-Pool, da Admin-Ops selten
-    sind. The byte transport is selected per OS via ``make_admin_transport()``
+    The transport connection is built lazily on the first call. ``AdminClient``
+    is deliberately lightweight — no connection pool, since admin ops are
+    rare. The byte transport is selected per OS via ``make_admin_transport()``
     (Windows named pipe / Unix domain socket); the elevation mechanism is
     selected per OS via ``make_elevator()`` (UAC / polkit / sudo / osascript /
     Null). Both are injectable for tests (``pipe_client=`` / ``elevator=``),
@@ -167,7 +167,7 @@ class AdminClient:
                 op_id=op.op_id,
                 success=False,
                 error_code="cancelled",
-                error_message=f"CancelToken gesetzt: {reason}",
+                error_message=f"CancelToken set: {reason}",
             )
 
         # 3. Ensure transport client + elevation
@@ -179,8 +179,8 @@ class AdminClient:
                 success=False,
                 error_code="no_secret",
                 error_message=(
-                    "HMAC-Secret fehlt im Credential Manager — "
-                    "Admin-Helper wurde noch nicht initialisiert."
+                    "HMAC secret missing in the Credential Manager — "
+                    "the admin helper has not been initialized yet."
                 ),
             )
         # AD-6: when no elevation mechanism is available (NullElevator on a

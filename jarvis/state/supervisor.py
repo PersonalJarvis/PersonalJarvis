@@ -1,7 +1,7 @@
-"""Supervisor-State-Machine — emittiert `SystemStateChanged` auf jeden Switch.
+"""Supervisor state machine — emits `SystemStateChanged` on every switch.
 
-Phase 1a: minimal — State-Felder + Provider-Switch. Phase 4 erweitert das zu
-einer echten FSM mit Guards und Multi-Harness-Dispatch (Plan §9 Phase 2 / §17.6).
+Phase 1a: minimal — state fields + provider switch. Phase 4 extends this into
+a real FSM with guards and multi-harness dispatch (Plan §9 Phase 2 / §17.6).
 """
 from __future__ import annotations
 
@@ -24,11 +24,11 @@ class SupervisorState(str, Enum):
 
 
 class Supervisor:
-    """Zentrale State-Machine + aktueller Brain-Provider-Name.
+    """Central state machine + current brain-provider name.
 
-    Der Supervisor ist **keine** Brain-Instanz und **kein** Orchestrator — er
-    ist nur der Single-Source-of-Truth für UI-State-Anzeige und Provider-
-    Auswahl. Echte Brain-Dispatch liegt in `BrainManager` (Phase 2).
+    The Supervisor is **not** a brain instance and **not** an orchestrator —
+    it is only the single source of truth for UI state display and provider
+    selection. Real brain dispatch lives in `BrainManager` (Phase 2).
     """
 
     def __init__(self, *, bus: EventBus, initial_provider: str = "mock") -> None:
@@ -45,7 +45,7 @@ class Supervisor:
         return self._active_provider
 
     async def set_state(self, new_state: str) -> None:
-        """Versucht einen State-Change. No-op wenn unbekannter oder identischer State."""
+        """Attempts a state change. No-op if the state is unknown or unchanged."""
         try:
             target = SupervisorState(new_state)
         except ValueError:

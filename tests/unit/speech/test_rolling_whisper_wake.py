@@ -2,7 +2,7 @@
 
 Forensic 2026-06-22 (branch feat/fast-boot-bootstrap): a user who sets a custom
 wake word ("Hey Alex") falls onto the ``stt_match`` path = RollingWhisperWake.
-Two live symptoms — "riesige Verzoegerung" + "manchmal gar nicht":
+Two live symptoms — "huge delay" + "sometimes nothing at all":
 
 - LATENCY (this file): ``detect`` used to ``await transcribe_pcm`` *inside* the
   chunk-consume loop, so while a (CPU "base") transcription ran for ~0.5-1 s the

@@ -1,10 +1,10 @@
-"""Fake-Brain für Tests: yielded scripted BrainDeltas.
+"""Fake brain for tests: yields scripted BrainDeltas.
 
-Zwei Modi:
-- `text_response`: nur Text, kein Tool-Call
-- `tool_then_text`: erst Tool-Call, dann nach Tool-Result Text
+Two modes:
+- `text_response`: text only, no tool call
+- `tool_then_text`: tool call first, then text after the tool result
 
-Implementiert das Brain-Protocol strukturell (runtime_checkable isinstance prüft
+Implements the Brain protocol structurally (runtime_checkable isinstance checks
 name/context_window/supports_tools/supports_vision/complete/estimate_cost).
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ from jarvis.core.protocols import BrainDelta, BrainRequest
 
 
 class FakeBrain:
-    """Fake-Brain-Provider für Tests."""
+    """Fake brain provider for tests."""
 
     name: str = "fake-brain"
     context_window: int = 8192
@@ -31,10 +31,10 @@ class FakeBrain:
     ) -> None:
         """
         Args:
-            script: Liste von Turn-Responses. Jeder Turn ist eine Liste von BrainDeltas.
-                    Bei N Tool-Use-Rounds müssen N+1 Turns im Script liegen.
-            text_response: Default-Text wenn kein Script.
-            fail_on_call: Wenn >=0, wirft RuntimeError beim N-ten complete()-Call.
+            script: List of turn responses. Each turn is a list of BrainDeltas.
+                    For N tool-use rounds, the script needs N+1 turns.
+            text_response: Default text when no script is given.
+            fail_on_call: If >=0, raises RuntimeError on the Nth complete() call.
         """
         self._script = script or [[BrainDelta(content=text_response, finish_reason="stop")]]
         self._call_index = 0
@@ -59,5 +59,5 @@ class FakeBrain:
 def tool_call_delta(
     name: str, input_dict: dict[str, Any], call_id: str = "call_test"
 ) -> BrainDelta:
-    """Hilfs-Konstruktor für einen Tool-Call-Delta."""
+    """Helper constructor for a tool-call delta."""
     return BrainDelta(tool_call={"id": call_id, "name": name, "input": input_dict})

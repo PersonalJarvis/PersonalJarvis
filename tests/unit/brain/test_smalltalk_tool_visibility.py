@@ -2,7 +2,7 @@
 but KEEPS the read-only screenshot tool, so the brain can still look at the screen
 on demand (Wave 2) even when the turn was classified smalltalk — e.g. the live
 2026-05-31 failure "Hallo, lies mir vor was oben links steht" left the brain with
-no screenshot tool and it could only stall ("ich schaue nach … einen Moment")."""
+no screenshot tool and it could only stall ("ich schaue nach … einen Moment")."""  # i18n-allow: verbatim quote of the hallucinated runtime output
 from __future__ import annotations
 
 from jarvis.brain.manager import BrainManager

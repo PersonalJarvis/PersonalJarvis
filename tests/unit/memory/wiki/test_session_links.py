@@ -40,7 +40,7 @@ from jarvis.memory.wiki.session_links import (
     ("alex", "alex"),
     ("  Mixed   Spaces  ", "mixed-spaces"),
     ("Personal_Jarvis", "personal-jarvis"),
-    ("Über Café", "uber-cafe"),
+    ("Über Café", "uber-cafe"),  # i18n-allow: German/accented word testing slugify's unicode handling, content under test
 ])
 def test_slugify(raw: str, expected: str) -> None:
     assert slugify(raw) == expected

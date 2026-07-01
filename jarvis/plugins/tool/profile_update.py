@@ -82,14 +82,14 @@ _BOOL_FIELDS: frozenset[tuple[str, str]] = frozenset({
 # case-insensitively as substrings of value + evidence.
 _DO_NOT_RECORD: tuple[str, ...] = (
     "politik", "politisch", "political", "partei", "wahl",
-    "religion", "religiös", "religioes", "religious", "kirche", "glaube an gott",
-    "diagnose", "diagnos", "depression", "angststörung", "anxiety",
+    "religion", "religiös", "religioes", "religious", "kirche", "glaube an gott",  # i18n-allow (DE match vocabulary for a privacy-category filter)
+    "diagnose", "diagnos", "depression", "angststörung", "anxiety",  # i18n-allow (DE match vocabulary for a privacy-category filter)
     "therapie", "therapy", "medikament", "krankheit", "mental health",
     "suizid", "suicide", "mbti", "myers-briggs", "enneagram",
 )
 
-_TRUE_WORDS: frozenset[str] = frozenset({"true", "ja", "yes", "1", "on", "erlaubt", "ok", "okay"})
-_FALSE_WORDS: frozenset[str] = frozenset({"false", "nein", "no", "0", "off", "keine", "verboten"})
+_TRUE_WORDS: frozenset[str] = frozenset({"true", "ja", "yes", "1", "on", "erlaubt", "ok", "okay"})  # i18n-allow (DE boolean tokens a bilingual model may emit)
+_FALSE_WORDS: frozenset[str] = frozenset({"false", "nein", "no", "0", "off", "keine", "verboten"})  # i18n-allow (DE boolean tokens a bilingual model may emit)
 
 
 def _coerce_bool(value: Any) -> bool | None:

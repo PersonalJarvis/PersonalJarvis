@@ -10,13 +10,13 @@ import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
 /**
- * Phase F2 — zwei Tabs auf diesem Branch:
- *   Chat    -> Master-Detail mit ChatThread (Telegram in F2, Federation-DM in F3).
- *   Status  -> F4-Stub fuer Per-Friend-Sharing-Permissions.
+ * Phase F2 — two tabs on this branch:
+ *   Chat    -> master-detail with ChatThread (Telegram in F2, federation DM in F3).
+ *   Status  -> F4 stub for per-friend sharing permissions.
  *
- * Der Federation-Feed-Tab existiert in spaeteren Branches (Phase 5+).
- * Auf skills-brain-integration ohne ihn aufgebaut, damit keine fehlenden
- * Imports ts-Fehler werfen.
+ * The federation feed tab exists in later branches (Phase 5+).
+ * Built on skills-brain-integration without it, so no missing
+ * imports throw TS errors.
  */
 type Tab = "chat" | "status";
 
@@ -60,8 +60,8 @@ export function FriendsView() {
         open={addOpen}
         onClose={() => setAddOpen(false)}
         onPairOpen={() => {
-          // Pair-Dialog existiert auf diesem Branch noch nicht (kommt mit
-          // Federation in spaeteren Branches). No-Op statt Crash.
+          // The pair dialog doesn't exist on this branch yet (comes with
+          // federation in later branches). No-op instead of a crash.
           setAddOpen(false);
         }}
       />

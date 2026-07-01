@@ -1,11 +1,11 @@
-"""E2E Job-Object Kill-Parent. Plan AD-9 — Hauptjarvis-Crash killt Overlay.
+"""E2E job-object kill-parent. Plan AD-9 — Main-Jarvis crash kills the overlay.
 
-Strategie: Wir starten einen "Parent-Process" der einen "Child-Process"
-spawned und unter ein Job-Object haengt mit JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE.
-Dann taskkillen wir den Parent hart und assert dass der Child innerhalb
-1 s ebenfalls weg ist.
+Strategy: we start a "parent process" that spawns a "child process"
+and attaches it to a job object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE.
+Then we hard taskkill the parent and assert that the child is also
+gone within 1 s.
 
-Windows-only — auf anderen Plattformen ist das ein Skip.
+Windows-only — a skip on other platforms.
 """
 
 from __future__ import annotations
@@ -19,12 +19,12 @@ import time
 import pytest
 
 if sys.platform != "win32":
-    pytest.skip("Job-Object ist Windows-only", allow_module_level=True)
+    pytest.skip("Job object is Windows-only", allow_module_level=True)
 
 try:
     import psutil  # noqa: F401
 except ImportError:  # pragma: no cover
-    pytest.skip("psutil benoetigt fuer Process-Watch", allow_module_level=True)
+    pytest.skip("psutil required for process watch", allow_module_level=True)
 
 
 PARENT_SCRIPT = textwrap.dedent("""
@@ -39,12 +39,12 @@ PARENT_SCRIPT = textwrap.dedent("""
 
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 
-    # Spawn child: laueft 30 s.
+    # Spawn child: runs for 30 s.
     child = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(30)"]
     )
 
-    # Job-Object aufsetzen.
+    # Set up the job object.
     job = win32job.CreateJobObject(None, "")
     info = win32job.QueryInformationJobObject(
         job, win32job.JobObjectExtendedLimitInformation
@@ -62,21 +62,21 @@ PARENT_SCRIPT = textwrap.dedent("""
     win32job.AssignProcessToJobObject(job, proc_h)
     win32api.CloseHandle(proc_h)
 
-    # PID des childs ausgeben damit der Test ihn watchen kann.
+    # Print the child's PID so the test can watch it.
     sys.stdout.write(str(child.pid) + chr(10))
     sys.stdout.flush()
 
-    # Endlos-loop damit der Test uns killen kann.
+    # Endless loop so the test can kill us.
     while True:
         time.sleep(1)
 """)
 
 
 def test_kill_parent_kills_child_within_one_second() -> None:
-    """Plan AD-9: KILL_ON_JOB_CLOSE garantiert no zombies."""
+    """Plan AD-9: KILL_ON_JOB_CLOSE guarantees no zombies."""
     import psutil
 
-    # Parent spawnen.
+    # Spawn the parent.
     parent = subprocess.Popen(
         [sys.executable, "-c", PARENT_SCRIPT],
         stdout=subprocess.PIPE,
@@ -85,37 +85,37 @@ def test_kill_parent_kills_child_within_one_second() -> None:
     )
 
     try:
-        # Erste Zeile = child PID.
+        # First line = child PID.
         line = parent.stdout.readline().strip()
         try:
             child_pid = int(line)
         except ValueError:
-            pytest.fail(f"Parent gab keine child PID aus: {line!r}")
-        assert psutil.pid_exists(child_pid), f"child PID {child_pid} nicht da"
+            pytest.fail(f"Parent did not print a child PID: {line!r}")
+        assert psutil.pid_exists(child_pid), f"child PID {child_pid} not present"
 
-        # Parent hart killen via taskkill /F.
+        # Hard-kill the parent via taskkill /F.
         subprocess.run(
             ["taskkill", "/F", "/PID", str(parent.pid), "/T"],
             check=False,
             capture_output=True,
         )
 
-        # Plan AD-9: child sollte innerhalb 1 s weg sein.
+        # Plan AD-9: child should be gone within 1 s.
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline:
             if not psutil.pid_exists(child_pid):
                 # done.
                 child_exit_time = time.monotonic()
-                # 1 s ist Plan-Vorgabe; +500ms toleranz fuer Test-Slack
+                # 1 s is the plan spec; +500ms tolerance for test slack
                 assert True
                 return
             time.sleep(0.05)
         pytest.fail(
-            f"child PID {child_pid} lebt noch 2 s nach parent-kill — "
-            "Job-Object hat nicht gekilled"
+            f"child PID {child_pid} is still alive 2 s after parent kill — "
+            "job object did not kill it"
         )
     finally:
-        # Cleanup parent (falls noch alive).
+        # Cleanup parent (if still alive).
         try:
             parent.terminate()
             parent.wait(timeout=2)

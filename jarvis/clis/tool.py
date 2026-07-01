@@ -82,8 +82,8 @@ class CliTool:
                 "command": {
                     "type": "string",
                     "description": (
-                        f"Vollstaendiger {spec.binary_name}-Befehl inklusive Arguments. "
-                        f"Muss mit '{spec.binary_name}' beginnen."
+                        f"Full {spec.binary_name} command including arguments. "
+                        f"Must start with '{spec.binary_name}'."
                     ),
                 },
                 "timeout_s": {
@@ -121,8 +121,8 @@ class CliTool:
                 success=False,
                 output=None,
                 error=(
-                    f"command muss mit '{self._spec.binary_name}' beginnen — "
-                    f"bekam '{command[:40]}...'"
+                    f"command must start with '{self._spec.binary_name}' — "
+                    f"got '{command[:40]}...'"
                 ),
             )
 

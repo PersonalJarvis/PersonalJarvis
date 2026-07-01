@@ -1,7 +1,7 @@
-"""REST-API für Tool-Registry-Inspektion.
+"""REST API for tool-registry inspection.
 
-Zeigt alle Tools, die dem Brain zur Laufzeit verfügbar sind — MCP-Adapter,
-native Plugin-Tools, Skills. Reine Read-Only-API für UI und Debug.
+Shows all tools available to the brain at runtime — MCP adapters, native
+plugin tools, skills. A pure read-only API for the UI and debugging.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def _tool_to_dict(name: str, tool: Any) -> dict[str, Any]:
         "risk_tier": getattr(tool, "risk_tier", "monitor"),
         "schema": getattr(tool, "schema", {}) or {},
         "source": source,
-        # MCP-Adapter haben einen MCPClient — wir zeigen den Server-Name für UI
+        # MCP adapters have an MCPClient — we show the server name for the UI
         "mcp_server": (
             getattr(getattr(tool, "_client", None), "spec", None).name
             if hasattr(tool, "_client")

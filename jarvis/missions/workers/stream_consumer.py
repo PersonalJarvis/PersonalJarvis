@@ -329,23 +329,23 @@ async def read_ndjson_stream(
     parser: Callable[[str], T | None],
     tee_path: Path | None = None,
 ) -> AsyncIterator[T]:
-    """Asynchroner Generator ueber NDJSON-Events von einem StreamReader.
+    """Async generator over NDJSON events from a StreamReader.
 
-    - Line-buffered: `readline()` liefert eine Zeile (inkl. Newline) oder
-      leeres Bytes-Object bei EOF.
-    - Tee: schreibt jede Roh-Zeile (mit Newline) nach `tee_path` (binaer-append),
-      sodass `stream.jsonl` als Forensik/Replay-Quelle dient.
-    - Robustheit: ungueltige Zeilen werden vom Parser zu None resolved und
-      einfach uebersprungen — Stream stoppt nur bei EOF.
+    - Line-buffered: `readline()` returns one line (including the newline) or
+      an empty bytes object at EOF.
+    - Tee: writes every raw line (with newline) to `tee_path` (binary-append),
+      so `stream.jsonl` serves as a forensics/replay source.
+    - Robustness: invalid lines are resolved to None by the parser and
+      simply skipped — the stream only stops at EOF.
 
     Args:
-        stream: stdout-StreamReader des Subprocesses.
-        parser: einer der `parse_*_stream_json`-Funktionen.
-        tee_path: optional, wenn gesetzt wird hier roh geschrieben.
-            Parent-Verzeichnis wird angelegt falls noetig.
+        stream: stdout StreamReader of the subprocess.
+        parser: one of the `parse_*_stream_json` functions.
+        tee_path: optional; if set, raw bytes are written here.
+            The parent directory is created if needed.
 
     Yields:
-        T-Instances (ClaudeStreamEvent oder CodexStreamEvent), niemals None.
+        T instances (ClaudeStreamEvent or CodexStreamEvent), never None.
     """
     tee_handle = None
     if tee_path is not None:
@@ -357,12 +357,12 @@ async def read_ndjson_stream(
             try:
                 raw = await stream.readline()
             except asyncio.LimitOverrunError:
-                # Eine extrem lange Zeile sprengte den Default-Buffer (64 KB).
-                # Wir koennen sie nicht safe weiterlesen — warnen + abbrechen.
+                # An extremely long line blew past the default buffer (64 KB).
+                # We can't safely keep reading it — warn and abort.
                 logger.warning("read_ndjson_stream: line buffer exceeded; stopping")
                 break
             if not raw:
-                # EOF — Subprocess hat stdout geschlossen.
+                # EOF — the subprocess closed stdout.
                 break
             if tee_handle is not None:
                 tee_handle.write(raw)

@@ -1,14 +1,14 @@
-﻿"""FastAPI + WebSocket-Server für die Desktop-UI (Phase 1a).
+﻿"""FastAPI + WebSocket server for the desktop UI (Phase 1a).
 
-Verantwortung:
-- REST-Endpoints für Health, Config-Read-Only, Plugin-Discovery, Debug.
-- WebSocket `/ws` mit Welcome-Frame, Bus-Forwarding, Input-Validation.
-- Optional Static-Mount für den React-Build unter `dist/` (Production-Mode).
+Responsibilities:
+- REST endpoints for health, config read-only, plugin discovery, debug.
+- WebSocket `/ws` with welcome frame, bus forwarding, input validation.
+- Optional static mount for the React build under `dist/` (production mode).
 
-Explizit NICHT hier:
-- Channel-Adapter-Logik (in `jarvis/channels/web.py`).
-- React-Build selbst (Agent 5).
-- Single-Instance-Focus-Logik (nur Placeholder-Endpoint).
+Explicitly NOT here:
+- Channel-adapter logic (in `jarvis/channels/web.py`).
+- The React build itself (Agent 5).
+- Single-instance focus logic (only a placeholder endpoint).
 """
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ _WS_SEND_TIMEOUT_S = 3.0
 
 
 class WebServer:
-    """In-Process uvicorn + FastAPI, betrieben vom Orchestrator-Loop."""
+    """In-process uvicorn + FastAPI, run by the orchestrator loop."""
 
     def __init__(self, cfg: JarvisConfig, bus: EventBus | None = None) -> None:
         self.cfg = cfg
@@ -78,32 +78,32 @@ class WebServer:
         self._clients: dict[str, WebSocket] = {}
         self._server: uvicorn.Server | None = None
         self._serve_task: asyncio.Task[None] | None = None
-        # PTY-Manager fuer die Desktop-App-Terminal-View. Sessions sind
-        # global pro Server-Instanz — sie ueberleben WS-Reconnects, aber
-        # nicht den Server-Shutdown (siehe stop()).
+        # PTY manager for the desktop-app terminal view. Sessions are
+        # global per server instance — they survive WS reconnects, but
+        # not a server shutdown (see stop()).
         self._pty = PtyManager()
-        # Per-Terminal Line-Buffer fuer Audit-Events.
+        # Per-terminal line buffer for audit events.
         self._pty_input_buffers: dict[str, str] = {}
         self._pty_shell_ids: dict[str, str] = {}
-        # Skill-Registry: nach First-Run-Bootstrap auf user_skills_dir() gewatcht.
-        # Watcher startet in ``start()`` sobald die Event-Loop laeuft.
+        # Skill registry: watched on user_skills_dir() after first-run bootstrap.
+        # The watcher starts in ``start()`` once the event loop is running.
         self._skill_registry: Any | None = None
-        # Doc-Registry: gewatcht auf default_doc_roots(); FTS5-Index unter
-        # docs_index_db_path(). Watcher startet in ``start()``.
+        # Doc registry: watched on default_doc_roots(); FTS5 index under
+        # docs_index_db_path(). Watcher also starts in ``start()``.
         self._doc_registry: Any | None = None
         self._cli_registry: Any | None = None
         self._plugin_registry: Any | None = None
-        # Board-Stack wird in _setup_board() befuellt (im _build_app-Pfad).
+        # Board stack is populated in _setup_board() (in the _build_app path).
         self._board_aggregator: Any | None = None
         self._board_aggregator_task: asyncio.Task[None] | None = None
         self._board_evaluator: Any | None = None
         self._bio_scheduler: Any | None = None
         self._bio_generator: Any | None = None
-        # Voice-Session-Recorder — laeuft am EventBus mit, wird in
-        # _init_session_stack() befuellt. None solange Recorder disabled.
+        # Voice-session recorder — runs alongside the EventBus, populated in
+        # _init_session_stack(). None while the recorder is disabled.
         self._session_recorder: Any | None = None
-        # Phase-5 Task-Stack (Aufgaben-View). _init_task_stack() befuellt
-        # alle drei; ohne Wiring liefert /api/tasks 503 (siehe BUG-007).
+        # Phase-5 task stack (tasks view). _init_task_stack() populates
+        # all three; without wiring /api/tasks returns 503 (see BUG-007).
         self._task_store: Any | None = None
         self._task_scheduler: Any | None = None
         self._task_runner: Any | None = None
@@ -160,14 +160,14 @@ class WebServer:
         app = FastAPI(
             title="Personal Jarvis — Admin/UI API",
             version=__version__,
-            # Swagger-UI auf ``/api/_swagger`` — der semantische ``/api/docs``-
-            # Pfad gehoert dem Doc-Browser-Router (siehe docs_routes.py).
+            # Swagger UI on ``/api/_swagger`` — the semantic ``/api/docs``
+            # path belongs to the doc-browser router (see docs_routes.py).
             docs_url="/api/_swagger",
             openapi_url="/api/openapi.json",
         )
 
-        # CORS nur für den Vite-Dev-Server — Production liefert Frontend aus
-        # dist/ und braucht keine Cross-Origin-Requests.
+        # CORS only for the Vite dev server — production serves the frontend
+        # from dist/ and needs no cross-origin requests.
         app.add_middleware(
             CORSMiddleware,
             allow_origins=[self.cfg.ui.vite_dev_url],
@@ -187,23 +187,23 @@ class WebServer:
         # empty registry until the reload lands). Each entry is (label, registry).
         self._pending_reloads: list[tuple[str, Any]] = []
 
-        # Skill-Registry-Setup: Bootstrap (Builtin-Skills kopieren) + Registry
-        # anlegen. reload_sync() ist deferred (siehe _pending_reloads). Der
-        # watchdog-Watcher wird erst in ``start()`` aktiviert.
+        # Skill-registry setup: bootstrap (copy builtin skills) + create the
+        # registry. reload_sync() is deferred (see _pending_reloads). The
+        # watchdog watcher is only activated in ``start()``.
         self._setup_skill_registry(app)
 
-        # Doc-Registry: Markdown-Discovery unter ``docs/`` + Geschwistern,
-        # FTS5-Index. Watchdog ebenfalls erst in ``start()`` aktiviert.
+        # Doc registry: Markdown discovery under ``docs/`` + siblings,
+        # FTS5 index. The watchdog is likewise only activated in ``start()``.
         self._setup_doc_registry(app)
 
-        # CLI-Tool-Registry — haelt Katalog + Prober + Auth + UsageLog im selben
-        # State-Objekt, das die REST-Routes und der Brain-Launcher teilen.
+        # CLI-tool registry — holds the catalog + prober + auth + usage log in
+        # the same state object shared by the REST routes and the brain launcher.
         self._setup_cli_registry(app)
 
         # Plugin-Tool-Registry — wired marketplace plugins as live brain tools.
         self._setup_plugin_registry(app)
 
-        # Sub-Agent-Registry (Dashboard-Feature) — abonniert sofort den Bus.
+        # Sub-agent registry (dashboard feature) — subscribes to the bus immediately.
         try:
             from jarvis.agents import JarvisAgentRegistry
 
@@ -214,8 +214,8 @@ class WebServer:
             logger.opt(exception=exc).warning("JarvisAgentRegistry setup failed")
             app.state.sub_agent_registry = None
 
-        # MCP-, Tool-, Provider-, Profile-, Task-, Skills-, CLI- und Sub-Agents-
-        # Routes einhaengen — lazy Import vermeidet Zyklen.
+        # Wire in the MCP, tool, provider, profile, task, skills, CLI, and
+        # sub-agents routes — lazy import avoids cycles.
         from jarvis.runs.routes import router as runs_router
         from jarvis.runs.runs_ws import router as runs_ws_router
 
@@ -269,13 +269,13 @@ class WebServer:
         from .wiki_ws import router as wiki_ws_router
         from .workflows_routes import router as workflows_router
         from .workspace_routes import router as workspace_router
-        # Conductor ist ein externes Package im selben Monorepo. Import
-        # defensiv — wer das Repo ohne conductor checkt aus, kriegt sonst
-        # hier einen ImportError beim Server-Boot.
+        # Conductor is an external package in the same monorepo. Import
+        # defensively — anyone who checks out the repo without conductor would
+        # otherwise get an ImportError here at server boot.
         try:
             from conductor.api import router as conductor_router
         except ImportError as exc:
-            logger.warning("Conductor-Modul nicht verfuegbar: {} — Conductor-View bleibt leer", exc)
+            logger.warning("Conductor module not available: {} — Conductor view stays empty", exc)
             conductor_router = None
         app.include_router(mcp_router)
         app.include_router(tools_router)
@@ -332,10 +332,10 @@ class WebServer:
         app.include_router(board_router)
         app.include_router(board_meta_router)
         app.include_router(federation_proxy_router)
-        # Phase 8.5 — Review-Pipeline read-only UI (Plan §6.5).
+        # Phase 8.5 — review-pipeline read-only UI (Plan §6.5).
         app.include_router(review_router)
-        # Voice-Session-Transkriptions-View (Sidebar -> "Transkription").
-        # Liefert 503 solange app.state.session_store nicht gesetzt ist.
+        # Voice-session transcription view (sidebar -> "Transcription").
+        # Returns 503 as long as app.state.session_store isn't set.
         app.include_router(sessions_router)
         # Run Inspector — forensic lens over the same voice sessions. Read-only;
         # 503 until app.state.session_store is set, like sessions_router.
@@ -346,11 +346,11 @@ class WebServer:
         # brain + speech_pipeline from app.state (graceful 503s when absent).
         app.include_router(chats_router)
         app.include_router(drop_router)
-        # Default: kein Recorder verdrahtet — _init_session_stack() in start()
-        # setzt das beim Erfolg um.
+        # Default: no recorder wired up — _init_session_stack() in start()
+        # sets this once it succeeds.
         app.state.session_store = None
-        # Phase-6 Mission-Stack — Auth-Token vor allen anderen, damit der
-        # Browser ihn ueberhaupt holen kann; danach REST + WS + PTY.
+        # Phase-6 mission stack — the auth token before all others, so the
+        # browser can even fetch it; then REST + WS + PTY.
         app.include_router(missions_auth_router)
         # Seed the desktop session token (injected as window.__JARVIS_TOKEN by
         # the fast-boot path) into the token store. The fast-boot token is a RAW
@@ -374,21 +374,21 @@ class WebServer:
         # Forwards WikiPageChanged events from the shared EventBus to
         # subscribed UI clients. WikiWatcher is started in start().
         app.include_router(wiki_ws_router)
-        # ConnectionManager-Singleton fuer den globalen Event-Stream. Wird
-        # in start() an MissionBus.subscribe_all() angehaengt.
+        # ConnectionManager singleton for the global event stream. Attached
+        # to MissionBus.subscribe_all() in start().
         app.state.missions_ws_manager = _MissionsConnMgr()
-        # MissionManager + Kontrollierer werden in start() lazy verdrahtet
-        # (brauchen running event-loop fuer aiosqlite). Default ist None,
-        # damit die REST-Routes 503 zurueckgeben statt zu crashen.
+        # MissionManager + Kontrollierer are wired lazily in start()
+        # (they need a running event loop for aiosqlite). Default is None,
+        # so the REST routes return 503 instead of crashing.
         app.state.mission_manager = None
         app.state.kontrollierer = None
 
-        # Board-Aggregator (Personal-Mastery-Dashboard) — der Aggregator wird
-        # in start() als Background-Task gelaufen lassen, der Store ist
-        # read-only und sofort verfuegbar.
+        # Board aggregator (personal-mastery dashboard) — the aggregator is
+        # run as a background task in start(); the store is read-only and
+        # available immediately.
         self._setup_board(app)
 
-        # Preview-Registry — subscribed auf PreviewServerStarted/Closed Events.
+        # Preview registry — subscribed to PreviewServerStarted/Closed events.
         try:
             from jarvis.preview.registry import PreviewRegistry
 
@@ -396,11 +396,11 @@ class WebServer:
             preview_registry.attach()
             app.state.preview_registry = preview_registry
         except Exception as exc:  # noqa: BLE001
-            logger.opt(exception=exc).warning("PreviewRegistry-Setup fehlgeschlagen")
+            logger.opt(exception=exc).warning("PreviewRegistry setup failed")
             app.state.preview_registry = None
 
-        # Cfg fuer die Routes verfuegbar machen (z.B. Admin-Pass-Check in
-        # skills_routes). Andere Routes nutzen es ebenfalls kuenftig.
+        # Make the config available to the routes (e.g. admin-pass check in
+        # skills_routes). Other routes will use it too going forward.
         app.state.config = self.cfg
         app.state.bus = self.bus
 
@@ -434,12 +434,12 @@ class WebServer:
         return app
 
     def _setup_board(self, app: FastAPI) -> None:
-        """Board-Store + Aggregator + Evaluator + BioGenerator initialisieren.
+        """Initialize the board store + aggregator + evaluator + BioGenerator.
 
-        Der Store ist read-only und steht sofort bereit (erzeugt leere DB
-        beim ersten Query, damit der UI-Mount nicht in 500 laeuft). Der
-        Aggregator laeuft in ``start()`` als Background-Task, der Evaluator
-        und der BioScheduler subscriben dort auf den Bus.
+        The store is read-only and ready immediately (creates an empty DB
+        on the first query, so the UI mount doesn't hit a 500). The
+        aggregator runs in ``start()`` as a background task; the evaluator
+        and the BioScheduler subscribe to the bus there.
         """
         try:
             from jarvis.board.aggregator import BoardAggregator
@@ -469,11 +469,11 @@ class WebServer:
             evaluator = AchievementEvaluator(db_path=db_path, bus=self.bus)
             bio_store = BioStore(db_path=db_path)
 
-            # Optional-Datenquellen-Pfade (Awareness, Missions, Self-Mod).
-            # Wenn die Datei/DB nicht existiert, faellt der Block still im
-            # Prompt aus — kein Fehler. Pfade kommen aus ``user_data_dir()``,
-            # nicht aus relativen Strings, damit App-Restart in einem anderen
-            # CWD nicht den Datenhunger des Generators verliert.
+            # Optional data-source paths (awareness, missions, self-mod).
+            # If the file/DB doesn't exist, the block just silently drops out
+            # of the prompt — no error. Paths come from ``user_data_dir()``,
+            # not relative strings, so an app restart in a different CWD
+            # doesn't starve the generator of its data.
             data_root = user_data_dir() / "data"
             recall_db = data_root / "memory.db"
             missions_db = data_root / "missions.db"
@@ -483,9 +483,9 @@ class WebServer:
             cfg = self.cfg
 
             def _bio_brain_resolver() -> Any:
-                # Lazy: Cfg + Bus aus Closure einfangen, sodass ein
-                # spaeterer Provider-Switch via UI direkt zieht (resolver
-                # invalidiert seinen Cache via ConfigReloaded).
+                # Lazy: capture cfg + bus from the closure, so a later
+                # provider switch via the UI takes effect immediately
+                # (the resolver invalidates its cache via ConfigReloaded).
                 return resolve_frontier_brain(cfg, bus=self.bus)
 
             bio_generator = BioGenerator(
@@ -519,12 +519,12 @@ class WebServer:
             app.state.bio_generator = bio_generator
             app.state.bio_store = bio_store
             logger.info(
-                "Board vorbereitet (jsonl={}, db={}, achievements={})",
+                "Board ready (jsonl={}, db={}, achievements={})",
                 jsonl_dir, db_path, len(evaluator.list_all()),
             )
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "Board-Setup fehlgeschlagen — /board liefert leer"
+                "Board setup failed — /board returns empty"
             )
             self._board_aggregator = None
             self._board_aggregator_task = None
@@ -538,10 +538,10 @@ class WebServer:
             app.state.bio_store = None
 
     def _setup_skill_registry(self, app: FastAPI) -> None:
-        """First-Run-Bootstrap + SkillRegistry an ``app.state`` haengen.
+        """First-run bootstrap + attach the SkillRegistry to ``app.state``.
 
-        Fehlerfaelle (z.B. read-only Filesystem im Test-Runner) sind nicht
-        fatal — die UI zeigt dann "Keine Skills" statt abzustuerzen.
+        Failure cases (e.g. a read-only filesystem in the test runner) are
+        not fatal — the UI then shows "No skills" instead of crashing.
         """
         try:
             from jarvis.skills.bootstrap import ensure_user_skills_dir
@@ -564,18 +564,18 @@ class WebServer:
             )
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "SkillRegistry-Setup fehlgeschlagen — Skills-View bleibt leer"
+                "SkillRegistry setup failed — Skills view stays empty"
             )
             app.state.skill_registry = None
 
     def _setup_doc_registry(self, app: FastAPI) -> None:
-        """Doc-Registry hochziehen + FTS5-Index initial befuellen.
+        """Bring up the doc registry + populate the FTS5 index initially.
 
-        Roots = ``default_doc_roots()`` (siehe ``jarvis/core/paths.py``).
-        Index-DB liegt unter ``user_data_dir()/data/docs_index.sqlite``.
+        Roots = ``default_doc_roots()`` (see ``jarvis/core/paths.py``).
+        The index DB lives under ``user_data_dir()/data/docs_index.sqlite``.
 
-        Fehlerfaelle (read-only FS, Index-DB-Lock) sind nicht fatal — die UI
-        zeigt dann "Keine Docs verfuegbar" statt zu crashen.
+        Failure cases (read-only FS, index-DB lock) are not fatal — the UI
+        then shows "No docs available" instead of crashing.
         """
         try:
             from jarvis.core.paths import default_doc_roots, docs_index_db_path
@@ -594,22 +594,22 @@ class WebServer:
             # listening (start()).
             self._pending_reloads.append(("DocRegistry", registry))
             logger.info(
-                "DocRegistry created (scan deferred) for {} Roots", len(roots)
+                "DocRegistry created (scan deferred) for {} roots", len(roots)
             )
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "DocRegistry-Setup fehlgeschlagen — Docs-View bleibt leer"
+                "DocRegistry setup failed — Docs view stays empty"
             )
             app.state.doc_registry = None
 
     def _setup_cli_registry(self, app: FastAPI) -> None:
-        """``CliToolRegistry`` aufsetzen und Katalog-Probe asynchron nachziehen.
+        """Set up the ``CliToolRegistry`` and run the catalog probe asynchronously.
 
-        Der Konstruktor erstellt die Registry ohne zu proben (nichtblockierend).
-        Ein asyncio-Task wird in ``start()`` geplant, der ``bootstrap()`` ausfuehrt —
-        bis dahin liefern die Endpoints ``status=checking`` fuer alle Eintraege.
+        The constructor creates the registry without probing (non-blocking).
+        An asyncio task is scheduled in ``start()`` that runs ``bootstrap()`` —
+        until then the endpoints return ``status=checking`` for all entries.
 
-        Fehlerfaelle: read-only FS oder DB-Lock → kein Crash, nur leere Registry.
+        Failure cases: read-only FS or DB lock → no crash, just an empty registry.
         """
         try:
             from jarvis.clis.registry import CliToolRegistry
@@ -618,17 +618,17 @@ class WebServer:
             registry = CliToolRegistry(bus=self.bus)
             self._cli_registry = registry
             app.state.cli_registry = registry
-            # Shared-State: ab jetzt sehen CliToolLoader und make_cli_patterns_fn
-            # dieselbe Instanz — der LLM bekommt die echten verbundenen CLIs als
-            # Tools, nicht eine leere Katalog-Kopie.
+            # Shared state: from here on, CliToolLoader and make_cli_patterns_fn
+            # see the same instance — the LLM gets the real connected CLIs as
+            # tools, not an empty catalog copy.
             set_active_registry(registry)
             logger.info(
-                "CliToolRegistry erstellt ({} Katalog-Eintraege, bootstrap pending)",
+                "CliToolRegistry created ({} catalog entries, bootstrap pending)",
                 len(registry.catalog().all()),
             )
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "CliToolRegistry-Setup fehlgeschlagen — CLIs-View bleibt leer"
+                "CliToolRegistry setup failed — CLIs view stays empty"
             )
             app.state.cli_registry = None
 
@@ -648,10 +648,10 @@ class WebServer:
             self._plugin_registry = registry
             app.state.plugin_registry = registry
             set_active_plugin_registry(registry)
-            logger.info("PluginToolRegistry erstellt (bootstrap pending)")
+            logger.info("PluginToolRegistry created (bootstrap pending)")
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "PluginToolRegistry-Setup fehlgeschlagen — Plugins bleiben worker-only"
+                "PluginToolRegistry setup failed — plugins stay worker-only"
             )
             app.state.plugin_registry = None
             self._plugin_registry = None
@@ -670,7 +670,7 @@ class WebServer:
 
         @app.get("/api/config")
         async def get_config() -> dict[str, Any]:
-            # Read-only Snapshot — Secrets sind per Design nicht in der Config.
+            # Read-only snapshot — secrets are, by design, never in the config.
             return cfg.model_dump()
 
         @app.get("/api/plugins")
@@ -678,7 +678,7 @@ class WebServer:
             try:
                 return list_all_plugins()
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning("Plugin-Discovery fehlgeschlagen")
+                logger.opt(exception=exc).warning("Plugin discovery failed")
                 return {}
 
         @app.post("/api/debug/emit-test-event")
@@ -693,22 +693,22 @@ class WebServer:
 
         @app.post("/api/window/focus")
         async def window_focus() -> dict[str, Any]:
-            # Placeholder — der eigentliche Fokus-Call landet in der Desktop-App
-            # (pywebview-Shell). Hier nur ACK, damit Single-Instance-Ping einen
-            # definierten Status bekommt.
+            # Placeholder — the actual focus call lands in the desktop app
+            # (pywebview shell). Just an ACK here, so single-instance ping
+            # gets a defined status.
             return {"ok": True, "focused": False, "note": "handled by desktop-shell"}
 
         @app.get("/api/brain/status")
         async def brain_status() -> dict[str, Any]:
-            """Liefert den aktuell aktiven Brain-Provider + Modell.
+            """Returns the currently active brain provider + model.
 
-            Frontend nutzt das beim Mount, um den Sidebar-Footer korrekt zu
-            initialisieren (statt vom hartcodierten "claude-api"-Default
-            auszugehen). Live-Switches kommen weiterhin via WS-Event
+            The frontend uses this on mount to initialize the sidebar footer
+            correctly (instead of assuming the hardcoded "claude-api"
+            default). Live switches still arrive via the WS event
             ``BrainProviderChanged``.
             """
             brain = getattr(app.state, "brain", None)
-            # BrainManager exposed `active_provider`. MockBrain hat nur `name`.
+            # BrainManager exposes `active_provider`. MockBrain only has `name`.
             # Fast-boot deferral: the heavy BrainManager build runs in a
             # background thread, so `app.state.brain` is None for the first
             # ~850 ms while uvicorn already serves. In that window fall back to
@@ -740,27 +740,27 @@ class WebServer:
 
         @app.get("/api/jarvis-agent/status")
         async def jarvis_agent_status() -> dict[str, Any]:
-            """OpenClaw-Bridge-Status fuer die SettingsView (Welle 3).
+            """OpenClaw-bridge status for the settings view (Welle 3).
 
-            Read-only Snapshot:
+            Read-only snapshot:
 
-            * ``configured``       — Block ``[harness.openclaw]`` in jarvis.toml?
-            * ``enabled``          — Bridge-Toggle aus dem Block
-            * ``binary_path``      — konfigurierter Pfad
-            * ``binary_detected``  — Resolver-Ergebnis (PATH + .cmd/.ps1/.exe)
-            * ``version_pin``      — AD-21 Pin (None bei fehlendem Block)
-            * ``brain_primary``    — aktiver SUBAGENT-Provider
-              (``[brain.sub_jarvis].provider``); Fallback auf ``brain.primary``
-              nur wenn kein Subagent-Provider gesetzt ist. NICHT der Router-
-              Brain — der Subagent fuehrt die Heavy-Tasks aus.
-            * ``provider_slug``    — OpenClaw-Slug des aktiven Subagent-
-              Providers nach AD-6 (claude-api->claude-cli)
-            * ``model_resolved``   — Override aus Config ODER Frontier-Deep-
-              Model des aktiven Subagent-Providers
-            * ``mapping``          — vollstaendige Slug-Mapping-Tabelle
+            * ``configured``       — is the ``[harness.openclaw]`` block present in jarvis.toml?
+            * ``enabled``          — bridge toggle from the block
+            * ``binary_path``      — configured path
+            * ``binary_detected``  — resolver result (PATH + .cmd/.ps1/.exe)
+            * ``version_pin``      — AD-21 pin (None when the block is missing)
+            * ``brain_primary``    — active SUBAGENT provider
+              (``[brain.sub_jarvis].provider``); falls back to ``brain.primary``
+              only when no subagent provider is set. NOT the router
+              brain — the subagent runs the heavy tasks.
+            * ``provider_slug``    — OpenClaw slug of the active subagent
+              provider per AD-6 (claude-api->claude-cli)
+            * ``model_resolved``   — override from config OR the frontier-deep
+              model of the active subagent provider
+            * ``mapping``          — the full slug-mapping table
 
-            Vertrag: docs/openclaw-bridge.md §4.3 Wizard-/Setup-Erweiterung.
-            Endpoint liefert KEINE Secrets — nur Boolean ob Key gesetzt ist.
+            Contract: docs/openclaw-bridge.md §4.3 wizard/setup extension.
+            The endpoint returns NO secrets — only a boolean for whether a key is set.
             """
             import shutil
 
@@ -968,13 +968,12 @@ class WebServer:
 
         @app.get("/api/memory/facts")
         async def get_memory_facts() -> dict[str, Any]:
-            """Liefert das Core-Memory (Persona, User-Facts, Preferences).
+            """Returns the core memory (persona, user facts, preferences).
 
-            Frontend zeigt das in der Notizen-View, damit Alex sieht,
-            was Jarvis sich gemerkt hat. core_memory.json wird beim
-            naechsten Brain-Call automatisch in den System-Prompt
-            injiziert — die View ist also Read-Only-Spiegel auf den
-            persistenten Memory-State.
+            The frontend shows this in the notes view, so the user can see
+            what Jarvis has remembered. core_memory.json is automatically
+            injected into the system prompt on the next brain call — so this
+            view is a read-only mirror of the persistent memory state.
             """
             from jarvis.core.config import DATA_DIR
             from jarvis.memory import CORE_MEMORY_FILENAME, CoreMemory
@@ -983,51 +982,51 @@ class WebServer:
                 mem = CoreMemory.load(DATA_DIR / CORE_MEMORY_FILENAME)
                 return {"ok": True, "data": mem.all()}
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning("Memory-Lesefehler")
+                logger.opt(exception=exc).warning("Memory read error")
                 return {"ok": False, "error": str(exc), "data": {}}
 
         @app.post("/api/memory/facts")
         async def add_memory_fact(payload: dict[str, Any]) -> dict[str, Any]:
-            """User-driven Add aus der UI."""
+            """User-driven add from the UI."""
             from jarvis.core.config import DATA_DIR
             from jarvis.memory import CORE_MEMORY_FILENAME, CoreMemory
 
             fact = (payload.get("fact") or "").strip()
             category = (payload.get("category") or "general").strip()
             if not fact:
-                return {"ok": False, "error": "fact fehlt"}
+                return {"ok": False, "error": "fact is missing"}
             try:
                 mem = CoreMemory.load(DATA_DIR / CORE_MEMORY_FILENAME)
                 mem.add_fact(fact, category=category)
                 return {"ok": True, "data": mem.all()}
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning("Memory-Schreibfehler")
+                logger.opt(exception=exc).warning("Memory write error")
                 return {"ok": False, "error": str(exc)}
 
         @app.delete("/api/memory/facts")
         async def delete_memory_fact(payload: dict[str, Any]) -> dict[str, Any]:
-            """User-driven Remove aus der UI."""
+            """User-driven remove from the UI."""
             from jarvis.core.config import DATA_DIR
             from jarvis.memory import CORE_MEMORY_FILENAME, CoreMemory
 
             fact = (payload.get("fact") or "").strip()
             category = (payload.get("category") or "general").strip()
             if not fact:
-                return {"ok": False, "error": "fact fehlt"}
+                return {"ok": False, "error": "fact is missing"}
             try:
                 mem = CoreMemory.load(DATA_DIR / CORE_MEMORY_FILENAME)
                 ok = mem.remove_fact(fact, category=category)
                 return {"ok": ok, "data": mem.all()}
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning("Memory-Loeschfehler")
+                logger.opt(exception=exc).warning("Memory delete error")
                 return {"ok": False, "error": str(exc)}
 
         @app.get("/api/terminal/shells")
         async def terminal_shells() -> dict[str, Any]:
-            """Liefert alle auf diesem System installierten Shells.
+            """Returns all shells installed on this system.
 
-            Frontend nutzt das, um das Shell-Dropdown nur mit verfuegbaren
-            Optionen zu fuellen — kein "Command not found" beim Spawn.
+            The frontend uses this to populate the shell dropdown with only
+            available options — no "command not found" on spawn.
             """
             return {
                 "shells": [
@@ -1090,7 +1089,7 @@ class WebServer:
                 _drop_stalled_client()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "WS-Forward fehlgeschlagen",
+                    "WS forward failed",
                     session_id=session_id,
                     event=type(event).__name__,
                 )
@@ -1124,7 +1123,7 @@ class WebServer:
                     # Recoverable: a malformed frame from a still-connected
                     # client (bad JSON). Notify and keep listening.
                     logger.opt(exception=exc).warning(
-                        "WS-Decode-Fehler",
+                        "WS decode error",
                         session_id=session_id,
                     )
                     await self.bus.publish(
@@ -1157,7 +1156,7 @@ class WebServer:
                 )
             )
         finally:
-            # Unsubscribe zur Memory-Leak-Vermeidung.
+            # Unsubscribe to avoid a memory leak.
             try:
                 self.bus._wildcard_subscribers.remove(_forward)  # type: ignore[attr-defined]
             except ValueError:
@@ -1174,7 +1173,7 @@ class WebServer:
         raw: Any,
         send_lock: asyncio.Lock,
     ) -> None:
-        """Validiert und dispatched eine eingehende WS-Frame."""
+        """Validates and dispatches an incoming WS frame."""
         if not isinstance(raw, dict):
             await self.bus.publish(
                 ErrorOccurred(
@@ -1214,7 +1213,7 @@ class WebServer:
                     )
                 )
         except ValidationError as exc:
-            logger.warning("WS-Frame-Validation", errors=exc.errors())
+            logger.warning("WS frame validation error", errors=exc.errors())
             await self.bus.publish(
                 ErrorOccurred(
                     layer="ui.web.ws",
@@ -1252,8 +1251,8 @@ class WebServer:
             await self._handle_dictation(cmd.payload)
         elif cmd.action == "mission.inject":
             await self._handle_mission_inject(session_id, cmd.payload)
-        # provider_switch/set_state laufen jetzt über REST (POST /api/brain/switch
-        # bzw. POST /api/secrets/{key}). Doppelte Code-Pfade hier entfernt.
+        # provider_switch/set_state now run over REST (POST /api/brain/switch
+        # or POST /api/secrets/{key}). Duplicate code paths removed here.
 
     async def _handle_mission_inject(
         self, session_id: str, payload: dict[str, Any]
@@ -1356,7 +1355,7 @@ class WebServer:
                 ErrorOccurred(
                     layer="ui.web.terminal",
                     error_type="ShellNotFound",
-                    message=f"Shell {shell_id!r} nicht installiert",
+                    message=f"Shell {shell_id!r} not installed",
                     recoverable=True,
                     source_layer="ui.web.terminal",
                 )
@@ -1418,8 +1417,8 @@ class WebServer:
                 source_layer="ui.web.terminal",
             )
         )
-        # Direkte Antwort-Frame mit terminal_id, damit das Frontend mehrere
-        # parallele Spawn-Requests eindeutig zuordnen kann.
+        # Direct response frame with terminal_id, so the frontend can
+        # unambiguously match up multiple parallel spawn requests.
         ws = self._clients.get(session_id)
         if ws is not None:
             async with send_lock:
@@ -1441,7 +1440,7 @@ class WebServer:
             return
         if not self._pty.write(terminal_id, data):
             return
-        # Audit-Log: line-buffer pflegen, bei \r/\n Command emittieren.
+        # Audit log: maintain the line buffer, emit a command on \r/\n.
         buf = self._pty_input_buffers.get(terminal_id, "")
         for ch in data:
             if ch in ("\r", "\n"):
@@ -1457,12 +1456,12 @@ class WebServer:
                     )
                 buf = ""
             elif ch in ("\x7f", "\b"):
-                # Backspace — letztes Zeichen aus Buffer entfernen
+                # Backspace — remove the last character from the buffer
                 buf = buf[:-1]
             elif ch >= " ":
                 buf += ch
-            # Andere Control-Chars (Ctrl-C etc.) ignorieren wir im Buffer.
-        # Memory-Cap fuer extrem lange Pasted-Lines.
+            # We ignore other control chars (Ctrl-C etc.) in the buffer.
+        # Memory cap for extremely long pasted lines.
         if len(buf) > 4096:
             buf = buf[-4096:]
         self._pty_input_buffers[terminal_id] = buf
@@ -1538,9 +1537,9 @@ class WebServer:
             "h1{font-weight:500;font-size:18px;margin:0 0 12px}"
             "p{margin:0;color:#9aa3ad;font-size:14px;line-height:1.5}</style>"
             "</head><body><main>"
-            "<h1>Jarvis startet…</h1>"
-            "<p>Frontend wird gerade gebaut oder neu geladen. "
-            "Diese Seite aktualisiert sich automatisch.</p>"
+            "<h1>Jarvis is starting…</h1>"
+            "<p>The frontend is currently being built or reloaded. "
+            "This page refreshes automatically.</p>"
             "</main></body></html>"
         )
         return HTMLResponse(
@@ -1613,13 +1612,13 @@ class WebServer:
             while not server.started:
                 if asyncio.get_running_loop().time() > deadline:
                     raise TimeoutError(
-                        f"uvicorn server auf {host}:{resolved_port} nicht in 5s ready"
+                        f"uvicorn server on {host}:{resolved_port} not ready within 5s"
                     )
                 if self._serve_task.done():
                     exc = self._serve_task.exception()
                     if exc is not None:
                         raise exc
-                    raise RuntimeError("uvicorn.Server.serve() beendet vor 'started'")
+                    raise RuntimeError("uvicorn.Server.serve() exited before 'started'")
                 await asyncio.sleep(0.05)
         else:
             # Bootstrap fast-boot path: a separate server already serves on the
@@ -1629,14 +1628,14 @@ class WebServer:
 
         _boot_mark("uvicorn_serve")
 
-        # Phase-6 Mission-Stack — MissionManager mit DB-Path aus dem
-        # Memory-data_dir der Config (selber Ordner wie data/jarvis.db,
-        # eigene Datei data/missions.db). Recovery laeuft im start().
+        # Phase-6 mission stack — MissionManager with a DB path derived from
+        # the config's memory data_dir (same folder as data/jarvis.db, its
+        # own file data/missions.db). Recovery runs in start().
         try:
             await self._init_mission_stack()
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "MissionManager-Init fehlgeschlagen — /api/missions liefert 503"
+                "MissionManager init failed — /api/missions returns 503"
             )
         _boot_mark("mission_stack")
 
@@ -1670,7 +1669,7 @@ class WebServer:
             await self._init_wiki_integration()
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "WikiIntegration-Init fehlgeschlagen — wiki write-wiring inaktiv"
+                "WikiIntegration init failed — wiki write-wiring inactive"
             )
         _boot_mark("wiki_integration")
 
@@ -1693,104 +1692,104 @@ class WebServer:
             self._init_wiki_watcher()
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "WikiWatcher-Init fehlgeschlagen — desktop wiki live-reload inaktiv"
+                "WikiWatcher init failed — desktop wiki live-reload inactive"
             )
         _boot_mark("wiki_watcher")
 
-        # Voice-Session-Recorder + Store fuer die Transkriptions-View.
-        # Sub-Setup: laeuft sync (SQLite-WAL, kein async-Loop noetig), wird
-        # aber im start() ausgefuehrt damit der EventBus garantiert lebt.
+        # Voice-session recorder + store for the transcription view.
+        # Sub-setup: runs sync (SQLite-WAL, no async loop needed), but is
+        # run in start() so the EventBus is guaranteed to be alive.
         try:
             self._init_session_stack()
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "SessionRecorder-Init fehlgeschlagen — /api/sessions liefert 503"
+                "SessionRecorder init failed — /api/sessions returns 503"
             )
         _boot_mark("session_stack")
 
-        # Phase-5 Task-Stack (Aufgaben-View). TaskStore liegt additiv in
-        # data/jarvis.db (ADR-0003), Scheduler laeuft als asyncio-Loop, der
-        # vom CancelToken im stop() beendet wird.
+        # Phase-5 task stack (tasks view). TaskStore lives additively in
+        # data/jarvis.db (ADR-0003); the scheduler runs as an asyncio loop
+        # terminated by the CancelToken in stop().
         try:
             await self._init_task_stack()
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "TaskStack-Init fehlgeschlagen — /api/tasks liefert 503"
+                "TaskStack init failed — /api/tasks returns 503"
             )
         _boot_mark("task_stack")
 
-        # Skill-Hot-Reload-Watcher starten, sobald die Loop stabil laeuft.
+        # Start the skill hot-reload watcher once the loop is stable.
         if self._skill_registry is not None:
             try:
                 self._skill_registry.start_watcher(asyncio.get_running_loop())
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "SkillRegistry-Watcher-Start fehlgeschlagen — kein Hot-Reload"
+                    "SkillRegistry watcher start failed — no hot-reload"
                 )
 
-        # Doc-Hot-Reload-Watcher analog. watchdog observiert pro Root einen
-        # eigenen Observer-Thread.
+        # Doc hot-reload watcher, likewise. watchdog observes its own
+        # observer thread per root.
         if self._doc_registry is not None:
             try:
                 self._doc_registry.start_watcher(asyncio.get_running_loop())
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "DocRegistry-Watcher-Start fehlgeschlagen — kein Hot-Reload"
+                    "DocRegistry watcher start failed — no hot-reload"
                 )
 
-        # CLI-Registry asynchron bootstrappen — probet alle Katalog-CLIs und
-        # baut Tool-Instanzen. ``asyncio.create_task`` haengt den Call als
-        # Background-Task an, damit ``start()`` selbst nicht blockt.
+        # Bootstrap the CLI registry asynchronously — probes all catalog CLIs
+        # and builds tool instances. ``asyncio.create_task`` runs the call as
+        # a background task so ``start()`` itself doesn't block.
         if self._cli_registry is not None:
             async def _bootstrap_clis() -> None:
                 try:
                     await self._cli_registry.bootstrap()
                 except Exception as exc:  # noqa: BLE001
                     logger.opt(exception=exc).warning(
-                        "CliToolRegistry-Bootstrap fehlgeschlagen — CLIs-View leer"
+                        "CliToolRegistry bootstrap failed — CLIs view empty"
                     )
             asyncio.create_task(_bootstrap_clis(), name="cli-registry-bootstrap")
 
-        # Plugin-Registry asynchron bootstrappen — oeffnet pro verbundenem
-        # Plugin einen In-Process-MCPClient und bridged dessen Tools in den
-        # Live-Brain (BrainToolsChanged re-expandiert). Mirror der CLI-Registry.
+        # Bootstrap the plugin registry asynchronously — opens an in-process
+        # MCPClient per connected plugin and bridges its tools into the
+        # live brain (BrainToolsChanged re-expands). Mirrors the CLI registry.
         if self._plugin_registry is not None:
             async def _bootstrap_plugins() -> None:
                 try:
                     await self._plugin_registry.bootstrap()
                 except Exception as exc:  # noqa: BLE001
                     logger.opt(exception=exc).warning(
-                        "PluginToolRegistry-Bootstrap fehlgeschlagen — Plugins worker-only"
+                        "PluginToolRegistry bootstrap failed — plugins worker-only"
                     )
             asyncio.create_task(_bootstrap_plugins(), name="plugin-registry-bootstrap")
 
-        # Board-Aggregator als Endlos-Task. run_forever() macht erst einen
-        # on-startup-Run und schlaeft dann 6 h (Plan §5-A Decision #2).
+        # Board aggregator as a never-ending task. run_forever() does an
+        # on-startup run first and then sleeps 6h (Plan §5-A Decision #2).
         if self._board_aggregator is not None:
             self._board_aggregator_task = asyncio.create_task(
                 self._board_aggregator.run_forever(interval_s=6 * 3600),
                 name="board-aggregator",
             )
 
-        # Achievement-Evaluator am Bus. Phase B.
+        # Achievement evaluator on the bus. Phase B.
         if self._board_evaluator is not None:
             try:
                 self._board_evaluator.attach()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "AchievementEvaluator.attach() fehlgeschlagen"
+                    "AchievementEvaluator.attach() failed"
                 )
 
-        # Bio-Scheduler — wochentl. + master-Achievement-Trigger.
-        # Der Brain wird hier noch nicht finalisiert (app.state.brain kommt
-        # meist erst spaeter). BioGenerator.brain bleibt auf None, bis der
-        # Caller ihn setzt — der Scheduler faengt das Brain-None sauber ab.
+        # Bio scheduler — weekly + master achievement trigger.
+        # The brain isn't finalized here yet (app.state.brain usually
+        # arrives later). BioGenerator.brain stays None until the caller
+        # sets it — the scheduler handles a None brain gracefully.
         if self._bio_scheduler is not None:
             try:
                 self._bio_scheduler.start()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "BioScheduler.start() fehlgeschlagen"
+                    "BioScheduler.start() failed"
                 )
 
         # Friends-Stack: FriendRegistry + ChannelManager. Started as a BACKGROUND
@@ -1805,7 +1804,7 @@ class WebServer:
                 await self._init_channel_stack()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "ChannelStack-Init fehlgeschlagen — /api/friends liefert 503"
+                    "ChannelStack init failed — /api/friends returns 503"
                 )
 
         self._channel_stack_task = asyncio.create_task(
@@ -1949,9 +1948,9 @@ class WebServer:
         )
 
     async def _init_mission_stack(self) -> None:
-        """Phase-6 Production-Wiring: bootstrap_missions() liefert den
-        kompletten Stack (Manager, Kontrollierer, Budget, Voice-Listener,
-        Cleanup-Task), inkl. Safety-Hooks und WS-Manager-Bus-Bridge.
+        """Phase-6 production wiring: bootstrap_missions() returns the
+        complete stack (manager, Kontrollierer, budget, voice listener,
+        cleanup task), including safety hooks and the WS-manager bus bridge.
         """
         from jarvis.missions.init import bootstrap_missions
 
@@ -1959,9 +1958,9 @@ class WebServer:
         data_dir.mkdir(parents=True, exist_ok=True)
         db_path = data_dir / "missions.db"
 
-        # Isolation-Root: <repo_parent>/jarvis-agent-outputs/ (preferred; falls back
+        # Isolation root: <repo_parent>/jarvis-agent-outputs/ (preferred; falls back
         # to <repo_parent>/sub-agents-outputs/ if only the old dir exists — see
-        # resolve_outputs_root). Repo-Root ist 4 Ebenen over jarvis/ui/web/server.py:
+        # resolve_outputs_root). The repo root is 4 levels above jarvis/ui/web/server.py:
         # server.py -> web -> ui -> jarvis -> repo.
         repo_root = WEB_DIR.parent.parent.parent
         # Test/benchmark isolation seam: an explicit JARVIS_ISOLATION_ROOT
@@ -1994,15 +1993,15 @@ class WebServer:
             isolation_root=isolation_root,
             repo_root=repo_root,
             recover_missions=_is_primary,
-            tts_speak_fn=None,  # TTS-Wiring kommt aus DesktopApp wenn Voice live
-            brain_caller=None,  # Decomposer arbeitet im Heuristik-only-Modus
-            # Welle-4 Y: Speech-Bus fuer MissionAnnouncer durchreichen, damit
-            # Mission-Completion-Events als AnnouncementRequested auf dem
-            # globalen Bus landen — pipeline._on_announcement subscribed dort.
+            tts_speak_fn=None,  # TTS wiring comes from DesktopApp once voice is live
+            brain_caller=None,  # The decomposer runs in heuristic-only mode
+            # Welle-4 Y: pass the speech bus through for MissionAnnouncer, so
+            # mission-completion events land as AnnouncementRequested on the
+            # global bus — pipeline._on_announcement subscribes there.
             speech_bus=self.bus,
-            # Defaults aus jarvis.toml [phase6.*] (alle ueberschreibbar via cfg later)
+            # Defaults from jarvis.toml [phase6.*] (all overridable via cfg later)
             safety_enabled=True,
-            # User mandate 2026-05-31 ("überhaupt kein Budget", frontier-quality-
+            # User mandate 2026-05-31 ("no budget at all", frontier-quality-
             # over-cost): the per-mission/daily cost cap is DISABLED so a long,
             # high-quality Opus mission is never aborted mid-work for cost. The
             # per_mission_usd/daily_usd values below are inert while disabled.
@@ -2029,14 +2028,14 @@ class WebServer:
         self._missions_voice_listener = result["voice_listener"]
         self._missions_cleanup_task = result["cleanup_task"]
 
-        # Welle-4-Wiring: spawn_worker-Tool im Brain braucht den
-        # MissionManager UND den Kontrollierer. Der Brain wird in
-        # DesktopApp._start_speech_and_orb ueber build_default_brain()
-        # gebaut — die Singleton-Setter machen beide dort verfuegbar
-        # (Lazy-Resolve via _resolve_mission_manager / _resolve_kontrollierer).
-        # Ohne den Kontrollierer-Setter wuerde der Voice-Pfad eine Mission
-        # dispatchen, aber niemand triggert run_mission — die Mission bliebe
-        # PENDING und der User hoerte keine Antwort (BUG-016).
+        # Welle-4 wiring: the spawn_worker tool in the brain needs both the
+        # MissionManager AND the Kontrollierer. The brain is built in
+        # DesktopApp._start_speech_and_orb via build_default_brain() — the
+        # singleton setters make both available there (lazy resolve via
+        # _resolve_mission_manager / _resolve_kontrollierer).
+        # Without the Kontrollierer setter, the voice path would dispatch a
+        # mission but nothing would trigger run_mission — the mission would
+        # stay PENDING and the user would hear no answer (BUG-016).
         try:
             from jarvis.brain.factory import (
                 set_kontrollierer,
@@ -2050,8 +2049,8 @@ class WebServer:
             self.app.state.worker_available = True
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "set_mission_manager/kontrollierer-Wiring fehlgeschlagen — "
-                "spawn_worker wird in diesem Run deaktiviert: %s", exc,
+                "set_mission_manager/kontrollierer wiring failed — "
+                "spawn_worker is disabled for this run: %s", exc,
             )
             # Surface the failure for both downstream readers:
             #  - `self.app.state.worker_available` lets REST routes and
@@ -2059,8 +2058,8 @@ class WebServer:
             #    instead of permanently rendering "loading" / "pending".
             #  - the factory-level singleton lets the Brain's spawn_worker
             #    tool short-circuit at execute()-time with an honest
-            #    "konnte nicht initialisiert werden" message instead of the
-            #    transient "noch nicht bereit" the in-progress path returns.
+            #    "could not be initialized" message instead of the
+            #    transient "not ready yet" the in-progress path returns.
             self.app.state.worker_available = False
             try:
                 from jarvis.brain.factory import set_worker_bootstrap_failed
@@ -2071,7 +2070,7 @@ class WebServer:
                     inner_exc,
                 )
 
-        # WS-Bridge: ConnectionManager aus Phase-4 wird auf den Bus subscribed.
+        # WS bridge: the Phase-4 ConnectionManager is subscribed to the bus.
         ws_mgr = getattr(self.app.state, "missions_ws_manager", None)
         if ws_mgr is not None:
             result["manager"].bus.subscribe_all(ws_mgr.fanout)
@@ -2258,11 +2257,11 @@ class WebServer:
         logger.info("wiki_watcher: started for vault {}", vault_root)
 
     async def _init_task_stack(self) -> None:
-        """Phase-5 Task-Queue-Wiring (BUG-007).
+        """Phase-5 task-queue wiring (BUG-007).
 
-        Baut TaskStore + TaskRunner + TaskScheduler auf, fuehrt den
-        Startup-Cleanup fuer ``running``-Tasks (App-Exit) aus und startet
-        den Scheduler-Loop als Background-Task.
+        Builds the TaskStore + TaskRunner + TaskScheduler, runs the
+        startup cleanup for ``running`` tasks (app exit), and starts
+        the scheduler loop as a background task.
 
         The runner is wired with the brain so agentic (``agent``) tasks run a
         tool-restricted turn unattended (read-only/monitor-tier plugins pass;
@@ -2279,16 +2278,16 @@ class WebServer:
 
         data_dir = Path(self.cfg.memory.data_dir)
         data_dir.mkdir(parents=True, exist_ok=True)
-        # Tasks teilen sich die DB mit Memory (ADR-0003) — additives Schema.
+        # Tasks share the DB with memory (ADR-0003) — an additive schema.
         db_path = data_dir / "jarvis.db"
 
         store = TaskStore(db_path)
         await store.init()
 
-        # Crash-Recovery: alle running -> interrupted plus Error-Log.
+        # Crash recovery: all running -> interrupted, plus an error log entry.
         recovered = await store.cleanup_interrupted()
         if recovered:
-            logger.info("TaskStack: {} interrupted Tasks vom Vorlauf bereinigt", recovered)
+            logger.info("TaskStack: cleaned up {} interrupted tasks from the previous run", recovered)
 
         # Wire the brain so agentic (`agent`) tasks can run a tool-restricted
         # turn unattended. app.state.brain is set before server.start() (see
@@ -2321,7 +2320,7 @@ class WebServer:
         self._task_cancel_token = cancel_token
         self._task_scheduler_task = scheduler_task
 
-        # Routes lesen aus app.state — siehe tasks_routes.py:28
+        # Routes read from app.state — see tasks_routes.py:28
         self.app.state.task_store = store
         self.app.state.task_scheduler = scheduler
         self.app.state.task_runner = runner
@@ -2332,18 +2331,18 @@ class WebServer:
         )
 
     def _init_session_stack(self) -> None:
-        """Voice-Session-Recorder + Store fuer die Transkriptions-View.
+        """Voice-session recorder + store for the transcription view.
 
-        Bootstrap analog zu ``_init_mission_stack``, aber sync — der Store
-        nutzt sqlite3 + threading.Lock (siehe ``jarvis/sessions/store.py``).
-        Liest Defaults aus der ``[sessions]``-Sektion in jarvis.toml; die
-        Sektion ist NICHT im Pydantic-Tree (siehe Annahme A-2 im Phase-7-
-        Bootstrap), daher tomllib direkt.
+        Bootstrap analogous to ``_init_mission_stack``, but sync — the store
+        uses sqlite3 + threading.Lock (see ``jarvis/sessions/store.py``).
+        Reads defaults from the ``[sessions]`` section in jarvis.toml; that
+        section is NOT in the Pydantic tree (see assumption A-2 in the
+        Phase-7 bootstrap), hence tomllib directly.
         """
         from jarvis.sessions.init import bootstrap_sessions
 
-        # Defaults entsprechen jarvis.toml [sessions] (enabled=true,
-        # data/sessions.db, retention 30d). User kann via TOML overriden.
+        # Defaults match jarvis.toml [sessions] (enabled=true,
+        # data/sessions.db, retention 30d). User can override via TOML.
         enabled = True
         rel_db_path = "data/sessions.db"
         retention_days = 30
@@ -2360,15 +2359,15 @@ class WebServer:
                 retention_days = int(section.get("retention_days", retention_days))
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "Konnte [sessions]-Sektion aus jarvis.toml nicht lesen — Defaults"
+                    "Could not read the [sessions] section from jarvis.toml — using defaults"
                 )
 
         if not enabled:
-            logger.info("Voice-Session-Recorder via [sessions].enabled=false deaktiviert")
+            logger.info("Voice-session recorder disabled via [sessions].enabled=false")
             return
 
-        # rel_db_path ist relativ zum Repo-Root (= cwd beim Start). Falls absolut,
-        # bleibt es absolut. Path() macht beides korrekt.
+        # rel_db_path is relative to the repo root (= cwd at start). If
+        # absolute, it stays absolute. Path() handles both correctly.
         db_path = Path(rel_db_path)
         if not db_path.is_absolute():
             db_path = Path(self.cfg.memory.data_dir).parent / db_path
@@ -2382,20 +2381,20 @@ class WebServer:
         )
         self.app.state.session_store = result["store"]
         self._session_recorder = result["recorder"]
-        logger.info("Session-Recorder online (db={}, retention={}d)", db_path, retention_days)
+        logger.info("Session recorder online (db={}, retention={}d)", db_path, retention_days)
 
     async def _init_channel_stack(self) -> None:
-        """Bootstrappt FriendRegistry + ChannelManager + startet alle Channels.
+        """Bootstraps FriendRegistry + ChannelManager + starts all channels.
 
-        Friends-UI funktioniert auch ohne Telegram (FriendRegistry ist immer
-        da). TelegramChannel landet bei fehlendem Token in ``start_errors``,
-        blockiert die anderen Channels nicht.
+        The Friends UI works even without Telegram (FriendRegistry is always
+        there). TelegramChannel lands in ``start_errors`` when the token is
+        missing, without blocking the other channels.
         """
         from jarvis.channels.bootstrap import bootstrap_channels
         from jarvis.channels.chat_bridge import ChannelChatBridge
 
-        # data_dir existiert moeglicherweise nicht auf jedem Branch unter
-        # cfg.memory; Fallback auf ./data damit der Code branch-portabel ist.
+        # data_dir might not exist on every branch under cfg.memory;
+        # fall back to ./data so the code stays branch-portable.
         data_dir = Path("data")
         try:
             mem_dir = getattr(self.cfg, "memory", None)
@@ -2442,28 +2441,28 @@ class WebServer:
                 )
 
     async def stop(self) -> None:
-        # Skill-Watcher stoppen, sonst bleibt der watchdog-Thread als Zombie
-        # haengen und verhindert Prozess-Ende.
+        # Stop the skill watcher, otherwise the watchdog thread stays behind
+        # as a zombie and prevents the process from exiting.
         if self._skill_registry is not None:
             try:
                 self._skill_registry.stop_watcher()
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning("SkillRegistry-Watcher-Stop fehlgeschlagen")
+                logger.opt(exception=exc).warning("SkillRegistry watcher stop failed")
 
-        # Doc-Watcher + FTS5-Connection schliessen.
+        # Close the doc watcher + FTS5 connection.
         if self._doc_registry is not None:
             try:
                 self._doc_registry.close()
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning("DocRegistry-Close fehlgeschlagen")
+                logger.opt(exception=exc).warning("DocRegistry close failed")
 
-        # Shared-CLI-Registry unset'en — sonst haelt der Module-Singleton eine
-        # Referenz auf eine "tote" Registry, wenn der Server neu startet.
+        # Unset the shared CLI registry — otherwise the module singleton keeps
+        # a reference to a "dead" registry when the server restarts.
         try:
             from jarvis.clis.shared import set_active_registry
             set_active_registry(None)
         except Exception as exc:  # noqa: BLE001
-            logger.opt(exception=exc).debug("CLI-Shared-Registry Cleanup fehlgeschlagen: {}", exc)
+            logger.opt(exception=exc).debug("CLI shared-registry cleanup failed: {}", exc)
 
         # Symmetric teardown for the plugin registry: unset the module singleton
         # AND stop the registry so each connected plugin's MCPClient (with its
@@ -2477,13 +2476,13 @@ class WebServer:
                 await self._plugin_registry.stop()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).debug(
-                    "PluginToolRegistry-Cleanup fehlgeschlagen: {}", exc
+                    "PluginToolRegistry cleanup failed: {}", exc
                 )
             self._plugin_registry = None
             self.app.state.plugin_registry = None
 
-        # Board-Aggregator-Task geordnet beenden, bevor uvicorn faellt. Der
-        # run_forever()-Loop faengt CancelledError selbst und propagiert es.
+        # Cleanly stop the board-aggregator task before uvicorn goes down. The
+        # run_forever() loop catches CancelledError itself and re-raises it.
         if self._board_aggregator_task is not None:
             self._board_aggregator_task.cancel()
             try:
@@ -2491,7 +2490,7 @@ class WebServer:
             except (TimeoutError, asyncio.CancelledError):
                 pass
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning("Board-Aggregator Shutdown-Fehler")
+                logger.opt(exception=exc).warning("Board-aggregator shutdown error")
             self._board_aggregator_task = None
         if self._bio_scheduler is not None:
             try:
@@ -2515,7 +2514,7 @@ class WebServer:
             try:
                 await wiki_handle.shutdown()
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).debug("WikiIntegration.shutdown() fehlgeschlagen")
+                logger.opt(exception=exc).debug("WikiIntegration.shutdown() failed")
             self._wiki_integration_handle = None
 
         # Phase B3 wiki live-reload: stop the watchdog observer cleanly
@@ -2527,21 +2526,21 @@ class WebServer:
                 await wiki_watcher.shutdown()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).debug(
-                    "WikiWatcher.shutdown() fehlgeschlagen"
+                    "WikiWatcher.shutdown() failed"
                 )
             self._wiki_watcher = None
 
-        # PTY-Sessions terminieren bevor uvicorn faellt — verhindert dass
-        # Reader-Threads in einen geschlossenen Loop schreiben wollen.
+        # Terminate PTY sessions before uvicorn goes down — prevents reader
+        # threads from trying to write into a closed loop.
         try:
             self._pty.close_all()
         except Exception as exc:  # noqa: BLE001
-            logger.opt(exception=exc).warning("PTY-Cleanup fehlgeschlagen")
+            logger.opt(exception=exc).warning("PTY cleanup failed")
 
-        # Phase-6 Mission-Stack ordentlich runterfahren — Connection schliesst
-        # die SQLite-DB. Periodic recovery re-sweep + Cleanup-Task cancellen
-        # BEVOR der Store schliesst (sonst tickt das Re-Sweep gegen eine
-        # geschlossene Connection).
+        # Cleanly shut down the Phase-6 mission stack — closing the
+        # connection closes the SQLite DB. Cancel the periodic recovery
+        # re-sweep + cleanup task BEFORE the store closes (otherwise the
+        # re-sweep ticks against a closed connection).
         resweep_task = getattr(self, "_missions_resweep_task", None)
         if resweep_task is not None:
             resweep_task.cancel()
@@ -2607,13 +2606,13 @@ class WebServer:
                 await mission_manager.stop()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "MissionManager.stop() fehlgeschlagen"
+                    "MissionManager.stop() failed"
                 )
             self.app.state.mission_manager = None
             self.app.state.kontrollierer = None
 
-        # Phase-5 Task-Stack runterfahren: Scheduler-Loop cancellen, laufende
-        # Runner-Tasks abwarten (max 2s), Store schliessen.
+        # Shut down the Phase-5 task stack: cancel the scheduler loop, wait
+        # for running runner tasks (max 2s), close the store.
         if self._task_scheduler is not None and self._task_cancel_token is not None:
             try:
                 self._task_cancel_token.cancel("server_shutdown")
@@ -2626,7 +2625,7 @@ class WebServer:
             except (TimeoutError, asyncio.CancelledError):
                 pass
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning("TaskScheduler-Loop Shutdown-Fehler: {}", exc)
+                logger.opt(exception=exc).warning("TaskScheduler loop shutdown error: {}", exc)
             self._task_scheduler_task = None
         if self._task_scheduler is not None:
             try:
@@ -2637,7 +2636,7 @@ class WebServer:
             try:
                 await self._task_store.close()
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning("TaskStore.close() fehlgeschlagen")
+                logger.opt(exception=exc).warning("TaskStore.close() failed")
         self._task_scheduler = None
         self._task_store = None
         self._task_runner = None
@@ -2646,7 +2645,7 @@ class WebServer:
         self.app.state.task_scheduler = None
         self.app.state.task_runner = None
 
-        # Voice-Session-Recorder vom Bus detachen + DB-Connection schliessen.
+        # Detach the voice-session recorder from the bus + close the DB connection.
         recorder = getattr(self, "_session_recorder", None)
         store = getattr(self.app.state, "session_store", None)
         if recorder is not None or store is not None:
@@ -2655,7 +2654,7 @@ class WebServer:
                 shutdown_sessions({"store": store, "recorder": recorder})
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "SessionRecorder-Shutdown fehlgeschlagen"
+                    "SessionRecorder shutdown failed"
                 )
             self._session_recorder = None
             self.app.state.session_store = None
@@ -2684,7 +2683,7 @@ class WebServer:
                     await friend_registry.close()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "ChannelStack-Shutdown fehlgeschlagen"
+                    "ChannelStack shutdown failed"
                 )
             self.app.state.channel_manager = None
             self.app.state.friend_registry = None

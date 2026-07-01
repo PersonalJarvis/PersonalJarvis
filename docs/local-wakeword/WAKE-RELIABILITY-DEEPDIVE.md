@@ -20,8 +20,8 @@ on a Pixel — on Windows, Linux and macOS. Reported symptom: a clear, loud
   exactly "say it 2-3 times".
 - **The wake runs a weak `base` model on the CPU** while the RTX 5070 Ti sits
   idle (the post-wake utterance STT is cloud/Groq, so the GPU is free). Under app
-  CPU/GIL contention `base` both mis-transcribes ("Mach weiter" -> "Nach
-  weiter"/"Wetter. Its fun.") and occasionally hangs past the 8 s timeout.
+  CPU/GIL contention `base` both mis-transcribes ("Mach weiter" -> "Nach <!-- i18n-allow -->
+  weiter"/"Wetter. Its fun.") and occasionally hangs past the 8 s timeout. <!-- i18n-allow -->
 
 The deeper truth: **wake detection via full speech-to-text is the wrong
 architecture.** "Hey Google"/Alexa/Siri never transcribe to wake — they run a

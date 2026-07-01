@@ -18,7 +18,7 @@ assistant: the core pattern is **Supervisor-Agent** that dispatches work to
 interchangeable harnesses (the agent-harness subprocess, Codex CLI, Open
 Interpreter, MCP servers). The voice layer is just the interface.
 
-**Master plan:** `~/.claude/plans/also-er-muss-auch-lexical-pond.md` — binding for
+**Master plan:** `~/.claude/plans/also-er-muss-auch-lexical-pond.md` — binding for  <!-- i18n-allow -->
 all design decisions. On conflict between plan and code, the plan wins; code
 deviations must be documented back in the plan.
 

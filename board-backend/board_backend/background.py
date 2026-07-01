@@ -1,12 +1,12 @@
-"""Background-Tasks im Backend (Phase D).
+"""Background tasks in the backend (Phase D).
 
-- ``StoriesCleanup`` — nightly job, loescht ``activity_items`` mit
-  abgelaufener ``expires_at``.
-- ``FederationPuller`` — pollt jede Friend-URL ihrem konfigurierten
-  Intervall nach (Default 120 s, per-Friend ueberschreibbar).
+- ``StoriesCleanup`` — nightly job that deletes ``activity_items`` with
+  an expired ``expires_at``.
+- ``FederationPuller`` — polls each friend URL at its configured
+  interval (default 120 s, overridable per friend).
 
-Beide laufen als ``asyncio.Task``, attached an die FastAPI-App via
-``startup``/``shutdown``-Lifespan.
+Both run as an ``asyncio.Task``, attached to the FastAPI app via the
+``startup``/``shutdown`` lifespan.
 """
 from __future__ import annotations
 
@@ -24,15 +24,15 @@ log = logging.getLogger(__name__)
 
 
 # ----------------------------------------------------------------------
-# Stories-Cleanup
+# Stories cleanup
 # ----------------------------------------------------------------------
 
 class StoriesCleanup:
-    """Loescht abgelaufene ``activity_items`` (typ. Stories nach 24 h).
+    """Deletes expired ``activity_items`` (typically stories after 24 h).
 
-    Tickt alle ``interval_s`` (Default 1 h). Plan §D nennt „nightly" — das
-    ist ungefaehr; ein 1h-Tick toleriert App-Restarts und gibt schnellere
-    Cleanup-Garantie ohne signifikanten DB-Cost.
+    Ticks every ``interval_s`` (default 1 h). Plan §D calls this
+    "nightly" — that's approximate; a 1 h tick tolerates app restarts
+    and gives a faster cleanup guarantee without a significant DB cost.
     """
 
     def __init__(self, *, session_factory, interval_s: float = 3600.0) -> None:
@@ -55,7 +55,7 @@ class StoriesCleanup:
         self._task = None
 
     async def _loop(self) -> None:
-        # Erster Run sofort, danach Intervall.
+        # First run immediately, then at the interval.
         while True:
             try:
                 self.run_once()
@@ -69,7 +69,7 @@ class StoriesCleanup:
                 raise
 
     def run_once(self) -> int:
-        """Synchron + idempotent. Returns count gelöschter Items."""
+        """Synchronous + idempotent. Returns the count of deleted items."""
         now = datetime.now(timezone.utc)
         with self._sf() as session:
             expired = session.query(ActivityItem).filter(
@@ -83,18 +83,18 @@ class StoriesCleanup:
 
 
 # ----------------------------------------------------------------------
-# Federation-Puller
+# Federation puller
 # ----------------------------------------------------------------------
 
 class FederationPuller:
-    """Polled jede Friend-URL gemaess ``Friend.pull_interval_s``.
+    """Polls each friend URL per ``Friend.pull_interval_s``.
 
-    Pro Friend ein eigener ``asyncio.Task`` — wenn ein Friend offline ist,
-    blockiert er die anderen nicht.
+    One ``asyncio.Task`` per friend — if a friend is offline, it doesn't
+    block the others.
 
-    Aktuell: pullt nur den Feed (``/api/v1/federation/feed``) und persistiert
-    NICHT — der Output dient dem UI, nicht der DB. Phase E koennte einen
-    Cache-Layer dazwischen schalten.
+    Currently: only pulls the feed (``/api/v1/federation/feed``) and does
+    NOT persist it — the output serves the UI, not the DB. Phase E could
+    insert a cache layer in between.
     """
 
     def __init__(self, *, session_factory, http_client: httpx.AsyncClient | None = None) -> None:
@@ -107,7 +107,7 @@ class FederationPuller:
     async def start(self) -> None:
         if self._http is None:
             self._http = httpx.AsyncClient(timeout=10.0)
-        # Alle aktiven Friends pollen.
+        # Poll all active friends.
         with self._sf() as session:
             friends = session.query(Friend).all()
             for f in friends:
@@ -153,12 +153,12 @@ class FederationPuller:
                 raise
 
     async def _pull_once(self, friend_url: str) -> list[Any]:
-        """Anonymer Pull — der Feed selbst filtert visibility=public.
+        """Anonymous pull — the feed itself filters visibility=public.
 
-        Fuer einen authenticated friend-Pull braeuchten wir den lokalen
-        Privkey + Pubkey, die das Backend nicht hat (siehe Reactions-Note).
-        Phase D-MVP: nur public items. Phase D-Vollausbau: lokales Jarvis
-        liefert dem Backend einen scoped Auth-Header pro Friend.
+        For an authenticated friend pull we'd need the local privkey +
+        pubkey, which the backend doesn't have (see the reactions note).
+        Phase D MVP: public items only. Phase D full build-out: the local
+        Jarvis supplies the backend a scoped auth header per friend.
         """
         assert self._http is not None
         resp = await self._http.get(f"{friend_url.rstrip('/')}/api/v1/federation/feed",

@@ -1,4 +1,4 @@
-"""Contract-Tests: alle 5 Phase-2-Tools erfüllen strukturell das Tool-Protocol."""
+"""Contract tests: all 5 Phase-2 tools structurally satisfy the tool protocol."""
 from __future__ import annotations
 
 import inspect

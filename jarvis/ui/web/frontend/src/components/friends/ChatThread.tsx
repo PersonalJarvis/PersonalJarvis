@@ -12,14 +12,14 @@ import { SourceBadge } from "./SourceBadge";
 import { cn } from "@/lib/utils";
 
 /**
- * Chat-Thread fuer einen Friend (rechte Seite des Chat-Tabs).
+ * Chat thread for a friend (right side of the chat tab).
  *
- * Layout (wie ChatsView):
- *   - Header (Friend-Name + Source-Badge + Permission-Profile)
- *   - ScrollArea mit MessageBubbles (timestamp-sortiert)
- *   - Input-Footer (Send-Button + Enter-to-send)
+ * Layout (like ChatsView):
+ *   - Header (friend name + source badge + permission profile)
+ *   - ScrollArea with message bubbles (timestamp-sorted)
+ *   - Input footer (send button + Enter-to-send)
  *
- * Wenn der Friend keinen verknuepften Channel hat, ist der Send-Pfad disabled.
+ * If the friend has no linked channel, the send path is disabled.
  */
 export function ChatThread({ friend }: { friend: FriendDetail }) {
   const t = useT();

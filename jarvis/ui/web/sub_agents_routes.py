@@ -1,11 +1,11 @@
-"""REST-API fuer das Sub-Agent-Dashboard (Desktop-UI).
+"""REST API for the sub-agent dashboard (desktop UI).
 
 Endpoints:
-- ``GET /api/sub-agents/tree``          → Snapshot aller aktiven Agents.
-- ``GET /api/sub-agents/{trace_id}``    → Einzelne Node (fuer DetailPanel).
+- ``GET /api/sub-agents/tree``          → snapshot of all active agents.
+- ``GET /api/sub-agents/{trace_id}``    → a single node (for the detail panel).
 
-Der Router erwartet eine ``SubAgentRegistry`` auf
-``app.state.sub_agent_registry`` (vom ``WebServer._build_app`` gesetzt).
+The router expects a ``SubAgentRegistry`` on
+``app.state.sub_agent_registry`` (set by ``WebServer._build_app``).
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api/sub-agents", tags=["sub-agents"])
 
 @router.get("/tree")
 async def get_tree(request: Request) -> dict:
-    """Aktueller Agent-Tree (alle laufenden + TTL-gepufferte Nodes)."""
+    """Current agent tree (all running + TTL-buffered nodes)."""
     registry = getattr(request.app.state, "sub_agent_registry", None)
     if registry is None:
         return {"roots": [], "all": {}, "count": 0, "server_ts_ns": 0}
@@ -30,7 +30,7 @@ async def get_tree(request: Request) -> dict:
 
 @router.get("/{trace_id}")
 async def get_agent(trace_id: str, request: Request) -> dict:
-    """Eine Agent-Node im Detail (fuer das DetailPanel)."""
+    """A single agent node in detail (for the detail panel)."""
     registry = getattr(request.app.state, "sub_agent_registry", None)
     if registry is None:
         raise HTTPException(status_code=503, detail="sub-agent registry not ready")

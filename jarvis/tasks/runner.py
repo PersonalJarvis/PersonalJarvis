@@ -1,30 +1,30 @@
-"""TaskRunner — dispatcht eine persistierte Task-Spec an ihre Action.
+"""TaskRunner — dispatches a persisted task spec to its action.
 
-Lifecycle fuer einen Task:
+Lifecycle of a task:
 
     scheduled → running → (completed | failed | cancelled)
 
-Der Runner laedt die Spec aus dem Store, setzt den State auf ``running``
-und unterscheidet dann nach Action-Kind:
+The runner loads the spec from the store, sets the state to ``running``,
+and then branches on the action kind:
 
-- ``HarnessDispatchAction`` → ``HarnessManager.dispatch(...)`` und streamt
-  Progress-Results als ``task_steps``-Rows.
-- ``SpeakAction`` → ``TTSProvider.synthesize(text)``; die Audio-Chunks
-  werden ans Ausgabegeraet weitergegeben (Audio-Out-Routing liegt nicht in
-  unserem Scope — wir konsumieren den Stream und loggen Step-Zeilen).
-- ``ToolCallAction`` → ``ToolExecutor.execute(tool, args)`` via der Tool-
-  Registry. Risk-Tier/Approval laufen wie gewohnt.
+- ``HarnessDispatchAction`` → ``HarnessManager.dispatch(...)`` and streams
+  progress results as ``task_steps`` rows.
+- ``SpeakAction`` → ``TTSProvider.synthesize(text)``; the audio chunks are
+  forwarded to the output device (audio-out routing is outside our scope —
+  we consume the stream and log step lines).
+- ``ToolCallAction`` → ``ToolExecutor.execute(tool, args)`` via the tool
+  registry. Risk-tier/approval work as usual.
 
-Retry-Policy: nach einem Fehler erhoehen wir ``attempts`` und pruefen
-``max_attempts``. Bei Retry: State bleibt ``scheduled`` (damit der
-Scheduler den Task erneut einreiht — das passiert in einem separaten
-Reschedule-Call durch den Orchestrator, siehe ADR-0005). Vereinfachung
-in Phase 5: kein automatisches Backoff-Rescheduling on_event-Tasks; nur
-zeitbasierte kriegen beim Fehler ``finished_at_ns`` + bleiben auf
-``failed``. Der Task-Curator-Job (spaeter) kann retryen.
+Retry policy: after a failure we increment ``attempts`` and check
+``max_attempts``. On retry: the state stays ``scheduled`` (so the scheduler
+re-enqueues the task — that happens in a separate reschedule call by the
+orchestrator, see ADR-0005). Simplification in Phase 5: no automatic backoff
+rescheduling for on_event tasks; only time-based ones get ``finished_at_ns``
+on failure and stay ``failed``. The task-curator job (later) can retry.
 
-**Cancel-Handling:** Der Runner prueft vor jedem Step ``cancel_token.is_
-cancelled()``. Wenn gesetzt, bricht er ab und setzt State auf ``cancelled``.
+**Cancel handling:** the runner checks ``cancel_token.is_
+cancelled()`` before every step. If set, it aborts and sets the state to
+``cancelled``.
 """
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ log = logging.getLogger(__name__)
 
 
 # ----------------------------------------------------------------------
-# Protokoll-Stubs fuer Dependency-Injection
+# Protocol stubs for dependency injection
 # ----------------------------------------------------------------------
 
 class _HarnessManagerLike(Protocol):
@@ -100,12 +100,12 @@ class _AutoApproverLike(Protocol):
 # ----------------------------------------------------------------------
 
 class TaskRunner:
-    """Fuehrt eine Task-Spec aus (eine Invocation pro ``run()``-Call).
+    """Executes a task spec (one invocation per ``run()`` call).
 
-    Abhaengigkeiten sind optional — wenn z.B. kein ``tts`` uebergeben wird,
-    schlaegt ein ``SpeakAction``-Task mit sauberem Error fehl, der als
-    ``task_steps``-Row geloggt wird. Das erlaubt, den Runner in Tests ohne
-    volle Infrastruktur zu benutzen.
+    Dependencies are optional — e.g. if no ``tts`` is passed, a
+    ``SpeakAction`` task fails with a clean error, which is logged as a
+    ``task_steps`` row. This lets the runner be used in tests without the
+    full infrastructure.
     """
 
     def __init__(
@@ -138,7 +138,7 @@ class TaskRunner:
         *,
         trigger_event: dict[str, Any] | None = None,
     ) -> None:
-        """Fuehrt einen Task komplett durch. Terminal-State im Store persistiert.
+        """Runs a task through to completion. The terminal state is persisted in the store.
 
         ``trigger_event`` carries the flat fields of the bus event that fired an
         ``on_event`` task (e.g. a ``MissionCompleted`` with ``result_uri``). Its
@@ -147,10 +147,10 @@ class TaskRunner:
         """
         spec = await self._store.get_spec(task_id)
         if spec is None:
-            log.warning("TaskRunner: task_id %s nicht im Store gefunden", task_id)
+            log.warning("TaskRunner: task_id %s not found in store", task_id)
             return
 
-        # Fruehe Cancel-Probe (vor State-Wechsel)
+        # Early cancel probe (before the state change)
         if cancel_token is not None and cancel_token.is_cancelled():
             await self._store.update_state(task_id, "cancelled",
                                            error=cancel_token.reason or "cancelled")
@@ -211,7 +211,7 @@ class TaskRunner:
         Interpolates the triggering event's fields into ``template`` and publishes
         it as ``AnnouncementRequested(kind="subagent")`` — the readback kind that
         survives the voice hangup gate and is mirrored to browser tabs, so it
-        reaches the user after "auflegen" and on a headless runtime. No-op when the
+        reaches the user after "hang up" and on a headless runtime. No-op when the
         rule set no announcement.
         """
         if not template:
@@ -250,11 +250,11 @@ class TaskRunner:
             await self._run_tool_call(task_id, action, cancel_token)
         elif action.kind == "agent":
             await self._run_agent(task_id, action, cancel_token, ctx)
-        else:  # pragma: no cover — schema laesst nichts anderes zu
-            raise RuntimeError(f"Unbekannter Action-Kind: {action.kind}")
+        else:  # pragma: no cover — the schema does not allow anything else
+            raise RuntimeError(f"Unknown action kind: {action.kind}")
 
     # ------------------------------------------------------------------
-    # Action-Handler
+    # Action handlers
     # ------------------------------------------------------------------
 
     async def _run_harness_dispatch(
@@ -265,9 +265,9 @@ class TaskRunner:
         ctx: dict[str, Any],
     ) -> None:
         if self._harness is None:
-            raise RuntimeError("HarnessManager nicht konfiguriert — harness_dispatch geht nicht")
-        # Lokaler Import, damit wir keine Zyklen auf core/protocols in
-        # Testumgebungen erzeugen
+            raise RuntimeError("HarnessManager not configured — harness_dispatch cannot run")
+        # Local import so we don't create cycles on core/protocols in
+        # test environments
         from jarvis.core.protocols import HarnessTask
 
         # Interpolate {field} placeholders from the triggering event so a CU goal
@@ -323,13 +323,13 @@ class TaskRunner:
                              source_layer="tasks.runner")
         )
         if self._tts is None:
-            raise RuntimeError("TTSProvider nicht konfiguriert — speak geht nicht")
+            raise RuntimeError("TTSProvider not configured — speak cannot run")
 
-        # Audit F-AUDIT-3 (2026-04-29): action.text durch scrub_for_voice
-        # filtern, bevor TTS es synthesisiert. Defense-in-Depth: Workflow-
-        # Definitionen koennten Brain-generierten Text als Speak-Action
-        # haben, ohne dass der Skill-Author den Filter explizit aufruft.
-        # Sprache: action hat optional .language; sonst Default "de".
+        # Audit F-AUDIT-3 (2026-04-29): filter action.text through
+        # scrub_for_voice before TTS synthesizes it. Defense-in-depth: workflow
+        # definitions could have brain-generated text as a speak action without
+        # the skill author explicitly calling the filter.
+        # Language: action has an optional .language; otherwise default "de".
         from jarvis.brain.output_filter import scrub_for_voice
         speak_lang = getattr(action, "language", None) or "de"
         scrubbed = scrub_for_voice(text, language=speak_lang)
@@ -340,7 +340,7 @@ class TaskRunner:
             )
         speak_text = scrubbed.cleaned
         if not speak_text.strip():
-            log.info("tasks.runner.speak: text leer nach filter — skip TTS")
+            log.info("tasks.runner.speak: text empty after filter — skipping TTS")
             seq = await self._store.append_step(
                 task_id, "log",
                 {"event": "tts_skipped", "reason": "scrub_empty"},
@@ -351,9 +351,9 @@ class TaskRunner:
             )
             return
 
-        # TTS liefert einen AsyncIterator von AudioChunks. Wir konsumieren
-        # den Stream, damit der Provider seine Pipeline komplett abfaehrt —
-        # Audio-Routing liegt ausserhalb des Runners.
+        # TTS returns an AsyncIterator of AudioChunks. We consume the stream
+        # so the provider fully drains its pipeline — audio routing is
+        # outside the runner's scope.
         chunk_count = 0
         async for _chunk in await _aiter_safe(self._tts.synthesize(speak_text)):
             self._check_cancel(cancel_token)
@@ -453,10 +453,10 @@ class TaskRunner:
         cancel_token: CancelToken | None,
     ) -> None:
         if self._executor is None or self._tools is None:
-            raise RuntimeError("ToolExecutor oder Tool-Registry nicht konfiguriert")
+            raise RuntimeError("ToolExecutor or tool registry not configured")
         tool = _lookup_tool(self._tools, action.tool_name)
         if tool is None:
-            raise KeyError(f"Tool '{action.tool_name}' nicht im Registry")
+            raise KeyError(f"Tool '{action.tool_name}' not found in registry")
 
         seq = await self._store.append_step(
             task_id, "action",
@@ -488,12 +488,12 @@ class TaskRunner:
         )
         if not success:
             raise RuntimeError(
-                f"Tool '{action.tool_name}' fehlgeschlagen: "
-                f"{getattr(result, 'error', 'unbekannt')}"
+                f"Tool '{action.tool_name}' failed: "
+                f"{getattr(result, 'error', 'unknown')}"
             )
 
     # ------------------------------------------------------------------
-    # Cancel-Check
+    # Cancel check
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -507,7 +507,7 @@ class TaskRunner:
 # ----------------------------------------------------------------------
 
 class _Cancelled(RuntimeError):
-    """Interner Sentinel fuer Cancel-Paths."""
+    """Internal sentinel for cancel paths."""
 
 
 class _SafeDict(dict):
@@ -545,8 +545,8 @@ def _safe_format(template: str, ctx: dict[str, Any]) -> str:
 
 
 def _lookup_tool(registry: Any, name: str) -> Any:
-    """Nimmt entweder dict-like (``__contains__``/``__getitem__``) oder
-    has-get Registries an.
+    """Accepts either a dict-like (``__contains__``/``__getitem__``) or a
+    has-get registry.
     """
     try:
         if name in registry:
@@ -560,12 +560,13 @@ def _lookup_tool(registry: Any, name: str) -> Any:
 
 
 async def _aiter_safe(maybe_coro: Any) -> Any:
-    """Nimmt entweder einen ``AsyncIterator`` oder eine Coroutine, die einen
-    zurueckgibt, und returnt den Iterator.
+    """Accepts either an ``AsyncIterator`` or a coroutine that returns one,
+    and returns the iterator.
 
-    Pattern ist noetig, weil manche Harness-/TTS-Implementations ``async
-    def dispatch(...) -> AsyncIterator`` deklarieren (Coroutine, die
-    Iterator liefert), andere direkt ``def dispatch(...) -> AsyncIterator``.
+    This pattern is needed because some harness/TTS implementations declare
+    ``async def dispatch(...) -> AsyncIterator`` (a coroutine that yields an
+    iterator), while others declare ``def dispatch(...) -> AsyncIterator``
+    directly.
     """
     import inspect
     if inspect.isawaitable(maybe_coro):

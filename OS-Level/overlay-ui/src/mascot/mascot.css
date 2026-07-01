@@ -1,9 +1,9 @@
 /* mascot.css — Plan §13.
  *
- * Body + Window sind transparent, Mascot fuellt das volle 160x160
- * Window. Rive-Canvas oder PNG-Fallback wird als 100%-Surface
- * eingespannt; CSS animiert nur einen leichten idle-Pulse fuer den
- * Fall dass weder Rive noch State-Animation greift.
+ * Body + window are transparent, the mascot fills the full 160x160
+ * window. The Rive canvas or PNG fallback is stretched to a 100%
+ * surface; CSS only animates a subtle idle pulse for the case where
+ * neither Rive nor a state animation applies.
  */
 
 html,
@@ -14,9 +14,9 @@ body {
   height: 100vh;
   background: transparent;
   overflow: hidden;
-  /* Plan §17: contain: strict am Mascot-Root. */
+  /* Plan §17: contain: strict on the mascot root. */
   contain: strict;
-  /* Mascot ist drag/right-click-empfindlich — pointer-events default. */
+  /* The mascot is drag/right-click-sensitive — pointer-events default. */
 }
 
 .mascot-host {
@@ -25,8 +25,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* Subtle idle-Pulse via opacity. Plan §13.1 sagt "gentle, not eye-
-   * catching". Transform-only animation = compositor-thread. */
+  /* Subtle idle pulse via opacity. Plan §13.1 says "gentle, not eye-
+   * catching". Transform-only animation = compositor thread. */
   animation: mascot-idle-pulse 8s ease-in-out infinite;
 }
 
@@ -34,8 +34,8 @@ body {
 #mascot-fallback {
   width: 100%;
   height: 100%;
-  /* Pixel-art bzw. PNG soll knack-scharf bleiben wenn der User
-   * eine andere Mascot-Groesse waehlt. */
+  /* Pixel art / PNG should stay crisp-sharp when the user
+   * picks a different mascot size. */
   image-rendering: pixelated;
   image-rendering: crisp-edges;
   user-select: none;
@@ -60,9 +60,9 @@ body {
   }
 }
 
-/* State-driven Tweaks — Plan §13.2 mappt OverlayState auf Rive-Inputs;
- * im Fallback machen wir einen statischen Tint via CSS-Filter so dass
- * der User zumindest die State-Aenderung subtil sieht. */
+/* State-driven tweaks — Plan §13.2 maps OverlayState onto Rive inputs;
+ * in the fallback we apply a static tint via CSS filter so the user
+ * at least sees the state change subtly. */
 :root[data-state="error"] .mascot-host {
   animation:
     mascot-idle-pulse 8s ease-in-out infinite,
@@ -95,7 +95,7 @@ body {
   }
 }
 
-/* prefers-reduced-motion: Mascot-Animationen pausieren, statisch. */
+/* prefers-reduced-motion: pause mascot animations, static. */
 @media (prefers-reduced-motion: reduce) {
   .mascot-host,
   .mascot-host * {

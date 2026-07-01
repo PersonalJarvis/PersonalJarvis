@@ -316,12 +316,12 @@
           <article class="step">
             <span class="number">1</span>
             <h2>Leiser Audio-Tail</h2>
-            <p>Nach dem Sprechen bleibt ein kurzer, leerer oder verrauschter Rest im Probe-Fenster.</p>
+            <p>After speaking, a short, silent, or noisy remainder stays in the probe window.</p>
           </article>
           <article class="step">
             <span class="number">2</span>
             <h2>Whisper halluziniert</h2>
-            <p>STT macht daraus einen bekannten Untertitel-Text, obwohl du ihn nicht gesagt hast.</p>
+            <p>STT turns it into a familiar subtitle text, even though you never said it.</p>
           </article>
           <article class="step bad">
             <span class="number">3</span>
@@ -331,20 +331,20 @@
           <article class="step bad">
             <span class="number">4</span>
             <h2>Bubble zeigt es</h2>
-            <p>Das Partial wurde als <strong>TranscriptionUpdate</strong> published und die Orb-UI hat es live angezeigt.</p>
+            <p>The partial was published as a <strong>TranscriptionUpdate</strong> and the Orb UI displayed it live.</p>
           </article>
         </div>
 
         <div class="code">
           <div class="bar">
-            <span>Vorher: Filter traf nicht</span>
+            <span>Before: filter did not match</span>
             <span>pipeline.py</span>
           </div>
           <pre>Input vom STT:
 <span class="miss">"Untertitelung des ZDF, 2020"</span>
 
 Alte Regex:
-"untertitel (von|der|im auftrag)"  -> kein Treffer
+"untertitel (von|der|im auftrag)"  -> no match  <!-- i18n-allow: literal regex pattern from the filter -->
 
 Folge:
 tail_is_empty = false
@@ -355,18 +355,18 @@ Orb-Bubble zeigt den falschen Text.</pre>
         <div class="fix">
           <div class="fix-box">
             <strong>Jetzt</strong>
-            <span class="hit">untertitelung des zdf</span> wird als STT-Halluzination erkannt.
+            <span class="hit">untertitelung des zdf</span> is recognized as an STT hallucination.
           </div>
           <div class="arrow">→</div>
           <div class="fix-box">
             <strong>Resultat</strong>
-            Kein Partial-Publish, kein finales Bubble-Leak, zurueck in Listening.
+            No partial publish, no final bubble leak, back to Listening.
           </div>
         </div>
       </div>
 
       <aside class="card orb-zone">
-        <p class="caption">So sah der sichtbare Fehler aus: Die Bubble hat nicht gelogen, sie hat nur ungefiltert angezeigt, was Whisper falsch erzeugt hat.</p>
+        <p class="caption">This is what the visible error looked like: the bubble did not lie, it just displayed unfiltered what Whisper had incorrectly generated.</p>
         <div class="bubble">
           Im Anhang habe ich den Tablet.
           <span class="ghost">Untertitelung des ZDF, 2020</span>

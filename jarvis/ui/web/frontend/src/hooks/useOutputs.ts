@@ -1,9 +1,9 @@
 /**
- * useOutputs — Stub nach Filesystem-Reset 2026-04-25.
+ * useOutputs — stub after the 2026-04-25 filesystem reset.
  *
- * Liefert die OutputSummary-Liste + Plan-Detail aus den FastAPI-Endpoints.
- * Voller Hook (mit Polling-Stop bei abgeschlossenem Run) folgt; aktuell
- * minimal aber funktional.
+ * Provides the OutputSummary list + plan detail from the FastAPI endpoints.
+ * The full hook (with polling stop on a completed run) is coming; for now
+ * this is minimal but functional.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 

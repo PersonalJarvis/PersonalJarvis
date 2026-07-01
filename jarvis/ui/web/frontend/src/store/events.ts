@@ -110,6 +110,14 @@ export interface Toast {
   kind: "info" | "success" | "warning" | "error";
   message: string;
   ts: number;
+  /**
+   * Absolute path of a file that was just saved to the user's Downloads. When
+   * set (desktop only), the toast renders "Show in folder" / "Open" actions and
+   * stays up longer so the user has time to click them. Empty in the browser/VPS.
+   */
+  filePath?: string;
+  /** Display name of the saved file (shown next to the actions). */
+  filename?: string;
 }
 
 export interface ChatMessage {
@@ -139,22 +147,22 @@ export interface ConversationSummary {
 export interface PendingTerminalCommand {
   command: string;
   shell: string;
-  label: string;          // z.B. "Install GitHub CLI" — wird im Terminal als Banner gerendert
+  label: string;          // e.g. "Install GitHub CLI" — rendered as a banner in the terminal
 }
 
 /**
- * Begleit-Overlay zur Terminal-Session bei CLI-Connect-Flows.
+ * Companion overlay to the terminal session during CLI-connect flows.
  *
- * Unabhaengig vom pendingTerminalCommand, weil der Coach waehrend der ganzen
- * Login-Dauer aktiv bleibt (Command wird ja nur einmal injiziert, Coach aber
- * pollt bis auth.status == "connected").
+ * Independent of pendingTerminalCommand, because the coach stays active for
+ * the entire login duration (the command is only injected once, but the coach
+ * polls until auth.status == "connected").
  */
 export interface CliConnectCoach {
-  cliName: string;                    // API-Name, fuer Polling: /api/clis/{cliName}/check
-  displayName: string;                // z.B. "GitHub CLI"
+  cliName: string;                    // API name, for polling: /api/clis/{cliName}/check
+  displayName: string;                // e.g. "GitHub CLI"
   authMode: "oauth_cli" | "api_key" | "config_file" | "none";
-  loginCommand: string;               // shell-ready, z.B. "gh auth login"
-  statusCommand: string | null;       // z.B. "gh auth status" — optional fuer manuellen Recheck
+  loginCommand: string;               // shell-ready, e.g. "gh auth login"
+  statusCommand: string | null;       // e.g. "gh auth status" — optional, for a manual recheck
 }
 
 interface EventStore {
@@ -182,10 +190,10 @@ interface EventStore {
   conversations: ConversationSummary[];
   activeThreadId: string | null;
   activeKind: ConversationKind;
-  // Optimistischer Thinking-Indikator fuer den Text-Chat: ChatInput.send()
-  // setzt true, eintreffender Assistant-Reply (oder ErrorOccurred aus brain-Layer
-  // bzw. 60s-Timeout) setzt zurueck. Bewusst getrennt vom globalen voiceState,
-  // weil der auch durch Voice-Pipeline-Turns gesetzt wird (kein Text-Chat-Wait).
+  // Optimistic thinking indicator for the text chat: ChatInput.send()
+  // sets it true; an incoming assistant reply (or ErrorOccurred from the brain layer,
+  // or a 60s timeout) resets it. Deliberately separate from the global voiceState,
+  // because that is also set by voice-pipeline turns (not a text-chat wait).
   chatThinking: boolean;
   // Live reasoning trace rendered inside the ThinkingTrace card. Steps are
   // ingested from WS events ONLY while chatThinking is true (voice turns in
@@ -221,10 +229,10 @@ interface EventStore {
   dictationCommitText: string;
   pendingTerminalCommand: PendingTerminalCommand | null;
   cliConnectCoach: CliConnectCoach | null;
-  // Wenn der User aus ClisView heraus eine CLI installieren laesst (Klick
-  // "Im Terminal installieren"), setzen wir hier den Namen — das TerminalView
-  // erkennt nach exit_code=0, dass es einen Install verifizieren soll
-  // (POST /check + Toast). One-shot: nach Verify wieder auf null.
+  // When the user installs a CLI from within ClisView (clicking
+  // "Install in terminal"), we set the name here — TerminalView
+  // detects after exit_code=0 that it should verify an install
+  // (POST /check + toast). One-shot: reset to null after verify.
   pendingInstallCliName: string | null;
   pushEvent: (e: EventItem) => void;
   setVoice: (v: VoiceState) => void;
@@ -234,7 +242,11 @@ interface EventStore {
   clearEvents: () => void;
   setActiveSection: (s: SectionId) => void;
   setTranscription: (text: string, isFinal: boolean) => void;
-  pushToast: (kind: Toast["kind"], message: string) => void;
+  pushToast: (
+    kind: Toast["kind"],
+    message: string,
+    opts?: { filePath?: string; filename?: string },
+  ) => void;
   dismissToast: (id: string) => void;
   pushMessage: (m: ChatMessage) => void;
   setMessages: (m: ChatMessage[]) => void;
@@ -262,6 +274,9 @@ interface EventStore {
 const MAX_EVENTS = 500;
 const MAX_MESSAGES = 200;
 const TOAST_TTL_MS = 3500;
+// A file toast carries "Show in folder" / "Open" actions the user must have time
+// to aim at and click — keep it up noticeably longer than a plain notification.
+const TOAST_FILE_TTL_MS = 12000;
 // Finished reasoning traces are per-message UI sugar, not history — cap the
 // map so a long session cannot grow it unbounded (insertion order = age).
 const MAX_TRACES = 24;
@@ -312,12 +327,19 @@ export const useEventStore = create<EventStore>((set, get) => ({
   setTranscription: (text, isFinal) =>
     set({ transcription: text, transcriptionFinal: isFinal }),
 
-  pushToast: (kind, message) => {
+  pushToast: (kind, message, opts) => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const filePath = opts?.filePath;
     set((state) => ({
-      toasts: [...state.toasts, { id, kind, message, ts: Date.now() }],
+      toasts: [
+        ...state.toasts,
+        { id, kind, message, ts: Date.now(), filePath, filename: opts?.filename },
+      ],
     }));
-    setTimeout(() => get().dismissToast(id), TOAST_TTL_MS);
+    setTimeout(
+      () => get().dismissToast(id),
+      filePath ? TOAST_FILE_TTL_MS : TOAST_TTL_MS,
+    );
   },
 
   dismissToast: (id) =>

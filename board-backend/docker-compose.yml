@@ -1,11 +1,11 @@
-# Lokales Compose-File fuer das Board-Backend.
+# Local compose file for the board backend.
 #
 # Start:
-#   cp .env.example .env       # ADMIN_TOKEN setzen!
+#   cp .env.example .env       # set ADMIN_TOKEN!
 #   docker compose up -d --build
 #   curl http://localhost:8765/healthz
 #
-# Multi-Arch-Build (amd64 + arm64):
+# Multi-arch build (amd64 + arm64):
 #   docker buildx build --platform linux/amd64,linux/arm64 \
 #       -t jarvis-board-backend:0.1.0 . --push
 
@@ -18,7 +18,7 @@ services:
     container_name: jarvis-board-backend
     restart: unless-stopped
     environment:
-      JARVIS_BOARD_ADMIN_TOKEN: ${JARVIS_BOARD_ADMIN_TOKEN:?ADMIN_TOKEN ist nicht gesetzt — siehe .env.example}
+      JARVIS_BOARD_ADMIN_TOKEN: ${JARVIS_BOARD_ADMIN_TOKEN:?ADMIN_TOKEN is not set — see .env.example}
       JARVIS_BOARD_DB_PATH: /data/board.db
       JARVIS_BOARD_REGISTER_RATE_LIMIT_PER_MINUTE: ${JARVIS_BOARD_RATE_LIMIT:-10}
       JARVIS_BOARD_REPLAY_WINDOW_SECONDS: ${JARVIS_BOARD_REPLAY_WINDOW:-300}

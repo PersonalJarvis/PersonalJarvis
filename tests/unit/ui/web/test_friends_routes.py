@@ -1,6 +1,6 @@
 # === F-FRIENDS [F3] · feature/friends-section · alex-2026-05-01 ===
 # === F-FRIENDS [F2] · feature/friends-section · alex-2026-04-30 ===
-"""REST-Route-Tests fuer die Phase-F2 Friends-API."""
+"""REST route tests for the Phase-F2 Friends API."""
 from __future__ import annotations
 
 from typing import Any
@@ -240,7 +240,7 @@ def test_send_message_without_channel_400(app_with_registry: FastAPI) -> None:
 
 
 def test_send_message_pubkey_persists_outbound(app_with_registry: FastAPI) -> None:
-    """F3: jarvis_pubkey-Branch ist nicht mehr 501 — Outbound landet in der DB."""
+    """F3: the jarvis_pubkey branch is no longer 501 — outbound lands in the DB."""
     with TestClient(app_with_registry) as client:
         r = client.post("/api/friends", json={"display_name": "JarvisFriend"})
         fid = r.json()["id"]
@@ -258,7 +258,7 @@ def test_send_message_pubkey_persists_outbound(app_with_registry: FastAPI) -> No
 
 
 def test_list_messages_after_send_returns_items(app_with_registry: FastAPI) -> None:
-    """GET /messages liest die per POST persistierten Outbound-Items zurueck."""
+    """GET /messages reads back the outbound items persisted via POST."""
     with TestClient(app_with_registry) as client:
         r = client.post("/api/friends", json={"display_name": "JarvisFriend"})
         fid = r.json()["id"]
@@ -332,7 +332,7 @@ def test_send_message_telegram_routes_via_manager(
 
 
 def test_send_telegram_persists_outbound(app_with_registry: FastAPI) -> None:
-    """F3: Telegram-Send muss zusaetzlich ein Outbound-Echo in der DB anlegen."""
+    """F3: Telegram send must additionally create an outbound echo in the DB."""
     from unittest.mock import AsyncMock
 
     fake_telegram = AsyncMock()

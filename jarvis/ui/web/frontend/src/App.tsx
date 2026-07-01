@@ -39,8 +39,8 @@ export default function App() {
       {/* Always-present "Jarvis presence" drop dock — drag a mission/output
           card here to pull it into the live conversation context. */}
       <JarvisDock />
-      {/* Hintergrund-Polling fuer CLI-OAuth-Logins — pollt /check alle 3s
-          solange ein cliConnectCoach im Store gesetzt ist. */}
+      {/* Background polling for CLI OAuth logins — polls /check every 3s
+          as long as a cliConnectCoach is set in the store. */}
       <CliConnectPoller />
       {/* Blocking onboarding gate — overlays everything until first-run setup is complete. */}
       <OnboardingGate />

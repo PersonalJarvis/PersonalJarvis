@@ -1,4 +1,4 @@
-"""Tests fuer State-Machine-Tabelle (legal vs. illegal Transitions)."""
+"""Tests for the state-machine table (legal vs. illegal transitions)."""
 from __future__ import annotations
 
 import pytest
@@ -12,11 +12,11 @@ from jarvis.missions.state_machine import (
     transition,
 )
 
-# --- Happy-Path-Sequenz ---
+# --- Happy-path sequence ---
 
 
 def test_happy_path_pending_to_approved() -> None:
-    """PENDING -> RUNNING -> CRITIQUING -> APPROVED ist die Erfolgs-Kette."""
+    """PENDING -> RUNNING -> CRITIQUING -> APPROVED is the success chain."""
     assert transition(MissionState.PENDING, MissionState.RUNNING)
     assert transition(MissionState.RUNNING, MissionState.CRITIQUING)
     assert transition(MissionState.CRITIQUING, MissionState.APPROVED)
@@ -99,13 +99,13 @@ def test_timeout_from_active_states(from_state: MissionState) -> None:
         # path and was moved out of this illegal-list. Phase-6
         # worker-critic missions still walk via CRITIQUING, but the
         # edge itself is whitelisted globally.
-        # Aus Endzustand heraus
+        # Out of a terminal state
         (MissionState.APPROVED, MissionState.RUNNING),
         (MissionState.APPROVED, MissionState.FAILED),
         (MissionState.FAILED, MissionState.RUNNING),
         (MissionState.CANCELLED, MissionState.RUNNING),
         (MissionState.TIMED_OUT, MissionState.RUNNING),
-        # Self-Loop ist nicht erlaubt
+        # Self-loop is not allowed
         (MissionState.RUNNING, MissionState.RUNNING),
         (MissionState.PENDING, MissionState.PENDING),
     ],
@@ -117,7 +117,7 @@ def test_illegal_transitions_raise(
         transition(from_state, to_state)
 
 
-# --- Endzustands-Klassifikation ---
+# --- Terminal-state classification ---
 
 
 @pytest.mark.parametrize(
@@ -137,21 +137,21 @@ def test_is_terminal(state: MissionState, expected: bool) -> None:
     assert is_terminal(state) is expected
 
 
-# --- Konsistenz: aus Endzustaenden gibt es keine ALLOWED-Transition ---
+# --- Consistency: no ALLOWED transition out of terminal states ---
 
 
 def test_no_outgoing_transitions_from_terminal_states() -> None:
     terminals = [s for s in MissionState if is_terminal(s)]
     for term in terminals:
         outgoing = [pair for pair in ALLOWED_TRANSITIONS if pair[0] == term]
-        assert outgoing == [], f"Endzustand {term} hat ausgehende Transitions: {outgoing}"
+        assert outgoing == [], f"terminal state {term} has outgoing transitions: {outgoing}"
 
 
-# --- Konsistenz: keine Phase-5-Naming-Kollision (BudgetWarning bleibt frei) ---
+# --- Consistency: no Phase-5 naming collision (BudgetWarning stays free) ---
 
 
 def test_no_phase5_budget_warning_collision() -> None:
-    """Sicherstellen dass jarvis/core/events.py:BudgetWarning unangetastet ist."""
+    """Ensure jarvis/core/events.py:BudgetWarning stays untouched."""
     from jarvis.core.events import BudgetWarning  # Phase-5-Event
     from jarvis.missions.events import MissionBudgetWarning  # Phase-6
 

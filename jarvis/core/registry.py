@@ -1,11 +1,11 @@
-﻿"""Plugin-Discovery via entry_points.
+﻿"""Plugin discovery via entry_points.
 
-Alle Plugin-Slots sind in pyproject.toml unter [project.entry-points."jarvis.*"]
-deklariert. Dieses Modul listet sie zur Laufzeit auf, lädt sie lazy und prüft
-gegen das passende Protocol.
+All plugin slots are declared in pyproject.toml under
+[project.entry-points."jarvis.*"]. This module lists them at runtime, loads
+them lazily, and checks them against the matching Protocol.
 
-Wichtig: `load()` importiert erst beim tatsächlichen Aufruf — das erlaubt
-optionale Dependencies (z.B. Porcupine lädt nur wenn der User es nutzen will).
+Important: `load()` only imports on actual invocation — this allows optional
+dependencies (e.g. Porcupine only loads when the user wants to use it).
 """
 from __future__ import annotations
 
@@ -16,45 +16,45 @@ from .protocols import PLUGIN_GROUPS
 
 
 class PluginNotFoundError(KeyError):
-    """Plugin mit dem Namen existiert nicht im entry_points-Katalog."""
+    """No plugin with this name exists in the entry_points catalogue."""
 
 
 class PluginLoadError(RuntimeError):
-    """Plugin konnte nicht importiert werden (fehlende Dep, Syntax-Fehler …)."""
+    """Plugin could not be imported (missing dependency, syntax error …)."""
 
 
 class PluginContractError(TypeError):
-    """Plugin implementiert das erwartete Protocol nicht strukturell."""
+    """Plugin does not structurally implement the expected Protocol."""
 
 
 def list_plugins(group: str) -> list[str]:
-    """Liste aller verfügbaren Plugin-Namen in einer Gruppe.
+    """Lists all available plugin names in a group.
 
     Args:
-        group: z.B. "jarvis.brain", "jarvis.stt", siehe PLUGIN_GROUPS.
+        group: e.g. "jarvis.brain", "jarvis.stt", see PLUGIN_GROUPS.
     """
     if group not in PLUGIN_GROUPS:
-        raise ValueError(f"Unknown plugin group: {group}. Erlaubt: {PLUGIN_GROUPS}")
+        raise ValueError(f"Unknown plugin group: {group}. Allowed: {PLUGIN_GROUPS}")
     eps = metadata.entry_points(group=group)
     return sorted(ep.name for ep in eps)
 
 
 def list_all_plugins() -> dict[str, list[str]]:
-    """Alle Plugins gruppiert nach Typ."""
+    """All plugins grouped by type."""
     return {g: list_plugins(g) for g in PLUGIN_GROUPS}
 
 
 def load(group: str, name: str, protocol: type[Protocol] | None = None) -> type[Any]:
-    """Lädt eine Plugin-Klasse anhand ihres Namens.
+    """Loads a plugin class by its name.
 
     Args:
-        group: Plugin-Gruppe (z.B. "jarvis.brain").
-        name: Entry-Point-Name (z.B. "claude-api").
-        protocol: Optional — prüft strukturell via isinstance-check bei Instanzen.
+        group: Plugin group (e.g. "jarvis.brain").
+        name: Entry-point name (e.g. "claude-api").
+        protocol: Optional — checks structurally via an isinstance check on instances.
 
     Returns:
-        Die Plugin-Klasse (nicht die Instanz). Aufrufer muss selbst instanziieren
-        mit den passenden Constructor-Argumenten.
+        The plugin class (not the instance). The caller must instantiate it
+        itself with the matching constructor arguments.
 
     Raises:
         PluginNotFoundError, PluginLoadError, PluginContractError.
@@ -67,8 +67,8 @@ def load(group: str, name: str, protocol: type[Protocol] | None = None) -> type[
     if not candidates:
         available = sorted(ep.name for ep in eps)
         raise PluginNotFoundError(
-            f"Plugin '{name}' in Gruppe '{group}' nicht gefunden. "
-            f"Verfügbar: {available}"
+            f"Plugin '{name}' not found in group '{group}'. "
+            f"Available: {available}"
         )
 
     ep = candidates[0]
@@ -76,32 +76,32 @@ def load(group: str, name: str, protocol: type[Protocol] | None = None) -> type[
         plugin_cls = ep.load()
     except ImportError as exc:
         raise PluginLoadError(
-            f"Plugin '{name}' konnte nicht importiert werden. "
-            f"Fehlt eine Dependency? Original-Fehler: {exc}"
+            f"Plugin '{name}' could not be imported. "
+            f"Missing a dependency? Original error: {exc}"
         ) from exc
     except Exception as exc:  # noqa: BLE001
-        raise PluginLoadError(f"Plugin '{name}' Load fehlgeschlagen: {exc}") from exc
+        raise PluginLoadError(f"Plugin '{name}' load failed: {exc}") from exc
 
-    # Protocol-Check ist strukturell (Python prüft Attribute + Method-Signaturen
-    # beim ersten isinstance-Aufruf auf einer Instanz — nicht auf der Klasse).
-    # Wir können hier höchstens sicherstellen, dass es eine Klasse ist.
+    # Protocol check is structural (Python checks attributes + method
+    # signatures on the first isinstance call on an instance — not on the
+    # class). Here we can at most ensure that it is a class.
     if not isinstance(plugin_cls, type):
         raise PluginContractError(
-            f"Plugin '{name}' ist keine Klasse sondern {type(plugin_cls)}"
+            f"Plugin '{name}' is not a class but {type(plugin_cls)}"
         )
 
-    _ = protocol  # Documentation-Intent; Verifikation erfolgt auf Instanz-Ebene
+    _ = protocol  # Documentation-intent; verification happens at the instance level
     return plugin_cls
 
 
 def describe() -> str:
-    """Lesbare Übersicht aller installierten Plugins — für CLI/Admin-UI."""
+    """Human-readable overview of all installed plugins — for CLI/admin UI."""
     lines: list[str] = ["Jarvis Plugin Registry", "=" * 30, ""]
     for group in PLUGIN_GROUPS:
         plugins = list_plugins(group)
         lines.append(f"[{group}]")
         if not plugins:
-            lines.append("  (keine)")
+            lines.append("  (none)")
         else:
             for p in plugins:
                 lines.append(f"  - {p}")

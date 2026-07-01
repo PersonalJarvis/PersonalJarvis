@@ -1,12 +1,12 @@
-"""Tests für die Self-Mod-Brain-Tools (Phase 7.3).
+"""Tests for the self-mod brain tools (Phase 7.3).
 
-Plan-Akzeptanzkriterien §7.3:
-- Tool-Calls funktionieren via Hauptjarvis-Brain-Manager (Adapter testbar
-  ohne LLM-Roundtrip — Defense-in-Depth gegen "trust the model output").
-- `set_config_value` legt Pending an, schreibt nicht.
-- SAFE-Tier wird automatisch konfirmiert ohne User-Interaktion.
-- Pending läuft nach 5min ab.
-- `get_config_value` für `security.admin_password_hash` wirft Forbidden.
+Plan acceptance criteria §7.3:
+- Tool calls work via the Hauptjarvis brain manager (adapter testable
+  without an LLM round-trip — defense-in-depth against "trust the model output").
+- `set_config_value` creates a pending mutation, does not write.
+- SAFE tier is auto-confirmed without user interaction.
+- A pending mutation expires after 5min.
+- `get_config_value` for `security.admin_password_hash` raises Forbidden.
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ FIXTURE = (
 
 
 # ----------------------------------------------------------------------
-# Test-Fixtures
+# Test fixtures
 # ----------------------------------------------------------------------
 
 
@@ -106,7 +106,7 @@ def _read_audit(audit: SelfModAudit) -> list[dict]:
 
 
 def _make_ctx() -> ExecutionContext:
-    """Minimaler ExecutionContext-Stub — die Tools nutzen ihn nicht."""
+    """Minimal ExecutionContext stub — the tools don't use it."""
     from uuid import uuid4
 
     return ExecutionContext(
@@ -123,7 +123,7 @@ def _exec(tool: Any, args: dict[str, Any]) -> ToolResult:
 
 
 # ----------------------------------------------------------------------
-# Schema-Inspektion (Plan-§AD-9)
+# Schema inspection (Plan-§AD-9)
 # ----------------------------------------------------------------------
 
 
@@ -134,7 +134,7 @@ class TestSchemaCompliance:
     )
     def test_strict_mode_enabled(self, tool_cls: type) -> None:
         assert tool_cls.schema.get("strict") is True, (
-            f"{tool_cls.__name__} muss strict-Mode aktiviert haben"
+            f"{tool_cls.__name__} must have strict mode enabled"
         )
 
     @pytest.mark.parametrize(
@@ -143,7 +143,7 @@ class TestSchemaCompliance:
     )
     def test_no_additional_properties(self, tool_cls: type) -> None:
         assert tool_cls.schema.get("additionalProperties") is False, (
-            f"{tool_cls.__name__} muss additionalProperties=false setzen"
+            f"{tool_cls.__name__} must set additionalProperties=false"
         )
 
     @pytest.mark.parametrize(
@@ -151,7 +151,7 @@ class TestSchemaCompliance:
         [ListMutableSettingsTool, GetConfigValueTool, SetConfigValueTool],
     )
     def test_all_properties_required(self, tool_cls: type) -> None:
-        """Strict-Mode-Anforderung: alle Properties müssen in `required`."""
+        """Strict-mode requirement: all properties must be in `required`."""
         properties = tool_cls.schema.get("properties", {})
         required = set(tool_cls.schema.get("required", []))
         property_names = set(properties.keys())
@@ -172,7 +172,7 @@ class TestSchemaCompliance:
     ) -> None:
         examples = tool_cls.schema.get("input_examples", [])
         assert len(examples) >= min_examples, (
-            f"{tool_cls.__name__}: nur {len(examples)} input_examples (Plan: ≥{min_examples})"
+            f"{tool_cls.__name__}: only {len(examples)} input_examples (Plan: ≥{min_examples})"
         )
 
     def test_self_mod_tool_names_constant(self) -> None:
@@ -219,15 +219,15 @@ class TestListMutableSettings:
     def test_current_values_match_fixture(self, tools: dict[str, Any]) -> None:
         result = _exec(tools["list_mutable_settings"], {})
         by_path = {entry["path"]: entry for entry in result.output}
-        # Aus minimal_jarvis.toml:
+        # From minimal_jarvis.toml:
         assert by_path["tts.provider"]["current_value"] == "gemini-flash-tts"
         assert by_path["tts.speed"]["current_value"] == 1.0
         assert by_path["profile.language"]["current_value"] == "de"
 
     def test_redacts_sensitive_paths_if_present(self) -> None:
-        """Defense-in-Depth: selbst wenn ein Forbidden-Pfad versehentlich
-        in ALLOWED landen würde, würde der current_value im Output redacted."""
-        # Synthetischer Test — direkte _maybe_redact-Funktion:
+        """Defense-in-depth: even if a forbidden path accidentally
+        ended up in ALLOWED, the current_value in the output would still be redacted."""
+        # Synthetic test — direct _maybe_redact function call:
         from jarvis.brain.tools.self_mod_tools import _maybe_redact
 
         assert _maybe_redact("tts.provider", "elevenlabs") == "elevenlabs"
@@ -301,8 +301,8 @@ class TestGetConfigValue:
         assert result.output["value"] is None
 
     def test_security_path_returns_forbidden(self, tools: dict[str, Any]) -> None:
-        """Plan-§7.3-AC: get_config_value für security.admin_password_hash
-        wirft Forbidden."""
+        """Plan-§7.3-AC: get_config_value for security.admin_password_hash
+        raises Forbidden."""
         result = _exec(
             tools["get_config_value"],
             {"path": "security.admin_password_hash"},
@@ -343,7 +343,7 @@ class TestSetConfigValue:
         fixture_path: Path,
         audit_log: SelfModAudit,
     ) -> None:
-        """Plan-§7.3-AC: SAFE-Tier wird automatisch konfirmiert."""
+        """Plan-§7.3-AC: SAFE tier is auto-confirmed."""
         result = _exec(
             tools["set_config_value"],
             {"path": "tts.speed", "new_value": 1.25, "reason": "test"},
@@ -354,9 +354,9 @@ class TestSetConfigValue:
         assert out["risk_tier"] == "safe"
         assert out["applied"] is True
         assert out["backup_path"] is not None
-        # File wurde wirklich geschrieben
+        # File was actually written
         assert _isolated_loader(fixture_path).tts.speed == 1.25
-        # Audit-Eintrag vom Writer
+        # Audit entry from the writer
         entries = _read_audit(audit_log)
         assert len(entries) == 1
         assert entries[0]["ok"] is True
@@ -367,7 +367,7 @@ class TestSetConfigValue:
         fixture_path: Path,
         pending_store: PendingMutationStore,
     ) -> None:
-        """Plan-§7.3-AC: ASK-Tier legt Pending an, schreibt nicht."""
+        """Plan-§7.3-AC: ASK tier creates a pending mutation, does not write."""
         original_bytes = fixture_path.read_bytes()
         result = _exec(
             tools["set_config_value"],
@@ -383,9 +383,9 @@ class TestSetConfigValue:
         assert out["risk_tier"] == "ask"
         assert out["applied"] is False
         assert out["backup_path"] is None
-        # File unverändert
+        # File unchanged
         assert fixture_path.read_bytes() == original_bytes
-        # Pending im Store
+        # Pending mutation in the store
         assert len(pending_store) == 1
 
     def test_ask_tier_pending_id_is_uuid(self, tools: dict[str, Any]) -> None:
@@ -395,7 +395,7 @@ class TestSetConfigValue:
             tools["set_config_value"],
             {"path": "tts.provider", "new_value": "elevenlabs", "reason": ""},
         )
-        UUID(result.output["id"])  # darf nicht werfen
+        UUID(result.output["id"])  # must not raise
 
     def test_unknown_path_returns_path_not_allowed(
         self, tools: dict[str, Any]
@@ -424,26 +424,26 @@ class TestSetConfigValue:
     def test_safe_tier_pre_validate_failure(
         self, tools: dict[str, Any], fixture_path: Path
     ) -> None:
-        """Auto-Confirm + invalider Wert → Pre-Validate scheitert,
-        Tool gibt validate_failed zurück."""
-        # tts.speed ist SAFE, also auto-confirm. Float-Coercion fail mit non-numeric string.
-        # Aber Pydantic akzeptiert "1.25" → 1.25. Wir nutzen tts.provider als
-        # ASK-Tier-Beispiel, geht via SAFE/Auto-Pfad nicht.
-        # Stattdessen: tts.speed mit list-Wert (nicht durch Schema-Re-Validate
-        # gefangen, weil dict/list explizit ausgeschlossen). Wir nutzen
-        # einen Pfad-Test mit invalidem Bool-Wert für tts.provider (str-Field).
-        # Da provider ASK ist, gibt es kein Auto-Confirm — also auch kein
-        # Pre-Validate. → Test entfernt; siehe TestSetConfigValuePreValidate.
+        """Auto-confirm + an invalid value → pre-validate fails,
+        the tool returns validate_failed."""
+        # tts.speed is SAFE, so auto-confirm. Float coercion fails with a non-numeric string.
+        # But Pydantic accepts "1.25" → 1.25. We use tts.provider as an
+        # ASK-tier example, which doesn't go through the SAFE/auto path.
+        # Instead: tts.speed with a list value (not caught by schema
+        # re-validate, since dict/list are explicitly excluded). We use
+        # a path test with an invalid bool value for tts.provider (str field).
+        # Since provider is ASK, there is no auto-confirm — so also no
+        # pre-validate. → Test removed; see TestSetConfigValuePreValidate.
         original = fixture_path.read_bytes()
-        # Sanity: Test-Fixture intakt
+        # Sanity: test fixture intact
         assert original
 
     def test_invalid_new_value_type_rejected_by_handler(
         self, tools: dict[str, Any]
     ) -> None:
-        """Defense-in-Depth-Schema-Re-Validate (kein Vertrauen in Modell-Output)."""
-        # JSON-Schema akzeptiert strict nur primitive Types, aber das Modell könnte
-        # versuchen, ein dict zu schicken.
+        """Defense-in-depth schema re-validate (no trust in model output)."""
+        # JSON schema strict only accepts primitive types, but the model could
+        # try to send a dict.
         result = _exec(
             tools["set_config_value"],
             {"path": "tts.provider", "new_value": {"a": 1}, "reason": ""},
@@ -460,7 +460,7 @@ class TestSetConfigValue:
 
 
 # ----------------------------------------------------------------------
-# SAFE-Tier-Pre-Validate-Failure (echter PreValidateError-Pfad)
+# SAFE-tier pre-validate failure (real PreValidateError path)
 # ----------------------------------------------------------------------
 
 
@@ -468,16 +468,16 @@ class TestSetConfigValuePreValidate:
     def test_safe_tier_pre_validate_failure_returns_validate_failed(
         self, tools: dict[str, Any], fixture_path: Path
     ) -> None:
-        """SAFE-Tier mit Wert, der Pydantic-Coercion sprengt.
+        """SAFE tier with a value that blows up Pydantic coercion.
 
-        `tts.speed` ist `float`. Wir senden eine Boolean — Pydantic v2
-        akzeptiert bool als float-Coerce nicht in strict-Mode-Kontext, aber
-        Default ist lax. Bessere Strategie: extreme NaN-Werte gehen durch,
-        aber ein fixer Schema-Mismatch via Strict-Mode lässt sich provozieren.
+        `tts.speed` is `float`. We send a boolean — Pydantic v2 does not
+        accept bool as a float coerce in strict-mode context, but the
+        default is lax. Better strategy: extreme NaN values pass through,
+        but a fixed schema mismatch can be provoked via strict mode.
         """
-        # Pydantic akzeptiert bool→float (`True` → 1.0). Wir gehen einen
-        # anderen Weg: ein Tool-Setup mit forciertem Pre-Validate-Failure
-        # via patched JarvisConfig-Loader.
+        # Pydantic accepts bool→float (`True` → 1.0). We take a
+        # different route: a tool setup with a forced pre-validate failure
+        # via a patched JarvisConfig loader.
         from unittest.mock import patch
 
         from jarvis.core.self_mod import schema as sm_schema  # noqa: F401
@@ -492,7 +492,7 @@ class TestSetConfigValuePreValidate:
             )
         assert result.success is False
         assert "validate_failed" in result.error
-        # File NICHT geschrieben
+        # File NOT written
         assert _isolated_loader(fixture_path).tts.speed == 1.0
 
 
@@ -516,7 +516,7 @@ class TestPendingStoreLifecycle:
         mutation_result = pending_store.confirm(pending_id)
         assert mutation_result.ok is True
         assert _isolated_loader(fixture_path).tts.provider == "elevenlabs"
-        # Pending wurde konsumiert
+        # Pending mutation was consumed
         assert pending_store.get(pending_id) is None
 
     def test_reject_does_not_persist(
@@ -535,7 +535,7 @@ class TestPendingStoreLifecycle:
         pending_store.reject(pending_id)
         assert fixture_path.read_bytes() == original_bytes
         assert pending_store.get(pending_id) is None
-        # Audit-Eintrag mit error="rejected_by_user"
+        # Audit entry with error="rejected_by_user"
         entries = _read_audit(audit_log)
         rejected = [e for e in entries if e.get("error") == "rejected_by_user"]
         assert len(rejected) == 1
@@ -544,9 +544,9 @@ class TestPendingStoreLifecycle:
         self,
         writer: AtomicConfigWriter,
     ) -> None:
-        """Plan-§7.3-AC: Pending läuft nach 5min ab.
+        """Plan-§7.3-AC: pending mutation expires after 5min.
 
-        Wir setzen TTL klein und triggern cleanup.
+        We set the TTL small and trigger cleanup.
         """
         from jarvis.core.self_mod import MutationRequest
 
@@ -581,44 +581,44 @@ class TestPendingStoreLifecycle:
         )
         pending_id = __import__("uuid").UUID(result.output["id"])
         pending_store.reject(pending_id)
-        # Nochmal — darf nicht crashen
+        # Again — must not crash
         pending_store.reject(pending_id)
 
 
 # ----------------------------------------------------------------------
-# Tool-Sichtbarkeit (Plan-§AD-2)
+# Tool visibility (Plan-§AD-2)
 # ----------------------------------------------------------------------
 
 
 class TestToolVisibility:
     def test_self_mod_tools_only_in_router_loader(self) -> None:
-        """Plan-§AD-2: Self-Mod-Tools sind ausschliesslich im Router-Tier verdrahtet.
+        """Plan-§AD-2: self-mod tools are wired exclusively in the router tier.
 
-        Welle-4-Migration: vorher pruefte der Test ``SUB_TOOLS`` (Sub-Jarvis-
-        Tier-Tool-Set). Sub-Jarvis-Tier wurde durch die OpenClaw-Bridge
-        ersetzt (siehe docs/openclaw-bridge.md §11) — ``SUB_TOOLS`` ist
-        geloescht. Self-Mod-Tools werden jetzt im Router-Loader direkt
-        registriert (``factory.py:_load_tools_for_tier`` mit ``tier="router"``)
-        und der OpenClaw-Worker hat keinen Zugriff auf das Tool-Set des
-        Routers (Subprocess-Boundary).
+        Wave-4 migration: previously the test checked ``SUB_TOOLS`` (the
+        sub-Jarvis-tier tool set). The sub-Jarvis tier was replaced by the
+        OpenClaw bridge (see docs/openclaw-bridge.md §11) — ``SUB_TOOLS``
+        has been deleted. Self-mod tools are now registered directly in the
+        router loader (``factory.py:_load_tools_for_tier`` with
+        ``tier="router"``), and the OpenClaw worker has no access to the
+        router's tool set (subprocess boundary).
         """
         from jarvis.brain.factory import ROUTER_TOOLS, SELF_MOD_TOOL_NAMES_ROUTER
 
-        # Self-Mod-Tools sind explizit AUSSERHALB des entry_points-Sets,
-        # weshalb sie NICHT in ROUTER_TOOLS stehen — sie kommen ueber den
-        # separaten ``build_self_mod_tools()``-Pfad rein.
+        # Self-mod tools are explicitly OUTSIDE the entry_points set,
+        # which is why they are NOT in ROUTER_TOOLS — they come in via the
+        # separate ``build_self_mod_tools()`` path.
         for tool_name in SELF_MOD_TOOL_NAMES:
             assert tool_name not in ROUTER_TOOLS, (
-                f"Self-Mod-Tool '{tool_name}' darf NICHT in ROUTER_TOOLS sein — "
-                f"sie werden separat ueber build_self_mod_tools() injected."
+                f"Self-mod tool '{tool_name}' must NOT be in ROUTER_TOOLS — "
+                f"it is injected separately via build_self_mod_tools()."
             )
             assert tool_name in SELF_MOD_TOOL_NAMES_ROUTER, (
-                f"Self-Mod-Tool '{tool_name}' fehlt in SELF_MOD_TOOL_NAMES_ROUTER"
+                f"Self-mod tool '{tool_name}' is missing from SELF_MOD_TOOL_NAMES_ROUTER"
             )
 
 
 # ----------------------------------------------------------------------
-# build_self_mod_tools-Factory
+# build_self_mod_tools factory
 # ----------------------------------------------------------------------
 
 
@@ -643,7 +643,7 @@ class TestFactory:
             },
         )
         assert len(tools) == 3
-        # Smoke: list_mutable_settings funktioniert
+        # Smoke test: list_mutable_settings works
         result = _exec(tools["list_mutable_settings"], {})
         assert result.success is True
 
@@ -685,7 +685,7 @@ class TestFactory:
 
 
 # ----------------------------------------------------------------------
-# PendingMutation-Schema
+# PendingMutation schema
 # ----------------------------------------------------------------------
 
 
@@ -697,7 +697,7 @@ class TestPendingMutationSchema:
             tools["set_config_value"],
             {"path": "tts.provider", "new_value": "elevenlabs", "reason": ""},
         )
-        # Payload muss JSON-serialisierbar sein (für Anthropic-Tool-Use)
+        # Payload must be JSON-serializable (for Anthropic tool use)
         json.dumps(result.output)
 
     def test_pending_mutation_pydantic_strict(self) -> None:

@@ -1,12 +1,12 @@
-"""Sehr kleiner In-Memory-Rate-Limiter.
+"""A very small in-memory rate limiter.
 
-Einfaches Sliding-Window — pro IP halten wir eine Liste der letzten
-``timestamps`` und droppen alle ausserhalb des Fensters. Das reicht fuer
-die einzige rate-limited Route (``/identity/register``), die ein paar
-Requests pro Minute sehen wird.
+Simple sliding window — per IP we keep a list of the last
+``timestamps`` and drop everything outside the window. That's enough
+for the only rate-limited route (``/identity/register``), which will
+see a handful of requests per minute.
 
-Fuer ein Multi-Worker-Deployment muesste das auf Redis o.ae. wandern;
-fuer einen Single-Worker-Container ist In-Memory korrekt.
+For a multi-worker deployment this would need to move to Redis or
+similar; for a single-worker container, in-memory is correct.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ class RateLimiter:
         self._lock = threading.Lock()
 
     def allow(self, key: str) -> bool:
-        """``True`` wenn der Request jetzt durch darf, sonst ``False``."""
+        """``True`` if the request may pass now, ``False`` otherwise."""
         now = time.monotonic()
         cutoff = now - 60.0
         with self._lock:

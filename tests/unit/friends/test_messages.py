@@ -1,5 +1,5 @@
 # === F-FRIENDS [F3] · feature/friends-section · alex-2026-05-01 ===
-"""Unit-Tests fuer :class:`jarvis.friends.messages.DirectMessageStore`."""
+"""Unit tests for :class:`jarvis.friends.messages.DirectMessageStore`."""
 from __future__ import annotations
 
 from uuid import uuid4
@@ -89,7 +89,7 @@ async def test_list_chronological_ascending(
         channel="telegram",
         created_at_ns=3_000,
     )
-    # Bewusst out-of-order einfuegen, damit das ORDER BY arbeitet.
+    # Intentionally insert out of order, so ORDER BY does the work.
     await registry.messages.add(b)
     await registry.messages.add(c)
     await registry.messages.add(a)
@@ -131,7 +131,7 @@ async def test_multi_friend_isolation(registry: FriendRegistry) -> None:
         DirectMessage(
             friend_id=f1.id,
             direction="outbound",
-            text="fuer Alice",
+            text="for Alice",
             channel="telegram",
         )
     )
@@ -139,7 +139,7 @@ async def test_multi_friend_isolation(registry: FriendRegistry) -> None:
         DirectMessage(
             friend_id=f2.id,
             direction="outbound",
-            text="fuer Bob",
+            text="for Bob",
             channel="jarvis_pubkey",
         )
     )
@@ -147,9 +147,9 @@ async def test_multi_friend_isolation(registry: FriendRegistry) -> None:
     alice_msgs = await registry.messages.list_for_friend(f1.id)
     bob_msgs = await registry.messages.list_for_friend(f2.id)
     assert len(alice_msgs) == 1
-    assert alice_msgs[0].text == "fuer Alice"
+    assert alice_msgs[0].text == "for Alice"
     assert len(bob_msgs) == 1
-    assert bob_msgs[0].text == "fuer Bob"
+    assert bob_msgs[0].text == "for Bob"
 
 
 @pytest.mark.asyncio
@@ -174,7 +174,7 @@ async def test_delete_for_friend(
 async def test_delete_friend_cascades_messages(
     registry: FriendRegistry, friend: Friend
 ) -> None:
-    """delete_friend muss alle DMs des Friends aufraeumen."""
+    """delete_friend must clean up all of the friend's DMs."""
     await registry.messages.add(
         DirectMessage(
             friend_id=friend.id,
@@ -186,8 +186,8 @@ async def test_delete_friend_cascades_messages(
     assert len(await registry.messages.list_for_friend(friend.id)) == 1
 
     await registry.delete_friend(friend.id)
-    # Direkt gegen die Tabelle schauen — die Friend-FK gibt es nicht mehr,
-    # aber die DM-Zeilen muessen ebenfalls weg sein.
+    # Look directly against the table — the friend FK no longer exists,
+    # but the DM rows must be gone too.
     msgs_after = await registry.messages.list_for_friend(friend.id)
     assert msgs_after == []
 
@@ -196,5 +196,5 @@ async def test_delete_friend_cascades_messages(
 async def test_delete_for_friend_unknown_is_noop(
     registry: FriendRegistry,
 ) -> None:
-    # Kein Friend mit dieser ID — DELETE darf einfach 0 Rows treffen.
+    # No friend with this ID — DELETE may simply hit 0 rows.
     await registry.messages.delete_for_friend(uuid4())

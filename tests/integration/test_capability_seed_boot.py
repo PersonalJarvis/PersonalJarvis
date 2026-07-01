@@ -1,7 +1,7 @@
 """Boot-wiring regression: the brain build must seed the CapabilityRegistry.
 
 The 2026-05-25 live bug ("Kannst du mir einen Subagent spawnen …" → Jarvis
-answers "Das kann ich noch nicht. Mir fehlt dafür ein Werkzeug …") was caused by
+answers "Das kann ich noch nicht. Mir fehlt dafür ein Werkzeug …") was caused by  # i18n-allow
 ``seed_registry()`` never being called in the production boot path. The registry
 stayed empty, so ``BrainManager._check_unsupported_intent`` rejected every action
 utterance before the deterministic force-spawn path could run.
@@ -52,7 +52,7 @@ def test_build_default_brain_seeds_capability_registry(empty_registry) -> None:
     )
 
     resolved = empty_registry.resolve_intent(
-        "Kannst du mir einen Subagent spawnen, der eine Datei macht"
+        "Kannst du mir einen Subagent spawnen, der eine Datei macht"  # i18n-allow
     )
     assert resolved is not None, (
         "a sub-agent spawn request must resolve to a registered capability"

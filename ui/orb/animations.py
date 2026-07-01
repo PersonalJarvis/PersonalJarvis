@@ -1,13 +1,13 @@
-"""Stub fuer ``ui.orb.animations`` — Original-Modul lokal verloren.
+"""Stub for ``ui.orb.animations`` — original module lost locally.
 
-Das echte Modul lieferte den Animations-Katalog (idle-pulse, breath, wave,
-etc.) plus ``Transform``/``ArmTransform``-Datenklassen, die Overlay-Renderer
-zur Frame-Komposition kombiniert. Diese Stubs erfuellen die Import-API,
-damit der Orb-Overlay-Bootstrap nicht crasht — Animationen sind dann nur
-"identity" (kein visueller Effekt), aber der Speech-Pipeline-Setup
-durchlaeuft ohne Exception.
+The real module supplied the animation catalog (idle-pulse, breath, wave,
+etc.) plus the ``Transform``/``ArmTransform`` dataclasses that the overlay
+renderer combines for frame composition. These stubs satisfy the import API
+so the orb-overlay bootstrap doesn't crash — animations then are just
+"identity" (no visual effect), but the speech-pipeline setup
+runs through without an exception.
 
-Wenn das Original wiederhergestellt wird, ueberschreibt es diese Datei.
+When the original is restored, it overwrites this file.
 """
 from __future__ import annotations
 
@@ -17,11 +17,11 @@ from typing import Any
 
 @dataclass(frozen=True)
 class Transform:
-    """Body-Transform — Skalierung, Skew, Rotation, Translation, Helligkeit.
+    """Body transform — scale, skew, rotation, translation, brightness.
 
-    Felder gemaess `ui/orb/overlay.py` (Zeilen 686-743): `scale`, `skew_x`,
+    Fields per `ui/orb/overlay.py` (lines 686-743): `scale`, `skew_x`,
     `skew_y`, `dx`, `dy`, `rotation`, `brightness`. Identity = neutral
-    (kein visueller Effekt).
+    (no visual effect).
     """
 
     scale: float = 1.0
@@ -33,7 +33,7 @@ class Transform:
     brightness: float = 1.0
 
     def combine(self, other: "Transform") -> "Transform":
-        """Multiplikative/additive Kombination (Identity-stable)."""
+        """Multiplicative/additive combination (identity-stable)."""
         return Transform(
             scale=self.scale * other.scale,
             skew_x=self.skew_x * other.skew_x,
@@ -47,10 +47,10 @@ class Transform:
 
 @dataclass(frozen=True)
 class ArmTransform:
-    """Arm-Transform — Rotation/Translation pro Arm.
+    """Arm transform — rotation/translation per arm.
 
-    `rotation` (Radian) wird vom Renderer in Grad konvertiert; `dx`/`dy`
-    in Pixel; `visible` als Multiplier-Flag.
+    `rotation` (radians) is converted to degrees by the renderer; `dx`/`dy`
+    in pixels; `visible` as a multiplier flag.
     """
 
     rotation: float = 0.0
@@ -77,7 +77,7 @@ def identity_arm() -> ArmTransform:
 
 @dataclass
 class Animation:
-    """Basis-Animation — Stub liefert nur Identity-Frames."""
+    """Base animation — the stub only returns identity frames."""
 
     name: str = "identity"
     t_start: float = 0.0
@@ -97,23 +97,23 @@ class Animation:
         return (t - self.t_start) >= self.duration
 
 
-# Leerer Registry — make_animation faellt auf eine generische Identity-
-# Animation zurueck wenn ``name`` nicht bekannt ist. So bleibt die
-# Animations-Dispatch-Logik im Renderer frei von Crashes.
+# Empty registry — make_animation falls back to a generic identity
+# animation if ``name`` is unknown. This keeps the animation dispatch
+# logic in the renderer free of crashes.
 ANIMATION_REGISTRY: dict[str, type[Animation]] = {}
 
-# Idle-Pool: leeres Tuple → der Orb-Bus-Bridge-Idle-Loop probiert
-# ``self._rng.choice(IDLE_ANIMATION_POOL)``, und choice auf leerem Tuple
-# wirft IndexError. Wir geben einen einzelnen Identity-Eintrag, damit
-# der Loop funktional bleibt (spielt halt nichts Sichtbares).
+# Idle pool: an empty tuple → the orb-bus-bridge idle loop tries
+# ``self._rng.choice(IDLE_ANIMATION_POOL)``, and choice on an empty tuple
+# raises IndexError. We provide a single identity entry so
+# the loop stays functional (it just plays nothing visible).
 IDLE_ANIMATION_POOL: tuple[str, ...] = ("identity",)
 
 
 def make_animation(name: str, *, t_start: float = 0.0, **params: Any) -> Animation:
-    """Factory — liefert eine Identity-Animation falls ``name`` unbekannt.
+    """Factory — returns an identity animation if ``name`` is unknown.
 
-    Original-Verhalten war: ``ANIMATION_REGISTRY[name](...)`` — das wuerde
-    bei leerem Registry mit KeyError crashen. Wir fangen das ab.
+    The original behavior was: ``ANIMATION_REGISTRY[name](...)`` — that
+    would crash with KeyError on an empty registry. We catch that.
     """
     cls = ANIMATION_REGISTRY.get(name, Animation)
     return cls(name=name, t_start=t_start, params=params)

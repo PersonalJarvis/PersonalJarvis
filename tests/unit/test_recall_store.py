@@ -1,4 +1,4 @@
-"""Unit-Tests für RecallStore (FTS5 + KV)."""
+"""Unit tests for RecallStore (FTS5 + KV)."""
 from __future__ import annotations
 
 from uuid import uuid4
@@ -47,7 +47,7 @@ async def test_bm25_ranking(store):
     await store.record_message(trace_id=tid, role="user", text="apple banana cherry")
     await store.record_message(trace_id=tid, role="user", text="apple apple apple")
     results = await store.search_messages("apple", k=5)
-    # Die Message mit mehr "apple"-Vorkommen sollte besser ranken (niedrigerer bm25 score)
+    # The message with more "apple" occurrences should rank better (lower bm25 score)
     assert len(results) == 2
     ranks = [r["rank"] for r in results]
     assert ranks[0] <= ranks[1]

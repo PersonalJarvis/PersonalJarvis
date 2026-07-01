@@ -1,8 +1,8 @@
-"""Tests für RouterVisionConfig (Wave-1 B4).
+"""Tests for RouterVisionConfig (Wave-1 B4).
 
-Prüft Defaults der Pydantic-Sub-Config und die Verdrahtung in `jarvis.toml`
-unter `[brain.router.vision]`. Alle Felder MÜSSEN Defaults haben — bestehende
-Configs ohne die Section müssen sauber laden.
+Checks the Pydantic sub-config's defaults and the wiring into `jarvis.toml`
+under `[brain.router.vision]`. All fields MUST have defaults — existing
+configs without the section must still load cleanly.
 """
 from __future__ import annotations
 
@@ -35,18 +35,18 @@ def test_router_vision_config_defaults():
 
 
 def test_router_vision_config_loaded_from_jarvis_toml():
-    """Lädt die globale jarvis.toml via tomllib UND via load_config() und
-    prüft dass `[brain.router.vision]` korrekt in RouterVisionConfig landet.
+    """Loads the global jarvis.toml via tomllib AND via load_config() and
+    checks that `[brain.router.vision]` correctly lands in RouterVisionConfig.
 
-    Zwei-Ebenen-Test:
-      1. Raw-TOML — garantiert dass die Section mit erwarteten Keys drin steht.
-      2. load_config() — garantiert dass Pydantic die Section auto-unmarshaled
-         in `cfg.brain.router.vision` (RouterVisionConfig).
+    Two-layer test:
+      1. Raw TOML — guarantees the section exists with the expected keys.
+      2. load_config() — guarantees Pydantic auto-unmarshals the section
+         into `cfg.brain.router.vision` (RouterVisionConfig).
     """
     toml_path = DEFAULT_CONFIG_FILE
-    assert toml_path.exists(), f"jarvis.toml nicht an {toml_path}"
+    assert toml_path.exists(), f"jarvis.toml not found at {toml_path}"
 
-    # 1. Raw-TOML-Layer — Section existiert mit den Plan-Werten.
+    # 1. Raw-TOML layer — section exists with the plan values.
     with toml_path.open("rb") as f:
         data = tomllib.load(f)
     vsec = data["brain"]["router"]["vision"]

@@ -2,7 +2,7 @@
 Profile view (the pencil-per-field UI).
 
 Contract (see jarvis/ui/web/profile_routes.py::patch_field):
-- ``set`` overwrites a scalar field in place (Chef → König)
+- ``set`` overwrites a scalar field in place (boss → king)
 - ``clear`` empties any field so it reads back as "not known yet"
 - ``append`` / ``remove`` add/drop one item of a list field (the chips)
 - the canonical field allow-list (shared with update_profile) is enforced
@@ -39,7 +39,7 @@ values:
 
 # USER.md
 
-## Observations ueber Zeit
+## Observations over time
 
 <!-- curator:observations:start -->
 <!-- curator:observations:end -->
@@ -84,13 +84,13 @@ def _patch(client: TestClient, **body):
 
 def test_set_scalar_overwrites_chef_to_koenig(ctx) -> None:
     res = _patch(ctx.client, cluster="identity", field="preferred_address",
-                 operation="set", value="König")
+                 operation="set", value="König")  # i18n-allow
     assert res.status_code == 200, res.text
     assert res.json()["changed"] is True
     # In-memory + the read endpoint reflect it.
-    assert ctx.profile.get("identity", "preferred_address") == "König"
+    assert ctx.profile.get("identity", "preferred_address") == "König"  # i18n-allow
     meta = ctx.client.get("/api/profile").json()["user"]["meta"]
-    assert meta["identity"]["preferred_address"] == "König"
+    assert meta["identity"]["preferred_address"] == "König"  # i18n-allow
 
 
 def test_set_scalar_persists_to_disk(ctx) -> None:

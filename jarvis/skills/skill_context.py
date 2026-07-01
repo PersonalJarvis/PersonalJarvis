@@ -1,18 +1,18 @@
-"""Kontext-Registry fuer das Skill-System (Skills-Brain-Integration).
+"""Context registry for the skill system (skills-brain integration).
 
-Vorbild: ``jarvis/harness/computer_use_context.py``.
+Modeled on: ``jarvis/harness/computer_use_context.py``.
 
-Die Speech-Pipeline (Pre-Brain-Hook) und das ``run_skill``-Tool brauchen
-Zugriff auf SkillRegistry + SkillRunner. Beide Komponenten werden aber an
-verschiedenen Stellen instanziiert (BrainManager-Factory bzw. Pipeline-
-Bootstrap), und die Plugin-Tools werden via ``entry_points`` ohne Args
-geladen. Statt umstaendliche DI durch alle Layer zu ziehen, halten wir
-einen prozessweiten Kontext.
+The speech pipeline (pre-brain hook) and the ``run_skill`` tool need
+access to SkillRegistry + SkillRunner. Both components are instantiated at
+different places (BrainManager factory vs. pipeline bootstrap), and the
+plugin tools are loaded via ``entry_points`` without args. Instead of
+threading cumbersome DI through every layer, we keep
+a process-wide context.
 
-Die App ruft einmal beim Start ``set_skill_context(ctx)``; Konsumenten
-holen sich den Kontext mit ``get_skill_context()`` (raised RuntimeError
-wenn nicht gesetzt) oder ``try_get_skill_context()`` (None wenn nicht
-gesetzt — fuer optionale Hooks die gracefully skippen koennen).
+The app calls ``set_skill_context(ctx)`` once at startup; consumers
+fetch the context with ``get_skill_context()`` (raises RuntimeError
+if not set) or ``try_get_skill_context()`` (None if not
+set — for optional hooks that can gracefully skip).
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class SkillContext:
-    """Alle Deps des Skill-Pfads an einer Stelle."""
+    """All deps of the skill path in one place."""
     registry: SkillRegistry
     runner: SkillRunner
 
@@ -35,7 +35,7 @@ _CONTEXT: SkillContext | None = None
 
 
 def set_skill_context(ctx: SkillContext | None) -> None:
-    """Setzt oder loescht (ctx=None) den globalen Skill-Context."""
+    """Sets or clears (ctx=None) the global skill context."""
     global _CONTEXT
     _CONTEXT = ctx
     # Real-boot registration point for paired-skill capabilities. The brain
@@ -59,21 +59,21 @@ def set_skill_context(ctx: SkillContext | None) -> None:
 
 
 def get_skill_context() -> SkillContext:
-    """Liefert den gesetzten Kontext oder wirft eine klare Fehlermeldung."""
+    """Returns the set context, or raises a clear error message."""
     if _CONTEXT is None:
         raise RuntimeError(
-            "Skill-Context nicht gesetzt. "
-            "Die Haupt-App muss vor dem ersten Skill-Aufruf "
-            "`set_skill_context(...)` aufrufen.",
+            "Skill context not set. "
+            "The main app must call `set_skill_context(...)` "
+            "before the first skill call.",
         )
     return _CONTEXT
 
 
 def try_get_skill_context() -> SkillContext | None:
-    """Liefert den Kontext wenn gesetzt, sonst None.
+    """Returns the context if set, otherwise None.
 
-    Fuer Code-Pfade die optional Skills nutzen (z.B. der Pre-Brain-Hook
-    in der Speech-Pipeline darf gracefully skippen wenn die Registry
-    nicht aufgesetzt wurde, etwa im Headless-Mock-Mode).
+    For code paths that use skills optionally (e.g. the pre-brain hook
+    in the speech pipeline may gracefully skip if the registry
+    wasn't set up, such as in headless mock mode).
     """
     return _CONTEXT

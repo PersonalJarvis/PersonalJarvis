@@ -78,12 +78,12 @@ class Scenario:
 SCENARIOS: tuple[Scenario, ...] = (
     Scenario("01", "greeting", "Guten Morgen, wie geht es dir?", "de"),
     Scenario("02", "smalltalk", "Ich bin heute echt ein bisschen gestresst.", "de"),
-    Scenario("03", "opinion-80s", "Was hältst du eigentlich von Musik aus den Achtzigern?", "de"),
-    Scenario("04", "explain", "Erklär mir mal, warum der Himmel blau ist.", "de"),
-    Scenario("05", "advice", "Hast du einen Tipp, wie ich morgens besser in die Gänge komme?", "de"),
-    Scenario("06", "knowledge", "Erzähl mir was Interessantes über den Mond.", "de"),
-    Scenario("07", "compare", "Was ist der Unterschied zwischen Nebel und Wolken?", "de"),
-    Scenario("08", "chitchat", "Puh, war ein langer Tag. Womit kennst du dich eigentlich gut aus?", "de"),
+    Scenario("03", "opinion-80s", "Was hältst du eigentlich von Musik aus den Achtzigern?", "de"),  # i18n-allow
+    Scenario("04", "explain", "Erklär mir mal, warum der Himmel blau ist.", "de"),  # i18n-allow
+    Scenario("05", "advice", "Hast du einen Tipp, wie ich morgens besser in die Gänge komme?", "de"),  # i18n-allow
+    Scenario("06", "knowledge", "Erzähl mir was Interessantes über den Mond.", "de"),  # i18n-allow
+    Scenario("07", "compare", "Was ist der Unterschied zwischen Nebel und Wolken?", "de"),  # i18n-allow
+    Scenario("08", "chitchat", "Puh, war ein langer Tag. Womit kennst du dich eigentlich gut aus?", "de"),  # i18n-allow
     Scenario("09", "greeting", "Good morning, how are you doing today?", "en"),
     Scenario("10", "explain", "Explain to me why the sky is blue.", "en"),
     Scenario("11", "knowledge", "Tell me something interesting about the moon.", "en"),

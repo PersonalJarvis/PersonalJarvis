@@ -3,9 +3,9 @@
     python -m jarvis.brain.launcher --provider gemini --prompt "Hallo"
     python -m jarvis.brain.launcher --provider claude-api --prompt "Was ist 2+2?"
     python -m jarvis.brain.launcher --list-providers
-    python -m jarvis.brain.launcher --prompt "öffne Notepad"              (with tools)
+    python -m jarvis.brain.launcher --prompt "öffne Notepad"              (with tools)  # i18n-allow
     python -m jarvis.brain.launcher --prompt "formatiere C:"             (blacklist deny)
-    python -m jarvis.brain.launcher --prompt "merk dir: ich heiße Sam" --save-memory
+    python -m jarvis.brain.launcher --prompt "merk dir: ich heiße Sam" --save-memory  # i18n-allow
 
 The launcher bypasses the voice pipeline entirely. It is the primary
 verification CLI for Phase 2 and remains permanently useful as a debug tool.
@@ -27,18 +27,18 @@ if sys.platform == "win32":
 def _build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="jarvis.brain.launcher",
-        description="Standalone-CLI für Brain-Layer-Tests",
+        description="Standalone CLI for brain-layer tests",
     )
     p.add_argument("--prompt", type=str, help="User-Prompt an das Brain")
-    p.add_argument("--provider", type=str, help="Primary-Provider überschreiben")
+    p.add_argument("--provider", type=str, help="Override the primary provider")
     p.add_argument("--list-providers", action="store_true",
-                   help="Listet alle verfügbaren/geladenen Providers")
+                   help="Lists all available/loaded providers")
     p.add_argument("--snapshot", action="store_true",
                    help="Gibt BrainManager.snapshot() aus")
     p.add_argument("--with-tools", action="store_true",
                    help="Registriert alle 5 Phase-2-Tools im Dispatcher")
     p.add_argument("--no-memory", action="store_true",
-                   help="Kein Core-Memory + Recall laden (für Minimal-Tests)")
+                   help="Skip loading Core-Memory + Recall (for minimal tests)")
     p.add_argument("--stream", action="store_true",
                    help="Streamt Token-weise auf stdout statt final-print")
     return p
@@ -53,7 +53,7 @@ async def _run(args: argparse.Namespace) -> int:
     if args.list_providers:
         from jarvis.brain.provider_registry import BrainProviderRegistry
         reg = BrainProviderRegistry()
-        print("Verfügbare Brain-Providers:")
+        print("Available brain providers:")
         for name in reg.available():
             print(f"  - {name}")
         failed = reg.failed()
@@ -110,7 +110,7 @@ async def _run(args: argparse.Namespace) -> int:
         return 0
 
     if not args.prompt:
-        print("Kein --prompt angegeben. Benutze --help.", file=sys.stderr)
+        print("No --prompt given. Use --help.", file=sys.stderr)
         return 2
 
     # Send prompt
@@ -147,7 +147,7 @@ def _load_tools() -> dict:
             cls = ep.load()
             inst = cls()
         except Exception as exc:  # noqa: BLE001
-            print(f"[warn] Tool '{ep.name}' nicht ladbar: {exc}", file=sys.stderr)
+            print(f"[warn] Tool '{ep.name}' could not be loaded: {exc}", file=sys.stderr)
             continue
         if getattr(inst, "is_virtual_loader", False):
             try:
@@ -167,7 +167,7 @@ def _load_tools() -> dict:
             inst = HotkeyTool()
             tools[inst.name] = inst
         except Exception as exc:  # noqa: BLE001
-            print(f"[warn] Fallback-Tool 'hotkey' nicht ladbar: {exc}", file=sys.stderr)
+            print(f"[warn] Fallback tool 'hotkey' could not be loaded: {exc}", file=sys.stderr)
     if "click" not in tools:
         try:
             from jarvis.plugins.tool.click import ClickTool
@@ -175,7 +175,7 @@ def _load_tools() -> dict:
             inst = ClickTool()
             tools[inst.name] = inst
         except Exception as exc:  # noqa: BLE001
-            print(f"[warn] Fallback-Tool 'click' nicht ladbar: {exc}", file=sys.stderr)
+            print(f"[warn] Fallback tool 'click' could not be loaded: {exc}", file=sys.stderr)
     return tools
 
 

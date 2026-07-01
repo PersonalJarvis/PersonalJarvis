@@ -80,9 +80,9 @@ def _build_windows_input_types() -> Any:
 
 
 def _send_text_windows(text: str, delay_s: float) -> None:
-    """Sendet Unicode-Text an das aktive Windows-Fenster via SendInput."""
+    """Sends Unicode text to the active Windows window via SendInput."""
     if os.name != "nt":
-        raise RuntimeError("Native Text-Eingabe ohne pyautogui ist nur auf Windows verfuegbar")
+        raise RuntimeError("Native text input without pyautogui is only available on Windows")
 
     import ctypes
 
@@ -129,15 +129,15 @@ class TypeTextTool:
     name: str = "type_text"
     risk_tier: str = "safe"
     description: str = (
-        "Tippt Text in das gerade aktive Fenster (als wuerde der User ihn eingeben)."
+        "Types text into the currently active window (as if the user typed it)."
     )
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
-            "text": {"type": "string", "description": "Zu tippender Text"},
+            "text": {"type": "string", "description": "Text to type"},
             "delay_s": {
                 "type": "number",
-                "description": "Pause zwischen Tastenanschlaegen in Sekunden",
+                "description": "Pause between keystrokes in seconds",
                 "default": 0.02,
             },
         },

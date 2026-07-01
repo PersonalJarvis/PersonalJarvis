@@ -153,10 +153,10 @@ async def test_english_pin_failure_is_not_hardcoded_german(monkeypatch) -> None:
 
     reply = await mgr._run_local_action_fast_path("do the thing")
 
-    # The historical German hardcoded fallbacks ("nicht geklappt", "Aktion")
+    # The historical German hardcoded fallbacks ("nicht geklappt", "Aktion")  # i18n-allow
     # must not surface on an English-pinned turn.
     assert "geklappt" not in reply.lower()
-    assert "konnte nicht" not in reply.lower()
+    assert "konnte nicht" not in reply.lower()  # i18n-allow
 
 
 # ---------------------------------------------------------------------------

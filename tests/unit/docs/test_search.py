@@ -1,4 +1,4 @@
-"""Unit-Tests fuer DocSearch (SQLite-FTS5)."""
+"""Unit tests for DocSearch (SQLite-FTS5)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -42,7 +42,7 @@ def test_upsert_and_query_basic(search: DocSearch) -> None:
     search.upsert(_doc(
         slug="router-discipline",
         title="Concept: Router-Discipline",
-        body="Hauptjarvis ist Pure Dispatcher und delegiert via spawn_worker.",
+        body="Hauptjarvis is a Pure Dispatcher and delegates via spawn_worker.",
     ))
     results = search.query("Dispatcher")
     assert len(results) == 1
@@ -90,8 +90,8 @@ def test_filter_by_diataxis(search: DocSearch) -> None:
 
 
 def test_query_orders_by_rank(search: DocSearch) -> None:
-    """BM25-Ranking: ein Doc, das den Term mehrfach + im Title hat,
-    sollte vor einem Doc mit nur einem Treffer im Body stehen."""
+    """BM25 ranking: a doc that has the term multiple times + in the title
+    should rank above a doc with only one hit in the body."""
     search.upsert(_doc(
         "primary", "Routing Discipline",
         body="routing routing routing routing logic for the router brain",
@@ -125,10 +125,10 @@ def test_query_empty_returns_empty(search: DocSearch) -> None:
 
 
 def test_query_handles_unbalanced_quote(search: DocSearch) -> None:
-    """Ein offener Quote sollte nicht crashen — sanitizer entfernt ihn."""
+    """An open quote should not crash — the sanitizer removes it."""
     search.upsert(_doc("a", "A", "hello world"))
-    results = search.query('"hello')  # offene Quote
-    # Entweder leer oder mit Treffer — Hauptsache kein OperationalError
+    results = search.query('"hello')  # unbalanced quote
+    # Either empty or with a hit — the main thing is no OperationalError
     assert isinstance(results, list)
 
 
@@ -149,7 +149,7 @@ def test_snippet_contains_mark_tags(search: DocSearch) -> None:
         "Doc",
         body=(
             "Lorem ipsum dolor sit amet. "
-            "The Voice-Pipeline ist Phase 1 von Personal-Jarvis. "
+            "The Voice-Pipeline is Phase 1 of Personal-Jarvis. "
             "Sed do eiusmod tempor incididunt."
         ),
     ))

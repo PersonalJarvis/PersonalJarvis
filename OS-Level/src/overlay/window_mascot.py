@@ -1,14 +1,14 @@
-"""MascotWindow — separates transparentes Frameless-Window. Plan §12.2 + §13.
+"""MascotWindow — separate transparent frameless window. Plan §12.2 + §13.
 
-Im Gegensatz zum EdgeGlowWindow ist Mascot NICHT click-through. Es
-faengt Drag (linke Maustaste) und Right-Click (Kontextmenu).
-QtWebEngineView rendert die Mascot-HTML (Rive oder PNG-Fallback).
+Unlike EdgeGlowWindow, the mascot is NOT click-through. It catches
+drag (left mouse button) and right-click (context menu).
+QtWebEngineView renders the mascot HTML (Rive or PNG fallback).
 
-Hit-Testing per Plan §12.2: setMask(QRegion ellipse) damit transparente
-Ecken der 160x160 Box klick-passthrough sind.
+Hit-testing per Plan §12.2: setMask(QRegion ellipse) so the transparent
+corners of the 160x160 box are click-passthrough.
 
-Position-Persistence + Monitor-Recovery sind in mascot_position.py
-ausgelagert; dieses Modul ist nur die Window-Mechanik.
+Position persistence + monitor recovery live in mascot_position.py;
+this module is only the window mechanics.
 """
 
 from __future__ import annotations
@@ -50,19 +50,19 @@ if TYPE_CHECKING:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 
-# Plan §22 — Vite-Build legt das HTML genau hier ab.
+# Plan §22 — the Vite build places the HTML exactly here.
 _MASCOT_HTML = (
     Path(__file__).resolve().parents[2] / "overlay-ui" / "dist" / "mascot.html"
 )
 
 
 class MascotStateBridge(QObject):
-    """QWebChannel-Bridge fuer den Mascot. Plan §13.2 mappt
-    OverlayStates auf Rive-Inputs.
+    """QWebChannel bridge for the mascot. Plan §13.2 maps
+    OverlayStates to Rive inputs.
 
-    Wir feuern dieselbe stateChanged-Signatur wie StateBridge fuer den
-    EdgeGlow, sodass der Mascot-Renderer dieselbe Bridge-Mechanik
-    verwenden kann (typed Wrapper in bridge.ts).
+    We fire the same stateChanged signature as StateBridge for the
+    EdgeGlow, so the mascot renderer can use the same bridge mechanics
+    (typed wrapper in bridge.ts).
     """
 
     stateChanged = Signal(str, str, str)  # old, new, reason
@@ -93,21 +93,21 @@ class MascotStateBridge(QObject):
 
 
 class _TransparentWebPage(QWebEnginePage):
-    """Page mit transparentem Hintergrund. Identisch zur EdgeGlow-
-    Variante — Chromium rendert sonst weiss obwohl body transparent."""
+    """Page with a transparent background. Identical to the EdgeGlow
+    variant — otherwise Chromium renders white even though body is transparent."""
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
         self.setBackgroundColor(QColor(0, 0, 0, 0))
 
 
-# Position-Save Callback Signatur: (MascotPosition) -> None.
-# Caller (setup_mascot) injiziert eine save-to-toml Funktion.
+# Position-save callback signature: (MascotPosition) -> None.
+# The caller (setup_mascot) injects a save-to-toml function.
 PositionSaveCallback = Callable[[MascotPosition], None]
 
 
 class MascotWindow(QWidget):
-    """Single-instance frameless transparent Window. Plan §12.2.
+    """Single-instance frameless transparent window. Plan §12.2.
 
     Lifecycle::
 
@@ -119,11 +119,11 @@ class MascotWindow(QWidget):
         win.show()
     """
 
-    # Wird gefired wenn der User per Right-Click "Hide for session" waehlt.
+    # Fired when the user picks "Hide for session" via right-click.
     hideRequested = Signal()
-    # User-triggered "Move to default" — Caller berechnet neue Position.
+    # User-triggered "Move to default" — the caller computes the new position.
     resetRequested = Signal()
-    # User-triggered "Settings..." — Caller oeffnet Settings-Dialog.
+    # User-triggered "Settings..." — the caller opens the settings dialog.
     settingsRequested = Signal()
     # User double-clicked the mascot. Caller forwards this upstream as
     # a MascotEventEnvelope(kind="mute_toggle") so the main jarvis
@@ -155,7 +155,7 @@ class MascotWindow(QWidget):
         self._on_position_saved = on_position_saved
         self._html_path = html_path or _MASCOT_HTML
 
-        # Plan §12.2: KEIN WindowTransparentForInput (Klicks erwartet).
+        # Plan §12.2: NO WindowTransparentForInput (clicks are expected).
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
@@ -165,16 +165,16 @@ class MascotWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
-        # KEIN WA_TransparentForMouseEvents — Mascot fangt Maus-Input.
+        # NO WA_TransparentForMouseEvents — the mascot catches mouse input.
 
         self.setFixedSize(size_px, size_px)
-        # Plan §12.2: setMask(QRegion ellipse) damit transparente Ecken
-        # nicht Klicks fangen. Re-applied in resizeEvent fuer Sicherheit.
+        # Plan §12.2: setMask(QRegion ellipse) so the transparent corners
+        # don't catch clicks. Re-applied in resizeEvent for safety.
         self.setMask(QRegion(QRect(0, 0, size_px, size_px), QRegion.RegionType.Ellipse))
 
         self.move(initial_x, initial_y)
 
-        # Layout + WebView fuer Rive/PNG.
+        # Layout + WebView for Rive/PNG.
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self._view = QWebEngineView(self)
@@ -182,7 +182,7 @@ class MascotWindow(QWidget):
         page = _TransparentWebPage(self._view)
         self._view.setPage(page)
 
-        # WebChannel + StateBridge wenn StateMachine geliefert wurde.
+        # WebChannel + StateBridge if a StateMachine was supplied.
         self._channel: Optional[QWebChannel] = None
         self._bridge: Optional[MascotStateBridge] = None
         if state_machine is not None:
@@ -195,14 +195,14 @@ class MascotWindow(QWidget):
             self._view.setUrl(QUrl.fromLocalFile(str(self._html_path)))
         else:
             logger.warning(
-                "mascot.html nicht gefunden unter %s — `npm run build` im overlay-ui/?",
+                "mascot.html not found at %s — did you run `npm run build` in overlay-ui/?",
                 self._html_path,
             )
             self._view.setUrl(QUrl("about:blank"))
 
         layout.addWidget(self._view)
 
-        # Drag-State.
+        # Drag state.
         self._drag_offset: Optional[QPoint] = None
         self._dragging: bool = False
         # Local visual mute indicator — toggled on every doubleClick so the
@@ -212,7 +212,7 @@ class MascotWindow(QWidget):
         self._muted_visual: bool = False
         self._opacity_normal: float = 1.0
         self._opacity_muted: float = 0.45
-        # Plan §18.1 — screenChanged-Hook wird in showEvent verbunden.
+        # Plan §18.1 — the screenChanged hook is connected in showEvent.
         self._screen_change_connected: bool = False
 
     # --- Lifecycle / Win32-Affinity ---
@@ -224,7 +224,7 @@ class MascotWindow(QWidget):
         apply_mascot_styles(hwnd)
         if self._hide_from_capture:
             exclude_from_capture(hwnd)
-        # Plan §18.1 — Reapply auf screenChanged.
+        # Plan §18.1 — reapply on screenChanged.
         if not self._screen_change_connected:
             handle = self.windowHandle()
             if handle is not None:
@@ -247,7 +247,7 @@ class MascotWindow(QWidget):
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
-        # Mask neu setzen falls jemand size_px aendert.
+        # Re-apply the mask in case someone changes size_px.
         self.setMask(
             QRegion(
                 QRect(0, 0, self.width(), self.height()),
@@ -363,10 +363,10 @@ class MascotWindow(QWidget):
     # --- Position-Persistence ---
 
     def _finalize_drag(self) -> None:
-        """Snap-to-edge + Clamp + Persist. Plan §13.3 + §13.4."""
+        """Snap-to-edge + clamp + persist. Plan §13.3 + §13.4."""
         from PySide6.QtGui import QGuiApplication
 
-        # Welcher Monitor enthaelt das Mascot jetzt?
+        # Which monitor now contains the mascot?
         center = self.pos() + QPoint(self.width() // 2, self.height() // 2)
         screen = QGuiApplication.screenAt(center) or QGuiApplication.primaryScreen()
         if screen is None:
@@ -375,8 +375,8 @@ class MascotWindow(QWidget):
         geo = screen.availableGeometry()
         monitor_geo = (geo.x(), geo.y(), geo.width(), geo.height())
 
-        # Snap zuerst — Snap kann das Mascot ueber die Kante schieben,
-        # daher danach clampen.
+        # Snap first — snapping can push the mascot past the edge,
+        # so clamp afterwards.
         snapped_x, snapped_y = snap_to_edges(
             self.x(),
             self.y(),
@@ -393,7 +393,7 @@ class MascotWindow(QWidget):
         if (clamped_x, clamped_y) != (self.x(), self.y()):
             self.move(clamped_x, clamped_y)
 
-        # Relative zum work-area-Top-Left persistieren.
+        # Persist relative to the work area's top-left.
         rel_x = clamped_x - geo.x()
         rel_y = clamped_y - geo.y()
         position = MascotPosition(

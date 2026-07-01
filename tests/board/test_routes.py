@@ -1,9 +1,9 @@
-"""Route-Tests fuer ``/api/board/personal/*``.
+"""Route tests for ``/api/board/personal/*``.
 
-Isolierter Setup: wir haengen nur den ``board_router`` in eine frische
-``FastAPI``-Instanz und wiring manuell ``app.state.board_store`` +
-``app.state.board_aggregator``. Das vermeidet die komplexe ``WebServer``-
-Initialisierung (Skill-Registry, Conductor, MCP) im Route-Test.
+Isolated setup: we mount only the ``board_router`` on a fresh
+``FastAPI`` instance and manually wire ``app.state.board_store`` +
+``app.state.board_aggregator``. This avoids the complex ``WebServer``
+initialization (skill registry, conductor, MCP) in the route test.
 """
 from __future__ import annotations
 
@@ -94,7 +94,7 @@ def test_heatmap_fills_every_day(wired_client: TestClient) -> None:
     body = resp.json()
     assert body["days"] == 30
     assert len(body["cells"]) == 30
-    # mindestens eine Zelle muss Aktivitaet haben, auch wenn kein Task lief
+    # at least one cell must show activity, even if no task ran
     assert any(c["activity_events"] >= 1 for c in body["cells"])
 
 
@@ -123,7 +123,7 @@ def test_refresh_reruns_aggregator(wired_client: TestClient) -> None:
 
 
 def test_503_when_store_missing(tmp_path: Path) -> None:
-    """Ohne konfigurierten Store muss der Endpoint sauber 503 liefern."""
+    """Without a configured store, the endpoint must cleanly return 503."""
     app = FastAPI()
     app.include_router(board_router)
     app.state.board_store = None

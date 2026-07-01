@@ -1,13 +1,13 @@
 """SHQueryUserNotificationState polling. Plan §12.6 + §20.2.
 
-Pollt alle 2 Sekunden auf einem Daemon-Thread mit
-``THREAD_PRIORITY_LOWEST`` (best effort). Wenn der State zu einem
-"hide-worthy" Code wechselt (D3D-Fullscreen, Presentation-Mode oder
-optional Busy), feuert eine Callback. Klassischer Pull-Polling-
-Ansatz weil Windows kein Push-Event fuer diesen Status hat.
+Polls every 2 seconds on a daemon thread with
+``THREAD_PRIORITY_LOWEST`` (best effort). When the state changes to a
+"hide-worthy" code (D3D fullscreen, presentation mode, or optionally
+busy), it fires a callback. A classic pull-polling approach because
+Windows has no push event for this status.
 
-Keine PySide6-Dependency damit der Polling-Thread auch in Test-
-Setups ohne QApplication laufen kann.
+No PySide6 dependency, so the polling thread can also run in test
+setups without a QApplication.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ class UserNotificationState(IntEnum):
     APP = 7  # QUNS_APP
 
 
-# Plan §12.6: Default-Hide-Codes (BUSY ist optional via ignore_busy_state).
+# Plan §12.6: default hide codes (BUSY is optional via ignore_busy_state).
 _HARD_HIDE_STATES: frozenset[UserNotificationState] = frozenset(
     {UserNotificationState.RUNNING_D3D_FULL_SCREEN, UserNotificationState.PRESENTATION_MODE}
 )
@@ -44,20 +44,20 @@ _SOFT_HIDE_STATES: frozenset[UserNotificationState] = frozenset(
 
 @dataclass(frozen=True)
 class FullscreenStatus:
-    """Schnappschuss vom letzten Polling-Tick."""
+    """Snapshot of the last polling tick."""
 
     state: UserNotificationState
     should_hide: bool
 
 
-# Callback-Signatur: (FullscreenStatus) -> None.
+# Callback signature: (FullscreenStatus) -> None.
 StatusCallback = Callable[[FullscreenStatus], None]
 
 
 def query_state() -> Optional[UserNotificationState]:
     """Plan §12.6 — SHQueryUserNotificationState via ctypes.
 
-    Returnt None wenn nicht-Windows oder API nicht verfuegbar.
+    Returns None on non-Windows or when the API isn't available.
     """
     if sys.platform != "win32":
         return None
@@ -84,9 +84,9 @@ def query_state() -> Optional[UserNotificationState]:
 def should_hide_for_state(
     state: UserNotificationState, *, ignore_busy_state: bool
 ) -> bool:
-    """Mapping State -> hide. Plan §12.6:
-    - immer hide bei RUNNING_D3D_FULL_SCREEN, PRESENTATION_MODE
-    - hide bei BUSY nur wenn ignore_busy_state == False (Default)
+    """Mapping state -> hide. Plan §12.6:
+    - always hide on RUNNING_D3D_FULL_SCREEN, PRESENTATION_MODE
+    - hide on BUSY only when ignore_busy_state == False (default)
     """
     if state in _HARD_HIDE_STATES:
         return True
@@ -96,9 +96,9 @@ def should_hide_for_state(
 
 
 class FullscreenDetector:
-    """Polling-Thread um SHQueryUserNotificationState.
+    """Polling thread around SHQueryUserNotificationState.
 
-    Plan §12.6: Low-Prio Daemon-Thread, 2 s Intervall, sauberer Exit.
+    Plan §12.6: low-prio daemon thread, 2 s interval, clean exit.
 
     Lifecycle::
 
@@ -133,15 +133,15 @@ class FullscreenDetector:
         return self._thread is not None and self._thread.is_alive()
 
     def set_ignore_busy_state(self, ignore: bool) -> None:
-        """Runtime-Toggle (z.B. wenn Config-Reload kommt)."""
+        """Runtime toggle (e.g. when a config reload happens)."""
         self._ignore_busy_state = ignore
 
     def set_callback(self, callback: Optional[StatusCallback]) -> None:
         self._callback = callback
 
     def poll_once(self) -> Optional[FullscreenStatus]:
-        """Synchroner Poll-Cycle. Returnt FullscreenStatus oder None
-        (Nicht-Windows / API-Fehler)."""
+        """Synchronous poll cycle. Returns FullscreenStatus or None
+        (non-Windows / API error)."""
         state = self._query_fn()
         if state is None:
             return None
@@ -177,7 +177,7 @@ class FullscreenDetector:
             self._thread.join(timeout=2.0)
 
     def _run(self) -> None:
-        # Best-effort: Thread-Priority absenken auf Windows.
+        # Best effort: lower the thread priority on Windows.
         if sys.platform == "win32":
             try:
                 import ctypes

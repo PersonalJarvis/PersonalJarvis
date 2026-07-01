@@ -1,17 +1,18 @@
-"""Unit-Tests fuer die TTS-Announcement-Bridge (Phase 5 CL-13).
+"""Unit tests for the TTS announcement bridge (Phase 5 CL-13).
 
-Der ``AnnouncementRequested``-Event wird vom RouterBrain / Tools emittiert,
-wenn dem User eine konkrete Zwischenansage ohne Brain-Pfad gegeben werden soll.
-Die ``SpeechPipeline`` subscribed darauf und spielt die Ansage ueber ``synthesize()`` +
-``player.play_chunks()`` ab — identischer Pfad wie normale Antworten.
+The ``AnnouncementRequested`` event is emitted by the RouterBrain / tools
+when the user should be given a concrete interim announcement without going
+through the brain path. The ``SpeechPipeline`` subscribes to it and plays the
+announcement via ``synthesize()`` + ``player.play_chunks()`` — the identical
+path as normal answers.
 
-Regression-Hintergrund (2026-04-23): Die frueheren Tests hier liefen gegen
-einen ``FakeTTS`` mit ``speak()``-Methode. Der echte ``GeminiFlashTTS``
-exponiert jedoch nur ``synthesize()``, und der alte ``_on_announcement``
-rief ``self._tts.speak(...)`` auf — ein stummer ``AttributeError``, der
-die Announcements monatelang unhoerbar machte. Die Tests waren grün, weil
-Fake und Implementation sich gegenseitig bestaetigten. Jetzt wird gegen
-die echte ``synthesize()``-API getestet.
+Regression background (2026-04-23): the earlier tests here ran against
+a ``FakeTTS`` with a ``speak()`` method. The real ``GeminiFlashTTS``
+only exposes ``synthesize()`` though, and the old ``_on_announcement``
+called ``self._tts.speak(...)`` — a silent ``AttributeError`` that made
+announcements inaudible for months. The tests were green because the
+fake and the implementation confirmed each other. Now it is tested
+against the real ``synthesize()`` API.
 """
 from __future__ import annotations
 
@@ -32,7 +33,7 @@ from jarvis.speech.pipeline import SpeechPipeline
 
 @dataclass
 class FakeTTS:
-    """TTS-Fake mit realer ``synthesize``-API (Protokoll-konform)."""
+    """TTS fake with a real ``synthesize`` API (protocol-conformant)."""
 
     name: str = "fake-tts"
     supports_streaming: bool = True
@@ -43,14 +44,14 @@ class FakeTTS:
         language_code: str | None = None,
     ) -> AsyncIterator[AudioChunk]:
         self.calls.append((text, language_code))
-        # AsyncGenerator ohne yields → leerer Stream, reicht fuer Assertions
+        # AsyncGenerator with no yields → empty stream, enough for the assertions
         if False:  # pragma: no cover
             yield  # type: ignore[unreachable]
 
 
 @dataclass
 class FakePlayer:
-    """Player-Fake: zeichnet play_chunks-Aufrufe + stop-Calls auf."""
+    """Player fake: records play_chunks calls + stop calls."""
 
     stop_calls: int = 0
     plays: int = 0
@@ -68,7 +69,7 @@ class FakePlayer:
 
 
 class FakeBrain:
-    """Zaehlt Calls — darf bei Announcements NIE gerufen werden."""
+    """Counts calls — must NEVER be called for announcements."""
 
     def __init__(self) -> None:
         self.calls: int = 0
@@ -81,10 +82,10 @@ class FakeBrain:
 def _make_pipeline(
     tts: FakeTTS, bus: EventBus, player: FakePlayer | None = None
 ) -> SpeechPipeline:
-    """Pipeline mit gestecktem Fake-TTS + Bus + optionalem FakePlayer.
+    """Pipeline wired with a fake TTS + bus + optional FakePlayer.
 
-    STT/Wake sind hier irrelevant. Der FakePlayer ersetzt ``self._player``,
-    damit kein echtes WASAPI geoeffnet wird.
+    STT/wake are irrelevant here. The FakePlayer replaces ``self._player``,
+    so no real WASAPI gets opened.
     """
     pipeline = SpeechPipeline(tts=tts, bus=bus, enable_whisper_wake=False)
     if player is not None:
@@ -110,12 +111,12 @@ async def test_announcement_event_triggers_synthesize() -> None:
 
 @pytest.mark.asyncio
 async def test_announcement_english_language_passthrough() -> None:
-    """Sprachparameter wird zu language_code gemappt (en → en-US).
+    """The language parameter is mapped to language_code (en → en-US).
 
-    Audit F-AUDIT-5 (2026-04-29): Test-Text auf neutrale Phrase migriert,
-    weil scrub_for_voice "sir"-Anrede + "sub-agent"-Engineering-Compounds
-    scrubbt (Mandat-A1). Der Test verifiziert die Bridge-Mechanik, nicht
-    die Phrasen-Inhalte.
+    Audit F-AUDIT-5 (2026-04-29): migrated the test text to a neutral phrase,
+    because scrub_for_voice scrubs "sir" address + "sub-agent" engineering
+    compounds (mandate A1). The test verifies the bridge mechanics, not
+    the phrase contents.
     """
     bus = EventBus()
     tts = FakeTTS()
@@ -131,11 +132,11 @@ async def test_announcement_english_language_passthrough() -> None:
 
 @pytest.mark.asyncio
 async def test_announcement_bypass_skips_brain() -> None:
-    """Announcements duerfen den Brain-Pfad nicht anstossen (TTS-Bypass).
+    """Announcements must not touch the brain path (TTS bypass).
 
-    Audit F-AUDIT-5: "sub-agent" durch neutrales "routine" ersetzt — der
-    Test verifiziert dass FakeBrain nicht angestossen wird, nicht den
-    Phrasen-Inhalt.
+    Audit F-AUDIT-5: replaced "sub-agent" with the neutral "routine" — the
+    test verifies that FakeBrain is not touched, not the
+    phrase content.
     """
     bus = EventBus()
     tts = FakeTTS()
@@ -154,8 +155,8 @@ async def test_announcement_bypass_skips_brain() -> None:
 
 @pytest.mark.asyncio
 async def test_announcement_interrupt_calls_player_stop_before_play() -> None:
-    """Bei ``priority="interrupt"`` wird erst ``player.stop()`` gerufen,
-    dann ``synthesize()`` + ``play_chunks()`` — in dieser Reihenfolge."""
+    """With ``priority="interrupt"``, ``player.stop()`` is called first,
+    then ``synthesize()`` + ``play_chunks()`` — in that order."""
     bus = EventBus()
     tts = FakeTTS()
     player = FakePlayer()
@@ -163,12 +164,12 @@ async def test_announcement_interrupt_calls_player_stop_before_play() -> None:
 
     await bus.publish(
         AnnouncementRequested(
-            text="achtung, abbruch", language="de", priority="interrupt"
+            text="achtung, abbruch", language="de", priority="interrupt"  # i18n-allow: simulated German announcement voice output under test
         )
     )
 
     assert player.stop_calls == 1
-    assert tts.calls == [("achtung, abbruch", "de-DE")]
+    assert tts.calls == [("achtung, abbruch", "de-DE")]  # i18n-allow: matches simulated German voice output above
     assert player.order == ["stop", "play"]
 
 
@@ -190,7 +191,7 @@ async def test_announcement_normal_does_not_call_stop() -> None:
 
 @pytest.mark.asyncio
 async def test_announcement_without_bus_is_safe() -> None:
-    """Ohne Bus wird keine Subscription angelegt — Pipeline bleibt funktional."""
+    """Without a bus, no subscription is created — the pipeline stays functional."""
     tts = FakeTTS()
     pipeline = SpeechPipeline(tts=tts, bus=None, enable_whisper_wake=False)
     assert pipeline._bus is None
@@ -199,18 +200,18 @@ async def test_announcement_without_bus_is_safe() -> None:
 
 @pytest.mark.asyncio
 async def test_openclaw_spawn_announcement_is_silent() -> None:
-    """``JarvisAgentAnnouncement`` darf NICHT mehr TTS-sprechen.
+    """``JarvisAgentAnnouncement`` must NOT speak via TTS anymore.
 
-    Spawn-ACK-History:
-    - 2026-04-25 .. 2026-05-10: stumm (User-Wunsch).
-    - 2026-05-11: kurz reaktiviert mit "Okay, mache ich." damit der
-      User Spawn von stillem Timeout unterscheiden kann.
-    - 2026-05-12 (aktuell): User widerruft — die Phrase nervt. Spawn-
-      Feedback uebernimmt das Sub-Agents-Board (visuell) und der
-      Background-Completed-Readback am Ende der Mission.
+    Spawn-ACK history:
+    - 2026-04-25 .. 2026-05-10: silent (user request).
+    - 2026-05-11: briefly reactivated with "Okay, mache ich." so the
+      user could tell a spawn apart from a silent timeout.
+    - 2026-05-12 (current): user revokes it again — the phrase is annoying.
+      Spawn feedback is now handled by the Sub-Agents board (visual) and the
+      background-completed readback at the end of the mission.
 
-    Regression-Guard: wenn jemand den ACK ohne ADR-Update wieder
-    einbaut, schlaegt dieser Test an.
+    Regression guard: if someone reintroduces the ACK without an ADR update,
+    this test catches it.
     """
     from uuid import uuid4
 
@@ -222,13 +223,13 @@ async def test_openclaw_spawn_announcement_is_silent() -> None:
     await bus.publish(
         JarvisAgentAnnouncement(
             trace_id=uuid4(),
-            action="den vom User beschriebenen Workflow",
+            action="the workflow described by the user",
             target="",
         )
     )
 
     assert tts.calls == [], (
-        f"Spawn-ACK darf nicht sprechen, aber TTS wurde gerufen: "
+        f"Spawn ACK must not speak, but TTS was called: "
         f"{tts.calls!r}"
     )
     assert player.plays == 0
@@ -245,22 +246,22 @@ async def test_openclaw_background_success_with_summary_speaks() -> None:
     await bus.publish(
         JarvisAgentBackgroundCompleted(
             success=True,
-            utterance="recherchier mir fuenf themen",
-            summary="Fuenf Recherche-Themen liegen bereit.",
+            utterance="recherchier mir fuenf themen",  # i18n-allow: simulated German user utterance under test
+            summary="Fuenf Recherche-Themen liegen bereit.",  # i18n-allow: simulated German voice output under test
             error="",
             duration_s=12.3,
         )
     )
 
     assert tts.calls == [
-        ("Fertig. Fuenf Recherche-Themen liegen bereit.", "de-DE")
+        ("Fertig. Fuenf Recherche-Themen liegen bereit.", "de-DE")  # i18n-allow: matches simulated German voice output above
     ]
     assert player.plays == 1
 
 
 @pytest.mark.asyncio
-async def test_openclaw_background_success_no_summary_speaks_fertig() -> None:
-    """Erfolg ohne Summary → ``"Fertig."`` (Output-Filter-safe)."""
+async def test_openclaw_background_success_no_summary_speaks_fertig() -> None:  # i18n-allow: identifier name, not translatable prose
+    """Success with no summary → ``"Fertig."`` (output-filter-safe)."""  # i18n-allow: quotes the actual German TTS output under test
     bus = EventBus()
     tts = FakeTTS()
     player = FakePlayer()
@@ -272,13 +273,13 @@ async def test_openclaw_background_success_no_summary_speaks_fertig() -> None:
         )
     )
 
-    assert tts.calls == [("Fertig.", "de-DE")]
+    assert tts.calls == [("Fertig.", "de-DE")]  # i18n-allow: simulated German voice output under test
     assert player.plays == 1
 
 
 @pytest.mark.asyncio
 async def test_openclaw_background_failure_speaks_error() -> None:
-    """``success=False`` → Fehler-Ansage ``"Das hat nicht geklappt. ..."``."""
+    """``success=False`` → error announcement ``"Das hat nicht geklappt. ..."``."""  # i18n-allow: quotes the actual German TTS output under test
     bus = EventBus()
     tts = FakeTTS()
     player = FakePlayer()
@@ -291,24 +292,24 @@ async def test_openclaw_background_failure_speaks_error() -> None:
         )
     )
 
-    # rate-limit ueberlebt scrub_for_voice. "Provider" wuerde gescrubbt.
-    # event.error endet ohne Punkt → text endet ohne Punkt (simple Concat).
-    assert tts.calls == [("Das hat nicht geklappt. rate-limit reached", "de-DE")]
+    # rate-limit survives scrub_for_voice. "Provider" would be scrubbed.
+    # event.error ends without a period → text ends without a period (simple concat).
+    assert tts.calls == [("Das hat nicht geklappt. rate-limit reached", "de-DE")]  # i18n-allow: simulated German voice output under test
     assert player.plays == 1
 
 
 @pytest.mark.asyncio
 async def test_announcement_regression_no_speak_api() -> None:
-    """Regression-Guard: pipeline darf kein ``tts.speak(...)`` rufen.
+    """Regression guard: the pipeline must not call ``tts.speak(...)``.
 
-    Der FakeTTS exponiert bewusst KEIN ``speak``. Wenn die Pipeline trotzdem
-    versuchen wuerde ``tts.speak(...)`` zu rufen (wie in der 2026-04-23-Bug-
-    Version), landete der ``AttributeError`` stumm im except-Block und der
-    Spy auf ``synthesize()`` waere leer.
+    The FakeTTS deliberately does NOT expose ``speak``. If the pipeline
+    still tried to call ``tts.speak(...)`` (as in the 2026-04-23 bug
+    version), the ``AttributeError`` landed silently in the except block and
+    the spy on ``synthesize()`` would be empty.
     """
     bus = EventBus()
     tts = FakeTTS()
-    assert not hasattr(tts, "speak"), "Fake soll speak() NICHT exponieren"
+    assert not hasattr(tts, "speak"), "fake must NOT expose speak()"
     player = FakePlayer()
     _make_pipeline(tts, bus, player)
 
@@ -317,7 +318,7 @@ async def test_announcement_regression_no_speak_api() -> None:
     )
 
     assert tts.calls == [("zu diensten alex", "de-DE")], (
-        "Announcement muss ueber synthesize() laufen, nicht tts.speak()"
+        "announcement must go through synthesize(), not tts.speak()"
     )
     assert player.plays == 1
 
@@ -349,7 +350,7 @@ async def test_announcement_language_none_resolves_via_conversation() -> None:
 
 @pytest.mark.asyncio
 async def test_empty_announcement_is_not_spoken() -> None:
-    """Leere Announcements sind UI-/State-Signale, keine TTS-Phrasen."""
+    """Empty announcements are UI/state signals, not TTS phrases."""
     bus = EventBus()
     tts = FakeTTS()
     player = FakePlayer()
@@ -363,14 +364,14 @@ async def test_empty_announcement_is_not_spoken() -> None:
 
 @pytest.mark.asyncio
 async def test_openclaw_spawn_action_echo_is_not_spoken() -> None:
-    """Spawn-Voice-Pfad ist seit 2026-05-12 komplett stumm.
+    """The spawn voice path has been completely silent since 2026-05-12.
 
-    History dieses Tests:
-    - Pre-2026-05-11: pruefte dass Pfad gar nicht spricht (urspruengl. Suppress).
-    - 2026-05-11: Spawn-ACK reaktiviert, Test prueft FIXE Phrase ohne Echo
-      aus ``event.action`` (Tool-Use-Leak-Vektor).
-    - 2026-05-12: User widerruft den ACK komplett. Test garantiert:
-      egal welche action/target im Event, KEIN TTS-Call.
+    History of this test:
+    - Pre-2026-05-11: verified the path doesn't speak at all (original suppress).
+    - 2026-05-11: spawn ACK reactivated, test verifies a FIXED phrase without
+      echoing ``event.action`` (tool-use-leak vector).
+    - 2026-05-12: user revokes the ACK entirely. Test guarantees:
+      no matter what action/target is on the event, NO TTS call.
     """
     from uuid import uuid4
 
@@ -382,13 +383,13 @@ async def test_openclaw_spawn_action_echo_is_not_spoken() -> None:
     await bus.publish(
         JarvisAgentAnnouncement(
             trace_id=uuid4(),
-            action="eine App baut",
-            target="im Workspace",
+            action="builds an app",
+            target="in the workspace",
         )
     )
 
     assert tts.calls == [], (
-        f"Spawn-Pfad darf nicht sprechen, aber TTS wurde gerufen: "
+        f"Spawn path must not speak, but TTS was called: "
         f"{tts.calls!r}"
     )
     assert player.plays == 0
@@ -396,11 +397,11 @@ async def test_openclaw_spawn_action_echo_is_not_spoken() -> None:
 
 @pytest.mark.asyncio
 async def test_openclaw_completion_signal_does_speak_with_summary() -> None:
-    """Completion-Voice-Meldung MUSS sprechen — User-Wunsch 2026-05-11.
+    """The completion voice message MUST speak — user request 2026-05-11.
 
-    Vor 2026-05-11 war dieser Pfad suppress't und der Vorgaenger-Test
-    verifizierte ``tts.calls == []``. Heute Regression-Guard fuer das
-    umgekehrte Verhalten: success+summary → kurze Voice-Ansage.
+    Before 2026-05-11 this path was suppressed and the predecessor test
+    verified ``tts.calls == []``. Today's regression guard is for the
+    opposite behavior: success+summary → short voice announcement.
     """
     bus = EventBus()
     tts = FakeTTS()
@@ -411,12 +412,12 @@ async def test_openclaw_completion_signal_does_speak_with_summary() -> None:
         JarvisAgentBackgroundCompleted(
             success=True,
             utterance="baue mir etwas",
-            summary="Fertig gebaut",
+            summary="Fertig gebaut",  # i18n-allow: simulated German voice output under test
             duration_s=1.2,
         )
     )
 
-    assert tts.calls == [("Fertig. Fertig gebaut", "de-DE")]
+    assert tts.calls == [("Fertig. Fertig gebaut", "de-DE")]  # i18n-allow: matches simulated German voice output above
     assert player.plays == 1
 
 
@@ -443,14 +444,14 @@ async def test_completion_announcement_speaks_after_hangup() -> None:
 
     await bus.publish(
         AnnouncementRequested(
-            text="Deine Reise-Recherche ist fertig.",
+            text="Deine Reise-Recherche ist fertig.",  # i18n-allow: simulated German voice output under test
             language="de",
             priority="normal",
             kind="completion",
         )
     )
 
-    assert tts.calls == [("Deine Reise-Recherche ist fertig.", "de-DE")]
+    assert tts.calls == [("Deine Reise-Recherche ist fertig.", "de-DE")]  # i18n-allow: matches simulated German voice output above
     assert player.plays == 1
 
 
@@ -466,7 +467,7 @@ async def test_stale_preamble_dropped_after_hangup() -> None:
 
     await bus.publish(
         AnnouncementRequested(
-            text="Einen Moment, ich schaue nach.",
+            text="Einen Moment, ich schaue nach.",  # i18n-allow: simulated German voice output under test
             language="de",
             priority="normal",
             kind="preamble",
@@ -488,7 +489,7 @@ async def test_plain_late_announcement_still_dropped_after_hangup() -> None:
     pipeline._hangup_event.set()  # type: ignore[attr-defined]
 
     await bus.publish(
-        AnnouncementRequested(text="irgendeine späte ansage", language="de")
+        AnnouncementRequested(text="irgendeine späte ansage", language="de")  # i18n-allow: simulated German voice output under test
     )
 
     assert tts.calls == []
@@ -508,15 +509,15 @@ async def test_background_completed_speaks_after_hangup() -> None:
     await bus.publish(
         JarvisAgentBackgroundCompleted(
             success=True,
-            utterance="recherchier mir fuenf themen",
-            summary="Fuenf Recherche-Themen liegen bereit.",
+            utterance="recherchier mir fuenf themen",  # i18n-allow: simulated German user utterance under test
+            summary="Fuenf Recherche-Themen liegen bereit.",  # i18n-allow: simulated German voice output under test
             error="",
             duration_s=12.3,
         )
     )
 
     assert tts.calls == [
-        ("Fertig. Fuenf Recherche-Themen liegen bereit.", "de-DE")
+        ("Fertig. Fuenf Recherche-Themen liegen bereit.", "de-DE")  # i18n-allow: matches simulated German voice output above
     ]
     assert player.plays == 1
 
@@ -533,7 +534,7 @@ async def test_completion_announcement_still_silenced_when_muted() -> None:
 
     await bus.publish(
         AnnouncementRequested(
-            text="Deine Reise-Recherche ist fertig.",
+            text="Deine Reise-Recherche ist fertig.",  # i18n-allow: simulated German voice output under test
             language="de",
             kind="completion",
         )

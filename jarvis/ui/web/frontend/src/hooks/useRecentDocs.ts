@@ -10,19 +10,19 @@ export interface RecentDoc {
   slug: string;
   title: string;
   diataxis: DocDiataxis;
-  /** Unix-ms — fuer LRU-Sortierung. */
+  /** Unix ms — for LRU sorting. */
   openedAt: number;
 }
 
 /**
- * localStorage-basierter Recent-Docs-Tracker.
+ * localStorage-based recent-docs tracker.
  *
- * Eintraege werden im LRU-Stil gehalten: beim Doc-Open wird der Eintrag an
- * die Spitze geschoben (oder neu angelegt). Cap bei ``MAX_ENTRIES`` (5);
- * laengere Listen wuerden in der Sidebar zu viel Platz brauchen.
+ * Entries are kept LRU-style: opening a doc moves the entry to the top
+ * (or creates it). Capped at ``MAX_ENTRIES`` (5); longer lists would take
+ * up too much room in the sidebar.
  *
- * State + localStorage werden synchron gehalten — kein react-query, weil
- * die Daten ohnehin client-only sind.
+ * State + localStorage are kept in sync — no react-query, since the data
+ * is client-only anyway.
  */
 export function useRecentDocs(): {
   recent: RecentDoc[];
@@ -31,10 +31,10 @@ export function useRecentDocs(): {
 } {
   const [recent, setRecent] = useState<RecentDoc[]>(() => loadFromStorage());
 
-  // Sync-Pattern fuer mehrere ``useRecentDocs``-Instanzen im selben Window:
-  // ``storage``-Event firet nur cross-tab, nicht intra-tab. Custom-Event
-  // ``docs-recent-changed`` wird bei jedem ``push``/``clear`` dispatched
-  // und alle Instanzen reloaden aus localStorage.
+  // Sync pattern for multiple ``useRecentDocs`` instances in the same window:
+  // the ``storage`` event only fires cross-tab, not intra-tab. The custom
+  // ``docs-recent-changed`` event is dispatched on every ``push``/``clear``
+  // and all instances reload from localStorage.
   useEffect(() => {
     const reload = () => setRecent(loadFromStorage());
     window.addEventListener("storage", (e) => {

@@ -83,8 +83,8 @@ const RAW_OK = {
 };
 
 const CURATOR_503_DETAIL =
-  "Der Curator laeuft in dieser Session nicht — evtl. Mock-Brain oder ein " +
-  "Provider ohne Memory-Integration.";
+  "The curator is not running in this session — possibly a mock brain or a " +
+  "provider without memory integration.";
 
 afterEach(() => {
   cleanup();

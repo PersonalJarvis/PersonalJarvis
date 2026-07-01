@@ -1,15 +1,15 @@
-"""Activity-Routes (Phase D).
+"""Activity routes (Phase D).
 
-- ``POST /api/v1/activities`` (signed by owner) — Owner erstellt eine neue
-  Activity-Item (Achievement, Story, Milestone) mit Visibility.
-- ``GET  /api/v1/activities`` (signed by owner) — Owner sieht eigene
-  Items inkl. Reaction-Counts.
-- ``GET  /api/v1/federation/feed`` (signed by viewer) — friend ODER
-  anonymer Caller pullt das Owner-Board. Visibility-Filter im SQL.
+- ``POST /api/v1/activities`` (signed by owner) — the owner creates a new
+  activity item (achievement, story, milestone) with a visibility.
+- ``GET  /api/v1/activities`` (signed by owner) — the owner sees their own
+  items including reaction counts.
+- ``GET  /api/v1/federation/feed`` (signed by viewer) — a friend OR an
+  anonymous caller pulls the owner's board. Visibility filter in SQL.
 
-Reaction-Visibility (Plan §D §0):
-- Owner sieht ``reaction_counts: {rocket: 3, brain: 1, fire: 0}``.
-- Andere sehen ``reaction_counts: null, has_reactions: true|false``.
+Reaction visibility (Plan §D §0):
+- The owner sees ``reaction_counts: {rocket: 3, brain: 1, fire: 0}``.
+- Others see ``reaction_counts: null, has_reactions: true|false``.
 """
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ STORY_DEFAULT_HOURS = 24
 
 
 # ----------------------------------------------------------------------
-# Owner-Side: create + list
+# Owner side: create + list
 # ----------------------------------------------------------------------
 
 @router.post("/activities", response_model=ActivityItemDTO)
@@ -93,12 +93,12 @@ def create_story(
     request: Request,
     auth: SignedAuth = Depends(require_signed_request),
 ) -> ActivityItemDTO:
-    """Plan §D-Spec: separate Route fuer Stories (24 h Lebensdauer)."""
+    """Plan §D spec: a separate route for stories (24 h lifetime)."""
     try:
         body = StoryCreateRequest.model_validate(auth.payload)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    # Auf ActivityCreateRequest mappen — gleiche Logic, gleicher Pfad.
+    # Map onto ActivityCreateRequest — same logic, same path.
     activity_payload = {
         "ts_ms": body.ts_ms,
         "kind": "story",
@@ -106,7 +106,7 @@ def create_story(
         "visibility": body.visibility,
         "expires_in_hours": 24,
     }
-    # Re-use create_activity-Logic durch direkten Call mit gepatchtem auth-payload.
+    # Reuse the create_activity logic via a direct call with a patched auth payload.
     auth.payload = activity_payload
     return create_activity(request, auth)
 
@@ -135,7 +135,7 @@ def list_own_activities(
 
 
 # ----------------------------------------------------------------------
-# Federation-Side: GET feed
+# Federation side: GET feed
 # ----------------------------------------------------------------------
 
 @fed_router.get("/feed", response_model=FeedResponse)
@@ -143,18 +143,18 @@ def federation_feed(
     request: Request,
     sort: str = Query("interesting", pattern=r"^(interesting|latest)$"),
     since: str | None = Query(None, description="ISO-8601 timestamp (UTC). "
-                              "Items mit created_at < since werden ausgefiltert."),
+                              "Items with created_at < since are filtered out."),
     auth=Depends(require_federation_signed),
 ) -> FeedResponse:
-    """Liefert die Activity-Items des Owners, gefiltert nach Visibility.
+    """Returns the owner's activity items, filtered by visibility.
 
-    - ``visibility=public`` -> immer sichtbar
-    - ``visibility=friends`` -> nur wenn ``viewer`` in ``friends``-Tabelle
-    - ``visibility=private`` -> nur wenn ``viewer == owner``
+    - ``visibility=public`` -> always visible
+    - ``visibility=friends`` -> only if ``viewer`` is in the ``friends`` table
+    - ``visibility=private`` -> only if ``viewer == owner``
 
-    ``since`` (Plan §D-Spec): inkrementeller Pull. Friends speichern den
-    ``server_now`` ihres letzten Pulls und reichen ihn beim naechsten als
-    ``since`` rein, sodass der Backend nur die Diffs serialisieren muss.
+    ``since`` (Plan §D spec): incremental pull. Friends store the
+    ``server_now`` of their last pull and pass it in as ``since`` on the
+    next one, so the backend only has to serialize the diffs.
     """
     since_dt = None
     if since is not None:
@@ -170,7 +170,7 @@ def federation_feed(
         is_owner = (auth.viewer_pubkey == owner.pubkey)
         is_friend = is_owner or _is_friend(session, owner.pubkey, auth.viewer_pubkey)
 
-        # SQL-Filter — Plan §D ALGORITHM TRANSPARENT BY DESIGN
+        # SQL filter — Plan §D ALGORITHM TRANSPARENT BY DESIGN
         clauses = [ActivityItem.visibility == "public"]
         if is_friend:
             clauses.append(ActivityItem.visibility == "friends")
@@ -211,9 +211,9 @@ def interesting_score(reactions_total: int, age_hours: float) -> float:
 
     interesting = reactions * exp(-age_hours / 24)
 
-    Deterministisch, parameterlos, in einer einzigen Zeile berechnet. Das
-    halbe Lebensdauer-Window (24 h) ist hardcoded, sodass es kein Tunable
-    gibt, das via A/B-Test heimlich optimiert wird (Plan §0).
+    Deterministic, parameterless, computed in a single line. The
+    half-life window (24 h) is hardcoded, so there's no tunable that
+    could be secretly optimized via A/B testing (Plan §0).
     """
     return reactions_total * math.exp(-age_hours / 24.0)
 
@@ -227,7 +227,7 @@ def _sort_items(items: list[ActivityItemDTO], sort: str) -> list[ActivityItemDTO
     def _score(i: ActivityItemDTO) -> tuple[float, datetime]:
         age_h = max(0.0, (now - i.created_at).total_seconds() / 3600.0)
         total = sum((i.reaction_counts or {}).values())
-        # Tie-Break: created_at, damit Reihenfolge bei reactions=0 deterministisch ist.
+        # Tie-break: created_at, so the order is deterministic when reactions=0.
         return (-interesting_score(total, age_h), -i.created_at.timestamp())
 
     return sorted(items, key=_score)

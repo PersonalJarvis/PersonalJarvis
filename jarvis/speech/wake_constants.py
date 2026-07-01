@@ -42,7 +42,7 @@ DEFAULT_WAKE_PHRASE = ""  # empty = neutral pre-onboarding default; user must op
 # hallucination must NOT match (BUG-009). This is the single definition; the
 # rolling-whisper backstop and the prefix verifier both re-export it.
 JARVIS_WAKE_PATTERN = re.compile(
-    r"\bh(ey|i|allo)\W+(jarv\w{1,5}|charv\w{1,5}|tscharv\w{1,5}|dschärw\w{1,5})\b",
+    r"\bh(ey|i|allo)\W+(jarv\w{1,5}|charv\w{1,5}|tscharv\w{1,5}|dschärw\w{1,5})\b",  # i18n-allow
     re.IGNORECASE,
 )
 
@@ -73,7 +73,7 @@ _NON_WAKE_OWW_MODELS: frozenset[str] = frozenset({"timer", "weather"})
 # "Hey Rhasspy", and any phrase with a matching pretrained model works offline.
 INSTANT_WAKE_PHRASES: tuple[str, ...] = ()
 
-_NORMALISE_RE = re.compile(r"[^0-9a-zäöüß]+")
+_NORMALISE_RE = re.compile(r"[^0-9a-zäöüß]+")  # i18n-allow
 _MATCH_NORMALISE_RE = re.compile(r"[^0-9a-z]+")
 
 
@@ -81,13 +81,13 @@ def _strip_diacritics(text: str) -> str:
     """Return an ASCII-ish form for STT matching, not display."""
     decomposed = unicodedata.normalize("NFKD", text or "")
     stripped = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
-    return stripped.replace("ß", "ss")
+    return stripped.replace("ß", "ss")  # i18n-allow
 
 
 def normalize_phrase(phrase: str) -> list[str]:
     """Lower-case, strip punctuation, split into word tokens.
 
-    Keeps German umlauts/ß. Empty/whitespace input returns ``[]``.
+    Keeps German umlauts/ß. Empty/whitespace input returns ``[]``.  # i18n-allow
     """
     cleaned = _NORMALISE_RE.sub(" ", (phrase or "").lower()).strip()
     return cleaned.split() if cleaned else []

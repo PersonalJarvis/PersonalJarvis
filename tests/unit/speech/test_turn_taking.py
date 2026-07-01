@@ -219,14 +219,14 @@ async def test_single_turn_mode_ends_session_after_response() -> None:
     # background conversation without a wake word.
     pipe = _make_pipeline(
         FakeSTT(text="Wie spaet ist es"),
-        brain_response="Es ist kurz nach drei.",
+        brain_response="Es ist kurz nach drei.",  # i18n-allow
         continue_listening_after_response=False,
     )
 
     keep_session = await pipe._handle_utterance(b"\x01\x00" * 1024)
 
     assert keep_session is False
-    assert pipe._spoken == [("Es ist kurz nach drei.", "de")]
+    assert pipe._spoken == [("Es ist kurz nach drei.", "de")]  # i18n-allow
     assert pipe._turn_state == TurnTakingState.IDLE
     assert pipe._session_end_reason == "turn_complete"
 
@@ -240,14 +240,14 @@ async def test_conversation_mode_keeps_session_listening_when_opted_in() -> None
     # then the only ways out -- same semantics as 2026-05-05 production.
     pipe = _make_pipeline(
         FakeSTT(text="Wie spaet ist es"),
-        brain_response="Es ist kurz nach drei.",
+        brain_response="Es ist kurz nach drei.",  # i18n-allow
         continue_listening_after_response=True,
     )
 
     keep_session = await pipe._handle_utterance(b"\x01\x00" * 1024)
 
     assert keep_session is True
-    assert pipe._spoken == [("Es ist kurz nach drei.", "de")]
+    assert pipe._spoken == [("Es ist kurz nach drei.", "de")]  # i18n-allow
     assert pipe._turn_state == TurnTakingState.LISTENING
     assert pipe._session_end_reason is None
 
@@ -256,7 +256,7 @@ async def test_conversation_mode_keeps_session_listening_when_opted_in() -> None
 async def test_barge_in_keeps_session_listening() -> None:
     pipe = _make_pipeline(
         FakeSTT(text="Erklaer das"),
-        brain_response="Das ist eine laengere Antwort.",
+        brain_response="Das ist eine laengere Antwort.",  # i18n-allow
         speak_barged=True,
     )
 
@@ -270,7 +270,7 @@ async def test_barge_in_keeps_session_listening() -> None:
 @pytest.mark.asyncio
 async def test_continuous_response_mode_can_keep_listening() -> None:
     pipe = _make_pipeline(
-        FakeSTT(text="Erzaehl weiter"),
+        FakeSTT(text="Erzaehl weiter"),  # i18n-allow
         brain_response="Gerne.",
         continue_listening_after_response=True,
     )
@@ -394,7 +394,7 @@ async def test_complete_question_with_kannst_du_reaches_brain() -> None:
     """
     pipe = _make_pipeline(
         FakeSTT(text="Kannst du das fixen"),
-        brain_response="Ja, ich kümmere mich darum.",
+        brain_response="Ja, ich kümmere mich darum.",  # i18n-allow
         continue_listening_after_response=True,
     )
 
@@ -403,7 +403,7 @@ async def test_complete_question_with_kannst_du_reaches_brain() -> None:
     assert keep_session is True
     assert pipe._pending_user_context == []
     assert pipe._spoken  # brain produced a reply that was spoken
-    assert pipe._spoken[0][0] == "Ja, ich kümmere mich darum."
+    assert pipe._spoken[0][0] == "Ja, ich kümmere mich darum."  # i18n-allow
 
 
 @pytest.mark.asyncio
@@ -414,7 +414,7 @@ async def test_brain_call_timeout_returns_to_listening_without_hanging() -> None
     Without the asyncio.wait_for guard around `_brain_with_ack`, an upstream
     stall (Gemini hang, OAuth refresh) leaves the pipeline forever in
     PROCESSING — exactly the user-reported "Jarvis stopped thinking" symptom.
-    Live bug 2026-05-29 ("Claude Code öffnen" stalled → silent hangup) extended
+    Live bug 2026-05-29 ("Claude Code öffnen" stalled → silent hangup) extended  # i18n-allow
     the AD-OE6 zero-silent-drop contract to the timeout path: the turn now
     returns to LISTENING AND speaks a short "took too long" fallback (was
     previously silent — see test_total_brain_failure for the same contract).
@@ -611,7 +611,7 @@ async def test_streaming_empty_non_suppressed_speaks_clarifying_question() -> No
     # The pipeline must now speak a short clarifying question instead of
     # dropping the user into silence (AD-OE6).
     pipe = _make_streaming_pipeline(
-        FakeSTT(text="Das sind fuer mich die naechsten Plaene"),
+        FakeSTT(text="Das sind fuer mich die naechsten Plaene"),  # i18n-allow
         stream_chunks=[],
         all_failed=False,
         suppressed=False,
@@ -842,14 +842,14 @@ async def test_brain_end_call_sentinel_hangs_up_and_is_not_spoken() -> None:
     # command, so the brain decides — and signals end via the sentinel.
     pipe = _make_pipeline(
         FakeSTT(text="Ich glaube wir sind durch"),
-        brain_response="Bis später, Alex. [[END_CALL]]",
+        brain_response="Bis später, Alex. [[END_CALL]]",  # i18n-allow
         continue_listening_after_response=True,  # prove hangup overrides stay-open
     )
 
     keep_session = await pipe._handle_utterance(b"\x01\x00" * 1024)
 
     assert keep_session is False
-    assert pipe._spoken == [("Bis später, Alex.", "de")]  # sentinel stripped
+    assert pipe._spoken == [("Bis später, Alex.", "de")]  # sentinel stripped  # i18n-allow
     assert pipe._session_end_reason == "voice_pattern"
     assert pipe._hangup_event.is_set()
 
@@ -888,7 +888,7 @@ async def test_explicit_auflegen_still_hard_hangs_up_via_regex() -> None:
 async def test_brain_streaming_strips_sentinel_but_keeps_it_in_full_text() -> None:
     pipe = _make_streaming_pipeline(
         FakeSTT(text="x"),
-        stream_chunks=["Alles erledigt. ", "Bis später, Alex. ", "[[END_CALL]]"],
+        stream_chunks=["Alles erledigt. ", "Bis später, Alex. ", "[[END_CALL]]"],  # i18n-allow
         all_failed=False,
     )
 
@@ -900,7 +900,7 @@ async def test_brain_streaming_strips_sentinel_but_keeps_it_in_full_text() -> No
     # spoken text is captured on pipe._synthesized, NOT on _spoken.
     assert "[[END_CALL]]" in full
     assert all("[[END_CALL]]" not in t for t in pipe._synthesized)  # never spoken
-    assert any("Bis später" in t for t in pipe._synthesized)
+    assert any("Bis später" in t for t in pipe._synthesized)  # i18n-allow
 
 
 @pytest.mark.asyncio
@@ -908,7 +908,7 @@ async def test_brain_timeout_speaks_fallback_instead_of_silent_hangup() -> None:
     """AD-OE6: when the brain stalls past brain_timeout_s, the turn must SPEAK a
     graceful fallback, not drop back to LISTENING in silence.
 
-    Live bug 2026-05-29: "kannst du Claude Code öffnen" stalled the Gemini
+    Live bug 2026-05-29: "kannst du Claude Code öffnen" stalled the Gemini  # i18n-allow
     stream; idle_timeout (30s) pre-empted brain_timeout (40s) and the turn hung
     up with zero feedback. The fix lowers brain_timeout below idle_timeout AND
     speaks on timeout — this pins the spoken-fallback half.

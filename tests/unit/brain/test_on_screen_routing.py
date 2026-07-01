@@ -53,9 +53,9 @@ def _manager() -> BrainManager:
 
 
 _ON_SCREEN = [
-    "Mach das für mich am Bildschirm",
-    "Mach es auf dem Bildschirm",
-    "Bediene das am Bildschirm für mich",
+    "Mach das für mich am Bildschirm",  # i18n-allow
+    "Mach es auf dem Bildschirm",  # i18n-allow
+    "Bediene das am Bildschirm für mich",  # i18n-allow
     "Do it on screen for me",
     "On my screen, find the latest post",
 ]
@@ -88,9 +88,9 @@ def test_build_and_show_on_screen_still_spawns_a_mission() -> None:
     """A build-a-deliverable request that ALSO mentions the screen must still
     spawn the mission — the build wins over the pc-control stand-down."""
     assert _manager()._should_force_spawn(
-        "Bau mir eine Website und zeig sie mir am Bildschirm"
+        "Bau mir eine Website und zeig sie mir am Bildschirm"  # i18n-allow
     ) is True
 
 
 def test_screen_knowledge_question_does_not_force_spawn() -> None:
-    assert _manager()._should_force_spawn("Was ist ein Bildschirm?") is False
+    assert _manager()._should_force_spawn("Was ist ein Bildschirm?") is False  # i18n-allow

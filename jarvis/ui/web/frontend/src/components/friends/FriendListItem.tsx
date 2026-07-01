@@ -3,10 +3,10 @@ import { SourceBadge } from "./SourceBadge";
 import { cn } from "@/lib/utils";
 
 /**
- * Ein Eintrag in der FriendsList (linke Seite des Chat-Tabs).
+ * A single entry in the FriendsList (left side of the chat tab).
  *
- * Layout: Avatar-Initial + Name + Source-Badges + Note (truncated).
- * Selected-State markiert via Border + Background.
+ * Layout: avatar initial + name + source badges + note (truncated).
+ * The selected state is marked via border + background.
  */
 export function FriendListItem({
   friend,

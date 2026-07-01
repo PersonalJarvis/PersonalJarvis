@@ -396,10 +396,10 @@ def _is_diagnostic_reply(text: str) -> bool:
     return (
         t.startswith("brain unavailable")
         or t.startswith("brain error")
-        or t.startswith("brain-fehler")
-        or t.startswith("kein brain-key gefunden")
-        or t.startswith("keine brain-provider")
-        or t.startswith("brain nicht verfuegbar")
+        or t.startswith("brain-fehler")  # i18n-allow: matches a literal string the production diagnostic fallback may emit
+        or t.startswith("kein brain-key gefunden")  # i18n-allow: matches a literal string the production diagnostic fallback may emit
+        or t.startswith("keine brain-provider")  # i18n-allow: matches a literal string the production diagnostic fallback may emit
+        or t.startswith("brain nicht verfuegbar")  # i18n-allow: matches a literal string the production diagnostic fallback may emit
         or "brainunavailable" in t
     )
 

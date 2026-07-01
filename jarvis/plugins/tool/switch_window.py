@@ -1,12 +1,12 @@
-"""switch_window-Tool: bringt ein Fenster nach Titel-Substring in den Vordergrund.
+"""switch_window tool: brings a window to the foreground by title substring.
 
 The window enumeration / focus logic now lives in
 ``jarvis.platform.window_state`` (so ``open_app`` and the Computer-Use loop can
 reuse it). This tool delegates to the per-OS focus helpers there and keeps its
 exact user-facing readback strings (AD-7: the Windows path is unchanged).
 
-Risk-Tier: ``monitor`` — Fenster-Switches sind reversibel, aber der Fokus-
-Wechsel kann ungewollte Aktionen ausloesen, wenn der User gerade tippt.
+Risk tier: ``monitor`` — window switches are reversible, but the focus
+change can trigger unwanted actions if the user is currently typing.
 """
 from __future__ import annotations
 
@@ -27,15 +27,15 @@ class SwitchWindowTool:
     name: str = "switch_window"
     risk_tier: str = "monitor"
     description: str = (
-        "Wechselt zu einem Top-Level-Fenster, dessen Titel den uebergebenen "
-        "Substring enthaelt. Case-insensitive. Restored minimierte Fenster."
+        "Switches to a top-level window whose title contains the given "
+        "substring. Case-insensitive. Restores minimized windows."
     )
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
             "title_contains": {
                 "type": "string",
-                "description": "Substring, der im Fenstertitel vorkommen muss",
+                "description": "Substring that must appear in the window title",
             },
         },
         "required": ["title_contains"],
@@ -46,7 +46,7 @@ class SwitchWindowTool:
         if not isinstance(title, str) or not title.strip():
             return ToolResult(
                 success=False, output=None,
-                error="title_contains fehlt oder leer",
+                error="title_contains missing or empty",
             )
 
         plat = detect_platform()
@@ -59,11 +59,11 @@ class SwitchWindowTool:
         except Exception as exc:  # noqa: BLE001
             return ToolResult(
                 success=False, output=None,
-                error=f"Window-Enumeration fehlgeschlagen: {exc}",
+                error=f"Window enumeration failed: {exc}",
             )
 
         if found:
-            return ToolResult(success=True, output=f"Fokus auf Fenster: {msg}")
+            return ToolResult(success=True, output=f"Focused window: {msg}")
         return ToolResult(success=False, output=None, error=msg)
 
     async def _execute_non_windows(self, plat: str, title: str) -> ToolResult:

@@ -1,18 +1,18 @@
-"""Tests für `jarvis.voice.self_mod_flow.SelfModFlowController` (Phase 7.4).
+"""Tests for `jarvis.voice.self_mod_flow.SelfModFlowController` (Phase 7.4).
 
-Plan-Akzeptanzkriterien §7.4:
-- Misshear-Test: User-Reject führt zu keinem Schreiben
-- Timeout-Test: 30s ohne Antwort → automatischer Reject
-- SAFE-Tier-Test: `tts.speed`-Mutation läuft ohne Echo durch
-- Sprachdetection: Templates passen sich an `profile.language` an
+Plan acceptance criteria §7.4:
+- Misshear test: user reject leads to no write
+- Timeout test: 30s with no answer → automatic reject
+- SAFE-tier test: `tts.speed` mutation goes through without an echo
+- Language detection: templates adapt to `profile.language`
 
-Plus Prompt-AC:
-- Confirm → APPLIED, set_config_value genau einmal, Audit hat
+Plus prompt AC:
+- Confirm → APPLIED, set_config_value exactly once, audit has
   voice_confirmation
-- Veto → VETOED, set_config_value NICHT gerufen, Audit "voice_vetoed"
-- Mehrdeutige Antwort verlängert NICHT den Timeout (kein Soft-Lock)
-- Integrationstest: Hauptjarvis-Tool-Call → Voice-Layer-Confirm →
-  jarvis.toml mutiert
+- Veto → VETOED, set_config_value NOT called, audit "voice_vetoed"
+- Ambiguous response does NOT extend the timeout (no soft lock)
+- Integration test: Hauptjarvis tool call → voice-layer confirm →
+  jarvis.toml mutated
 """
 from __future__ import annotations
 
@@ -140,7 +140,7 @@ class TestBeginSafeTier:
         pending_store: PendingMutationStore,
         fixture_path: Path,
     ) -> None:
-        """Plan-§7.4 SAFE-Tier-Path: kein Echo, sofort persistiert."""
+        """Plan-§7.4 SAFE-tier path: no echo, persisted immediately."""
         pending = _make_pending_via_tool(
             pending_store, path="tts.speed", new_value=1.25
         )
@@ -150,7 +150,7 @@ class TestBeginSafeTier:
         assert session.echo_question == ""
         assert session.final_message is not None
         assert "1.25" in session.final_message
-        # File wurde wirklich geschrieben (vom Store, vor begin())
+        # File was actually written (by the store, before begin())
         assert _isolated_loader(fixture_path).tts.speed == 1.25
 
 
@@ -269,9 +269,9 @@ class TestVetoFlow:
             pending_store, path="tts.provider", new_value="elevenlabs"
         )
         session = controller.begin(pending)
-        final = controller.receive_answer(session, "nein, doch nicht")
+        final = controller.receive_answer(session, "nein, doch nicht")  # i18n-allow
         assert final.state == FlowState.VETOED
-        # File unverändert
+        # File unchanged
         assert fixture_path.read_bytes() == original_bytes
 
     def test_veto_writes_audit_voice_vetoed(
@@ -284,11 +284,11 @@ class TestVetoFlow:
             pending_store, path="tts.provider", new_value="elevenlabs"
         )
         session = controller.begin(pending)
-        controller.receive_answer(session, "abbrechen", confidence=0.85)
+        controller.receive_answer(session, "abbrechen", confidence=0.85)  # i18n-allow
         entries = _read_audit(audit_log)
         vetoed = [e for e in entries if e.get("error") == "voice_vetoed"]
         assert len(vetoed) == 1
-        assert vetoed[0]["voice_confirmation"]["transcript"] == "abbrechen"
+        assert vetoed[0]["voice_confirmation"]["transcript"] == "abbrechen"  # i18n-allow
         assert vetoed[0]["voice_confirmation"]["confidence"] == 0.85
 
     def test_veto_renders_short_message(
@@ -317,10 +317,10 @@ class TestMisshearReject:
         fixture_path: Path,
         audit_log: SelfModAudit,
     ) -> None:
-        """Plan-AC: User hört Echo „Karen" statt „Charon" → Reject → kein Schreiben.
+        """Plan AC: user hears the echo „Karen" instead of „Charon" → reject → no write.
 
-        Wir simulieren: STT hat „Karen" als new_value transkribiert, der Echo-Satz
-        zeigt das, der User hört es und sagt „nein".
+        We simulate: STT transcribed „Karen" as new_value, the echo sentence
+        shows it, the user hears it and says „no".
         """
         original_bytes = fixture_path.read_bytes()
         pending = _make_pending_via_tool(
@@ -330,10 +330,10 @@ class TestMisshearReject:
         # Echo zeigt "Karen" (genau das, was STT verstanden hat — End-Focus
         # macht das User-sichtbar):
         assert "Karen" in session.echo_question
-        # User hört es und sagt nein
+        # User hears it and says no
         final = controller.receive_answer(session, "nein, falsch verstanden")
         assert final.state == FlowState.VETOED
-        # File unverändert — User wurde durch Echo gerettet
+        # File unchanged — the user was saved by the echo
         assert fixture_path.read_bytes() == original_bytes
 
 
@@ -355,7 +355,7 @@ class TestTimeoutFlow:
             pending_store, path="tts.provider", new_value="elevenlabs"
         )
         session = controller.begin(pending, now=1000.0)
-        final = controller.check_timeout(session, now=1031.0)  # 31s später
+        final = controller.check_timeout(session, now=1031.0)  # 31s later
         assert final.state == FlowState.TIMEOUT
         assert fixture_path.read_bytes() == original_bytes
         # Audit "voice_timeout"
@@ -383,13 +383,13 @@ class TestTimeoutFlow:
             pending_store, path="tts.provider", new_value="elevenlabs"
         )
         session = controller.begin(pending, now=1000.0)
-        # User antwortet zu spät — wird als Timeout behandelt
+        # User answers too late — treated as a timeout
         final = controller.receive_answer(session, "ja", now=1031.0)
         assert final.state == FlowState.TIMEOUT
 
 
 # ----------------------------------------------------------------------
-# Mehrdeutigkeit (kein Soft-Lock, kein Confirm-Bias)
+# Ambiguity (no soft lock, no confirm bias)
 # ----------------------------------------------------------------------
 
 
@@ -399,8 +399,8 @@ class TestAmbiguousNoSoftLock:
         controller: SelfModFlowController,
         pending_store: PendingMutationStore,
     ) -> None:
-        """Plan-AP-12 + Plan-Sicherheits-Eigenschaft: Mehrdeutiges
-        verlängert NICHT die Deadline, blockiert aber den Confirm.
+        """Plan-AP-12 + plan safety property: an ambiguous response does
+        NOT extend the deadline, but does block the confirm.
         """
         pending = _make_pending_via_tool(
             pending_store, path="tts.provider", new_value="elevenlabs"
@@ -410,10 +410,10 @@ class TestAmbiguousNoSoftLock:
         intermediate = controller.receive_answer(
             session, "vielleicht", now=1010.0
         )
-        # Bleibt in CONFIRMING, Deadline UNVERÄNDERT
+        # Stays in CONFIRMING, deadline UNCHANGED
         assert intermediate.state == FlowState.CONFIRMING
-        assert intermediate.deadline_ts == 1030.0  # nicht verlängert
-        # Dann läuft Timer ab
+        assert intermediate.deadline_ts == 1030.0  # not extended
+        # Then the timer runs out
         final = controller.check_timeout(intermediate, now=1031.0)
         assert final.state == FlowState.TIMEOUT
 
@@ -471,23 +471,23 @@ class TestIntegrationToolCallToMutation:
             )
         )
         assert tool_result.success is True
-        # Re-Konstruktion des PendingMutation-Modells aus dem Tool-Output
+        # Reconstruction of the PendingMutation model from the tool output
         pending = PendingMutation.model_validate(tool_result.output)
         assert pending.applied is False  # ASK-Tier
 
-        # 2. Voice-Layer übernimmt die Echo-Confirmation
+        # 2. Voice layer takes over the echo confirmation
         session = controller.begin(pending)
         assert session.state == FlowState.CONFIRMING
         assert "elevenlabs" in session.echo_question
 
-        # 3. User bestätigt via STT-Mock
+        # 3. User confirms via STT mock
         final = controller.receive_answer(session, "ja", confidence=0.95)
         assert final.state == FlowState.APPLIED
 
         # 4. jarvis.toml ist mutiert
         assert _isolated_loader(fixture_path).tts.provider == "elevenlabs"
 
-        # 5. Audit-Trail enthält voice_confirmed (Pre) + ok=true (Mutate)
+        # 5. Audit trail contains voice_confirmed (pre) + ok=true (mutate)
         entries = _read_audit(audit_log)
         voice_pre = [
             e

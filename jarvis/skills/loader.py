@@ -1,11 +1,11 @@
-"""Skill-Loader: Markdown-File → Skill.
+"""Skill loader: Markdown file → Skill.
 
-Benötigt optional `python-frontmatter`. Wenn nicht verfügbar, fällt er auf
-einen eingebauten YAML-Frontmatter-Splitter zurück (`---\\n...\\n---\\n`).
+Optionally needs `python-frontmatter`. If not available, it falls back to
+a built-in YAML frontmatter splitter (`---\\n...\\n---\\n`).
 
-Kaputte Files werden NICHT geraised — sie landen als `DRAFT` mit gesetztem
-`error`-Field im Skill. So kann das Registry eine Diagnose anzeigen ohne
-die ganze Pipeline zu töten.
+Broken files are NOT raised — they land as `DRAFT` with the `error`
+field set on the skill. This lets the registry show a diagnosis without
+killing the whole pipeline.
 """
 from __future__ import annotations
 
@@ -41,11 +41,11 @@ def _body_hash(body: str) -> str:
 
 
 def _scan_resources(skill_root: Path) -> dict[str, tuple[str, ...]]:
-    """Listet die Bundle-Resource-Sibling-Ordner (references/scripts/assets/agents).
+    """Lists the bundle-resource sibling folders (references/scripts/assets/agents).
 
-    Gibt pro Kind die Liste der File-Pfade *relativ zum Kind-Ordner* zurueck,
-    sortiert. Fehlende Ordner landen als leeres Tuple — Aufrufer muss kein
-    defaultdict fuehren. Symlinks werden dereferenziert (``rglob`` folgt ihnen).
+    Returns, per kind, the list of file paths *relative to the kind folder*,
+    sorted. A missing folder lands as an empty tuple — the caller doesn't need to
+    carry a defaultdict. Symlinks are dereferenced (``rglob`` follows them).
     """
     out: dict[str, tuple[str, ...]] = {}
     for kind in RESOURCE_KINDS:
@@ -56,7 +56,7 @@ def _scan_resources(skill_root: Path) -> dict[str, tuple[str, ...]]:
         files: list[str] = []
         for p in kind_dir.rglob("*"):
             if p.is_file():
-                # Pfad relativ zum Kind-Ordner, forward-slashes fuer UI-Konsistenz
+                # Path relative to the kind folder, forward slashes for UI consistency
                 rel = p.relative_to(kind_dir).as_posix()
                 files.append(rel)
         out[kind] = tuple(sorted(files))
@@ -64,9 +64,9 @@ def _scan_resources(skill_root: Path) -> dict[str, tuple[str, ...]]:
 
 
 def _split_frontmatter(text: str) -> tuple[dict, str]:
-    """Trennt YAML-Frontmatter vom Markdown-Body.
+    """Splits the YAML frontmatter from the Markdown body.
 
-    Bevorzugt python-frontmatter, fällt sonst auf manuellen Split zurück.
+    Prefers python-frontmatter, otherwise falls back to a manual split.
     """
     if _HAVE_FRONTMATTER:
         post = _frontmatter.loads(text)  # type: ignore[union-attr]
@@ -74,11 +74,11 @@ def _split_frontmatter(text: str) -> tuple[dict, str]:
 
     if not _HAVE_YAML:
         raise RuntimeError(
-            "Weder python-frontmatter noch PyYAML installiert — "
-            "Skill-Parsing nicht möglich."
+            "Neither python-frontmatter nor PyYAML installed — "
+            "skill parsing not possible."
         )
 
-    # Manueller Split: '---\n<yaml>\n---\n<body>'
+    # Manual split: '---\n<yaml>\n---\n<body>'
     if text.startswith("---"):
         parts = text.split("---", 2)
         if len(parts) >= 3:
@@ -86,15 +86,15 @@ def _split_frontmatter(text: str) -> tuple[dict, str]:
             body = parts[2].lstrip("\n")
             meta = yaml.safe_load(fm_str) or {}
             if not isinstance(meta, dict):
-                raise ValueError("Frontmatter muss ein YAML-Mapping sein")
+                raise ValueError("Frontmatter must be a YAML mapping")
             return meta, body
     return {}, text
 
 
 def parse_skill(path: Path) -> Skill:
-    """Lädt eine einzelne SKILL.md und gibt einen Skill zurück.
+    """Loads a single SKILL.md and returns a Skill.
 
-    Niemals raise — Fehler landen im `error`-Feld + DRAFT-State.
+    Never raises — errors land in the `error` field + DRAFT state.
     """
     path = Path(path)
     resources = _scan_resources(path.parent)
@@ -158,9 +158,9 @@ def parse_skill(path: Path) -> Skill:
             resources=resources,
         )
 
-    # Phase 7.5: Wenn das Frontmatter explizit `state: draft` setzt, übernehmen.
-    # OpenClaw-authored Skills landen so deterministisch im DRAFT-Pool und
-    # werden vom Hot-Reload-Active-Filter ausgeschlossen (Plan-§AD-8).
+    # Phase 7.5: if the frontmatter explicitly sets `state: draft`, honor it.
+    # This deterministically puts OpenClaw-authored skills into the DRAFT pool
+    # and excludes them from the hot-reload active filter (Plan-§AD-8).
     final_state = (
         fm.state if fm.state is not None else SkillLifecycleState.VALIDATED
     )
@@ -177,7 +177,7 @@ def parse_skill(path: Path) -> Skill:
 
 
 def discover_skills(root: Path) -> list[Skill]:
-    """Walkt `root` rekursiv nach SKILL.md-Dateien."""
+    """Walks `root` recursively for SKILL.md files."""
     root = Path(root)
     if not root.exists():
         return []

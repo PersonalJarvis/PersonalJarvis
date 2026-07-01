@@ -1,7 +1,7 @@
 """Tests for the per-tool spawn cooldown.
 
 Live regression 2026-05-27 (mission_019e6983-{82e7,a83b,b0be}): ONE user
-voice request ("Subagent für HTML-Slideshow") produced THREE mission cards
+voice request ("Subagent für HTML-Slideshow") produced THREE mission cards  # i18n-allow: verbatim forensic quote of the live German voice utterance under test
 in the Outputs UI within 10 seconds. Root cause: the user's long utterance
 was VAD-fragmented across multiple turns, and each turn that landed in the
 brain either re-matched a force-spawn phrase or the brain issued another
@@ -88,7 +88,7 @@ async def test_cooldown_suppresses_duplicate_spawn() -> None:
     tool._active_dispatches = 1
 
     result = await tool.execute(
-        {"utterance": "Drogen in Schulen", "action": "noch eine Slideshow"},
+        {"utterance": "Drogen in Schulen", "action": "noch eine Slideshow"},  # i18n-allow: simulated German user utterance, content under test
         _ctx(),
     )
 

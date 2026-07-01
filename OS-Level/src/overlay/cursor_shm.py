@@ -1,10 +1,10 @@
-"""Cursor-Stream Shared-Memory Layout + Reader. Plan §11 + AD-5.
+"""Cursor-stream shared-memory layout + reader. Plan §11 + AD-5.
 
-32-Byte fixed-layout Block, single-writer (Hauptjarvis) /
-single-reader (Overlay). Lock-frei via Seqlock-Pattern (odd seq =
+32-byte fixed-layout block, single-writer (Hauptjarvis) /
+single-reader (overlay). Lock-free via a seqlock pattern (odd seq =
 writer mid-write, even seq = quiescent).
 
-Plan §11.2 Layout (little-endian, total 32 bytes):
+Plan §11.2 layout (little-endian, total 32 bytes):
 
     | offset | size | type      | field         |
     | 0      | 8    | int64 LE  | ts_ns         | Unix-epoch ns
@@ -14,17 +14,17 @@ Plan §11.2 Layout (little-endian, total 32 bytes):
     | 20     | 4    | uint32 LE | monitor_idx  | screen index
     | 24     | 8    | -         | reserved      | padding to 32
 
-Reader-Pattern (Plan §11.3): seq_before, dann Daten, dann seq_after.
-Wenn seq_before & 1 -> Writer mid-write, retry. Wenn seq_before !=
-seq_after -> torn read, retry. Sonst Frame valid.
+Reader pattern (Plan §11.3): seq_before, then data, then seq_after.
+If seq_before & 1 -> writer mid-write, retry. If seq_before !=
+seq_after -> torn read, retry. Otherwise the frame is valid.
 
-Writer-Pattern (Plan §11.4): _seq+1 als ungerade BUSY publishen,
-Daten schreiben, _seq+2 als gerade DONE publishen.
+Writer pattern (Plan §11.4): publish _seq+1 as odd BUSY, write data,
+publish _seq+2 as even DONE.
 
-Diese Datei enthaelt BEIDE Klassen (Reader + Writer) damit das
-Layout an genau einer Stelle definiert ist. Hauptjarvis-side gibt es
-``jarvis/overlay/cursor_writer.py`` als Convenience-Wrapper inkl.
-Streamer-Thread; der nutzt diesen Writer hier.
+This file contains BOTH classes (reader + writer) so the layout is
+defined in exactly one place. On the Hauptjarvis side there's
+``jarvis/overlay/cursor_writer.py`` as a convenience wrapper including
+the streamer thread; it uses this writer under the hood.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
-# Plan §11.1 — fixed 32-Byte Block.
+# Plan §11.1 — fixed 32-byte block.
 CURSOR_SHM_SIZE: int = 32
 
 # struct.pack/unpack format:
@@ -55,7 +55,7 @@ CURSOR_SHM_SIZE: int = 32
 CURSOR_SHM_STRUCT: str = "<qiiII8s"
 assert struct.calcsize(CURSOR_SHM_STRUCT) == CURSOR_SHM_SIZE
 
-# Offsets fuer Single-Field-Reads (Reader pattern braucht seq-only Reads).
+# Offsets for single-field reads (the reader pattern needs seq-only reads).
 _OFFSET_TS = 0
 _OFFSET_X = 8
 _OFFSET_Y = 12
@@ -65,13 +65,13 @@ _PADDING_BYTES = bytes(8)  # zero-padding
 
 
 def make_cursor_shm_name() -> str:
-    """Plan §11.1: ``jarvis-cursor-{8 hex chars}`` random-per-session."""
+    """Plan §11.1: ``jarvis-cursor-{8 hex chars}`` random per session."""
     return f"jarvis-cursor-{secrets.token_hex(4)}"
 
 
 @dataclass(frozen=True)
 class CursorFrame:
-    """Ein erfolgreich gelesener Cursor-Frame."""
+    """A successfully read cursor frame."""
 
     ts_ns: int
     x: int
@@ -81,7 +81,7 @@ class CursorFrame:
 
 
 class CursorShmReader:
-    """Overlay-Side Reader. Nicht-blockierend, Seqlock-Pattern.
+    """Overlay-side reader. Non-blocking, seqlock pattern.
 
     Lifecycle::
 
@@ -95,10 +95,10 @@ class CursorShmReader:
         finally:
             reader.close()
 
-    ``attach()`` bindet an einen existierenden Block — wirft
-    ``FileNotFoundError`` wenn der Writer (Hauptjarvis) noch nicht
-    publiziert hat. ``close()`` released nur die Reader-Referenz; der
-    Writer (Owner) ist fuer ``unlink()`` verantwortlich.
+    ``attach()`` binds to an existing block — raises
+    ``FileNotFoundError`` if the writer (Hauptjarvis) hasn't published
+    yet. ``close()`` only releases the reader reference; the writer
+    (owner) is responsible for ``unlink()``.
     """
 
     def __init__(self, shm: shared_memory.SharedMemory) -> None:
@@ -110,29 +110,29 @@ class CursorShmReader:
 
     @classmethod
     def attach(cls, name: str) -> "CursorShmReader":
-        """Bindet an einen existierenden Block. ``FileNotFoundError`` wenn weg."""
+        """Binds to an existing block. ``FileNotFoundError`` if it's gone."""
         shm = shared_memory.SharedMemory(name=name, create=False)
         return cls(shm)
 
     def read(self) -> Optional[CursorFrame]:
-        """Plan §11.3 Seqlock-Read.
+        """Plan §11.3 seqlock read.
 
-        Returnt:
-            * ``CursorFrame`` bei sauberem Read mit neuen Daten.
-            * ``None`` wenn:
-                - Writer mid-write (seq odd)
-                - keine neuen Daten (seq == last_seq)
-                - torn read (seq vorher != nachher)
+        Returns:
+            * ``CursorFrame`` on a clean read with new data.
+            * ``None`` if:
+                - the writer is mid-write (seq odd)
+                - there is no new data (seq == last_seq)
+                - it was a torn read (seq before != after)
         """
-        # Wir koennen direkt per memoryview slicen; struct.unpack_from
-        # ist genauso schnell und liest native int Types.
+        # We can slice directly via memoryview; struct.unpack_from
+        # is just as fast and reads native int types.
         seq_before = struct.unpack_from("<I", self._buf, _OFFSET_SEQ)[0]
         if seq_before & 1:
-            return None  # Writer mid-write
+            return None  # writer mid-write
         if seq_before == self._last_seq:
-            return None  # nichts Neues
+            return None  # nothing new
         if seq_before == 0:
-            # Block ist initialized aber Writer hat noch nie publiziert.
+            # Block is initialized but the writer has never published.
             return None
 
         ts_ns = struct.unpack_from("<q", self._buf, _OFFSET_TS)[0]
@@ -142,7 +142,7 @@ class CursorShmReader:
         seq_after = struct.unpack_from("<I", self._buf, _OFFSET_SEQ)[0]
 
         if seq_before != seq_after:
-            return None  # Writer schrieb waehrend wir lasen -> torn
+            return None  # writer wrote while we were reading -> torn
 
         self._last_seq = seq_after
         return CursorFrame(
@@ -158,11 +158,11 @@ class CursorShmReader:
         return self._last_seq
 
     def close(self) -> None:
-        """Released die Reader-Sicht. Macht KEIN unlink (Writer is owner)."""
+        """Releases the reader view. Does NOT unlink (the writer is owner)."""
         try:
             self._buf.release()
         except (ValueError, BufferError):
-            # memoryview bereits released — OK.
+            # memoryview already released — OK.
             pass
         try:
             self._shm.close()
@@ -171,15 +171,15 @@ class CursorShmReader:
 
 
 class CursorShmWriter:
-    """Producer-Side Writer. Plan §11.4 Seqlock-Pattern.
+    """Producer-side writer. Plan §11.4 seqlock pattern.
 
-    Owner of the SHM block — ``close()`` ruft ``unlink()`` damit der
-    Block nach Process-Exit nicht leakt (relevant fuer Linux; Windows
-    GC'd das eh wenn alle Handles weg sind).
+    Owner of the SHM block — ``close()`` calls ``unlink()`` so the
+    block doesn't leak after process exit (relevant for Linux; Windows
+    GCs it anyway once all handles are gone).
 
-    Wird hier in OS-Level definiert damit Layout an einer Stelle lebt.
-    Hauptjarvis nutzt ``jarvis.overlay.cursor_writer.CursorStreamer``
-    der diesen Writer wrapped.
+    Defined here in OS-Level so the layout lives in one place.
+    Hauptjarvis uses ``jarvis.overlay.cursor_writer.CursorStreamer``,
+    which wraps this writer.
     """
 
     def __init__(self, shm: shared_memory.SharedMemory, *, owner: bool = True) -> None:
@@ -188,31 +188,31 @@ class CursorShmWriter:
         self._shm = shm
         self._buf = shm.buf
         self._owner = owner
-        # Plan §11.4: ``_seq`` startet bei 0 (gerade), erstes
-        # publiziertes Frame endet mit seq=2.
+        # Plan §11.4: ``_seq`` starts at 0 (even), the first
+        # published frame ends with seq=2.
         self._seq: int = 0
-        # Initialer Block-Inhalt: alles 0 (seq=0 -> "noch nie publiziert").
-        # ``shared_memory.SharedMemory(create=True)`` liefert das auf
-        # POSIX/Windows bereits zero'd.
+        # Initial block content: all 0 (seq=0 -> "never published yet").
+        # ``shared_memory.SharedMemory(create=True)`` already delivers
+        # that zero'd on POSIX/Windows.
 
     @classmethod
     def create(cls, name: Optional[str] = None) -> "CursorShmWriter":
-        """Erzeugt einen NEUEN Block. Standard-Name via ``make_cursor_shm_name()``."""
+        """Creates a NEW block. Default name via ``make_cursor_shm_name()``."""
         if name is None:
             name = make_cursor_shm_name()
         shm = shared_memory.SharedMemory(name=name, create=True, size=CURSOR_SHM_SIZE)
-        # Sicherstellen dass die ersten 32 Bytes 0 sind (POSIX ist garantiert,
-        # Windows ist es auch — aber explizit ist robuster).
+        # Make sure the first 32 bytes are 0 (guaranteed on POSIX,
+        # true on Windows too — but explicit is more robust).
         shm.buf[:CURSOR_SHM_SIZE] = bytes(CURSOR_SHM_SIZE)
         return cls(shm, owner=True)
 
     def write(self, x: int, y: int, monitor_idx: int) -> int:
-        """Plan §11.4 Seqlock-Write. Returnt die finale ``seq``.
+        """Plan §11.4 seqlock write. Returns the final ``seq``.
 
-        Pattern: seq_busy (ungerade) -> Daten -> seq_done (gerade).
-        Nach diesem Call ist ``self._seq`` gerade und = neuer Wert.
+        Pattern: seq_busy (odd) -> data -> seq_done (even).
+        After this call, ``self._seq`` is even and equals the new value.
         """
-        seq_busy = self._seq + 1  # ungerade
+        seq_busy = self._seq + 1  # odd
         struct.pack_into("<I", self._buf, _OFFSET_SEQ, seq_busy)
         ts_ns = time.time_ns()
         struct.pack_into("<q", self._buf, _OFFSET_TS, ts_ns)
@@ -220,7 +220,7 @@ class CursorShmWriter:
         struct.pack_into("<i", self._buf, _OFFSET_Y, int(y))
         struct.pack_into("<I", self._buf, _OFFSET_MONITOR, int(monitor_idx))
         struct.pack_into("<8s", self._buf, 24, _PADDING_BYTES)
-        seq_done = seq_busy + 1  # gerade
+        seq_done = seq_busy + 1  # even
         struct.pack_into("<I", self._buf, _OFFSET_SEQ, seq_done)
         self._seq = seq_done
         return seq_done
@@ -234,7 +234,7 @@ class CursorShmWriter:
         return self._seq
 
     def close(self) -> None:
-        """Schliesst + unlinked (wenn owner)."""
+        """Closes + unlinks (if owner)."""
         try:
             self._buf.release()
         except (ValueError, BufferError):
@@ -247,9 +247,9 @@ class CursorShmWriter:
             try:
                 self._shm.unlink()
             except (FileNotFoundError, Exception):  # noqa: BLE001
-                # Auf Windows ist unlink ein no-op (resource_tracker
-                # handled das); FileNotFoundError ok wenn doppelt
-                # geschlossen.
+                # On Windows, unlink is a no-op (resource_tracker
+                # handles that); FileNotFoundError is fine if closed
+                # twice.
                 pass
 
 

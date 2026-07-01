@@ -1,4 +1,4 @@
-﻿"""Unit-Tests fuer TIER_DEFAULTS_BY_PROVIDER, _resolve_tier_model und get_tier_default_model."""
+﻿"""Unit tests for TIER_DEFAULTS_BY_PROVIDER, _resolve_tier_model, and get_tier_default_model."""
 from __future__ import annotations
 
 import pytest
@@ -20,19 +20,19 @@ class TestTierDefaultsCatalog:
         assert required <= set(TIER_DEFAULTS_BY_PROVIDER["deep"])
 
     def test_router_models_look_fast(self):
-        # 2026-04-29 Update: GPT-5.5 hat keine -mini-Variante released; OpenAI
-        # sagt selbst "GPT-5.5 hat per-token-Latenz wie GPT-5.4". Fast-Tier-
-        # Heuristik akzeptiert daher auch Frontier-Hauptmodelle.
-        # Siehe TIER_DEFAULTS_BY_PROVIDER-Doc in jarvis/brain/manager.py.
+        # 2026-04-29 update: GPT-5.5 has no -mini variant released; OpenAI
+        # itself says "GPT-5.5 has per-token latency like GPT-5.4". The fast-tier
+        # heuristic therefore also accepts frontier main models.
+        # See the TIER_DEFAULTS_BY_PROVIDER doc in jarvis/brain/manager.py.
         for provider, model in TIER_DEFAULTS_BY_PROVIDER["router"].items():
             if provider == "openrouter":
                 continue  # deliberate free-model default; not a fast-tier slug
             if provider == "gemini":
-                continue  # hat keinen Fast-Mode
+                continue  # has no fast mode
             if provider == "openai" and model in {"gpt-5.5", "gpt-5"}:
-                continue  # Frontier-Hauptmodell ohne -mini-Suffix
+                continue  # frontier main model without -mini suffix
             assert any(tag in model.lower() for tag in ("haiku", "flash", "mini", "fast", "chat", "small")), \
-                f"{provider}: {model} sieht nicht nach Fast-Tier aus"
+                f"{provider}: {model} does not look like a fast tier"
 
     def test_sub_models_look_frontier(self):
         for provider, model in TIER_DEFAULTS_BY_PROVIDER["deep"].items():
@@ -40,7 +40,7 @@ class TestTierDefaultsCatalog:
                 continue  # deliberate free-model default; not a frontier slug
             assert any(tag in model.lower() for tag in
                        ("fable", "opus", "pro", "large", "reasoner", "gpt-4", "gpt-5")), \
-                f"{provider}: {model} sieht nicht nach Frontier-Tier aus"
+                f"{provider}: {model} does not look like a frontier tier"
 
     def test_claude_deep_tier_is_reachable_opus_never_fable(self):
         """Maintainer decision 2026-06-14 (supersedes the 2026-06-10 fable
@@ -78,7 +78,7 @@ class TestResolveTierModel:
         assert _resolve_tier_model("super_frontier", "claude-api", None) == ""
 
     def test_deep_gemini_default(self):
-        # 2026-04-29: Frontier ueberall (User-Mandat).
+        # 2026-04-29: frontier everywhere (user mandate).
         assert _resolve_tier_model("deep", "gemini", None) == "gemini-3.1-pro-preview"
 
     def test_deep_openai_default(self):
@@ -87,8 +87,8 @@ class TestResolveTierModel:
 
 class TestPublicGetter:
     def test_get_default_returns_model(self):
-        # 2026-04-29 Frontier-Update + Bug-API-1: gemini-3-flash-preview
-        # weil Google API das Stable-Alias 'gemini-3-flash' nicht listet.
+        # 2026-04-29 frontier update + Bug-API-1: gemini-3-flash-preview
+        # because the Google API does not list the stable alias 'gemini-3-flash'.
         assert get_tier_default_model("router", "gemini") == "gemini-3-flash-preview"
 
     def test_get_default_returns_none_for_unknown_provider(self):

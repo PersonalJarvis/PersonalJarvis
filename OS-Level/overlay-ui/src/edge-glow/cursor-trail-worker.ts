@@ -1,16 +1,16 @@
 // cursor-trail-worker.ts — OffscreenCanvas Worker. Plan §15.2.
 //
-// Empfaengt:
+// Receives:
 //   - { type: "init", canvas: OffscreenCanvas, dpr: number }
 //   - { type: "resize", width: number, height: number, dpr: number }
 //   - { type: "push", x: number, y: number }
-//                        // x, y sind PHYSICAL px; Worker konvertiert
-//                        // selbst per dpr in CSS-px.
-//   - { type: "clear" }   // bei action_ended
+//                        // x, y are PHYSICAL px; the worker itself
+//                        // converts them to CSS px via dpr.
+//   - { type: "clear" }   // on action_ended
 //
-// Maintained einen Ring-Buffer von 20 Punkten + zeichnet jeden Frame
-// mit fading opacity (Plan §15.1). Punkte verblassen nach
-// ``POINT_LIFETIME_MS`` linear.
+// Maintains a ring buffer of 20 points and draws every frame with
+// fading opacity (Plan §15.1). Points fade out linearly after
+// ``POINT_LIFETIME_MS``.
 
 interface InitMsg {
   type: "init";
@@ -48,7 +48,7 @@ let canvas: OffscreenCanvas | null = null;
 let ctx: OffscreenCanvasRenderingContext2D | null = null;
 let dpr = 1;
 
-// Ring buffer — feste Groesse, head pointer.
+// Ring buffer — fixed size, head pointer.
 const buf: TrailPoint[] = [];
 let head = 0;
 
@@ -64,8 +64,8 @@ function pushPoint(physX: number, physY: number): void {
     buf[head] = point;
     head = (head + 1) % TRAIL_LENGTH;
   }
-  // Self-stopping RAF (Plan §17): falls drawFrame sich beim letzten
-  // leeren Frame selbst angehalten hat, jetzt wieder anwerfen.
+  // Self-stopping RAF (Plan §17): if drawFrame stopped itself on the
+  // last empty frame, kick it off again now.
   if (rafHandle === 0 && ctx !== null) {
     rafHandle = requestAnimationFrame(drawFrame);
   }
@@ -82,11 +82,11 @@ function clearTrail(): void {
 function drawFrame(): void {
   if (ctx === null || canvas === null) return;
 
-  // Self-stopping RAF (Plan §17): wenn Trail leer ist, pausiere die
-  // RAF-Schleife komplett — kein clearRect-GPU-Round-Trip pro Frame
-  // fuer Blank-Canvas. Wieder-Start erfolgt in pushPoint().
+  // Self-stopping RAF (Plan §17): pause the RAF loop entirely once the
+  // trail is empty — no clearRect GPU round-trip per frame for a blank
+  // canvas. Restart happens in pushPoint().
   if (buf.length === 0) {
-    cancelAnimationFrame(rafHandle); // defensive — RAF hat sich u.U. gerade selbst gefired
+    cancelAnimationFrame(rafHandle); // defensive — the RAF may have just self-fired
     rafHandle = 0;
     return;
   }
@@ -94,8 +94,8 @@ function drawFrame(): void {
   rafHandle = requestAnimationFrame(drawFrame);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Plan §15.2: globalCompositeOperation = 'lighter' fuer luminoses
-  // Akkumulieren.
+  // Plan §15.2: globalCompositeOperation = 'lighter' for luminous
+  // accumulation.
   ctx.globalCompositeOperation = "lighter";
   ctx.fillStyle = "#FFC700"; // Plan §7.1 yellow-primary
 

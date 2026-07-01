@@ -3,7 +3,7 @@
 The CLI section renders ``display_name`` as the primary card title, so every
 entry must carry a name a non-expert can recognize. The Google entries are
 pinned explicitly because they are the ones users failed to recognize
-("gcloud"? "GAM"?). ASCII umlaut substitutes ("fuer") and German fragments
+("gcloud"? "GAM"?). ASCII umlaut substitutes ("fuer") and German fragments  # i18n-allow: cites the literal forbidden tokens checked below
 ("uvm.", "Env-Variablen") are rejected because user-facing catalog strings
 must be clean English (Output Language Policy).
 """
@@ -16,7 +16,7 @@ from jarvis.clis.catalog import SEED_CATALOG_PATH, load_catalog
 
 # Tokens that only appear in broken ASCII-umlaut German or German fragments.
 _FORBIDDEN_TOKENS = re.compile(
-    r"\b(fuer|ueber|loeschen|uvm|eintraege|variablen)\b", re.IGNORECASE
+    r"\b(fuer|ueber|loeschen|uvm|eintraege|variablen)\b", re.IGNORECASE  # i18n-allow: German fragment tokens matched in logic
 )
 
 

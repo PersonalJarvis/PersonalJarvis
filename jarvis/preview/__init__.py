@@ -1,4 +1,4 @@
-"""Preview-System: Registry + Events fuer Dev-Server-Iframes in der Sidebar."""
+"""Preview system: registry + events for dev-server iframes in the sidebar."""
 from .registry import PreviewEntry, PreviewRegistry, PreviewServerClosed, PreviewServerStarted
 
 __all__ = [

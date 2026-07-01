@@ -35,17 +35,17 @@ def ctx():
 async def test_single_harness_success(ctx):
     bus = EventBus()
     mgr = _make_manager_with_fakes(bus, {
-        "openclaw": FakeHarness(scripted_output="Build läuft durch."),
+        "openclaw": FakeHarness(scripted_output="Build succeeded."),
     })
     tool = DispatchToHarnessTool(bus=bus, manager=mgr, max_output_chars=4000)
 
     result = await tool.execute(
-        {"harness": "openclaw", "prompt": "Prüfe den Build."},
+        {"harness": "openclaw", "prompt": "Check the build."},
         ctx,
     )
     assert result.success is True
     assert result.output["harness"] == "openclaw"
-    assert "Build läuft durch." in result.output["stdout"]
+    assert "Build succeeded." in result.output["stdout"]
 
 
 @pytest.mark.asyncio
@@ -131,4 +131,4 @@ async def test_output_trim_for_large_stdout(ctx):
     result = await tool.execute({"harness": "fake", "prompt": "p"}, ctx)
     assert result.success is True
     assert len(result.output["stdout"]) < 2000
-    assert "gekürzt" in result.output["stdout"]
+    assert "trimmed" in result.output["stdout"]

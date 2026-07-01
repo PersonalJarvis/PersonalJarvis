@@ -1,15 +1,15 @@
-"""``OverlayBridge`` — Hauptjarvis-seitige IPC-Faceade.
+"""``OverlayBridge`` — main-Jarvis-side IPC facade.
 
 Phase 9.2:
-- ``send`` / ``send_nowait`` mit bounded ``asyncio.Queue(maxsize=256)``.
-- Drop-Policy nach Plan §10.4: drop oldest non-state first, drop state last.
-- WS-Handler-Coroutine fuer ``websockets.serve(...)``. Validiert eingehende
-  Messages via ``IPCMessage.validate_json``.
-- Aktuellen State cachen (``last_state_envelope``) damit ein Reconnect den
-  Resync-Frame als erstes bekommt (§10.5).
+- ``send`` / ``send_nowait`` with a bounded ``asyncio.Queue(maxsize=256)``.
+- Drop policy per Plan §10.4: drop oldest non-state first, drop state last.
+- WS handler coroutine for ``websockets.serve(...)``. Validates incoming
+  messages via ``IPCMessage.validate_json``.
+- Caches the current state (``last_state_envelope``) so a reconnect gets
+  the resync frame first (§10.5).
 
-Noch NICHT in 9.2: Coalescing (AD-17), Cursor-SHM, State-Machine. Phase 9.3
-liefert die State-Machine ueber dieser Bridge.
+NOT YET in 9.2: coalescing (AD-17), cursor SHM, state machine. Phase 9.3
+delivers the state machine on top of this bridge.
 """
 
 from __future__ import annotations
@@ -46,25 +46,25 @@ logger = logging.getLogger(__name__)
 OUTBOUND_QUEUE_MAX = 256
 INBOUND_QUEUE_MAX = 64
 
-# Mock-Type fuer ``websockets.WebSocketServerProtocol``. Wir typen lose,
-# damit der Modul-Import nicht von ``websockets`` abhaengt (Headless-Tests).
+# Mock type for ``websockets.WebSocketServerProtocol``. We type loosely,
+# so the module import doesn't depend on ``websockets`` (headless tests).
 WSConn = Any
 
 
 class _BoundedOutbox:
-    """Bounded Outbound-Queue mit Drop-Policy (§10.4).
+    """Bounded outbound queue with drop policy (§10.4).
 
-    Implementiert als ``deque(maxlen=N)`` plus ``asyncio.Event`` fuer
-    Wake-Up. Wir benutzen kein ``asyncio.Queue.put_nowait``, weil dessen
-    Full-Behavior ``QueueFull``-Exception ist; wir wollen Drop-Oldest-Non-
-    State, also brauchen wir handcrafted Drop-Logic.
+    Implemented as a ``deque(maxlen=N)`` plus an ``asyncio.Event`` for
+    wake-up. We don't use ``asyncio.Queue.put_nowait`` because its
+    full-behavior is a ``QueueFull`` exception; we want drop-oldest-non-
+    state, so we need handcrafted drop logic.
     """
 
     def __init__(self, maxsize: int = OUTBOUND_QUEUE_MAX) -> None:
         self._max = maxsize
-        # ``deque`` ohne maxlen — Eviction machen wir selbst.
+        # ``deque`` without maxlen — we handle eviction ourselves.
         self._buf: deque[bytes] = deque()
-        self._types: deque[str] = deque()  # parallel zur _buf
+        self._types: deque[str] = deque()  # parallel to _buf
         self._wake = asyncio.Event()
         self._dropped = 0
 
@@ -76,12 +76,12 @@ class _BoundedOutbox:
         return len(self._buf)
 
     def put(self, envelope_type: str, raw_json: bytes) -> bool:
-        """Non-blocking enqueue. Returnt ``True`` bei Aufnahme.
+        """Non-blocking enqueue. Returns ``True`` on acceptance.
 
-        Drop-Policy: Wenn voll, droppe das aelteste *Non-State*-Element.
-        Wenn nur State-Elemente in der Queue sind, droppe nichts und
-        verwerfe stattdessen den NEUEN Non-State-Eintrag (state wird nie
-        gedroppt).
+        Drop policy: if full, drop the oldest *non-state* element.
+        If only state elements are in the queue, drop nothing and
+        instead discard the NEW non-state entry (state is never
+        dropped).
         """
         if len(self._buf) < self._max:
             self._buf.append(raw_json)
@@ -89,10 +89,10 @@ class _BoundedOutbox:
             self._wake.set()
             return True
 
-        # Voll. Suche aelteste Non-State.
+        # Full. Look for the oldest non-state.
         for idx, t in enumerate(self._types):
             if not is_state_type(t):
-                # Diesen Eintrag rauswerfen.
+                # Evict this entry.
                 del self._buf[idx]
                 del self._types[idx]
                 self._buf.append(raw_json)
@@ -101,9 +101,9 @@ class _BoundedOutbox:
                 self._wake.set()
                 return True
 
-        # Queue komplett State. Dann darf nur ein State-Element rein.
+        # Queue is entirely state. Then only one state element may go in.
         if is_state_type(envelope_type):
-            # Aeltesten State droppen.
+            # Drop the oldest state.
             self._buf.popleft()
             self._types.popleft()
             self._buf.append(raw_json)
@@ -112,12 +112,12 @@ class _BoundedOutbox:
             self._wake.set()
             return True
 
-        # Non-State + nur State in Queue -> neuen droppen.
+        # Non-state + only state in queue -> drop the new one.
         self._dropped += 1
         return False
 
     async def get(self) -> bytes:
-        """Async pop. Blockiert bis ein Element verfuegbar ist."""
+        """Async pop. Blocks until an element is available."""
         while not self._buf:
             self._wake.clear()
             await self._wake.wait()
@@ -132,7 +132,7 @@ class _BoundedOutbox:
 
 
 class OverlayBridge:
-    """Hauptjarvis-seitige WS-Server-Bridge.
+    """Main-Jarvis-side WS server bridge.
 
     Lifecycle:
         bridge = OverlayBridge()
@@ -140,7 +140,7 @@ class OverlayBridge:
         # ... bridge.emit_state(...) etc ...
         await bridge.stop()
 
-    WS-Handler:
+    WS handler:
         await websockets.serve(bridge.handler, "127.0.0.1", port)
     """
 
@@ -166,7 +166,7 @@ class OverlayBridge:
             return
         self._running = True
         self._started_at_ns = now_ns()
-        # Heartbeat-Pump alle ``_heartbeat_interval`` Sekunden.
+        # Heartbeat pump every ``_heartbeat_interval`` seconds.
         self._tasks.append(
             asyncio.create_task(self._heartbeat_loop(), name="overlay-heartbeat")
         )
@@ -188,15 +188,15 @@ class OverlayBridge:
     # --- public emit-API (sync, queue-only) ---
 
     def send_nowait(self, envelope: Any) -> bool:
-        """Sync-API. Serialisiert das Envelope und pusht in die Outbox."""
+        """Sync API. Serializes the envelope and pushes it into the outbox."""
         raw = envelope.model_dump_json().encode("utf-8")
         if isinstance(envelope, StateEnvelope):
             self._last_state_envelope = envelope
         return self._outbox.put(envelope.type, raw)
 
     async def send(self, envelope: Any) -> bool:
-        """Async-API. Aktuell identisch zu ``send_nowait`` weil die Queue
-        non-blocking ist; signature bleibt async fuer 9.3+ Erweiterungen."""
+        """Async API. Currently identical to ``send_nowait`` because the
+        queue is non-blocking; the signature stays async for 9.3+ extensions."""
         return self.send_nowait(envelope)
 
     def emit_state(
@@ -222,8 +222,8 @@ class OverlayBridge:
         duration_hint_ms: Optional[int] = None,
         action_id: Optional[str] = None,
     ) -> str:
-        """Plan §8.4 — vor Function-Call. Returnt die action_id damit
-        emit_action_ended sie referenzieren kann."""
+        """Plan §8.4 — before the function call. Returns the action_id so
+        emit_action_ended can reference it."""
         aid = action_id or new_ulid()
         env = ActionStartedEnvelope(
             payload=ActionStartedPayload(
@@ -242,7 +242,7 @@ class OverlayBridge:
         succeeded: bool = True,
         duration_actual_ms: Optional[int] = None,
     ) -> bool:
-        """Plan §8.4 — im finally-Block (auch bei Exception)."""
+        """Plan §8.4 — in the finally block (also on exception)."""
         env = ActionEndedEnvelope(
             payload=ActionEndedPayload(
                 action_id=action_id,
@@ -261,7 +261,7 @@ class OverlayBridge:
         button: str = "left",
         modifiers: Optional[list[str]] = None,
     ) -> bool:
-        """Plan §14.3 — emit BEFORE pyautogui.click() so Visual reicht
+        """Plan §14.3 — emit BEFORE pyautogui.click() so Visual reaches
         WebView before OS Click Event finished propagating."""
         env = ClickEnvelope(
             payload=ClickPayload(
@@ -282,7 +282,7 @@ class OverlayBridge:
         recoverable: bool = True,
         context: Optional[dict[str, Any]] = None,
     ) -> bool:
-        """Plan §8.4 — bei Exception in @overlay_action."""
+        """Plan §8.4 — on exception in @overlay_action."""
         env = ErrorEnvelope(
             payload=ErrorPayload(
                 code=code,
@@ -313,10 +313,10 @@ class OverlayBridge:
     # --- WS handler ---
 
     async def handler(self, websocket: WSConn) -> None:
-        """``websockets.serve(...)``-kompatibler Handler.
+        """``websockets.serve(...)``-compatible handler.
 
-        State-Resync per §10.5: erstes Frame nach Connect ist der zuletzt
-        bekannte State (falls vorhanden).
+        State resync per §10.5: the first frame after connect is the last
+        known state (if any).
         """
         self._connected.add(websocket)
         try:
@@ -381,12 +381,12 @@ class OverlayBridge:
 
 
 def envelope_to_json(envelope: Any) -> bytes:
-    """Helper fuer Tests."""
+    """Helper for tests."""
     return envelope.model_dump_json().encode("utf-8")
 
 
 # -------------------------------------------------------------------------
-# Sub-Agent No-Op-Stub. Plan §8.7 / AD-6.
+# Sub-agent no-op stub. Plan §8.7 / AD-6.
 # -------------------------------------------------------------------------
 
 
@@ -394,8 +394,8 @@ JARVIS_DEPTH_ENV: str = "JARVIS_DEPTH"
 
 
 def is_sub_agent_process() -> bool:
-    """True wenn ``JARVIS_DEPTH > 0`` env. Sub-Agent-Code laeuft mit
-    Depth >= 1 (Phase-5-Convention)."""
+    """True when the ``JARVIS_DEPTH > 0`` env is set. Sub-agent code runs with
+    depth >= 1 (Phase-5 convention)."""
     raw = os.environ.get(JARVIS_DEPTH_ENV, "0")
     try:
         return int(raw) > 0
@@ -404,16 +404,16 @@ def is_sub_agent_process() -> bool:
 
 
 class NoOpOverlayBridge:
-    """No-Op-Stub fuer Sub-Agents. Plan §8.7 / AD-6.
+    """No-op stub for sub-agents. Plan §8.7 / AD-6.
 
-    Hat dieselbe Public-API wie ``OverlayBridge``, aber alle Methoden
-    sind Lifeless-Stubs. Sub-Agent-Code kann daher dasselbe Pattern
-    schreiben (``bridge.emit_click(...)``) ohne Special-Casing — die
-    Events landen einfach im Void.
+    Has the same public API as ``OverlayBridge``, but all methods
+    are lifeless stubs. Sub-agent code can therefore write the same
+    pattern (``bridge.emit_click(...)``) without special-casing — the
+    events simply vanish into the void.
 
-    Wichtig: Wir vererben NICHT von OverlayBridge weil dessen __init__
-    eine asyncio.Queue baut und in Sub-Agent-Sync-Pfaden gibt es ggf.
-    keinen Event-Loop. Stattdessen duck-typed Stub.
+    Important: we do NOT inherit from OverlayBridge because its __init__
+    builds an asyncio.Queue, and sub-agent sync paths may have no
+    event loop. Instead: a duck-typed stub.
     """
 
     @property
@@ -444,7 +444,7 @@ class NoOpOverlayBridge:
         self,
         _state: str,
         *,
-        intensity: float = 1.0,  # noqa: ARG002 — API-Symmetrie
+        intensity: float = 1.0,  # noqa: ARG002 — API symmetry
         reason: Optional[str] = None,  # noqa: ARG002
     ) -> bool:
         return False
@@ -456,7 +456,7 @@ class NoOpOverlayBridge:
         duration_hint_ms: Optional[int] = None,  # noqa: ARG002
         action_id: Optional[str] = None,
     ) -> str:
-        # Stub returnt eine action_id damit Caller-Code weiterlaufen kann.
+        # Stub returns an action_id so caller code can keep going.
         return action_id or "noop"
 
     def emit_action_ended(

@@ -77,7 +77,7 @@ async def test_all_providers_fail_publishes_response_generated_for_transcript():
     event (``recorder.py::_on_response_generated``). The total-failure branch of
     ``generate`` returned the apology WITHOUT publishing that event, so the
     recorded turn had an empty ``jarvis_text`` — the UI showed the user line but no
-    reply, even though the user clearly heard "ich komme gerade nicht an mein
+    reply, even though the user clearly heard "ich komme gerade nicht an mein  # i18n-allow
     Sprachmodell". The spoken apology must be published like any other reply.
     """
     bus = EventBus()
@@ -157,7 +157,7 @@ async def test_router_picks_deep_for_research_intent():
     manager = BrainManager(config=config, bus=bus, tools={})
 
     chain = manager._build_fallback_chain("deep")
-    # Erstes Element sollte das deep_model nutzen
+    # First element should use the deep_model
     first_provider, first_model = chain[0]
     assert first_provider == "claude-subscription"
     assert first_model == "opus-model"
@@ -178,16 +178,16 @@ async def test_router_picks_fast_for_simple_intent():
     first_provider, first_model = chain[0]
     assert first_provider == "claude-subscription"
     assert first_model == "haiku-model"
-    # Und der Haiku-Fallback ist opus-model
+    # And the Haiku fallback is opus-model
     assert chain[1][1] == "opus-model"
 
 
 class _MissingKeyBrain:
-    """Brain-Stub der wie ein echter Provider ohne API-Key failt.
+    """Brain stub that fails like a real provider with no API key.
 
-    Der Cache-Lookup in _get_brain liefert diese Instanz; die complete()-
-    Methode wirft beim ersten Call die typische "Kein API-Key"-Exception,
-    die _is_missing_key_exc erkennen muss.
+    The cache lookup in _get_brain returns this instance; the complete()
+    method raises the typical "missing API key" exception on the first
+    call, which _is_missing_key_exc must recognize.
     """
     name = "missing-key-brain"
     context_window = 8192
@@ -199,7 +199,7 @@ class _MissingKeyBrain:
 
     async def complete(self, req):  # type: ignore[no-untyped-def]
         self.call_count += 1
-        raise RuntimeError("Kein Gemini-API-Key gefunden")
+        raise RuntimeError("Kein Gemini-API-Key gefunden")  # i18n-allow — matched by _is_missing_key_exc
         yield  # pragma: no cover
 
     def estimate_cost(self, req) -> float:  # type: ignore[no-untyped-def]
@@ -207,7 +207,7 @@ class _MissingKeyBrain:
 
 
 class _EmptyBrain:
-    """Brain-Stub fuer legitime leere Provider-Antworten (fire-and-forget spawns).
+    """Brain stub for legitimate empty provider responses (fire-and-forget spawns).
 
     Production now keys the 'legitimate silence' path on finish_reason=="suppress_response"
     (2026-04-29 fix): a finish_reason="stop" with empty text triggers the empty-response
@@ -231,7 +231,7 @@ class _EmptyBrain:
 
 @pytest.mark.asyncio
 async def test_empty_provider_response_is_silent_not_provider_error():
-    """Regression: Prompt-erlaubtes Schweigen darf kein API-Key-Fehler werden."""
+    """Regression: prompt-sanctioned silence must not become an API-key error."""
     bus = EventBus()
     config = JarvisConfig()
     config.brain.primary = "gemini"
@@ -265,10 +265,10 @@ def test_provider_chain_error_keeps_primary_failure_before_missing_fallback_keys
 
 @pytest.mark.asyncio
 async def test_dead_provider_skipped_on_subsequent_turns():
-    """Bug-Fix-Regression: nach missing_key wird Provider in Session deaktiviert.
+    """Bug-fix regression: after missing_key, the provider is deactivated for the session.
 
-    Vorher: jeder Voice-Turn hat 8x sequentiell auf "Kein API-Key" gewartet.
-    Nach dem Fix: Provider landet in `_dead_providers`, wird beim naechsten
+    Before: every voice turn waited 8x sequentially on "no API key".
+    After the fix: the provider lands in `_dead_providers` and gets filtered
     Build der Chain rausgefiltert.
     """
     bus = EventBus()
@@ -292,8 +292,8 @@ async def test_dead_provider_skipped_on_subsequent_turns():
     manager._brain_cache[("gemini", "gemini-pro")] = dead_gemini
     manager._brain_cache[("claude-subscription", "haiku")] = working_claude
 
-    # Test-Chain mit eingebautem Dead-Provider-Filter (mimickt das Verhalten
-    # des echten _build_fallback_chain ohne Plugin-Discovery zu brauchen).
+    # Test chain with a built-in dead-provider filter (mimics the behavior
+    # of the real _build_fallback_chain without needing plugin discovery).
     def _chain(level: str) -> list[tuple[str, str | None]]:
         full = [
             ("gemini", "gemini-flash"),
@@ -309,19 +309,19 @@ async def test_dead_provider_skipped_on_subsequent_turns():
     assert "gemini" in manager._dead_providers
     calls_after_turn1 = dead_gemini.call_count
 
-    # Turn 2: Gemini wird NICHT mehr versucht (call_count bleibt gleich)
+    # Turn 2: Gemini is NOT tried again (call_count stays the same)
     out2 = await manager.generate("hi nochmal", use_history=False)
     assert "Claude" in out2
     assert dead_gemini.call_count == calls_after_turn1, (
-        "Dead-Provider wurde erneut versucht — Filter im _build_fallback_chain "
-        "greift nicht."
+        "dead provider was retried — filter in _build_fallback_chain "
+        "is not effective."
     )
 
 
 @pytest.mark.asyncio
 async def test_dead_providers_reset_on_switch():
-    """Provider-Switch (User setzt Key, sagt 'wechsel auf gemini') resettet
-    die Dead-Liste damit der frische Key sofort greift."""
+    """A provider switch (user sets a key, says 'switch to gemini') resets
+    the dead list so the fresh key takes effect immediately."""
     bus = EventBus()
     config = JarvisConfig()
     config.brain.primary = "gemini"
@@ -331,13 +331,13 @@ async def test_dead_providers_reset_on_switch():
     manager = BrainManager(config=config, bus=bus, tools={})
     manager._registry._loaded = True
 
-    # Initial-State: gemini ist dead, claude-subscription steht als Switch-Ziel bereit
+    # Initial state: gemini is dead, claude-subscription is ready as the switch target
     manager._dead_providers.add("gemini")
     manager._brain_cache[("gemini", "gemini-flash")] = FakeBrain(text_response="x")
     manager._brain_cache[("claude-subscription", "haiku")] = FakeBrain(text_response="ok")
 
     await manager.switch("claude-subscription")
     assert "gemini" not in manager._dead_providers, (
-        "Dead-Liste muss bei Switch reset werden — sonst landet ein neu "
-        "gesetzter Key nicht in der Chain."
+        "dead list must be reset on switch — otherwise a newly set "
+        "key never makes it into the chain."
     )

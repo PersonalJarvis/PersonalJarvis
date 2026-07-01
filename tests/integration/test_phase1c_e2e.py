@@ -74,7 +74,7 @@ def test_memory_save_skill_is_disabled_and_does_not_trigger(
     reg.reload_sync()
     matcher = TriggerMatcher(reg)
     skill = matcher.match_voice(
-        "merk dir: python ist meine lieblings-sprache", lang="de"
+        "merk dir: python ist meine lieblings-sprache", lang="de"  # i18n-allow
     )
     # Disabled skill with empty triggers must never fire.
     assert skill is None
@@ -84,10 +84,10 @@ def test_memory_save_skill_is_disabled_and_does_not_trigger(
 async def test_skill_runner_instantiates_correctly(
     builtin_root: Path, bus: EventBus
 ) -> None:
-    """Regression-Test fuer BLOCKER 2 (SkillRunner signature)."""
+    """Regression test for BLOCKER 2 (SkillRunner signature)."""
     reg = SkillRegistry(builtin_root, bus)
     reg.reload_sync()
-    # Muss ohne TypeError funktionieren nach Fix
+    # Must work without TypeError after the fix
     runner = SkillRunner(registry=reg, bus=bus)
     assert runner is not None
     assert runner.registry is reg

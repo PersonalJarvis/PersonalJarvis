@@ -1,8 +1,8 @@
-"""Tests fuer ReviewPipeline-Loop: Multi-Iteration-Feedback-Chain (Phase 8.2).
+"""Tests for the ReviewPipeline loop: multi-iteration feedback chain (Phase 8.2).
 
-Plan-Referenz: §6.2 Akzeptanzkriterium 3 — gemockter HarnessManager
-liefert needs_revision, needs_revision, pass; Pipeline returnt success in
-Iteration 3 und der Worker sieht das Feedback der Vor-Iteration.
+Plan reference: §6.2 acceptance criterion 3 — a mocked HarnessManager
+returns needs_revision, needs_revision, pass; the pipeline returns success in
+iteration 3 and the worker sees the feedback from the previous iteration.
 """
 from __future__ import annotations
 
@@ -42,13 +42,13 @@ def _pass() -> ReviewVerdict:
 
 
 def test_three_iter_feedback_chain(tmp_path: Path) -> None:
-    """Reviewer liefert needs_revision x2, dann pass — success in Iter 3."""
+    """Reviewer returns needs_revision x2, then pass — success in iter 3."""
     visible_state_per_call: list[list[str]] = []
 
     async def worker_spawn(state: RunState, i: int) -> str:
-        # Worker inspiziert state — verifiziert dass die Vor-Iterationen mit
-        # Feedback im RunState sichtbar sind. Phase 8.3 baut daraus den
-        # Feedback-Block; Phase 8.2 verifiziert nur die Sichtbarkeit.
+        # Worker inspects state — verifies that previous iterations with
+        # feedback are visible in RunState. Phase 8.3 builds the
+        # feedback block from this; Phase 8.2 only verifies visibility.
         visible = [
             r.verdict.issues[0].description
             for r in state.reviewed_iterations()
@@ -79,19 +79,19 @@ def test_three_iter_feedback_chain(tmp_path: Path) -> None:
     )
 
     result = asyncio.run(
-        pipeline.run("ein hinreichend langer Task fuer Loop-Test")
+        pipeline.run("a sufficiently long task for the loop test")
     )
 
-    # Erfolg in Iter 3
+    # Success in iter 3
     assert result.success is True
     assert len(result.iterations) == 3
     assert result.iterations[-1].verdict is not None
     assert result.iterations[-1].verdict.status is ReviewStatus.PASS
     assert result.final_artifact == "worker output iter=3"
 
-    # Feedback-Sichtbarkeit pro Iteration
-    assert visible_state_per_call[0] == []  # Iter 1: kein Vor-Feedback
-    assert visible_state_per_call[1] == ["rename x to user_id"]  # Iter 2 sieht Iter-1-Issue
+    # Feedback visibility per iteration
+    assert visible_state_per_call[0] == []  # iter 1: no previous feedback
+    assert visible_state_per_call[1] == ["rename x to user_id"]  # iter 2 sees the iter-1 issue
     assert visible_state_per_call[2] == [
         "rename x to user_id",
         "add docstring to foo()",
@@ -99,7 +99,7 @@ def test_three_iter_feedback_chain(tmp_path: Path) -> None:
 
 
 def test_audit_log_records_all_iterations(tmp_path: Path) -> None:
-    """3 Worker-Spawns + 3 Reviewer-Spawns = 6 Audit-Eintraege."""
+    """3 worker spawns + 3 reviewer spawns = 6 audit entries."""
     log = tmp_path / "review.log"
 
     verdicts = [
@@ -127,7 +127,7 @@ def test_audit_log_records_all_iterations(tmp_path: Path) -> None:
         max_iterations=3,
     )
 
-    asyncio.run(pipeline.run("ein hinreichend langer Task"))
+    asyncio.run(pipeline.run("a sufficiently long task"))
 
     entries = audit.tail()
     assert len(entries) == 6
@@ -140,13 +140,13 @@ def test_audit_log_records_all_iterations(tmp_path: Path) -> None:
         "worker_spawn",
         "reviewer_spawn",
     ]
-    # Reviewer-Statuses spiegeln die Verdict-Kette
+    # Reviewer statuses mirror the verdict chain
     reviewer_statuses = [
         e["status"] for e in entries if e["phase"] == "reviewer_spawn"
     ]
     assert reviewer_statuses == ["needs_revision", "needs_revision", "pass"]
-    # Reviewer-Audit hat issue_count gesetzt
+    # Reviewer audit has issue_count set
     rev_eintraege = [e for e in entries if e["phase"] == "reviewer_spawn"]
     assert rev_eintraege[0]["issue_count"] == 1
     assert rev_eintraege[1]["issue_count"] == 1
-    assert rev_eintraege[2]["issue_count"] == 0  # pass-Verdict ohne Issues
+    assert rev_eintraege[2]["issue_count"] == 0  # pass verdict has no issues

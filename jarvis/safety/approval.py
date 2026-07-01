@@ -1,17 +1,17 @@
-"""Approval-Workflow: Dual-Channel (UI-WebSocket + Toast) mit First-Wins.
+"""Approval workflow: dual-channel (UI WebSocket + toast) with first-wins.
 
-Sequenz:
+Sequence:
 1. ToolExecutor publishes `ActionProposed(trace_id, tool, args, tier)`
-2. `ApprovalWorkflow.wait(trace_id, timeout_s=60)` wird awaited
-3. UI und/oder Toast rendern Modal
-4. User drückt Approve → UI sendet `ActionApproved` via Channel →
-   ChannelAdapter re-publisht aufs Bus → `wait()`-Future wird resolved
-5. User drückt Deny → analog `ActionDenied`
-6. Timeout → Default = Deny (`ActionDenied(reason="timeout")`)
+2. `ApprovalWorkflow.wait(trace_id, timeout_s=60)` is awaited
+3. UI and/or toast render a modal
+4. User clicks Approve → UI sends `ActionApproved` via a channel →
+   ChannelAdapter re-publishes onto the bus → `wait()`'s future is resolved
+5. User clicks Deny → analogous `ActionDenied`
+6. Timeout → default = deny (`ActionDenied(reason="timeout")`)
 
-Die Integration in eine Channel-UI (WebSocket + Desktop-App) läuft über
-den gleichen Event-Bus. Die UI muss nur `ActionApproved`/`ActionDenied`
-publizieren wenn der User klickt.
+The integration into a channel UI (WebSocket + desktop app) runs over
+the same event bus. The UI only needs to publish `ActionApproved`/`ActionDenied`
+when the user clicks.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from jarvis.core.events import ActionApproved, ActionDenied
 
 
 class ApprovalWorkflow:
-    """Hält pro `trace_id` ein Future das auf Approve/Deny wartet."""
+    """Holds one future per `trace_id` that waits for approve/deny."""
 
     def __init__(self, bus: EventBus, *, timeout_s: float = 60.0) -> None:
         self._bus = bus
@@ -45,7 +45,7 @@ class ApprovalWorkflow:
         self._resolve(event.trace_id, False, event.reason or "denied")
 
     async def wait(self, trace_id: UUID, timeout_s: float | None = None) -> tuple[bool, str]:
-        """Wartet bis zu `timeout_s` auf Approval/Denial für diese trace_id.
+        """Waits up to `timeout_s` for an approval/denial for this trace_id.
 
         Returns:
             (approved: bool, who_or_reason: str)
@@ -61,17 +61,17 @@ class ApprovalWorkflow:
             return (False, "timeout")
 
     # ------------------------------------------------------------------
-    # Convenience: synthetische Approve/Deny für Tests & CLI-Launcher
+    # Convenience: synthetic approve/deny for tests & the CLI launcher
     # ------------------------------------------------------------------
 
     async def approve(self, trace_id: UUID, who: str = "user") -> None:
-        """Löst pending-approval auf (z.B. aus Toast-Callback heraus)."""
+        """Resolves a pending approval (e.g. from a toast callback)."""
         await self._bus.publish(ActionApproved(trace_id=trace_id, approved_by=who))
 
     async def deny(self, trace_id: UUID, reason: str = "denied") -> None:
         await self._bus.publish(ActionDenied(trace_id=trace_id, reason=reason))
 
-    # Statische Helper für Tool-Code der keinen Bus-Zugriff hat
+    # Static helper for tool code that has no bus access
     @staticmethod
     def extract_proposed_args(payload: dict[str, Any]) -> dict[str, Any]:
         return dict(payload.get("args", {}))

@@ -2,8 +2,8 @@
 
 Root cause this guards against (2026-05-25): the desktop "Languages" view let
 the user pick a Reply Language (DE/EN/ES), but the value died in localStorage —
-``_build_system_prompt`` hardcoded ``"Nutzer-Sprache: DE oder EN — antworte in
-derselben."`` so Jarvis ignored the choice entirely (no Spanish, no hard pin).
+``_build_system_prompt`` hardcoded ``"Nutzer-Sprache: DE oder EN — antworte in  # i18n-allow
+derselben."`` so Jarvis ignored the choice entirely (no Spanish, no hard pin).  # i18n-allow
 
 These tests lock in that:
   * a pinned language emits a strong, language-named directive,

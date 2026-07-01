@@ -54,7 +54,7 @@ def _require_brain(request: Request):
     if brain is None or not hasattr(brain, "set_reply_language"):
         raise HTTPException(
             status_code=503,
-            detail="Brain-Manager nicht verfügbar (vermutlich Headless-Mode)",
+            detail="Brain manager not available (likely headless mode)",
         )
     return brain
 

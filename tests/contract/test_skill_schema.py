@@ -1,4 +1,4 @@
-"""Contract-Tests für das Skill-Frontmatter-Schema (pydantic)."""
+"""Contract tests for the Skill frontmatter schema (pydantic)."""
 from __future__ import annotations
 
 import pytest

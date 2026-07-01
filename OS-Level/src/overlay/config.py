@@ -1,6 +1,6 @@
-"""OverlayConfig — Pydantic v2 Modell gemaess Plan §21.1.
+"""OverlayConfig — Pydantic v2 model per Plan §21.1.
 
-Hot-Reload ist Phase 9.2-Thema. Hier nur das Modell + ``from_toml``.
+Hot-reload is a Phase 9.2 topic. This only has the model + ``from_toml``.
 """
 
 from __future__ import annotations
@@ -18,12 +18,12 @@ _LOOPBACK_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "::1", "localhost"})
 
 def _validate_hex_color(value: str) -> str:
     if not _HEX_COLOR_RE.match(value):
-        raise ValueError(f"erwartet '#RRGGBB', bekommen: {value!r}")
+        raise ValueError(f"expected '#RRGGBB', got: {value!r}")
     return value
 
 
 class OverlayThemeConfig(BaseModel):
-    """Farben & Glow-Geometrie. Plan §7.1, §7.2, §21.1."""
+    """Colors & glow geometry. Plan §7.1, §7.2, §21.1."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -41,7 +41,7 @@ class OverlayThemeConfig(BaseModel):
 
 
 class OverlayMascotConfig(BaseModel):
-    """Maskottchen-Position + Drag-Verhalten. Plan §13.4, §21.1."""
+    """Mascot position + drag behavior. Plan §13.4, §21.1."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -55,7 +55,7 @@ class OverlayMascotConfig(BaseModel):
 
 
 class OverlayConfig(BaseModel):
-    """Top-Level [overlay]-Section. Plan §21.1."""
+    """Top-level [overlay] section. Plan §21.1."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -93,12 +93,12 @@ class OverlayConfig(BaseModel):
     @classmethod
     def _check_loopback(cls, v: str) -> str:
         if v not in _LOOPBACK_HOSTS:
-            raise ValueError(f"ws_host muss Loopback sein, bekommen: {v!r}")
+            raise ValueError(f"ws_host must be loopback, got: {v!r}")
         return v
 
     @classmethod
     def from_toml(cls, path: str | Path) -> "OverlayConfig":
-        """Lese ``[overlay]``-Section aus TOML. Wenn fehlt: Defaults (Plan §21.4)."""
+        """Read the ``[overlay]`` section from TOML. If missing: use defaults (Plan §21.4)."""
         toml_path = Path(path)
         with toml_path.open("rb") as f:
             data: dict[str, Any] = tomllib.load(f)

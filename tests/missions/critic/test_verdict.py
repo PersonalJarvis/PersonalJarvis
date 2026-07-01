@@ -1,4 +1,4 @@
-"""Tests fuer CriticVerdict-Schema, Aggregations-Helper, Schema-Export."""
+"""Tests for the CriticVerdict schema, aggregation helper, schema export."""
 from __future__ import annotations
 
 import json
@@ -34,7 +34,7 @@ def _make_verdict(
     security_status: str | None = None,
     issues: list[CriticIssue] | None = None,
 ) -> CriticVerdict:
-    """Verdict-Factory fuer kompakte Tests."""
+    """Verdict factory for compact tests."""
     axes = {}
     for ax in REQUIRED_AXES:
         status = "pass" if all_axes_pass else "fail"
@@ -48,7 +48,7 @@ def _make_verdict(
         issues=issues or [],
         correction_instruction="" if verdict == "approve" else "fix bug X",
         summary="ok" if verdict == "approve" else "needs fix",
-        summary_de="ok" if verdict == "approve" else "muss korrigiert werden",
+        summary_de="ok" if verdict == "approve" else "muss korrigiert werden",  # i18n-allow (German value under summary_de field)
         confidence=confidence,
         suggested_next_action="accept" if verdict == "approve" else "retry",
     )
@@ -162,13 +162,13 @@ def test_approval_invalid_when_one_axis_fails() -> None:
 
 
 def test_approval_invalid_when_evidence_empty() -> None:
-    """Empty-Evidence-Approval ist eine Abstention — Kriterium 1 design-reviewer."""
+    """An empty-evidence approval is an abstention — Criterion 1 design-reviewer."""
     v = _make_verdict(all_axes_pass=True, all_evidence_present=False)
     assert is_approval_valid(v) is False
 
 
 def test_approval_invalid_when_one_axis_evidence_empty() -> None:
-    """Eine einzige Axis ohne Evidence reicht zum Reject."""
+    """A single axis without evidence is enough to reject."""
     v = _make_verdict(all_axes_pass=True, all_evidence_present=True)
     bad_axes = dict(v.axes)
     bad_axes["completeness"] = CriticAxis(status="pass", evidence=[])

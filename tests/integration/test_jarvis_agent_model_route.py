@@ -3,7 +3,7 @@
 The API-Keys "Subagent" section lets the user pin which MODEL the heavy-task
 sub-agents run, separate from the router brain. Write side:
 ``POST /api/jarvis-agent/model`` -> 3-layer ``config_writer.set_sub_jarvis_model``
-(TOML + config-soll + ENV — ``brain.sub_jarvis.model`` is drift-guard pinned).
+(TOML + config-soll + ENV — ``brain.sub_jarvis.model`` is drift-guard pinned).  # i18n-allow
 Read side: ``GET /api/openclaw/status`` exposes ``sub_model_override`` and the
 effective ``model_resolved`` (override wins, else the provider's deep model).
 """
@@ -30,7 +30,7 @@ def server() -> Iterator[WebServer]:
 
 @pytest.fixture(autouse=True)
 def _no_toml_write(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Capture persistence instead of writing the real jarvis.toml/soll/ENV."""
+    """Capture persistence instead of writing the real jarvis.toml/soll/ENV."""  # i18n-allow
     calls: list[str] = []
     from jarvis.core import config_writer
 

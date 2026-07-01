@@ -65,7 +65,7 @@ def ensure_admin_secret(*, force: bool = False) -> str:
         logger.warning(
             "admin_launcher.keyring_write_failed",
             key=ADMIN_HMAC_KEY,
-            hint="Helper kann nur ueber ENV-Fallback starten.",
+            hint="Helper can only start via the ENV fallback.",
         )
     return encoded
 
@@ -129,7 +129,7 @@ def launch_elevated_helper(
     # pipe name would contain anyway.
     import re as _re
     if not _re.fullmatch(r"\\\\\.\\pipe\\[A-Za-z0-9._\-]{1,200}", pipe):
-        raise ValueError(f"Ungueltiger pipe_name: {pipe!r}")
+        raise ValueError(f"Invalid pipe_name: {pipe!r}")
     python_exe, args = _build_helper_argv()
     full_args = f'{args} --pipe-name "{pipe}"'
 
@@ -142,7 +142,7 @@ def launch_elevated_helper(
         from win32com.shell import shell, shellcon  # type: ignore[import-not-found]
     except ImportError as exc:  # pragma: no cover — only on real Windows
         raise RuntimeError(
-            "pywin32 nicht verfuegbar — launch_elevated_helper braucht Windows."
+            "pywin32 not available — launch_elevated_helper requires Windows."
         ) from exc
 
     sei = shell.ShellExecuteEx(
@@ -156,7 +156,7 @@ def launch_elevated_helper(
     if not h_process:
         # ShellExecuteEx error → user declined, or path is wrong, etc.
         raise UACCancelledError(
-            "UAC-Prompt wurde abgelehnt oder Helper konnte nicht gestartet werden."
+            "UAC prompt was declined or the helper could not be started."
         )
 
     try:
@@ -174,10 +174,10 @@ def launch_elevated_helper(
             if state == win32event.WAIT_OBJECT_0:
                 exit_code = win32process.GetExitCodeProcess(h_process)
                 raise HelperStartTimeoutError(
-                    f"Helper ist frueh beendet (exit={exit_code}) — Pipe nie ready."
+                    f"Helper exited early (exit={exit_code}) — pipe never ready."
                 )
         raise HelperStartTimeoutError(
-            f"Pipe {pipe} wurde nach {pipe_timeout_ms}ms nicht ready."
+            f"Pipe {pipe} was not ready after {pipe_timeout_ms}ms."
         )
 
     logger.info("admin_launcher.started", pid=pid, pipe=pipe)

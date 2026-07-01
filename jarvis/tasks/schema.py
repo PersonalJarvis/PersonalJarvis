@@ -1,11 +1,11 @@
-"""TaskSpec-Schema — Pydantic-Modelle fuer die persistente Task-Queue.
+"""TaskSpec schema — Pydantic models for the persistent task queue.
 
-Trigger-Scope ist bewusst klein (Mandat §8.3, User-Bestaetigung):
-`after_delay`, `at_time`, `on_event`. Kein Cron (das haben Skills),
-keine RRULE.
+The trigger scope is deliberately small (mandate §8.3, user-confirmed):
+`after_delay`, `at_time`, `on_event`. No cron (skills have that already),
+no RRULE.
 
-ADR-0003 beschreibt das DB-Schema, dieses Modul die In-Memory- und
-JSON-Repraesentation.
+ADR-0003 describes the DB schema; this module covers the in-memory and JSON
+representation.
 """
 from __future__ import annotations
 
@@ -19,15 +19,15 @@ from pydantic import BaseModel, ConfigDict, Field
 # ---------------------------------------------------------------------
 
 class TriggerAfterDelay(BaseModel):
-    """'In N Sekunden' — relativ zu `time.time_ns()` bei Scheduling."""
+    """'In N seconds' — relative to `time.time_ns()` at scheduling time."""
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: Literal["after_delay"] = "after_delay"
-    delay_seconds: float = Field(gt=0, le=30 * 24 * 3600)   # max 30 Tage
+    delay_seconds: float = Field(gt=0, le=30 * 24 * 3600)   # max 30 days
 
 
 class TriggerAtTime(BaseModel):
-    """Absoluter Zeitpunkt, ISO-8601 mit Zeitzone. Local-Time ohne TZ wird
-    als System-Zone interpretiert.
+    """Absolute point in time, ISO-8601 with timezone. Local time without a
+    TZ is interpreted as the system zone.
     """
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: Literal["at_time"] = "at_time"
@@ -35,8 +35,8 @@ class TriggerAtTime(BaseModel):
 
 
 class TriggerOnEvent(BaseModel):
-    """'Wenn Event X passiert' — Event-Klassen-Name plus optionaler
-    Filter-Ausdruck (Feldvergleich). Beispiel:
+    """'When event X happens' — the event class name plus an optional
+    filter expression (field comparison). Example:
 
         event_name = "MessageSent"
         filter_expr = "role == 'user'"
@@ -78,11 +78,11 @@ TRIGGER_TYPES: tuple[str, ...] = ("after_delay", "at_time", "on_event", "every")
 
 
 # ---------------------------------------------------------------------
-# Action — was beim Trigger ausgefuehrt wird
+# Action — what runs when the trigger fires
 # ---------------------------------------------------------------------
 
 class HarnessDispatchAction(BaseModel):
-    """Dispatcht an einen Harness (openclaw, computer-use, ...)."""
+    """Dispatches to a harness (openclaw, computer-use, ...)."""
     model_config = ConfigDict(frozen=True, extra="forbid")
     kind: Literal["harness_dispatch"] = "harness_dispatch"
     harness: str = Field(min_length=1, max_length=64)
@@ -91,14 +91,14 @@ class HarnessDispatchAction(BaseModel):
 
 
 class SpeakAction(BaseModel):
-    """TTS — Jarvis sagt einen fixen Satz (z.B. 'erinner mich heute Abend')."""
+    """TTS — Jarvis says a fixed sentence (e.g. 'remind me tonight')."""
     model_config = ConfigDict(frozen=True, extra="forbid")
     kind: Literal["speak"] = "speak"
     text: str = Field(min_length=1, max_length=2048)
 
 
 class ToolCallAction(BaseModel):
-    """Einzelnen Tool ausfuehren (z.B. 'open_app Outlook')."""
+    """Run a single tool (e.g. 'open_app Outlook')."""
     model_config = ConfigDict(frozen=True, extra="forbid")
     kind: Literal["tool_call"] = "tool_call"
     tool_name: str = Field(min_length=1, max_length=64)
@@ -147,7 +147,7 @@ ACTION_KINDS: tuple[str, ...] = ("harness_dispatch", "speak", "tool_call", "agen
 
 
 # ---------------------------------------------------------------------
-# Retry-Policy
+# Retry policy
 # ---------------------------------------------------------------------
 
 class RetryPolicy(BaseModel):
@@ -156,21 +156,21 @@ class RetryPolicy(BaseModel):
     max_attempts: int = Field(default=1, ge=1, le=10)
     backoff_initial_s: float = Field(default=5.0, ge=0, le=3600)
     backoff_factor: float = Field(default=2.0, ge=1.0, le=10.0)
-    retry_on_interrupt: bool = True          # Startup-Cleanup (ADR-0003)
+    retry_on_interrupt: bool = True          # startup cleanup (ADR-0003)
 
 
 # ---------------------------------------------------------------------
-# TaskSpec + State
+# TaskSpec + state
 # ---------------------------------------------------------------------
 
 TaskState = Literal[
-    "pending",          # noch nie geschedult (z.B. created_from_api, wartet auf hydrate)
-    "scheduled",        # im Heap oder wartet auf Event
-    "running",          # TaskRunner fuehrt gerade aus
-    "completed",        # Erfolgreich beendet
-    "failed",           # Nach max_attempts aufgegeben
-    "cancelled",        # Manuell oder Kill-Switch
-    "interrupted",      # App-Exit waehrend running (ADR-0003)
+    "pending",          # never scheduled yet (e.g. created_from_api, waiting for hydrate)
+    "scheduled",        # in the heap or waiting for an event
+    "running",          # the TaskRunner is currently executing it
+    "completed",        # finished successfully
+    "failed",           # given up after max_attempts
+    "cancelled",        # manual or kill-switch
+    "interrupted",      # app exit while running (ADR-0003)
 ]
 
 
@@ -181,7 +181,7 @@ TASK_STATES: tuple[str, ...] = (
 
 
 class TaskSpec(BaseModel):
-    """Die Beschreibung eines geschedulten Tasks — persistiert als JSON in
+    """The description of a scheduled task — persisted as JSON in
     `tasks.spec_json`.
     """
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -198,7 +198,7 @@ class TaskSpec(BaseModel):
     # terminal outcome, action-agnostic (the `harness_dispatch`/CU path does not
     # self-announce, unlike `agent`). Published as AnnouncementRequested(
     # kind="subagent"), which punches through the voice hangup gate and is
-    # mirrored to browser tabs — so "say Bescheid" works post-hangup and headless.
+    # mirrored to browser tabs — so "let me know" works post-hangup and headless.
     # Both support {field} placeholders interpolated from the triggering event
     # (e.g. "Done — opened {result_uri}."). None = stay silent (legacy behaviour).
     announce_on_success: str | None = Field(default=None, max_length=2048)

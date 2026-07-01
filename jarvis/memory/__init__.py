@@ -1,10 +1,10 @@
-"""Memory-Layer: Recall (FTS5) + Core-Memory (JSON) + Workspace + Auto-Recording.
+"""Memory layer: recall (FTS5) + core memory (JSON) + workspace + auto-recording.
 
-Workspace (neu, OpenClaw-inspired):
-- `UserProfile` fuer USER.md (strukturiertes Persoenlichkeits-Profil)
-- `Soul` fuer SOUL.md (Jarvis' eigene Persona)
-- `PersonStore` fuer people/<name>.md (Menschen im Umfeld — getrennt vom User)
-- `Curator` fuer LLM-getriebene Extraktion + Validierung + Merge
+Workspace (new, OpenClaw-inspired):
+- `UserProfile` for USER.md (structured personality profile)
+- `Soul` for SOUL.md (Jarvis' own persona)
+- `PersonStore` for people/<name>.md (people around the user — kept separate from the user)
+- `Curator` for LLM-driven extraction + validation + merge
 """
 from __future__ import annotations
 

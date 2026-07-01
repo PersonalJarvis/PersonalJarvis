@@ -1,4 +1,4 @@
-"""``POST /api/v1/identity/register`` — Admin-only Identitaets-Anlage."""
+"""``POST /api/v1/identity/register`` — admin-only identity creation."""
 from __future__ import annotations
 
 import logging
@@ -19,11 +19,11 @@ router = APIRouter(prefix="/api/v1/identity", tags=["identity"])
     dependencies=[Depends(require_admin_token)],
 )
 def register(request: Request, payload: RegisterRequest) -> RegisterResponse:
-    """Registriert einen neuen Pubkey beim Backend.
+    """Registers a new pubkey with the backend.
 
-    Wenn der Pubkey schon existiert, aktualisieren wir lediglich den
-    ``display_name`` — kein 409, weil das Re-Pairing bei Geraete-Wechsel
-    eine sinnvolle Aktion ist und der Admin-Token ja vorhanden war.
+    If the pubkey already exists, we simply update the ``display_name``
+    — no 409, since re-pairing on a device change is a reasonable
+    action and the admin token was present anyway.
     """
     with get_db(request) as session:
         ident = session.get(Identity, payload.pubkey)

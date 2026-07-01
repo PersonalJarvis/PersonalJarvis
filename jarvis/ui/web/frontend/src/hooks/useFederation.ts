@@ -48,7 +48,7 @@ export interface FeedResponse {
 }
 
 // ----------------------------------------------------------------------
-// Fetchers (gegen lokalen Proxy, NICHT direkt das Federation-Backend)
+// Fetchers (against the local proxy, NOT the federation backend directly)
 // ----------------------------------------------------------------------
 
 async function fetchStatus(): Promise<FederationStatus> {

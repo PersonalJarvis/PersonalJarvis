@@ -76,7 +76,7 @@ class CliCatalog:
         merged: dict[str, CliSpec] = dict(seed)
         for name, spec in custom.items():
             if name in merged:
-                log.info("cli-catalog: custom-Override fuer seed-Eintrag '%s'", name)
+                log.info("cli-catalog: custom override for seed entry '%s'", name)
             merged[name] = spec
         return merged
 
@@ -116,7 +116,7 @@ class CliCatalog:
         out: dict[str, CliSpec] = {}
         for entry in entries:
             if not isinstance(entry, dict):
-                log.warning("cli-catalog[%s]: entry kein dict: %r", source, entry)
+                log.warning("cli-catalog[%s]: entry is not a dict: %r", source, entry)
                 continue
             entry_with_source = {**entry, "source": source}
             try:

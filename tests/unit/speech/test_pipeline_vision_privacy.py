@@ -1,8 +1,8 @@
-"""Wave-2 B7: Vision-Privacy-Hooks in SpeechPipeline.
+"""Wave-2 B7: Vision privacy hooks in SpeechPipeline.
 
-Testet die extrahierten Helper-Methods (_vision_cfg, _match_privacy_phrase,
-_maybe_toggle_vision_on_state) direkt auf einer Pipeline-Instanz via
-`__new__`, ohne den vollen STT/TTS/Wake-Bootstrap zu durchlaufen.
+Tests the extracted helper methods (_vision_cfg, _match_privacy_phrase,
+_maybe_toggle_vision_on_state) directly on a pipeline instance via
+`__new__`, without running the full STT/TTS/wake bootstrap.
 """
 from __future__ import annotations
 
@@ -37,10 +37,10 @@ class _FakeProvider:
 
 
 def _make_pipeline(*, provider=None, vision_cfg=None) -> SpeechPipeline:
-    """Baut eine nackte Pipeline-Instanz ohne Bootstrap.
+    """Builds a bare pipeline instance without bootstrap.
 
-    Nutzt `__new__` + manuelle Attribut-Injection — reicht fuer die Helper-
-    Method-Tests. Vermeidet STT/TTS/Wake-Init.
+    Uses `__new__` + manual attribute injection — sufficient for the helper
+    method tests. Avoids STT/TTS/wake init.
     """
     pipe = SpeechPipeline.__new__(SpeechPipeline)
     pipe._vision_provider = provider
@@ -101,7 +101,7 @@ def test_pipeline_vision_hook_noop_when_pause_on_idle_false():
 
 def test_pipeline_vision_hook_noop_when_no_provider():
     pipe = _make_pipeline(provider=None, vision_cfg=_default_vision_cfg())
-    # Darf nicht crashen
+    # Must not crash
     pipe._maybe_toggle_vision_on_state("IDLE")
     pipe._maybe_toggle_vision_on_state("LISTENING")
 
@@ -125,7 +125,7 @@ def test_voice_phrase_vision_back_on_returns_resume():
 
 def test_voice_phrase_non_match_returns_none():
     pipe = _make_pipeline(provider=_FakeProvider(), vision_cfg=_default_vision_cfg())
-    assert pipe._match_privacy_phrase("was ist das") is None
+    assert pipe._match_privacy_phrase("was ist das") is None  # i18n-allow
     assert pipe._match_privacy_phrase("hallo") is None
 
 
@@ -140,10 +140,10 @@ def test_voice_phrase_match_returns_none_when_no_config():
 
 
 def test_pipeline_init_accepts_vision_kwargs():
-    """__init__-Signatur akzeptiert config + vision_provider ohne Fehler.
+    """__init__ signature accepts config + vision_provider without error.
 
-    Wir instanziieren mit minimal-valid Komponenten; wenn die Kwargs fehlen
-    wuerden, waere das ein TypeError. Reiner Signatur-Smoke.
+    We instantiate with minimal-valid components; if the kwargs were
+    missing, that would be a TypeError. Pure signature smoke test.
     """
     import inspect
     sig = inspect.signature(SpeechPipeline.__init__)

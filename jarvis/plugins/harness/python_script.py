@@ -1,10 +1,10 @@
-"""Python-Script-Harness: führt Python-Code im Subprocess aus.
+"""Python-script harness: runs Python code in a subprocess.
 
-`task.prompt` wird als `-c "<code>"` an `python` übergeben (inline). Für
-File-Execution kann der Prompt mit `@path/to/file.py` beginnen.
+`task.prompt` is passed to `python` as `-c "<code>"` (inline). For file
+execution, the prompt can start with `@path/to/file.py`.
 
-Kein LLM-Loop — einfach deterministisches Script-Execution. Nützlich als
-schneller "Calculator"- oder "Datenverarbeitungs"-Harness, und als Test-Harness.
+No LLM loop — just deterministic script execution. Useful as a quick
+"calculator" or "data-processing" harness, and as a test harness.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ class PythonScriptHarness(SubprocessHarness):
         if prompt.startswith("@"):
             script_path = prompt[1:].strip()
             return [py, script_path]
-        # Inline-Code
+        # Inline code
         return [py, "-X", "utf8", "-c", prompt]
 
     async def health(self) -> bool:

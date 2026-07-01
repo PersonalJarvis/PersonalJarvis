@@ -1,4 +1,4 @@
-"""Exportiert Pydantic-Modelle aus jarvis.ui.web.schema als JSON-Schema."""
+"""Exports Pydantic models from jarvis.ui.web.schema as JSON schema."""
 import json
 import sys
 from pathlib import Path
@@ -16,7 +16,7 @@ def main() -> int:
             WSWelcome,
         )
     except ImportError:
-        print("Agent-2s schema.py noch nicht da. Skip.", file=sys.stderr)
+        print("Agent-2's schema.py not there yet. Skip.", file=sys.stderr)
         return 0
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(

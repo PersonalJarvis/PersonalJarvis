@@ -116,7 +116,7 @@ class ListMutableSettingsTool:
             return ToolResult(
                 success=False,
                 output=None,
-                error="invalid_input: list_mutable_settings akzeptiert keine Parameter",
+                error="invalid_input: list_mutable_settings accepts no parameters",
             )
 
         # Wave 2: enrich each entry with the value type + constraints so the
@@ -268,7 +268,7 @@ class SetConfigValueTool:
             "path": {
                 "type": "string",
                 "minLength": 1,
-                "description": "Dotted-Pfad in jarvis.toml. Muss in der Allowlist sein.",
+                "description": "Dotted path in jarvis.toml. Must be on the allowlist.",
             },
             "new_value": {
                 "anyOf": [
@@ -278,8 +278,8 @@ class SetConfigValueTool:
                     {"type": "boolean"},
                 ],
                 "description": (
-                    "Neuer Wert. Type wird vom Pre-Validate gegen das "
-                    "Pydantic-Modell geprüft."
+                    "New value. Its type is checked against the Pydantic "
+                    "model by the pre-validate step."
                 ),
             },
             "reason": {

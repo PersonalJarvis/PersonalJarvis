@@ -1,7 +1,7 @@
 # Phase 5 — Integration Test Report
 
 **Date:** 2026-04-22
-**Plan reference:** `.claude/plans/also-er-muss-auch-lexical-pond.md` §21 (new)
+**Plan reference:** `.claude/plans/also-er-muss-auch-lexical-pond.md` §21 (new)  <!-- i18n-allow -->
 **Mandate:** `Aufgaben/Unbenanntes Dokument (1).md`
 **Architecture decisions:** `docs/adr/0001` through `docs/adr/0008`
 **Research pass:** `docs/phase5-research.md`

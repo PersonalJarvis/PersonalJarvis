@@ -15,5 +15,5 @@ def test_unknown_plugin_returns_none():
 
 def test_keyword_match_is_case_insensitive_substring():
     card = UsageCard(plugin_id="x", keywords=["kalender", "termine"], body="...")
-    assert card.matches("Was habe ich heute für TERMINE?") is True
-    assert card.matches("erzähl mir einen witz") is False
+    assert card.matches("Was habe ich heute für TERMINE?") is True  # i18n-allow: simulated German user utterance, content under test
+    assert card.matches("erzähl mir einen witz") is False  # i18n-allow: simulated German user utterance, content under test

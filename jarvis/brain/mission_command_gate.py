@@ -1,18 +1,18 @@
 """MissionCommandGate — pattern matcher for OpenClaw mission meta-commands.
 
 AD-12 + AP-OC5 (see ``docs/openclaw-bridge.md``): status phrases
-("laeuft das noch?", "wie weit?", "Status?") and stop phrases ("brich ab",
+("laeuft das noch?", "wie weit?", "Status?") and stop phrases ("brich ab",  # i18n-allow
 "stop OpenClaw") MUST NOT lead to a new spawn — the router brain must
 detect them deterministically via regex, otherwise there is a risk of
-(a) latency from LLM tool-choice and (b) hallucination ("ja klar laeuft
-das noch" even though the mission is dead).
+(a) latency from LLM tool-choice and (b) hallucination ("ja klar laeuft  # i18n-allow
+das noch" even though the mission is dead).  # i18n-allow
 
 Architecture:
 
 - Pure function ``match_mission_command(text)`` -> ``MissionCommandMatch | None``.
 - Bilingual DE+EN. Patterns are intentionally strict (word boundaries,
   start-of-sentence anchors for stop phrases) so smalltalk like
-  "Wie weit ist das Buch?" or "Lass das stoppen, das Lied" does not
+  "Wie weit ist das Buch?" or "Lass das stoppen, das Lied" does not  # i18n-allow
   match incorrectly.
 - Optional: extract mission ID if the user explicitly names a mission
   ("status mission abc123" / "stop mission xyz"). Default is
@@ -40,19 +40,19 @@ _INTENT_T = Literal["status", "cancel"]
 
 # --- Status phrases -----------------------------------------------------------
 #
-# Match: "laeuft das noch?", "Laeuft die Mission noch?", "Status?",
+# Match: "laeuft das noch?", "Laeuft die Mission noch?", "Status?",  # i18n-allow
 # "Status der Mission", "wie weit?", "wie weit bist du?",
 # "is it still running?", "what's the status?", "how far are we?".
 #
 # Two pattern groups so German and English phrases remain clearly separable —
-# English with its own verb patterns, German with "laeufst/laeuft" + "Status"
+# English with its own verb patterns, German with "laeufst/laeuft" + "Status"  # i18n-allow
 # + "wie weit". Both typically end with "?" but that is optional (STT does
 # not reliably produce punctuation).
 _STATUS_PATTERN_DE = re.compile(
     r"""
     (
-        # 'laeuft (das|die mission|er|es) (noch|gerade|weiter)?'
-        \bl(?:ä|ae)uft\s+(?:das|die\s+mission|der|er|es)\s+(?:noch|gerade|weiter)\b
+        # 'laeuft (das|die mission|er|es) (noch|gerade|weiter)?'  # i18n-allow
+        \bl(?:ä|ae)uft\s+(?:das|die\s+mission|der|er|es)\s+(?:noch|gerade|weiter)\b  # i18n-allow
         |
         # bare 'wie weit' at sentence start or before '?'/end — asks about progress.
         # NOT 'wie weit ist Berlin' etc. (qualifier-free only matches when
@@ -60,20 +60,20 @@ _STATUS_PATTERN_DE = re.compile(
         ^\s*(?:jarvis[,\s]+)?wie\s+weit\s*\??\s*$
         |
         # 'wie weit' + person/mission qualifier
-        \bwie\s+weit\s+(?:bist\s+du|sind\s+wir|sind\s+sie|sind\s+die\s+mission|ist\s+(?:die\s+mission|der\s+sub|claw|openclaw))\b
+        \bwie\s+weit\s+(?:bist\s+du|sind\s+wir|sind\s+sie|sind\s+die\s+mission|ist\s+(?:die\s+mission|der\s+sub|claw|openclaw))\b  # i18n-allow
         |
         # 'status' alone (at start or after 'jarvis,'); MUST have question/end
         # character, otherwise it matches 'Status der Wirtschaft' incorrectly.
         ^(?:jarvis[,\s]+)?status\s*[?.!]*\s*$
         |
-        # 'status der mission' / 'status vom sub' / 'status von openclaw'
-        \bstatus\s+(?:der\s+mission|vom\s+sub|von\s+(?:openclaw|claw)|bei\s+(?:openclaw|claw))\b
+        # 'status der mission' / 'status vom sub' / 'status von openclaw'  # i18n-allow
+        \bstatus\s+(?:der\s+mission|vom\s+sub|von\s+(?:openclaw|claw)|bei\s+(?:openclaw|claw))\b  # i18n-allow
         |
-        # 'wo stehen wir' / 'wo steht das' / 'wo steht die mission'
-        \bwo\s+steh(?:en|t)\s+(?:wir|das|die\s+mission|der\s+sub|claw|openclaw)\b
+        # 'wo stehen wir' / 'wo steht das' / 'wo steht die mission'  # i18n-allow
+        \bwo\s+steh(?:en|t)\s+(?:wir|das|die\s+mission|der\s+sub|claw|openclaw)\b  # i18n-allow
         |
         # 'noch am laufen' / 'noch dran'
-        \b(?:noch|immer)\s+(?:am\s+laufen|dran|aktiv|beschäftigt|beschaeftigt)\b
+        \b(?:noch|immer)\s+(?:am\s+laufen|dran|aktiv|beschäftigt|beschaeftigt)\b  # i18n-allow
     )
     """,
     re.IGNORECASE | re.VERBOSE,
@@ -108,7 +108,7 @@ _STATUS_PATTERN_EN = re.compile(
 # --- Cancel phrases -----------------------------------------------------------
 #
 # Match: "brich ab", "brich die Mission ab", "stop OpenClaw",
-# "stoppe die Mission", "abbrechen", "cancel OpenClaw",
+# "stoppe die Mission", "abbrechen", "cancel OpenClaw",  # i18n-allow
 # "kill the mission".
 #
 # Important: the existing ``voice_command_gate._CANCEL_PATTERN`` already
@@ -120,20 +120,20 @@ _STATUS_PATTERN_EN = re.compile(
 _CANCEL_PATTERN_DE = re.compile(
     r"""
     (
-        # 'brich (das|die|den|alles) ab'
-        \bbrich\s+(?:das|die\s+mission|den\s+auftrag|alles|openclaw|claw|sub|den)\s*\w*\s*ab\b
+        # 'brich (das|die|den|alles) ab'  # i18n-allow
+        \bbrich\s+(?:das|die\s+mission|den\s+auftrag|alles|openclaw|claw|sub|den)\s*\w*\s*ab\b  # i18n-allow
         |
         # 'brich ab' — short form
         ^(?:jarvis[,\s]+)?brich\s+ab\b
         |
-        # 'stop(pe) (die mission|openclaw|claw|den auftrag)'
-        \bstopp?(?:e)?\s+(?:die\s+mission|openclaw|claw|den\s+auftrag|den\s+sub|alles)\b
+        # 'stop(pe) (die mission|openclaw|claw|den auftrag)'  # i18n-allow
+        \bstopp?(?:e)?\s+(?:die\s+mission|openclaw|claw|den\s+auftrag|den\s+sub|alles)\b  # i18n-allow
         |
-        # 'mission abbrechen' / 'auftrag abbrechen'
-        \b(?:mission|auftrag|openclaw|claw)\s+(?:bitte\s+)?abbrechen\b
+        # 'mission abbrechen' / 'auftrag abbrechen'  # i18n-allow
+        \b(?:mission|auftrag|openclaw|claw)\s+(?:bitte\s+)?abbrechen\b  # i18n-allow
         |
         # 'abbruch der mission' / 'abbruch openclaw'
-        \babbruch\s+(?:der\s+mission|openclaw|claw|vom\s+sub)\b
+        \babbruch\s+(?:der\s+mission|openclaw|claw|vom\s+sub)\b  # i18n-allow
     )
     """,
     re.IGNORECASE | re.VERBOSE,
@@ -208,7 +208,7 @@ def match_mission_command(text: str) -> MissionCommandMatch | None:
         On ambiguity (e.g. "wie weit cancel?" — rare), cancel wins.
 
     Examples (all return a match):
-      - "Laeuft das noch?"             -> status / de
+      - "Laeuft das noch?"             -> status / de  # i18n-allow
       - "Status?"                      -> status / de
       - "Wie weit bist du?"            -> status / de
       - "Brich die Mission ab"         -> cancel / de
@@ -216,7 +216,7 @@ def match_mission_command(text: str) -> MissionCommandMatch | None:
       - "Cancel the mission"           -> cancel / en
 
     Examples (no match):
-      - "Wie weit ist Berlin von hier?"  (no mission context)
+      - "Wie weit ist Berlin von hier?"  (no mission context)  # i18n-allow
       - "Status der Wirtschaft"          (status without mission/claw)
       - "Lass das stoppen, das Lied"     (no mission context)
       - ""

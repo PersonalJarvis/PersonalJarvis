@@ -1,7 +1,7 @@
 """CodexDirectWorker must not depend on the fragile ``codex.CMD`` shim.
 
 Live forensic 2026-06-20 (missions 019ee554 / 019ee555 / 019ee558, the
-"alle Subagent-Missionen schlagen fehl" incident): jarvis was launched by an
+"all subagent missions fail" incident): jarvis was launched by an
 agent runtime (hermes-agent) with a PATH that did NOT contain the Node.js
 directory. The worker invoked ``codex.CMD`` — an npm batch shim whose tail line
 resolves the interpreter as the *bare* command ``node`` via PATH:
@@ -9,9 +9,9 @@ resolves the interpreter as the *bare* command ``node`` via PATH:
     ... || title %COMSPEC% & "%_prog%" "...\\bin\\codex.js" %*   (_prog == "node")
 
 With ``node`` off the inherited PATH, cmd.exe died with
-``Der Befehl "node" ... konnte nicht gefunden werden`` and exited 1 in ~25 ms —
+``Der Befehl "node" ... konnte nicht gefunden werden`` and exited 1 in ~25 ms —  # i18n-allow: quotes the actual German-locale cmd.exe error text reproduced
 BEFORE codex ever started. Every mission then failed ``task_error`` →
-"Der Worker ist abgebrochen." (reproduced: codex.CMD + node-less PATH → exit 1
+"Der Worker ist abgebrochen." (reproduced: codex.CMD + node-less PATH → exit 1  # i18n-allow: quotes the actual German TTS readback phrase
 wall_ms=24; ``node`` + absolute path + same PATH → exit 0).
 
 The fix mirrors the existing ``gemini_worker._resolve_gemini_argv_prefix`` and

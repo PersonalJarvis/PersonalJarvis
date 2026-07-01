@@ -1,10 +1,10 @@
-"""Integration: BrainManager.generate() short-circuit fuer OpenClaw-Commands.
+"""Integration: BrainManager.generate() short-circuit for OpenClaw commands.
 
-AD-12 + AP-OC5: Status-/Cancel-Phrasen DUERFEN keinen Force-Spawn ausloesen,
-auch wenn ihr Verb in der ``spawn_verbs``-Allowlist haengt ("brich" bzw.
-ein Action-Verb-Kompositum). Der Test stellt sicher dass der Pattern-
-Matcher VOR der Force-Spawn-Heuristik greift, wenn Handler verdrahtet
-sind, und dass ohne Handler der normale Pfad weiterlaeuft.
+AD-12 + AP-OC5: status/cancel phrases must NOT trigger a force-spawn, even
+when their verb hangs off the ``spawn_verbs`` allowlist ("brich" i.e. an
+action-verb compound). The test ensures the pattern matcher takes effect
+BEFORE the force-spawn heuristic when handlers are wired, and that the
+normal path continues when no handler is set.
 """
 from __future__ import annotations
 
@@ -23,36 +23,36 @@ def _bare_manager() -> BrainManager:
 
 @pytest.mark.asyncio
 async def test_status_short_circuits_to_handler() -> None:
-    """Status-Phrase ruft den Handler statt einen Spawn anzustossen."""
+    """A status phrase calls the handler instead of triggering a spawn."""
     manager = _bare_manager()
     calls: list[str | None] = []
 
     async def status_fn(mission_id: str | None) -> str:
         calls.append(mission_id)
-        return "Eine Mission laeuft seit drei Minuten."
+        return "Eine Mission laeuft seit drei Minuten."  # i18n-allow
 
     async def cancel_fn(mission_id: str | None) -> str:
-        raise AssertionError("cancel_fn darf bei Status-Intent NICHT laufen")
+        raise AssertionError("cancel_fn must NOT run on a status intent")
 
     manager.set_mission_command_handlers(
         status_fn=status_fn,
         cancel_fn=cancel_fn,
     )
 
-    result = await manager.generate("Laeuft das noch?", use_history=False)
+    result = await manager.generate("Laeuft das noch?", use_history=False)  # i18n-allow
 
-    assert result == "Eine Mission laeuft seit drei Minuten."
-    assert calls == [None]  # keine Mission-ID im Text
+    assert result == "Eine Mission laeuft seit drei Minuten."  # i18n-allow
+    assert calls == [None]  # no mission ID in the text
 
 
 @pytest.mark.asyncio
 async def test_cancel_short_circuits_to_handler() -> None:
-    """Cancel-Phrase ruft den Cancel-Handler statt einen Spawn anzustossen."""
+    """A cancel phrase calls the cancel handler instead of triggering a spawn."""
     manager = _bare_manager()
     calls: list[str | None] = []
 
     async def status_fn(mission_id: str | None) -> str:
-        raise AssertionError("status_fn darf bei Cancel-Intent NICHT laufen")
+        raise AssertionError("status_fn must NOT run on a cancel intent")
 
     async def cancel_fn(mission_id: str | None) -> str:
         calls.append(mission_id)
@@ -90,12 +90,12 @@ async def test_mission_id_propagated_to_handler() -> None:
 
 @pytest.mark.asyncio
 async def test_history_appended_for_status_response() -> None:
-    """Die kurze Status-Antwort landet im History-Buffer (sonst kein
-    Conversation-Memory beim naechsten Turn)."""
+    """The short status answer lands in the history buffer (otherwise no
+    conversation memory on the next turn)."""
     manager = _bare_manager()
 
     async def status_fn(mission_id: str | None) -> str:
-        return "Laeuft seit fuenf Minuten."
+        return "Laeuft seit fuenf Minuten."  # i18n-allow
 
     manager.set_mission_command_handlers(
         status_fn=status_fn, cancel_fn=None,
@@ -107,13 +107,13 @@ async def test_history_appended_for_status_response() -> None:
     assert manager._history[0].role == "user"
     assert manager._history[0].content == "Wie weit bist du?"
     assert manager._history[1].role == "assistant"
-    assert manager._history[1].content == "Laeuft seit fuenf Minuten."
+    assert manager._history[1].content == "Laeuft seit fuenf Minuten."  # i18n-allow
 
 
 @pytest.mark.asyncio
 async def test_no_handler_falls_through(monkeypatch) -> None:
-    """Wenn keine Handler injiziert sind, greift der normale Spawn-Pfad
-    (kein Crash, kein leerer Return)."""
+    """When no handlers are injected, the normal spawn path takes over
+    (no crash, no empty return)."""
     manager = _bare_manager()
     spawn_called: list[str] = []
 
@@ -123,7 +123,7 @@ async def test_no_handler_falls_through(monkeypatch) -> None:
         spawn_called.append(user_text)
         return "spawned-result"
 
-    # Keine Handler verdrahtet — Pattern matcht zwar, fall through.
+    # No handlers wired — the pattern does match, but falls through.
     monkeypatch.setattr(manager, "_force_spawn_worker", fake_force_spawn)
 
     result = await manager.generate("Brich die Mission ab", use_history=False)
@@ -134,8 +134,8 @@ async def test_no_handler_falls_through(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_smalltalk_does_not_trigger_handler() -> None:
-    """Smalltalk wie 'Wie geht's?' darf den Status-Handler NICHT triggern.
-    Sonst wuerde jede Begruessung einen MissionManager-Read ausloesen."""
+    """Smalltalk like 'Wie geht's?' must NOT trigger the status handler.
+    Otherwise every greeting would trigger a MissionManager read."""
     manager = _bare_manager()
     triggered: list[str] = []
 
@@ -150,26 +150,26 @@ async def test_smalltalk_does_not_trigger_handler() -> None:
     async def fake_force_spawn(
         user_text: str, *, trace_id=None, source_layer=None
     ) -> str | None:
-        return None  # Smalltalk → keine Spawn
+        return None  # smalltalk → no spawn
 
     manager.set_mission_command_handlers(
         status_fn=status_fn, cancel_fn=cancel_fn,
     )
-    # Force-Spawn-Pfad mocken; Dispatcher wird gar nicht erst gerufen weil
-    # der nachfolgende Code-Pfad einen leeren Provider-Chain erkennt und
-    # zurueckkehrt.
+    # Mock the force-spawn path; the dispatcher never even gets called
+    # because the subsequent code path detects an empty provider chain
+    # and returns.
     manager._force_spawn_worker = fake_force_spawn  # type: ignore[method-assign]
 
     await manager.generate("Hallo Jarvis", use_history=False)
 
-    assert triggered == [], "Status-/Cancel-Handler wurde bei Smalltalk gerufen"
+    assert triggered == [], "status/cancel handler was called on smalltalk"
 
 
 @pytest.mark.asyncio
 async def test_status_handler_falls_through_when_only_cancel_set() -> None:
-    """Wenn der User nach Status fragt, aber nur cancel_fn gesetzt ist,
-    fallen wir nicht auf cancel zurueck — wir delegieren an den normalen
-    Pfad. (Sonst wuerden falsche Cancellations passieren.)"""
+    """When the user asks for status but only cancel_fn is set, we do not
+    fall back to cancel — we delegate to the normal path. (Otherwise
+    false cancellations would happen.)"""
     manager = _bare_manager()
     cancel_called: list[str | None] = []
 

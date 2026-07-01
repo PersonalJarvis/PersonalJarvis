@@ -1,16 +1,16 @@
 # === F-FRIENDS [F4] · feature/friends-section · alex-2026-05-01 ===
-"""Unit-Tests fuer :class:`jarvis.friends.status_filter.StatusFilter`.
+"""Unit tests for :class:`jarvis.friends.status_filter.StatusFilter`.
 
-Branch-portable: die echten Bus-Events (VoiceSessionStarted, MissionStarted,
-JarvisAgentTaskStarted, ...) existieren auf diesem Branch eventuell noch nicht.
-Wir bauen Fake-DataClass-Events mit den passenden Class-Names — der Filter
-arbeitet ueber ``type(event).__name__`` + ``hasattr``, also reicht das.
+Branch-portable: the real bus events (VoiceSessionStarted, MissionStarted,
+JarvisAgentTaskStarted, ...) may not exist yet on this branch.
+We build fake dataclass events with matching class names — the filter
+works via ``type(event).__name__`` + ``hasattr``, so that's enough.
 
-Fokus der Tests:
+Focus of the tests:
 
-- Hard-Blacklist absoluter Vorrang (KRITISCH).
-- Profile-Whitelists sauber separiert.
-- Field-Filtering blockiert Datenleak ueber unerwartete Event-Felder.
+- Hard blacklist has absolute precedence (CRITICAL).
+- Profile whitelists are cleanly separated.
+- Field filtering blocks data leaks via unexpected event fields.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from jarvis.friends.status_filter import HARD_BLACKLIST, PROFILES, StatusFilter
 
 # ----------------------------------------------------------------------
-# Fake-Events: Class-Name matched echte Bus-Event-Namen, Felder per Plan.
+# Fake events: class name matches real bus event names, fields per plan.
 # ----------------------------------------------------------------------
 
 
@@ -64,7 +64,7 @@ class VoiceSessionEnded:
 class MissionStarted:
     timestamp_ns: int = 3_000
     title: str = "Refactor Brain Module"
-    internal_prompt: str = "leak me"  # darf NICHT durchkommen
+    internal_prompt: str = "leak me"  # must NOT pass through
 
 
 @dataclass
@@ -72,15 +72,15 @@ class MissionCompleted:
     timestamp_ns: int = 4_000
     title: str = "Refactor Brain Module"
     success: bool = True
-    cost_usd: float = 12.34  # darf NICHT durchkommen
+    cost_usd: float = 12.34  # must NOT pass through
 
 
 @dataclass
 class JarvisAgentTaskStarted:
     timestamp_ns: int = 5_000
     summary: str = "Implementiert F4-Pipeline"
-    utterance: str = "leak me"  # darf NICHT durchkommen
-    private_secret: str = "do-not-leak"  # erfundenes Feld, darf NICHT durchkommen
+    utterance: str = "leak me"  # must NOT pass through
+    private_secret: str = "do-not-leak"  # made-up field, must NOT pass through
 
 
 @dataclass
@@ -91,33 +91,33 @@ class JarvisAgentTaskCompleted:
 
 
 # ----------------------------------------------------------------------
-# Hard-Blacklist: KRITISCHE Tests
+# Hard blacklist: CRITICAL tests
 # ----------------------------------------------------------------------
 
 
 def test_hard_blacklist_blocks_in_minimal() -> None:
-    """UtteranceCaptured darf im 'minimal'-Profile NIE durchkommen."""
+    """UtteranceCaptured must NEVER pass through in the 'minimal' profile."""
     event = UtteranceCaptured()
     result = StatusFilter.filter(event, "minimal")
     assert result is None
 
 
 def test_hard_blacklist_blocks_in_standard() -> None:
-    """UtteranceCaptured darf im 'standard'-Profile NIE durchkommen."""
+    """UtteranceCaptured must NEVER pass through in the 'standard' profile."""
     event = UtteranceCaptured()
     result = StatusFilter.filter(event, "standard")
     assert result is None
 
 
 def test_hard_blacklist_blocks_in_detailed() -> None:
-    """UtteranceCaptured darf im 'detailed'-Profile NIE durchkommen."""
+    """UtteranceCaptured must NEVER pass through in the 'detailed' profile."""
     event = UtteranceCaptured()
     result = StatusFilter.filter(event, "detailed")
     assert result is None
 
 
 def test_hard_blacklist_blocks_with_custom_whitelist() -> None:
-    """Custom-Whitelist darf Hard-Blacklist NICHT umgehen (AP-1/AP-11)."""
+    """A custom whitelist must NOT bypass the hard blacklist (AP-1/AP-11)."""
     event = UtteranceCaptured()
     result = StatusFilter.filter(
         event, "detailed", custom_whitelist=["UtteranceCaptured"]
@@ -126,21 +126,21 @@ def test_hard_blacklist_blocks_with_custom_whitelist() -> None:
 
 
 def test_hard_blacklist_blocks_action_executed() -> None:
-    """ActionExecuted ist in HARD_BLACKLIST — keine Aktionen leaken."""
+    """ActionExecuted is in HARD_BLACKLIST — no actions may leak."""
     event = ActionExecuted()
     result = StatusFilter.filter(event, "detailed")
     assert result is None
 
 
 def test_hard_blacklist_blocks_memory_updated() -> None:
-    """MemoryUpdated ist in HARD_BLACKLIST — keine Memory-Mutationen leaken."""
+    """MemoryUpdated is in HARD_BLACKLIST — no memory mutations may leak."""
     event = MemoryUpdated()
     result = StatusFilter.filter(event, "detailed")
     assert result is None
 
 
 def test_hard_blacklist_blocks_transcript_final() -> None:
-    """TranscriptFinal in HARD_BLACKLIST — STT-Output verlaesst Maschine NIE."""
+    """TranscriptFinal is in HARD_BLACKLIST — STT output NEVER leaves the machine."""
     event = TranscriptFinal()
     result = StatusFilter.filter(
         event, "detailed", custom_whitelist=["TranscriptFinal"]
@@ -149,7 +149,7 @@ def test_hard_blacklist_blocks_transcript_final() -> None:
 
 
 def test_hard_blacklist_constant_completeness() -> None:
-    """Sanity-Check: alle vom Plan genannten Hard-Blacklist-Eintraege da."""
+    """Sanity check: all hard-blacklist entries named in the plan are present."""
     required = {
         "UtteranceCaptured",
         "TranscriptFinal",
@@ -163,12 +163,12 @@ def test_hard_blacklist_constant_completeness() -> None:
 
 
 # ----------------------------------------------------------------------
-# Profile-Whitelists
+# Profile whitelists
 # ----------------------------------------------------------------------
 
 
 def test_minimal_passes_voice_session_started() -> None:
-    """'minimal' laesst VoiceSessionStarted durch."""
+    """'minimal' lets VoiceSessionStarted through."""
     event = VoiceSessionStarted()
     result = StatusFilter.filter(event, "minimal")
     assert result is not None
@@ -178,52 +178,52 @@ def test_minimal_passes_voice_session_started() -> None:
 
 
 def test_minimal_blocks_mission_started() -> None:
-    """'minimal' blockiert MissionStarted (Mission-Tracking erst ab 'standard')."""
+    """'minimal' blocks MissionStarted (mission tracking only starts at 'standard')."""
     event = MissionStarted()
     result = StatusFilter.filter(event, "minimal")
     assert result is None
 
 
 def test_minimal_blocks_openclaw() -> None:
-    """'minimal' blockiert Sub-Jarvis-Events (erst 'detailed')."""
+    """'minimal' blocks Jarvis-Agent events (only allowed from 'detailed')."""
     event = JarvisAgentTaskStarted()
     result = StatusFilter.filter(event, "minimal")
     assert result is None
 
 
 def test_standard_passes_mission_started() -> None:
-    """'standard' laesst MissionStarted mit erlaubten Feldern durch."""
+    """'standard' lets MissionStarted through with its allowed fields."""
     event = MissionStarted()
     result = StatusFilter.filter(event, "standard")
     assert result is not None
     assert result.event_type == "MissionStarted"
     assert result.profile_used == "standard"
     assert result.fields == {"title": "Refactor Brain Module"}
-    # internal_prompt darf NICHT durchkommen
+    # internal_prompt must NOT pass through
     assert "internal_prompt" not in result.fields
 
 
 def test_standard_passes_mission_completed_with_success() -> None:
-    """'standard' enthaelt fuer MissionCompleted: title + success."""
+    """'standard' includes for MissionCompleted: title + success."""
     event = MissionCompleted()
     result = StatusFilter.filter(event, "standard")
     assert result is not None
     assert result.fields == {"title": "Refactor Brain Module", "success": True}
-    # cost_usd darf NICHT durchkommen
+    # cost_usd must NOT pass through
     assert "cost_usd" not in result.fields
 
 
 def test_standard_blocks_openclaw() -> None:
-    """'standard' blockiert JarvisAgentTaskStarted."""
+    """'standard' blocks JarvisAgentTaskStarted."""
     event = JarvisAgentTaskStarted()
     result = StatusFilter.filter(event, "standard")
     assert result is None
 
 
 def test_detailed_passes_openclaw_with_summary_only() -> None:
-    """'detailed' laesst JarvisAgentTaskStarted durch, ABER nur summary-Field.
+    """'detailed' lets JarvisAgentTaskStarted through, BUT only the summary field.
 
-    KRITISCH: utterance + private_secret im Event duerfen NICHT durchkommen.
+    CRITICAL: utterance + private_secret on the event must NOT pass through.
     """
     event = JarvisAgentTaskStarted()
     result = StatusFilter.filter(event, "detailed")
@@ -235,11 +235,11 @@ def test_detailed_passes_openclaw_with_summary_only() -> None:
 
 
 def test_no_data_leak_via_unknown_field() -> None:
-    """Erfundene Felder im Event leaken NICHT — Filter ist Whitelist-only."""
+    """Made-up fields on the event do NOT leak — the filter is whitelist-only."""
     event = JarvisAgentTaskStarted()
     result = StatusFilter.filter(event, "detailed")
     assert result is not None
-    # Nur summary darf raus
+    # Only summary may pass through
     assert set(result.fields.keys()) == {"summary"}
 
 
@@ -259,21 +259,21 @@ def test_detailed_passes_openclaw_completed() -> None:
 
 
 # ----------------------------------------------------------------------
-# Custom-Whitelist-Verhalten
+# Custom whitelist behavior
 # ----------------------------------------------------------------------
 
 
 def test_custom_whitelist_extends_profile() -> None:
-    """Custom-Whitelist + Profile-Default werden als Union behandelt."""
+    """Custom whitelist + profile default are treated as a union."""
 
     @dataclass
     class CustomDebugEvent:
         timestamp_ns: int = 7_000
 
     event = CustomDebugEvent()
-    # Ohne Custom: blockiert
+    # Without custom: blocked
     assert StatusFilter.filter(event, "minimal") is None
-    # Mit Custom: durch
+    # With custom: passes through
     result = StatusFilter.filter(
         event, "minimal", custom_whitelist=["CustomDebugEvent"]
     )
@@ -282,9 +282,9 @@ def test_custom_whitelist_extends_profile() -> None:
 
 
 def test_custom_whitelist_does_not_replace_profile() -> None:
-    """Custom-Whitelist ergaenzt nur — Profile-Defaults bleiben aktiv."""
+    """Custom whitelist only extends — profile defaults stay active."""
     event = VoiceSessionStarted()
-    # Custom-Whitelist enthaelt VoiceSessionStarted nicht — soll trotzdem durch
+    # Custom whitelist does not contain VoiceSessionStarted — should still pass through
     result = StatusFilter.filter(
         event, "minimal", custom_whitelist=["FooBarEvent"]
     )
@@ -293,20 +293,20 @@ def test_custom_whitelist_does_not_replace_profile() -> None:
 
 
 # ----------------------------------------------------------------------
-# Edge-Cases
+# Edge cases
 # ----------------------------------------------------------------------
 
 
 def test_invalid_profile_returns_none() -> None:
-    """Unbekanntes Profile -> None statt Crash."""
+    """Unknown profile -> None instead of a crash."""
     event = VoiceSessionStarted()
-    # Type-Hint Literal erlaubt das nicht, aber Runtime kann das passieren
+    # The type-hint Literal disallows this, but it can happen at runtime
     result = StatusFilter.filter(event, "bogus")  # type: ignore[arg-type]
     assert result is None
 
 
 def test_event_without_timestamp_ns_default_to_zero() -> None:
-    """Event ohne timestamp_ns -> Filter setzt 0 (kein Crash)."""
+    """Event without timestamp_ns -> filter defaults it to 0 (no crash)."""
 
     @dataclass
     class TimestampLess:
@@ -321,12 +321,12 @@ def test_event_without_timestamp_ns_default_to_zero() -> None:
 
 
 def test_profiles_constant_has_all_three_levels() -> None:
-    """Sanity: PROFILES enthaelt minimal/standard/detailed."""
+    """Sanity: PROFILES contains minimal/standard/detailed."""
     assert set(PROFILES.keys()) == {"minimal", "standard", "detailed"}
 
 
 def test_detailed_blocks_blacklisted_event_present_in_custom() -> None:
-    """Egal welche Events der User custom-whitelistet — Hard-Blacklist gewinnt."""
+    """No matter which events the user custom-whitelists — the hard blacklist wins."""
     event = ActionExecuted()
     result = StatusFilter.filter(
         event,

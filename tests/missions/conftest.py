@@ -1,4 +1,4 @@
-"""Gemeinsame Fixtures fuer Phase-6-Mission-Tests."""
+"""Shared fixtures for Phase-6 mission tests."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -17,13 +17,13 @@ def tmp_missions_db(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def fake_mission_id() -> str:
-    """Einheitliche Mission-ID fuer Tests die nicht uuid7-Eigenschaften pruefen."""
+    """Uniform mission ID for tests that don't check uuid7 properties."""
     return uuid7_str()
 
 
 @pytest.fixture
 def make_envelope():
-    """Factory fuer EventEnvelope mit MissionDispatched-Default-Payload."""
+    """Factory for an EventEnvelope with a MissionDispatched default payload."""
 
     def _build(
         *,

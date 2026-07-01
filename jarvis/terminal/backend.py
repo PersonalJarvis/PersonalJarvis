@@ -15,7 +15,7 @@ read-loop in ``pty_manager.py`` keeps working verbatim once it talks to a
 
 * ``winpty.PtyProcess`` already deals in ``str`` (ConPTY decodes for us), so
   ``WinptyBackend`` is a thin pass-through that preserves the exact
-  ``RuntimeError("pywinpty nicht installiert ...")`` degrade.
+  ``RuntimeError("pywinpty not installed ...")`` degrade.
 * ``ptyprocess.PtyProcess`` deals in ``bytes`` (``.read`` returns bytes,
   ``.write`` takes bytes), so ``UnixPtyBackend`` decodes ``utf-8`` with
   ``errors="replace"`` on read and encodes on write.
@@ -147,7 +147,7 @@ class WinptyBackend:
         except ImportError as exc:
             # Preserve the exact degrade message from pty_manager.py:72-75.
             raise RuntimeError(
-                "pywinpty nicht installiert — `pip install pywinpty` (Windows-only)."
+                "pywinpty not installed — `pip install pywinpty` (Windows-only)."
             ) from exc
 
         proc = PtyProcess.spawn(

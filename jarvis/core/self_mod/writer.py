@@ -110,8 +110,8 @@ class AtomicConfigWriter:
         )
         if max_backups < backup_min_keep:
             raise ValueError(
-                f"max_backups ({max_backups}) muss >= backup_min_keep "
-                f"({backup_min_keep}) sein"
+                f"max_backups ({max_backups}) must be >= backup_min_keep "
+                f"({backup_min_keep})"
             )
         self._max_backups = max_backups
         self._backup_min_keep = backup_min_keep
@@ -146,15 +146,15 @@ class AtomicConfigWriter:
             raw = self._config_path.read_text(encoding="utf-8")
         except OSError as exc:
             raise BackupError(
-                f"Konnte {self._config_path} nicht lesen: {exc}"
+                f"Could not read {self._config_path}: {exc}"
             ) from exc
         if raw.startswith(self._BOM):
             raw = raw[len(self._BOM):]
         try:
             doc = tomlkit.parse(raw)
-        except Exception as exc:  # noqa: BLE001 — alle Parser-Fehler sind BackupError
+        except Exception as exc:  # noqa: BLE001 — all parser errors are a BackupError
             raise BackupError(
-                f"Konnte {self._config_path} nicht parsen: {exc}"
+                f"Could not parse {self._config_path}: {exc}"
             ) from exc
         return self._read_dotted(doc, path)
 
@@ -238,13 +238,13 @@ class AtomicConfigWriter:
             candidate.relative_to(self._backup_dir.resolve())
         except ValueError as exc:
             raise BackupError(
-                f"Backup-Pfad '{backup_filename}' liegt außerhalb des "
-                f"Backup-Verzeichnisses {self._backup_dir}"
+                f"Backup path '{backup_filename}' lies outside the "
+                f"backup directory {self._backup_dir}"
             ) from exc
         with type(self)._LOCK:
             if not candidate.is_file():
                 raise BackupError(
-                    f"Backup '{backup_filename}' existiert nicht"
+                    f"Backup '{backup_filename}' does not exist"
                 )
             self._restore(candidate)
             return candidate
@@ -261,7 +261,7 @@ class AtomicConfigWriter:
             raw = self._config_path.read_text(encoding="utf-8")
         except OSError as exc:
             self._audit_failure(request, old_value=None, error=f"read_failed: {exc}")
-            raise BackupError(f"Konnte {self._config_path} nicht lesen: {exc}") from exc
+            raise BackupError(f"Could not read {self._config_path}: {exc}") from exc
 
         had_bom = raw.startswith(self._BOM)
         if had_bom:
@@ -271,7 +271,7 @@ class AtomicConfigWriter:
         except Exception as exc:
             self._audit_failure(request, old_value=None, error=f"parse_failed: {exc}")
             raise BackupError(
-                f"Konnte {self._config_path} nicht parsen: {exc}"
+                f"Could not parse {self._config_path}: {exc}"
             ) from exc
 
         # Step 3 — old_value
@@ -291,8 +291,8 @@ class AtomicConfigWriter:
                 error=f"validate_failed: {_summarize_error(exc)}",
             )
             raise PreValidateError(
-                f"Pre-Validate für '{request.path}' = {request.new_value!r} "
-                f"schlug fehl: {_summarize_error(exc)}"
+                f"Pre-validate for '{request.path}' = {request.new_value!r} "
+                f"failed: {_summarize_error(exc)}"
             ) from exc
 
         # Step 6 — backup (only AFTER pre-validate, so that the reject path
@@ -306,7 +306,7 @@ class AtomicConfigWriter:
                 error=f"backup_failed: {exc}",
             )
             raise BackupError(
-                f"Backup für {self._config_path} schlug fehl: {exc}"
+                f"Backup for {self._config_path} failed: {exc}"
             ) from exc
 
         # Step 7 — atomic write
@@ -323,7 +323,7 @@ class AtomicConfigWriter:
                 error=f"write_failed: {exc}",
             )
             raise BackupError(
-                f"Atomic-Write für {self._config_path} schlug fehl: {exc}"
+                f"Atomic write for {self._config_path} failed: {exc}"
             ) from exc
 
         # Step 8 — reload test (synchronous; Plan-§AP-14)
@@ -347,9 +347,9 @@ class AtomicConfigWriter:
                     rolled_back=False,
                 )
                 raise RollbackError(
-                    f"jarvis.toml ist möglicherweise korrupt. Manueller "
-                    f"Restore aus {backup_path} erforderlich. "
-                    f"Reload-Error: {exc}; Rollback-Error: {restore_exc}"
+                    f"jarvis.toml may be corrupt. A manual "
+                    f"restore from {backup_path} is required. "
+                    f"Reload error: {exc}; rollback error: {restore_exc}"
                 ) from restore_exc
             self._audit_failure(
                 request,
@@ -358,8 +358,8 @@ class AtomicConfigWriter:
                 rolled_back=rolled,
             )
             raise ReloadError(
-                f"Reload-Test nach Mutation '{request.path}' schlug fehl, "
-                f"Original wurde aus Backup restauriert: "
+                f"Reload test after mutation '{request.path}' failed, "
+                f"the original was restored from backup: "
                 f"{_summarize_error(exc)}"
             ) from exc
 
@@ -371,7 +371,7 @@ class AtomicConfigWriter:
         try:
             self._gc_backups()
         except Exception as exc:  # noqa: BLE001
-            _LOG.warning("Backup-GC fehlgeschlagen: %s", exc)
+            _LOG.warning("Backup GC failed: %s", exc)
 
         # Step 11 — audit success
         self._audit.record(
@@ -424,7 +424,7 @@ class AtomicConfigWriter:
     def _apply_dotted(doc: TOMLDocument, path: str, value: Any) -> None:
         parts = path.split(".")
         if not parts or any(p == "" for p in parts):
-            raise ValueError(f"Ungültiger Pfad: {path!r}")
+            raise ValueError(f"Invalid path: {path!r}")
         parent: Any = doc
         for part in parts[:-1]:
             existing = parent.get(part) if isinstance(parent, (dict, AbstractTable)) else None
@@ -501,7 +501,7 @@ class AtomicConfigWriter:
                 except OSError:
                     # fsync can fail on some filesystems (e.g. tmpfs in CI)
                     # but is not critical enough to block the write.
-                    _LOG.debug("fsync fehlgeschlagen — ignoriere", exc_info=True)
+                    _LOG.debug("fsync failed — ignoring", exc_info=True)
             self._replace_keep_readonly(tmp_path, self._config_path)
             tmp_path = None  # replace succeeded — no cleanup needed
         except Exception:
@@ -510,7 +510,7 @@ class AtomicConfigWriter:
                     tmp_path.unlink(missing_ok=True)
                 except OSError as cleanup_exc:
                     _LOG.warning(
-                        "Tempfile-Cleanup fehlgeschlagen: %s", cleanup_exc
+                        "Tempfile cleanup failed: %s", cleanup_exc
                     )
             raise
 
@@ -538,12 +538,12 @@ class AtomicConfigWriter:
                 try:
                     os.fsync(fh.fileno())
                 except OSError:
-                    _LOG.debug("Backup-fsync fehlgeschlagen — ignoriere", exc_info=True)
+                    _LOG.debug("Backup fsync failed — ignoring", exc_info=True)
         except Exception:
             try:
                 target.unlink(missing_ok=True)
             except OSError as cleanup_exc:
-                _LOG.warning("Backup-Cleanup fehlgeschlagen: %s", cleanup_exc)
+                _LOG.warning("Backup cleanup failed: %s", cleanup_exc)
             raise
         return target
 
@@ -554,7 +554,7 @@ class AtomicConfigWriter:
         to `RollbackError`.
         """
         if not backup_path.is_file():
-            raise FileNotFoundError(f"Backup nicht gefunden: {backup_path}")
+            raise FileNotFoundError(f"Backup not found: {backup_path}")
         parent = self._config_path.parent
         fd, tmp_name = tempfile.mkstemp(
             suffix=".restore",
@@ -570,7 +570,7 @@ class AtomicConfigWriter:
                 try:
                     os.fsync(fh.fileno())
                 except OSError:
-                    _LOG.debug("Restore-fsync fehlgeschlagen", exc_info=True)
+                    _LOG.debug("Restore fsync failed", exc_info=True)
             self._replace_keep_readonly(tmp_path, self._config_path)
         except Exception:
             tmp_path.unlink(missing_ok=True)
@@ -638,7 +638,7 @@ class AtomicConfigWriter:
             try:
                 asyncio.run(self._bus.publish(event))
             except Exception as exc:  # noqa: BLE001
-                _LOG.warning("Bus-Dispatch (sync) fehlgeschlagen: %s", exc)
+                _LOG.warning("Bus dispatch (sync) failed: %s", exc)
             return
         loop.create_task(self._bus.publish(event))
 

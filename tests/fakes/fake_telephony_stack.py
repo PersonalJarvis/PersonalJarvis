@@ -40,7 +40,7 @@ class FakeSTT:
     supports_streaming = False
 
     def __init__(self, scripted: list[str] | None = None) -> None:
-        self._scripted = list(scripted or ["Wie spät ist es?"])
+        self._scripted = list(scripted or ["Wie spät ist es?"])  # i18n-allow: simulated German telephony STT transcript (product voice input)
         self._idx = 0
         self.calls: list[tuple[int, int]] = []
 
@@ -65,7 +65,7 @@ class FakeBrain:
 
     def __init__(
         self,
-        response: str = "Es ist genau vierzehn Uhr dreißig.",
+        response: str = "Es ist genau vierzehn Uhr dreißig.",  # i18n-allow: simulated German telephony TTS response (product voice output)
         responses: dict[str, str] | None = None,
         chunk_size: int = 8,
     ) -> None:

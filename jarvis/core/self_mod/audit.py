@@ -79,7 +79,7 @@ class SelfModAudit:
                     fh.write("\n")
         except Exception as exc:  # noqa: BLE001 — caller must never crash (Plan-§AP-5)
             _LOG.warning(
-                "SelfModAudit.record fehlgeschlagen: %s (path=%s)",
+                "SelfModAudit.record failed: %s (path=%s)",
                 exc,
                 self._path,
             )
@@ -115,7 +115,7 @@ class SelfModAudit:
             with self._lock, self._path.open("r", encoding="utf-8") as fh:
                 lines = fh.readlines()
         except Exception as exc:  # noqa: BLE001 — reading must never crash
-            _LOG.warning("SelfModAudit.tail fehlgeschlagen: %s", exc)
+            _LOG.warning("SelfModAudit.tail failed: %s", exc)
             return []
 
         tail_lines = lines[-n:]
@@ -127,5 +127,5 @@ class SelfModAudit:
             try:
                 result.append(json.loads(stripped))
             except json.JSONDecodeError as exc:
-                _LOG.warning("Korrupte Audit-Zeile übersprungen: %s", exc)
+                _LOG.warning("Corrupt audit line skipped: %s", exc)
         return result

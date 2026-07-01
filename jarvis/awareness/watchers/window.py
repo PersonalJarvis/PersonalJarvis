@@ -218,7 +218,7 @@ class WindowFocusWatcher:
                     pass
                 self._stop_event_handle = None
 
-            # P6: Queue-Reste werden GC'd. Drops-Counter loggen.
+            # P6: leftover queue items get GC'd. Log the drops counter.
             if self._drops > 0:
                 logger.info(
                     "WindowFocusWatcher: %d frames dropped (pump=%d, async=%d)",
@@ -270,7 +270,7 @@ class WindowFocusWatcher:
         def _proc(hook, event, hwnd, idObject, idChild, idThread, dwmsEventTime):
             # Hard-Negative HN4: NO logging, NO await, NO PrivacyFilter
             # in this callback. Enqueue only.
-            # Wir filtern auf das eigentliche Window (idObject==OBJID_WINDOW (0)).
+            # We filter on the actual window (idObject==OBJID_WINDOW (0)).
             if idObject != 0 or idChild != 0:
                 return
             if not hwnd:

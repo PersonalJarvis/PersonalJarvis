@@ -33,9 +33,9 @@ _LOOKUP_SHAPE_RE = re.compile(
 )
 
 # Definitional/explanatory questions are general knowledge, not a data lookup
-# ("Was ist ein Pull Request?") — never force a tool call for them.
+# (e.g. the German "Was ist ein Pull Request?") — never force a tool call for them.  # i18n-allow: quoted German input example
 _DEFINITION_RE = re.compile(
-    r"\b(was ist ein|was ist eine|was sind|was bedeutet|wofuer steht|"
+    r"\b(was ist ein|was ist eine|was sind|was bedeutet|wofuer steht|"  # i18n-allow: German input-matching data
     r"what is a|what is an|what are|what does|explain|erklaer)\b"
 )
 
@@ -85,7 +85,7 @@ _REFUSAL_EN_FALLBACK = "I have no data access for that right now."
 def _detect_lang(text: str) -> str:
     """Cheap DE/EN heuristic for the refusal language (mirrors the existing
     heuristic in ``BrainManager._check_unsupported_intent``)."""
-    if re.search(r"[äöüÄÖÜß]", text):
+    if re.search(r"[äöüÄÖÜß]", text):  # i18n-allow: umlaut character class, language-detection matching data
         return "de"
     if re.search(
         r"\b(was|wie|welche|welcher|steht|stehen|heute|morgen|hab|habe|"

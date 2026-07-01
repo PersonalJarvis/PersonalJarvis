@@ -1,4 +1,4 @@
-"""Overlay Entry-Point. Spaetere Phasen fuellen ``setup_*()`` Bodies."""
+"""Overlay entry point. Later phases fill in the ``setup_*()`` bodies."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def setup_dpi_awareness() -> None:
-    """Per-Monitor DPI. MUSS vor QApplication laufen — Plan §12.3."""
+    """Per-monitor DPI. MUST run before QApplication — Plan §12.3."""
     set_per_monitor_dpi_awareness()
 
 
@@ -45,20 +45,20 @@ def _setup_app_identity_and_icon() -> Optional["object"]:
 
 
 def setup_windows(app, config, state_machine=None, effects_bridge=None) -> list:
-    """Edge-Glow Windows pro Screen.
+    """Edge-Glow windows, one per screen.
 
-    Plan §12.1 + §12.5: ein Window pro Screen wenn ``all_monitors=True``,
-    sonst nur Primary. Hotplug haengen wir an den ``MonitorManager``.
+    Plan §12.1 + §12.5: one window per screen when ``all_monitors=True``,
+    otherwise only primary. We hook hotplug into the ``MonitorManager``.
 
-    ``state_machine`` (optional, neu in 9.3): Wird durchgereicht an
-    ``EdgeGlowWindow``, das eine ``StateBridge`` ueber QWebChannel
-    exposed. Ein Window pro Screen subscribed unabhaengig — Subscriber-
-    Liste der StateMachine ist threadsafe.
+    ``state_machine`` (optional, new in 9.3): passed through to
+    ``EdgeGlowWindow``, which exposes a ``StateBridge`` over QWebChannel.
+    Each window subscribes independently — the StateMachine's subscriber
+    list is thread-safe.
 
-    ``effects_bridge`` (optional, neu in 9.5): wird gleichzeitig als
-    ``effectsBridge`` am QWebChannel registriert. Selbe Instanz pro
-    Window — alle Windows feuern gegen dieselbe Bridge, der Renderer
-    pro Window subscribed unabhaengig.
+    ``effects_bridge`` (optional, new in 9.5): simultaneously registered
+    as ``effectsBridge`` on the QWebChannel. Same instance per window —
+    all windows fire against the same bridge, and the renderer per
+    window subscribes independently.
     """
     from PySide6.QtGui import QGuiApplication
 
@@ -99,40 +99,38 @@ def setup_windows(app, config, state_machine=None, effects_bridge=None) -> list:
 
     def _on_screen_removed(screen) -> None:
         for w in list(windows):
-            # ``w.screen()`` kann nach Remove None liefern — defensiv vergleichen.
+            # ``w.screen()`` can return None after removal — compare defensively.
             try:
                 if w.screen() is screen:
                     w.close()
                     windows.remove(w)
-            except RuntimeError:  # pragma: no cover — Window bereits weg
+            except RuntimeError:  # pragma: no cover — window already gone
                 if w in windows:
                     windows.remove(w)
 
     manager = MonitorManager(_on_screen_added, _on_screen_removed)
     manager.attach()
-    # Manager am App-Object parken, damit er nicht GC'd wird.
+    # Park the manager on the app object so it doesn't get GC'd.
     app._overlay_monitor_manager = manager  # type: ignore[attr-defined]
 
     return windows
 
 
 def setup_ipc(app, config, on_message=None) -> Any:
-    """WS-Client in dediziertem asyncio-Thread.
+    """WS client on a dedicated asyncio thread.
 
-    Qt-Event-Loop und asyncio koexistieren hier ueber einen Worker-Thread
-    statt qasync — das vermeidet eine zusaetzliche Dependency und macht
-    den Pfad besser testbar (asyncio kann unabhaengig vom Qt-Loop
-    gestartet/gestoppt werden).
+    The Qt event loop and asyncio coexist here via a worker thread
+    instead of qasync — that avoids an extra dependency and makes the
+    path easier to test (asyncio can be started/stopped independently
+    of the Qt loop).
 
-    Plan §10.5: Reconnect-Logic + Heartbeat sind komplett im
-    ``WSClient.run()`` gekapselt. Wir parken den Thread + Loop am
-    ``app``-Objekt damit nichts GC'd wird und der Shutdown-Hook das
-    Stop-Event setzen kann.
+    Plan §10.5: reconnect logic + heartbeat are fully encapsulated in
+    ``WSClient.run()``. We park the thread + loop on the ``app`` object
+    so nothing gets GC'd and the shutdown hook can set the stop event.
 
-    ``on_message`` (optional, neu in 9.3): Async-Callback der jedes
-    validierte IPC-Envelope bekommt. setup_state_machine() laesst hier
-    den ``EventRouter.handle`` durch — er ist sync, wir wrappen ihn
-    dort.
+    ``on_message`` (optional, new in 9.3): async callback that receives
+    every validated IPC envelope. setup_state_machine() passes
+    ``EventRouter.handle`` through here — it's sync, we wrap it there.
     """
     import threading
 
@@ -186,17 +184,16 @@ def setup_ipc(app, config, on_message=None) -> Any:
 
 
 def setup_state_machine(app, config) -> Any:
-    """State Machine + EventRouter. Phase 9.3.
+    """State machine + EventRouter. Phase 9.3.
 
-    Returnt ``{"machine": StateMachine, "router": EventRouter,
-    "on_message": Callable}``. Die ``on_message``-Coroutine wird an
-    ``setup_ipc`` durchgereicht; die ``machine`` an ``setup_windows``,
-    damit jedes ``EdgeGlowWindow`` eine eigene QWebChannel-Bridge
-    aufbauen kann.
+    Returns ``{"machine": StateMachine, "router": EventRouter,
+    "on_message": Callable}``. The ``on_message`` coroutine is passed
+    through to ``setup_ipc``; the ``machine`` goes to ``setup_windows``,
+    so each ``EdgeGlowWindow`` can build its own QWebChannel bridge.
 
-    Plan AD-8: State-Logic lebt im Overlay-Prozess. Der Router ist die
-    einzige Komponente die Wire-Format kennt — die StateMachine bleibt
-    IPC-unwissend.
+    Plan AD-8: state logic lives in the overlay process. The router is
+    the only component that knows the wire format — the StateMachine
+    stays IPC-agnostic.
     """
     from .event_router import EventRouter
     from .state import StateMachine
@@ -205,8 +202,8 @@ def setup_state_machine(app, config) -> Any:
     router = EventRouter(machine)
 
     async def on_message(envelope: Any) -> None:
-        # Router.handle ist sync und schnell (dict-Lookup +
-        # Locks). Wir rufen es direkt — kein await noetig.
+        # Router.handle is sync and fast (dict lookup + locks). We call
+        # it directly — no await needed.
         try:
             router.handle(envelope)
         except Exception:  # noqa: BLE001
@@ -222,22 +219,22 @@ def setup_state_machine(app, config) -> Any:
 
 
 def setup_effects(app, config, router=None) -> Any:
-    """Action-Effects: Cursor-SHM-Reader + Ripple/Action-Bridge. Phase 9.5.
+    """Action effects: cursor SHM reader + ripple/action bridge. Phase 9.5.
 
-    Returnt ``{"bridge": EffectsBridge, "shm_thread": Optional[Thread],
+    Returns ``{"bridge": EffectsBridge, "shm_thread": Optional[Thread],
     "shm_reader": Optional[CursorShmReader], "shm_stop": Event}``.
 
     Lifecycle:
-      - ``EffectsBridge`` wird sofort instantiiert, an ``app`` geparkt
-        und vom Caller via ``setup_windows(effects_bridge=...)`` an alle
-        Windows gehaengt.
-      - ``router.add_click_hook/add_action_started_hook/...`` werden
-        gehookt sodass IPC-Events durch die Bridge ans JS gehen.
-      - Wenn ``config.cursor_trail_enabled`` und ein
-        ``shm_cursor_name``-String per Config-IPC bekannt wird (vom
-        Hauptjarvis), startet ein 60-Hz-Reader-Thread und emittiert
-        ``cursorMoved``-Signals. Phase 9.5 polled den Config-Block
-        beim Start einmalig — dynamische Reconfig kommt mit 9.7+.
+      - ``EffectsBridge`` is instantiated immediately, parked on ``app``,
+        and attached to all windows by the caller via
+        ``setup_windows(effects_bridge=...)``.
+      - ``router.add_click_hook/add_action_started_hook/...`` are hooked
+        so IPC events flow through the bridge to the JS side.
+      - When ``config.cursor_trail_enabled`` and a ``shm_cursor_name``
+        string becomes known via config IPC (from Hauptjarvis), a 60-Hz
+        reader thread starts and emits ``cursorMoved`` signals. Phase
+        9.5 polls the config block once at startup — dynamic reconfig
+        arrives with 9.7+.
     """
     import threading
 
@@ -245,7 +242,7 @@ def setup_effects(app, config, router=None) -> Any:
 
     bridge = EffectsBridge()
 
-    # Hook-Wiring an EventRouter: jedes IPC-Event durchreichen.
+    # Hook wiring to EventRouter: pass every IPC event through.
     if router is not None:
         router.add_click_hook(
             lambda env: bridge.emit_click(
@@ -261,15 +258,15 @@ def setup_effects(app, config, router=None) -> Any:
             )
         )
         router.add_action_ended_hook(lambda env: bridge.emit_action_ended())
-        # Cursor via WS-Fallback (Plan §11.5) — wenn SHM aus, kommen
-        # CursorEnvelope durch und wir leiten weiter.
+        # Cursor via WS fallback (Plan §11.5) — when SHM is off,
+        # CursorEnvelope comes through and we forward it.
         router.add_cursor_hook(
             lambda env: bridge.emit_cursor(env.payload.x, env.payload.y)
         )
 
-    # SHM-Reader-Thread — nur wenn Trail enabled UND ein Name verfuegbar.
-    # Der Name kommt typischerweise per Config-IPC vom Hauptjarvis.
-    # Phase 9.5 startet den Thread DEFERRED via shm_attach()-Helper unten.
+    # SHM reader thread — only when the trail is enabled AND a name is
+    # available. The name typically comes via config IPC from Hauptjarvis.
+    # Phase 9.5 starts the thread DEFERRED via the shm_attach() helper below.
     handle = {
         "bridge": bridge,
         "shm_thread": None,
@@ -279,8 +276,8 @@ def setup_effects(app, config, router=None) -> Any:
     }
 
     def shm_attach(name: str, hz: int = 60) -> bool:
-        """Attached an einen existierenden SHM-Block und startet den
-        60-Hz-Reader-Thread. Returnt False wenn block fehlt."""
+        """Attaches to an existing SHM block and starts the 60-Hz
+        reader thread. Returns False if the block is missing."""
         from .cursor_shm import CursorShmReader
 
         try:
@@ -328,9 +325,9 @@ def setup_effects(app, config, router=None) -> Any:
 
 
 def _monitor_str_to_idx(monitor: str) -> int:
-    """ClickPayload.monitor ist String (frei-form). Wenn parse-bar als
-    int -> direkt; sonst 0 als Default. Phase-9.7-Mascot-Wiring kann
-    das verfeinern wenn echte Monitor-IDs reinkommen."""
+    """ClickPayload.monitor is a string (free-form). If parseable as
+    int -> use directly; otherwise default to 0. Phase-9.7 mascot
+    wiring can refine this once real monitor IDs come in."""
     if not monitor:
         return 0
     try:
@@ -340,20 +337,19 @@ def _monitor_str_to_idx(monitor: str) -> int:
 
 
 def setup_mascot(app, config, state_machine=None, toml_path=None, ipc=None) -> Any:
-    """Mascot-Window. Phase 9.6.
+    """Mascot window. Phase 9.6.
 
-    Returnt ``{"window": MascotWindow | None, "position": ResolvedPlacement | None}``.
+    Returns ``{"window": MascotWindow | None, "position": ResolvedPlacement | None}``.
 
-    Wenn ``config.mascot_enabled`` False ist, wird kein Window erzeugt
-    (Plan §13.5 — TOML-Toggle disabled mascot komplett).
+    If ``config.mascot_enabled`` is False, no window is created
+    (Plan §13.5 — the TOML toggle disables the mascot entirely).
 
-    Position wird per ``mascot_position.resolve_placement`` aus dem
-    persistierten ``[overlay.mascot]`` ermittelt; Recovery wenn der
-    Monitor weg ist landet auf primary (Plan §13.4 step 3).
+    Position is determined via ``mascot_position.resolve_placement``
+    from the persisted ``[overlay.mascot]``; recovery when the monitor
+    is gone falls back to primary (Plan §13.4 step 3).
 
-    Plus: ``hideRequested`` / ``resetRequested`` Signals werden auf
-    sinnvolle Defaults verkabelt (hide -> close, reset -> primary
-    default position).
+    Plus: ``hideRequested`` / ``resetRequested`` signals are wired to
+    sensible defaults (hide -> close, reset -> primary default position).
     """
     if not getattr(config, "mascot_enabled", True):
         logger.info("Mascot disabled via config.mascot_enabled=false")
@@ -378,13 +374,13 @@ def setup_mascot(app, config, state_machine=None, toml_path=None, ipc=None) -> A
     size_px = getattr(mascot_section, "size_px", 160) if mascot_section else 160
     snap_px = getattr(mascot_section, "snap_to_edges_px", 16) if mascot_section else 16
 
-    # Position laden — Default ist jarvis.toml im Working-Dir. Tests
-    # und Hauptjarvis-Bootstrap koennen toml_path explizit uebergeben.
+    # Load position — default is jarvis.toml in the working dir. Tests
+    # and the Hauptjarvis bootstrap can pass toml_path explicitly.
     config_path = Path(toml_path) if toml_path is not None else Path("jarvis.toml")
     persisted = load_position_from_toml(config_path)
     if persisted is None and mascot_section is not None:
-        # Fallback: Werte aus dem in-memory config (z.B. erster Start
-        # ohne TOML-Edit).
+        # Fallback: values from the in-memory config (e.g. first start
+        # without a TOML edit).
         persisted = MascotPosition(
             monitor=getattr(mascot_section, "position_monitor", "") or "",
             x_relative=getattr(mascot_section, "position_x_relative", DEFAULT_X_RELATIVE),
@@ -467,16 +463,16 @@ def setup_mascot(app, config, state_machine=None, toml_path=None, ipc=None) -> A
 
 
 def setup_throttling(app, config, state_machine=None, windows=None) -> Any:
-    """Fullscreen-Detection + Power-Monitor + Throttler-Wiring. Phase 9.7.
+    """Fullscreen detection + power monitor + throttler wiring. Phase 9.7.
 
     Inputs:
-      - ``state_machine`` (Pflicht fuer den Throttler — er subscribed
-        State-Changes fuer Idle-Reset).
-      - ``windows`` (optional, Liste der EdgeGlowWindow-Instanzen).
-        Throttler-Subscriber toggled auf jedem Window die
-        ``set_view_visible``-Methode bei Hide-Timeout.
+      - ``state_machine`` (required for the throttler — it subscribes
+        to state changes for idle reset).
+      - ``windows`` (optional, list of EdgeGlowWindow instances).
+        The throttler subscriber calls each window's
+        ``set_view_visible`` method on a hide timeout.
 
-    Returnt::
+    Returns::
 
         {
           "throttler": Throttler,
@@ -485,8 +481,8 @@ def setup_throttling(app, config, state_machine=None, windows=None) -> Any:
           "shutdown": Callable[[], None],
         }
 
-    Wenn keine StateMachine geliefert: nur fullscreen+power, kein
-    Throttler. (z.B. Headless-Tests.)
+    If no StateMachine is supplied: only fullscreen+power, no
+    throttler. (e.g. headless tests.)
     """
     from PySide6.QtCore import QTimer
 
@@ -501,12 +497,12 @@ def setup_throttling(app, config, state_machine=None, windows=None) -> Any:
         Throttler,
     )
 
-    # Qt-Cross-Thread-Marshall: FullscreenDetector und PowerMonitor laufen
-    # in eigenen Daemon-Threads. Ihre Callbacks duerfen NICHT direkt auf
-    # Qt-Widgets (setVisible, transition_to_*) zugreifen — Qt asserted hart
-    # mit STATUS_BREAKPOINT 0x80000003 und der Subprocess crasht. Wir routen
-    # alle Worker-Callbacks via QTimer.singleShot(0, ...) auf den Qt-Main-
-    # Thread, der QApplication.exec() haelt.
+    # Qt cross-thread marshalling: FullscreenDetector and PowerMonitor run
+    # on their own daemon threads. Their callbacks must NOT touch Qt
+    # widgets directly (setVisible, transition_to_*) — Qt hard-asserts
+    # with STATUS_BREAKPOINT 0x80000003 and the subprocess crashes. We
+    # route all worker callbacks via QTimer.singleShot(0, ...) onto the
+    # Qt main thread that holds QApplication.exec().
     def _post_to_main(fn) -> None:
         QTimer.singleShot(0, fn)
 
@@ -533,11 +529,12 @@ def setup_throttling(app, config, state_machine=None, windows=None) -> Any:
         )
         handle["throttler"] = throttler
 
-        # Window-Visibility-Toggling: throttler-snapshot.should_hide_view
-        # spiegelt sich auf jeden Edge-Glow-View (WebView setVisible).
-        # MUSS auf Qt-Main-Thread marshallen — Throttler kann den Subscriber
-        # synchron aus einem Worker-Thread aufrufen (Crash-Stack zeigt
-        # Detector → state_machine → throttler.recompute → _on_throttle).
+        # Window visibility toggling: throttler-snapshot.should_hide_view
+        # is mirrored onto each Edge-Glow view (WebView setVisible).
+        # MUST be marshalled onto the Qt main thread — the throttler can
+        # call the subscriber synchronously from a worker thread (the
+        # crash stack shows Detector → state_machine → throttler.recompute
+        # → _on_throttle).
         if windows is not None:
             def _on_throttle(snapshot) -> None:
                 visible = not snapshot.should_hide_view
@@ -556,11 +553,11 @@ def setup_throttling(app, config, state_machine=None, windows=None) -> Any:
 
             throttler.subscribe(_on_throttle)
 
-    # Fullscreen-Detection. Toggled HIDDEN-State.
-    # FullscreenDetector callback laeuft in seinem eigenen Daemon-Thread —
-    # state_machine.transition_* publiziert synchron an Subscriber, die
-    # ihrerseits Qt-Widgets anfassen. Komplette Logik via _post_to_main
-    # auf Qt-Main-Thread schicken.
+    # Fullscreen detection. Toggles the HIDDEN state.
+    # The FullscreenDetector callback runs on its own daemon thread —
+    # state_machine.transition_* publishes synchronously to subscribers,
+    # which in turn touch Qt widgets. Route the entire logic through
+    # _post_to_main onto the Qt main thread.
     def _on_fullscreen(status) -> None:
         if state_machine is None:
             return
@@ -569,11 +566,11 @@ def setup_throttling(app, config, state_machine=None, windows=None) -> Any:
             if status.should_hide:
                 state_machine.transition_to_hidden(reason="timeout")
             else:
-                # Recovery: zurueck nach IDLE wenn vorher HIDDEN durch
-                # Fullscreen war. Wenn manueller HIDDEN gesetzt wurde, nicht
-                # ueberschreiben — wir koennen das aktuell nicht
-                # unterscheiden, also bleibt der konservative Pfad: nur in
-                # IDLE wechseln wenn aktuell HIDDEN.
+                # Recovery: back to IDLE if HIDDEN was previously caused
+                # by fullscreen. If HIDDEN was set manually, don't
+                # override it — we currently can't distinguish the two,
+                # so we keep the conservative path: only switch to IDLE
+                # if currently HIDDEN.
                 if state_machine.state.value == "hidden":
                     from .state import OverlayState
 
@@ -592,10 +589,11 @@ def setup_throttling(app, config, state_machine=None, windows=None) -> Any:
     fullscreen.start()
     handle["fullscreen"] = fullscreen
 
-    # Power-Monitor. Halbiert FPS auf Battery.
-    # PowerMonitor.callback laeuft in eigenem Worker-Thread; throttler.set_on_battery
-    # publiziert synchron an _on_throttle-Subscriber (siehe oben). Auch hier auf
-    # Qt-Main-Thread marshallen, sonst gleiches Crash-Risiko bei AC/DC-Wechsel.
+    # Power monitor. Halves FPS on battery.
+    # PowerMonitor.callback runs on its own worker thread; throttler.set_on_battery
+    # publishes synchronously to the _on_throttle subscriber (see above). Also
+    # marshalled onto the Qt main thread here, otherwise the same crash risk
+    # applies on an AC/DC switch.
     def _on_power(status) -> None:
         if throttler is None:
             return
@@ -639,7 +637,7 @@ def main() -> int:
 
         return run_self_test()
 
-    setup_dpi_awareness()  # vor QApplication
+    setup_dpi_awareness()  # before QApplication
 
     # AUMID before QApplication so the taskbar group is fixed from the first
     # window registration (otherwise Qt's class inherits the python.exe icon).
@@ -660,11 +658,11 @@ def main() -> int:
             # Cosmetic only; never block the overlay on icon issues.
             pass
 
-    # Wire-Reihenfolge: state-machine zuerst (kein Side-effect ausser
-    # Object-Konstruktion), dann effects (haengen Hooks an router), dann
-    # windows mit machine + bridge, dann IPC mit on_message Callback.
-    # So gibt es keine Phase wo IPC schon Events liefert aber kein
-    # Subscriber dranhaengt.
+    # Wiring order: state machine first (no side effect besides object
+    # construction), then effects (attaches hooks to the router), then
+    # windows with machine + bridge, then IPC with the on_message
+    # callback. This way there's no phase where IPC is already delivering
+    # events but no subscriber is attached yet.
     _state = setup_state_machine(app, config)
     _effects = setup_effects(app, config, router=_state["router"])
     _windows = setup_windows(

@@ -265,7 +265,7 @@ class SyncClient:
     async def _register_if_needed(self) -> bool:
         token = _resolve_admin_token(self._secrets)
         if not token:
-            log.info("board sync: kein admin_token in keyring — skip register")
+            log.info("board sync: no admin_token in keyring — skip register")
             return False
         assert self._http is not None and self._pubkey_hex is not None
         try:

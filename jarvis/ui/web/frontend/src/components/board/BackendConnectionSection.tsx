@@ -5,15 +5,15 @@ import { robustCopy } from "@/lib/clipboard";
 import { useT } from "@/i18n";
 
 /**
- * Settings-Section: Backend-Connection (Plan §D-Spec).
+ * Settings section: backend connection (Plan §D spec).
  *
- * - Disconnect-Button (Local-Only-Mode): toggled board.federation.enabled in-memory.
- * - Backend-URL: read-only Anzeige; permanente Aenderung erfolgt in jarvis.toml.
- * - Pubkey: anzeigen + kopieren.
+ * - Disconnect button (local-only mode): toggles board.federation.enabled in-memory.
+ * - Backend URL: read-only display; a permanent change happens in jarvis.toml.
+ * - Pubkey: display + copy.
  *
- * Plan §D §0: KEIN Online-Indikator. Wir zeigen nur ob Federation
- * aktiviert ist (ein Setting), nicht ob die Backend-Verbindung gerade
- * "live" ist.
+ * Plan §D §0: NO online indicator. We only show whether federation
+ * is enabled (a setting), not whether the backend connection is currently
+ * "live".
  */
 export function BackendConnectionSection() {
   const t = useT();

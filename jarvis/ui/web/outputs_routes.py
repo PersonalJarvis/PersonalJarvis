@@ -333,7 +333,7 @@ async def list_outputs(request: Request) -> dict[str, Any]:
     except OSError as exc:
         logger.warning("outputs: listdir failed for %s: %s", root, exc)
         raise HTTPException(
-            status_code=500, detail=f"Outputs-root nicht lesbar: {exc}"
+            status_code=500, detail=f"Outputs root not readable: {exc}"
         ) from exc
 
     sessions: list[dict[str, Any]] = []

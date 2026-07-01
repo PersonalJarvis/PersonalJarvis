@@ -1,16 +1,16 @@
-"""REST-API fuer das Skill-System (Desktop-UI).
+"""REST API for the skill system (desktop UI).
 
 Endpoints:
-- ``GET  /api/skills``                → Liste (ohne Body, schlank fuer Sidebar).
-- ``GET  /api/skills/{name}``         → Voller Skill inkl. Markdown-Body.
-- ``PUT  /api/skills/{name}``         → Body (und optional Frontmatter) updaten.
-  Bei Builtin-Skills: ``admin_password`` im Request-Body noetig.
-- ``POST /api/skills/{name}/enable``  → State -> ACTIVE.
-- ``POST /api/skills/{name}/disable`` → State -> DISABLED.
-- ``POST /api/skills/reload``         → Registry.reload() forcen.
+- ``GET  /api/skills``                → list (no body, lean for the sidebar).
+- ``GET  /api/skills/{name}``         → full skill incl. Markdown body.
+- ``PUT  /api/skills/{name}``         → update body (and optionally frontmatter).
+  For built-in skills: ``admin_password`` is required in the request body.
+- ``POST /api/skills/{name}/enable``  → state -> ACTIVE.
+- ``POST /api/skills/{name}/disable`` → state -> DISABLED.
+- ``POST /api/skills/reload``         → force ``Registry.reload()``.
 
-Der Router erwartet eine ``SkillRegistry`` auf ``app.state.skill_registry`` — die
-wird vom ``WebServer`` beim Startup gesetzt (nach ``ensure_user_skills_dir()``).
+The router expects a ``SkillRegistry`` on ``app.state.skill_registry`` — it is
+set by the ``WebServer`` at startup (after ``ensure_user_skills_dir()``).
 """
 from __future__ import annotations
 
@@ -59,14 +59,14 @@ def _require_optional_module(module: str, feature: str) -> None:
 def _require_registry(request: Request) -> Any:
     reg = getattr(request.app.state, "skill_registry", None)
     if reg is None:
-        raise HTTPException(status_code=503, detail="SkillRegistry nicht verfuegbar")
+        raise HTTPException(status_code=503, detail="SkillRegistry not available")
     return reg
 
 
 def _security_cfg(request: Request) -> Any:
-    """Holt die SecurityConfig aus dem app-state. ``None`` wenn Cfg fehlt
-    (z.B. in Tests mit Mock-App) — Admin-Checks fallen dann zurueck auf
-    "kein Hash gesetzt = Builtin-Edits gesperrt"."""
+    """Fetches the SecurityConfig from app state. ``None`` when the config is
+    missing (e.g. in tests with a mock app) — admin checks then fall back to
+    "no hash set = built-in edits locked"."""
     cfg = getattr(request.app.state, "config", None)
     if cfg is None:
         return None
@@ -82,9 +82,9 @@ def _is_builtin(name: str) -> bool:
 
 
 def _skill_to_summary(s: Skill) -> dict[str, Any]:
-    """Schlanke Repraesentation fuer ``GET /api/skills`` — ohne Body."""
+    """Lean representation for ``GET /api/skills`` — without the body."""
     fm = s.frontmatter
-    # resources als plain dict mit Listen (statt Tuples) fuer JSON-Serialisation
+    # resources as a plain dict with lists (instead of tuples) for JSON serialization
     resources = {k: list(v) for k, v in s.resources.items()}
     resource_count = sum(len(v) for v in resources.values())
     return {
@@ -103,7 +103,7 @@ def _skill_to_summary(s: Skill) -> dict[str, Any]:
 
 
 def _skill_to_detail(s: Skill) -> dict[str, Any]:
-    """Volles Detail inkl. Body + Frontmatter-Dump."""
+    """Full detail incl. body + frontmatter dump."""
     out = _skill_to_summary(s)
     out["body"] = s.body
     out["body_hash"] = s.body_hash
@@ -112,7 +112,7 @@ def _skill_to_detail(s: Skill) -> dict[str, Any]:
         rel = s.path.relative_to(user_skills_dir())
         out["path"] = str(rel).replace("\\", "/")
     except ValueError:
-        # Skill liegt nicht unter user_skills_dir() (z.B. Test-Fixture)
+        # Skill does not live under user_skills_dir() (e.g. a test fixture)
         out["path"] = str(s.path)
     return out
 
@@ -135,46 +135,46 @@ def _sort_by_order(skills: list[Skill], order: list[str]) -> list[Skill]:
 
 
 def _resolve_resource_path(skill: Skill, kind: str, filename: str) -> Path:
-    """Loest einen Resource-Pfad und stellt sicher, dass er nicht aus dem
-    Skill-Root ausbricht (Path-Traversal-Schutz).
+    """Resolves a resource path and makes sure it does not escape the
+    skill root (path-traversal protection).
 
-    Wirft HTTPException bei unbekanntem Kind, fehlendem Ordner, oder Path-Escape.
+    Raises HTTPException on an unknown kind, a missing folder, or a path escape.
     """
     if kind not in RESOURCE_KINDS:
         raise HTTPException(
             status_code=400,
-            detail=f"Unbekannter Resource-Kind '{kind}' (erwartet: {list(RESOURCE_KINDS)})",
+            detail=f"Unknown resource kind '{kind}' (expected: {list(RESOURCE_KINDS)})",
         )
     kind_root = (skill.root / kind).resolve()
     if not kind_root.is_dir():
         raise HTTPException(
-            status_code=404, detail=f"Ordner '{kind}/' existiert nicht"
+            status_code=404, detail=f"Folder '{kind}/' does not exist"
         )
     target = (kind_root / filename).resolve()
     try:
         target.relative_to(kind_root)
     except ValueError:
-        # Symlink oder `..`-Konstrukt, das ausserhalb des Kind-Roots zeigt
+        # Symlink or `..` construct that points outside the kind root
         raise HTTPException(
-            status_code=400, detail="Pfad-Traversal ausserhalb des Resource-Ordners"
+            status_code=400, detail="Path traversal outside the resource folder"
         )
     if not target.is_file():
         raise HTTPException(
-            status_code=404, detail=f"Datei '{kind}/{filename}' nicht gefunden"
+            status_code=404, detail=f"File '{kind}/{filename}' not found"
         )
     return target
 
 
 # ----------------------------------------------------------------------
-# Admin-Pass-Check
+# Admin password check
 # ----------------------------------------------------------------------
 
 def _check_admin_pass(provided: str | None, security_cfg: Any) -> bool:
-    """Prueft ein Admin-Password gegen ``security.admin_password_hash``.
+    """Checks an admin password against ``security.admin_password_hash``.
 
-    - Kein Hash gesetzt (leerer String) -> immer False (Builtin-Edits gesperrt).
-    - Kein Password provided -> False.
-    - Sonst: SHA-256 vergleichen, constant-time via ``hmac.compare_digest``.
+    - No hash set (empty string) -> always False (built-in edits locked).
+    - No password provided -> False.
+    - Otherwise: compare SHA-256, constant-time via ``hmac.compare_digest``.
     """
     if security_cfg is None:
         return False
@@ -190,23 +190,23 @@ def _check_admin_pass(provided: str | None, security_cfg: Any) -> bool:
 # ----------------------------------------------------------------------
 
 class SkillUpdateBody(BaseModel):
-    """Body fuer ``PUT /api/skills/{name}``.
+    """Body for ``PUT /api/skills/{name}``.
 
-    ``content`` ist die vollstaendige SKILL.md (Frontmatter + Markdown). Der
-    Server re-parsed das File in-place, damit die Registry die State-Change
-    via Hot-Reload aufnimmt.
+    ``content`` is the complete SKILL.md (frontmatter + Markdown). The
+    server re-parses the file in place so the registry picks up the state
+    change via hot-reload.
     """
     content: str
     admin_password: str | None = Field(default=None)
 
 
 class SkillCreateBody(BaseModel):
-    """Body fuer ``POST /api/skills`` (neuer User-Skill aus der Desktop-App).
+    """Body for ``POST /api/skills`` (a new user skill from the desktop app).
 
-    Die Felder mappen 1:1 auf die Form im ``SkillCreateDialog`` — Optional-
-    Felder werden vom Authoring-Service auf Defaults gemappt (``risk_policy``
-    defaultet auf ``{default_tier: "ask"}``, ``body`` auf ein minimales
-    Markdown-Geruest).
+    The fields map 1:1 onto the form in ``SkillCreateDialog`` — optional
+    fields are mapped to defaults by the authoring service (``risk_policy``
+    defaults to ``{default_tier: "ask"}``, ``body`` to a minimal Markdown
+    scaffold).
     """
     name: str = Field(min_length=3, max_length=64)
     description: str = ""
@@ -222,10 +222,10 @@ class SkillCreateBody(BaseModel):
 
 
 class SkillCreatorDraftBody(BaseModel):
-    """Body fuer ``POST /api/skills/creator/draft``.
+    """Body for ``POST /api/skills/creator/draft``.
 
-    ``intent`` ist die eigentliche Nutzerbeschreibung. Die restlichen Felder
-    sind optionale UI-Hints, damit der Creator nicht alles erraten muss.
+    ``intent`` is the actual user description. The remaining fields are
+    optional UI hints so the creator doesn't have to guess everything.
     """
     intent: str = Field(min_length=3, max_length=4000)
     name_hint: str = Field(default="", max_length=100)
@@ -235,7 +235,7 @@ class SkillCreatorDraftBody(BaseModel):
 
 
 class SkillCreatorRefineBody(SkillCreatorDraftBody):
-    """Revision eines bestehenden AI-Drafts mit User-Feedback."""
+    """Revision of an existing AI draft with user feedback."""
     draft: dict[str, Any] = Field(default_factory=dict)
     feedback: str = Field(default="", max_length=4000)
 
@@ -273,7 +273,7 @@ class SkillBulkDeleteBody(BaseModel):
 
 
 class SkillQueryBody(BaseModel):
-    """Body fuer ``POST /api/skills/query`` — lokale Skill-Suche mit BM25 + LLM."""
+    """Body for ``POST /api/skills/query`` — local skill search with BM25 + LLM."""
     q: str = Field(default="", max_length=500)
     category: str | None = None
     state: str | None = None              # "active" | "validated" | "draft" | "disabled"
@@ -301,10 +301,10 @@ async def list_skills(request: Request) -> dict[str, Any]:
 
 @router.post("")
 async def create_skill(body: SkillCreateBody, request: Request) -> dict[str, Any]:
-    """Legt einen neuen User-Skill an und gibt die vollstaendige Detail-Repr zurueck.
+    """Creates a new user skill and returns the full detail representation.
 
-    Kollisionen (Name == Builtin oder Name == existierender Skill) werden mit
-    409 abgelehnt. Slug-Verstoss oder ungueltige Frontmatter → 400.
+    Collisions (name == built-in or name == an existing skill) are rejected
+    with 409. A slug violation or invalid frontmatter → 400.
     """
     from jarvis.skills.authoring import (
         SkillAuthoringError,
@@ -342,7 +342,7 @@ async def create_skill_draft(
     body: SkillCreatorDraftBody,
     request: Request,
 ) -> dict[str, Any]:
-    """Erzeugt einen AI-Draft, ohne Dateien zu schreiben."""
+    """Generates an AI draft without writing any files."""
     _require_optional_module("jarvis.skills.creator_service", "Skill Creator")
     from jarvis.skills.creator_service import SkillCreatorInput, SkillCreatorService
 
@@ -373,7 +373,7 @@ async def refine_skill_draft(
     body: SkillCreatorRefineBody,
     request: Request,
 ) -> dict[str, Any]:
-    """Ueberarbeitet einen AI-Draft anhand von Feedback/Rueckfragen."""
+    """Revises an AI draft based on feedback / follow-up questions."""
     _require_optional_module("jarvis.skills.creator_service", "Skill Creator")
     from jarvis.skills.creator_service import SkillCreatorInput, SkillCreatorService
 
@@ -406,7 +406,7 @@ async def validate_skill_draft(
     body: SkillCreatorValidateBody,
     request: Request,
 ) -> dict[str, Any]:
-    """Validiert einen Draft oder SKILL.md-Text, ohne zu persistieren."""
+    """Validates a draft or SKILL.md text without persisting it."""
     _require_optional_module("jarvis.skills.creator_service", "Skill Creator")
     from jarvis.skills.creator_service import render_skill_md, validate_skill_md
 
@@ -424,7 +424,7 @@ async def commit_skill_draft(
     body: SkillCreatorCommitBody,
     request: Request,
 ) -> dict[str, Any]:
-    """Persistiert den bestaetigten AI-Draft als User-Skill."""
+    """Persists the confirmed AI draft as a user skill."""
     _require_optional_module("jarvis.skills.creator_service", "Skill Creator")
     from jarvis.skills.authoring import SkillAuthoringError
     from jarvis.skills.creator_service import SkillCreatorService
@@ -451,7 +451,7 @@ def _extract_import_url(value: str) -> str:
     if not match:
         raise HTTPException(
             status_code=400,
-            detail="Kein http(s)-Link gefunden. Fuege einen SKILL.md-Link oder einen CLI-Befehl mit Link ein.",
+            detail="No http(s) link found. Paste a SKILL.md link or a CLI command containing a link.",
         )
     url = match.group(0).rstrip(").,;")
     github_blob = re.match(
@@ -466,10 +466,10 @@ def _extract_import_url(value: str) -> str:
 
 @router.post("/import")
 async def import_skill(body: SkillImportBody, request: Request) -> dict[str, Any]:
-    """Importiert einen Skill aus einem Link oder einem eingefuegten CLI-Befehl.
+    """Imports a skill from a link or a pasted CLI command.
 
-    Der Endpoint akzeptiert absichtlich keinen beliebigen Shell-Command. Aus dem
-    Text wird nur der erste http(s)-Link extrahiert und als SKILL.md geladen.
+    The endpoint deliberately does not accept an arbitrary shell command. Only
+    the first http(s) link is extracted from the text and loaded as SKILL.md.
     """
     import tempfile
 
@@ -488,14 +488,14 @@ async def import_skill(body: SkillImportBody, request: Request) -> dict[str, Any
         except httpx.HTTPError as exc:
             raise HTTPException(
                 status_code=400,
-                detail=f"Download fehlgeschlagen: {exc}",
+                detail=f"Download failed: {exc}",
             ) from exc
 
     content = resp.text
     if "---" not in content[:200]:
         raise HTTPException(
             status_code=400,
-            detail="Der Link sieht nicht wie eine SKILL.md mit YAML-Frontmatter aus.",
+            detail="This link does not look like a SKILL.md with YAML frontmatter.",
         )
 
     with tempfile.TemporaryDirectory(prefix="jarvis-skill-import-") as tmp:
@@ -507,14 +507,14 @@ async def import_skill(body: SkillImportBody, request: Request) -> dict[str, Any
     if parsed.frontmatter is None:
         raise HTTPException(
             status_code=400,
-            detail=f"SKILL.md konnte nicht gelesen werden: {parsed.error}",
+            detail=f"SKILL.md could not be read: {parsed.error}",
         )
 
     name = parsed.name
     if name in BUILTIN_SKILL_NAMES:
         raise HTTPException(
             status_code=409,
-            detail=f"'{name}' ist ein Builtin-Skill-Name und kann nicht importiert werden.",
+            detail=f"'{name}' is a built-in skill name and cannot be imported.",
         )
     try:
         reg.get(name)
@@ -523,7 +523,7 @@ async def import_skill(body: SkillImportBody, request: Request) -> dict[str, Any
     else:
         raise HTTPException(
             status_code=409,
-            detail=f"Skill '{name}' existiert bereits.",
+            detail=f"Skill '{name}' already exists.",
         )
 
     target_dir = user_skills_dir() / name
@@ -536,7 +536,7 @@ async def import_skill(body: SkillImportBody, request: Request) -> dict[str, Any
     except OSError as exc:
         raise HTTPException(
             status_code=500,
-            detail=f"Konnte Skill nicht schreiben: {exc}",
+            detail=f"Could not write skill: {exc}",
         ) from exc
 
     installed = parse_skill(target_file)
@@ -661,7 +661,7 @@ async def update_skill(
     body: SkillUpdateBody,
     request: Request,
 ) -> dict[str, Any]:
-    """Schreibt die SKILL.md neu. Bei Builtin-Skills wird der Admin-Pass geprueft."""
+    """Rewrites the SKILL.md. For built-in skills the admin password is checked."""
     reg = _require_registry(request)
     try:
         skill = reg.get(name)
@@ -672,11 +672,11 @@ async def update_skill(
         if not _check_admin_pass(body.admin_password, _security_cfg(request)):
             raise HTTPException(
                 status_code=403,
-                detail="Builtin-Skill darf nur mit gueltigem Admin-Password bearbeitet werden.",
+                detail="A built-in skill can only be edited with a valid admin password.",
             )
 
-    # Atomar schreiben: temp-file + rename, damit der Watcher keinen halb
-    # geschriebenen Zwischenstand liest.
+    # Write atomically: temp file + rename, so the watcher never reads a
+    # half-written intermediate state.
     target: Path = skill.path
     tmp = target.with_suffix(target.suffix + ".tmp")
     try:
@@ -684,11 +684,11 @@ async def update_skill(
         tmp.replace(target)
     except OSError as exc:
         raise HTTPException(
-            status_code=500, detail=f"Konnte Skill nicht schreiben: {exc}"
+            status_code=500, detail=f"Could not write skill: {exc}"
         ) from exc
 
-    # Sofort re-parsen + in Registry ersetzen, damit der Response den neuen State
-    # zeigt (der watchdog-Hotreload macht danach dasselbe, aber async).
+    # Re-parse immediately + replace in the registry, so the response shows the
+    # new state (the watchdog hot-reload does the same afterward, but async).
     updated = parse_skill(target)
     reg._skills[name] = updated  # type: ignore[attr-defined]
     return _skill_to_detail(updated)
@@ -713,11 +713,11 @@ async def reload_registry(request: Request) -> dict[str, Any]:
 
 @router.get("/{name}/link-health")
 async def get_skill_link_health(name: str, request: Request) -> dict[str, Any]:
-    """Prueft die URLs (homepage/source/docs) eines Skills.
+    """Checks a skill's URLs (homepage/source/docs).
 
-    Stale-While-Revalidate: ist ein Cache-Eintrag vorhanden (auch wenn stale),
-    wird er sofort zurueckgegeben — zugleich laeuft ein Refresh im Hintergrund.
-    Das sorgt dafuer, dass die UI nie auf HEAD-Requests wartet.
+    Stale-while-revalidate: if a cache entry exists (even if stale), it is
+    returned immediately — a refresh runs in the background at the same time.
+    This ensures the UI never waits on HEAD requests.
     """
     _require_optional_module("jarvis.skills.link_health", "Skill link-health check")
     from jarvis.skills.link_health import LinkHealthChecker
@@ -738,7 +738,7 @@ async def get_skill_link_health(name: str, request: Request) -> dict[str, Any]:
         "docs_url": fm.docs_url,
     }
 
-    # Checker pro App-State cachen, damit die SQLite-Connection wiederverwendet wird
+    # Cache the checker per app state, so the SQLite connection is reused
     checker = getattr(request.app.state, "_link_health_checker", None)
     if checker is None:
         checker = LinkHealthChecker()
@@ -752,7 +752,7 @@ async def get_skill_link_health(name: str, request: Request) -> dict[str, Any]:
             continue
         cached = checker.read_cached(url)
         if cached is None:
-            # Cache-Miss — synchroner Check (einmalig, schnell)
+            # Cache miss — synchronous check (one-off, fast)
             status = await checker.check_url(url)
             out[field_name] = status.to_dict()
         else:
@@ -760,8 +760,8 @@ async def get_skill_link_health(name: str, request: Request) -> dict[str, Any]:
             if not cached.fresh:
                 stale_urls.append(url)
 
-    # Stale-Eintraege im Hintergrund refreshen — der aktuelle Response enthaelt
-    # den alten Wert mit fresh=False, der naechste Call sieht den neuen.
+    # Refresh stale entries in the background — the current response contains
+    # the old value with fresh=False; the next call will see the new one.
     if stale_urls:
         asyncio.create_task(checker.check_all(stale_urls, force=True))
 
@@ -772,11 +772,11 @@ async def get_skill_link_health(name: str, request: Request) -> dict[str, Any]:
 async def get_skill_resource(
     name: str, kind: str, filename: str, request: Request
 ) -> PlainTextResponse:
-    """Liefert den Content eines Bundle-Resource-Files (Text-only, UTF-8).
+    """Returns the content of a bundled resource file (text-only, UTF-8).
 
-    Binaer-Files (Icons, Audio) werden aktuell nicht unterstuetzt — die UI
-    kann sie aus der Liste zeigen, aber nicht rendern. Anzeige fuer Bilder
-    waere ein spaeterer Ausbau via separatem Media-Endpoint.
+    Binary files (icons, audio) are currently not supported — the UI can show
+    them in the list but not render them. Displaying images would be a later
+    extension via a separate media endpoint.
     """
     reg = _require_registry(request)
     try:
@@ -790,7 +790,7 @@ async def get_skill_resource(
     except UnicodeDecodeError:
         raise HTTPException(
             status_code=415,
-            detail=f"Datei '{kind}/{filename}' ist nicht UTF-8-Text (binaer?)",
+            detail=f"File '{kind}/{filename}' is not UTF-8 text (binary?)",
         )
     return PlainTextResponse(content=text, media_type="text/plain; charset=utf-8")
 
@@ -804,12 +804,12 @@ def _flip_state(
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
 
-    # DRAFT bleibt DRAFT — man kann einen kaputten Skill nicht aktivieren.
+    # DRAFT stays DRAFT — a broken skill can't be activated.
     if skill.state == SkillLifecycleState.DRAFT:
         raise HTTPException(
             status_code=409,
-            detail=f"Skill '{name}' ist im DRAFT-State (Fehler: {skill.error}) — "
-                   "erst reparieren.",
+            detail=f"Skill '{name}' is in DRAFT state (error: {skill.error}) — "
+                   "fix it first.",
         )
 
     updated = replace(skill, state=new_state)
@@ -824,15 +824,15 @@ def _flip_state(
 
 
 # ----------------------------------------------------------------------
-# Skill-Finder (Catalog-Search + Install)
+# Skill finder (catalog search + install)
 # ----------------------------------------------------------------------
 
 class SkillSearchBody(BaseModel):
-    """Body fuer ``POST /api/skills/catalog/search``.
+    """Body for ``POST /api/skills/catalog/search``.
 
-    Die Felder mappen 1:1 auf das Dropdown-Menue im SkillFinder-Dialog.
-    Alle bis auf ``query`` sind optional — ohne Filter matcht gegen den
-    kompletten Katalog.
+    The fields map 1:1 onto the dropdown menu in the SkillFinder dialog.
+    All fields except ``query`` are optional — without a filter it matches
+    against the full catalog.
     """
     query: str = Field(default="", max_length=500)
     trust: str = Field(default="any")  # "any" | "official" | "verified" | "community" | "experimental"
@@ -844,12 +844,12 @@ class SkillSearchBody(BaseModel):
 
 
 class SkillInstallBody(BaseModel):
-    """Body fuer ``POST /api/skills/catalog/install``.
+    """Body for ``POST /api/skills/catalog/install``.
 
-    Der Client schickt den vollstaendigen Kandidaten zurueck (und nicht nur
-    den Namen), damit der Server nicht nochmal den Katalog durchsuchen muss
-    und der User-Intent stabil bleibt, selbst wenn der Katalog zwischen Such-
-    und Install-Call aktualisiert wird.
+    The client sends back the full candidate (not just the name), so the
+    server doesn't have to search the catalog again and the user's intent
+    stays stable even if the catalog is updated between the search and the
+    install call.
     """
     name: str
     raw_url: str | None = None
@@ -861,12 +861,12 @@ class SkillInstallBody(BaseModel):
 async def query_local_skills(
     body: SkillQueryBody, request: Request
 ) -> dict[str, Any]:
-    """Lokale Skill-Suche: BM25 + optionales LLM-Re-Ranking.
+    """Local skill search: BM25 + optional LLM re-ranking.
 
-    Mit leerer Query laeuft der Endpoint als reiner Filter-Router fuer Sidebar-
-    Filter (Kategorie/State/Risk/Builtin-Toggle/Tags). Mit Query wird zunaechst
-    FTS5-BM25 gegen den in-memory Skill-Index gefahren, dann (bei ausreichend
-    vielen Tokens + verfuegbarem Brain) ein LLM-Rerank der Top-15.
+    With an empty query the endpoint acts as a pure filter router for sidebar
+    filters (category/state/risk/built-in toggle/tags). With a query, FTS5-BM25
+    runs first against the in-memory skill index, then (given enough tokens and
+    an available brain) an LLM rerank of the top 15.
     """
     from jarvis.skills.local_search import (
         LocalSearchFilters,
@@ -876,15 +876,15 @@ async def query_local_skills(
     reg = _require_registry(request)
     brain = getattr(request.app.state, "brain", None)
 
-    # Cache pro App-State: LocalSkillSearch haelt den FTS5-Index in-memory.
-    # Wir haengen die Instanz an app.state, damit sie zwischen Requests wieder-
-    # verwendet wird (sonst muessten wir den Index pro Request neu bauen).
+    # Cache per app state: LocalSkillSearch keeps the FTS5 index in memory.
+    # We attach the instance to app.state so it's reused across requests
+    # (otherwise we'd have to rebuild the index on every request).
     searcher = getattr(request.app.state, "_local_skill_search", None)
     if searcher is None or searcher._registry is not reg:
         searcher = LocalSkillSearch(registry=reg, brain=brain)
         request.app.state._local_skill_search = searcher
     else:
-        # Brain kann sich zwischen Requests aendern (z.B. nach Provider-Switch)
+        # The brain can change between requests (e.g. after a provider switch)
         searcher._brain = brain
 
     filters = LocalSearchFilters(
@@ -899,11 +899,11 @@ async def query_local_skills(
     try:
         hits, brain_used = await searcher.query(filters)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"Query fehlgeschlagen: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Query failed: {exc}") from exc
 
-    # Fuer jeden Hit das volle Summary zurueckgeben, damit die UI dieselben
-    # Objekte wie in der normalen Liste rendern kann (keine separate
-    # Sub-Komponente fuer Search-Ergebnisse).
+    # Return the full summary for every hit, so the UI can render the same
+    # objects as in the normal list (no separate sub-component for search
+    # results).
     results: list[dict[str, Any]] = []
     for hit in hits:
         try:
@@ -927,16 +927,16 @@ async def query_local_skills(
 async def search_catalog(
     body: SkillSearchBody, request: Request
 ) -> dict[str, Any]:
-    """Semantisch-gerankte Suche im Skill-Katalog.
+    """Semantically ranked search over the skill catalog.
 
-    Wenn ``app.state.brain`` gesetzt ist, nutzt der Finder das Brain fuer
-    Ranking. Ohne Brain fallback auf heuristisches Token-Matching — die Suche
-    funktioniert also auch im Headless-Mode ohne Credentials.
+    If ``app.state.brain`` is set, the finder uses the brain for ranking.
+    Without a brain it falls back to heuristic token matching — so search
+    still works in headless mode without credentials.
     """
     brain = getattr(request.app.state, "brain", None)
     finder = SkillFinder(brain=brain)
 
-    # Typ-Konversion: Pydantic erlaubt nicht Literal-Union direkt als Query-Param
+    # Type conversion: Pydantic doesn't allow a Literal union directly as a query param
     trust_val: Any = body.trust if body.trust in ("any", "official", "verified", "community", "experimental") else "any"
 
     filters = SearchFilters(
@@ -952,7 +952,7 @@ async def search_catalog(
     try:
         candidates = await finder.search(filters)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"Suche fehlgeschlagen: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Search failed: {exc}") from exc
 
     return {
         "query": body.query,
@@ -966,17 +966,17 @@ async def search_catalog(
 async def install_from_catalog(
     body: SkillInstallBody, request: Request
 ) -> dict[str, Any]:
-    """Installiert einen Skill aus dem Katalog.
+    """Installs a skill from the catalog.
 
-    Schritte:
-    1. Datei per ``httpx`` aus ``raw_url`` holen (oder abbrechen wenn None).
-    2. In ``<user_skills>/<name>/SKILL.md`` ablegen.
-    3. Registry re-parsen + hot-swap einfuegen, damit die UI sofort den
-       neuen Skill sieht.
+    Steps:
+    1. Fetch the file via ``httpx`` from ``raw_url`` (or abort if None).
+    2. Save it to ``<user_skills>/<name>/SKILL.md``.
+    3. Re-parse the registry + hot-swap it in, so the UI sees the new
+       skill immediately.
     """
     reg = _require_registry(request)
 
-    # Kollisions-Check: existierender Skill mit gleichem Namen?
+    # Collision check: does a skill with the same name already exist?
     try:
         existing = reg.get(body.name)
     except KeyError:
@@ -984,10 +984,10 @@ async def install_from_catalog(
     if existing is not None:
         raise HTTPException(
             status_code=409,
-            detail=f"Skill '{body.name}' existiert bereits. Loesche ihn, bevor du neu installierst.",
+            detail=f"Skill '{body.name}' already exists. Delete it before reinstalling.",
         )
 
-    # Minimaler SkillCandidate fuer install() — wir brauchen raw_url + name
+    # Minimal SkillCandidate for install() — we only need raw_url + name
     from jarvis.skills.finder import SkillCandidate
 
     candidate = SkillCandidate(
@@ -1012,14 +1012,14 @@ async def install_from_catalog(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(
-            status_code=500, detail=f"Installation fehlgeschlagen: {exc}"
+            status_code=500, detail=f"Installation failed: {exc}"
         ) from exc
 
-    # Registry refresh — neuer Skill soll sofort in der Sidebar erscheinen
+    # Registry refresh — the new skill should appear in the sidebar immediately
     try:
         await reg.reload()
     except Exception as exc:  # noqa: BLE001
-        # Reload-Fail ist nicht fatal — der watchdog faengt's asynchron eh ein
+        # A reload failure is not fatal — the watchdog will catch it async anyway
         return {
             "ok": True,
             "name": body.name,
@@ -1038,9 +1038,9 @@ async def install_from_catalog(
 
 @router.get("/catalog/meta")
 async def catalog_meta(request: Request) -> dict[str, Any]:
-    """Meta-Info fuer das Frontend: welche Kategorien, Sprachen, Trust-Levels
-    existieren im aktuellen Katalog. Fuellt die Dropdowns im SkillFinder-Dialog
-    dynamisch, damit sie nicht mit der JSON auseinanderlaufen.
+    """Meta info for the frontend: which categories, languages, and trust levels
+    exist in the current catalog. Fills the dropdowns in the SkillFinder dialog
+    dynamically, so they don't drift out of sync with the JSON.
     """
     from jarvis.skills.catalog import load_catalog
 

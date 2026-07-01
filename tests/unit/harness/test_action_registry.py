@@ -1,16 +1,16 @@
-"""Action-Registry: Lookup, Validierung, Arg-Transform, Composite-Runners.
+"""Action registry: lookup, validation, arg transforms, composite runners.
 
-Pinnt das **Vokabular**, das der LLM-System-Prompt nennt und das der
-Computer-Use-Loop ausfuehren kann. Wenn Brain und Loop hier auseinander-
-laufen, plant der Brain Actions, die der Executor nicht kennt — und der
-User hoert "Unbekannte Action".
+Pins the **vocabulary** that the LLM system prompt names and that the
+Computer-Use loop can execute. If the brain and the loop drift apart here,
+the brain plans actions the executor doesn't know — and the
+user hears "unknown action".
 
-Diese Tests stellen sicher dass:
-  1. Alle vom User explizit verlangten Actions registriert sind.
-  2. ActionSpec-Validierung Inkonsistenzen aufdeckt (Tool UND Composite,
-     oder weder noch).
-  3. Argument-Transformer die richtigen Tool-Args produzieren.
-  4. Composite-Runners alle benoetigten Tools korrekt ausfuehren.
+These tests make sure that:
+  1. All actions the user explicitly required are registered.
+  2. ActionSpec validation catches inconsistencies (both tool AND
+     composite, or neither).
+  3. Argument transformers produce the correct tool args.
+  4. Composite runners execute all required tools correctly.
 """
 from __future__ import annotations
 
@@ -34,12 +34,12 @@ from jarvis.harness.action_registry import (
 
 
 # ---------------------------------------------------------------------
-# Vokabular-Coverage
+# Vocabulary coverage
 # ---------------------------------------------------------------------
 
-# Vom User explizit verlangte Actions in seinem Architektur-Auftrag.
-# Wenn dieser Test failed, ist das System-Vokabular gegenueber dem User-
-# Vertrag unvollstaendig — bitte Action ergaenzen statt Test loeschen.
+# Actions the user explicitly required in their architecture brief.
+# If this test fails, the system vocabulary is incomplete against the
+# user contract — please add the action instead of deleting the test.
 REQUIRED_ACTIONS: frozenset[str] = frozenset({
     "open_terminal",
     "open_new_tab",
@@ -58,13 +58,13 @@ REQUIRED_ACTIONS: frozenset[str] = frozenset({
 def test_default_registry_covers_user_required_actions() -> None:
     registered = set(DEFAULT_REGISTRY.names())
     missing = REQUIRED_ACTIONS - registered
-    assert not missing, f"Fehlende Actions in der Default-Registry: {missing!r}"
+    assert not missing, f"Missing actions in the default registry: {missing!r}"
 
 
 def test_describe_for_prompt_lists_every_action() -> None:
     desc = DEFAULT_REGISTRY.describe_for_prompt()
     for name in DEFAULT_REGISTRY.names():
-        assert name in desc, f"Action {name!r} fehlt im Prompt-Beschreibungstext"
+        assert name in desc, f"Action {name!r} is missing from the prompt description text"
 
 
 # ---------------------------------------------------------------------
@@ -123,7 +123,7 @@ def test_transform_press_shortcut_combo_string() -> None:
 
 
 def test_transform_press_shortcut_keys_list_wins() -> None:
-    """Wenn beide angegeben sind, gewinnt die explizite Liste."""
+    """If both are given, the explicit list wins."""
     result = _transform_press_shortcut({
         "combo": "alt+f4", "keys": ["ctrl", "c"],
     })
@@ -131,7 +131,7 @@ def test_transform_press_shortcut_keys_list_wins() -> None:
 
 
 def test_transform_press_shortcut_lowercases() -> None:
-    """ctrl+T wird zu ['ctrl', 't'] — der hotkey-Tool resolve macht ord(upper)."""
+    """ctrl+T becomes ['ctrl', 't'] — the hotkey tool resolve does ord(upper)."""
     result = _transform_press_shortcut({"combo": "Ctrl+T"})
     assert result == {"keys": ["ctrl", "t"]}
 
@@ -153,7 +153,7 @@ def test_transform_open_terminal_profile_aliases() -> None:
 
 
 def test_transform_open_terminal_passthrough_for_custom_path() -> None:
-    """Unbekannter Profile-Name wird durchgereicht — User kann eigene Pfade nutzen."""
+    """An unknown profile name is passed through — the user can use their own paths."""
     result = _transform_open_terminal({"profile": "/usr/local/bin/iterm2"})
     assert result["app_name"] == "/usr/local/bin/iterm2"
 
@@ -163,7 +163,7 @@ def test_transform_open_terminal_passthrough_for_custom_path() -> None:
 # ---------------------------------------------------------------------
 
 class _FakeExecutor:
-    """Speichert alle execute-Calls fuer Assertions."""
+    """Stores all execute calls for assertions."""
 
     def __init__(self, success: bool = True, error: str | None = None) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -197,7 +197,7 @@ class _FakeTool:
 
 @pytest.mark.asyncio
 async def test_composite_open_new_tab_calls_hotkey_with_ctrl_t() -> None:
-    """open_new_tab muss exakt Strg+T senden — das ist der universelle Tab-Shortcut."""
+    """open_new_tab must send exactly ctrl+T — that's the universal tab shortcut."""
     executor = _FakeExecutor()
     tools = {"hotkey": _FakeTool("hotkey")}
 
@@ -212,7 +212,7 @@ async def test_composite_open_new_tab_calls_hotkey_with_ctrl_t() -> None:
 @pytest.mark.asyncio
 async def test_composite_open_new_tab_fails_clearly_when_hotkey_missing() -> None:
     executor = _FakeExecutor()
-    tools: dict[str, Any] = {}  # Kein hotkey-Tool
+    tools: dict[str, Any] = {}  # No hotkey tool
 
     result = await _composite_open_new_tab({}, executor, tools, trace_id=uuid4())
 
@@ -243,8 +243,8 @@ async def test_composite_run_terminal_command_types_then_presses_enter() -> None
 
 @pytest.mark.asyncio
 async def test_composite_run_terminal_command_short_circuits_on_type_failure() -> None:
-    """Wenn type_text failed, darf Enter NICHT gedrueckt werden — sonst leere Befehle."""
-    executor = _FakeExecutor(success=False, error="Tippen fehlgeschlagen")
+    """If type_text fails, Enter must NOT be pressed — otherwise empty commands."""
+    executor = _FakeExecutor(success=False, error="Typing failed")
     tools = {
         "type_text": _FakeTool("type_text"),
         "hotkey": _FakeTool("hotkey"),
@@ -255,7 +255,7 @@ async def test_composite_run_terminal_command_short_circuits_on_type_failure() -
     )
 
     assert result.success is False
-    # Nur ein Aufruf (type_text), kein Enter-Hotkey.
+    # Only one call (type_text), no Enter hotkey.
     assert len(executor.calls) == 1
     assert executor.calls[0]["tool"] == "type_text"
 
@@ -275,7 +275,7 @@ async def test_composite_run_terminal_command_rejects_empty_command() -> None:
 
 
 # ---------------------------------------------------------------------
-# Default-Registry-Build ist deterministisch und idempotent
+# Default registry build is deterministic and idempotent
 # ---------------------------------------------------------------------
 
 def test_build_default_registry_is_deterministic() -> None:

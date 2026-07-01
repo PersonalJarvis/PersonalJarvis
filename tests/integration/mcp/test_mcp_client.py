@@ -1,8 +1,8 @@
-"""Integration-Tests für MCPClient + MCPToolAdapter gegen FakeMCPServer.
+"""Integration tests for MCPClient + MCPToolAdapter against FakeMCPServer.
 
-Der FakeMCPServer (`fake_mcp_server.py`) läuft als echtes Subprocess
-und spricht MCP via stdio — so testen wir den tatsächlichen
-Protokoll-Pfad inklusive Session-Initialisierung und Tool-Call.
+The FakeMCPServer (`fake_mcp_server.py`) runs as a real subprocess
+and speaks MCP via stdio — this way we test the actual protocol
+path including session initialization and the tool call.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ FAKE_SERVER = Path(__file__).parent / "fake_mcp_server.py"
 
 
 def _make_spec(mode: str = "ok") -> MCPServerSpec:
-    """Baut eine Spec, die den FakeMCPServer als Subprocess startet."""
+    """Builds a spec that starts the FakeMCPServer as a subprocess."""
     return MCPServerSpec(
         name=f"fake-mcp-{mode}",
         display="Fake MCP",
@@ -84,13 +84,13 @@ async def test_circuit_breaker_opens_on_3_failures() -> None:
     client = _client("fail")
     try:
         await client.start()
-        # Drei Fehler hintereinander provozieren
+        # Provoke three failures in a row
         for _ in range(3):
             with pytest.raises(Exception):
                 await client.call_tool("echo", {"msg": "boom"})
-        # Nach 3 Fails muss der Circuit-Breaker offen sein
+        # After 3 fails, the circuit breaker must be open
         assert client.is_healthy is False
-        # Weitere calls werden ohne SDK-Kontakt abgewiesen
+        # Further calls are rejected without SDK contact
         with pytest.raises(RuntimeError, match="circuit-breaker"):
             await client.call_tool("echo", {"msg": "still-bad"})
     finally:

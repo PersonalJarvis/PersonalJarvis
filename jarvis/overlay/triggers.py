@@ -50,12 +50,12 @@ class ActionKind(str, Enum):
     """Derived from Plan §6.1 — what triggers the glow."""
 
     CLICK = "click"
-    TYPING = "type"  # Plan §6.3 wire-string ist 'type', nicht 'typing'
+    TYPING = "type"  # Plan §6.3 wire string is 'type', not 'typing'
     MOVE = "move"
     NAVIGATE = "navigate"
     HOTKEY = "hotkey"
     SCROLL = "scroll"
-    BROWSER = "navigate"  # Backward-compat-Alias fuer Phase-9.1-Code
+    BROWSER = "navigate"  # backward-compat alias for Phase-9.1 code
 
 
 def _get_bridge() -> Any:
@@ -194,12 +194,12 @@ async def overlay_action_scope(
     *,
     duration_hint_ms: Optional[int] = None,
 ) -> AsyncIterator[str]:
-    """Async-Context-Manager. Plan §8.5 Contract.
+    """Async context manager. Plan §8.5 contract.
 
-    Yields die ``action_id`` damit Caller sie z.B. fuer
-    ``emit_click(...)`` referenzieren kann.
+    Yields the ``action_id`` so the caller can, for example,
+    reference it via ``emit_click(...)``.
 
-    Beispiel::
+    Example::
 
         async with overlay_action_scope(ActionKind.TYPING, duration_hint_ms=2000):
             await asyncio.to_thread(pyautogui.typewrite, text)
@@ -246,8 +246,8 @@ def overlay_action_scope_sync(
     *,
     duration_hint_ms: Optional[int] = None,
 ) -> Iterator[str]:
-    """Sync-Context-Manager. Plan §8.5 — fuer sync Caller die nicht
-    in einem async-Loop sind."""
+    """Sync context manager. Plan §8.5 — for sync callers that are not
+    in an async loop."""
     kind_str = kind.value if isinstance(kind, ActionKind) else str(kind)
     bridge = _get_bridge()
     action_id = ""

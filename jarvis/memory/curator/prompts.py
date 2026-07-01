@@ -45,89 +45,89 @@ def _render_allowed_fields() -> str:
     return "\n".join(lines)
 
 
-EXTRACTOR_SYSTEM_PROMPT = """Du bist ein Curator fuer ein persoenliches User-Profile.
-Deine Aufgabe: aus einem Gespraechs-Turn zwischen User und Assistant die **stabilen, \
-nuetzlichen Facts** extrahieren und in einem strikten JSON-Schema zurueckgeben.
+EXTRACTOR_SYSTEM_PROMPT = """You are a curator for a personal user profile.
+Your task: extract the **stable, useful facts** from a conversation turn \
+between the user and the assistant and return them in a strict JSON schema.
 
-DU GIBST AUSSCHLIESSLICH JSON ZURUECK. KEIN Markdown, kein Kommentar, kein Fence.
+YOU RETURN ONLY JSON. NO Markdown, no comment, no fence.
 
-# KRITISCHE REGEL — Subject-Disambiguierung
+# CRITICAL RULE — subject disambiguation
 
-Jedes Fact hat genau EIN Subject:
-- `"user"` — der Mensch der mit Jarvis spricht.
-- `"person:<Name>"` — eine ANDERE Person, die der User erwaehnt.
+Every fact has exactly ONE subject:
+- `"user"` — the human talking to Jarvis.
+- `"person:<Name>"` — ANOTHER person the user mentions.
 
-**GOLDEN RULE:** Wenn der User in erster Person spricht ("ich", "mein", "mir"),
-ist das Subject `user`. Wenn der User einen Namen erwaehnt, ist dieser Name
-ein `person:<Name>`, NICHT der User.
+**GOLDEN RULE:** If the user speaks in the first person ("I", "my", "me"),
+the subject is `user`. If the user mentions a name, that name is a
+`person:<Name>`, NOT the user.
 
-## Beispiele — das hier DARF NICHT verwechselt werden:
+## Examples — this must NOT be confused:
 
-**Input:** User sagt "Meine Freundin Laura arbeitet bei X."
+**Input:** User says "My girlfriend Laura works at X."
 **Output:**
 - `{"subject": "person:Laura", "cluster": "identity", "field": "name", "value": "Laura", "relationship": "partner", "confidence": 1.0, ...}`
-- KEINESFALLS `{"subject": "user", "field": "name", "value": "Laura"}` — das waere ein krasser Fehler!
+- NEVER `{"subject": "user", "field": "name", "value": "Laura"}` — that would be a serious mistake!
 
-**Input:** User sagt "Ich heisse Alex."
+**Input:** User says "My name is Alex."
 **Output:** `{"subject": "user", "cluster": "identity", "field": "name", "value": "Alex", ...}`
 
-**Input:** User sagt "Mein Kollege Paul hasst Emojis."
-**Output:** Beobachtung ueber Paul (subject=person:Paul), NICHT ueber den User.
+**Input:** User says "My colleague Paul hates emojis."
+**Output:** An observation about Paul (subject=person:Paul), NOT about the user.
 
-**Input:** User sagt "Sie sind super" (ohne klaren Antezedenten fuer 'sie')
-**Output:** Gar nichts extrahieren — confidence ist zu niedrig.
+**Input:** User says "They're great" (with no clear antecedent for "they")
+**Output:** Extract nothing at all — confidence is too low.
 
-# STABILITAETS-REGEL
+# STABILITY RULE
 
-Nur extrahieren was **langfristig stabil** ist:
-- JA: Praeferenzen, Werte, Arbeitsweise, Humor, Kommunikationsstil, stabile Facts.
-- NEIN: Tagesform, Emotion gerade eben, aktueller Task, Wetter, einmalige Ereignisse.
+Only extract what is **stable over the long term**:
+- YES: preferences, values, work style, humor, communication style, stable facts.
+- NO: mood of the day, momentary emotion, current task, weather, one-off events.
 
-Beispiel: "Ich bin heute muede" → NIX extrahieren (Tagesform).
-Beispiel: "Ich mag keine Emojis in Code-Reviews" → `{"subject": "user", "cluster": "values", "field": "pet_peeves", "value": "Emojis in Code-Reviews", "operation": "append"}`
+Example: "I'm tired today" → extract NOTHING (mood of the day).
+Example: "I don't like emojis in code reviews" → `{"subject": "user", "cluster": "values", "field": "pet_peeves", "value": "Emojis in code reviews", "operation": "append"}`
 
 # CONFIDENCE
 
-- `1.0` — User hat es direkt und unmissverstaendlich gesagt.
-- `0.8-0.9` — klar impliziert aber nicht woertlich.
-- `0.5-0.7` — vermutet. Wird in Review-Queue landen.
-- `<0.5` — nicht extrahieren.
+- `1.0` — the user said it directly and unambiguously.
+- `0.8-0.9` — clearly implied but not verbatim.
+- `0.5-0.7` — inferred. Goes to the review queue.
+- `<0.5` — do not extract.
 
-# DO-NOT-RECORD — KATEGORIEN DIE NIEMALS EXTRAHIERT WERDEN
+# DO-NOT-RECORD — CATEGORIES THAT ARE NEVER EXTRACTED
 
-- Politische oder religioese Ueberzeugungen.
-- Gesundheits- oder Mental-Health-Diagnosen.
-- Tagesform/Emotion ("gestresst", "muede", "froh").
-- Beziehungs-Konflikte ("habe Streit mit X").
-- Finanz-Details ("verdiene Y Euro").
-- MBTI-Typ oder andere pseudo-psychologische Labels.
+- Political or religious beliefs.
+- Health or mental-health diagnoses.
+- Mood of the day / emotion ("stressed", "tired", "happy").
+- Relationship conflicts ("had a fight with X").
+- Financial details ("earn Y euros").
+- MBTI type or other pseudo-psychological labels.
 
-Wenn der User solche Dinge erwaehnt: ignorieren. Keine Kompromisse.
+If the user mentions such things: ignore them. No exceptions.
 
-# ERLAUBTE FELDER (strikt — nichts anderes extrahieren)
+# ALLOWED FIELDS (strict — do not extract anything else)
 
 """ + _render_allowed_fields() + """
 
-# OUTPUT-SCHEMA
+# OUTPUT SCHEMA
 
 {
   "candidates": [
     {
       "subject": "user" | "person:<Name>",
       "cluster": "identity|communication|work_style|values|relationship",
-      "field": "<exakt eines der erlaubten Felder oder 'observation' fuer freie Notiz>",
+      "field": "<exactly one of the allowed fields, or 'observation' for a free note>",
       "value": <string|number|list|bool>,
       "operation": "set" | "append",
       "confidence": 0.0,
-      "evidence": "<exakter User-Zitat-Ausschnitt, max 150 Zeichen>",
-      "relationship": "partner|family|colleague|friend|unknown"  // nur wenn subject=person:
+      "evidence": "<exact user quote excerpt, max 150 characters>",
+      "relationship": "partner|family|colleague|friend|unknown"  // only if subject=person:
     }
   ]
 }
 
-Wenn nichts Relevantes extrahierbar ist: `{"candidates": []}` zurueckgeben.
+If nothing relevant can be extracted, return: `{"candidates": []}`.
 
-GIB JETZT AUSSCHLIESSLICH DAS JSON ZURUECK.
+RETURN ONLY THE JSON NOW.
 """
 
 
@@ -143,12 +143,12 @@ def build_extraction_prompt(user_text: str, assistant_text: str,
     """
     ctx_lines = []
     if user_name:
-        ctx_lines.append(f"- Der User heisst: {user_name}")
+        ctx_lines.append(f"- The user's name is: {user_name}")
     if known_people:
-        ctx_lines.append(f"- Bereits bekannte Personen im Umfeld: {', '.join(known_people)}")
-    ctx = "\n".join(ctx_lines) if ctx_lines else "- (Noch keine Infos ueber User oder andere Personen.)"
+        ctx_lines.append(f"- Already-known people in their circle: {', '.join(known_people)}")
+    ctx = "\n".join(ctx_lines) if ctx_lines else "- (No info about the user or other people yet.)"
 
-    return f"""## Kontext
+    return f"""## Context
 
 {ctx}
 
@@ -160,4 +160,4 @@ def build_extraction_prompt(user_text: str, assistant_text: str,
 
 ---
 
-Extrahiere jetzt stabile, nuetzliche Facts gemaess den Regeln. Output: JSON."""
+Now extract stable, useful facts according to the rules. Output: JSON."""

@@ -1,10 +1,10 @@
-"""Tests fuer Critic-Prompt-Templates.
+"""Tests for the Critic prompt templates.
 
-Pruefen explizit die fuenf Design-Reviewer-Kriterien aus
+Explicitly checks the five design-reviewer criteria from
 `.claude/agents/jarvis-critic-design-reviewer.md`:
-- Kriterium 1 — Evidence-Cite-Pflicht (Prompt verlangt file:line / log_line:N / test:name).
-- Kriterium 2 — Adversarial Framing verbatim aus Research-Doc §F.
-- Kriterium 3 — Anchor-Token (mission_prompt verbatim, triple-bracketed).
+- Criterion 1 — evidence-cite requirement (prompt demands file:line / log_line:N / test:name).
+- Criterion 2 — adversarial framing verbatim from the research doc §F.
+- Criterion 3 — anchor token (mission_prompt verbatim, triple-bracketed).
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from jarvis.missions.critic.prompts import (
 )
 
 
-# --- Kriterium 2 — Adversarial Framing ---
+# --- Criterion 2 — Adversarial Framing ---
 
 
 def test_template_contains_skeptical_phrasing() -> None:
@@ -37,7 +37,7 @@ def test_template_uses_adversarial_role() -> None:
     assert "adversarial code critic" in CRITIC_SYSTEM_PROMPT
 
 
-# --- Kriterium 1 — Evidence-Cite-Pflicht ---
+# --- Criterion 1 — Evidence-Cite Requirement ---
 
 
 def test_template_requires_evidence_format() -> None:
@@ -54,11 +54,11 @@ def test_template_rejects_empty_evidence_fail() -> None:
     assert "Empty-evidence FAILs are treated as abstentions" in CRITIC_SYSTEM_PROMPT
 
 
-# --- Kriterium 3 — Anchor-Token ---
+# --- Criterion 3 — Anchor Token ---
 
 
 def test_anchor_token_triple_bracketed_in_template() -> None:
-    """Das Template enthaelt die Bracket-Marker — nicht den eingesetzten String."""
+    """The template contains the bracket markers — not the substituted string."""
     assert "<<<{mission_prompt}>>>" in CRITIC_SYSTEM_PROMPT
 
 
@@ -75,7 +75,7 @@ def test_render_includes_mission_prompt_verbatim() -> None:
 
 
 def test_render_does_not_paraphrase_mission_prompt() -> None:
-    """Selbst bei langen Prompts mit Sonderzeichen verbatim einsetzen."""
+    """Insert verbatim even for long prompts with special characters."""
     weird = "Build X with !@#$%^&*() in the name and \"quoted\" parts."
     out = render_critic_prompt(
         mission_prompt=weird,
@@ -104,7 +104,7 @@ def test_template_includes_output_schema_keys() -> None:
 
 
 def test_template_demands_no_prose_no_markdown() -> None:
-    """`no prose` + `markdown` koennen ueber einen Zeilenumbruch verteilt sein."""
+    """`no prose` + `markdown` can be split across a line break."""
     assert "no prose" in CRITIC_SYSTEM_PROMPT
     assert "markdown" in CRITIC_SYSTEM_PROMPT
     assert "no code fences" in CRITIC_SYSTEM_PROMPT
@@ -219,7 +219,7 @@ def test_adversarial_prefix_emphasizes_skepticism() -> None:
 
 
 def test_render_anchor_present_in_both_modes() -> None:
-    """Anchor-Token muss auch im Adversarial-Reframe-Modus drin sein."""
+    """The anchor token must also be present in adversarial-reframe mode."""
     out = render_critic_prompt(
         mission_prompt="ANCHOR_X",
         worker_diff="d",

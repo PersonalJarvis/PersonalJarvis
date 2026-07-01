@@ -18,17 +18,17 @@ interface ApiKeyFormProps {
   credentialHelp?: string | null;
   onChanged?: () => void;
   /**
-   * Wird aufgerufen, nachdem ein Key erfolgreich gespeichert wurde.
-   * Die Parent-Card entscheidet, ob das einen Auto-Switch ausloest
-   * (z.B. wenn niemand sonst in der Tier aktiv ist).
+   * Called after a key has been saved successfully.
+   * The parent card decides whether that triggers an auto-switch
+   * (e.g. when no one else is active in the tier).
    */
   onSavedActivate?: () => void;
 }
 
 /**
- * Single-Key-Eingabeformular: Passwort-Input + "Speichern" + Lösch-Aktion bei
- * vorhandenem Wert. Schreibt direkt nach POST /api/secrets/{key}; der Wert
- * verlässt nach dem Submit das Frontend nie wieder (Read-Only-Flag im Backend).
+ * Single-key input form: password input + "Save" + delete action for an
+ * existing value. Writes directly to POST /api/secrets/{key}; the value
+ * never leaves the frontend again after submit (read-only flag in the backend).
  */
 export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp, onChanged, onSavedActivate }: ApiKeyFormProps) {
   const t = useT();

@@ -1,12 +1,12 @@
-"""dispatch_to_harness-Tool: vom Brain aufrufbar, delegiert an einen Harness.
+"""dispatch_to_harness tool: callable by the brain, delegates to a harness.
 
-Der Brain kann via Tool-Call OpenClaw / Codex / Python-Script / MCP-Remote
-spawnen. Output wird akkumuliert, auf `max_output_chars` getrimmt und als
-`ToolResult.output` zurückgegeben — der Brain sieht's in der nächsten Turn
-als `role="tool"`-Message und kann dann zusammenfassen.
+The brain can spawn OpenClaw / Codex / Python-Script / MCP-Remote via a tool
+call. Output is accumulated, trimmed to `max_output_chars`, and returned as
+`ToolResult.output` — the brain sees it in the next turn as a
+`role="tool"` message and can then summarize it.
 
-Optional: `parallel_harnesses` — mehrere Harnesses gleichzeitig und
-aggregiert zurückgeben.
+Optional: `parallel_harnesses` — run multiple harnesses at once and return
+the aggregated result.
 """
 from __future__ import annotations
 
@@ -49,24 +49,24 @@ class DispatchToHarnessTool:
             },
             "prompt": {
                 "type": "string",
-                "description": "Die Aufgabe / der Prompt für den Sub-Agenten.",
+                "description": "The task / prompt for the sub-agent.",
             },
             "cwd": {
                 "type": "string",
-                "description": "Working-Directory (optional).",
+                "description": "Working directory (optional).",
                 "default": "",
             },
             "timeout_s": {
                 "type": "number",
-                "description": "Maximale Laufzeit in Sekunden (Default 600).",
+                "description": "Maximum runtime in seconds (default 600).",
                 "default": 600,
             },
             "parallel_harnesses": {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    "Wenn gesetzt, werden alle genannten Harnesses parallel ausgeführt "
-                    "und ihre Outputs aggregiert. 'harness' wird ignoriert."
+                    "If set, all named harnesses run in parallel and their "
+                    "outputs are aggregated. 'harness' is ignored."
                 ),
                 "default": [],
             },
@@ -98,7 +98,7 @@ class DispatchToHarnessTool:
         if len(text) <= self._max_output_chars:
             return text
         keep = self._max_output_chars // 2
-        return text[:keep] + f"\n\n[… {len(text) - 2 * keep} chars gekürzt …]\n\n" + text[-keep:]
+        return text[:keep] + f"\n\n[… {len(text) - 2 * keep} chars trimmed …]\n\n" + text[-keep:]
 
     # ------------------------------------------------------------------
     # Execute
@@ -119,7 +119,7 @@ class DispatchToHarnessTool:
         env = dict(raw_env) if isinstance(raw_env, dict) else {}
 
         if not prompt:
-            return ToolResult(success=False, output=None, error="prompt fehlt")
+            return ToolResult(success=False, output=None, error="prompt is missing")
 
         task = HarnessTask(
             prompt=prompt,
@@ -132,7 +132,7 @@ class DispatchToHarnessTool:
             if parallel:
                 return await self._execute_parallel(list(parallel), task, aggregation)
             if not harness_name:
-                return ToolResult(success=False, output=None, error="harness fehlt")
+                return ToolResult(success=False, output=None, error="harness is missing")
             return await self._execute_single(harness_name, task)
         except Exception as exc:  # noqa: BLE001
             return ToolResult(success=False, output=None, error=f"{type(exc).__name__}: {exc}")
@@ -270,7 +270,7 @@ class DispatchToHarnessTool:
             aggregation,
             buffers,
             success=all_ok,
-            error=None if all_ok else "ein oder mehr Harnesses mit non-zero exit",
+            error=None if all_ok else "one or more harnesses exited non-zero",
         )
 
     def _parallel_result(

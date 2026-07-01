@@ -44,7 +44,7 @@ def _valid_entity_markdown(slug: str = "alex") -> str:
         "type: entity\n"
         "entity_kind: person\n"
         f"slug: {slug}\n"
-        "aliases: [Alex, Personal Jarvis Maintainer]\n"
+        "aliases: [Alex, Personal Jarvis Maintainer]\n"  # i18n-allow: proper name with umlaut used as unicode-handling test fixture
         "created: 2026-05-11\n"
         "updated: 2026-05-11\n"
         "---\n"
@@ -77,7 +77,7 @@ def test_parse_valid_entity_is_schema_valid(tmp_path: Path) -> None:
     assert page.is_schema_valid is True
     assert page.page_type == "entity"
     assert page.slug == "alex"
-    assert page.frontmatter["aliases"] == "[Alex, Personal Jarvis Maintainer]"
+    assert page.frontmatter["aliases"] == "[Alex, Personal Jarvis Maintainer]"  # i18n-allow: proper name with umlaut, matched fixture value
 
 
 def test_parse_extracts_wikilinks_in_order(tmp_path: Path) -> None:
@@ -317,15 +317,15 @@ def test_round_trip_unicode_body(tmp_path: Path) -> None:
         "---\n"
         "type: entity\n"
         "slug: alex\n"
-        "aliases: [Alex Maintainer]\n"
+        "aliases: [Alex Maintainer]\n"  # i18n-allow: proper name with umlaut used as unicode round-trip test fixture
         "---\n"
-        "Café — über sechs Zeichen mit Umlauten: äöüß.\n"
+        "Café — über sechs Zeichen mit Umlauten: äöüß.\n"  # i18n-allow: German sentence deliberately testing umlaut/unicode round-tripping, content under test
     )
     path = _entity_page(tmp_path)
     page = parse_markdown(src, path)
     re_parsed = parse_markdown(render_page(page), path)
     assert re_parsed == page
-    assert "äöüß" in page.body
+    assert "äöüß" in page.body  # i18n-allow: matches the umlaut fixture body above, content under test
 
 
 def test_render_includes_frontmatter_markers_even_when_empty() -> None:

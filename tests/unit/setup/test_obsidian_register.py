@@ -227,7 +227,7 @@ def test_register_vault_uuid_format(tmp_path: Path) -> None:
 def test_register_vault_unicode_path_preserved(tmp_path: Path) -> None:
     """German umlauts in vault_path survive the JSON round-trip verbatim."""
     cfg = tmp_path / "obsidian.json"
-    vault = tmp_path / "Müller Vault"
+    vault = tmp_path / "Müller Vault"  # i18n-allow: umlaut test data — the test verifies German characters round-trip
     vault.mkdir()
     _write_cfg(cfg, {"vaults": {}})
 
@@ -235,8 +235,8 @@ def test_register_vault_unicode_path_preserved(tmp_path: Path) -> None:
 
     assert result.status == "added"
     raw_text = cfg.read_text(encoding="utf-8")
-    # Verbatim umlaut byte sequence in the file (not ü escape).
-    assert "Müller" in raw_text
+    # Verbatim umlaut byte sequence in the file (not ü escape).  # i18n-allow: references the literal umlaut character under test
+    assert "Müller" in raw_text  # i18n-allow: matches the umlaut test data above
 
 
 # ---------------------------------------------------------------------------

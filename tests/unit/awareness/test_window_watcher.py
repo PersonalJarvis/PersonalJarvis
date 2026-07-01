@@ -1,15 +1,15 @@
-"""Tests fuer jarvis.awareness.watchers.window.WindowFocusWatcher.
+"""Tests for jarvis.awareness.watchers.window.WindowFocusWatcher.
 
-Strategie: Fake-Pump (kein echter Win32-Hook) plus injiziertes
-``_resolve_window_meta`` plus direkter Aufruf von ``_drain_once()``. Damit
-laufen Tests auf jeder Plattform; echte Hook-Lifecycle ist im Integration-
-Test ``test_a1_e2e.py``.
+Strategy: fake pump (no real Win32 hook) plus an injected
+``_resolve_window_meta`` plus a direct call to ``_drain_once()``. This lets
+tests run on any platform; the real hook lifecycle is in the integration
+test ``test_a1_e2e.py``.
 
-Architektur-Annahmen die der Implementation in Welle 3 vorgeben:
-- ``_drain_once()`` ist isolierbar (eine Iteration der Drain-Loop).
-- ``_safe_enqueue((ts_ns, hwnd))`` schiebt Items in die Queue (asyncio-thread-safe).
-- ``_resolve_window_meta(hwnd)`` ist staticmethod — patchbar.
-- ``_loop`` ist Property die in Tests vor _safe_enqueue gesetzt wird.
+Architecture assumptions the Wave 3 implementation dictates:
+- ``_drain_once()`` is isolatable (one iteration of the drain loop).
+- ``_safe_enqueue((ts_ns, hwnd))`` pushes items onto the queue (asyncio-thread-safe).
+- ``_resolve_window_meta(hwnd)`` is a staticmethod — patchable.
+- ``_loop`` is a property set in tests before _safe_enqueue.
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def _make_components() -> tuple[EventBus, AwarenessManager, PrivacyFilter]:
 
 
 def _async_collect(target: list):
-    """Test-Helper: gibt einen async Handler zurueck der Events an die Liste anhaengt."""
+    """Test helper: returns an async handler that appends events to the list."""
     async def _handler(ev):
         target.append(ev)
     return _handler
@@ -66,7 +66,7 @@ async def test_drain_routes_allowed_to_frame_updated() -> None:
 
 @pytest.mark.asyncio
 async def test_drain_routes_blocked_to_capture_blocked() -> None:
-    """Frame mit Banking-Title → AwarenessCaptureBlocked, KEIN FrameUpdated."""
+    """Frame with a banking title → AwarenessCaptureBlocked, NO FrameUpdated."""
     bus, manager, privacy = _make_components()
     blocked: list[AwarenessCaptureBlocked] = []
     updated: list[FrameUpdated] = []
@@ -89,7 +89,7 @@ async def test_drain_routes_blocked_to_capture_blocked() -> None:
 
 @pytest.mark.asyncio
 async def test_dedupe_50ms_window() -> None:
-    """Doppelter hwnd <50ms apart wird gedropt — Win32 emittiert manchmal 2-3."""
+    """Duplicate hwnd <50ms apart gets dropped — Win32 sometimes emits 2-3."""
     bus, manager, privacy = _make_components()
     received: list[FrameUpdated] = []
     bus.subscribe(FrameUpdated, _async_collect(received))
@@ -111,7 +111,7 @@ async def test_dedupe_50ms_window() -> None:
 
 @pytest.mark.asyncio
 async def test_dedupe_does_not_drop_different_hwnd() -> None:
-    """Verschiedene hwnds in <50ms werden NICHT dedupliziert."""
+    """Different hwnds within <50ms are NOT deduplicated."""
     bus, manager, privacy = _make_components()
     received: list[FrameUpdated] = []
     bus.subscribe(FrameUpdated, _async_collect(received))
@@ -133,7 +133,7 @@ async def test_dedupe_does_not_drop_different_hwnd() -> None:
 
 @pytest.mark.asyncio
 async def test_queue_full_increments_drops_no_crash() -> None:
-    """Bei voller Queue: drop-counter +1, kein Crash, kein Exception."""
+    """When the queue is full: drop counter +1, no crash, no exception."""
     bus, manager, privacy = _make_components()
     watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
     watcher._loop = asyncio.get_running_loop()
@@ -147,7 +147,7 @@ async def test_queue_full_increments_drops_no_crash() -> None:
 
 @pytest.mark.asyncio
 async def test_publish_updates_state_current_frame() -> None:
-    """Nach Drain: manager.state.current_frame ist gesetzt."""
+    """After drain: manager.state.current_frame is set."""
     bus, manager, privacy = _make_components()
     watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
     with patch.object(
@@ -165,13 +165,13 @@ async def test_publish_updates_state_current_frame() -> None:
 
 @pytest.mark.asyncio
 async def test_start_idempotent_on_linux() -> None:
-    """Auf Linux: start() ist no-op, kein Win32-Crash, doppelter call ok."""
+    """On Linux: start() is a no-op, no Win32 crash, a duplicate call is ok."""
     if os.name == "nt":
         pytest.skip("Linux-only — Win32-start startet echten Pump-Thread")
     bus, manager, privacy = _make_components()
     watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
     await watcher.start()
-    await watcher.start()  # kein Crash
+    await watcher.start()  # no crash
     await watcher.stop()
 
 
@@ -180,13 +180,13 @@ async def test_stop_idempotent_no_start() -> None:
     """stop() ohne start() ist no-op."""
     bus, manager, privacy = _make_components()
     watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
-    await watcher.stop()  # kein Crash, kein Hang
+    await watcher.stop()  # no crash, no hang
     await watcher.stop()
 
 
 @pytest.mark.asyncio
 async def test_resolve_meta_failure_skips_frame_no_crash() -> None:
-    """Wenn _resolve_window_meta raised: Frame wird gedropt, kein Crash."""
+    """If _resolve_window_meta raises: the frame is dropped, no crash."""
     bus, manager, privacy = _make_components()
     received: list[FrameUpdated] = []
     bus.subscribe(FrameUpdated, _async_collect(received))

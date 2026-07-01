@@ -390,7 +390,7 @@ async def test_exhausted_vision_chain_exits_with_no_provider_code() -> None:
             return self.brain
 
     ctx = make_ctx(_DeadChainManager())
-    chunks = await run_loop(ctx, "öffne mein spotify und spiel das lied")
+    chunks = await run_loop(ctx, "öffne mein spotify und spiel das lied")  # i18n-allow: simulated German user utterance, content under test
 
     final = chunks[-1]
     assert final.is_final
@@ -701,7 +701,7 @@ class JudgingBrain(FakeBrain):
 
 
 async def test_premature_done_is_rejected_and_mission_continues() -> None:
-    """The live 'Öffne Chrome' failure: the model declares done without
+    """The live 'open chrome' failure: the model declares done without
     having opened anything. The judge must reject it, the loop must keep
     working, and only a verified done may end the mission."""
     brain = JudgingBrain(
@@ -963,7 +963,7 @@ async def test_compound_goal_activates_planner() -> None:
         judge_script=['{"done": true, "proof": "settings page visible"}'],
     )
     ctx = make_ctx(brain, verify=True)
-    chunks = await run_loop(ctx, "oeffne chrome und navigiere zu den einstellungen")
+    chunks = await run_loop(ctx, "oeffne chrome und navigiere zu den einstellungen")  # i18n-allow: simulated German user utterance, content under test
 
     assert chunks[-1].exit_code == 0
     assert len(brain.planner_calls) == 1
@@ -981,7 +981,7 @@ async def test_search_discipline_not_injected_for_non_music_goals() -> None:
         judge_script=['{"done": true, "proof": "ok"}'],
     )
     ctx = make_ctx(brain, verify=True)
-    await run_loop(ctx, "oeffne chrome und navigiere zu den einstellungen")
+    await run_loop(ctx, "oeffne chrome und navigiere zu den einstellungen")  # i18n-allow: simulated German user utterance, content under test
 
     assert brain.executor_calls, "executor was never consulted"
     for _system, user in brain.executor_calls:
@@ -1056,7 +1056,7 @@ async def test_plan_step_advances_on_state_change_not_on_wait() -> None:
         judge_script=['{"done": true, "proof": "ok"}'],
     )
     ctx = make_ctx(brain, verify=True)
-    chunks = await run_loop(ctx, "oeffne chrome und navigiere zu den einstellungen")
+    chunks = await run_loop(ctx, "oeffne chrome und navigiere zu den einstellungen")  # i18n-allow: simulated German user utterance, content under test
 
     assert chunks[-1].exit_code == 0
     assert len(brain.executor_calls) == 2
@@ -1352,7 +1352,7 @@ async def test_persistent_observe_timeout_fails_after_cap_not_at_step_1(
 # Repeated-type guard (live forensic 2026-06-22, Microsoft-Store/Minecraft
 # turn): the model typed the SAME query "Minecraft" into the Store search box
 # TWICE in a row (steps 6.3 + 7.3) because it could not tell the first type had
-# landed -- "das ist ja dumm". A back-to-back identical type into a field that
+# landed -- "well that's just dumb". A back-to-back identical type into a field that
 # already holds the text is a redundant no-op. Suppress the repeat (like the
 # click toggle-stop) and push the model to the NEXT step instead of mashing the
 # same query. Provider/OS-agnostic: pure loop control.
@@ -1465,9 +1465,9 @@ def test_drag_is_in_the_action_vocabulary() -> None:
 # ---------------------------------------------------------------------------
 # General "no progress -> re-target" nudge (user mandate 2026-06-22: the loop
 # must GENERALLY recognise a missed target instead of mashing the same action --
-# "das war nur ein Beispiel ... ich möchte nicht dass es nur auf dieses eine
-# Beispiel bezogen ist ... unsere Mechanik ist Screenshot/Tastatur/Maus, das
-# bleibt"). The instant an action leaves the screen UNCHANGED, the loop tells
+# "that was just an example ... I don't want this to apply only to this one
+# example ... our mechanism is screenshot/keyboard/mouse, that stays the
+# same"). The instant an action leaves the screen UNCHANGED, the loop tells
 # the model -- for ANY action type, ANY app -- that it had no effect and to
 # re-target, BEFORE the 3-strike stuck abort.
 # ---------------------------------------------------------------------------
@@ -1869,7 +1869,7 @@ async def test_ensure_on_primary_reruns_after_mid_mission_open_app(
 
 # ---------------------------------------------------------------------------
 # Problem 2 — a guard-BLOCKED repeated click must TELL the model (or it spins to
-# the no-progress abort: "macht nicht weiter", live 2026-06-28).
+# the no-progress abort: "won't keep going", live 2026-06-28).
 # ---------------------------------------------------------------------------
 
 

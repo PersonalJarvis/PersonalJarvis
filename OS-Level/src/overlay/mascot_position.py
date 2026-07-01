@@ -1,19 +1,19 @@
-"""Mascot Position-Persistence + Monitor-Recovery. Plan §13.4 + §20.4.
+"""Mascot position persistence + monitor recovery. Plan §13.4 + §20.4.
 
-Persistiert ``[overlay.mascot] position_monitor / x_relative / y_relative``
-nach ``jarvis.toml`` via Atomic-Write (AD-11). Beim Boot:
-  - Wenn ``position_monitor`` in EnumDisplayMonitors gefunden:
-    Mascot dort an (rcWork.left + x_rel, rcWork.top + y_rel).
-  - Wenn nicht (Laptop undocked, port-swap, monitor unplugged):
-    deterministischer Fallback auf primary monitor + default (200, 80).
+Persists ``[overlay.mascot] position_monitor / x_relative / y_relative``
+to ``jarvis.toml`` via atomic write (AD-11). On boot:
+  - If ``position_monitor`` is found in EnumDisplayMonitors:
+    place the mascot there at (rcWork.left + x_rel, rcWork.top + y_rel).
+  - If not (laptop undocked, port swap, monitor unplugged):
+    deterministic fallback to the primary monitor + default (200, 80).
 
-Wir umgehen ctypes hier — Qt's QGuiApplication.screens() liefert
-``screen.name()`` was unter Win32 dem Device-Name (``\\.\DISPLAY1``)
-entspricht. Das hat den Vorteil dass Tests headless laufen koennen
-ohne Win32-Mock.
+We avoid ctypes here — Qt's QGuiApplication.screens() returns
+``screen.name()``, which matches the device name (``\\.\DISPLAY1``)
+under Win32. This has the advantage that tests can run headless
+without a Win32 mock.
 
-Atomic-Write nutzt tomllib + manuelles Schreiben (kein tomli_w noetig
-weil wir nur eine bekannte Section editieren).
+Atomic write uses tomllib + manual writing (no tomli_w needed
+since we only edit one known section).
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class MascotPosition:
-    """Persistierte Position. ``monitor`` = Win32 device name (``\\\\.\\DISPLAY1``)."""
+    """Persisted position. ``monitor`` = Win32 device name (``\\\\.\\DISPLAY1``)."""
 
     monitor: str
     x_relative: int
@@ -40,32 +40,32 @@ class MascotPosition:
 
 @dataclass(frozen=True)
 class ResolvedPlacement:
-    """Ergebnis von ``resolve_placement()`` — wo das Window tatsaechlich hin soll."""
+    """Result of ``resolve_placement()`` — where the window should actually go."""
 
     abs_x: int
     abs_y: int
     monitor: str
-    recovered: bool  # True wenn primary-fallback gegriffen hat
+    recovered: bool  # True if the primary fallback kicked in
 
 
-# Plan §13.4: defaults wenn die persistierte Position nicht restorbar ist.
+# Plan §13.4: defaults when the persisted position cannot be restored.
 DEFAULT_X_RELATIVE: int = 200
 DEFAULT_Y_RELATIVE: int = 80
-DEFAULT_MARGIN_PX: int = 16  # rcWork-Clamp + Snap-Toleranz
+DEFAULT_MARGIN_PX: int = 16  # rcWork clamp + snap tolerance
 
 
 @dataclass(frozen=True)
 class _ScreenSnapshot:
-    """Plattform-frei. Aus ``QGuiApplication.screens()`` befuellt."""
+    """Platform-agnostic. Populated from ``QGuiApplication.screens()``."""
 
-    name: str  # Win32 device name unter Windows; auf Linux/macOS sym. id
+    name: str  # Win32 device name on Windows; symbolic id on Linux/macOS
     geometry: tuple[int, int, int, int]  # (x, y, w, h) work-area in logical px
     is_primary: bool
 
 
 def screens_from_qt() -> list[_ScreenSnapshot]:
-    """Qt-screens snapshot fuer resolve_placement(). Lazy-import damit
-    der Loader auch headless ohne PySide6 importierbar bleibt."""
+    """Qt screens snapshot for resolve_placement(). Lazy import so
+    the loader stays importable headless without PySide6."""
     from PySide6.QtGui import QGuiApplication
 
     app = QGuiApplication.instance()
@@ -74,8 +74,8 @@ def screens_from_qt() -> list[_ScreenSnapshot]:
     primary = QGuiApplication.primaryScreen()
     out: list[_ScreenSnapshot] = []
     for screen in QGuiApplication.screens():
-        # availableGeometry = work-area (ohne Taskbar). Plan §13.4 nutzt
-        # rcWork — Qt's availableGeometry mappt 1:1.
+        # availableGeometry = work area (without taskbar). Plan §13.4 uses
+        # rcWork — Qt's availableGeometry maps 1:1.
         geo = screen.availableGeometry()
         out.append(
             _ScreenSnapshot(
@@ -93,19 +93,19 @@ def resolve_placement(
     *,
     mascot_size_px: int = 160,
 ) -> ResolvedPlacement:
-    """Plan §13.4 — die kanonische 5-Schritt-Recovery.
+    """Plan §13.4 — the canonical 5-step recovery.
 
-    1. Wenn ``persisted.monitor`` in screens enthalten:
-       Restore an (rcWork.left + x_rel, rcWork.top + y_rel) mit Clamp
-       in rcWork minus 16-px-Margin minus mascot_size.
-    2. Wenn nicht:
-       Pick primary monitor, default (200, 80) Position.
-       ``recovered=True`` damit Caller das loggen kann.
-    3. Wenn keine Screens (Headless / Tests): default (0, 0)
-       relative + leerer Monitor-Name; Caller muss damit umgehen.
+    1. If ``persisted.monitor`` is present in screens:
+       restore at (rcWork.left + x_rel, rcWork.top + y_rel) clamped
+       into rcWork minus a 16 px margin minus mascot_size.
+    2. If not:
+       pick the primary monitor, default (200, 80) position.
+       ``recovered=True`` so the caller can log it.
+    3. If there are no screens (headless / tests): default (0, 0)
+       relative + empty monitor name; the caller must handle that.
     """
     if not screens:
-        # Tests / headless ohne Qt-App.
+        # Tests / headless without a Qt app.
         return ResolvedPlacement(
             abs_x=DEFAULT_X_RELATIVE,
             abs_y=DEFAULT_Y_RELATIVE,
@@ -118,9 +118,9 @@ def resolve_placement(
     if persisted is not None and persisted.monitor in by_name:
         screen = by_name[persisted.monitor]
         sx, sy, sw, sh = screen.geometry
-        # Clamp der relativen Coords in rcWork minus Margin minus
-        # mascot_size — verhindert dass Mascot beim Restore von einem
-        # Resolution-Change off-screen landet.
+        # Clamp the relative coords into rcWork minus margin minus
+        # mascot_size — prevents the mascot from landing off-screen
+        # on restore after a resolution change.
         max_rel_x = max(0, sw - mascot_size_px - DEFAULT_MARGIN_PX)
         max_rel_y = max(0, sh - mascot_size_px - DEFAULT_MARGIN_PX)
         rel_x = max(DEFAULT_MARGIN_PX, min(persisted.x_relative, max_rel_x))
@@ -132,7 +132,7 @@ def resolve_placement(
             recovered=False,
         )
 
-    # Persisted-Monitor nicht da — primary fallback.
+    # Persisted monitor not present — primary fallback.
     primary = next((s for s in screens if s.is_primary), screens[0])
     sx, sy, _sw, _sh = primary.geometry
     return ResolvedPlacement(
@@ -151,15 +151,15 @@ def snap_to_edges(
     mascot_size_px: int = 160,
     snap_tolerance_px: int = 16,
 ) -> tuple[int, int]:
-    """Plan §13.3 — Edge-Snap innerhalb 16 px Toleranz.
+    """Plan §13.3 — edge snap within a 16 px tolerance.
 
-    Berechnet die nearest snap fuer top/bottom/left/right Kanten und
-    snapt wenn innerhalb Toleranz. Returnt (snapped_x, snapped_y).
+    Computes the nearest snap for the top/bottom/left/right edges and
+    snaps if within tolerance. Returns (snapped_x, snapped_y).
     """
     sx, sy, sw, sh = monitor_geometry
     snapped_x, snapped_y = abs_x, abs_y
 
-    # Distanz zur linken / rechten Kante.
+    # Distance to the left / right edge.
     dist_left = abs_x - sx
     dist_right = (sx + sw) - (abs_x + mascot_size_px)
     if 0 <= dist_left <= snap_tolerance_px:
@@ -167,7 +167,7 @@ def snap_to_edges(
     elif 0 <= dist_right <= snap_tolerance_px:
         snapped_x = sx + sw - mascot_size_px
 
-    # Distanz zur top / bottom Kante.
+    # Distance to the top / bottom edge.
     dist_top = abs_y - sy
     dist_bottom = (sy + sh) - (abs_y + mascot_size_px)
     if 0 <= dist_top <= snap_tolerance_px:
@@ -186,9 +186,9 @@ def clamp_to_work_area(
     mascot_size_px: int = 160,
     margin_px: int = DEFAULT_MARGIN_PX,
 ) -> tuple[int, int]:
-    """Verhindert Off-Screen-Drag. Plan §13.3 + §20.4.
+    """Prevents off-screen drag. Plan §13.3 + §20.4.
 
-    Mascot bleibt komplett innerhalb rcWork minus Margin.
+    Mascot stays fully inside rcWork minus the margin.
     """
     sx, sy, sw, sh = monitor_geometry
     min_x = sx + margin_px
@@ -204,8 +204,8 @@ def clamp_to_work_area(
 
 
 def load_position_from_toml(path: Path) -> Optional[MascotPosition]:
-    """Liest ``[overlay.mascot]``-Felder aus ``jarvis.toml``. None
-    wenn File fehlt oder Section/Felder nicht da."""
+    """Reads the ``[overlay.mascot]`` fields from ``jarvis.toml``. None
+    if the file is missing or the section/fields aren't there."""
     if not path.is_file():
         return None
     try:
@@ -225,20 +225,20 @@ def load_position_from_toml(path: Path) -> Optional[MascotPosition]:
 
 
 def save_position_to_toml(path: Path, position: MascotPosition) -> None:
-    """Atomic-Write der drei Position-Felder. Plan §21.3 light:
-       1. read existing TOML als Text
-       2. ersetze die drei Felder via line-based regex
+    """Atomic write of the three position fields. Plan §21.3 light:
+       1. read existing TOML as text
+       2. replace the three fields via line-based regex
        3. tempfile + os.replace()
 
-    Wir schreiben TOML manuell (text-based) statt mit tomli_w weil das
-    Format dann den User-Whitespace und Comments beibehalt — wichtig
-    weil ``jarvis.toml`` user-editable ist und wir keine
-    Comments fressen wollen.
+    We write TOML manually (text-based) instead of using tomli_w
+    because that preserves the user's whitespace and comments —
+    important because ``jarvis.toml`` is user-editable and we don't
+    want to eat comments.
     """
     import re
 
     if not path.is_file():
-        # Fresh File — minimal initial section schreiben.
+        # Fresh file — write a minimal initial section.
         new_text = (
             "[overlay.mascot]\n"
             f'position_monitor = "{_escape_toml_str(position.monitor)}"\n'
@@ -250,7 +250,7 @@ def save_position_to_toml(path: Path, position: MascotPosition) -> None:
 
     text = path.read_text(encoding="utf-8")
 
-    # Section [overlay.mascot] muss existieren oder wir appenden.
+    # Section [overlay.mascot] must exist, otherwise we append.
     section_re = re.compile(r"^\[overlay\.mascot\]\s*$", re.MULTILINE)
     if not section_re.search(text):
         if not text.endswith("\n"):
@@ -264,7 +264,7 @@ def save_position_to_toml(path: Path, position: MascotPosition) -> None:
         _atomic_write_text(path, text)
         return
 
-    # Section da. Ersetze die drei Felder, oder appendiere wenn fehlen.
+    # Section present. Replace the three fields, or append if missing.
     text = _replace_or_append_field(
         text,
         section_header="[overlay.mascot]",
@@ -288,7 +288,7 @@ def save_position_to_toml(path: Path, position: MascotPosition) -> None:
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
-    """tempfile + os.replace() (atomic auf Win32)."""
+    """tempfile + os.replace() (atomic on Win32)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
         prefix=path.name + ".", suffix=".tmp", dir=str(path.parent)
@@ -306,18 +306,18 @@ def _atomic_write_text(path: Path, text: str) -> None:
 
 
 def _escape_toml_str(s: str) -> str:
-    """Minimal TOML-string-escape: backslashes + double-quotes."""
+    """Minimal TOML string escape: backslashes + double-quotes."""
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def _replace_or_append_field(
     text: str, *, section_header: str, field: str, value: str
 ) -> str:
-    """Ersetzt ``field = ...`` innerhalb ``[section]``. Wenn das Feld
-    nicht existiert, wird es direkt unter dem Section-Header eingefuegt.
+    """Replaces ``field = ...`` within ``[section]``. If the field
+    doesn't exist, it is inserted directly under the section header.
 
-    Region-grenze: bis zum naechsten ``\\n[`` (= naechster Section)
-    oder Ende-of-File.
+    Region boundary: up to the next ``\\n[`` (= next section)
+    or end of file.
     """
     import re
 
@@ -328,7 +328,7 @@ def _replace_or_append_field(
     )
     region_m = region_re.search(text)
     if region_m is None:
-        return text  # caller stellte sicher dass section da ist
+        return text  # caller made sure the section is present
 
     region_text = region_m.group(2)
 
@@ -343,7 +343,7 @@ def _replace_or_append_field(
             count=1,
         )
     else:
-        # Feld am Section-Anfang einfuegen.
+        # Insert the field at the start of the section.
         new_region = f"{field} = {value}\n" + region_text
 
     return text[: region_m.start(2)] + new_region + text[region_m.end(2) :]

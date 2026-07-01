@@ -1,19 +1,19 @@
-"""Skill-Finder: Mini-Agent zur Suche und Installation von Skills.
+"""Skill finder: mini-agent for searching and installing skills.
 
-Der Finder ist ein schlanker Wrapper um:
-1. Den kuratierten Seed-Katalog (``catalog/seed_catalog.json``).
-2. Den ``BrainManager`` zur semantischen Bewertung der Kandidaten.
-3. Den ``httpx``-Client zum Download einer ausgewaehlten SKILL.md.
+The finder is a thin wrapper around:
+1. The curated seed catalog (``catalog/seed_catalog.json``).
+2. The ``BrainManager`` for semantically scoring the candidates.
+3. The ``httpx`` client for downloading a selected SKILL.md.
 
-Design-Prinzipien:
-- **Graceful degradation**: Ohne Brain funktioniert die Suche heuristisch
-  (String-Matching). Ohne Internet schlaegt ``install`` fehl, aber die Suche
-  laeuft weiter (statischer Katalog).
-- **Trust-Filter vor Brain**: Der Trust-Filter greift *vor* dem Brain-Ranking,
-  damit das Brain nicht Tokens fuer Kandidaten verschwendet, die der User
-  sowieso ablehnen wuerde.
-- **Stateless**: Der Finder haelt keinen State — Query-Historie liegt im
-  Frontend bzw. spaeter im Flight-Recorder.
+Design principles:
+- **Graceful degradation**: without a brain, search falls back to a
+  heuristic (string matching). Without internet, ``install`` fails, but
+  search keeps working (static catalog).
+- **Trust filter before the brain**: the trust filter runs *before*
+  brain ranking, so the brain doesn't waste tokens on candidates the user
+  would reject anyway.
+- **Stateless**: the finder holds no state — query history lives in the
+  frontend, and later in the flight recorder.
 """
 from __future__ import annotations
 
@@ -37,12 +37,12 @@ log = logging.getLogger(__name__)
 # ----------------------------------------------------------------------
 
 TrustLevel = Literal["official", "verified", "community", "experimental"]
-"""Vertrauensstufen fuer Skill-Quellen.
+"""Trust levels for skill sources.
 
-- ``official``: Anthropic, OpenAI, andere first-party Vendors.
-- ``verified``: Maintainer mit Track-Record und 3000+ GitHub-Stars.
-- ``community``: Aktiv gewartet, weniger Stars, pruefbar.
-- ``experimental``: Prototyp, Solo-Dev, Risiko vom User bewusst akzeptiert.
+- ``official``: Anthropic, OpenAI, other first-party vendors.
+- ``verified``: maintainer with a track record and 3000+ GitHub stars.
+- ``community``: actively maintained, fewer stars, checkable.
+- ``experimental``: prototype, solo dev, risk knowingly accepted by the user.
 """
 
 
@@ -56,9 +56,9 @@ TRUST_ORDER: dict[TrustLevel, int] = {
 
 @dataclass(frozen=True)
 class SkillCandidate:
-    """Ein Match-Kandidat aus dem Katalog.
+    """A match candidate from the catalog.
 
-    Frozen fuer JSON-Serialisierung in Responses + Replay-Kompatibilitaet.
+    Frozen for JSON serialization in responses + replay compatibility.
     """
     name: str
     title: str
@@ -113,7 +113,7 @@ class SkillCandidate:
 
 @dataclass(frozen=True)
 class SearchFilters:
-    """Filter fuer die Suche — mapping der Dropdown-Auswahl im Frontend."""
+    """Filters for the search — maps to the dropdown selection in the frontend."""
     query: str = ""
     trust: TrustLevel | Literal["any"] = "any"
     min_stars: int | None = None
@@ -131,33 +131,33 @@ _RISK_ORDER = {"safe": 0, "monitor": 1, "ask": 2, "block": 3}
 
 
 def _passes_filter(entry: dict[str, Any], f: SearchFilters) -> bool:
-    """Harte Filter vor dem Ranking — excluded Trust/Stars/Category/Risk."""
+    """Hard filter before ranking — excludes on trust/stars/category/risk."""
     # Trust
     if f.trust != "any":
         e_trust = entry.get("trust", "community")
         if TRUST_ORDER.get(e_trust, 99) > TRUST_ORDER.get(f.trust, 99):
             return False
 
-    # Min-Stars (wenn angegeben)
+    # Min stars (if given)
     if f.min_stars is not None:
         e_stars = entry.get("stars")
         if e_stars is None or e_stars < f.min_stars:
-            # Official-Skills haben ``stars = null`` — die lassen wir passieren
-            # unabhaengig vom Star-Threshold (offizielle > Stars-Metrik).
+            # Official skills have ``stars = null`` — we let those pass
+            # regardless of the star threshold (official > star metric).
             if entry.get("trust") != "official":
                 return False
 
-    # Kategorie
+    # Category
     if f.category:
         cats = entry.get("categories", [])
         if f.category not in cats:
             return False
 
-    # Sprache
+    # Language
     if f.language:
         langs = entry.get("languages", [])
         if f.language not in langs and "en" not in langs:
-            # EN faellt zurueck, wenn der Skill bilingual ist
+            # falls back to EN if the skill is bilingual
             return False
 
     # Risk
@@ -177,10 +177,10 @@ def _tokenize(text: str) -> set[str]:
 
 
 def _score_heuristic(query_tokens: set[str], entry: dict[str, Any]) -> float:
-    """Heuristisches Ranking ohne Brain.
+    """Heuristic ranking without a brain.
 
-    Zaehlt Token-Overlaps zwischen Query und (title + description + tags).
-    Gewichtet Tags hoeher, weil sie kuratiert sind.
+    Counts token overlaps between the query and (title + description + tags).
+    Weighs tags higher because they're curated.
     """
     if not query_tokens:
         return 0.0
@@ -196,15 +196,15 @@ def _score_heuristic(query_tokens: set[str], entry: dict[str, Any]) -> float:
     blob_overlap = len(query_tokens & blob_tokens)
     tag_overlap = len(query_tokens & tag_tokens)
 
-    # Tags bekommen Faktor 2, damit "docker" in Tags > "docker" irgendwo im Body
+    # Tags get a factor of 2, so "docker" in tags outranks "docker" somewhere in the body
     raw = blob_overlap + tag_overlap * 2
-    # Normalisieren auf [0, 1] mit sanftem Decay
+    # Normalize to [0, 1] with a soft decay
     return min(1.0, raw / (len(query_tokens) + 1))
 
 
 def _heuristic_reason(query_tokens: set[str], entry: dict[str, Any]) -> str:
-    """Menschlich lesbarer Grund fuer einen Treffer — damit der User versteht,
-    warum ein Skill hochgerankt wurde."""
+    """Human-readable reason for a match — so the user understands why a
+    skill was ranked highly."""
     matches = query_tokens & _tokenize(
         " ".join([
             str(entry.get("title", "")),
@@ -214,19 +214,19 @@ def _heuristic_reason(query_tokens: set[str], entry: dict[str, Any]) -> str:
     )
     if not matches:
         trust = entry.get("trust", "community")
-        return f"Trust-Match ({trust})"
+        return f"Trust match ({trust})"
     return "Match: " + ", ".join(sorted(matches)[:4])
 
 
 # ----------------------------------------------------------------------
-# Brain-gestuetztes Ranking
+# Brain-backed ranking
 # ----------------------------------------------------------------------
 
-_RANK_SYSTEM_PROMPT = """Du bist ein Skill-Ranker fuer Personal Jarvis. Der User
-sucht einen Skill, der sein Problem loest. Du bekommst eine User-Anfrage und eine
-Liste von Kandidaten als JSON. Gib NUR ein JSON-Array zurueck, sortiert von bestem
-zu schlechtestem Match. Jeder Eintrag: {"name": "...", "score": 0.0-1.0, "reason": "kurzer
-Satz warum es passt"}. Nichts anderes, kein Markdown, kein Prefix."""
+_RANK_SYSTEM_PROMPT = """You are a skill ranker for Personal Jarvis. The user
+is looking for a skill that solves their problem. You get a user query and a
+list of candidates as JSON. Return ONLY a JSON array, sorted from best
+to worst match. Each entry: {"name": "...", "score": 0.0-1.0, "reason": "short
+sentence on why it fits"}. Nothing else, no Markdown, no prefix."""
 
 
 async def _brain_rank(
@@ -234,17 +234,17 @@ async def _brain_rank(
     query: str,
     candidates: list[dict[str, Any]],
 ) -> dict[str, tuple[float, str]] | None:
-    """Nutzt ein Brain (BrainManager-Instanz) zum Ranking.
+    """Uses a brain (BrainManager instance) for ranking.
 
-    Returnt ``None`` wenn:
-    - kein Brain uebergeben
-    - die Response nicht als JSON parsebar war (dann faellt man auf Heuristik zurueck)
-    - das Brain einen Error raised
+    Returns ``None`` when:
+    - no brain was passed
+    - the response wasn't parsable as JSON (falls back to the heuristic)
+    - the brain raised an error
     """
     if brain is None:
         return None
 
-    # Minimaler Prompt: nur Name + Title + Description + Tags, um Tokens zu sparen
+    # Minimal prompt: only name + title + description + tags, to save tokens
     compact = [
         {
             "name": c["name"],
@@ -252,36 +252,36 @@ async def _brain_rank(
             "description": c.get("description"),
             "tags": c.get("tags", []),
         }
-        for c in candidates[:30]  # Hard-Cap — 30 Kandidaten reichen
+        for c in candidates[:30]  # hard cap — 30 candidates is plenty
     ]
     user_msg = (
-        f"User-Anfrage: {query!r}\n\n"
-        f"Kandidaten:\n{json.dumps(compact, ensure_ascii=False)}\n\n"
+        f"User query: {query!r}\n\n"
+        f"Candidates:\n{json.dumps(compact, ensure_ascii=False)}\n\n"
         f"{_RANK_SYSTEM_PROMPT}"
     )
 
     try:
-        # BrainManager.generate ist der uniforme Aufruf. Kein use_history — das
-        # ist ein One-Shot-Ranker, nicht Teil der Chat-Historie.
+        # BrainManager.generate is the uniform call. No use_history — this
+        # is a one-shot ranker, not part of the chat history.
         if hasattr(brain, "generate"):
             text = await brain.generate(user_msg, use_history=False)
         else:
-            # Fallback: falls jemand eine rohe Brain-Protocol-Impl uebergibt,
-            # koennten wir hier via dispatcher gehen. MVP: Nur BrainManager.
+            # Fallback: if someone passes a raw Brain-protocol impl, we could
+            # go through the dispatcher here. MVP: BrainManager only.
             return None
     except Exception as exc:  # noqa: BLE001
-        log.warning("Brain-Ranking fehlgeschlagen: %s", exc)
+        log.warning("Brain ranking failed: %s", exc)
         return None
 
-    # JSON rausfischen — Brain liefert evtl. mit Whitespace oder Prefix
+    # Fish out the JSON — the brain may return it with whitespace or a prefix
     json_match = re.search(r"\[\s*\{.*?\}\s*\]", text, re.DOTALL)
     if not json_match:
-        log.debug("Brain-Response enthaelt kein JSON-Array: %s", text[:200])
+        log.debug("Brain response contains no JSON array: %s", text[:200])
         return None
     try:
         parsed = json.loads(json_match.group(0))
     except json.JSONDecodeError as exc:
-        log.debug("Brain-Ranking-JSON nicht parsebar: %s", exc)
+        log.debug("Brain-ranking JSON not parsable: %s", exc)
         return None
 
     out: dict[str, tuple[float, str]] = {}
@@ -305,20 +305,20 @@ async def _brain_rank(
 # ----------------------------------------------------------------------
 
 class SkillFinder:
-    """Mini-Agent fuer Skill-Suche und Installation."""
+    """Mini-agent for skill search and installation."""
 
     def __init__(self, brain: Any | None = None) -> None:
         self._brain = brain
 
     async def search(self, filters: SearchFilters) -> list[SkillCandidate]:
-        """Filter + Rank — gibt bis zu ``filters.limit`` Kandidaten zurueck."""
+        """Filter + rank — returns up to ``filters.limit`` candidates."""
         catalog = load_catalog()
         filtered = [e for e in catalog if _passes_filter(e, filters)]
 
         if not filtered:
             return []
 
-        # Brain-Ranking
+        # Brain ranking
         brain_scores = await _brain_rank(self._brain, filters.query, filtered)
 
         query_tokens = _tokenize(filters.query)
@@ -327,8 +327,8 @@ class SkillFinder:
             cand = SkillCandidate.from_catalog_entry(entry)
             if brain_scores and cand.name in brain_scores:
                 score, reason = brain_scores[cand.name]
-                # Brain-Score mit 0.7 Gewicht, Heuristik-Score mit 0.3 — so
-                # bleibt ein heuristischer Nulltreffer nicht komplett blind
+                # Brain score weighted 0.7, heuristic score weighted 0.3 — so
+                # a heuristic zero-hit isn't left completely blind
                 heur = _score_heuristic(query_tokens, entry)
                 final_score = 0.7 * score + 0.3 * heur
                 final_reason = reason or _heuristic_reason(query_tokens, entry)
@@ -336,7 +336,7 @@ class SkillFinder:
                 final_score = _score_heuristic(query_tokens, entry)
                 final_reason = _heuristic_reason(query_tokens, entry)
 
-            # Trust-Bonus: bei gleichem Score gewinnt das vertrauenswuerdigere
+            # Trust bonus: on equal score, the more trustworthy one wins
             trust_bonus = (3 - TRUST_ORDER.get(cand.trust, 3)) * 0.01
             final_score += trust_bonus
 
@@ -350,24 +350,24 @@ class SkillFinder:
         return candidates[: filters.limit]
 
     async def install(self, candidate: SkillCandidate) -> Path:
-        """Installiert einen Kandidaten in ``user_skills_dir()``.
+        """Installs a candidate into ``user_skills_dir()``.
 
-        Strategie:
-        - Hat ``raw_url``, wird die SKILL.md direkt geholt.
-        - Ohne ``raw_url`` schlaegt die Installation fehl mit klarer Message —
-          der User muss dann manuell installieren (Link im Frontend).
+        Strategy:
+        - If ``raw_url`` is set, the SKILL.md is fetched directly.
+        - Without ``raw_url``, the install fails with a clear message —
+          the user then has to install manually (link in the frontend).
 
-        Gibt den Ziel-Pfad zurueck (``<user_skills>/<name>/SKILL.md``).
-        Raised ``ValueError`` bei ungueltigem SKILL.md (Frontmatter-Validation).
-        Raised ``RuntimeError`` bei Netzwerk-Fehler oder fehlender raw_url.
+        Returns the target path (``<user_skills>/<name>/SKILL.md``).
+        Raises ``ValueError`` on an invalid SKILL.md (frontmatter validation).
+        Raises ``RuntimeError`` on a network error or a missing raw_url.
         """
         if not candidate.raw_url:
             raise RuntimeError(
-                f"Kein Direkt-Download fuer '{candidate.name}' verfuegbar. "
-                f"Oeffne {candidate.source_url} und installiere manuell."
+                f"No direct download available for '{candidate.name}'. "
+                f"Open {candidate.source_url} and install manually."
             )
 
-        # httpx ist in den Runtime-Deps (mcp_routes etc.)
+        # httpx is in the runtime deps (mcp_routes etc.)
         import httpx
 
         async with httpx.AsyncClient(
@@ -379,27 +379,27 @@ class SkillFinder:
                 resp.raise_for_status()
             except httpx.HTTPError as exc:
                 raise RuntimeError(
-                    f"Download von {candidate.raw_url} fehlgeschlagen: {exc}"
+                    f"Download from {candidate.raw_url} failed: {exc}"
                 ) from exc
             content = resp.text
 
-        # Ziel-Struktur: <user_skills>/<name>/SKILL.md
+        # Target structure: <user_skills>/<name>/SKILL.md
         target_dir = user_skills_dir() / candidate.name
         target_dir.mkdir(parents=True, exist_ok=True)
         target_file = target_dir / "SKILL.md"
 
-        # Atomar schreiben
+        # Write atomically
         tmp = target_file.with_suffix(".md.tmp")
         tmp.write_text(content, encoding="utf-8")
         tmp.replace(target_file)
 
-        # Parse-Check: wenn das SKILL.md kaputt ist, markieren wir es als DRAFT,
-        # aber loeschen es nicht automatisch — der User sieht im UI den Fehler
-        # und kann entscheiden.
+        # Parse check: if the SKILL.md is broken, we mark it as DRAFT, but
+        # don't delete it automatically — the user sees the error in the UI
+        # and can decide.
         parsed = parse_skill(target_file)
         if parsed.error:
             log.warning(
-                "Installierter Skill '%s' hat Validation-Fehler: %s",
+                "Installed skill '%s' has a validation error: %s",
                 candidate.name, parsed.error,
             )
 

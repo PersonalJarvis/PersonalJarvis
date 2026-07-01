@@ -1,10 +1,10 @@
-"""Tests für SelfModAudit (Phase 7.1).
+"""Tests for SelfModAudit (Phase 7.1).
 
-Plan-Akzeptanzkriterien §7.1:
-- Audit-Log-Round-Trip mit Concurrent-Writes
-- Format-Treue zum Plan-Beispiel (10 Felder, ISO-Z, UUID4)
-- Sensitive Pfade werden redacted (Plan-§AP-2)
-- I/O-Fehler crashen Caller nicht (Plan-§AP-5)
+Plan acceptance criteria §7.1:
+- Audit-log round-trip with concurrent writes
+- Format fidelity to the plan example (10 fields, ISO-Z, UUID4)
+- Sensitive paths get redacted (Plan-§AP-2)
+- I/O errors don't crash the caller (Plan-§AP-5)
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def sample_event() -> AuditEvent:
     )
 
 
-# --- Round-Trip ---
+# --- Round trip ---
 
 
 class TestRecord:
@@ -77,7 +77,7 @@ class TestRecord:
     def test_format_matches_plan_spec(
         self, audit: SelfModAudit, sample_event: AuditEvent
     ) -> None:
-        """Plan-§7.1: 10 Audit-Felder."""
+        """Plan-§7.1: 10 audit fields."""
         audit.record(sample_event)
         parsed = json.loads(audit.path.read_text(encoding="utf-8").strip())
         for key in (
@@ -92,14 +92,14 @@ class TestRecord:
             "rolled_back",
             "error",
         ):
-            assert key in parsed, f"Plan-Feld '{key}' fehlt im Audit-JSON"
+            assert key in parsed, f"Plan field '{key}' missing from audit JSON"
 
     def test_iso_z_timestamp(
         self, audit: SelfModAudit, sample_event: AuditEvent
     ) -> None:
         audit.record(sample_event)
         parsed = json.loads(audit.path.read_text(encoding="utf-8").strip())
-        assert parsed["ts"].endswith("Z"), f"ts ohne Z-Suffix: {parsed['ts']}"
+        assert parsed["ts"].endswith("Z"), f"ts without Z suffix: {parsed['ts']}"
         assert "+00:00" not in parsed["ts"]
 
     def test_uuid4_audit_id(
@@ -114,7 +114,7 @@ class TestRecord:
         assert SelfModAudit.DEFAULT_PATH == Path("data") / "self_mod.log"
 
 
-# --- Concurrent-Writes (Plan-AC §7.1) ---
+# --- Concurrent writes (Plan-AC §7.1) ---
 
 
 class TestConcurrent:
@@ -136,10 +136,10 @@ class TestConcurrent:
 
         lines = audit.path.read_text(encoding="utf-8").splitlines()
         assert len(lines) == n_threads * per_thread, (
-            f"Erwartete {n_threads * per_thread} Zeilen, fand {len(lines)} — "
-            "Race-Condition oder Lock-Defekt."
+            f"Expected {n_threads * per_thread} lines, found {len(lines)} — "
+            "race condition or lock defect."
         )
-        # Jede Zeile muss valides JSON sein (kein Mid-Line-Tearing).
+        # Every line must be valid JSON (no mid-line tearing).
         for line in lines:
             parsed = json.loads(line)
             assert parsed["path"] == "tts.provider"
@@ -165,7 +165,7 @@ class TestRedaction:
     def test_redacts_sensitive_paths(
         self, audit: SelfModAudit, sensitive_path: str
     ) -> None:
-        secret = "sk-1234567890abcdef"  # noqa: S105 — Test-Fixture, kein echter Token
+        secret = "sk-1234567890abcdef"  # noqa: S105 — test fixture, not a real token
         new_secret = "new-" + secret
         event = AuditEvent(
             source=AuditSource.UI,
@@ -178,11 +178,11 @@ class TestRedaction:
         audit.record(event)
         content = audit.path.read_text(encoding="utf-8")
         assert secret not in content, (
-            f"Klartext-Secret im Log gelandet (path={sensitive_path}): "
+            f"Plaintext secret ended up in the log (path={sensitive_path}): "
             f"{content!r}"
         )
         parsed = json.loads(content.strip())
-        # Länge bleibt erhalten zur Telemetrie ("16-stelliger Token")
+        # Length is preserved for telemetry ("16-character token")
         assert parsed["old_value"] == "*" * len(secret)
         assert parsed["new_value"] == "*" * len(new_secret)
 
@@ -229,15 +229,15 @@ class TestRobustness:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Plan-§AP-5: I/O-Fehler crasht Caller NICHT."""
+        """Plan-§AP-5: I/O error does NOT crash the caller."""
         audit = SelfModAudit(path=tmp_path / "audit.log")
 
         def failing_open(self: Path, *args: object, **kwargs: object) -> None:
-            raise PermissionError("simuliert: kein Schreibrecht")
+            raise PermissionError("simulated: no write permission")
 
         monkeypatch.setattr(Path, "open", failing_open)
 
-        # Darf nicht propagieren.
+        # Must not propagate.
         audit.record(sample_event)
 
     def test_silent_on_mkdir_failure(
@@ -246,12 +246,12 @@ class TestRobustness:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Auch ein Disk-Full-Fehler beim Verzeichnis-Anlegen darf nicht
-        propagieren."""
-        audit = SelfModAudit(path=tmp_path / "neuer-subdir" / "audit.log")
+        """A disk-full error while creating the directory must also not
+        propagate."""
+        audit = SelfModAudit(path=tmp_path / "new-subdir" / "audit.log")
 
         def failing_mkdir(self: Path, *args: object, **kwargs: object) -> None:
-            raise OSError("simuliert: Disk-Full")
+            raise OSError("simulated: disk full")
 
         monkeypatch.setattr(Path, "mkdir", failing_mkdir)
 
@@ -277,9 +277,9 @@ class TestRobustness:
             audit.record(sample_event)
 
         assert any(
-            "fehlgeschlagen" in rec.getMessage().lower()
+            "fehlgeschlagen" in rec.getMessage().lower()  # i18n-allow: matches actual German text logged by jarvis/core/self_mod/audit.py
             for rec in caplog.records
-        ), "Erwarteter Warning-Log fehlt"
+        ), "expected warning log missing"
 
 
 # --- tail() ---
@@ -319,7 +319,7 @@ class TestTail:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         audit.record(sample_event)
-        # Manuell eine korrupte Zeile anhängen.
+        # Manually append a corrupt line.
         with audit.path.open("a", encoding="utf-8") as fh:
             fh.write("not-json-at-all\n")
         audit.record(sample_event)
@@ -329,8 +329,8 @@ class TestTail:
         ):
             entries = audit.tail()
 
-        # Die zwei validen Einträge bleiben, die korrupte Zeile wird
-        # übersprungen — kein Crash.
+        # The two valid entries remain, the corrupt line is
+        # skipped — no crash.
         assert len(entries) == 2
         for entry in entries:
             assert entry["path"] == "tts.provider"

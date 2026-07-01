@@ -62,7 +62,7 @@ class MutableSpec(BaseModel):
     risk_tier: SelfModRiskTier = "ask"
     needs_restart: bool = False
     description: str = Field(min_length=1)
-    sensitive: bool = False  # Phase 7.4: Wert wird im TTS-Echo nie gesprochen
+    sensitive: bool = False  # Phase 7.4: value is never spoken in the TTS echo
 
 
 class MutationRequest(BaseModel):

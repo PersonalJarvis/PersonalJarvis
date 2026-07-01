@@ -83,8 +83,8 @@ class ReviewPipeline:
             raise ValueError("max_iterations must be >= 1")
         if hard_ceiling > HARD_CEILING_MAX_ITERATIONS:
             raise ValueError(
-                f"hard_ceiling > {HARD_CEILING_MAX_ITERATIONS} verstößt "
-                "Plan-§AD-4 — bitte Source ändern, nicht Config"
+                f"hard_ceiling > {HARD_CEILING_MAX_ITERATIONS} violates "
+                "Plan-§AD-4 — please change the source, not the config"
             )
         if max_iterations > hard_ceiling:
             raise ValueError(

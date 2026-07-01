@@ -1,14 +1,14 @@
-"""Unit-Tests fuer Phase A4 ``resolve_context`` (jarvis/awareness/context.py).
+"""Unit tests for phase A4 ``resolve_context`` (jarvis/awareness/context.py).
 
-Spec: JARVIS_AWARENESS_PLAN.md §8 Heuristik-Reihenfolge.
+Spec: JARVIS_AWARENESS_PLAN.md §8 heuristic order.
 
-Testet:
+Tests:
 - IDE_SET (code.exe / cursor.exe / windsurf.exe) → cwd via psutil.
-- Browser (chrome.exe / msedge.exe) → Hostname aus Window-Title.
+- Browser (chrome.exe / msedge.exe) → hostname from the window title.
 - Terminal (WindowsTerminal.exe / pwsh.exe) → cwd via psutil.
-- Fallback unbekannter Process → process_name.
-- task_label = erste 5 Worte des Title.
-- Lazy-Import von psutil + Fail-Silent bei psutil-Failures.
+- Fallback for an unknown process → process_name.
+- task_label = first 5 words of the title.
+- Lazy import of psutil + fail-silent on psutil failures.
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def _frame(
     )
 
 
-# ---- Heuristik-Tabellen ----------------------------------------------------
+# ---- Heuristic tables -------------------------------------------------------
 
 
 def test_ide_set_contains_known_editors() -> None:
@@ -72,7 +72,7 @@ def test_ide_resolves_cwd_via_psutil() -> None:
 
 
 def test_ide_falls_back_to_process_name_when_cwd_fails() -> None:
-    """psutil-Failure → fallback auf process_name."""
+    """psutil failure → fallback to process_name."""
     with patch("jarvis.awareness.context._safe_cwd", return_value=None):
         ctx = resolve_context(_frame(process="code.exe"))
     assert ctx.project_root == "code.exe"
@@ -98,7 +98,7 @@ def test_browser_resolves_domain_in_title() -> None:
 
 
 def test_browser_falls_back_when_no_url_in_title() -> None:
-    """Title ohne Domain → fallback auf process_name."""
+    """Title without a domain → fallback to process_name."""
     ctx = resolve_context(_frame(
         process="chrome.exe",
         title="Stack Overflow - Google Chrome",
@@ -128,7 +128,7 @@ def test_terminal_falls_back_when_cwd_fails() -> None:
 
 
 def test_unknown_process_falls_back_to_process_name() -> None:
-    """Unbekannter Process: process_name ist Fallback-Identity-Key."""
+    """Unknown process: process_name is the fallback identity key."""
     ctx = resolve_context(_frame(
         process="random_app.exe",
         title="Random App Window",
@@ -145,7 +145,7 @@ def test_empty_process_name_uses_unknown_sentinel() -> None:
 
 
 def test_task_label_truncated_to_five_words() -> None:
-    """Plan §8: erste 5 Worte des Window-Titles."""
+    """Plan §8: first 5 words of the window title."""
     ctx = resolve_context(_frame(
         process="random_app.exe",
         title="word1 word2 word3 word4 word5 word6 word7",
@@ -179,7 +179,7 @@ def test_hostname_from_title_extracts_domain() -> None:
 
 
 def test_hostname_from_title_strips_browser_suffix() -> None:
-    """Browser-Suffix darf nicht als Domain interpretiert werden."""
+    """A browser suffix must not be interpreted as a domain."""
     assert _hostname_from_title("Login - Mozilla Firefox") is None
 
 
@@ -192,7 +192,7 @@ def test_hostname_from_title_returns_none_for_no_domain() -> None:
 
 
 def test_safe_cwd_returns_none_on_invalid_pid() -> None:
-    """pid <= 0 → None ohne psutil-Aufruf."""
+    """pid <= 0 → None without a psutil call."""
     from jarvis.awareness.context import _safe_cwd
 
     assert _safe_cwd(0) is None
@@ -201,12 +201,12 @@ def test_safe_cwd_returns_none_on_invalid_pid() -> None:
 
 def test_safe_cwd_returns_none_on_psutil_exception() -> None:
     """psutil.Process raises (NoSuchProcess, AccessDenied, OSError, ...)
-    → fallback to None ohne Crash.
+    → fallback to None without a crash.
     """
     from jarvis.awareness.context import _safe_cwd
 
-    # Patch psutil-Modul Lazy-Import via sys.modules. Wenn psutil nicht
-    # installiert ist, schluckt der except auch ImportError.
+    # Patch the psutil module lazy import via sys.modules. If psutil is
+    # not installed, the except also swallows ImportError.
     with patch("jarvis.awareness.context._safe_cwd", wraps=_safe_cwd):
         # Direct call — _safe_cwd has its own try/except; we simulate
         # via patched psutil module raising an exception.
@@ -217,7 +217,7 @@ def test_safe_cwd_returns_none_on_psutil_exception() -> None:
                 mock_proc.side_effect = RuntimeError("nope")
                 assert _safe_cwd(99999) is None
         except ImportError:
-            # psutil nicht installiert → _safe_cwd liefert None via except ImportError
+            # psutil not installed → _safe_cwd returns None via except ImportError
             assert _safe_cwd(99999) is None
 
 
@@ -225,9 +225,9 @@ def test_safe_cwd_returns_none_on_psutil_exception() -> None:
 
 
 def test_a_then_b_then_a_yields_distinct_then_resumed_contexts() -> None:
-    """Plan §8 Acceptance: Wechsel A→B→A liefert A's Episode-Snippet,
-    nicht B's. Hier nur Resolver-Side: A und B kriegen distinkte
-    project_roots, A re-resolved gibt das gleiche A wieder.
+    """Plan §8 acceptance: switching A→B→A returns A's episode snippet,
+    not B's. Here only the resolver side: A and B get distinct
+    project_roots, A re-resolved gives back the same A.
     """
     with patch("jarvis.awareness.context._safe_cwd",
                side_effect=["C:\\a", "C:\\b", "C:\\a"]):
@@ -238,6 +238,6 @@ def test_a_then_b_then_a_yields_distinct_then_resumed_contexts() -> None:
     assert a_first.project_root == "C:\\a"
     assert b.project_root == "C:\\b"
     assert a_again.project_root == "C:\\a"
-    # task_label aus dem zweiten A ist anders → Resolver bleibt deterministisch
-    # gegen Title-Aenderung.
+    # task_label from the second A is different → the resolver stays deterministic
+    # against a title change.
     assert a_again.task_label == "a.py - again"

@@ -46,4 +46,23 @@ if [ "$rc" -eq 2 ]; then
     exit 1
 fi
 
+# --- LANGUAGE gate (FAIL-CLOSED on confirmed German) --------------------------
+# English-only artifacts (CLAUDE.md rule 1). Checks the STAGED changes so new
+# German is caught at COMMIT time — the real write path (incl. the auto-save
+# stop-hook), which never pushes and so never reached the pre-push language gate.
+# rc == 1 means a CONFIRMED newly-added German line; any other rc fails OPEN
+# (never wedge a commit on tooling noise — pre-push + CI are the backstops).
+lang="scripts/ci/check_no_new_german.py"
+if [ -f "$lang" ]; then
+    "$PY" "$lang" --staged </dev/null
+    if [ "$?" -eq 1 ]; then
+        echo ""
+        echo "pre-commit BLOCKED: LANGUAGE gate — newly added German in staged changes."
+        echo "  Artifacts must be English (CLAUDE.md rule 1). Translate the lines above,"
+        echo "  or mark an intentionally-German product-surface line with 'i18n-allow'."
+        echo "  Bypass once with:  git commit --no-verify"
+        exit 1
+    fi
+fi
+
 exit 0

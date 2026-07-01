@@ -1,12 +1,12 @@
 {
   "schema_version": "1",
   "updated": "2026-04-22",
-  "note": "Kuratierter Seed-Katalog fuer den SkillFinder. Erweiterbar per Hand oder via Scraper-Job. Trust-Levels: official (Anthropic/OpenAI), verified (3000+ GitHub-Stars oder mehrfach gepruefte Maintainer), community (aktiv gewartet, <3000 Stars), experimental (Prototyp, Solo-Dev).",
+  "note": "Curated seed catalog for the SkillFinder. Extensible by hand or via a scraper job. Trust levels: official (Anthropic/OpenAI), verified (3000+ GitHub stars or a repeatedly vetted maintainer), community (actively maintained, <3000 stars), experimental (prototype, solo dev).",
   "entries": [
     {
       "name": "brainstorming",
       "title": "Brainstorming / Ideenfindung",
-      "description": "Interaktive Exploration von User-Intent vor jeder kreativen Arbeit — stellt gezielte Rueckfragen, bevor Code oder Feature implementiert wird.",
+      "description": "Interactive exploration of user intent before any creative work — asks targeted follow-up questions before code or a feature gets implemented.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/brainstorming",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/brainstorming/SKILL.md",
@@ -20,7 +20,7 @@
     {
       "name": "skill-creator",
       "title": "Skill Creator",
-      "description": "Erstellt neue Skills und verbessert bestehende iterativ — Anthropic's offizielles Autoren-Toolkit.",
+      "description": "Creates new skills and iteratively improves existing ones — Anthropic's official authoring toolkit.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/skill-creator",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/skill-creator/SKILL.md",
@@ -34,7 +34,7 @@
     {
       "name": "writing-plans",
       "title": "Writing Plans",
-      "description": "Schreibt strukturierte Implementation-Plaene fuer mehrstufige Aufgaben — Spec-Driven-Development.",
+      "description": "Writes structured implementation plans for multi-step tasks — spec-driven development.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/writing-plans",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/writing-plans/SKILL.md",
@@ -48,7 +48,7 @@
     {
       "name": "executing-plans",
       "title": "Executing Plans",
-      "description": "Fuehrt geschriebene Implementation-Plaene in isolierten Sessions mit Review-Checkpoints aus.",
+      "description": "Executes written implementation plans in isolated sessions with review checkpoints.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/executing-plans",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/executing-plans/SKILL.md",
@@ -62,7 +62,7 @@
     {
       "name": "test-driven-development",
       "title": "Test-Driven Development",
-      "description": "Red-Green-Refactor-Disziplin — schreibt Tests vor Implementation bei jedem Feature/Bugfix.",
+      "description": "Red-green-refactor discipline — writes tests before implementation for every feature/bugfix.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/test-driven-development",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/test-driven-development/SKILL.md",
@@ -76,7 +76,7 @@
     {
       "name": "systematic-debugging",
       "title": "Systematic Debugging",
-      "description": "Strukturierte Debug-Methodik — bei jedem Bug, Test-Failure oder unerwarteten Verhalten, bevor Fixes vorgeschlagen werden.",
+      "description": "Structured debugging methodology — for every bug, test failure, or unexpected behavior, before fixes are proposed.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/systematic-debugging",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/systematic-debugging/SKILL.md",
@@ -90,7 +90,7 @@
     {
       "name": "verification-before-completion",
       "title": "Verification Before Completion",
-      "description": "Verifiziert Arbeit durch Command-Ausfuehrung, bevor Erfolg behauptet wird — Evidence before assertions.",
+      "description": "Verifies work by running commands before claiming success — evidence before assertions.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/verification-before-completion",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/verification-before-completion/SKILL.md",
@@ -104,7 +104,7 @@
     {
       "name": "using-git-worktrees",
       "title": "Using Git Worktrees",
-      "description": "Erstellt isolierte Git-Worktrees fuer Feature-Arbeit — verhindert Konflikte mit laufender Arbeit.",
+      "description": "Creates isolated git worktrees for feature work — prevents conflicts with work in progress.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/using-git-worktrees",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/using-git-worktrees/SKILL.md",
@@ -118,7 +118,7 @@
     {
       "name": "receiving-code-review",
       "title": "Receiving Code Review",
-      "description": "Technisch rigoros mit Code-Review-Feedback umgehen — Verifikation statt blinder Zustimmung.",
+      "description": "Handles code-review feedback with technical rigor — verification instead of blind agreement.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/receiving-code-review",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/receiving-code-review/SKILL.md",
@@ -132,7 +132,7 @@
     {
       "name": "requesting-code-review",
       "title": "Requesting Code Review",
-      "description": "Fordert Code-Review an, bevor gemerged wird — Verifikation der Completeness.",
+      "description": "Requests code review before merging — verifies completeness.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/requesting-code-review",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/requesting-code-review/SKILL.md",
@@ -146,7 +146,7 @@
     {
       "name": "finishing-a-development-branch",
       "title": "Finishing a Development Branch",
-      "description": "Fuehrt strukturiert durch den Abschluss einer Feature-Branch: Merge, PR, Cleanup.",
+      "description": "Guides you structurally through finishing a feature branch: merge, PR, cleanup.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/finishing-a-development-branch",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/finishing-a-development-branch/SKILL.md",
@@ -160,7 +160,7 @@
     {
       "name": "dispatching-parallel-agents",
       "title": "Dispatching Parallel Agents",
-      "description": "Parallelisiert 2+ unabhaengige Tasks ueber mehrere Agents — ohne Shared-State.",
+      "description": "Parallelizes 2+ independent tasks across multiple agents — without shared state.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/dispatching-parallel-agents",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/dispatching-parallel-agents/SKILL.md",
@@ -174,7 +174,7 @@
     {
       "name": "subagent-driven-development",
       "title": "Subagent-Driven Development",
-      "description": "Fuehrt Implementation-Plaene mit unabhaengigen Tasks in der aktuellen Session aus — via Subagents.",
+      "description": "Executes implementation plans with independent tasks in the current session — via subagents.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/subagent-driven-development",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/subagent-driven-development/SKILL.md",
@@ -188,7 +188,7 @@
     {
       "name": "writing-skills",
       "title": "Writing Skills",
-      "description": "Meta-Skill: Erstellt oder bearbeitet andere Skills und verifiziert Funktionalitaet.",
+      "description": "Meta-skill: creates or edits other skills and verifies functionality.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/writing-skills",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/writing-skills/SKILL.md",
@@ -202,7 +202,7 @@
     {
       "name": "using-superpowers",
       "title": "Using Superpowers",
-      "description": "Etabliert wie andere Skills gefunden und genutzt werden — Start-of-Conversation-Skill.",
+      "description": "Establishes how other skills are found and used — a start-of-conversation skill.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/using-superpowers",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/using-superpowers/SKILL.md",
@@ -216,7 +216,7 @@
     {
       "name": "web-design-guidelines",
       "title": "Web Design Guidelines",
-      "description": "Review von UI-Code gegen Web-Interface-Guidelines — Accessibility, UX, Best-Practices.",
+      "description": "Reviews UI code against web-interface guidelines — accessibility, UX, best practices.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/web-design-guidelines",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/web-design-guidelines/SKILL.md",
@@ -230,7 +230,7 @@
     {
       "name": "shadcn-ui",
       "title": "shadcn/ui Integration",
-      "description": "Expert-Guidance fuer shadcn/ui-Component-Discovery, Installation und Customization.",
+      "description": "Expert guidance for shadcn/ui component discovery, installation, and customization.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/shadcn-ui",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/shadcn-ui/SKILL.md",
@@ -244,7 +244,7 @@
     {
       "name": "frontend-design",
       "title": "Frontend Design",
-      "description": "Erstellt distinctive, production-grade Frontend-Interfaces — jenseits generischer AI-Aesthetik.",
+      "description": "Creates distinctive, production-grade frontend interfaces — beyond generic AI aesthetics.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/frontend-design",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/frontend-design/SKILL.md",
@@ -258,7 +258,7 @@
     {
       "name": "code-review",
       "title": "Code Review",
-      "description": "Review eines Pull-Requests auf Qualitaet, Konventionen und Sicherheit.",
+      "description": "Reviews a pull request for quality, conventions, and security.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/code-review",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/code-review/SKILL.md",
@@ -272,7 +272,7 @@
     {
       "name": "security-review",
       "title": "Security Review",
-      "description": "Security-Review der aktuellen Branch — Schwachstellen-Scanning vor Merge.",
+      "description": "Security review of the current branch — vulnerability scanning before merge.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/security-review",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/security-review/SKILL.md",
@@ -286,7 +286,7 @@
     {
       "name": "excalidraw-diagram",
       "title": "Excalidraw Diagram",
-      "description": "Erstellt Excalidraw-Diagramme fuer Workflows, Architekturen, Konzepte — visuelle Argumente.",
+      "description": "Creates Excalidraw diagrams for workflows, architectures, concepts — visual arguments.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/excalidraw-diagram-skill",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/excalidraw-diagram-skill/SKILL.md",
@@ -300,7 +300,7 @@
     {
       "name": "commit-commands",
       "title": "Commit / Push / PR",
-      "description": "Struktur-Commit mit Conventional-Commit-Style, push und PR-Erstellung in einem Flow.",
+      "description": "Structured commit with conventional-commit style, push, and PR creation in one flow.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/commit-commands",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/commit-commands/SKILL.md",
@@ -314,7 +314,7 @@
     {
       "name": "feature-dev",
       "title": "Feature Dev (Guided)",
-      "description": "Gefuehrte Feature-Entwicklung mit Codebase-Understanding und Architektur-Fokus.",
+      "description": "Guided feature development with codebase understanding and an architecture focus.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/feature-dev",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/feature-dev/SKILL.md",
@@ -328,7 +328,7 @@
     {
       "name": "simplify",
       "title": "Simplify Code",
-      "description": "Reviewt geaenderten Code auf Reuse, Quality und Efficiency — fixed gefundene Issues.",
+      "description": "Reviews changed code for reuse, quality, and efficiency — fixes issues it finds.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/simplify",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/simplify/SKILL.md",
@@ -342,7 +342,7 @@
     {
       "name": "claude-api",
       "title": "Claude API Helper",
-      "description": "Baut, debuggt und optimiert Apps mit der Claude API / Anthropic SDK — inkl. Prompt-Caching.",
+      "description": "Builds, debugs, and optimizes apps with the Claude API / Anthropic SDK — including prompt caching.",
       "source": "anthropic",
       "source_url": "https://github.com/anthropics/skills/tree/main/skills/claude-api",
       "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/claude-api/SKILL.md",
@@ -356,7 +356,7 @@
     {
       "name": "pdf-extraction",
       "title": "PDF Extraction",
-      "description": "Extrahiert Text, Tabellen und Metadaten aus PDF-Dokumenten strukturiert.",
+      "description": "Extracts text, tables, and metadata from PDF documents in a structured way.",
       "source": "skills-sh",
       "source_url": "https://skills.sh/",
       "raw_url": null,
@@ -369,8 +369,8 @@
     },
     {
       "name": "markdown-to-slides",
-      "title": "Markdown zu Slides",
-      "description": "Konvertiert Markdown-Dokumente in praesentable Slide-Decks (Reveal.js / Marp).",
+      "title": "Markdown to Slides",
+      "description": "Converts Markdown documents into presentable slide decks (Reveal.js / Marp).",
       "source": "skills-sh",
       "source_url": "https://skills.sh/",
       "raw_url": null,
@@ -384,7 +384,7 @@
     {
       "name": "browser-automation",
       "title": "Browser Automation",
-      "description": "Steuert Browser ueber Playwright — Scraping, Testing, Task-Automation.",
+      "description": "Controls a browser via Playwright — scraping, testing, task automation.",
       "source": "skills-sh",
       "source_url": "https://skills.sh/",
       "raw_url": null,
@@ -398,7 +398,7 @@
     {
       "name": "email-triage",
       "title": "Email Triage",
-      "description": "Priorisiert Inbox — kategorisiert, fasst zusammen, schlaegt Antworten vor.",
+      "description": "Prioritizes your inbox — categorizes, summarizes, and suggests replies.",
       "source": "skills-sh",
       "source_url": "https://skills.sh/",
       "raw_url": null,
@@ -412,7 +412,7 @@
     {
       "name": "meeting-notes",
       "title": "Meeting Notes",
-      "description": "Strukturiert Meeting-Notizen — Action-Items, Decisions, Follow-Ups.",
+      "description": "Structures meeting notes — action items, decisions, follow-ups.",
       "source": "skills-sh",
       "source_url": "https://skills.sh/",
       "raw_url": null,
@@ -426,7 +426,7 @@
     {
       "name": "code-archaeology",
       "title": "Code Archaeology",
-      "description": "Erforscht alte Codebases — Tracing-Patterns, Architektur-Rekonstruktion, Commit-Story.",
+      "description": "Explores old codebases — tracing patterns, architecture reconstruction, commit history.",
       "source": "community",
       "source_url": "https://github.com/search?q=SKILL.md+code+archaeology",
       "raw_url": null,
@@ -440,7 +440,7 @@
     {
       "name": "api-scaffold",
       "title": "API Scaffold",
-      "description": "Generiert API-Boilerplate — FastAPI, Express, Axum mit Best-Practice-Defaults.",
+      "description": "Generates API boilerplate — FastAPI, Express, Axum with best-practice defaults.",
       "source": "community",
       "source_url": "https://github.com/search?q=SKILL.md+api+scaffold",
       "raw_url": null,
@@ -454,7 +454,7 @@
     {
       "name": "docker-helper",
       "title": "Docker Helper",
-      "description": "Erstellt Dockerfiles und docker-compose-Setups mit Multi-Stage-Builds und Best-Practices.",
+      "description": "Creates Dockerfiles and docker-compose setups with multi-stage builds and best practices.",
       "source": "community",
       "source_url": "https://github.com/search?q=SKILL.md+docker",
       "raw_url": null,
@@ -468,7 +468,7 @@
     {
       "name": "sql-optimizer",
       "title": "SQL Optimizer",
-      "description": "Analysiert SQL-Queries, schlaegt Indexes vor, erklaert Query-Plans.",
+      "description": "Analyzes SQL queries, suggests indexes, explains query plans.",
       "source": "community",
       "source_url": "https://github.com/search?q=SKILL.md+sql+optimizer",
       "raw_url": null,
@@ -482,7 +482,7 @@
     {
       "name": "regex-explain",
       "title": "Regex Explainer",
-      "description": "Erklaert komplexe Regex-Patterns Schritt-fuer-Schritt und generiert neue.",
+      "description": "Explains complex regex patterns step by step and generates new ones.",
       "source": "community",
       "source_url": "https://github.com/search?q=SKILL.md+regex",
       "raw_url": null,
@@ -496,7 +496,7 @@
     {
       "name": "cron-reminder",
       "title": "Cron Reminder",
-      "description": "Verwaltet geplante Reminders via Cron-Expressions — mit natuerlichsprachlicher Eingabe.",
+      "description": "Manages scheduled reminders via cron expressions — with natural-language input.",
       "source": "experimental",
       "source_url": "https://github.com/search?q=SKILL.md+cron+reminder",
       "raw_url": null,
@@ -510,7 +510,7 @@
     {
       "name": "voice-journal",
       "title": "Voice Journal",
-      "description": "Voice-Driven-Tagebuch — STT plus Zusammenfassung plus automatisches Tagging.",
+      "description": "Voice-driven journal — STT plus summarization plus automatic tagging.",
       "source": "experimental",
       "source_url": "https://github.com/search?q=SKILL.md+voice+journal",
       "raw_url": null,
@@ -524,7 +524,7 @@
     {
       "name": "gaming-log",
       "title": "Gaming Log",
-      "description": "Loggt Gaming-Sessions, Achievements, Playtime — auch ueber Konsolen-Bridges.",
+      "description": "Logs gaming sessions, achievements, playtime — even via console bridges.",
       "source": "experimental",
       "source_url": "https://github.com/search?q=SKILL.md+gaming",
       "raw_url": null,

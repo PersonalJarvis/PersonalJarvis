@@ -15,12 +15,12 @@ interface Props {
 }
 
 /**
- * Volltext-Search-Modal — cmdk + Radix-Dialog. Pattern Anthropic/Tailwind-
- * Style: Strg+K oeffnet, Tippen zeigt Live-Results, Enter springt zum Doc.
+ * Full-text search modal — cmdk + Radix dialog. Anthropic/Tailwind-style
+ * pattern: Ctrl+K opens it, typing shows live results, Enter jumps to the doc.
  *
- * Backend-FTS5 liefert ``snippet``-HTML mit ``<mark>``-Tags fuer Highlights;
- * wir rendern das mit ``dangerouslySetInnerHTML`` weil es nur unsere eigenen
- * Doc-Bodies sind (kein User-Input, kein XSS-Risiko).
+ * The backend FTS5 returns ``snippet`` HTML with ``<mark>`` tags for
+ * highlights; we render that with ``dangerouslySetInnerHTML`` because it's
+ * only our own doc bodies (no user input, no XSS risk).
  */
 export function DocsSearchModal({ open, onOpenChange, onSelect }: Props) {
   const t = useT();
@@ -32,7 +32,7 @@ export function DocsSearchModal({ open, onOpenChange, onSelect }: Props) {
     open,
   );
 
-  // Reset query beim Schliessen, damit Re-open frisch startet.
+  // Reset the query on close so a re-open starts fresh.
   useEffect(() => {
     if (!open) setQuery("");
   }, [open]);
@@ -121,7 +121,7 @@ export function DocsSearchModal({ open, onOpenChange, onSelect }: Props) {
   );
 }
 
-/** Sehr einfacher Debounce-Hook — vermeidet eine extra Lib. */
+/** A very simple debounce hook — avoids pulling in an extra lib. */
 function useDebounced<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {

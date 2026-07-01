@@ -1,6 +1,6 @@
-"""Overlay-Bridge Public-API. Plan §9.1.
+"""Overlay bridge public API. Plan §9.1.
 
-Hauptjarvis-Code importiert ausschliesslich von hier::
+Main-Jarvis code imports exclusively from here::
 
     from jarvis.overlay import (
         get_overlay,
@@ -9,9 +9,9 @@ Hauptjarvis-Code importiert ausschliesslich von hier::
         ActionKind,
     )
 
-Sub-Agent-Detection (Plan §8.7 / AD-6) ist transparent: in Sub-Agents
-returnt ``get_overlay()`` einen ``NoOpOverlayBridge``-Stub mit der
-gleichen API. Caller-Code merkt strukturell nichts.
+Sub-agent detection (Plan §8.7 / AD-6) is transparent: in sub-agents
+``get_overlay()`` returns a ``NoOpOverlayBridge`` stub with the
+same API. Caller code notices nothing structurally.
 """
 
 from __future__ import annotations

@@ -1,8 +1,8 @@
-"""Integration-Tests fuer den Single-Instance-Lock der Desktop-App.
+"""Integration tests for the desktop app's single-instance lock.
 
-Fokus: Lock-Akquise, Re-Entry-Verweigerung, Stale-PID-Uebernahme. Das
-eigentliche ``webview.start()`` ist nicht headless-testbar und wird hier
-bewusst nicht ausgeloest.
+Focus: lock acquisition, re-entry denial, stale-PID takeover. The
+actual ``webview.start()`` isn't headless-testable and is deliberately
+not triggered here.
 """
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ from jarvis.ui import desktop_app
 
 @pytest.fixture
 def lock_paths(tmp_path: Path) -> tuple[Path, Path]:
-    """Isolierte Lock- und Meta-Pfade pro Test, vermeidet Interferenz mit
-    einer echten Jarvis-Installation auf derselben Maschine."""
+    """Isolated lock and meta paths per test, avoids interference with
+    a real Jarvis installation on the same machine."""
     return tmp_path / "jarvis.lock", tmp_path / ".jarvis-running"
 
 
@@ -43,7 +43,7 @@ def test_second_acquire_raises_when_first_alive(
         lock_path=lock_p, meta_path=meta_p
     )
     try:
-        # Meta-Sidecar mit unserer eigenen PID (garantiert lebendig).
+        # Meta sidecar with our own PID (guaranteed alive).
         meta_p.write_text(
             json.dumps({"pid": os.getpid(), "port": 47821, "started_at": 0.0}),
             encoding="utf-8",
@@ -74,44 +74,44 @@ def test_release_frees_lock(lock_paths: tuple[Path, Path]) -> None:
 
 
 def _find_dead_pid() -> int:
-    """Liefert einen PID der mit sehr hoher Wahrscheinlichkeit nicht lebt.
+    """Returns a PID that, with very high probability, is not alive.
 
-    Strategie: probier 999999 abwaerts — auf modernen Windows/Linux sind
-    PIDs typischerweise < 100000. psutil.pid_exists ist O(1) pro Call.
+    Strategy: try 999999 downward — on modern Windows/Linux, PIDs are
+    typically < 100000. psutil.pid_exists is O(1) per call.
     """
     import psutil  # type: ignore[import-not-found]
 
     for candidate in (999983, 999979, 999961, 999959):
         if not psutil.pid_exists(candidate):
             return candidate
-    pytest.skip("Kein toter PID-Kandidat gefunden — System zu voll.")
+    pytest.skip("No dead PID candidate found — system too full.")
     return 0  # unreachable
 
 
 def test_stale_lock_gets_taken_over(lock_paths: tuple[Path, Path]) -> None:
-    """Wenn das Sidecar einen toten PID nennt, darf die zweite Acquire
-    den Lock uebernehmen (statt SingleInstanceError zu werfen)."""
+    """If the sidecar names a dead PID, the second acquire is allowed to
+    take over the lock (instead of raising SingleInstanceError)."""
     lock_p, meta_p = lock_paths
 
     dead_pid = _find_dead_pid()
 
-    # Stale-Zustand simulieren: Meta-Sidecar schreiben, *ohne* dass der
-    # FileLock tatsaechlich gehalten wird — Prozess-Crash-Szenario. Da
-    # filelock POSIX-/Windows-OS-Locks nutzt, ist das Lock nach Prozess-
-    # Exit automatisch frei; das Sidecar bleibt aber liegen.
+    # Simulate a stale state: write the meta sidecar *without* the
+    # FileLock actually being held — a process-crash scenario. Since
+    # filelock uses POSIX/Windows OS locks, the lock is automatically
+    # freed after the process exits; but the sidecar stays behind.
     meta_p.parent.mkdir(parents=True, exist_ok=True)
     meta_p.write_text(
         json.dumps({"pid": dead_pid, "port": 47821, "started_at": 0.0}),
         encoding="utf-8",
     )
-    # Lock-File existiert evtl. auch noch; das ist ok — acquire kuemmert sich.
+    # The lock file may still exist too; that's fine — acquire handles it.
     lock_p.touch()
 
     lock = desktop_app.acquire_single_instance_lock(
         lock_path=lock_p, meta_path=meta_p
     )
     try:
-        # Kritisch: _keine_ SingleInstanceError trotz existierendem Sidecar.
+        # Critical: _no_ SingleInstanceError despite the existing sidecar.
         assert lock.is_locked
     finally:
         lock.release()
@@ -120,11 +120,11 @@ def test_stale_lock_gets_taken_over(lock_paths: tuple[Path, Path]) -> None:
 def test_stale_lock_with_contention_cleans_sidecar(
     lock_paths: tuple[Path, Path],
 ) -> None:
-    """Harter Stale-Pfad: OS-Lock wird von einem Subprocess gehalten, der
-    sich schnell beendet. Sidecar nennt einen unabhaengigen toten PID
-    (nicht der Subprocess-PID, sonst waere es kein Stale-Fall nach
-    Definition). acquire muss nach Subprocess-Exit das Lock kriegen und
-    den Sidecar beseitigen.
+    """Hard stale path: the OS lock is held by a subprocess that exits
+    quickly. The sidecar names an independent dead PID (not the
+    subprocess PID, otherwise it wouldn't be a stale case by
+    definition). acquire must grab the lock after the subprocess exits
+    and remove the sidecar.
     """
     import subprocess
     import sys as _sys
@@ -132,7 +132,7 @@ def test_stale_lock_with_contention_cleans_sidecar(
     lock_p, meta_p = lock_paths
     dead_pid = _find_dead_pid()
 
-    # Subprocess der das Lock kurz haelt (250ms) dann beendet.
+    # Subprocess that holds the lock briefly (250ms) then exits.
     holder_code = (
         "from filelock import FileLock;"
         "import time;"
@@ -147,30 +147,31 @@ def test_stale_lock_with_contention_cleans_sidecar(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    # Warte bis der Holder das Lock wirklich haelt.
+    # Wait until the holder actually holds the lock.
     assert proc.stdout is not None
     line = proc.stdout.readline()
-    assert b"LOCKED" in line, f"Holder-Subprocess gab kein LOCKED aus: {line!r}"
+    assert b"LOCKED" in line, f"Holder subprocess did not print LOCKED: {line!r}"
 
-    # Sidecar mit *anderem* toten PID (nicht proc.pid!) — sonst wuerde
-    # _pid_alive(proc.pid) True zurueckgeben solange der Subprocess laeuft,
-    # und wir waeren im "Jarvis laeuft bereits"-Pfad statt Stale-Pfad.
+    # Sidecar with a *different* dead PID (not proc.pid!) — otherwise
+    # _pid_alive(proc.pid) would return True as long as the subprocess
+    # runs, and we'd be on the "Jarvis is already running" path instead
+    # of the stale path.
     meta_p.parent.mkdir(parents=True, exist_ok=True)
     meta_p.write_text(
         json.dumps({"pid": dead_pid, "port": 47821, "started_at": 0.0}),
         encoding="utf-8",
     )
 
-    # Jetzt acquire: erster Versuch (timeout=0) scheitert -> Sidecar gelesen
-    # -> PID tot -> Sidecar loeschen -> retry (timeout=2s) -> klappt nachdem
-    # der Subprocess freigibt.
+    # Now acquire: the first attempt (timeout=0) fails -> sidecar read
+    # -> PID dead -> delete sidecar -> retry (timeout=2s) -> succeeds once
+    # the subprocess releases.
     lock = desktop_app.acquire_single_instance_lock(
         lock_path=lock_p, meta_path=meta_p
     )
     try:
         assert lock.is_locked
         assert not meta_p.exists(), (
-            "Sidecar mit totem PID muss im Stale-Pfad entfernt werden."
+            "Sidecar with a dead PID must be removed on the stale path."
         )
     finally:
         lock.release()

@@ -70,6 +70,6 @@ This skill writes a new ADR or amends an existing ADR in the Phase-6 family. Sty
 
 ## Edge cases
 
-- **Conflict with the master plan:** the plan at `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md` is binding. On a conflict between the plan and a new ADR: quote the plan section and justify why the ADR deviates from it.
+- **Conflict with the master plan:** the plan at `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md` is binding. On a conflict between the plan and a new ADR: quote the plan section and justify why the ADR deviates from it.  <!-- i18n-allow -->
 - **Multiple ADRs at once:** if a larger block (e.g. a new sub-phase) needs multiple ADRs, create them sequentially with cross-refs.
 - **Retiring an ADR:** set the status to `Superseded by ADR-NNNN`, keep the content. Never delete.

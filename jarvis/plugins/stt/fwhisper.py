@@ -1,11 +1,11 @@
-"""faster-whisper STT-Plugin.
+"""faster-whisper STT plugin.
 
-Implementiert strukturell `STTProvider` — kein Vererbung, nur Duck-Type.
-Das Modell (distil-large-v3, multilingual DE+EN) wird lazy beim ersten
-`start()`-Call in GPU-Memory geladen (~1.5 GB VRAM bei int8_float16).
+Structurally implements `STTProvider` — no inheritance, just duck-typing.
+The model (distil-large-v3, multilingual DE+EN) is lazily loaded into
+GPU memory on the first `start()` call (~1.5 GB VRAM at int8_float16).
 
-Auf RTX 5070 Ti liefert distil-large-v3 für eine 5-Sekunden-Utterance
-~250 ms Latenz — gut genug für Phase 1.
+On an RTX 5070 Ti, distil-large-v3 delivers ~250 ms latency for a
+5-second utterance — good enough for Phase 1.
 """
 from __future__ import annotations
 
@@ -138,7 +138,9 @@ def _cpu_safe_compute_type(compute_type: str) -> str:
     return compute_type
 
 
-def _new_whisper_model(model_name: str, device: str, compute_type: str) -> Any:
+def _new_whisper_model(
+    model_name: str, device: str, compute_type: str, cpu_threads: int = 0
+) -> Any:
     """Construct a ``WhisperModel`` (overridable seam for tests).
 
     The heavy ``faster_whisper`` import stays lazy here so importing this module
@@ -146,18 +148,32 @@ def _new_whisper_model(model_name: str, device: str, compute_type: str) -> Any:
     import + a real model build. The import shield skips ctranslate2's
     transformers+torch converter stack (inference doesn't need it) — see
     :func:`inference_only_import_shield`.
+
+    ``cpu_threads`` bounds ctranslate2's intra-op thread pool. 0 = auto (all
+    cores). A FIXED small value is the standard mitigation for the intermittent
+    ``model.transcribe`` HANG that appears when ctranslate2 and PyTorch share a
+    process (both bring their own OpenMP runtime; ctranslate2 auto-grabbing every
+    core deadlocks against torch's pool — live-log evidence 2026-06-30: the wake
+    transcribe hung for 8 s at a time on BOTH cpu and cuda while torch was
+    loaded). ``num_workers=1`` keeps a single inference stream so there is no
+    internal cross-thread contention. Only the wake model sets this (it coexists
+    with torch on the always-on loop); the utterance STT keeps auto threads.
     """
     with inference_only_import_shield():
         from faster_whisper import WhisperModel
 
-    return WhisperModel(model_name, device=device, compute_type=compute_type)
+    kwargs: dict[str, Any] = {"device": device, "compute_type": compute_type}
+    if cpu_threads and cpu_threads > 0:
+        kwargs["cpu_threads"] = int(cpu_threads)
+        kwargs["num_workers"] = 1
+    return WhisperModel(model_name, **kwargs)
 
 
 class FasterWhisperProvider:
-    """Lokaler Whisper-STT über faster-whisper (CTranslate2-Backend)."""
+    """Local Whisper STT via faster-whisper (CTranslate2 backend)."""
 
     name = "faster-whisper"
-    supports_streaming = False  # wir können später stream_transcribe nachrüsten
+    supports_streaming = False  # we can add stream_transcribe later
 
     def __init__(
         self,
@@ -166,11 +182,15 @@ class FasterWhisperProvider:
         compute_type: str = "int8_float16",
         language: str | None = None,  # None = auto-detect (bilingual DE+EN)
         beam_size: int = 5,
-        vad_filter: bool = False,  # wir haben externes Silero-VAD davor
-        # Kein Initial-Prompt im Hot-Path: feste Beispielsaetze wurden bei
-        # leisem Audio als Transkript halluziniert und gingen ans Brain.
+        vad_filter: bool = False,  # we have an external Silero VAD in front of this
+        # No initial prompt in the hot path: fixed example sentences were
+        # hallucinated as the transcript on quiet audio and sent to the brain.
         initial_prompt: str | None = None,
         no_speech_threshold: float = 0.6,
+        # 0 = auto (all cores). A fixed small value avoids the ctranslate2<->torch
+        # OpenMP deadlock that hung the always-on wake transcribe (see
+        # ``_new_whisper_model``); set only on the wake model.
+        cpu_threads: int = 0,
     ) -> None:
         self._model_name = model
         self._device = device
@@ -199,6 +219,7 @@ class FasterWhisperProvider:
         self._vad_filter = vad_filter
         self._initial_prompt = initial_prompt
         self._no_speech_threshold = no_speech_threshold
+        self._cpu_threads = int(cpu_threads)
         self._model: Any = None  # lazy
         # Serialize the actual ctranslate2 inference. ``transcribe_pcm`` runs
         # ``model.transcribe`` in a worker thread (asyncio.to_thread), and the
@@ -217,7 +238,9 @@ class FasterWhisperProvider:
         model_name = _normalize_model_name(self._model_name)
         device, compute_type = self._device, self._compute_type
         try:
-            self._model = _new_whisper_model(model_name, device, compute_type)
+            self._model = _new_whisper_model(
+                model_name, device, compute_type, self._cpu_threads
+            )
             return
         except Exception as exc:  # noqa: BLE001 — fall back rather than crash boot
             fb_device, fb_ct = "cpu", _cpu_safe_compute_type(compute_type)
@@ -231,7 +254,9 @@ class FasterWhisperProvider:
                 "retrying on cpu/%s.",
                 model_name, device, compute_type, exc, fb_ct,
             )
-        self._model = _new_whisper_model(model_name, fb_device, fb_ct)
+        self._model = _new_whisper_model(
+            model_name, fb_device, fb_ct, self._cpu_threads
+        )
 
     def recover(self) -> None:
         """Self-heal a WEDGED inference engine without an app restart.
@@ -289,14 +314,14 @@ class FasterWhisperProvider:
             log.debug("Whisper warm-up inference skipped: %s", exc)
 
     async def transcribe(self, audio: AsyncIterator[AudioChunk]) -> Transcript:
-        """Sammelt alle Chunks, transkribiert am Stück.
+        """Collects all chunks, transcribes them in one go.
 
-        Für Phase 1 reicht das — die VAD-Schicht davor liefert uns bereits
-        saubere Utterances, also ist "am Stück" das natürliche Granularity.
+        This is enough for Phase 1 — the VAD layer in front already delivers
+        clean utterances, so "in one go" is the natural granularity.
         """
         self._ensure_model()
 
-        # Alle Chunks in einem float32-Array zusammenziehen
+        # Concatenate all chunks into one float32 array
         pieces: list[np.ndarray] = []
         sample_rate = 16_000
         async for chunk in audio:
@@ -312,10 +337,11 @@ class FasterWhisperProvider:
         self, pcm_bytes: bytes, sample_rate: int = 16_000,
         language: str | None = None,
     ) -> Transcript:
-        """Direkter Weg für VAD-Output: int16-PCM-Bytes → Transcript.
+        """Direct path for VAD output: int16 PCM bytes → transcript.
 
-        `language` überschreibt per Call die Default-Sprache. Nützlich für den
-        Wake-Detector der auch bei STT-Default "auto" immer auf Deutsch hören soll.
+        `language` overrides the default language per call. Useful for the
+        wake detector, which should always listen for German even when the
+        STT default is "auto".
         """
         self._ensure_model()
         audio_np = pcm_bytes_to_np(pcm_bytes)
@@ -325,7 +351,7 @@ class FasterWhisperProvider:
         self, audio_np: np.ndarray, sample_rate: int,
         language: str | None = None,
     ) -> Transcript:
-        # faster-whisper ist synchron → in Thread shippen
+        # faster-whisper is synchronous → ship it off to a thread
         import asyncio
         return await asyncio.to_thread(self._transcribe_sync, audio_np, sample_rate, language)
 
@@ -333,12 +359,12 @@ class FasterWhisperProvider:
         self, audio_np: np.ndarray, sample_rate: int,
         language: str | None = None,
     ) -> Transcript:
-        # faster-whisper akzeptiert np.ndarray float32 direkt wenn 16 kHz
+        # faster-whisper accepts np.ndarray float32 directly when 16 kHz
         if sample_rate != 16_000:
-            # Resample wäre hier nötig — wir erwarten aber 16 kHz von Capture
-            raise ValueError(f"Erwartet 16 kHz, bekommen {sample_rate} Hz")
+            # A resample would be needed here — but we expect 16 kHz from capture
+            raise ValueError(f"Expected 16 kHz, got {sample_rate} Hz")
 
-        # Per-Call-Override hat Vorrang vor self._language
+        # Per-call override takes precedence over self._language
         effective_lang = language if language is not None else self._language
 
         # NON-BLOCKING acquire across BOTH the transcribe() call and the lazy
@@ -368,13 +394,13 @@ class FasterWhisperProvider:
                 initial_prompt=self._initial_prompt,
                 no_speech_threshold=self._no_speech_threshold,
             )
-            # segments_iter ist generator — durchiterieren materialisiert
+            # segments_iter is a generator — iterating over it materializes it
             segments = list(segments_iter)
         finally:
             lock.release()
         text = "".join(s.text for s in segments).strip()
 
-        # Segment-Tuples als Meta für Debugging/Flight-Recorder
+        # Segment tuples as metadata for debugging/flight-recorder
         seg_dicts = tuple(
             {
                 "start": s.start,
@@ -386,7 +412,7 @@ class FasterWhisperProvider:
             for s in segments
         )
 
-        # Confidence-Approximation: exp(avg_logprob) gemittelt — nicht perfekt, reicht.
+        # Confidence approximation: averaged exp(avg_logprob) — not perfect, good enough.
         if segments:
             avg = sum(s.avg_logprob for s in segments) / len(segments)
             confidence = float(np.exp(avg))
@@ -404,6 +430,6 @@ class FasterWhisperProvider:
     async def stream_transcribe(
         self, audio: AsyncIterator[AudioChunk]
     ) -> AsyncIterator[Transcript]:
-        """Placeholder für inkrementelle Transkription — Phase 2+."""
+        """Placeholder for incremental transcription — Phase 2+."""
         final = await self.transcribe(audio)
         yield final

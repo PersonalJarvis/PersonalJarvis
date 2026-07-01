@@ -1,20 +1,20 @@
-"""SQLite-Store fuer Voice-Sessions (sync, WAL-Mode).
+"""SQLite store for voice sessions (sync, WAL mode).
 
-Im Unterschied zu ``jarvis/missions/event_store.py`` (aiosqlite, async)
-laeuft dieser Store synchron mit ``sqlite3`` + ``threading.Lock``.
-Begruendung: der ``SessionRecorder`` wird aus EventBus-Subscriber-
-Callbacks aufgerufen; das passiert je nach Event aus dem asyncio-Loop
-ODER aus einem Worker-Thread (Pipeline ist Multi-Threaded). Ein
-synchroner Store mit Lock ist der einfachste Pfad ohne Loop-Detection-
-Hacks. SQLite-Writes liegen im µs-Bereich, Lock-Contention ist auf
-einem Voice-Pfad mit < 100 Events/Sek nicht messbar.
+Unlike ``jarvis/missions/event_store.py`` (aiosqlite, async),
+this store runs synchronously with ``sqlite3`` + ``threading.Lock``.
+Rationale: the ``SessionRecorder`` is called from EventBus subscriber
+callbacks; depending on the event this happens from the asyncio loop
+OR from a worker thread (the pipeline is multi-threaded). A
+synchronous store with a lock is the simplest path without loop-detection
+hacks. SQLite writes are in the µs range, and lock contention is
+unmeasurable on a voice path with < 100 events/sec.
 
-Atomicitaet: WAL + ``synchronous=NORMAL`` flusht Writes auf Disk;
-zwischen Process-Crash und Bus-Publish kann ein Event verloren gehen
-- bei Voice-Sessions akzeptabel (nicht-kritisches UI-Feature).
+Atomicity: WAL + ``synchronous=NORMAL`` flushes writes to disk;
+an event can be lost between a process crash and the bus publish
+- acceptable for voice sessions (a non-critical UI feature).
 
-Cleanup: ``prune_older_than(days)`` loescht alte Sessions; ON DELETE
-CASCADE in schema.sql raeumt Turns + Events automatisch mit.
+Cleanup: ``prune_older_than(days)`` deletes old sessions; ON DELETE
+CASCADE in schema.sql cleans up turns + events automatically along with it.
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 
 class SessionStore:
-    """Sync SQLite-Store mit threading.Lock-Synchronisation."""
+    """Sync SQLite store with threading.Lock synchronization."""
 
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
@@ -45,17 +45,17 @@ class SessionStore:
     # --- Lifecycle ----------------------------------------------------
 
     def open(self) -> None:
-        """DB oeffnen, PRAGMAs setzen, Schema (idempotent) laden, Migrations."""
+        """Open the DB, set PRAGMAs, load the schema (idempotent), run migrations."""
         with self._lock:
             if self._conn is not None:
                 return
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
-            # check_same_thread=False: wir serialisieren selbst via self._lock,
-            # mehrere Threads (Pipeline-Worker, FastAPI-Routes) duerfen lesen+schreiben.
+            # check_same_thread=False: we serialize ourselves via self._lock,
+            # multiple threads (pipeline worker, FastAPI routes) may read+write.
             conn = sqlite3.connect(
                 str(self._db_path),
                 check_same_thread=False,
-                isolation_level=None,  # autocommit; WAL ist Lock-Manager
+                isolation_level=None,  # autocommit; WAL is the lock manager
             )
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
@@ -69,11 +69,11 @@ class SessionStore:
             log.debug("SessionStore opened: %s", self._db_path)
 
     def _apply_migrations(self) -> None:
-        """Idempotente Spalten-Migrations fuer pre-existing DBs.
+        """Idempotent column migrations for pre-existing DBs.
 
-        SQLite hat kein ``ADD COLUMN IF NOT EXISTS`` — wir lesen
-        ``pragma_table_info`` und appendieren nur fehlende Spalten.
-        Pattern uebernommen aus ``jarvis/missions/event_store.py``.
+        SQLite has no ``ADD COLUMN IF NOT EXISTS`` — we read
+        ``pragma_table_info`` and only append missing columns.
+        Pattern adopted from ``jarvis/missions/event_store.py``.
         """
         assert self._conn is not None
         cur = self._conn.execute("PRAGMA table_info(voice_turns)")
@@ -104,7 +104,7 @@ class SessionStore:
     @property
     def _c(self) -> sqlite3.Connection:
         if self._conn is None:
-            raise RuntimeError("SessionStore: open() vor Verwendung aufrufen")
+            raise RuntimeError("SessionStore: call open() before use")
         return self._conn
 
     # --- Session-Header ----------------------------------------------
@@ -117,10 +117,10 @@ class SessionStore:
         wake_keyword: str = "",
         language: str = "de",
     ) -> None:
-        """Anlegen oder (bei Recorder-Re-Init) idempotent re-upserten.
+        """Create, or (on a recorder re-init) idempotently re-upsert.
 
-        ON CONFLICT: ``started_ms`` bleibt erhalten (erstes Wake gewinnt),
-        nur ``wake_keyword``/``language`` werden ggf. ueberschrieben.
+        ON CONFLICT: ``started_ms`` is preserved (the first wake wins),
+        only ``wake_keyword``/``language`` may get overwritten.
         """
         with self._lock:
             self._c.execute(
@@ -147,7 +147,7 @@ class SessionStore:
         total_tokens_out: int,
         providers_used: list[str],
     ) -> None:
-        """Hangup-Update — schreibt End-Zeit und Aggregate."""
+        """Hangup update — writes the end time and aggregates."""
         with self._lock:
             self._c.execute(
                 """
@@ -271,7 +271,7 @@ class SessionStore:
         kind: str,
         payload: dict[str, Any],
     ) -> int:
-        """Roh-Event anhaengen, gibt vergebene seq zurueck."""
+        """Append a raw event, returns the assigned seq."""
         with self._lock:
             cur = self._c.execute(
                 """
@@ -288,10 +288,10 @@ class SessionStore:
     # --- Read-API -----------------------------------------------------
 
     def list_sessions(self, *, limit: int = 100) -> list[SessionListItem]:
-        """Sessions nach started_ms desc — neueste zuerst.
+        """Sessions by started_ms desc — newest first.
 
-        ``preview`` ist die erste User-Utterance (erste Turn-Row mit
-        nicht-leerem ``user_text``).
+        ``preview`` is the first user utterance (the first turn row with
+        a non-empty ``user_text``).
         """
         with self._lock:
             cur = self._c.execute(
@@ -397,7 +397,7 @@ class SessionStore:
         ]
 
     def list_open_sessions(self) -> list[str]:
-        """IDs aller Sessions ohne ``ended_ms`` — fuer Crash-Recovery."""
+        """IDs of all sessions without ``ended_ms`` — for crash recovery."""
         with self._lock:
             cur = self._c.execute(
                 "SELECT id FROM voice_sessions WHERE ended_ms IS NULL"
@@ -407,10 +407,10 @@ class SessionStore:
     # --- Maintenance --------------------------------------------------
 
     def prune_older_than(self, days: int) -> int:
-        """Loescht Sessions mit ``started_ms`` aelter als N Tage.
+        """Deletes sessions with ``started_ms`` older than N days.
 
-        Cascade-Delete in schema.sql raeumt Turns + Events automatisch
-        mit. Returns Anzahl geloeschter Session-Rows.
+        Cascade delete in schema.sql cleans up turns + events
+        automatically along with it. Returns the number of deleted session rows.
         """
         if days <= 0:
             return 0
@@ -443,7 +443,7 @@ def _now_ms() -> int:
 
 
 def _json_default(obj: Any) -> Any:
-    """Fallback fuer json.dumps: UUID, set, dataclass-ish."""
+    """Fallback for json.dumps: UUID, set, dataclass-ish."""
     if hasattr(obj, "hex") and hasattr(obj, "int"):  # UUID
         return str(obj)
     if isinstance(obj, set):
@@ -496,10 +496,10 @@ def _row_to_turn(r: sqlite3.Row) -> VoiceTurnRow:
 
 
 def _safe_col(r: sqlite3.Row, name: str, default: int) -> int:
-    """Liest eine Spalte, gibt Default zurueck wenn sie nicht existiert.
+    """Reads a column, returns the default if it doesn't exist.
 
-    Brauchen wir nur fuer das schmale Fenster, in dem ein laufender
-    Backend noch ohne Migration startet — schadet im Normalfall nicht.
+    We only need this for the narrow window in which a running
+    backend still starts without the migration — harmless in the normal case.
     """
     try:
         v = r[name]

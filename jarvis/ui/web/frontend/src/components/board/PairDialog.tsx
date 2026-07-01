@@ -14,13 +14,13 @@ interface PairDialogProps {
 }
 
 /**
- * Pair-Dialog mit zwei Modi:
- * - "Generate"     — Owner erzeugt Token, zeigt URL + QR.
- * - "Accept"       — Friend hat URL bekommen, fuegt sie ein.
+ * Pair dialog with two modes:
+ * - "Generate"     — owner generates a token, shows URL + QR.
+ * - "Accept"       — friend received the URL, pastes it in.
  *
- * Modal ist non-blocking — schliesst auf Backdrop-Click. Plan §D §0:
- * KEIN Pop-Up das Feed-Scrolling unterbricht; aber dieses Modal wird
- * vom User explizit geoeffnet.
+ * Modal is non-blocking — closes on backdrop click. Plan §D §0:
+ * NO pop-up that interrupts feed scrolling; but this modal is
+ * explicitly opened by the user.
  */
 export function PairDialog({ onClose }: PairDialogProps) {
   const t = useT();

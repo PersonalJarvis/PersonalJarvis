@@ -1,8 +1,8 @@
-"""Contract-Test: MockBrain reagiert auf MessageSent und triggert State-Flow.
+"""Contract test: MockBrain reacts to MessageSent and triggers the state flow.
 
-E2E-mini: User-Message → Bus → Mock-Brain → Response + State-Transitions.
-Verifiziert, dass das Event-Wiring in `DesktopApp._run_backend` stehen kann,
-ohne dass wir den echten WebServer starten müssen.
+E2E-mini: user message → bus → mock brain → response + state transitions.
+Verifies that the event wiring can stand in for `DesktopApp._run_backend`
+without us having to start the real WebServer.
 """
 from __future__ import annotations
 
@@ -38,13 +38,13 @@ async def test_mock_brain_produces_assistant_message_and_state_sequence() -> Non
 
     await brain.respond(thread_id="t1", text="Hallo Jarvis", store=store)
 
-    # Es muss mindestens ein SystemStateChanged-Paar geben (THINKING, SPEAKING, IDLE)
+    # There must be at least one SystemStateChanged pair (THINKING, SPEAKING, IDLE)
     states = [e.new_state for e in collected if isinstance(e, SystemStateChanged)]
     assert "THINKING" in states
     assert "SPEAKING" in states
     assert states[-1] == "IDLE"
 
-    # Eine ResponseGenerated muss drin sein
+    # A ResponseGenerated must be in there
     assert any(isinstance(e, ResponseGenerated) for e in collected)
 
     # Store hat genau einen User-Turn + einen Assistant-Turn
@@ -65,19 +65,19 @@ async def test_message_sent_event_triggers_brain_via_subscribe() -> None:
     async def _on_msg(evt: MessageSent) -> None:
         if evt.role != "user":
             return
-        # Skip echoes aus dem ChatStore selbst — sonst Loop.
+        # Skip echoes from the ChatStore itself — otherwise a loop.
         if evt.source_layer in ("chat", "brain:mock"):
             return
         await brain.respond(thread_id=evt.thread_id or "default", text=evt.text, store=store)
 
     bus.subscribe(MessageSent, _on_msg)
 
-    # User-Message reinfahren — das ist was routes_ws macht
+    # Feed in a user message — that's what routes_ws does
     await bus.publish(
         MessageSent(source_layer="ui.web.ws", thread_id="t1", role="user", text="echo hallo")
     )
 
-    # Kurze Pause damit die Event-Chain durchrieselt
+    # Brief pause so the event chain trickles through
     await asyncio.sleep(0.6)
 
     thread = store.get_thread("t1")

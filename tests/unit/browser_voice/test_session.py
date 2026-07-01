@@ -69,7 +69,7 @@ def _make_session(sink, *, stt=None, brain=None, tts=None, rate=STT_SAMPLE_RATE,
         session_id="bv1",
         send_binary=sink.send_binary,
         send_json=sink.send_json,
-        stt=stt or FakeSTT(["Wie spät ist es?"]),
+        stt=stt or FakeSTT(["Wie spät ist es?"]),  # i18n-allow: simulated German STT transcript under test
         brain=brain or FakeBrain("Es ist vierzehn Uhr."),
         tts=tts or FakeTTS(ms_per_char=2),
         browser_sample_rate=rate,

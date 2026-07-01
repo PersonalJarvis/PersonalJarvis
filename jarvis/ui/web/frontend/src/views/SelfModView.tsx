@@ -1,11 +1,11 @@
-// SelfModView (Phase 7.6) — read-only Audit-UI für die Self-Mod-Pipeline.
-// Plan-§7.6 Drei Tabs: History (Audit-Log), Mutable (Allowlist), Backups.
+// SelfModView (Phase 7.6) — read-only audit UI for the self-mod pipeline.
+// Plan-§7.6 three tabs: History (audit log), Mutable (allowlist), Backups.
 //
-// SelfModView ist read-only für Mutationen — Plan-§Out-of-Scope: kein
-// "Edit Setting"-Button. Mutation läuft ausschließlich via Voice/Chat.
+// SelfModView is read-only for mutations — Plan-§Out-of-Scope: no
+// "Edit Setting" button. Mutation happens exclusively via voice/chat.
 //
-// Sensitive Pfade werden serverseitig redacted (Plan-§AP-2 Defense-in-Depth)
-// und zusätzlich clientseitig mit einer "***"-Badge visuell markiert.
+// Sensitive paths are redacted server-side (Plan-§AP-2 defense-in-depth)
+// and additionally marked visually client-side with a "***" badge.
 
 import { useEffect, useMemo, useState } from "react";
 import { useEventStore } from "@/store/events";
@@ -222,7 +222,7 @@ function AuditEventDetail({
 }) {
   const t = useT();
   const sensitive = isSensitivePath(event.path);
-  // Server hat schon redacted; clientseitig markieren wir das visuell.
+  // The server has already redacted it; we just mark it visually client-side.
   const display = useMemo(() => {
     const copy: AuditEvent = { ...event };
     if (sensitive) {

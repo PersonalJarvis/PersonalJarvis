@@ -219,7 +219,7 @@ class SessionRollupWorker:
         """Roll up everything since ``session_start_ns`` into one page.
 
         Public entry point — called by ``_on_idle_entered`` for the
-        idle-threshold trigger and by external callers (voice "tschüss",
+        idle-threshold trigger and by external callers (voice "tschüss",  # i18n-allow: real German voice-trigger word
         day-rollover timer) for explicit flushes.
         """
         if not self._cfg.enabled:

@@ -1,14 +1,14 @@
-"""Conductor-API — FastAPI-Router.
+"""Conductor API — FastAPI router.
 
-Zwei Deployment-Modi:
+Two deployment modes:
 
-1. **Standalone** — ``conductor.api.app.create_app()`` gibt eine fertig
-   konfigurierte ``FastAPI``-App. CLI ``python -m conductor serve`` nutzt
-   das.
+1. **Standalone** — ``conductor.api.app.create_app()`` returns a fully
+   configured ``FastAPI`` app. The CLI ``python -m conductor serve`` uses
+   this.
 
-2. **Embedded** — nur der ``router`` wird von Jarvis (oder einem anderen
-   Host) importiert und via ``app.include_router(router)`` eingehaengt.
-   Jarvis' WebServer macht genau das.
+2. **Embedded** — only the ``router`` is imported by Jarvis (or another
+   host) and mounted via ``app.include_router(router)``. Jarvis's
+   web server does exactly that.
 """
 from __future__ import annotations
 

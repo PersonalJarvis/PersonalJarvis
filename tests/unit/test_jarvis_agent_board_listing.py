@@ -113,7 +113,7 @@ async def test_worker_spawn_and_approval_update_node() -> None:
                     tokens_used=123,
                     cost_usd=0.02,
                     wall_ms=1500,
-                    summary_de="fertig",
+                    summary_de="fertig",  # i18n-allow
                     summary_en="done",
                 ),
             )

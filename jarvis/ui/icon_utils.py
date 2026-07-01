@@ -1,11 +1,12 @@
-"""Win32-Helper zum Setzen des Fenster-Icons einer pywebview-Instanz.
+"""Win32 helper for setting the window icon of a pywebview instance.
 
-Warum braucht Jarvis das? pywebview ``create_window`` hat auf Windows keinen
-``icon``-Parameter — das Taskbar- und Titlebar-Icon erbt daher vom Prozess
-(``python.exe`` / ``pythonw.exe``), also das generische Python-Logo. Wir setzen
-es nach dem ``shown``-Event per ``WM_SETICON`` direkt gegen das Window-Handle.
+Why does Jarvis need this? pywebview's ``create_window`` has no ``icon``
+parameter on Windows — the taskbar and titlebar icon therefore inherits from
+the process (``python.exe`` / ``pythonw.exe``), i.e. the generic Python logo.
+We set it after the ``shown`` event via ``WM_SETICON`` directly against the
+window handle.
 
-Alle Funktionen sind No-Ops auf Nicht-Windows-Plattformen.
+All functions are no-ops on non-Windows platforms.
 """
 from __future__ import annotations
 
@@ -24,11 +25,11 @@ _IMAGE_ICON = 1
 _LR_LOADFROMFILE = 0x00000010
 _LR_DEFAULTSIZE = 0x00000040
 
-# Class-Icon-Slots (negative Indices fuer SetClassLongPtrW). Das Class-Icon
-# wird von Windows fuer den Taskbar-Eintrag verwendet, wenn beim ersten
-# Anzeigen noch kein Window-Icon (WM_SETICON) gesetzt ist. Ohne Class-Icon
-# faellt die Taskbar auf das Process-Icon (pythonw.exe → Python-Logo) zurueck
-# und cached die Zuordnung fuer den Rest der Session.
+# Class icon slots (negative indices for SetClassLongPtrW). Windows uses the
+# class icon for the taskbar entry when no window icon (WM_SETICON) has been
+# set yet at first display. Without a class icon, the taskbar
+# falls back to the process icon (pythonw.exe → Python logo)
+# and caches that mapping for the rest of the session.
 _GCLP_HICON = -14
 _GCLP_HICONSM = -34
 
@@ -235,7 +236,7 @@ def ensure_windows_app_identity(app_id: str = APP_USER_MODEL_ID) -> bool:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
         return True
     except Exception as exc:  # noqa: BLE001
-        logger.debug("AppUserModelID konnte nicht gesetzt werden: {}", exc)
+        logger.debug("AppUserModelID could not be set: {}", exc)
         return False
 
 
@@ -246,14 +247,14 @@ def _apply_icon_to_hwnd(hwnd: int, ico_path: Path) -> bool:
     if not hwnd:
         return False
     if not ico_path.is_file():
-        logger.warning("Icon-Datei fehlt: {}", ico_path)
+        logger.warning("Icon file missing: {}", ico_path)
         return False
 
     try:
         import ctypes
         from ctypes import wintypes
     except Exception as exc:  # noqa: BLE001
-        logger.opt(exception=exc).warning("ctypes nicht verfügbar")
+        logger.opt(exception=exc).warning("ctypes not available")
         return False
 
     user32 = ctypes.windll.user32
@@ -273,7 +274,7 @@ def _apply_icon_to_hwnd(hwnd: int, ico_path: Path) -> bool:
         None, path_str, _IMAGE_ICON, 16, 16, _LR_LOADFROMFILE | _LR_DEFAULTSIZE
     )
     if not hicon_big or not hicon_small:
-        logger.warning("LoadImageW schlug fehl für {}", path_str)
+        logger.warning("LoadImageW failed for {}", path_str)
         return False
 
     # WM_SETICON: titlebar + Alt-Tab switcher.
@@ -284,7 +285,7 @@ def _apply_icon_to_hwnd(hwnd: int, ico_path: Path) -> bool:
     # window registers its own class, so we only affect Jarvis windows.
     user32.SetClassLongPtrW(hwnd, _GCLP_HICON, hicon_big)
     user32.SetClassLongPtrW(hwnd, _GCLP_HICONSM, hicon_small)
-    logger.debug("Icon gesetzt (window+class): hwnd={} path={}", hwnd, path_str)
+    logger.debug("Icon set (window+class): hwnd={} path={}", hwnd, path_str)
     return True
 
 
@@ -300,33 +301,33 @@ def set_window_icon_by_hwnd(hwnd: int, ico_path: Path) -> bool:
 def set_window_icon_by_title(
     title: str, ico_path: Path, *, quiet: bool = False
 ) -> bool:
-    """Setzt Taskbar- und Titlebar-Icon des Fensters mit passendem ``title``.
+    """Sets the taskbar and titlebar icon of the window matching ``title``.
 
-    Benötigt, weil pywebview das HWND nicht stabil exposed. ``FindWindowW``
-    gegen den Titel ist ein pragmatischer Weg — der Jarvis-Window-Title ist
-    konstant ("Personal Jarvis") und einzigartig.
+    Needed because pywebview doesn't stably expose the HWND. ``FindWindowW``
+    against the title is a pragmatic way — the Jarvis window title is
+    constant ("Personal Jarvis") and unique.
 
     Args:
-        title: Window-Titel exakt wie von pywebview gesetzt.
-        ico_path: Pfad zur ``.ico``-Datei.
-        quiet: Wenn True, werden "hwnd nicht gefunden"-Hinweise auf debug
-            geloggt statt warning. Fuer Polling-Loops, bei denen das Fenster
-            erwartungsgemaess erst nach einigen Iterationen auftaucht.
+        title: Window title exactly as set by pywebview.
+        ico_path: Path to the ``.ico`` file.
+        quiet: If True, "hwnd not found" notices are logged at debug
+            instead of warning. For polling loops where the window is
+            expected to appear only after a few iterations.
 
     Returns:
-        True wenn beide Icons gesetzt werden konnten.
+        True if both icons could be set.
     """
     if sys.platform != "win32":
         return False
     if not ico_path.is_file():
-        logger.warning("Icon-Datei fehlt: {}", ico_path)
+        logger.warning("Icon file missing: {}", ico_path)
         return False
 
     try:
         import ctypes
         from ctypes import wintypes
     except Exception as exc:  # noqa: BLE001
-        logger.opt(exception=exc).warning("ctypes nicht verfügbar")
+        logger.opt(exception=exc).warning("ctypes not available")
         return False
 
     user32 = ctypes.windll.user32
@@ -334,9 +335,9 @@ def set_window_icon_by_title(
     hwnd = user32.FindWindowW(None, title)
     if not hwnd:
         if quiet:
-            logger.debug("Fenster '{}' (noch) nicht gefunden", title)
+            logger.debug("Window '{}' not found (yet)", title)
         else:
-            logger.warning("Fenster '{}' nicht gefunden — Icon nicht gesetzt", title)
+            logger.warning("Window '{}' not found — icon not set", title)
         return False
     return _apply_icon_to_hwnd(int(hwnd), ico_path)
 
@@ -358,7 +359,7 @@ def set_window_icon_for_pid(pid: int, ico_path: Path) -> bool:
         import ctypes
         from ctypes import wintypes
     except Exception as exc:  # noqa: BLE001
-        logger.opt(exception=exc).warning("ctypes nicht verfügbar")
+        logger.opt(exception=exc).warning("ctypes not available")
         return False
 
     user32 = ctypes.windll.user32
@@ -388,36 +389,36 @@ def set_window_icon_for_pid(pid: int, ico_path: Path) -> bool:
 
 
 def load_ico_as_pil_image(ico_path: Path, size: int = 64) -> Any | None:
-    """Lädt ``.ico`` als ``PIL.Image`` für pystray-Tray-Icon.
+    """Loads a ``.ico`` as a ``PIL.Image`` for the pystray tray icon.
 
-    pystray braucht ein Image-Objekt, keine Datei-Referenz. Wir laden die
-    größte verfügbare Repräsentation und skalieren auf ``size``.
+    pystray needs an Image object, not a file reference. We load the
+    largest available representation and scale it to ``size``.
     """
     if not ico_path.is_file():
         return None
     try:
         from PIL import Image
     except Exception as exc:  # noqa: BLE001
-        logger.opt(exception=exc).warning("Pillow nicht verfügbar")
+        logger.opt(exception=exc).warning("Pillow not available")
         return None
     try:
         img = Image.open(ico_path)
-        # .ico enthält typischerweise mehrere Größen — Pillow wählt die erste,
-        # wir forcen eine saubere Zielgröße via resize.
+        # .ico typically contains multiple sizes — Pillow picks the first,
+        # we force a clean target size via resize.
         if img.mode != "RGBA":
             img = img.convert("RGBA")
         if img.size != (size, size):
             img = img.resize((size, size), Image.LANCZOS)
         return img
     except Exception as exc:  # noqa: BLE001
-        logger.opt(exception=exc).warning("ICO-Load schlug fehl: {}", ico_path)
+        logger.opt(exception=exc).warning("ICO load failed: {}", ico_path)
         return None
 
 
 def project_icon_path() -> Path:
-    """Auflösung des Standard-Icon-Pfads: ``<projekt-root>/assets/icons/jarvis.ico``.
+    """Resolves the default icon path: ``<project-root>/assets/icons/jarvis.ico``.
 
-    Die Datei liegt außerhalb des ``jarvis``-Packages. Wir gehen von
-    ``jarvis/ui/icon_utils.py`` drei Ebenen hoch zum Projekt-Root.
+    The file lives outside the ``jarvis`` package. We go up three levels
+    from ``jarvis/ui/icon_utils.py`` to the project root.
     """
     return Path(__file__).resolve().parents[2] / "assets" / "icons" / "jarvis.ico"

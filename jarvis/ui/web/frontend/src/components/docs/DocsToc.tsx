@@ -6,23 +6,23 @@ import type { DocHeading } from "@/hooks/useDocs";
 
 interface Props {
   headings: DocHeading[];
-  /** Container in dem die <h2>/<h3>-Anchors leben. Wir queryen darin. */
+  /** Container that holds the <h2>/<h3> anchors. We query inside it. */
   contentRef: React.RefObject<HTMLElement>;
 }
 
 /**
- * Right-Sidebar Table-of-Contents mit Active-Heading-Tracking via
- * IntersectionObserver — Anthropic/Mintlify-Stil.
+ * Right-sidebar table of contents with active-heading tracking via
+ * IntersectionObserver — Anthropic/Mintlify style.
  *
- * Reagiert auf H2 + H3. H4-H6 sind in unseren Docs selten, wuerden aber bei
- * Bedarf hier ergaenzt. Active-Heading wird via ``rootMargin`` zur Heading-
- * Hoehe verschoben, damit die Heading-Zeile selbst (nicht der Body darunter)
- * den Active-State setzt.
+ * Reacts to H2 + H3. H4-H6 are rare in our docs but could be added here if
+ * needed. The active-heading trigger is shifted by the heading height via
+ * ``rootMargin``, so the heading line itself (not the body below it) sets
+ * the active state.
  */
 export function DocsToc({ headings, contentRef }: Props) {
   const [activeSlug, setActiveSlug] = useState<string | null>(null);
 
-  // TOC nur fuer H2 + H3 — Tutorial-Mid-Point-Checks und ADR-Subsections.
+  // TOC only for H2 + H3 — tutorial mid-point checks and ADR subsections.
   const tocHeadings = headings.filter((h) => h.level >= 2 && h.level <= 3);
 
   useEffect(() => {
@@ -38,7 +38,7 @@ export function DocsToc({ headings, contentRef }: Props) {
 
     const observer = new IntersectionObserver(
       (entries) => {
-        // Nimm den ersten sichtbaren Eintrag — Top-most-rule.
+        // Take the first visible entry — top-most rule.
         const visible = entries
           .filter((e) => e.isIntersecting)
           .sort(
@@ -51,7 +51,7 @@ export function DocsToc({ headings, contentRef }: Props) {
         }
       },
       {
-        // Heading wird Active wenn es im oberen 20% des Viewports steht.
+        // A heading becomes active when it's in the top 20% of the viewport.
         rootMargin: "0px 0px -80% 0px",
         threshold: 0,
       },
@@ -72,7 +72,7 @@ export function DocsToc({ headings, contentRef }: Props) {
       <ScrollArea className="h-full">
         <div className="px-4 py-6">
           <h3 className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Auf dieser Seite
+            On this page
           </h3>
           <ul className="space-y-1 text-xs">
             {tocHeadings.map((h) => (
@@ -104,14 +104,14 @@ function handleClick(e: React.MouseEvent<HTMLAnchorElement>, slug: string) {
   const el = document.getElementById(slug);
   if (el) {
     el.scrollIntoView({ behavior: "smooth", block: "start" });
-    // URL-Hash aktualisieren ohne Full-Reload
+    // Update the URL hash without a full reload
     window.history.replaceState(null, "", `#${slug}`);
   }
 }
 
 /**
- * Minimaler CSS.escape-Polyfill fuer aeltere Browser. WebView2 ist Edge-
- * basiert und unterstuetzt CSS.escape, aber besser sicher als sorry.
+ * Minimal CSS.escape polyfill for older browsers. WebView2 is Edge-based
+ * and supports CSS.escape, but better safe than sorry.
  */
 function cssEscape(value: string): string {
   if (typeof CSS !== "undefined" && CSS.escape) return CSS.escape(value);

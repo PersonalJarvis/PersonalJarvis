@@ -69,7 +69,7 @@ def _mission_event(**over: Any) -> dict[str, Any]:
     base = {
         "mission_id": "m1",
         "status": "approved",
-        "summary_de": "Fertig.",
+        "summary_de": "Fertig.",  # i18n-allow
         "summary_en": "Done.",
         "result_uri": "/out/result.md",
         "reason": "",

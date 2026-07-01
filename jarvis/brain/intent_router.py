@@ -9,12 +9,12 @@ Orthogonal to the tier router from Phase 5 (`jarvis/brain/router.py`):
 Goal: no extra LLM-call latency for routing. Heuristic-based:
 
 - **FAST** (Haiku): simple actions, tool calls, smalltalk responses
-  Keywords: öffne, spawn, starte, klicke, tippe, sag, merk, zeig, such, etc.
+  Keywords: öffne, spawn, starte, klicke, tippe, sag, merk, zeig, such, etc.  # i18n-allow
   Heuristic: short (<80 chars), imperative, one clear verb + object
 
 - **DEEP** (Opus): reasoning, analysis, planning, explaining, comparing, coding
-  Keywords: recherchiere, analysiere, plane, erkläre, vergleich, schreib, baue,
-  debug, refactor, überlege, zusammenfass, etc.
+  Keywords: recherchiere, analysiere, plane, erkläre, vergleich, schreib, baue,  # i18n-allow
+  debug, refactor, überlege, zusammenfass, etc.  # i18n-allow
   Heuristic: long, many subclauses, multiple aspects, question word + depth
 
 - **CODE** (OpenClaw Heavy-Worker): explicit coding tasks
@@ -34,15 +34,15 @@ IntentLevel = Literal["fast", "deep", "code"]
 # Simple actions / tool triggers (Haiku is sufficient).
 _FAST_PATTERNS = [
     # German — imperatives
-    r"\böffne\b", r"\bstart(e|et)?\b", r"\bstarte\b", r"\bspawn(e)?\b",
+    r"\böffne\b", r"\bstart(e|et)?\b", r"\bstarte\b", r"\bspawn(e)?\b",  # i18n-allow
     r"\bklick(e|t)?\b", r"\btipp(e|t)?\b", r"\btype\b",
     r"\bsag\b", r"\bsage\b", r"\bsprich\b",
     r"\bzeig(e|t)?\b", r"\bliste\b", r"\bdisplay\b",
     r"\bmach auf\b", r"\bmach zu\b", r"\bminimier\b", r"\bmaximier\b",
     r"\bmerk dir\b", r"\bspeicher\b",
-    r"\bkopiere\b", r"\bfüg(e)? ein\b",
+    r"\bkopiere\b", r"\bfüg(e)? ein\b",  # i18n-allow
     r"\bsuch\b", r"\bfinde\b",
-    r"\bwie spät\b", r"\bdatum\b",
+    r"\bwie spät\b", r"\bdatum\b",  # i18n-allow
     r"\bwelcher tag\b",
     # Englisch
     r"\bopen\b", r"\bclose\b", r"\blaunch\b", r"\brun\b",
@@ -58,10 +58,10 @@ _FAST_PATTERNS = [
 _DEEP_PATTERNS = [
     # German — `\w*` instead of `\b` at the end to catch conjugations
     r"\brecherchier\w*", r"\banalysier\w*", r"\bplane\w*\b", r"\bplanung\b",
-    r"\berklär\w*", r"\bvergleich\w*", r"\bunterschied\w*",
+    r"\berklär\w*", r"\bvergleich\w*", r"\bunterschied\w*",  # i18n-allow
     r"\bschreib\w*", r"\bformulier\w*", r"\bverfass\w*",
     r"\bbau(e|t)?\b.*\bmir\b", r"\bentwickel\w*", r"\bentwerf\w*",
-    r"\büberleg\w*", r"\bdenk gründlich\b", r"\bnachdenk\w*",
+    r"\büberleg\w*", r"\bdenk gründlich\b", r"\bnachdenk\w*",  # i18n-allow
     r"\bzusammenfass\w*", r"\bfass\w*.*zusammen",
     r"\bwarum\b", r"\bwieso\b", r"\bweshalb\b",
     r"\boptimier\w*", r"\bverbesser\w*",
@@ -77,7 +77,7 @@ _DEEP_PATTERNS = [
 
 # Coding tasks are routed to the OpenClaw heavy worker.
 _CODE_PATTERNS = [
-    r"\bcode\b.*(für|for|write|schreib)",
+    r"\bcode\b.*(für|for|write|schreib)",  # i18n-allow
     r"\bimplementier\b", r"\bimplement\b",
     r"\bfix bug\b", r"\bfehler finden\b", r"\bdebug\b",
     r"\brefactor\b", r"\brefaktor\b",

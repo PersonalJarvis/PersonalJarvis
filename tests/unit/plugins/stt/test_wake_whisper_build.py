@@ -42,32 +42,27 @@ def test_build_wake_whisper_uses_wake_fields_not_utterance_model() -> None:
     assert p._compute_type == "int8"
 
 
-def test_build_wake_whisper_custom_phrase_upgrades_to_gpu_turbo_with_bias() -> None:
-    # Mission 2026-06-30 (live-log evidence, data/jarvis_desktop.log): the
-    # base/cpu wake model WEDGES repeatedly ("5 consecutive transcribe failures ->
-    # rebuilding the wedged wake model" — up to 40 s of total deafness) and
-    # mis-transcribes even clear speech under app CPU/GIL contention, so a custom
-    # wake ("Hey Nico") needs 2-3 tries. The utterance STT is cloud (Groq), so the
-    # GPU sits idle. Fix: a custom phrase on a CUDA box now runs on the strong
-    # turbo model — ~150 ms per window so it NEVER blows the transcribe timeout
-    # (kills the wedge) and hears the proper noun accurately. The phrase bias is
-    # KEPT (the earlier "turbo without bias mangles Hey Nico -> cuf ich" finding);
-    # the earlier "bias hallucinates the phrase onto silence" concern does NOT
-    # apply on the rolling wake path, which gates on rms/peak/no_speech and so
-    # never feeds a silent window to the model. Reversible via wake_high_accuracy.
+def test_build_wake_whisper_custom_phrase_default_stays_base_cpu_on_cuda() -> None:
+    # DEFAULT is base/cpu even on a CUDA box (wake_high_accuracy defaults False).
+    # Live-log evidence 2026-06-30: on the maintainer's Blackwell GPU (sm_120)
+    # CTranslate2 ``model.transcribe`` HANGS on every live large-v3-turbo/cuda
+    # inference (8 s timeout -> self-heal drops the model -> cold rebuild hangs
+    # again -> vicious cycle, wake permanently deaf). So GPU turbo is OFF by
+    # default; the validated base/cpu + phrase-bias config is the default.
     p = build_wake_whisper(STTConfig(), wake_phrase="Hey Alex", cuda_available=True)
-    assert p._model_name == "large-v3-turbo"
-    assert p._device == "cuda"
+    assert p._model_name == "base"
+    assert p._device == "cpu"
     assert p._initial_prompt == "Hey Alex"  # bias KEPT — needed to hear the name
 
 
-def test_build_wake_whisper_custom_phrase_gpu_upgrade_is_reversible() -> None:
-    # wake_high_accuracy = False forces the validated base/cpu + bias config back
-    # (the escape hatch if the strong model ever over-triggers on a given voice).
-    cfg = STTConfig(wake_high_accuracy=False)
+def test_build_wake_whisper_custom_phrase_gpu_turbo_is_opt_in() -> None:
+    # wake_high_accuracy = True opts a custom phrase into large-v3-turbo/cuda WITH
+    # bias — for GPUs where CTranslate2 inference is stable (RTX 30xx/40xx). Kept
+    # as an escape hatch, NOT the default (it hangs on Blackwell).
+    cfg = STTConfig(wake_high_accuracy=True)
     p = build_wake_whisper(cfg, wake_phrase="Hey Alex", cuda_available=True)
-    assert p._model_name == "base"
-    assert p._device == "cpu"
+    assert p._model_name == "large-v3-turbo"
+    assert p._device == "cuda"
     assert p._initial_prompt == "Hey Alex"
 
 
@@ -98,6 +93,16 @@ def test_build_wake_whisper_cpu_keeps_bias() -> None:
     assert p._model_name == "base"
     assert p._device == "cpu"
     assert p._initial_prompt == "Hey Alex"
+
+
+def test_build_wake_whisper_uses_greedy_beam_for_speed() -> None:
+    # The wake transcribes short phrases on a latency-sensitive always-on loop.
+    # Greedy decoding (beam_size=1) is ~3-5x faster than the beam-5 default on
+    # base/cpu, so a window transcribes in a fraction of the time — far less
+    # likely to blow the wedge timeout under app CPU load, and snappier. The
+    # phrase bias + sound-folding matcher keep recall high without beam search.
+    p = build_wake_whisper(STTConfig(), cuda_available=False)
+    assert p._beam_size == 1
 
 
 def test_build_wake_whisper_passes_language() -> None:

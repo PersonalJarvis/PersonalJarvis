@@ -6,18 +6,18 @@ import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
- * Vollstaendige Trophaeen-Wand. Unlocked in Primary-Farbe, locked grayed
- * mit Lock-Icon. Kein Badge-Counter fuer andere Nutzer (Plan §0 — keine
- * oeffentlichen Like-Counts); die Wand ist privat, nur der User sieht sie.
+ * Full trophy wall. Unlocked in primary color, locked grayed out
+ * with a lock icon. No badge counter for other users (Plan §0 — no
+ * public like counts); the wall is private, only the user sees it.
  */
 export function AchievementGrid() {
   const t = useT();
   const qc = useQueryClient();
   const { data, isLoading } = useAchievements();
 
-  // Live-Unlock via WS — wenn der Evaluator einen Unlock publisht,
-  // invalidiert das den React-Query-Cache und die Karte fuellt sich
-  // ohne Polling-Delay.
+  // Live unlock via WS — when the evaluator publishes an unlock,
+  // this invalidates the React-Query cache and the card fills in
+  // without a polling delay.
   useEffect(() => {
     const handler = () => qc.invalidateQueries({ queryKey: ["board", "achievements"] });
     window.addEventListener("jarvis:achievement-unlocked", handler as EventListener);

@@ -1,6 +1,6 @@
 ---
 plugin_id: stripe
-keywords: stripe, zahlung, zahlung, payment, payments, kunde, kunden, customer, customers, rechnung, rechnungen, invoice, invoices, subscription, abo, abonnement, charge, refund, rückerstattung, balance, guthaben, preis, price
+keywords: stripe, zahlung, zahlung, payment, payments, kunde, kunden, customer, customers, rechnung, rechnungen, invoice, invoices, subscription, abo, abonnement, charge, refund, rückerstattung, balance, guthaben, preis, price  # i18n-allow
 ---
 Use stripe/* tools to look up customers, payments, invoices, and balance — read-first.
 - The hosted MCP server is read-focused; destructive mutations require explicit user intent.

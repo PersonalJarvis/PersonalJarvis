@@ -1,22 +1,22 @@
-"""SelfModFlowController — State-Machine für die Voice-Echo-Confirmation.
+"""SelfModFlowController — state machine for the voice echo confirmation.
 
-Plan-§7.4-Konversationsfluss als reiner Library-Layer. Die echte
-Voice-Pipeline (`jarvis/speech/pipeline.py`) bekommt in Phase 7.6
-einen Adapter, der diesen Controller einhängt.
+Plan-§7.4 conversation flow as a pure library layer. The real
+voice pipeline (`jarvis/speech/pipeline.py`) will get an adapter
+in Phase 7.6 that hooks in this controller.
 
 States:
-    PARSED      — initialer Zustand (intern)
-    CONFIRMING  — Echo-Frage an TTS gegeben, wartet auf User-Antwort
-    APPLYING    — Confirmation entdeckt, mutate() läuft
-    APPLIED     — End-Zustand: erfolgreich persistiert
-    VETOED      — End-Zustand: User hat abgelehnt
-    TIMEOUT     — End-Zustand: keine Antwort innerhalb 30s
-    FAILED      — End-Zustand: Pre-Validate / Reload / Rollback-Fehler
+    PARSED      — initial state (internal)
+    CONFIRMING  — echo question handed to TTS, waiting for the user's answer
+    APPLYING    — confirmation detected, mutate() is running
+    APPLIED     — terminal state: successfully persisted
+    VETOED      — terminal state: user declined
+    TIMEOUT     — terminal state: no answer within 30s
+    FAILED      — terminal state: pre-validate / reload / rollback error
 
-Audit-Trail (Plan-§AP-1, §AP-12 codifiziert):
-- Pre-Audit "voice_confirmed" beim Confirm (mit voice_confirmation-Feld)
-- Reject-Audit "voice_vetoed" oder "voice_timeout" via Pending-Store
-- Mutate-Audit (success/failure) wird vom AtomicConfigWriter geschrieben
+Audit trail (Plan-§AP-1, §AP-12 codified):
+- Pre-audit "voice_confirmed" on confirm (with the voice_confirmation field)
+- Reject-audit "voice_vetoed" or "voice_timeout" via the pending store
+- Mutate-audit (success/failure) is written by the AtomicConfigWriter
 """
 from __future__ import annotations
 
@@ -70,10 +70,10 @@ _TERMINAL_STATES = frozenset(
 
 @dataclass(frozen=True)
 class FlowSession:
-    """Snapshot des Flow-State.
+    """Snapshot of the flow state.
 
-    `frozen=True` + `replace()` für State-Übergänge — pure Funktionen,
-    keine Mutation, deterministisch testbar.
+    `frozen=True` + `replace()` for state transitions — pure functions,
+    no mutation, deterministically testable.
     """
 
     pending: PendingMutation
@@ -108,9 +108,9 @@ def _voice_confirmation_payload(
 
 
 class SelfModFlowController:
-    """Orchestrator für den Voice-Echo-Confirmation-Flow.
+    """Orchestrator for the voice echo confirmation flow.
 
-    Plan-§7.4 Default-Timeout 30s — über Konstruktor anpassbar.
+    Plan-§7.4 default timeout 30s — configurable via the constructor.
     """
 
     DEFAULT_TIMEOUT_SECONDS: ClassVar[float] = 30.0
@@ -124,14 +124,14 @@ class SelfModFlowController:
         default_language: str = "de",
     ) -> None:
         self._pending_store = pending_store
-        # Audit für Pre-Events (voice_confirmed). Reject-Events laufen über
-        # den Pending-Store, der seinerseits den gleichen Writer-Audit hat.
+        # Audit for pre-events (voice_confirmed). Reject events run through
+        # the pending store, which in turn has the same writer audit.
         self._audit: SelfModAudit = audit if audit is not None else pending_store._audit  # noqa: SLF001
         self._timeout_seconds = timeout_seconds
         self._default_language = default_language
 
     # ------------------------------------------------------------------
-    # Flow-Übergänge
+    # Flow transitions
     # ------------------------------------------------------------------
 
     def begin(
@@ -141,11 +141,11 @@ class SelfModFlowController:
         language: str | None = None,
         now: float | None = None,
     ) -> FlowSession:
-        """Initiiert den Flow nach erhaltener `PendingMutation`.
+        """Initiates the flow after receiving a `PendingMutation`.
 
-        SAFE-Tier (`pending.applied=True`): Flow startet bereits in
-        `APPLIED`-State, weil der Store die Mutation schon persistiert hat.
-        Voice-Pipeline rendert nur noch das `safe_applied`-Outcome.
+        SAFE tier (`pending.applied=True`): the flow starts directly in the
+        `APPLIED` state, because the store has already persisted the mutation.
+        The voice pipeline just renders the `safe_applied` outcome.
         """
         lang = language or self._default_language
         if pending.applied:
@@ -177,17 +177,17 @@ class SelfModFlowController:
         confidence: float = 1.0,
         now: float | None = None,
     ) -> FlowSession:
-        """Verarbeitet eine User-Antwort.
+        """Processes a user's answer.
 
-        - Confirm  → Pending wird konsumiert, Mutate läuft, → APPLIED/FAILED.
-        - Veto     → Pending wird via Store mit `voice_vetoed` rejected.
-        - Ambiguous/Unknown → Session bleibt in CONFIRMING, **ohne** Timeout
-          zu verlängern (Plan-Sicherheits-Eigenschaft, kein Soft-Lock).
-        - Wenn Timeout bereits überschritten ist: → TIMEOUT.
+        - Confirm  → the pending mutation is consumed, mutate runs, → APPLIED/FAILED.
+        - Veto     → the pending mutation is rejected via the store with `voice_vetoed`.
+        - Ambiguous/Unknown → the session stays in CONFIRMING, **without** extending
+          the timeout (a plan safety property, no soft-lock).
+        - If the timeout has already elapsed: → TIMEOUT.
         """
         if session.state != FlowState.CONFIRMING:
             raise ValueError(
-                f"receive_answer ist nur in CONFIRMING erlaubt, nicht in {session.state}"
+                f"receive_answer is only allowed in CONFIRMING, not in {session.state}"
             )
         clock = now if now is not None else time.time()
         if clock > session.deadline_ts:
@@ -198,7 +198,7 @@ class SelfModFlowController:
             return self._apply(session, transcript=transcript, confidence=confidence)
         if verdict == "veto":
             return self._veto(session, transcript=transcript, confidence=confidence)
-        # ambiguous OR unknown: bleibt im CONFIRMING ohne Timeout-Verlängerung.
+        # ambiguous OR unknown: stays in CONFIRMING without extending the timeout.
         return replace(
             session, transcript=transcript, confidence=confidence
         )
@@ -206,9 +206,9 @@ class SelfModFlowController:
     def check_timeout(
         self, session: FlowSession, *, now: float | None = None
     ) -> FlowSession:
-        """Soll regelmäßig (z.B. alle 1s) gerufen werden.
+        """Should be called regularly (e.g. every 1s).
 
-        End-Zustände werden unverändert zurückgegeben.
+        Terminal states are returned unchanged.
         """
         if session.is_terminal() or session.state != FlowState.CONFIRMING:
             return session
@@ -224,7 +224,7 @@ class SelfModFlowController:
     def _apply(
         self, session: FlowSession, *, transcript: str, confidence: float
     ) -> FlowSession:
-        # Pre-Audit "voice_confirmed" mit Reichern voice_confirmation
+        # Pre-audit "voice_confirmed" enriched with voice_confirmation
         voice_payload = _voice_confirmation_payload(transcript, confidence)
         try:
             self._audit.record(
@@ -241,7 +241,7 @@ class SelfModFlowController:
                 )
             )
         except Exception as exc:  # noqa: BLE001
-            _LOG.warning("voice_confirmed Pre-Audit fehlgeschlagen: %s", exc)
+            _LOG.warning("voice_confirmed pre-audit failed: %s", exc)
 
         try:
             mutation_result = self._pending_store.confirm(session.pending.id)
@@ -262,7 +262,7 @@ class SelfModFlowController:
                 ),
             )
         except KeyError as exc:
-            # Pending nach TTL-Ablauf nicht mehr da
+            # Pending mutation no longer there after TTL expiry
             return replace(
                 session,
                 state=FlowState.TIMEOUT,
@@ -294,7 +294,7 @@ class SelfModFlowController:
         self, session: FlowSession, *, transcript: str, confidence: float
     ) -> FlowSession:
         voice_payload = _voice_confirmation_payload(transcript, confidence)
-        # Reject-Audit kommt vom Pending-Store mit reason="voice_vetoed".
+        # Reject-audit comes from the pending store with reason="voice_vetoed".
         try:
             self._pending_store.reject(
                 session.pending.id,
@@ -303,7 +303,7 @@ class SelfModFlowController:
                 voice_confirmation=voice_payload,
             )
         except Exception as exc:  # noqa: BLE001
-            _LOG.warning("Pending-Store-Reject (vetoed) fehlgeschlagen: %s", exc)
+            _LOG.warning("Pending-store reject (vetoed) failed: %s", exc)
         return replace(
             session,
             state=FlowState.VETOED,
@@ -323,7 +323,7 @@ class SelfModFlowController:
                 voice_confirmation=None,
             )
         except Exception as exc:  # noqa: BLE001
-            _LOG.warning("Pending-Store-Reject (timeout) fehlgeschlagen: %s", exc)
+            _LOG.warning("Pending-store reject (timeout) failed: %s", exc)
         return replace(
             session,
             state=FlowState.TIMEOUT,
@@ -333,7 +333,7 @@ class SelfModFlowController:
         )
 
 
-# Re-Export für test-friendly access
+# Re-export for test-friendly access
 __all__ = [
     "FlowSession",
     "FlowState",
@@ -341,6 +341,6 @@ __all__ = [
 ]
 
 
-# Suppress lint: `field` import wird für zukünftige FrozenSet-Defaults reserviert
+# Suppress lint: `field` import is reserved for future FrozenSet defaults
 _ = field
 _ = UUID

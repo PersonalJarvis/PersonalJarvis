@@ -1,13 +1,13 @@
-"""Integration-Tests fuer Phase A1 — E2E mit echtem Win32.
+"""Integration tests for Phase A1 — E2E with real Win32.
 
-Skippt auf Linux/Mac (Plan §5 AC). Spawnt notepad.exe als bekannten
-Foreground-Trigger und misst SetWinEventHook-Latenz + UnhookWinEvent-
-Cleanup + 2s-Shutdown-Budget.
+Skips on Linux/Mac (Plan §5 AC). Spawns notepad.exe as a known
+foreground trigger and measures SetWinEventHook latency + UnhookWinEvent
+cleanup + the 2s shutdown budget.
 
-Wird NICHT von der Standard-Test-Suite eingesammelt wenn auf non-Windows
-laeuft — pytestmark skipt das ganze Modul. Im Worktree-Pfad
-``<USER_HOME>\\Desktop\\jarvis-a0`` (Win32) laufen die Tests
-real; in Linux-CI: skipped.
+NOT collected by the standard test suite when running on non-Windows —
+pytestmark skips the whole module. On the worktree path
+``<USER_HOME>\\Desktop\\jarvis-a0`` (Win32) the tests run
+for real; on Linux CI: skipped.
 """
 from __future__ import annotations
 
@@ -20,12 +20,12 @@ import pytest
 
 pytestmark = pytest.mark.skipif(
     os.name != "nt",
-    reason="Win32-only — Hook-Lifecycle-Test braucht echten Pump-Thread",
+    reason="Win32-only — hook lifecycle test needs a real pump thread",
 )
 
-# Imports duerfen auf Linux NICHT crashen — Lazy-Imports in den Watchers
-# stellen das sicher (siehe HN3). Wenn doch: Module-Top-Import von win32event
-# o.ae. wurde versehentlich eingefuehrt → Sofort fixen.
+# Imports must NOT crash on Linux — lazy imports in the watchers make sure of
+# that (see HN3). If they do: a module-top import of win32event or similar
+# was accidentally introduced → fix immediately.
 from jarvis.awareness.config import AwarenessConfig  # noqa: E402
 from jarvis.awareness.manager import AwarenessManager  # noqa: E402
 from jarvis.awareness.privacy import PrivacyFilter  # noqa: E402
@@ -36,7 +36,7 @@ from jarvis.core.events import FrameUpdated, IdleEntered  # noqa: E402
 
 
 def _async_collect(target: list):
-    """Test-Helper: gibt einen async Handler zurueck der Events an die Liste anhaengt."""
+    """Test helper: returns an async handler that appends events to the list."""
     async def _handler(ev):
         target.append(ev)
     return _handler
@@ -59,14 +59,14 @@ async def test_window_focus_watcher_real_win32_hook() -> None:
     proc = None
     try:
         proc = subprocess.Popen(["notepad.exe"])
-        # Polling auf event (max 3s — Hook-Latenz sollte <100ms sein)
+        # Poll for the event (max 3s — hook latency should be <100ms)
         for _ in range(60):
             if any(ev.process_name.lower() == "notepad.exe" for ev in received):
                 break
             await asyncio.sleep(0.05)
 
         assert any(ev.process_name.lower() == "notepad.exe" for ev in received), (
-            f"Kein FrameUpdated fuer notepad.exe. "
+            f"No FrameUpdated for notepad.exe. "
             f"Received: {[(ev.process_name, ev.window_title) for ev in received]}"
         )
     finally:
@@ -115,11 +115,11 @@ async def test_window_focus_watcher_stop_under_2s() -> None:
 @pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_idle_detector_real_threshold_2s() -> None:
-    """IdleDetector mit threshold_s=2 — wartet 3.5s ohne Mouse/KB-Sim.
+    """IdleDetector with threshold_s=2 — waits 3.5s with no mouse/KB sim.
 
-    Annahme: Test laeuft in nicht-interaktiver Session (CI/headless).
-    Bei interaktiver Session mit Maus-Bewegung kann der Test fehlschlagen
-    — dann gilt's als environmental noise, nicht als A1-Regression.
+    Assumption: test runs in a non-interactive session (CI/headless).
+    In an interactive session with mouse movement the test can fail
+    — that counts as environmental noise, not an A1 regression.
     """
     cfg = AwarenessConfig.default()
     bus = EventBus()
@@ -133,8 +133,8 @@ async def test_idle_detector_real_threshold_2s() -> None:
     try:
         await asyncio.sleep(3.5)
         assert manager.state.is_idle is True or len(received) > 0, (
-            "Erwartet: IdleEntered nach 3.5s Inaktivitaet. "
-            "Falls fehlgeschlagen: vermutlich interaktive Session mit Mouse-Movement."
+            "Expected: IdleEntered after 3.5s of inactivity. "
+            "If this fails: likely an interactive session with mouse movement."
         )
     finally:
         await detector.stop()

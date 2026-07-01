@@ -36,15 +36,15 @@ _PROVIDER_ALIASES = (
 # Strict: "wechsel auf X", "switch to X", "wechsle zu X", "nutze X" — plus the
 # natural-phrasing filler "[den/the/deinen] [brain ]provider/anbieter/modell"
 # between the verb and the target (added 2026-06-08). Without that filler,
-# "switch the brain provider to gemini" / "wechsel den Brain-Provider auf X"
+# "switch the brain provider to gemini" / "wechsel den Brain-Provider auf X"  # i18n-allow: quoted German input example
 # fell through to the router LLM, which (told it had "no authority" to switch)
-# refused with "keine Berechtigung". A still-strict gate: it ends in a known
+# refused with "keine Berechtigung" ("no permission"). A still-strict gate: it ends in a known  # i18n-allow: quoted German runtime phrase
 # provider alias with a word boundary, so harmless sentences never match.
 # The German imperative paradigm needs two stems: "wechsel" and "wechsle".
 _PROVIDER_PATTERN = re.compile(
-    r"\b(?:wechsel[n]?|wechsle|änder\w*|aender\w*|setz\w*|stell\w*"
+    r"\b(?:wechsel[n]?|wechsle|änder\w*|aender\w*|setz\w*|stell\w*"  # i18n-allow: German provider-switch input-matching data
     r"|switch(?:\s+to)?|benutze?|nutze|use|nimm)"
-    r"(?:\s+(?:den|die|das|der|the|deinen|deine|dein|meinen|meine|mein|my))?"
+    r"(?:\s+(?:den|die|das|der|the|deinen|deine|dein|meinen|meine|mein|my))?"  # i18n-allow: German provider-switch input-matching data
     r"(?:\s+(?:brain[-\s]*provider|provider|anbieter|sprach[-\s]*modell|modell|model))?"
     # Optional "von/from <source>" so "switch FROM gemini TO openai" targets the
     # destination after auf/zu/to, not the source (forensic 2026-06-27).
@@ -54,18 +54,18 @@ _PROVIDER_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Cancel: "stopp", "abbruch", "abbrechen", "cancel", "jarvis stopp" — only at
+# Cancel: "stopp", "abbruch", "abbrechen", "cancel", "jarvis stopp" — only at  # i18n-allow: quoted German cancel-command examples
 # sentence start OR preceded by "jarvis", to avoid catching harmless phrases
 # like "stopp doch mal kurz".
 _CANCEL_PATTERN = re.compile(
-    r"^(?:jarvis[,\s]+)?(?:stopp?|abbruch|abbrechen|cancel|stop\s+sub|halt)\b",
+    r"^(?:jarvis[,\s]+)?(?:stopp?|abbruch|abbrechen|cancel|stop\s+sub|halt)\b",  # i18n-allow: German cancel-command input-matching data
     re.IGNORECASE,
 )
 
 # Depth override: "denk gruendlich" / "denk schnell" / "think hard" — kept
 # intentionally as-is (already proven). We reuse the list from manager.py.
 _DEEP_PATTERNS = (
-    "denk gründlich", "denk gruendlich", "denk tief", "denk mal gründlich",
+    "denk gründlich", "denk gruendlich", "denk tief", "denk mal gründlich",  # i18n-allow: German depth-override input-matching data
     "think hard", "think deeply", "deep thinking",
     "nimm opus", "use opus", "opus-modus",
 )
@@ -79,23 +79,23 @@ _FAST_PATTERNS = (
 # "respond in German" must be a DETERMINISTIC, provider-independent action (set
 # brain.reply_language directly) — not an LLM tool-choice, never a worker
 # mission. A language word ALONE never matches; it needs an intent marker:
-#   (a) an unambiguous CHANGE verb (umstell/umänder/wechsel/änder/switch/change),
+#   (a) an unambiguous CHANGE verb (umstell/umänder/wechsel/änder/switch/change),  # i18n-allow: quoted German input-matching verb stems
 #   (b) a bare imperative SPEAK verb (sprich/speak <lang>), or
 #   (c) an OUTPUT verb (antwort/respond/reply/answer/rede/set/stell/mach) plus a
 #       directional preposition (auf/in/zu/to <lang>).
-# So "wie heißt das auf Englisch?", "ich spreche Englisch", "auf Deutsch klingt
-# das besser", "erzähl mir was auf Englisch" still fall through to the brain.
+# So "wie heißt das auf Englisch?", "ich spreche Englisch", "auf Deutsch klingt  # i18n-allow: quoted German input examples that must NOT match
+# das besser", "erzähl mir was auf Englisch" still fall through to the brain.  # i18n-allow: quoted German input example
 _LANG_ALIASES: dict[str, str] = {
     "englisch": "en", "english": "en",
     "deutsch": "de", "german": "de",
     "spanisch": "es", "spanish": "es", "español": "es", "espanol": "es", "castellano": "es",
     "automatisch": "auto", "automatik": "auto", "automatic": "auto", "auto": "auto",
 }
-# (a) Unambiguous change verbs — incl. German separable forms ("umändern",
-# "umstellen") whose "um" prefix breaks a plain "\bänder" boundary.
+# (a) Unambiguous change verbs — incl. German separable forms ("umändern",  # i18n-allow: quoted German verb-form examples
+# "umstellen") whose "um" prefix breaks a plain "\bänder" boundary.  # i18n-allow: quoted German verb-form example
 _LANG_CHANGE_VERB = re.compile(
-    r"\b(?:um(?:stell|schalt|änder|aender|stellung)\w*|wechsel\w*|wechsle"
-    r"|änder\w*|aender\w*|switch\w*|change\w*)\b",
+    r"\b(?:um(?:stell|schalt|änder|aender|stellung)\w*|wechsel\w*|wechsle"  # i18n-allow: German change-verb input-matching data
+    r"|änder\w*|aender\w*|switch\w*|change\w*)\b",  # i18n-allow: German change-verb input-matching data
     re.IGNORECASE,
 )
 # (b) Imperative speak verbs — match directly (no preposition needed):
@@ -116,7 +116,7 @@ _LANG_PREP = re.compile(r"\b(?:auf|zu|to|in|on)\b", re.IGNORECASE)
 
 def _match_language_switch(t: str) -> str | None:
     # Pick the language that appears EARLIEST in the utterance, not the first
-    # one in alias-dict order. "antworte auf deutsch und englisch" must resolve
+    # one in alias-dict order. "antworte auf deutsch und englisch" must resolve  # i18n-allow: quoted German input example
     # to de (the first spoken language), not en just because "englisch" happens
     # to sit earlier in _LANG_ALIASES (forensic 2026-06-27).
     best: tuple[int, str] | None = None
@@ -141,7 +141,7 @@ def _match_language_switch(t: str) -> str | None:
 # that runs heavy missions, NOT the router brain. The gate stays pure: it only
 # recognises the intent + the spoken provider word; the manager handler maps it
 # to a canonical subagent slug, validates, and persists via the 3-layer writer
-# (config-soll pinned) so the drift-guard cannot revert it. A sub-agent
+# (config-soll pinned) so the drift-guard cannot revert it. A sub-agent  # i18n-allow: "config-soll" is a Soll/Ist ("target-state") technical term, not prose
 # QUALIFIER is required, so a bare "switch to gemini" still means the main brain.
 _SUBAGENT_QUALIFIER = re.compile(
     r"\b(?:sub[-\s]?agent|subagent|sub[-\s]?jarvis|subjarvis|worker|helfer|helper)\b",
@@ -174,7 +174,7 @@ def _match_subagent_switch(t: str) -> str | None:
         return None
     # Gate: an explicit change verb is an unambiguous command; otherwise accept
     # only "... provider auf/to <X>" (a noun + preposition) so a STATEMENT like
-    # "der Sub-Agent läuft auf Gemini" (no verb, no 'provider' word) falls through
+    # "der Sub-Agent läuft auf Gemini" (no verb, no 'provider' word) falls through  # i18n-allow: quoted German input example
     # to the brain instead of silently switching.
     if not (
         _SUBAGENT_SWITCH_VERB.search(t)
@@ -182,7 +182,7 @@ def _match_subagent_switch(t: str) -> str | None:
     ):
         return None
     # The TARGET provider follows the directional preposition: "switch ... TO
-    # codex", "von Antigravity AUF Codex". Look for a provider word AFTER the last
+    # codex", "von Antigravity AUF Codex". Look for a provider word AFTER the last  # i18n-allow: quoted German input example
     # auf/zu/to first (the target); only then fall back to the whole sentence.
     # Without this the first word in alias-list ORDER wins, so "von Antigravity
     # auf Codex" switched to antigravity — the SOURCE, not the target (forensic

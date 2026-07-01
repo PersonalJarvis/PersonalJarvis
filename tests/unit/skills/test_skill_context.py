@@ -1,7 +1,7 @@
-"""Unit-Tests fuer den prozessweiten Skill-Context (Skills-Brain-Integration: Phase Skills-1).
+"""Unit tests for the process-wide skill context (skills-brain integration: Phase Skills-1).
 
-Vorbild-Tests: ``tests/unit/harness/test_computer_use_context.py`` (falls
-vorhanden) — selbe Mechanik (Set/Get/TryGet) wird hier verifiziert.
+Model tests: ``tests/unit/harness/test_computer_use_context.py`` (if
+present) — the same mechanism (set/get/tryGet) is verified here.
 """
 from __future__ import annotations
 
@@ -16,16 +16,16 @@ from jarvis.skills.skill_context import (
 
 
 class _StubRegistry:
-    """Marker-Stub fuer SkillRegistry — nur Identitaets-Tests, kein Verhalten."""
+    """Marker stub for SkillRegistry — identity tests only, no behavior."""
 
 
 class _StubRunner:
-    """Marker-Stub fuer SkillRunner — nur Identitaets-Tests, kein Verhalten."""
+    """Marker stub for SkillRunner — identity tests only, no behavior."""
 
 
 @pytest.fixture(autouse=True)
 def _reset_context():
-    """Garantiert sauberer State pro Test — globaler Context wird zurueckgesetzt."""
+    """Guarantees clean state per test — global context is reset."""
     set_skill_context(None)
     yield
     set_skill_context(None)
@@ -36,7 +36,7 @@ def test_try_get_returns_none_when_unset():
 
 
 def test_get_raises_runtime_error_when_unset():
-    with pytest.raises(RuntimeError, match="nicht gesetzt"):
+    with pytest.raises(RuntimeError, match="not set"):
         get_skill_context()
 
 

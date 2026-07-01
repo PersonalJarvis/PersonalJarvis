@@ -1,15 +1,15 @@
-"""TaskStore — aiosqlite-basierte Persistenz fuer die Task-Queue (ADR-0003).
+"""TaskStore — aiosqlite-based persistence for the task queue (ADR-0003).
 
-Der Store ist bewusst dumm: kein Scheduling, kein Event-Dispatch. Nur
-CRUD + transaktionale State-Uebergaenge + Startup-Cleanup.
+The store is deliberately dumb: no scheduling, no event dispatch. Just
+CRUD + transactional state transitions + startup cleanup.
 
-Zwei Tabellen:
-- ``tasks``      — Hauptzeile pro geschedultem Task (TaskSpec als JSON-Blob).
-- ``task_steps`` — Append-only Step-Log (Runner schreibt hier observation/action/
-  verify/log-Zeilen, UI rendert sie als Timeline).
+Two tables:
+- ``tasks``      — main row per scheduled task (TaskSpec as a JSON blob).
+- ``task_steps`` — append-only step log (the runner writes observation/action/
+  verify/log lines here, the UI renders them as a timeline).
 
-Pattern: identisch zu ``jarvis/memory/recall.py`` (``aiosqlite`` + ``ensure_open``
-Lazy-Init damit die Store-Instanz synchron konstruiert werden kann).
+Pattern: identical to ``jarvis/memory/recall.py`` (``aiosqlite`` + ``ensure_open``
+lazy-init so the store instance can be constructed synchronously).
 """
 from __future__ import annotations
 
@@ -51,12 +51,12 @@ CREATE TABLE tasks_new (
 
 
 class TaskStore:
-    """CRUD-Store fuer Tasks + Steps auf der gemeinsamen Memory-DB.
+    """CRUD store for tasks + steps on the shared memory DB.
 
-    Die DB-Datei wird NICHT von dieser Klasse initialisiert, was das
-    Memory-Schema angeht — das uebernimmt ``RecallStore``. Wir koennen
-    aber trotzdem init() unabhaengig aufrufen, weil unser Schema
-    additiv und idempotent ist (``CREATE TABLE IF NOT EXISTS``).
+    The DB file is NOT initialized by this class as far as the memory
+    schema is concerned — ``RecallStore`` handles that. We can still call
+    init() independently, though, because our schema is additive and
+    idempotent (``CREATE TABLE IF NOT EXISTS``).
     """
 
     name: str = "sqlite-tasks"
@@ -71,13 +71,13 @@ class TaskStore:
     # ------------------------------------------------------------------
 
     async def init(self) -> None:
-        """Oeffnet DB-Connection + fuehrt additives Schema aus."""
+        """Opens the DB connection + runs the additive schema."""
         if self._conn is not None:
             return
         self._conn = await aiosqlite.connect(self._db_path, isolation_level=None)
         self._conn.row_factory = aiosqlite.Row
-        # PRAGMAs: WAL + busy_timeout kommen vom Memory-Schema, aber
-        # bei einer noch leeren DB setzen wir sie sicherheitshalber auch hier.
+        # PRAGMAs: WAL + busy_timeout come from the memory schema, but on a
+        # still-empty DB we set them here too, just to be safe.
         await self._conn.execute("PRAGMA journal_mode = WAL")
         await self._conn.execute("PRAGMA busy_timeout = 5000")
         await self._conn.execute("PRAGMA foreign_keys = ON")
@@ -103,7 +103,7 @@ class TaskStore:
     def _require_conn(self) -> aiosqlite.Connection:
         if self._conn is None:
             raise RuntimeError(
-                "TaskStore nicht initialisiert — rufe init() oder nutze 'async with'."
+                "TaskStore not initialized — call init() or use 'async with'."
             )
         return self._conn
 
@@ -165,23 +165,23 @@ class TaskStore:
         )
 
     # ------------------------------------------------------------------
-    # Hilfen
+    # Helpers
     # ------------------------------------------------------------------
 
     @staticmethod
     def _compute_trigger_fields(spec: TaskSpec) -> tuple[str, int | None, str | None]:
-        """Extrahiert ``(trigger_type, due_at_ns, event_selector)`` aus einer Spec.
+        """Extracts ``(trigger_type, due_at_ns, event_selector)`` from a spec.
 
-        ``due_at_ns`` ist UTC-nano-seconds; beim Scheduler wird es mit
-        ``time.time_ns()`` verglichen.
+        ``due_at_ns`` is UTC nanoseconds; the scheduler compares it against
+        ``time.time_ns()``.
         """
         trig = spec.trigger
         if trig.type == "after_delay":
             due = time.time_ns() + int(trig.delay_seconds * 1e9)
             return "after_delay", due, None
         if trig.type == "at_time":
-            # Parsing-Responsibility liegt beim Scheduler (ISO-8601 + TZ).
-            # Hier nur fallback: wenn parsen klappt, nutzen wir ihn.
+            # Parsing responsibility lives with the scheduler (ISO-8601 + TZ).
+            # Here just a fallback: if parsing succeeds, we use it.
             from datetime import datetime
             try:
                 dt = datetime.fromisoformat(trig.iso_timestamp.replace("Z", "+00:00"))
@@ -207,18 +207,18 @@ class TaskStore:
             else:
                 due = time.time_ns() + int(trig.interval_seconds * 1e9)
             return "every", due, None
-        raise ValueError(f"Unbekannter Trigger-Typ: {trig.type}")  # pragma: no cover
+        raise ValueError(f"Unknown trigger type: {trig.type}")  # pragma: no cover
 
     # ------------------------------------------------------------------
     # CRUD
     # ------------------------------------------------------------------
 
     async def insert(self, spec: TaskSpec, *, trace_id: str | None = None) -> str:
-        """Legt einen neuen Task mit ``state='scheduled'`` an.
+        """Creates a new task with ``state='scheduled'``.
 
-        Returnt die Task-ID (str). ``trace_id`` darf optional mitgegeben
-        werden; sonst wird die Spec-ID als Trace verwendet (ein Task = ein
-        Trace, solange kein anderer Scope ueberschreibt).
+        Returns the task ID (str). ``trace_id`` may optionally be passed in;
+        otherwise the spec ID is used as the trace (one task = one trace, as
+        long as no other scope overrides it).
         """
         conn = self._require_conn()
         trigger_type, due_at_ns, event_selector = self._compute_trigger_fields(spec)
@@ -249,10 +249,10 @@ class TaskStore:
         result: dict[str, Any] | None = None,
         increment_attempts: bool = False,
     ) -> None:
-        """Uebergang in einen neuen State, atomar mit optionaler Fehler-/Result-Info.
+        """Transitions to a new state, atomically, with optional error/result info.
 
-        Setzt automatisch ``started_at_ns`` beim Uebergang in ``running``
-        und ``finished_at_ns`` in Terminal-States.
+        Automatically sets ``started_at_ns`` on the transition to ``running``
+        and ``finished_at_ns`` on terminal states.
         """
         conn = self._require_conn()
         now_ns = time.time_ns()
@@ -275,8 +275,8 @@ class TaskStore:
             sets.append("attempts = attempts + 1")
 
         params.append(task_id)
-        # `sets` ist eine Whitelist von Spalten-Zuweisungen (oben statisch
-        # erzeugt) — kein User-Input fliesst in den SQL-String.
+        # `sets` is a whitelist of column assignments (built statically
+        # above) — no user input flows into the SQL string.
         sql = f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?"  # noqa: S608
         await conn.execute(sql, tuple(params))
 
@@ -286,11 +286,11 @@ class TaskStore:
         kind: str,
         payload: dict[str, Any],
     ) -> int:
-        """Haengt einen Step an ``task_steps`` an. Returnt die neue ``seq``.
+        """Appends a step to ``task_steps``. Returns the new ``seq``.
 
-        ``kind`` ist ``'observation' | 'action' | 'verify' | 'log'``. Keine
-        harte DB-Constraint, damit Runner auch andere Kinds (z.B. 'retry')
-        eintragen kann.
+        ``kind`` is ``'observation' | 'action' | 'verify' | 'log'``. No hard
+        DB constraint, so the runner can also record other kinds (e.g.
+        'retry').
         """
         conn = self._require_conn()
         cur = await conn.execute(
@@ -315,7 +315,7 @@ class TaskStore:
         *,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        """Returnt eine Liste von Task-Rows (ohne Steps), gefiltert nach State."""
+        """Returns a list of task rows (without steps), filtered by state."""
         conn = self._require_conn()
         sql = (
             "SELECT id, trace_id, state, trigger_type, due_at_ns, title, "
@@ -339,7 +339,7 @@ class TaskStore:
         return [dict(r) for r in rows]
 
     async def get(self, task_id: str) -> dict[str, Any] | None:
-        """Returnt Full-Task (inkl. Steps) oder None."""
+        """Returns the full task (incl. steps), or None."""
         conn = self._require_conn()
         cur = await conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
         row = await cur.fetchone()
@@ -367,7 +367,7 @@ class TaskStore:
         return task
 
     async def get_spec(self, task_id: str) -> TaskSpec | None:
-        """Deserialisiert ``spec_json`` zurueck zu einer TaskSpec."""
+        """Deserializes ``spec_json`` back into a TaskSpec."""
         conn = self._require_conn()
         cur = await conn.execute(
             "SELECT spec_json FROM tasks WHERE id = ?", (task_id,)
@@ -379,7 +379,7 @@ class TaskStore:
         return TaskSpec.model_validate_json(row["spec_json"])
 
     async def delete(self, task_id: str) -> bool:
-        """Entfernt Task + Steps (via ON DELETE CASCADE). Returnt ob ein Row getroffen wurde."""
+        """Removes the task + steps (via ON DELETE CASCADE). Returns whether a row was hit."""
         conn = self._require_conn()
         cur = await conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
         rowcount = cur.rowcount
@@ -387,14 +387,14 @@ class TaskStore:
         return rowcount > 0
 
     async def all_pending_scheduled(self) -> list[dict[str, Any]]:
-        """Fuer Scheduler-Hydration: alle Tasks im State ``scheduled``."""
+        """For scheduler hydration: all tasks in state ``scheduled``."""
         return await self.list(state_filter="scheduled", limit=10_000)
 
     async def cleanup_interrupted(self) -> int:
-        """Startup-Cleanup: alle ``running`` → ``interrupted`` mit Error-Log.
+        """Startup cleanup: all ``running`` → ``interrupted`` with an error log.
 
-        Returnt die Anzahl der betroffenen Tasks. Laut ADR-0003 muss das
-        beim App-Start aufgerufen werden, bevor der Scheduler haydriert.
+        Returns the number of affected tasks. Per ADR-0003 this must be
+        called at app start, before the scheduler hydrates.
         """
         conn = self._require_conn()
         now_ns = time.time_ns()

@@ -101,7 +101,7 @@ async def test_very_quiet_wake_below_legacy_peak_gate_reaches_whisper() -> None:
         ("Leo", "leo"),                 # 3-char name — short-token relaxed ratio
         ("Alex", "alex"),             # name
         ("Herz", "herz"),               # German common noun
-        ("Björn", "björn"),             # umlaut name — diacritics folded for match
+        ("Björn", "björn"),             # umlaut name — diacritics folded for match  # i18n-allow
         ("Athena", "athena"),           # longer name
         ("Computer", "computer"),       # English noun
         ("Hey Zeus", "hey zeus"),       # two-word phrase, prefix stripped

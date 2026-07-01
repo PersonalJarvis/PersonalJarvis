@@ -1,10 +1,10 @@
-"""Tests fuer jarvis.awareness.config.AwarenessConfig.
+"""Tests for jarvis.awareness.config.AwarenessConfig.
 
-A0-Scope:
-- Pydantic-Model laedt mit Defaults (default()-Helper).
-- Default-Blacklist matcht Plan §4 Wortlaut.
-- Backward-Compat: jarvis.toml ohne [awareness]-Block laedt sauber.
-- Custom-TOML ueberschreibt Defaults.
+A0 scope:
+- The Pydantic model loads with defaults (default() helper).
+- The default blacklist matches the plan §4 wording.
+- Backward compat: jarvis.toml without an [awareness] block loads cleanly.
+- Custom TOML overrides the defaults.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from jarvis.awareness.config import AwarenessConfig
 
 
 def test_default_loads_clean() -> None:
-    """AwarenessConfig.default() ohne Argumente, ohne Errors."""
+    """AwarenessConfig.default() with no arguments, no errors."""
     cfg = AwarenessConfig.default()
     assert cfg.enabled is True
     assert cfg.privacy is not None
@@ -24,7 +24,7 @@ def test_default_loads_clean() -> None:
 
 
 def test_default_blacklist_matches_plan_section_4() -> None:
-    """Default-Blacklist enthaelt exakt die §4-Patterns."""
+    """The default blacklist contains exactly the §4 patterns."""
     cfg = AwarenessConfig.default()
     blocked_procs = cfg.privacy.blocked_processes
     assert "1password*" in blocked_procs
@@ -39,11 +39,11 @@ def test_default_blacklist_matches_plan_section_4() -> None:
         "*Passwort*", "*Password*Manager*",
         "*Inkognito*", "*Private Browsing*",
     ):
-        assert pattern in blocked_titles, f"Plan-Pattern fehlt: {pattern}"
+        assert pattern in blocked_titles, f"plan pattern missing: {pattern}"
 
 
 def test_default_allowed_processes_matches_plan() -> None:
-    """Default-Allowlist enthaelt Coding-Apps aus §4."""
+    """The default allowlist contains coding apps from §4."""
     cfg = AwarenessConfig.default()
     for proc in ("code.exe", "cursor.exe", "windsurf.exe",
                  "WindowsTerminal.exe", "pwsh.exe", "cmd.exe"):
@@ -51,13 +51,13 @@ def test_default_allowed_processes_matches_plan() -> None:
 
 
 def test_default_when_unknown_is_hybrid() -> None:
-    """D-A1 Default: Hybrid-Strategy."""
+    """D-A1 default: hybrid strategy."""
     cfg = AwarenessConfig.default()
     assert cfg.privacy.default_when_unknown == "block_for_browsers_allow_for_others"
 
 
 def test_watchers_defaults_for_a1_forward_compat() -> None:
-    """Watchers-Defaults sind hier definiert, werden in A1 verwendet."""
+    """Watchers defaults are defined here, used in A1."""
     cfg = AwarenessConfig.default()
     assert cfg.watchers.enable_window is True
     assert cfg.watchers.enable_idle is True
@@ -65,14 +65,14 @@ def test_watchers_defaults_for_a1_forward_compat() -> None:
 
 
 def test_quotas_defaults() -> None:
-    """Quotas-Defaults: 50 MiB / 1000 Episoden."""
+    """Quotas defaults: 50 MiB / 1000 episodes."""
     cfg = AwarenessConfig.default()
     assert cfg.quotas.max_bytes == 50 * 1024 * 1024
     assert cfg.quotas.max_episodes == 1000
 
 
 def test_loads_from_toml_overrides_defaults() -> None:
-    """Custom-TOML ueberschreibt Defaults Feld fuer Feld."""
+    """Custom TOML overrides defaults field by field."""
     raw = textwrap.dedent("""
         enabled = false
 
@@ -101,9 +101,9 @@ def test_loads_from_toml_overrides_defaults() -> None:
 
 
 def test_partial_toml_keeps_defaults_for_missing_keys() -> None:
-    """Backward-Compat: nur einige Felder gesetzt → Rest bleibt Default."""
+    """Backward compat: only some fields set → the rest stays default."""
     data = tomllib.loads('enabled = false\n')
     cfg = AwarenessConfig(**data)
     assert cfg.enabled is False
-    # Privacy-Defaults wurden NICHT veraendert
+    # Privacy defaults were NOT changed
     assert "1password*" in cfg.privacy.blocked_processes

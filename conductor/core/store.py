@@ -1,10 +1,10 @@
-"""ConductorStore — aiosqlite-Persistenz.
+"""ConductorStore — aiosqlite persistence.
 
-Pattern identisch zu ``jarvis.workflows.store``: Lazy-Init via ``init()``,
-Context-Manager-Support, additives Schema via ``executescript``.
+Pattern identical to ``jarvis.workflows.store``: lazy init via ``init()``,
+context-manager support, additive schema via ``executescript``.
 
-Default-DB-Path: ``~/.conductor/conductor.sqlite`` — bewusst separat von
-Jarvis, damit Conductor auch ohne Jarvis-Installation laeuft.
+Default DB path: ``~/.conductor/conductor.sqlite`` — deliberately
+separate from Jarvis, so Conductor also runs without a Jarvis install.
 """
 from __future__ import annotations
 
@@ -63,8 +63,8 @@ class ConductorStore:
     def _require_conn(self) -> aiosqlite.Connection:
         if self._conn is None:
             raise RuntimeError(
-                "ConductorStore nicht initialisiert — rufe init() oder "
-                "nutze 'async with'."
+                "ConductorStore not initialized — call init() or "
+                "use 'async with'."
             )
         return self._conn
 
@@ -73,11 +73,11 @@ class ConductorStore:
     # ------------------------------------------------------------------
 
     async def upsert_job(self, job: Job) -> str:
-        """Legt einen Job an oder ueberschreibt eine bestehende ID.
+        """Creates a job or overwrites an existing ID.
 
-        Schreibt auch denormalisierte Felder (``type``, ``schedule_type``,
-        ``schedule_expr``, ``webhook_token``) die der Scheduler fuer
-        schnelle Queries braucht.
+        Also writes denormalized fields (``type``, ``schedule_type``,
+        ``schedule_expr``, ``webhook_token``) that the scheduler needs
+        for fast queries.
         """
         conn = self._require_conn()
         spec = job.spec
@@ -248,8 +248,8 @@ class ConductorStore:
         if not sets:
             return
         params.append(run_id)
-        # ``sets`` wird statisch aus Literal-Fragmenten aufgebaut — kein
-        # User-Input fliesst in den SQL-String.
+        # ``sets`` is built statically from literal fragments — no
+        # user input flows into the SQL string.
         sql = f"UPDATE runs SET {', '.join(sets)} WHERE id = ?"  # noqa: S608
         await conn.execute(sql, tuple(params))
 
@@ -295,7 +295,7 @@ class ConductorStore:
         return [dict(r) for r in rows]
 
     async def cleanup_interrupted_runs(self) -> int:
-        """Startup: alle running/pending → failed (app-exit detected)."""
+        """Startup: all running/pending → failed (app-exit detected)."""
         conn = self._require_conn()
         cur = await conn.execute(
             """

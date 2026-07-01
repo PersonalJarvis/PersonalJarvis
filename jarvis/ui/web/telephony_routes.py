@@ -370,7 +370,7 @@ async def post_selftest(request: Request) -> JSONResponse:
         error = f"brain: {exc}"
 
     if not response_text:
-        response_text = "Ja, das Telefon funktioniert. Ich höre dich klar und deutlich."
+        response_text = "Ja, das Telefon funktioniert. Ich höre dich klar und deutlich."  # i18n-allow: canned voice-output fallback, synthesized via TTS below
 
     # Scrub + TTS -> count synthesized bytes after transcode to Twilio mu-law.
     try:

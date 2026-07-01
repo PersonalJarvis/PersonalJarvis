@@ -1,4 +1,4 @@
-"""Preview-Routes: liefert registrierte Dev-Server fuer die Sidebar-Previews-View."""
+"""Preview routes: serves registered dev servers for the sidebar Previews view."""
 from __future__ import annotations
 
 from typing import Any

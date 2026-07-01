@@ -1,4 +1,4 @@
-"""Unit-Tests für IterationBudget."""
+"""Unit tests for IterationBudget."""
 from __future__ import annotations
 
 from jarvis.brain import IterationBudget

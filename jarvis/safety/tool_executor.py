@@ -1,13 +1,13 @@
-"""ToolExecutor: orchestriert Risk-Eval → Plausibility → Approval → Execute → Event-Log.
+"""ToolExecutor: orchestrates risk-eval → plausibility → approval → execute → event log.
 
-Einziger autorisierter Einstiegspunkt für Tool-Calls. Wer `Tool.execute()`
-direkt aufruft umgeht Safety — das ist ein Bug.
+The only authorized entry point for tool calls. Calling `Tool.execute()`
+directly bypasses safety — that is a bug.
 
-Phase 4 (Persona-Mandat): Vor jeder Approval-Entscheidung laeuft ein
-Plausibilitaets-Check. Wenn die Voice-Pipeline einen ``plausibility_context_fn``
-registriert hat, holt der Executor sich Transcript-Confidence + Wake-Age
-und entscheidet, ob bei ``ask``-/``monitor``-Tools eine zusaetzliche
-Confirmation noetig ist (siehe ``jarvis.brain.plausibility``).
+Phase 4 (persona mandate): a plausibility check runs before every approval
+decision. If the voice pipeline has registered a ``plausibility_context_fn``,
+the executor fetches transcript confidence + wake age and decides whether
+``ask``/``monitor`` tools need an extra confirmation (see
+``jarvis.brain.plausibility``).
 """
 from __future__ import annotations
 
@@ -44,9 +44,9 @@ VOICE_CONFIRM_SENTINEL = "__voice_confirm_required__"
 
 
 # ``plausibility_context_fn`` returns (Transcript | None, wake_age_s | None).
-# Die Voice-Pipeline registriert einen Provider, der den letzten User-Turn-
-# Transcript und die Sekunden seit dem letzten Wake-Trigger liefert. Bei
-# ``None``-Returns laeuft der Executor wie bisher (kein Plausibility-Check).
+# The voice pipeline registers a provider that supplies the last user-turn
+# transcript and the seconds since the last wake trigger. On
+# ``None`` returns the executor behaves as before (no plausibility check).
 PlausibilityContextFn = Callable[[], "tuple[Transcript | None, float | None]"]
 
 
@@ -78,11 +78,11 @@ class ToolExecutor:
     def set_plausibility_context_fn(
         self, fn: PlausibilityContextFn | None,
     ) -> None:
-        """Spaete Registrierung des Plausibility-Context-Providers.
+        """Late registration of the plausibility-context provider.
 
-        Die Voice-Pipeline ruft das nach ihrem ``run()``-Setup auf, weil der
-        ToolExecutor frueher in der Bootstrap-Reihenfolge gebaut wird als
-        die Pipeline. Idempotent — ``None`` setzt den Hook zurueck.
+        The voice pipeline calls this after its own ``run()`` setup, because
+        the ToolExecutor is built earlier in the bootstrap order than
+        the pipeline. Idempotent — ``None`` resets the hook.
         """
         self._plausibility_context_fn = fn
 
@@ -91,16 +91,16 @@ class ToolExecutor:
         tool: Tool,
         decision: Any,
     ) -> "PlausibilityDecision | None":
-        """Holt den aktuellen Plausibility-Context und prueft.
+        """Fetches the current plausibility context and checks it.
 
-        Returns ``None`` wenn kein Context-Provider registriert ist oder
-        das Tool durch Whitelist auf ``safe`` heruntergesetzt wurde —
-        Whitelist-Logik ist heilig (Mandat: "Whitelist-downgraded Tools
-        laufen weiter ohne Plausibility-Check").
+        Returns ``None`` if no context provider is registered, or the
+        tool was downgraded to ``safe`` via whitelist — whitelist logic
+        is sacred (mandate: "whitelist-downgraded tools keep running
+        without a plausibility check").
         """
         if self._plausibility_context_fn is None:
             return None
-        # Whitelist-Downgrade: Plausibility uebergehen.
+        # Whitelist downgrade: skip plausibility.
         if decision.approved_by == "whitelist":
             return None
         try:
@@ -143,7 +143,7 @@ class ToolExecutor:
             ))
             return ToolResult(success=False, output=None, error=str(exc))
 
-        # 2. Proposed-Event (UI kann das als Live-Indikator nutzen). The brain's
+        # 2. Proposed event (the UI can use this as a live indicator). The brain's
         # rationale rides along for the Session-Decision-Log — redacted + capped
         # here so no raw secret reaches the bus / session DB / local diary.
         await self._bus.publish(ActionProposed(
@@ -154,9 +154,9 @@ class ToolExecutor:
             rationale=safe_preview(rationale),
         ))
 
-        # 2.5 Plausibility-Check (Phase 4): zwischen Tier-Decision und
-        # Approval. Ergebnis kann ``require_confirmation`` erzwingen, auch
-        # wenn der Tier-Workflow das nicht vorsieht (z.B. bei ``monitor``).
+        # 2.5 Plausibility check (Phase 4): between the tier decision and
+        # approval. The result can force ``require_confirmation`` even
+        # when the tier workflow doesn't call for it (e.g. for ``monitor``).
         plaus = self._evaluate_plausibility(tool, decision)
         if plaus is not None and plaus.reason != "ok":
             log.info(
@@ -164,7 +164,7 @@ class ToolExecutor:
                 tool.name, decision.tier, plaus.reason, plaus.require_confirmation,
             )
 
-        # 3. Approval (nur wenn der Tier-Workflow ODER Plausibility es will)
+        # 3. Approval (only if the tier workflow OR plausibility wants it)
         approved_by = decision.approved_by or "auto"
         needs_confirm = self._evaluator.needs_user_confirmation(decision) or (
             plaus is not None and plaus.require_confirmation
@@ -200,7 +200,7 @@ class ToolExecutor:
                     reason=who_or_reason,
                 ))
                 return ToolResult(success=False, output=None, error=f"approval-denied ({who_or_reason})")
-            approved_by = who_or_reason  # "user" oder "auto"
+            approved_by = who_or_reason  # "user" or "auto"
 
         # 4. Execute
         ctx = ExecutionContext(

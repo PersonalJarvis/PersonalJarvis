@@ -41,22 +41,22 @@ from .transport import current_user_sid, default_pipe_name, make_admin_transport
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="jarvis.admin.helper",
-        description="UAC-elevateter Admin-Helper fuer Personal Jarvis (ADR-0001).",
+        description="UAC-elevated admin helper for Personal Jarvis (ADR-0001).",
     )
     p.add_argument(
         "--pipe-name",
         default=None,
-        help="Named-Pipe-Pfad. Default: \\\\.\\pipe\\jarvis-admin-<user-sid>",
+        help="Named pipe path. Default: \\\\.\\pipe\\jarvis-admin-<user-sid>",
     )
     p.add_argument(
         "--keyring-key",
         default=ADMIN_HMAC_KEY,
-        help="Keyring-Key fuer das HMAC-Secret.",
+        help="Keyring key for the HMAC secret.",
     )
     p.add_argument(
         "--env-fallback",
         default=ADMIN_HMAC_ENV,
-        help="ENV-Variable als Fallback fuer das HMAC-Secret.",
+        help="ENV variable as fallback for the HMAC secret.",
     )
     return p.parse_args(argv)
 
@@ -67,8 +67,8 @@ def _load_secret(keyring_key: str, env_fallback: str) -> bytes:
         logger.error("admin_helper.no_secret",
                      keyring_key=keyring_key, env_fallback=env_fallback)
         raise SystemExit(
-            "Kein HMAC-Secret im Credential Manager. "
-            "Setup-Wizard ausfuehren oder `jarvis_admin_hmac` via keyring setzen."
+            "No HMAC secret in the Credential Manager. "
+            "Run the setup wizard or set `jarvis_admin_hmac` via keyring."
         )
     try:
         return base64.urlsafe_b64decode(raw.encode("ascii"))

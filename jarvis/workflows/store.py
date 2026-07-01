@@ -1,8 +1,8 @@
-"""WorkflowStore — aiosqlite-basierte Persistenz.
+"""WorkflowStore — aiosqlite-based persistence.
 
-Pattern identisch zu ``jarvis.tasks.store`` (Lazy-Init via ``init()``/
-``ensure_open``). Drei Tabellen: ``workflows``, ``workflow_runs``,
-``workflow_run_steps`` — siehe ``schema.sql``.
+Pattern identical to ``jarvis.tasks.store`` (lazy init via ``init()``/
+``ensure_open``). Three tables: ``workflows``, ``workflow_runs``,
+``workflow_run_steps`` — see ``schema.sql``.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ SCHEMA_FILE = Path(__file__).parent / "schema.sql"
 
 
 class WorkflowStore:
-    """CRUD fuer Workflows + Runs + Run-Steps."""
+    """CRUD for workflows + runs + run steps."""
 
     name: str = "sqlite-workflows"
 
@@ -58,7 +58,7 @@ class WorkflowStore:
     def _require_conn(self) -> aiosqlite.Connection:
         if self._conn is None:
             raise RuntimeError(
-                "WorkflowStore nicht initialisiert — rufe init() oder nutze 'async with'."
+                "WorkflowStore not initialized — call init() or use 'async with'."
             )
         return self._conn
 
@@ -67,7 +67,7 @@ class WorkflowStore:
     # ------------------------------------------------------------------
 
     async def upsert_workflow(self, wf: WorkflowDef) -> str:
-        """Legt einen Workflow an oder ueberschreibt eine bestehende ID."""
+        """Creates a workflow or overwrites an existing ID."""
         conn = self._require_conn()
         trig = wf.trigger
         trigger_type = trig.type
@@ -120,7 +120,7 @@ class WorkflowStore:
             return None
 
     async def list_workflows(self) -> list[dict[str, Any]]:
-        """Liefert alle Workflow-Rows (ohne Runs) — fuer das Dashboard."""
+        """Returns all workflow rows (without runs) — for the dashboard."""
         conn = self._require_conn()
         cur = await conn.execute(
             "SELECT * FROM workflows ORDER BY created_at_ns ASC"
@@ -170,7 +170,7 @@ class WorkflowStore:
         trigger: str,
         input_data: dict[str, Any] | None = None,
     ) -> str:
-        """Legt einen Run (Status 'pending') an und returnt die Run-ID."""
+        """Creates a run (status 'pending') and returns the run ID."""
         conn = self._require_conn()
         from uuid import uuid4
         run_id = str(uuid4())
@@ -256,7 +256,7 @@ class WorkflowStore:
         return run
 
     # ------------------------------------------------------------------
-    # Run-Steps
+    # Run steps
     # ------------------------------------------------------------------
 
     async def start_step(
@@ -300,7 +300,7 @@ class WorkflowStore:
     # ------------------------------------------------------------------
 
     async def cleanup_interrupted_runs(self) -> int:
-        """Beim App-Start: ``running`` → ``failed`` (app exit)."""
+        """On app start: ``running`` → ``failed`` (app exit)."""
         conn = self._require_conn()
         cur = await conn.execute(
             """

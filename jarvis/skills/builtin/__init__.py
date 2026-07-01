@@ -1,16 +1,17 @@
-"""Built-in Skills für Jarvis.
+"""Built-in skills for Jarvis.
 
-Jedes Unterverzeichnis enthält genau eine `SKILL.md` mit YAML-Frontmatter
-(siehe `jarvis.skills.schema.SkillFrontmatter`). Diese Skills werden beim
-First-Run von `jarvis.skills.bootstrap.ensure_user_skills_dir()` in
-`user_skills_dir()` kopiert (Windows: `%LOCALAPPDATA%\Jarvis\skills`) —
-von dort aus liest die `SkillRegistry` und watcht via watchdog.
+Each subdirectory contains exactly one `SKILL.md` with YAML frontmatter
+(see `jarvis.skills.schema.SkillFrontmatter`). On first run these skills are
+copied into `user_skills_dir()` by
+`jarvis.skills.bootstrap.ensure_user_skills_dir()` (Windows:
+`%LOCALAPPDATA%\Jarvis\skills`) — the `SkillRegistry` reads from and watches
+that location.
 
-Liste der mitgelieferten Skills:
-  - morning-routine   Kalender / Mail / Wetter Morgen-Briefing
-  - deep-work-mode    DND + Fokus-Timer per Hotkey/Voice
-  - memory-save       "merk dir ..." in Memory-MCP speichern
-  - skill-creator     Meta-Skill zum Bauen weiterer Skills
+List of bundled skills:
+  - morning-routine   calendar / mail / weather morning briefing
+  - deep-work-mode    DND + focus timer via hotkey/voice
+  - memory-save       "remember that ..." saved to memory-MCP
+  - skill-creator     meta-skill for building further skills
   - plugin-<id>       Paired skills for marketplace plugins (2026-06-07): each
                       teaches the router which voice/chat intents reach the
                       connected plugin's tools (gmail, github, stripe, ...).
@@ -58,7 +59,7 @@ BUILTIN_SKILL_NAMES: tuple[str, ...] = (
 
 
 def builtin_skill_path(name: str) -> Path:
-    """Gibt den Pfad zur SKILL.md eines Built-in-Skills zurück."""
+    """Returns the path to a built-in skill's SKILL.md."""
     return BUILTIN_SKILLS_DIR / name / "SKILL.md"
 
 

@@ -51,10 +51,10 @@ TemplateKey = Literal[
 MAX_VOICE_CHARS: Final[int] = 280
 
 
-READBACK_TEMPLATES: Final[dict[TemplateKey, dict[Lang, list[str]]]] = {
+READBACK_TEMPLATES: Final[dict[TemplateKey, dict[Lang, list[str]]]] = {  # i18n-allow: German TTS voice-output templates (paired de/en)
     "approved": {
         "de": [
-            "Fertig. {summary}",
+            "Fertig. {summary}",  # i18n-allow
             "Erledigt. {summary}",
             "Abgeschlossen. {summary}",
         ],
@@ -65,9 +65,9 @@ READBACK_TEMPLATES: Final[dict[TemplateKey, dict[Lang, list[str]]]] = {
     },
     "failed": {
         "de": [
-            "Die Aufgabe ist gescheitert. Grund: {reason}",
+            "Die Aufgabe ist gescheitert. Grund: {reason}",  # i18n-allow
             "Aufgabe gescheitert. {reason}",
-            "Das hat nicht geklappt. {reason}",
+            "Das hat nicht geklappt. {reason}",  # i18n-allow
         ],
         "en": [
             "The task failed. Reason: {reason}",
@@ -76,7 +76,7 @@ READBACK_TEMPLATES: Final[dict[TemplateKey, dict[Lang, list[str]]]] = {
     },
     "timeout": {
         "de": [
-            "Die Aufgabe ist in einen Timeout gelaufen.",
+            "Die Aufgabe ist in einen Timeout gelaufen.",  # i18n-allow
             "Zeitueberschreitung. Aufgabe abgebrochen.",
         ],
         "en": [
@@ -86,7 +86,7 @@ READBACK_TEMPLATES: Final[dict[TemplateKey, dict[Lang, list[str]]]] = {
     "cancelled": {
         "de": [
             "Aufgabe abgebrochen.",
-            "Die Aufgabe wurde gestoppt.",
+            "Die Aufgabe wurde gestoppt.",  # i18n-allow
         ],
         "en": [
             "Task cancelled.",
@@ -104,7 +104,7 @@ READBACK_TEMPLATES: Final[dict[TemplateKey, dict[Lang, list[str]]]] = {
     "budget_warn_80": {
         "de": [
             "Achtzig Prozent vom Budget weg.",
-            "Das Budget wird knapp.",
+            "Das Budget wird knapp.",  # i18n-allow
         ],
         "en": [
             "Eighty percent of budget used.",
@@ -113,7 +113,7 @@ READBACK_TEMPLATES: Final[dict[TemplateKey, dict[Lang, list[str]]]] = {
     "budget_exceeded": {
         "de": [
             "Budget aufgebraucht. Aufgabe abgebrochen.",
-            "Das Limit ist erreicht. Stoppe die Aufgabe.",
+            "Das Limit ist erreicht. Stoppe die Aufgabe.",  # i18n-allow
         ],
         "en": [
             "Budget exhausted. Task aborted.",
@@ -122,7 +122,7 @@ READBACK_TEMPLATES: Final[dict[TemplateKey, dict[Lang, list[str]]]] = {
     "injection_blocked": {
         "de": [
             "Injection-Versuch erkannt. Aufgabe abgebrochen.",
-            "Ein verdaechtiger Output wurde geblockt. Aufgabe gestoppt.",
+            "Ein verdaechtiger Output wurde geblockt. Aufgabe gestoppt.",  # i18n-allow
         ],
         "en": [
             "Injection attempt detected. Task terminated.",
@@ -130,7 +130,7 @@ READBACK_TEMPLATES: Final[dict[TemplateKey, dict[Lang, list[str]]]] = {
     },
     "path_guard_blocked": {
         "de": [
-            "Ein geschuetzter Pfad wurde angefasst. Aufgabe abgebrochen.",
+            "Ein geschuetzter Pfad wurde angefasst. Aufgabe abgebrochen.",  # i18n-allow
             "Geblockter Pfad in der Aufgabe. Stoppe.",
         ],
         "en": [
@@ -139,7 +139,7 @@ READBACK_TEMPLATES: Final[dict[TemplateKey, dict[Lang, list[str]]]] = {
     },
     "destructive_confirm": {
         "de": [
-            "Das wird {target} loeschen. Bist du sicher? Bitte in der UI bestaetigen.",
+            "Das wird {target} loeschen. Bist du sicher? Bitte in der UI bestaetigen.",  # i18n-allow
             "Destruktive Aktion: {target}. Bestaetigung erforderlich.",
         ],
         "en": [
@@ -148,8 +148,8 @@ READBACK_TEMPLATES: Final[dict[TemplateKey, dict[Lang, list[str]]]] = {
     },
     "crash_recovery": {
         "de": [
-            "Eine vorherige Aufgabe wurde wegen Crash abgebrochen.",
-            "Ich habe eine abgebrochene Aufgabe gefunden und sauber abgeschlossen.",
+            "Eine vorherige Aufgabe wurde wegen Crash abgebrochen.",  # i18n-allow
+            "Ich habe eine abgebrochene Aufgabe gefunden und sauber abgeschlossen.",  # i18n-allow
         ],
         "en": [
             "A previous task was aborted due to a crash.",
@@ -157,8 +157,8 @@ READBACK_TEMPLATES: Final[dict[TemplateKey, dict[Lang, list[str]]]] = {
     },
     "iteration_running": {
         "de": [
-            "Iteration {n} laeuft.",
-            "Naechster Versuch laeuft.",
+            "Iteration {n} laeuft.",  # i18n-allow
+            "Naechster Versuch laeuft.",  # i18n-allow
         ],
         "en": [
             "Iteration {n} running.",
@@ -174,17 +174,17 @@ READBACK_TEMPLATES: Final[dict[TemplateKey, dict[Lang, list[str]]]] = {
 # orchestrator / recovery sweep; the DE and EN sets must stay in parity.
 FAILURE_REASON_PHRASES: Final[dict[Lang, dict[str, str]]] = {
     "de": {
-        "critic_loop_exhausted": "Drei Versuche haben nicht gereicht.",
-        "critic_rejected": "Die Prüfung war nicht zufrieden.",
-        "task_error": "Der Worker ist abgebrochen.",
+        "critic_loop_exhausted": "Drei Versuche haben nicht gereicht.",  # i18n-allow
+        "critic_rejected": "Die Prüfung war nicht zufrieden.",  # i18n-allow
+        "task_error": "Der Worker ist abgebrochen.",  # i18n-allow
         "attempts_timed_out": "Das Zeitlimit wurde überschritten.",  # i18n-allow (DE TTS phrase)
-        "budget_exceeded": "Das Kostenlimit ist erreicht.",
-        "decompose_failed": "Die Aufgabe konnte ich nicht zerlegen.",
-        "crash_recovery": "Eine alte Mission wurde aufgeräumt.",
+        "budget_exceeded": "Das Kostenlimit ist erreicht.",  # i18n-allow
+        "decompose_failed": "Die Aufgabe konnte ich nicht zerlegen.",  # i18n-allow
+        "crash_recovery": "Eine alte Mission wurde aufgeräumt.",  # i18n-allow
         "interrupted": "Eine laufende Mission wurde unterbrochen.",  # i18n-allow (DE TTS phrase)
-        "empty_diff": "Es wurden keine Dateien geschrieben.",
-        "critic_unavailable": "Der Prüfer ist abgestürzt, die Arbeit liegt im Worktree.",
-        "worktree_setup_failed": "Ich konnte keinen Arbeitsbereich anlegen.",
+        "empty_diff": "Es wurden keine Dateien geschrieben.",  # i18n-allow
+        "critic_unavailable": "Der Prüfer ist abgestürzt, die Arbeit liegt im Worktree.",  # i18n-allow
+        "worktree_setup_failed": "Ich konnte keinen Arbeitsbereich anlegen.",  # i18n-allow
     },
     "en": {
         "critic_loop_exhausted": "Three attempts were not enough.",
@@ -277,7 +277,7 @@ class MissionReadback:
             # The "approved" verdict is a false-positive: render failure.
             override_reason = (
                 honesty_check.verdict.summary_de
-                or "Konnte ich nicht ausführen — kein Tool-Aufruf."
+                or "Konnte ich nicht ausführen — kein Tool-Aufruf."  # i18n-allow: German TTS fallback phrase
             )
             return self.render_failed(reason=override_reason, language=language)
 
@@ -309,7 +309,7 @@ class MissionReadback:
         # raw snake_case token is never spoken. Shared with the announcer via
         # FAILURE_REASON_PHRASES. Unmapped reasons fall back to the raw text.
         mapped = FAILURE_REASON_PHRASES.get(language, {}).get(short_reason)
-        safe_reason = mapped if mapped else (reason or "unbekannter Fehler").strip()
+        safe_reason = mapped if mapped else (reason or "unbekannter Fehler").strip()  # i18n-allow: German TTS fallback phrase
         max_insert = MAX_VOICE_CHARS - len(template) + len("{reason}")
         if len(safe_reason) > max_insert:
             safe_reason = safe_reason[:max_insert].rstrip()

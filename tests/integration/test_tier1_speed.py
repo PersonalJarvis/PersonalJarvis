@@ -1,9 +1,9 @@
-"""Tier-1-Latenz-Test: Live-Brain mit neuen Settings.
+"""Tier-1 latency test: live brain with new settings.
 
-Misst:
-- Brain-Latenz mit max_retries=0 (sollte bei 429 sofort fallbacken)
-- Multi-Tool-Call-Latenz
-- RateLimitTracker-Verhalten bei simuliertem 429
+Measures:
+- Brain latency with max_retries=0 (should fall back immediately on 429)
+- Multi-tool-call latency
+- RateLimitTracker behavior under a simulated 429
 """
 from __future__ import annotations
 
@@ -18,13 +18,14 @@ def _api_key_available() -> bool:
 
 
 def _oauth_available() -> bool:
-    # Claude OAuth Max-Plan via claude-api Provider; aktuell ueber denselben
-    # Env-Marker wie _api_key_available, bis spezifischer OAuth-Token-Check noetig wird.
+    # Claude OAuth Max plan via the claude-api provider; currently uses the
+    # same env marker as _api_key_available, until a more specific OAuth
+    # token check is needed.
     return _api_key_available()
 
 
 @pytest.mark.voice_latency
-@pytest.mark.skipif(not _api_key_available(), reason="kein Brain-API-Key")
+@pytest.mark.skipif(not _api_key_available(), reason="no Brain API key")
 @pytest.mark.asyncio
 async def test_latency_simple_answer():
     from jarvis.brain.factory import build_default_brain
@@ -38,7 +39,7 @@ async def test_latency_simple_answer():
 
 
 @pytest.mark.voice_latency
-@pytest.mark.skipif(not _api_key_available(), reason="kein Brain-API-Key")
+@pytest.mark.skipif(not _api_key_available(), reason="no Brain API key")
 @pytest.mark.asyncio
 async def test_rate_limit_tracker_skips_bad_provider():
     from jarvis.brain.factory import build_default_brain
@@ -51,29 +52,29 @@ async def test_rate_limit_tracker_skips_bad_provider():
     r = await asyncio.wait_for(brain.generate("Sag 'Hi'."), timeout=30)
     dt = time.perf_counter() - t0
     print(f"\nMit haiku rate-limited: {dt:.2f}s → {r[:80]}")
-    # Sollte auf Opus (deep_model) fallbacken, immer noch sub-15s
+    # Should fall back to Opus (deep_model), still sub-15s
     assert dt < 25.0
 
 
 @pytest.mark.voice_latency
-@pytest.mark.skipif(not _oauth_available(), reason="kein Claude OAuth")
+@pytest.mark.skipif(not _oauth_available(), reason="no Claude OAuth")
 @pytest.mark.asyncio
 async def test_multitool_latency():
-    """Latenz-Test: Multi-Part-Request muss innerhalb der Deadline beantwortet werden.
+    """Latency test: a multi-part request must be answered within the deadline.
 
-    (open_app wurde in älteren Builds als Tool-Assertion-Anker genutzt; das Tool
-    wurde entfernt — dieser Test misst jetzt reine Antwort-Latenz.)
+    (open_app was used as the tool-assertion anchor in older builds; that
+    tool was removed — this test now measures pure response latency.)
     """
     from jarvis.brain.factory import build_default_brain
     brain = build_default_brain()
 
     t0 = time.perf_counter()
     r = await asyncio.wait_for(
-        brain.generate("Öffne bitte 3 Windows Terminal-Fenster (wt)."),
+        brain.generate("Öffne bitte 3 Windows Terminal-Fenster (wt)."),  # i18n-allow (simulated German user utterance)
         timeout=30,
     )
     dt = time.perf_counter() - t0
     print(f"\nMulti-Tool-Latenz Tier-1: {dt:.2f}s")
     print(f"Response: {r[:150]}")
-    assert r, "Brain muss eine Antwort liefern"
+    assert r, "Brain must produce a response"
     assert dt < 25.0, f"Brain zu langsam: {dt}s"

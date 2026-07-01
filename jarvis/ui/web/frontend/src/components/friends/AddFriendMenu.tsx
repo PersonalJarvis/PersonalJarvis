@@ -6,14 +6,14 @@ import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
- * "+ Friend hinzufuegen"-Dialog mit drei Modi:
+ * "+ Add Friend" dialog with three modes:
  *
- *  1. Telegram-Kontakt: Display-Name + Telegram-Chat-ID. Erstellt Friend +
- *     verknuepft TG-Channel (is_primary=True).
- *  2. Jarvis-Pubkey: Display-Name + Pubkey. Erstellt Friend + verknuepft
- *     pubkey-Channel. (Federation-DM erst F3.)
- *  3. Pair-Link: Verweist auf den existierenden PairDialog (Pubkey + URL +
- *     PairToken via board-backend).
+ *  1. Telegram contact: display name + Telegram chat ID. Creates the friend
+ *     and links the TG channel (is_primary=True).
+ *  2. Jarvis pubkey: display name + pubkey. Creates the friend and links the
+ *     pubkey channel. (Federation DM only lands in F3.)
+ *  3. Pair link: points to the existing PairDialog (pubkey + URL +
+ *     PairToken via the board backend).
  */
 type Mode = "telegram" | "jarvis_pubkey" | "link";
 

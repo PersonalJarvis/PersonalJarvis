@@ -2,7 +2,7 @@
 
 Persona mandate phase 1: brain output → TTS path scrubs tool JSON,
 stack traces, engineering jargon, self-reference, echo paraphrase, and
-filler openers. Regex-only, NO LLM calls (latency-fatal, mandate § "NICHT tun").
+filler openers. Regex-only, NO LLM calls (latency-fatal, mandate § "DO NOT").
 
 API:
     from jarvis.brain.output_filter import scrub_for_voice
@@ -18,7 +18,7 @@ Order of operations (stack trace is an early return):
     3. Remove tool-call JSON (three forms: fn-call, inline, pure JSON)
     4. Remove self-reference ("Als KI", "Als Sprachmodell", "Ich bin nur")
     5. Echo paraphrase ONLY at opener position (``<= OPENER_BUDGET = 60`` chars)
-    6. Remove filler openers ("Großartige Frage", "Tolle Frage", ...)
+    6. Remove filler openers ("Great question", "Wonderful question", ...)
     7. Remove engineering jargon (with whitelist protection via hyphen
        lookbehind/lookahead — compounds like "Browser-Provider" are preserved)
     8. Normalise whitespace
@@ -71,7 +71,7 @@ assert not (set(WHITELIST_WORDS) & set(JARGON_WORDS)), (
 OPENER_BUDGET = 60
 
 FALLBACK_PHRASES: dict[str, str] = {
-    "de": "Es trat ein Fehler auf.",
+    "de": "Es trat ein Fehler auf.",  # i18n-allow: spoken German fallback phrase (runtime voice output)
     "en": "An error occurred.",
     # Runtime-output-language doctrine: every spoken phrase table carries all
     # supported locales (de/en/es) so a Spanish-pinned user never falls back to
@@ -111,7 +111,7 @@ REPR_SIGNATURE_RE = re.compile(
 
 # Raw shell / PowerShell / .NET command guard (live bug 2026-06-28). The fast
 # tier, on a garbled "navigate Discord" turn, emitted a SendKeys PowerShell
-# command as its REPLY TEXT and TTS read it aloud "mit Sonderzeichen und allem"
+# command as its REPLY TEXT and TTS read it aloud "with special characters and everything"
 # (Add-Type … [System.Windows.Forms.SendKeys]::SendWait('^(g)')). The tool-leak
 # rules above only catch tool NAMES / JSON / XML — a bare command string has
 # none of those, so it slipped through to TTS. Each alternative below is a
@@ -163,12 +163,12 @@ TOOL_JSON_RE = re.compile(
     r"\s*:\s*[^}]*\}",
     re.IGNORECASE,
 )
-# Tool-Name als Python-style keyword-call: ``spawn_openclaw(utterance='x', ...)``
+# Tool name as a Python-style keyword call: ``spawn_openclaw(utterance='x', ...)``
 TOOL_CALL_KW_RE = re.compile(
     r"\b(?:" + "|".join(TOOL_NAMES) + r")\s*\([^)]{0,2000}\)",
     re.DOTALL,
 )
-# XML-Tool-Tags inkl. Inner-Content: ``<spawn_openclaw>...</spawn_openclaw>``
+# XML tool tags incl. inner content: ``<spawn_openclaw>...</spawn_openclaw>``
 TOOL_XML_RE = re.compile(
     r"<(?:" + "|".join(TOOL_NAMES) + r")\b[^>]*>"
     r".*?"
@@ -176,11 +176,11 @@ TOOL_XML_RE = re.compile(
     re.DOTALL,
 )
 
-# Phase-1-Erweiterung 2 (2026-04-28 spaeter):
-# Anthropic-internes ``<function_calls><invoke name="...">...</invoke></function_calls>``-
-# Format. Brain leakt das gelegentlich wortlich in den Output. Pattern matcht
-# den ganzen Block + greedy bis schliessendem Tag. Ausserdem ein Standalone-
-# ``<invoke>`` falls der ``</function_calls>``-Wrapper fehlt.
+# Phase-1 extension 2 (later on 2026-04-28):
+# Anthropic-internal ``<function_calls><invoke name="...">...</invoke></function_calls>``
+# format. The brain occasionally leaks this verbatim into the output. The
+# pattern matches the whole block, greedy up to the closing tag. Also a
+# standalone ``<invoke>`` in case the ``</function_calls>`` wrapper is missing.
 ANTHROPIC_FUNCTION_CALLS_RE = re.compile(
     r"<function_calls>.*?</function_calls>",
     re.DOTALL | re.IGNORECASE,
@@ -190,10 +190,10 @@ ANTHROPIC_INVOKE_RE = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 
-# Generische Tool-Wrapper-Tags wie ``<tool_call>...</tool_call>`` und
-# ``<tool_response>...</tool_response>``. Konservativ auf bekannte
-# Wrapper-Namen beschraenkt, damit harmlose XML/HTML im User-Content
-# ("<tag>x</tag>" als Beispiel-Doku) nicht zerschossen wird.
+# Generic tool-wrapper tags such as ``<tool_call>...</tool_call>`` and
+# ``<tool_response>...</tool_response>``. Conservatively limited to known
+# wrapper names, so harmless XML/HTML in user content
+# ("<tag>x</tag>" as example documentation) is not destroyed.
 GENERIC_TOOL_WRAPPER_RE = re.compile(
     r"<(?:tool_call|tool_response|tool_use|function_results)\b[^>]*>"
     r".*?"
@@ -201,32 +201,31 @@ GENERIC_TOOL_WRAPPER_RE = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 
-# Base64-Image-Drift: ``data:image/...;base64,<long-string>`` + lange
-# Standalone-Base64-Sequenzen (>=200 Chars zusammenhaengende Base64-Chars).
-# Re-Probe-Drift Szenario 08 vom 2026-04-28: Brain leakte einen kompletten
-# WebP-Image als Body-String.
+# Base64 image drift: ``data:image/...;base64,<long-string>`` + long
+# standalone base64 sequences (>=200 contiguous base64 chars).
+# Re-probe-drift scenario 08 from 2026-04-28: the brain leaked an entire
+# WebP image as the body string.
 BASE64_DATA_URI_RE = re.compile(
     r"data:[a-zA-Z]+/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+",
 )
 
-# Audit F-AUDIT-4 (2026-04-29): Brain leakt Tool-Calls als prosaische
-# Aufzaehlung ("spawn_openclaw with utterance is X context_hints is Y
-# action is Z target is W"). Probe vom 2026-04-29 Szenario 07 zeigte
-# das im Voice-Output. Das ist kein JSON, kein YAML, kein XML — der
-# Filter musste vorher um dieses natuerlichsprachige Format erweitert
-# werden.
+# Audit F-AUDIT-4 (2026-04-29): the brain leaks tool calls as a prose
+# enumeration ("spawn_openclaw with utterance is X context_hints is Y
+# action is Z target is W"). A probe from 2026-04-29 scenario 07 showed
+# this in the voice output. This is neither JSON, YAML, nor XML — the
+# filter had to be extended for this natural-language format.
 #
-# Pattern: tool-name + " with " + ein oder mehrere "<key> is <value>"-
-# Phrasen, getrennt durch Leerzeichen oder ".". Greedy bis Doppel-Newline
-# oder Satzgrenze (max 600 Chars als Sicherheits-Cap).
+# Pattern: tool name + " with " + one or more "<key> is <value>"
+# phrases, separated by spaces or ".". Greedy up to a double newline
+# or sentence boundary (max 600 chars as a safety cap).
 TOOL_CALL_PROSE_RE = re.compile(
     r"\b(?:" + "|".join(TOOL_NAMES) + r")\s+with\s+"
     r"[\w\-]+\s+is\s+.*?"
-    r"(?=\n\s*\n|\Z|(?<=\.)(?=\s+[A-ZÄÖÜ]))",
+    r"(?=\n\s*\n|\Z|(?<=\.)(?=\s+[A-ZÄÖÜ]))",  # i18n-allow: umlaut character class, sentence-boundary matching data
     re.DOTALL | re.IGNORECASE,
 )
-# Fallback: einzelne "<key> is <value>"-Phrasen mit Tool-Arg-Schluesseln
-# auch ohne Tool-Name-Prefix (Brain koennte Tool-Name weggelassen haben).
+# Fallback: individual "<key> is <value>" phrases with tool-arg keys,
+# even without a tool-name prefix (the brain may have omitted the tool name).
 TOOL_ARGS_PROSE_KEYS: tuple[str, ...] = (
     "utterance", "context_hints", "context hints",
     "action", "target", "tool_hint", "tool hint",
@@ -283,7 +282,7 @@ SELF_REF_RE = re.compile(
 # Background-action narration (DE+EN+ES). The maintainer finds it annoying when
 # Jarvis ANNOUNCES internal bookkeeping it does silently in the background —
 # "I'm noting that", "let me look at the last transcription", "ich notiere mir
-# das", "ich schaue mir die letzte Transkription an", "tomo nota". The action
+# das", "ich schaue mir die letzte Transkription an", "tomo nota". The action  # i18n-allow: quoted German/Spanish input examples matching BACKGROUND_ACTION_RE below
 # still happens; it is just never spoken. Cuts the whole narration clause incl.
 # its sentence punctuation (same shape as SELF_REF_RE). Applies in BOTH normal
 # and ack mode. The "look at the previous transcript/answer" alternatives are
@@ -318,11 +317,11 @@ BACKGROUND_ACTION_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Echo-Paraphrase — nur am Opener (durch Position-Slicing in der Funktion,
-# nicht im Regex selbst).
+# Echo paraphrase — only at the opener (via position slicing in the
+# function, not in the regex itself).
 ECHO_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(p, re.IGNORECASE) for p in [
-        r"^\s*Du möchtest also\b[^.!?]*[.!?]\s*",
+        r"^\s*Du möchtest also\b[^.!?]*[.!?]\s*",  # i18n-allow: German echo-paraphrase matching data, checked against generated brain text
         r"^\s*Ich verstehe(?:,|\s+)?\s*dass\b[^.!?]*[.!?]\s*",
         r"^\s*If I understand correctly\b[^.!?]*[.!?]\s*",
         r"^\s*You'?d like me to\b[^.!?]*[.!?]\s*",
@@ -330,39 +329,39 @@ ECHO_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     ]
 )
 
-# Filler-Opener — Phase-2-Anti-Pattern-Liste aus voice_e2e_probe.py
-# erweitert um Filler-Selbstreferenz ('Lass mich kurz', 'Let me think').
-# Pattern matcht NUR am Opener; mid-sentence Vorkommen bleibt erhalten
-# (Failure-Mode-6-analog).
+# Filler opener — Phase-2 anti-pattern list from voice_e2e_probe.py,
+# extended with filler self-reference ('Lass mich kurz', 'Let me think').
+# The pattern matches ONLY at the opener; mid-sentence occurrences are
+# preserved (failure-mode-6 analog).
 FILLER_OPENER_RE = re.compile(
     r"^\s*("
-    # Klassisch-Phase-0
-    r"Großartige Frage|Grossartige Frage|Tolle Frage|Geniale Frage|"
+    # Classic Phase-0
+    r"Großartige Frage|Grossartige Frage|Tolle Frage|Geniale Frage|"  # i18n-allow: German filler-opener matching data, checked against generated brain text
     r"Great question|Excellent question|Good question|"
-    # Phase-2-Filler-Selbstreferenz (ANTI_PATTERNS-Liste in voice_e2e_probe.py)
+    # Phase-2 filler self-reference (ANTI_PATTERNS list in voice_e2e_probe.py)
     r"Lass mich kurz[^.!?]*?(?=[.!?,]|$)|"
     r"Let me think"
     r")[!.?,]*\s*",
     re.IGNORECASE,
 )
 
-# Engineering-Jargon — Standalone-Worte, kein Hyphen-Compound.
-# WICHTIG: ``(?<!\w-)`` muss VOR der Alternative stehen, nicht dahinter —
-# Lookbehind am Regex-Ende prueft die 2 Chars vor Match-END, nicht
-# Match-START. Das hat in einem frueheren Entwurf "Brain-Provider" zerschossen.
-# Siehe Test ``test_clean_text_passes_through_unchanged[file-summary]``.
+# Engineering jargon — standalone words, not a hyphen compound.
+# IMPORTANT: ``(?<!\w-)`` must come BEFORE the alternation, not after —
+# a lookbehind at the regex end checks the 2 chars before match-END, not
+# match-START. In an earlier draft this destroyed "Brain-Provider".
+# See test ``test_clean_text_passes_through_unchanged[file-summary]``.
 JARGON_RE = re.compile(
-    r"(?<!\w-)"     # kein "Browser-" / "Brain-"-Praefix vorne
+    r"(?<!\w-)"     # no "Browser-" / "Brain-" prefix in front
     r"\b(?:" + "|".join(JARGON_WORDS) + r")\b"
-    r"(?!-\w)",     # kein "-Server" / "-Provider"-Suffix folgen lassen
+    r"(?!-\w)",     # no "-Server" / "-Provider" suffix allowed to follow
     re.IGNORECASE,
 )
 
-# Engineering-Jargon-Compounds (mit Bindestrich) — komplett raus, weil sie
-# kein User-Konzept anhaengen ("Sub-Agent" hat keinen Whitelist-Anker wie
-# "Browser" oder "Datei"). Pattern matcht Compound + folgender Artikel-/
-# Nebenwort-Phrase wenn der Satz mit dem Compound startet, sonst nur der
-# Compound selbst.
+# Engineering jargon compounds (with hyphen) — stripped entirely, because
+# they have no user-concept anchor ("Sub-Agent" has no whitelist anchor
+# like "Browser" or "Datei"). The pattern matches the compound plus a
+# following article/adverb phrase when the sentence starts with the
+# compound, otherwise just the compound itself.
 #
 # 2026-05-24: the 2026-05-13 "OpenClaw is a brand name, let it through"
 # exception is REVERSED. The OpenClaw subprocess was retired (the worker now
@@ -380,22 +379,22 @@ JARGON_COMPOUND_RE = re.compile(
 # standalone "OpenClaw"/"OpenClore" (common STT mis-spelling of the brand).
 OPENCLAW_RE = re.compile(r"\bOpenCl(?:aw|ore)-?", re.IGNORECASE)
 
-# A1-Drift (Mandat A1): "Sir"-Anrede aus dem Output entfernen.
-# Pattern matcht ``Sir`` als Anrede in drei Formen:
-#   1) Opener mit Komma:    "Sir, ich starte..." -> "ich starte..."
-#   2) Tail nach Komma:     "Erledigt, Sir."    -> "Erledigt."
-#   3) Standalone-Wort:     "Sir." (selten, aber moeglich nach Anrede-Drift)
-# Innerhalb von Quotes (``"Yes, Sir, ..."``) wird NICHT gescrubbt — Zitat-
-# Schutz fuer Songtexte, Zitate, Filme. Heuristik: wenn ``Sir`` zwischen zwei
-# Anfuehrungszeichen liegt, kein Match.
+# A1 drift (Mandate A1): remove the "Sir" honorific from the output.
+# The pattern matches ``Sir`` as an honorific in three forms:
+#   1) Opener with comma:   "Sir, ich starte..." -> "ich starte..."
+#   2) Tail after comma:    "Erledigt, Sir."    -> "Erledigt."
+#   3) Standalone word:     "Sir." (rare, but possible after honorific drift)
+# Inside quotes (``"Yes, Sir, ..."``) it is NOT scrubbed — quote
+# protection for song lyrics, quotations, films. Heuristic: if ``Sir``
+# sits between two quotation marks, no match.
 SIR_OPENER_RE = re.compile(r"^\s*Sir\s*,\s*", re.IGNORECASE)
 SIR_TAIL_RE = re.compile(r",\s*Sir\b", re.IGNORECASE)
 QUOTE_PROTECT_RE = re.compile(r'"[^"]*\bSir\b[^"]*"', re.IGNORECASE)
 
-# Tool-Args-YAML-Block — Probe-Drift 03 vom 2026-04-28. Erkennt YAML-aehnliche
-# Bloecke mit Tool-Arg-Schluesseln wie ``context_hints:``, ``action:``,
-# ``target:``, ``utterance:``. Greedy bis zum naechsten Doppel-Newline oder
-# Ende — zerschneidet den ganzen YAML-Block.
+# Tool-args YAML block — probe-drift 03 from 2026-04-28. Detects YAML-like
+# blocks with tool-arg keys such as ``context_hints:``, ``action:``,
+# ``target:``, ``utterance:``. Greedy up to the next double newline or
+# end — cuts out the whole YAML block.
 TOOL_ARGS_YAML_KEYS: tuple[str, ...] = (
     "context_hints", "action", "target", "utterance",
     "tool_hint", "step_id", "args", "parameters",
@@ -404,14 +403,14 @@ TOOL_ARGS_YAML_RE = re.compile(
     r"(?:^|\n)"
     r"(?:" + "|".join(TOOL_ARGS_YAML_KEYS) + r")\s*:\s*"
     r"(?:.*?)"
-    r"(?=\n\s*\n|\n[A-ZÄÖÜ][a-zäöüß]|\Z)",
+    r"(?=\n\s*\n|\n[A-ZÄÖÜ][a-zäöüß]|\Z)",  # i18n-allow: umlaut character class, sentence-boundary matching data
     re.DOTALL | re.IGNORECASE,
 )
 
-# Post-Scrub-Muell-Threshold: nach allen Filtern muss der Output mindestens
-# diese Anzahl alphanumerischer Zeichen enthalten, sonst wird er als
-# Filter-Artefakt erkannt und durch die Standard-Phrase ersetzt.
-# Probe-Drift 12 vom 2026-04-28: Output war einzelnes ``}``.
+# Post-scrub-residue threshold: after all filters run, the output must
+# contain at least this many alphanumeric characters, otherwise it is
+# recognized as a filter artifact and replaced by the standard phrase.
+# Probe-drift 12 from 2026-04-28: output was a single ``}``.
 MIN_MEANINGFUL_CHARS = 3
 
 
@@ -422,17 +421,17 @@ MIN_MEANINGFUL_CHARS = 3
 
 @dataclass
 class ScrubResult:
-    """Ergebnis von ``scrub_for_voice``.
+    """Result of ``scrub_for_voice``.
 
     Attributes:
-        cleaned: Der gescrubbte Text, ready fuer TTS.
-        actions: Liste der durchgefuehrten Operationen, fuer Telemetrie/Debug.
-            Beispiele: ``"replaced_stacktrace"``, ``"removed_tool_json"``,
+        cleaned: The scrubbed text, ready for TTS.
+        actions: List of operations performed, for telemetry/debug.
+            Examples: ``"replaced_stacktrace"``, ``"removed_tool_json"``,
             ``"stripped_markdown"``, ``"removed_self_reference"``,
             ``"rephrased_echo"``, ``"removed_filler_opener"``,
             ``"removed_engineering_jargon"``.
-        fallback_used: ``True`` wenn der gesamte Text durch eine Standard-
-            Phrase ersetzt wurde (aktuell nur bei Stacktrace-Treffer).
+        fallback_used: ``True`` when the entire text was replaced by a
+            standard phrase (currently only on a stacktrace hit).
     """
 
     cleaned: str
@@ -443,30 +442,30 @@ class ScrubResult:
 def scrub_for_voice(
     text: str, *, language: str = "de", ack_mode: bool = False
 ) -> ScrubResult:
-    """Bereinigt Brain-Output fuer die TTS-Synthese.
+    """Cleans up brain output for TTS synthesis.
 
     Args:
-        text: Der zu scrubbende Text (Brain-Response, OpenClaw-Summary,
-            Skill-Output, Announcement-Text, ...).
-        language: ``"de"`` oder ``"en"`` — bestimmt die Fallback-Phrase
-            bei Stacktrace-Treffer.
-        ack_mode: ``True`` markiert den Aufruf als Pre-Thinking-Ack
-            (Flash-Brain). Im ack_mode wird der ``FILLER_OPENER_RE``-Pass
-            uebersprungen, weil Flash-Brain-Acks per Persona-Spec genau
-            solche Opener verwenden duerfen ("Lass mich kurz nachschauen.",
-            "Let me check on that."). Alle anderen Filter (Schwarzliste,
-            Stacktrace, Markdown, Self-Reference) bleiben aktiv.
+        text: The text to scrub (brain response, OpenClaw summary,
+            skill output, announcement text, ...).
+        language: ``"de"`` or ``"en"`` — determines the fallback phrase
+            on a stacktrace hit.
+        ack_mode: ``True`` marks the call as a pre-thinking ack
+            (flash brain). In ack_mode the ``FILLER_OPENER_RE`` pass is
+            skipped, because flash-brain acks are explicitly allowed by
+            the persona spec to use such openers ("Let me take a quick
+            look.", "Let me check on that."). All other filters (blacklist,
+            stacktrace, markdown, self-reference) stay active.
 
     Returns:
-        ``ScrubResult`` mit cleaned/actions/fallback_used.
+        ``ScrubResult`` with cleaned/actions/fallback_used.
     """
     if not text or not text.strip():
         return ScrubResult(cleaned="", actions=[], fallback_used=False)
 
     actions: list[str] = []
 
-    # 1. Stacktrace: Early-Return mit Standard-Phrase. Mandat: "komplett raus,
-    #    durch 'Es trat ein Fehler auf.' ersetzt".
+    # 1. Stacktrace: early return with the standard phrase. Mandate: "cut
+    #    out entirely, replaced by the German fallback phrase".
     if STACKTRACE_RE.search(text):
         fallback = FALLBACK_PHRASES.get(language, FALLBACK_PHRASES["de"])
         return ScrubResult(
@@ -515,8 +514,8 @@ def scrub_for_voice(
         if not out.strip():
             return ScrubResult(cleaned="", actions=actions, fallback_used=False)
 
-    # 2. Markdown — Code-Fences zuerst (sonst greift INLINE_CODE auf den
-    #    Inhalt der Fence). Inline-Code behaelt den Inhalt, nur Backticks weg.
+    # 2. Markdown — code fences first (otherwise INLINE_CODE would grab the
+    #    fence content). Inline code keeps the content, only backticks go.
     new = CODE_FENCE_RE.sub(" ", out)
     new = INLINE_CODE_RE.sub(r"\1", new)
     new = MARKDOWN_BOLD_RE.sub("", new)
@@ -542,11 +541,11 @@ def scrub_for_voice(
     new = TOOL_CALL_INLINE_RE.sub("", new)
     new = TOOL_JSON_RE.sub("", new)
     new = TOOL_CALL_KW_RE.sub("", new)
-    new = TOOL_ARGS_YAML_RE.sub("", new)  # Phase-1-Erweiterung 2026-04-28
-    # Audit F-AUDIT-4 (2026-04-29): prosaisch geschriebene Tool-Args
-    # ("X with utterance is Y context_hints is Z action is ...") — nach
-    # YAML-Pattern, weil Prose-Pattern strikter (greedy bis Satzende) ist
-    # und sonst YAML-Block schon weg waere.
+    new = TOOL_ARGS_YAML_RE.sub("", new)  # Phase-1 extension 2026-04-28
+    # Audit F-AUDIT-4 (2026-04-29): tool args written as prose
+    # ("X with utterance is Y context_hints is Z action is ...") — after
+    # the YAML pattern, because the prose pattern is stricter (greedy up
+    # to sentence end) and otherwise the YAML block would already be gone.
     new = TOOL_CALL_PROSE_RE.sub("", new)
     new = TOOL_ARGS_PROSE_RE.sub("", new)
     if new != out:
@@ -612,8 +611,8 @@ def scrub_for_voice(
         actions.append("removed_engineering_jargon")
         out = new
 
-    # 7b. A1-Drift: "Sir"-Anrede entfernen, mit Quote-Schutz fuer Zitate.
-    #     (Mandat A1 + Phase-1-Erweiterung 2026-04-28.)
+    # 7b. A1 drift: remove the "Sir" honorific, with quote protection for quotations.
+    #     (Mandate A1 + Phase-1 extension 2026-04-28.)
     quote_spans: list[tuple[int, int]] = [
         m.span() for m in QUOTE_PROTECT_RE.finditer(out)
     ]
@@ -636,7 +635,7 @@ def scrub_for_voice(
         sir_changed = True
         out = new
     if sir_changed:
-        actions.append("removed_anrede_drift")
+        actions.append("removed_anrede_drift")  # i18n-allow: internal telemetry action-name identifier, not prose
 
     # 7c. Em dash / en dash -> comma (2026-06-29 "choppy voice" forensic). A
     #     parenthetical dash renders as a hard pause and a trailing half-sentence
@@ -675,10 +674,10 @@ def scrub_for_voice(
     out = re.sub(r",\s*(?=[,.!?;:])", "", out)
     out = re.sub(r",\s*$", "", out).strip()
 
-    # 9. Post-Scrub-Muell-Fallback: wenn nach allem Filtern weniger als
-    #    MIN_MEANINGFUL_CHARS alphanumerische Zeichen uebrig sind UND der
-    #    Filter ueberhaupt etwas gemacht hat (actions nicht leer), ist das
-    #    ein Filter-Artefakt -> Standard-Phrase. Probe-Drift 12 vom 2026-04-28.
+    # 9. Post-scrub-residue fallback: if fewer than MIN_MEANINGFUL_CHARS
+    #    alphanumeric characters remain after all filtering AND the filter
+    #    actually did something (actions not empty), this is a filter
+    #    artifact -> standard phrase. Probe-drift 12 from 2026-04-28.
     if actions:
         meaningful = sum(1 for c in out if c.isalnum())
         if meaningful < MIN_MEANINGFUL_CHARS:

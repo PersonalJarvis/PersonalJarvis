@@ -1,8 +1,8 @@
-"""Contract-Tests — jede VisionSource-Implementierung erfuellt das Protocol.
+"""Contract tests — every VisionSource implementation satisfies the protocol.
 
-Phase 5 hat zum Start nur `FakeVisionSource`; produktive Sources
-(ScreenshotSource, UIATreeSource, CompositeVisionEngine) werden von
-Task 5.1-A geliefert und hier in die `SOURCES`-Liste eingetragen.
+Phase 5 starts with only `FakeVisionSource`; production sources
+(ScreenshotSource, UIATreeSource, CompositeVisionEngine) are delivered by
+Task 5.1-A and get registered in the `SOURCES` list here.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from tests.fixtures.vision.fake_vision import FakeVisionSource
 
 def _get_sources() -> list[VisionSource]:
     sources: list[VisionSource] = [FakeVisionSource()]
-    # produktive Sources sind optional solange 5.1-A nicht gelaufen ist
+    # production sources are optional until 5.1-A has run
     with contextlib.suppress(Exception):
         from jarvis.vision.screenshot import ScreenshotSource  # type: ignore[attr-defined]
         sources.append(ScreenshotSource())
@@ -38,7 +38,7 @@ def test_vision_source_has_required_attrs(source):
 @pytest.mark.parametrize("source", _get_sources(), ids=lambda s: s.name)
 def test_vision_source_structurally_matches_protocol(source):
     assert isinstance(source, VisionSource), (
-        f"{source.name} erfuellt das VisionSource-Protocol nicht"
+        f"{source.name} does not satisfy the VisionSource protocol"
     )
 
 

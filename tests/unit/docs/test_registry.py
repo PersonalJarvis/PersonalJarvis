@@ -1,4 +1,4 @@
-"""Unit-Tests fuer DocRegistry."""
+"""Unit tests for DocRegistry."""
 from __future__ import annotations
 
 import asyncio
@@ -25,7 +25,7 @@ Hauptjarvis dispatcht via Sub-Jarvis-Spawn.
 """
 
 HOWTO_MD = """---
-title: "How-To: Provider hinzufuegen"
+title: "How-To: Provider hinzufuegen"  # i18n-allow: matched by the "hinzufuegen" search-query test below
 slug: provider-add
 diataxis: howto
 status: draft
@@ -147,12 +147,12 @@ def test_search_via_registry(registry: DocRegistry) -> None:
 
 
 def test_search_with_diataxis_filter(registry: DocRegistry) -> None:
-    # Beide Docs erwaehnen das Wort "Schritt" oder "Hauptjarvis" nicht in
-    # beiden — wir nehmen einen Begriff, den nur das How-To hat.
+    # Neither doc mentions the word "Schritt" or "Hauptjarvis" in both —
+    # we pick a term that only the how-to has.
     results = registry.search_query(
-        "hinzufuegen", diataxis=DocDiataxis.HOWTO,
+        "hinzufuegen", diataxis=DocDiataxis.HOWTO,  # i18n-allow: matches the fixture title's German search term
     )
-    # Title enthaelt "hinzufuegen"
+    # Title contains "hinzufuegen"  # i18n-allow: matches the fixture title's German search term
     assert any(r.slug == "provider-add" for r in results)
 
 
@@ -200,7 +200,7 @@ async def test_async_reload(doc_root: Path) -> None:
 # ----------------------------------------------------------------------
 
 class _StubBus:
-    """Minimaler Bus-Stub fuer Reload-Event-Tests."""
+    """Minimal bus stub for reload-event tests."""
 
     def __init__(self) -> None:
         self.events: list[object] = []
@@ -212,15 +212,15 @@ class _StubBus:
 def test_emit_reloaded_without_loop_does_not_crash(
     doc_root: Path,
 ) -> None:
-    """Wenn keine Event-Loop laeuft, sollte _emit_reloaded silent failen
-    statt zu crashen."""
+    """When no event loop is running, _emit_reloaded should fail silently
+    instead of crashing."""
     bus = _StubBus()
     reg = DocRegistry(
         roots=[doc_root / "docs"],
         index_db=doc_root / "index.sqlite",
         bus=bus,
     )
-    reg.reload_sync()  # darf nicht crashen
+    reg.reload_sync()  # must not crash
     reg.close()
 
 
@@ -229,7 +229,7 @@ def test_emit_reloaded_without_loop_does_not_crash(
 # ----------------------------------------------------------------------
 
 def test_multi_root_no_double_index(tmp_path: Path) -> None:
-    """Wenn zwei Roots ueberlappen, jeder File nur einmal."""
+    """When two roots overlap, each file appears only once."""
     (tmp_path / "a").mkdir()
     (tmp_path / "a" / "b").mkdir()
     (tmp_path / "a" / "b" / "doc.md").write_text(CONCEPT_MD, encoding="utf-8")
@@ -239,6 +239,6 @@ def test_multi_root_no_double_index(tmp_path: Path) -> None:
     )
     reg.reload_sync()
     docs = reg.list()
-    # Nur ein Doc — kein Duplikat trotz ueberlappender Roots
+    # Only one doc — no duplicate despite overlapping roots
     assert len(docs) == 1
     reg.close()

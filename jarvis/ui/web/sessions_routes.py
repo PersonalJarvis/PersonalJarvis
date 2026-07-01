@@ -1,21 +1,21 @@
-"""REST-Routes fuer die Voice-Session-Transcription-View.
+"""REST routes for the voice-session transcription view.
 
 Endpoints:
-    GET  /api/sessions                       Liste (neueste zuerst, max 100)
-    GET  /api/sessions/{session_id}          Detail mit Turns + Roh-Events
-    GET  /api/sessions/{session_id}/export   Markdown / Plain-Text fuer Copy
+    GET  /api/sessions                       List (newest first, max 100)
+    GET  /api/sessions/{session_id}          Detail with turns + raw events
+    GET  /api/sessions/{session_id}/export   Markdown / plain text for copy
     POST /api/sessions/{session_id}/save     Writes a file to the user's Downloads folder
 
-Wird vom WebServer in ``_build_app()`` eingehaengt::
+Wired in by the WebServer in ``_build_app()``::
 
     from .sessions_routes import router as sessions_router
     app.include_router(sessions_router)
 
-Der zugrundeliegende ``SessionStore`` wird beim App-Start in
-``server.py::_init_sessions_stack()`` per ``bootstrap_sessions(...)``
-erzeugt und auf ``app.state.session_store`` gelegt.
+The underlying ``SessionStore`` is created at app start in
+``server.py::_init_sessions_stack()`` via ``bootstrap_sessions(...)``
+and placed on ``app.state.session_store``.
 
-Loopback-only (Server bindet auf 127.0.0.1) — kein Auth-Token noetig.
+Loopback-only (the server binds to 127.0.0.1) — no auth token needed.
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 
 # ----------------------------------------------------------------------
-# DI Helper — Store aus app.state ziehen
+# DI helper — pull the store from app.state
 # ----------------------------------------------------------------------
 
 
@@ -65,10 +65,10 @@ async def list_sessions(
     request: Request,
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[SessionListItem]:
-    """Liste aller Voice-Sessions, neueste zuerst.
+    """List of all voice sessions, newest first.
 
-    Frontend ruft das beim Tab-Wechsel auf "Transkription" sowie nach
-    einem ``VoiceSessionEnded``-WS-Event (Re-Fetch).
+    The frontend calls this on tab switch to "Transcription" as well as
+    after a ``VoiceSessionEnded`` WS event (refetch).
     """
     store = _require_store(request)
     return store.list_sessions(limit=limit)
@@ -76,7 +76,7 @@ async def list_sessions(
 
 @router.get("/{session_id}", response_model=SessionDetail)
 async def get_session_detail(session_id: str, request: Request) -> SessionDetail:
-    """Komplette Session: Header + Turns + Roh-Events fuer Replay."""
+    """Full session: header + turns + raw events for replay."""
     store = _require_store(request)
     session = store.get_session(session_id)
     if session is None:
@@ -94,17 +94,17 @@ async def export_session(
         default="markdown", alias="format"
     ),
 ) -> Response:
-    """Formatierte Session fuer Click-to-Copy.
+    """Formatted session for click-to-copy.
 
-    - ``format=markdown`` (Default) — strukturiert mit Emojis, fuer Chat-/
-      Notion-/Obsidian-Copy.
-    - ``format=plain`` — ASCII-only, fuer Plain-Text-Editoren.
-    - ``format=json`` — Maschinen-lesbares Komplett-Dump (gleicher Inhalt
-      wie ``GET /api/sessions/{id}``).
+    - ``format=markdown`` (default) — structured with emojis, for chat/
+      Notion/Obsidian pasting.
+    - ``format=plain`` — ASCII-only, for plain-text editors.
+    - ``format=json`` — machine-readable full dump (same content as
+      ``GET /api/sessions/{id}``).
 
-    Returns ``text/markdown`` bzw. ``text/plain`` mit dem fertigen Text
-    im Body — Frontend kann ``response.text()`` direkt in
-    ``navigator.clipboard.writeText`` reichen.
+    Returns ``text/markdown`` or ``text/plain`` with the finished text in
+    the body — the frontend can pass ``response.text()`` straight into
+    ``navigator.clipboard.writeText``.
     """
     store = _require_store(request)
     session = store.get_session(session_id)
@@ -122,7 +122,7 @@ async def export_session(
     if export_format == "plain":
         body = format_session_plain(session, turns, events)
         return PlainTextResponse(content=body, media_type="text/plain; charset=utf-8")
-    # JSON-Variant — wir geben den vollen Detail-Payload zurueck.
+    # JSON variant — we return the full detail payload.
     detail = SessionDetail(session=session, turns=turns, events=events)
     return Response(
         content=detail.model_dump_json(indent=2),
@@ -131,12 +131,12 @@ async def export_session(
 
 
 # ----------------------------------------------------------------------
-# Save-to-Downloads — Backend schreibt direkt ins Filesystem
+# Save-to-Downloads — the backend writes directly to the filesystem
 # ----------------------------------------------------------------------
 
 
 class SaveSessionResponse(BaseModel):
-    """Antwort des Save-Endpoints — voller Pfad fuer Toast/Anzeige."""
+    """Response of the save endpoint — full path for the toast/display."""
 
     saved_path: str
     bytes_written: int
@@ -172,7 +172,7 @@ async def save_session_to_downloads(
     turns = store.get_turns(session_id)
     events = store.get_events(session_id)
 
-    # Format-Body rendern.
+    # Render the format body.
     if export_format == "markdown":
         body = format_session_markdown(session, turns, events)
     elif export_format == "plain":
@@ -181,17 +181,17 @@ async def save_session_to_downloads(
         detail = SessionDetail(session=session, turns=turns, events=events)
         body = detail.model_dump_json(indent=2)
 
-    # Filename aus Session-Metadaten + erstem User-Text bauen.
+    # Build the filename from session metadata + the first user text.
     first_user = next((t.user_text for t in turns if t.user_text), "")
     filename = _build_filename(session, first_user, export_format)
 
-    # Zielpfad: %USERPROFILE%\Downloads\.
+    # Target path: %USERPROFILE%\Downloads\.
     downloads = Path.home() / "Downloads"
     downloads.mkdir(parents=True, exist_ok=True)
     target = _avoid_collision(downloads / filename)
 
-    # Schreiben — UTF-8 mit BOM nur fuer plain-Text damit Notepad korrekt
-    # erkennt; Markdown + JSON bleiben pure UTF-8.
+    # Write — UTF-8 with a BOM only for plain text so Notepad detects it
+    # correctly; Markdown + JSON stay pure UTF-8.
     encoding = "utf-8"
     target.write_text(body, encoding=encoding)
     log.info(
@@ -297,7 +297,7 @@ def _build_filename(
     first_user_text: str,
     export_format: Literal["markdown", "plain", "json"],
 ) -> str:
-    """Erzeugt einen Filesystem-tauglichen Dateinamen.
+    """Generates a filesystem-safe filename.
 
     Pattern: ``voice-session-YYYY-MM-DD_HH-mm-{slug}.{ext}``.
     """
@@ -309,10 +309,10 @@ def _build_filename(
 
 
 def _slugify(text: str) -> str:
-    """Reduziert Text auf [a-z0-9-], maximal 4 Woerter, 40 Zeichen."""
+    """Reduces text to [a-z0-9-], at most 4 words, 40 characters."""
     if not text:
         return ""
-    # Umlaute / Diakritika strippen
+    # Strip umlauts / diacritics
     import unicodedata as _u
     norm = _u.normalize("NFKD", text)
     ascii_text = norm.encode("ascii", "ignore").decode("ascii").lower()
@@ -322,7 +322,7 @@ def _slugify(text: str) -> str:
 
 
 def _avoid_collision(target: Path) -> Path:
-    """Hängt -1, -2, ... an, falls die Datei schon existiert."""
+    """Appends -1, -2, ... if the file already exists."""
     if not target.exists():
         return target
     stem = target.stem
@@ -332,5 +332,5 @@ def _avoid_collision(target: Path) -> Path:
         candidate = parent / f"{stem}-{i}{suffix}"
         if not candidate.exists():
             return candidate
-    # Fallback — hochgradig unwahrscheinlich
+    # Fallback — highly unlikely
     return parent / f"{stem}-{int(datetime.now().timestamp())}{suffix}"

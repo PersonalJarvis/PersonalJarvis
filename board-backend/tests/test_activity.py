@@ -1,6 +1,6 @@
-"""Activity-Feed + Visibility + Story + interesting-Algorithmus.
+"""Activity feed + visibility + story + interesting algorithm.
 
-Smoke-Tests aus Plan §D:
+Smoke tests from Plan §D:
 - test_feed_excludes_non_friend_items   (friends-only Items)
 - test_visibility_private_never_appears_in_feed
 - test_visibility_public_appears_in_feed_for_anyone
@@ -94,8 +94,8 @@ def _create_item(
 # ----------------------------------------------------------------------
 
 def test_feed_excludes_non_friend_items(client: TestClient) -> None:
-    """Plan-Smoke: ein non-friend pullt → friends-Items NICHT enthalten,
-    public/Items aber schon."""
+    """Plan smoke: a non-friend pulling → friends items NOT included,
+    but public items are."""
     owner_priv, owner_pub = generate_keypair()
     _, friend_pub = generate_keypair()
     _, stranger_pub = generate_keypair()
@@ -112,7 +112,7 @@ def test_feed_excludes_non_friend_items(client: TestClient) -> None:
 
     stranger_priv, _ = generate_keypair()
     stranger_priv = stranger_priv  # noqa
-    # Stranger-Keypair separat
+    # Separate stranger keypair
     sp_priv, sp_pub = generate_keypair()
     resp = _signed_get(client, "/api/v1/federation/feed", priv=sp_priv, pub=sp_pub)
     assert resp.status_code == 200
@@ -131,7 +131,7 @@ def test_visibility_private_never_appears_in_feed(client: TestClient) -> None:
     pr_id = _create_item(client, priv=owner_priv, pub=owner_pub,
                          kind="milestone", visibility="private")
 
-    # Friend schaut: KEIN private item.
+    # Friend looks: NO private item.
     resp = _signed_get(client, "/api/v1/federation/feed", priv=fp_priv, pub=fp_pub)
     assert resp.status_code == 200
     ids = {i["id"] for i in resp.json()["items"]}
@@ -144,7 +144,7 @@ def test_visibility_public_appears_in_feed_for_anyone(client: TestClient) -> Non
     pub_id = _create_item(client, priv=owner_priv, pub=owner_pub,
                           kind="milestone", visibility="public")
 
-    # Random Stranger pullt — sieht das public-Item.
+    # Random stranger pulls — sees the public item.
     sp_priv, sp_pub = generate_keypair()
     resp = _signed_get(client, "/api/v1/federation/feed", priv=sp_priv, pub=sp_pub)
     assert resp.status_code == 200
@@ -153,7 +153,7 @@ def test_visibility_public_appears_in_feed_for_anyone(client: TestClient) -> Non
 
 
 def test_owner_sees_own_private_via_federation(client: TestClient) -> None:
-    """Owner pulling its own feed sieht alles (inkl. private)."""
+    """Owner pulling its own feed sees everything (incl. private)."""
     owner_priv, owner_pub = generate_keypair()
     _setup_owner(client, owner_pub)
     pr_id = _create_item(client, priv=owner_priv, pub=owner_pub,
@@ -166,7 +166,7 @@ def test_owner_sees_own_private_via_federation(client: TestClient) -> None:
 
 
 # ----------------------------------------------------------------------
-# Stories-Expiry
+# Stories expiry
 # ----------------------------------------------------------------------
 
 def test_story_creates_expires_at_24h(client: TestClient) -> None:
@@ -186,7 +186,7 @@ def test_story_creates_expires_at_24h(client: TestClient) -> None:
 
 
 def test_story_expires_after_24h(client: TestClient) -> None:
-    """Plan-Smoke: nach Time-Travel +25h verschwindet die Story aus dem Feed."""
+    """Plan smoke: after a +25h time travel, the story disappears from the feed."""
     owner_priv, owner_pub = generate_keypair()
     fp_priv, fp_pub = generate_keypair()
     _setup_owner(client, owner_pub)
@@ -194,13 +194,13 @@ def test_story_expires_after_24h(client: TestClient) -> None:
 
     sid = _create_item(client, priv=owner_priv, pub=owner_pub,
                        kind="story", visibility="friends",
-                       payload={"text": "vergaenglich"})
+                       payload={"text": "ephemeral"})
 
-    # Jetzt sichtbar.
+    # Visible now.
     r1 = _signed_get(client, "/api/v1/federation/feed", priv=fp_priv, pub=fp_pub)
     assert sid in {i["id"] for i in r1.json()["items"]}
 
-    # In der DB die expires_at auf 1 min in der Vergangenheit setzen.
+    # Set expires_at in the DB to 1 minute in the past.
     factory = client.app.state.session_factory
     with factory() as session:
         item = session.get(ActivityItem, sid)
@@ -212,11 +212,11 @@ def test_story_expires_after_24h(client: TestClient) -> None:
 
 
 # ----------------------------------------------------------------------
-# Reaction-Visibility
+# Reaction visibility
 # ----------------------------------------------------------------------
 
 def test_owner_sees_own_reaction_counts(client: TestClient) -> None:
-    """Plan §D §0: Owner sieht Counts mit Zahl, andere nicht."""
+    """Plan §D §0: owner sees counts as a number, others don't."""
     from board_backend.models import Reaction
 
     owner_priv, owner_pub = generate_keypair()
@@ -232,17 +232,17 @@ def test_owner_sees_own_reaction_counts(client: TestClient) -> None:
         session.add(Reaction(item_id=iid, reactor_pubkey=fp_pub, reaction="fire"))
         session.commit()
 
-    # Owner pulled eigenen Feed.
+    # Owner pulls its own feed.
     own = _signed_get(client, "/api/v1/activities",
                       priv=owner_priv, pub=owner_pub).json()
     own_item = next(i for i in own["items"] if i["id"] == iid)
     assert own_item["reaction_counts"] == {"rocket": 1, "brain": 0, "fire": 1}
 
-    # Friend pulled federation-feed → counts MUST BE None
-    fp_priv = None  # erzeugen
+    # Friend pulled federation feed → counts MUST BE None
+    fp_priv = None  # generate
     fp_priv, fp_pub2 = generate_keypair()
-    # reuse fp_pub from above? Wir haben nur den pubkey hinzugefuegt; brauchen
-    # den priv. Generiere neu, fuege als zweiten friend hinzu.
+    # reuse fp_pub from above? We only added the pubkey; we need
+    # the priv. Generate a new one, add as a second friend.
     _add_friend(client, owner_pub, fp_pub2)
 
     fed = _signed_get(client, "/api/v1/federation/feed",
@@ -253,11 +253,11 @@ def test_owner_sees_own_reaction_counts(client: TestClient) -> None:
 
 
 # ----------------------------------------------------------------------
-# Interesting-Algorithm — Plan-Smoke
+# Interesting algorithm — plan smoke
 # ----------------------------------------------------------------------
 
 def test_interesting_algorithm_is_deterministic() -> None:
-    """Plan-Smoke: same input → same order. Pure-function check."""
+    """Plan smoke: same input → same order. Pure-function check."""
     a = interesting_score(reactions_total=5, age_hours=10)
     b = interesting_score(reactions_total=5, age_hours=10)
     assert a == b
@@ -273,7 +273,7 @@ def test_interesting_sorts_recent_higher_for_equal_reactions(client: TestClient)
     _setup_owner(client, owner_pub)
     older_id = _create_item(client, priv=owner_priv, pub=owner_pub,
                             kind="milestone", visibility="public")
-    # Setze created_at zurueck.
+    # Set created_at back.
     factory = client.app.state.session_factory
     with factory() as session:
         item = session.get(ActivityItem, older_id)
@@ -310,11 +310,11 @@ def test_latest_sort_is_strict_chronological(client: TestClient) -> None:
 
 
 # ----------------------------------------------------------------------
-# Activity-Create-Pflichten
+# Activity-create requirements
 # ----------------------------------------------------------------------
 
 def test_activity_create_rejects_extra_fields(client: TestClient) -> None:
-    """PII-Wand: extra='forbid' wirkt auch hier."""
+    """PII wall: extra='forbid' also applies here."""
     owner_priv, owner_pub = generate_keypair()
     _setup_owner(client, owner_pub)
     body = {
@@ -322,7 +322,7 @@ def test_activity_create_rejects_extra_fields(client: TestClient) -> None:
         "kind": "milestone",
         "payload": {},
         "visibility": "friends",
-        "raw_transcript": "secret",      # extra-Feld
+        "raw_transcript": "secret",      # extra field
     }
     resp = _signed_post(client, "/api/v1/activities",
                         priv=owner_priv, pub=owner_pub, payload=body)

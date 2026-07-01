@@ -1,4 +1,4 @@
-"""Tests fuer Bug API-1 (2026-04-29): API-Key/Account-Fehler-Behandlung.
+"""Tests for bug API-1 (2026-04-29): API key / account error handling.
 
 Drei zusammenhaengende Defekte gefixt:
 
@@ -7,8 +7,8 @@ Drei zusammenhaengende Defekte gefixt:
    google-genai SDK 11 Pydantic-Validation-Errors.
 
 2. _is_account_blocked_exc() — Anthropic credit-too-low / xAI no-team-access /
-   OpenAI tier-not-available werden als terminales Account-Problem erkannt
-   (nicht als rate_limit oder invalid_model).
+   OpenAI tier-not-available are recognized as a terminal account problem
+   (not as rate_limit or invalid_model).
 
 3. _format_provider_chain_error — User-actionable Account-Block-Message
    statt "Provider unerreichbar"-Halluzination.
@@ -90,8 +90,8 @@ class TestGeminiSchemaSanitize:
         assert "strict" not in out["items"]
 
     def test_tools_gemini_format_does_not_raise_with_self_mod_schema(self) -> None:
-        """Self-Mod-Tools (Phase 7.3) haben strict + input_examples — vor dem
-        Fix crashte gemini-Plugin mit `extra_forbidden`. Jetzt: clean."""
+        """Self-mod tools (Phase 7.3) have strict + input_examples — before the
+        fix, the gemini plugin crashed with `extra_forbidden`. Now: clean."""
         tools = (
             {
                 "name": "set_config_value",
@@ -356,7 +356,7 @@ class TestAccountBlocked:
                "found', 'error': 'The model grok-4.1-fast does not exist or "
                "your team does not have access to it.'}")
         assert _is_account_blocked_exc(msg)
-        # Wird account_blocked, nicht invalid_model — wichtig fuer User-Message.
+        # Becomes account_blocked, not invalid_model — important for the user message.
         assert _classify_provider_error(msg, default="call_fail") == "account_blocked"
 
     def test_openai_tier_not_available(self) -> None:
@@ -364,13 +364,13 @@ class TestAccountBlocked:
         assert _is_account_blocked_exc(msg)
 
     def test_invalid_model_does_not_match_account(self) -> None:
-        # Echte invalid_model-Fehler ohne Account-Hint bleiben "invalid_model".
+        # Genuine invalid_model errors without an account hint stay "invalid_model".
         msg = "model_not_found: gpt-foo"
         assert not _is_account_blocked_exc(msg)
         assert _is_invalid_model_exc(msg)
 
     def test_missing_key_does_not_match_account(self) -> None:
-        msg = "Kein OpenAI-API-Key gefunden (openai_api_key / OPENAI_API_KEY)."
+        msg = "Kein OpenAI-API-Key gefunden (openai_api_key / OPENAI_API_KEY)."  # i18n-allow
         assert _is_missing_key_exc(msg)
         assert not _is_account_blocked_exc(msg)
 
@@ -396,7 +396,7 @@ class TestChainErrorFormat:
         msg = _format_provider_chain_error(errors)
         assert "claude-api" in msg
         assert "grok" in msg
-        # Konkrete URL-Hinweise damit User klicken kann
+        # Concrete URL hints so the user can click through
         assert "anthropic" in msg.lower()
         assert "x.ai" in msg.lower() or "console" in msg.lower()
 
@@ -406,6 +406,6 @@ class TestChainErrorFormat:
             ("claude-api", "haiku", "account_blocked", "credit"),
         ]
         msg = _format_provider_chain_error(errors)
-        # Beide Bereiche werden adressiert
+        # Both areas are addressed
         assert "Brain-Key" in msg or "missing" in msg.lower()
         assert "Account-Problem" in msg

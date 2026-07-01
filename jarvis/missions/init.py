@@ -523,7 +523,7 @@ async def bootstrap_missions(
     daily_usd: float = 50.0,
     warn_pct: tuple[int, ...] = (50, 80),
     # When False the BudgetTracker is a no-op (no cost cap, no abort). User
-    # mandate 2026-05-31 ("überhaupt kein Budget"). Default True keeps the
+    # mandate 2026-05-31 ("no budget at all"). Default True keeps the
     # cap for other installs / the cloud-first €5-VPS profile.
     budget_enabled: bool = True,
     # Voice flags (from [phase6.voice])

@@ -1,4 +1,4 @@
-"""Unit-Tests fuer TaskStore — CRUD + Startup-Cleanup + append_step."""
+"""Unit tests for TaskStore — CRUD + startup cleanup + append_step."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -48,7 +48,7 @@ async def test_insert_on_event_stores_selector(store: TaskStore) -> None:
     spec = TaskSpec(
         title="Reagiere auf Mails",
         trigger=TriggerOnEvent(event_name="MessageSent", filter_expr="role == 'user'"),
-        action=SpeakAction(text="Neue Nachricht!"),
+        action=SpeakAction(text="Neue Nachricht!"),  # i18n-allow
     )
     tid = await store.insert(spec)
     task = await store.get(tid)

@@ -1,10 +1,10 @@
-"""Tests für Plan-§AD-8 + §AP-6: Draft-Skills triggern NIEMALS automatisch.
+"""Tests for Plan-§AD-8 + §AP-6: draft skills NEVER auto-trigger.
 
-Akzeptanzkriterien aus Phase 7.5:
-- list_active() ignoriert DRAFT-Skills komplett
-- list_drafts() zeigt sie an
-- promote() bringt sie auf state=active
-- promote() blockiert bei unsafe Skill-Body (eval/exec/...)
+Acceptance criteria from Phase 7.5:
+- list_active() completely ignores DRAFT skills
+- list_drafts() shows them
+- promote() moves them to state=active
+- promote() blocks on an unsafe skill body (eval/exec/...)
 """
 from __future__ import annotations
 
@@ -27,10 +27,10 @@ def _draft(**overrides) -> SkillDraft:
     defaults: dict = dict(
         slug="test-skill",
         name="Test Skill",
-        description="Test-Skill für Draft-Isolation",
+        description="Test skill for draft isolation",
         intent="test intent",
         triggers_yaml="[{type: voice, pattern: '^test'}]",
-        body_markdown="## Test Skill\n\nNur ein Marker-Body.",
+        body_markdown="## Test Skill\n\nJust a marker body.",
         state="draft",
     )
     defaults.update(overrides)
@@ -53,7 +53,7 @@ class TestDraftIsolation:
     def test_list_active_excludes_drafts(
         self, skills_root: Path
     ) -> None:
-        # 1 Draft anlegen
+        # Create 1 draft
         write_draft(_draft(slug="draft-skill"), user_skills_root=skills_root)
         registry = SkillRegistry(skills_root, bus=None)
         registry.reload_sync()
@@ -63,14 +63,14 @@ class TestDraftIsolation:
     def test_list_active_includes_validated_skill(
         self, skills_root: Path
     ) -> None:
-        # Skill OHNE state-Field im Frontmatter → Loader setzt VALIDATED
+        # Skill WITHOUT a state field in frontmatter → loader sets VALIDATED
         skill_dir = skills_root / "active-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
             "---\n"
             'schema_version: "1"\n'
             "name: active-skill\n"
-            "description: legacy skill ohne state field\n"
+            "description: legacy skill without state field\n"
             "---\n\n"
             "## Body\n",
             encoding="utf-8",
@@ -94,7 +94,7 @@ class TestPromote:
         registry.reload_sync()
         assert registry.list_drafts()
         promoted = registry.promote("promo-test")
-        # Skill ist jetzt aktiv (oder validated, beides ist active-Pool)
+        # Skill is now active (or validated, both are in the active pool)
         assert promoted.state in (
             SkillLifecycleState.ACTIVE,
             SkillLifecycleState.VALIDATED,
@@ -102,7 +102,7 @@ class TestPromote:
         assert any(
             s.path.parent.name == "promo-test" for s in registry.list_active()
         )
-        # Frontmatter hat state: active
+        # Frontmatter has state: active
         text = promoted.path.read_text(encoding="utf-8")
         fm = yaml.safe_load(text.split("---", 2)[1])
         assert fm["state"] == "active"
@@ -120,7 +120,7 @@ class TestPromote:
             "---\n"
             'schema_version: "1"\n'
             "name: active-already\n"
-            "description: bereits aktiv\n"
+            "description: already active\n"
             "---\n",
             encoding="utf-8",
         )
@@ -144,7 +144,7 @@ class TestPromote:
         registry.reload_sync()
         with pytest.raises(UnsafeSkillError):
             registry.promote("unsafe-skill")
-        # Skill bleibt im Draft-Status
+        # Skill remains in draft status
         registry.reload_sync()
         assert any(
             s.path.parent.name == "unsafe-skill"

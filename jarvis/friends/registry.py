@@ -122,7 +122,7 @@ class FriendRegistry:
     def _require_conn(self) -> aiosqlite.Connection:
         if self._conn is None:
             raise FriendRegistryError(
-                "FriendRegistry nicht geoeffnet — open() oder 'async with' nutzen."
+                "FriendRegistry not opened — use open() or 'async with'."
             )
         return self._conn
 

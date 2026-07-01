@@ -2,7 +2,7 @@
 
 ## Symptom
 
-After a successful Jarvis call, the desktop app stayed in `Hört zu` /
+After a successful Jarvis call, the desktop app stayed in `Hört zu` / <!-- i18n-allow: quoted internal UI state label -->
 `LISTENING` and Jarvis did not answer a normal smalltalk prompt such as
 `Wie geht es dir, Jarvis?`. <!-- i18n-allow -->
 
@@ -17,7 +17,7 @@ Two independent turn-taking gaps could produce the same user-visible symptom:
 2. The VAD endpoint trusted Silero probability plus a fixed silence window. In
    noisy rooms or with fan/echo leakage, Silero can keep reporting speech after
    the user has stopped. That prevents a final transcript and keeps the UI in
-   `Hört zu`.
+   `Hört zu`. <!-- i18n-allow: quoted internal UI state label -->
 
 ## Fix
 

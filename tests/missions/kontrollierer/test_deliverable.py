@@ -33,14 +33,14 @@ def test_tasks_dir_without_artifacts_returns_empty(tmp_path: Path) -> None:
 
 
 def test_single_file_is_named(tmp_path: Path) -> None:
-    """One archived file → 'Fertig. Datei X ist gespeichert.'"""
+    """One archived file → 'Fertig. Datei X ist gespeichert.'"""  # i18n-allow: quotes the German TTS readback
     files = tmp_path / "tasks" / "019e63c5-5855" / "artifacts" / "files"
     files.mkdir(parents=True)
     (files / "landing.html").write_text("<html/>", encoding="utf-8")
     s = build_deliverable_summary(tmp_path)
     assert "landing.html" in s, f"filename must appear in summary, got {s!r}"
-    assert "Datei" in s
-    assert "gespeichert" in s
+    assert "Datei" in s  # i18n-allow: asserts the German TTS readback text
+    assert "gespeichert" in s  # i18n-allow: asserts the German TTS readback text
 
 
 def test_two_files_are_named(tmp_path: Path) -> None:
@@ -126,7 +126,7 @@ def test_single_file_summary_in_english(tmp_path: Path) -> None:
     s = build_deliverable_summary(tmp_path, language="en")
     assert "landing.html" in s, f"filename must appear, got {s!r}"
     assert "saved" in s
-    assert "Datei" not in s and "gespeichert" not in s, (
+    assert "Datei" not in s and "gespeichert" not in s, (  # i18n-allow: asserts absence of the German TTS words
         f"English summary must not contain German words: {s!r}"
     )
 

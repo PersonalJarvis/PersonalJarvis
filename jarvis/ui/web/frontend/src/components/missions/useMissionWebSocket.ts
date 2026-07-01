@@ -1,12 +1,13 @@
 /**
- * WebSocket-Verbindung zum Mission-Bus (`/api/missions/ws`).
+ * WebSocket connection to the mission bus (`/api/missions/ws`).
  *
- * Erst-Frame nach onOpen ist ein "hello" mit `last_seq` — das Backend liefert
- * dann Replay-Events vor neuen Live-Events. So kann ein gerade reconnecteter
- * Tab seq-Luecken auffuellen, ohne ein REST-Catch-up.
+ * The first frame after onOpen is a "hello" with `last_seq` — the backend
+ * then delivers replay events before new live events. That way a tab that
+ * just reconnected can fill seq gaps without a REST catch-up.
  *
- * Reconnect erfolgt automatisch via react-use-websocket (exponentielles
- * Backoff bis 30s, infinite Retries). UI zeigt "offline" via store.connected.
+ * Reconnect happens automatically via react-use-websocket (exponential
+ * backoff up to 30s, infinite retries). The UI shows "offline" via
+ * store.connected.
  */
 import { useEffect, useMemo } from "react";
 import useWebSocket, { ReadyState } from "react-use-websocket";
@@ -73,7 +74,7 @@ export function useMissionWebSocket(): { readyState: ReadyState } {
     if (isEventEnvelope(msg)) {
       applyEvent(msg);
     }
-    // hello_ack und andere Control-Frames: silent ignore (kein UI-Feedback noetig)
+    // hello_ack and other control frames: silently ignore (no UI feedback needed)
   }, [lastJsonMessage, applyEvent]);
 
   return { readyState };

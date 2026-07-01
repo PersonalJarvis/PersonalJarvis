@@ -1,9 +1,9 @@
-"""Unit-Tests fuer TurnBuffer.
+"""Unit tests for TurnBuffer.
 
-Regression-Test fuer BUG-001 (2026-04-23): der Stub-TurnBuffer akzeptierte keine
-Kwargs, die Pipeline ruft aber ``append(text=..., language=..., confidence=...)``
-auf. Ergebnis: TypeError bei jedem User-Utterance, Session bricht nach "Sir?"
-lautlos ab. Diese Tests stellen den API-Contract fest.
+Regression test for BUG-001 (2026-04-23): the stub TurnBuffer did not accept
+kwargs, but the pipeline calls ``append(text=..., language=..., confidence=...)``.
+Result: TypeError on every user utterance, session silently aborts after "Sir?"
+The tests here pin down the API contract.
 """
 from __future__ import annotations
 
@@ -13,14 +13,14 @@ from jarvis.speech.turn_buffer import Turn, TurnBuffer
 
 
 def test_append_accepts_pipeline_kwargs() -> None:
-    """BUG-001 Regression: append muss text/language/confidence als Kwargs nehmen."""
+    """BUG-001 regression: append must take text/language/confidence as kwargs."""
     buf = TurnBuffer(maxlen=5)
     buf.append(text="Hallo Jarvis", language="de", confidence=0.92)
     assert len(buf) == 1
 
 
 def test_append_confidence_optional() -> None:
-    """Nicht jeder STT-Provider liefert confidence — Default None muss reichen."""
+    """Not every STT provider supplies confidence — a default of None must suffice."""
     buf = TurnBuffer()
     buf.append(text="Hello", language="en")
     last = buf.last()
@@ -69,7 +69,7 @@ def test_maxlen_evicts_oldest() -> None:
 
 
 def test_turn_is_frozen() -> None:
-    """Turn ist immutable — kein versehentliches Mutieren eines Buffer-Eintrags."""
+    """Turn is immutable — no accidental mutation of a buffer entry."""
     buf = TurnBuffer()
     buf.append(text="hallo", language="de")
     last = buf.last()

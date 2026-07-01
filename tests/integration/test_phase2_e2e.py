@@ -40,7 +40,7 @@ class _DummyTool:
 
 @pytest_asyncio.fixture
 async def fake_infra(tmp_path, monkeypatch):
-    """Baut Bus+Manager mit FakeBrain + DummyTool auf."""
+    """Builds a Bus+Manager with FakeBrain + DummyTool."""
     bus = EventBus()
     config = JarvisConfig()
     config.safety = SafetyConfig(
@@ -62,12 +62,12 @@ async def fake_infra(tmp_path, monkeypatch):
         ],
         # 2. Turn: Finale Antwort nach Tool-Result
         [
-            BrainDelta(content="Fertig: echo-hello-world"),
+            BrainDelta(content="Fertig: echo-hello-world"),  # i18n-allow (matched by assert below)
             BrainDelta(finish_reason="stop"),
         ],
     ])
 
-    # BrainManager patchen damit er den FakeBrain nutzt
+    # Patch BrainManager so it uses the FakeBrain
     manager = BrainManager(
         config=config,
         bus=bus,
@@ -80,7 +80,7 @@ async def fake_infra(tmp_path, monkeypatch):
     manager._registry._loaded = True
     manager._registry._classes[manager._active_name] = type(fake)
     manager._brain_cache[(manager._active_name, None)] = fake
-    # Fallback-Chain für Tests einfrieren — nur den fake nutzen
+    # Freeze the fallback chain for tests — only use the fake
     manager._build_fallback_chain = lambda level: [(manager._active_name, None)]  # type: ignore[assignment]
 
     return {"manager": manager, "fake": fake, "tool": tool, "bus": bus}
@@ -101,11 +101,11 @@ async def test_brain_can_use_tool_and_finish(fake_infra):
 
     result = await fake_infra["manager"].generate("Benutze echo_tool mit msg=hello-world", use_history=False)
 
-    # Tool wurde ausgeführt
+    # Tool was executed
     assert len(fake_infra["tool"].calls) == 1
     assert fake_infra["tool"].calls[0] == {"msg": "hello-world"}
 
-    # Events wurden publiziert
+    # Events were published
     proposed = [e for e in captured_events if e[0] == "proposed"]
     executed = [e for e in captured_events if e[0] == "executed"]
     assert len(proposed) == 1
@@ -114,11 +114,11 @@ async def test_brain_can_use_tool_and_finish(fake_infra):
     assert executed[0][1] == "echo_tool"
     assert executed[0][2] is True
 
-    # Fake-Brain wurde 2× aufgerufen (Tool-Call + Follow-up)
+    # Fake brain was called 2x (tool call + follow-up)
     assert len(fake_infra["fake"].calls) == 2
 
     # Final text
-    assert "Fertig" in result
+    assert "Fertig" in result  # i18n-allow (matches content set above)
 
 
 @pytest.mark.asyncio
@@ -127,7 +127,7 @@ async def test_no_tool_call_just_text():
     config = JarvisConfig()
     fake = FakeBrain(text_response="Hallo!")
     manager = BrainManager(config=config, bus=bus, tools={})
-    # Keine Tools → Dispatcher nutzt den simple-Path
+    # No tools → dispatcher uses the simple path
     manager._active_name = fake.name
     manager._registry._loaded = True
     manager._registry._classes[fake.name] = type(fake)

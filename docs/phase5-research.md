@@ -1,7 +1,7 @@
 # Phase 5 — Research pass
 
 **Date:** 2026-04-22
-**Plan reference:** `.claude/plans/also-er-muss-auch-lexical-pond.md` §9-Phase-5, §20 (builder pattern)
+**Plan reference:** `.claude/plans/also-er-muss-auch-lexical-pond.md` §9-Phase-5, §20 (builder pattern)  <!-- i18n-allow -->
 **Mandate:** `Aufgaben/Unbenanntes Dokument (1).md`
 **Author context:** Code scan of phases 0–4, no changes made.
 

@@ -2,10 +2,11 @@
 not spawn a worker that can't reach it.
 
 Forensic 2026-06-27 (voice 17:44): "Schau mal nach was in meinem Google Calendar
-am 29. ist" spawned a worker ("umfangreicheres Stueck Arbeit") which has no
-google_calendar tool (plugin tools are router-tier only, AP-5/AP-14) and answered
-"kann ich nicht". ``_hide_spawn_when_plugin_tool_handles_turn`` drops the spawn
-vehicles on a calendar (plugin-tool) turn so the router calls the tool inline."""
+am 29. ist" (a German request to check the calendar) spawned a worker
+("a larger chunk of work") which has no google_calendar tool (plugin tools are
+router-tier only, AP-5/AP-14) and answered "I can't do that". ``_hide_spawn_when_
+plugin_tool_handles_turn`` drops the spawn vehicles on a calendar (plugin-tool)
+turn so the router calls the tool inline."""
 from __future__ import annotations
 
 import re
@@ -33,7 +34,7 @@ def _surface() -> dict:
 def test_calendar_turn_hides_spawn_keeps_tool():
     m = _mgr()
     out = m._hide_spawn_when_plugin_tool_handles_turn(
-        _surface(), "Was habe ich heute für Termine?"
+        _surface(), "Was habe ich heute für Termine?"  # i18n-allow
     )
     assert "google_calendar" in out
     assert "search_web" in out  # inline answer path stays open
@@ -45,7 +46,7 @@ def test_exact_failing_utterance_now_hides_spawn():
     m = _mgr()
     out = m._hide_spawn_when_plugin_tool_handles_turn(
         _surface(),
-        "Schau mal bitte nach, was in meinem Google Calendar am 29. für Termine sind",
+        "Schau mal bitte nach, was in meinem Google Calendar am 29. für Termine sind",  # i18n-allow
     )
     assert "spawn_worker" not in out and "multi_spawn" not in out
     assert "google_calendar" in out
@@ -54,7 +55,7 @@ def test_exact_failing_utterance_now_hides_spawn():
 def test_non_calendar_turn_keeps_spawn():
     m = _mgr()
     surface = _surface()
-    out = m._hide_spawn_when_plugin_tool_handles_turn(surface, "Erzähl mir einen Witz")
+    out = m._hide_spawn_when_plugin_tool_handles_turn(surface, "Erzähl mir einen Witz")  # i18n-allow
     assert out == surface  # untouched — no plugin keyword matched
 
 
@@ -82,6 +83,6 @@ def test_no_plugin_tool_in_surface_keeps_spawn():
     m = _mgr()
     surface = {"search_web": object(), "spawn_worker": object()}
     out = m._hide_spawn_when_plugin_tool_handles_turn(
-        surface, "Was habe ich heute für Termine?"
+        surface, "Was habe ich heute für Termine?"  # i18n-allow
     )
     assert "spawn_worker" in out  # no calendar tool present => don't hide

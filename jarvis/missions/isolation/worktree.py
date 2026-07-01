@@ -354,8 +354,8 @@ class WorktreeManager:
         # All retries failed. Decide based on `force`.
         if force:
             logger.warning(
-                "git worktree remove fehlgeschlagen nach %d Versuchen "
-                "(letzter exit=%s) — manueller rmtree fuer %s",
+                "git worktree remove failed after %d attempts "
+                "(last exit=%s) — manual rmtree for %s",
                 len(attempts),
                 last_exc.returncode if last_exc else "?",
                 path,

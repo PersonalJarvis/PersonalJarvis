@@ -1,13 +1,13 @@
-"""TTS-Provider-Plugins (Google Gemini, ElevenLabs, xAI Grok, ...).
+"""TTS provider plugins (Google Gemini, ElevenLabs, xAI Grok, ...).
 
-`build_tts_from_config` ist die zentrale Factory fuer alle Call-Sites
-(Desktop-App, Speech-Pipeline-CLI). Nur so bleibt der TTS-Wechsel per
-`jarvis.toml` ein Config-Edit und kein Code-Edit.
+`build_tts_from_config` is the central factory for all call sites
+(desktop app, speech-pipeline CLI). Only this way does switching TTS via
+`jarvis.toml` stay a config edit rather than a code edit.
 
-SAPI5 (Windows-natives, roboterhaftes TTS) ist seit 2026-04-25 nur noch
-ein **opt-in**-Notausgang: per Default schweigt der Provider lieber als
-auf die Windows-Stimme umzuschalten. Auf `tts.allow_sapi5_fallback = true`
-setzen, wenn man jedwedes Audio-Output haben will.
+SAPI5 (Windows-native, robotic-sounding TTS) has been an **opt-in**
+emergency exit only since 2026-04-25: by default the provider would
+rather stay silent than switch to the Windows voice. Set
+`tts.allow_sapi5_fallback = true` if you want audio output no matter what.
 """
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ from typing import Any
 
 log = logging.getLogger("jarvis.tts.factory")
 
-# Voices, die zum jeweiligen Provider gehoeren — verhindert dass z.B. ein
-# Gemini-Voice ("Charon") im Grok-Plugin landet und HTTP 400 ausloest.
+# Voices belonging to each respective provider — prevents e.g. a
+# Gemini voice ("Charon") from landing in the Grok plugin and triggering HTTP 400.
 _GEMINI_VOICES = frozenset({
     "Charon", "Orus", "Iapetus", "Rasalgethi", "Algenib",
     "Algieba", "Kore", "Fenrir", "Aoede",
@@ -173,16 +173,16 @@ def _resolve_keyed_tts_provider(primary_name: str, tts_cfg: Any) -> tuple[str, A
 def _resolve_voice_for_provider(
     requested: str, provider: str, default: str, allowed: frozenset[str]
 ) -> str:
-    """Liefert einen fuer den Provider gueltigen Voice-Namen.
+    """Returns a voice name valid for the provider.
 
-    Wenn der Config-Voice nicht zur aktuellen Provider-Whitelist gehoert
-    (typischer Fall: User wechselt provider, vergisst voice anzupassen),
-    fallen wir auf den Provider-Default zurueck und loggen den Override.
+    When the config voice doesn't belong to the current provider whitelist
+    (typical case: the user switches provider, forgets to adjust the voice),
+    we fall back to the provider default and log the override.
     """
     if not requested or requested not in allowed:
         if requested:
             log.info(
-                "Voice %r passt nicht zu Provider %r (gueltig: %s) — nutze %r.",
+                "Voice %r does not match provider %r (valid: %s) — using %r.",
                 requested, provider, ", ".join(sorted(allowed)), default,
             )
         return default
@@ -190,7 +190,7 @@ def _resolve_voice_for_provider(
 
 
 def build_tts_from_config(tts_cfg: Any) -> Any:
-    """Erzeugt den TTS-Provider entsprechend `config.tts.provider`.
+    """Builds the TTS provider according to `config.tts.provider`.
 
     Honors `[tts].fallback`: when a fallback provider is configured (and differs
     from the primary), the primary is wrapped in a ``FallbackTTS`` so a
@@ -200,19 +200,19 @@ def build_tts_from_config(tts_cfg: Any) -> Any:
     legacy call-sites / test doubles see identical behaviour.
 
     Args:
-        tts_cfg: `TTSConfig`-Instanz aus `jarvis.core.config`.
+        tts_cfg: `TTSConfig` instance from `jarvis.core.config`.
 
     Returns:
-        Instanz des gewaehlten TTS-Plugins (implementiert `TTSProvider`), oder
-        ein `FallbackTTS` der primär + fallback umschliesst.
+        Instance of the chosen TTS plugin (implements `TTSProvider`), or
+        a `FallbackTTS` that wraps primary + fallback.
 
     Raises:
-        RuntimeError: wenn das primaere Plugin nicht importierbar ist
-            (z.B. weil das Modul gar nicht installiert wurde). Frueher
-            knallte hier ein nackter ImportError, den `desktop_app.py`
-            via blanket-except verschluckte → ganze Speech-Pipeline weg.
-            Ein nicht-baubarer *Fallback* degradiert dagegen nur (Warnung +
-            primary-only), damit eine Fallback-Fehlkonfig den Ton nicht killt.
+        RuntimeError: when the primary plugin is not importable
+            (e.g. because the module was never installed). Previously
+            this raised a bare ImportError that `desktop_app.py`
+            swallowed via a blanket except → the entire speech pipeline gone.
+            An un-buildable *fallback*, by contrast, only degrades (warning +
+            primary-only), so a fallback misconfiguration doesn't kill the audio.
     """
     requested_name = (tts_cfg.provider or "gemini-flash-tts").lower()
     # Open-source AP-22: if the configured TTS provider has no usable key, cross
@@ -253,11 +253,11 @@ def _build_provider(tts_cfg: Any, provider: str) -> Any:
             )
         except ImportError as exc:
             raise RuntimeError(
-                f"TTS-Provider 'elevenlabs' konfiguriert, aber Plugin nicht "
-                f"importierbar: {exc}",
+                f"TTS provider 'elevenlabs' configured, but the plugin is not "
+                f"importable: {exc}",
             ) from exc
-        # ElevenLabs nutzt Voice-IDs (kryptische Hashes), keine Provider-
-        # Whitelist — wir nehmen den Config-Wert wie er ist.
+        # ElevenLabs uses voice IDs (cryptic hashes), no provider
+        # whitelist — we take the config value as-is.
         return ElevenLabsTTS(
             model=tts_cfg.model or "eleven_flash_v2_5",
             default_voice=tts_cfg.voice_de or JARVIS_VOICE_DANIEL,
@@ -307,10 +307,10 @@ def _build_provider(tts_cfg: Any, provider: str) -> Any:
             from jarvis.plugins.tts.grok_voice_tts import GROK_VOICE_LEO, GrokVoiceTTS
         except ImportError as exc:
             raise RuntimeError(
-                f"TTS-Provider 'grok-voice' konfiguriert, aber Plugin nicht "
-                f"importierbar: {exc}. Pruefe, ob die Datei "
-                f"jarvis/plugins/tts/grok_voice_tts.py existiert und httpx "
-                f"installiert ist.",
+                f"TTS provider 'grok-voice' configured, but the plugin is not "
+                f"importable: {exc}. Check whether the file "
+                f"jarvis/plugins/tts/grok_voice_tts.py exists and httpx "
+                f"is installed.",
             ) from exc
         voice = _resolve_voice_for_provider(
             tts_cfg.voice_de, "grok-voice", GROK_VOICE_LEO, _GROK_VOICES,
@@ -324,21 +324,21 @@ def _build_provider(tts_cfg: Any, provider: str) -> Any:
 
     if provider not in ("gemini-flash-tts", "gemini-flash", "gemini"):
         log.warning(
-            "Unbekannter TTS-Provider %r — falle auf gemini-flash-tts zurueck.",
+            "Unknown TTS provider %r — falling back to gemini-flash-tts.",
             tts_cfg.provider,
         )
 
-    # Default / Fallback: Gemini-Flash-TTS (bisheriges Verhalten).
+    # Default / fallback: Gemini Flash TTS (previous behavior).
     try:
         from jarvis.plugins.tts.gemini_flash_tts import GeminiFlashTTS
     except ImportError as exc:
         raise RuntimeError(
-            f"Gemini-TTS-Plugin nicht importierbar: {exc}",
+            f"Gemini TTS plugin not importable: {exc}",
         ) from exc
     voice = _resolve_voice_for_provider(
         tts_cfg.voice_de, "gemini-flash-tts", "Charon", _GEMINI_VOICES,
     )
-    # Backwards-compat: alte Configs mit ElevenLabs-Voice-ID auf Gemini-Default.
+    # Backwards compat: old configs with an ElevenLabs voice ID map to the Gemini default.
     if voice == "onwK4e9ZLuTAKqWW03F9":
         voice = "Charon"
     return GeminiFlashTTS(

@@ -1,7 +1,7 @@
-// Zod-Schemas, gespiegelt zu den Pydantic-v2-Modellen in
-// OS-Level/src/overlay/schema.py. Symmetrie ist Plan AD-15. Phase 9.3
-// braucht nur den State-Slice; weitere Envelopes wandern hierher mit
-// 9.4ff.
+// Zod schemas, mirrored to the Pydantic v2 models in
+// OS-Level/src/overlay/schema.py. Symmetry is Plan AD-15. Phase 9.3
+// only needs the state slice; more envelopes will move here in
+// 9.4 and beyond.
 
 import { z } from "zod";
 
@@ -18,8 +18,8 @@ export const StateNameSchema = z.enum([
 
 export type StateName = z.infer<typeof StateNameSchema>;
 
-// (old, new, reason) — passend zur Signatur von StateBridge.stateChanged
-// auf der Python-Seite (window_glow.py).
+// (old, new, reason) — matches the signature of StateBridge.stateChanged
+// on the Python side (window_glow.py).
 export const StateChangeSchema = z.object({
   old: StateNameSchema,
   next: StateNameSchema,

@@ -1,12 +1,12 @@
-// ripple.ts — Click-Ripple-Effect. Plan §14.
+// ripple.ts — Click-ripple effect. Plan §14.
 //
-// Pre-warm Pool von 8 Divs (Plan §14.2) damit Burst-Clicks keinen
-// appendChild/Layout-Jank ausloesen. Animation laeuft komplett im CSS
+// Pre-warms a pool of 8 divs (Plan §14.2) so burst clicks don't trigger
+// appendChild/layout jank. The animation runs entirely in CSS
 // (transform+opacity, compositor-only).
 //
-// Coords vom Hauptjarvis sind PHYSICAL pixels (Plan §14.4). Wir
-// rechnen am Renderer-Boundary in CSS-logical um — ein Punkt, kein
-// verstreuter Off-by-DPI-Bug.
+// Coords from Hauptjarvis are PHYSICAL pixels (Plan §14.4). We convert
+// to CSS-logical at the renderer boundary — one spot, not an
+// off-by-DPI bug scattered everywhere.
 
 const POOL_SIZE = 8;
 const RIPPLE_LIFETIME_MS = 600; // Plan §14.1
@@ -21,12 +21,12 @@ let pool: RippleSlot[] | null = null;
 let layer: HTMLElement | null = null;
 
 /**
- * Erzeugt den Pool. Idempotent — mehrere Aufrufe sind no-op.
+ * Creates the pool. Idempotent — repeated calls are no-ops.
  *
- * Container muss eine ``.ripple-layer``-Surface sein (per CSS
- * pointer-events:none, position:fixed inset:0). buildRipplePool laesst
- * sie an ``document.body`` haengen; der Caller kann auch eigenes
- * Container-Element uebergeben (testbar).
+ * The container must be a ``.ripple-layer`` surface (per CSS
+ * pointer-events:none, position:fixed inset:0). buildRipplePool
+ * appends it to ``document.body``; the caller can also pass its own
+ * container element (testable).
  */
 export function buildRipplePool(container?: HTMLElement): void {
   if (pool !== null) return;
@@ -43,7 +43,7 @@ export function buildRipplePool(container?: HTMLElement): void {
     const el = document.createElement("div");
     el.className = "ripple";
     el.dataset["slot"] = String(i);
-    // Initial off-screen + invisible — nimmt keinen Platz ein.
+    // Initial off-screen + invisible — takes up no space.
     el.style.opacity = "0";
     el.style.transform = "translate(-9999px, -9999px) scale(0)";
     layer.appendChild(el);
@@ -52,23 +52,23 @@ export function buildRipplePool(container?: HTMLElement): void {
 }
 
 /**
- * Spawnt ein Ripple am Click-Coord. Plan §14.4 — physical px in,
- * CSS-px out via ``window.devicePixelRatio``.
+ * Spawns a ripple at the click coordinate. Plan §14.4 — physical px in,
+ * CSS px out via ``window.devicePixelRatio``.
  *
- * Returnt ``true`` wenn ein Pool-Slot verfuegbar war, ``false`` wenn
- * alle 8 Slots aktiv sind (Burst > 8 Klicks innerhalb 600 ms — der
- * 9. wird droppt; akzeptabler Edge-Case).
+ * Returns ``true`` if a pool slot was available, ``false`` if all 8
+ * slots are active (a burst of > 8 clicks within 600 ms — the 9th
+ * gets dropped; an acceptable edge case).
  */
 export function triggerRipple(physicalX: number, physicalY: number): boolean {
   if (pool === null) {
     buildRipplePool();
   }
-  // pool wurde gerade gebaut, sicher non-null.
+  // pool was just built, guaranteed non-null.
   const p = pool as RippleSlot[];
 
   const slot = p.find((s) => !s.inUse);
   if (slot === undefined) {
-    // Alle 8 Slots in-use. Plan §14.5 (Edge-Case) sagt "akzeptabel".
+    // All 8 slots in use. Plan §14.5 (edge case) says "acceptable".
     return false;
   }
 
@@ -77,9 +77,9 @@ export function triggerRipple(physicalX: number, physicalY: number): boolean {
   const cssY = physicalY / dpr;
 
   slot.inUse = true;
-  // Re-trigger der CSS-Animation: erst zuruecksetzen, dann setzen.
-  // Force reflow zwischen den beiden Klassen-Toggles damit die Animation
-  // wirklich neu startet (wichtig beim Pool-Reuse).
+  // Re-trigger the CSS animation: reset first, then set.
+  // Force reflow between the two class toggles so the animation
+  // actually restarts (important on pool reuse).
   slot.el.classList.remove("active");
   slot.el.style.transform = `translate(${cssX}px, ${cssY}px) scale(0)`;
   slot.el.style.opacity = "1";
@@ -87,7 +87,7 @@ export function triggerRipple(physicalX: number, physicalY: number): boolean {
   void slot.el.offsetWidth;
   slot.el.classList.add("active");
 
-  // Reset-Timer: nach 600 ms zurueck in den Pool.
+  // Reset timer: back into the pool after 600 ms.
   if (slot.resetTimer !== null) {
     window.clearTimeout(slot.resetTimer);
   }
@@ -103,7 +103,7 @@ export function triggerRipple(physicalX: number, physicalY: number): boolean {
 }
 
 /**
- * Test-Helper: aktuelle Pool-Auslastung. Production nicht relevant.
+ * Test helper: current pool utilization. Not relevant to production.
  */
 export function ripplePoolStats(): { total: number; inUse: number } {
   if (pool === null) return { total: 0, inUse: 0 };
@@ -114,7 +114,7 @@ export function ripplePoolStats(): { total: number; inUse: number } {
 }
 
 /**
- * Test-Helper: Pool resetten zwischen Tests.
+ * Test helper: reset the pool between tests.
  */
 export function resetRipplePool(): void {
   if (pool !== null) {

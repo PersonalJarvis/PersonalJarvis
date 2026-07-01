@@ -41,17 +41,17 @@ from jarvis.core.events import BrainTTFT, LatencySpan  # noqa: E402
 # (category, utterance). Mix of the turn classes the suite cares about: cheap
 # smalltalk/knowledge turns (snappiness-sensitive), screen-reference turns
 # (must keep vision), and action turns (force-spawn path).
-SCENARIOS: list[tuple[str, str]] = [
+SCENARIOS: list[tuple[str, str]] = [  # i18n-allow: simulated German user utterances driving the router latency probe
     ("smalltalk", "hallo jarvis"),
-    ("smalltalk", "wie spät ist es"),
+    ("smalltalk", "wie spät ist es"),  # i18n-allow: simulated German user utterance under test
     ("smalltalk", "danke dir"),
-    ("knowledge", "was ist die hauptstadt von frankreich"),
-    ("knowledge", "erklär mir kurz was ein vektor ist"),
-    ("screen_ref", "was siehst du hier auf dem bildschirm"),
-    ("screen_ref", "was ist das hier"),
-    ("action", "öffne den browser"),
+    ("knowledge", "was ist die hauptstadt von frankreich"),  # i18n-allow: simulated German user utterance under test
+    ("knowledge", "erklär mir kurz was ein vektor ist"),  # i18n-allow: simulated German user utterance under test
+    ("screen_ref", "was siehst du hier auf dem bildschirm"),  # i18n-allow: simulated German user utterance under test
+    ("screen_ref", "was ist das hier"),  # i18n-allow: simulated German user utterance under test
+    ("action", "öffne den browser"),  # i18n-allow: simulated German user utterance under test
     ("action", "repariere den bug in main.py"),
-    ("action", "starte einen subagenten für die recherche"),
+    ("action", "starte einen subagenten für die recherche"),  # i18n-allow: simulated German user utterance under test
 ]
 
 

@@ -1,9 +1,9 @@
-"""Unit-Tests für die MCP-Registry.
+"""Unit tests for the MCP registry.
 
-Seit 2026-04-22 ist ``BOOTSTRAP_SERVERS`` bewusst leer — alle Server
-kommen aus ``mcp.json`` (User-editierbar oder via Claude-Desktop-Import).
-Die Tests decken deshalb die Registry-Mechanik, nicht eine kuratierte
-Server-Liste.
+Since 2026-04-22, ``BOOTSTRAP_SERVERS`` is deliberately empty — all servers
+come from ``mcp.json`` (user-editable or via Claude Desktop import).
+The tests therefore cover the registry mechanics, not a curated
+server list.
 """
 from __future__ import annotations
 
@@ -23,8 +23,8 @@ def _make_spec(name: str = "custom-mcp", *, mandatory: bool = False) -> MCPServe
 
 
 def test_bootstrap_servers_is_empty_by_design() -> None:
-    """Bewusste Architektur-Entscheidung vom 2026-04-22: keine
-    vorkuratierten Server — alle Server kommen aus ``mcp.json``."""
+    """Deliberate architecture decision from 2026-04-22: no
+    pre-curated servers — all servers come from ``mcp.json``."""
     assert BOOTSTRAP_SERVERS == []
 
 
@@ -70,7 +70,7 @@ def test_registry_all_specs_returns_all_registered() -> None:
 
 
 def test_mcp_server_spec_is_frozen() -> None:
-    """Specs sind pydantic-frozen — Mutation muss scheitern."""
+    """Specs are pydantic-frozen — mutation must fail."""
     spec = _make_spec()
     with pytest.raises((AttributeError, Exception)):
         spec.name = "changed"  # type: ignore[misc]

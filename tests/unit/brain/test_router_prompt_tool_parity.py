@@ -69,7 +69,7 @@ def test_prompt_routes_app_actions_to_computer_use() -> None:
         "router prompt no longer routes PC actions to computer_use."
     )
     # And it explicitly tells the model NOT to use the phantom open_app.
-    assert re.search(r"NICHT\s+open_app", SYSTEM_PROMPT), (
+    assert re.search(r"NICHT\s+open_app", SYSTEM_PROMPT), (  # i18n-allow
         "router prompt should explicitly forbid open_app so the model uses "
         "computer_use for opening apps."
     )
@@ -93,9 +93,9 @@ def test_search_web_is_a_real_router_tool_and_advertised() -> None:
         "visible inline path for news/knowledge questions and will fall "
         "back to spawning a worker mission for a single lookup."
     )
-    # The old phantom-era warning ("Es gibt KEIN search_web") must be gone —
+    # The old phantom-era warning ("Es gibt KEIN search_web") must be gone —  # i18n-allow
     # it would directly contradict the real function declaration.
-    assert not re.search(r"KEIN\s+search_web", SYSTEM_PROMPT), (
+    assert not re.search(r"KEIN\s+search_web", SYSTEM_PROMPT), (  # i18n-allow
         "router prompt still claims search_web does not exist while the "
         "tool IS registered — contradictory instructions."
     )

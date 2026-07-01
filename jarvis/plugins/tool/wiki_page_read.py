@@ -7,7 +7,7 @@ Why a second wiki tool exists
 ``wiki-recall`` returns up to 5 hits with a 240-character snippet each.
 That is enough for "what do we know about X" but truncates anything
 longer.  When the brain has already narrowed the answer down to one page
-(e.g. user asks "lies mir alles ueber Joy vor") it needs the *full*
+(e.g. user asks "read me everything about Joy") it needs the *full*
 markdown content, not a snippet.  This tool fills that gap.
 
 Placement rule

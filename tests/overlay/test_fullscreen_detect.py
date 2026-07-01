@@ -58,7 +58,7 @@ def test_normal_states_do_not_hide() -> None:
 
 
 # -------------------------------------------------------------------------
-# FullscreenDetector — sync poll_once + Callback nur bei Wechsel
+# FullscreenDetector — sync poll_once + callback only on change
 # -------------------------------------------------------------------------
 
 
@@ -118,7 +118,7 @@ def test_query_returning_none_does_not_crash() -> None:
 
 
 def test_thread_starts_and_stops_cleanly() -> None:
-    """2-Sekunden-Polling-Thread shutdown muss schnell sein (<200 ms)."""
+    """2-second polling-thread shutdown must be fast (<200 ms)."""
     states = [UserNotificationState.NOT_PRESENT]
 
     det = FullscreenDetector(

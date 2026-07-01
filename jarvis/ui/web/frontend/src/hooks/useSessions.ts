@@ -1,16 +1,16 @@
 /**
- * useSessions — kombiniert REST-Fetch (React-Query) mit Live-Updates aus
- * dem WebSocket-Event-Stream.
+ * useSessions — combines a REST fetch (React Query) with live updates from
+ * the WebSocket event stream.
  *
- * Strategie:
- *  - React-Query haelt die Sessions-Liste + Detail-Cache.
- *  - Wenn auf dem Bus ein VoiceSessionStarted oder VoiceSessionEnded
- *    Event ankommt, invalidieren wir die Listen-Query (forciert Refetch).
- *  - Bei VoiceSessionEnded: zusaetzlich das Detail invalidieren (Aggregate
- *    sind erst beim Hangup final).
+ * Strategy:
+ *  - React Query holds the sessions list + detail cache.
+ *  - When a VoiceSessionStarted or VoiceSessionEnded event arrives on the
+ *    bus, we invalidate the list query (forces a refetch).
+ *  - On VoiceSessionEnded: also invalidate the detail (aggregates are only
+ *    final once the call has been hung up).
  *
- * Damit braucht es kein Polling — die Liste aktualisiert sich live in dem
- * Moment, in dem der User auflegt.
+ * That means no polling is needed — the list updates live the moment the
+ * user hangs up.
  */
 import { useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -29,14 +29,14 @@ export function useSessions() {
     queryFn: () => fetchSessions(100),
     refetchInterval: 30_000,
     retry: (failureCount, err) => {
-      // 503 = Recorder disabled → kein Retry, sofort Empty-State zeigen
+      // 503 = recorder disabled → no retry, show the empty state right away
       if (err instanceof Error && /HTTP 503/.test(err.message)) return false;
       return failureCount < 1;
     },
   });
 
-  // Letztes Voice-Session-Event-Vorkommen — wenn neu, invalidieren.
-  // useMemo + Dependency auf events.length+letzte-id verhindert Endlos-Loop.
+  // Most recent voice-session event occurrence — invalidate when it's new.
+  // useMemo + dependency on events.length+last-id prevents an infinite loop.
   const lastVoiceEvent = useMemo(() => {
     for (let i = events.length - 1; i >= 0; i--) {
       const ev = events[i];
@@ -53,7 +53,7 @@ export function useSessions() {
   useEffect(() => {
     if (lastVoiceEvent === null) return;
     queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
-    // Bei Ended: Detail-Cache des betroffenen Eintrags ebenfalls invalidieren.
+    // On Ended: also invalidate the detail cache of the affected entry.
     if (lastVoiceEvent.name === "VoiceSessionEnded") {
       const sid = (lastVoiceEvent.payload as { session_id?: string } | null)
         ?.session_id;

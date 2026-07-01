@@ -160,9 +160,9 @@ class StatusPublisher:
                 )
             return
 
-        # jarvis_pubkey: Federation kommt spaeter (F5+); in F4 stub-only
+        # jarvis_pubkey: federation comes later (F5+); F4 is stub-only
         log.debug(
-            "StatusPublisher: channel %r noch nicht implementiert (friend=%s)",
+            "StatusPublisher: channel %r not yet implemented (friend=%s)",
             primary.channel,
             friend.id,
         )

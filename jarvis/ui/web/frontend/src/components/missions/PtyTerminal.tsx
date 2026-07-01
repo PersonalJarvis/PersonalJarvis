@@ -1,16 +1,16 @@
 /**
- * Live-Terminal fuer einen Worker. xterm.js + FitAddon + Backpressure.
+ * Live terminal for a worker. xterm.js + FitAddon + backpressure.
  *
- * Zwingende Conventions:
- *  - Terminal-Instance ueber useRef (NICHT useState) — sonst rerender pro chunk.
- *  - dispose() im Cleanup: ohne das laeuft jede Worker-Selection in einen
- *    WebGL-Context-Leak (Chrome cap = 16 Contexts pro Origin).
- *  - Backpressure: bytesPending wird lokal gezaehlt; ab 128 KB pending wird ein
- *    `{type:"pause"}` an den PTY-Stream gesendet, ab 16 KB wieder `resume`.
+ * Mandatory conventions:
+ *  - Terminal instance via useRef (NOT useState) — otherwise it re-renders per chunk.
+ *  - dispose() in cleanup: without it, every worker selection leaks a
+ *    WebGL context (Chrome caps at 16 contexts per origin).
+ *  - Backpressure: bytesPending is counted locally; past 128 KB pending we
+ *    send a `{type:"pause"}` to the PTY stream, and `resume` again at 16 KB.
  *
- * MVP-Hinweis: das Backend-PTY-Endpoint ist als Stub geplant (Phase 6, separater
- * Sub-Agent). Bis es fertig ist, zeigt diese Component einen "Stream nicht
- * verfuegbar"-Placeholder, sobald der WS-Connect failt.
+ * MVP note: the backend PTY endpoint is planned as a stub (Phase 6, separate
+ * Jarvis-Agent). Until it's ready, this component shows a "stream not
+ * available" placeholder as soon as the WS connect fails.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
@@ -59,7 +59,7 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
         try {
           ws.send(JSON.stringify({ type, worker_id: workerId }));
         } catch {
-          // ignore — Backpressure-Hinweis ist best-effort
+          // ignore — the backpressure signal is best-effort
         }
       }
     },
@@ -108,7 +108,7 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
       try {
         fitRef.current?.fit();
       } catch {
-        // resize-failures sind nicht kritisch
+        // resize failures aren't critical
       }
     };
     window.addEventListener("resize", handleResize);
@@ -186,8 +186,8 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
         // ignore
       }
       wsRef.current = null;
-      // Terminal wird disposed wenn der WORKER waechselt (siehe key-prop in
-      // MissionsView), nicht bei jedem Re-Render
+      // The terminal is disposed when the WORKER changes (see the key prop
+      // in MissionsView), not on every re-render
       disposeTerminal(workerId);
       termRef.current = null;
       fitRef.current = null;

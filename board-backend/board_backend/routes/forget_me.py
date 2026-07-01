@@ -1,9 +1,9 @@
 """Right-to-be-forgotten — DELETE /api/v1/federation/identity/{pubkey}.
 
-GDPR-mässig: ein Friend signiert mit seinem Privkey einen DELETE-Request,
-der seine eigene Identity (= seine Friendship-Spur + alle seine Reaktionen)
-auf unserem Backend löscht. Activity-Items des Friends gibt es bei uns
-gar nicht (er hostet die selbst), aber wir cleanen seine Reactions.
+GDPR-style: a friend signs a DELETE request with their privkey, which
+deletes their own identity (= their friendship trace + all their
+reactions) on our backend. We don't have the friend's activity items
+at all (they host those themselves), but we do clean up their reactions.
 """
 from __future__ import annotations
 
@@ -25,10 +25,10 @@ def forget_me(
     auth: FederationAuth = Depends(require_federation_signed),
     request: Request = None,
 ) -> ForgetMeAck:
-    """Friend selbst-loescht alle seine Spuren bei uns.
+    """The friend self-deletes all their traces at our end.
 
-    Plan §D: signed by friend. ``pubkey`` im Path muss == ``viewer_pubkey``
-    aus der Sig sein, sonst 403.
+    Plan §D: signed by friend. ``pubkey`` in the path must == ``viewer_pubkey``
+    from the signature, otherwise 403.
     """
     if pubkey.lower() != auth.viewer_pubkey.lower():
         raise HTTPException(
@@ -38,14 +38,14 @@ def forget_me(
     with get_db(request) as session:
         owner = get_owner_identity(session)
 
-        # Friendship loeschen
+        # Delete the friendship
         friend_row = session.get(Friend, (owner.pubkey, pubkey))
         deleted_friendship = False
         if friend_row is not None:
             session.delete(friend_row)
             deleted_friendship = True
 
-        # Reactions des Reactors loeschen
+        # Delete the reactor's reactions
         reactions = session.query(Reaction).filter(
             Reaction.reactor_pubkey == pubkey
         ).all()
@@ -53,9 +53,9 @@ def forget_me(
         for r in reactions:
             session.delete(r)
 
-        # Activity-Items: wir hosten nur eigene Items, der friend hat hier
-        # keine Items (sein author_pubkey kommt im ActivityItem-Schema nicht
-        # als author vor, weil author == owner). Daher 0.
+        # Activity items: we only host our own items, the friend has no
+        # items here (their author_pubkey never shows up as author in the
+        # ActivityItem schema, since author == owner). Hence 0.
         deleted_activities = 0
 
         session.commit()

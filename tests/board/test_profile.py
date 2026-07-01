@@ -1,10 +1,10 @@
-"""Tests fuer BioGenerator (Brainstorm 2026-05-02 — beissend mit Augenzwinkern).
+"""Tests for BioGenerator (Brainstorm 2026-05-02 — biting, with a wink).
 
-Drei Szenarien (Power / Casual / Empty), Failure-Modi, neue Spec-Achsen:
-- Cold-Start-Hint im Prompt bei days_observed < 7
-- Wochen-Delta wenn previous_bio vorhanden
-- Feedback-Vector beeinflusst Prompt
-- Brain-Resolver wird bei JEDEM Call neu aufgeloest
+Three scenarios (Power / Casual / Empty), failure modes, new spec axes:
+- Cold-start hint in the prompt when days_observed < 7
+- Weekly delta when previous_bio is present
+- Feedback vector influences the prompt
+- Brain resolver is re-resolved on EVERY call
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from jarvis.core.protocols import BrainDelta, BrainRequest
 
 FORBIDDEN_WORDS = [
     "leidenschaftlich",
-    "großartig",
+    "großartig",  # i18n-allow: German cliche word checked against the (German) generated bio text
     "grossartig",
     "beeindruckend",
     "power-user",
@@ -53,11 +53,11 @@ def _assert_not_cliche(text: str) -> None:
 # ----------------------------------------------------------------------
 
 class FakeBrain:
-    """Mimt ``Brain.complete(BrainRequest) -> AsyncIterator[BrainDelta]``.
+    """Mimics ``Brain.complete(BrainRequest) -> AsyncIterator[BrainDelta]``.
 
-    ``async def`` mit ``yield`` macht das Method zu einem AsyncGenerator —
-    Aufrufer bekommt direkt einen ``AsyncIterator``, kompatibel mit
-    ``aggregate()`` aus ``jarvis.brain.streaming``.
+    ``async def`` with ``yield`` turns the method into an AsyncGenerator —
+    the caller gets an ``AsyncIterator`` directly, compatible with
+    ``aggregate()`` from ``jarvis.brain.streaming``.
     """
 
     def __init__(self, script: list[str] | str) -> None:
@@ -196,7 +196,7 @@ def test_render_no_cold_start_after_7_days() -> None:
 def test_render_previous_bio_block() -> None:
     _, user = render_bio_prompt({
         "days_observed": 30,
-        "previous_bio": "Du bist immer noch praezise und ungeduldig.",
+        "previous_bio": "Du bist immer noch praezise und ungeduldig.",  # i18n-allow: fed verbatim into the German bio prompt, asserted below
     })
     assert "FRUEHERE BIO" in user
     assert "praezise" in user
@@ -205,16 +205,16 @@ def test_render_previous_bio_block() -> None:
 def test_render_feedback_vector_haerter_lowers_threshold() -> None:
     _, user = render_bio_prompt({
         "days_observed": 30,
-        "feedback_vector": {"trifft": 1, "trifft_nicht": 0, "haerter": 3},
+        "feedback_vector": {"trifft": 1, "trifft_nicht": 0, "haerter": 3},  # i18n-allow: real API/DB contract values, matched in logic
     })
     assert "BISSIGER" in user
     assert "Hoeflichkeitsschwelle" in user
 
 
-def test_render_feedback_vector_trifft_nicht_dominant() -> None:
+def test_render_feedback_vector_trifft_nicht_dominant() -> None:  # i18n-allow: name matches real API/DB contract value "trifft_nicht"
     _, user = render_bio_prompt({
         "days_observed": 30,
-        "feedback_vector": {"trifft": 0, "trifft_nicht": 4, "haerter": 1},
+        "feedback_vector": {"trifft": 0, "trifft_nicht": 4, "haerter": 1},  # i18n-allow: real API/DB contract values, matched in logic
     })
     assert "konkreter an den Daten" in user
 
@@ -223,7 +223,7 @@ def test_render_episodes_block() -> None:
     _, user = render_bio_prompt({
         "days_observed": 14,
         "episodes": [
-            "User hat ueber Tests geschimpft, aber dann doch alle gefixt.",
+            "User hat ueber Tests geschimpft, aber dann doch alle gefixt.",  # i18n-allow: fed verbatim into the German bio prompt, asserted below
             "Lange Session in VS Code mit Python.",
             "Browser-Tab mit GitHub PRs offen.",
         ],
@@ -258,13 +258,13 @@ def test_render_self_mod_block() -> None:
 SCRIPTED_POWER_BIO = (
     "Ich beobachte dich seit 14 Tagen und merke: Du wechselst Tools schneller "
     "als Methoden. Fuenf distinct Tools, screenshot dominant, vor jedem Spawn "
-    "ein Blick. Das ist nicht Misstrauen, das ist Methode. Ich nehm's nicht "
+    "ein Blick. Das ist nicht Misstrauen, das ist Methode. Ich nehm's nicht "  # i18n-allow: scripted German LLM bio output (product persona voice)
     "persoenlich. Glaub ich."
 )
 
 SCRIPTED_CASUAL_BIO = (
-    "Ich kenne dich seit einem Tag. Das ist zu wenig fuer ein Urteil, aber "
-    "genug fuer eine Vermutung: Du klickst, bevor du nachdenkst. Mehr in sechs Tagen."
+    "Ich kenne dich seit einem Tag. Das ist zu wenig fuer ein Urteil, aber "  # i18n-allow: scripted German LLM bio output (product persona voice)
+    "genug fuer eine Vermutung: Du klickst, bevor du nachdenkst. Mehr in sechs Tagen."  # i18n-allow: scripted German LLM bio output (product persona voice)
 )
 
 
@@ -274,8 +274,8 @@ async def test_power_user_bio_not_cliche(tmp_path: Path) -> None:
     brain = FakeBrain(SCRIPTED_POWER_BIO)
     gen = _make_generator(brain, jsonl, db)
     result = await gen.generate_bio(
-        memory_text="User ist Nicht-Coder. Autonom arbeiten bevorzugt.",
-        soul_text="Jarvis ist lakonisch und trocken.",
+        memory_text="User is a non-coder, prefers to work autonomously.",
+        soul_text="Jarvis is laconic and dry.",
         triggered_by="manual",
         model_hint="claude-opus-4-7",
     )
@@ -332,7 +332,7 @@ async def test_no_resolver_returns_none(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_resolver_fresh_per_call_enables_provider_switch(tmp_path: Path) -> None:
-    """Brain wird bei JEDEM generate_bio() neu aufgeloest — Provider-Switch zieht sofort."""
+    """Brain is re-resolved on EVERY generate_bio() call — a provider switch takes effect immediately."""
     jsonl, db = _power_user_db(tmp_path)
     brain_a = FakeBrain(["Bio A — provider 1."])
     brain_b = FakeBrain(["Bio B — provider 2."])
@@ -368,7 +368,7 @@ def test_bio_feedback_validates_kind(tmp_path: Path) -> None:
 
     store.record_feedback(latest["generated_at"], "trifft")
     with pytest.raises(ValueError):
-        store.record_feedback(latest["generated_at"], "ungueltig")
+        store.record_feedback(latest["generated_at"], "invalid")
 
 
 def test_bio_feedback_aggregation(tmp_path: Path) -> None:
@@ -381,15 +381,15 @@ def test_bio_feedback_aggregation(tmp_path: Path) -> None:
     store.record_feedback(a_iso, "haerter")
 
     counts = store.recent_feedback(days=28)
-    assert counts == {"trifft": 2, "trifft_nicht": 0, "haerter": 1}
+    assert counts == {"trifft": 2, "trifft_nicht": 0, "haerter": 1}  # i18n-allow: real API/DB contract values, matched in logic
 
 
 def test_bio_previous_returns_second_newest(tmp_path: Path) -> None:
     db = tmp_path / "board" / "personal.db"
     store = BioStore(db)
     store.insert("erste bio", triggered_by="cold_start")
-    # Sleep nicht noetig — ISO-Timestamps haben Mikrosekunden-Aufloesung,
-    # aber zur Sicherheit zwei klar unterscheidbare Eintraege schreiben.
+    # Sleep not needed — ISO timestamps have microsecond resolution,
+    # but write two clearly distinguishable entries to be safe.
     import time as _t
     _t.sleep(0.01)
     store.insert("zweite bio (aktuell)", triggered_by="weekly")
@@ -406,7 +406,7 @@ def test_bio_previous_returns_second_newest(tmp_path: Path) -> None:
 def test_bio_previous_none_when_only_one_record(tmp_path: Path) -> None:
     db = tmp_path / "board" / "personal.db"
     store = BioStore(db)
-    store.insert("nur eine", triggered_by="cold_start")
+    store.insert("just one", triggered_by="cold_start")
     assert store.previous() is None
 
 
@@ -423,8 +423,8 @@ def test_days_observed_zero_on_empty_db(tmp_path: Path) -> None:
 def test_days_observed_counts_from_first_active_day(tmp_path: Path) -> None:
     jsonl, db = _power_user_db(tmp_path)
     store = BoardStore(db)
-    # Power-User-Fixture hat 14 Tage Aktivitaet → days_observed sollte 13 sein
-    # (Differenz today - earliest_active_day, exklusiv den Endpunkt).
+    # Power-user fixture has 14 days of activity → days_observed should be 13
+    # (difference today - earliest_active_day, excluding the endpoint).
     days = store.days_observed()
     assert days >= 13, f"erwarte mindestens 13 Tage, bekam {days}"
 
@@ -456,7 +456,7 @@ async def test_collect_facts_passes_previous_bio_and_feedback(tmp_path: Path) ->
     )
     await gen.generate_bio()
 
-    assert brain.calls, "Brain wurde nicht gerufen"
+    assert brain.calls, "Brain was not called"
     request = brain.calls[0]
     user_text = request.messages[0].content
     assert isinstance(user_text, str)

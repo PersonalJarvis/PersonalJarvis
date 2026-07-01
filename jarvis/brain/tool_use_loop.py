@@ -72,7 +72,7 @@ log = logging.getLogger(__name__)
 # blocks it without executing the tool, and gives the LLM a redirect hint.
 _RESEARCH_KEYWORDS = re.compile(
     r"\b("
-    r"recherchier\w*|analysier\w*|erklaer\w*|erklär\w*|"
+    r"recherchier\w*|analysier\w*|erklaer\w*|erklär\w*|"  # i18n-allow: German input-matching data (research-intent classifier)
     r"untersuch\w*|vergleich\w*|zusammenfass\w*|"
     r"research|analy[sz]e|explain|compare|summari[sz]e"
     r")\b",
@@ -82,7 +82,7 @@ _RESEARCH_KEYWORDS = re.compile(
 _META_DEBUG_KEYWORDS = re.compile(
     r"\b("
     r"api\s*key|provider|brain|text[-\s]*to[-\s]*speech|tts|"
-    r"transkript|transcript|log|bug|debug|fehler|fallback|"
+    r"transkript|transcript|log|bug|debug|fehler|fallback|"  # i18n-allow: German input-matching data (meta/debug-intent classifier)
     r"standardantwort|standardphrase|phrase|jarvis\s+sagt|"
     r"verstehst\s+du\s+was\s+ich\s+meine"
     r")\b",
@@ -91,8 +91,8 @@ _META_DEBUG_KEYWORDS = re.compile(
 
 _INSTRUCTIONAL_QUESTION_RE = re.compile(
     r"^\s*(?:"
-    r"wie\s+(?:kann|koennte|könnte|muss|soll|mach|mache|macht|geht|funktioniert)\s+"
-    r"|was\s+(?:ist|bedeutet|heisst|heißt)\s+"
+    r"wie\s+(?:kann|koennte|könnte|muss|soll|mach|mache|macht|geht|funktioniert)\s+"  # i18n-allow: German input-matching data (instructional-question classifier)
+    r"|was\s+(?:ist|bedeutet|heisst|heißt)\s+"  # i18n-allow: same German input-matching data
     r"|woran\s+erkenne\s+"
     r"|warum\s+"
     r"|how\s+(?:do|can|could|should|would)\s+"
@@ -106,18 +106,18 @@ _INSTRUCTIONAL_QUESTION_RE = re.compile(
 # These utterances must NEVER trigger side-effect tools — the Curator
 # (jarvis/memory/curator/) extracts the facts automatically in the background
 # and merges them into USER.md. Observation 2026-05-05: Gemini-3-Flash-Preview
-# interpreted "Ich heiße Personal Jarvis Maintainer" as a task and spawned a Phase-6
+# interpreted "Ich heiße Personal Jarvis Maintainer" as a task and spawned a Phase-6  # i18n-allow: forensic quote of the actual German utterance that triggered this bug
 # worker for a manual USER.md edit (failed with exit_code=1) —
 # a clear tool-choice misfire in weaker models.
 _SELF_IDENTIFICATION_RE = re.compile(
     r"^\s*(?:"
-    r"ich\s+(?:heisse|heiße)\s+\w+"
+    r"ich\s+(?:heisse|heiße)\s+\w+"  # i18n-allow: same German input-matching data (self-identification classifier)
     r"|mein\s+name\s+(?:ist|lautet)\s+\w+"
     r"|nenn(?:e|en\s+sie)?\s+mich\s+\w+"
     r"|du\s+(?:kannst|darfst|sollst)\s+mich\s+\w+\s+nennen"
-    r"|sie\s+(?:koennen|können|duerfen|dürfen|sollen)\s+mich\s+\w+\s+nennen"
-    r"|meine\s+anrede\s+(?:ist|lautet)\s+\w+"
-    r"|meine\s+pronomen\s+(?:ist|sind|lauten)\s+\w+"
+    r"|sie\s+(?:koennen|können|duerfen|dürfen|sollen)\s+mich\s+\w+\s+nennen"  # i18n-allow: German input-matching data (self-identification classifier)
+    r"|meine\s+anrede\s+(?:ist|lautet)\s+\w+"  # i18n-allow: same German input-matching data
+    r"|meine\s+pronomen\s+(?:ist|sind|lauten)\s+\w+"  # i18n-allow: same German input-matching data
     r"|my\s+name(?:\s+is|'s)\s+\w+"
     r"|call\s+me\s+\w+"
     r"|you\s+(?:can|may|should)\s+call\s+me\s+\w+"
@@ -290,7 +290,7 @@ def _is_side_effect_tool(tool: Any) -> bool:
 _ARG_HALLUCINATION_RE = re.compile(
     r"\b("
     r"im\s+auftrag\s+des|mediagroup|"
-    r"untertitel\s+(von|der|im\s+auftrag)|"
+    r"untertitel\s+(von|der|im\s+auftrag)|"  # i18n-allow: German STT-hallucination matching data
     r"abonnier(e|t|en)?\s+(den|meinen)\s+kanal|"
     r"thanks\s+for\s+watching|please\s+subscribe|"
     r"copyright\s+\d{4}|all\s+rights\s+reserved"
@@ -477,7 +477,7 @@ class ToolUseLoop:
 
             # Budget exhausted → abort
             if self._budget.exceeded():
-                log.warning("IterationBudget erschöpft: %s", self._budget.snapshot())
+                log.warning("IterationBudget exhausted: %s", self._budget.snapshot())
                 final_agg.finish_reason = "budget_exceeded"
                 break
 
@@ -538,17 +538,17 @@ class ToolUseLoop:
                     and _is_side_effect_tool(tool)
                 ):
                     log.info(
-                        "tool_use_loop: Side-Effect-Tool '%s' fuer How-to-Frage blockiert",
+                        "tool_use_loop: side-effect tool '%s' blocked for a how-to question",
                         tool_name,
                     )
                     tool_result_payload = {
                         "success": False,
                         "output": None,
                         "error": (
-                            "Tool nicht ausgefuehrt: der User stellt eine How-to- "
-                            "oder Erklaerfrage. Antworte direkt mit der passenden "
-                            "kurzen Anleitung. Fuehre keine App-, Shell-, Harness- "
-                            "oder Computer-Use-Aktion aus."
+                            "Tool not executed: the user is asking a how-to or "
+                            "explanation question. Answer directly with the "
+                            "appropriate short instructions. Do not run any "
+                            "app, shell, harness, or computer-use action."
                         ),
                     }
                 elif (
@@ -557,20 +557,20 @@ class ToolUseLoop:
                     and _is_side_effect_tool(tool)
                 ):
                     log.info(
-                        "tool_use_loop: Side-Effect-Tool '%s' fuer Self-Identification blockiert",
+                        "tool_use_loop: side-effect tool '%s' blocked for self-identification",
                         tool_name,
                     )
                     tool_result_payload = {
                         "success": False,
                         "output": None,
                         "error": (
-                            "Tool nicht ausgefuehrt: der User stellt sich vor "
-                            "(Name, Anrede oder Pronomen). Antworte mit einer "
-                            "kurzen, freundlichen Begruessung (1-2 Saetze, max). "
-                            "Der Curator extrahiert die Facts automatisch im "
-                            "Hintergrund und persistiert sie in USER.md — Du "
-                            "musst USER.md NICHT manuell editieren, keinen "
-                            "Worker spawnen, keine Shell aufrufen."
+                            "Tool not executed: the user is introducing "
+                            "themselves (name, salutation, or pronouns). Reply "
+                            "with a short, friendly acknowledgement (1-2 "
+                            "sentences max). The Curator extracts the facts "
+                            "automatically in the background and persists them "
+                            "to USER.md — you must NOT manually edit USER.md, "
+                            "spawn a worker, or invoke a shell."
                         ),
                     }
                 elif tool is None:
@@ -582,24 +582,24 @@ class ToolUseLoop:
                     # failure (BUG-007/016/020/028 class). With the ROUTER_TOOLS
                     # fix this should be rare, but never silent again.
                     log.warning(
-                        "tool_use_loop: Tool '%s' nicht im Router-Tool-Set — "
-                        "Anti-Stille-Fallback statt leerer Antwort", tool_name,
+                        "tool_use_loop: tool '%s' not in the router tool set — "
+                        "anti-silence fallback instead of an empty response", tool_name,
                     )
-                    tool_result_payload = {"error": f"Tool '{tool_name}' nicht verfügbar"}
+                    tool_result_payload = {"error": f"Tool '{tool_name}' not available"}
                     suppress_output = _anti_silence_phrase(
                         user_utterance, reply_language
                     )
                 elif tool_name == "spawn_worker" and _is_meta_debug_intent(user_utterance):
                     log.info(
-                        "tool_use_loop: spawn_worker fuer Meta-/Debug-Utterance blockiert"
+                        "tool_use_loop: spawn_worker blocked for a meta/debug utterance"
                     )
-                    # Asking the LLM to "antworte direkt und konkret" via a
+                    # Asking the LLM to "answer directly and concretely" via a
                     # tool_result error message turned out to be unreliable —
                     # Gemini Flash regularly ignores the instruction, the
                     # outer loop never produces a text chunk, and Brain-Stream
                     # times out after 40s with nothing in `final_agg.text`.
-                    # The user then hears silence ("hört zu, denkt, hört
-                    # wieder zu, spricht gar nicht").
+                    # The user then hears silence ("listens, thinks, listens
+                    # again, never speaks").
                     #
                     # The Meta-Debug verdict is already deterministic and
                     # high-precision (intent classifier matched the utterance
@@ -614,10 +614,10 @@ class ToolUseLoop:
                         "success": False,
                         "output": None,
                         "error": (
-                            "spawn_worker wurde nicht ausgefuehrt: der User "
-                            "spricht ueber Jarvis-/Provider-/Transcript-Verhalten. "
-                            "Antworte direkt und konkret; keine Delegation, keine "
-                            "Bestaetigungsphrase."
+                            "spawn_worker was not executed: the user is talking "
+                            "about Jarvis/provider/transcript behavior. Answer "
+                            "directly and concretely; no delegation, no "
+                            "confirmation phrase."
                         ),
                     }
                 elif stt_blocked:
@@ -626,17 +626,17 @@ class ToolUseLoop:
                     # Do NOT execute the tool; the LLM gets a structured error
                     # and should ask the user again.
                     log.info(
-                        "tool_use_loop: STT-Halluzination-Guard blockiert %s — %s",
+                        "tool_use_loop: STT-hallucination guard blocked %s — %s",
                         tool_name, stt_reason,
                     )
                     tool_result_payload = {
                         "success": False,
                         "output": None,
                         "error": (
-                            f"Tool '{tool_name}' NICHT ausgefuehrt: {stt_reason}. "
-                            f"Wahrscheinlich STT-Misshearing. Antworte dem User "
-                            f"mit einer kurzen Rueckfrage (max 1 Satz) statt das "
-                            f"Tool erneut mit dem selben Wert zu rufen."
+                            f"Tool '{tool_name}' NOT executed: {stt_reason}. "
+                            f"Likely an STT misheard word. Answer the user "
+                            f"with a short follow-up question (max 1 sentence) "
+                            f"instead of calling the tool again with the same value."
                         ),
                     }
                 elif _should_block_action_as_research(
@@ -650,21 +650,21 @@ class ToolUseLoop:
                     # Instead of executing → tool result with redirect hint;
                     # the LLM corrects itself in the next turn.
                     log.info(
-                        "tool_use_loop: Action-Tool '%s' bei Research-Intent blockiert "
-                        "(intent_level=%s) — LLM wird auf search_web umgeleitet",
+                        "tool_use_loop: action tool '%s' blocked on research intent "
+                        "(intent_level=%s) — LLM redirected to search_web",
                         tool_name, intent_level,
                     )
                     tool_result_payload = {
                         "success": False,
                         "output": None,
                         "error": (
-                            f"Tool '{tool_name}' wurde nicht ausgefuehrt: der Utterance "
-                            f"'{user_utterance[:120]}' klingt nach Recherche (Info *ueber* "
-                            f"ein Thema), nicht nach Aktion auf dem verbundenen System. "
-                            f"Nutze stattdessen search_web fuer allgemeine Recherche. "
-                            f"Action-Tools (cli_* und MCP) sind nur fuer gezielte "
-                            f"Operationen auf Deinen Ressourcen gedacht, z.B. "
-                            f"'liste meine Projekte'."
+                            f"Tool '{tool_name}' was not executed: the utterance "
+                            f"'{user_utterance[:120]}' sounds like research (info "
+                            f"*about* a topic), not an action on the connected "
+                            f"system. Use search_web instead for general research. "
+                            f"Action tools (cli_* and MCP) are only meant for "
+                            f"targeted operations on your own resources, e.g. "
+                            f"'list my projects'."
                         ),
                     }
                 else:

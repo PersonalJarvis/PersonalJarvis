@@ -1,6 +1,6 @@
 """The Computer-Use verifier writes its ``proof`` in the turn's output language.
 
-Live bug 2026-06-27 (German voice session 07:47): "öffne meinen Explorer und
+Live bug 2026-06-27 (German voice session 07:47): "öffne meinen Explorer und  # i18n-allow: verbatim forensic quote of the live German voice utterance under test
 navigiere zum Videos-Ordner" was read back as
 "Erledigt — The file explorer window is open and navigated to the 'Videos'
 folder, as shown" — a German frame ("Erledigt —") around an ENGLISH body. The
@@ -207,10 +207,10 @@ async def test_generic_verifier_user_message_carries_german_directive() -> None:
         executor_script=['{"action": "open_app", "name": "explorer"}',
                          '{"action": "done"}'],
         plan_script=['{"plan": []}'],
-        judge_script=['{"done": true, "proof": "Der Explorer ist offen"}'],
+        judge_script=['{"done": true, "proof": "Der Explorer ist offen"}'],  # i18n-allow: simulated German runtime-output proof, content under test
     )
     ctx = make_ctx(brain, verify=True, titles=["Datei-Explorer"] * 5)
-    await run_loop(ctx, "öffne den datei explorer", output_language="de")
+    await run_loop(ctx, "öffne den datei explorer", output_language="de")  # i18n-allow: simulated German user utterance, content under test
 
     assert brain.judge_calls, "the verifier was never consulted"
     assert "german" in _judge_user_messages(brain)

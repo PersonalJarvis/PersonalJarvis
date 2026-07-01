@@ -1,29 +1,31 @@
-"""screenshot-Tool: erfasst den aktiven Monitor als JPEG fuer Brain-Vision.
+"""screenshot tool: captures the active monitor as JPEG for Brain vision.
 
-Risk-Tier: monitor — Screenshot liest Bildschirminhalt, also werden Aufrufe
-standardmaessig geloggt. Whitelist per `[safety.whitelist].tools` erlaubt
-Dauer-Einsatz ohne Confirm-Prompt.
+Risk tier: monitor — a screenshot reads screen content, so calls are logged
+by default. A whitelist entry under `[safety.whitelist].tools` allows
+continuous use without a confirm prompt.
 
-Phase A1 (2026-04-25): Default-Format auf JPEG q85 umgestellt. Vision-LLMs
-(Claude/Gemini/GPT) rechnen Token-Kosten in Pixel-Area, nicht Bytes — JPEG
-schrumpft die Payload um ~8x bei identischen Tokens. Quality 85 ist der
-Sweet-Spot: visuell verlustfrei fuer Text + UI-Elements, deutlich kleiner
-als PNG. Iteratives Shrinking entfaellt — quality-Param erledigt das.
+Phase A1 (2026-04-25): switched the default format to JPEG q85. Vision LLMs
+(Claude/Gemini/GPT) charge token cost by pixel area, not bytes — JPEG
+shrinks the payload by ~8x for identical tokens. Quality 85 is the
+sweet spot: visually lossless for text + UI elements, noticeably smaller
+than PNG. Iterative shrinking is no longer needed — the quality param
+handles that.
 
-Multi-Monitor-Fix: per Default folgt der Capture dem Foreground-Window
-(``select_capture_monitor`` aus ``jarvis.vision.screenshot``). Damit sieht
-das Brain den Bildschirm, auf dem der User gerade aktiv ist — nicht
-hardcoded den mss-Primary, der auf Multi-Monitor-Setups oft leer ist.
+Multi-monitor fix: by default the capture follows the foreground window
+(``select_capture_monitor`` from ``jarvis.vision.screenshot``). That way
+the brain sees the screen the user is actually active on — instead of
+hardcoding the mss primary, which is often blank on multi-monitor setups.
 
-Ablauf in `execute`:
-1. ``mss.mss().monitors`` enumerieren -> ``select_capture_monitor`` waehlt
-   den richtigen Monitor (Foreground-Window-Lookup).
-2. `PIL.Image.frombytes("RGB", size, raw.rgb)` baut ein Pillow-Image.
-3. JPEG q85 — typisch 100-300 KB fuer 4K-Screenshots. Falls > _MAX_BYTES
-   (Edge-Case bei sehr detail-dichten Screens), Quality runter bis es passt.
+Flow in `execute`:
+1. Enumerate ``mss.mss().monitors`` -> ``select_capture_monitor`` picks
+   the right monitor (foreground-window lookup).
+2. `PIL.Image.frombytes("RGB", size, raw.rgb)` builds a Pillow image.
+3. JPEG q85 — typically 100-300 KB for 4K screenshots. If it exceeds
+   _MAX_BYTES (edge case on very detail-dense screens), quality is lowered
+   until it fits.
 4. Result: `artifacts=[{"type": "image", "mime": "image/jpeg", "data":
-   <base64>}]` damit das Vision-capable Brain den Screenshot direkt
-   konsumieren kann.
+   <base64>}]` so the vision-capable brain can consume the screenshot
+   directly.
 """
 from __future__ import annotations
 
@@ -37,20 +39,21 @@ from jarvis.vision.screenshot import select_capture_monitor
 _MAX_BYTES = 500_000
 _DEFAULT_JPEG_QUALITY = 85
 _MIN_JPEG_QUALITY = 50
-# Vision-LLMs (Claude/Gemini/GPT) skalieren intern auf ~1568 px Laengsseite
-# zur Token-Berechnung. 4K-Captures (3840x2160) sind reine Verschwendung —
-# sie kosten ~3x Bytes und Tokens ohne sichtbaren Vision-Vorteil. 2048 px
-# Laengsseite ist der Sweet-Spot: deutlich groesser als das interne LLM-
-# Resampling-Ziel (kein Detail-Verlust), aber hart genug um das _MAX_BYTES-
-# Budget bei 4K-Multi-Monitor zuverlaessig zu treffen.
+# Vision LLMs (Claude/Gemini/GPT) internally downscale to ~1568 px on the
+# longest side for token accounting. 4K captures (3840x2160) are pure
+# waste — they cost ~3x the bytes and tokens with no visible vision benefit.
+# 2048 px on the longest side is the sweet spot: noticeably larger than the
+# internal LLM resampling target (no detail loss), but tight enough to
+# reliably hit the _MAX_BYTES budget on 4K multi-monitor captures.
 _MAX_DIMENSION = 2048
 
 
 def _resize_for_budget(image: Any, max_dim: int) -> Any:
-    """Skaliert ein Pillow-Image proportional auf maximal ``max_dim`` Laengsseite.
+    """Proportionally scales a Pillow image to at most ``max_dim`` on its
+    longest side.
 
-    Identitaet, wenn das Bild bereits kleiner ist. Damit kostet der Aufruf
-    auf 1440p-Captures nichts.
+    Identity when the image is already smaller. So the call costs nothing
+    on 1440p captures.
     """
     w, h = image.size
     longest = max(w, h)
@@ -58,25 +61,25 @@ def _resize_for_budget(image: Any, max_dim: int) -> Any:
         return image
     scale = max_dim / longest
     new_size = (max(1, int(round(w * scale))), max(1, int(round(h * scale))))
-    # Late-Import damit das Modul auch ohne PIL importierbar bleibt;
-    # _encode_with_budget wird ohnehin nur aus Pfaden gerufen, die PIL haben.
+    # Late import so the module stays importable without PIL; _encode_with_budget
+    # is only ever called from paths that have PIL anyway.
     from PIL import Image  # noqa: PLC0415
 
     return image.resize(new_size, resample=Image.Resampling.LANCZOS)
 
 
 def _encode_jpeg(image: Any, quality: int) -> bytes:
-    """Serialisiert ein Pillow-Image als JPEG mit gegebener Qualitaet."""
+    """Serializes a Pillow image as JPEG at the given quality."""
     buf = io.BytesIO()
     image.save(buf, format="JPEG", quality=quality, optimize=True)
     return buf.getvalue()
 
 
 def _encode_with_budget(image: Any, max_bytes: int) -> bytes:
-    """JPEG q85 zuerst; bei Overshoot Quality reduzieren bis _MIN_JPEG_QUALITY.
+    """JPEG q85 first; on overshoot, lower quality down to _MIN_JPEG_QUALITY.
 
-    Vor dem Encode wird auf ``_MAX_DIMENSION`` Laengsseite runtergescaled,
-    damit 4K-Captures (Multi-Monitor) das Byte-Budget zuverlaessig treffen.
+    Before encoding, the image is downscaled to ``_MAX_DIMENSION`` on its
+    longest side so 4K captures (multi-monitor) reliably hit the byte budget.
     """
     image = _resize_for_budget(image, _MAX_DIMENSION)
     quality = _DEFAULT_JPEG_QUALITY
@@ -98,7 +101,7 @@ class ScreenSnapshotTool:
         "properties": {
             "reason": {
                 "type": "string",
-                "description": "Warum der Screenshot gebraucht wird (fuer Log)",
+                "description": "Why the screenshot is needed (for the log)",
             }
         },
         "required": [],
@@ -114,7 +117,7 @@ class ScreenSnapshotTool:
             return ToolResult(
                 success=False,
                 output=None,
-                error=f"Dependency fehlt: {exc.name or exc}",
+                error=f"Missing dependency: {exc.name or exc}",
             )
 
         try:
@@ -124,16 +127,16 @@ class ScreenSnapshotTool:
                     return ToolResult(
                         success=False,
                         output=None,
-                        error="Kein Primaer-Monitor gefunden",
+                        error="No primary monitor found",
                     )
                 target = select_capture_monitor(monitors, strategy="foreground")
                 raw = sct.grab(target)
                 image = Image.frombytes("RGB", raw.size, raw.rgb)
-        except Exception as exc:  # noqa: BLE001 — mss/Display-Fehler sind divers
+        except Exception as exc:  # noqa: BLE001 — mss/display errors are varied
             return ToolResult(
                 success=False,
                 output=None,
-                error=f"Screenshot fehlgeschlagen: {exc}",
+                error=f"Screenshot failed: {exc}",
             )
 
         jpeg_bytes = _encode_with_budget(image, _MAX_BYTES)

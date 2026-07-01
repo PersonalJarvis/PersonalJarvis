@@ -130,7 +130,7 @@ class AdminPipeServer:
         transport: AdminTransport | None = None,
     ) -> None:
         if not secret or len(secret) < 16:
-            raise ValueError("secret muss mindestens 16 Bytes sein")
+            raise ValueError("secret must be at least 16 bytes")
         self._secret = secret
         self._pipe_name = pipe_name
         self._executor = executor
@@ -331,7 +331,7 @@ class AdminPipeClient:
                  io_timeout_s: float = 180.0,
                  transport: AdminTransport | None = None) -> None:
         if not secret or len(secret) < 16:
-            raise ValueError("secret muss mindestens 16 Bytes sein")
+            raise ValueError("secret must be at least 16 bytes")
         self._secret = secret
         self._pipe_name = pipe_name
         self._connect_timeout_ms = connect_timeout_ms
@@ -361,13 +361,13 @@ class AdminPipeClient:
             return AdminResponse(
                 op_id=op.op_id, success=False,
                 error_code="ipc_timeout",
-                error_message="Admin-Helper antwortete nicht innerhalb der Frist.",
+                error_message="Admin helper did not respond within the deadline.",
             )
         except FileNotFoundError:
             return AdminResponse(
                 op_id=op.op_id, success=False,
                 error_code="helper_unavailable",
-                error_message=f"Named-Pipe {self._pipe_name} existiert nicht.",
+                error_message=f"Named pipe {self._pipe_name} does not exist.",
             )
         except Exception as exc:  # noqa: BLE001
             return AdminResponse(

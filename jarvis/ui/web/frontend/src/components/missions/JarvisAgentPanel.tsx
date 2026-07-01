@@ -49,8 +49,8 @@ async function copyToClipboard(value: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(value);
   } catch {
-    // Best-effort. Falls die Browser-API nicht verfuegbar ist (z.B. unsicherer
-    // Kontext) wird der User sehen, dass nichts passiert — wir loggen still.
+    // Best-effort. If the browser API isn't available (e.g. an insecure
+    // context), the user will just see nothing happen — we log it silently.
   }
 }
 
@@ -200,9 +200,9 @@ function WorkerRow({ worker }: WorkerRowProps) {
               <a
                 href={`file:///${worker.log_path.replace(/^\//, "")}`}
                 onClick={(e) => {
-                  // file://-Links werden vom Browser oft geblockt; per Click
-                  // ins Clipboard kopieren ist der zuverlaessige Pfad. Der
-                  // Link bleibt als visueller Hinweis.
+                  // file:// links are often blocked by the browser; copying
+                  // to the clipboard on click is the reliable path. The
+                  // link stays as a visual hint.
                   e.preventDefault();
                   copyToClipboard(worker.log_path);
                 }}

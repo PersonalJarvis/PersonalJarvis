@@ -1,11 +1,11 @@
-"""Einmaliges Migrations-Skript: Frontmatter zu allen ADR-Files ergaenzen.
+"""One-off migration script: add frontmatter to all ADR files.
 
-Idempotent — wenn ein Frontmatter schon existiert, wird die Datei nicht
-angefasst. Pro ADR werden ``title`` aus dem ersten H1 extrahiert,
-``slug`` aus dem Dateinamen, ``diataxis: adr``, plus eine grobe Phasen-
-Zuordnung aus einer Hand-Mapping-Tabelle.
+Idempotent — if frontmatter already exists, the file is not
+touched. Per ADR, ``title`` is extracted from the first H1,
+``slug`` from the filename, ``diataxis: adr``, plus a rough phase
+assignment from a hand-mapping table.
 
-Aufruf:
+Usage:
     python scripts/migrate_adrs.py
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 ADR_DIR = REPO / "docs" / "adr"
 
-# Hand-Mapping: ADR-Nr -> Master-Plan-Phase. Aus Inhaltslesung erkannt.
+# Hand mapping: ADR number -> master-plan phase. Determined by reading the content.
 PHASE_MAP: dict[str, str] = {
     "0001": "5",  # IPC Named Pipe — Admin
     "0002": "5",  # UIA Tree — Vision
@@ -31,14 +31,14 @@ PHASE_MAP: dict[str, str] = {
     "0011": "5",  # Router Pure Dispatcher — Persona/Phase 5
 }
 
-# Heutiges Datum als ``last_reviewed``-Default. ADRs sind in Phasen
-# entstanden, aber wir markieren sie heute als reviewed (sie waren in den
-# Phasen-Reviews mit drin).
+# Today's date as the ``last_reviewed`` default. ADRs were created across
+# phases, but we mark them as reviewed today (they were part of the
+# phase reviews).
 TODAY = "2026-04-29"
 
 
 def extract_title(body: str) -> str:
-    """Liest den ersten ``# H1``-Text und liefert ihn ohne ``#`` und Whitespace."""
+    """Reads the first ``# H1`` text and returns it without ``#`` and whitespace."""
     m = re.search(r"^#\s+(.+?)\s*$", body, re.MULTILINE)
     return m.group(1).strip() if m else "ADR"
 
@@ -78,7 +78,7 @@ def build_frontmatter(adr_num: str, title: str, slug: str) -> str:
 
 def main() -> None:
     if not ADR_DIR.is_dir():
-        raise SystemExit(f"ADR-Dir nicht gefunden: {ADR_DIR}")
+        raise SystemExit(f"ADR dir not found: {ADR_DIR}")
 
     migrated = 0
     skipped = 0

@@ -1,12 +1,11 @@
-"""MCP-Remote-Harness: wrappt externe MCP-Server als Harness.
+"""MCP-remote harness: wraps an external MCP server as a harness.
 
-Im Gegensatz zu den CLI-Harnesses (openclaw, codex) läuft das hier
-als In-Process MCP-Client gegen einen Remote- oder lokalen Stdio-Server.
-Der Prompt wird als MCP-Tool-Call (Convention: `dispatch(prompt)`) an den
-ersten zur-Verfügung-stehenden Server gesendet.
+Unlike the CLI harnesses (openclaw, codex), this one runs as an in-process
+MCP client against a remote or local stdio server. The prompt is sent as an
+MCP tool call (convention: `dispatch(prompt)`) to the first available server.
 
-Konfiguration: `task.env["MCP_SERVER_NAME"]` wählt einen konkreten Server
-aus der Bootstrap-Liste; default ist `filesystem-mcp`.
+Configuration: `task.env["MCP_SERVER_NAME"]` picks a specific server from the
+bootstrap list; the default is `filesystem-mcp`.
 """
 from __future__ import annotations
 
@@ -21,7 +20,7 @@ log = logging.getLogger(__name__)
 
 
 class MCPRemoteHarness:
-    """Nutzt einen MCP-Server zum Ausführen von Tool-Calls via Harness-Interface."""
+    """Uses an MCP server to run tool calls via the harness interface."""
 
     name: str = "mcp-remote"
     version: str = "0.1"
@@ -32,9 +31,9 @@ class MCPRemoteHarness:
         self._current_server: str | None = None
 
     async def health(self) -> bool:
-        # Ein MCP-Remote-Harness ist "healthy" wenn mindestens ein
-        # Bootstrap-Server gepingt werden kann. Da das Pinging Zeit
-        # kostet, returnen wir hier nur: registry-is-not-empty.
+        # An MCP-remote harness is "healthy" when at least one bootstrap
+        # server can be pinged. Since pinging costs time, we only return
+        # here: registry-is-not-empty.
         return len(BOOTSTRAP_SERVERS) > 0
 
     async def invoke(self, task: HarnessTask) -> AsyncIterator[HarnessResult]:
@@ -46,7 +45,7 @@ class MCPRemoteHarness:
 
         if spec is None:
             yield HarnessResult(
-                stderr=f"MCP-Server '{server_name}' nicht in BOOTSTRAP_SERVERS.\n",
+                stderr=f"MCP server '{server_name}' not in BOOTSTRAP_SERVERS.\n",
                 exit_code=2,
                 duration_ms=int((time.perf_counter() - t_start) * 1000),
                 is_final=True,
@@ -58,7 +57,7 @@ class MCPRemoteHarness:
             await client.connect()
         except Exception as exc:  # noqa: BLE001
             yield HarnessResult(
-                stderr=f"MCP-Connect fehlgeschlagen: {exc}\n",
+                stderr=f"MCP connect failed: {exc}\n",
                 exit_code=1,
                 duration_ms=int((time.perf_counter() - t_start) * 1000),
                 is_final=True,
@@ -66,7 +65,7 @@ class MCPRemoteHarness:
             return
 
         try:
-            # Liste verfügbarer Tools
+            # List of available tools
             tools = await client.list_tools()
             tool_names = [t.name for t in tools]
             yield HarnessResult(
@@ -74,8 +73,8 @@ class MCPRemoteHarness:
                 is_final=False,
             )
 
-            # Wenn der Prompt einen der Tool-Namen als Prefix hat, nutze den.
-            # Convention: "toolname args-as-json" oder bloß "prompt".
+            # If the prompt has one of the tool names as a prefix, use it.
+            # Convention: "toolname args-as-json" or just "prompt".
             chosen_tool: str | None = None
             args: dict = {"prompt": task.prompt}
             for t in tools:
@@ -84,11 +83,11 @@ class MCPRemoteHarness:
                     break
 
             if chosen_tool is None and tool_names:
-                # Kein expliziter Tool-Name — wir geben die Liste zurück und fertig.
+                # No explicit tool name — we return the list and are done.
                 yield HarnessResult(
                     stdout=(
-                        "Bitte Tool-Name an den Anfang des Prompts setzen "
-                        f"(z.B. '{tool_names[0]} ...').\n"
+                        "Please put a tool name at the start of the prompt "
+                        f"(e.g. '{tool_names[0]} ...').\n"
                     ),
                     is_final=False,
                 )

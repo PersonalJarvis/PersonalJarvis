@@ -1,14 +1,14 @@
-"""Tests für `jarvis.voice.echo_confirmation` (Phase 7.4).
+"""Tests for `jarvis.voice.echo_confirmation` (Phase 7.4).
 
-Plan-Akzeptanzkriterien §7.4:
-- Echo-Frage folgt End-Focus-Pattern (alt zuerst, neu zuletzt)
-- Misshear-Test: gefakter STT-Output „Karen" statt „Charon" → User-Reject
-- Sprachdetection: Templates passen sich an `profile.language` an
+Plan acceptance criteria §7.4:
+- Echo question follows the end-focus pattern (old first, new last)
+- Misshear test: faked STT output „Karen" instead of „Charon" → user reject
+- Language detection: templates adapt to `profile.language`
 
-Plus Prompt-AC:
-- Templater happy paths für numeric/string/bool/enum
-- Sensitive: Wert taucht NICHT im Satz auf
-- Pattern-Match deterministisch (Veto > Confirm > Ambiguous > Unknown)
+Plus prompt AC:
+- Templater happy paths for numeric/string/bool/enum
+- Sensitive: value does NOT appear in the sentence
+- Pattern match is deterministic (Veto > Confirm > Ambiguous > Unknown)
 """
 from __future__ import annotations
 
@@ -65,8 +65,8 @@ class TestConfirmPatterns:
             "ja",
             "Ja",
             "ja, mach das",
-            "bestätige",
-            "bestätigt",
+            "bestätige",  # i18n-allow
+            "bestätigt",  # i18n-allow
             "mach",
             "los",
             "okay",
@@ -103,12 +103,12 @@ class TestVetoPatterns:
         [
             "nein",
             "Nein",
-            "abbrechen",
+            "abbrechen",  # i18n-allow
             "abbruch",
             "stop",
             "stopp",
-            "nicht",
-            "doch nicht",
+            "nicht",  # i18n-allow
+            "doch nicht",  # i18n-allow
             "lass",
             "falsch",
         ],
@@ -124,13 +124,13 @@ class TestVetoPatterns:
 class TestAmbiguousPatterns:
     @pytest.mark.parametrize(
         "transcript",
-        ["vielleicht", "warte", "moment", "weiß nicht", "ähm"],
+        ["vielleicht", "warte", "moment", "weiß nicht", "ähm"],  # i18n-allow
     )
     def test_ambiguous_de(self, transcript: str) -> None:
         # WICHTIG: Plan-Sicherheits-Eigenschaft — ambiguous ist NIEMALS Confirm.
         result = classify_response(transcript, language="de")
         assert result in ("ambiguous", "veto"), (
-            f"Mehrdeutige Antwort '{transcript}' wurde als Confirm interpretiert!"
+            f"Ambiguous response '{transcript}' was interpreted as Confirm!"
         )
         assert result != "confirm"
 
@@ -201,7 +201,7 @@ class TestFormatConfirmation:
         # End-Focus-Plan-Template
         assert sentence.startswith("Verstanden — TTS-Provider")
         assert "von elevenlabs zu gemini-flash-tts" in sentence
-        assert sentence.rstrip(".?!").endswith("Bestätigen")
+        assert sentence.rstrip(".?!").endswith("Bestätigen")  # i18n-allow
 
     def test_numeric_value_de(self) -> None:
         pending = _pending(
@@ -222,19 +222,19 @@ class TestFormatConfirmation:
             description="Dark-Mode",
         )
         sentence = format_confirmation(pending, language="de")
-        # bool wird als "an"/"aus" gerendert (nicht als True/False)
-        assert "von aus zu an" in sentence
+        # bool is rendered as "an"/"aus" (not as True/False)
+        assert "von aus zu an" in sentence  # i18n-allow
 
     def test_label_strips_parenthesis(self) -> None:
         pending = _pending(
             path="profile.language",
             old_value="de",
             new_value="en",
-            description="Profil-Sprache (wirkt sofort in nächster Antwort)",
+            description="Profil-Sprache (wirkt sofort in nächster Antwort)",  # i18n-allow
         )
         sentence = format_confirmation(pending, language="de")
-        assert "Profil-Sprache" in sentence
-        # Klammer-Inhalt landet NICHT im TTS-Output
+        assert "Profil-Sprache" in sentence  # i18n-allow
+        # Parenthesis content must NOT land in the TTS output
         assert "wirkt sofort" not in sentence
 
     def test_english_template(self) -> None:
@@ -267,7 +267,7 @@ class TestEndFocusTokenPosition:
         tokens = sentence.split()
         last_three = " ".join(tokens[-3:])
         assert str(new) in last_three, (
-            f"new_value '{new}' nicht in den letzten 3 Tokens: {last_three!r}"
+            f"new_value '{new}' not in the last 3 tokens: {last_three!r}"
         )
 
 
@@ -304,7 +304,7 @@ class TestSensitiveLeak:
         assert self.SENTINEL not in sentence_en, (
             f"Klartext-Secret im EN-TTS-Output (path={path}): {sentence_en}"
         )
-        # Phrase muss aber semantisch sinnvoll sein
+        # But the phrase must still be semantically meaningful
         assert "neuen Wert" in sentence_de or "new value" in sentence_en
 
     def test_outcome_does_not_leak_either(self) -> None:
@@ -327,8 +327,8 @@ class TestSensitiveLeak:
     def test_outcome_validate_failed_with_short_error_blocks_leak(
         self,
     ) -> None:
-        """Sub-Agent-Review-BLOCKER: short_error kann via Pydantic-Message
-        den new_value enthalten. Bei sensitive Path muss er verworfen werden.
+        """Sub-Agent-review blocker: short_error can carry the new_value via
+        the Pydantic message. For a sensitive path it must be discarded.
         """
         pending = _pending(
             path="anthropic_api_key",
@@ -338,8 +338,8 @@ class TestSensitiveLeak:
         )
         # Wir simulieren einen short_error wie writer.py ihn liefert
         fake_msg = (
-            f"Pre-Validate für 'anthropic_api_key' = '{self.SENTINEL}' "
-            "schlug fehl: 1 validation error"
+            f"Pre-validate for 'anthropic_api_key' = '{self.SENTINEL}' "
+            "failed: 1 validation error"
         )
         sentence_de = format_outcome(
             "validate_failed",
@@ -359,15 +359,15 @@ class TestSensitiveLeak:
     def test_short_error_from_pre_validate_exception_does_not_contain_repr(
         self,
     ) -> None:
-        """short_error_from_exception(PreValidateError) darf den repr-Wert
-        aus der Original-Message NICHT durchreichen.
+        """short_error_from_exception(PreValidateError) must NOT pass through
+        the repr value from the original message.
         """
         from jarvis.core.self_mod import PreValidateError
         from jarvis.voice.echo_confirmation import short_error_from_exception
 
         secret = "sk-leakable-XYZ-789"  # noqa: S105 — Test-Fixture
         exc = PreValidateError(
-            f"Pre-Validate für 'x' = {secret!r} schlug fehl: bla"
+            f"Pre-validate for 'x' = {secret!r} failed: bla"
         )
         result = short_error_from_exception(exc)
         assert secret not in result
@@ -391,7 +391,7 @@ class TestOutcomeTemplates:
     def test_applied_with_restart(self) -> None:
         pending = _pending(
             path="brain.primary", old_value="claude", new_value="gemini",
-            description="Primärer Brain-Provider", requires_restart=True,
+            description="Primärer Brain-Provider", requires_restart=True,  # i18n-allow
         )
         sentence = format_outcome("applied_restart", pending, language="de")
         assert "neustarten" in sentence

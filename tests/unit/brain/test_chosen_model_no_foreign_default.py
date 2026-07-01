@@ -4,7 +4,7 @@ model, never a hardcoded foreign-family default.
 Live forensic 2026-06-29 (session 18:09:59): the user's brain was OpenRouter with
 ``model = "nvidia/nemotron-3-ultra-550b-a55b:free"`` — a FREE model that answers
 HTTP 200 with the current key. Yet every turn spoke the provider-down apology
-("Entschuldige, ich komme gerade nicht an mein Sprachmodell"). Root cause: the
+("Entschuldige, ich komme gerade nicht an mein Sprachmodell"). Root cause: the  # i18n-allow
 OpenRouter account had hit its per-key spend limit, so PAID models 403'd
 ("Key limit exceeded (total limit)") while the chosen FREE model kept working.
 But the fallback chain never tried the free model for the deep slot:

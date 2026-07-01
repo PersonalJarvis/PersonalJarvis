@@ -148,7 +148,7 @@ describe("WikiView — empty state", () => {
     await waitFor(() => {
       expect(screen.getByTestId("wiki-empty-state")).toBeDefined();
     });
-    expect(screen.getByText(/Dein Wiki ist noch leer/i)).toBeDefined();
+    expect(screen.getByText(/Your wiki is still empty/i)).toBeDefined();
   });
 });
 

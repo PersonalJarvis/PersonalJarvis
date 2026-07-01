@@ -19,7 +19,7 @@ def builtin_root() -> Path:
 
 
 async def test_voice_match_de_en(builtin_root: Path) -> None:
-    """AC12: Named Test beide Sprachen in einem Test (Review-Warning 3)."""
+    """AC12: named test covers both languages in one test (Review-Warning 3)."""
     bus = EventBus()
     reg = SkillRegistry(builtin_root, bus)
     reg.reload_sync()
@@ -46,7 +46,7 @@ async def test_cron_scheduler_graceful_without_croniter(
     matcher = TriggerMatcher(reg)
     stop_event = asyncio.Event()
     stop_event.set()  # sofort stop
-    # Darf NICHT crashen
+    # Must NOT crash
     count = 0
     async for _ in matcher.run_cron_scheduler(stop_event):
         count += 1
