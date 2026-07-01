@@ -379,6 +379,11 @@ def build_wake_whisper(
         compute_type=compute,
         language=language,
         initial_prompt=bias,
+        # Greedy decoding for the wake: a short phrase on an always-on loop does
+        # not need beam search, and beam_size=1 transcribes a window ~3-5x faster
+        # on base/cpu — far less likely to blow the wedge timeout under app CPU
+        # load, and snappier. The phrase bias + sound-folding matcher keep recall.
+        beam_size=1,
     )
 
 

@@ -95,6 +95,16 @@ def test_build_wake_whisper_cpu_keeps_bias() -> None:
     assert p._initial_prompt == "Hey Ruben"
 
 
+def test_build_wake_whisper_uses_greedy_beam_for_speed() -> None:
+    # The wake transcribes short phrases on a latency-sensitive always-on loop.
+    # Greedy decoding (beam_size=1) is ~3-5x faster than the beam-5 default on
+    # base/cpu, so a window transcribes in a fraction of the time — far less
+    # likely to blow the wedge timeout under app CPU load, and snappier. The
+    # phrase bias + sound-folding matcher keep recall high without beam search.
+    p = build_wake_whisper(STTConfig(), cuda_available=False)
+    assert p._beam_size == 1
+
+
 def test_build_wake_whisper_passes_language() -> None:
     p = build_wake_whisper(STTConfig(), language="de", cuda_available=False)
     assert p._language == "de"
