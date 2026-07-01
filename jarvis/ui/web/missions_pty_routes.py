@@ -1,15 +1,15 @@
-"""Per-Worker PTY-Tail-WebSocket (MVP-Stub fuer Phase-4).
+"""Per-worker PTY-tail WebSocket (MVP stub for Phase 4).
 
 Endpoint: ``/api/missions/pty/{worker_id}``.
 
-Aktueller Stand:
-- Hello-Handshake + Token-Auth identisch zu ``missions_ws_routes``.
-- Wenn der Worker keine bekannte Log-Datei hat: close ``4404``.
-- Die echte Tail-Loop (mit Backpressure ueber pause/resume-Frames) wird in
-  Phase-5 verdrahtet, sobald die Worker-Log-Map am ``Kontrollierer`` haengt.
+Current state:
+- Hello handshake + token auth identical to ``missions_ws_routes``.
+- If the worker has no known log file: close ``4404``.
+- The real tail loop (with backpressure via pause/resume frames) gets wired
+  up in Phase 5, once the worker log map hangs off the ``Kontrollierer``.
 
-Backpressure-Konstanten sind hier dokumentiert, damit Phase-5 sie ohne
-Refactor uebernehmen kann.
+The backpressure constants are documented here so Phase 5 can adopt them
+without a refactor.
 """
 from __future__ import annotations
 
@@ -27,18 +27,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/missions/pty", tags=["missions-pty"])
 
 
-# Phase-5 wird diese Werte beim echten Tail-Loop nutzen.
+# Phase 5 will use these values in the real tail loop.
 PAUSE_BYTES: Final[int] = 128 * 1024
 RESUME_BYTES: Final[int] = 16 * 1024
 _HELLO_TIMEOUT_S: Final[float] = 5.0
 
 
 def _resolve_worker_log(worker_id: str, app_state: Any) -> Path | None:
-    """Worker-Log-Path aufloesen (TODO: in Phase-5 mit Kontrollierer-Map ersetzen).
+    """Resolves the worker log path (TODO: replace with the Kontrollierer map in Phase 5).
 
-    Aktuell pruefen wir nur, ob ein optionaler State-Eintrag
-    ``app.state.mission_worker_logs`` existiert (dict[worker_id, Path]).
-    Sonst None → 4404.
+    Currently we only check whether an optional state entry
+    ``app.state.mission_worker_logs`` exists (dict[worker_id, Path]).
+    Otherwise None → 4404.
     """
     log_map = getattr(app_state, "mission_worker_logs", None)
     if not isinstance(log_map, dict):
@@ -52,10 +52,10 @@ def _resolve_worker_log(worker_id: str, app_state: Any) -> Path | None:
 
 @router.websocket("/{worker_id}")
 async def pty_ws(ws: WebSocket, worker_id: str) -> None:
-    """PTY-Tail-WebSocket fuer einen Worker. MVP gibt 4404 zurueck."""
+    """PTY-tail WebSocket for a worker. The MVP returns 4404."""
     await ws.accept()
 
-    # Hello + Auth (gleiche Konvention wie /api/missions/ws).
+    # Hello + auth (same convention as /api/missions/ws).
     try:
         first = await asyncio.wait_for(
             ws.receive_json(), timeout=_HELLO_TIMEOUT_S
@@ -89,7 +89,7 @@ async def pty_ws(ws: WebSocket, worker_id: str) -> None:
     # - Async-read 4KB chunks, send_text
     # - Track sum(bytes pending), send {"type": "pause"} if > PAUSE_BYTES,
     #   {"type": "resume"} if drops below RESUME_BYTES
-    # - Reader-Task fuer pause/resume control vom Client
+    # - Reader task for pause/resume control from the client
     await ws.send_json(
         {
             "type": "info",
