@@ -1,8 +1,8 @@
-"""Preview-Registry: sammelt laufende Dev-Server fuer die Sidebar-Preview-View.
+"""Preview registry: collects running dev servers for the sidebar preview view.
 
-Events werden NICHT in core/events.py definiert (Scope-Trennung) — sie erben
-aber von Event damit Bus-Subscriptions und Flight-Recorder sie einheitlich
-behandeln.
+Events are NOT defined in core/events.py (scope separation) — but they do
+inherit from Event so bus subscriptions and the flight recorder treat them
+uniformly.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class PreviewServerStarted(Event):
-    """Sub-Agent hat einen Dev-Server gestartet und registriert ihn."""
+    """A Jarvis-Agent started a dev server and registered it."""
     port: int = 0
     title: str = ""
     kind: str = ""  # "vite" | "flask" | "static" | ...
@@ -30,7 +30,7 @@ class PreviewServerStarted(Event):
 
 @dataclass(frozen=True, slots=True)
 class PreviewServerClosed(Event):
-    """Dev-Server wurde gestoppt oder der Sub-Agent ist beendet."""
+    """The dev server was stopped or the Jarvis-Agent has ended."""
     port: int = 0
 
 
@@ -45,10 +45,10 @@ class PreviewEntry:
 
 
 class PreviewRegistry:
-    """Haelt eine aktuelle Liste der laufenden Dev-Server.
+    """Holds a current list of running dev servers.
 
-    Subscribed auf ``PreviewServerStarted`` und ``PreviewServerClosed``
-    ueber den Bus und aktualisiert die interne Liste.
+    Subscribes to ``PreviewServerStarted`` and ``PreviewServerClosed``
+    over the bus and updates the internal list.
     """
 
     def __init__(self, bus: EventBus) -> None:
@@ -73,11 +73,11 @@ class PreviewRegistry:
             agent_trace_id=str(e.trace_id) if e.trace_id else None,
         )
         self._entries[e.port] = entry
-        log.info("Preview-Server registriert: port=%d title=%r", e.port, e.title)
+        log.info("Preview server registered: port=%d title=%r", e.port, e.title)
 
     async def _on_closed(self, e: PreviewServerClosed) -> None:
         self._entries.pop(e.port, None)
-        log.info("Preview-Server entfernt: port=%d", e.port)
+        log.info("Preview server removed: port=%d", e.port)
 
 
 __all__ = [
