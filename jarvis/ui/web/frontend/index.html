@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" sizes="256x256" href="/jarvis-gigi-256.png" />
     <link rel="icon" type="image/x-icon" href="/jarvis-gigi.ico" />
-    <title>Jarvis</title>
+    <!-- Neutral, trademark-free fallback title. The inline boot script below
+         overwrites it with the user's own assistant name (from the localStorage
+         cache) the instant the window opens, so a trademarked placeholder is
+         never shown. -->
+    <title>Assistant</title>
     <style>
       /* Boot splash — painted from index.html the instant the window opens, so
          there is NO black screen while the (large) JS bundle loads + React
@@ -41,10 +45,37 @@
     <div id="root">
       <div id="jarvis-boot-splash">
         <div class="ring"></div>
-        <div class="name">Personal Jarvis</div>
+        <!-- Painted synchronously by the inline script below from the cached
+             assistant name (the user's chosen wake word, e.g. "Nico"). Left
+             empty in static HTML so the very first run — before any name is
+             cached — shows only the spinner, never a hardcoded / trademarked
+             name. -->
+        <div class="name"></div>
         <div class="sub">Starting…</div>
       </div>
     </div>
+    <script>
+      // Paint the user's own assistant name (derived from their wake word) into
+      // the boot splash + window title the instant the window opens. The name is
+      // read SYNCHRONOUSLY from localStorage — no network, no await — so this
+      // adds effectively zero startup latency. The cache is written by the app
+      // after each name resolve (see src/lib/assistantNameCache.ts; keep this
+      // storage key in lockstep). On the very first run the cache is empty and
+      // the splash keeps just its spinner. A trademarked placeholder such as
+      // "Jarvis" is never painted here.
+      (function () {
+        try {
+          var name = (localStorage.getItem("jarvis.assistantName") || "").trim();
+          if (name) {
+            var el = document.querySelector("#jarvis-boot-splash .name");
+            if (el) el.textContent = name;
+            document.title = name;
+          }
+        } catch (e) {
+          /* storage blocked (private mode) — keep the neutral fallback */
+        }
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

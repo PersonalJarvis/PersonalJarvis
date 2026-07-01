@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { MessageRole } from "@/types/messages";
+import { readCachedAssistantName } from "@/lib/assistantNameCache";
 import {
   finalizeThinkingSteps,
   reduceThinkingSteps,
@@ -214,9 +215,12 @@ interface EventStore {
   // phrase with its prefix stripped, else the neutral "Assistant" default —
   // [persona].name was removed 2026-06-20). Seeded once at app start by
   // useAssistantNameSeed and refreshed on a wake-word save, so the
-  // header wordmark + every assistant byline follow the configured identity
-  // instead of a hardcoded "Jarvis". Defaults to "Jarvis" only for the sub-tick
-  // before the local seed fetch resolves (zero-regression first paint).
+  // header wordmark + every assistant byline follow the configured identity.
+  // The initial value is read SYNCHRONOUSLY from the localStorage cache (the
+  // last resolved name) so the user's own name paints instantly at boot with no
+  // added latency; it falls back to the neutral "Assistant" — NEVER a
+  // trademarked placeholder like "Jarvis" — only on the very first run before
+  // any name has been cached. See src/lib/assistantNameCache.ts.
   assistantName: string;
   // Chat mic-dictation (transcribe-only). ``dictating`` is true while the mic
   // session runs; ``dictationText`` is the live interim tail (overwritten by
@@ -301,7 +305,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
   thinkingTraces: {},
   brainProvider: "unknown",
   brainModel: "",
-  assistantName: "Jarvis",
+  assistantName: readCachedAssistantName(),
   dictating: false,
   dictationText: "",
   dictationCommitSeq: 0,

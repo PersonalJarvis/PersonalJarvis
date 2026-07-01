@@ -33,7 +33,7 @@ function RestartHintProbe() {
 
 describe("useT name substitution", () => {
   beforeEach(() => {
-    useEventStore.setState({ assistantName: "Jarvis" });
+    useEventStore.setState({ assistantName: "Assistant" });
   });
   afterEach(() => cleanup());
 
@@ -46,14 +46,16 @@ describe("useT name substitution", () => {
     expect(text).not.toContain("Jarvis");
   });
 
-  it("renders the default 'Jarvis' when the store is unseeded (test backward-compat)", () => {
+  it("renders the neutral default when the store is unseeded — never a trademarked name", () => {
     render(<RestartHintProbe />);
-    expect(screen.getByTestId("hint").textContent).toBe("Restart Jarvis");
+    const text = screen.getByTestId("hint").textContent ?? "";
+    expect(text).toBe("Restart Assistant");
+    expect(text).not.toContain("Jarvis");
   });
 
   it("follows a live rename through t()", () => {
     render(<RestartHintProbe />);
-    expect(screen.getByTestId("hint").textContent).toBe("Restart Jarvis");
+    expect(screen.getByTestId("hint").textContent).toBe("Restart Assistant");
 
     act(() => {
       useEventStore.setState({ assistantName: "Athena" });
