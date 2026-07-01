@@ -334,6 +334,10 @@ def _load_german_gate(tree: Path):
     allow = tree / "scripts" / "ci" / "german-allowlist.txt"
     if not detect.exists():
         return None, []
+    # Never let importing the detector drop a __pycache__/*.pyc into the tree we
+    # are about to ship (that .pyc would be copied into the release otherwise).
+    prev = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
     try:
         spec = importlib.util.spec_from_file_location("_german_detect_ship", detect)
         mod = importlib.util.module_from_spec(spec)
@@ -341,6 +345,8 @@ def _load_german_gate(tree: Path):
         fn = mod.looks_german
     except Exception:
         return None, []
+    finally:
+        sys.dont_write_bytecode = prev
     return fn, (_read_lines(allow) if allow.exists() else [])
 
 
