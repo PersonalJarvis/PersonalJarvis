@@ -116,7 +116,7 @@ _LANG_PREP = re.compile(r"\b(?:auf|zu|to|in|on)\b", re.IGNORECASE)
 
 def _match_language_switch(t: str) -> str | None:
     # Pick the language that appears EARLIEST in the utterance, not the first
-    # one in alias-dict order. "antworte auf deutsch und englisch" must resolve
+    # one in alias-dict order. "antworte auf deutsch und englisch" must resolve  # i18n-allow: quoted German input example
     # to de (the first spoken language), not en just because "englisch" happens
     # to sit earlier in _LANG_ALIASES (forensic 2026-06-27).
     best: tuple[int, str] | None = None
@@ -141,7 +141,7 @@ def _match_language_switch(t: str) -> str | None:
 # that runs heavy missions, NOT the router brain. The gate stays pure: it only
 # recognises the intent + the spoken provider word; the manager handler maps it
 # to a canonical subagent slug, validates, and persists via the 3-layer writer
-# (config-soll pinned) so the drift-guard cannot revert it. A sub-agent
+# (config-soll pinned) so the drift-guard cannot revert it. A sub-agent  # i18n-allow: "config-soll" is a Soll/Ist ("target-state") technical term, not prose
 # QUALIFIER is required, so a bare "switch to gemini" still means the main brain.
 _SUBAGENT_QUALIFIER = re.compile(
     r"\b(?:sub[-\s]?agent|subagent|sub[-\s]?jarvis|subjarvis|worker|helfer|helper)\b",
@@ -174,7 +174,7 @@ def _match_subagent_switch(t: str) -> str | None:
         return None
     # Gate: an explicit change verb is an unambiguous command; otherwise accept
     # only "... provider auf/to <X>" (a noun + preposition) so a STATEMENT like
-    # "der Sub-Agent läuft auf Gemini" (no verb, no 'provider' word) falls through
+    # "der Sub-Agent läuft auf Gemini" (no verb, no 'provider' word) falls through  # i18n-allow: quoted German input example
     # to the brain instead of silently switching.
     if not (
         _SUBAGENT_SWITCH_VERB.search(t)
@@ -182,7 +182,7 @@ def _match_subagent_switch(t: str) -> str | None:
     ):
         return None
     # The TARGET provider follows the directional preposition: "switch ... TO
-    # codex", "von Antigravity AUF Codex". Look for a provider word AFTER the last
+    # codex", "von Antigravity AUF Codex". Look for a provider word AFTER the last  # i18n-allow: quoted German input example
     # auf/zu/to first (the target); only then fall back to the whole sentence.
     # Without this the first word in alias-list ORDER wins, so "von Antigravity
     # auf Codex" switched to antigravity — the SOURCE, not the target (forensic
