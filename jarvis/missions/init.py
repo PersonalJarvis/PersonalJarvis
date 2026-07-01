@@ -449,6 +449,64 @@ def _live_subagent_provider(boot_snapshot: str | None) -> str | None:
     return boot_snapshot
 
 
+def _cross_family_last_resort_worker(task_text: str) -> Any | None:
+    """The key-aware, cross-family LAST-resort heavy worker (open-source AP-22/23).
+
+    The legacy last resort was always ``ClaudeDirectWorker`` — the Claude Max
+    OAuth ``claude`` CLI. A downloader whose only credential is a Gemini /
+    OpenRouter / OpenAI key (and who never switched ``[brain.worker].provider``
+    off the ``claude-api`` default) then bricked every heavy mission: there is no
+    ``claude`` binary on a fresh install and no Anthropic key. This mirrors the
+    Brain's cross-family fallback chain — probe the families the user ACTUALLY
+    has and run on the first reachable one, crossing families instead of
+    dead-ending on Claude.
+
+    Subscription-first ordering (no metered key before a metered key):
+      1. Claude Max OAuth ``claude`` CLI, when its binary is present — this keeps
+         the maintainer/subscription path unchanged (it is reached first, so a
+         host WITH Claude never diverts to a metered key);
+      2. ChatGPT subscription via the codex CLI OAuth login (no API key);
+      3. the in-process ``ApiAgentWorker`` on whatever single API key is
+         configured — ``claude-api``, ``gemini``, ``openrouter``, ``openai``, in
+         the Brain chain's family order.
+
+    Returns ``None`` ONLY when nothing is reachable (the genuine no-credential
+    case); the caller then keeps the honest Claude last resort, which fails
+    legibly rather than silently. Because Claude is probed first, this never
+    silently diverts a working Claude to Gemini — it only rescues a host that
+    has no Claude at all (the §3 single-key downloader).
+    """
+    # 1. Claude Max OAuth CLI — subscription, no metered key, preferred floor.
+    from jarvis.missions.workers.claude_direct_worker import _resolve_claude_binary
+
+    if _resolve_claude_binary() is not None:
+        return ClaudeDirectWorker(
+            mcp_servers=_assemble_worker_mcp_servers(task_text=task_text)
+        )
+    # 2. ChatGPT subscription via the codex CLI OAuth login (no API key).
+    from jarvis.codex_auth_state import codex_needs_reauth
+    from jarvis.missions.workers.codex_direct_worker import _codex_oauth_available
+
+    if _codex_oauth_available() and not codex_needs_reauth():
+        return CodexDirectWorker()
+    # 3. In-process API worker on whatever single key the user has, crossing
+    #    families — the same cross-family set the Brain fallback chain uses.
+    from jarvis.core.config import get_provider_secret
+    from jarvis.missions.workers.api_agent_worker import supports_api_agent_worker
+
+    for prov in ("claude-api", "gemini", "openrouter", "openai"):
+        if supports_api_agent_worker(prov) and get_provider_secret(prov):
+            logger.warning(
+                "Mission worker -> ApiAgentWorker(%r): no Claude CLI / Codex login "
+                "reachable, crossing to the configured API-key family so the heavy "
+                "mission runs instead of failing on the absent `claude` binary "
+                "(open-source AP-22/AP-23, single-key downloader).",
+                prov,
+            )
+            return ApiAgentWorker(prov)
+    return None
+
+
 async def bootstrap_missions(
     *,
     db_path: Path,
@@ -817,6 +875,15 @@ async def bootstrap_missions(
                         "window resets (avoids a wasted Claude probe per mission)."
                     )
                     return CodexDirectWorker()
+            # Open-source AP-22/AP-23: before the honest Claude last resort, try
+            # the user's ACTUAL provider family. A fresh install whose only key is
+            # gemini/openrouter/openai (and who never moved off the claude-api
+            # default) has neither the `claude` binary nor an Anthropic key, so a
+            # bare ClaudeDirectWorker here would brick the mission. The helper
+            # probes Claude FIRST, so a host WITH Claude is unchanged.
+            cross = _cross_family_last_resort_worker(getattr(step, "prompt", "") or "")
+            if cross is not None:
+                return cross
             # Give the delegated worker the connected marketplace plugins as a
             # claude-cli MCP config so it can issue the plugin tool calls (AD-OE4).
             return ClaudeDirectWorker(
@@ -882,11 +949,14 @@ async def bootstrap_missions(
                 )
                 return ApiAgentWorker(provider)
             logger.warning(
-                "Mission worker -> ClaudeDirectWorker: subagent provider %r has no "
-                "API key configured, so it cannot run — completing on Claude Max "
-                "instead of failing the mission.",
+                "Mission worker: subagent provider %r has no API key configured, "
+                "so it cannot run — trying the user's other provider families "
+                "before the Claude last resort (open-source AP-22/AP-23).",
                 provider,
             )
+            cross = _cross_family_last_resort_worker(getattr(step, "prompt", "") or "")
+            if cross is not None:
+                return cross
             return ClaudeDirectWorker(
                 mcp_servers=_assemble_worker_mcp_servers(
                     task_text=getattr(step, "prompt", "") or ""
@@ -899,7 +969,9 @@ async def bootstrap_missions(
             import shutil
 
             from jarvis.core.config import get_provider_secret
-            if not (shutil.which("gemini") or shutil.which("gemini.cmd")) and get_provider_secret("gemini"):
+            if not (
+                shutil.which("gemini") or shutil.which("gemini.cmd")
+            ) and get_provider_secret("gemini"):
                 logger.info(
                     "Mission worker -> ApiAgentWorker('gemini'): no Gemini CLI, "
                     "running in-process on the Gemini API key."
@@ -920,7 +992,12 @@ async def bootstrap_missions(
         # The legacy ``"subjarvis"`` kind (openclaw-claude / unknown provider /
         # unset default) routed to the OpenClaw subprocess worker, which was
         # removed (it caused the ~92% nested-claude hang; see docs/BUGS.md).
-        # All of those cases now fall back to the proven direct Opus worker.
+        # Open-source AP-22/AP-23: try the user's ACTUAL provider family before
+        # the Claude last resort, so an openrouter/gemini/openai-only downloader
+        # is not dead-ended on the absent `claude` binary.
+        cross = _cross_family_last_resort_worker(getattr(step, "prompt", "") or "")
+        if cross is not None:
+            return cross
         return ClaudeDirectWorker(
             mcp_servers=_assemble_worker_mcp_servers(
                 task_text=getattr(step, "prompt", "") or ""

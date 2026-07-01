@@ -123,6 +123,32 @@ def phrase_core_for_match(phrase: str) -> list[str]:
     return core or tokens
 
 
+def sound_fold(token: str) -> str:
+    """Collapse sound-equivalent spelling variants onto one canonical form.
+
+    A small local Whisper mis-spells a proper-noun wake word in sound-equivalent
+    ways ("Nico" -> "Niko"/"Nicko"/"Nikko", "Sophie" -> "Sofie"). Folding the
+    common variances a wake word actually sees — ``c``/``k``, ``ck``, ``ph``/``f``,
+    ``y``/``i``, and doubled letters — makes those forms compare EQUAL so the
+    match no longer needs a perfect spelling. It only canonicalises spelling; it
+    does NOT loosen the fuzzy ratio, so clearly different words still do not
+    match (no extra false wakes). Expects an already lower-cased, accent-folded
+    token (see :func:`normalize_phrase_for_match`). Applied AFTER wake-prefix
+    stripping so a folded "hey" can never break prefix detection. Pure stdlib, so
+    it behaves identically on every OS.
+    """
+    if not token:
+        return token
+    t = token.replace("ph", "f").replace("ck", "k")
+    t = t.replace("c", "k").replace("y", "i")
+    out: list[str] = []
+    for ch in t:
+        if out and out[-1] == ch:  # collapse doubles: Nikko -> niko, Emma -> ema
+            continue
+        out.append(ch)
+    return "".join(out)
+
+
 def match_known_oww_model(phrase: str) -> str | None:
     """Map a phrase onto a pretrained openWakeWord model name, or ``None``.
 
@@ -195,6 +221,7 @@ __all__ = [
     "normalize_phrase_for_match",
     "phrase_core",
     "phrase_core_for_match",
+    "sound_fold",
     "match_known_oww_model",
     "resolve_oww_model_path",
 ]

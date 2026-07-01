@@ -71,9 +71,14 @@ _DEBUG_WAVS_ENV = os.environ.get("JARVIS_WAKE_DEBUG_WAVS", "").strip().lower() i
 # timed out at 8 s, abandoned, retried, hung again, forever; an app restart did
 # not even clear it. The timeout only BOUNDS a hang; it never RECOVERS. A run of
 # failures with zero successes is the wedge signature (a legitimate VAD-probe
-# overlap clears in 1-2 polls and resets the counter on the next success), so a
-# small threshold self-heals fast without firing on a transient overlap.
-_WEDGE_RECOVER_AFTER_FAILS = 5
+# overlap clears in 1-2 polls and resets the counter on the next success).
+# 2026-06-30 (live logs showed the base/cpu model wedging dozens of times a day,
+# each dead window swallowing spoken wakes -> "say it 2-3 times"): lowered 5 -> 2
+# so the deaf window is as short as possible. Two consecutive failures with zero
+# successes in between is already an unambiguous wedge; a lone transient overlap
+# clears on the very next successful poll and resets the counter, so 2 does not
+# fire spuriously.
+_WEDGE_RECOVER_AFTER_FAILS = 2
 
 
 def _save_wav(pcm_bytes: bytes, sample_rate: int, path: Path) -> None:
@@ -128,7 +133,11 @@ class RollingWhisperWake:
         # ``.search(text)`` returning an object with ``.group(0)``.
         pattern: Any = DEFAULT_PATTERN,
         window_s: float = 1.8,        # kürzer = weniger Stille-Anteil = höhere avg-RMS
-        poll_interval_s: float = 0.3,  # schnellere Wake-Reaktion
+        # 2026-06-30 ("~0.5 s delay"): 0.3 -> 0.2 so a spoken custom wake reaches
+        # the bar within one snappier poll. The gates skip silence cheaply, so the
+        # extra polls only transcribe when a window actually passes the audio
+        # gates — negligible extra cost, a visibly faster reaction.
+        poll_interval_s: float = 0.2,
         cooldown_s: float = 5.0,      # längerer Cooldown → weniger Over-Triggering
         sample_rate: int = 16_000,
         # 2026-04-22 (3. Iteration): RMS/Peak-Gates zurueck auf niedrig. Die
@@ -143,12 +152,14 @@ class RollingWhisperWake:
         # 2026-06-29 (mission "wake only triggers when shouting"): the raw peak
         # gate runs BEFORE transcription on a quiet mic, so a normal-volume
         # custom wake ("Hey Nico") whose window peaks below the legacy 0.02 was
-        # dropped silently — only a shout cleared it. Lowered to 0.012 so a
-        # genuinely quiet wake reaches Whisper; the ``min_rms`` silence guard
-        # (pinned >= 0.003 by test_wake_hallucination_guard) still rejects digital
-        # silence/idle hiss, and the confidence + no_speech + pattern gates below
-        # are the real false-positive guards on whatever does reach Whisper.
-        min_peak: float = 0.012,
+        # dropped silently — only a shout cleared it. 2026-06-30: lowered further
+        # 0.012 -> 0.008 because a downloader on an even quieter built-in laptop
+        # mic still peaked below 0.012. 0.008 still sits well above the ~0.0046
+        # idle-hiss level (pinned gated by test_stats_count_a_sub_peak_window),
+        # and the ``min_rms`` silence guard (pinned >= 0.003) plus the confidence +
+        # no_speech + pattern gates remain the real false-positive guards on
+        # whatever does reach Whisper.
+        min_peak: float = 0.008,
         save_debug_wavs: bool = False,  # Watchdog-Modus — OFF in prod (env opt-in)
         heartbeat_interval_s: float = 3.0,
         # Peak-Normalization statt fester Gain: misst Audio-Peak, wendet

@@ -198,17 +198,30 @@ function Get-PubkeyFingerprint([string]$PemText) {
     return ([System.BitConverter]::ToString($hash) -replace '-', '').ToLower()
 }
 
-$banner = @'
+# Render UTF-8 block glyphs + 24-bit brand gold. Banner art is machine-
+# generated (figlet ANSI Shadow) and lives inside the here-string, where
+# non-ASCII is syntactically inert; do not hand-edit -- that is how the
+# historical Harvis typo crept in. (Source stays ASCII outside the banner:
+# this file is served BOM-less and Windows PowerShell reads it as cp1252.)
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+${_g} = "$([char]27)[38;2;231;196;110m"
+${_d} = "$([char]27)[38;2;140;140;140m"
+${_b} = "$([char]27)[1m"
+${_r} = "$([char]27)[0m"
+$banner = @"
 
- ____                                  _   _                  _
-|  _ \ ___ _ __ ___  ___  _ __   __ _ | | | | __ _ _ ____   _(_)___
-| |_) / _ \ '__/ __|/ _ \| '_ \ / _` || |_| |/ _` | '__\ \ / / / __|
-|  __/  __/ |  \__ \ (_) | | | | (_| ||  _  | (_| | |   \ V /| \__ \
-|_|   \___|_|  |___/\___/|_| |_|\__,_||_| |_|\__,_|_|    \_/ |_|___/
+${_g}   P  E  R  S  O  N  A  L
+     ██╗ █████╗ ██████╗ ██╗   ██╗██╗███████╗
+     ██║██╔══██╗██╔══██╗██║   ██║██║██╔════╝
+     ██║███████║██████╔╝██║   ██║██║███████╗
+██   ██║██╔══██║██╔══██╗╚██╗ ██╔╝██║╚════██║
+╚█████╔╝██║  ██║██║  ██║ ╚████╔╝ ██║███████║
+ ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝${_r}
 
-  Verifying installer (Sigstore + offline ceremony + SLSA L3, Wave 3)
-'@
-Write-Host $banner -ForegroundColor Cyan
+${_g}  ●${_r} ${_b}Verifying installer · Windows${_r}
+${_d}  Sigstore + offline ceremony + SLSA L3 + ML-DSA-65 (Wave 3)${_r}
+"@
+Write-Host $banner
 
 # ------------------------------------------------------------------- tag
 Write-Host ''

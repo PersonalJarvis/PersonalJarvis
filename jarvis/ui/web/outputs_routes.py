@@ -888,14 +888,41 @@ def _resolve_opener(opener_id: str) -> tuple[str, str] | None:
     return None
 
 
+# Detecting the installed editors resolves each candidate, and a not-installed
+# one walks the whole Start Menu tree (``_resolve_via_start_menu``) — far too
+# slow to repeat on every chooser open. Recomputing it per request made the
+# dialog flash "no apps detected" for a second until the scan finished. The
+# installed-app set is stable for a session, so memoize with a short TTL; a
+# freshly installed editor still appears within the window or after a restart.
+_OPENERS_TTL_S = 300.0
+_openers_cache: tuple[float, list[dict[str, str]]] | None = None
+
+
+def _reset_openers_cache() -> None:
+    """Drop the memoized opener list. For tests and warm-up; safe to call anytime."""
+    global _openers_cache
+    _openers_cache = None
+
+
 def _available_openers() -> list[dict[str, str]]:
-    """The openers actually launchable on this host, for the chooser dialog."""
+    """The openers actually launchable on this host, for the chooser dialog.
+
+    Memoized per process (``_OPENERS_TTL_S``) because resolving each editor
+    candidate can walk the Start Menu tree, which is too slow to redo on every
+    dialog open.
+    """
+    global _openers_cache
+    now = time.monotonic()
+    cached = _openers_cache
+    if cached is not None and now - cached[0] < _OPENERS_TTL_S:
+        return cached[1]
     out: list[dict[str, str]] = [{"id": "default", "label": "System default app"}]
     if _resolve_browser_target() is not None:
         out.append({"id": "browser", "label": "Browser"})
     for oid, label in _OPENER_EDITORS:
         if _resolve_installed(oid) is not None:
             out.append({"id": oid, "label": label})
+    _openers_cache = (now, out)
     return out
 
 

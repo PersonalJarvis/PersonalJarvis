@@ -24,8 +24,7 @@ t=0.90 s  brain:  "Berlin."
 The user perception is "Jarvis just said two things in a row" — the
 ack stops feeling like a butler-style acknowledgment and starts
 feeling like dead filler. The driver reported it as
-`"die kleine Quittung nervt, wenn die richtige Antwort eh sofort
-kommt"`.
+"the little acknowledgment is annoying when the right answer comes immediately".
 
 **2. BUG-017 (Gemini account 403) makes the force-spawn-openclaw
 path inviable on every non-Claude/non-Gemini primary.**

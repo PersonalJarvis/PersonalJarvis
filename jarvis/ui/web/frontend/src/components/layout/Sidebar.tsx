@@ -24,6 +24,7 @@ import {
 import { useEventStore, type SectionId } from "@/store/events";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useSectionHealth } from "@/hooks/useProviders";
+import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { cn } from "@/lib/utils";
 import { useMemo } from "react";
 import { useT } from "@/i18n";
@@ -146,6 +147,10 @@ export function Sidebar() {
     () => Object.values(sectionHealth).some((h) => h?.status === "error"),
     [sectionHealth],
   );
+  // A connected marketplace plugin whose token was revoked/expired (needs_reauth)
+  // — surfaced as an amber dot on the row that fronts Plugins ("Skills & Tools"),
+  // so a dead connection is visible app-wide, not only on the Plugins page.
+  const pluginsNeedReconnect = usePluginAttention();
   const agentsCount = useEventStore((s) =>
     s.events.filter((e) => e.name === "AgentStateChange").length > 0 ? undefined : 0,
   );
@@ -243,6 +248,8 @@ export function Sidebar() {
                 badge={item.id === "agents" ? agentsCount : undefined}
                 alert={item.id === "apikeys" ? apikeysHasError : false}
                 alertTitle={t("sidebar.apikeys_alert")}
+                warn={item.id === "skills" ? pluginsNeedReconnect : false}
+                warnTitle={t("sidebar.plugins_reconnect_alert")}
                 onClick={() => setActive(item.id)}
               />
             ))}
@@ -289,6 +296,8 @@ function NavRow({
   badge,
   alert = false,
   alertTitle,
+  warn = false,
+  warnTitle,
   onClick,
 }: {
   item: NavItem;
@@ -300,6 +309,11 @@ function NavRow({
   alert?: boolean;
   /** Plain-language hover text for the alert dot. */
   alertTitle?: string;
+  /** Draw an amber status dot — a softer "needs attention" than `alert` (e.g. a
+   *  connected plugin whose token was revoked and needs a one-click reconnect). */
+  warn?: boolean;
+  /** Plain-language hover text for the warn dot. */
+  warnTitle?: string;
   onClick: () => void;
 }) {
   const Icon = item.icon;
@@ -308,7 +322,7 @@ function NavRow({
       <button
         type="button"
         onClick={onClick}
-        title={alert ? alertTitle : undefined}
+        title={alert ? alertTitle : warn ? warnTitle : undefined}
         className={cn(
           "group relative flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all",
           "hover:bg-background/60",
@@ -330,6 +344,14 @@ function NavRow({
             role="status"
             aria-label={alertTitle}
             className="h-2 w-2 shrink-0 rounded-full bg-destructive ring-2 ring-background"
+          />
+        )}
+        {!alert && warn && (
+          <span
+            data-testid={`nav-warn-${item.id}`}
+            role="status"
+            aria-label={warnTitle}
+            className="h-2 w-2 shrink-0 rounded-full bg-amber-500 ring-2 ring-background"
           />
         )}
         {badge !== undefined && badge > 0 && (

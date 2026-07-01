@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from jarvis.brain.tool_use_loop import ToolUseLoop
+from jarvis.brain.tool_use_loop import _MAX_TOOL_RESULT_CHARS, ToolUseLoop
 from jarvis.core.protocols import BrainDelta, BrainRequest, ToolResult
 
 
@@ -50,6 +50,55 @@ class _Brain:
 
         yield BrainDelta(content="Mit Windows-Taste plus Pluszeichen zoomst du rein.")
         yield BrainDelta(finish_reason="stop")
+
+
+class _HugeOutputTool:
+    name = "gmail"
+    schema: dict[str, Any] = {}
+
+
+class _ExecHuge:
+    async def execute(self, tool: Any, args: dict[str, Any], **_: Any) -> ToolResult:
+        return ToolResult(success=True, output="X" * 50_000)
+
+
+class _ToolThenAnswerBrain:
+    def __init__(self) -> None:
+        self.requests: list[BrainRequest] = []
+
+    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        self.requests.append(req)
+        if len(self.requests) == 1:
+            yield BrainDelta(tool_call={"id": "c1", "name": "gmail", "input": {}})
+            yield BrainDelta(finish_reason="tool_use")
+            return
+        yield BrainDelta(content="Zusammengefasst.")
+        yield BrainDelta(finish_reason="stop")
+
+
+@pytest.mark.asyncio
+async def test_tool_result_is_capped_before_reaching_brain() -> None:
+    """Systemic backstop (2026-07-01): no tool may flood the model context with
+    an unbounded raw payload (a raw Gmail ``format=full`` message is ~23k chars).
+    A ~50k-char tool output must be truncated — with a marker — before it is
+    serialized into the tool-role message the brain sees on the next turn."""
+    brain = _ToolThenAnswerBrain()
+    loop = ToolUseLoop(
+        brain,
+        {"gmail": _HugeOutputTool()},
+        _ExecHuge(),  # type: ignore[arg-type]
+    )
+
+    result = await loop.run([], user_utterance="was steht in meinen mails")
+
+    assert "Zusammengefasst" in result.text
+    tool_msgs = [
+        m for m in brain.requests[1].messages if getattr(m, "role", None) == "tool"
+    ]
+    assert tool_msgs, "expected a tool-role message in the 2nd request"
+    inner = tool_msgs[-1].content[0]["content"]
+    assert len(inner) <= _MAX_TOOL_RESULT_CHARS + 200
+    assert "truncated" in inner
 
 
 @pytest.mark.asyncio

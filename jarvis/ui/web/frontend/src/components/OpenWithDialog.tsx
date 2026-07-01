@@ -7,7 +7,7 @@
  * event store; its only outputs are the `onPick` / `onClose` callbacks.
  */
 import { useEffect, useState } from "react";
-import { AppWindow, FileText, Globe, X } from "lucide-react";
+import { AppWindow, FileText, Globe, Loader2, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -16,6 +16,9 @@ import type { OpenerInfo } from "@/hooks/useOutputs";
 export interface OpenWithDialogProps {
   /** The apps that can open the artifact (from `useOpeners`). */
   openers: OpenerInfo[];
+  /** True while the opener list is still being detected. Shows a spinner
+   *  instead of the misleading "no apps detected" hint during that window. */
+  loading?: boolean;
   /** Called with the chosen opener id and whether to remember it as default. */
   onPick: (opener: string, remember: boolean) => void;
   /** Called when the user dismisses the dialog (X, Escape, click-outside). */
@@ -37,7 +40,12 @@ function OpenerIcon({ id }: { id: string }) {
   return <AppWindow className={cls} />;
 }
 
-export function OpenWithDialog({ openers, onPick, onClose }: OpenWithDialogProps) {
+export function OpenWithDialog({
+  openers,
+  loading = false,
+  onPick,
+  onClose,
+}: OpenWithDialogProps) {
   const t = useT();
   const [remember, setRemember] = useState(false);
 
@@ -76,8 +84,15 @@ export function OpenWithDialog({ openers, onPick, onClose }: OpenWithDialogProps
         </div>
 
         {openers.length === 0 ? (
-          <div className="py-4 text-center text-xs text-muted-foreground">
-            {t("outputs_view.open_with_empty")}
+          <div className="flex items-center justify-center gap-2 py-4 text-center text-xs text-muted-foreground">
+            {loading ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {t("outputs_view.open_with_loading")}
+              </>
+            ) : (
+              t("outputs_view.open_with_empty")
+            )}
           </div>
         ) : (
           <ul className="flex flex-col gap-1">

@@ -764,6 +764,10 @@ def _payload_for(event: Event) -> dict[str, Any]:
         "tool_name",
         "args_preview",
         "output_preview",
+        # Session-Decision-Log: the brain's rationale on ActionProposed (the
+        # "why"). Already redacted + capped at publish time by the ToolExecutor,
+        # so persisting it raw here is safe — no unredacted secret can arrive.
+        "rationale",
         "success",
         "duration_ms",
         "duration_s",

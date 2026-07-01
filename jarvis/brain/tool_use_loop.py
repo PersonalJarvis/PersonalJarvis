@@ -26,6 +26,27 @@ from jarvis.safety.tool_executor import VOICE_CONFIRM_SENTINEL, ToolExecutor
 from .iteration_budget import IterationBudget
 from .streaming import StreamingAggregate, aggregate, aggregate_with_consumer
 
+# Central backstop for tool-output bloat: no tool result may exceed this many
+# chars in the tool-role message fed back to the brain. Individual tools should
+# self-slim (a raw Gmail ``format=full`` message is ~23k chars of headers +
+# base64), but this cap guarantees a bound for EVERY tool — present and future —
+# so one verbose provider can never flood the context, slow the turn and crowd
+# out the answer (live bug 2026-07-01). The event-bus/DB preview cap
+# (``safe_preview``) is a separate path and never touched what the model saw.
+_MAX_TOOL_RESULT_CHARS = 8000
+
+
+def _cap_tool_result_json(serialized: str) -> str:
+    """Truncate an over-long serialized tool result, leaving an honest marker so
+    the model knows the payload was clipped (rather than silently ending)."""
+    if len(serialized) <= _MAX_TOOL_RESULT_CHARS:
+        return serialized
+    kept = serialized[:_MAX_TOOL_RESULT_CHARS]
+    return (
+        f"{kept}… [truncated: tool output was {len(serialized)} chars, "
+        f"capped at {_MAX_TOOL_RESULT_CHARS}]"
+    )
+
 
 def _images_from_artifacts(artifacts: object) -> list[ImageBlock]:
     """Extract ImageBlocks from a tool's artifacts (Wave 2 on-demand vision).
@@ -665,6 +686,10 @@ class ToolUseLoop:
                             "voice_confirm": voice_confirm,
                         },
                         trace_id=tid,
+                        # Session-Decision-Log: the model's natural-language text
+                        # emitted alongside this tool call IS the "why". Captured
+                        # for free (no extra call); the executor redacts + caps it.
+                        rationale=agg.text or "",
                     )
                     # Two-turn voice/chat confirmation: the executor deferred this
                     # consequential tool instead of blocking. Speak a short
@@ -743,13 +768,18 @@ class ToolUseLoop:
                         if readback is not None:
                             suppress_output = readback
 
-                # Append tool result as a new message
+                # Append tool result as a new message. Cap it centrally so no
+                # tool can flood the brain's context with an unbounded raw payload
+                # (the actual image artifacts still ride separately as a user-role
+                # message below, so clipping this text never blinds vision).
                 current_messages.append(BrainMessage(
                     role="tool",
                     content=[{
                         "type": "tool_result",
                         "tool_use_id": call_id,
-                        "content": json.dumps(tool_result_payload, ensure_ascii=False, default=str),
+                        "content": _cap_tool_result_json(
+                            json.dumps(tool_result_payload, ensure_ascii=False, default=str)
+                        ),
                     }],
                     tool_call_id=call_id,
                     name=tool_name,

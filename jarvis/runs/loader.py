@@ -106,6 +106,8 @@ class RunLoader:
             except Exception as exc:  # noqa: BLE001 — usage log is best-effort
                 log.debug("usage join failed for turn %s: %s", tr.id, exc)
         tools = analyzer.merge_action_tools(events, cli_tools)
+        # Surface the already-captured command + result onto each tool row.
+        analyzer.attach_tool_io(events, tools)
         turn = RunTurn(
             idx=tr.idx,
             trace_id=tr.id,

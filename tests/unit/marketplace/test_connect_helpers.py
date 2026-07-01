@@ -201,13 +201,60 @@ def test_resolve_pkce_client_google_prefers_secret(
     assert csec == "GOCSPX-x"
 
 
-def test_resolve_pkce_client_non_google_passthrough(
+def test_resolve_pkce_client_unmapped_passthrough(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # A PKCE plugin with no own-client family mapping returns the catalog values
+    # unchanged and never reads a secret (defensive: no accidental hijack).
     monkeypatch.setattr(
         "jarvis.core.config.get_secret",
         lambda key, env_fallback=None: "should-not-be-used",
     )
-    cid, csec = resolve_pkce_client("slack", "slack.id", "slack.secret")
-    assert cid == "slack.id"
-    assert csec == "slack.secret"
+    cid, csec = resolve_pkce_client("some_future_pkce", "cat.id", "cat.secret")
+    assert cid == "cat.id"
+    assert csec == "cat.secret"
+
+
+def test_resolve_pkce_client_slack_prefers_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Slack now supports a bring-your-own OAuth client via the slack_oauth_client_*
+    # secrets, exactly like the Google family — so a downloader can run their own
+    # production Slack app instead of the maintainer's catalog client.
+    monkeypatch.setattr(
+        "jarvis.core.config.get_secret",
+        lambda key, env_fallback=None: {
+            "slack_oauth_client_id": "111.222",
+            "slack_oauth_client_secret": "slack-sec",
+        }.get(key),
+    )
+    cid, csec = resolve_pkce_client("slack", "catalog.id", "catalog.secret")
+    assert cid == "111.222"
+    assert csec == "slack-sec"
+
+
+def test_resolve_pkce_client_asana_prefers_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "jarvis.core.config.get_secret",
+        lambda key, env_fallback=None: {
+            "asana_oauth_client_id": "asana-rid",
+            "asana_oauth_client_secret": "asana-sec",
+        }.get(key),
+    )
+    cid, csec = resolve_pkce_client("asana", "catalog.id", "catalog.secret")
+    assert cid == "asana-rid"
+    assert csec == "asana-sec"
+
+
+def test_resolve_pkce_client_slack_falls_back_to_catalog_when_no_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No slack_oauth secret set -> the real catalog client_id is used unchanged.
+    monkeypatch.setattr(
+        "jarvis.core.config.get_secret", lambda key, env_fallback=None: None
+    )
+    cid, csec = resolve_pkce_client("slack", "slack.real.id", "slack.real.secret")
+    assert cid == "slack.real.id"
+    assert csec == "slack.real.secret"

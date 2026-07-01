@@ -238,12 +238,15 @@ class TestConfirmFlow:
         controller: SelfModFlowController,
         pending_store: PendingMutationStore,
     ) -> None:
+        # brain.primary is locked for non-USER actors (ProviderSwitchLockedError).
+        # Use stt.provider instead — also has needs_restart=True per overrides.py
+        # but is NOT in the provider lock list, so HAUPTJARVIS may change it.
         pending = _make_pending_via_tool(
-            pending_store, path="brain.primary", new_value="gemini"
+            pending_store, path="stt.provider", new_value="openai-whisper"
         )
         session = controller.begin(pending)
         final = controller.receive_answer(session, "ja")
-        # brain.primary hat needs_restart=True
+        # stt.provider hat needs_restart=True
         assert final.state == FlowState.APPLIED
         assert final.final_message is not None
         assert "neustarten" in final.final_message

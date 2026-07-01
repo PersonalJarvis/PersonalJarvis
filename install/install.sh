@@ -20,29 +20,42 @@ REPO_URL="${JARVIS_INSTALL_REPO:-https://github.com/PersonalJarvis/PersonalJarvi
 BRANCH="${JARVIS_INSTALL_REF:-main}"
 INSTALL_DIR="${JARVIS_INSTALL_DIR:-$HOME/.personal-jarvis}"
 
-# ANSI colors (best-effort; safe to omit on dumb terminals)
+# 24-bit brand palette (Charcoal + Gold), best-effort. On a real terminal we
+# emit ANSI escapes so the banner sweeps gold and the ✓ ticks render; on a
+# dumb terminal / pipe we omit them entirely.
 if [ -t 1 ]; then
-    BOLD=$(printf '\033[1m'); CYAN=$(printf '\033[36m')
-    YELLOW=$(printf '\033[33m'); GREEN=$(printf '\033[32m')
-    RED=$(printf '\033[31m'); RESET=$(printf '\033[0m')
+    GOLD=$(printf '\033[38;2;231;196;110m')
+    GREEN=$(printf '\033[38;2;122;200;140m')
+    DIM=$(printf '\033[38;2;140;140;140m')
+    RED=$(printf '\033[38;2;224;122;110m')
+    BOLD=$(printf '\033[1m')
+    RST=$(printf '\033[0m')
 else
-    BOLD=""; CYAN=""; YELLOW=""; GREEN=""; RED=""; RESET=""
+    GOLD=""; GREEN=""; DIM=""; RED=""; BOLD=""; RST=""
 fi
 
+step() { printf '\n%s  ●%s %s%s%s\n' "$GOLD" "$RST" "$BOLD" "$1" "$RST"; }
+ok()   { printf '%s    ✓%s %s%s%s\n' "$GREEN" "$RST" "$DIM" "$1" "$RST"; }
+note() { printf '%s      %s%s\n' "$DIM" "$1" "$RST"; }
+err()  { printf '%s    ✗ %s%s\n' "$RED" "$1" "$RST"; }
+
+# Banner glyphs are machine-generated (figlet "ANSI Shadow"); do not hand-edit
+# — that is how the historical "Harvis" typo crept in.
 cat <<EOF
 
-${CYAN} ____                                  _   _                  _
-|  _ \\ ___ _ __ ___  ___  _ __   __ _ | | | | __ _ _ ____   _(_)___
-| |_) / _ \\ '__/ __|/ _ \\| '_ \\ / _\` || |_| |/ _\` | '__\\ \\ / / / __|
-|  __/  __/ |  \\__ \\ (_) | | | | (_| ||  _  | (_| | |   \\ V /| \\__ \\
-|_|   \\___|_|  |___/\\___/|_| |_|\\__,_||_| |_|\\__,_|_|    \\_/ |_|___/${RESET}
+${GOLD}   P  E  R  S  O  N  A  L
+     ██╗ █████╗ ██████╗ ██╗   ██╗██╗███████╗
+     ██║██╔══██╗██╔══██╗██║   ██║██║██╔════╝
+     ██║███████║██████╔╝██║   ██║██║███████╗
+██   ██║██╔══██║██╔══██╗╚██╗ ██╔╝██║╚════██║
+╚█████╔╝██║  ██║██║  ██║ ╚████╔╝ ██║███████║
+ ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝${RST}
 
-  ${BOLD}Quick install (macOS / Linux)${RESET}
-
+${GOLD}  ●${RST} ${BOLD}Quick install · macOS / Linux${RST}
 EOF
 
 # -------------------------------------------------------------- preflight
-echo "${YELLOW}[1/5] Checking prerequisites...${RESET}"
+step 'Checking prerequisites'
 
 find_python() {
     for candidate in python3.13 python3.12 python3.11 python3 python; do
@@ -61,40 +74,41 @@ find_python() {
 }
 
 if ! PYTHON_EXE=$(find_python); then
-    echo ""
-    echo "${RED}  Python 3.11+ not found.${RESET}"
-    echo "${RED}  Install it from:"
-    echo "    - macOS:  https://www.python.org/downloads/ or 'brew install python@3.12'"
-    echo "    - Linux:  use your distro package (apt install python3.12, dnf install python3.12, ...)"
-    echo "${RESET}"
+    err 'Python 3.11+ not found.'
+    note 'Install it from:'
+    note '  - macOS:  https://www.python.org/downloads/ or "brew install python@3.12"'
+    note '  - Linux:  your distro package (apt install python3.12, dnf install python3.12, ...)'
     exit 1
 fi
-echo "      Python OK (${GREEN}$PYTHON_EXE${RESET})"
+PY_VER=$("$PYTHON_EXE" -c 'import sys; print("Python %d.%d.%d" % sys.version_info[:3])' 2>/dev/null || echo "$PYTHON_EXE")
+ok "$PY_VER"
 
 if ! command -v git >/dev/null 2>&1; then
-    echo ""
-    echo "${RED}  git not found.${RESET}"
-    echo "    - macOS:  install Xcode CLT ('xcode-select --install') or 'brew install git'"
-    echo "    - Linux:  use your distro package (apt install git, ...)"
+    err 'git not found.'
+    note '  - macOS:  install Xcode CLT ("xcode-select --install") or "brew install git"'
+    note '  - Linux:  your distro package (apt install git, ...)'
     exit 1
 fi
-echo "      ${GREEN}git OK${RESET}"
+ok 'git'
 
 # -------------------------------------------------------------- clone / update
-echo ""
-echo "${YELLOW}[2/5] Preparing repo at $INSTALL_DIR ...${RESET}"
+step 'Fetching Personal Jarvis'
+note "$INSTALL_DIR"
 
 if [ -d "$INSTALL_DIR/.git" ]; then
-    echo "      existing checkout found — pulling latest..."
-    git -C "$INSTALL_DIR" fetch --depth 1 origin "$BRANCH"
-    git -C "$INSTALL_DIR" checkout "$BRANCH"
-    git -C "$INSTALL_DIR" reset --hard "origin/$BRANCH"
+    # --quiet keeps the noisy "Receiving objects: NN%" churn out of the clean
+    # transcript; real errors still surface on stderr.
+    git -C "$INSTALL_DIR" fetch --quiet --depth 1 origin "$BRANCH"
+    git -C "$INSTALL_DIR" checkout --quiet "$BRANCH"
+    git -C "$INSTALL_DIR" reset --quiet --hard "origin/$BRANCH"
+    ok 'updated existing checkout to latest'
 elif [ -e "$INSTALL_DIR" ]; then
-    echo "${RED}  $INSTALL_DIR exists but is not a git repo. Aborting to avoid clobbering your files.${RESET}"
-    echo "${RED}  Remove or move that directory, then re-run.${RESET}"
+    err "$INSTALL_DIR exists but is not a git repo."
+    note 'Aborting to avoid clobbering your files. Remove or move that directory, then re-run.'
     exit 1
 else
-    git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+    git clone --quiet --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+    ok 'downloaded'
 fi
 
 # WAVE 5 — payload-commit pin (axis E, Wave-5 audit Finding 2).
@@ -106,35 +120,32 @@ fi
 # (git SHA-1) or 64-char (git SHA-256 repos).
 if [ -n "${JARVIS_PAYLOAD_COMMIT:-}" ]; then
     if ! printf '%s' "$JARVIS_PAYLOAD_COMMIT" | grep -Eq '^[0-9a-f]{40}([0-9a-f]{24})?$'; then
-        echo "${RED}  JARVIS_PAYLOAD_COMMIT is not a well-formed git SHA: '$JARVIS_PAYLOAD_COMMIT' — refusing.${RESET}"
+        err "JARVIS_PAYLOAD_COMMIT is not a well-formed git SHA: '$JARVIS_PAYLOAD_COMMIT' — refusing."
         exit 1
     fi
-    echo "      pinning clone to signed commit ${JARVIS_PAYLOAD_COMMIT}..."
     # Shallow clones don't carry the full history; deepen to retrieve the
     # target SHA explicitly. `fetch <sha>` succeeds on most modern
     # github.com hosts (allowReachableSHA1InWant + uploadpack.allowAnySHA1InWant
     # are server defaults). Falls back to unshallow if direct-SHA fetch fails.
-    if ! git -C "$INSTALL_DIR" fetch --depth 1 origin "$JARVIS_PAYLOAD_COMMIT" 2>/dev/null; then
-        git -C "$INSTALL_DIR" fetch --unshallow origin || git -C "$INSTALL_DIR" fetch origin
+    if ! git -C "$INSTALL_DIR" fetch --quiet --depth 1 origin "$JARVIS_PAYLOAD_COMMIT" 2>/dev/null; then
+        git -C "$INSTALL_DIR" fetch --quiet --unshallow origin || git -C "$INSTALL_DIR" fetch --quiet origin
     fi
-    if ! git -C "$INSTALL_DIR" checkout --detach "$JARVIS_PAYLOAD_COMMIT"; then
-        echo "${RED}  failed to checkout payload-commit ${JARVIS_PAYLOAD_COMMIT} — refusing.${RESET}"
-        echo "${RED}  the cloned tree does not contain the signed commit; release may be inconsistent.${RESET}"
+    if ! git -C "$INSTALL_DIR" checkout --quiet --detach "$JARVIS_PAYLOAD_COMMIT"; then
+        err "failed to checkout payload-commit ${JARVIS_PAYLOAD_COMMIT} — refusing."
+        note 'the cloned tree does not contain the signed commit; release may be inconsistent.'
         exit 1
     fi
     # Defensive verify: assert HEAD is exactly the signed SHA byte-for-byte.
     ACTUAL_HEAD=$(git -C "$INSTALL_DIR" rev-parse HEAD)
     if [ "$ACTUAL_HEAD" != "$JARVIS_PAYLOAD_COMMIT" ]; then
-        echo "${RED}  HEAD drift detected: pinned=${JARVIS_PAYLOAD_COMMIT}, actual=${ACTUAL_HEAD} — refusing.${RESET}"
+        err "HEAD drift detected: pinned=${JARVIS_PAYLOAD_COMMIT}, actual=${ACTUAL_HEAD} — refusing."
         exit 1
     fi
-    echo "      ${GREEN}clone pinned to ${JARVIS_PAYLOAD_COMMIT}${RESET}"
+    ok "pinned to signed commit ${JARVIS_PAYLOAD_COMMIT:0:12}…"
 fi
-echo "      ${GREEN}repo ready${RESET}"
 
 # -------------------------------------------------------------- venv
-echo ""
-echo "${YELLOW}[3/5] Creating Python virtual environment...${RESET}"
+step 'Creating Python environment'
 
 VENV_PATH="$INSTALL_DIR/.venv"
 VENV_PYTHON="$VENV_PATH/bin/python"
@@ -142,26 +153,24 @@ VENV_PYTHON="$VENV_PATH/bin/python"
 if [ ! -x "$VENV_PYTHON" ]; then
     "$PYTHON_EXE" -m venv "$VENV_PATH"
 fi
-echo "      ${GREEN}venv OK${RESET}"
+ok 'virtual environment ready'
 
 # -------------------------------------------------------------- bootstrap deps
-echo ""
-echo "${YELLOW}[4/5] Installing bootstrap dependencies (rich, packaging)...${RESET}"
+step 'Installing bootstrap dependencies'
+note 'rich, packaging'
 "$VENV_PYTHON" -m pip install --quiet --upgrade pip
 "$VENV_PYTHON" -m pip install --quiet rich packaging
-echo "      ${GREEN}bootstrap deps OK${RESET}"
+ok 'done'
 
 # -------------------------------------------------------------- hand off
-echo ""
-echo "${YELLOW}[5/5] Handing off to the Python installer...${RESET}"
-echo ""
-
 INSTALLER_PY="$INSTALL_DIR/install/installer.py"
 if [ ! -f "$INSTALLER_PY" ]; then
-    echo "${RED}  $INSTALLER_PY not found in the clone.${RESET}"
-    echo "${RED}  The repo seems incomplete. File a bug.${RESET}"
+    err "$INSTALLER_PY not found in the clone."
+    note 'The repo seems incomplete. File a bug.'
     exit 1
 fi
+
+step 'Launching the guided installer…'
 
 cd "$INSTALL_DIR"
 exec "$VENV_PYTHON" "$INSTALLER_PY" "$@"

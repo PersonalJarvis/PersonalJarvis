@@ -98,6 +98,9 @@ class FakeRegistry:
     def __init__(self, brain: Any) -> None:
         self._brain = brain
 
+    def available(self) -> set[str]:
+        return {"gemini"}
+
     def instantiate(self, name: str, **kwargs: Any) -> Any:
         return self._brain
 

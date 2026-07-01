@@ -37,6 +37,18 @@ from jarvis.ui.web.outputs_routes import (
     router as outputs_router,
 )
 
+
+@pytest.fixture(autouse=True)
+def _reset_openers_cache_between_tests():
+    """The opener list is memoized per process; clear it around every test so
+    the editor-detection cases don't see each other's cached result."""
+    from jarvis.ui.web import outputs_routes
+
+    outputs_routes._reset_openers_cache()
+    yield
+    outputs_routes._reset_openers_cache()
+
+
 # --- Stubs -------------------------------------------------------------------
 
 
@@ -1033,6 +1045,30 @@ def test_openers_detects_installed_editor_only(app):
     ids = {o["id"] for o in r.json()["openers"]}
     assert "code" in ids
     assert "cursor" not in ids  # raw fallback → not installed → hidden
+
+
+def test_openers_result_is_memoized(app):
+    """Resolving the editor candidates walks the Start Menu per not-installed
+    editor — too slow to redo on every open. The list is cached per process, so
+    a second request must serve the cache without re-resolving (the fix for the
+    'open' button taking too long and flashing 'no apps detected')."""
+    from unittest.mock import MagicMock
+
+    app.state.native_file_actions = True
+    resolver = MagicMock(side_effect=_fake_resolver_only("code"))
+    with patch(
+        "jarvis.plugins.tool.app_resolver.resolve_app_launch_target", resolver
+    ), patch(
+        "jarvis.ui.web.outputs_routes._resolve_browser_target", return_value=None
+    ):
+        client = TestClient(app)
+        first = client.get("/api/outputs/openers")
+        calls_after_first = resolver.call_count
+        second = client.get("/api/outputs/openers")
+
+    assert first.json() == second.json()
+    assert calls_after_first > 0  # first call did the real resolution
+    assert resolver.call_count == calls_after_first  # second came from the cache
 
 
 def test_open_with_404_when_native_disabled(app):

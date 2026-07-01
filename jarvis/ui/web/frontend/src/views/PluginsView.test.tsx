@@ -2,7 +2,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ConnectIconButton, PluginsView } from "@/views/PluginsView";
+import {
+  ConnectIconButton,
+  PkceConnectDialog,
+  PluginsView,
+} from "@/views/PluginsView";
 
 const CATALOG = {
   version: 1,
@@ -165,5 +169,212 @@ describe("ConnectIconButton click-lock", () => {
     });
 
     expect(onConnect).toHaveBeenCalledTimes(2);
+  });
+});
+
+// A revoked / expired plugin (status needs_reauth) must NOT look like a never-
+// connected one. It surfaces a distinct "Reconnect" affordance that re-runs the
+// same connect flow — the one-click repair for a dead token.
+describe("ConnectIconButton reconnect state", () => {
+  it("renders a Reconnect button for needs_reauth that triggers onConnect", async () => {
+    const onConnect = vi.fn(() => Promise.resolve());
+    render(
+      <ConnectIconButton
+        status="needs_reauth"
+        onConnect={onConnect}
+        onDisconnect={() => {}}
+      />,
+    );
+    const btn = screen.getByRole("button", { name: "Reconnect plugin" });
+    expect(btn).toBeDefined();
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(onConnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("never shows a plain Connect or Disconnect button for needs_reauth", () => {
+    render(
+      <ConnectIconButton
+        status="needs_reauth"
+        onConnect={() => {}}
+        onDisconnect={() => {}}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Connect plugin" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Disconnect plugin" })).toBeNull();
+  });
+});
+
+// The PKCE pre-connect dialog is the in-app path to run your OWN production
+// OAuth client (the durable fix for the 7-day Google revocation) without env
+// vars, plus the honest provider-side hint.
+describe("PkceConnectDialog own-client + production hint", () => {
+  const gmail = {
+    id: "gmail",
+    name: "Gmail",
+    description: "Mail",
+    category: "Communication",
+    logoSlug: "gmail",
+    authMode: "oauth_pkce_loopback",
+    authConfig: { mode: "oauth_pkce_loopback" },
+    status: "not_connected",
+  } as unknown as Parameters<typeof PkceConnectDialog>[0]["plugin"];
+
+  it("shows the Google production hint with a console link", () => {
+    render(
+      <PkceConnectDialog plugin={gmail} onClose={() => {}} onProceed={() => {}} />,
+    );
+    expect(screen.getByText(/production/i)).toBeDefined();
+    const link = screen.getByRole("link", { name: /google cloud console/i });
+    expect((link as HTMLAnchorElement).href).toContain("console.cloud.google.com");
+  });
+
+  it("proceeds without writing secrets when no client is entered", async () => {
+    const fetchMock = vi.fn();
+    (globalThis as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+    const onProceed = vi.fn(() => Promise.resolve());
+    render(
+      <PkceConnectDialog plugin={gmail} onClose={() => {}} onProceed={onProceed} />,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^continue$/i }));
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(onProceed).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes google_oauth_client_id/secret then proceeds when a client is entered", async () => {
+    const calls: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      return { ok: true, status: 200, json: async () => ({}) } as Response;
+    });
+    (globalThis as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+    const onProceed = vi.fn(() => Promise.resolve());
+    render(
+      <PkceConnectDialog plugin={gmail} onClose={() => {}} onProceed={onProceed} />,
+    );
+    fireEvent.click(screen.getByText(/use your own oauth client/i));
+    fireEvent.change(screen.getByLabelText(/client id/i), {
+      target: { value: "myid.apps.googleusercontent.com" },
+    });
+    fireEvent.change(screen.getByLabelText(/client secret/i), {
+      target: { value: "GOCSPX-x" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^continue$/i }));
+    });
+    expect(calls).toContain("/api/secrets/google_oauth_client_id");
+    expect(calls).toContain("/api/secrets/google_oauth_client_secret");
+    expect(onProceed).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("PluginsView opens the PKCE pre-connect dialog", () => {
+  it("shows the own-client dialog instead of starting OAuth immediately", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/marketplace/plugins") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            version: 1,
+            schema_version: "t",
+            total: 1,
+            connected: 0,
+            plugins: [
+              {
+                id: "gmail",
+                display_name: "Gmail",
+                description: "Mail",
+                category: "Communication",
+                logo_slug: "gmail",
+                auth: { mode: "oauth_pkce_loopback" },
+                status: "not_connected",
+                live_callable: false,
+              },
+            ],
+          }),
+        } as Response;
+      }
+      // A /connect/start hit here would mean OAuth fired immediately (the old
+      // behaviour) — make that an explicit failure.
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    (globalThis as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+
+    renderPluginsView();
+    // Wait for the real row's Connect button (the "Gmail" text alone also appears
+    // in the static "Coming soon" strip before data loads, so it isn't a safe
+    // signal that the row has rendered).
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Connect plugin" }),
+      ).toBeDefined(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect plugin" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("dialog")).toBeDefined(),
+    );
+    expect(screen.getByText(/Connect Gmail/i)).toBeDefined();
+  });
+});
+
+describe("PluginsView keeps revoked plugins visible", () => {
+  it("shows a needs_reauth plugin under Installed with a Reconnect-needed badge", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/marketplace/plugins") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            version: 1,
+            schema_version: "t",
+            total: 1,
+            connected: 0,
+            plugins: [
+              {
+                id: "gmail",
+                display_name: "Gmail",
+                description: "Mail",
+                category: "Communication",
+                logo_slug: "gmail",
+                auth: { mode: "oauth_pkce_loopback" },
+                status: "needs_reauth",
+                live_callable: false,
+              },
+            ],
+          }),
+        } as Response;
+      }
+      throw new Error(`unexpected fetch ${String(input)}`);
+    });
+    (globalThis as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+
+    renderPluginsView();
+
+    // Open the Installed tab — the revoked plugin must be there, not hidden in
+    // Browse as if never connected.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^Installed\b/i })).toBeDefined();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Installed\b/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Gmail")).toBeDefined();
+    });
+    // The row carries the amber "Reconnect needed" badge AND a Reconnect button.
+    expect(screen.getByText("Reconnect needed")).toBeDefined();
+    expect(
+      screen.getByRole("button", { name: "Reconnect plugin" }),
+    ).toBeDefined();
   });
 });

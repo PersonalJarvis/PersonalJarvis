@@ -34,6 +34,7 @@ Termination paths:
     - "done"            -> exit_code 0
     - "fail"            -> exit_code 5
     - parse error       -> exit_code 2
+    - no vision provider-> exit_code 3   (provider chain exhausted; keyless / out-of-credit / no-vision)
     - step budget       -> exit_code 4
     - tool failure      -> exit_code 8
     - observe failure   -> exit_code 1
@@ -92,6 +93,23 @@ class CULoopError(RuntimeError):
     """Structural error in the screenshot-only loop."""
 
 
+class CUNoCapableProviderError(CULoopError):
+    """No screen-capable (vision) brain was reachable for Computer-Use.
+
+    Raised when the whole provider chain is exhausted because every candidate
+    was keyless / out-of-credit (402) / rate-limited (429) / unreachable /
+    no-vision — i.e. an account/credential fact the user can fix in-app, NOT the
+    model returning an unparseable response. Subclasses :class:`CULoopError` so
+    existing ``except CULoopError`` paths keep catching it, while callers that
+    care (the exit-code mapper) can tell it apart and report it honestly (exit 3,
+    a "check your keys/credit" readback) instead of the generic parse phrase.
+    Live forensic 2026-06-30: a Spotify screen action failed because Gemini's
+    credits were depleted, Claude returned 502, OpenAI had no key, and the
+    OpenRouter model had no vision — yet the user heard the misleading "couldn't
+    get a valid screen-control response" (exit 2).
+    """
+
+
 _VALID_ACTIONS: frozenset[str] = frozenset(
     {"click", "click_element", "type", "key", "scroll", "drag",
      "open_app", "switch_window", "wait", "done", "fail"}
@@ -143,10 +161,28 @@ _TIMEOUT_EXIT_CODE = 124
 _FAIL_EXIT_CODE = 5
 _BUDGET_EXIT_CODE = 4
 _PARSE_EXIT_CODE = 2
+_NO_PROVIDER_EXIT_CODE = 3  # vision-provider chain exhausted (no screen-capable brain)
 _TOOL_EXIT_CODE = 8
 _OBSERVE_EXIT_CODE = 1
 _ELEVATION_EXIT_CODE = 9  # waited for an OS elevation confirmation, none came
 _CANCEL_EXIT_CODE = 130
+
+
+def _llm_failure_exit_code(exc: BaseException) -> int:
+    """Map a giving-up brain failure to the right exit code.
+
+    An exhausted vision-provider chain (:class:`CUNoCapableProviderError`) is an
+    account/credential fact the user can fix in-app, so it gets its own honest
+    exit code (3 → a "no screen-capable model; check your keys/credit" readback).
+    Any other brain failure — a genuine parse error, a transient provider hiccup
+    that simply never recovered — stays the generic parse/"confused" code (2).
+    Keeping them apart is what stopped the user hearing "couldn't get a valid
+    screen-control response" when the real cause was a dead provider chain
+    (live forensic 2026-06-30).
+    """
+    if isinstance(exc, CUNoCapableProviderError):
+        return _NO_PROVIDER_EXIT_CODE
+    return _PARSE_EXIT_CODE
 
 
 def _wayland_block_message() -> str | None:
@@ -1627,7 +1663,7 @@ async def _call_brain(
                     )
                     continue
 
-        raise CULoopError(
+        raise CUNoCapableProviderError(
             selector.error_message(
                 images_attached=images_attached,
                 attempted=attempted,
@@ -1949,7 +1985,7 @@ def _proof_language_directive(output_language: str | None) -> str:
     """One-line instruction telling a verifier which language to write ``proof`` in.
 
     The verdict's ``proof`` is forwarded verbatim into the spoken completion
-    readback ("Erledigt — {proof}" / "Done — {proof}" / "Listo — {proof}"), so it
+    readback ("Erledigt. {proof}" / "Done. {proof}" / "Listo. {proof}"), so it
     must match the turn's resolved output language — otherwise a German frame wraps
     an English body (live bug 2026-06-27). A missing/unknown language yields no
     directive, preserving the historical (English-default) behaviour for tests /
@@ -2162,7 +2198,7 @@ async def _verify_goal_done(
 
     Returns ``(done, proof)``. Never raises -- on any error returns
     ``(False, "")`` so verification can only HELP, never block the loop."""
-    # The verdict's `proof` is spoken back verbatim ("Erledigt — {proof}"), so
+    # The verdict's `proof` is spoken back verbatim ("Erledigt. {proof}"), so
     # steer every judge to write it in the turn's resolved language (de/en/es).
     # Empty when no language was threaded in (tests / minimal wiring) — then the
     # judge keeps its historical English default.
@@ -4719,12 +4755,17 @@ async def _run_screenshot_loop(
                     step_idx, llm_failures, _MAX_LLM_FAILURES, exc,
                 )
                 if llm_failures >= _MAX_LLM_FAILURES:
+                    # Tell apart an exhausted vision-provider chain (exit 3 —
+                    # account/credential fact, fix keys/credit) from a generic
+                    # model/parse failure (exit 2). Live forensic 2026-06-30: a
+                    # dead chain was reported as exit 2 and the user heard the
+                    # misleading "couldn't get a valid screen-control response".
                     yield _final(
                         stderr=(
                             f"[cu] giving up after {llm_failures} model "
                             f"failures (last: {exc})\n"
                         ),
-                        exit_code=_PARSE_EXIT_CODE,
+                        exit_code=_llm_failure_exit_code(exc),
                     )
                     return
                 await _profile_phase(

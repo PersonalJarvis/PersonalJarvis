@@ -80,16 +80,30 @@ def _refresh_plugin_in_live_registry(plugin_id: str) -> None:
 # ----------------------------------------------------------------------
 
 
-def _plugin_status(plugin_id: str, store: TokenStore) -> str:
+def _plugin_status_meta(
+    plugin_id: str, store: TokenStore
+) -> tuple[str, str | None, str | None]:
+    """Return ``(status, expires_at_iso, last_refreshed_iso)`` from ONE token load.
+
+    ``expires_at`` / ``last_refreshed`` are surfaced so the UI can show an honest
+    "auto-refreshing / expiring soon" hint without re-deriving it. Both are
+    ``None`` for a token that carries no expiry (e.g. a PAT) or was never
+    refreshed — never a fabricated timestamp.
+    """
     try:
         tokens = store.load(plugin_id)
     except RuntimeError:
-        return "error"
+        return "error", None, None
     if tokens is None:
-        return "not_connected"
-    if tokens.needs_reauth:
-        return "needs_reauth"
-    return "connected"
+        return "not_connected", None, None
+    expires_at = tokens.expires_at.isoformat() if tokens.expires_at else None
+    last_refreshed = tokens.extra.get("last_refreshed") or None
+    status = "needs_reauth" if tokens.needs_reauth else "connected"
+    return status, expires_at, last_refreshed
+
+
+def _plugin_status(plugin_id: str, store: TokenStore) -> str:
+    return _plugin_status_meta(plugin_id, store)[0]
 
 
 def _build_dcr_handler(plugin_id: str, auth: HostedMcpOAuthDcrAuth) -> HostedMcpDcrHandler:
@@ -180,8 +194,10 @@ async def list_plugins(response: Response) -> dict[str, Any]:
     connected = 0
     for spec in catalog.plugins:
         item = spec.model_dump(mode="json")
-        status = _plugin_status(spec.id, store)
+        status, expires_at, last_refreshed = _plugin_status_meta(spec.id, store)
         item["status"] = status
+        item["expires_at"] = expires_at
+        item["last_refreshed"] = last_refreshed
         mcp = spec.mcp_server or {}
         mcp_live, runtime_missing = _mcp_live(mcp)
         if runtime_missing:

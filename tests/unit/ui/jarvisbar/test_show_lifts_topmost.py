@@ -8,10 +8,18 @@ Windows, so the later boot windows mapped on top of the bar and it stayed hidden
 until the first wake-word re-showed it ("bar does not appear when ready, only
 after the wake-word"). ``_do_show`` now re-asserts ``-topmost`` and lifts, matching
 the mascot orb. These tests pin that contract without a real Tk window.
+
+Forensic (2026-06-30): re-asserting ``-topmost`` is itself a Win32 style
+mutation on this layered (color-key + alpha) window, and Windows can silently
+drop the layered attributes on such a mutation (BUG-030) — the bar then briefly
+renders its true opaque black backing instead of the keyed-out magenta ("black
+border flashes around the bar, then disappears"). ``_do_show`` now also
+re-applies ``-transparentcolor``/``-alpha`` right after the topmost re-assert,
+so a dropped attribute self-heals on the very next reveal.
 """
 from __future__ import annotations
 
-from jarvis.ui.jarvisbar.overlay import JarvisBarOverlay
+from jarvis.ui.jarvisbar.overlay import COLOR_KEY_HEX, JarvisBarOverlay
 
 
 class _FakeRoot:
@@ -50,6 +58,38 @@ def test_do_show_deiconifies_then_lifts_and_repins_topmost() -> None:
     assert root.attrs.get("-topmost") is True
     # The lift happens after the deiconify (Windows remaps without topmost).
     assert root.calls.index("deiconify") < root.calls.index("lift")
+
+
+def test_do_show_reapplies_transparentcolor_and_alpha_after_topmost() -> None:
+    """BUG-030 guard: the topmost re-assert must not leave the layered
+    color-key/alpha attributes un-reapplied — else a Windows-side drop of
+    those attributes on the style mutation shows as a black flash."""
+    bar, root = _bar_with_fake_root()
+
+    bar._do_show()  # noqa: SLF001
+
+    assert root.attrs.get("-transparentcolor") == COLOR_KEY_HEX
+    assert root.attrs.get("-alpha") == bar._opacity  # noqa: SLF001
+    # Re-applied AFTER the topmost mutation, not before — the whole point is
+    # to heal whatever the topmost re-assert may have just dropped.
+    assert root.calls.index("wm_attributes:-topmost=True") < root.calls.index(
+        f"wm_attributes:-transparentcolor={COLOR_KEY_HEX}"
+    )
+
+
+def test_do_show_transparentcolor_reassert_failure_does_not_raise() -> None:
+    bar, root = _bar_with_fake_root()
+
+    def _boom(name: str, value: object) -> None:
+        if name == "-transparentcolor":
+            raise RuntimeError("transparentcolor exploded")
+        root.calls.append(f"wm_attributes:{name}={value}")
+        root.attrs[name] = value
+
+    root.wm_attributes = _boom  # type: ignore[method-assign]
+
+    # Must not raise even when the color-key re-assert fails.
+    bar._do_show()  # noqa: SLF001
 
 
 def test_do_show_lift_failure_does_not_swallow_deiconify() -> None:

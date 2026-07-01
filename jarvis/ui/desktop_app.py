@@ -2335,6 +2335,10 @@ class DesktopApp:
                 continue_listening_after_response=(
                     not self.cfg.trigger.single_turn_mode
                 ),
+                # Conversation-mode idle auto-hangup. ``session_idle_timeout_s``
+                # <= 0 keeps the session active until a manual hangup (user
+                # mandate). The constructor default (30 s) is the safe baseline.
+                idle_timeout_s=self.cfg.trigger.session_idle_timeout_s,
                 bus=bus,
                 supervisor=supervisor,
                 input_device=self.cfg.audio.input_device or None,

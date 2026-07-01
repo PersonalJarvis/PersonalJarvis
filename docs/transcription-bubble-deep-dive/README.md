@@ -30,13 +30,13 @@ The user said:
 
 ```text
 Was ist morgen fuer ein Tag?
-```
+``` <!-- i18n-allow: STT test fixture -->
 
 The bubble showed:
 
 ```text
 Was? Was ist morgens? Was ist morgen fuer ein Tag? Morgen fuer einen Tag.
-```
+``` <!-- i18n-allow: STT test fixture -->
 
 The pattern is typical for the current live-bubble architecture:
 
@@ -70,19 +70,19 @@ Partial 1: Was?
 Partial 2: Was ist morgens?
 Partial 3: Was ist morgen fuer ein Tag?
 Partial 4: Morgen fuer einen Tag.
-```
+``` <!-- i18n-allow: STT test fixture -->
 
 The correct display would not be:
 
 ```text
 Was? Was ist morgens? Was ist morgen fuer ein Tag? Morgen fuer einen Tag.
-```
+``` <!-- i18n-allow: STT test fixture -->
 
 The better display would be either:
 
 ```text
 Was ist morgen fuer ein Tag?
-```
+``` <!-- i18n-allow: STT test fixture -->
 
 or, while speaking live, always only the currently best hypothesis.
 

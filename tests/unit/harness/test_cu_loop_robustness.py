@@ -32,7 +32,11 @@ from jarvis.core.protocols import (
 from jarvis.harness.computer_use_context import ComputerUseContext
 from jarvis.harness.screenshot_only_loop import (
     CULoopError,
+    CUNoCapableProviderError,
+    _NO_PROVIDER_EXIT_CODE,
+    _PARSE_EXIT_CODE,
     _call_brain,
+    _llm_failure_exit_code,
     _run_screenshot_loop,
 )
 
@@ -341,6 +345,59 @@ async def test_repeated_model_failures_end_mission_cleanly() -> None:
     assert final.exit_code != 0
     assert final.stderr  # clean, explicit failure message
     assert len(brain.requests) == 3
+
+
+# ---------------------------------------------------------------------------
+# Honest exit code when the vision-provider chain is EXHAUSTED (exit 3, not the
+# overloaded parse/"confused" exit 2). Live forensic 2026-06-30: every CU vision
+# provider was dead (Gemini credits depleted, Claude 502, OpenAI no key,
+# OpenRouter model no-vision), so _call_brain raised the provider-chain error 3×
+# — but the loop reported exit 2 and the user heard "couldn't get a valid
+# screen-control response" instead of an honest "no screen-capable model; check
+# your keys/credit". An exhausted chain is an account/credential fact, not model
+# confusion, so it gets its own exit code.
+# ---------------------------------------------------------------------------
+
+
+def test_llm_failure_exit_code_distinguishes_dead_chain_from_parse() -> None:
+    # An exhausted vision-provider chain → the honest "no capable provider" code.
+    assert _llm_failure_exit_code(
+        CUNoCapableProviderError("provider chain failed: no vision-capable provider")
+    ) == _NO_PROVIDER_EXIT_CODE
+    # A generic brain failure / parse error stays the parse/confused code.
+    assert _llm_failure_exit_code(CULoopError("bad parse")) == _PARSE_EXIT_CODE
+    assert _llm_failure_exit_code(RuntimeError("provider hiccup")) == _PARSE_EXIT_CODE
+    # The honest code must be distinct from the parse code (no overloading).
+    assert _NO_PROVIDER_EXIT_CODE != _PARSE_EXIT_CODE
+
+
+async def test_exhausted_vision_chain_exits_with_no_provider_code() -> None:
+    class _DeadChainManager:
+        """Every provider in the chain is dead (the 2026-06-30 reality)."""
+
+        active_provider = "primary"
+
+        def __init__(self) -> None:
+            self.brain = _StreamingBrain(
+                exc=RuntimeError("429 prepayment credits depleted"),
+                supports_vision=True,
+            )
+
+        def _build_fallback_chain(self, level: str) -> list[tuple[str, str | None]]:
+            return [("primary", "vision-model")]
+
+        def _get_brain(self, name: str, model: str | None = None) -> "_StreamingBrain":
+            return self.brain
+
+    ctx = make_ctx(_DeadChainManager())
+    chunks = await run_loop(ctx, "öffne mein spotify und spiel das lied")
+
+    final = chunks[-1]
+    assert final.is_final
+    assert final.exit_code == _NO_PROVIDER_EXIT_CODE, (
+        f"exhausted vision chain must exit {_NO_PROVIDER_EXIT_CODE} (honest), "
+        f"got {final.exit_code}: {final.stderr!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

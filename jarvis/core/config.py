@@ -178,6 +178,16 @@ class TriggerConfig(BaseModel):
     # 2026-05-18: single-turn is the canonical behaviour — open-mic mode
     # made Jarvis trigger on every word in the room.
     single_turn_mode: bool = True
+    # Silence window (seconds) after which a CONVERSATION-mode voice session
+    # (``single_turn_mode = false``) auto-hangs-up while waiting for the next
+    # user turn. Set to 0 — or any value <= 0 — to DISABLE the auto-hangup
+    # entirely: the session then stays active until you hang up manually (say
+    # "auflegen" or press the hangup hotkey). User mandate 2026-06-30. Has no
+    # effect in single-turn mode (each turn ends after Jarvis answers anyway).
+    # Wired into ``SpeechPipeline(idle_timeout_s=...)`` at every construction
+    # site; the constructor default (30 s) stays the safe baseline for a fresh
+    # download so an accidental wake never holds the mic open forever.
+    session_idle_timeout_s: float = 30.0
     # When True (default, user mandate 2026-05-29), the configured ``hotkey`` is
     # a true push-to-talk key: holding it records, releasing it submits the
     # captured audio as one prompt (one-shot — Jarvis answers once, then the
@@ -247,6 +257,17 @@ class STTConfig(BaseModel):
     wake_model: str = "base"
     wake_device: str = "cpu"
     wake_compute_type: str = "int8"
+    # When True (default) AND a CUDA GPU is present AND the post-wake utterance
+    # STT is NOT itself using the GPU, a CUSTOM wake phrase (the transcription-
+    # based ``stt_match`` path) runs on the strong ``large-v3-turbo`` model on the
+    # GPU instead of the small ``base`` model on the CPU. Live-log evidence
+    # (2026-06-30): the base/cpu wake model WEDGED repeatedly under app CPU/GIL
+    # contention (tens of seconds of total deafness -> "say it 2-3 times") and
+    # mis-transcribed the wake name. The GPU model transcribes a window in ~150 ms
+    # so it never blows the wedge timeout, and hears the proper noun accurately.
+    # Set False to force the validated base/cpu + phrase-bias config back — the
+    # escape hatch if the strong model ever over-triggers on a particular voice.
+    wake_high_accuracy: bool = True
     language: str = "auto"
     # Vocabulary biasing passed to Whisper's ``prompt`` field — the same
     # mechanism dictation tools like Wispr Flow use to keep proper nouns and
@@ -625,12 +646,17 @@ class EvidenceDomainsConfig(BaseModel):
         # "cloud" domain), so a billing question deterministically FORCES a
         # real cli_gcloud call (or an honest refusal) instead of relying on the
         # model's discretion (live 2026-06-17). Keywords are cloud/billing
-        # specific — NO bare "kosten"/"cost" so "was kostet X" never hijacks.
+        # specific — NO bare "kosten"/"cost" so "was kostet X" never hijacks, and
+        # NO bare "budget" so a travel/household/project budget never forces a
+        # billing call (live 2026-06-30 Bora-Bora session: "bei meinem Budget bei
+        # 25.000 Euro" voided a good travel answer). Cloud-budget phrasing is kept
+        # via the explicit "cloud budget"/"gcp budget" phrases instead.
         "cloud": [
             "google cloud", "gcp", "gcloud", "cloud-cli", "cloud cli",
             "google-kosten", "google kosten", "cloud-kosten", "cloud kosten",
             "cloud-rechnung", "cloud rechnung", "cloud billing", "billing account",
-            "abrechnung", "abrechnungen", "guthaben", "billing", "budget",
+            "cloud budget", "cloud-budget", "gcp budget", "gcloud budget",
+            "abrechnung", "abrechnungen", "guthaben", "billing",
         ],
         # Local screen / window-activity history. Served by the always-on
         # internal `awareness-recall` tool (wired into the domain→tool map in

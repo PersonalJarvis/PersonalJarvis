@@ -15,11 +15,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections import deque
 from collections.abc import AsyncIterator
 
 import numpy as np
 
+from jarvis.audio.wake_normalizer import AdaptiveWakeNormalizer
 from jarvis.core.protocols import AudioChunk
 
 log = logging.getLogger("jarvis.wake")
@@ -79,70 +79,57 @@ PRODUCTION_WAKE_THRESHOLD = 0.15
 
 
 class WakeGainNormalizer:
-    """Amplify-only, noise-gated, capped streaming AGC for the OWW wake path.
+    """Amplify-only, adaptive-floor, capped streaming AGC for the OWW wake path.
 
-    Root cause of "the wake word only triggers when I shout" (2026-06-28): in the
-    default lightweight config the fast openWakeWord detector is the SOLE wake
-    path (the ``RollingWhisperWake`` low-volume backstop is a power-user opt-in
-    behind ``cfg.trigger.heavy_local_whisper``), and it fed RAW int16 frames into
-    the neural model. openWakeWord's activation score scales with input level, so
-    on this project's documented quiet-mic hardware (normal-speech rms ~0.01-0.02)
-    a genuine "Hey Jarvis" peaks at ~0.10-0.14 — just *below* the pinned 0.15
-    threshold. Only shouting lifted the level over the bar.
+    Thin adapter over the shared :class:`jarvis.audio.wake_normalizer.
+    AdaptiveWakeNormalizer` so the default openWakeWord path and the
+    ``RollingWhisperWake`` backstop share ONE input-normalization mechanism
+    (mission 2026-06-30). It exists as its own name for the OWW-specific defaults
+    (frame size 1280) and the existing call sites/tests.
 
-    The threshold cannot move (``test_wake_threshold`` pins the BUG-009 floor), so
-    this brings the SAME peak normalization the ``RollingWhisperWake`` backstop
-    already uses to the default OWW path. Per-frame behaviour:
-
-    * the gain is derived from a rolling peak over the last ``window_s`` of audio
-      (not the single frame) so it stays stable across the wake phrase and the
-      intra-phrase envelope the model relies on is preserved;
-    * it is AMPLIFY-ONLY — an already-loud wake is never turned down, so the
-      genuine-peak band the threshold was calibrated on never regresses;
-    * it is gated by ``noise_floor_peak`` — digital silence / idle hiss below the
-      floor is returned UNCHANGED so the AGC can never manufacture an ambient
-      false-fire band (the AGC-level analogue of the BUG-009 guard);
-    * the gain is capped at ``max_gain_db`` so a near-silent floor cannot be blown
-      up to full scale.
-
-    Pure mechanism — no I/O, no model. ``reset()`` clears the rolling envelope so
-    a stale loud burst does not suppress the gain on the next quiet utterance.
+    Root cause of "the wake word only triggers when I shout" (2026-06-28): the
+    fast openWakeWord detector fed RAW int16 frames into the neural model, whose
+    activation score scales with input level, so on a quiet mic a genuine
+    "Hey Jarvis" under-scored the pinned 0.15 threshold and only a shout crossed
+    it. The 2026-06-28 fix added peak normalization but gated it on a FIXED
+    ``noise_floor_peak=0.02`` — a genuinely quiet wake between that floor and true
+    silence still got zero gain. This now uses an ADAPTIVE floor (mission
+    2026-06-30): on a quiet mic the floor settles to the real ambient level, so a
+    quiet wake rises above it and is amplified, while flat silence / steady
+    sub-floor hiss is still left unchanged. The 0.15 threshold and the
+    amplify-only + sub-floor guards are unchanged, so quiet wakes are lifted
+    without widening the ambient false-fire band.
     """
 
     def __init__(
         self,
         target_peak_dbfs: float = -3.0,
-        max_gain_db: float = 20.0,
-        noise_floor_peak: float = 0.02,
+        max_gain_db: float = 30.0,
+        # Now the ADAPTIVE floor's STARTING value (was a fixed hard gate). Lower
+        # than the legacy 0.02 so a quiet-but-real wake is above the fresh-session
+        # speech threshold; it adapts further down on a quiet mic.
+        noise_floor_peak: float = 0.006,
         window_s: float = 1.5,
         sample_rate: int = OWW_SAMPLE_RATE,
         frame_samples: int = OWW_FRAME_SAMPLES,
     ) -> None:
-        self._target_peak = float(10.0 ** (target_peak_dbfs / 20.0))  # -3 dBFS ≈ 0.707
-        self._max_gain = float(10.0 ** (max_gain_db / 20.0))          # 20 dB = 10x
-        self._noise_floor = float(noise_floor_peak)
-        frame_s = frame_samples / sample_rate                          # 80 ms
-        self._window_frames = max(1, int(round(window_s / frame_s)))
-        self._recent_peaks: deque[float] = deque(maxlen=self._window_frames)
+        self._norm = AdaptiveWakeNormalizer(
+            target_peak_dbfs=target_peak_dbfs,
+            max_gain_db=max_gain_db,
+            floor_start=noise_floor_peak,
+            window_s=window_s,
+            sample_rate=sample_rate,
+            frame_samples=frame_samples,
+        )
 
     def reset(self) -> None:
         """Forget the rolling envelope (called on detector stop / re-arm)."""
-        self._recent_peaks.clear()
+        self._norm.reset()
 
     def process(self, frame: np.ndarray) -> np.ndarray:
         """Return ``frame`` (int16) amplified toward the target peak, or
-        unchanged when below the noise floor / already loud enough."""
-        f32 = frame.astype(np.float32) / 32768.0
-        frame_peak = float(np.max(np.abs(f32))) if f32.size else 0.0
-        self._recent_peaks.append(frame_peak)
-        rolling_peak = max(self._recent_peaks) if self._recent_peaks else frame_peak
-        if rolling_peak < self._noise_floor:
-            return frame  # silence / sub-floor hiss — leave it alone (gain 1.0)
-        gain = min(self._target_peak / rolling_peak, self._max_gain)
-        if gain <= 1.0:
-            return frame  # already loud enough — amplify-only, never attenuate
-        boosted = np.clip(f32 * gain, -1.0, 1.0)
-        return (boosted * 32767.0).astype(np.int16)
+        unchanged when below the adaptive floor / already loud enough."""
+        return self._norm.process(frame)
 
 
 class OpenWakeWordProvider:
@@ -326,9 +313,29 @@ class OpenWakeWordProvider:
             # offline-fähig beim ersten Start.
             self._model = Model(**self._model_kwargs())
 
+    def _warmup_model(self) -> None:
+        """Run ONE throwaway inference so the first real wake frame is not cold.
+
+        ``_ensure_model`` only LOADS the ONNX graph; the first ``predict`` still
+        pays the onnxruntime graph-init / melspec+embedding warm cost, and that
+        used to land on the user's first "Hey Jarvis" (a swallowed wake + a
+        visible delay before the bar — mission 2026-06-30 "~0.5 s delay"). Priming
+        it here moves the cost off the wake path. Fail-closed: a warm-up error
+        (e.g. a partially-loaded model) degrades to a no-op, never breaks boot.
+        """
+        model = self._model
+        if model is None:
+            return
+        try:
+            dummy = np.zeros(OWW_FRAME_SAMPLES, dtype=np.int16)
+            model.predict(dummy)
+        except Exception as exc:  # noqa: BLE001 — warm-up must never break boot
+            log.debug("OWW warm-up inference skipped: %s", exc)
+
     async def start(self) -> None:
-        """Pre-load Model — spart Latenz beim ersten Audio-Frame."""
+        """Pre-load AND warm the model — spart Kaltstart-Latenz beim ersten Frame."""
         await asyncio.to_thread(self._ensure_model)
+        await asyncio.to_thread(self._warmup_model)
 
     async def stop(self) -> None:
         self._model = None

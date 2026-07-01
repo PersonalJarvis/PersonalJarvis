@@ -317,6 +317,7 @@ export function SessionDetail({ detail, loading, error }: Props) {
       {editorFormat && (
         <OpenWithDialog
           openers={openers.data ?? []}
+          loading={openers.isLoading}
           onPick={pickOpener}
           onClose={() => setEditorFormat(null)}
         />

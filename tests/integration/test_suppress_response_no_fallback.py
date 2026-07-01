@@ -97,6 +97,14 @@ async def test_suppress_response_does_not_trigger_fallback():
         ("claude-subscription", "opus-model"),
     ]
 
+    # Bypass the signalless-turn gate (added 2026-06-27) that removes
+    # spawn_worker from tool-less/non-action utterances.  The gate is correct
+    # production behaviour — but this test is NOT about turn routing; it only
+    # verifies that suppress_response does not cascade into a fallback.  We
+    # disable the gate here so spawn_worker stays visible to the FakeBrain and
+    # we can observe the suppress_response path end-to-end.
+    manager._hide_action_tools_on_signalless_turn = lambda tools, user_text: tools  # type: ignore[method-assign]
+
     # Utterance enthaelt KEIN Verb aus spawn_verbs, sodass die Force-Spawn-
     # Heuristik nicht greift und der LLM-Pfad wirklich getestet wird.
     result = await manager.generate("erkläre mir das mal", use_history=False)

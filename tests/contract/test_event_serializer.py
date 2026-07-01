@@ -33,10 +33,20 @@ def _all_event_classes() -> list[type[Event]]:
 EVENT_CLASSES = _all_event_classes()
 
 
+# Some Event subclasses validate their fields in __post_init__ and cannot be
+# instantiated with bare defaults.  Map class name → minimal valid kwargs so
+# the parametrized test can still cover them without weakening the guard.
+_REQUIRED_KWARGS: dict[str, dict] = {
+    # LatencySpan.__post_init__ rejects phase="" — supply a real phase value.
+    "LatencySpan": {"phase": "stt_finalize"},
+}
+
+
 @pytest.mark.parametrize("event_cls", EVENT_CLASSES, ids=[c.__name__ for c in EVENT_CLASSES])
 def test_event_serializes_to_json(event_cls: type[Event]) -> None:
     """Instanziert Event mit Defaults und serialisiert zu JSON."""
-    event = event_cls()
+    kwargs = _REQUIRED_KWARGS.get(event_cls.__name__, {})
+    event = event_cls(**kwargs)
     envelope = event_to_ws_envelope(event)
 
     # JSON-roundtrip muss klappen

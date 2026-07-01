@@ -922,11 +922,14 @@ shape):
 ### 11.2 Mitigation: 5-axis-signed hash-pinned lockfile + CI audit
 
 `requirements.in` is the source of truth, mirroring `pyproject.toml
-[project].dependencies` one-to-one. `requirements.txt` is the
-machine-generated lockfile produced by `pip-compile --generate-hashes
---resolver=backtracking requirements.in` (currently ≈3200 `--hash=sha256:`
-lines across ≈170 packages — every wheel + sdist on PyPI is pinned by
-content hash).
+[project].dependencies` one-to-one (enforced by
+`scripts/ci/check_requirements_sync.py`). `requirements.txt` is the
+machine-generated, platform-universal lockfile produced by `uv pip compile
+--universal --generate-hashes --python-version 3.11 --output-file=requirements.txt
+requirements.in` — every wheel + sdist on PyPI is pinned by content hash, and
+per-OS environment markers (`; sys_platform == 'win32'`, `== 'linux'`, …) let the
+one lockfile install with `--require-hashes` on Windows, macOS AND Linux (each OS
+resolves only the wheels that apply to it).
 
 The sign-installer workflow:
 

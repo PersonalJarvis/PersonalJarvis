@@ -28,7 +28,7 @@ primary channel, desktop shell via pywebview, WebSocket event stream).
 python -m jarvis.ui.web.launcher --headless
 ```
 
-Expectation: log line `Jarvis-Backend läuft auf http://127.0.0.1:47821`
+Expectation: log line `Jarvis-Backend läuft auf http://127.0.0.1:47821`  <!-- i18n-allow -->
 
 - `curl http://127.0.0.1:47821/api/health` → `{"ok":true,"version":"0.1.0"}`
 - `curl http://127.0.0.1:47821/api/plugins` → all 7 plugin groups, incl. `jarvis.channel`
@@ -58,7 +58,7 @@ Expectation: window shows the Vite dev UI, HMR works (edit in .tsx immediately v
 ### 4. Single-Instance Lock
 
 Start `python -m jarvis.ui.web.launcher` twice in a row.
-The second invocation must abort with exit code `3` and the message `Jarvis läuft bereits.` (Jarvis is already running.)
+The second invocation must abort with exit code `3` and the message `Jarvis läuft bereits.` (Jarvis is already running.)  <!-- i18n-allow -->
 
 ### 5. WebSocket Event Echo in the Browser
 

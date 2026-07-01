@@ -138,6 +138,9 @@ async def _main() -> None:
         # User-Mandat 2026-05-18: every turn requires a fresh wake. The Toml
         # field ``[trigger].single_turn_mode`` is the canonical source.
         continue_listening_after_response=not config.trigger.single_turn_mode,
+        # ``session_idle_timeout_s`` <= 0 keeps a conversation session active
+        # until a manual hangup; the 30 s default stays the safe baseline.
+        idle_timeout_s=config.trigger.session_idle_timeout_s,
         bus=bus,
         supervisor=supervisor,
         input_device=config.audio.input_device or None,

@@ -166,7 +166,8 @@
     "wake_hint": "Sag dein Wake-Word…",
     "brain_label": "Brain",
     "brain_tooltip": "Brain-Provider wechseln",
-    "apikeys_alert": "Ein Anbieter ist eingerichtet, funktioniert aber nicht — zum Beheben API Keys öffnen"
+    "apikeys_alert": "Ein Anbieter ist eingerichtet, funktioniert aber nicht — zum Beheben API Keys öffnen",
+    "plugins_reconnect_alert": "Eine Plugin-Verbindung ist abgelaufen — zum Neuverbinden Skills & Tools öffnen"
   },
   "chats_view": {
     "title": "Chat",
@@ -1205,6 +1206,7 @@
     "open_with_remember": "Als Standard merken",
     "open_with_change": "Öffnen-mit ändern",
     "open_with_empty": "Keine Apps gefunden, um diese Datei zu öffnen.",
+    "open_with_loading": "Apps werden gesucht …",
     "opener_default": "System-Standard-App",
     "opener_browser": "Browser",
     "reveal_in_folder": "Im Ordner anzeigen"

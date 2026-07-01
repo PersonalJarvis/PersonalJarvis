@@ -68,7 +68,7 @@ class DocFrontmatter(BaseModel):
     slug: str
     diataxis: DocDiataxis = DocDiataxis.UNCLASSIFIED
     status: DocStatus = DocStatus.DRAFT
-    owner: str = "sam"
+    owner: str = "maintainers"
     last_reviewed: date | None = None
     phase: str = "-"
     audience: DocAudience = "developer"
@@ -84,7 +84,7 @@ class DocFrontmatter(BaseModel):
     def _strip_nonempty(cls, v: str) -> str:
         v = v.strip()
         if not v:
-            raise ValueError("darf nicht leer sein")
+            raise ValueError("must not be empty")
         return v
 
     @field_validator("phase", mode="before")
@@ -105,7 +105,7 @@ class DocFrontmatter(BaseModel):
             return [s.strip() for s in v.split(",") if s.strip()]
         if isinstance(v, list):
             return [str(s).strip() for s in v if str(s).strip()]
-        raise ValueError("muss Liste oder kommaseparierter String sein")
+        raise ValueError("must be a list or a comma-separated string")
 
 
 # ----------------------------------------------------------------------
