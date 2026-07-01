@@ -44,21 +44,21 @@ from jarvis.brain.vision_gate import has_visual_marker, should_attach_screenshot
 _VISUAL = [
     "was siehst du hier",
     "schau mal das hier",
-    "klick auf den Button",  # i18n-allow
-    "warum ist das rot?",  # i18n-allow
-    "lies mir die Fehlermeldung vor",  # i18n-allow
-    "was steht da auf dem Bildschirm",  # i18n-allow
-    "mach das Fenster zu",  # i18n-allow
+    "klick auf den Button", <!-- i18n-allow -->
+    "warum ist das rot?", <!-- i18n-allow -->
+    "lies mir die Fehlermeldung vor",
+    "was steht da auf dem Bildschirm", <!-- i18n-allow -->
+    "mach das Fenster zu",
     "look at this window",
 ]
 
 # Turns that are conversational / factual → no screenshot, even though they are
 # not "smalltalk". This is the user's reported case.
 _NON_VISUAL = [
-    "was haben wir gerade besprochen?",  # i18n-allow
-    "erklär mir nochmal das Thema",  # i18n-allow
-    "wie spät ist es",  # i18n-allow
-    "was ist die Hauptstadt von Frankreich",  # i18n-allow
+    "was haben wir gerade besprochen?",
+    "erklär mir nochmal das Thema", <!-- i18n-allow -->
+    "wie spät ist es", <!-- i18n-allow -->
+    "was ist die Hauptstadt von Frankreich", <!-- i18n-allow -->
     "warum ist das so wichtig?",  # i18n-allow   # "warum ist das" is NOT a marker without a colour
     "fass das bitte zusammen",
 ]
@@ -118,22 +118,22 @@ import re
 # they fire on non-visual turns.
 _VISUAL_MARKERS: tuple[str, ...] = (
     # deictic / pointing
-    "das hier", "das da", "hier auf", "da auf", "hier oben", "hier unten",  # i18n-allow
-    "hier links", "hier rechts", "hier im", "hier in der",  # i18n-allow
+    "das hier", "das da", "hier auf", "da auf", "hier oben", "hier unten", <!-- i18n-allow -->
+    "hier links", "hier rechts", "hier im", "hier in der",
     # look / show verbs
-    "schau", "sieh", "siehst", "guck", "zeig mir", "zeig mal",  # i18n-allow
+    "schau", "sieh", "siehst", "guck", "zeig mir", "zeig mal",
     # screen / window / page nouns
-    "auf dem bildschirm", "am bildschirm", "im bild", "auf dem screen",  # i18n-allow
-    "bildschirm", "dieses fenster", "das fenster", "diese seite",  # i18n-allow
-    "die seite hier", "fehlermeldung", "knopf", "button", "menü", "menue",  # i18n-allow
-    "dialog",  # i18n-allow
+    "auf dem bildschirm", "am bildschirm", "im bild", "auf dem screen", <!-- i18n-allow -->
+    "bildschirm", "dieses fenster", "das fenster", "diese seite",
+    "die seite hier", "fehlermeldung", "knopf", "button", "menü", "menue", <!-- i18n-allow -->
+    "dialog",
     # actions on the screen
-    "klick", "markier", "scroll", "öffne das", "oeffne das", "mach das zu",  # i18n-allow
-    "mach das fenster", "schließ das fenster", "schliess das fenster",  # i18n-allow
+    "klick", "markier", "scroll", "öffne das", "oeffne das", "mach das zu", <!-- i18n-allow -->
+    "mach das fenster", "schließ das fenster", "schliess das fenster", <!-- i18n-allow -->
     # diagnosis / read-out
-    "warum ist das rot", "warum ist das grau", "warum ist das blau",  # i18n-allow
-    "was steht da", "was steht hier", "was ist das hier", "lies vor",  # i18n-allow
-    "lies mir das", "lies das", "vorlesen",  # i18n-allow
+    "warum ist das rot", "warum ist das grau", "warum ist das blau", <!-- i18n-allow -->
+    "was steht da", "was steht hier", "was ist das hier", "lies vor", <!-- i18n-allow -->
+    "lies mir das", "lies das", "vorlesen",
     # English
     "this here", "that there", "look at", "see this", "on screen",
     "on the screen", "this window", "what's this", "what is this", "click",

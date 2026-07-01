@@ -172,13 +172,13 @@ Manual validation checklist:
 
 1. `Mach Spotify auf`
    Expected: direct fast path, no provider call, no vision collection.
-2. `Hey Jarvis, can you open Spotify?`  # i18n-allow
+2. `Hey Jarvis, can you open Spotify?`
    Expected: direct fast path, not smalltalk.
-3. `How can I open Chrome?`  # i18n-allow
+3. `How can I open Chrome?`
    Expected: no app launch; normal answer path.
-4. `Click the Send button`  # i18n-allow
+4. `Click the Send button`
    Expected: POAV Computer-Use with the original prompt.
-5. `Open three terminals`  # i18n-allow
+5. `Open three terminals`
    Expected: scripted fast path if supported by the current gate; otherwise no
    provider-side coordinate guessing.
 

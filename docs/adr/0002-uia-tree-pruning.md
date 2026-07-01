@@ -28,7 +28,7 @@ The CU harness needs structured UI access so that vision hallucinations ("click 
 
 Goal: **≤ 150 nodes** per observation. If exceeded: a second pruning round with depth 5, then depth 4. If still > 150 → `fallback_to_screenshot_only = True` in the observation event.
 
-Serialized format: compact, one node = `{"r":"Button","n":"Save","id":"btnSave","b":[100,200,180,32],"p":<parent_idx>}`. No redundancy, no whitespace.  # i18n-allow
+Serialized format: compact, one node = `{"r":"Button","n":"Save","id":"btnSave","b":[100,200,180,32],"p":<parent_idx>}`. No redundancy, no whitespace.
 
 ## Consequences
 

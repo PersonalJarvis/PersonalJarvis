@@ -5,11 +5,11 @@ description: Read and manage events in the user's Google Calendar.
 when_to_use: Use when the user mentions Google Calendar or wants to check, create, move, or delete calendar events or appointments.
 category: productivity
 plugin_id: google_calendar
-intent_verbs: [zeig, lies, such, erstell, plan, verschieb, lösch]  # i18n-allow
-intent_objects: [kalender, google-kalender, google-calendar, gcal, termin, termine, meeting, ereignis]  # i18n-allow
+intent_verbs: [zeig, lies, such, erstell, plan, verschieb, lösch] <!-- i18n-allow -->
+intent_objects: [kalender, google-kalender, google-calendar, gcal, termin, termine, meeting, ereignis]
 triggers:
   - type: voice
-    pattern: "(google.?(kalender|calendar)|gcal|(in )?(meine[nm]? )?(kalender|termin|meeting))"  # i18n-allow
+    pattern: "(google.?(kalender|calendar)|gcal|(in )?(meine[nm]? )?(kalender|termin|meeting))"
 requires_tools: [google_calendar]
 risk_policy:
   default_tier: monitor

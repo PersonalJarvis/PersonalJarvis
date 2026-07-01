@@ -156,23 +156,23 @@ In `jarvis/brain/manager.py`, after the `_subagent_switch_failure_phrase` functi
 # so the spoken readback is HONEST (audit 2026-06-27: the old path returned ""
 # silently, even when the switch was refused). de/en/es (Runtime Output Language).
 _PROVIDER_SWITCH_CONFIRM: dict[str, str] = {
-    "de": "Erledigt — dein Haupt-Brain läuft jetzt auf {p}.",  # i18n-allow
+    "de": "Erledigt — dein Haupt-Brain läuft jetzt auf {p}.", <!-- i18n-allow -->
     "en": "Done — your main brain now runs on {p}.",
     "es": "Listo — tu cerebro principal ahora usa {p}.",
 }
 _PROVIDER_SWITCH_FAIL: dict[str, dict[str, str]] = {
     "missing_credential": {
-        "de": "{p} ist nicht eingerichtet — hinterlege zuerst den Schlüssel, dann stelle ich um.",  # i18n-allow
+        "de": "{p} ist nicht eingerichtet — hinterlege zuerst den Schlüssel, dann stelle ich um.", <!-- i18n-allow -->
         "en": "{p} isn't set up — add its key first, then I'll switch.",
         "es": "{p} no está configurado — añade su clave primero y luego cambio.",
     },
     "subagent_only": {
-        "de": "{p} geht nur als Sub-Agent, nicht als Haupt-Brain.",  # i18n-allow
+        "de": "{p} geht nur als Sub-Agent, nicht als Haupt-Brain.", <!-- i18n-allow -->
         "en": "{p} only works as a sub-agent, not as the main brain.",
         "es": "{p} solo funciona como sub-agente, no como cerebro principal.",
     },
     "other": {
-        "de": "Den Haupt-Brain konnte ich nicht auf {p} umstellen.",  # i18n-allow
+        "de": "Den Haupt-Brain konnte ich nicht auf {p} umstellen.", <!-- i18n-allow -->
         "en": "I couldn't switch the main brain to {p}.",
         "es": "No pude cambiar el cerebro principal a {p}.",
     },
@@ -321,7 +321,7 @@ _CANCEL_CONFIRM: dict[str, str] = {
     "es": "Listo — detuve {n} tarea(s) en curso.",
 }
 _CANCEL_NONE: dict[str, str] = {
-    "de": "Es lief gerade nichts, das ich stoppen könnte.",  # i18n-allow
+    "de": "Es lief gerade nichts, das ich stoppen könnte.", <!-- i18n-allow -->
     "en": "Nothing was running to stop.",
     "es": "No había nada en curso que detener.",
 }
@@ -415,7 +415,7 @@ In `jarvis/brain/manager.py`, after the `_CANCEL_NONE` block (Task 2), add:
 # path. Confirms the new depth instead of staying silent (audit 2026-06-27).
 _DEPTH_CONFIRM: dict[str, dict[str, str]] = {
     "deep": {
-        "de": "Alles klar — ich denke ab jetzt gründlicher.",  # i18n-allow
+        "de": "Alles klar — ich denke ab jetzt gründlicher.", <!-- i18n-allow -->
         "en": "Got it — I'll think more deeply from now on.",
         "es": "Entendido — pensaré más a fondo a partir de ahora.",
     },
@@ -529,7 +529,7 @@ In `jarvis/brain/manager.py`, immediately AFTER `_LANG_SWITCH_CONFIRM` (ends ~li
 # / locked jarvis.toml). Honest: scoped to this session, not "from now on", because
 # it reverts on restart (audit 2026-06-27). de/en/es.
 _LANG_SWITCH_CONFIRM_SESSION: dict[str, str] = {
-    "de": "Für diese Sitzung antworte ich auf Deutsch — dauerhaft speichern hat nicht geklappt.",  # i18n-allow
+    "de": "Für diese Sitzung antworte ich auf Deutsch — dauerhaft speichern hat nicht geklappt.", <!-- i18n-allow -->
     "en": "For this session I'll reply in English — saving it permanently didn't work.",
     "es": "Por esta sesión responderé en español — no pude guardarlo de forma permanente.",
 }
@@ -625,8 +625,8 @@ def test_cancel_recognizes_halt() -> None:
 
 
 def test_halt_midsentence_is_not_cancel() -> None:
-    # "das ist halt so" must NOT cancel — halt only at sentence start / after jarvis  # i18n-allow
-    m = match_voice_command("das ist halt so")  # i18n-allow
+    # "das ist halt so" must NOT cancel — halt only at sentence start / after jarvis <!-- i18n-allow -->
+    m = match_voice_command("das ist halt so") <!-- i18n-allow -->
     assert m is None or m.kind != "cancel"
 ```
 

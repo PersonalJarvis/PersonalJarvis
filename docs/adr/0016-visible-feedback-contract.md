@@ -87,7 +87,7 @@ class UserVisibleFeedback(Event):
   always *sees* the orb on boot regardless of pin location. Skipped
   in single-monitor / primary-pin / default-anchor boots — no visual
   noise in the 99% case.
-- **L2 — Discovery-independent recovery.** Voice phrases "Orb zurück", "wo bist du", "reset orb" are matched by  # i18n-allow
+- **L2 — Discovery-independent recovery.** Voice phrases "Orb zurück", "wo bist du", "reset orb" are matched by <!-- i18n-allow -->
   `jarvis.brain.local_action_gate` and dispatched to the new
   `reset_orb_position` tool, which publishes `OrbResetRequested`.
   The orb bridge subscribes and resets via the Tk-thread marshal.

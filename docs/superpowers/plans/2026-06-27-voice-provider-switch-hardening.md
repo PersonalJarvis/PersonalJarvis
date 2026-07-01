@@ -126,12 +126,12 @@ In `jarvis/brain/manager.py`, immediately AFTER the `_SUBAGENT_SWITCH_CONFIRM` d
 # a false "done"; always names what failed. de/en/es (Runtime Output Language).
 _SUBAGENT_SWITCH_FAIL: dict[str, dict[str, str]] = {
     "missing_credential": {
-        "de": "{p} ist nicht verbunden — richte es zuerst ein, dann stelle ich um.",  # i18n-allow
+        "de": "{p} ist nicht verbunden — richte es zuerst ein, dann stelle ich um.", <!-- i18n-allow -->
         "en": "{p} isn't connected — set it up first, then I'll switch.",
         "es": "{p} no está conectado — configúralo primero y luego cambio.",
     },
     "other": {
-        "de": "Das konnte ich nicht auf {p} umstellen.",  # i18n-allow
+        "de": "Das konnte ich nicht auf {p} umstellen.", <!-- i18n-allow -->
         "en": "I couldn't switch the sub-agent to {p}.",
         "es": "No pude cambiar el sub-agente a {p}.",
     },
@@ -231,7 +231,7 @@ Append to `tests/unit/brain/test_voice_command_gate.py`:
 
 ```python
 def test_main_provider_switch_from_x_to_y_targets_y() -> None:
-    # "von Gemini auf OpenAI" must target OpenAI (the destination), not fall through.  # i18n-allow
+    # "von Gemini auf OpenAI" must target OpenAI (the destination), not fall through. <!-- i18n-allow -->
     m = match_voice_command("wechsel von gemini auf openai")  # i18n-allow: fixture
     assert m is not None and m.kind == "provider_switch"
     assert m.target == "openai"
@@ -413,7 +413,7 @@ In `jarvis/brain/voice_command_gate.py`, replace the language-word scan at the t
 
 ```python
     # Pick the language word at the EARLIEST position in the text, not the first
-    # in dict-insertion order — "auf Deutsch und Englisch" must resolve to "de"  # i18n-allow
+    # in dict-insertion order — "auf Deutsch und Englisch" must resolve to "de" <!-- i18n-allow -->
     # (forensic 2026-06-27).
     best: tuple[int, str] | None = None  # (start_position, code)
     for word, c in _LANG_ALIASES.items():

@@ -126,8 +126,8 @@ Replace the blocking block at lines 2693-2707:
 ```python
                         _publish_announcement_nonblocking(ctx.bus, AnnouncementRequested(
                             text=(
-                                f"Schritt {done_steps} von {len(plan)} "  # i18n-allow
-                                "erledigt."  # i18n-allow
+                                f"Schritt {done_steps} von {len(plan)} "
+                                "erledigt."
                             ),
                             priority="normal",
                             language="de",

@@ -31,7 +31,7 @@ The Jarvis-Agent spawning pipeline is **production-ready with caveats** — ther
 
 ### Non-ASCII deliverable filenames are silently dropped from artifacts/files/ (git core.quotepath octal-escape not decoded)
 
-**What breaks.** When a worker creates a deliverable with a non-ASCII name (umlauts: `Werbungä.html`, `Lebenslauf-Müller.pdf`), the archive step fails to copy it into `artifacts/files/`. Mission ends APPROVED, `diff.patch` carries the content, but the Outputs UI shows no deliverable file and `build_deliverable_summary` returns `''`, so voice falls back to the generic "Mission completed". For a bilingual DE assistant, umlaut filenames are routine, so this recurs.  # i18n-allow
+**What breaks.** When a worker creates a deliverable with a non-ASCII name (umlauts: `Werbungä.html`, `Lebenslauf-Müller.pdf`), the archive step fails to copy it into `artifacts/files/`. Mission ends APPROVED, `diff.patch` carries the content, but the Outputs UI shows no deliverable file and `build_deliverable_summary` returns `''`, so voice falls back to the generic "Mission completed". For a bilingual DE assistant, umlaut filenames are routine, so this recurs. <!-- i18n-allow -->
 
 **Evidence (`jarvis/missions/kontrollierer/orchestrator.py`).**
 - Lines 179-182: `_NEW_FILE_DIFF_HEADER_RE = re.compile(r'^diff --git (\"?)a/(?P<path>[^\"\n]+?)\1 (\"?)b/(?P=path)\3\nnew file mode', re.MULTILINE)`.

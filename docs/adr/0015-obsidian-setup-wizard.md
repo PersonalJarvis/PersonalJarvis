@@ -83,7 +83,7 @@ by six contracts.
   whether the setup dialog auto-opens on Wiki-tab first paint.
   Pressing Esc, clicking outside the dialog, or clicking the close
   X does **not** set the flag — only the explicit
-  "It worked — Done" button does. The asymmetry is deliberate:  # i18n-allow
+  "It worked — Done" button does. The asymmetry is deliberate:
   an accidental dismissal must not lock the user out of the help
   flow they have not yet completed; only an affirmative "I'm done"
   click marks the onboarding as resolved. The flag can be reset by
@@ -91,7 +91,7 @@ by six contracts.
   "Status" pill click forever.
 
 - **3-step German-language walkthrough.** The dialog steps the user
-  through Install → Connect → Live-Test in three numbered cards.  # i18n-allow
+  through Install → Connect → Live-Test in three numbered cards.
   The Live-Test step launches Obsidian directly via the
   `obsidian://open?vault=<urlencoded-name>` URL scheme — the only
   zero-install way for a browser to invoke a native application

@@ -16,7 +16,7 @@ audience: developer
 
 ## Context
 
-The mandate requires persistent, crash-safe tasks (`"in zwei Stunden …"`, `"wenn Outlook eine Mail von Tom bekommt"`) with retry logic, UI visibility, and cancel capability. The question is where the persistent state lives.  # i18n-allow
+The mandate requires persistent, crash-safe tasks (`"in zwei Stunden …"`, `"wenn Outlook eine Mail von Tom bekommt"`) with retry logic, UI visibility, and cancel capability. The question is where the persistent state lives. <!-- i18n-allow -->
 
 ## Decision
 

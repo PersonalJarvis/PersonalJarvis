@@ -21,7 +21,7 @@ Brain output lands on two TTS paths:
 1. `pipeline._handle_utterance` → `_speak()` → `tts.synthesize()` (main path).
 2. `pipeline._on_announcement` (`AnnouncementRequested` bus handler) → `tts.synthesize()` (bus bypass for skill / Jarvis-Agent announcements).
 
-On both paths, tool-call JSON, stack traces, Markdown remnants, engineering jargon (`Harness`/`MCP`/`Subprocess`/`Provider`), self-reference (self-identification as AI), echo paraphrase (reformulation opening) and filler openers (generic affirmations) reach the TTS synthesis unfiltered — the user hears engineering garbage read aloud. Pre-existing pre-filters (`_strip_paraphrase_prefix`, `_is_non_substantive_response`) cover only a part of it.  # i18n-allow
+On both paths, tool-call JSON, stack traces, Markdown remnants, engineering jargon (`Harness`/`MCP`/`Subprocess`/`Provider`), self-reference (self-identification as AI), echo paraphrase (reformulation opening) and filler openers (generic affirmations) reach the TTS synthesis unfiltered — the user hears engineering garbage read aloud. Pre-existing pre-filters (`_strip_paraphrase_prefix`, `_is_non_substantive_response`) cover only a part of it.
 
 Three filter strategies were up for debate:
 
@@ -34,7 +34,7 @@ Three filter strategies were up for debate:
 **Pattern-based filter in `jarvis/brain/output_filter.py`.** Regex-only, no LLM call, with the following order of operations:
 
 ```
-1. Stack trace -> standard phrase ("Error occurred"), fallback_used=True  # i18n-allow
+1. Stack trace -> standard phrase ("Error occurred"), fallback_used=True
 2. Markdown strip (**, ##, ```, leading -/*)
 3. Tool-call JSON / tool-call KW args / XML tool tags (tool-name whitelist)
 4. Self-reference (AI self-identification / language model claims)
@@ -44,10 +44,10 @@ Three filter strategies were up for debate:
 8. Whitespace normalization
 ```
 
-**Whitelist** (sacred, NEVER scrubbed): `Datei`, `Email`, `Browser`, `Terminal`, `Notiz`, `Termin`, `Kalender`.  # i18n-allow
+**Whitelist** (sacred, NEVER scrubbed): `Datei`, `Email`, `Browser`, `Terminal`, `Notiz`, `Termin`, `Kalender`.
 Hyphen compounds (`Browser-Provider`, `Brain-Provider`) are preserved by lookbehind.
 
-**Failure-mode-6 protection:** the echo-paraphrase filter acts ONLY on the first 60 characters. Mid-sentence echoes are preserved — otherwise the filter would swallow legitimate confirmations.  # i18n-allow
+**Failure-mode-6 protection:** the echo-paraphrase filter acts ONLY on the first 60 characters. Mid-sentence echoes are preserved — otherwise the filter would swallow legitimate confirmations.
 
 ### Rationale
 

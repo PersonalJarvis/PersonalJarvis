@@ -596,8 +596,8 @@ def _reg_with_gmail() -> CapabilityRegistry:
         path=Path("plugin-gmail/SKILL.md"),
         frontmatter=SkillFrontmatter(
             name="plugin-gmail", plugin_id="gmail", description="Gmail.",
-            intent_verbs=["lies", "lese", "schick", "sende", "antworte", "zeig", "check"],  # i18n-allow
-            intent_objects=["postfach", "inbox", "gmail", "mail", "email", "mails", "nachrichten", "posteingang"],  # i18n-allow
+            intent_verbs=["lies", "lese", "schick", "sende", "antworte", "zeig", "check"],
+            intent_objects=["postfach", "inbox", "gmail", "mail", "email", "mails", "nachrichten", "posteingang"],
             risk_policy={"default_tier": "ask"},
         ),
         body="g", state=SkillLifecycleState.ACTIVE,
@@ -609,9 +609,9 @@ def _reg_with_gmail() -> CapabilityRegistry:
 def test_gmail_request_with_domain_noun_resolves_to_gmail():
     reg = _reg_with_gmail()
     for utt in [
-        "Schick eine Email an sam@example.com mit dem Betreff Hallo",  # i18n-allow
-        "lies meine letzte Mail aus dem Postfach",  # i18n-allow
-        "check mein Postfach",  # i18n-allow
+        "Schick eine Email an sam@example.com mit dem Betreff Hallo", <!-- i18n-allow -->
+        "lies meine letzte Mail aus dem Postfach", <!-- i18n-allow -->
+        "check mein Postfach",
     ]:
         cap = reg.resolve_intent(utt)
         assert cap is not None and cap.id == "skill.paired.gmail", f"{utt!r} -> {cap}"
@@ -622,10 +622,10 @@ def test_generic_verb_without_gmail_noun_does_not_hijack():
     (WhatsApp/Pizza) and coding tasks must not resolve to gmail."""
     reg = _reg_with_gmail()
     for utt in [
-        "Sende eine WhatsApp an Mama",  # i18n-allow
-        "Bestelle eine Pizza",  # i18n-allow
-        "Poste auf X dass ich heute frei habe",  # i18n-allow
-        "Trag einen Termin morgen 10 Uhr ein",  # i18n-allow
+        "Sende eine WhatsApp an Mama",
+        "Bestelle eine Pizza",
+        "Poste auf X dass ich heute frei habe", <!-- i18n-allow -->
+        "Trag einen Termin morgen 10 Uhr ein", <!-- i18n-allow -->
     ]:
         cap = reg.resolve_intent(utt)
         assert cap is None or cap.id != "skill.paired.gmail", f"{utt!r} -> {cap}"
@@ -700,8 +700,8 @@ def _gmail_skill() -> Skill:
         frontmatter=SkillFrontmatter(
             name="plugin-gmail", plugin_id="gmail",
             description="Read and send mail from the connected Gmail inbox.",
-            intent_verbs=["lies", "lese", "schick", "sende", "antworte", "zeig", "check"],  # i18n-allow
-            intent_objects=["postfach", "inbox", "gmail", "mails", "nachrichten", "posteingang"],  # i18n-allow
+            intent_verbs=["lies", "lese", "schick", "sende", "antworte", "zeig", "check"],
+            intent_objects=["postfach", "inbox", "gmail", "mails", "nachrichten", "posteingang"],
             risk_policy={"default_tier": "ask"},
         ),
         body="Use gmail/* tools to read and send mail.",
@@ -713,7 +713,7 @@ def test_gmail_request_resolves_when_paired():
     reg = CapabilityRegistry()
     register_paired_capabilities(reg, [_gmail_skill()])
     # The gate must NOT return UNSUPPORTED — resolve_intent is non-None now.
-    plan = match_local_action("schick eine Mail an Sam aus meinem Postfach", _registry=reg)  # i18n-allow
+    plan = match_local_action("schick eine Mail an Sam aus meinem Postfach", _registry=reg) <!-- i18n-allow -->
     assert plan is None or plan.mode != LocalActionMode.UNSUPPORTED
 
 
@@ -721,7 +721,7 @@ def test_email_validation_still_refused_or_passed_through():
     """Coding task that merely names email stays non-Gmail."""
     reg = CapabilityRegistry()
     register_paired_capabilities(reg, [_gmail_skill()])
-    assert reg.resolve_intent("implementier eine Email-Validation") is None  # i18n-allow
+    assert reg.resolve_intent("implementier eine Email-Validation") is None
 ```
 
 > CI LANGUAGE GATE: the German voice-utterance string literals and German intent-vocab lists above are intentional test data (they prove Jarvis's German speech path resolves). Each such line carries `# i18n-allow`. After writing, verify with `py -3.11 scripts/ci/check_no_new_german.py HEAD~1` → must print "gate OK".

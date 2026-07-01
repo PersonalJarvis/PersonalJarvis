@@ -129,7 +129,7 @@ The router-tier brain is a **pure dispatcher**. Tool surface is the `ROUTER_TOOL
 
 Force-spawn heuristic in `BrainManager._should_force_openclaw`:
 - Smalltalk allowlist wins → never spawn.
-- Action verb (`lies/baue/installiere/öffne/mach/zeig` + repair words) → spawn.  # i18n-allow
+- Action verb (`lies/baue/installiere/öffne/mach/zeig` + repair words) → spawn. <!-- i18n-allow -->
 - External-system marker (PR/Repo/GitHub/Issue) → spawn.
 
 Patterns configurable under `[brain.routing]`. **The sub-tier was deleted in Welle 4 — only `"router"` remains.** Resurrecting `SUB_TOOLS` or adding the harness-spawn / `dispatch-with-review` / `run-skill` tool to any worker set breaks the D9 recursion guard. When extending `ROUTER_TOOLS`: amend ADR-0011 + extend `tests/unit/brain/test_routing.py`.

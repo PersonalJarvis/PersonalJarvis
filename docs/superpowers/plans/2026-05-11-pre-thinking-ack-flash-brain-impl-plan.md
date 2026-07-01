@@ -741,7 +741,7 @@ def test_de_prompt_contains_question_example_phrase():
 
 
 def test_de_prompt_contains_reflection_example_phrase():
-    assert "überlegen" in PERSONA_PROMPT_DE  # i18n-allow
+    assert "überlegen" in PERSONA_PROMPT_DE <!-- i18n-allow -->
 
 
 def test_de_prompt_forbids_subagent():
@@ -842,7 +842,7 @@ from __future__ import annotations
 __all__ = ["PERSONA_PROMPT_DE", "PERSONA_PROMPT_EN", "get_persona_prompt"]
 
 
-PERSONA_PROMPT_DE = """Du bist JARVIS, der persönliche Assistent von Alex. Sprich kurz, natürlich  # i18n-allow
+PERSONA_PROMPT_DE = """Du bist JARVIS, der persönliche Assistent von Alex. Sprich kurz, natürlich <!-- i18n-allow -->
 und kontextspezifisch — wie ein cleverer Kollege, der weiß, was er tut.
 
 Deine einzige Aufgabe: ein kurzer Bestätigungssatz, BEVOR die eigentliche
