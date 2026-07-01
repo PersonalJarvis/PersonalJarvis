@@ -138,7 +138,9 @@ def _cpu_safe_compute_type(compute_type: str) -> str:
     return compute_type
 
 
-def _new_whisper_model(model_name: str, device: str, compute_type: str) -> Any:
+def _new_whisper_model(
+    model_name: str, device: str, compute_type: str, cpu_threads: int = 0
+) -> Any:
     """Construct a ``WhisperModel`` (overridable seam for tests).
 
     The heavy ``faster_whisper`` import stays lazy here so importing this module
@@ -146,11 +148,25 @@ def _new_whisper_model(model_name: str, device: str, compute_type: str) -> Any:
     import + a real model build. The import shield skips ctranslate2's
     transformers+torch converter stack (inference doesn't need it) — see
     :func:`inference_only_import_shield`.
+
+    ``cpu_threads`` bounds ctranslate2's intra-op thread pool. 0 = auto (all
+    cores). A FIXED small value is the standard mitigation for the intermittent
+    ``model.transcribe`` HANG that appears when ctranslate2 and PyTorch share a
+    process (both bring their own OpenMP runtime; ctranslate2 auto-grabbing every
+    core deadlocks against torch's pool — live-log evidence 2026-06-30: the wake
+    transcribe hung for 8 s at a time on BOTH cpu and cuda while torch was
+    loaded). ``num_workers=1`` keeps a single inference stream so there is no
+    internal cross-thread contention. Only the wake model sets this (it coexists
+    with torch on the always-on loop); the utterance STT keeps auto threads.
     """
     with inference_only_import_shield():
         from faster_whisper import WhisperModel
 
-    return WhisperModel(model_name, device=device, compute_type=compute_type)
+    kwargs: dict[str, Any] = {"device": device, "compute_type": compute_type}
+    if cpu_threads and cpu_threads > 0:
+        kwargs["cpu_threads"] = int(cpu_threads)
+        kwargs["num_workers"] = 1
+    return WhisperModel(model_name, **kwargs)
 
 
 class FasterWhisperProvider:
@@ -171,6 +187,10 @@ class FasterWhisperProvider:
         # hallucinated as the transcript on quiet audio and sent to the brain.
         initial_prompt: str | None = None,
         no_speech_threshold: float = 0.6,
+        # 0 = auto (all cores). A fixed small value avoids the ctranslate2<->torch
+        # OpenMP deadlock that hung the always-on wake transcribe (see
+        # ``_new_whisper_model``); set only on the wake model.
+        cpu_threads: int = 0,
     ) -> None:
         self._model_name = model
         self._device = device
@@ -199,6 +219,7 @@ class FasterWhisperProvider:
         self._vad_filter = vad_filter
         self._initial_prompt = initial_prompt
         self._no_speech_threshold = no_speech_threshold
+        self._cpu_threads = int(cpu_threads)
         self._model: Any = None  # lazy
         # Serialize the actual ctranslate2 inference. ``transcribe_pcm`` runs
         # ``model.transcribe`` in a worker thread (asyncio.to_thread), and the
