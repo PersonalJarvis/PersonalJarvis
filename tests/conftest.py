@@ -1,11 +1,11 @@
-"""Gemeinsame Pytest-Fixtures für alle Test-Suites."""
+"""Shared pytest fixtures for all test suites."""
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-# Repo-Root in sys.path aufnehmen, damit Tests Top-Level-Module wie `ui.orb`
-# importieren koennen (Pytest setzt sys.path standardmaessig nicht auf den Repo-Root).
+# Add the repo root to sys.path so tests can import top-level modules like
+# `ui.orb` (pytest doesn't add the repo root to sys.path by default).
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
@@ -18,7 +18,7 @@ from jarvis.core.bus import EventBus, reset_default_bus
 
 @pytest.fixture(autouse=True)
 def _reset_bus():
-    """Reset des globalen Default-Bus vor und nach jedem Test."""
+    """Reset the global default bus before and after each test."""
     reset_default_bus()
     yield
     reset_default_bus()
