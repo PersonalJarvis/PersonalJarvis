@@ -1,11 +1,11 @@
-"""Integration-Tests fuer die Sub-Agent-Dashboard-REST-API.
+"""Integration tests for the Sub-Agent dashboard REST API.
 
-Deckt:
-- GET /api/sub-agents/tree liefert leere Struktur wenn keine Events.
-- Events auf dem Bus landen im Tree-Endpoint.
-- GET /api/sub-agents/{trace_id} liefert eine einzelne Node.
-- 404 bei unbekanntem trace_id.
-- 503-Fallback wenn Registry fehlt.
+Covers:
+- GET /api/sub-agents/tree returns an empty structure when there are no events.
+- Events on the bus land in the tree endpoint.
+- GET /api/sub-agents/{trace_id} returns a single node.
+- 404 for an unknown trace_id.
+- 503 fallback when the registry is missing.
 """
 from __future__ import annotations
 
@@ -26,16 +26,16 @@ from jarvis.ui.web.server import WebServer
 
 @pytest.fixture
 def server_bus() -> tuple[TestClient, EventBus, JarvisAgentRegistry]:
-    """Baut einen echten WebServer + FastAPI + Registry auf.
+    """Builds a real WebServer + FastAPI + registry.
 
-    Die Registry haengt direkt am Bus, also fliessen bus.publish-Events
-    durch in den /api/sub-agents/tree-Response.
+    The registry hangs directly off the bus, so bus.publish events
+    flow through into the /api/sub-agents/tree response.
     """
     bus = EventBus()
     ws = WebServer(bus=bus, cfg=load_config())
     client = TestClient(ws.app)
     registry = ws.app.state.sub_agent_registry
-    assert registry is not None, "JarvisAgentRegistry wurde nicht attached"
+    assert registry is not None, "JarvisAgentRegistry was not attached"
     return client, bus, registry
 
 
@@ -118,7 +118,7 @@ async def test_tree_lifecycle_running_to_completed(server_bus) -> None:
 
 
 def test_tree_fallback_when_registry_missing() -> None:
-    """Wenn Registry None ist (Import-Fehler), liefert /tree ein leeres OK-Payload."""
+    """If registry is None (import error), /tree returns an empty OK payload."""
     from fastapi import FastAPI
 
     from jarvis.ui.web.sub_agents_routes import router as sub_agents_router
