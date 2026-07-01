@@ -66,16 +66,16 @@ def _augment_with_preferences(
 # in token count, dominated by re.findall.
 
 _TOP_DE: frozenset[str] = frozenset({
-    "der", "die", "das", "und", "ich", "ist", "nicht", "ein", "eine", "zu",
-    "den", "mit", "sich", "auf", "für", "von", "im", "dem", "ja", "kurz",
-    "mache", "danke", "hallo", "klar", "okay", "gut", "lass", "mich", "kann",
-    "gleich", "schaue", "suche", "prüfe", "starte", "wechsle", "öffne",
-    "hole", "schaut", "ändere", "recherchiere", "guten", "tag", "abend",
-    "morgen", "schön", "bitte", "leider", "noch", "schon", "aber",
-    "oder", "auch", "nur", "weil", "wenn", "dann", "doch", "wie", "was",
+    "der", "die", "das", "und", "ich", "ist", "nicht", "ein", "eine", "zu",  # i18n-allow: German output-language-detection vocabulary, matched against generated ack text
+    "den", "mit", "sich", "auf", "für", "von", "im", "dem", "ja", "kurz",  # i18n-allow: same German language-detection vocabulary
+    "mache", "danke", "hallo", "klar", "okay", "gut", "lass", "mich", "kann",  # i18n-allow: same German language-detection vocabulary
+    "gleich", "schaue", "suche", "prüfe", "starte", "wechsle", "öffne",  # i18n-allow: same German language-detection vocabulary
+    "hole", "schaut", "ändere", "recherchiere", "guten", "tag", "abend",  # i18n-allow: same German language-detection vocabulary
+    "morgen", "schön", "bitte", "leider", "noch", "schon", "aber",  # i18n-allow: same German language-detection vocabulary
+    "oder", "auch", "nur", "weil", "wenn", "dann", "doch", "wie", "was",  # i18n-allow: same German language-detection vocabulary
     "wer", "wo", "wann", "warum", "diese", "dieser", "dieses", "habe",
-    "hast", "hat", "haben", "wird", "werden", "wollen", "kannst", "konnte",
-    "sollst", "soll", "muss", "müssen", "Chef",
+    "hast", "hat", "haben", "wird", "werden", "wollen", "kannst", "konnte",  # i18n-allow: same German language-detection vocabulary
+    "sollst", "soll", "muss", "müssen", "Chef",  # i18n-allow: same German language-detection vocabulary
 })
 
 _TOP_EN: frozenset[str] = frozenset({
@@ -137,11 +137,11 @@ def _word_count(text: str) -> int:
 # describing an action, not answering a question).
 
 _ACTION_VERBS = frozenset({
-    "suche", "suchst", "sucht", "prüfe", "prüfst", "prüft", "hole", "holst",
+    "suche", "suchst", "sucht", "prüfe", "prüfst", "prüft", "hole", "holst",  # i18n-allow: German action-verb detection vocabulary, matched against generated ack text
     "holt", "schaue", "schaust", "schaut", "starte", "startest", "startet",
-    "öffne", "öffnest", "öffnet", "wechsle", "wechselst", "wechselt",
-    "recherchiere", "recherchierst", "recherchiert", "ändere", "änderst",
-    "ändert", "mache", "machst", "macht", "look", "lookup", "search",
+    "öffne", "öffnest", "öffnet", "wechsle", "wechselst", "wechselt",  # i18n-allow: same German action-verb detection vocabulary
+    "recherchiere", "recherchierst", "recherchiert", "ändere", "änderst",  # i18n-allow: same German action-verb detection vocabulary
+    "ändert", "mache", "machst", "macht", "look", "lookup", "search",  # i18n-allow: same German action-verb detection vocabulary
     "fetch", "fetches", "fetching", "check", "checks", "checking",
     "launch", "launches", "launching", "change", "changes", "changing",
     "switch", "switches", "switching", "open", "opens", "opening",
@@ -155,18 +155,19 @@ _WEEKDAY_RE = re.compile(
     re.IGNORECASE,
 )
 _MONTH_RE = re.compile(
-    r"\b(januar|februar|märz|april|mai|juni|juli|august|september|"
+    r"\b(januar|februar|märz|april|mai|juni|juli|august|september|"  # i18n-allow: German month-name detection vocabulary, matched against generated ack text
     r"oktober|november|dezember|january|february|march|may|june|july|"
     r"august|september|october|november|december)\b",
     re.IGNORECASE,
 )
 # Spec §6 calls for `(.*)\s(ist|...)\s(.*)\.` — i.e. multi-word
-# subjects ("Die Hauptstadt von Italien ist Rom.") must match. The
-# original tightening to `\S+` only caught single-word subjects and
-# silently failed on the very examples the spec listed; broaden to
-# `.+?` so a multi-word noun-phrase prefix still triggers the filter.
+# subjects (German example: "Die Hauptstadt von Italien ist Rom." — "Rome
+# is the capital of Italy.") must match. The original tightening to
+# `\S+` only caught single-word subjects and silently failed on the very
+# examples the spec listed; broaden to `.+?` so a multi-word noun-phrase
+# prefix still triggers the filter.
 _DEFINITION_RE = re.compile(
-    r"^\s*.+?\s+(ist|sind|war|waren|is|are|was|were)\s+.+\.\s*$",
+    r"^\s*.+?\s+(ist|sind|war|waren|is|are|was|were)\s+.+\.\s*$",  # i18n-allow: bilingual (de/en) copula-verb matching data
     re.IGNORECASE,
 )
 
