@@ -693,7 +693,7 @@ def _phase2_full_brain(
         soul = Soul.load(workspace.soul_path)
         people = PersonStore(workspace)
     except Exception as exc:  # noqa: BLE001
-        log.warning("Workspace-Load fehlgeschlagen: %s — continuing without profile", exc)
+        log.warning("Workspace load failed: %s — continuing without profile", exc)
         user_profile = None
         soul = None
         people = None
@@ -781,7 +781,7 @@ def _phase2_full_brain(
                     v_provider, v_model, v_cfg.timeout_s,
                 )
             except Exception as exc:    # noqa: BLE001
-                log.warning("Verdichter konnte nicht initialisiert werden: %s", exc)
+                log.warning("Verdichter could not be initialized: %s", exc)
                 awareness_manager._verdichter = None    # noqa: SLF001
 
         # Phase A2: build the StoryTracker and attach it to the manager. Lifecycle
@@ -807,7 +807,7 @@ def _phase2_full_brain(
                     s_cfg.hard_timer_min,
                 )
             except Exception as exc:    # noqa: BLE001
-                log.warning("StoryTracker konnte nicht initialisiert werden: %s", exc)
+                log.warning("StoryTracker could not be initialized: %s", exc)
                 awareness_manager._story_tracker = None    # noqa: SLF001
 
         # Phase A5-Lite: probes (GitProbe + FileSystemProbe). Called by the
@@ -835,7 +835,7 @@ def _phase2_full_brain(
                     [type(p).__name__ for p in probes_list], p_cfg.total_budget_ms,
                 )
             except Exception as exc:    # noqa: BLE001
-                log.warning("Probes konnten nicht initialisiert werden: %s", exc)
+                log.warning("Probes could not be initialized: %s", exc)
                 awareness_manager._probes = []    # noqa: SLF001
                 awareness_manager._fs_probe = None    # noqa: SLF001
 
@@ -932,7 +932,7 @@ def _phase2_full_brain(
     try:
         manager.attach_to_bus(bus)
     except Exception as exc:  # noqa: BLE001
-        log.warning("attach_to_bus fehlgeschlagen: %s", exc)
+        log.warning("attach_to_bus failed: %s", exc)
 
     cu_cfg = getattr(config, "computer_use", None)
     cu_enabled = bool(cu_cfg and cu_cfg.enabled)
