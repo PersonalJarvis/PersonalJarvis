@@ -1,4 +1,4 @@
-"""Tests fuer BudgetTracker (Token-Bucket-Cost-Guard)."""
+"""Tests for BudgetTracker (token-bucket cost guard)."""
 from __future__ import annotations
 
 import asyncio
@@ -25,7 +25,7 @@ from jarvis.missions.events import (
 
 
 async def _capture_emitter() -> tuple[list[EventEnvelope], "asyncio.Future"]:
-    """Erstellt einen Emitter der Envelopes in eine Liste sammelt."""
+    """Creates an emitter that collects envelopes into a list."""
     captured: list[EventEnvelope] = []
 
     async def emitter(env: EventEnvelope) -> int:
@@ -144,7 +144,7 @@ async def test_record_warn_only_once_per_threshold() -> None:
 
     bt = BudgetTracker(per_mission_usd=10.0, emitter=emitter)
     await bt.record("m1", 5.0)  # 50%
-    await bt.record("m1", 0.1)  # noch immer 50%-Schwelle, kein neuer Warn
+    await bt.record("m1", 0.1)  # still at the 50% threshold, no new warning
     await bt.record("m1", 0.1)
     warns = [e for e in captured if isinstance(e.payload, MissionBudgetWarning)]
     assert len(warns) == 1
@@ -153,7 +153,7 @@ async def test_record_warn_only_once_per_threshold() -> None:
 @pytest.mark.asyncio
 async def test_record_no_emitter_no_warn_no_crash() -> None:
     bt = BudgetTracker(per_mission_usd=10.0, emitter=None)
-    # Sollte einfach durchlaufen ohne zu raisen
+    # Should just run through without raising
     await bt.record("m1", 5.0)
 
 
@@ -166,7 +166,7 @@ async def test_record_raises_at_per_mission_limit() -> None:
     await bt.record("m1", 4.5)
     with pytest.raises(BudgetExceeded, match="Mission m1"):
         await bt.record("m1", 0.6)
-    # Cost wurde trotzdem persistiert (Forensik)
+    # Cost was persisted anyway (forensics)
     assert bt.mission_cost("m1") == pytest.approx(5.1)
 
 
@@ -181,9 +181,9 @@ async def test_record_raises_at_daily_limit() -> None:
 @pytest.mark.asyncio
 async def test_assert_under_limit_pre_check() -> None:
     bt = BudgetTracker(per_mission_usd=5.0)
-    bt.assert_under_limit("m1")  # frische Mission, kein Crash
+    bt.assert_under_limit("m1")  # fresh mission, no crash
     await bt.record("m1", 4.5)
-    bt.assert_under_limit("m1")  # noch unter Limit, kein Crash
+    bt.assert_under_limit("m1")  # still under limit, no crash
 
 
 @pytest.mark.asyncio
@@ -294,7 +294,7 @@ async def test_bind_to_event_bus_ignores_non_draft_events() -> None:
 
 @pytest.mark.asyncio
 async def test_record_concurrent_workers_serialize_via_lock() -> None:
-    """Parallele record() von 5 Workern duerfen keine Race-Condition haben."""
+    """Parallel record() calls from 5 workers must not race."""
     bt = BudgetTracker(per_mission_usd=100.0)
 
     async def worker(amount: float) -> None:
