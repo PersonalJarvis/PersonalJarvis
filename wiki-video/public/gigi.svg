@@ -1,4 +1,4 @@
-<svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Gigi — Bit-Ghost (Schwarz/Gelb)">
+<svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Gigi — Bit-Ghost (black/gold)">
   <defs>
     <filter id="yGlow" x="-50%" y="-50%" width="200%" height="200%">
       <feGaussianBlur stdDeviation="3" result="b"/>
