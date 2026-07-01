@@ -514,8 +514,8 @@ def scrub_for_voice(
         if not out.strip():
             return ScrubResult(cleaned="", actions=actions, fallback_used=False)
 
-    # 2. Markdown — Code-Fences zuerst (sonst greift INLINE_CODE auf den
-    #    Inhalt der Fence). Inline-Code behaelt den Inhalt, nur Backticks weg.
+    # 2. Markdown — code fences first (otherwise INLINE_CODE would grab the
+    #    fence content). Inline code keeps the content, only backticks go.
     new = CODE_FENCE_RE.sub(" ", out)
     new = INLINE_CODE_RE.sub(r"\1", new)
     new = MARKDOWN_BOLD_RE.sub("", new)
@@ -541,11 +541,11 @@ def scrub_for_voice(
     new = TOOL_CALL_INLINE_RE.sub("", new)
     new = TOOL_JSON_RE.sub("", new)
     new = TOOL_CALL_KW_RE.sub("", new)
-    new = TOOL_ARGS_YAML_RE.sub("", new)  # Phase-1-Erweiterung 2026-04-28
-    # Audit F-AUDIT-4 (2026-04-29): prosaisch geschriebene Tool-Args
-    # ("X with utterance is Y context_hints is Z action is ...") — nach
-    # YAML-Pattern, weil Prose-Pattern strikter (greedy bis Satzende) ist
-    # und sonst YAML-Block schon weg waere.
+    new = TOOL_ARGS_YAML_RE.sub("", new)  # Phase-1 extension 2026-04-28
+    # Audit F-AUDIT-4 (2026-04-29): tool args written as prose
+    # ("X with utterance is Y context_hints is Z action is ...") — after
+    # the YAML pattern, because the prose pattern is stricter (greedy up
+    # to sentence end) and otherwise the YAML block would already be gone.
     new = TOOL_CALL_PROSE_RE.sub("", new)
     new = TOOL_ARGS_PROSE_RE.sub("", new)
     if new != out:
@@ -611,8 +611,8 @@ def scrub_for_voice(
         actions.append("removed_engineering_jargon")
         out = new
 
-    # 7b. A1-Drift: "Sir"-Anrede entfernen, mit Quote-Schutz fuer Zitate.
-    #     (Mandat A1 + Phase-1-Erweiterung 2026-04-28.)
+    # 7b. A1 drift: remove the "Sir" honorific, with quote protection for quotations.
+    #     (Mandate A1 + Phase-1 extension 2026-04-28.)
     quote_spans: list[tuple[int, int]] = [
         m.span() for m in QUOTE_PROTECT_RE.finditer(out)
     ]
@@ -635,7 +635,7 @@ def scrub_for_voice(
         sir_changed = True
         out = new
     if sir_changed:
-        actions.append("removed_anrede_drift")
+        actions.append("removed_anrede_drift")  # i18n-allow: internal telemetry action-name identifier, not prose
 
     # 7c. Em dash / en dash -> comma (2026-06-29 "choppy voice" forensic). A
     #     parenthetical dash renders as a hard pause and a trailing half-sentence
@@ -662,10 +662,10 @@ def scrub_for_voice(
     out = re.sub(r",\s*(?=[,.!?;:])", "", out)
     out = re.sub(r",\s*$", "", out).strip()
 
-    # 9. Post-Scrub-Muell-Fallback: wenn nach allem Filtern weniger als
-    #    MIN_MEANINGFUL_CHARS alphanumerische Zeichen uebrig sind UND der
-    #    Filter ueberhaupt etwas gemacht hat (actions nicht leer), ist das
-    #    ein Filter-Artefakt -> Standard-Phrase. Probe-Drift 12 vom 2026-04-28.
+    # 9. Post-scrub-residue fallback: if fewer than MIN_MEANINGFUL_CHARS
+    #    alphanumeric characters remain after all filtering AND the filter
+    #    actually did something (actions not empty), this is a filter
+    #    artifact -> standard phrase. Probe-drift 12 from 2026-04-28.
     if actions:
         meaningful = sum(1 for c in out if c.isalnum())
         if meaningful < MIN_MEANINGFUL_CHARS:
