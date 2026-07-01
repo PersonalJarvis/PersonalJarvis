@@ -6937,7 +6937,14 @@ class SpeechPipeline:
         start = time.monotonic()
         task: asyncio.Task[tuple[str, bool]] = asyncio.ensure_future(coro)
         monitor_task: asyncio.Task[bool] | None = None
-        if interrupt_monitor and getattr(self, "_continuation_interrupt_enabled", False):
+        if (
+            interrupt_monitor
+            and getattr(self, "_continuation_interrupt_enabled", False)
+            # Mute is an input-only contract: while muted the user has told us to
+            # stop listening, so never open the thinking-interrupt monitor's
+            # second mic (a mid-turn mute is handled below by standing it down).
+            and not getattr(self, "_muted", False)
+        ):
             self._brain_first_frame_played = False
             monitor_task = asyncio.create_task(
                 self._barge_monitor(
@@ -6972,6 +6979,26 @@ class SpeechPipeline:
                     if getattr(self, "_brain_first_frame_played", False):
                         # Playback started — _brain_streaming's own barge monitor
                         # now owns interruption; stand our thinking monitor down.
+                        monitor_task.cancel()
+                        try:
+                            await monitor_task
+                        except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                            pass
+                        monitor_task = None
+                    elif getattr(self, "_muted", False):
+                        # Voice muted mid-think (orb double-click → _muted=True):
+                        # the user said "stop listening to me". The thinking-
+                        # interrupt monitor is an INPUT path, so it must honour mute
+                        # exactly like the wake loop (_activation_allowed) and
+                        # _speak do. Otherwise it aborts the turn on the muted
+                        # second mic while the muted wake loop can NEVER capture the
+                        # recombination utterance — silently killing a fully-worked
+                        # turn (live bug 2026-07-01 "Was steht alles in meinen
+                        # E-Mails drin?": 6 mails fetched, a barge on the muted mic
+                        # → empty answer, empty transcript). Stand the monitor down
+                        # unconditionally and let the brain finish; its answer still
+                        # lands as text. Clearing it here (not just skipping the
+                        # abort) also avoids a busy-spin on an already-done monitor.
                         monitor_task.cancel()
                         try:
                             await monitor_task
@@ -7645,6 +7672,15 @@ class SpeechPipeline:
                 residual = np.empty(0, dtype=np.float32)
                 speech_run = 0
                 async for chunk in mic.stream():
+                    # Honour the global mute (orb double-click → _muted=True):
+                    # while muted the user has told us to stop listening, so a
+                    # barge must never fire on this second mic — mirrors
+                    # _activation_allowed / _speak, which both short-circuit on
+                    # _muted. Without this the thinking-interrupt monitor aborted a
+                    # muted-but-still-working turn (live bug 2026-07-01).
+                    if getattr(self, "_muted", False):
+                        speech_run = 0
+                        continue
                     # Echo-suppression (spec §4.2): while our own ACK/preamble
                     # audio is still within the post-TTS suppression window, skip
                     # detection so the thinking-interrupt monitor never mistakes

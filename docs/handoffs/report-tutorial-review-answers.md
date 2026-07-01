@@ -21,7 +21,7 @@
   The first name "Ruben" is shown on purpose (he introduces himself by name).
 - **One genuine, actionable finding:** the in-video GitHub screenshot
   (`video/public/shot-github.png`, used in the CreatorIntro scene) shows the **real
-  surname "Ruben Lütke"** and GitHub login **"rubenluetke10-beep"** in the
+  surname "Ruben Lütke"** and GitHub login **"rubenluetke10-beep"** in the  <!-- i18n-allow -->
   contributor list — readable at 4K / on pause. It is also **stale** (the public
   history has since been anonymized, so the video would show data that no longer
   exists in the live repo).

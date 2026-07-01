@@ -69,7 +69,7 @@ New mode `UNSUPPORTED` is added to `LocalActionMode`; manager.py routes it direc
 - Emit `_unsupported_response(text)` via the same TTS path as a normal short reply.
 
 Response phrasing (deterministic, no LLM):
-- DE: *"Das kann ich noch nicht. Mir fehlt dafür ein Werkzeug — wenn du mir verrätst welches MCP oder welche Integration zuständig wäre, kann ich's lernen."* ("I can't do that yet. I'm missing a tool for it — if you tell me which MCP or integration should be responsible, I can learn it.")
+- DE: *"Das kann ich noch nicht. Mir fehlt dafür ein Werkzeug — wenn du mir verrätst welches MCP oder welche Integration zuständig wäre, kann ich's lernen."* ("I can't do that yet. I'm missing a tool for it — if you tell me which MCP or integration should be responsible, I can learn it.")  <!-- i18n-allow: product voice output DE -->
 - EN: *"I can't do that yet. I don't have a registered tool for it. Tell me which MCP or integration should handle it and I can learn."*
 
 ---
@@ -77,10 +77,10 @@ Response phrasing (deterministic, no LLM):
 ### Layer 3 — Capability-Aware Prompts + Critic Honesty
 
 **3a. System prompt (`manager.py:770-786`)** — replace the hardcoded `NUTZE: search_web / cli_* / dispatch_to_harness` block with `registry.render_for_prompt(lang)`. Append a hard rule:
-> You must never claim to perform an action that is not listed above. If the user asks for one, respond with: "Das kann ich noch nicht — mir fehlt das passende Werkzeug." ("I can't do that yet — I'm missing the right tool.") Do not invent tools.
+> You must never claim to perform an action that is not listed above. If the user asks for one, respond with: "Das kann ich noch nicht — mir fehlt das passende Werkzeug." ("I can't do that yet — I'm missing the right tool.") Do not invent tools. <!-- i18n-allow: product voice output DE -->
 
 **3b. Ack-Brain persona (`jarvis/brain/ack_brain/persona_prompt.py`)** — extend the forbidden vocabulary list with action-promise patterns:
-- "mache ich" ("I'll do it"), "wird erledigt" ("will be taken care of"), "ist gesendet" ("is sent"), "ist eingetragen" ("is entered"), "kümmere mich" ("I'll handle it")
+- "mache ich" ("I'll do it"), "wird erledigt" ("will be taken care of"), "ist gesendet" ("is sent"), "ist eingetragen" ("is entered"), "kümmere mich" ("I'll handle it")  <!-- i18n-allow: product speech output patterns -->
 - "I'll do that", "will be sent", "will be scheduled", "consider it done"
 
 The Ack-Brain is allowed only: (a) acoustic acknowledgment ("mhm", "verstanden" / "understood"), (b) context-restating questions ("welche Adresse?" / "which address?"), (c) silence on uncertainty.

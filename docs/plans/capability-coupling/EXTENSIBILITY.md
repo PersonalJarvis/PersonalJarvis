@@ -21,8 +21,8 @@ from jarvis.core.capabilities import Capability
 MY_GMAIL_CAPABILITY = Capability(
     id="mcp.gmail/send_mail",
     source="mcp",
-    verbs=("schick", "sende", "send", "mail", "email"),
-    objects=("email", "mail", "nachricht", "message"),
+    verbs=("schick", "sende", "send", "mail", "email"),  # i18n-allow
+    objects=("email", "mail", "nachricht", "message"),  # i18n-allow
     description="Send an email via the Gmail MCP server.",
     risk_tier="ask",          # user confirmation required before sending
     requires_evidence=True,   # Critic must see a tool-call to ratify success
@@ -58,8 +58,8 @@ description. If the auto-derived verbs/objects are wrong, override them in
 
 ```toml
 [capabilities.mcp.gmail.send_mail]
-verbs = ["schick", "sende", "send", "mail", "email"]
-objects = ["email", "mail", "nachricht", "message"]
+verbs = ["schick", "sende", "send", "mail", "email"]  # i18n-allow
+objects = ["email", "mail", "nachricht", "message"]  # i18n-allow
 ```
 
 **Harness adapter** — call `registry.register(...)` inside the adapter's

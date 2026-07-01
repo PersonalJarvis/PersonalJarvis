@@ -114,6 +114,68 @@ async def test_disabled_does_not_start_monitor(monkeypatch):
     assert started["called"] is False
 
 
+# --- Mute must silence the thinking-interrupt monitor --------------------- #
+# Live bug 2026-07-01 ("Was steht alles in meinen E-Mails drin?"): while the
+# brain was mid-think (6 Gmail messages already fetched) the user muted via the
+# orb double-click. The thinking-interrupt monitor is a SECOND live mic that
+# ignored the mute, "heard" audio, and aborted the fully-worked turn — empty
+# answer, empty transcript. The muted wake loop could never capture a
+# recombination utterance, so the turn died silently. Mute is an input-only
+# contract (see _activation_allowed / _speak): the monitor must honour it too.
+
+
+@pytest.mark.asyncio
+async def test_muted_session_does_not_abort_brain_turn(monkeypatch):
+    """A mute that flips mid-think must stand the thinking-interrupt monitor down
+    instead of aborting: the turn completes and its answer is returned."""
+    p = _guard_pipeline()
+    p._muted = True
+
+    async def fake_monitor(*, grace_s, respect_input_suppression=False):
+        # The monitor's second mic "hears" audio even though voice is muted.
+        return True
+
+    async def working_brain():
+        await asyncio.sleep(0.05)
+        return ("your inbox summary", False)
+
+    monkeypatch.setattr(p, "_barge_monitor", fake_monitor)
+    monkeypatch.setattr(p, "_mark_brain_progress", lambda: None)
+
+    response, barged = await asyncio.wait_for(
+        p._run_brain_with_stall_guard(working_brain(), interrupt_monitor=True),
+        timeout=5.0,
+    )
+    assert response == "your inbox summary"
+    assert barged is False
+
+
+@pytest.mark.asyncio
+async def test_muted_session_does_not_start_thinking_monitor(monkeypatch):
+    """When voice is already muted the thinking-interrupt monitor must not even
+    open its second mic — mute means 'stop listening to me'."""
+    p = _guard_pipeline()
+    p._muted = True
+    started = {"called": False}
+
+    async def tracking_monitor(*, grace_s, respect_input_suppression=False):
+        started["called"] = True
+        return True
+
+    async def quick_brain():
+        return ("ok", False)
+
+    monkeypatch.setattr(p, "_barge_monitor", tracking_monitor)
+    monkeypatch.setattr(p, "_mark_brain_progress", lambda: None)
+
+    response, barged = await p._run_brain_with_stall_guard(
+        quick_brain(), interrupt_monitor=True
+    )
+    assert response == "ok"
+    assert barged is False
+    assert started["called"] is False
+
+
 # --- Behavioral tests driving the REAL _brain_streaming path -------------- #
 # The four tests above drive _run_brain_with_stall_guard in isolation and flip
 # _brain_first_frame_played by hand. These two pin the handoff against the ACTUAL
