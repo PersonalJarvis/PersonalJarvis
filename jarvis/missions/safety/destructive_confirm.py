@@ -108,7 +108,7 @@ DESTRUCTIVE_PATTERNS: Final[list[tuple[str, re.Pattern[str], str]]] = [
     ),
     (
         "drop_database_de",
-        # German variant: "datenbank loeschen", "tabelle dropp(en)"
+        # German variant: "datenbank loeschen", "tabelle dropp(en)"  # i18n-allow
         re.compile(
             r"\b(?:datenbank|tabelle|schema)\s+(?P<target>\w+)\s+"  # i18n-allow
             r"(?:loeschen|droppen|loesche)",  # i18n-allow
@@ -120,14 +120,14 @@ DESTRUCTIVE_PATTERNS: Final[list[tuple[str, re.Pattern[str], str]]] = [
 
 
 def is_destructive(prompt: str) -> tuple[bool, DestructiveDetection | None]:
-    """Returns (True, DestructiveDetection) wenn der Prompt destruktiv aussieht.
+    """Returns (True, DestructiveDetection) if the prompt looks destructive.
 
     Args:
-        prompt: User-Mission-Prompt.
+        prompt: The user's mission prompt.
 
     Returns:
-        Tuple `(found, detection)`. Bei mehreren Treffern: erster (severity-
-        ordering haben wir nicht — alle sind gleichermassen blockend).
+        Tuple `(found, detection)`. On multiple matches: the first one (we
+        have no severity ordering — all are equally blocking).
     """
     if not prompt:
         return (False, None)
