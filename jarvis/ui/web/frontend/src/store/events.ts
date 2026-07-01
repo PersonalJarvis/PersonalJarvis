@@ -110,6 +110,14 @@ export interface Toast {
   kind: "info" | "success" | "warning" | "error";
   message: string;
   ts: number;
+  /**
+   * Absolute path of a file that was just saved to the user's Downloads. When
+   * set (desktop only), the toast renders "Show in folder" / "Open" actions and
+   * stays up longer so the user has time to click them. Empty in the browser/VPS.
+   */
+  filePath?: string;
+  /** Display name of the saved file (shown next to the actions). */
+  filename?: string;
 }
 
 export interface ChatMessage {
