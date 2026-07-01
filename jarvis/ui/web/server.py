@@ -469,11 +469,11 @@ class WebServer:
             evaluator = AchievementEvaluator(db_path=db_path, bus=self.bus)
             bio_store = BioStore(db_path=db_path)
 
-            # Optional-Datenquellen-Pfade (Awareness, Missions, Self-Mod).
-            # Wenn die Datei/DB nicht existiert, faellt der Block still im
-            # Prompt aus — kein Fehler. Pfade kommen aus ``user_data_dir()``,
-            # nicht aus relativen Strings, damit App-Restart in einem anderen
-            # CWD nicht den Datenhunger des Generators verliert.
+            # Optional data-source paths (awareness, missions, self-mod).
+            # If the file/DB doesn't exist, the block just silently drops out
+            # of the prompt — no error. Paths come from ``user_data_dir()``,
+            # not relative strings, so an app restart in a different CWD
+            # doesn't starve the generator of its data.
             data_root = user_data_dir() / "data"
             recall_db = data_root / "memory.db"
             missions_db = data_root / "missions.db"
@@ -483,9 +483,9 @@ class WebServer:
             cfg = self.cfg
 
             def _bio_brain_resolver() -> Any:
-                # Lazy: Cfg + Bus aus Closure einfangen, sodass ein
-                # spaeterer Provider-Switch via UI direkt zieht (resolver
-                # invalidiert seinen Cache via ConfigReloaded).
+                # Lazy: capture cfg + bus from the closure, so a later
+                # provider switch via the UI takes effect immediately
+                # (the resolver invalidates its cache via ConfigReloaded).
                 return resolve_frontier_brain(cfg, bus=self.bus)
 
             bio_generator = BioGenerator(
@@ -519,12 +519,12 @@ class WebServer:
             app.state.bio_generator = bio_generator
             app.state.bio_store = bio_store
             logger.info(
-                "Board vorbereitet (jsonl={}, db={}, achievements={})",
+                "Board ready (jsonl={}, db={}, achievements={})",
                 jsonl_dir, db_path, len(evaluator.list_all()),
             )
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "Board-Setup fehlgeschlagen — /board liefert leer"
+                "Board setup failed — /board returns empty"
             )
             self._board_aggregator = None
             self._board_aggregator_task = None
@@ -538,10 +538,10 @@ class WebServer:
             app.state.bio_store = None
 
     def _setup_skill_registry(self, app: FastAPI) -> None:
-        """First-Run-Bootstrap + SkillRegistry an ``app.state`` haengen.
+        """First-run bootstrap + attach the SkillRegistry to ``app.state``.
 
-        Fehlerfaelle (z.B. read-only Filesystem im Test-Runner) sind nicht
-        fatal — die UI zeigt dann "Keine Skills" statt abzustuerzen.
+        Failure cases (e.g. a read-only filesystem in the test runner) are
+        not fatal — the UI then shows "No skills" instead of crashing.
         """
         try:
             from jarvis.skills.bootstrap import ensure_user_skills_dir
@@ -564,18 +564,18 @@ class WebServer:
             )
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "SkillRegistry-Setup fehlgeschlagen — Skills-View bleibt leer"
+                "SkillRegistry setup failed — Skills view stays empty"
             )
             app.state.skill_registry = None
 
     def _setup_doc_registry(self, app: FastAPI) -> None:
-        """Doc-Registry hochziehen + FTS5-Index initial befuellen.
+        """Bring up the doc registry + populate the FTS5 index initially.
 
-        Roots = ``default_doc_roots()`` (siehe ``jarvis/core/paths.py``).
-        Index-DB liegt unter ``user_data_dir()/data/docs_index.sqlite``.
+        Roots = ``default_doc_roots()`` (see ``jarvis/core/paths.py``).
+        The index DB lives under ``user_data_dir()/data/docs_index.sqlite``.
 
-        Fehlerfaelle (read-only FS, Index-DB-Lock) sind nicht fatal — die UI
-        zeigt dann "Keine Docs verfuegbar" statt zu crashen.
+        Failure cases (read-only FS, index-DB lock) are not fatal — the UI
+        then shows "No docs available" instead of crashing.
         """
         try:
             from jarvis.core.paths import default_doc_roots, docs_index_db_path
@@ -594,22 +594,22 @@ class WebServer:
             # listening (start()).
             self._pending_reloads.append(("DocRegistry", registry))
             logger.info(
-                "DocRegistry created (scan deferred) for {} Roots", len(roots)
+                "DocRegistry created (scan deferred) for {} roots", len(roots)
             )
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "DocRegistry-Setup fehlgeschlagen — Docs-View bleibt leer"
+                "DocRegistry setup failed — Docs view stays empty"
             )
             app.state.doc_registry = None
 
     def _setup_cli_registry(self, app: FastAPI) -> None:
-        """``CliToolRegistry`` aufsetzen und Katalog-Probe asynchron nachziehen.
+        """Set up the ``CliToolRegistry`` and run the catalog probe asynchronously.
 
-        Der Konstruktor erstellt die Registry ohne zu proben (nichtblockierend).
-        Ein asyncio-Task wird in ``start()`` geplant, der ``bootstrap()`` ausfuehrt —
-        bis dahin liefern die Endpoints ``status=checking`` fuer alle Eintraege.
+        The constructor creates the registry without probing (non-blocking).
+        An asyncio task is scheduled in ``start()`` that runs ``bootstrap()`` —
+        until then the endpoints return ``status=checking`` for all entries.
 
-        Fehlerfaelle: read-only FS oder DB-Lock → kein Crash, nur leere Registry.
+        Failure cases: read-only FS or DB lock → no crash, just an empty registry.
         """
         try:
             from jarvis.clis.registry import CliToolRegistry
@@ -618,17 +618,17 @@ class WebServer:
             registry = CliToolRegistry(bus=self.bus)
             self._cli_registry = registry
             app.state.cli_registry = registry
-            # Shared-State: ab jetzt sehen CliToolLoader und make_cli_patterns_fn
-            # dieselbe Instanz — der LLM bekommt die echten verbundenen CLIs als
-            # Tools, nicht eine leere Katalog-Kopie.
+            # Shared state: from here on, CliToolLoader and make_cli_patterns_fn
+            # see the same instance — the LLM gets the real connected CLIs as
+            # tools, not an empty catalog copy.
             set_active_registry(registry)
             logger.info(
-                "CliToolRegistry erstellt ({} Katalog-Eintraege, bootstrap pending)",
+                "CliToolRegistry created ({} catalog entries, bootstrap pending)",
                 len(registry.catalog().all()),
             )
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "CliToolRegistry-Setup fehlgeschlagen — CLIs-View bleibt leer"
+                "CliToolRegistry setup failed — CLIs view stays empty"
             )
             app.state.cli_registry = None
 
@@ -648,10 +648,10 @@ class WebServer:
             self._plugin_registry = registry
             app.state.plugin_registry = registry
             set_active_plugin_registry(registry)
-            logger.info("PluginToolRegistry erstellt (bootstrap pending)")
+            logger.info("PluginToolRegistry created (bootstrap pending)")
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "PluginToolRegistry-Setup fehlgeschlagen — Plugins bleiben worker-only"
+                "PluginToolRegistry setup failed — plugins stay worker-only"
             )
             app.state.plugin_registry = None
             self._plugin_registry = None
