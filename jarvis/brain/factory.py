@@ -998,7 +998,7 @@ def _phase2_full_brain(
                         "Computer-Use on-demand capture only (max-speed mode)."
                     )
             except Exception as exc:  # noqa: BLE001
-                log.warning("Vision-Engine/Provider konnte nicht gebaut werden: %s", exc)
+                log.warning("Vision engine/provider could not be built: %s", exc)
                 manager._vision_provider = None
                 vision_engine_for_cu = None
 
@@ -1034,7 +1034,7 @@ def _phase2_full_brain(
                 "read-visible-ui-state",
                 "switch-window",
                 # Primary action tools — without these every plan from the
-                # CU loop fails at execute-time with "Tool '<name>' nicht im
+                # CU loop fails at execute-time with "Tool '<name>' nicht im  # i18n-allow: forensic quote of the actual German error text
                 # Computer-Use-Tool-Set verdrahtet". The ActionRegistry in
                 # action_registry.py:278-368 maps the corresponding action
                 # names (type_text, click, hotkey, move_mouse, open_app) to
@@ -1127,14 +1127,14 @@ def _phase2_full_brain(
                 cu_cfg.max_replans,
             )
         except Exception as exc:  # noqa: BLE001
-            log.warning("ComputerUseContext konnte nicht gesetzt werden: %s", exc)
+            log.warning("ComputerUseContext could not be set: %s", exc)
     elif tier == "router" and cu_cfg is not None and not cu_enabled:
-        log.info("ComputerUseContext deaktiviert ([computer_use].enabled = false)")
+        log.info("ComputerUseContext disabled ([computer_use].enabled = false)")
     elif tier == "router" and cu_enabled and vision_engine_for_cu is None:
         log.warning(
-            "ComputerUseContext konnte nicht verdrahtet werden: "
-            "[computer_use].enabled = true, aber Vision-Engine fehlt "
-            "(prüfe [brain.router.vision].enabled)"
+            "ComputerUseContext could not be wired up: "
+            "[computer_use].enabled = true, but the vision engine is missing "
+            "(check [brain.router.vision].enabled)"
         )
 
     # Router tier: inject system prompt
@@ -1163,9 +1163,9 @@ def _phase2_full_brain(
                 people=people,
                 bus=bus,
             )
-            log.info("Curator aktiv fuer Router-Tier (legacy_curator.enabled=true)")
+            log.info("Curator active for router tier (legacy_curator.enabled=true)")
         except Exception as exc:  # noqa: BLE001
-            log.warning("Curator konnte nicht initialisiert werden: %s", exc)
+            log.warning("Curator could not be initialized: %s", exc)
     elif not legacy_enabled:
         log.info(
             "Legacy-Curator soft-disabled (cfg.memory.legacy_curator.enabled=false) "
@@ -1338,7 +1338,7 @@ def _legacy_full_brain(bus: Any | None = None) -> Any:
                 capture_mode=vision_cfg.capture_mode,
             )
         except Exception as exc:  # noqa: BLE001
-            log.warning("VisionContextProvider konnte nicht gebaut werden: %s", exc)
+            log.warning("VisionContextProvider could not be built: %s", exc)
             manager._vision_provider = None
 
     # B4 Soft-Disable (2026-05-17) — see the matching gate in
@@ -1358,7 +1358,7 @@ def _legacy_full_brain(bus: Any | None = None) -> Any:
             )
             log.info("Curator active (legacy path, legacy_curator.enabled=true)")
         except Exception as exc:  # noqa: BLE001
-            log.warning("Curator konnte nicht initialisiert werden: %s", exc)
+            log.warning("Curator could not be initialized: %s", exc)
 
     return manager
 
@@ -1401,7 +1401,7 @@ def build_default_brain(
     # the single authoritative brain entry point, so EVERY runtime (voice, REST,
     # headless) has a populated registry before the first turn. Without this the
     # registry stays empty and BrainManager._check_unsupported_intent rejects
-    # every action utterance with "Das kann ich noch nicht ...", pre-empting the
+    # every action utterance with "Das kann ich noch nicht ...", pre-empting the  # i18n-allow: quoted German runtime voice-output phrase
     # deterministic force-spawn path (live bug 2026-05-25 — "Kannst du einen
     # Subagent spawnen"). seed_registry is idempotent (re-registration replaces
     # by id), so repeated brain builds AND the dynamic MCP registration in
@@ -1478,24 +1478,24 @@ def build_default_brain(
         return _echo_brain
 
     if mode == "legacy":
-        log.info("JARVIS_BRAIN=legacy → Legacy-BrainManager (vor Tiered-Routing).")
+        log.info("JARVIS_BRAIN=legacy → Legacy BrainManager (before tiered routing).")
         try:
             return _legacy_full_brain(bus=bus)
         except Exception as exc:  # noqa: BLE001
-            log.warning("Legacy-BrainManager nicht initialisierbar: %s — Fallback.", exc)
+            log.warning("Legacy BrainManager could not be initialized: %s — falling back.", exc)
             try:
                 return _phase1_gemini_fallback()
             except Exception as exc2:  # noqa: BLE001
-                log.error("GeminiTestBrain-Fallback auch gescheitert: %s", exc2)
+                log.error("GeminiTestBrain fallback also failed: %s", exc2)
                 return _echo_brain
 
     if mode == "gemini" or not allow_phase2:
         try:
             brain = _phase1_gemini_fallback()
-            log.info("Brain-Stack: GeminiTestBrain (Phase-1b-Kompat-Modus).")
+            log.info("Brain stack: GeminiTestBrain (Phase-1b compat mode).")
             return brain
         except Exception as exc:  # noqa: BLE001
-            log.warning("GeminiTestBrain nicht verfügbar: %s — Echo-Fallback.", exc)
+            log.warning("GeminiTestBrain not available: %s — falling back to echo.", exc)
             return _echo_brain
 
     # Default: full BrainManager with tier routing. No silent echo/test-brain
@@ -1504,14 +1504,14 @@ def build_default_brain(
     try:
         brain = _phase2_full_brain(tier=tier, bus=bus)
         log.info(
-            "Brain-Stack: BrainManager tier=%s aktiv — provider=%s, tools=%d",
+            "Brain stack: BrainManager tier=%s active — provider=%s, tools=%d",
             tier,
             getattr(brain, "active_provider", "?"),
             len(getattr(brain, "_tools", {})),
         )
         return brain
     except Exception as exc:  # noqa: BLE001
-        log.error("BrainManager (tier=%s) nicht initialisierbar: %s", tier, exc)
+        log.error("BrainManager (tier=%s) could not be initialized: %s", tier, exc)
         raise
 
 
