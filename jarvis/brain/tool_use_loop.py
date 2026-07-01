@@ -90,7 +90,7 @@ _INSTRUCTIONAL_QUESTION_RE = re.compile(
 # a clear tool-choice misfire in weaker models.
 _SELF_IDENTIFICATION_RE = re.compile(
     r"^\s*(?:"
-    r"ich\s+(?:heisse|heiße)\s+\w+"
+    r"ich\s+(?:heisse|heiße)\s+\w+"  # i18n-allow: same German input-matching data (self-identification classifier)
     r"|mein\s+name\s+(?:ist|lautet)\s+\w+"
     r"|nenn(?:e|en\s+sie)?\s+mich\s+\w+"
     r"|du\s+(?:kannst|darfst|sollst)\s+mich\s+\w+\s+nennen"
