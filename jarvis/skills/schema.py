@@ -1,10 +1,10 @@
-"""Pydantic-Schemas + DataClasses für Skills.
+"""Pydantic schemas + dataclasses for skills.
 
-Frontmatter ist YAML — pydantic validiert strukturell. `Skill` selbst ist
-ein frozen DataClass (Immutability für Flight-Recorder-Replay).
+Frontmatter is YAML — pydantic validates it structurally. `Skill` itself is
+a frozen dataclass (immutability for flight-recorder replay).
 
-Skill-Lifecycle-Events erben von `jarvis.core.events.Event` — sind aber hier
-definiert (nicht in events.py), damit wir die core-Layer nicht anfassen müssen.
+Skill lifecycle events inherit from `jarvis.core.events.Event` — but are defined
+here (not in events.py) so we don't have to touch the core layer.
 """
 from __future__ import annotations
 
@@ -19,32 +19,32 @@ from jarvis.core.events import Event
 from jarvis.core.protocols import RiskTier
 
 # ----------------------------------------------------------------------
-# Lifecycle-State
+# Lifecycle state
 # ----------------------------------------------------------------------
 
 class SkillLifecycleState(str, Enum):
-    """Phasen im Skill-Leben."""
-    DRAFT = "draft"            # noch nicht validiert / fehlerhaft
-    VALIDATED = "validated"    # Frontmatter OK, Tools existieren
-    ACTIVE = "active"          # vom User aktiviert, triggert
-    DISABLED = "disabled"      # vom User deaktiviert
+    """Phases in a skill's lifecycle."""
+    DRAFT = "draft"            # not yet validated / broken
+    VALIDATED = "validated"    # frontmatter OK, tools exist
+    ACTIVE = "active"          # activated by the user, triggers
+    DISABLED = "disabled"      # deactivated by the user
 
 
 # ----------------------------------------------------------------------
-# Frontmatter-Models
+# Frontmatter models
 # ----------------------------------------------------------------------
 
 TriggerType = Literal["voice", "hotkey", "schedule"]
 
 
 class SkillTrigger(BaseModel):
-    """Ein Trigger — Voice-Pattern, Hotkey-Combo oder Cron-Expression."""
+    """A trigger — voice pattern, hotkey combo, or cron expression."""
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     type: TriggerType
-    pattern: str | None = None   # Voice: Regex oder Template
-    combo: str | None = None     # Hotkey: z.B. "ctrl+right_alt+j"
-    cron: str | None = None      # Schedule: Cron-Expression
+    pattern: str | None = None   # voice: regex or template
+    combo: str | None = None     # hotkey: e.g. "ctrl+right_alt+j"
+    cron: str | None = None      # schedule: cron expression
     language: list[str] = Field(default_factory=lambda: ["de", "en"])
 
     @field_validator("pattern", "combo", "cron")
@@ -53,19 +53,19 @@ class SkillTrigger(BaseModel):
         return v.strip() if isinstance(v, str) else v
 
     def validate_payload(self) -> list[str]:
-        """Semantischer Check: je nach `type` muss das passende Feld gesetzt sein."""
+        """Semantic check: depending on `type`, the matching field must be set."""
         errors: list[str] = []
         if self.type == "voice" and not self.pattern:
-            errors.append("voice-trigger braucht 'pattern'")
+            errors.append("voice trigger needs 'pattern'")
         if self.type == "hotkey" and not self.combo:
-            errors.append("hotkey-trigger braucht 'combo'")
+            errors.append("hotkey trigger needs 'combo'")
         if self.type == "schedule" and not self.cron:
-            errors.append("schedule-trigger braucht 'cron'")
+            errors.append("schedule trigger needs 'cron'")
         return errors
 
 
 class SkillRiskPolicy(BaseModel):
-    """Risk-Tier-Konfiguration für einen Skill."""
+    """Risk-tier configuration for a skill."""
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     default_tier: RiskTier = "monitor"
@@ -74,7 +74,7 @@ class SkillRiskPolicy(BaseModel):
 
 
 class SkillFrontmatter(BaseModel):
-    """YAML-Frontmatter einer SKILL.md."""
+    """YAML frontmatter of a SKILL.md."""
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     schema_version: Literal["1"] = "1"
@@ -93,9 +93,9 @@ class SkillFrontmatter(BaseModel):
     risk_policy: SkillRiskPolicy = Field(default_factory=SkillRiskPolicy)
     config: dict[str, Any] = Field(default_factory=dict)
     token_budget_estimate: int = Field(default=2000, ge=1, le=100_000)
-    # Phase 7.5: Lifecycle-State im Frontmatter — OpenClaw-authored Skills
-    # tragen explizit `state: draft`, vom `draft_writer` erzwungen (Plan-§AD-8).
-    # Default `None` → Loader interpretiert als "validated/active" (Legacy).
+    # Phase 7.5: lifecycle state in the frontmatter — OpenClaw-authored skills
+    # explicitly carry `state: draft`, enforced by the `draft_writer` (Plan-§AD-8).
+    # Default `None` → the loader interprets it as "validated/active" (legacy).
     state: SkillLifecycleState | None = None
     # Plugin<->Skill pairing (2026-06-07). When set, this skill is the canonical
     # source for a marketplace plugin's intent vocabulary; the deterministic
@@ -127,35 +127,35 @@ class SkillFrontmatter(BaseModel):
     @classmethod
     def _name_nonempty(cls, v: str) -> str:
         if not v or not v.strip():
-            raise ValueError("name darf nicht leer sein")
+            raise ValueError("name must not be empty")
         return v.strip()
 
     @field_validator("homepage_url", "source_url", "docs_url", mode="before")
     @classmethod
     def _clean_url(cls, v: Any) -> str | None:
-        """Trimmt Whitespace, mappt leere Strings auf None, erzwingt http(s)://.
+        """Trims whitespace, maps empty strings to None, enforces http(s)://.
 
-        Begruendung: Pydantic's ``HttpUrl`` ist zu strikt (z.B. trailing-slash
-        Normalisierung), und wir wollen die Original-URL roundtrip-sicher
-        speichern. Max 2048 Zeichen schuetzt vor Missbrauch (Homepage-Feld als
-        JSON-Payload-Drop).
+        Rationale: pydantic's ``HttpUrl`` is too strict (e.g. trailing-slash
+        normalization), and we want to store the original URL roundtrip-safely.
+        A 2048-char max guards against abuse (homepage field used as a
+        JSON payload drop).
         """
         if v is None:
             return None
         if not isinstance(v, str):
-            raise ValueError("URL muss string sein")
+            raise ValueError("URL must be a string")
         cleaned = v.strip()
         if not cleaned:
             return None
         if len(cleaned) > 2048:
-            raise ValueError("URL zu lang (max 2048 Zeichen)")
+            raise ValueError("URL too long (max 2048 characters)")
         if not (cleaned.startswith("http://") or cleaned.startswith("https://")):
-            raise ValueError("URL muss mit http:// oder https:// beginnen")
+            raise ValueError("URL must start with http:// or https://")
         return cleaned
 
 
 # ----------------------------------------------------------------------
-# Skill-Container
+# Skill container
 # ----------------------------------------------------------------------
 
 RESOURCE_KINDS: tuple[str, ...] = ("references", "scripts", "assets", "agents")
@@ -163,19 +163,19 @@ RESOURCE_KINDS: tuple[str, ...] = ("references", "scripts", "assets", "agents")
 
 @dataclass(frozen=True, slots=True)
 class Skill:
-    """Eine geladene SKILL.md — parsed Frontmatter + Body + Metadaten.
+    """A loaded SKILL.md — parsed frontmatter + body + metadata.
 
-    ``resources`` haelt die Bundle-Sibling-Ordner (analog zu Anthropic's
-    Claude-Skills-Struktur: ``references/``, ``scripts/``, ``assets/``,
-    ``agents/``). Wert pro Key ist die Liste der relativen File-Pfade zum
-    Skill-Root. Leer wenn der jeweilige Ordner nicht existiert.
+    ``resources`` holds the bundle sibling folders (analogous to Anthropic's
+    Claude-Skills structure: ``references/``, ``scripts/``, ``assets/``,
+    ``agents/``). The value per key is the list of relative file paths to the
+    skill root. Empty if the respective folder doesn't exist.
     """
     path: Path
-    frontmatter: SkillFrontmatter | None           # None wenn DRAFT/broken
+    frontmatter: SkillFrontmatter | None           # None if DRAFT/broken
     body: str
     state: SkillLifecycleState = SkillLifecycleState.DRAFT
     body_hash: str = ""
-    error: str | None = None                       # Parse-/Validation-Fehler
+    error: str | None = None                       # parse/validation error
     resources: dict[str, tuple[str, ...]] = field(
         default_factory=lambda: {k: () for k in RESOURCE_KINDS}
     )
@@ -188,13 +188,13 @@ class Skill:
 
     @property
     def root(self) -> Path:
-        """Verzeichnis in dem die SKILL.md liegt — Basis fuer Resource-Lookups."""
+        """Directory containing the SKILL.md — base for resource lookups."""
         return self.path.parent
 
 
 @dataclass(frozen=True, slots=True)
 class SkillResult:
-    """Gesamtes Ergebnis eines SkillRunner.run()."""
+    """The overall result of a SkillRunner.run()."""
     skill_name: str
     success: bool
     steps: tuple[dict[str, Any], ...] = field(default_factory=tuple)
@@ -204,7 +204,7 @@ class SkillResult:
 
 
 # ----------------------------------------------------------------------
-# Skill-Events (erben von jarvis.core.events.Event)
+# Skill events (inherit from jarvis.core.events.Event)
 # ----------------------------------------------------------------------
 
 @dataclass(frozen=True, slots=True)
@@ -253,10 +253,10 @@ class SkillRegistryReloaded(Event):
 
 @dataclass(frozen=True, slots=True)
 class SkillCreated(Event):
-    """Ein User-authored Skill wurde ueber die Desktop-App angelegt.
+    """A user-authored skill was created via the desktop app.
 
-    Getrennt von ``SkillStateChanged``, damit die UI spezifisch auf das Authoring-
-    Event reagieren kann (Toast "Skill erstellt", React-Query-Invalidation).
+    Separate from ``SkillStateChanged`` so the UI can react specifically to the
+    authoring event (toast "Skill created", React-Query invalidation).
     """
     skill_name: str = ""
     author: str = ""
@@ -264,8 +264,8 @@ class SkillCreated(Event):
 
 @dataclass(frozen=True, slots=True)
 class SkillLinkCheckCompleted(Event):
-    """Der LinkHealthChecker hat HEAD-Requests fuer die URLs eines Skills
-    abgeschlossen und das Ergebnis im Cache aktualisiert.
+    """The LinkHealthChecker has completed HEAD requests for a skill's URLs
+    and updated the result in the cache.
     """
     skill_name: str = ""
     healthy: int = 0
@@ -273,7 +273,7 @@ class SkillLinkCheckCompleted(Event):
 
 
 # ----------------------------------------------------------------------
-# Activation-Events (Skills-Brain-Integration, Phase Skills-1)
+# Activation events (skills-brain integration, Phase Skills-1)
 # ----------------------------------------------------------------------
 
 
@@ -293,13 +293,13 @@ class SkillInvoked(Event):
 
 @dataclass(frozen=True, slots=True)
 class SkillDirectTriggered(Event):
-    """Skill wurde via TriggerMatcher direkt aktiviert (Pre-Brain-Hook).
+    """Skill was directly activated via the TriggerMatcher (pre-brain hook).
 
-    Komplementaer zu SkillStarted: SkillDirectTriggered markiert die
-    *Aktivierungs-Entscheidung* (Brain bypassed), SkillStarted markiert
-    den eigentlichen Run-Beginn im SkillRunner. Forward-compatible mit
-    Awareness-Layer (A0-A5) via ``trigger_type`` als activation_path-
-    Discriminator.
+    Complementary to SkillStarted: SkillDirectTriggered marks the
+    *activation decision* (brain bypassed), SkillStarted marks the
+    actual run start in the SkillRunner. Forward-compatible with the
+    awareness layer (A0-A5) via ``trigger_type`` as the activation-path
+    discriminator.
     """
     skill_name: str = ""
     trigger_type: str = ""   # "voice_direct" | "hotkey" | "cron"
