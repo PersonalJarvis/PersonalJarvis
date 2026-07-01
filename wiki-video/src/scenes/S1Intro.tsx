@@ -6,10 +6,12 @@ export const S1Intro: React.FC = () => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  // Ghost entrance: spring scale-up + fade.
+  // Ghost entrance: spring scale-up + fade. Starts with a faint presence at
+  // frame 0 (opacity 0.22, scale 0.82) so the opener materializes rather than
+  // fading from an empty frame.
   const gIn = spring({ frame, fps, config: { damping: 200, mass: 0.6, stiffness: 90 } });
-  const gScale = 0.7 + gIn * 0.3;
-  const gOpacity = lerp(frame, [0, 18], [0, 1], EASE.outExpo);
+  const gScale = 0.82 + gIn * 0.18;
+  const gOpacity = lerp(frame, [0, 16], [0.22, 1], EASE.outExpo);
 
   const titleO = lerp(frame, [24, 44], [0, 1], EASE.outExpo);
   const titleY = lerp(frame, [24, 46], [26, 0], EASE.outExpo);

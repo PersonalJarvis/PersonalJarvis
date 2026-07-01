@@ -17,10 +17,11 @@ type SceneEntry = {
   key: keyof typeof SCENES;
   comp: React.ReactNode;
   pad?: boolean;
+  fadeIn?: number;
 };
 
 const order: SceneEntry[] = [
-  { key: "intro", comp: <S1Intro />, pad: false },
+  { key: "intro", comp: <S1Intro />, pad: false, fadeIn: 0 },
   { key: "idea", comp: <S2Idea /> },
   { key: "arch", comp: <S3Architecture /> },
   { key: "page", comp: <S4Page /> },
@@ -41,6 +42,7 @@ export const WikiVideo: React.FC = () => {
             <SceneWrap
               durationInFrames={dur}
               pad={s.pad ?? true}
+              fadeIn={s.fadeIn}
               fadeOut={isLast ? 0 : undefined}
             >
               {s.comp}

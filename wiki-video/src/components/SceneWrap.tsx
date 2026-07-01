@@ -14,14 +14,17 @@ export const SceneWrap: React.FC<{
   pad?: boolean;
   children: React.ReactNode;
 }> = ({ durationInFrames, fadeIn = 18, fadeOut = 20, pad = true, children }) => {
+  // fadeIn/fadeOut may be explicitly 0 to disable that edge fade.
   const frame = useCurrentFrame();
-  const inO = lerp(frame, [0, fadeIn], [0, 1], EASE.outExpo);
+  // fadeIn<=0 → no wrapper fade-in (the scene owns its entrance, so frame 0 is
+  // never an empty fade-from-nothing). fadeOut<=0 → holds to the end.
+  const inO = fadeIn > 0 ? lerp(frame, [0, fadeIn], [0, 1], EASE.outExpo) : 1;
   const outO =
     fadeOut > 0
       ? lerp(frame, [durationInFrames - fadeOut, durationInFrames], [1, 0], EASE.inCubic)
       : 1;
   const opacity = Math.min(inO, outO);
-  const y = lerp(frame, [0, fadeIn], [16, 0], EASE.outExpo);
+  const y = fadeIn > 0 ? lerp(frame, [0, fadeIn], [16, 0], EASE.outExpo) : 0;
 
   return (
     <AbsoluteFill
