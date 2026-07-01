@@ -2533,20 +2533,24 @@ class SpeechPipeline:
                         quiet_ms, elapsed * 1000.0, event.text[:80],
                     )
                     return
-        # Symmetric turn-boundary guard (AD-OE5). Jarvis already has barge-in
-        # (the user interrupts Jarvis via priority="interrupt" below); this is
-        # the missing reverse — Jarvis must not start speaking while the USER
-        # holds the floor. Only non-interrupt announcements are gated; an
+        # Symmetric turn-boundary guard (AD-OE5) + idle guard (live bug 2026-07-01).
+        # A background "still on it" heartbeat (kind="progress") is only meaningful
+        # while the user is ACTIVELY in a session waiting for the mission — the mic
+        # is open and Jarvis is LISTENING. It is dropped in every other state:
+        # during a foreground turn (THINKING/JARVIS_SPEAKING/…) it would talk over
+        # that turn, and while IDLE there is NO active session at all, so speaking
+        # it is Jarvis "talking out of nowhere" into a machine the user walked away
+        # from (live bug 2026-07-01: a force-spawned mission's three bounded beats
+        # spoke into fresh, empty wake sessions after the user hung up). An
         # interrupt is a deliberate barge and still punches through.
         current_turn_state = getattr(self, "_turn_state", TurnTakingState.IDLE)
         if (
             event.priority != "interrupt"
             and is_progress
-            and current_turn_state
-            not in {TurnTakingState.IDLE, TurnTakingState.LISTENING}
+            and current_turn_state is not TurnTakingState.LISTENING
         ):
             log.info(
-                "Progress announcement dropped — foreground turn active (%s): %r",
+                "Progress announcement dropped — no active listening session (%s): %r",
                 getattr(current_turn_state, "value", current_turn_state),
                 event.text[:80],
             )
