@@ -1,7 +1,7 @@
-"""Tests fuer jarvis.missions.worker_runtime.workspace.
+"""Tests for jarvis.missions.worker_runtime.workspace.
 
-Quelle der Wahrheit: docs/openclaw-bridge.md AD-23 + AP-OC15 +
-docs/spike-results-openclaw.md B-9 (System-Prompt-Auto-Injection-Befund).
+Source of truth: docs/openclaw-bridge.md AD-23 + AP-OC15 +
+docs/spike-results-openclaw.md B-9 (system-prompt auto-injection finding).
 """
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def test_agents_contract_still_carries_file_write_obligation() -> None:
 
 def test_agents_contract_sets_quality_bar_no_stub() -> None:
     """Live incident 2026-05-31 (mission 019e7e04): the router brief said
-    'Erstelle ein sinnvolles HTML-Grundgerüst', the Opus worker obeyed and
+    'Erstelle ein sinnvolles HTML-Grundgerüst', the Opus worker obeyed and  # i18n-allow: quotes the actual German router-brief text from the live incident
     shipped a 12-line stub, and the mission passed. The contract must set a
     quality floor: a complete, production-quality artefact is required and a
     skeleton/stub/placeholder is a FAILURE — even when a hint sounds minimal."""
@@ -84,14 +84,14 @@ def test_prepare_workspace_creates_subdir(tmp_path: Path) -> None:
 
 
 def test_prepare_workspace_writes_all_five_stub_files(tmp_path: Path) -> None:
-    """B-9: OpenClaw injiziert AGENTS/SOUL/IDENTITY/TOOLS/USER — alle 5 Stubs muessen da sein."""
+    """B-9: OpenClaw injects AGENTS/SOUL/IDENTITY/TOOLS/USER — all 5 stubs must be present."""
     workspace = prepare_workspace(tmp_path, mission_id="m-001")
     actual = {f.name for f in workspace.iterdir() if f.is_file()}
     assert actual == EXPECTED_WORKSPACE_FILES
 
 
 def test_prepare_workspace_files_contain_mission_id(tmp_path: Path) -> None:
-    """Audit: jede der 5 Stub-Files enthaelt die Mission-ID — Trace-Pfad."""
+    """Audit: each of the 5 stub files contains the mission ID — trace path."""
     workspace = prepare_workspace(tmp_path, mission_id="m-abc-123")
     for name in EXPECTED_WORKSPACE_FILES:
         text = (workspace / name).read_text(encoding="utf-8")
@@ -99,7 +99,7 @@ def test_prepare_workspace_files_contain_mission_id(tmp_path: Path) -> None:
 
 
 def test_prepare_workspace_files_carry_managed_marker(tmp_path: Path) -> None:
-    """Header-Marker erlaubt spaetere Tools zu erkennen ob ein File Personal-Jarvis-managed ist."""
+    """Header marker lets later tools recognize whether a file is Personal-Jarvis-managed."""
     workspace = prepare_workspace(tmp_path, mission_id="m-001")
     for name in EXPECTED_WORKSPACE_FILES:
         text = (workspace / name).read_text(encoding="utf-8")
@@ -107,7 +107,7 @@ def test_prepare_workspace_files_carry_managed_marker(tmp_path: Path) -> None:
 
 
 def test_prepare_workspace_creates_parents(tmp_path: Path) -> None:
-    """state_dir muss nicht existieren — Helfer erzeugt parents implizit."""
+    """state_dir doesn't need to exist — the helper creates parents implicitly."""
     deep = tmp_path / "missions" / "m-deep" / "openclaw_state"
     workspace = prepare_workspace(deep, mission_id="m-deep")
     assert workspace.is_dir()
@@ -115,7 +115,7 @@ def test_prepare_workspace_creates_parents(tmp_path: Path) -> None:
 
 
 def test_prepare_workspace_idempotent_overwrites(tmp_path: Path) -> None:
-    """Zweiter Call ueberschreibt mit demselben Inhalt, keine Append-Duplikate."""
+    """A second call overwrites with the same content, no append duplicates."""
     workspace = prepare_workspace(tmp_path, mission_id="m-1")
     first_text = (workspace / "AGENTS.md").read_text(encoding="utf-8")
     workspace2 = prepare_workspace(tmp_path, mission_id="m-1")
@@ -125,7 +125,7 @@ def test_prepare_workspace_idempotent_overwrites(tmp_path: Path) -> None:
 
 
 def test_prepare_workspace_idempotent_with_new_mission_id(tmp_path: Path) -> None:
-    """Zweiter Call mit anderer Mission-ID ersetzt den Inhalt (kein Append)."""
+    """A second call with a different mission ID replaces the content (no append)."""
     prepare_workspace(tmp_path, mission_id="m-1")
     workspace = prepare_workspace(tmp_path, mission_id="m-2")
     text = (workspace / "AGENTS.md").read_text(encoding="utf-8")
@@ -134,17 +134,17 @@ def test_prepare_workspace_idempotent_with_new_mission_id(tmp_path: Path) -> Non
 
 
 def test_prepare_workspace_uses_lf_line_endings(tmp_path: Path) -> None:
-    """OpenClaw liest die Files vermutlich als Text — LF ist sicher cross-platform."""
+    """OpenClaw presumably reads the files as text — LF is safely cross-platform."""
     workspace = prepare_workspace(tmp_path, mission_id="m-1")
     raw = (workspace / "AGENTS.md").read_bytes()
     assert b"\r\n" not in raw, "Stubs must use LF line endings, not CRLF"
 
 
 def test_prepare_workspace_utf8_encoding(tmp_path: Path) -> None:
-    """UTF-8 weil OpenClaw cross-platform laeuft."""
+    """UTF-8 because OpenClaw runs cross-platform."""
     workspace = prepare_workspace(tmp_path, mission_id="m-1")
     raw = (workspace / "AGENTS.md").read_bytes()
-    # UTF-8 BOM darf NICHT da sein (interferiert mit OpenClaws Markdown-Parser)
+    # UTF-8 BOM must NOT be present (interferes with OpenClaw's Markdown parser)
     assert not raw.startswith(b"\xef\xbb\xbf"), "Files must not start with UTF-8 BOM"
 
 
@@ -169,7 +169,7 @@ def test_verify_injected_files_pass_with_expected_only() -> None:
 
 
 def test_verify_injected_files_returns_unexpected() -> None:
-    """B-9 / AP-OC15: ein zusaetzlicher File ist Persona-Leak-Indikator."""
+    """B-9 / AP-OC15: an extra file is a persona-leak indicator."""
     injected = [
         {"name": "AGENTS.md"},
         {"name": "SOUL.md"},
@@ -202,12 +202,12 @@ def test_verify_injected_files_empty_list() -> None:
 
 
 def test_verify_injected_files_none_treated_as_pass() -> None:
-    """Wenn OpenClaw keinen Report liefert -> Audit gilt als gruen (nicht als Fail)."""
+    """If OpenClaw delivers no report -> audit counts as green (not a fail)."""
     assert verify_injected_files(None) == []
 
 
 def test_verify_injected_files_ignores_entries_without_name() -> None:
-    """Schema-Bruch von OpenClaw seitig ist kein Bridge-Bug."""
+    """A schema break on OpenClaw's side is not a bridge bug."""
     injected = [
         {"name": "AGENTS.md"},
         {"rawChars": 100},
@@ -218,7 +218,7 @@ def test_verify_injected_files_ignores_entries_without_name() -> None:
 
 
 def test_verify_injected_files_custom_expected_set() -> None:
-    """Override von expected fuer Tests / Future-Use."""
+    """Override of expected for tests / future use."""
     injected = [{"name": "FOO.md"}, {"name": "BAR.md"}]
     custom = frozenset({"FOO.md"})
     assert verify_injected_files(injected, expected=custom) == ["BAR.md"]
