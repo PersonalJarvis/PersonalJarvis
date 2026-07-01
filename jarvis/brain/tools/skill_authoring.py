@@ -39,7 +39,7 @@ class SpawnSkillAuthorTool:
                 "type": "string",
                 "minLength": 1,
                 "description": (
-                    "User-Beschreibung der Skill-Funktion in natürlicher Sprache."
+                    "User description of the skill's function, in natural language."
                 ),
             },
             "suggested_name": {
@@ -109,8 +109,8 @@ class SpawnSkillAuthorTool:
                     "forced_state_override": result.forced_state_override,
                     "review_url": result.review_url,
                     "message": (
-                        f"Skill-Entwurf für '{result.skill_name}' liegt in der UI. "
-                        "Schau drüber und aktivier ihn dort — bis dahin triggert er nicht."
+                        f"Skill draft for '{result.skill_name}' is waiting in the UI. "
+                        "Review it and activate it there — until then it won't trigger."
                     ),
                 },
             )
