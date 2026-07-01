@@ -59,18 +59,18 @@ class BudgetTracker:
     ) -> None:
         # enabled=False turns the whole tracker into a no-op: no cost
         # accumulation, no warnings, no hard cap — a mission is NEVER aborted
-        # for cost. User mandate 2026-05-31 ("überhaupt kein Budget",
-        # frontier-quality-over-cost). The caps are inert when disabled, so
-        # their positive-value validation is skipped (a disabled tracker may be
-        # built with 0 caps). Code default stays True so other installs /
-        # the cloud-first €5-VPS profile keep the safety cap unless they opt
-        # out at the wiring layer (server._init_mission_stack).
+        # for cost. User mandate 2026-05-31 ("überhaupt kein Budget", i.e. no  # i18n-allow: quoted literal user mandate
+        # budget cap at all — frontier-quality-over-cost). The caps are inert
+        # when disabled, so their positive-value validation is skipped (a
+        # disabled tracker may be built with 0 caps). Code default stays True
+        # so other installs / the cloud-first €5-VPS profile keep the safety
+        # cap unless they opt out at the wiring layer (server._init_mission_stack).
         if enabled and (per_mission_usd <= 0 or daily_usd <= 0):
-            raise ValueError("Budget-Caps muessen > 0 sein")
+            raise ValueError("Budget caps must be > 0")
         if enabled:
             for p in warn_pct:
                 if not (0 < p < 100):
-                    raise ValueError(f"warn_pct {p} muss in (0, 100) liegen")
+                    raise ValueError(f"warn_pct {p} must be in (0, 100)")
 
         self._enabled = enabled
         self._per_mission_usd = per_mission_usd
@@ -132,12 +132,12 @@ class BudgetTracker:
             # Hard-cap check AFTER warning emit (user should still hear the warning).
             if new_mission >= self._per_mission_usd:
                 raise BudgetExceeded(
-                    f"Mission {mission_id} hat ${new_mission:.2f} verbraucht, "
-                    f"Limit ${self._per_mission_usd:.2f}."
+                    f"Mission {mission_id} has spent ${new_mission:.2f}, "
+                    f"limit ${self._per_mission_usd:.2f}."
                 )
             if new_daily >= self._daily_usd:
                 raise BudgetExceeded(
-                    f"Daily Budget ueberschritten: ${new_daily:.2f} / "
+                    f"Daily budget exceeded: ${new_daily:.2f} / "
                     f"${self._daily_usd:.2f}. Mission {mission_id} aborted."
                 )
 
@@ -154,13 +154,13 @@ class BudgetTracker:
         cur = self._per_mission_costs.get(mission_id, 0.0)
         if cur >= self._per_mission_usd:
             raise BudgetExceeded(
-                f"Mission {mission_id}: Pre-Spawn-Check failed (${cur:.2f} >= "
+                f"Mission {mission_id}: pre-spawn check failed (${cur:.2f} >= "
                 f"${self._per_mission_usd:.2f})"
             )
         if self._daily_total_usd >= self._daily_usd:
             raise BudgetExceeded(
-                f"Daily-Limit ueberschritten ({self._daily_total_usd:.2f} >= "
-                f"{self._daily_usd:.2f}); kein neuer Worker-Spawn."
+                f"Daily limit exceeded ({self._daily_total_usd:.2f} >= "
+                f"{self._daily_usd:.2f}); no new worker spawn."
             )
 
     def bind_to_event_bus(self, bus) -> None:  # type: ignore[no-untyped-def]
@@ -181,7 +181,7 @@ class BudgetTracker:
                     # Logging here is sufficient — the record call has already
                     # stored the cost and emitted the warning.
                     logger.warning(
-                        "BudgetTracker: Budget exceeded fuer mission %s "
+                        "BudgetTracker: budget exceeded for mission %s "
                         "(via WorkerDraftReady auto-track) — orchestrator must abort",
                         env.mission_id,
                     )
