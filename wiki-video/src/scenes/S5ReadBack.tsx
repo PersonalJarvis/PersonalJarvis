@@ -70,7 +70,8 @@ export const S5ReadBack: React.FC = () => {
   const panelY = lerp(frame, [78, 98], [18, 0], EASE.outExpo);
 
   return (
-    <AbsoluteFill style={{ justifyContent: "center" }}>
+    <AbsoluteFill style={{ justifyContent: "center", alignItems: "center" }}>
+      <div style={{ width: "100%", maxWidth: 1560 }}>
       <Eyebrow delay={2}>Recall — read back in milliseconds</Eyebrow>
       <div style={{ height: 20 }} />
       <Headline size={54} delay={8}>
@@ -175,6 +176,7 @@ export const S5ReadBack: React.FC = () => {
           sub="Crosses provider families when a key is dead, throttled, or out of credit."
           delay={172}
         />
+      </div>
       </div>
     </AbsoluteFill>
   );
