@@ -553,13 +553,13 @@ async def test_claude_direct_accepts_verdict_with_over_long_summary(
                 "deliverable)."
             ),
             summary_de=(  # i18n-allow (German value under summary_de field)
-                "Die Datei synthwave.html enthaelt eine vollstaendige, "
-                "sachlich korrekte HTML-Seite ueber Synthwave mit acht klar "
-                "gegliederten Abschnitten zu Definition, Geschichte, "
-                "Sub-Genres, Kuenstlern und Einfluss. Sauberes, valides "
-                "HTML5 ohne Sicherheitsprobleme. Kleiner Hinweis: Inline-CSS "
-                "statt externer Datei, bei Einzeldatei aber akzeptabel und "
-                "nicht blockierend."
+                "Die Datei synthwave.html enthaelt eine vollstaendige, "  # i18n-allow
+                "sachlich korrekte HTML-Seite ueber Synthwave mit acht klar "  # i18n-allow
+                "gegliederten Abschnitten zu Definition, Geschichte, "  # i18n-allow
+                "Sub-Genres, Kuenstlern und Einfluss. Sauberes, valides "  # i18n-allow
+                "HTML5 ohne Sicherheitsprobleme. Kleiner Hinweis: Inline-CSS "  # i18n-allow
+                "statt externer Datei, bei Einzeldatei aber akzeptabel und "  # i18n-allow
+                "nicht blockierend."  # i18n-allow
             ),
         )
     )
