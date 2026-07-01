@@ -36,7 +36,7 @@ class GrokFlashAck:
             )
             if not api_key:
                 raise RuntimeError(
-                    f"Kein Grok-API-Key in keyring/env "
+                    f"No Grok API key in keyring/env "
                     f"({self._config.api_key_secret} / GROK_API_KEY)."
                 )
             from openai import AsyncOpenAI
