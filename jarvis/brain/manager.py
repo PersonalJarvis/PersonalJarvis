@@ -2259,6 +2259,75 @@ class BrainManager:
             max_tokens=self._config.brain.max_tokens,
         )
 
+    def _build_tool_ack_emitter(
+        self, user_text: str
+    ) -> Callable[[str, dict[str, Any]], Awaitable[None]] | None:
+        """Grounded per-tool ack emitter for the voice turn (perceived latency).
+
+        Returns an async callback the tool-use loop awaits ONCE, the moment the
+        router brain has actually SELECTED a tool call — so the otherwise-silent
+        tool-execution + readback window speaks a short, deterministic, LLM-free
+        line ("Okay, ich schaue in deine Mails."). This bridges the wait on slow
+        plugin turns (e.g. a cold email/calendar fetch) where the persona forbids
+        any spoken preamble before the tool and round-2 has not started yet.
+
+        Returns ``None`` when there is no bus, the feature is off
+        (``[ack_brain].grounded_tool_ack = false``), or the utterance is a
+        Voice-Control command (the action itself is the confirmation).
+
+        GROUNDED, not speculative: unlike the retired Flash-Brain preamble it
+        fires only after a real tool decision, never on suspicion. The words are
+        rendered by ``generate_ack`` (skip-list-aware, so passive reads / low-
+        latency UI events stay silent) and the language is re-resolved and
+        re-scrubbed authoritatively at the speech layer, so the reply-language
+        pin and conversation stickiness still win there. Publishing with
+        ``source_layer="brain.router.ack"`` means the existing pipeline guard
+        keeps "one ack per turn" when a machine re-enables the Flash-Brain
+        preamble (``jarvis/speech/pipeline.py`` drops this source while the
+        Flash-Brain is active); with the preamble off (the default) it is heard.
+        """
+        if self._bus is None:
+            return None
+        ack_cfg = getattr(self._config, "ack_brain", None) if self._config else None
+        if not getattr(ack_cfg, "grounded_tool_ack", True):
+            return None
+        from .ack_generator import generate_ack, is_voice_control_utterance
+
+        if is_voice_control_utterance(user_text):
+            return None
+        bus = self._bus
+        language = resolve_output_language(
+            self._reply_language,
+            "unknown",
+            user_text,
+            default=DEFAULT_LOCALE,
+            conversation_language=self._conversation_language,
+        )
+        # Fire at most once per turn even if the provider chain retries the
+        # tool-use loop (a provider that emits tool_calls then errors would
+        # otherwise re-announce on the fallback provider's re-run).
+        fired = False
+
+        async def emit(tool_name: str, tool_args: dict[str, Any]) -> None:
+            nonlocal fired
+            if fired:
+                return
+            text = generate_ack(tool_name, tool_args, language=language)
+            if text is None:  # skip-list tool (passive read / UI micro-event)
+                return
+            fired = True
+            await bus.publish(
+                AnnouncementRequested(
+                    text=text,
+                    priority="normal",
+                    language=language,
+                    kind="preamble",
+                    source_layer="brain.router.ack",
+                )
+            )
+
+        return emit
+
     @property
     def reply_language(self) -> str:
         """The active reply-language pin: ``auto`` | ``de`` | ``en`` | ``es``."""
@@ -6462,6 +6531,12 @@ class BrainManager:
             self._pending_drop_images = ()
             images = tuple(_dropped_imgs) + tuple(images)
 
+        # Grounded per-tool ack (perceived-latency): built ONCE per turn so a
+        # provider-chain retry cannot double-announce. The loop fires it the
+        # moment a tool is actually selected; None when the feature is off or
+        # this is a Voice-Control utterance.
+        _tool_ack_emitter = self._build_tool_ack_emitter(user_text)
+
         for idx, (prov_name, model) in enumerate(chain):
             # Skip providers already marked dead in THIS turn.
             # Example: gemini-fast fails with missing_key → gemini-deep would
@@ -6603,6 +6678,7 @@ class BrainManager:
                     intent_level=decision.level,
                     evidence_required_tool=self._evidence_required_tool,
                     text_consumer=_attempt_consumer,
+                    ack_emitter=_tool_ack_emitter,
                     on_progress=on_progress,
                     turn_context=turn_context,
                     reply_language=self._reply_language,

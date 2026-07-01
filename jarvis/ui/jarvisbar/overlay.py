@@ -86,7 +86,17 @@ def _display_scale(root: Any) -> float:
     longer upscaled, shrinking the idle pill to a ~48x8 sliver that could not be
     seen or grabbed (4K @ 150%). Clamped to a sane range; never below 1.0 — a
     smaller bar is never the goal. Any query failure falls back to 1.0.
+
+    Cross-platform: macOS renders Tk windows Retina-scaled by the OS ITSELF (the
+    window's backing scale factor), so applying our own pixel-scale on top would
+    DOUBLE the bar. There we return 1.0 and let the OS handle HiDPI. Windows
+    (DPI-aware) and Linux draw at true pixels, so a fixed-pixel window is
+    physically small on a scaled display — that is exactly where this scale is
+    both needed and correct. Off Windows the sibling ``_claim_system_dpi_``
+    ``awareness`` is a no-op, so this is the only OS-aware branch that matters.
     """
+    if sys.platform == "darwin":
+        return 1.0
     try:
         scale = float(root.winfo_fpixels("1i")) / 96.0
     except Exception:  # noqa: BLE001 — never block the bar on a DPI query
