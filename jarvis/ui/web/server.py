@@ -160,14 +160,14 @@ class WebServer:
         app = FastAPI(
             title="Personal Jarvis — Admin/UI API",
             version=__version__,
-            # Swagger-UI auf ``/api/_swagger`` — der semantische ``/api/docs``-
-            # Pfad gehoert dem Doc-Browser-Router (siehe docs_routes.py).
+            # Swagger UI on ``/api/_swagger`` — the semantic ``/api/docs``
+            # path belongs to the doc-browser router (see docs_routes.py).
             docs_url="/api/_swagger",
             openapi_url="/api/openapi.json",
         )
 
-        # CORS nur für den Vite-Dev-Server — Production liefert Frontend aus
-        # dist/ und braucht keine Cross-Origin-Requests.
+        # CORS only for the Vite dev server — production serves the frontend
+        # from dist/ and needs no cross-origin requests.
         app.add_middleware(
             CORSMiddleware,
             allow_origins=[self.cfg.ui.vite_dev_url],
@@ -187,17 +187,17 @@ class WebServer:
         # empty registry until the reload lands). Each entry is (label, registry).
         self._pending_reloads: list[tuple[str, Any]] = []
 
-        # Skill-Registry-Setup: Bootstrap (Builtin-Skills kopieren) + Registry
-        # anlegen. reload_sync() ist deferred (siehe _pending_reloads). Der
-        # watchdog-Watcher wird erst in ``start()`` aktiviert.
+        # Skill-registry setup: bootstrap (copy builtin skills) + create the
+        # registry. reload_sync() is deferred (see _pending_reloads). The
+        # watchdog watcher is only activated in ``start()``.
         self._setup_skill_registry(app)
 
-        # Doc-Registry: Markdown-Discovery unter ``docs/`` + Geschwistern,
-        # FTS5-Index. Watchdog ebenfalls erst in ``start()`` aktiviert.
+        # Doc registry: Markdown discovery under ``docs/`` + siblings,
+        # FTS5 index. The watchdog is likewise only activated in ``start()``.
         self._setup_doc_registry(app)
 
-        # CLI-Tool-Registry — haelt Katalog + Prober + Auth + UsageLog im selben
-        # State-Objekt, das die REST-Routes und der Brain-Launcher teilen.
+        # CLI-tool registry — holds the catalog + prober + auth + usage log in
+        # the same state object shared by the REST routes and the brain launcher.
         self._setup_cli_registry(app)
 
         # Plugin-Tool-Registry — wired marketplace plugins as live brain tools.
