@@ -1,19 +1,19 @@
-"""ElevenLabs TTS Plugin — Multi-Language DE+EN via eleven_flash_v2_5.
+"""ElevenLabs TTS plugin — multi-language DE+EN via eleven_flash_v2_5.
 
-Nutzt das offizielle `elevenlabs`-SDK. Output-Format ist `pcm_24000`
-(Raw Linear-PCM, 24 kHz mono, kein Decoder noetig) — identisch zum
-Gemini-Pfad, damit der Playback-Layer (`sounddevice`) nichts anpassen
-muss.
+Uses the official `elevenlabs` SDK. Output format is `pcm_24000`
+(raw linear PCM, 24 kHz mono, no decoder needed) — identical to the
+Gemini path, so the playback layer (`sounddevice`) doesn't need any
+adjustment.
 
-Echtes Streaming via `client.text_to_speech.convert_as_stream(...)`:
-das SDK liefert beim Eintreffen einzelner Audio-Chunks sofort Bytes.
-Weil das SDK synchron ist, laeuft der Producer in einem Worker-Thread
-und reicht Chunks ueber eine `asyncio.Queue` an den async-Consumer.
+Real streaming via `client.text_to_speech.convert_as_stream(...)`:
+the SDK delivers bytes immediately as individual audio chunks arrive.
+Because the SDK is synchronous, the producer runs in a worker thread
+and hands chunks to the async consumer via an `asyncio.Queue`.
 
-Fallback-Kette bei Fehlern (Quota / Auth / Netzwerk):
-  ElevenLabs  →  Gemini-TTS  →  SAPI5 (Windows native, Quota-frei)
-Die Gemini-/SAPI5-Helpers werden aus `gemini_flash_tts` importiert, um
-die Implementierung klein zu halten.
+Fallback chain on errors (quota / auth / network):
+  ElevenLabs  →  Gemini TTS  →  SAPI5 (Windows native, quota-free)
+The Gemini/SAPI5 helpers are imported from `gemini_flash_tts` to
+keep the implementation small.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from typing import Any
 from jarvis.core import config as cfg
 from jarvis.core.protocols import AudioChunk
 
-# SAPI5-Emergency-Fallback wiederverwenden (Windows-native, Quota-frei).
+# Reuse the SAPI5 emergency fallback (Windows-native, quota-free).
 from jarvis.plugins.tts.gemini_flash_tts import (
     SAPI5_SAMPLE_RATE,
     _sapi5_synthesize,
@@ -37,18 +37,18 @@ ELEVENLABS_TTS_SAMPLE_RATE = 24_000
 _OUTPUT_FORMAT = "pcm_24000"
 _STREAMING_LATENCY_OPTIMIZATION = 1
 
-# Bei Quota-Exhaustion / Auth-Problem ElevenLabs kurzzeitig skippen,
-# damit nicht jeder Satz erneut den 429-Pfad triggert.
+# On quota exhaustion / an auth problem, skip ElevenLabs briefly
+# so not every sentence retriggers the 429 path.
 _QUOTA_COOLDOWN_S = 900.0
 
 
-# Kuratierte Jarvis-Voices (Multi-Lingual, DE+EN via eleven_flash_v2_5).
-# Voice-IDs sind ElevenLabs-intern stabil (offizielle Standard-Library).
-JARVIS_VOICE_DANIEL = "onwK4e9ZLuTAKqWW03F9"   # British, autoritativ — Jarvis-Default
-JARVIS_VOICE_GEORGE = "JBFqnCBsd6RMkjVDRZzb"   # British, tiefer Narrator
-JARVIS_VOICE_CHARLIE = "IKne3meq5aSn9XLyUdCD"  # British, maturer Butler-Ton
-JARVIS_VOICE_BRIAN = "nPczCjzI2devNBz1zQrb"    # American, Deep Narrator
-JARVIS_VOICE_ADAM = "pNInz6obpgDQGcFmaJgB"     # American, klassische AI-Voice
+# Curated Jarvis voices (multilingual, DE+EN via eleven_flash_v2_5).
+# Voice IDs are stable within ElevenLabs (official standard library).
+JARVIS_VOICE_DANIEL = "onwK4e9ZLuTAKqWW03F9"   # British, authoritative — Jarvis default
+JARVIS_VOICE_GEORGE = "JBFqnCBsd6RMkjVDRZzb"   # British, deep narrator
+JARVIS_VOICE_CHARLIE = "IKne3meq5aSn9XLyUdCD"  # British, mature butler tone
+JARVIS_VOICE_BRIAN = "nPczCjzI2devNBz1zQrb"    # American, deep narrator
+JARVIS_VOICE_ADAM = "pNInz6obpgDQGcFmaJgB"     # American, classic AI voice
 
 
 DEFAULT_VOICES: tuple[str, ...] = (
@@ -61,7 +61,7 @@ DEFAULT_VOICES: tuple[str, ...] = (
 
 
 class ElevenLabsTTS:
-    """TTS-Provider fuer ElevenLabs (eleven_flash_v2_5 — Multi-Lang)."""
+    """TTS provider for ElevenLabs (eleven_flash_v2_5 — multi-lang)."""
 
     name = "elevenlabs"
     supports_streaming = True
@@ -93,7 +93,7 @@ class ElevenLabsTTS:
     # ------------------------------------------------------------------
 
     def _resolve_api_key(self) -> str:
-        """Key-Lookup: Windows Credential Manager → ENV → .env."""
+        """Key lookup: Windows Credential Manager → ENV → .env."""
         for key, env in (
             ("elevenlabs_api_key", "ELEVENLABS_API_KEY"),
             ("eleven_api_key", "ELEVEN_API_KEY"),
@@ -102,8 +102,8 @@ class ElevenLabsTTS:
             if val:
                 return val
         raise RuntimeError(
-            "ElevenLabs-API-Key nicht gefunden. Setze ELEVENLABS_API_KEY "
-            "im Windows Credential Manager oder in der .env."
+            "ElevenLabs API key not found. Set ELEVENLABS_API_KEY "
+            "in the Windows Credential Manager or in .env."
         )
 
     def _ensure_client(self) -> None:
@@ -121,11 +121,11 @@ class ElevenLabsTTS:
         voice: str | None = None,
         language_code: str | None = None,
     ) -> AsyncIterator[AudioChunk]:
-        """Synthetisiert Audio, yielded AudioChunks im echten Streaming.
+        """Synthesizes audio, yields AudioChunks in real streaming.
 
-        `language_code` ist optional — das multilinguale Modell erkennt
-        die Sprache aus dem Text automatisch. Wir reichen den Code nur
-        an den SAPI5-Fallback durch (fuer die Stimmen-Auswahl dort).
+        `language_code` is optional — the multilingual model detects
+        the language from the text automatically. We only pass the code
+        through to the SAPI5 fallback (for the voice selection there).
         """
         text = text.strip()
         if not text:
@@ -135,7 +135,7 @@ class ElevenLabsTTS:
 
         log = logging.getLogger("jarvis.tts.elevenlabs")
 
-        # Cooldown aktiv? Erst Gemini, dann SAPI5 — niemals stumm bleiben.
+        # Cooldown active? Gemini first, then SAPI5 — never stay silent.
         if self._quota_blocked_until and time.monotonic() < self._quota_blocked_until:
             async for chunk in self._fallback(text, language_code):
                 yield chunk
@@ -154,7 +154,7 @@ class ElevenLabsTTS:
                         channels=1,
                     )
             if not got_any:
-                log.warning("ElevenLabs-Stream leer — Fallback.")
+                log.warning("ElevenLabs stream empty — falling back.")
                 async for chunk in self._fallback(text, language_code):
                     yield chunk
         except Exception as exc:  # noqa: BLE001
@@ -169,13 +169,13 @@ class ElevenLabsTTS:
             ):
                 self._quota_blocked_until = time.monotonic() + _QUOTA_COOLDOWN_S
                 log.warning(
-                    "ElevenLabs-Quota/Auth-Fehler (%s) — Fallback fuer %.0f min.",
+                    "ElevenLabs quota/auth error (%s) — falling back for %.0f min.",
                     exc.__class__.__name__,
                     _QUOTA_COOLDOWN_S / 60,
                 )
             else:
                 log.warning(
-                    "ElevenLabs-Fehler (%s: %s) — Fallback.",
+                    "ElevenLabs error (%s: %s) — falling back.",
                     exc.__class__.__name__,
                     msg[:200],
                 )
@@ -183,7 +183,7 @@ class ElevenLabsTTS:
                 yield chunk
 
     def list_voices(self, language: str | None = None) -> list[str]:
-        """Kuratierte Jarvis-tauglichen Voice-IDs. Alle DE+EN via multilingual."""
+        """Curated Jarvis-suitable voice IDs. All DE+EN via multilingual."""
         return list(DEFAULT_VOICES)
 
     # ------------------------------------------------------------------
@@ -193,10 +193,10 @@ class ElevenLabsTTS:
     async def _stream_pcm(
         self, voice: str, text: str, language_code: str | None
     ) -> AsyncIterator[bytes]:
-        """ElevenLabs-SDK ist sync → Producer-Thread + asyncio.Queue.
+        """The ElevenLabs SDK is sync → producer thread + asyncio.Queue.
 
-        Nutzt `text_to_speech.stream(...)` (SDK 2.x). Liefert einen sync
-        `Iterator[bytes]` — jede Iteration ist ein Audio-Chunk.
+        Uses `text_to_speech.stream(...)` (SDK 2.x). Returns a sync
+        `Iterator[bytes]` — each iteration is one audio chunk.
         """
         from elevenlabs import VoiceSettings
 
@@ -208,7 +208,7 @@ class ElevenLabsTTS:
             speed=self._speed,
         )
 
-        # ElevenLabs erwartet ISO-639-1 zweistellig ("de" / "en"), nicht "de-DE".
+        # ElevenLabs expects two-letter ISO-639-1 ("de" / "en"), not "de-DE".
         lang_short: str | None = None
         code = (language_code or self._language_code or "").lower().strip()
         if code:
@@ -254,13 +254,13 @@ class ElevenLabsTTS:
     async def _fallback(
         self, text: str, language_code: str | None
     ) -> AsyncIterator[AudioChunk]:
-        """Cross-Provider-Fallback Gemini-TTS → SAPI5 (Letzteres Opt-in).
+        """Cross-provider fallback Gemini TTS → SAPI5 (the latter opt-in).
 
-        Stage 1 (Gemini) bleibt immer aktiv: Wechselt der primaere Provider
-        wegen Quota/Auth aus, ist Gemini der naechste Cloud-TTS — keine
-        roboterhafte Stimme. Stage 2 (SAPI5) ist nur aktiv wenn der User
-        ``tts.allow_sapi5_fallback = true`` gesetzt hat. Default-Verhalten:
-        bei Totalausfall lieber stumm bleiben als Windows-Roboter abspielen.
+        Stage 1 (Gemini) is always active: if the primary provider drops
+        out due to quota/auth, Gemini is the next cloud TTS — no
+        robotic voice. Stage 2 (SAPI5) is only active if the user has
+        set ``tts.allow_sapi5_fallback = true``. Default behavior:
+        on total failure, prefer staying silent over playing the Windows robot voice.
         """
         log = logging.getLogger("jarvis.tts.elevenlabs")
 
@@ -277,21 +277,21 @@ class ElevenLabsTTS:
             return
         except Exception as exc:  # noqa: BLE001
             log.error(
-                "Gemini-Fallback nach ElevenLabs-Fehler ebenfalls gescheitert (%s).",
+                "Gemini fallback after the ElevenLabs error also failed (%s).",
                 exc.__class__.__name__, exc_info=True,
             )
 
         if not self._allow_sapi5_fallback:
             log.error(
-                "Sowohl ElevenLabs als auch Gemini-TTS lieferten kein Audio. "
-                "SAPI5-Notbremse per Config deaktiviert — bleibe stumm. "
-                "Setze tts.allow_sapi5_fallback=true wenn Du Windows-TTS als "
-                "Notausgang erlaubst.",
+                "Both ElevenLabs and Gemini TTS delivered no audio. "
+                "SAPI5 emergency fallback disabled via config — staying silent. "
+                "Set tts.allow_sapi5_fallback=true if you want to allow "
+                "Windows TTS as an emergency exit.",
             )
             return
 
-        # Stage 2: SAPI5 (Windows native, Quota-frei) — nur bei Opt-in.
-        log.warning("SAPI5-Notbremse aktiv (Config-Opt-in).")
+        # Stage 2: SAPI5 (Windows-native, quota-free) — opt-in only.
+        log.warning("SAPI5 emergency fallback active (config opt-in).")
         pcm = await asyncio.to_thread(
             _sapi5_synthesize, text, language_code or self._language_code
         )
