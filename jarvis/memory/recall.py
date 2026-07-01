@@ -98,7 +98,7 @@ class RecallStore:
 
     def _require_conn(self) -> aiosqlite.Connection:
         if self._conn is None:
-            raise RuntimeError("RecallStore ist nicht geöffnet — rufe open() oder nutze 'async with'.")
+            raise RuntimeError("RecallStore is not open — call open() or use 'async with'.")
         return self._conn
 
     # ------------------------------------------------------------------
@@ -215,7 +215,7 @@ class RecallStore:
         return rowcount
 
     # ------------------------------------------------------------------
-    # MemoryStore-Protocol (KV-Store über `kv_store`-Tabelle)
+    # MemoryStore protocol (KV store via the `kv_store` table)
     # ------------------------------------------------------------------
 
     async def put(self, namespace: str, key: str, value: dict[str, Any]) -> None:
