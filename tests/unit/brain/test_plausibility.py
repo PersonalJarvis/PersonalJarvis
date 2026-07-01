@@ -1,17 +1,18 @@
-"""Tests fuer ``jarvis.brain.plausibility.check_plausibility`` (Phase 4).
+"""Tests for ``jarvis.brain.plausibility.check_plausibility`` (phase 4).
 
-Persona-Mandat Phase 4: Vor jeder Tool-Execution mit ``risk_tier ∈ {ask,
-monitor}`` prueft der Plausibility-Guard zwei Signale:
+Persona mandate phase 4: before every tool execution with ``risk_tier ∈
+{ask, monitor}``, the plausibility guard checks two signals:
 
-  - Whisper-Confidence des aktuellen Turns (``Transcript.confidence``)
-  - Wake-Time-Differenz (``wake_age_s`` seit letztem Wake-Trigger)
+  - Whisper confidence of the current turn (``Transcript.confidence``)
+  - Wake-time difference (``wake_age_s`` since the last wake trigger)
 
-Bei niedriger Confidence (< Threshold) ODER stale Wake (> stale_seconds):
-  - ``ask``-Tier: zusaetzliche Voice-Bestaetigung (require_confirmation=True)
-  - ``monitor``-Tier: nur Log-Warning, kein Block (require_confirmation=False)
+On low confidence (< threshold) OR a stale wake (> stale_seconds):
+  - ``ask`` tier: additional voice confirmation (require_confirmation=True)
+  - ``monitor`` tier: log-warning only, no block (require_confirmation=False)
 
-Plausibility ist KEIN Risk-Tier — Whitelist-downgraded Tools (``safe``)
-laufen weiter ohne Plausibility-Check, sonst ist die Whitelist sinnlos.
+Plausibility is NOT a risk tier — whitelist-downgraded tools (``safe``)
+keep running without a plausibility check, otherwise the whitelist would
+be pointless.
 """
 from __future__ import annotations
 
@@ -25,12 +26,12 @@ from jarvis.core.protocols import Transcript
 
 
 def _t(confidence: float | None) -> Transcript:
-    """Hilfs-Konstruktor fuer Test-Transcripts.
+    """Helper constructor for test transcripts.
 
-    Akzeptiert ``None`` fuer Failure-Mode-3 (manche STT-Provider liefern
-    keine Confidence). ``Transcript`` ist als ``float`` typisiert, aber wir
-    castet defensiv — der Plausibility-Guard muss sowohl float als auch
-    None vertragen.
+    Accepts ``None`` for failure mode 3 (some STT providers do not report
+    a confidence). ``Transcript`` is typed as ``float``, but we cast
+    defensively — the plausibility guard must tolerate both a float and
+    None.
     """
     return Transcript(
         text="test",
@@ -41,7 +42,7 @@ def _t(confidence: float | None) -> Transcript:
 
 
 # ---------------------------------------------------------------------------
-# 5 Cases aus dem Mandat
+# 5 cases from the mandate
 # ---------------------------------------------------------------------------
 
 
@@ -82,8 +83,8 @@ def test_low_confidence_stale_wake_ask_requires_confirmation() -> None:
     )
     assert decision.proceed is True
     assert decision.require_confirmation is True
-    # Low confidence dominiert ueber stale_wake — beides triggert, aber
-    # die Confidence-Diagnose ist informativer fuer Debugging.
+    # Low confidence dominates over stale_wake — both trigger, but the
+    # confidence diagnosis is more informative for debugging.
     assert decision.reason == "low_confidence_ask"
 
 
@@ -101,7 +102,7 @@ def test_high_confidence_stale_wake_monitor_log_only() -> None:
 
 
 def test_low_confidence_safe_tier_passes_through() -> None:
-    """Case 5: low confidence + ANY + safe → durchwinken, Plausibility tut nichts."""
+    """Case 5: low confidence + ANY + safe → waved through, plausibility does nothing."""
     decision = check_plausibility(
         tool_name="search_web",
         risk_tier="safe",
@@ -114,16 +115,16 @@ def test_low_confidence_safe_tier_passes_through() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Failure-Mode-3-Test: Transcript.confidence == None konservativ als 0.0
+# Failure-mode-3 test: Transcript.confidence == None treated conservatively as 0.0
 # ---------------------------------------------------------------------------
 
 
 def test_none_confidence_treated_as_zero_for_ask_tier() -> None:
-    """``Transcript.confidence`` kann ``None`` sein (Failure-Mode 3 Mandat).
+    """``Transcript.confidence`` can be ``None`` (failure-mode 3 mandate).
 
-    Konservative Behandlung: ``None`` → 0.0 → triggert require_confirmation
-    bei ``ask``-Tier. Verhindert, dass ein STT-Provider ohne Confidence-
-    Reporting die Plausibility-Schicht stillschweigend deaktiviert.
+    Conservative handling: ``None`` → 0.0 → triggers require_confirmation
+    at the ``ask`` tier. Prevents an STT provider without confidence
+    reporting from silently disabling the plausibility layer.
     """
     decision = check_plausibility(
         tool_name="run_shell",
@@ -137,7 +138,7 @@ def test_none_confidence_treated_as_zero_for_ask_tier() -> None:
 
 
 def test_none_confidence_treated_as_zero_for_monitor_tier() -> None:
-    """``None``-Confidence bei monitor → log-only, kein Block."""
+    """``None`` confidence at monitor → log-only, no block."""
     decision = check_plausibility(
         tool_name="open_app",
         risk_tier="monitor",
@@ -150,7 +151,7 @@ def test_none_confidence_treated_as_zero_for_monitor_tier() -> None:
 
 
 def test_no_transcript_treated_as_zero_confidence() -> None:
-    """Fehlender Transcript (None) wird wie None-Confidence behandelt."""
+    """A missing transcript (None) is treated like a None confidence."""
     decision = check_plausibility(
         tool_name="run_shell",
         risk_tier="ask",
@@ -163,12 +164,12 @@ def test_no_transcript_treated_as_zero_confidence() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Konfigurierbarkeits-Tests: Threshold/Stale-Seconds aus Config
+# Configurability tests: threshold/stale-seconds from config
 # ---------------------------------------------------------------------------
 
 
 def test_custom_confidence_threshold() -> None:
-    """Threshold von 0.8 (statt Default 0.5) macht 0.6 zu low_confidence."""
+    """A threshold of 0.8 (instead of the default 0.5) makes 0.6 low_confidence."""
     from jarvis.core.config import BrainPlausibilityConfig
 
     cfg = BrainPlausibilityConfig(confidence_threshold=0.8)
@@ -184,7 +185,7 @@ def test_custom_confidence_threshold() -> None:
 
 
 def test_custom_stale_wake_seconds() -> None:
-    """``stale_wake_seconds=10`` macht 15s zu stale, was bei monitor log-only triggert."""
+    """``stale_wake_seconds=10`` makes 15s stale, which triggers log-only at monitor."""
     from jarvis.core.config import BrainPlausibilityConfig
 
     cfg = BrainPlausibilityConfig(stale_wake_seconds=10.0)
@@ -201,12 +202,12 @@ def test_custom_stale_wake_seconds() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Edge-Case: Confidence genau an der Schwelle.
+# Edge case: confidence exactly at the threshold.
 # ---------------------------------------------------------------------------
 
 
 def test_confidence_exactly_at_threshold_passes() -> None:
-    """Confidence genau == Threshold gilt als ausreichend (>=, nicht >)."""
+    """A confidence exactly == threshold counts as sufficient (>=, not >)."""
     decision = check_plausibility(
         tool_name="run_shell",
         risk_tier="ask",
@@ -218,7 +219,7 @@ def test_confidence_exactly_at_threshold_passes() -> None:
 
 
 def test_wake_age_exactly_at_threshold_passes() -> None:
-    """Wake-Age genau == 30s gilt als nicht-stale (<=, nicht <)."""
+    """A wake age exactly == 30s counts as not stale (<=, not <)."""
     decision = check_plausibility(
         tool_name="run_shell",
         risk_tier="ask",

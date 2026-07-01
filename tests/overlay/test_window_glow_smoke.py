@@ -1,4 +1,4 @@
-"""EdgeGlowWindow Smoke-Test — instantiiert headless, ohne ``show()``."""
+"""EdgeGlowWindow smoke test — instantiates headless, without ``show()``."""
 
 from __future__ import annotations
 
@@ -14,11 +14,11 @@ def test_edge_glow_window_instantiates_headless(qapp) -> None:
     from overlay.window_glow import EdgeGlowWindow
 
     primary = QGuiApplication.primaryScreen()
-    assert primary is not None, "offscreen platform muss einen Screen liefern"
+    assert primary is not None, "offscreen platform must provide a screen"
 
     win = EdgeGlowWindow(primary, hide_from_capture=False)
     try:
-        # Sanity: Flags sind gesetzt — KEIN show() (Plan-Vorgabe).
+        # Sanity: flags are set — NO show() (per the plan).
         flags = win.windowFlags()
         assert flags & Qt.WindowType.FramelessWindowHint
         assert flags & Qt.WindowType.WindowStaysOnTopHint
@@ -31,7 +31,7 @@ def test_edge_glow_window_instantiates_headless(qapp) -> None:
         assert win.testAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
         assert win.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
 
-        # Geometrie matcht den Screen.
+        # Geometry matches the screen.
         assert win.geometry() == primary.geometry()
     finally:
         win.deleteLater()

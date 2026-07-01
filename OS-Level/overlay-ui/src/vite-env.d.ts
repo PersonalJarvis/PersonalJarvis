@@ -1,5 +1,5 @@
-// Ambient declarations fuer Vite-spezifische Imports.
-// Strict-Mode wuerde sonst meckern dass der Default-Export untyped ist.
+// Ambient declarations for Vite-specific imports.
+// Otherwise strict mode would complain that the default export is untyped.
 
 declare module "*.svg?raw" {
   const content: string;

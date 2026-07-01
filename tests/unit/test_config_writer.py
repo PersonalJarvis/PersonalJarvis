@@ -1,4 +1,4 @@
-﻿"""Tests für config_writer: atomare TOML-Edits, Kommentar-Preservation, Roundtrip."""
+﻿"""Tests for config_writer: atomic TOML edits, comment preservation, roundtrip."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,43 +10,43 @@ from jarvis.core import config_writer
 
 @pytest.fixture(autouse=True)
 def _isolate_provider_switch_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Neutralize the config-soll.json + ENV side-effects of the provider switches.
+    """Neutralize the config-soll.json + ENV side-effects of the provider switches.  # i18n-allow
 
     ``set_brain_primary`` / ``set_tts_provider`` / ``set_stt_provider`` are the
     authoritative writers of THREE persistence layers (jarvis.toml,
-    scripts/config-soll.json, JARVIS__*  ENV). The tests in this module only
+    scripts/config-soll.json, JARVIS__*  ENV). The tests in this module only  # i18n-allow
     exercise the TOML layer against a temp file, so we stub the best-effort syncs
-    to no-ops — otherwise they would touch the LIVE scripts/config-soll.json and
+    to no-ops — otherwise they would touch the LIVE scripts/config-soll.json and  # i18n-allow
     the LIVE Windows registry. The dedicated three-layer coverage lives in
     tests/unit/test_config_writer_{brain_primary,tts,stt}_sync.py.
     """
     monkeypatch.setattr(
-        config_writer, "_sync_brain_primary_drift_soll", lambda name: None
+        config_writer, "_sync_brain_primary_drift_soll", lambda name: None  # i18n-allow
     )
     monkeypatch.setattr(
-        config_writer, "_sync_tts_provider_drift_soll", lambda applied: None
+        config_writer, "_sync_tts_provider_drift_soll", lambda applied: None  # i18n-allow
     )
     monkeypatch.setattr(
-        config_writer, "_sync_stt_provider_drift_soll", lambda name: None
+        config_writer, "_sync_stt_provider_drift_soll", lambda name: None  # i18n-allow
     )
 
 
 @pytest.fixture
 def sample_toml(tmp_path: Path) -> Path:
-    """jarvis.toml-Skelett mit Kommentaren, die wir nicht verlieren wollen."""
+    """jarvis.toml skeleton with comments we don't want to lose."""
     p = tmp_path / "jarvis.toml"
     p.write_text(
         """\
-# Personal Jarvis — Hauptkonfiguration
-# Kommentare bleiben beim Schreiben erhalten (tomlkit).
+# Personal Jarvis — main configuration
+# Comments survive the write (tomlkit).
 
 [brain]
-# Aktiver Standard-Provider
+# Active default provider
 primary = "openrouter"
 deep_brain = "claude-api"
 
 [brain.providers.claude-api]
-model = "claude-haiku-4-5"  # darf NICHT verschwinden
+model = "claude-haiku-4-5"  # must NOT disappear
 
 [tts]
 provider = "gemini-flash-tts"
@@ -66,9 +66,9 @@ def test_set_brain_primary_changes_value(sample_toml: Path) -> None:
 def test_set_brain_primary_preserves_comments(sample_toml: Path) -> None:
     config_writer.set_brain_primary("gemini", path=sample_toml)
     text = sample_toml.read_text(encoding="utf-8")
-    assert "# Personal Jarvis — Hauptkonfiguration" in text
-    assert "# Aktiver Standard-Provider" in text
-    assert "# darf NICHT verschwinden" in text
+    assert "# Personal Jarvis — main configuration" in text
+    assert "# Active default provider" in text
+    assert "# must NOT disappear" in text
 
 
 def test_set_brain_primary_preserves_unrelated_keys(sample_toml: Path) -> None:
@@ -110,7 +110,7 @@ def test_set_ui_language_writes_ui_key(sample_toml: Path) -> None:
 def test_atomic_write_does_not_leave_tmp(sample_toml: Path) -> None:
     config_writer.set_brain_primary("openai", path=sample_toml)
     leftovers = list(sample_toml.parent.glob("*.tmp"))
-    assert leftovers == [], f"Tempfile nicht aufgeräumt: {leftovers}"
+    assert leftovers == [], f"Tempfile not cleaned up: {leftovers}"
 
 
 def test_missing_config_raises(tmp_path: Path) -> None:

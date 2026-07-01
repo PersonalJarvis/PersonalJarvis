@@ -1,4 +1,4 @@
-"""Contract-Tests: alle registrierten Harness-Plugins erfüllen das Protocol."""
+"""Contract tests: every registered harness plugin satisfies the protocol."""
 from __future__ import annotations
 
 import inspect

@@ -34,8 +34,8 @@ def test_active_bar_body_click_does_not_hang_up():
     A low-intent click on the BODY of an active bar — between the End button and
     the mic, where NO control is drawn — must NOT end the session. The old code
     treated the whole left 40% of the bar as the hang-up X, so any such click
-    silently hung up ("Jarvis legt von selbst auf, ich hab nichts von Auflegen
-    gesagt").
+    silently hung up ("Jarvis hangs up on its own, I never said anything about
+    hanging up").
     """
     W, PW = 100, 100
     # Body gap between the End X (centre 20, hit ±16 → up to 36) and the mic zone

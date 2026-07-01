@@ -1,14 +1,14 @@
-"""read_visible_ui_state-Tool: liefert den aktuellen UI-State als Feedback.
+"""read_visible_ui_state tool: returns the current UI state as feedback.
 
-Liefert dem Agent strukturierte Information darueber, was gerade auf dem
-Bildschirm sichtbar ist — Fenster-Titel, sichtbare Texte, Anzahl Nodes.
-Optional zusaetzlich einen Screenshot-Artifact fuer Vision-faehige Brains.
+Gives the agent structured information about what is currently visible
+on screen — window title, visible texts, node count.
+Optionally also a screenshot artifact for vision-capable brains.
 
-Risk-Tier: ``safe`` — read-only, kein State-Change.
+Risk tier: ``safe`` — read-only, no state change.
 
-Architektur: Das Tool instanziiert eine ``UIATreeSource`` lazy beim ersten
-Call. Alternativ kann der Caller via Factory eine bestehende Source
-injizieren (siehe ``brain.factory``-Verdrahtung mit VisionEngine).
+Architecture: the tool lazily instantiates a ``UIATreeSource`` on the
+first call. Alternatively the caller can inject an existing source via
+factory (see the ``brain.factory`` wiring with VisionEngine).
 """
 from __future__ import annotations
 
@@ -21,8 +21,8 @@ class ReadVisibleUIStateTool:
     name: str = "read_visible_ui_state"
     risk_tier: str = "safe"
     description: str = (
-        "Liest den aktuellen UI-Zustand: Fenster-Titel, sichtbarer Text und "
-        "UI-Element-Count. Optional zusaetzlich einen Screenshot."
+        "Reads the current UI state: window title, visible text, and "
+        "UI element count. Optionally also a screenshot."
     )
     schema: dict[str, Any] = {
         "type": "object",
@@ -30,19 +30,19 @@ class ReadVisibleUIStateTool:
             "include_screenshot": {
                 "type": "boolean",
                 "default": False,
-                "description": "Falls True, zusaetzlich Screenshot als image-artifact",
+                "description": "If True, also return a screenshot as an image artifact",
             },
             "max_text_chars": {
                 "type": "integer",
                 "default": 2000,
-                "description": "Limit fuer aggregierten Text — verhindert Token-Explosion",
+                "description": "Limit for the aggregated text — prevents a token explosion",
             },
         },
         "required": [],
     }
 
     def __init__(self, vision_source: Any | None = None) -> None:
-        # Optional injizierbar fuer Tests + zentrale Engine-Wiederverwendung.
+        # Optionally injectable for tests + central engine reuse.
         self._vision_source = vision_source
 
     async def execute(self, args: dict[str, Any], ctx: ExecutionContext) -> ToolResult:
@@ -60,13 +60,13 @@ class ReadVisibleUIStateTool:
         source = self._vision_source or make_ui_tree_source()
         try:
             obs = await source.observe()
-        except Exception as exc:  # noqa: BLE001 — UIA kann diverse Fehler werfen
+        except Exception as exc:  # noqa: BLE001 — UIA can raise a variety of errors
             return ToolResult(
                 success=False, output=None,
-                error=f"UI-Observation fehlgeschlagen: {exc}",
+                error=f"UI observation failed: {exc}",
             )
 
-        # Texte aus den Nodes aggregieren
+        # Aggregate texts from the nodes
         texts: list[str] = []
         char_count = 0
         for node in obs.nodes:
@@ -100,7 +100,7 @@ class ReadVisibleUIStateTool:
                     },
                 )
             except OSError:
-                # Screenshot-Datei nicht lesbar — kein Hard-Fail
+                # Screenshot file not readable — not a hard fail
                 pass
 
         return ToolResult(

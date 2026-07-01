@@ -36,7 +36,7 @@ class GeminiFlashAck:
             )
             if not api_key:
                 raise RuntimeError(
-                    f"Kein Gemini-API-Key in keyring/env "
+                    f"No Gemini API key in keyring/env "
                     f"({self._config.api_key_secret} / GEMINI_API_KEY)."
                 )
             from google import genai

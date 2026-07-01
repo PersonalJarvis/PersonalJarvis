@@ -1,19 +1,19 @@
-"""Smoke-Test Phase 3: Critic-Loop + Kontrollierer (mocked, no API).
+"""Smoke test Phase 3: Critic loop + Kontrollierer (mocked, no API).
 
-Laeuft End-to-End ohne pytest, prueft die Acceptance-Kriterien aus
-docs/phase6-prompt-chain.md fuer Phase 3 mit Fakes statt echten Subprocesses.
-Exit 0 bei Erfolg, Exit 1 bei Fehler.
+Runs end-to-end without pytest, checking the acceptance criteria from
+docs/phase6-prompt-chain.md for Phase 3 with fakes instead of real subprocesses.
+Exit 0 on success, exit 1 on failure.
 
-Was wird verifiziert:
-1. Decomposer (heuristik-Pfad) liefert 1-Step-Plan fuer kurze Prompt.
-2. Kontrollierer fuehrt Worker+Critic-Loop durch:
-   - Iter 0: Critic returns revise -> Reflection persisted -> Iter 1 startet.
+What is verified:
+1. Decomposer (heuristic path) returns a 1-step plan for a short prompt.
+2. Kontrollierer runs the worker+critic loop:
+   - Iter 0: Critic returns revise -> reflection persisted -> iter 1 starts.
    - Iter 1: Critic returns approve -> MissionApproved.
-3. Reflections.md hat genau 1 Eintrag (von iter 0).
-4. State-Machine: PENDING -> RUNNING -> CRITIQUING -> APPROVED.
-5. CriticVerdictReady-Events: 2 (iter 0 revise + iter 1 approve).
-6. MissionApproved-Event auf Bus.
-7. Cost in BudgetTracker akkumuliert (mocked $0.05 + $0.05 = $0.10).
+3. Reflections.md has exactly 1 entry (from iter 0).
+4. State machine: PENDING -> RUNNING -> CRITIQUING -> APPROVED.
+5. CriticVerdictReady events: 2 (iter 0 revise + iter 1 approve).
+6. MissionApproved event on the bus.
+7. Cost accumulated in BudgetTracker (mocked $0.05 + $0.05 = $0.10).
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from unittest.mock import MagicMock
 if sys.stdout.encoding != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
 
-# Repo-Root in sys.path damit `from jarvis.missions...` funktioniert
+# Repo root in sys.path so `from jarvis.missions...` works
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from jarvis.missions.budget import BudgetTracker  # noqa: E402
@@ -205,50 +205,50 @@ async def smoke() -> int:
             isolation_root=tmp_path / "missions",
         )
 
-        # Dispatch + Run
-        mid = await mgr.dispatch(prompt="Schreibe is_palindrome(s: str) -> bool")
+        # Dispatch + run
+        mid = await mgr.dispatch(prompt="Write is_palindrome(s: str) -> bool")
         end_state = await kontrollierer.run_mission(mid)
 
-        # Check 1: End-State
+        # Check 1: end state
         if end_state != MissionState.APPROVED:
             failures.append(f"end_state {end_state} != APPROVED")
         else:
             print(f"{OK} mission ended APPROVED")
 
-        # Check 2: Mission-Header-State
+        # Check 2: mission header state
         view = await mgr.mission(mid)
         if view is None or view.state != MissionState.APPROVED:
             failures.append(f"mission state {view.state if view else None} != APPROVED")
         else:
             print(f"{OK} mission header is APPROVED")
 
-        # Check 3: Anzahl Iterationen
+        # Check 3: number of iterations
         if len(critic.calls) != 2:
-            failures.append(f"critic.calls = {len(critic.calls)}, erwartet 2")
+            failures.append(f"critic.calls = {len(critic.calls)}, expected 2")
         else:
             print(f"{OK} critic was called exactly 2 times")
 
         if len(worker.spawn_calls) != 2:
-            failures.append(f"worker.spawn_calls = {len(worker.spawn_calls)}, erwartet 2")
+            failures.append(f"worker.spawn_calls = {len(worker.spawn_calls)}, expected 2")
         else:
             print(f"{OK} worker spawned exactly 2 times")
 
-        # Check 4: Reflections.md hat 1 Eintrag (von iter 0 revise).
+        # Check 4: Reflections.md has 1 entry (from iter 0 revise).
         # mission_dir uses mission_id[:13] (BUG-LIVE-10 bumped the prefix from 8
         # to 13 chars — see orchestrator._run_mission + outputs_routes.py).
         mission_dir = tmp_path / "missions" / f"mission_{mid[:13]}"
         refl = ReflectionMemory(mission_dir)
         last = refl.last_n(5)
         if len(last) != 1:
-            failures.append(f"reflections={len(last)}, erwartet 1")
+            failures.append(f"reflections={len(last)}, expected 1")
         else:
-            print(f"{OK} reflections.md hat 1 Eintrag (iter 0)")
+            print(f"{OK} reflections.md has 1 entry (iter 0)")
             if "edge case" not in last[0].summary:
-                failures.append(f"reflection summary unerwartet: {last[0].summary!r}")
+                failures.append(f"unexpected reflection summary: {last[0].summary!r}")
             else:
-                print(f"{OK} reflection summary enthaelt 'edge case'")
+                print(f"{OK} reflection summary contains 'edge case'")
 
-        # Check 5: State-Machine-Transitions
+        # Check 5: state-machine transitions
         events = await mgr.store.events_for_mission(mid)
         sc_events = [e for e in events if e.payload.event_type == "MissionStateChanged"]
         transitions = [(e.payload.from_state, e.payload.to_state) for e in sc_events]  # type: ignore[attr-defined]
@@ -258,7 +258,7 @@ async def smoke() -> int:
             ("CRITIQUING", "APPROVED"),
         ]:
             if expected not in transitions:
-                failures.append(f"transition {expected} fehlt; got {transitions}")
+                failures.append(f"transition {expected} missing; got {transitions}")
         if all((exp in transitions) for exp in [
             ("PENDING", "RUNNING"),
             ("RUNNING", "CRITIQUING"),
@@ -266,37 +266,37 @@ async def smoke() -> int:
         ]):
             print(f"{OK} state-machine: PENDING -> RUNNING -> CRITIQUING -> APPROVED")
 
-        # Check 6: CriticVerdictReady-Events
+        # Check 6: CriticVerdictReady events
         verdict_events = [e for e in events if e.payload.event_type == "CriticVerdictReady"]
         if len(verdict_events) != 2:
-            failures.append(f"CriticVerdictReady-events = {len(verdict_events)}, erwartet 2")
+            failures.append(f"CriticVerdictReady events = {len(verdict_events)}, expected 2")
         else:
-            print(f"{OK} 2x CriticVerdictReady auf event-store")
+            print(f"{OK} 2x CriticVerdictReady on event store")
 
-        # Check 7: MissionApproved-Event
+        # Check 7: MissionApproved event
         approved_events = [e for e in events if e.payload.event_type == "MissionApproved"]
         if len(approved_events) != 1:
-            failures.append(f"MissionApproved-events = {len(approved_events)}, erwartet 1")
+            failures.append(f"MissionApproved events = {len(approved_events)}, expected 1")
         else:
-            print(f"{OK} MissionApproved emittiert")
+            print(f"{OK} MissionApproved emitted")
 
-        # Check 8: Cost akkumuliert
+        # Check 8: cost accumulated
         cost = budget.mission_cost(mid)
         if cost != 0.10:
-            failures.append(f"budget.mission_cost = {cost}, erwartet 0.10")
+            failures.append(f"budget.mission_cost = {cost}, expected 0.10")
         else:
             print(f"{OK} budget.mission_cost = $0.10 (2 iterations × $0.05)")
 
         # Check 9: MissionPlanReady
         plan_events = [e for e in events if e.payload.event_type == "MissionPlanReady"]
         if len(plan_events) != 1:
-            failures.append(f"MissionPlanReady-events = {len(plan_events)}, erwartet 1")
+            failures.append(f"MissionPlanReady events = {len(plan_events)}, expected 1")
         else:
-            print(f"{OK} MissionPlanReady emittiert")
+            print(f"{OK} MissionPlanReady emitted")
 
-        # Check 10: Worker-Prompt iter 1 enthielt Reflection-Block
+        # Check 10: worker prompt iter 1 contained the reflection block
         if "Prior Critic Feedback" not in worker.spawn_calls[1]["prompt"]:
-            failures.append("Worker-Prompt iter 1 enthaelt KEIN 'Prior Critic Feedback'")
+            failures.append("worker prompt iter 1 does NOT contain 'Prior Critic Feedback'")
         else:
             print(f"{OK} worker iter 1 prompt has 'Prior Critic Feedback' block")
 

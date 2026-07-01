@@ -1,16 +1,16 @@
-"""IPC Pydantic-v2-Schemas — Single-Source. Plan §10.
+"""IPC Pydantic v2 schemas — single source of truth. Plan §10.
 
-Wire-Envelope (§10.1):
+Wire envelope (§10.1):
     {v, type, id, ts_ns, target, payload}
 
-``type`` ist der Discriminator fuer ``payload``. Die saubere Pydantic-v2-
-Variante: pro Message-Type ein eigenes Envelope-Modell mit ``type`` als
-``Literal``-Field; die Union darueber wird mit ``Field(discriminator="type")``
-typisiert. ``IPCMessage`` ist die runtime-validierende ``TypeAdapter``-
-Instanz.
+``type`` is the discriminator for ``payload``. The clean Pydantic v2
+approach: one dedicated envelope model per message type with ``type``
+as a ``Literal`` field; the union over them is typed with
+``Field(discriminator="type")``. ``IPCMessage`` is the runtime-validating
+``TypeAdapter`` instance.
 
-AD-15: Pydantic v2 (Python) und Zod (TS) symmetrisch — Phase 9.4 leitet
-das Zod-Schema aus dem JSON-Schema-Export hier ab.
+AD-15: Pydantic v2 (Python) and Zod (TS) stay symmetric — Phase 9.4
+derives the Zod schema from the JSON-schema export here.
 """
 
 from __future__ import annotations
@@ -27,10 +27,10 @@ from pydantic import (
 )
 from ulid import ULID
 
-# Schema-Major-Version. Forward-Compat: Empfaenger warnen wenn != 1.
+# Schema major version. Forward compat: receivers warn if != 1.
 SCHEMA_VERSION = 1
 
-# Discriminator-Werte (auch von der State-Machine in 9.3 referenziert).
+# Discriminator values (also referenced by the state machine in 9.3).
 StateName = Literal[
     "idle",
     "listening",
@@ -48,12 +48,12 @@ StateReason = Literal["wakeword", "user", "tool", "timeout", "error"]
 
 
 def now_ns() -> int:
-    """Unix-epoch ns. Kompatibel mit SHM-Cursor + WS-Envelopes (§11.4)."""
+    """Unix epoch ns. Compatible with the SHM cursor + WS envelopes (§11.4)."""
     return time.time_ns()
 
 
 def new_ulid() -> str:
-    """Frische ULID als Wire-String (26 Crockford-Base32 chars)."""
+    """Fresh ULID as a wire string (26 Crockford Base32 chars)."""
     return str(ULID())
 
 
@@ -99,7 +99,7 @@ class ActionEndedPayload(BaseModel):
 
 
 class CursorPayload(BaseModel):
-    """WS-Fallback wenn SHM nicht verfuegbar (§11.5)."""
+    """WS fallback when SHM isn't available (§11.5)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -121,9 +121,9 @@ class HeartbeatPayload(BaseModel):
 
 
 class ConfigPayload(BaseModel):
-    """Hauptjarvis -> Overlay nach Config-Reload (§10.2)."""
+    """Main-Jarvis -> overlay after a config reload (§10.2)."""
 
-    model_config = ConfigDict(extra="allow")  # forward-compat, neue Theme-Keys
+    model_config = ConfigDict(extra="allow")  # forward-compat, new theme keys
 
     theme: dict[str, Any] = Field(default_factory=dict)
     mascot_enabled: bool = True
@@ -168,12 +168,12 @@ class MascotEventPayload(BaseModel):
 
 
 # -----------------------------------------------------------------------------
-# Envelope — §10.1, eine Klasse pro type, Discriminated Union
+# Envelope — §10.1, one class per type, discriminated union
 # -----------------------------------------------------------------------------
 
 
 class _BaseEnvelope(BaseModel):
-    """Gemeinsame Envelope-Felder. ``type`` setzt jede Subklasse selbst."""
+    """Shared envelope fields. Each subclass sets ``type`` itself."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -185,9 +185,9 @@ class _BaseEnvelope(BaseModel):
     @field_validator("v")
     @classmethod
     def _check_version(cls, value: int) -> int:
-        # Forward-Compat: hoechere Versionen werden in IPC-Layer geloggt,
-        # hier akzeptieren wir alles >=1, damit ein neueres Overlay vom
-        # alten Hauptjarvis empfangen kann.
+        # Forward compat: higher versions are logged in the IPC layer,
+        # here we accept anything >=1 so a newer overlay can receive
+        # from an older Main-Jarvis.
         if value < 1:
             raise ValueError(f"schema-version v={value} < 1")
         return value
@@ -259,14 +259,14 @@ IPCEnvelope = Annotated[
     Field(discriminator="type"),
 ]
 
-# Runtime-Validator. ``IPCMessage.validate_python(d)`` /
-# ``IPCMessage.validate_json(b)`` waehlen anhand des ``type``-Felds das
-# richtige Envelope-Modell.
+# Runtime validator. ``IPCMessage.validate_python(d)`` /
+# ``IPCMessage.validate_json(b)`` pick the right envelope model based
+# on the ``type`` field.
 IPCMessage: TypeAdapter[Any] = TypeAdapter(IPCEnvelope)
 
 
-# State-Sets, die Plan §6.1 in Code abbildet — auch von der 9.3-State-
-# Machine konsumiert.
+# State sets that mirror Plan §6.1 in code — also consumed by the
+# 9.3 state machine.
 NON_STATE_TYPES: frozenset[str] = frozenset(
     {
         "cursor",
@@ -283,7 +283,7 @@ STATE_TYPES: frozenset[str] = frozenset({"state", "config"})
 
 
 def is_state_type(envelope_type: str) -> bool:
-    """Backpressure-Hint: ``False`` -> kann gedroppt werden (§10.4)."""
+    """Backpressure hint: ``False`` -> can be dropped (§10.4)."""
     return envelope_type in STATE_TYPES
 
 

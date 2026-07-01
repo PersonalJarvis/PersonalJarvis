@@ -151,8 +151,8 @@ def test_envelope_v_must_be_at_least_1() -> None:
 
 
 def test_higher_version_accepted_for_forward_compat() -> None:
-    # Forward-Compat: Empfaenger laesst v=2 durch (loggt nur Warning beim
-    # IPC-Layer); das Pydantic-Modell selbst darf nicht raisen.
+    # Forward compat: receiver lets v=2 through (only logs a warning at
+    # the IPC layer); the Pydantic model itself must not raise.
     msg = IPCMessage.validate_python(
         {
             "type": "state",
@@ -167,7 +167,7 @@ def test_higher_version_accepted_for_forward_compat() -> None:
 
 
 def test_jarvis_re_export_identical() -> None:
-    """``jarvis.overlay.schema`` muss exakt dieselben Klassen reexportieren."""
+    """``jarvis.overlay.schema`` must re-export exactly the same classes."""
     from jarvis.overlay.schema import IPCMessage as JIPC
     from jarvis.overlay.schema import StateEnvelope as JSE
 

@@ -6,9 +6,9 @@ import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
-// Safety-Net: wenn das Brain in 60s nicht antwortet (kein Reply, kein Fehler-Event),
-// drehen wir den Indikator zurueck. Backend-Hangs duerfen die UI nicht permanent
-// in den Wait-State versetzen.
+// Safety net: if the brain doesn't respond within 60s (no reply, no error event),
+// we revert the indicator. A backend hang must not leave the UI stuck in the
+// wait state permanently.
 const THINKING_TIMEOUT_MS = 60_000;
 
 export function ChatInput() {

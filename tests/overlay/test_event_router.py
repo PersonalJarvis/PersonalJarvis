@@ -196,7 +196,7 @@ def test_ack_is_noop(router: EventRouter, machine: StateMachine) -> None:
 
 
 def test_unknown_envelope_is_noop(router: EventRouter, machine: StateMachine) -> None:
-    """Wenn jemand etwas Fremdes durchschiebt, kein Crash, einfach False."""
+    """When something foreign is pushed through, no crash, just False."""
 
     class _Foreign:
         pass

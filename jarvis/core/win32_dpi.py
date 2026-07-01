@@ -53,6 +53,6 @@ def ensure_dpi_awareness() -> None:
 
             ctypes.windll.user32.SetProcessDPIAware()
         except Exception:  # noqa: BLE001
-            logger.warning("DPI-Awareness konnte nicht gesetzt werden", exc_info=True)
+            logger.warning("Could not set DPI awareness", exc_info=True)
     finally:
         _DPI_AWARENESS_SET = True

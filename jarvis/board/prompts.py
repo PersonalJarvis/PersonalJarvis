@@ -51,7 +51,7 @@ Du arbeitest zu viel und solltest dringend mehr schlafen. Vergiss nicht, auch ma
 BEISPIEL ❌ VERMEIDEN (Corporate-Floskeln):
 Du bist ein leidenschaftlicher Power-User mit beeindruckender Hingabe zur Automatisierung!
 
-JETZT generierst du genau einen Absatz."""
+JETZT generierst du genau einen Absatz."""  # i18n-allow: BIO_SYSTEM_PROMPT is the runtime LLM prompt that dictates the German-language Board bio text spoken/written to the user — translating it would change the produced output language
 
 
 # Alias for backward-compat — old tests/imports may reference ``SYSTEM_PROMPT``.
@@ -131,7 +131,7 @@ def _render_cold_start(days_observed: int) -> str:
     remaining = max(1, 7 - days_observed)
     return (
         f"COLD-START-HINWEIS: Du kennst den User erst seit {days_observed} Tagen. "
-        f"Schreibe kuerzer (2-3 Saetze) und beende mit "
+        f"Schreibe kuerzer (2-3 Saetze) und beende mit "  # i18n-allow: fragment of the German BIO_SYSTEM_PROMPT runtime prompt (Board bio is spoken/written German product output)
         f"\"Mehr in {remaining} {'Tag' if remaining == 1 else 'Tagen'}.\"\n"
     )
 
@@ -176,7 +176,7 @@ def _render_missions(missions: Any) -> str:
         return ""
     parts = [
         f"\nMISSIONS (letzte 30 Tage):",
-        f"- Abgeschlossen: {approved} | Fehlgeschlagen: {failed} | Abgebrochen: {aborted}",
+        f"- Abgeschlossen: {approved} | Fehlgeschlagen: {failed} | Abgebrochen: {aborted}",  # i18n-allow: German BIO_SYSTEM_PROMPT fragment
     ]
     if overdue:
         previews = ", ".join(str(t)[:60] for t in overdue[:3])
@@ -207,13 +207,13 @@ def _render_feedback(feedback: Any) -> str:
     if not isinstance(feedback, dict) or not feedback:
         return ""
     trifft = int(feedback.get("trifft", 0) or 0)
-    trifft_nicht = int(feedback.get("trifft_nicht", 0) or 0)
+    trifft_nicht = int(feedback.get("trifft_nicht", 0) or 0)  # i18n-allow: API/DB contract identifier (see board/profile.py), matched in logic
     haerter = int(feedback.get("haerter", 0) or 0)
-    if trifft + trifft_nicht + haerter == 0:
+    if trifft + trifft_nicht + haerter == 0:  # i18n-allow: same API/DB contract identifiers
         return ""
     parts = [f"\nFEEDBACK-VECTOR (letzte 4 Wochen):"]
     parts.append(
-        f"- Trifft: {trifft} | Trifft-nicht: {trifft_nicht} | Haerter-gefordert: {haerter}",
+        f"- Trifft: {trifft} | Trifft-nicht: {trifft_nicht} | Haerter-gefordert: {haerter}",  # i18n-allow: German BIO_SYSTEM_PROMPT fragment
     )
     if haerter > 0:
         parts.append(
@@ -221,10 +221,10 @@ def _render_feedback(feedback: Any) -> str:
             "Senke die Hoeflichkeitsschwelle, behalte die Faktentreue. "
             "Mehr Mikro-Korrekturen, mehr Pointe."
         )
-    if trifft_nicht > trifft:
+    if trifft_nicht > trifft:  # i18n-allow: API/DB contract identifiers, matched in logic
         parts.append(
-            "- TON-ANPASSUNG: bisherige Charakter-Annahmen scheinen nicht zu treffen. "
-            "Sei bei dieser Bio konkreter an den Daten, weniger interpretativ."
+            "- TON-ANPASSUNG: bisherige Charakter-Annahmen scheinen nicht zu treffen. "  # i18n-allow: German BIO_SYSTEM_PROMPT fragment
+            "Sei bei dieser Bio konkreter an den Daten, weniger interpretativ."  # i18n-allow: German BIO_SYSTEM_PROMPT fragment
         )
     return "\n".join(parts) + "\n"
 
@@ -235,7 +235,7 @@ def _render_feedback(feedback: Any) -> str:
 
 def _fmt_tools(tools: Any) -> str:
     if not tools:
-        return "— (noch keine Tool-Nutzung)"
+        return "— (noch keine Tool-Nutzung)"  # i18n-allow: German BIO_SYSTEM_PROMPT fragment
     if isinstance(tools, list):
         return ", ".join(str(t) for t in tools[:8])
     return str(tools)
@@ -245,7 +245,7 @@ def _fmt_ratio(completed: int, failed: int) -> str:
     completed = int(completed or 0)
     failed = int(failed or 0)
     if completed + failed <= 0:
-        return "— (noch keine Tasks)"
+        return "— (noch keine Tasks)"  # i18n-allow: German BIO_SYSTEM_PROMPT fragment
     return f"{completed} ok / {failed} fail"
 
 

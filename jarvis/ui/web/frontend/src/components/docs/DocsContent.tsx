@@ -66,9 +66,9 @@ function DocsContentInner({
   const list = useDocsList();
   const neighbors = computeNeighbors(grouped.data, slug);
   const openInEditor = useOpenDocInEditor();
-  // Slug-Index fuer Cross-Link-Resolution: Set fuer O(1)-Lookup im
-  // ``a``-Renderer. Wenn ein Markdown-Link auf einen bekannten Slug zeigt,
-  // navigiert der Klick intern statt extern.
+  // Slug index for cross-link resolution: a Set for O(1) lookup in the
+  // ``a`` renderer. If a Markdown link points to a known slug, the click
+  // navigates internally instead of externally.
   const knownSlugs = useMemo<Set<string>>(() => {
     return new Set((list.data ?? []).map((d) => d.slug));
   }, [list.data]);
@@ -91,7 +91,7 @@ function DocsContentInner({
 
   return (
     <article className="prose prose-neutral dark:prose-invert prose-sm mx-auto max-w-2xl px-8 py-8 prose-headings:scroll-mt-20 prose-code:before:hidden prose-code:after:hidden prose-a:text-primary prose-a:no-underline hover:prose-a:underline">
-      {/* Header — Frontmatter-Snippet */}
+      {/* Header — frontmatter snippet */}
       <header className="not-prose mb-8 border-b border-border pb-4">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <DocTypeBadge diataxis={data.diataxis} />
@@ -137,7 +137,7 @@ function DocsContentInner({
         {data.body}
       </ReactMarkdown>
 
-      {/* Footer — Last-Updated + Prev/Next-Pager */}
+      {/* Footer — last-updated + prev/next pager */}
       <footer className="not-prose mt-12 border-t border-border pt-6">
         <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5">
@@ -183,7 +183,7 @@ function DocsContentInner({
 }
 
 // ----------------------------------------------------------------------
-// Prev/Next-Berechnung + NavCard
+// Prev/next computation + NavCard
 // ----------------------------------------------------------------------
 
 function computeNeighbors(
@@ -191,8 +191,8 @@ function computeNeighbors(
   currentSlug: string,
 ): { prev: DocSummary | null; next: DocSummary | null } {
   if (!grouped) return { prev: null, next: null };
-  // Wir flatten die Sidebar-Reihenfolge: Diataxis-Order, innerhalb der
-  // Gruppe alphabetisch (so wie der Backend-``grouped_by_diataxis`` sortiert).
+  // We flatten the sidebar order: Diataxis order, alphabetical within each
+  // group (matching how the backend's ``grouped_by_diataxis`` sorts).
   const flat: DocSummary[] = [];
   for (const kind of DIATAXIS_ORDER) {
     const items = grouped[kind];
@@ -237,7 +237,7 @@ function NavCard({
 }
 
 // ----------------------------------------------------------------------
-// Markdown-Custom-Components
+// Markdown custom components
 // ----------------------------------------------------------------------
 
 interface MarkdownContext {
@@ -246,15 +246,15 @@ interface MarkdownContext {
 }
 
 /**
- * Resolved einen Markdown-Link gegen den Doc-Index.
+ * Resolves a Markdown link against the doc index.
  *
- * Match-Reihenfolge:
- * 1. ``[text](slug-im-Index)``                -> intern
- * 2. ``[text](docs/path/to/file.md)``         -> intern wenn Slug aus Pfad ableitbar
- * 3. ``[text](docs/adr/0011-...md)``          -> intern via ``adr-...``-Slug
- * 4. http(s)://...                            -> extern, neuer Tab
- * 5. #anchor                                  -> Anchor-Sprung innerhalb der Seite
- * 6. alles andere                             -> default-Anchor
+ * Match order:
+ * 1. ``[text](slug-in-index)``                -> internal
+ * 2. ``[text](docs/path/to/file.md)``         -> internal if a slug can be derived from the path
+ * 3. ``[text](docs/adr/0011-...md)``          -> internal via ``adr-...`` slug
+ * 4. http(s)://...                            -> external, new tab
+ * 5. #anchor                                  -> anchor jump within the page
+ * 6. anything else                            -> default anchor
  */
 function resolveLink(
   href: string,
@@ -265,20 +265,20 @@ function resolveLink(
   if (href.startsWith("http://") || href.startsWith("https://")) {
     return { kind: "external" };
   }
-  // Direkter Slug-Treffer
+  // Direct slug match
   if (knownSlugs.has(href)) return { kind: "internal", slug: href };
-  // Pfad mit .md am Ende — Stem ohne Extension probieren, plus diverse
-  // Praefix-Varianten ("docs/adr/0011-router.md" -> "adr-0011-router").
+  // Path ending in .md — try the stem without the extension, plus a few
+  // prefix variants ("docs/adr/0011-router.md" -> "adr-0011-router").
   const cleaned = href.replace(/^\.?\//, "").replace(/\.md$/, "");
-  // 1. ganzer Pfad als Slug
+  // 1. whole path as slug
   if (knownSlugs.has(cleaned)) return { kind: "internal", slug: cleaned };
-  // 2. nur Dateiname
+  // 2. filename only
   const parts = cleaned.split("/");
   const lastSegment = parts[parts.length - 1];
   if (knownSlugs.has(lastSegment)) {
     return { kind: "internal", slug: lastSegment };
   }
-  // 3. ADR-Konvention: ``docs/adr/NNNN-...`` -> ``adr-NNNN-...``
+  // 3. ADR convention: ``docs/adr/NNNN-...`` -> ``adr-NNNN-...``
   if (parts.length >= 2 && parts[parts.length - 2] === "adr") {
     const adrSlug = `adr-${lastSegment}`;
     if (knownSlugs.has(adrSlug)) return { kind: "internal", slug: adrSlug };
@@ -288,7 +288,7 @@ function resolveLink(
 
 function makeMarkdownComponents(ctx: MarkdownContext): Components {
   return {
-    // Code-Block (mit Sprach-Tag) wird zur Shiki-Component.
+    // Code block (with language tag) becomes the Shiki component.
     code({ className, children, ...rest }) {
       const match = /language-(\w+)/.exec(className || "");
       if (!match) {
@@ -306,7 +306,7 @@ function makeMarkdownComponents(ctx: MarkdownContext): Components {
       );
     },
 
-    // Blockquote mit GitHub-Style-Callout-Tag erkennen.
+    // Detect a blockquote with a GitHub-style callout tag.
     blockquote({ children }) {
       const tagged = parseTaggedBlockquote(children);
       if (tagged) {
@@ -319,7 +319,7 @@ function makeMarkdownComponents(ctx: MarkdownContext): Components {
       );
     },
 
-    // Cross-Link-Resolution
+    // Cross-link resolution
     a({ href, children, ...rest }) {
       const resolved = href ? resolveLink(href, ctx.knownSlugs) : { kind: "default" as const };
       if (resolved.kind === "internal" && ctx.onInternalNavigate) {
@@ -352,7 +352,7 @@ function makeMarkdownComponents(ctx: MarkdownContext): Components {
       );
     },
 
-    // Tabellen mit etwas mehr Padding fuer bessere Lesbarkeit.
+    // Tables with a bit more padding for better readability.
     table({ children }) {
       return (
         <div className="not-prose my-4 overflow-x-auto rounded-md border border-border">
@@ -364,27 +364,27 @@ function makeMarkdownComponents(ctx: MarkdownContext): Components {
 }
 
 /**
- * Schaut sich die Children eines blockquote an: wenn der erste Knoten ein
- * <p> mit Leading-Tag (``[!info]`` etc.) ist, liefert der typ + die
- * gestripten Children. Sonst null.
+ * Looks at the children of a blockquote: if the first node is a <p> with a
+ * leading tag (``[!info]`` etc.), returns the type + the stripped children.
+ * Otherwise null.
  */
 function parseTaggedBlockquote(
   children: React.ReactNode,
 ): { type: CalloutType; children: React.ReactNode } | null {
-  // children kann ein Array sein (mit Whitespace-Strings dazwischen).
+  // children can be an array (with whitespace strings in between).
   const arr = Array.isArray(children) ? children : [children];
   for (const node of arr) {
     if (typeof node === "string") {
       if (!node.trim()) continue;
       const tag = parseCalloutTag(node);
       if (tag) {
-        // Der Tag selbst hat keinen Block-Wrap — wir packen den Rest direkt
-        // als Text rein. Sonderfall, in der Praxis selten.
+        // The tag itself has no block wrap — we insert the rest directly
+        // as text. An edge case, rare in practice.
         return { type: tag.type, children: tag.rest };
       }
       return null;
     }
-    // Erstes <p>-Element greifen
+    // Grab the first <p> element
     if (
       typeof node === "object" &&
       node !== null &&
@@ -402,8 +402,8 @@ function parseTaggedBlockquote(
       if (firstText) {
         const tag = parseCalloutTag(firstText);
         if (tag) {
-          // Re-mounted children: ersten Text durch ``rest`` ersetzen, andere
-          // Knoten durchreichen.
+          // Re-mounted children: replace the first text with ``rest``, pass
+          // other nodes through unchanged.
           if (typeof pChildren === "string") {
             return { type: tag.type, children: <p>{tag.rest}</p> };
           }

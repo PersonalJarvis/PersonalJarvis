@@ -1,13 +1,13 @@
-"""SkillRunner: rendert Body (Jinja2-Sandbox) + führt Tool-Zeilen aus.
+"""SkillRunner: renders the body (Jinja2 sandbox) + executes tool lines.
 
-Body-Konvention:
-    Normaler Markdown-/Prose-Content.
+Body convention:
+    Normal Markdown/prose content.
 
     TOOL: <tool-name> {"arg": "value"}
     TOOL: other_tool {"k": 1}
 
-Zeilen, die mit `TOOL:` beginnen, werden als Tool-Calls extrahiert
-(nach dem Jinja-Rendering). Alles andere ist Prosa für LLM-Kontext.
+Lines starting with `TOOL:` are extracted as tool calls
+(after Jinja rendering). Everything else is prose for LLM context.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from uuid import uuid4
 
 @dataclass(frozen=True)
 class _NowProxy:
-    """Jinja-friendly Wrapper um den aktuellen Zeitpunkt."""
+    """Jinja-friendly wrapper around the current point in time."""
 
     iso: str
     epoch_ms: int
@@ -32,7 +32,7 @@ class _NowProxy:
 
 @dataclass(frozen=True)
 class _DateProxy:
-    """Jinja-friendly Wrapper um das aktuelle Datum."""
+    """Jinja-friendly wrapper around the current date."""
 
     iso: str
     year: int
@@ -83,7 +83,7 @@ _TOOL_LINE_RE = re.compile(r"^\s*TOOL:\s*(?P<name>\S+)\s*(?P<args>\{.*\})?\s*$")
 
 
 class SkillRunner:
-    """Runtime-Executor für Skills."""
+    """Runtime executor for skills."""
 
     def __init__(
         self,
@@ -108,7 +108,7 @@ class SkillRunner:
     # ------------------------------------------------------------------
 
     def render(self, skill: Skill, extra_context: dict[str, Any] | None = None) -> str:
-        """Rendert den Skill-Body via Jinja2-Sandbox."""
+        """Renders the skill body via the Jinja2 sandbox."""
         if skill.frontmatter is None:
             return skill.body
         ctx: dict[str, Any] = {
@@ -146,7 +146,7 @@ class SkillRunner:
 
     @staticmethod
     def extract_tool_calls(rendered_body: str) -> list[tuple[str, dict[str, Any]]]:
-        """Scannt Zeilen ab, die mit ``TOOL:`` beginnen."""
+        """Scans lines starting with ``TOOL:``."""
         calls: list[tuple[str, dict[str, Any]]] = []
         for line in rendered_body.splitlines():
             m = _TOOL_LINE_RE.match(line)
@@ -168,10 +168,10 @@ class SkillRunner:
     # ------------------------------------------------------------------
 
     async def _resolve_tool(self, name: str) -> Any | None:
-        """Versucht das Tool-Objekt aus dem Tool-Registry zu beschaffen."""
+        """Tries to obtain the tool object from the tool registry."""
         if self.tool_registry is None:
             return None
-        # gängige APIs: .get(name), .resolve(name), __getitem__
+        # common APIs: .get(name), .resolve(name), __getitem__
         for attr in ("get", "resolve"):
             fn = getattr(self.tool_registry, attr, None)
             if callable(fn):
@@ -187,7 +187,7 @@ class SkillRunner:
             return None
 
     def _check_risk(self, skill: Skill, tool_name: str) -> tuple[bool, str]:
-        """Gibt (allowed, reason). Wenn safety_enforcer fehlt, immer allow."""
+        """Returns (allowed, reason). If safety_enforcer is missing, always allow."""
         if self.safety_enforcer is None or skill.frontmatter is None:
             return True, "no-enforcer"
         tier = skill.frontmatter.risk_policy.per_tool_overrides.get(
@@ -217,7 +217,7 @@ class SkillRunner:
         skill: Skill,
         args: dict[str, Any] | None = None,
     ) -> SkillResult:
-        """Führt den Skill aus (inkl. Tool-Calls)."""
+        """Runs the skill (incl. tool calls)."""
         args = args or {}
         trace_id = uuid4()
         trigger_hint = args.get("_trigger", "manual")

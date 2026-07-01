@@ -164,8 +164,8 @@ class TelegramChannel:
             )
         except ImportError as exc:
             raise ChannelStartError(
-                "python-telegram-bot nicht installiert. "
-                "Installiere via: pip install 'python-telegram-bot>=22,<23'"
+                "python-telegram-bot not installed. "
+                "Install via: pip install 'python-telegram-bot>=22,<23'"
             ) from exc
 
         await self._validate_token(token)
@@ -235,13 +235,13 @@ class TelegramChannel:
             self._bot_username = (me.username or "").lower() or "<unknown>"
         except InvalidToken as exc:
             raise ChannelStartError(
-                "Telegram-Token ungueltig (InvalidToken). "
-                "Pruefe Token in @BotFather oder erneuere ihn via Wizard."
+                "Telegram token invalid (InvalidToken). "
+                "Check the token in @BotFather or renew it via the wizard."
             ) from exc
         except TelegramError as exc:
-            raise ChannelStartError(f"Telegram getMe fehlgeschlagen: {exc}") from exc
+            raise ChannelStartError(f"Telegram getMe failed: {exc}") from exc
         except Exception as exc:  # noqa: BLE001
-            raise ChannelStartError(f"Telegram getMe fehlgeschlagen: {exc}") from exc
+            raise ChannelStartError(f"Telegram getMe failed: {exc}") from exc
 
     # ------------------------------------------------------------------
     # Inbound

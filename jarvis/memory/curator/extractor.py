@@ -87,7 +87,7 @@ class Extractor:
                     chunks.append(delta.content)
             raw = "".join(chunks).strip()
         except Exception as exc:  # noqa: BLE001
-            log.warning("Curator-Extraction fehlgeschlagen (LLM): %s", exc)
+            log.warning("Curator extraction failed (LLM): %s", exc)
             return []
 
         if not raw:
@@ -95,7 +95,7 @@ class Extractor:
 
         data = _parse_json_robust(raw)
         if not data:
-            log.debug("Curator-Output nicht parseable:\n%s", raw[:500])
+            log.debug("Curator output not parseable:\n%s", raw[:500])
             return []
 
         cands_raw = data.get("candidates", [])

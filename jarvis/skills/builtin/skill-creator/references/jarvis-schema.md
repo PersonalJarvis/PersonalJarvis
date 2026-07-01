@@ -34,14 +34,14 @@ matching field must be set:
 ```yaml
 triggers:
   - type: voice
-    pattern: "^(guten morgen|good morning)$"   # Regex, re.IGNORECASE wird beim Match gesetzt
-    language: [de, en]                         # optional, Default [de, en]
+    pattern: "^(guten morgen|good morning)$"   # regex, re.IGNORECASE is applied at match time  <!-- i18n-allow -->
+    language: [de, en]                         # optional, default [de, en]
 
   - type: hotkey
-    combo: "ctrl+right_alt+j"                  # global-hotkeys-Syntax
+    combo: "ctrl+right_alt+j"                  # global-hotkeys syntax
 
   - type: schedule
-    cron: "0 7 * * *"                          # croniter-Syntax (5 Felder)
+    cron: "0 7 * * *"                          # croniter syntax (5 fields)
 ```
 
 **Voice patterns:**
@@ -63,10 +63,10 @@ triggers:
 ```yaml
 risk_policy:
   default_tier: monitor           # safe | monitor | ask | block
-  per_tool_overrides:             # pro-Tool anderer Tier
+  per_tool_overrides:             # different tier per tool
     gmail-mcp/send_mail: ask
     fetch-mcp/fetch_weather: safe
-  require_confirmation:           # Tool-Aufrufe die immer Bestaetigung kriegen
+  require_confirmation:           # tool calls that always require confirmation
     - send_money
 ```
 
@@ -96,7 +96,7 @@ Analogous to Anthropic's structure, a skill folder may have sibling directories:
 ```
 <skill-name>/
 ├── SKILL.md          (Pflicht)
-├── references/       (Markdown-Docs, on-demand geladen)
+├── references/       (Markdown docs, loaded on-demand)
 ├── scripts/          (Python/Shell, vom Runner aufrufbar)
 ├── assets/           (Templates, Configs, Icons)
 └── agents/           (Sub-Agent-Personas als Markdown)

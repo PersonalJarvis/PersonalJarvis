@@ -37,7 +37,7 @@ class GitProbe:
         if cwd is None:
             return {"git_branch": None}
 
-        # Strategy 1: .git/HEAD direct-read (fast, kein Subprocess)
+        # Strategy 1: .git/HEAD direct-read (fast, no subprocess)
         try:
             branch = await asyncio.wait_for(
                 asyncio.to_thread(self._read_head_file, cwd),
@@ -79,7 +79,7 @@ class GitProbe:
             if not git_dir_or_file.exists():
                 return None
 
-            # Worktree-Repo: .git ist file mit "gitdir: ..."
+            # Worktree repo: .git is a file containing "gitdir: ..."
             if git_dir_or_file.is_file():
                 content = git_dir_or_file.read_text(encoding="utf-8").strip()
                 if content.startswith("gitdir:"):

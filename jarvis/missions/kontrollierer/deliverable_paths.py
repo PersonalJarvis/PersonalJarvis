@@ -18,7 +18,7 @@ multi-layer drift bug class (CLAUDE.md / BUG-008):
     pre-fix missions and any other archive path;
   * the user-folder mirror + voice readback
     (``deliverable.py``) — keeps the user's Downloads and the spoken
-    "N Dateien gespeichert" count free of scratch.
+    "N files saved" count free of scratch.
 
 Live forensic 2026-06-21 (mission_019eeb34-bb67): a browser/QA worker launched
 four headless Chrome instances with profiles under
@@ -167,7 +167,7 @@ def is_deliverable_path(rel: str, *, managed_files: frozenset[str] = frozenset()
 # HTML file" and the worker shipped melbourne_guide.html PLUS generate_guide.py
 # — a Python script that embeds the whole page as a string literal and writes
 # the sibling .html — PLUS a hero image. The user opened the .py in a browser,
-# saw "only code", and wanted that process scratch gone ("nur das Hauptding").
+# saw "only code", and wanted that process scratch gone ("just the main thing").
 # A path-only denylist cannot catch this: generate_guide.py is a perfectly
 # normal-looking file in artifacts/files/. So this filter inspects content.
 #

@@ -1,15 +1,15 @@
-"""End-to-End-Tests für die Self-Mod-Pipeline (Phase 7.6).
+"""End-to-end tests for the self-mod pipeline (Phase 7.6).
 
-Plan-§7.6 vier Plan-Akzeptanzkriterien (test_setting_mutation,
+Plan-§7.6's four plan acceptance criteria (test_setting_mutation,
 test_skill_authoring, test_pre_validation_reject,
-test_rollback_on_reload_failure) plus Prompt-Erweiterungen T1..T9.
+test_rollback_on_reload_failure) plus prompt extensions T1..T9.
 
-Pattern: alle LLM-Aufrufe werden gemockt; jarvis.toml lebt in tmp_path.
-Brain-Manager-Mock liefert PendingMutation-Output, Voice-Layer-Mock
-liefert Confirm/Veto/Timeout-Antworten.
+Pattern: all LLM calls are mocked; jarvis.toml lives in tmp_path.
+The brain-manager mock returns PendingMutation output, the voice-layer
+mock returns confirm/veto/timeout answers.
 
-Markierung: alle Tests `@pytest.mark.e2e` — laufen nicht in CI by default
-(Plan-§7.6: "E2E-Tests laufen nicht in CI"). Manueller Trigger via
+Marker: all tests carry `@pytest.mark.e2e` — they don't run in CI by
+default (Plan-§7.6: "E2E tests don't run in CI"). Manual trigger via
 `pytest -m e2e tests/e2e/`.
 """
 from __future__ import annotations
@@ -157,12 +157,12 @@ class TestT1VoiceConfirm:
         fixture_path: Path,
         audit: SelfModAudit,
     ) -> None:
-        """Plan-§EK-1: Voice-Befehl ändert TTS-Provider, persistiert,
-        Audit-Trail dokumentiert die Operation.
+        """Plan-§EK-1: a voice command changes the TTS provider, persists it,
+        the audit trail documents the operation.
 
-        Hauptjarvis ruft set_config_value-Tool, Voice-Layer übernimmt,
-        User confirmt — am Ende ist jarvis.toml mutiert + Audit hat
-        beide Trails (voice_confirmed Pre + write success).
+        Main-Jarvis calls the set_config_value tool, the voice layer takes
+        over, the user confirms — in the end jarvis.toml is mutated + audit
+        has both trails (voice_confirmed pre + write success).
         """
         # 1. Hauptjarvis-Tool-Call
         tool_result = asyncio.run(
@@ -222,14 +222,14 @@ class TestT2VoiceVeto:
         )
         pending = PendingMutation.model_validate(tool_result.output)
         session = controller.begin(pending)
-        final = controller.receive_answer(session, "nein, doch nicht")
+        final = controller.receive_answer(session, "nein, doch nicht")  # i18n-allow: simulated German voice-veto utterance, matched by the flow controller
         assert final.state == FlowState.VETOED
-        # File unverändert
+        # File unchanged
         assert fixture_path.read_bytes() == original_bytes
         # Audit "voice_vetoed"
         entries = _read_audit(audit)
         assert any(e.get("error") == "voice_vetoed" for e in entries)
-        # KEIN Backup-Eintrag (Veto vor Pre-Validate-Stage)
+        # NO backup entry (veto happens before the pre-validate stage)
         backups = list((tmp_path / "backups").glob("jarvis.toml.*.bak"))
         assert backups == []
 
@@ -258,11 +258,11 @@ class TestT3DeniedPath:
         )
         assert result.success is False
         assert "path_not_allowed" in result.error
-        # File unverändert (Plan-§AD-1 strukturell durchgesetzt)
+        # File unchanged (Plan-§AD-1 enforced structurally)
         assert fixture_path.read_bytes() == original_bytes
-        # Plan-§AD-6 Audit für Allowlist-Reject ist Phase-7.3-Erweiterung,
-        # aktuell schreibt der Tool-Handler keinen Audit-Eintrag bei Reject —
-        # der Reject ist im Tool-Result selbst dokumentiert.
+        # Plan-§AD-6 audit for allowlist rejects is a Phase-7.3 extension;
+        # currently the tool handler doesn't write an audit entry on reject —
+        # the reject is documented in the tool result itself.
 
     def test_secret_path_returns_forbidden(
         self,
@@ -297,8 +297,8 @@ class TestT4ValidateFailRollback:
         tmp_path: Path,
         audit: SelfModAudit,
     ) -> None:
-        """Plan-§EK-4: Reload-Failure führt zu automatischem Rollback,
-        Audit `rolled_back=true`.
+        """Plan-§EK-4: a reload failure triggers an automatic rollback,
+        audit `rolled_back=true`.
         """
         original_bytes = fixture_path.read_bytes()
 
@@ -342,8 +342,8 @@ class TestT5SkillAuthoring:
         tmp_path: Path,
         audit: SelfModAudit,
     ) -> None:
-        """Plan-§EK-2: Voice-Befehl erzeugt Skill-Draft, der in UI sichtbar
-        wird, aber nicht triggert.
+        """Plan-§EK-2: a voice command creates a skill draft that becomes
+        visible in the UI, but does not trigger.
         """
         skills_root = tmp_path / "user_skills"
         skills_root.mkdir()
@@ -428,7 +428,7 @@ class TestT6SkillPromote:
 
 
 # ----------------------------------------------------------------------
-# T7 — Audit-Log-Integrität bei 100 Mixed-Operations
+# T7 — audit log integrity under 100 mixed operations
 # ----------------------------------------------------------------------
 
 
@@ -442,7 +442,7 @@ class TestT7AuditIntegrity:
         # Plan-§7.6 robustness: 100 randomisierte ops → Audit ist valide.
         import random
 
-        rng = random.Random(42)  # noqa: S311 — Test-Determinismus, kein Crypto
+        rng = random.Random(42)  # noqa: S311 — test determinism, not crypto
         for i in range(100):
             op = rng.choice(["safe_set", "denied", "ask_confirm", "ask_veto"])
             if op == "safe_set":
@@ -496,13 +496,13 @@ class TestT7AuditIntegrity:
                 session = controller.begin(pending)
                 controller.receive_answer(session, "nein")
 
-        # Audit-Log ist valide: jede Zeile ist parsbar JSON, hat ts/audit_id.
-        # Anzahl ist Operations-abhängig (denied + ask_veto erzeugen weniger
-        # Einträge als safe_set+ask_confirm) — mindestens 50 als robuste Untergrenze.
+        # Audit log is valid: every line is parsable JSON, has ts/audit_id.
+        # The count depends on the operations (denied + ask_veto produce fewer
+        # entries than safe_set+ask_confirm) — at least 50 as a robust floor.
         entries = _read_audit(audit)
         assert len(entries) >= 50, (
-            f"Erwartete ≥50 Audit-Einträge nach 100 Mixed-Ops, "
-            f"erhielt {len(entries)}"
+            f"Expected ≥50 audit entries after 100 mixed ops, "
+            f"got {len(entries)}"
         )
         from uuid import UUID
 
@@ -510,12 +510,12 @@ class TestT7AuditIntegrity:
             assert "ts" in entry
             assert "audit_id" in entry
             UUID(entry["audit_id"])  # Pydantic-validation
-        # Timestamps sind monoton (oder gleich): ISO-String-Vergleich reicht
-        # für die Plan-§7.6-Robustness-Aussage.
+        # Timestamps are monotonic (or equal): an ISO string comparison is
+        # enough for the Plan-§7.6 robustness claim.
         timestamps = [entry["ts"] for entry in entries]
         sorted_ts = sorted(timestamps)
-        # Audit-Log ist append-only — Reihenfolge im File == Reihenfolge der
-        # Einträge. Wir erlauben Gleichheit (Mikrosekunden-Auflösung kann kollidieren).
+        # The audit log is append-only — order in the file == order of the
+        # entries. We allow equality (microsecond resolution can collide).
         assert timestamps == sorted_ts or len(set(timestamps)) >= len(timestamps) - 5
 
 
@@ -531,9 +531,9 @@ class TestT8BackupFifo:
         tmp_path: Path,
         audit: SelfModAudit,
     ) -> None:
-        """60 erfolgreiche Sets mit max_backups=50 → 50 erhalten, älteste gelöscht.
+        """60 successful sets with max_backups=50 → 50 kept, oldest deleted.
 
-        Plan-§7.2 GC-Policy strukturell verifiziert.
+        Plan-§7.2 GC policy verified structurally.
         """
         writer = AtomicConfigWriter(
             config_path=fixture_path,
@@ -567,11 +567,11 @@ class TestT9CorrelationId:
         controller: SelfModFlowController,
         audit: SelfModAudit,
     ) -> None:
-        """Eine `correlation_id` zieht sich durch tool → voice → mutate-audit.
+        """A `correlation_id` threads through tool → voice → mutate-audit.
 
-        Aktuell ist die `correlation_id` nicht überall im Audit als Feld
-        — wir prüfen via `audit_id` der ersten und letzten Audit-Zeile,
-        dass beide auf denselben Pfad verweisen (logische Korrelation).
+        Currently the `correlation_id` isn't present as a field everywhere
+        in the audit — we check via the `audit_id` of the first and last
+        audit line that both point to the same path (logical correlation).
         """
         tool_result = asyncio.run(
             tools["set_config_value"].execute(
@@ -593,7 +593,7 @@ class TestT9CorrelationId:
 
         entries = _read_audit(audit)
         path_entries = [e for e in entries if e.get("path") == "tts.provider"]
-        # Mind. zwei Einträge mit gleichem Pfad (voice_confirmed Pre + write success)
+        # At least two entries with the same path (voice_confirmed pre + write success)
         assert len(path_entries) >= 2
 
 
@@ -609,7 +609,7 @@ def api_app(
     audit: SelfModAudit,
     writer: AtomicConfigWriter,
 ) -> FastAPI:
-    """Minimal FastAPI-App für die Self-Mod-Endpoints."""
+    """Minimal FastAPI app for the self-mod endpoints."""
     app = FastAPI()
     app.include_router(self_mod_router)
     app.state.self_mod_audit = audit
@@ -633,7 +633,7 @@ class TestRestApi:
         tools: dict[str, Any],
         controller: SelfModFlowController,
     ) -> None:
-        # Vorab: einen Audit-Eintrag erzeugen
+        # First, create an audit entry
         tool_result = asyncio.run(
             tools["set_config_value"].execute(
                 {"path": "tts.speed", "new_value": 1.42, "reason": ""},
@@ -681,7 +681,7 @@ class TestRestApi:
         api_app: FastAPI,
         audit: SelfModAudit,
     ) -> None:
-        # Manuell einen sensitive-Pfad-Audit-Eintrag schreiben
+        # Manually write a sensitive-path audit entry
         from jarvis.core.self_mod.schema import AuditEvent
 
         audit.record(
@@ -698,7 +698,7 @@ class TestRestApi:
         client = TestClient(api_app)
         response = client.get("/api/self-mod/audit")
         body = response.json()
-        # Plan-§AP-2 Defense-in-Depth: Klartext darf NICHT durchsickern
+        # Plan-§AP-2 defense-in-depth: plaintext must NOT leak
         text = json.dumps(body)
         assert "sk-leakable-VERY-LONG" not in text
         assert "sk-new-leakable-VALUE" not in text
@@ -706,13 +706,13 @@ class TestRestApi:
     def test_audit_endpoint_no_mutation_verbs(
         self, api_app: FastAPI
     ) -> None:
-        """Plan-§AP-Audit-Mutation: /api/self-mod/audit ist read-only.
+        """Plan-§AP-Audit-Mutation: /api/self-mod/audit is read-only.
 
-        DELETE/PUT/PATCH müssen 405 oder 404 werfen.
+        DELETE/PUT/PATCH must throw 405 or 404.
         """
         client = TestClient(api_app)
         for method in ("delete", "put", "patch"):
             resp = getattr(client, method)("/api/self-mod/audit")
             assert resp.status_code in (404, 405), (
-                f"{method.upper()} sollte abgelehnt werden, kam {resp.status_code}"
+                f"{method.upper()} should have been rejected, got {resp.status_code}"
             )

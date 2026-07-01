@@ -1,4 +1,4 @@
-"""Unit-Tests fuer CancelToken + CancelScope + KillSwitch (ADR-0004)."""
+"""Unit tests for CancelToken + CancelScope + KillSwitch (ADR-0004)."""
 from __future__ import annotations
 
 import asyncio
@@ -23,7 +23,7 @@ async def test_cancel_sets_state_and_first_reason_wins():
     assert tok.is_cancelled()
     assert tok.reason == "budget_task_exceeded"
 
-    tok.cancel("kill_switch:hotkey")                   # sollte ignoriert werden
+    tok.cancel("kill_switch:hotkey")                   # should be ignored
     assert tok.reason == "budget_task_exceeded"
 
 
@@ -59,7 +59,7 @@ async def test_cancel_scope_registers_and_releases_token():
         assert tokens[0][1] == "test_holder"
         assert tokens[0][0] is token
 
-    # nach Exit muss der Token weg sein
+    # after exit the token must be gone
     assert list(ks.active_tokens()) == []
 
 
@@ -76,7 +76,7 @@ async def test_cancel_scope_releases_on_exception():
 
 @pytest.mark.asyncio
 async def test_cancel_scope_without_kill_switch_still_works():
-    """Ein Scope ohne KillSwitch ist legal (z.B. fuer Isolation in Tests)."""
+    """A scope without a KillSwitch is legal (e.g. for isolation in tests)."""
     async with CancelScope(None, holder="orphan") as token:
         assert not token.is_cancelled()
         token.cancel("manual")
@@ -151,19 +151,19 @@ async def test_bind_is_idempotent_per_bus():
     bus = EventBus()
     ks = KillSwitch()
     ks.bind(bus)
-    ks.bind(bus)                                         # zweimal — darf nicht doppelt subscriben
+    ks.bind(bus)                                         # twice — must not subscribe twice
 
     async with CancelScope(ks, holder="x") as tok:
         await bus.publish(KillRequested(source="tray"))
         await asyncio.sleep(0)
-        # Nur ein cancel-Call gemacht worden — trotzdem is_cancelled True.
+        # Only one cancel call was made — is_cancelled is still True.
         assert tok.is_cancelled()
 
 
 @pytest.mark.asyncio
 async def test_forward_kill_bridges_between_busses():
-    """Zwei-Bus-Problem aus CLAUDE.md: KillSwitch kann ein Event aus Bus A
-    nach Bus B weiterleiten.
+    """Two-bus problem from CLAUDE.md: KillSwitch can forward an event from
+    bus A to bus B.
     """
     ui_bus = EventBus()
     brain_bus = EventBus()

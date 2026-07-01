@@ -21,8 +21,8 @@ if TYPE_CHECKING:
 
 
 _NO_BRAIN_REPLY_DE = (
-    "(Kein Brain-Provider an die Chat-UI angebunden. "
-    "Nutze die Voice-Pipeline oder hinterlege einen API-Key in den Einstellungen.)"
+    "(Kein Brain-Provider an die Chat-UI angebunden. "  # i18n-allow
+    "Nutze die Voice-Pipeline oder hinterlege einen API-Key in den Einstellungen.)"  # i18n-allow
 )
 
 

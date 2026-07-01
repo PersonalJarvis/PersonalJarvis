@@ -1,8 +1,8 @@
-"""Tests fuer den Review-Pipeline-GC-CLI (Phase 8.5).
+"""Tests for the review-pipeline GC CLI (Phase 8.5).
 
-Plan-Referenz: §6.5 Akzeptanzkriterium 2 — temp-Verzeichnis mit fake
-Run-Dirs unterschiedlichen Alters, GC-Aufruf, verifiziert dass nur die
-richtigen gelöscht wurden.
+Plan reference: §6.5 acceptance criterion 2 — a temp directory with fake
+run dirs of different ages, a GC call, verifies that only the
+correct ones were deleted.
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def _make_run(
     final: dict | None = None,
     age_days: float = 0.0,
 ) -> Path:
-    """Legt ein Fake-Run-Dir an, optional mit final.json und mtime-Backdate."""
+    """Creates a fake run dir, optionally with final.json and an mtime backdate."""
     run_dir = runs_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "iter-1").mkdir(exist_ok=True)
@@ -74,7 +74,7 @@ def test_parse_duration_invalid() -> None:
 
 
 def test_should_delete_skips_incomplete(tmp_path: Path) -> None:
-    """Run ohne final.json wird NIE gelöscht (Recovery-Buffer)."""
+    """A run without final.json is NEVER deleted (recovery buffer)."""
     runs_root = tmp_path / "runs"
     runs_root.mkdir()
     run_dir = _make_run(runs_root, "incomplete", final=None)
@@ -160,7 +160,7 @@ def test_run_gc_dry_run_does_not_delete(tmp_path: Path) -> None:
         keep_cap_fired=False,
     )
     assert stats["deleted"] == ["old"]
-    # Aber: Verzeichnis ist NOCH da (dry_run)
+    # But: the directory is STILL there (dry_run)
     assert (runs_root / "old").is_dir()
 
 
@@ -211,7 +211,7 @@ def test_run_gc_writes_gc_log(tmp_path: Path) -> None:
 
 
 def test_run_gc_does_not_touch_audit_log(tmp_path: Path) -> None:
-    """Plan-§AD-11: GC darf Audit-Log NICHT anrühren."""
+    """Plan §AD-11: GC must NOT touch the audit log."""
     runs_root = tmp_path / "runs"
     runs_root.mkdir()
     _make_run(runs_root, "x", final={"outcome": "success"}, age_days=60)

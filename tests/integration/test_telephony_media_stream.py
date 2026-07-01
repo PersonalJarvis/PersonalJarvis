@@ -55,8 +55,8 @@ def app() -> FastAPI:
             call_sid=call_sid,
             stream_sid=stream_sid,
             send=send,
-            stt=FakeSTT(["Wie spät ist es?"]),
-            brain=FakeBrain("Es ist genau vierzehn Uhr dreißig."),
+            stt=FakeSTT(["Wie spät ist es?"]),  # i18n-allow (simulated German STT input under test)
+            brain=FakeBrain("Es ist genau vierzehn Uhr dreißig."),  # i18n-allow (simulated German voice output under test)
             # Short greeting/answers keep the synchronous TestClient WS from
             # backpressuring: ~40 ms of audio is ~2 frames, well within buffers.
             tts=FakeTTS(ms_per_char=1),

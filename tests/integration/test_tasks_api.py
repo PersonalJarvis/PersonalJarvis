@@ -1,4 +1,4 @@
-"""Integration-Tests fuer die Task-Queue-REST-API (Phase 5).
+"""Integration tests for the task-queue REST API (Phase 5).
 
 Pattern: FastAPI ``TestClient`` + in-memory TaskStore (via ``tmp_path``).
 POST → GET → POST-cancel → GET-state-cancelled.
@@ -30,7 +30,7 @@ async def wired_server(tmp_path: Path):
 
     store = TaskStore(tmp_path / "tasks.db")
     await store.init()
-    runner = TaskRunner(store=store, bus=bus)  # kein TTS/HM — laeuft nie
+    runner = TaskRunner(store=store, bus=bus)  # no TTS/HM — never runs
     scheduler = TaskScheduler(store=store, bus=bus, runner=runner)
 
     server.app.state.task_store = store
@@ -147,7 +147,7 @@ def test_list_with_state_filter(wired_server) -> None:
 
 def test_post_rejects_invalid_spec(wired_server) -> None:
     with TestClient(wired_server.app) as client:
-        # delay_seconds <= 0 ist von Pydantic geblockt (gt=0)
+        # delay_seconds <= 0 is blocked by Pydantic (gt=0)
         resp = client.post("/api/tasks", json={
             "title": "bad",
             "trigger": {"type": "after_delay", "delay_seconds": 0.0},
@@ -161,7 +161,7 @@ def test_service_unavailable_when_store_missing(tmp_path: Path) -> None:
     cfg.ui.dev_mode = True
     bus = EventBus()
     server = WebServer(cfg, bus=bus)
-    # Bewusst kein app.state.task_store setzen
+    # Deliberately not setting app.state.task_store
     with TestClient(server.app) as client:
         resp = client.get("/api/tasks")
         assert resp.status_code == 503

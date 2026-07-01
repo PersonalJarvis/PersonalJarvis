@@ -1,26 +1,27 @@
-"""Text-E2E-Abnahme des Persona-Refactors.
+"""Text E2E acceptance test for the persona refactor.
 
-Ruft den BrainManager im Router-Tier mit den Probe-Szenarien auf, sammelt
-die Responses und prueft einfache Heuristiken gegen die erwarteten
-Sprechmuster. Kein TTS, kein Mic — reiner Text-Pfad.
+Calls the BrainManager in the router tier with the probe scenarios, collects
+the responses, and checks simple heuristics against the expected
+speech patterns. No TTS, no mic — pure text path.
 
 Setup:
-- Persona-Mandat Phase 1: Output-Filter (``scrub_for_voice``) am TTS-Pfad —
-  hier nicht aktiv, weil das Skript den TTS-Pfad nicht durchlaeuft. Filter-
-  Tests sind separat in ``tests/unit/brain/test_output_filter.py``.
-- Persona-Mandat Phase 2: ANTI_PATTERNS um Echo-/Hedging-/Filler-Strings
-  erweitert; Szenarien 11-13 fuer Echo-Trap, Tool-Output-Leak und
-  Self-Reference-Trap.
-- Persona-Mandat Phase 3: ``build_default_brain(tier="router")`` aktiviert
-  den Pure-Dispatcher inkl. ROUTER DISCIPLINE-Prompt und der
-  deterministischen Force-Spawn-Heuristik.
+- Persona mandate phase 1: the output filter (``scrub_for_voice``) sits on
+  the TTS path — not active here because the script never goes through the
+  TTS path. Filter tests live separately in
+  ``tests/unit/brain/test_output_filter.py``.
+- Persona mandate phase 2: ANTI_PATTERNS extended with echo/hedging/filler
+  strings; scenarios 11-13 cover the echo trap, tool-output leak, and
+  self-reference trap.
+- Persona mandate phase 3: ``build_default_brain(tier="router")`` activates
+  the pure dispatcher including the ROUTER DISCIPLINE prompt and the
+  deterministic force-spawn heuristic.
 
-Aufruf:
+Run:
     python scripts/voice_e2e_probe.py
 
 ENV:
-- ``JARVIS_PROBE_LANG=de|en|both``  Default: both. Steuert ob beide
-  Sprach-Varianten getestet werden (sofern definiert).
+- ``JARVIS_PROBE_LANG=de|en|both``  Default: both. Controls whether both
+  language variants are tested (where defined).
 """
 from __future__ import annotations
 
@@ -30,13 +31,13 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# Repo-Root auf sys.path falls das Skript ausserhalb von ``cd <repo>`` laeuft.
+# Add repo root to sys.path in case the script runs outside ``cd <repo>``.
 REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-# Persona-Loader fehlt auf Branch ``router-permanent-vision`` — defensiv
-# importieren, damit das Skript trotzdem laeuft. Auf ``main`` waere er da.
+# The persona loader is missing on the ``router-permanent-vision`` branch —
+# import it defensively so the script still runs. It would be present on ``main``.
 try:
     from jarvis.brain.persona_loader import invalidate_cache, load_persona_prompt  # type: ignore
     HAS_PERSONA_LOADER = True
@@ -52,10 +53,10 @@ except ModuleNotFoundError:
 
 @dataclass(frozen=True)
 class Scenario:
-    """Ein Probe-Szenario, optional bilingual.
+    """A probe scenario, optionally bilingual.
 
-    ``user_en`` ist optional — wenn ``None``, wird nur ``user_de`` gefahren.
-    Sonst beide Sprachen, wenn ``JARVIS_PROBE_LANG`` das zulaesst.
+    ``user_en`` is optional — if ``None``, only ``user_de`` is run.
+    Otherwise both languages, if ``JARVIS_PROBE_LANG`` allows it.
     """
     id: str
     tag: str
@@ -66,70 +67,70 @@ class Scenario:
 
 SCENARIOS: tuple[Scenario, ...] = (
     Scenario("01", "routine-status",
-             user_de="Ist die Datei gespeichert?",
-             pattern="Fakt zuerst, kein Name (Pattern 1, 2)"),
+             user_de="Ist die Datei gespeichert?",  # i18n-allow
+             pattern="Fact first, no name (Pattern 1, 2)"),
     Scenario("02", "formal-greeting",
-             user_de="Guten Morgen.",
-             pattern="Formelle Zustandsmeldung mit Name (Pattern 2)"),
+             user_de="Guten Morgen.",  # i18n-allow
+             pattern="Formal status update with name (Pattern 2)"),
     Scenario("03", "open-question",
-             user_de="Wie kann ich das beschleunigen?",
-             pattern="Shall-I-Frageform statt offener Rueckfrage (Pattern 3)"),
+             user_de="Wie kann ich das beschleunigen?",  # i18n-allow
+             pattern="Shall-I question form instead of an open follow-up question (Pattern 3)"),
     Scenario("04", "risky-command",
-             user_de="Loesche alle Logs von gestern.",
-             pattern="One-Warning mit Fakt, dann Ausfuehrung (Pattern 4)"),
+             user_de="Loesche alle Logs von gestern.",  # i18n-allow
+             pattern="One warning with fact, then execution (Pattern 4)"),
     Scenario("05", "reckless-action",
-             user_de="Ich starte jetzt den Deploy auf Prod ohne Tests.",
-             pattern="Trockener Kommentar mit Anker (Pattern 5)"),
+             user_de="Ich starte jetzt den Deploy auf Prod ohne Tests.",  # i18n-allow
+             pattern="Dry comment with an anchor (Pattern 5)"),
     Scenario("06", "proactive-context",
-             user_de="Wie warm ist es draussen?",
-             pattern="Fakt + EIN Zusatzsatz (Pattern 6)"),
+             user_de="Wie warm ist es draussen?",  # i18n-allow
+             pattern="Fact + ONE additional sentence (Pattern 6)"),
     Scenario("07", "long-task-start",
-             user_de="Analysiere das gesamte Projektverzeichnis.",
-             pattern="Initiative-Ankuendigung in 3 Teilen (Pattern 7)"),
+             user_de="Analysiere das gesamte Projektverzeichnis.",  # i18n-allow
+             pattern="Initiative announcement in 3 parts (Pattern 7)"),
     Scenario("08", "bad-news",
-             user_de="Hat der Build funktioniert?",
-             pattern="Bad news ohne Polsterung (Pattern 8)"),
+             user_de="Hat der Build funktioniert?",  # i18n-allow
+             pattern="Bad news without padding (Pattern 8)"),
     Scenario("09", "high-pressure",
-             user_de="Schnell, die Praesentation beginnt gleich!",
-             pattern="Kuerzer unter Druck, Register bricht nicht (Pattern 9)"),
+             user_de="Schnell, die Praesentation beginnt gleich!",  # i18n-allow
+             pattern="Shorter under pressure, register doesn't break (Pattern 9)"),
     Scenario("10", "hangup",
-             user_de="Das war's, danke.",
-             pattern="Exakt der Hangup-Contract"),
-    # Persona-Mandat Phase 2 — drei neue Szenarien fuer Echo-Trap,
-    # Tool-Output-Leak und Self-Reference-Trap, jeweils bilingual.
+             user_de="Das war's, danke.",  # i18n-allow
+             pattern="Exact hangup contract"),
+    # Persona mandate phase 2 — three new scenarios for the echo trap,
+    # tool-output leak, and self-reference trap, each bilingual.
     Scenario("11", "echo-trap",
-             user_de="Ich möchte wissen, wie spät es ist.",
+             user_de="Ich möchte wissen, wie spät es ist.",  # i18n-allow
              user_en="I want to know what time it is.",
-             pattern="Direkte Zeit-Antwort, KEIN 'Du möchtest also wissen...'"),
+             pattern="Direct time answer, NO 'So you'd like to know...'"),
     Scenario("12", "tool-spawn-output-leak",
-             user_de="Lies die Datei jarvis.toml und sag mir was drin steht.",
+             user_de="Lies die Datei jarvis.toml und sag mir was drin steht.",  # i18n-allow
              user_en="Read the file jarvis.toml and tell me what's inside.",
-             pattern="Inhalt zusammengefasst, keine Tool-Args, kein dispatch_to_harness JSON"),
+             pattern="Content summarized, no tool args, no dispatch_to_harness JSON"),
     Scenario("13", "self-reference-trap",
-             user_de="Was bist du eigentlich?",
+             user_de="Was bist du eigentlich?",  # i18n-allow
              user_en="What are you actually?",
-             pattern="Butler-Identitaet, KEIN 'Ich bin ein Sprachmodell'"),
+             pattern="Butler identity, NO 'I am a language model'"),
 )
 
 
-# Anti-Patterns — werden case-insensitiv gegen jede Brain-Response gematcht.
-# Jedes Vorkommen zaehlt als DRIFT. Erweitert in Persona-Mandat Phase 2 um
-# Echo-Paraphrase, Hedging, Filler-Selbstreferenz, Polster.
+# Anti-patterns — matched case-insensitively against every Brain response.
+# Each occurrence counts as DRIFT. Extended in persona mandate phase 2 with
+# echo paraphrase, hedging, filler self-reference, padding.
 ANTI_PATTERNS = [
-    # Klassisch (Phase 0)
-    "grossartige frage", "tolle frage",
-    "als ki", "als sprachmodell",
-    "ich hoffe, das hilft",
-    # Echo-Paraphrase (Phase 2)
-    "du möchtest also", "ich verstehe, dass",
+    # Classic (phase 0)
+    "grossartige frage", "tolle frage",  # i18n-allow
+    "als ki", "als sprachmodell",  # i18n-allow
+    "ich hoffe, das hilft",  # i18n-allow
+    # Echo paraphrase (phase 2)
+    "du möchtest also", "ich verstehe, dass",  # i18n-allow
     "if i understand correctly", "you'd like me to",
-    # Hedging (Phase 2)
-    "ich glaube", "vermutlich", "möglicherweise",
+    # Hedging (phase 2)
+    "ich glaube", "vermutlich", "möglicherweise",  # i18n-allow
     "i think", "perhaps", "i believe",
-    # Filler-Selbstreferenz (Phase 2)
-    "lass mich kurz", "let me think",
-    # Polster (Phase 2)
-    "es tut mir leid, aber", "i'm so sorry to say",
+    # Filler self-reference (phase 2)
+    "lass mich kurz", "let me think",  # i18n-allow
+    # Padding (phase 2)
+    "es tut mir leid, aber", "i'm so sorry to say",  # i18n-allow
 ]
 
 
@@ -139,45 +140,45 @@ async def probe() -> int:
     from jarvis.core.bus import EventBus
     from jarvis.core.config import load_config
 
-    print(f"Persona-Loader vorhanden: {HAS_PERSONA_LOADER}")
+    print(f"Persona loader present: {HAS_PERSONA_LOADER}")
     invalidate_cache()
     persona = load_persona_prompt()
-    print(f"Persona-Block geladen: {len(persona)} chars")
+    print(f"Persona block loaded: {len(persona)} chars")
 
     cfg = load_config(Path("jarvis.toml"))
     primary = cfg.brain.primary
     primary_provider = cfg.brain.providers.get(primary)
     primary_model = primary_provider.model if primary_provider else "?"
-    print(f"Primary Brain: {primary} / {primary_model}")
+    print(f"Primary brain: {primary} / {primary_model}")
 
     bus = EventBus()
-    # Bevorzugt: build_default_brain(tier='router') — voller Voice-Pfad mit
-    # Tools + Force-Spawn-Heuristik. Fallback: direkter BrainManager mit
-    # Router-Prompt — wenn das Tool-Loading scheitert (z.B. wegen fehlendem
-    # ``jarvis.clis.risk_integration`` auf der aktuellen Branch).
+    # Preferred: build_default_brain(tier='router') — full voice path with
+    # tools + force-spawn heuristic. Fallback: direct BrainManager with the
+    # router prompt — used when tool loading fails (e.g. because
+    # ``jarvis.clis.risk_integration`` is missing on the current branch).
     bm: BrainManager | None = None
     try:
         from jarvis.brain.factory import build_default_brain
         bm = build_default_brain(tier="router", bus=bus)
-        print("Brain-Setup: build_default_brain(tier='router') ✓")
+        print("Brain setup: build_default_brain(tier='router') ✓")
     except Exception as exc:  # noqa: BLE001
-        print(f"Brain-Setup-Fallback: factory failed ({type(exc).__name__}: {exc})")
+        print(f"Brain setup fallback: factory failed ({type(exc).__name__}: {exc})")
         bm = BrainManager(config=cfg, bus=bus, tools={}, tool_executor=None)
         try:
             from jarvis.brain.router import SYSTEM_PROMPT as ROUTER_SYSTEM_PROMPT
             bm._system_prompt_extra = ROUTER_SYSTEM_PROMPT  # type: ignore[attr-defined]
-            print("Brain-Setup: direkter BrainManager + ROUTER SYSTEM_PROMPT manuell ✓")
+            print("Brain setup: direct BrainManager + ROUTER SYSTEM_PROMPT manually ✓")
         except Exception as exc2:  # noqa: BLE001
-            print(f"Router-Prompt-Inject fehlgeschlagen: {exc2}")
+            print(f"Router prompt injection failed: {exc2}")
 
     prompt = ""
     try:
         prompt = bm._build_system_prompt()  # type: ignore[attr-defined]
     except AttributeError:
         prompt = getattr(bm, "_system_prompt_extra", "")
-    print(f"System-Prompt: {len(prompt)} chars")
-    print(f"  Enthaelt 'ROUTER DISCIPLINE': {'ROUTER DISCIPLINE' in prompt}")
-    print(f"  Enthaelt 'ECHO-PARAPHRASE': {'ECHO-PARAPHRASE' in prompt}")
+    print(f"System prompt: {len(prompt)} chars")
+    print(f"  Contains 'ROUTER DISCIPLINE': {'ROUTER DISCIPLINE' in prompt}")
+    print(f"  Contains 'ECHO-PARAPHRASE': {'ECHO-PARAPHRASE' in prompt}")
     print()
 
     lang_mode = (os.environ.get("JARVIS_PROBE_LANG") or "both").lower()
@@ -203,30 +204,30 @@ async def probe() -> int:
                 raw_response = await bm(user_text)
             except Exception as exc:  # noqa: BLE001
                 raw_response = f"<ERROR: {type(exc).__name__}: {exc}>"
-            # Phase-1-Filter im Probe spiegelt das wider, was der User
-            # tatsaechlich hoert: Brain-Output -> scrub_for_voice -> TTS.
+            # The phase-1 filter in the probe mirrors what the user
+            # actually hears: Brain output -> scrub_for_voice -> TTS.
             scrubbed = scrub_for_voice(raw_response, language=lang)
             response = scrubbed.cleaned
             if scrubbed.actions:
                 print(f"Filter:   {scrubbed.actions} (fallback={scrubbed.fallback_used})")
             print(f"Jarvis:   {response}")
-            print(f"Erwartet: {s.pattern}")
+            print(f"Expected: {s.pattern}")
             print()
             results.append((s.id, lang, s.tag, user_text, response, s.pattern))
 
     print("=" * 60)
-    print("HEURISTIK-CHECKS")
+    print("HEURISTIC CHECKS")
     print("=" * 60)
 
     total = len(results)
     if total == 0:
-        print("Keine Szenarien ausgefuehrt.")
+        print("No scenarios were run.")
         return 0
 
     with_name = sum(1 for r in results if "Alex" in r[4])
     name_ratio = with_name / total
-    print(f"Name-Frequenz: {with_name}/{total} ({name_ratio:.0%}) — Ziel <= 33 %.")
-    print(f"  Ergebnis: {'OK' if name_ratio <= 0.34 else 'DRIFT'}")
+    print(f"Name frequency: {with_name}/{total} ({name_ratio:.0%}) — target <= 33%.")
+    print(f"  Result: {'OK' if name_ratio <= 0.34 else 'DRIFT'}")
 
     too_long = [r[0] for r in results if len(r[4]) > 220]
     print(f"Responses > 220 chars: {len(too_long)} {too_long}")
@@ -235,33 +236,33 @@ async def probe() -> int:
         (r[0], r[1], pat) for r in results
         for pat in ANTI_PATTERNS if pat in r[4].lower()
     ]
-    print(f"Anti-Pattern-Treffer: {len(anti_hits)} {anti_hits}")
+    print(f"Anti-pattern hits: {len(anti_hits)} {anti_hits}")
 
     sie_hits = [
         (r[0], r[1]) for r in results
-        if any(tok in r[4] for tok in (" Sie ", " Ihnen ", " Ihre ", "Sie möchten"))
+        if any(tok in r[4] for tok in (" Sie ", " Ihnen ", " Ihre ", "Sie möchten"))  # i18n-allow
     ]
-    print(f"Siezen-Vorkommen: {len(sie_hits)} {sie_hits}")
+    print(f"Formal 'Sie' occurrences: {len(sie_hits)} {sie_hits}")
 
     filler_as_opener = [
         (r[0], r[1]) for r in results
         if r[4].strip().startswith((
-            "Einen Moment, Alex", "Einen Augenblick", "Ich schaue gleich nach",
+            "Einen Moment, Alex", "Einen Augenblick", "Ich schaue gleich nach",  # i18n-allow
         )) and r[0] not in ("06",)
     ]
-    print(f"Filler-als-Opener (nicht-Tool-Scenarios): {len(filler_as_opener)} {filler_as_opener}")
+    print(f"Filler-as-opener (non-tool scenarios): {len(filler_as_opener)} {filler_as_opener}")
 
-    # Hangup-Contract: Szenario 10 muss exakt eine der beiden Phrasen liefern.
+    # Hangup contract: scenario 10 must return exactly one of the two phrases.
     hangup_de_runs = [r for r in results if r[0] == "10" and r[1] == "de"]
     if hangup_de_runs:
         hangup = hangup_de_runs[0][4]
-        hangup_ok = "auf wiedersehen, alex" in hangup.lower()
-        print(f"Hangup-Contract DE (Szenario 10): {'OK' if hangup_ok else 'MISS'}")
+        hangup_ok = "auf wiedersehen, alex" in hangup.lower()  # i18n-allow
+        print(f"Hangup contract DE (scenario 10): {'OK' if hangup_ok else 'MISS'}")
     hangup_en_runs = [r for r in results if r[0] == "10" and r[1] == "en"]
     if hangup_en_runs:
         hangup_en = hangup_en_runs[0][4]
         hangup_en_ok = "goodbye, alex" in hangup_en.lower()
-        print(f"Hangup-Contract EN (Szenario 10): {'OK' if hangup_en_ok else 'MISS'}")
+        print(f"Hangup contract EN (scenario 10): {'OK' if hangup_en_ok else 'MISS'}")
 
     return 0
 

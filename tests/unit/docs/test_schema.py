@@ -1,4 +1,4 @@
-"""Unit-Tests fuer DocFrontmatter + Doc-Schema."""
+"""Unit tests for DocFrontmatter + doc schema."""
 from __future__ import annotations
 
 from datetime import date
@@ -73,7 +73,7 @@ def test_frontmatter_tags_none_becomes_empty_list() -> None:
 
 
 def test_frontmatter_extra_fields_ignored() -> None:
-    """``extra='ignore'`` muss unbekannte Felder schlucken — kein Crash."""
+    """``extra='ignore'`` must swallow unknown fields — no crash."""
     fm = DocFrontmatter.model_validate({
         "title": "t",
         "slug": "s",

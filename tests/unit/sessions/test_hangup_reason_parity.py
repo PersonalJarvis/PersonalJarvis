@@ -84,7 +84,7 @@ def test_session_list_tsx_switch_covers_all_reasons() -> None:
     """SessionList.tsx ``hangupLabel`` must have a case for every non-empty value.
 
     The empty string is the running-session marker and never reaches
-    ``hangupLabel`` (the caller falls back to a "läuft" badge); we
+    ``hangupLabel`` (the caller falls back to a "läuft" badge); we  # i18n-allow: quotes the actual German UI badge label under test
     therefore exclude it from the required cases.
     """
     text = SESSION_LIST_TSX.read_text(encoding="utf-8")

@@ -1,19 +1,19 @@
-"""pywebview-Shell-Orchestrator.
+"""pywebview shell orchestrator.
 
-**Thread-Choreografie** (siehe Plan §5.1, §5.2):
+**Thread choreography** (see Plan §5.1, §5.2):
 
-- Main-Thread:        `webview.start()` — blockt bis Window-Close
-- Daemon-Thread 1:    Uvicorn (WebServer)
-- Daemon-Thread 2:    pystray (JarvisTray) — Doppelklick-Handler emittiert
-                      ``TrayCommand("open_ui")`` in die Queue
-- Daemon-Thread 3:    Tray→Shell-Bridge (diese Klasse) — konsumiert die Queue
-                      thread-safely und ruft `request_show()` via
-                      `webview.windows[0].show()` auf
+- Main thread:        `webview.start()` — blocks until window close
+- Daemon thread 1:    Uvicorn (web server)
+- Daemon thread 2:    pystray (JarvisTray) — the double-click handler emits
+                      ``TrayCommand("open_ui")`` into the queue
+- Daemon thread 3:    Tray→shell bridge (this class) — consumes the queue
+                      thread-safely and calls `request_show()` via
+                      `webview.windows[0].show()`
 
-**Warum Close-Button = hide statt destroy?** pywebview's Default-Handler
-beendet bei Close den Main-Loop. User-Entscheidung (2026-04-20): Close =
-Minimize-to-Tray. `on_closing`-Callback gibt `False` zurück → Window wird
-versteckt statt zerstört.
+**Why does the close button hide instead of destroy?** pywebview's default
+handler ends the main loop on close. User decision (2026-04-20): close =
+minimize-to-tray. The `on_closing` callback returns `False` → the window is
+hidden instead of destroyed.
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 
 class JarvisShell:
-    """Kapselt pywebview-Fenster + Tray-Bridge + Shutdown-Hook."""
+    """Encapsulates the pywebview window + tray bridge + shutdown hook."""
 
     def __init__(
         self,
@@ -55,7 +55,7 @@ class JarvisShell:
         return self._window
 
     def request_show(self) -> None:
-        """Holt das Fenster nach vorne — thread-safe callable."""
+        """Brings the window to the front — thread-safe callable."""
         if self._window is None:
             return
         try:
@@ -72,7 +72,7 @@ class JarvisShell:
                 logger.opt(exception=exc).warning("Window.hide() failed")
 
     def run(self) -> None:
-        """Erstellt das Window und startet pywebview — blockt Main-Thread."""
+        """Creates the window and starts pywebview — blocks the main thread."""
         import webview  # type: ignore[import-untyped]
 
         self._window = webview.create_window(
@@ -88,10 +88,10 @@ class JarvisShell:
             confirm_close=self._cfg.confirm_close,
         )
 
-        # Close-Button = hide (Minimize-to-Tray-Verhalten)
+        # Close button = hide (minimize-to-tray behavior)
         def _on_closing() -> bool:
-            # Wenn wir wirklich beenden wollen (via Tray-Menu "Beenden"), wurde
-            # `_close_requested = True` gesetzt → echtes Close zulassen.
+            # If we really want to quit (via the tray menu "Quit"),
+            # `_close_requested = True` was set → allow a real close.
             if self._close_requested:
                 return True
             self.request_hide()
@@ -99,7 +99,7 @@ class JarvisShell:
 
         self._window.events.closing += _on_closing
 
-        # Token ins Frontend injecten, sobald das DOM geladen ist.
+        # Inject the token into the frontend as soon as the DOM has loaded.
         def _on_loaded() -> None:
             try:
                 self._window.evaluate_js(
@@ -111,7 +111,7 @@ class JarvisShell:
 
         self._window.events.loaded += _on_loaded
 
-        # Tray→Shell Bridge starten, falls Tray vorhanden
+        # Start the tray→shell bridge, if a tray exists
         if self._tray is not None:
             bridge = threading.Thread(
                 target=self._tray_bridge_loop,
@@ -126,7 +126,7 @@ class JarvisShell:
         self._on_close()
 
     def quit(self) -> None:
-        """Wirkliches Beenden — wird vom Tray-Menu "Beenden" aufgerufen."""
+        """Actual quit — called from the tray menu "Quit"."""
         self._close_requested = True
         if self._window is not None:
             try:
@@ -135,11 +135,11 @@ class JarvisShell:
                 logger.opt(exception=exc).warning("Window.destroy() failed")
 
     def _tray_bridge_loop(self) -> None:
-        """Pollt die Tray-Command-Queue und reagiert auf open_ui/quit.
+        """Polls the tray command queue and reacts to open_ui/quit.
 
-        **Wichtig:** wir rufen `show()`/`hide()` **aus diesem Thread**, nicht
-        aus dem pystray-Thread direkt — pystray-Callbacks dürfen nicht in
-        pywebview-APIs reingreifen (WinForms-Deadlock-Risiko).
+        **Important:** we call `show()`/`hide()` **from this thread**, not
+        directly from the pystray thread — pystray callbacks must not reach
+        into pywebview APIs (WinForms deadlock risk).
         """
         assert self._tray is not None
         import queue

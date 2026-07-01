@@ -62,21 +62,21 @@ _HANGUP_PATTERNS: Final[tuple[str, ...]] = (
     r"\bauff?lieg\w*\b",
     r"\bauffleg\w*\b",
     # German — other explicit closings
-    r"\btschüss\b",
+    r"\btschüss\b",  # i18n-allow
     r"\btschuess\b",
     r"\bbeenden\b",
-    r"\bgespräch beenden\b",
-    r"\bauf wiederhören\b",
+    r"\bgespräch beenden\b",  # i18n-allow
+    r"\bauf wiederhören\b",  # i18n-allow
     r"\bauf wiederhoeren\b",
     r"\bauf wiedersehen\b",
-    r"\bbis später\b",
+    r"\bbis später\b",  # i18n-allow
     r"\bgute nacht\b",
     r"\bjarvis aus\b",
     r"\bjarvis ende\b",
     r"\bende jarvis\b",
     r"\bschluss jetzt\b",
     r"\bfertig jarvis\b",
-    r"\bjarvis fertig\b",
+    r"\bjarvis fertig\b",  # i18n-allow
     r"\bstopp jarvis\b",
     r"\bjarvis stopp\b",
     # English — explicit closings

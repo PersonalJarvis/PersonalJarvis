@@ -91,14 +91,14 @@ async def test_subagent_announcement_punches_through_hangup() -> None:
 
     await bus.publish(
         AnnouncementRequested(
-            text="Deine Recherche ist fertig.",
+            text="Deine Recherche ist fertig.",  # i18n-allow
             language="de",
             priority="normal",
             kind="subagent",
         )
     )
 
-    assert tts.calls == [("Deine Recherche ist fertig.", "de-DE")]
+    assert tts.calls == [("Deine Recherche ist fertig.", "de-DE")]  # i18n-allow
     assert player.plays == 1
 
 
@@ -207,7 +207,7 @@ async def test_preamble_does_not_animate_speaking() -> None:
 
     await bus.publish(
         AnnouncementRequested(
-            text="Einen Moment, ich schaue nach.", language="de", kind="preamble"
+            text="Einen Moment, ich schaue nach.", language="de", kind="preamble"  # i18n-allow
         )
     )
 
@@ -235,7 +235,7 @@ async def test_background_completed_arms_readback_grace() -> None:
         JarvisAgentBackgroundCompleted(
             success=True,
             utterance="recherchier mir fuenf themen",
-            summary="Fuenf Recherche-Themen liegen bereit.",
+            summary="Fuenf Recherche-Themen liegen bereit.",  # i18n-allow
             error="",
             duration_s=12.3,
         )

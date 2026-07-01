@@ -1,24 +1,24 @@
-"""WebSocket-Endpoint fuer den globalen Phase-6 Mission-Event-Stream.
+"""WebSocket endpoint for the global Phase-6 mission event stream.
 
-Pfad: ``/api/missions/ws``.
+Path: ``/api/missions/ws``.
 
-Protokoll:
-1. Client schickt als erstes Frame ``{"type": "hello", "last_seq": <int>,
-   "token": "<str>"}``. Wenn das Frame fehlt oder fehlerhaft ist → close 4400.
-   Wenn der Token ungueltig ist → close 4401.
-2. Server replayt aus SQLite alle Events mit ``seq > last_seq`` in Reihenfolge
-   und sendet sie unverzoeglich als JSON-Frames (ein Frame pro Envelope).
-3. Server fanouted neu eintreffende Events ueber den ``MissionBus`` an alle
-   verbundenen Clients (per-Client bounded queue mit drop-oldest).
+Protocol:
+1. The client sends ``{"type": "hello", "last_seq": <int>,
+   "token": "<str>"}`` as the first frame. If the frame is missing or malformed → close 4400.
+   If the token is invalid → close 4401.
+2. The server replays all events with ``seq > last_seq`` from SQLite in order
+   and sends them immediately as JSON frames (one frame per envelope).
+3. The server fans newly arriving events out over the ``MissionBus`` to all
+   connected clients (per-client bounded queue with drop-oldest).
 
-Kein Heartbeat noetig — uvicorn handhabt WebSocket-Pings selbst, der Client
-darf optional ``{"type": "ping"}``-Frames schicken; sie werden ignoriert.
+No heartbeat needed — uvicorn handles WebSocket pings itself; the client
+may optionally send ``{"type": "ping"}`` frames, which are ignored.
 
-Drop-Oldest-Begruendung: ein langsamer/blockierter Client darf den Bus nicht
-bremsen — der Voice-Pfad teilt sich mit dem WS-Pfad keine Critical-Path-
-Latenz, aber die Sub-Mission-Tasks emittieren u.U. burstartig (Worker-Spawn
-+ Worker-Progress + Critic-Verdict auf einmal). Fenstergroesse 200 reicht
-fuer ein paar Sekunden Backlog vor dem ersten Drop.
+Drop-oldest rationale: a slow/blocked client must not throttle the bus —
+the voice path doesn't share critical-path latency with the WS path, but
+sub-mission tasks may emit bursts (worker spawn + worker progress +
+critic verdict all at once). A window size of 200 covers a few seconds of
+backlog before the first drop.
 """
 from __future__ import annotations
 
@@ -52,11 +52,11 @@ _HELLO_TIMEOUT_S = 5.0
 
 
 class ConnectionManager:
-    """Per-Client bounded ``asyncio.Queue`` + globaler Fanout.
+    """Per-client bounded ``asyncio.Queue`` + global fanout.
 
-    Eine Instanz pro Server. Wird beim Server-Start in ``app.state.missions_ws_manager``
-    abgelegt und an ``MissionBus.subscribe_all()`` gehaengt — so landet jedes
-    persistierte Event automatisch in jeder Client-Queue.
+    One instance per server. Stored in ``app.state.missions_ws_manager``
+    at server start and attached to ``MissionBus.subscribe_all()`` — so every
+    persisted event automatically lands in every client queue.
     """
 
     def __init__(self) -> None:
@@ -69,23 +69,23 @@ class ConnectionManager:
         last_seq: int,
         store: "MissionEventStore",
     ) -> asyncio.Queue[EventEnvelope]:
-        """Registriert einen Client und enqueued alle Replay-Events ab ``last_seq``.
+        """Registers a client and enqueues all replay events since ``last_seq``.
 
-        Replay laeuft synchron vor Registrierung — so verpasst der Client
-        keine Events, die zwischen ``events_since()`` und ``subscribe_all()``
-        publiziert wuerden.
+        Replay runs synchronously before registration — this way the client
+        never misses events that would be published between ``events_since()``
+        and ``subscribe_all()``.
         """
         queue: asyncio.Queue[EventEnvelope] = asyncio.Queue(
             maxsize=_QUEUE_MAXSIZE
         )
-        # Replay erst, dann registrieren — sonst racet Live-Fanout mit Replay.
+        # Replay first, then register — otherwise live fanout races the replay.
         replay = await store.events_since(last_seq)
         for env in replay:
             try:
                 queue.put_nowait(env)
             except asyncio.QueueFull:
-                # Replay-Burst groesser als Queue — die aeltesten Replay-
-                # Events haben den Vortritt vor Live-Events.
+                # Replay burst larger than the queue — the oldest replay
+                # events take priority over live events.
                 try:
                     queue.get_nowait()
                     queue.put_nowait(env)
@@ -100,9 +100,9 @@ class ConnectionManager:
             self._clients.pop(client_id, None)
 
     async def fanout(self, env: EventEnvelope) -> None:
-        """``MissionBus.subscribe_all``-Handler. Drop-Oldest pro Client."""
-        # Snapshot ohne Lock — Modifikationen am Dict sind asyncio-thread-safe
-        # (eine Loop pro Server), wir lesen nur Werte.
+        """``MissionBus.subscribe_all`` handler. Drop-oldest per client."""
+        # Snapshot without a lock — modifications to the dict are asyncio-thread-safe
+        # (one loop per server), and we're only reading values.
         for client_id, queue in list(self._clients.items()):
             try:
                 queue.put_nowait(env)
@@ -129,7 +129,7 @@ class ConnectionManager:
 
 
 def _resolve_manager(ws: WebSocket) -> tuple[ConnectionManager, "MissionManager"] | None:
-    """Sucht ``missions_ws_manager`` + ``mission_manager`` in app.state."""
+    """Looks up ``missions_ws_manager`` + ``mission_manager`` in app.state."""
     app = ws.scope["app"]
     mgr = getattr(app.state, "missions_ws_manager", None)
     mission_manager = getattr(app.state, "mission_manager", None)
@@ -140,7 +140,7 @@ def _resolve_manager(ws: WebSocket) -> tuple[ConnectionManager, "MissionManager"
 
 @router.websocket("/ws")
 async def missions_ws(ws: WebSocket) -> None:
-    """Globaler Mission-Event-Stream (Hello → Replay → Live)."""
+    """Global mission event stream (hello → replay → live)."""
     await ws.accept()
 
     resolved = _resolve_manager(ws)
@@ -149,7 +149,7 @@ async def missions_ws(ws: WebSocket) -> None:
         return
     conn_mgr, mission_manager = resolved
 
-    # 1. Hello-Frame (Timeout 5s).
+    # 1. Hello frame (5s timeout).
     try:
         first = await asyncio.wait_for(
             ws.receive_json(), timeout=_HELLO_TIMEOUT_S
@@ -182,7 +182,7 @@ async def missions_ws(ws: WebSocket) -> None:
     client_id = uuid4().hex
     queue = await conn_mgr.connect(client_id, last_seq, mission_manager.store)
 
-    # 2. Reader-Task (drained Client-Frames ohne sie zu interpretieren).
+    # 2. Reader task (drains client frames without interpreting them).
     async def _reader() -> None:
         while True:
             try:
@@ -195,16 +195,16 @@ async def missions_ws(ws: WebSocket) -> None:
                     exc,
                 )
                 continue
-            # Reserved fuer Future-Control-Frames (pause/resume etc.).
+            # Reserved for future control frames (pause/resume etc.).
             if isinstance(msg, dict) and msg.get("type") == "ping":
-                # Schweigender Pong-Skip — Bus-Pings reichen.
+                # Silent pong skip — bus pings are enough.
                 continue
 
     reader_task = asyncio.create_task(
         _reader(), name=f"missions_ws-reader-{client_id[:8]}"
     )
 
-    # 3. Writer-Loop. Bei WS-Disconnect: stoppen.
+    # 3. Writer loop. Stop on WS disconnect.
     try:
         while True:
             env = await queue.get()

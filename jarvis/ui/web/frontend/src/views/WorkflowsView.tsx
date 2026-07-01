@@ -321,12 +321,12 @@ function WorkflowCard({
   const isRunning = runMut.isPending && runMut.variables?.id === workflow.id;
 
   const handleRun = async () => {
-    // Simple-Input-Detection: wenn die Def Input-Variable referenziert,
-    // prompten wir synchron via browser-prompt. Fuer komplexere Inputs
-    // kommt spaeter ein echter Input-Dialog.
-    // Momentan einfach: wir wissen es nicht ohne den Definition-Payload zu
-    // laden → einfacher Fallback: Empty-Input. Die URL-Zusammenfassung (ein
-    // Seed) schlaegt dann mit "URL leer" fehl, was akzeptabel ist als MVP.
+    // Simple input detection: if the def references an input variable,
+    // we prompt synchronously via a browser prompt. A real input dialog
+    // for more complex inputs comes later.
+    // Kept simple for now: we don't know without loading the definition
+    // payload → simple fallback: empty input. The URL summary (one of the
+    // seeds) then fails with "URL empty", which is acceptable as an MVP.
     let input: Record<string, unknown> = {};
     if (workflow.name.toLowerCase().includes("url")) {
       const url = window.prompt(t("workflows_view.url_to_summarize"), "https://");
@@ -674,7 +674,7 @@ function EmptyState() {
 }
 
 // ---------------------------------------------------------------------
-// Time helpers (alle Timestamps in ns)
+// Time helpers (all timestamps in ns)
 // ---------------------------------------------------------------------
 
 function formatFutureDelta(ns: number): string {
@@ -717,5 +717,5 @@ function formatAbsolute(ns: number): string {
   }
 }
 
-// Silence unused-lint for PowerOff — behalten weil spaeter Bulk-Disable.
+// Silence unused-lint for PowerOff — kept because of a later bulk-disable feature.
 void PowerOff;

@@ -1,4 +1,4 @@
-"""ShellHandler — startet einen Subprozess, capture stdout/stderr."""
+"""ShellHandler — starts a subprocess, captures stdout/stderr."""
 from __future__ import annotations
 
 import asyncio
@@ -18,7 +18,7 @@ class ShellHandler:
     async def execute(
         self,
         spec: Any,
-        input_data: dict[str, Any],  # noqa: ARG002 — fuer einheitliches Protocol
+        input_data: dict[str, Any],  # noqa: ARG002 — for a uniform protocol
     ) -> HandlerResult:
         try:
             argv = shlex.split(spec.command, posix=False)
@@ -27,8 +27,9 @@ class ShellHandler:
                 success=False, output="", exit_code=-1,
                 error=f"command parse error: {exc}",
             )
-        # Auf Windows laesst shlex posix=False die aeusseren Quotes im
-        # Token — strippen, sonst meint subprocess den Filename incl. "".
+        # On Windows, shlex posix=False leaves the outer quotes in the
+        # token — strip them, otherwise subprocess treats the filename
+        # as including the "".
         argv = [
             a[1:-1] if len(a) >= 2 and a[0] == a[-1] and a[0] in ('"', "'")
             else a

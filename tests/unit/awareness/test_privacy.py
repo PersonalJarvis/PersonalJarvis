@@ -1,10 +1,10 @@
-"""Tests fuer jarvis.awareness.privacy.PrivacyFilter.
+"""Tests for jarvis.awareness.privacy.PrivacyFilter.
 
-Plan §4 Smoke-Erwartungen + Hybrid-Default-Verhalten + User-Patterns-Additivitaet.
+Plan §4 smoke expectations + hybrid default behavior + user-patterns additivity.
 
-PrivacyFilter spiegelt jarvis.safety.risk_tier: SYSTEM-Patterns sind hart,
-USER kann nur additiv blocken (nie System-Defaults entfernen). Reihenfolge:
-BLOCK > ALLOW > Default-Hybrid (block-for-browsers).
+PrivacyFilter mirrors jarvis.safety.risk_tier: SYSTEM patterns are hard,
+USER can only block additively (never remove system defaults). Order:
+BLOCK > ALLOW > default hybrid (block-for-browsers).
 """
 from __future__ import annotations
 
@@ -16,23 +16,23 @@ def _filter() -> PrivacyFilter:
     return PrivacyFilter(AwarenessConfig.default())
 
 
-# --- Plan §4 Smoke-Test (verbindlich) --------------------------------------
+# --- Plan §4 smoke test (binding) ------------------------------------------
 
 def test_blocks_banking_title() -> None:
-    """Plan-Smoke 1: Sparkasse-Online-Banking → BLOCKED, reason matcht."""
+    """Plan smoke 1: Sparkasse-Online-Banking → BLOCKED, reason matches."""
     pf = _filter()
     allowed, reason = pf.is_allowed(
-        window_title="Sparkasse Online-Banking - Mozilla Firefox",
+        window_title="Sparkasse Online-Banking - Mozilla Firefox",  # i18n-allow
         process_name="firefox.exe",
     )
     assert allowed is False
     assert reason.startswith("matched_blocked_title:")
-    # Ein Banking-Pattern muss matchen — entweder *Banking* oder *Sparkasse* oder *Online-Banking*
-    assert any(p in reason for p in ("*Banking*", "*Sparkasse*", "*Online-Banking*"))
+    # A banking pattern must match — either *Banking* or *Sparkasse* or *Online-Banking*
+    assert any(p in reason for p in ("*Banking*", "*Sparkasse*", "*Online-Banking*"))  # i18n-allow
 
 
 def test_allows_vscode() -> None:
-    """Plan-Smoke 2: VS Code → ALLOWED, reason matcht."""
+    """Plan smoke 2: VS Code → ALLOWED, reason matches."""
     pf = _filter()
     allowed, reason = pf.is_allowed(
         window_title="pipeline.py - jarvis - Visual Studio Code",
@@ -42,10 +42,10 @@ def test_allows_vscode() -> None:
     assert reason == "matched_allowed_process:code.exe"
 
 
-# --- Hybrid-Default (D-A1) -------------------------------------------------
+# --- Hybrid default (D-A1) --------------------------------------------------
 
 def test_browser_without_explicit_block_still_blocked_via_hybrid() -> None:
-    """D-A1: Browser ohne Title-Match → BLOCKED (default block_for_browsers)."""
+    """D-A1: a browser without a title match → BLOCKED (default block_for_browsers)."""
     pf = _filter()
     allowed, reason = pf.is_allowed(
         window_title="Wikipedia — The Free Encyclopedia",
@@ -56,7 +56,7 @@ def test_browser_without_explicit_block_still_blocked_via_hybrid() -> None:
 
 
 def test_unknown_non_browser_allowed_via_hybrid() -> None:
-    """D-A1: Notepad o.ae. → ALLOWED (default allow_for_others)."""
+    """D-A1: Notepad or similar → ALLOWED (default allow_for_others)."""
     pf = _filter()
     allowed, reason = pf.is_allowed(
         window_title="Untitled - Notepad",
@@ -67,7 +67,7 @@ def test_unknown_non_browser_allowed_via_hybrid() -> None:
 
 
 def test_chrome_blocked_by_hybrid() -> None:
-    """Chrome zaehlt als Browser → Hybrid-Default blockt."""
+    """Chrome counts as a browser → the hybrid default blocks it."""
     pf = _filter()
     allowed, _ = pf.is_allowed(
         window_title="GitHub - Mozilla Firefox",
@@ -76,10 +76,10 @@ def test_chrome_blocked_by_hybrid() -> None:
     assert allowed is False
 
 
-# --- BLOCK trumpft ALLOW + Reihenfolge -------------------------------------
+# --- BLOCK trumps ALLOW + order ---------------------------------------------
 
 def test_blocked_process_trumps_allowed_process() -> None:
-    """1password-Title in code.exe → BLOCK gewinnt (process-blacklist greift)."""
+    """1password title in code.exe → BLOCK wins (the process blacklist applies)."""
     pf = _filter()
     allowed, reason = pf.is_allowed(
         window_title="My Vault - 1Password",
@@ -90,20 +90,20 @@ def test_blocked_process_trumps_allowed_process() -> None:
 
 
 def test_blocked_title_trumps_allowed_process() -> None:
-    """Banking-Title in code.exe (z.B. PDF-View) → Title-Blacklist gewinnt."""
+    """Banking title in code.exe (e.g. a PDF view) → the title blacklist wins."""
     pf = _filter()
     allowed, reason = pf.is_allowed(
-        window_title="Sparkasse Statement.pdf - Code",
+        window_title="Sparkasse Statement.pdf - Code",  # i18n-allow
         process_name="code.exe",
     )
     assert allowed is False
     assert reason.startswith("matched_blocked_title:")
 
 
-# --- User-Patterns sind additiv --------------------------------------------
+# --- User patterns are additive ----------------------------------------------
 
 def test_user_patterns_can_add_blocks() -> None:
-    """User kann eigene blocked_processes ergaenzen — additiv zum System."""
+    """The user can add their own blocked_processes — additive to the system."""
     cfg = AwarenessConfig.default()
 
     def user_patterns() -> tuple[list[str], list[str], list[str]]:
@@ -120,31 +120,31 @@ def test_user_patterns_can_add_blocks() -> None:
 
 
 def test_user_patterns_cannot_remove_system_blocks() -> None:
-    """User-Patterns sind ADDITIV — leere User-Liste laesst System-Defaults
-    aktiv. 1password bleibt blockiert auch wenn User nichts hinzufuegt."""
+    """User patterns are ADDITIVE — an empty user list leaves the system
+    defaults active. 1password stays blocked even if the user adds nothing."""
     cfg = AwarenessConfig.default()
 
     def user_patterns() -> tuple[list[str], list[str], list[str]]:
-        return ([], [], [])  # User loescht nichts; kann auch nicht
+        return ([], [], [])  # user deletes nothing; can't anyway
 
     pf = PrivacyFilter(cfg, user_patterns_fn=user_patterns)
     allowed, _ = pf.is_allowed(
         window_title="My Vault",
         process_name="1password.exe",
     )
-    assert allowed is False  # System-Default 1password* greift weiterhin
+    assert allowed is False  # system default 1password* still applies
 
 
 def test_user_patterns_callback_errors_are_swallowed() -> None:
-    """Wenn user_patterns_fn raised: behandeln wie leere Liste, nicht crashen.
-    Spiegelt jarvis.safety.risk_tier._collect_patterns try/except."""
+    """If user_patterns_fn raises: treat it like an empty list, don't crash.
+    Mirrors jarvis.safety.risk_tier._collect_patterns try/except."""
     cfg = AwarenessConfig.default()
 
     def broken() -> tuple[list[str], list[str], list[str]]:
         raise RuntimeError("user-toml-broken")
 
     pf = PrivacyFilter(cfg, user_patterns_fn=broken)
-    # Crasht nicht; System-Defaults greifen normal
+    # Doesn't crash; system defaults apply normally
     allowed, _ = pf.is_allowed(
         window_title="Untitled - Notepad",
         process_name="notepad.exe",
@@ -152,10 +152,10 @@ def test_user_patterns_callback_errors_are_swallowed() -> None:
     assert allowed is True
 
 
-# --- reason-String-Format (Plan §4 Smoke-Spec) -----------------------------
+# --- reason string format (plan §4 smoke spec) ------------------------------
 
 def test_reason_format_for_blocked_title() -> None:
-    """reason-Format: matched_blocked_title:<pattern>."""
+    """reason format: matched_blocked_title:<pattern>."""
     pf = _filter()
     _, reason = pf.is_allowed(
         window_title="PayPal Login",
@@ -165,7 +165,7 @@ def test_reason_format_for_blocked_title() -> None:
 
 
 def test_reason_format_for_allowed_process() -> None:
-    """reason-Format: matched_allowed_process:<pattern>."""
+    """reason format: matched_allowed_process:<pattern>."""
     pf = _filter()
     _, reason = pf.is_allowed(
         window_title="Untitled-1 - Visual Studio Code",
@@ -175,10 +175,10 @@ def test_reason_format_for_allowed_process() -> None:
 
 
 def test_case_insensitive_matching() -> None:
-    """Patterns matchen case-insensitive (wie risk_tier.py:105)."""
+    """Patterns match case-insensitively (like risk_tier.py:105)."""
     pf = _filter()
     allowed, _ = pf.is_allowed(
-        window_title="Meine SPARKASSE Online-Banking Sitzung",
+        window_title="Meine SPARKASSE Online-Banking Sitzung",  # i18n-allow
         process_name="firefox.exe",
     )
     assert allowed is False

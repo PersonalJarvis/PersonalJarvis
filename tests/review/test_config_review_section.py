@@ -1,7 +1,7 @@
-"""Tests fuer ReviewConfig-Pydantic-Validation (Phase 8.4).
+"""Tests for ReviewConfig Pydantic validation (Phase 8.4).
 
-Plan-Referenz: §6.4 — `[review]`-Section in jarvis.toml, Pydantic-
-Validation grün.
+Plan reference: §6.4 — `[review]` section in jarvis.toml, Pydantic
+validation green.
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def test_default_review_config() -> None:
     assert cfg.worker_model == "sonnet"
     assert cfg.reviewer_model == "opus"
     assert cfg.default_rubric == "default"
-    # 4 Rubrics aus Plan §6.4
+    # 4 rubrics from Plan §6.4
     assert set(cfg.rubrics.keys()) == {
         "default",
         "code_generation",
@@ -53,7 +53,7 @@ def test_default_rubrics_have_items() -> None:
 
 @pytest.mark.parametrize("bad_max", [0, 6, 10, -1])
 def test_max_iterations_out_of_range_rejected(bad_max: int) -> None:
-    """AD-4 hard ceiling 5; werte > 5 oder < 1 werden abgelehnt."""
+    """AD-4 hard ceiling 5; values > 5 or < 1 are rejected."""
     with pytest.raises(ValidationError):
         ReviewConfig(max_iterations=bad_max)
 
@@ -77,27 +77,27 @@ def test_rubric_items_not_empty() -> None:
 
 
 # ----------------------------------------------------------------------
-# Roundtrip mit jarvis.toml
+# Round trip with jarvis.toml
 # ----------------------------------------------------------------------
 
 
 def test_jarvis_toml_review_section_exists_and_validates() -> None:
-    """End-to-End: Die echte jarvis.toml muss eine [review]-Section haben,
-    die ReviewConfig.model_validate akzeptiert."""
+    """End-to-end: the real jarvis.toml must have a [review] section
+    that ReviewConfig.model_validate accepts."""
     jarvis_toml = REPO_ROOT / "jarvis.toml"
     assert jarvis_toml.exists()
 
     raw = tomllib.loads(jarvis_toml.read_text(encoding="utf-8"))
-    assert "review" in raw, "jarvis.toml hat keine [review]-Section"
+    assert "review" in raw, "jarvis.toml has no [review] section"
 
     cfg = ReviewConfig.model_validate(raw["review"])
-    # Werte aus Plan §6.4
+    # Values from Plan §6.4
     assert cfg.enabled is True
     assert cfg.max_iterations == 3
     assert cfg.hard_ceiling == 5
     assert cfg.default_rubric == "default"
 
-    # Alle 4 Rubrics aus Plan §6.4
+    # All 4 rubrics from Plan §6.4
     assert set(cfg.rubrics.keys()) == {
         "default",
         "code_generation",

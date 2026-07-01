@@ -104,7 +104,7 @@ async def test_recovery_reconciles_unfinalized_approved_mission(
                 tokens_used=10,
                 cost_usd=0.1,
                 wall_ms=1000,
-                summary_de="Fertig.",
+                summary_de="Fertig.",  # i18n-allow: German summary_de voice-readback field under test
                 summary_en="Done.",
             ),
         )

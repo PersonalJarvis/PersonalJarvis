@@ -1,11 +1,11 @@
-"""REST-Endpoints fuer Conductor.
+"""REST endpoints for Conductor.
 
-Erwartet drei Objekte auf ``request.app.state``:
+Expects three objects on ``request.app.state``:
 - ``conductor_store`` (``ConductorStore``)
 - ``conductor_runner`` (``Runner``)
 - ``conductor_scheduler`` (``Scheduler``) — optional
 
-Ohne Store: 503.
+Without a store: 503.
 """
 from __future__ import annotations
 
@@ -27,14 +27,14 @@ router = APIRouter(prefix="/api/conductor", tags=["conductor"])
 def _require_store(request: Request) -> Any:
     store = getattr(request.app.state, "conductor_store", None)
     if store is None:
-        raise HTTPException(status_code=503, detail="ConductorStore nicht verfuegbar")
+        raise HTTPException(status_code=503, detail="ConductorStore not available")
     return store
 
 
 def _require_runner(request: Request) -> Any:
     runner = getattr(request.app.state, "conductor_runner", None)
     if runner is None:
-        raise HTTPException(status_code=503, detail="Conductor Runner nicht verfuegbar")
+        raise HTTPException(status_code=503, detail="Conductor Runner not available")
     return runner
 
 
@@ -95,7 +95,7 @@ async def list_jobs(request: Request) -> dict[str, Any]:
 @router.post("/jobs", status_code=201)
 async def create_job(job: Job, request: Request) -> dict[str, Any]:
     store = _require_store(request)
-    # Wenn Schedule ein Webhook ist ohne Token: eins generieren.
+    # If the schedule is a webhook without a token: generate one.
     if job.schedule.type == "webhook" and len(job.schedule.token) < 16:
         new_token = secrets.token_urlsafe(24)
         job = job.model_copy(
@@ -110,7 +110,7 @@ async def get_job(job_id: str, request: Request) -> dict[str, Any]:
     store = _require_store(request)
     row = await store.get_job(job_id)
     if row is None:
-        raise HTTPException(status_code=404, detail="Job nicht gefunden")
+        raise HTTPException(status_code=404, detail="Job not found")
     summary = _row_to_summary(row)
     summary["recent_runs"] = await store.list_runs(job_id=job_id, limit=20)
     return summary
@@ -123,7 +123,7 @@ async def patch_job(
     store = _require_store(request)
     row = await store.get_job(job_id)
     if row is None:
-        raise HTTPException(status_code=404, detail="Job nicht gefunden")
+        raise HTTPException(status_code=404, detail="Job not found")
     if "enabled" in payload:
         await store.set_enabled(job_id, bool(payload["enabled"]))
         if not payload["enabled"]:
@@ -136,7 +136,7 @@ async def delete_job(job_id: str, request: Request) -> dict[str, Any]:
     store = _require_store(request)
     ok = await store.delete_job(job_id)
     if not ok:
-        raise HTTPException(status_code=404, detail="Job nicht gefunden")
+        raise HTTPException(status_code=404, detail="Job not found")
     return {"ok": True, "id": job_id}
 
 
@@ -174,12 +174,12 @@ async def get_run(run_id: str, request: Request) -> dict[str, Any]:
     store = _require_store(request)
     run = await store.get_run(run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail="Run nicht gefunden")
+        raise HTTPException(status_code=404, detail="Run not found")
     return run
 
 
 # ----------------------------------------------------------------------
-# Webhook-Trigger (public, token-authenticated)
+# Webhook trigger (public, token-authenticated)
 # ----------------------------------------------------------------------
 
 @router.post("/hooks/{token}")
@@ -187,16 +187,16 @@ async def webhook_trigger(
     token: str, request: Request,
     body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
-    """Webhook-URL fuer extern gehostete Trigger. Token ist die Auth.
+    """Webhook URL for externally hosted triggers. The token is the auth.
 
-    Beispiel: ``curl -X POST https://your-jarvis/api/conductor/hooks/<token>``
+    Example: ``curl -X POST https://your-jarvis/api/conductor/hooks/<token>``
     """
     store = _require_store(request)
     runner = _require_runner(request)
     row = await store.get_job_by_webhook_token(token)
     if row is None:
-        raise HTTPException(status_code=404, detail="Unbekannter Webhook-Token")
+        raise HTTPException(status_code=404, detail="Unknown webhook token")
     if not row.get("enabled"):
-        raise HTTPException(status_code=409, detail="Job deaktiviert")
+        raise HTTPException(status_code=409, detail="Job disabled")
     run_id = await runner.trigger(row["id"], trigger="webhook", input_data=body or {})
     return {"ok": True, "run_id": run_id, "job_id": row["id"]}

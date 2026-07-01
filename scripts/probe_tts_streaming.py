@@ -23,7 +23,7 @@ if str(REPO) not in sys.path:
 
 from jarvis.core.config import load_config  # noqa: E402
 
-TEXT = "Es ist gerade kurz nach sieben Uhr abends, Chef. Soll ich noch etwas vorbereiten?"
+TEXT = "Es ist gerade kurz nach sieben Uhr abends, Chef. Soll ich noch etwas vorbereiten?"  # i18n-allow: sample TTS voice output text used to probe streaming
 
 
 async def main() -> int:

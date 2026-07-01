@@ -1,13 +1,13 @@
-"""Watchdog-Modus: Pipeline läuft permanent, alles wird mitgeschrieben.
+"""Watchdog mode: the pipeline runs continuously and everything is logged.
 
-Unterschied zu `pipeline.py`:
-- Logs gehen SOWOHL auf Konsole ALS AUCH in `./data/jarvis_watchdog.log`
-- Debug-WAVs (Rolling-Whisper-Transkriptionen) in `./data/wake_debug/*.wav`
-- Heartbeat alle 3 Sek auch wenn nichts passiert
-- Bei jedem Wake werden Audio-Buffer gespeichert für Nachanalyse
+Difference from `pipeline.py`:
+- Logs go BOTH to the console AND to `./data/jarvis_watchdog.log`
+- Debug WAVs (rolling-Whisper transcriptions) in `./data/wake_debug/*.wav`
+- Heartbeat every 3 sec even when nothing happens
+- On every wake, audio buffers are saved for later analysis
 
-Der User / ich können nach einem Test die Log-Datei prüfen um zu sehen
-ob Mic-Audio ankommt, was Whisper transkribiert, ob Wake triggert.
+The user / I can check the log file after a test to see whether mic audio
+is coming through, what Whisper transcribes, and whether wake triggers.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from pathlib import Path
 
 
 def _setup_logging(log_file: Path) -> None:
-    """Log geht in Datei UND auf Konsole."""
+    """Logs go to both the file AND the console."""
     log_file.parent.mkdir(parents=True, exist_ok=True)
     fmt = "%(asctime)s %(levelname)-5s %(name)s | %(message)s"
     root = logging.getLogger()
@@ -88,7 +88,7 @@ async def _main() -> None:
 
     config = cfg.load_config()
 
-    # Event-Bus + Supervisor verdrahten — Voraussetzung fuer Orb-Integration
+    # Wire up event bus + supervisor — prerequisite for Orb integration
     bus = EventBus()
     supervisor = Supervisor(bus=bus)
 
@@ -103,9 +103,9 @@ async def _main() -> None:
         bridge.attach()
         log.info("Orb-Overlay + Bus-Bridge aktiv.")
     except Exception as exc:  # noqa: BLE001
-        log.warning("Orb-Overlay konnte nicht starten (%s) — laufe ohne UI.", exc)
+        log.warning("Orb overlay failed to start (%s) — running without UI.", exc)
 
-    # STT-Sprache aus Config (default "auto" = bilingual DE+EN auto-detect).
+    # STT language from config (default "auto" = bilingual DE+EN auto-detect).
     stt_language = config.stt.language if config.stt.language not in ("", "auto") else None
     stt = FasterWhisperProvider(
         model=config.stt.model,
@@ -117,9 +117,9 @@ async def _main() -> None:
     tts = build_tts_from_config(config.tts)
     brain = build_default_brain()
 
-    # Output-Device aus config.audio.output_device ("auto-headset" by default)
-    # → wird von AudioPlayer._resolve_output_device aufgelöst auf den tatsächlichen
-    # Headset-Index, damit TTS nicht auf den Monitor-Lautsprecher spielt.
+    # Output device from config.audio.output_device ("auto-headset" by default)
+    # → resolved by AudioPlayer._resolve_output_device to the actual
+    # headset index, so TTS doesn't play through the monitor speaker.
     output_device = config.audio.output_device or None
     _call_hk, _ptt_hk = config.trigger.resolve_hotkeys()
     pipeline = SpeechPipeline(
@@ -146,7 +146,7 @@ async def _main() -> None:
         input_device=config.audio.input_device or None,
         output_device=output_device,
     )
-    log.info("Pipeline wird gestartet …")
+    log.info("Starting pipeline …")
     await pipeline.run()
 
 
@@ -154,4 +154,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(_main())
     except KeyboardInterrupt:
-        print("\nWatchdog beendet.")
+        print("\nWatchdog stopped.")

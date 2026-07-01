@@ -78,7 +78,7 @@ def spawn_external_terminal(
             log.info("external terminal via wt: %s (cwd=%s)", command, workdir_str)
             return True, "wt"
         except Exception as exc:  # noqa: BLE001
-            log.warning("wt-spawn fehlgeschlagen, faelle auf pwsh zurueck: %s", exc)
+            log.warning("wt spawn failed, falling back to pwsh: %s", exc)
 
     # 2) pwsh.exe as a standalone window.
     pwsh = shutil.which("pwsh")
@@ -96,7 +96,7 @@ def spawn_external_terminal(
             log.info("external terminal via pwsh: %s (cwd=%s)", command, workdir_str)
             return True, "pwsh"
         except Exception as exc:  # noqa: BLE001
-            log.warning("pwsh-spawn fehlgeschlagen, faelle auf powershell zurueck: %s", exc)
+            log.warning("pwsh spawn failed, falling back to powershell: %s", exc)
 
     # 3) powershell.exe (Windows default).
     ps = shutil.which("powershell")
@@ -114,9 +114,9 @@ def spawn_external_terminal(
             log.info("external terminal via powershell: %s (cwd=%s)", command, workdir_str)
             return True, "powershell"
         except Exception as exc:  # noqa: BLE001
-            log.warning("powershell-spawn fehlgeschlagen: %s", exc)
+            log.warning("powershell spawn failed: %s", exc)
 
-    log.error("Kein externes Terminal verfuegbar (wt/pwsh/powershell alle nicht gefunden)")
+    log.error("No external terminal available (wt/pwsh/powershell all not found)")
     return False, "failed"
 
 

@@ -1,4 +1,4 @@
-"""Tests fuer UUIDv7-Helper."""
+"""Tests for the UUIDv7 helper."""
 from __future__ import annotations
 
 import time
@@ -12,21 +12,21 @@ def test_uuid7_returns_uuid_instance() -> None:
 
 
 def test_uuid7_version_is_7() -> None:
-    """RFC 9562: Version-Bits muessen 0b0111 (=7) sein."""
+    """RFC 9562: version bits must be 0b0111 (=7)."""
     u = uuid7()
     assert u.version == 7
 
 
 def test_uuid7_variant_is_rfc4122() -> None:
-    """Variant-Bits muessen 0b10 (RFC 4122) sein."""
+    """Variant bits must be 0b10 (RFC 4122)."""
     u = uuid7()
-    # variant property gibt 'specified in RFC 4122' string oder int
+    # variant property returns 'specified in RFC 4122' string or int
     assert u.variant == "specified in RFC 4122"
 
 
 def test_uuid7_distinct_calls_produce_distinct_ids() -> None:
     ids = {uuid7() for _ in range(1000)}
-    assert len(ids) == 1000  # keine Kollisionen
+    assert len(ids) == 1000  # no collisions
 
 
 def test_uuid7_str_is_canonical_format() -> None:
@@ -38,7 +38,7 @@ def test_uuid7_str_is_canonical_format() -> None:
 
 
 def test_uuid7_timestamp_prefix_lexicographically_sortable() -> None:
-    """Zwei IDs >=2ms auseinander muessen lexicographisch in Zeit-Order stehen."""
+    """Two IDs >=2ms apart must be lexicographically ordered in time."""
     a = uuid7_str()
     time.sleep(0.005)  # 5 ms
     b = uuid7_str()
@@ -46,9 +46,9 @@ def test_uuid7_timestamp_prefix_lexicographically_sortable() -> None:
 
 
 def test_uuid7_throughput_acceptable() -> None:
-    """10000 IDs in <1s — genug fuer Mission-Event-Spike."""
+    """10000 IDs in <1s — enough for a mission-event spike."""
     start = time.perf_counter()
     for _ in range(10000):
         uuid7()
     elapsed = time.perf_counter() - start
-    assert elapsed < 1.0, f"uuid7 zu langsam: {elapsed:.3f}s fuer 10k Calls"
+    assert elapsed < 1.0, f"uuid7 too slow: {elapsed:.3f}s for 10k calls"

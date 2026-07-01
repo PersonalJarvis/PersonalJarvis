@@ -39,28 +39,28 @@ _STOPWORDS: frozenset[str] = frozenset({
     # German
     "aber", "alle", "allem", "allen", "aller", "alles", "also", "ander",
     "andere", "anderem", "anderen", "anderer", "anderes", "anderm", "andern",
-    "anderr", "anders", "auch", "auf", "aus", "bald", "beime", "beim",
+    "anderr", "anders", "auch", "auf", "aus", "bald", "beime", "beim",  # i18n-allow: German stopword list, matched against user text for wiki relevance scoring
     "bereits", "bin", "bist", "bitte", "bzw", "dabei", "dadurch", "damit",
     "dann", "dass", "dein", "deine", "deinem", "deinen", "deiner", "deines",
     "denen", "denn", "derer", "dessen", "dies", "diese", "diesem", "diesen",
-    "dieser", "dieses", "doch", "durch", "ein", "eine", "einem", "einen",
+    "dieser", "dieses", "doch", "durch", "ein", "eine", "einem", "einen",  # i18n-allow: same German stopword list
     "einer", "eines", "einig", "einige", "einigem", "einigen", "einiger",
     "einiges", "einmal", "erst", "etwa", "euch", "euer", "eure", "eurem",
-    "euren", "eurer", "eures", "falls", "fast", "fuer", "ganz", "gemacht",
-    "gibt", "hatte", "haben", "habe", "habt", "hier", "hinter", "ihnen",
+    "euren", "eurer", "eures", "falls", "fast", "fuer", "ganz", "gemacht",  # i18n-allow: same German stopword list
+    "gibt", "hatte", "haben", "habe", "habt", "hier", "hinter", "ihnen",  # i18n-allow: same German stopword list
     "ihrer", "ihrem", "ihres", "ihren", "indem", "irgend", "ist", "jede",
-    "jedem", "jeden", "jeder", "jedes", "jetzt", "kein", "keine", "keinem",
-    "keinen", "keiner", "keines", "kann", "kannst", "konnte", "koennen",
+    "jedem", "jeden", "jeder", "jedes", "jetzt", "kein", "keine", "keinem",  # i18n-allow: same German stopword list
+    "keinen", "keiner", "keines", "kann", "kannst", "konnte", "koennen",  # i18n-allow: same German stopword list
     "macht", "manche", "manchem", "manchen", "mancher", "manches", "mein",
-    "meine", "meinem", "meinen", "meiner", "meines", "mehr", "mich", "muss",
-    "nach", "nicht", "noch", "oder", "ohne", "sehr", "sein", "seine",
+    "meine", "meinem", "meinen", "meiner", "meines", "mehr", "mich", "muss",  # i18n-allow: same German stopword list
+    "nach", "nicht", "noch", "oder", "ohne", "sehr", "sein", "seine",  # i18n-allow: same German stopword list
     "seinem", "seinen", "seiner", "seines", "seit", "selbst", "sich", "sie",
-    "sind", "soll", "sollen", "sollte", "sondern", "sonst", "ueber", "und",
+    "sind", "soll", "sollen", "sollte", "sondern", "sonst", "ueber", "und",  # i18n-allow: same German stopword list
     "unser", "unsere", "unserem", "unseren", "unserer", "unseres", "unter",
-    "viel", "viele", "vielem", "vielen", "vieler", "vieles", "vom", "von",
+    "viel", "viele", "vielem", "vielen", "vieler", "vieles", "vom", "von",  # i18n-allow: same German stopword list
     "vor", "wann", "ward", "warum", "was", "weg", "weil", "welche", "welchem",
-    "welchen", "welcher", "welches", "wenn", "wer", "werden", "wie", "wieder",
-    "will", "wird", "wirst", "wohl", "worden", "wurden", "wurde", "wird",
+    "welchen", "welcher", "welches", "wenn", "wer", "werden", "wie", "wieder",  # i18n-allow: same German stopword list
+    "will", "wird", "wirst", "wohl", "worden", "wurden", "wurde", "wird",  # i18n-allow: same German stopword list
     "zwar", "zwischen",
     # English
     "about", "above", "after", "again", "against", "also", "among", "any",
@@ -78,10 +78,10 @@ _STOPWORDS: frozenset[str] = frozenset({
     "well", "were", "what", "when", "where", "which", "while", "who", "whom",
     "why", "will", "with", "would", "you", "your",
     # Short German articles and pronouns
-    "das", "dem", "den", "der", "des", "die", "dir", "doch", "du", "ein",
+    "das", "dem", "den", "der", "des", "die", "dir", "doch", "du", "ein",  # i18n-allow: same German stopword list
     "hat", "ich", "ihm", "ihn", "ihr", "ihm", "ins", "man", "mir", "mit",
     "nun", "nur", "pro", "sei", "sie", "uns", "war", "wir", "wer", "wen",
-    "zum", "zur",
+    "zum", "zur",  # i18n-allow: same German stopword list
 })
 
 # Tokenize on whitespace and common punctuation

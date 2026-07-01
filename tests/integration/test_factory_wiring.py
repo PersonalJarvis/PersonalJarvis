@@ -1,15 +1,15 @@
-"""Regressions-Tests fuer die Factory-Wire-In.
+"""Regression tests for the factory wire-in.
 
-Welle-4-Migration: vorher gab es zwei Tiers ``router`` und ``sub_jarvis``,
-und ``SUB_TOOLS`` war die Tool-Liste fuer den Sub-Tier. Sub-Jarvis-Tier
-wurde durch die OpenClaw-Bridge ersetzt (siehe docs/openclaw-bridge.md §11)
-— nur ``router`` bleibt; ``SUB_TOOLS`` ist geloescht.
+Wave-4 migration: there used to be two tiers, ``router`` and ``sub_jarvis``,
+and ``SUB_TOOLS`` was the tool list for the sub tier. The Sub-Jarvis tier
+was replaced by the OpenClaw bridge (see docs/openclaw-bridge.md §11)
+— only ``router`` remains; ``SUB_TOOLS`` has been deleted.
 
-Verifiziert:
-- build_default_brain(tier="router") liefert einen BrainManager mit Router-Tier
-- spawn-worker ist als Tool im Router-Tool-Set (ROUTER_TOOLS Konstante)
-- Router-System-Prompt ist injiziert (via _system_prompt_extra)
-- JARVIS_BRAIN=legacy-Escape liefert keinen spawn_worker
+Verifies:
+- build_default_brain(tier="router") returns a BrainManager with the router tier
+- spawn-worker is a tool in the router tool set (ROUTER_TOOLS constant)
+- the router system prompt is injected (via _system_prompt_extra)
+- JARVIS_BRAIN=legacy escape returns no spawn_worker
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def test_router_system_prompt_is_injected() -> None:
     brain = build_default_brain(tier="router")
     extra = getattr(brain, "_system_prompt_extra", "")
     assert any(kw in extra for kw in ("Router", "Delegator", "spawn_worker", "SPAWN")), (
-        f"Router-System-Prompt nicht injiziert. _system_prompt_extra[:200]: {extra[:200]!r}"
+        f"Router system prompt not injected. _system_prompt_extra[:200]: {extra[:200]!r}"
     )
 
 
@@ -56,7 +56,7 @@ def test_legacy_mode_escape_works() -> None:
         brain = build_default_brain(tier="router")
         tools = getattr(brain, "_tools", {})
         assert "spawn_worker" not in tools, (
-            "Legacy-Pfad darf kein spawn_worker laden"
+            "legacy path must not load spawn_worker"
         )
     finally:
         os.environ.pop("JARVIS_BRAIN", None)

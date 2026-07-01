@@ -1,11 +1,11 @@
-"""Unit-Tests fuer RouterBrain Permanent-Vision-Inject (B5, Wave-2).
+"""Unit tests for RouterBrain permanent vision inject (B5, wave 2).
 
-Deckt ab:
-- Vision-Inject wenn Provider aktiv liefert genau einen ImageBlock
-- Ohne Provider oder bei Pause: keine Images
-- Exception im Provider -> Text-Only-Fallback, kein Crash
-- `VisionInjected`-Event wird mit korrektem Hash/Bytes emittiert
-- `SYSTEM_PROMPT` enthaelt die SCREEN-CONTEXT-Klausel
+Covers:
+- Vision inject when the provider is active delivers exactly one ImageBlock
+- No provider or paused: no images
+- Exception in the provider -> text-only fallback, no crash
+- The `VisionInjected` event is emitted with the correct hash/bytes
+- `SYSTEM_PROMPT` contains the SCREEN-CONTEXT clause
 """
 from __future__ import annotations
 
@@ -82,7 +82,7 @@ class _NoopToolExecutor:
 
 
 class _RecordingDispatcher:
-    """Ersetzt den echten BrainDispatcher waehrend Tests."""
+    """Replaces the real BrainDispatcher during tests."""
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -270,7 +270,7 @@ async def test_generate_flags_executed_desktop_action_tool() -> None:
         lambda _brain, *, tools_override=None: _AggDispatcher(requested="computer_use")
     )
 
-    await router.manager.generate("was ist das hier")
+    await router.manager.generate("was ist das hier")  # i18n-allow
     assert router.manager._last_turn_executed_action_tool is True
 
 
@@ -284,7 +284,7 @@ async def test_generate_does_not_flag_non_action_tool() -> None:
         lambda _brain, *, tools_override=None: _AggDispatcher(requested="wiki_recall")
     )
 
-    await router.manager.generate("was ist das hier")
+    await router.manager.generate("was ist das hier")  # i18n-allow
     assert router.manager._last_turn_executed_action_tool is False
 
 
@@ -303,12 +303,12 @@ async def test_generate_does_not_flag_requested_but_blocked_action_tool() -> Non
         )
     )
 
-    await router.manager.generate("wie öffne ich Chrome?")
+    await router.manager.generate("wie öffne ich Chrome?")  # i18n-allow
     assert router.manager._last_turn_executed_action_tool is False
 
 
 # ----------------------------------------------------------------------
-# Vision-Inject Tests
+# Vision-inject tests
 # ----------------------------------------------------------------------
 
 
@@ -320,11 +320,11 @@ async def test_router_injects_image_when_provider_active() -> None:
         provider = _FakeVisionProvider(obs=obs)
         router, recorder = _build_router(vision_provider=provider)
 
-        [d async for d in router.handle("was ist das hier")]
+        [d async for d in router.handle("was ist das hier")]  # i18n-allow
 
         assert len(recorder.calls) == 1
         call = recorder.calls[0]
-        assert call["user_text"] == "was ist das hier"
+        assert call["user_text"] == "was ist das hier"  # i18n-allow
         images = call["images"]
         assert isinstance(images, tuple)
         assert len(images) == 1
@@ -369,7 +369,7 @@ async def test_router_continues_on_vision_failure(caplog: pytest.LogCaptureFixtu
     assert len(recorder.calls) == 1
     assert recorder.calls[0]["images"] == ()
     assert any(d.content for d in deltas)
-    assert any("Vision-Inject fehlgeschlagen" in rec.message for rec in caplog.records)
+    assert any("Vision-Inject fehlgeschlagen" in rec.message for rec in caplog.records)  # i18n-allow
 
 
 @pytest.mark.asyncio
@@ -402,7 +402,7 @@ async def test_router_emits_vision_injected_event() -> None:
 
 
 # ----------------------------------------------------------------------
-# SYSTEM_PROMPT (grep-basiert)
+# SYSTEM_PROMPT (grep-based)
 # ----------------------------------------------------------------------
 
 
@@ -411,15 +411,15 @@ def test_system_prompt_contains_screen_context_section() -> None:
 
 
 def test_system_prompt_contains_context_not_task_clause() -> None:
-    assert "Bild ist Kontext, kein Auftrag" in SYSTEM_PROMPT
+    assert "Bild ist Kontext, kein Auftrag" in SYSTEM_PROMPT  # i18n-allow
 
 
 def test_system_prompt_screen_context_before_action_section() -> None:
-    # Nach dem Pure-Delegator-Refactor (Commit e09780b7) heisst die Action-
-    # Sektion jetzt "DELEGATOR-PRINZIP" / "ENTSCHEIDUNGSTABELLE" statt des
-    # alten "Bei jeder Eingabe entscheidest"-Markers. Wichtig bleibt nur,
-    # dass SCREEN-CONTEXT VOR der Entscheidungs-Anweisung steht, damit der
-    # Router das Bild als Kontext kennt BEVOR er routet.
+    # After the pure-delegator refactor (commit e09780b7) the action section
+    # is now called "DELEGATOR-PRINZIP" / "ENTSCHEIDUNGSTABELLE" instead of
+    # the old "Bei jeder Eingabe entscheidest" marker. What matters is only
+    # that SCREEN-CONTEXT comes BEFORE the decision instruction, so the
+    # router knows the image as context BEFORE it routes.
     idx_screen = SYSTEM_PROMPT.find("SCREEN-CONTEXT")
     idx_actions = SYSTEM_PROMPT.find("ENTSCHEIDUNGSTABELLE")
     assert idx_screen >= 0 and idx_actions >= 0
@@ -427,7 +427,7 @@ def test_system_prompt_screen_context_before_action_section() -> None:
 
 
 # ----------------------------------------------------------------------
-# Helper-Function
+# Helper function
 # ----------------------------------------------------------------------
 
 
@@ -450,7 +450,7 @@ async def test_router_injects_jpeg_with_matching_mime() -> None:
         provider = _FakeVisionProvider(obs=obs)
         router, recorder = _build_router(vision_provider=provider)
 
-        [d async for d in router.handle("was ist das hier")]
+        [d async for d in router.handle("was ist das hier")]  # i18n-allow
 
         img = recorder.calls[0]["images"][0]
         assert img.mime == "image/jpeg"

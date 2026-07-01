@@ -62,7 +62,7 @@ async def test_launches_when_not_running(monkeypatch):
     monkeypatch.setattr(oa.window_state, "is_app_running", lambda n: None)
     res = await OpenAppTool().execute({"app_name": "obs"}, _ctx())
     assert res.success is True
-    assert "Gestartet" in (res.output or "")
+    assert "Gestartet" in (res.output or "")  # i18n-allow: matches the tool's real (currently German) readback text
     assert len(calls) == 1
 
 
@@ -93,7 +93,7 @@ async def test_focus_failure_falls_through_to_launch(monkeypatch):
     monkeypatch.setattr(oa.window_state, "raise_window", lambda w: (False, "lock timeout"))
     res = await OpenAppTool().execute({"app_name": "obs"}, _ctx())
     assert res.success is True
-    assert "Gestartet" in (res.output or "")   # launched after the raise failed
+    assert "Gestartet" in (res.output or "")   # launched after the raise failed  # i18n-allow: matches the tool's real (currently German) readback text
     assert len(calls) == 1
 
 
@@ -128,13 +128,13 @@ async def test_fresh_launch_raises_window_to_foreground(monkeypatch):
 
 async def test_raise_miss_keeps_success(monkeypatch):
     # The launch already succeeded; a foreground-raise miss must NOT flip the
-    # result to failure — it only softens the readback back to plain "Gestartet".
+    # result to failure — it only softens the readback back to plain "Gestartet".  # i18n-allow: quotes the tool's real (currently German) readback text
     calls = _stub_launch(monkeypatch)
     monkeypatch.setattr(oa.window_state, "is_app_running", lambda n: None)
     monkeypatch.setattr(oa.window_state, "raise_after_launch", lambda n, **k: (False, "no window"))
     res = await OpenAppTool().execute({"app_name": "chrome"}, _ctx())
     assert res.success is True
-    assert "Gestartet" in (res.output or "")
+    assert "Gestartet" in (res.output or "")  # i18n-allow: matches the tool's real (currently German) readback text
     assert "vorn" not in (res.output or "").lower()
     assert len(calls) == 1
 
@@ -149,7 +149,7 @@ async def test_raise_crash_never_breaks_launch(monkeypatch):
     monkeypatch.setattr(oa.window_state, "raise_after_launch", boom)
     res = await OpenAppTool().execute({"app_name": "chrome"}, _ctx())
     assert res.success is True            # crash in the raise never fails the launch
-    assert "Gestartet" in (res.output or "")
+    assert "Gestartet" in (res.output or "")  # i18n-allow: matches the tool's real (currently German) readback text
     assert len(calls) == 1
 
 

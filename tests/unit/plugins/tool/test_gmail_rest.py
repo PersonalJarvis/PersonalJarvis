@@ -156,9 +156,9 @@ def test_tool_contract_shape():
 
 # ----------------------------------------------------------------------
 # Per-action risk (forensic 2026-06-19, session dc533e39): "Was habe ich
-# heute auf dem Plan?" → morning-routine → gmail action=list_messages
-# (read) was forced through the ask-tier confirm and Jarvis spoke "Soll
-# ich die E-Mail wirklich senden?". Only send_message is consequential;
+# heute auf dem Plan?" → morning-routine → gmail action=list_messages  # i18n-allow: simulated German user utterance, forensic quote
+# (read) was forced through the ask-tier confirm and Jarvis spoke "Soll  # i18n-allow: verbatim quote of real German runtime voice output
+# ich die E-Mail wirklich senden?". Only send_message is consequential;  # i18n-allow: verbatim quote of real German runtime voice output
 # reads must stay safe so the morning briefing can check unread mail
 # without a spurious send confirmation.
 # ----------------------------------------------------------------------
@@ -199,13 +199,13 @@ def test_risk_tier_for_args_unknown_action_is_conservative():
 
 @pytest.mark.asyncio
 async def test_get_message_returns_slim_projection_not_raw_mime():
-    body_text = "Hallo Alex, hier ist der Kern der Nachricht. " * 5
+    body_text = "Hallo Alex, hier ist der Kern der Nachricht. " * 5  # i18n-allow
     raw_body_b64 = base64.urlsafe_b64encode(body_text.encode("utf-8")).decode("ascii")
     fat = {
         "id": "m1",
         "threadId": "t1",
         "labelIds": ["UNREAD", "INBOX"],
-        "snippet": "Hallo Alex, hier ist der Kern",
+        "snippet": "Hallo Alex, hier ist der Kern",  # i18n-allow
         "payload": {
             "mimeType": "multipart/alternative",
             "headers": [
@@ -236,8 +236,8 @@ async def test_get_message_returns_slim_projection_not_raw_mime():
     assert out["from"] == "Chef <chef@firma.de>"
     assert out["subject"] == "Quartalszahlen"
     assert out["date"].startswith("Wed, 01 Jul 2026")
-    assert out["snippet"] == "Hallo Alex, hier ist der Kern"
-    assert "Kern der Nachricht" in out["body"]
+    assert out["snippet"] == "Hallo Alex, hier ist der Kern"  # i18n-allow
+    assert "Kern der Nachricht" in out["body"]  # i18n-allow
 
     import json as _json
 

@@ -1,7 +1,7 @@
 """Computer-Use-vs-sub-agent-spawn routing (force-spawn depth-marker overlap).
 
-Live bug: "Mach einen Deep Dive mit Computer Use in meinem Chrome Browser und
-such mir den neuesten Post von Elon Musk raus" was force-spawned into a
+Live bug: "Mach einen Deep Dive mit Computer Use in meinem Chrome Browser und  # i18n-allow
+such mir den neuesten Post von Elon Musk raus" was force-spawned into a  # i18n-allow
 background sub-agent mission instead of reaching the Computer-Use path.
 
 Root cause (evidence, not guess): ``BrainManager._should_force_spawn`` hoists any
@@ -10,12 +10,12 @@ sees the turn. That phrase list mixes two semantically different things:
 
 * **vehicle names** (``subagent`` / ``spawn`` / ``openclaw`` / ``delegate``) —
   the user named the worker. Unambiguous; absolute priority (mandate 2026-06-15).
-* **depth markers** (``deep dive`` / ``gründlich`` / ``umfassend`` / …) — these
+* **depth markers** (``deep dive`` / ``gründlich`` / ``umfassend`` / …) — these  # i18n-allow
   describe thoroughness, NOT a vehicle, and OVERLAP with computer-use requests.
 
 A depth marker must not override an explicit on-screen/computer/browser request:
 the computer-use-vs-spawn call is the LLM router's (it owns ``computer_use`` plus
-the SYSTEM_PROMPT rule "Bildschirm/Browser bedienen ist computer_use, kein
+the SYSTEM_PROMPT rule "Bildschirm/Browser bedienen ist computer_use, kein  # i18n-allow
 spawn_worker"). The deterministic gate only decides whether to FORCE a spawn —
 for an ambiguous depth marker + a computer-use request it must stand down and let
 the LLM decide. A genuine depth/research request WITHOUT a screen signal still
@@ -70,8 +70,8 @@ def _manager() -> BrainManager:
 # computer-use / browser request. Must NOT force-spawn — it routes to the LLM
 # router which picks computer_use.
 FAILING_UTTERANCE = (
-    "Mach einen Deep Dive mit Computer Use in meinem Chrome Browser und "
-    "such mir den neuesten Post von Elon Musk raus"
+    "Mach einen Deep Dive mit Computer Use in meinem Chrome Browser und "  # i18n-allow
+    "such mir den neuesten Post von Elon Musk raus"  # i18n-allow
 )
 
 
@@ -107,8 +107,8 @@ def test_computer_use_is_reachable_by_the_router() -> None:
 # depth marker — must NOT force-spawn (they reach the LLM router -> computer_use).
 _REACH_COMPUTER_USE = [
     FAILING_UTTERANCE,
-    # depth marker ("gründliche") + explicit screen control ("Bildschirm"/"klick")
-    "Mach eine gründliche Analyse auf meinem Bildschirm und klick dich durch",
+    # depth marker ("gründliche") + explicit screen control ("Bildschirm"/"klick")  # i18n-allow
+    "Mach eine gründliche Analyse auf meinem Bildschirm und klick dich durch",  # i18n-allow
     # English depth marker + browser
     "Do a deep dive in my browser and click through the open tabs",
     # a plain pc-control request (no depth marker at all) must also stay off the
@@ -131,13 +131,13 @@ _STILL_SPAWNS = [
     # contract: 'deep dive' over a CLI capability still spawns)
     "Mach einen Deep Dive in meine Google Cloud Kosten",
     # depth research, no screen signal
-    "Mach eine umfassende Recherche über die KI-News der letzten Woche",
+    "Mach eine umfassende Recherche über die KI-News der letzten Woche",  # i18n-allow
     # explicit vehicle name — absolute priority (mandate 2026-06-15)
-    "Spawne einen Subagenten der die Logs analysiert",
-    "Delegier das an einen Subagenten",
+    "Spawne einen Subagenten der die Logs analysiert",  # i18n-allow
+    "Delegier das an einen Subagenten",  # i18n-allow
     # explicit vehicle name DESPITE a screen signal — naming the vehicle wins
     # over the computer-use stand-down (the mandate must survive the fix)
-    "Spawne einen Subagenten der in Chrome klickt und mir einen Report baut",
+    "Spawne einen Subagenten der in Chrome klickt und mir einen Report baut",  # i18n-allow
 ]
 
 
@@ -150,7 +150,7 @@ def test_genuine_background_work_still_force_spawns(utterance: str) -> None:
 
 
 # Smalltalk never spawns.
-_SMALLTALK = ["Hallo", "Wie geht's?", "Danke", "Was ist die Hauptstadt von Frankreich?"]
+_SMALLTALK = ["Hallo", "Wie geht's?", "Danke", "Was ist die Hauptstadt von Frankreich?"]  # i18n-allow
 
 
 @pytest.mark.parametrize("utterance", _SMALLTALK)
@@ -167,8 +167,8 @@ def test_vehicle_plus_screen_signal_distinguishes_from_depth_plus_screen() -> No
     a blanket keyword match but a vehicle-vs-depth distinction that hands the
     ambiguous case to the LLM."""
     manager = _manager()
-    vehicle = "Spawne einen Subagenten der in Chrome klickt und mir einen Report baut"
-    depth = "Mach einen Deep Dive und klick dich durch Chrome"
+    vehicle = "Spawne einen Subagenten der in Chrome klickt und mir einen Report baut"  # i18n-allow
+    depth = "Mach einen Deep Dive und klick dich durch Chrome"  # i18n-allow
     assert _looks_like_pc_control(vehicle) is True
     assert _looks_like_pc_control(depth) is True
     assert manager._should_force_spawn(vehicle) is True, "vehicle name must still spawn"

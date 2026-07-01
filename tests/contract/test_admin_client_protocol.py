@@ -1,12 +1,12 @@
-"""Contract-Tests fuer die AdminClient-Schnittstelle.
+"""Contract tests for the AdminClient interface.
 
-Parallel zum Muster aus ``test_harness_protocol.py``: wir pruefen, dass
-die AdminClient-Klasse die gewohnten Methoden hat (``execute`` ist
-async, DestructiveRequiresApproval existiert, Events werden publiziert).
+Parallel to the pattern in ``test_harness_protocol.py``: we check that
+the AdminClient class has the expected methods (``execute`` is async,
+DestructiveRequiresApproval exists, events get published).
 
-Das hier ist *kein* runtime_checkable Protocol, weil ``AdminClient``
-strikter ist als ein freies Protocol — aber die Form ist so stabil,
-dass Regressions-Tests sinnvoll sind.
+This is *not* a runtime_checkable Protocol, because ``AdminClient`` is
+stricter than a free-form Protocol — but the shape is stable enough
+that regression tests make sense.
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def test_admin_client_constructor_accepts_bus_and_token():
     params = sig.parameters
     assert "bus" in params
     assert "cancel_token" in params
-    # Pipe-Client-Injection fuer Tests muss moeglich sein.
+    # Pipe-client injection for tests must be possible.
     assert "pipe_client" in params or "pipe_name" in params
 
 
@@ -54,8 +54,8 @@ def test_destructive_exception_carries_op_metadata():
 
 
 def test_admin_hmac_env_and_key_constants_stable():
-    """Wenn diese Konstanten geaendert werden, muessen Wizard + Helper + ADR
-    mitgezogen werden — deshalb ist das ein Contract.
+    """If these constants change, the wizard + helper + ADR must be
+    updated along with them — that's why this is a contract.
     """
     assert ADMIN_HMAC_KEY == "jarvis_admin_hmac"
     assert ADMIN_HMAC_ENV == "JARVIS_ADMIN_HMAC"
@@ -63,14 +63,14 @@ def test_admin_hmac_env_and_key_constants_stable():
 
 def test_admin_secret_configured_callable():
     assert callable(admin_secret_configured)
-    # Idempotent: Aufruf darf nicht crashen.
+    # Idempotent: calling it must not crash.
     _ = admin_secret_configured()
 
 
 @pytest.mark.asyncio
 async def test_admin_client_returns_adminresponse_on_no_secret(monkeypatch):
-    """Ohne hinterlegtes Secret: ``execute`` liefert einen AdminResponse
-    mit ``error_code=no_secret`` zurueck, keine Exception."""
+    """Without a stored secret: ``execute`` returns an AdminResponse
+    with ``error_code=no_secret``, not an exception."""
     from jarvis.admin import client as client_mod
 
     def _no_secret(*_args, **_kwargs):

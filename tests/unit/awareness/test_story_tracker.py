@@ -1,12 +1,12 @@
 """Phase A2 — StoryTracker (jarvis/awareness/story.py).
 
-Tests die Trigger-Logik (Salience-Filter, App-Switch, Idle, Hard-Timer,
-Buffer-Overflow), den End-to-End-Pfad (Verdichter -> Recall -> State-Update
--> Bus-Event) sowie alle §6 Hard-Negatives (PrivacyFilter-Block,
-Min-Duration-Skip, Verdichter-Exception-Handling).
+Tests the trigger logic (salience filter, app switch, idle, hard timer,
+buffer overflow), the end-to-end path (Verdichter -> Recall -> state
+update -> bus event), and all §6 hard negatives (PrivacyFilter block,
+min-duration skip, Verdichter exception handling).
 
-Konvention: Fakes statt Mocks (CLAUDE.md). FakeRecall + FakeVerdichter
-implementieren genau die Methoden die der Tracker aufruft.
+Convention: fakes instead of mocks (CLAUDE.md). FakeRecall + FakeVerdichter
+implement exactly the methods the tracker calls.
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ from jarvis.core.events import (
 
 @dataclass
 class FakeRecall:
-    """Fake fuer RecallStore — sammelt record_episode-Calls."""
+    """Fake for RecallStore — collects record_episode calls."""
     episodes: list[dict[str, Any]] = field(default_factory=list)
     next_id: int = 1
     raise_on_record: bool = False
@@ -48,7 +48,7 @@ class FakeRecall:
 
 @dataclass
 class FakeVerdichter:
-    """Fake fuer Verdichter — gibt deterministische Summary + Usage zurueck."""
+    """Fake for Verdichter — returns a deterministic summary + usage."""
     summary: str = "Fake summary"
     tokens_in: int = 100
     tokens_out: int = 50
@@ -131,10 +131,10 @@ async def test_start_subscribes_to_bus() -> None:
     tracker, _, bus, _, _ = _make_tracker()
     await tracker.start()
     try:
-        # Bus sollte jetzt subscriber fuer die 3 Event-Typen haben.
-        # Wir testen das indirekt: publish ein Event und pruefe ob handler
-        # called (via _on_response_generated → builder.add_event)
-        # Erst Builder oeffnen via Frame:
+        # Bus should now have subscribers for the 3 event types.
+        # We test this indirectly: publish an event and check whether the
+        # handler was called (via _on_response_generated → builder.add_event)
+        # First open the builder via a frame:
         frame = _make_frame()
         tracker._manager.state.current_frame = frame
         await bus.publish(FrameUpdated(
@@ -172,7 +172,7 @@ async def test_stop_idempotent() -> None:
 
 
 async def test_privacy_blocked_frame_not_buffered() -> None:
-    """Hard Negative §6: PrivacyFilter-blockierte Frames NIE in Verdichter-Input."""
+    """Hard negative §6: PrivacyFilter-blocked frames NEVER enter Verdichter input."""
     tracker, manager, _, _, _ = _make_tracker()
     manager.state.current_frame = _make_frame(capture_allowed=False)
     ev = FrameUpdated(
@@ -185,10 +185,10 @@ async def test_privacy_blocked_frame_not_buffered() -> None:
 
 
 async def test_low_salience_frame_dropped() -> None:
-    """Frames mit Score < SALIENCE_THRESHOLD landen NICHT im Builder."""
+    """Frames with score < SALIENCE_THRESHOLD do NOT end up in the builder."""
     tracker, manager, _, _, _ = _make_tracker()
-    # Boring-Process (Explorer.exe) → -50 Penalty → unter Threshold.
-    boring = _make_frame(process="Explorer.exe", title="Datei-Explorer")
+    # Boring process (Explorer.exe) → -50 penalty → below threshold.
+    boring = _make_frame(process="Explorer.exe", title="File-Explorer")
     manager.state.current_frame = boring
     ev = FrameUpdated(
         window_title=boring.active_window_title,
@@ -197,14 +197,14 @@ async def test_low_salience_frame_dropped() -> None:
         is_capture_allowed=True,
     )
     await tracker._on_frame_updated(ev)
-    # _prev_frame wird trotzdem updated (fuer naechsten Vergleich)
+    # _prev_frame is still updated (for the next comparison)
     assert tracker._prev_frame is not None
-    # ABER kein Builder geoeffnet
+    # BUT no builder is opened
     assert tracker._builder is None
 
 
 async def test_high_salience_frame_buffered() -> None:
-    """High-salience Frame oeffnet Builder + landet drin."""
+    """High-salience frame opens the builder and ends up in it."""
     tracker, manager, _, _, _ = _make_tracker()
     frame = _make_frame()
     manager.state.current_frame = frame
@@ -223,7 +223,7 @@ async def test_high_salience_frame_buffered() -> None:
 
 
 async def test_app_switch_after_min_duration_triggers_flush() -> None:
-    """Process-Wechsel + duration >= 60s → flush via Verdichter."""
+    """Process switch + duration >= 60s → flush via Verdichter."""
     tracker, manager, _, recall, verdichter = _make_tracker(
         story_cfg=AwarenessStoryConfig(episode_min_duration_s=1),
     )
@@ -245,15 +245,15 @@ async def test_app_switch_after_min_duration_triggers_flush() -> None:
         process_name=f2.active_process_name,
         pid=f2.active_pid, is_capture_allowed=True,
     ))
-    # Verdichter MUSS gerufen worden sein
+    # Verdichter MUST have been called
     assert len(verdichter.calls) == 1
-    # Episode persistiert
+    # Episode persisted
     assert len(recall.episodes) == 1
     assert recall.episodes[0]["trigger_kind"] == "window_switch"
 
 
 async def test_short_episode_skipped_on_app_switch() -> None:
-    """App-Switch + duration < min → kein Flush, builder reset."""
+    """App switch + duration < min → no flush, builder reset."""
     tracker, manager, _, recall, verdichter = _make_tracker(
         story_cfg=AwarenessStoryConfig(episode_min_duration_s=60),
     )
@@ -264,7 +264,7 @@ async def test_short_episode_skipped_on_app_switch() -> None:
         process_name=f1.active_process_name,
         pid=f1.active_pid, is_capture_allowed=True,
     ))
-    # KEIN sleep — duration ~0s
+    # NO sleep — duration ~0s
     f2 = _make_frame(process="Chrome.exe", title="other")
     manager.state.current_frame = f2
     await tracker._on_frame_updated(FrameUpdated(
@@ -272,16 +272,16 @@ async def test_short_episode_skipped_on_app_switch() -> None:
         process_name=f2.active_process_name,
         pid=f2.active_pid, is_capture_allowed=True,
     ))
-    # Verdichter NICHT gerufen, recall NICHT befuellt
+    # Verdichter NOT called, recall NOT populated
     assert verdichter.calls == []
     assert recall.episodes == []
-    # Builder wurde aber reset (nicht None weil neuer Frame eingefuegt)
-    # — wir testen: builder.frame_count ist 0 oder builder ist None
+    # Builder was reset though (not None, since a new frame was inserted)
+    # — we test: builder.frame_count is 0 or builder is None
     assert tracker._builder is None or tracker._builder.frame_count == 0
 
 
 async def test_idle_entered_flushes_long_episode() -> None:
-    """IdleEntered nach >= min_duration → flush."""
+    """IdleEntered after >= min_duration → flush."""
     tracker, manager, _, recall, verdichter = _make_tracker(
         story_cfg=AwarenessStoryConfig(episode_min_duration_s=1),
     )
@@ -299,7 +299,7 @@ async def test_idle_entered_flushes_long_episode() -> None:
 
 
 async def test_idle_entered_skips_short_episode() -> None:
-    """IdleEntered bei zu kurzer Episode → reset, kein Flush."""
+    """IdleEntered on a too-short episode → reset, no flush."""
     tracker, manager, _, recall, verdichter = _make_tracker(
         story_cfg=AwarenessStoryConfig(episode_min_duration_s=60),
     )
@@ -335,7 +335,7 @@ async def test_buffer_overflow_forces_flush() -> None:
             process_name=f.active_process_name,
             pid=f.active_pid, is_capture_allowed=True,
         ))
-    # Buffer-overflow ab Frame 4 → flush mit trigger="buffer_overflow"
+    # Buffer overflow from frame 4 onward → flush with trigger="buffer_overflow"
     assert len(verdichter.calls) >= 1
     assert any(
         ep["trigger_kind"] == "buffer_overflow" for ep in recall.episodes
@@ -346,9 +346,9 @@ async def test_buffer_overflow_forces_flush() -> None:
 
 
 async def test_response_generated_adds_event_to_builder() -> None:
-    """ResponseGenerated → builder.add_event mit kind='BrainTurnCompleted'."""
+    """ResponseGenerated → builder.add_event with kind='BrainTurnCompleted'."""
     tracker, manager, _, _, _ = _make_tracker()
-    # Erst Frame, damit Builder existiert
+    # First a frame, so the builder exists
     f = _make_frame()
     manager.state.current_frame = f
     await tracker._on_frame_updated(FrameUpdated(
@@ -356,19 +356,19 @@ async def test_response_generated_adds_event_to_builder() -> None:
         process_name=f.active_process_name,
         pid=f.active_pid, is_capture_allowed=True,
     ))
-    # Jetzt ResponseGenerated
+    # Now ResponseGenerated
     await tracker._on_response_generated(
-        ResponseGenerated(text="Antwort vom Brain", language="de"),
+        ResponseGenerated(text="Reply from the brain", language="de"),
     )
     assert tracker._builder is not None
     events = tracker._builder.events
     assert len(events) == 1
     assert events[0]["kind"] == "BrainTurnCompleted"
-    assert events[0]["payload"]["text_len"] == len("Antwort vom Brain")
+    assert events[0]["payload"]["text_len"] == len("Reply from the brain")
 
 
 async def test_response_generated_without_builder_is_noop() -> None:
-    """ResponseGenerated ohne offenen Builder → no-op (kein Crash)."""
+    """ResponseGenerated without an open builder → no-op (no crash)."""
     tracker, *_ = _make_tracker()
     # Builder ist None
     await tracker._on_response_generated(
@@ -381,7 +381,7 @@ async def test_response_generated_without_builder_is_noop() -> None:
 
 
 async def test_flush_updates_state_last_episode_summary() -> None:
-    """Nach flush: manager.state.last_episode_summary + last_episode_id."""
+    """After flush: manager.state.last_episode_summary + last_episode_id."""
     tracker, manager, _, recall, verdichter = _make_tracker(
         story_cfg=AwarenessStoryConfig(episode_min_duration_s=1),
         fake_verdichter=FakeVerdichter(summary="Test summary X"),
@@ -400,7 +400,7 @@ async def test_flush_updates_state_last_episode_summary() -> None:
 
 
 async def test_flush_publishes_episode_recorded_event() -> None:
-    """Nach flush: bus.publish(EpisodeRecorded(...))."""
+    """After flush: bus.publish(EpisodeRecorded(...))."""
     tracker, manager, bus, _, _ = _make_tracker(
         story_cfg=AwarenessStoryConfig(episode_min_duration_s=1),
         fake_verdichter=FakeVerdichter(summary="Hello world"),
@@ -431,7 +431,7 @@ async def test_flush_publishes_episode_recorded_event() -> None:
 
 
 async def test_verdichter_exception_handled_gracefully() -> None:
-    """Verdichter wirft → empty summary, Episode trotzdem persistiert."""
+    """Verdichter raises → empty summary, episode persisted anyway."""
     tracker, manager, _, recall, _ = _make_tracker(
         story_cfg=AwarenessStoryConfig(episode_min_duration_s=1),
         fake_verdichter=FakeVerdichter(raise_exc=RuntimeError("brain dead")),
@@ -445,14 +445,14 @@ async def test_verdichter_exception_handled_gracefully() -> None:
     ))
     await asyncio.sleep(1.1)
     await tracker._on_idle_entered(IdleEntered(idle_since_ns=time.time_ns()))
-    # Episode wurde persistiert MIT empty summary
+    # Episode was persisted WITH empty summary
     assert len(recall.episodes) == 1
     assert recall.episodes[0]["summary"] == ""
     assert recall.episodes[0]["tokens_in"] == 0
 
 
 async def test_recall_exception_drops_episode_no_crash() -> None:
-    """recall.record_episode wirft → episode lost, kein Crash, no state-update."""
+    """recall.record_episode raises → episode lost, no crash, no state update."""
     tracker, manager, _, recall, _ = _make_tracker(
         story_cfg=AwarenessStoryConfig(episode_min_duration_s=1),
         fake_recall=FakeRecall(raise_on_record=True),
@@ -466,13 +466,13 @@ async def test_recall_exception_drops_episode_no_crash() -> None:
     ))
     await asyncio.sleep(1.1)
     await tracker._on_idle_entered(IdleEntered(idle_since_ns=time.time_ns()))
-    # State NICHT updated weil persist failed
+    # State NOT updated because persist failed
     assert manager.state.last_episode_summary == ""
     assert recall.episodes == []
 
 
 async def test_stop_force_flushes_remaining_builder() -> None:
-    """stop() flush ungeachtet von duration (trigger='stop' zwingt flush)."""
+    """stop() flushes regardless of duration (trigger='stop' forces a flush)."""
     tracker, manager, _, recall, verdichter = _make_tracker(
         story_cfg=AwarenessStoryConfig(episode_min_duration_s=999),
     )
@@ -484,7 +484,7 @@ async def test_stop_force_flushes_remaining_builder() -> None:
         process_name=f.active_process_name,
         pid=f.active_pid, is_capture_allowed=True,
     ))
-    # KEIN sleep — duration ~0s. Aber stop forciert flush.
+    # NO sleep — duration ~0s. But stop() forces a flush.
     await tracker.stop()
     assert len(verdichter.calls) == 1
     assert recall.episodes[0]["trigger_kind"] == "stop"
@@ -492,11 +492,11 @@ async def test_stop_force_flushes_remaining_builder() -> None:
 
 async def test_stale_state_blocked_frame_does_not_leak(
 ) -> None:
-    """M2-Fix: blocked Frame in state.current_frame darf NIE im Builder landen,
-    auch wenn das Event als allowed kam (Race-Window).
+    """M2 fix: a blocked frame in state.current_frame must NEVER end up in
+    the builder, even if the event arrived marked allowed (race window).
     """
     tracker, manager, _, _, _ = _make_tracker()
-    # Setup: state hat blocked Frame, Event sagt aber allowed=True
+    # Setup: state has a blocked frame, but the event says allowed=True
     blocked_frame = _make_frame(
         title="Banking", process="chrome.exe",
         capture_allowed=False,
@@ -504,7 +504,7 @@ async def test_stale_state_blocked_frame_does_not_leak(
     manager.state.current_frame = blocked_frame
     ev = FrameUpdated(
         window_title="something_else", process_name="Code.exe",
-        pid=1, is_capture_allowed=True,    # Event sagt allowed
+        pid=1, is_capture_allowed=True,    # Event says allowed
     )
     await tracker._on_frame_updated(ev)
     # M2-Defense: re-check stops the leak
@@ -512,14 +512,14 @@ async def test_stale_state_blocked_frame_does_not_leak(
 
 
 async def test_hard_timer_path_persists_episode_with_correct_trigger() -> None:
-    """AC-3 Trigger-Path: _maybe_flush(trigger_kind='hard_timer') persistiert
-    Episode mit trigger_kind='hard_timer'. Wir simulieren den Timer-Tick
-    direkt statt 5min real-time zu warten.
+    """AC-3 trigger path: _maybe_flush(trigger_kind='hard_timer') persists
+    the episode with trigger_kind='hard_timer'. We simulate the timer tick
+    directly instead of waiting 5 real-time minutes.
     """
     tracker, manager, _, recall, _ = _make_tracker(
         story_cfg=AwarenessStoryConfig(episode_min_duration_s=1),
     )
-    base_ns = time.time_ns() - 2_000_000_000    # 2s in der Vergangenheit
+    base_ns = time.time_ns() - 2_000_000_000    # 2s in the past
     f = _make_frame(ts_ns=base_ns)
     manager.state.current_frame = f
     await tracker._on_frame_updated(FrameUpdated(
@@ -527,15 +527,15 @@ async def test_hard_timer_path_persists_episode_with_correct_trigger() -> None:
         process_name=f.active_process_name,
         pid=f.active_pid, is_capture_allowed=True,
     ))
-    # B1-Refactor: _maybe_flush nimmt seinen Lock selbst — Caller darf
-    # NICHT mehr den Lock halten (sonst Deadlock auf asyncio.Lock).
+    # B1 refactor: _maybe_flush acquires its own lock — the caller must
+    # NOT hold the lock anymore (otherwise deadlock on asyncio.Lock).
     await tracker._maybe_flush(trigger_kind="hard_timer")
     assert recall.episodes[0]["trigger_kind"] == "hard_timer"
 
 
 async def test_hard_timer_loop_lifecycle_starts_and_cancels_cleanly() -> None:
-    """AC-3 Lifecycle: _hard_timer_loop laeuft im Background-Task und cancelt
-    sauber bei stop() — kein hanging Task, kein Resource-Leak.
+    """AC-3 lifecycle: _hard_timer_loop runs as a background task and cancels
+    cleanly on stop() — no hanging task, no resource leak.
     """
     tracker, *_ = _make_tracker()
     assert tracker._timer_task is None
@@ -543,24 +543,24 @@ async def test_hard_timer_loop_lifecycle_starts_and_cancels_cleanly() -> None:
     assert tracker._timer_task is not None
     assert not tracker._timer_task.done()
     await tracker.stop()
-    assert tracker._timer_task is None    # nach stop ist Task abgeraeumt
+    assert tracker._timer_task is None    # after stop the task is cleaned up
 
 
 async def test_max_duration_triggers_flush() -> None:
-    """m4-Fix: Episode > episode_max_duration_min → forced flush.
+    """m4 fix: episode > episode_max_duration_min → forced flush.
 
-    Single-Frame-Setup: ts_ns liegt 2min in der Vergangenheit, sodass die
-    Builder.duration_ns gleich beim ersten add_frame > max_duration_min*60s
-    ist. Damit haben wir genau 1 Verdichter-Call (deterministisch).
+    Single-frame setup: ts_ns is 2min in the past, so Builder.duration_ns
+    already exceeds max_duration_min*60s on the very first add_frame. This
+    gives us exactly 1 Verdichter call (deterministic).
     """
     tracker, manager, _, recall, verdichter = _make_tracker(
         story_cfg=AwarenessStoryConfig(
-            episode_min_duration_s=999,    # min = high, sonst Flush via min
-            episode_max_duration_min=1,    # max = 1min fuer Test
+            episode_min_duration_s=999,    # min = high, otherwise flush via min
+            episode_max_duration_min=1,    # max = 1min for the test
             buffer_max=999,                # buffer wide enough
         ),
     )
-    base_ns = time.time_ns() - (2 * 60 * 1_000_000_000)    # 2min in der Vergangenheit
+    base_ns = time.time_ns() - (2 * 60 * 1_000_000_000)    # 2min in the past
     f = _make_frame(title="long_session.py", ts_ns=base_ns)
     manager.state.current_frame = f
     await tracker._on_frame_updated(FrameUpdated(
@@ -568,8 +568,8 @@ async def test_max_duration_triggers_flush() -> None:
         process_name=f.active_process_name,
         pid=f.active_pid, is_capture_allowed=True,
     ))
-    # max_duration trigger feuert direkt nach add_frame —
-    # Builder.duration_ns ≈ 2min > 1min Hard-Cap.
+    # max_duration trigger fires right after add_frame —
+    # Builder.duration_ns ≈ 2min > 1min hard cap.
     assert len(verdichter.calls) == 1
     assert recall.episodes[0]["trigger_kind"] == "max_duration"
 
@@ -579,11 +579,11 @@ async def test_max_duration_triggers_flush() -> None:
 
 @dataclass
 class SlowVerdichter:
-    """Fake-Verdichter, der seinen Call ``sleep_s`` blockiert.
+    """Fake Verdichter whose call blocks for ``sleep_s``.
 
-    Genutzt um die B1-Lock-Holding-Pattern zu reproduzieren — ohne den
-    B1-Fix wuerde der Lock 5s gehalten und parallele _on_frame_updated
-    serialisiert ausfuehren.
+    Used to reproduce the B1 lock-holding pattern — without the B1 fix
+    the lock would be held for 5s and parallel _on_frame_updated calls
+    would execute serially.
     """
     sleep_s: float = 0.5
     summary: str = "slow summary"
@@ -607,16 +607,16 @@ class SlowVerdichter:
 
 
 async def test_b1_lock_free_during_verdichter_call() -> None:
-    """B1-Regression (AC-strict): Mock-Verdichter blockt 5s, 50 parallele
-    Frame-Pushes — Throughput im Test < 100ms gesamt (nicht 5s seriell).
+    """B1 regression (AC-strict): mock Verdichter blocks for 5s, 50 parallel
+    frame pushes — test throughput < 100ms total (not 5s serial).
 
-    Plan-AC (JARVIS_AWARENESS_PLAN §6 Folge-AC, Codex-BLOCKER B1):
-    - Verdichter sleep = 5.0s (harter AC-Wert aus dem Spike-Prompt).
-    - 50 parallele Pushes muessen in <0.1s (100ms) durch sein. Ohne den
-      B1-Fix wuerde Push #1 die ganzen 5s auf dem Lock warten; alle 50
-      seriell waeren ~ 5s * 50 = 250s.
-    - Mit B1-Fix wird der Lock VOR dem 5s sleep released — die 50 Pushes
-      laufen in <100ms durch.
+    Plan AC (JARVIS_AWARENESS_PLAN §6 follow-up AC, Codex blocker B1):
+    - Verdichter sleep = 5.0s (hard AC value from the spike prompt).
+    - 50 parallel pushes must complete in <0.1s (100ms). Without the
+      B1 fix, push #1 alone would wait the full 5s on the lock; all 50
+      serially would take ~5s * 50 = 250s.
+    - With the B1 fix the lock is released BEFORE the 5s sleep — the 50
+      pushes complete in <100ms.
     """
     slow = SlowVerdichter(sleep_s=5.0)
     tracker, manager, _, _, _ = _make_tracker(
@@ -661,8 +661,8 @@ async def test_b1_lock_free_during_verdichter_call() -> None:
     elapsed = time.monotonic() - start
 
     # AC-strict: 50 pushes in <100ms while verdichter still sleeps. Without
-    # the B1-fix Push #1 alone would wait 5s on the lock — alle 50 zusammen
-    # haetten 250s+ gedauert.
+    # the B1 fix, push #1 alone would wait 5s on the lock — all 50 together
+    # would have taken 250s+.
     assert elapsed < 0.1, (
         f"B1-Regression: {elapsed:.3f}s for 50 frame updates while verdichter "
         f"blocks 5s (AC: <0.1s — Lock is held over verdichter.call)"
@@ -674,10 +674,10 @@ async def test_b1_lock_free_during_verdichter_call() -> None:
 
 
 async def test_b1_idle_handler_does_not_block_frame_handler() -> None:
-    """B1: idle-flush + frame-update interleaved → frame-update returnt sofort.
+    """B1: idle-flush + frame-update interleaved → frame-update returns immediately.
 
-    Direkter Stress-Test: idle-handler haelt internen run_flush busy via
-    SlowVerdichter; ein paralleler frame-update darf nicht warten.
+    Direct stress test: the idle handler keeps internal run_flush busy via
+    SlowVerdichter; a parallel frame update must not wait.
     """
     slow = SlowVerdichter(sleep_s=0.4)
     tracker, manager, _, _, _ = _make_tracker(
@@ -720,16 +720,16 @@ async def test_b1_idle_handler_does_not_block_frame_handler() -> None:
 
 
 async def test_b2_no_frame_loss_during_concurrent_flush() -> None:
-    """B2-Regression: Frame, der waehrend Flush gepusht wird, MUSS in
-    irgendeiner Episode landen (alte oder naechste) — niemals "lost".
+    """B2 regression: a frame pushed while a flush is in progress MUST end up
+    in some episode (old or next) — never "lost".
 
-    Setup: Frame 1 öffnet Builder, Idle triggert Flush (Verdichter blockt
-    300ms). Während des Flush wird ein zweiter Frame gepusht. Wir
-    erwarten:
-    - Episode 1 enthaelt Frame 1 (frame_count == 1).
-    - Frame 2 startet Episode 2 (neuer Builder, da _builder=None nach
-      atomic detach im B1-Snapshot).
-    - Final-Flush via stop() persistiert Episode 2 mit Frame 2.
+    Setup: frame 1 opens the builder, idle triggers a flush (Verdichter
+    blocks for 300ms). While the flush is in progress, a second frame is
+    pushed. We expect:
+    - Episode 1 contains frame 1 (frame_count == 1).
+    - Frame 2 starts episode 2 (a new builder, since _builder=None after
+      the atomic detach in the B1 snapshot).
+    - The final flush via stop() persists episode 2 with frame 2.
     """
     slow = SlowVerdichter(sleep_s=0.3, summary="ep1")
     tracker, manager, _, recall, _ = _make_tracker(
@@ -799,8 +799,8 @@ async def test_b2_no_frame_loss_during_concurrent_flush() -> None:
 
 
 async def test_b2_extract_snapshot_locked_resets_builder() -> None:
-    """B2: nach _extract_snapshot_locked ist der Builder None und alle
-    Frames/Events sind im Snapshot — kein Doppel-Bookkeeping.
+    """B2: after _extract_snapshot_locked, the builder is None and all
+    frames/events are in the snapshot — no double bookkeeping.
     """
     tracker, manager, _, _, _ = _make_tracker(
         story_cfg=AwarenessStoryConfig(episode_min_duration_s=1),

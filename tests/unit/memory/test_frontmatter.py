@@ -1,6 +1,6 @@
-"""Unit-Tests fuer `jarvis.memory.frontmatter`.
+"""Unit tests for `jarvis.memory.frontmatter`.
 
-Parse/Write-Roundtrips, Section-Replace/-Append, Fehlerresilienz bei kaputtem
+Parse/write roundtrips, section replace/append, error resilience against broken
 YAML.
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ class TestParseAndWrite:
         assert "Some text." in parsed_body
 
     def test_body_without_frontmatter_returns_empty_meta(self) -> None:
-        """Legacy-File ohne Frontmatter darf nicht crashen."""
+        """A legacy file without frontmatter must not crash."""
         text = "# Just Markdown\n\nNo frontmatter here."
         meta, body = parse_frontmatter(text)
         assert meta == {}
@@ -48,23 +48,23 @@ class TestParseAndWrite:
         assert "# Body" in body
 
     def test_malformed_yaml_returns_empty_meta_and_preserves_body(self) -> None:
-        """Kaputtes YAML → leeres Dict, Body bleibt erhalten (nicht raisen)."""
+        """Broken YAML → empty dict, body is preserved (does not raise)."""
         text = "---\nkey: : invalid: yaml: [\n---\n\n# Body retained"
         meta, body = parse_frontmatter(text)
-        # Empty dict bei Parse-Fehler
+        # Empty dict on parse error
         assert meta == {}
-        # Der Body muss erhalten sein, damit wir keine Daten verlieren
+        # The body must be preserved so we don't lose data
         assert "# Body retained" in body
 
     def test_missing_closing_delim_falls_back_to_no_frontmatter(self) -> None:
-        """Kein zweites `---` → kein Frontmatter parsen, Body == Original."""
+        """No second `---` → don't parse frontmatter, body == original."""
         text = "---\nkey: value\n\nNo close delim\n"
         meta, body = parse_frontmatter(text)
         assert meta == {}
         assert body == text
 
     def test_non_dict_yaml_becomes_raw(self) -> None:
-        """YAML das nur eine Liste/Zahl ist → wir wrappen es als `_raw`."""
+        """YAML that is only a list/number → we wrap it as `_raw`."""
         text = "---\n- one\n- two\n---\n\n# Body"
         meta, body = parse_frontmatter(text)
         assert meta.get("_raw") == ["one", "two"]
@@ -74,7 +74,7 @@ class TestParseAndWrite:
         text = "---\r\nkey: value\r\n---\r\n\r\n# Body"
         meta, body = parse_frontmatter(text)
         assert meta == {"key": "value"}
-        # Body enthaelt den Rest (evtl. mit CR)
+        # Body contains the rest (possibly with CR)
         assert "Body" in body
 
 
@@ -83,7 +83,7 @@ class TestParseAndWrite:
 # ======================================================================
 
 class TestReplaceSection:
-    """`replace_section` tauscht den Inhalt zwischen Start- und End-Marker."""
+    """`replace_section` swaps the content between the start and end markers."""
 
     def test_replace_content_between_markers(self) -> None:
         body = (
@@ -101,7 +101,7 @@ class TestReplaceSection:
         assert "<!-- curator:context:end -->" in result
 
     def test_no_markers_leaves_body_unchanged(self) -> None:
-        """Ohne Marker → body identisch zurueck (wir loggen, raisen nicht)."""
+        """Without markers → body returned unchanged (we log, don't raise)."""
         body = "# Titel\n\nKein Marker hier."
         result = replace_section(body, "context", "NEW")
         assert result == body
@@ -137,14 +137,14 @@ class TestAppendToSection:
         assert "- [2026-04-21] baz: qux" in result
 
     def test_dedupes_identical_line(self) -> None:
-        """Identische Zeile → nicht erneut anhaengen."""
+        """Identical line → not appended again."""
         body = (
             "<!-- curator:observations:start -->\n"
             "- [2026-04-20] foo: bar\n"
             "<!-- curator:observations:end -->"
         )
         result = append_to_section(body, "observations", "- [2026-04-20] foo: bar")
-        # Nur eine Instanz der Zeile
+        # Only one instance of the line
         assert result.count("- [2026-04-20] foo: bar") == 1
 
     def test_append_into_empty_section(self) -> None:
@@ -156,6 +156,6 @@ class TestAppendToSection:
         assert "- [2026-04-21] first" in result
 
     def test_no_markers_leaves_body_unchanged(self) -> None:
-        body = "# Titel, keine Marker"
+        body = "# Title, no markers"
         result = append_to_section(body, "observations", "- foo")
         assert result == body

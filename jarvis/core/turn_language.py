@@ -59,9 +59,9 @@ _THIN_TURN_MAX_TOKENS = 2
 
 _TOKEN_RE = re.compile(r"\b[\w']+\b", re.UNICODE)
 
-# Strong script signals: umlauts/ß occur in German only; inverted punctuation
+# Strong script signals: umlauts/ß occur in German only; inverted punctuation  # i18n-allow: English comment; literal umlaut/ß characters named for illustration only
 # and accented vowels (minus the pan-European é) point to Spanish.
-_DE_SCRIPT_RE = re.compile(r"[äöüÄÖÜß]")
+_DE_SCRIPT_RE = re.compile(r"[äöüÄÖÜß]")  # i18n-allow: German-script detection regex, matched in logic (core of the language resolver)
 _ES_SCRIPT_RE = re.compile(r"[áíóúñÁÍÓÚÑ¿¡]")
 
 # Function-word sets, kept mutually disjoint. Words common to more than one of

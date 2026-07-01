@@ -118,7 +118,7 @@ class SubprocessHarness:
             )
         except FileNotFoundError as exc:
             yield HarnessResult(
-                stderr=f"Harness-Binary nicht gefunden: {exc}\n",
+                stderr=f"Harness binary not found: {exc}\n",
                 exit_code=127,
                 duration_ms=int((time.perf_counter() - t_start) * 1000),
                 is_final=True,
@@ -126,7 +126,7 @@ class SubprocessHarness:
             return
         except OSError as exc:
             yield HarnessResult(
-                stderr=f"Spawn-Fehler: {exc}\n",
+                stderr=f"Spawn error: {exc}\n",
                 exit_code=1,
                 duration_ms=int((time.perf_counter() - t_start) * 1000),
                 is_final=True,
@@ -138,8 +138,8 @@ class SubprocessHarness:
             # crashing through the stack we return a clear final HarnessResult.
             yield HarnessResult(
                 stderr=(
-                    f"Subprocess nicht unterstuetzt im aktuellen Event-Loop: {exc}. "
-                    "Pruefe ob WindowsProactorEventLoopPolicy aktiv ist.\n"
+                    f"Subprocess not supported on the current event loop: {exc}. "
+                    "Check whether WindowsProactorEventLoopPolicy is active.\n"
                 ),
                 exit_code=1,
                 duration_ms=int((time.perf_counter() - t_start) * 1000),

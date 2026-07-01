@@ -1,7 +1,7 @@
-"""MessageRecorder: Bus-Subscriber der MessageSent+ResponseGenerated-Events
-automatisch ins Recall-Log schreibt.
+"""MessageRecorder: a bus subscriber that automatically writes
+MessageSent + ResponseGenerated events into the recall log.
 
-Wird einmal beim Supervisor-Start registriert:
+Registered once at supervisor start:
 
     recorder = MessageRecorder(recall)
     recorder.attach(bus)

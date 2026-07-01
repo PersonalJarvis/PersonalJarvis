@@ -616,7 +616,7 @@ def _parse_action(raw: str) -> dict[str, Any]:
         # UIA-grounded click — the user says e.g. ``click_element name="7"``
         # and ClickElementTool resolves the exact pixel coords from the
         # UIAutomation tree. Added 2026-05-27 after the live test ``oeffne
-        # Rechner und klick auf 7`` saw Gemini Flash guess (646, 984) /
+        # Rechner und klick auf 7`` saw Gemini Flash guess (646, 984) /  # i18n-allow
         # (36, 262) and miss the Calc 7-button entirely — Vision LLMs
         # cannot reliably ground raw pixel coords from a screenshot, and
         # UIA names are the deterministic fix.
@@ -3814,13 +3814,13 @@ async def run_cu_loop(
 # Generic verbs / fillers that are never an app NAME (de + en). They must not be
 # matched against an open window title and accidentally focus an unrelated window.
 # Lower-cased ascii (the goal is lower-cased before matching).
-_TASK_FOCUS_STOPWORDS = frozenset({
+_TASK_FOCUS_STOPWORDS = frozenset({  # i18n-allow: German input-vocabulary matcher
     "mach", "mache", "machen", "macht", "bitte", "kannst", "wuerde", "irgendwas",
     "etwas", "something", "anything", "please", "would", "could", "open", "oeffne",
-    "oeffnen", "starte", "launch", "klick", "klicke", "click", "suche", "such",
+    "oeffnen", "starte", "launch", "klick", "klicke", "click", "suche", "such",  # i18n-allow
     "search", "navigiere", "navigieren", "navigate", "gehe", "schreibe", "tippe",
-    "type", "scroll", "scrolle", "mein", "meine", "meinen", "einen", "eine",
-    "this", "that", "the", "und", "and", "for", "fuer", "with", "mit", "post",
+    "type", "scroll", "scrolle", "mein", "meine", "meinen", "einen", "eine",  # i18n-allow
+    "this", "that", "the", "und", "and", "for", "fuer", "with", "mit", "post",  # i18n-allow
     "page", "seite", "tab", "fenster", "window", "screen", "monitor", "last",
     "letzte", "letzten", "first", "erste", "next", "naechste", "dann", "then",
 })
@@ -4037,7 +4037,7 @@ async def _run_screenshot_loop(
     #     open_app for the same app is SUPPRESSED with a history note pointing
     #     the model at the already-open window. This kills the window spam where
     #     a never-terminating mission re-opened the same app 4-7x (live: 7
-    #     Spotify windows in one 51s mission 2026-05-28; "30 Rechner für 7+7").
+    #     Spotify windows in one 51s mission 2026-05-28; "30 Rechner für 7+7").  # i18n-allow: quoted literal user prompt from bug forensics
     #     A GENUINE close is still handled: the regression detector below pops
     #     the entry when the foreground falls to the desktop, re-allowing ONE
     #     fresh launch -- so recover-after-close still works without spam. The
@@ -4059,7 +4059,7 @@ async def _run_screenshot_loop(
     #     field already holds it -- so we suppress it and push the model to the
     #     NEXT step (submit / click a result) instead of mashing the same query
     #     (BUG-CU-RETYPE, live 2026-06-22: "Minecraft" typed into the Microsoft
-    #     Store search box in BOTH step 6 and step 7 -- "das ist ja dumm").
+    #     Store search box in BOTH step 6 and step 7 -- "das ist ja dumm").  # i18n-allow: quoted literal user reaction from bug forensics
     last_typed_text = ""
     #   * last_stall_nudge_hash: the screenshot hash we last warned the model
     #     about. When the screen is UNCHANGED since the previous step, the last
@@ -4948,7 +4948,7 @@ async def _run_screenshot_loop(
                     # and to do something DIFFERENT. Without this note the click
                     # guard was silent — the model never learned why nothing
                     # happened and kept clicking the same dead spot until the
-                    # no-progress abort ("macht nicht weiter"). Mirrors the
+                    # no-progress abort ("macht nicht weiter"). Mirrors the  # i18n-allow: quoted literal user phrase from bug forensics
                     # open_app-suppression note above so the model can break out.
                     history.append(
                         f"{tag}: your click at ~({_tx},{_ty}) was BLOCKED — you "

@@ -50,7 +50,7 @@ def _manager(obs: SimpleNamespace) -> BrainManager:
 async def test_smalltalk_turn_skips_screenshot(tmp_path) -> None:
     m = _manager(_make_obs(tmp_path))
     imgs = await m._collect_vision_images(
-        trace_id=uuid4(), user_text="wie spät ist es", is_smalltalk=True
+        trace_id=uuid4(), user_text="wie spät ist es", is_smalltalk=True  # i18n-allow
     )
     assert imgs == ()
 

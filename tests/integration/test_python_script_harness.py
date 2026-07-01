@@ -1,4 +1,4 @@
-"""Live-Integration-Test für python-script-Harness (echter Python-Subprocess)."""
+"""Live integration test for the python-script harness (a real Python subprocess)."""
 from __future__ import annotations
 
 import pytest

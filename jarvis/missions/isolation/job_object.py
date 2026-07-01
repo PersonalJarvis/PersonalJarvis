@@ -133,7 +133,7 @@ class _Win32JobObjectImpl:
         places it in the job (Research-Doc §C lines 168-169).
         """
         if self._closed:
-            raise RuntimeError("WindowsJobObject ist schon geschlossen")
+            raise RuntimeError("WindowsJobObject is already closed")
 
         import win32api  # type: ignore[import-not-found]  # noqa: PLC0415
         import win32con  # type: ignore[import-not-found]  # noqa: PLC0415
@@ -279,8 +279,8 @@ def WindowsJobObject(name: str | None = None) -> Any:  # noqa: ANN401, N802
             return _Win32JobObjectImpl(name)
         except ImportError:
             logger.warning(
-                "pywin32 fehlt — WindowsJobObject faellt auf No-Op zurueck. "
-                "Worker-Crash-Reaping ist NICHT garantiert."
+                "pywin32 missing — WindowsJobObject falls back to a no-op. "
+                "Worker crash reaping is NOT guaranteed."
             )
             return _NoOpJobObject(name)
     # macOS / Linux: real session/process-group reaping (SIGTERM→SIGKILL on close).

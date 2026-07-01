@@ -6,7 +6,7 @@ keyboard on THIS machine). Before this tool existed the router could only reach
 the computer-use harness through the two-level ``dispatch_to_harness`` +
 magic-``harness``-string indirection, whose schema description never mentioned
 desktop control — so the model picked the wrong tool (or invented one) and the
-user heard a refusal for "öffne ein Terminal".
+user heard a refusal for "öffne ein Terminal".  # i18n-allow: simulated German user utterance, content under test
 
 These tests pin the new tool's identity, schema and dispatch behaviour without
 an LLM: the tool forwards the goal verbatim to the canonical ``computer-use``
@@ -60,7 +60,7 @@ class _FakeHarnessManager:
 def _ctx() -> ExecutionContext:
     return ExecutionContext(
         trace_id=uuid.uuid4(),
-        user_utterance="öffne ein Terminal",
+        user_utterance="öffne ein Terminal",  # i18n-allow: simulated German user utterance, content under test
         config={},
         memory_read=None,
     )

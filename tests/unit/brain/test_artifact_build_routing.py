@@ -68,8 +68,8 @@ def test_build_an_html_file_routes_to_a_mission() -> None:
 _BUILD_DELIVERABLE = [
     "Build me a website about my startup",
     "Create a PDF report about the AI market",
-    "Bau mir eine Webseite über meinen Urlaub",
-    "Erstell mir ein interaktives Dashboard mit den wichtigsten Zahlen",
+    "Bau mir eine Webseite über meinen Urlaub",  # i18n-allow
+    "Erstell mir ein interaktives Dashboard mit den wichtigsten Zahlen",  # i18n-allow
     "Write me an HTML page that visualizes my expenses",
     "Generate a landing page for the product launch",
 ]

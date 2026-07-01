@@ -1,1 +1,1 @@
-"""Top-level UI namespace fuer Orb-Overlay und Highlight-Layer."""
+"""Top-level UI namespace for the orb overlay and highlight layer."""

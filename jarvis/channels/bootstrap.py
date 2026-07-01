@@ -50,9 +50,9 @@ async def bootstrap_channels(
         errors = await manager.start_all()
         if errors:
             for name, err in errors.items():
-                log.warning("Channel '%s' Start fehlgeschlagen: %s", name, err)
+                log.warning("Channel '%s' start failed: %s", name, err)
         log.info(
-            "Channels initialisiert: started=%s failed_load=%s start_errors=%s",
+            "Channels initialized: started=%s failed_load=%s start_errors=%s",
             manager.started(),
             list(manager.failed()),
             list(errors),

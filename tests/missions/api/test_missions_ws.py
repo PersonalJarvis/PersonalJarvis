@@ -1,4 +1,4 @@
-"""WebSocket-Tests fuer /api/missions/ws (Hello + Replay + Live-Fanout)."""
+"""WebSocket tests for /api/missions/ws (hello + replay + live fanout)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -82,7 +82,7 @@ def test_ws_closes_4400_on_missing_hello(app: FastAPI) -> None:
         with pytest.raises(WebSocketDisconnect) as exc_info:
             with client.websocket_connect("/api/missions/ws") as ws:
                 ws.send_json({"type": "not_hello"})
-                # Server soll close(4400) schicken
+                # Server should send close(4400)
                 ws.receive_json()
     assert exc_info.value.code == 4400
 
@@ -101,7 +101,7 @@ def test_ws_closes_4401_on_invalid_token(app: FastAPI) -> None:
 def test_ws_accepts_valid_token_and_streams_replay(
     app: FastAPI, manager: MissionManager
 ) -> None:
-    """Dispatch einer Mission VOR dem WS-Connect → Replay liefert sie."""
+    """Dispatch a mission BEFORE the WS connect → replay delivers it."""
     with TestClient(app) as client:
         d1 = client.post("/api/missions/dispatch", json={"prompt": "first"})
         d2 = client.post("/api/missions/dispatch", json={"prompt": "second"})
@@ -123,7 +123,7 @@ def test_ws_accepts_valid_token_and_streams_replay(
 def test_ws_replay_respects_last_seq(
     app: FastAPI, manager: MissionManager
 ) -> None:
-    """``last_seq=1`` ueberspringt das erste Event und liefert nur das zweite."""
+    """``last_seq=1`` skips the first event and delivers only the second."""
     with TestClient(app) as client:
         client.post("/api/missions/dispatch", json={"prompt": "first"})
         client.post("/api/missions/dispatch", json={"prompt": "second"})
@@ -139,13 +139,13 @@ def test_ws_replay_respects_last_seq(
 def test_ws_live_fanout_after_connect(
     app: FastAPI, manager: MissionManager
 ) -> None:
-    """Dispatch NACH dem Connect → Event landet via fanout im Client."""
+    """Dispatch AFTER the connect → the event lands via fanout at the client."""
     with TestClient(app) as client:
         token = client.get("/api/missions/auth/token").json()["token"]
 
         with client.websocket_connect("/api/missions/ws") as ws:
             ws.send_json({"type": "hello", "last_seq": 0, "token": token})
-            # Jetzt eine Mission anstossen → Live-Frame muss kommen
+            # Now trigger a mission → the live frame must arrive
             d = client.post(
                 "/api/missions/dispatch", json={"prompt": "live!"}
             )

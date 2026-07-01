@@ -5,10 +5,10 @@
 <title>Jarvis Orb</title>
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <style>
-  /* Schwarz als Grund — das Host-Fenster und alle WebView2-Children werden
-     per SetWindowRgn zum Kreis geclippt (siehe overlay.py). Alles ausserhalb
-     des Kreises ist physisch weggeclippt; der schwarze Grund ist nur ein
-     Fallback falls das Clipping am Rand 1px ungenau ist. */
+  /* Black as the base — the host window and all WebView2 children are
+     clipped to a circle via SetWindowRgn (see overlay.py). Everything outside
+     the circle is physically clipped away; the black base is just a
+     fallback in case the clipping is off by 1px at the edge. */
   html, body {
     margin: 0; padding: 0; height: 100%; width: 100%;
     background: transparent;
@@ -45,7 +45,7 @@
   window.addEventListener('resize', resize);
   resize();
 
-  // Python-Bridge
+  // Python bridge
   let mode = 'idle', extLevel = null, level = 0;
   window.__orb = {
     setMode(m) { mode = m; },
@@ -55,23 +55,23 @@
 
   const TAU = Math.PI * 2;
 
-  // Plasma-Swirl-Partikel (als weiche Blobs, bewegen sich langsam im Inneren)
+  // Plasma swirl particles (as soft blobs, move slowly inside)
   const swirls = [];
   for (let i = 0; i < 6; i++) {
     swirls.push({
       angle: Math.random() * TAU,
       radius: 0.15 + Math.random() * 0.35,
-      speed: 0.015 + Math.random() * 0.035, // bewusst langsam, nicht hypnotisch
+      speed: 0.015 + Math.random() * 0.035, // deliberately slow, not hypnotic
       phase: Math.random() * TAU,
       size: 0.22 + Math.random() * 0.2,
-      hue: 45 + Math.random() * 15, // warmes Gelb-Gold
+      hue: 45 + Math.random() * 15, // warm yellow-gold
     });
   }
 
   function currentLevel(t) {
     if (extLevel !== null) return extLevel;
     if (mode === 'speak') return 0.35 + 0.25 * Math.sin(t * 1.8) + 0.1 * Math.sin(t * 3.3);
-    if (mode === 'listen') return 0; // externes Level wird injiziert
+    if (mode === 'listen') return 0; // external level gets injected
     return 0;
   }
 
@@ -80,8 +80,8 @@
     const t = (now - t0) / 1000;
     const w = canvas.clientWidth, h = canvas.clientHeight;
     const cx = w / 2, cy = h / 2;
-    // -1px Buffer, damit Anti-Aliasing am Kreisrand nicht gegen Magenta
-    // blendet (sonst rosa Fransen um den Orb herum).
+    // -1px buffer so anti-aliasing at the circle edge doesn't blend
+    // against magenta (otherwise pink fringes appear around the orb).
     const R = Math.min(w, h) * 0.5 - 1;
 
     const raw = currentLevel(t);
@@ -91,11 +91,11 @@
 
     ctx.clearRect(0, 0, w, h);
 
-    // Harter Kreis-Clip: ab hier wird nur innerhalb des Orbs gezeichnet.
+    // Hard circle clip: from here on, drawing only happens inside the orb.
     ctx.save();
     ctx.beginPath(); ctx.arc(cx, cy, R, 0, TAU); ctx.clip();
 
-    // --- 1. Glaskugel-Shell (dunkel, mit leichtem Randlicht)
+    // --- 1. Glass sphere shell (dark, with slight edge light)
     const shell = ctx.createRadialGradient(
       cx - R * 0.3, cy - R * 0.3, R * 0.1,
       cx, cy, R
@@ -106,7 +106,7 @@
     ctx.fillStyle = shell;
     ctx.fillRect(0, 0, w, h);
 
-    // --- 2. Plasma-Innenraum: Swirl-Blobs (additive, damit sie leuchten)
+    // --- 2. Plasma interior: swirl blobs (additive, so they glow)
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     for (const s of swirls) {
@@ -124,7 +124,7 @@
       ctx.beginPath(); ctx.arc(px, py, size, 0, TAU); ctx.fill();
     }
 
-    // Heller Core in der Mitte
+    // Bright core in the middle
     const coreR = R * (0.2 + energy * 0.25);
     const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR);
     core.addColorStop(0, `rgba(255, 250, 210, ${0.9 + energy * 0.1})`);
@@ -134,7 +134,7 @@
     ctx.beginPath(); ctx.arc(cx, cy, coreR, 0, TAU); ctx.fill();
     ctx.restore();
 
-    // --- 3. Glas-Highlight (gebogener heller Bogen fuer 3D-Gefuehl)
+    // --- 3. Glass highlight (curved bright arc for a 3D feel)
     const hi = ctx.createRadialGradient(
       cx - R * 0.35, cy - R * 0.4, 0,
       cx - R * 0.35, cy - R * 0.4, R * 0.55
@@ -145,7 +145,7 @@
     ctx.fillStyle = hi;
     ctx.fillRect(0, 0, w, h);
 
-    // --- 4. Rim-Light (feiner warmer Rand am Kreis)
+    // --- 4. Rim light (fine warm edge around the circle)
     ctx.strokeStyle = `rgba(255, 210, 90, ${0.25 + energy * 0.25})`;
     ctx.lineWidth = Math.max(1, R * 0.008);
     ctx.beginPath(); ctx.arc(cx, cy, R - 1, 0, TAU); ctx.stroke();

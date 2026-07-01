@@ -20,7 +20,7 @@ def default_core_memory() -> dict[str, Any]:
         "persona": {
             "name": "Jarvis",
             "role": "Voice-gesteuerter Meta-Orchestrator",
-            "style": "hilfsbereit, präzise, auf Deutsch",
+            "style": "hilfsbereit, präzise, auf Deutsch",  # i18n-allow
         },
         "user_facts": {},
         "preferences": {

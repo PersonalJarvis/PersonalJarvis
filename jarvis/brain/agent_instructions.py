@@ -41,10 +41,10 @@ _INSTRUCTIONS_DIRNAME = "agent_instructions"
 _DEFAULT_BASENAME = DEFAULT_ASSISTANT_NAME  # "Assistant" — when a name sanitises to ""
 _MAX_BASENAME_LEN = 60
 
-# ä/ö/ü/ß transliteration so a German name yields an ASCII-safe, portable filename
-# (e.g. "Jürgen" -> "Juergen.md"). Case-preserving for the common single-cap case.
+# ä/ö/ü/ß transliteration so a German name yields an ASCII-safe, portable filename  # i18n-allow: English comment merely mentioning umlaut characters, not German prose
+# (e.g. "Jürgen" -> "Juergen.md"). Case-preserving for the common single-cap case.  # i18n-allow: same, illustrative umlaut example name
 _UMLAUTS = {
-    "ä": "ae", "ö": "oe", "ü": "ue", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue", "ß": "ss",
+    "ä": "ae", "ö": "oe", "ü": "ue", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue", "ß": "ss",  # i18n-allow: umlaut-transliteration data table, not prose
 }
 # Characters that are unsafe in a filename on Windows and/or POSIX.
 _UNSAFE = set('<>:"/\\|?*')

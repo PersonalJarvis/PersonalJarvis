@@ -1,10 +1,10 @@
-"""Voice-Comparison-Test für JARVIS-Stimme.
+"""Voice-comparison test for the JARVIS voice.
 
-Generiert dieselbe Test-Phrase mit allen männlich-tiefen Gemini-Voices
-und spielt sie nacheinander mit 0.7 Sek Pause ab. Du hörst und entscheidest
-welche am ehesten zum ruhigen, formellen Assistenten-Ton der Jarvis-Stimme passt.
+Generates the same test phrase with all male, deep-voiced Gemini voices and
+plays them back one after another with a 0.7 s pause. Listen and decide which
+one best matches the calm, formal assistant tone of the Jarvis voice.
 
-Aufruf:
+Usage:
     python -m jarvis.speech.voice_compare
 """
 from __future__ import annotations
@@ -22,17 +22,17 @@ try:
 except Exception:  # noqa: BLE001 — sounddevice/PortAudio (libportaudio2) absent (headless/slim)
     sd = None  # type: ignore[assignment]
 
-# Kandidaten-Voices — männlich/tief/autoritativ laut Gemini-Voice-Docs
+# Candidate voices — male/deep/authoritative per the Gemini voice docs
 JARVIS_CANDIDATES: tuple[str, ...] = (
-    "Charon",       # informativ/ruhig
-    "Fenrir",       # erregbar, tief
-    "Orus",         # firm, autoritär
-    "Algieba",      # aktueller Default (für Vergleich)
+    "Charon",       # informative/calm
+    "Fenrir",       # excitable, deep
+    "Orus",         # firm, authoritative
+    "Algieba",      # current default (for comparison)
     "Enceladus",    # breathy
-    "Rasalgethi",   # informativ
-    "Iapetus",      # klar
+    "Rasalgethi",   # informative
+    "Iapetus",      # clear
     "Alnilam",      # firm
-    "Sadachbia",    # lebhaft
+    "Sadachbia",    # lively
     "Zubenelgenubi", # casual
 )
 
@@ -49,7 +49,7 @@ def _setup() -> None:
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
         except (AttributeError, OSError):
             pass
-    # .env laden
+    # Load .env
     env_path = Path(__file__).resolve().parents[2] / ".env"
     if env_path.exists():
         for line in env_path.read_text(encoding="utf-8").splitlines():
@@ -62,7 +62,7 @@ def _setup() -> None:
 
 
 async def _synth(voice: str, text: str) -> bytes:
-    """Synthetisiert Test-Phrase mit einer Voice und returnt PCM-Bytes."""
+    """Synthesizes the test phrase with one voice and returns PCM bytes."""
     from google import genai
     from google.genai import types
     key = (
@@ -95,23 +95,23 @@ def _play(pcm_bytes: bytes, sample_rate: int = 24_000) -> None:
 async def main() -> None:
     _setup()
     print("=" * 64)
-    print(f"  JARVIS Voice-Comparison — {len(JARVIS_CANDIDATES)} Kandidaten")
+    print(f"  JARVIS Voice-Comparison — {len(JARVIS_CANDIDATES)} candidates")
     print("=" * 64)
     print(f"Phrase: \"{TEST_PHRASE}\"\n")
 
-    # Erst alle generieren (damit Playback fluide ist)
-    print("Generiere alle Samples (parallel)...")
+    # Generate all first (so playback is smooth)
+    print("Generating all samples (in parallel)...")
     tasks = [_synth(v, TEST_PHRASE) for v in JARVIS_CANDIDATES]
     pcms = await asyncio.gather(*tasks, return_exceptions=True)
-    print("Fertig.\n")
+    print("Done.\n")
 
-    # Save to WAVs für späteren Vergleich
+    # Save to WAVs for later comparison
     out_dir = Path(__file__).resolve().parents[2] / "data" / "voice_compare"
     out_dir.mkdir(parents=True, exist_ok=True)
     import wave
     for voice, pcm in zip(JARVIS_CANDIDATES, pcms):
         if isinstance(pcm, Exception):
-            print(f"  ! {voice}: FEHLER {pcm}")
+            print(f"  ! {voice}: ERROR {pcm}")
             continue
         p = out_dir / f"jarvis_test_{voice}.wav"
         with wave.open(str(p), "wb") as wf:
@@ -120,7 +120,7 @@ async def main() -> None:
             wf.setframerate(24_000)
             wf.writeframes(pcm)
 
-    # Nacheinander abspielen, mit Ansage
+    # Play back one after another, with an announcement
     for voice, pcm in zip(JARVIS_CANDIDATES, pcms):
         if isinstance(pcm, Exception):
             continue
@@ -131,8 +131,8 @@ async def main() -> None:
 
     print()
     print("=" * 64)
-    print(f"WAV-Dateien gespeichert unter: {out_dir}")
-    print("Welche Voice klingt für dich am besten nach JARVIS?")
+    print(f"WAV files saved under: {out_dir}")
+    print("Which voice sounds most like JARVIS to you?")
     print("=" * 64)
 
 
@@ -140,4 +140,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nAbgebrochen.")
+        print("\nAborted.")

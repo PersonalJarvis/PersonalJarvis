@@ -58,7 +58,7 @@ def test_resolve_falls_back_to_primary_when_monitor_missing() -> None:
         monitor="\\\\.\\DISPLAY99", x_relative=500, y_relative=400
     )
     placement = resolve_placement(persisted, screens)
-    # Default-Position auf primary, NICHT der gespeicherte Offset.
+    # Default position on primary, NOT the stored offset.
     assert placement.abs_x == 100 + DEFAULT_X_RELATIVE
     assert placement.abs_y == 200 + DEFAULT_Y_RELATIVE
     assert placement.monitor == "\\\\.\\DISPLAY2"

@@ -2,7 +2,7 @@
 
 Some providers (notably Gemini) intermittently emit a ``spawn_worker``
 tool_use block as the response *text* instead of executing it. Without the
-recovery path the raw JSON reaches TTS as "Es trat ein Fehler auf" and the
+recovery path the raw JSON reaches TTS as "Es trat ein Fehler auf" and the  # i18n-allow
 delegated Opus-4.7 sub-agent never runs — even though the brain decided to
 delegate. These tests pin the detector + the recovery execution.
 
@@ -28,7 +28,7 @@ from jarvis.core.config import JarvisConfig
 
 # Canonical fragments of the leak-recovery "couldn't execute" fallback. A
 # recovered read tool that produced a usable result must NEVER speak these.
-_FAILURE_FRAGMENTS = ("konnte sie aber nicht", "couldn't execute")
+_FAILURE_FRAGMENTS = ("konnte sie aber nicht", "couldn't execute")  # i18n-allow
 
 
 def test_extract_detects_leaked_spawn_variants() -> None:
@@ -73,7 +73,7 @@ def _manager_with_fake_spawn(captured: dict) -> BrainManager:
             captured["user_utterance"] = user_utterance
             return SimpleNamespace(
                 success=True,
-                output="Mach ich, ich kümmere mich im Hintergrund darum.",
+                output="Mach ich, ich kümmere mich im Hintergrund darum.",  # i18n-allow
                 error=None,
             )
 
@@ -99,7 +99,7 @@ async def test_recover_executes_leaked_spawn_and_returns_ack() -> None:
         user_text="erstelle mir eine Datei test-opus.md",
         trace_id=uuid4(),
     )
-    assert out == "Mach ich, ich kümmere mich im Hintergrund darum."
+    assert out == "Mach ich, ich kümmere mich im Hintergrund darum."  # i18n-allow
     # The leaked utterance is forwarded to the spawn tool.
     assert captured["args"]["utterance"] == "erstelle mir eine Datei test-opus.md"
     assert captured["tool"].name == "spawn_worker"
@@ -110,7 +110,7 @@ async def test_recover_returns_none_for_normal_response() -> None:
     captured: dict = {}
     mgr = _manager_with_fake_spawn(captured)
     out = await mgr._recover_leaked_spawn(
-        "Alles erledigt, ich habe das im Hintergrund übernommen.",
+        "Alles erledigt, ich habe das im Hintergrund übernommen.",  # i18n-allow
         user_text="erstelle mir eine Datei",
         trace_id=uuid4(),
     )
@@ -121,13 +121,13 @@ async def test_recover_returns_none_for_normal_response() -> None:
 # ---------------------------------------------------------------------------
 # Leaked READ-tool (search_web) recovery (live repro 2026-06-14).
 #
-# "Was hältst du von exp.com?" — an opinion question — made Gemini leak a
+# "Was hältst du von exp.com?" — an opinion question — made Gemini leak a  # i18n-allow
 # ``search_web`` tool_use block as TEXT. The recovery ran the search and got a
 # usable eXp-Realty result, but returned ``str(result.output)`` — and
 # search_web's output is a dict, so the string started with ``{``. The
 # streaming guard ``_looks_like_tool_use_leak`` then mistook that ANSWER for
 # another tool-use leak, dropped it, and the user heard the canned
-# "Ich habe die Aktion erkannt, konnte sie aber nicht ausführen." A recovered
+# "Ich habe die Aktion erkannt, konnte sie aber nicht ausführen." A recovered  # i18n-allow
 # read tool must yield a SPEAKABLE answer, never a raw dict and never the
 # failure phrase.
 # ---------------------------------------------------------------------------
@@ -173,8 +173,8 @@ def test_render_recovered_tool_output_renders_search_results_speakable() -> None
 
 
 def test_render_recovered_tool_output_passes_through_plain_string() -> None:
-    # String-output tools (open_app -> "Gestartet: chrome") stay byte-identical.
-    assert _render_recovered_tool_output("Gestartet: chrome") == "Gestartet: chrome"
+    # String-output tools (open_app -> "Gestartet: chrome") stay byte-identical.  # i18n-allow
+    assert _render_recovered_tool_output("Gestartet: chrome") == "Gestartet: chrome"  # i18n-allow
 
 
 def test_render_recovered_tool_output_empty_results_is_empty_not_repr() -> None:
@@ -200,7 +200,7 @@ async def test_recover_leaked_search_web_speaks_answer_not_failure_phrase() -> N
         '"name":"search_web","input":{"query":"exp.com"}}]'
     )
     out = await mgr._recover_leaked_tool(
-        leaked, user_text="Was hältst du von exp.com?", trace_id=uuid4(),
+        leaked, user_text="Was hältst du von exp.com?", trace_id=uuid4(),  # i18n-allow
     )
     # The search actually ran with the leaked query.
     assert captured["args"]["query"] == "exp.com"
@@ -219,7 +219,7 @@ async def test_recover_leaked_search_web_empty_results_is_spoken_fallback() -> N
     )
     leaked = '{"type":"tool_use","name":"search_web","input":{"query":"zzz"}}'
     out = await mgr._recover_leaked_tool(
-        leaked, user_text="Was hältst du von zzz?", trace_id=uuid4(),
+        leaked, user_text="Was hältst du von zzz?", trace_id=uuid4(),  # i18n-allow
     )
     assert out is not None
     assert not any(frag in out.lower() for frag in _FAILURE_FRAGMENTS)

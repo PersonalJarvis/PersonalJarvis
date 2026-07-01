@@ -1,23 +1,22 @@
-"""SkillAuthoringRunner — orchestriert OpenClaw-Author-Spawn + Validation-Loop.
+"""SkillAuthoringRunner — orchestrates the OpenClaw-Author spawn + validation loop.
 
-Welle-4-Migration: vorher hiess der Spawn-Pfad ``Sub-Jarvis``. Nach der
-OpenClaw-Bridge-Migration (siehe docs/openclaw-bridge.md §11, R-6) wird der
-Spawn-Callback an den ``MissionManager`` gebunden — die ``SpawnCallback``-
-Signatur (``str -> Awaitable[str]``) bleibt rueckwaertskompatibel und kann
-sowohl direkt einen Brain-Call als auch ein Mission-Dispatch + Result-Read
-implementieren.
+Welle-4 migration: the spawn path used to be called ``Sub-Jarvis``. After the
+OpenClaw-bridge migration (see docs/openclaw-bridge.md §11, R-6), the
+spawn callback is bound to the ``MissionManager`` — the ``SpawnCallback``
+signature (``str -> Awaitable[str]``) stays backward-compatible and can
+implement either a direct brain call or a mission dispatch + result read.
 
-Plan-§7.5-Pipeline:
-1. Slug-Generierung (kebab-case aus suggested_name oder LLM-derived)
-2. Clash-Check gegen user_skills_dir
-3. Staging-Dir-Anlage (tempfile.mkdtemp)
-4. OpenClaw-Author-Spawn mit Aufgabenbeschreibung
-5. Validation-Loop ≤3 Iterationen
-6. Erfolgs-Pfad: draft_writer kopiert nach user_skills_dir mit forced state=draft
-7. SkillRegistry-Watcher detektiert + UI zeigt Warn-Badge
+Plan-§7.5 pipeline:
+1. Slug generation (kebab-case from suggested_name or LLM-derived)
+2. Clash check against user_skills_dir
+3. Staging-dir creation (tempfile.mkdtemp)
+4. OpenClaw-Author spawn with a task description
+5. Validation loop ≤3 iterations
+6. Success path: draft_writer copies to user_skills_dir with forced state=draft
+7. SkillRegistry watcher detects it + the UI shows a warn badge
 
-Plan-§AP-6: keine Auto-Aktivierung. Plan-§AP-7: Skill-Authoring NIE im
-Hauptjarvis-Pfad — nur OpenClaw-Author (Frontier-Worker via Mission-Manager).
+Plan-§AP-6: no auto-activation. Plan-§AP-7: skill authoring NEVER in the
+main-Jarvis path — only OpenClaw-Author (frontier worker via Mission-Manager).
 """
 from __future__ import annotations
 
@@ -48,13 +47,13 @@ from .schema import SkillDraft
 
 _LOG = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT_SECONDS = 300.0  # 5 Minuten (Plan-§7.5)
-DEFAULT_MAX_ITERATIONS = 3       # Plan-§7.5 Validation-Loop ≤3
+DEFAULT_TIMEOUT_SECONDS = 300.0  # 5 minutes (Plan-§7.5)
+DEFAULT_MAX_ITERATIONS = 3       # Plan-§7.5 validation loop ≤3
 
 
 @dataclass(frozen=True)
 class AuthoringSuccess:
-    """Erfolgreicher Authoring-Versuch."""
+    """A successful authoring attempt."""
 
     skill_name: str
     slug: str
@@ -66,7 +65,7 @@ class AuthoringSuccess:
 
 @dataclass(frozen=True)
 class AuthoringFailure:
-    """Fehlgeschlagener Authoring-Versuch."""
+    """A failed authoring attempt."""
 
     error_kind: str
     message: str
@@ -74,44 +73,44 @@ class AuthoringFailure:
     validation_errors: tuple[str, ...] = field(default_factory=tuple)
 
 
-# Spawn-Callback: dependency-injected, damit Tests den OpenClaw-Author-Aufruf
-# mocken können (Plan-Constraint: NIE echte API-Calls in Tests).
+# Spawn callback: dependency-injected, so tests can mock the OpenClaw-Author
+# call (plan constraint: NEVER real API calls in tests).
 SpawnCallback = Callable[[str], "asyncio.Future[str] | str"]
 
 
 # ----------------------------------------------------------------------
-# System-Prompt für OpenClaw-Author (Plan-§7.5)
+# System prompt for OpenClaw-Author (Plan-§7.5)
 # ----------------------------------------------------------------------
 
 
-OPENCLAW_AUTHOR_SYSTEM_PROMPT = """Du bist OpenClaw-Author (Opus 4.7), Skill-Authoring-Spezialist.
+OPENCLAW_AUTHOR_SYSTEM_PROMPT = """You are OpenClaw-Author (Opus 4.7), a skill-authoring specialist.
 
-Der User möchte einen neuen Skill erzeugen. Du gibst NUR ein einziges JSON-
-Objekt zurück, das exakt dem `SkillDraft`-Schema entspricht. Keine Prosa
-außenherum, kein Markdown-Codefence — pures JSON.
+The user wants to create a new skill. You return ONLY a single JSON
+object that exactly matches the `SkillDraft` schema. No surrounding
+prose, no Markdown codefence — pure JSON.
 
-Constraints (verbindlich, NIE überschreibbar):
-- Du erzeugst NIEMALS ausführbaren Code außerhalb der Skill-Sandbox-Boundary.
-  Erlaubte Imports stehen in `jarvis/skills/safe_imports.txt`.
-- Du gibst NIEMALS state ≠ "draft" aus, auch wenn der User darum bittet —
-  die Pipeline forciert "draft" ohnehin (state-Override-Audit erinnert dich).
+Constraints (binding, NEVER overridable):
+- You NEVER produce executable code outside the skill-sandbox boundary.
+  Allowed imports are listed in `jarvis/skills/safe_imports.txt`.
+- You NEVER output state != "draft", even if the user asks for it —
+  the pipeline forces "draft" anyway (a state-override audit reminds you).
 - `eval`, `exec`, `compile`, `os.system`, `subprocess.Popen(shell=True)`
-  werden vom Promote-Lint geblockt — Skills mit solchen Calls werden
-  abgelehnt.
-- Slug ist lowercase, kebab-case, max 64 Zeichen, keine Pfad-Trennzeichen.
-- Body ist Markdown mit YAML-Frontmatter — Body-Markdown ohne Frontmatter,
-  Frontmatter wird vom draft_writer rekonstruiert.
+  are blocked by the promote lint — skills with such calls are
+  rejected.
+- Slug is lowercase, kebab-case, max 64 characters, no path separators.
+- Body is Markdown with a YAML frontmatter — body Markdown without frontmatter,
+  the frontmatter is reconstructed by draft_writer.
 
-Format-Beispiel (JSON):
+Format example (JSON):
 {
   "slug": "spotify-auto-pause",
   "name": "Spotify Auto-Pause",
-  "description": "Pausiert Spotify wenn der User redet.",
+  "description": "Pauses Spotify when the user speaks.",
   "category": "automation",
   "intent": "User wants Spotify to pause during voice interactions",
   "triggers_yaml": "[{type: voice, pattern: '^pause spotify'}]",
   "requires_tools": ["run-shell"],
-  "body_markdown": "## Spotify Auto-Pause\\n\\nDieser Skill ...",
+  "body_markdown": "## Spotify Auto-Pause\\n\\nThis skill ...",
   "state": "draft"
 }
 """
@@ -123,7 +122,7 @@ Format-Beispiel (JSON):
 
 
 class SkillAuthoringRunner:
-    """Plan-§7.5 Authoring-Pipeline (OpenClaw-Author-Spawn + Validation-Loop)."""
+    """Plan-§7.5 authoring pipeline (OpenClaw-Author spawn + validation loop)."""
 
     def __init__(
         self,
@@ -147,7 +146,7 @@ class SkillAuthoringRunner:
         suggested_name: str | None = None,
         trigger_hint: str | None = None,
     ) -> AuthoringSuccess | AuthoringFailure:
-        """Hauptmethode. Plan-§7.5-Voice-Output:
+        """Main method. Plan-§7.5 voice output:
         SUCCESS / VALIDATION_FAIL / TIMEOUT.
         """
         prompt = self._build_user_prompt(
@@ -166,7 +165,7 @@ class SkillAuthoringRunner:
             except TimeoutError:
                 self._record_audit(
                     error_kind="author_timeout",
-                    message=f"OpenClaw-Author-Spawn timeout nach {self._timeout_seconds}s",
+                    message=f"OpenClaw-Author spawn timeout after {self._timeout_seconds}s",
                     iterations=iteration,
                     intent=intent,
                 )
@@ -196,13 +195,13 @@ class SkillAuthoringRunner:
                     validation_errors=last_errors,
                 )
 
-            # Sicherheits-Lint vor dem Schreiben (Plan-§7.5)
+            # Security lint before writing (Plan-§7.5)
             findings = safe_lint_skill_body(draft.body_markdown)
             if findings:
                 last_errors = tuple(findings)
                 if iteration < self._max_iterations:
                     prompt = self._build_retry_prompt(
-                        prompt, "Skill-Body enthält verbotene Calls: "
+                        prompt, "Skill body contains forbidden calls: "
                         + ", ".join(findings)
                     )
                     continue
@@ -214,12 +213,12 @@ class SkillAuthoringRunner:
                 )
                 return AuthoringFailure(
                     error_kind="unsafe",
-                    message="Skill-Body enthält unerlaubte Calls",
+                    message="Skill body contains disallowed calls",
                     iterations=iteration,
                     validation_errors=last_errors,
                 )
 
-            # Erfolgs-Pfad
+            # Success path
             try:
                 result: DraftWriteResult = write_draft(
                     draft, user_skills_root=self._user_skills_root
@@ -255,10 +254,10 @@ class SkillAuthoringRunner:
                 review_url=f"/api/skills/{result.slug}",
             )
 
-        # Schleife verlassen ohne return → defensive Fallback
+        # Loop exited without returning → defensive fallback
         return AuthoringFailure(
             error_kind="exhausted",
-            message="Validation-Loop nach 3 Iterationen ohne Erfolg",
+            message="Validation loop after 3 iterations without success",
             iterations=self._max_iterations,
             validation_errors=last_errors,
         )
@@ -268,7 +267,7 @@ class SkillAuthoringRunner:
     # ------------------------------------------------------------------
 
     async def _call_spawn(self, prompt: str) -> str:
-        """Nutzt die injizierte Spawn-Callback. Awaitable oder direct str."""
+        """Uses the injected spawn callback. Awaitable or direct str."""
         result = self._spawn(prompt)
         if asyncio.iscoroutine(result):
             return await result
@@ -289,28 +288,28 @@ class SkillAuthoringRunner:
         if trigger_hint:
             parts.append(f"Trigger hint: {trigger_hint}")
         parts.append(
-            "\nLiefere ein JSON-Objekt nach dem SkillDraft-Schema. "
-            "Nur JSON, keine Prosa."
+            "\nReturn a JSON object matching the SkillDraft schema. "
+            "JSON only, no prose."
         )
         return "\n".join(parts)
 
     def _build_retry_prompt(self, last_prompt: str, error: str) -> str:
         return (
             last_prompt
-            + f"\n\nFehler beim letzten Versuch: {error}\n"
-            + "Bitte korrigiere und versuche erneut."
+            + f"\n\nError on the last attempt: {error}\n"
+            + "Please correct it and try again."
         )
 
     def _parse_draft(self, response: str) -> SkillDraft:
-        """Extrahiert JSON aus der OpenClaw-Author-Response.
+        """Extracts JSON from the OpenClaw-Author response.
 
-        OpenClaw-Author sollte pures JSON liefern; wir tolerieren ein
-        einrahmendes ```json…``` für Markdown-Bias.
+        OpenClaw-Author should deliver pure JSON; we tolerate an
+        enclosing ```json…``` for Markdown bias.
         """
         import json
 
         cleaned = response.strip()
-        # Markdown-Codefence stripen, falls vorhanden
+        # Strip a Markdown codefence, if present
         if cleaned.startswith("```"):
             match = re.match(
                 r"```(?:json)?\s*\n?(.*?)```",
@@ -322,9 +321,9 @@ class SkillAuthoringRunner:
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"OpenClaw-Author-Response ist kein valides JSON: {exc}") from exc
+            raise ValueError(f"OpenClaw-Author response is not valid JSON: {exc}") from exc
         if not isinstance(data, dict):
-            raise ValueError("OpenClaw-Author-Response muss ein JSON-Objekt sein")
+            raise ValueError("OpenClaw-Author response must be a JSON object")
         return SkillDraft.model_validate(data)
 
     def _record_audit(
@@ -338,7 +337,7 @@ class SkillAuthoringRunner:
         draft_path: str | None = None,
         forced_state_override: bool = False,
     ) -> None:
-        """Schreibt Audit-Event mit `type=skill_authored` (Plan-§7.5)."""
+        """Writes an audit event with `type=skill_authored` (Plan-§7.5)."""
         extras: dict[str, Any] = {
             "type": "skill_authored",
             "intent": intent,
@@ -365,4 +364,4 @@ class SkillAuthoringRunner:
                 )
             )
         except Exception as exc:  # noqa: BLE001
-            _LOG.warning("Skill-Authoring-Audit fehlgeschlagen: %s", exc)
+            _LOG.warning("Skill-authoring audit failed: %s", exc)

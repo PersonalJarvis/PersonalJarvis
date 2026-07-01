@@ -1,8 +1,8 @@
-"""Contract-Test für das WebSocket-Wire-Schema.
+"""Contract test for the WebSocket wire schema.
 
-Sichert ab, dass der WSMessageIn/WSCommand-Discriminator im Backend dasselbe
-Format versteht, das das Frontend über `src/schema/ws.ts` sendet. Der Test
-nutzt realistische JSON-Payloads wie sie aus `useWebSocket.ts` kommen würden.
+Ensures the WSMessageIn/WSCommand discriminator in the backend understands
+the same format the frontend sends via `src/schema/ws.ts`. The test uses
+realistic JSON payloads like the ones that would come from `useWebSocket.ts`.
 """
 from __future__ import annotations
 

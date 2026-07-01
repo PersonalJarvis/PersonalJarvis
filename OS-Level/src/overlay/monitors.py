@@ -1,8 +1,8 @@
-"""Monitor-Enumeration via Qt + Hotplug-Subscription. Plan §12.3, §12.5.
+"""Monitor enumeration via Qt + hotplug subscription. Plan §12.3, §12.5.
 
-Qt liefert ``screenAdded``/``screenRemoved``-Signals; wir kapseln das in
-einen kleinen Manager, damit Phase 9.1 die Windows-pro-Screen verwaltet
-und Phase 9.2+ Position-Recovery (Mascot, Plan §13.4) andocken kann.
+Qt provides ``screenAdded``/``screenRemoved`` signals; we wrap that in
+a small manager so Phase 9.1 can manage the windows-per-screen and
+Phase 9.2+ can hook in position recovery (mascot, Plan §13.4).
 """
 
 from __future__ import annotations
@@ -17,22 +17,22 @@ if TYPE_CHECKING:  # pragma: no cover
 
 @dataclass(frozen=True)
 class MonitorInfo:
-    """Snapshot eines Monitors, plattform-frei."""
+    """Snapshot of a monitor, platform-agnostic."""
 
     name: str
-    geometry: tuple[int, int, int, int]  # (x, y, w, h) logische Pixel
+    geometry: tuple[int, int, int, int]  # (x, y, w, h) logical pixels
     device_pixel_ratio: float
     is_primary: bool
 
 
 def enumerate_monitors() -> list[MonitorInfo]:
-    """Snapshot aller live Monitore.
+    """Snapshot of all live monitors.
 
-    Greift auf ``QGuiApplication.screens()`` zu — vorher muss eine
-    QApplication existieren (siehe ``main.py``). Test-Code mockt das
-    QGuiApplication-Modul.
+    Accesses ``QGuiApplication.screens()`` — a QApplication must
+    already exist (see ``main.py``). Test code mocks the
+    QGuiApplication module.
     """
-    from PySide6.QtGui import QGuiApplication  # lazy: keine Qt-Imports im Self-Test
+    from PySide6.QtGui import QGuiApplication  # lazy: no Qt imports in the self-test
 
     app = QGuiApplication.instance()
     if app is None:
@@ -53,10 +53,10 @@ def enumerate_monitors() -> list[MonitorInfo]:
 
 
 class MonitorManager:
-    """Subscribed auf ``QGuiApplication`` Hotplug-Signals.
+    """Subscribes to ``QGuiApplication`` hotplug signals.
 
-    Phase 9.1 nutzt nur ``on_screen_added`` / ``on_screen_removed`` als
-    Hooks; Window-Lifecycle steckt in ``main.setup_windows``.
+    Phase 9.1 only uses ``on_screen_added`` / ``on_screen_removed`` as
+    hooks; window lifecycle lives in ``main.setup_windows``.
     """
 
     def __init__(
@@ -69,12 +69,12 @@ class MonitorManager:
         self._app: Optional["QObject"] = None
 
     def attach(self) -> None:
-        """Verbindet Hotplug-Signals. Idempotent."""
+        """Connects hotplug signals. Idempotent."""
         from PySide6.QtGui import QGuiApplication  # lazy
 
         app = QGuiApplication.instance()
         if app is None:
-            raise RuntimeError("MonitorManager.attach: keine QGuiApplication")
+            raise RuntimeError("MonitorManager.attach: no QGuiApplication")
         if self._app is app:
             return
         if self._on_added is not None:
@@ -84,7 +84,7 @@ class MonitorManager:
         self._app = app
 
     def detach(self) -> None:
-        """Trennt Signals. Vor App-Quit aufrufen, sonst Dangling-Callbacks."""
+        """Disconnects signals. Call before app quit, otherwise dangling callbacks."""
         if self._app is None:
             return
         if self._on_added is not None:

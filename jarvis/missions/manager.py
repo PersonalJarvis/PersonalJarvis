@@ -1,14 +1,14 @@
-"""MissionManager — orchestriert Lebenszyklus einer Mission.
+"""MissionManager — orchestrates the lifecycle of a mission.
 
-Phase-1-Skeleton: Dispatch + State-Transitions + Recovery-Wiring. **KEINE
-Worker-Logik** (kommt in Phase 2), **KEIN Critic** (Phase 3). Diese Skeleton-
-Schicht garantiert dass alle nachfolgenden Phasen einen sauberen Event-Stream
-+ State-Machine + Recovery-Pfad vorfinden.
+Phase-1 skeleton: dispatch + state transitions + recovery wiring. **NO
+worker logic** (comes in Phase 2), **NO critic** (Phase 3). This skeleton
+layer guarantees that all subsequent phases find a clean event stream
++ state machine + recovery path.
 
-Persist-vor-Publish-Disziplin:
-- `dispatch()` macht erst `upsert_mission(PENDING)`, dann `append_and_publish(MissionDispatched)`.
-- `transition_state()` macht erst `append_and_publish(MissionStateChanged)`, dann `upsert_mission(to_state)`.
-  Begruendung: bei Crash zwischen Publish und Header-Update findet Recovery beim Restart noch den alten Header-State und kann das Replay aus events_since rekonstruieren — der State-Header ist hilfreich aber nicht authoritativ; das Event-Log ist die Source of Truth.
+Persist-before-publish discipline:
+- `dispatch()` first does `upsert_mission(PENDING)`, then `append_and_publish(MissionDispatched)`.
+- `transition_state()` first does `append_and_publish(MissionStateChanged)`, then `upsert_mission(to_state)`.
+  Rationale: on a crash between publish and header update, recovery on restart still finds the old header state and can reconstruct the replay from events_since — the state header is helpful but not authoritative; the event log is the source of truth.
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ SourceActor = Literal[
 
 @dataclass(frozen=True)
 class MissionView:
-    """Read-only Snapshot eines Mission-Records."""
+    """Read-only snapshot of a mission record."""
 
     mission_id: str
     prompt: str
@@ -52,10 +52,10 @@ class MissionView:
 
 
 class MissionManager:
-    """Lebenszyklus + State-Transitions fuer Missions.
+    """Lifecycle + state transitions for missions.
 
-    Owns einen MissionBus + MissionEventStore. Recovery laeuft beim `start()`.
-    Kein globaler Singleton — immer via DI instanziert (siehe ADR-0009 D-Liste).
+    Owns a MissionBus + MissionEventStore. Recovery runs on `start()`.
+    No global singleton — always instantiated via DI (see ADR-0009 D-list).
     """
 
     def __init__(self, db_path: Path, *, bus: MissionBus | None = None) -> None:
@@ -147,8 +147,8 @@ class MissionManager:
                 language=language,
             ),
         )
-        # Header zuerst — sonst koennen Subscriber das MissionDispatched-Event
-        # auf eine nicht-existente Mission im Store sehen.
+        # Header first — otherwise subscribers could see the MissionDispatched
+        # event for a mission that doesn't yet exist in the store.
         await self._store.upsert_mission(
             mission_id=mission_id,
             prompt=prompt,
@@ -167,20 +167,20 @@ class MissionManager:
         reason: str,
         source_actor: SourceActor = "system",
     ) -> EventEnvelope:
-        """Validiere State-Uebergang, persist + publish MissionStateChanged.
+        """Validate the state transition, persist + publish MissionStateChanged.
 
-        Hebt `IllegalStateTransition` wenn der Uebergang nicht in
-        `ALLOWED_TRANSITIONS` steht. Hebt `KeyError` wenn die Mission
-        nicht existiert. Aktualisiert auch den Mission-Header.
+        Raises `IllegalStateTransition` if the transition is not in
+        `ALLOWED_TRANSITIONS`. Raises `KeyError` if the mission
+        doesn't exist. Also updates the mission header.
         """
         self._ensure_started()
         lock = self._state_locks.setdefault(mission_id, asyncio.Lock())
         async with lock:
             current_str = await self._store.get_mission_state(mission_id)
             if current_str is None:
-                raise KeyError(f"Mission nicht gefunden: {mission_id}")
+                raise KeyError(f"Mission not found: {mission_id}")
             from_state = MissionState(current_str)
-            # validiert oder raises IllegalStateTransition
+            # validates or raises IllegalStateTransition
             transition(from_state, to_state)
 
             prompt = await self._get_prompt(mission_id) or ""
@@ -195,7 +195,7 @@ class MissionManager:
                     reason=reason,
                 ),
             )
-            # Event zuerst (authoritative log), Header danach (snapshot fuer fast lookup)
+            # Event first (authoritative log), header after (snapshot for fast lookup)
             await self._store.append_and_publish(env)
             await self._store.upsert_mission(
                 mission_id=mission_id,
@@ -207,7 +207,7 @@ class MissionManager:
             return env
 
     async def mission(self, mission_id: str) -> MissionView | None:
-        """Snapshot eines Mission-Headers oder None wenn nicht vorhanden."""
+        """Snapshot of a mission header, or None if not present."""
         self._ensure_started()
         state_str = await self._store.get_mission_state(mission_id)
         if state_str is None:

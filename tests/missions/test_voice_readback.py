@@ -1,4 +1,4 @@
-"""Tests fuer MissionReadback — DE-Templates + name-neutral tone + 280-cap."""
+"""Tests for MissionReadback — DE templates + name-neutral tone + 280-cap."""
 from __future__ import annotations
 
 import pytest
@@ -26,8 +26,8 @@ def _assert_no_owner_name(out: str) -> None:
 def test_approved_is_name_neutral() -> None:
     rb = MissionReadback()
     out = rb.render_approved(summary="X")
-    # Approved templates: "Fertig./Erledigt./Abgeschlossen. {summary}".
-    assert "Fertig" in out or "Erledigt" in out or "Abgeschlossen" in out, (
+    # Approved templates: "Fertig./Erledigt./Abgeschlossen. {summary}".  # i18n-allow: quotes the actual German TTS readback templates
+    assert "Fertig" in out or "Erledigt" in out or "Abgeschlossen" in out, (  # i18n-allow: asserts the German TTS readback text
         f"expected an approved status phrase in {out!r}"
     )
     _assert_no_owner_name(out)
@@ -36,8 +36,8 @@ def test_approved_is_name_neutral() -> None:
 def test_failed_is_name_neutral() -> None:
     rb = MissionReadback()
     out = rb.render_failed(reason="kaputt")
-    # Failed templates frame it as "gescheitert" / "nicht geklappt".
-    assert "gescheitert" in out.lower() or "nicht geklappt" in out.lower(), (
+    # Failed templates frame it as "gescheitert" / "nicht geklappt".  # i18n-allow: quotes the actual German TTS readback templates
+    assert "gescheitert" in out.lower() or "nicht geklappt" in out.lower(), (  # i18n-allow: asserts the German TTS readback text
         f"expected a failure status phrase in {out!r}"
     )
     _assert_no_owner_name(out)
@@ -88,7 +88,7 @@ def test_render_failed_unknown_reason_still_interpolated() -> None:
 
 def test_render_failed_maps_worktree_setup_failed() -> None:
     """#8 (2026-05-27): a worktree-create failure (path cap / git index lock)
-    must speak an actionable cause, not the generic 'Der Worker ist
+    must speak an actionable cause, not the generic 'Der Worker ist  # i18n-allow: quotes the actual German TTS readback phrase
     abgebrochen.' that a real worker crash produces."""
     rb = MissionReadback()
     out = rb.render_failed(reason="worktree_setup_failed", language="de")
@@ -187,7 +187,7 @@ def test_failure_reason_phrases_shared_with_announcer() -> None:
     # Both voice components resolve a known reason to the identical phrase.
     assert (
         FAILURE_REASON_PHRASES["de"]["critic_unavailable"]
-        == "Der Prüfer ist abgestürzt, die Arbeit liegt im Worktree."
+        == "Der Prüfer ist abgestürzt, die Arbeit liegt im Worktree."  # i18n-allow: asserts the actual German TTS readback phrase
     )
     # Pin the timeout key so a symmetric removal from BOTH de+en (which the
     # set-equality check below would NOT catch) can never silently regress the
@@ -220,7 +220,7 @@ def test_injection_blocked_is_name_neutral() -> None:
 
 
 def test_no_template_contains_sir_anywhere() -> None:
-    """Strict A1: kein einziges Template darf 'Sir'/'sir' enthalten."""
+    """Strict A1: not a single template may contain 'Sir'/'sir'."""
     from jarvis.missions.voice.readback import READBACK_TEMPLATES
     for key, lang_map in READBACK_TEMPLATES.items():
         for lang, templates in lang_map.items():
@@ -263,22 +263,22 @@ def test_max_voice_chars_is_280() -> None:
 
 
 def test_anti_repeat_two_consecutive_approved_differ() -> None:
-    """Bei mehreren Templates pro Key sollten zwei aufeinanderfolgende
-    Render-Calls unterschiedliche Templates liefern (anti-repeat-window=3).
+    """With multiple templates per key, two consecutive
+    render calls should return different templates (anti-repeat-window=3).
     """
     rb = MissionReadback(anti_repeat_window=3)
     out1 = rb.render_approved(summary="X")
     out2 = rb.render_approved(summary="X")
-    # Bei mind. 2 Templates pro Key sollten sich diese unterscheiden
+    # With at least 2 templates per key, these should differ
     assert out1 != out2
 
 
 def test_anti_repeat_window_zero_allows_repeats() -> None:
-    """anti_repeat_window=1 -> nur 1 letztes wird gemerkt -> bei 3 Templates
-    geht's wieder von vorn nach 2 Calls."""
+    """anti_repeat_window=1 -> only the last 1 is remembered -> with 3 templates
+    it starts over again after 2 calls."""
     rb = MissionReadback(anti_repeat_window=1)
     outputs = [rb.render_approved(summary="X") for _ in range(5)]
-    # mindestens ein Wiederhol darf vorkommen wenn pool > window
+    # at least one repeat may occur when pool > window
     assert len(set(outputs)) <= 3
 
 
@@ -355,8 +355,8 @@ def test_render_failed_empty_reason_uses_default() -> None:
     rb = MissionReadback()
     out = rb.render_failed(reason="")
     assert out
-    # Default-Reason ist "unbekannter Fehler"
-    assert "fehler" in out.lower() or "unbekannt" in out.lower()
+    # Default reason is "unbekannter Fehler"  # i18n-allow: quotes the actual German TTS readback default phrase
+    assert "fehler" in out.lower() or "unbekannt" in out.lower()  # i18n-allow: asserts the German TTS readback text
     _assert_no_owner_name(out)
 
 
@@ -373,12 +373,12 @@ def test_render_en_fallback_when_lang_unknown() -> None:
 
 
 def test_correction_instruction_not_in_iteration_template() -> None:
-    """ADR-0009 §1: render_iteration_running darf NICHT die LLM-correction-instruction
-    weiterreichen — nur "Iteration N laeuft.".
+    """ADR-0009 §1: render_iteration_running must NOT pass through the
+    LLM correction_instruction — only "Iteration N laeuft.".  # i18n-allow: quotes the actual German TTS readback phrase
     """
     rb = MissionReadback()
-    # API: render_iteration_running nimmt nur `n`, KEINEN correction_instruction-Param.
-    # Verify das bleibt so durch Template-Inspect.
+    # API: render_iteration_running only takes `n`, NO correction_instruction param.
+    # Verify this stays true via template inspection.
     pool = READBACK_TEMPLATES["iteration_running"]["de"]
     for tmpl in pool:
         assert "{correction" not in tmpl

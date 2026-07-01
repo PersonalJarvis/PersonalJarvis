@@ -1,19 +1,19 @@
-"""MultiSpawnTool: N parallele Harness-Calls mit unterschiedlichen Prompts.
+"""MultiSpawnTool: N parallel harness calls with different prompts.
 
-Unterschied zu `dispatch_to_harness`:
-    - `dispatch_to_harness` = 1 Harness, 1 Prompt (oder N Harnesses × 1 Prompt).
-    - `multi_spawn`         = 1 Harness, N unterschiedliche Prompts parallel.
+Difference from `dispatch_to_harness`:
+    - `dispatch_to_harness` = 1 harness, 1 prompt (or N harnesses × 1 prompt).
+    - `multi_spawn`         = 1 harness, N different prompts in parallel.
 
-Anwendungsfall: OpenClaw-Worker spawnt 3 parallele `openclaw`-Agents mit
-verschiedenen Teil-Aufgaben ("schreib die Tests", "schreib die Impl",
-"schreib die Docs") und aggregiert die Outputs.
+Use case: an OpenClaw worker spawns 3 parallel `openclaw` agents with
+different sub-tasks ("write the tests", "write the implementation",
+"write the docs") and aggregates the outputs.
 
-Aggregation-Modes:
-    - "merge"         → alle Sections mit "---"-Separator konkatenieren.
-    - "first_success" → ersten Section mit exit=0 zurückgeben, Rest cancellen.
+Aggregation modes:
+    - "merge"         → concatenate all sections with a "---" separator.
+    - "first_success" → return the first section with exit=0, cancel the rest.
 
-Output-Cap: `max_output_chars` (Default 8000). Wenn überschritten, werden
-spätere Sections mit "(X sections truncated)"-Marker ersetzt.
+Output cap: `max_output_chars` (default 8000). When exceeded, later
+sections are replaced with a "(X sections truncated)" marker.
 """
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ class MultiSpawnTool:
     name: str = "multi_spawn"
     risk_tier: str = "monitor"
     description: str = (
-        "Führt N parallele Harness-Calls aus (z.B. 3x openclaw mit "
-        "unterschiedlichen Prompts). Für Fan-Out von Sub-Tasks."
+        "Runs N parallel harness calls (e.g. 3x openclaw with "
+        "different prompts). For fanning out sub-tasks."
     )
     schema: dict[str, Any] = {
         "type": "object",
@@ -38,7 +38,7 @@ class MultiSpawnTool:
             "harness": {
                 "type": "string",
                 "enum": ["openclaw", "codex", "python-script"],
-                "description": "Welches Harness N-fach spawnen.",
+                "description": "Which harness to spawn N times.",
             },
             "prompts": {
                 "type": "array",
@@ -46,8 +46,8 @@ class MultiSpawnTool:
                 "minItems": 2,
                 "maxItems": 5,
                 "description": (
-                    "Liste von Prompts; pro Prompt wird ein Harness-Call "
-                    "parallel gestartet."
+                    "List of prompts; one harness call is started in "
+                    "parallel per prompt."
                 ),
             },
             "aggregation": {
@@ -78,14 +78,14 @@ class MultiSpawnTool:
         timeout_s = int(args.get("timeout_s") or 600)
 
         if not harness_name:
-            return ToolResult(success=False, output=None, error="harness fehlt")
+            return ToolResult(success=False, output=None, error="harness is missing")
 
         prompts = [p for p in prompts_raw if isinstance(p, str) and p.strip()]
         if len(prompts) < 2:
             return ToolResult(
                 success=False,
                 output=None,
-                error="mindestens 2 Prompts erforderlich",
+                error="at least 2 prompts required",
             )
 
         tasks = [HarnessTask(prompt=p, timeout_s=timeout_s) for p in prompts]
@@ -102,7 +102,7 @@ class MultiSpawnTool:
             )
 
     async def _collect(self, harness_name: str, task: HarnessTask) -> dict[str, Any]:
-        """Drains den Dispatch-Stream zu einem akkumulierten Result-Dict."""
+        """Drains the dispatch stream into an accumulated result dict."""
         stdout_buf: list[str] = []
         stderr_buf: list[str] = []
         exit_code = -1
@@ -120,7 +120,7 @@ class MultiSpawnTool:
                 if r.cost_usd:
                     cost_usd += r.cost_usd
         except Exception as exc:  # noqa: BLE001
-            stderr_buf.append(f"Dispatch-Crash: {exc}\n")
+            stderr_buf.append(f"Dispatch crash: {exc}\n")
             exit_code = 1
         return {
             "stdout": "".join(stdout_buf),
@@ -168,7 +168,7 @@ class MultiSpawnTool:
                     for i, c in enumerate(collected)
                 ],
             },
-            error=None if all_ok else "ein oder mehr Sections mit non-zero exit",
+            error=None if all_ok else "one or more sections with a non-zero exit",
             artifacts=artifacts,
         )
 
@@ -218,7 +218,7 @@ class MultiSpawnTool:
         if winning is None:
             last = completed[-1][1] if completed else {
                 "stdout": "",
-                "stderr": "alle Sections fehlgeschlagen",
+                "stderr": "all sections failed",
                 "exit_code": 1,
             }
             combined = self._trim_section(
@@ -234,7 +234,7 @@ class MultiSpawnTool:
                     "combined": combined,
                     "winning_index": None,
                 },
-                error="kein Section war erfolgreich",
+                error="no section succeeded",
             )
 
         combined = self._trim_section(
@@ -271,7 +271,7 @@ class MultiSpawnTool:
     def _aggregate_with_cap(
         self, collected: list[dict[str, Any]], total: int
     ) -> tuple[str, int]:
-        """Formatiert Sections und cap'd aggregate auf max_output_chars.
+        """Formats sections and caps the aggregate at max_output_chars.
 
         Returns: (aggregated_text, truncated_section_count)
         """

@@ -1,6 +1,6 @@
 // === F-FRIENDS [F2] · feature/friends-section · alex-2026-04-30 ===
 /**
- * Chat-Thread-Hooks fuer einen Friend (Phase F2).
+ * Chat-thread hooks for a friend (Phase F2).
  *
  * In F2: Polling 5s. Backend liefert leere Liste — UI zeigt empty-state,
  * Send-Pfad funktioniert bereits gegen Telegram.

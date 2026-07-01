@@ -1,13 +1,13 @@
-"""Integration-Test fuer den Frontier-Autoswitch-Boot-Hook.
+"""Integration test for the Frontier-Autoswitch boot hook.
 
-Mit gemocktem FrontierResolver verifizieren wir:
-1. Bei neuerem Modell: ProviderConfig wird mutiert + Bus-Event emittiert +
-   Pending-Eintrag liegt in der Modal-Queue.
-2. Bei gleichem Modell: keine Mutation, kein Event, keine Pending.
-3. Bei Resolver-Crash: keine Mutation, kein Event, kein Pending —
-   silent Fallback auf TOML-Default.
-4. Sub-Jarvis-Override (`[brain.sub_jarvis] model = "..."`) bleibt
-   unangetastet.
+With a mocked FrontierResolver we verify:
+1. On a newer model: ProviderConfig is mutated + a bus event is emitted +
+   a pending entry lands in the modal queue.
+2. On the same model: no mutation, no event, no pending.
+3. On a resolver crash: no mutation, no event, no pending —
+   silent fallback to the TOML default.
+4. The Sub-Jarvis override (`[brain.sub_jarvis] model = "..."`) stays
+   untouched.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from jarvis.core.events import FrontierModelSwitched
 
 
 class _StubResolver:
-    """Resolver-Stub: returns vorgegebene Werte pro (provider, tier)."""
+    """Resolver stub: returns pre-set values per (provider, tier)."""
 
     def __init__(self, mapping: dict[tuple[str, str], str | None]) -> None:
         self._map = mapping
@@ -38,14 +38,14 @@ class _StubResolver:
 
 
 class _CrashingResolver:
-    """Resolver-Stub der bei jedem Call crasht."""
+    """Resolver stub that crashes on every call."""
 
     async def resolve_latest(self, provider: str, tier: str) -> str | None:
         raise RuntimeError("simulated provider down")
 
 
 def _make_config_with_old_models() -> JarvisConfig:
-    """Baut eine JarvisConfig mit alten Hauptjarvis-Modellen + Sub-Jarvis-Pin."""
+    """Builds a JarvisConfig with old Hauptjarvis models + a Sub-Jarvis pin."""
     cfg = JarvisConfig.model_validate({
         "brain": {
             "primary": "claude-api",
@@ -83,10 +83,10 @@ def _clear_pending_between_tests() -> Any:
 
 @pytest.fixture(autouse=True)
 def _mock_toml_persist(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, str | None]]]:
-    """Verhindert, dass Tests die echte jarvis.toml beschreiben.
+    """Prevents tests from writing the real jarvis.toml.
 
-    Returns die Liste der Calls, damit Tests verifizieren koennen dass
-    persist tatsaechlich aufgerufen wurde.
+    Returns the list of calls so tests can verify that
+    persist was actually invoked.
     """
     calls: list[tuple[str, dict[str, str | None]]] = []
 
@@ -109,8 +109,8 @@ async def test_apply_switches_when_resolver_returns_newer_models(
         ("gemini", "fast"): "gemini-3-flash",
         ("gemini", "deep"): "gemini-3.1-pro-preview",
         ("openai", "fast"): "gpt-5.5",
-        ("claude-api", "fast"): "claude-sonnet-4-6",  # unverändert
-        ("claude-api", "deep"): "claude-opus-4-7",    # unverändert
+        ("claude-api", "fast"): "claude-sonnet-4-6",  # unchanged
+        ("claude-api", "deep"): "claude-opus-4-7",    # unchanged
     })
     bus = EventBus()
     received: list[FrontierModelSwitched] = []
@@ -118,7 +118,7 @@ async def test_apply_switches_when_resolver_returns_newer_models(
 
     switches = await apply_frontier_resolution(cfg, resolver, bus)
 
-    # Verifiziere dass TOML-Persist auch gerufen wurde (3 Switches → 3 Calls).
+    # Verify that TOML persist was also called (3 switches → 3 calls).
     assert len(_mock_toml_persist) == 3
     persist_providers = {p for p, _ in _mock_toml_persist}
     assert persist_providers == {"gemini", "openai"}
@@ -139,7 +139,7 @@ async def test_apply_switches_when_resolver_returns_newer_models(
     assert cfg.brain.worker is not None
     assert cfg.brain.worker.model == "gemini-2.5-pro"
 
-    # Bus-Events publisht (event-loop-tick fuer subscribe-async)
+    # Bus events published (event-loop tick for subscribe-async)
     import asyncio
     await asyncio.sleep(0.01)
     assert len(received) == 3
@@ -160,7 +160,7 @@ async def test_disabled_by_default_is_noop(
     _mock_toml_persist: list[tuple[str, dict[str, str | None]]],
 ) -> None:
     """With ``brain.frontier_auto_apply`` unset (default False) the boot hook is
-    a complete no-op: no resolver call, no TOML/soll persist, no mutation, no
+    a complete no-op: no resolver call, no TOML/soll persist, no mutation, no  # i18n-allow — "soll" = config-soll.json, not German prose
     event, no pending — even though newer models are available. User mandate
     2026-06-20: providers/models must NOT switch by themselves.
     """
@@ -180,7 +180,7 @@ async def test_disabled_by_default_is_noop(
 
     assert switches == []
     assert resolver.calls == []           # resolver never queried
-    assert _mock_toml_persist == []       # nothing persisted to TOML/soll
+    assert _mock_toml_persist == []       # nothing persisted to TOML/soll  # i18n-allow — "soll" = config-soll.json
     assert cfg.brain.providers["gemini"].model == "gemini-2.5-flash"  # unmutated
     assert get_pending_switches() == []
     import asyncio
@@ -217,7 +217,7 @@ async def test_resolver_crash_does_not_mutate_config() -> None:
     resolver = _CrashingResolver()
     bus = EventBus()
 
-    # Sollte nicht raisen — Auto-Switch ist defensive.
+    # Should not raise — auto-switch is defensive.
     switches = await apply_frontier_resolution(cfg, resolver, bus)
     assert switches == []
 
@@ -227,12 +227,12 @@ async def test_resolver_crash_does_not_mutate_config() -> None:
 
 @pytest.mark.asyncio
 async def test_resolver_returns_none_no_switch() -> None:
-    """Wenn Resolver fuer einen Provider None liefert (z.B. kein API-Key),
-    soll fuer diesen Provider nichts passieren — andere Provider weiterhin OK.
+    """When the resolver returns None for a provider (e.g. no API key),
+    nothing should happen for that provider — other providers stay OK.
     """
     cfg = _make_config_with_old_models()
     resolver = _StubResolver({
-        ("gemini", "fast"): None,                  # kein Key
+        ("gemini", "fast"): None,                  # no key
         ("gemini", "deep"): None,
         ("openai", "fast"): "gpt-5.5",             # OK
         ("claude-api", "fast"): "claude-sonnet-4-6",

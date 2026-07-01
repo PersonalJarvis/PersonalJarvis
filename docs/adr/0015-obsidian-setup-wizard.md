@@ -134,7 +134,7 @@ by six contracts.
   colour beyond the existing green/yellow/red. This is a visible
   system-health indicator for the Obsidian connection that did not
   exist before; first-time users will see it transition through
-  yellow ("nicht registriert") to green ("verbunden") as they
+  yellow ("nicht registriert" — not registered) to green ("verbunden" — connected) as they  <!-- i18n-allow -->
   complete the walkthrough.
 - The Wiki-tab now does one read-only HTTP probe (`GET
   /api/setup/obsidian/status` and `GET /api/setup/state`) on first
@@ -161,7 +161,7 @@ tray is invisible at that moment and would require a context switch
 the same surface the user is already looking at.
 
 **CLI wizard (`python -m jarvis --wizard --obsidian`).** Rejected.
-B9 is a UX-first feature for a Nicht-Coder user. Hiding the
+B9 is a UX-first feature for a non-coder user. Hiding the
 onboarding behind a CLI command defeats the purpose: the user would
 need to know the CLI flag exists, open a terminal, and run a
 Python module — a workflow this user does not perform. The CLI

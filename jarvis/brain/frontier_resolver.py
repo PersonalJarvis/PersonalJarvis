@@ -193,7 +193,7 @@ class FrontierResolver:
                 api_key = cfg.get_provider_secret("claude-api")
                 if not api_key:
                     raise RuntimeError(
-                        "Kein Anthropic-API-Key fuer Frontier-Resolver.",
+                        "No Anthropic API key for the frontier resolver.",
                     )
                 resp = await client.get(
                     "https://api.anthropic.com/v1/models",
@@ -209,7 +209,7 @@ class FrontierResolver:
                 api_key = cfg.get_provider_secret("openai")
                 if not api_key:
                     raise RuntimeError(
-                        "Kein OpenAI-API-Key fuer Frontier-Resolver.",
+                        "No OpenAI API key for the frontier resolver.",
                     )
                 resp = await client.get(
                     "https://api.openai.com/v1/models",
@@ -222,7 +222,7 @@ class FrontierResolver:
                 api_key = cfg.get_provider_secret("gemini")
                 if not api_key:
                     raise RuntimeError(
-                        "Kein Gemini-API-Key fuer Frontier-Resolver.",
+                        "No Gemini API key for the frontier resolver.",
                     )
                 resp = await client.get(
                     "https://generativelanguage.googleapis.com/v1beta/models"
@@ -255,7 +255,7 @@ class FrontierResolver:
 
 
 # ----------------------------------------------------------------------
-# Provider-Picker (Module-Level fuer einfacheres Testing)
+# Provider picker (module-level for easier testing)
 # ----------------------------------------------------------------------
 
 def _pick_anthropic(models: list[str], tier: Tier) -> str | None:

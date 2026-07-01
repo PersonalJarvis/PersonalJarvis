@@ -1,11 +1,11 @@
-"""Pydantic-Request/Response-Modelle.
+"""Pydantic request/response models.
 
-Sicherheit: ``SyncPayload`` enthaelt **explizit nur** sichere Aggregat-
-Felder. Wenn ein Sync-Call Felder mit verbotenen Namen mitsendet
-(``text``, ``transcript``, ``args``, ``output_preview`` …), wird er vom
-``models_extra='forbid'`` abgelehnt. Das ist die Server-seitige Spiegelung
-von ``BoardAggregator.export_all_for_federation()`` (Plan §A-Smoke
-„test_no_pii_in_aggregated_stats").
+Security: ``SyncPayload`` **explicitly contains only** safe aggregate
+fields. If a sync call sends fields with disallowed names
+(``text``, ``transcript``, ``args``, ``output_preview`` …), it is
+rejected by ``models_extra='forbid'``. This is the server-side mirror
+of ``BoardAggregator.export_all_for_federation()`` (Plan §A-Smoke
+"test_no_pii_in_aggregated_stats").
 """
 from __future__ import annotations
 
@@ -51,8 +51,8 @@ class RegisterResponse(BaseModel):
 # ----------------------------------------------------------------------
 
 class DailyStatsItem(BaseModel):
-    """Eine Tages-Aggregation. Spiegelt das BoardAggregator-Format aus
-    ``export_all_for_federation()`` — sichere Felder only.
+    """A daily aggregation. Mirrors the BoardAggregator format from
+    ``export_all_for_federation()`` — safe fields only.
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -75,13 +75,14 @@ class AchievementItem(BaseModel):
 
 
 class SyncPayload(BaseModel):
-    """Eingehende Sync-Daten. ``extra='forbid'`` ist die zentrale PII-Wand.
+    """Incoming sync data. ``extra='forbid'`` is the central PII wall.
 
-    Pflichtfelder:
-    - ``ts_ms``: Client-Sendezeit in Millisekunden seit Epoch (UTC).
-      Server lehnt ab, wenn |now - ts_ms| > replay_window.
-    - ``display_name``: redundant zur ``identity``-Tabelle, weil der User
-      ihn ohne Re-Registrierung aendern koennen muss (Plan §C-Decision-2).
+    Required fields:
+    - ``ts_ms``: client send time in milliseconds since epoch (UTC).
+      Server rejects when |now - ts_ms| > replay_window.
+    - ``display_name``: redundant with the ``identity`` table, because the
+      user must be able to change it without re-registering (Plan
+      §C-Decision-2).
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -112,7 +113,7 @@ class MeResponse(BaseModel):
 
 
 # ----------------------------------------------------------------------
-# Generischer Error
+# Generic error
 # ----------------------------------------------------------------------
 
 class ErrorResponse(BaseModel):
@@ -126,7 +127,7 @@ class ErrorResponse(BaseModel):
 # ----------------------------------------------------------------------
 
 class PairInitiateRequest(BaseModel):
-    """Admin generiert Pair-URL. Display-Name optional fuer Debug-Anzeigen."""
+    """Admin generates a pair URL. Display name optional for debug displays."""
     note: str | None = None
 
 
@@ -138,7 +139,7 @@ class PairInitiateResponse(BaseModel):
 
 
 class PairAcceptRequest(BaseModel):
-    """Friend's Backend ruft Owner's /pair/accept mit dem Token + eigenen Daten."""
+    """Friend's backend calls owner's /pair/accept with the token + its own data."""
     model_config = ConfigDict(extra="forbid")
 
     token: Annotated[str, StringConstraints(min_length=16, max_length=64)]
@@ -180,11 +181,11 @@ VisibilityStr = Annotated[
 
 
 class ActivityCreateRequest(BaseModel):
-    """Erstellung einer neuen Activity vom Owner.
+    """Creation of a new activity by the owner.
 
-    Server-extra='forbid'-Wand verhindert Kontamination mit Tool-Outputs
-    oder Voice-Texten — der Owner-Frontend muss das selbst saubern, der
-    Server akzeptiert keine zusaetzlichen Felder.
+    The server's extra='forbid' wall prevents contamination with tool
+    outputs or voice text — the owner's frontend must sanitize that
+    itself; the server accepts no additional fields.
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -192,7 +193,7 @@ class ActivityCreateRequest(BaseModel):
     kind: Annotated[str, StringConstraints(pattern=r"^(achievement_unlocked|story|milestone)$")]
     payload: dict[str, Any] = Field(default_factory=dict)
     visibility: VisibilityStr = "friends"
-    # Stories: 24h (Server enforced). Andere Kinds: None.
+    # Stories: 24h (server enforced). Other kinds: None.
     expires_in_hours: int | None = Field(default=None, ge=1, le=168)
 
 
@@ -205,7 +206,7 @@ class ActivityItemDTO(BaseModel):
     created_at: datetime
     visibility: VisibilityStr
     expires_at: datetime | None
-    # Owner sieht Counts mit Zahlen, andere bekommen nur ``reactions_seen=true|false``.
+    # Owner sees counts as numbers, others only get ``reactions_seen=true|false``.
     reaction_counts: dict[str, int] | None = None
     has_reactions: bool = False
 
@@ -221,13 +222,13 @@ class FeedResponse(BaseModel):
 # ----------------------------------------------------------------------
 
 class ReactionRequest(BaseModel):
-    """Reactor → Owner. Reactor's Backend forwardet das hier zur Author-API.
+    """Reactor → owner. Reactor's backend forwards this to the author's API.
 
-    ``author_pubkey`` referenziert den Item-Author. Owner-Backend nutzt das,
-    um in seiner ``friends``-Tabelle den richtigen Friend-Backend zu finden.
-    Die Sig wird auf diesem ganzen body gemacht — wenn das Frontend hier
-    luegt, scheitert die Sig-Verify auf Friend-Seite (item_id stimmt nicht
-    zum signierten payload).
+    ``author_pubkey`` references the item author. The owner's backend uses
+    this to find the right friend's backend in its ``friends`` table. The
+    signature is computed over this whole body — if the frontend lies
+    here, the signature verification fails on the friend's side (item_id
+    doesn't match the signed payload).
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -246,10 +247,10 @@ class ReactionAck(BaseModel):
 # ----------------------------------------------------------------------
 
 class InboundReactionRequest(BaseModel):
-    """Friend's Backend pusht eine Reaktion an Owner's Backend.
+    """Friend's backend pushes a reaction to the owner's backend.
 
-    Identische Felder wie ``ReactionRequest`` — nur die Sig wird beim
-    Empfaenger gegen den Reactor's Pubkey verifiziert.
+    Identical fields to ``ReactionRequest`` — only the signature is
+    verified by the receiver against the reactor's pubkey.
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -270,11 +271,12 @@ class ForgetMeAck(BaseModel):
 # ----------------------------------------------------------------------
 
 class StoryCreateRequest(BaseModel):
-    """Wrapper um ``ActivityCreateRequest`` mit fixem kind=story.
+    """Wrapper around ``ActivityCreateRequest`` with a fixed kind=story.
 
-    Fuer den Owner ist ``POST /api/v1/stories`` semantisch klarer als ein
-    generischer activity-call mit kind-Parameter. Server intern bauen wir
-    daraus einen ``ActivityCreateRequest(kind='story', expires_in_hours=24)``.
+    For the owner, ``POST /api/v1/stories`` is semantically clearer than a
+    generic activity call with a kind parameter. Internally the server
+    builds an ``ActivityCreateRequest(kind='story', expires_in_hours=24)``
+    from this.
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -288,7 +290,7 @@ class StoryCreateRequest(BaseModel):
 # ----------------------------------------------------------------------
 
 class FriendUpdateRequest(BaseModel):
-    """Per-Friend-Sync-Interval-Setting (Plan §D-Spec)."""
+    """Per-friend sync interval setting (Plan §D-Spec)."""
     model_config = ConfigDict(extra="forbid")
 
     ts_ms: int = Field(ge=0)

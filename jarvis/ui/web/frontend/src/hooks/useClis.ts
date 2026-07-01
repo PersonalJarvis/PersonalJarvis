@@ -1,5 +1,5 @@
 /**
- * React Query Hooks fuer die CLI-Integration.
+ * React Query hooks for the CLI integration.
  *
  * Endpoints (siehe jarvis/ui/web/cli_routes.py).
  */

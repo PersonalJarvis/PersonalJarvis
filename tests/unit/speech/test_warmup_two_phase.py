@@ -307,7 +307,7 @@ async def test_ready_cue_does_not_block_wake_loop_start(monkeypatch) -> None:
     """The ready chime must not sit between ready=True and the wake loop.
 
     Live logs showed Phase A completing quickly, then ``_play_ready_cue`` holding
-    ``_warmup()`` for several seconds before ``Pipeline bereit`` and the wake
+    ``_warmup()`` for several seconds before ``Pipeline ready`` and the wake
     listener started. A wedged/slow output device must not keep the wake word
     dead after the critical listening path is ready.
     """

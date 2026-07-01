@@ -1,9 +1,9 @@
-"""Gemeinsame Logik für OpenAI-kompatible APIs (openai / openrouter / grok).
+"""Shared logic for OpenAI-compatible APIs (openai / openrouter / grok).
 
-Alle drei nutzen das Chat-Completions-Format. Unterschiede:
-- Base-URL (api.openai.com / openrouter.ai / api.x.ai)
-- Model-Namen-Namensraum
-- Default-Headers (OpenRouter will X-Title, HTTP-Referer)
+All three use the Chat-Completions format. Differences:
+- Base URL (api.openai.com / openrouter.ai / api.x.ai)
+- Model-name namespace
+- Default headers (OpenRouter wants X-Title, HTTP-Referer)
 """
 from __future__ import annotations
 
@@ -30,28 +30,28 @@ CLIENT_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=30.0, pool=30.0)
 
 
 def _stream_options_supported() -> bool:
-    """One-shot Detection: kennt das installierte openai-SDK ``stream_options``?
+    """One-shot detection: does the installed openai SDK know ``stream_options``?
 
-    `stream_options` wurde in openai>=1.30 (Juni 2024) eingefuehrt — aeltere
-    Versionen werfen ``TypeError: got unexpected keyword argument`` direkt
-    beim Aufruf. Wir pruefen die Signatur einmalig zur Modul-Ladezeit und
-    cachen das Ergebnis. Bei zukuenftigen API-Aenderungen ist der Re-Try-Pfad
-    in ``run_openai_chat`` der Notanker.
+    `stream_options` was introduced in openai>=1.30 (June 2024) — older
+    versions raise ``TypeError: got unexpected keyword argument`` directly
+    on the call. We check the signature once at module-load time and cache
+    the result. For future API changes, the re-try path in
+    ``run_openai_chat`` is the safety net.
     """
     try:
         from openai.resources.chat.completions import AsyncCompletions
 
         sig = inspect.signature(AsyncCompletions.create)
         return "stream_options" in sig.parameters
-    except Exception:  # noqa: BLE001 — Detection darf den Import nicht killen
+    except Exception:  # noqa: BLE001 — detection must never kill the import
         return False
 
 
 _STREAM_OPTIONS_SUPPORTED = _stream_options_supported()
 if not _STREAM_OPTIONS_SUPPORTED:
     log.warning(
-        "openai-SDK kennt 'stream_options' nicht — vermutlich openai<1.30. "
-        "Provider laufen ohne Inline-Usage-Tracking. Empfehlung: pip install -U openai."
+        "openai SDK does not know 'stream_options' — likely openai<1.30. "
+        "Provider runs without inline usage tracking. Recommendation: pip install -U openai."
     )
 
 
@@ -61,13 +61,13 @@ def _to_openai_messages(
     *,
     supports_vision: bool = True,
 ) -> list[dict[str, Any]]:
-    """BrainMessages → OpenAI-Chat-Completions-Array.
+    """BrainMessages → OpenAI Chat-Completions array.
 
-    Multimodal: `BrainMessage.images` wird für user-Messages als Data-URI
-    im `image_url`-Content-Block enkodiert. Wenn der Ziel-Provider kein
-    Vision-Support hat (`supports_vision=False`), werden images verworfen
-    und einmalig pro Call geloggt.
-    Backwards-Compat: Ohne images bleibt der Content ein plain String.
+    Multimodal: `BrainMessage.images` is encoded as a Data-URI in the
+    `image_url` content block for user messages. If the target provider has
+    no vision support (`supports_vision=False`), images are dropped and
+    logged once per call.
+    Backwards-compat: without images, the content stays a plain string.
     """
     out: list[dict[str, Any]] = []
     system_parts: list[str] = []
@@ -93,7 +93,7 @@ def _to_openai_messages(
             continue
 
         if m.role == "assistant" and isinstance(m.content, list):
-            # Assistant mit Tool-Calls
+            # Assistant with tool calls
             text_parts: list[str] = []
             tool_calls: list[dict[str, Any]] = []
             for block in m.content:
@@ -116,8 +116,8 @@ def _to_openai_messages(
             out.append(entry)
             continue
 
-        # user | assistant (mit string content)
-        # `getattr` für Backwards-Compat (Protocol pre-Wave-1-B1 hat kein images).
+        # user | assistant (with string content)
+        # `getattr` for backwards-compat (Protocol pre-Wave-1-B1 had no images).
         images = getattr(m, "images", ()) or ()
         has_images = m.role == "user" and bool(images)
         if has_images and supports_vision:
@@ -142,11 +142,11 @@ def _to_openai_messages(
         if has_images and not supports_vision:
             if not vision_drop_warned:
                 log.warning(
-                    "Provider ohne Vision-Support — %d Image(s) werden verworfen.",
+                    "Provider without vision support — dropping %d image(s).",
                     len(images),
                 )
                 vision_drop_warned = True
-            # Fall through zum plain-text-Pfad (images gedroppt).
+            # Fall through to the plain-text path (images dropped).
 
         text_content = (
             m.content
@@ -234,10 +234,10 @@ async def stream_complete(
     extra_body: dict[str, Any] | None = None,
     supports_vision: bool = True,
 ) -> AsyncIterator[BrainDelta]:
-    """Streaming-Run gegen OpenAI-kompatible Chat-Completions.
+    """Streaming run against OpenAI-compatible Chat-Completions.
 
-    `supports_vision` wird an den Message-Builder durchgereicht — bei `False`
-    werden `BrainMessage.images` verworfen + eine WARN geloggt.
+    `supports_vision` is passed through to the message builder — when `False`,
+    `BrainMessage.images` are dropped and a WARN is logged.
     """
     messages = _to_openai_messages(req.messages, req.system, supports_vision=supports_vision)
     kwargs: dict[str, Any] = {
@@ -247,10 +247,10 @@ async def stream_complete(
         "temperature": req.temperature,
         "stream": True,
     }
-    # stream_options gibts erst seit openai>=1.30. Auf alten SDKs (z.B. 1.10)
-    # wuerde der unconditional-Aufruf einen TypeError werfen und die Plugin-
-    # Kette mit "AsyncCompletions.create() got an unexpected keyword argument"
-    # crashen — User hoert dann statt einer Antwort die "unerreichbar"-Diag.
+    # stream_options only exists since openai>=1.30. On old SDKs (e.g. 1.10)
+    # the unconditional call would raise a TypeError and crash the plugin
+    # chain with "AsyncCompletions.create() got an unexpected keyword argument"
+    # — the user then hears the "unreachable" diagnostic instead of an answer.
     if _STREAM_OPTIONS_SUPPORTED:
         kwargs["stream_options"] = {"include_usage": True}
     # Sanitize tool names to the OpenAI/Anthropic rule and keep a reverse map so
@@ -263,20 +263,20 @@ async def stream_complete(
     if extra_body:
         kwargs.update(extra_body)
 
-    # Akkumulator für Tool-Call-Partials (OpenAI streamt pro tool_call index)
+    # Accumulator for tool-call partials (OpenAI streams per tool_call index)
     tool_buffer: dict[int, dict[str, Any]] = {}
 
     try:
         stream = await client.chat.completions.create(**kwargs)
     except TypeError as exc:
-        # Belt-and-Suspenders: falls die Detection oben aus irgendeinem Grund
-        # falsch lag (gemockte Tests, monkey-patched SDK, exotische Forks),
-        # versuchen wir's nochmal ohne stream_options. Erspart einen harten
-        # Fail wenn der Live-API einen unerwarteten Kwarg ablehnt.
+        # Belt-and-suspenders: if the detection above was wrong for whatever
+        # reason (mocked tests, monkey-patched SDK, exotic forks), retry once
+        # without stream_options. Saves a hard fail when the live API rejects
+        # an unexpected kwarg.
         if "stream_options" not in kwargs or "stream_options" not in str(exc):
             raise
         log.warning(
-            "openai-SDK lehnte 'stream_options' ab (%s) — Re-Try ohne Kwarg.",
+            "openai SDK rejected 'stream_options' (%s) — retrying without the kwarg.",
             exc,
         )
         kwargs.pop("stream_options", None)
@@ -308,7 +308,7 @@ async def stream_complete(
 
             finish = getattr(choice, "finish_reason", None)
             if finish:
-                # Tool-Calls abschließen wenn vorhanden
+                # Finalize tool calls if present
                 for idx, buf in sorted(tool_buffer.items()):
                     try:
                         parsed = json.loads(buf["arguments"]) if buf["arguments"] else {}
@@ -322,7 +322,7 @@ async def stream_complete(
                 tool_buffer.clear()
                 yield BrainDelta(finish_reason=finish)
 
-        # Usage-Info (OpenAI liefert das im letzten Chunk)
+        # Usage info (OpenAI delivers this in the last chunk)
         usage = getattr(chunk, "usage", None)
         if usage is not None:
             yield BrainDelta(usage={

@@ -47,7 +47,7 @@ from jarvis.core.events import (  # noqa: E402
     TranscriptionUpdate,
 )
 
-QUESTION = "Was ist die Hauptstadt von Frankreich?"
+QUESTION = "Was ist die Hauptstadt von Frankreich?"  # i18n-allow: simulated German user utterance fed through the live voice pipeline for the latency benchmark
 TTS_RATE = 24_000
 
 

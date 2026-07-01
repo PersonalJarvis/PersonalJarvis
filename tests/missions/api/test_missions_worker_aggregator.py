@@ -1,11 +1,11 @@
-"""Unit-Tests fuer den OpenClaw-Worker-Aggregator (Phase 9 Welle 4 UI).
+"""Unit tests for the OpenClaw worker aggregator (Phase 9 Wave 4 UI).
 
-Pure-helper-Tests ohne FastAPI / DB-IO. Deckt:
-- Detection-Heuristik (step.harness == 'openclaw' UND fallback ueber model+sid)
-- State-Dir-Konvention (matcht ``OpenClawHarness._build_spec``)
-- Reattach-Status: live -> killed -> ended (mission terminal)
-- Cost/Tokens-Aggregation aus Progress + DraftReady
-- Empty-Stream / Non-OpenClaw-Workers
+Pure helper tests without FastAPI / DB I/O. Covers:
+- Detection heuristic (step.harness == 'openclaw' AND fallback via model+sid)
+- State-dir convention (matches ``OpenClawHarness._build_spec``)
+- Reattach status: live -> killed -> ended (mission terminal)
+- Cost/tokens aggregation from Progress + DraftReady
+- Empty stream / non-OpenClaw workers
 """
 from __future__ import annotations
 
@@ -42,8 +42,8 @@ def test_no_workers_returns_empty():
 
 
 def test_non_openclaw_worker_is_ignored():
-    """Reine Claude/Codex-Worker (kein step.harness, kein /-Modell) tauchen
-    nicht in der OpenClaw-Liste auf."""
+    """Pure Claude/Codex workers (no step.harness, no /-model) do not
+    show up in the OpenClaw list."""
     spawn = WorkerSpawned(
         worker_id="w1",
         step={"task": "build foo"},
@@ -58,13 +58,13 @@ def test_non_openclaw_worker_is_ignored():
 
 
 def test_step_harness_marker_is_canonical():
-    """``step["harness"] == "openclaw"`` triggert die Detection auch ohne
-    session_id oder /-Modell."""
+    """``step["harness"] == "openclaw"`` triggers detection even without
+    a session_id or /-model."""
     spawn = WorkerSpawned(
         worker_id="w1",
         step={"harness": "openclaw"},
         pid=42,
-        cli="python",  # OpenClaw kann sich noch nicht als 'openclaw' eintragen
+        cli="python",  # OpenClaw cannot yet register itself as 'openclaw'
         model="any",
         worktree="C:/wt/agent-1",
         session_id=None,
@@ -97,8 +97,8 @@ def test_session_id_plus_provider_slash_fallback_detection():
 
 
 def test_state_dir_matches_openclaw_harness_convention():
-    """Der state_dir-Pfad MUSS exakt der ``OpenClawHarness._build_spec``-
-    Konvention folgen — sonst zeigt die UI den falschen Ort an."""
+    """The state_dir path MUST exactly follow the ``OpenClawHarness._build_spec``
+    convention — otherwise the UI shows the wrong location."""
     spawn = WorkerSpawned(
         worker_id="w1",
         step={"harness": "openclaw"},
@@ -185,7 +185,7 @@ def test_ended_status_when_mission_terminal_without_kill():
         tokens_used=100,
         cost_usd=0.5,
         wall_ms=1000,
-        summary_de="fertig",
+        summary_de="fertig",  # i18n-allow (German value under summary_de field)
         summary_en="done",
     )
     workers = extract_worker_missions([
@@ -198,8 +198,8 @@ def test_ended_status_when_mission_terminal_without_kill():
 
 
 def test_killed_wins_over_terminal():
-    """Wenn Worker bereits explizit gekillt wurde, soll Mission-Terminal das
-    nicht ueberschreiben (killed != ended)."""
+    """If the worker was already explicitly killed, mission-terminal must
+    not overwrite that (killed != ended)."""
     spawn = WorkerSpawned(
         worker_id="w1",
         step={"harness": "openclaw"},
@@ -215,7 +215,7 @@ def test_killed_wins_over_terminal():
         tokens_used=100,
         cost_usd=0.5,
         wall_ms=1000,
-        summary_de="fertig",
+        summary_de="fertig",  # i18n-allow (German value under summary_de field)
         summary_en="done",
     )
     workers = extract_worker_missions([
@@ -283,7 +283,7 @@ def test_multiple_openclaw_workers_preserved_in_spawn_order():
 
 
 def test_unknown_event_types_are_ignored_safely():
-    """Critic-Verdicts oder andere Non-Worker-Events crashen den Aggregator nicht."""
+    """Critic verdicts or other non-worker events do not crash the aggregator."""
     spawn = WorkerSpawned(
         worker_id="w1",
         step={"harness": "openclaw"},

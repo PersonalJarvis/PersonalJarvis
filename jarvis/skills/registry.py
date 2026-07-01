@@ -1,8 +1,8 @@
-"""Skill-Registry: In-Memory-Store aller geladenen Skills + Hot-Reload.
+"""Skill registry: in-memory store of all loaded skills + hot reload.
 
 Hot-Reload via watchdog (FileSystemEventHandler + debounce 500ms, asyncio.Lock).
-Das eigentliche Dispatching (welcher Skill triggert auf welche Voice-Utterance)
-passiert im `TriggerMatcher`.
+The actual dispatching (which skill triggers on which voice utterance)
+happens in the `TriggerMatcher`.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from .schema import (
     SkillRegistryReloaded,
 )
 
-# watchdog ist optional — wenn es fehlt, gibt's keinen Hot-Reload
+# watchdog is optional — without it there's no hot reload
 try:
     from watchdog.events import FileSystemEventHandler  # type: ignore
     from watchdog.observers import Observer  # type: ignore
@@ -34,14 +34,14 @@ except Exception:  # pragma: no cover
 
 
 def _rewrite_state_in_frontmatter(text: str, new_state: str) -> str:
-    """Setzt das `state`-Field im YAML-Frontmatter auf `new_state`.
+    """Sets the `state` field in the YAML frontmatter to `new_state`.
 
-    Plan-§7.5-Promote: SKILL.md wird minimal-invasiv editiert, kein
-    Schema-Re-Render — User-Kommentare im Body bleiben erhalten.
+    Plan-§7.5-Promote: SKILL.md is edited minimally-invasively, no
+    schema re-render — user comments in the body are preserved.
 
-    Sub-Agent-Review-MAJOR-Hardening: Regex matcht jetzt auch Zeilen
-    mit Trailing-Comment (`state: draft # do not promote`) und YAML-
-    Anchor (`state: &s draft`). Das verhindert Duplikat-Keys.
+    Sub-agent-review MAJOR hardening: the regex now also matches lines
+    with a trailing comment (`state: draft # do not promote`) and a YAML
+    anchor (`state: &s draft`). This prevents duplicate keys.
     """
     import re as _re
 
@@ -52,7 +52,7 @@ def _rewrite_state_in_frontmatter(text: str, new_state: str) -> str:
         return text
     fm = parts[1]
     body = parts[2]
-    # `[^\n]*` matcht alles bis zum nächsten Newline — inkl. Comments + Anchors.
+    # `[^\n]*` matches everything up to the next newline — incl. comments + anchors.
     state_re = _re.compile(r"(?m)^state\s*:[^\n]*$")
     if state_re.search(fm):
         fm = state_re.sub(f"state: {new_state}", fm)
@@ -64,10 +64,10 @@ log = logging.getLogger(__name__)
 
 
 class SkillRegistry:
-    """Hält alle bekannten Skills + bietet Lookup nach Name/Trigger-Typ.
+    """Holds all known skills + provides lookup by name/trigger type.
 
-    Thread-safe via ``asyncio.Lock`` für Reloads + interner `threading.Lock`
-    für watchdog-Callbacks (die aus einem anderen Thread feuern).
+    Thread-safe via ``asyncio.Lock`` for reloads + an internal `threading.Lock`
+    for watchdog callbacks (which fire from a different thread).
     """
 
     def __init__(
@@ -88,7 +88,7 @@ class SkillRegistry:
         self._async_lock = asyncio.Lock()
         self._thread_lock = threading.Lock()
         self._observer: Any | None = None
-        self._pending_reload: float | None = None   # Unix-ts des nächsten Reloads
+        self._pending_reload: float | None = None   # Unix ts of the next reload
         self._reload_task: asyncio.Task | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -98,17 +98,17 @@ class SkillRegistry:
 
     def get(self, name: str) -> Skill:
         if name not in self._skills:
-            raise KeyError(f"Skill '{name}' nicht im Registry")
+            raise KeyError(f"Skill '{name}' not in registry")
         return self._skills[name]
 
     def list(self) -> list[Skill]:
         return list(self._skills.values())
 
     def list_active(self) -> list[Skill]:
-        """Phase 7.5 (Plan-§AD-8): Skills, die der TriggerMatcher sehen darf.
+        """Phase 7.5 (Plan-§AD-8): skills the TriggerMatcher is allowed to see.
 
-        DRAFT/DISABLED-Skills sind ausgeschlossen — Hot-Reload-Filter
-        gegen versehentliche Aktivierung von OpenClaw-authored Drafts.
+        DRAFT/DISABLED skills are excluded — a hot-reload filter
+        against accidental activation of OpenClaw-authored drafts.
         """
         return [
             s
@@ -117,8 +117,8 @@ class SkillRegistry:
         ]
 
     def list_drafts(self) -> list[Skill]:
-        """Plan-§7.5: alle Skills mit state=DRAFT (vom OpenClaw-Worker erzeugt
-        oder vom Loader wegen Schema-Fehler markiert)."""
+        """Plan-§7.5: all skills with state=DRAFT (produced by the OpenClaw worker
+        or flagged by the loader due to a schema error)."""
         return [
             s
             for s in self._skills.values()
@@ -126,27 +126,27 @@ class SkillRegistry:
         ]
 
     def promote(self, slug: str) -> Skill:
-        """Plan-§7.5 + Plan-§AP-6: User-explizite Aktivierung eines Drafts.
+        """Plan-§7.5 + Plan-§AP-6: explicit user activation of a draft.
 
-        Phasen:
-        1. Skill aus Drafts holen.
-        2. Sicherheits-Lint des Skill-Bodies (kein eval/exec/system,
-           Import-Allowlist).
-        3. SKILL.md neu schreiben mit `state: active` im Frontmatter.
-        4. Reload-Sync.
-        5. Audit-Eintrag `skill_promoted`.
+        Phases:
+        1. Fetch the skill from drafts.
+        2. Security lint of the skill body (no eval/exec/system,
+           import allowlist).
+        3. Rewrite SKILL.md with `state: active` in the frontmatter.
+        4. Reload sync.
+        5. Audit entry `skill_promoted`.
 
-        Wirft `KeyError` wenn der Slug nicht existiert, `RuntimeError`
-        wenn der Skill kein DRAFT ist, `UnsafeSkillError` wenn der Lint
-        verbotene Calls findet.
+        Raises `KeyError` if the slug doesn't exist, `RuntimeError`
+        if the skill isn't a DRAFT, `UnsafeSkillError` if the lint
+        finds forbidden calls.
         """
         from jarvis.skills.authoring.draft_writer import (
             UnsafeSkillError,
             safe_lint_skill_body,
         )
 
-        # Plan-§7.5: User-CLI ruft mit Slug (= path.parent.name); SkillRegistry
-        # indiziert intern nach `skill.name`. Fallback-Lookup über Slug.
+        # Plan-§7.5: the user CLI calls with a slug (= path.parent.name); SkillRegistry
+        # indexes internally by `skill.name`. Fallback lookup via slug.
         skill = self._skills.get(slug)
         if skill is None:
             for candidate in self._skills.values():
@@ -154,11 +154,11 @@ class SkillRegistry:
                     skill = candidate
                     break
         if skill is None:
-            raise KeyError(f"Skill '{slug}' nicht im Registry")
+            raise KeyError(f"Skill '{slug}' not in registry")
         if skill.state != SkillLifecycleState.DRAFT:
             raise RuntimeError(
-                f"Skill '{slug}' ist nicht im DRAFT-Zustand "
-                f"(aktuell: {skill.state.value})"
+                f"Skill '{slug}' is not in DRAFT state "
+                f"(currently: {skill.state.value})"
             )
 
         findings = safe_lint_skill_body(skill.body)
@@ -169,10 +169,10 @@ class SkillRegistry:
                 extra={"lint_findings": findings},
             )
             raise UnsafeSkillError(
-                f"Skill '{slug}' enthält unerlaubte Calls: {findings}"
+                f"Skill '{slug}' contains disallowed calls: {findings}"
             )
 
-        # SKILL.md mit state=active re-write (Plan-§AD-8: User-explizite Aktivierung)
+        # Re-write SKILL.md with state=active (Plan-§AD-8: explicit user activation)
         text = skill.path.read_text(encoding="utf-8")
         new_text = _rewrite_state_in_frontmatter(text, "active")
         skill.path.write_text(new_text, encoding="utf-8")
@@ -186,7 +186,7 @@ class SkillRegistry:
                     break
         if promoted is None:
             raise RuntimeError(
-                f"Promote: Skill '{slug}' nach reload nicht mehr im Registry"
+                f"Promote: skill '{slug}' no longer in registry after reload"
             )
 
         self._record_audit_event(
@@ -203,10 +203,10 @@ class SkillRegistry:
         slug: str,
         extra: dict[str, Any] | None = None,
     ) -> None:
-        """Audit-Eintrag via SelfModAudit wenn auf dem Bus verfügbar.
+        """Audit entry via SelfModAudit when available on the bus.
 
-        Falls kein Audit-Adapter konfiguriert: Skill-Promote wird auf den
-        Bus emittiert (SkillStateChanged), reicht für die Trail-Sicht.
+        If no audit adapter is configured: the skill promote is still
+        emitted on the bus (SkillStateChanged), which suffices for the trail view.
         """
         try:
             from jarvis.core.self_mod import (
@@ -232,7 +232,7 @@ class SkillRegistry:
                 )
             )
         except Exception as exc:  # noqa: BLE001
-            log.debug("Skill-Promote-Audit-Fallback (SelfModAudit fehlt): %s", exc)
+            log.debug("Skill-promote audit fallback (SelfModAudit missing): %s", exc)
 
     def by_trigger(
         self,
@@ -249,7 +249,7 @@ class SkillRegistry:
         return out
 
     def needs_setup(self) -> list[Skill]:
-        """Skills im DRAFT-State (Parser- oder Validator-Fehler)."""
+        """Skills in DRAFT state (parser or validator error)."""
         return [s for s in self._skills.values() if s.state == SkillLifecycleState.DRAFT]
 
     # ------------------------------------------------------------------
@@ -288,14 +288,14 @@ class SkillRegistry:
         return out
 
     def reload_sync(self) -> None:
-        """Synchroner Reload — für Bootstrap + Tests."""
+        """Synchronous reload — for bootstrap + tests."""
         skills = self._apply_state_overrides(discover_skills(self.root))
         with self._thread_lock:
             self._skills = {s.name: s for s in skills}
         self._emit_reloaded()
 
     async def reload(self) -> None:
-        """Async-Reload mit Lock."""
+        """Async reload with lock."""
         async with self._async_lock:
             skills = await asyncio.get_event_loop().run_in_executor(
                 None, discover_skills, self.root
@@ -316,7 +316,7 @@ class SkillRegistry:
             1 for s in self._skills.values() if s.state == SkillLifecycleState.DRAFT
         )
         evt = SkillRegistryReloaded(total=total, active=active, draft=draft)
-        # bus.publish ist async — feuern und vergessen
+        # bus.publish is async — fire and forget
         try:
             loop = self._loop or asyncio.get_event_loop()
             if loop.is_running():
@@ -329,16 +329,16 @@ class SkillRegistry:
     # ------------------------------------------------------------------
 
     def start_watcher(self, loop: asyncio.AbstractEventLoop | None = None) -> bool:
-        """Startet den Filesystem-Watcher (falls watchdog installiert).
+        """Starts the filesystem watcher (if watchdog is installed).
 
-        Returns True bei Erfolg, False wenn watchdog nicht vorhanden oder Root
-        nicht existiert.
+        Returns True on success, False if watchdog is missing or the root
+        doesn't exist.
         """
         if not _HAVE_WATCHDOG:
-            log.info("watchdog nicht installiert — kein Hot-Reload")
+            log.info("watchdog not installed — no hot reload")
             return False
         if not self.root.exists():
-            log.warning("skill-root existiert nicht: %s", self.root)
+            log.warning("skill root does not exist: %s", self.root)
             return False
 
         self._loop = loop or asyncio.get_event_loop()
@@ -372,8 +372,8 @@ class SkillRegistry:
         self._observer = None
 
     def _schedule_reload(self) -> None:
-        """Debounce-Mechanismus: bei schnell aufeinanderfolgenden FS-Events
-        warten wir `debounce_ms`, bevor wir tatsächlich reloaden."""
+        """Debounce mechanism: on rapidly successive FS events, we
+        wait `debounce_ms` before actually reloading."""
         deadline = time.monotonic() + self._debounce_ms / 1000.0
         with self._thread_lock:
             self._pending_reload = deadline
@@ -391,7 +391,7 @@ class SkillRegistry:
             self._pending_reload = None
         if deadline is None:
             return
-        # Wenn zwischenzeitlich ein neuerer Reload geplant wurde, skippen
+        # If a newer reload was scheduled in the meantime, skip
         if time.monotonic() + 0.001 < deadline:
             return
         try:

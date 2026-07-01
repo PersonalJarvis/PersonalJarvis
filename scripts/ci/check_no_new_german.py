@@ -178,6 +178,39 @@ def get_diff(base: str) -> str:
     return result.stdout
 
 
+def get_staged_diff() -> str:
+    """Unified diff of the STAGED index vs HEAD (additions only) — for pre-commit.
+
+    Lets the gate run at COMMIT time (the real write path, incl. the auto-save
+    stop-hook), not only on an explicit push/PR.
+    """
+    result = _git(["diff", "--cached", "--unified=0", "--no-color", "--diff-filter=AM"])
+    return result.stdout
+
+
+def scan_all_tracked(patterns: list[str]) -> list[tuple[str, int, str]]:
+    """Whole-tree scan of every git-tracked, scanned, non-allowlisted file.
+
+    For the public-release gate: a depersonalized snapshot must be German-free in
+    FULL, not just in a diff (the diff/PR gates are structurally blind to backlog).
+    """
+    out: list[tuple[str, int, str]] = []
+    for path in _git(["ls-files"]).stdout.splitlines():
+        path = path.strip()
+        if not path or not is_scanned(path) or is_allowlisted(path, patterns):
+            continue
+        try:
+            content = (Path.cwd() / path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for lineno, line in enumerate(content.splitlines(), start=1):
+            if _INLINE_ESCAPE in line:
+                continue
+            if looks_german(line):
+                out.append((path, lineno, line.strip()[:120]))
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     # Windows consoles default to cp1252; make the stream UTF-8 where
@@ -187,17 +220,31 @@ def main(argv: list[str] | None = None) -> int:
     except (AttributeError, ValueError):
         pass
 
-    base = resolve_base(argv)
-    diff_text = get_diff(base)
-    added = parse_added_lines(diff_text)
+    flags = {a for a in argv if a.startswith("--")}
+    positional = [a for a in argv if not a.startswith("--")]
     patterns = load_allowlist()
-    violations = find_violations(added, patterns)
+
+    if "--all" in flags:
+        # Whole-tree scan (public-release snapshot gate).
+        violations = scan_all_tracked(patterns)
+        scope = "whole tree"
+    elif "--staged" in flags:
+        # Staged index vs HEAD (pre-commit).
+        added = parse_added_lines(get_staged_diff())
+        violations = find_violations(added, patterns)
+        scope = "staged changes"
+    else:
+        # Default: added lines vs a diff base (pre-push / PR CI).
+        base = resolve_base(positional)
+        added = parse_added_lines(get_diff(base))
+        violations = find_violations(added, patterns)
+        scope = f"added lines (diff base: {base})"
 
     if violations:
-        print("OUTPUT-LANGUAGE GATE FAILED - newly added German text detected.\n")
+        print("OUTPUT-LANGUAGE GATE FAILED - German text detected.\n")
         print(
             "Every committed artifact must be English (CLAUDE.md, Output Language\n"
-            "Policy). The lines below were ADDED by this change and look German:\n"
+            f"Policy). The lines below ({scope}) look German:\n"
         )
         for path, lineno, text in violations:
             print(f"  [x] {path}:{lineno}")
@@ -210,10 +257,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    print(
-        f"output-language gate OK - no new German in the added lines "
-        f"(diff base: {base})."
-    )
+    print(f"output-language gate OK - no German ({scope}).")
     return 0
 
 

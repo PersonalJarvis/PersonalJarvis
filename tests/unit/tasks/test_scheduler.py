@@ -1,4 +1,4 @@
-"""Unit-Tests fuer TaskScheduler — heap, event-dispatch, cancel."""
+"""Unit tests for TaskScheduler — heap, event dispatch, cancel."""
 from __future__ import annotations
 
 import asyncio
@@ -153,7 +153,7 @@ async def test_on_event_filter_expr_blocks_non_match(
     )
     await scheduler.schedule(spec)
 
-    # assistant-Message → sollte NICHT dispatched werden
+    # assistant message → should NOT be dispatched
     await bus.publish(MessageSent(thread_id="t1", role="assistant", text="hi"))
     assert runner.dispatched == []
 
@@ -184,7 +184,7 @@ async def test_cancel_before_fire_prevents_run(
     ok = await scheduler.cancel_task(tid)
     assert ok is True
 
-    # Kurz warten, sollte NICHT gedispatcht werden
+    # Wait briefly, should NOT be dispatched
     await asyncio.sleep(0.2)
     assert runner.dispatched == []
 
@@ -204,7 +204,7 @@ async def test_hydrate_restores_scheduled_tasks(
     tmp_path: Path, bus: EventBus, runner: FakeRunner
 ) -> None:
     db = tmp_path / "hydrate.db"
-    # Vorbereitung: Store mit einem geschedulten Task
+    # Setup: store with one scheduled task
     store1 = TaskStore(db)
     await store1.init()
     spec = TaskSpec(
@@ -249,10 +249,10 @@ def test_filter_expr_rejects_dangerous_input() -> None:
     assert _match_filter(evt, None) is True
     assert _match_filter(evt, "") is True
 
-    # Function-Calls sind nicht erlaubt
+    # Function calls are not allowed
     assert _match_filter(evt, "__import__('os').system('dir')") is False
 
-    # Attribute-Access ist nicht erlaubt
+    # Attribute access is not allowed
     assert _match_filter(evt, "role.upper() == 'USER'") is False
 
     # Einfache Vergleiche funktionieren

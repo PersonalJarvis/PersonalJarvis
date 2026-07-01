@@ -53,16 +53,16 @@ def test_save_writes_to_downloads(home: Path) -> None:
     client = _client(native=True, home=home)
     res = client.post(
         "/api/downloads/save",
-        json={"filename": "note.txt", "content_b64": _b64("hällo".encode())},
+        json={"filename": "note.txt", "content_b64": _b64("hällo".encode())},  # i18n-allow
     )
     assert res.status_code == 200, res.text
     data = res.json()
     target = home / "Downloads" / "note.txt"
     assert target.exists()
-    assert target.read_text(encoding="utf-8") == "hällo"
+    assert target.read_text(encoding="utf-8") == "hällo"  # i18n-allow
     assert data["saved_path"] == str(target)
     assert data["filename"] == "note.txt"
-    assert data["bytes_written"] == len("hällo".encode())
+    assert data["bytes_written"] == len("hällo".encode())  # i18n-allow
 
 
 def test_save_disabled_returns_404(home: Path) -> None:
@@ -124,3 +124,72 @@ def test_save_rejects_oversized(home: Path, monkeypatch: pytest.MonkeyPatch) -> 
         json={"filename": "big.bin", "content_b64": _b64(b"x" * 16)},
     )
     assert res.status_code == 413
+
+
+# --- reveal / open (native "show in folder" + "open" for a saved file) -------
+
+
+def _make_download(home: Path, name: str = "voice-session.md") -> Path:
+    downloads = home / "Downloads"
+    downloads.mkdir(parents=True, exist_ok=True)
+    f = downloads / name
+    f.write_text("# transcript", encoding="utf-8")
+    return f
+
+
+@pytest.mark.parametrize("route", ["reveal", "open"])
+def test_reveal_open_disabled_returns_404(home: Path, route: str) -> None:
+    client = _client(native=False, home=home)
+    res = client.post(f"/api/downloads/{route}", json={"path": str(_make_download(home))})
+    assert res.status_code == 404
+
+
+@pytest.mark.parametrize("route", ["reveal", "open"])
+def test_reveal_open_rejects_outside_downloads(home: Path, route: str) -> None:
+    client = _client(native=True, home=home)
+    _make_download(home)  # ensure Downloads exists
+    outside = home / "secret.txt"
+    outside.write_text("x", encoding="utf-8")
+    res = client.post(f"/api/downloads/{route}", json={"path": str(outside)})
+    assert res.status_code == 403
+
+
+@pytest.mark.parametrize("route", ["reveal", "open"])
+def test_reveal_open_missing_file_returns_404(home: Path, route: str) -> None:
+    client = _client(native=True, home=home)
+    (home / "Downloads").mkdir(parents=True, exist_ok=True)
+    gone = home / "Downloads" / "gone.md"
+    res = client.post(f"/api/downloads/{route}", json={"path": str(gone)})
+    assert res.status_code == 404
+
+
+def test_reveal_invokes_helper_with_resolved_path(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import jarvis.platform.open_path as open_path
+
+    calls: list[Path] = []
+    monkeypatch.setattr(
+        open_path, "reveal_in_folder", lambda p: (calls.append(p), True)[1]
+    )
+    client = _client(native=True, home=home)
+    f = _make_download(home)
+    res = client.post("/api/downloads/reveal", json={"path": str(f)})
+    assert res.status_code == 200, res.text
+    assert res.json() == {"revealed": True}
+    assert calls and calls[0] == f.resolve()
+
+
+def test_open_invokes_helper_and_reports_failure(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import jarvis.platform.open_path as open_path
+
+    calls: list[Path] = []
+    monkeypatch.setattr(open_path, "open_file", lambda p: (calls.append(p), False)[1])
+    client = _client(native=True, home=home)
+    f = _make_download(home)
+    res = client.post("/api/downloads/open", json={"path": str(f)})
+    assert res.status_code == 200, res.text
+    assert res.json() == {"opened": False}
+    assert calls and calls[0] == f.resolve()

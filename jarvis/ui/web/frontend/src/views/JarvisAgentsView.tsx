@@ -1,11 +1,11 @@
 /**
- * SubAgentsView — Live-Tafel aller aktiven Jarvis-Agents.
+ * SubAgentsView — live board of all active Jarvis-Agents.
  *
- * Statt einer ReactFlow-Canvas mit Karten rendert die View jetzt eine
- * Bahnhofs-Abfahrtstafel (DepartureBoard), die sich kontinuierlich vom
- * leeren Standby-Zustand zum aktiven Drilldown-Zustand fuellt. Alle
- * Tool-Calls sind inline pro Agent-Zeile aufklappbar — kein Box-Layout,
- * keine Canvas, alles in einer Spalte.
+ * Instead of a ReactFlow canvas with cards, the view now renders a
+ * train-station departure board (DepartureBoard) that continuously fills
+ * from the empty standby state to the active drilldown state. All
+ * tool calls are expandable inline per agent row — no box layout,
+ * no canvas, everything in one column.
  */
 import { Trash2, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";

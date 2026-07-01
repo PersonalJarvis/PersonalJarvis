@@ -1,13 +1,13 @@
-"""Tests fuer NDJSON-Stream-Consumer (Claude + Codex).
+"""Tests for the NDJSON stream consumer (Claude + Codex).
 
-Deckt:
-- Roundtrip jedes Pydantic-Models gegen seine NDJSON-Repraesentation.
-- Edge-Case: leere Zeile, Whitespace-only, ungueltiges JSON, JSON-Array statt
-  Object, unbekannter Top-Level-`type`, unbekannter `system.subtype`.
-- `read_ndjson_stream`: liest mehrere Events, ueberspringt Garbage, schreibt
-  Tee-Datei korrekt, beendet bei EOF.
+Covers:
+- Roundtrip of every Pydantic model against its NDJSON representation.
+- Edge cases: empty line, whitespace-only, invalid JSON, JSON array instead
+  of object, unknown top-level `type`, unknown `system.subtype`.
+- `read_ndjson_stream`: reads multiple events, skips garbage, writes the
+  tee file correctly, terminates on EOF.
 
-Style: pytest-asyncio (Project-Default in pyproject.toml).
+Style: pytest-asyncio (project default in pyproject.toml).
 """
 from __future__ import annotations
 
@@ -170,7 +170,7 @@ class TestParseClaudeStreamJson:
         assert parse_claude_stream_json(line) is None
 
     def test_extra_fields_are_ignored(self) -> None:
-        # CLI fuegt neue Felder hinzu — wir crashen NICHT.
+        # CLI adds new fields — we do NOT crash.
         line = json.dumps(
             {
                 "type": "system",
@@ -185,14 +185,14 @@ class TestParseClaudeStreamJson:
         assert ev.session_id == "x"
 
     def test_partial_line_with_no_newline(self) -> None:
-        # Partial-Line (kein Newline am Ende) wird trotzdem geparst.
+        # Partial line (no trailing newline) is still parsed.
         line = '{"type":"assistant","message":{"role":"assistant"}}'
         ev = parse_claude_stream_json(line)
         assert isinstance(ev, ClaudeAssistantMessage)
 
 
 # ---------------------------------------------------------------------------
-# Codex-Parser-Tests
+# Codex parser tests
 # ---------------------------------------------------------------------------
 
 
@@ -248,19 +248,19 @@ class TestParseCodexStreamJson:
         )
         ev = parse_codex_stream_json(line)
         assert isinstance(ev, CodexItem)
-        # type wird normalisiert (item.created ist in der Literal-Union).
+        # type gets normalized (item.created is in the literal union).
         assert ev.type == "item.created"
         assert ev.payload["id"] == "i1"
         assert ev.payload["kind"] == "tool_use"
-        # `type`-Feld selbst landet NICHT im payload (wir filtern es heraus).
+        # the `type` field itself does NOT end up in payload (we filter it out).
         assert "type" not in ev.payload
 
     def test_item_unknown_subtype_falls_back_to_generic_item(self) -> None:
-        # Schema-Drift: neuer item.foo-Typ den unsere Literal-Union nicht kennt.
+        # Schema drift: a new item.foo type our literal union doesn't know.
         line = json.dumps({"type": "item.brand_new", "data": 42})
         ev = parse_codex_stream_json(line)
         assert isinstance(ev, CodexItem)
-        # Faellt zurueck auf 'item' weil 'item.brand_new' nicht in der Literal-Union steht.
+        # Falls back to 'item' because 'item.brand_new' is not in the literal union.
         assert ev.type == "item"
         assert ev.payload["data"] == 42
 
@@ -274,7 +274,7 @@ class TestParseCodexStreamJson:
         assert parse_codex_stream_json("garbage{") is None
 
     def test_unknown_top_type(self) -> None:
-        # Nicht 'item.*', nicht in der bekannten Liste -> None.
+        # Not 'item.*', not in the known list -> None.
         assert parse_codex_stream_json(json.dumps({"type": "wat", "x": 1})) is None
 
     def test_extra_fields_ignored(self) -> None:
@@ -290,12 +290,12 @@ class TestParseCodexStreamJson:
 
 
 # ---------------------------------------------------------------------------
-# read_ndjson_stream-Tests
+# read_ndjson_stream tests
 # ---------------------------------------------------------------------------
 
 
 def _make_reader(payload: bytes) -> asyncio.StreamReader:
-    """Baut einen asyncio.StreamReader mit fertigem Datenpuffer."""
+    """Builds an asyncio.StreamReader with a ready-made data buffer."""
     reader = asyncio.StreamReader()
     reader.feed_data(payload)
     reader.feed_eof()

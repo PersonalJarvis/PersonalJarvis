@@ -6,7 +6,7 @@ must surface as ``"persisted": false`` so the UI knows the choice will not
 survive a restart — never a silent success.
 
 These tests use a FakeBrainManager and monkeypatch ``config_writer`` so they
-never touch the live jarvis.toml, config-soll.json, or registry.
+never touch the live jarvis.toml, config-soll.json, or registry.  # i18n-allow
 """
 from __future__ import annotations
 

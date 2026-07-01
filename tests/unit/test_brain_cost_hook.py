@@ -1,7 +1,7 @@
-"""Regression-Tests fuer H13: CostMeter-Hook im BrainManager.
+"""Regression tests for H13: CostMeter hook in BrainManager.
 
-Deckt die Pre-Call-Gate-Pfade (Cooldown, Task-Budget, Tages-Budget)
-und die Post-Call-Usage-Fuetterung.
+Covers the pre-call gate paths (cooldown, task budget, daily budget)
+and the post-call usage feed.
 """
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ import pytest
 from jarvis.control.cost import BudgetConfig, CostMeter, ModelPrice
 
 # ---------------------------------------------------------------------
-# Minimal-Harness: Real-BrainManager zu initialisieren ist teuer.
-# Wir stubben die Dispatch-Grenze, indem wir direkt den Cost-Hook-Flow
-# als Funktion ausfahren wie es generate() tut.
+# Minimal harness: initializing a real BrainManager is expensive.
+# We stub the dispatch boundary by running the cost-hook flow directly
+# as a function, the way generate() does.
 # ---------------------------------------------------------------------
 
 @dataclass
@@ -85,7 +85,7 @@ def test_meter_accumulates_on_dispatch(tmp_path):
     ))
     # 1.0 USD × eur_per_usd=1.0 = 1.0 EUR == per_task_eur
     assert meter.total_for(tid) == pytest.approx(1.0)
-    assert not meter.over_task_budget(tid)            # nicht > 1.0
+    assert not meter.over_task_budget(tid)            # not > 1.0
     meter.add(CostRecord(
         trace_id=tid, provider="test", model="test",
         tokens_in=1, tokens_out=1, tokens_cache_hit=0,
@@ -95,8 +95,8 @@ def test_meter_accumulates_on_dispatch(tmp_path):
 
 
 def test_cooldown_blocks_new_requests(tmp_path):
-    """Nach Tages-Overrun setzt der Meter Cooldown — der Pre-Gate muss
-    das erkennen und Brain-Dispatch uebergehen.
+    """After a daily overrun, the meter sets a cooldown — the pre-gate must
+    detect that and skip the brain dispatch.
     """
     meter = _make_meter(tmp_path, per_day_eur=0.5, cooldown_minutes=60)
     meter.start_cooldown("test")

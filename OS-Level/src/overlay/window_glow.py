@@ -1,15 +1,15 @@
-"""EdgeGlowWindow — transparentes click-through Frameless-Fenster pro Screen.
+"""EdgeGlowWindow — transparent click-through frameless window per screen.
 
-Phase 9.3: Test-Quadrat ist raus, statt dessen rendert ein
-``QWebEngineView`` die ``overlay-ui/dist/edge-glow.html``. Eine
-``StateBridge`` wird via ``QWebChannel`` als ``stateBridge`` exposed —
-der TS-Renderer subscribed auf ``stateChanged`` und liest ``currentState``.
+Phase 9.3: the test square is gone; instead a ``QWebEngineView`` renders
+``overlay-ui/dist/edge-glow.html``. A ``StateBridge`` is exposed via
+``QWebChannel`` as ``stateBridge`` — the TS renderer subscribes to
+``stateChanged`` and reads ``currentState``.
 
-Window-Flags strikt nach Plan §12.1.
+Window flags strictly follow Plan §12.1.
 
-WICHTIG: Wenn ``overlay-ui/dist/edge-glow.html`` nicht existiert (z.B.
-weil noch nie gebuildet), laedt der View ``about:blank`` und loggt eine
-Warnung. Das verhindert Crashes in CI/Smoke-Pfaden ohne Frontend-Build.
+IMPORTANT: if ``overlay-ui/dist/edge-glow.html`` doesn't exist (e.g.
+because it was never built), the view loads ``about:blank`` and logs a
+warning. This prevents crashes in CI/smoke paths without a frontend build.
 """
 
 from __future__ import annotations
@@ -44,26 +44,26 @@ if TYPE_CHECKING:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 
-# Plan §22 — Vite-Build legt das HTML genau hier ab.
+# Plan §22 — the Vite build places the HTML exactly here.
 _EDGE_GLOW_HTML = (
     Path(__file__).resolve().parents[2] / "overlay-ui" / "dist" / "edge-glow.html"
 )
 
 
 class StateBridge(QObject):
-    """QObject das via QWebChannel als ``stateBridge`` exposed wird.
+    """QObject exposed via QWebChannel as ``stateBridge``.
 
-    Der TS-Renderer (``overlay-ui/src/edge-glow/main.ts``) verbindet
-    seinen Handler auf ``stateChanged`` und ruft ``currentState`` fuer das
-    initiale Frame.
+    The TS renderer (``overlay-ui/src/edge-glow/main.ts``) connects
+    its handler to ``stateChanged`` and calls ``currentState`` for the
+    initial frame.
 
-    Das Object MUSS im GUI-Thread instantiiert werden — Qt-Signals werden
-    automatisch per ``QueuedConnection`` an die GUI-Thread-Slots
-    marshalled, wenn ``emit()`` aus dem IPC-Thread kommt.
+    This object MUST be instantiated on the GUI thread — Qt signals are
+    automatically marshalled to the GUI thread slots via
+    ``QueuedConnection`` when ``emit()`` is called from the IPC thread.
     """
 
-    # (old, new, reason) — alle drei strings, weil JS-Signal-Routing nur
-    # primitive Typen sauber serialisiert.
+    # (old, new, reason) — all three strings, since JS signal routing
+    # only cleanly serializes primitive types.
     stateChanged = Signal(str, str, str)
 
     def __init__(
@@ -71,8 +71,9 @@ class StateBridge(QObject):
     ) -> None:
         super().__init__(parent)
         self._machine = machine
-        # Subscriber wird sync vom StateMachine-Caller-Thread aufgerufen.
-        # Wir feuern hier nur das Qt-Signal — Qt marshalled es selbst.
+        # The subscriber is called synchronously on the StateMachine
+        # caller thread. We only fire the Qt signal here — Qt marshals
+        # it itself.
         self._unsubscribe = machine.subscribe(self._on_state_change)
 
     def _on_state_change(
@@ -84,8 +85,8 @@ class StateBridge(QObject):
         try:
             self.stateChanged.emit(old.value, new.value, reason or "")
         except RuntimeError:
-            # Window wurde bereits zerstoert -> Subscriber wird gleich
-            # detached; harmlos.
+            # Window has already been destroyed -> the subscriber is
+            # about to be detached; harmless.
             logger.debug("StateBridge.emit on dead QObject")
 
     @Slot(result=str)
@@ -93,27 +94,27 @@ class StateBridge(QObject):
         return self._machine.state.value
 
     def shutdown(self) -> None:
-        """Unsubscribe vom StateMachine — aufrufen vor ``deleteLater()``."""
+        """Unsubscribe from the StateMachine — call before ``deleteLater()``."""
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None
 
 
 class EffectsBridge(QObject):
-    """QObject das via QWebChannel als ``effectsBridge`` exposed wird.
-    Phase 9.5 — feuert die Action-Effects (Click-Ripple, Cursor-Trail,
-    Typing-Sweep).
+    """QObject exposed via QWebChannel as ``effectsBridge``.
+    Phase 9.5 — fires the action effects (click ripple, cursor trail,
+    typing sweep).
 
-    Signale gehen 1:1 zum TS-Renderer (Plan §14/§15/§16). Coords sind
-    immer PHYSICAL px (Plan §14.4 + §11.2); Renderer konvertiert per
+    Signals go 1:1 to the TS renderer (Plan §14/§15/§16). Coords are
+    always PHYSICAL px (Plan §14.4 + §11.2); the renderer converts via
     devicePixelRatio.
     """
 
     # x, y physical px, monitor_idx, button.
     clickEvent = Signal(int, int, int, str)
-    # x, y physical px (aus SHM oder WS-Fallback).
+    # x, y physical px (from SHM or the WS fallback).
     cursorMoved = Signal(int, int)
-    # kind, duration_hint_ms (-1 wenn nicht gesetzt).
+    # kind, duration_hint_ms (-1 if not set).
     actionStarted = Signal(str, int)
     actionEnded = Signal()
 
@@ -146,11 +147,11 @@ class EffectsBridge(QObject):
 
 
 class _TransparentWebPage(QWebEnginePage):
-    """Page mit transparentem Hintergrund.
+    """Page with a transparent background.
 
-    Ohne diesen Override rendert Chromium einen weissen Background
-    selbst wenn ``body { background: transparent }`` gesetzt ist. Plan
-    §12.1 + AD-1 fordern echte Compositor-Transparenz.
+    Without this override, Chromium renders a white background even
+    when ``body { background: transparent }`` is set. Plan §12.1 + AD-1
+    require true compositor transparency.
     """
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
@@ -159,11 +160,11 @@ class _TransparentWebPage(QWebEnginePage):
 
 
 class EdgeGlowWindow(QWidget):
-    """Frameless, transparent, click-through, immer oben.
+    """Frameless, transparent, click-through, always on top.
 
-    Geometrie deckt den vollen Monitor ab. Im Gegensatz zur 9.1-Version
-    rendert hier ein ``QWebEngineView`` die echte HTML/CSS-Pipeline; das
-    statische Test-Quadrat ist entfernt.
+    Geometry covers the full monitor. Unlike the 9.1 version, a
+    ``QWebEngineView`` renders the real HTML/CSS pipeline here; the
+    static test square has been removed.
     """
 
     def __init__(
@@ -182,8 +183,8 @@ class EdgeGlowWindow(QWidget):
         self._state_machine = state_machine
         self._effects_bridge = effects_bridge
         self._html_path = html_path or _EDGE_GLOW_HTML
-        # Plan §18.1 — screenChanged-Signal wird in showEvent verbunden,
-        # weil windowHandle() vor show() None sein kann.
+        # Plan §18.1 — the screenChanged signal is connected in showEvent,
+        # since windowHandle() can be None before show().
         self._screen_change_connected: bool = False
 
         # Plan §12.1 — exakt diese Flag-Kombination.
@@ -202,23 +203,23 @@ class EdgeGlowWindow(QWidget):
         self.setScreen(screen)
         self.setGeometry(screen.geometry())
 
-        # Layout + WebView. Margins 0 damit der Render-Surface die volle
-        # Window-Geometrie nutzt — sonst gibt es einen 9-px Default-Rand.
+        # Layout + WebView. Margins 0 so the render surface uses the
+        # full window geometry — otherwise there's a 9 px default margin.
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
         self._view = QWebEngineView(self)
-        # Kein Background-Repaint vom Widget selbst.
+        # No background repaint from the widget itself.
         self._view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._view.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
         page = _TransparentWebPage(self._view)
         self._view.setPage(page)
 
-        # WebChannel + StateBridge wenn StateMachine geliefert wurde.
-        # Das ist optional damit Phase-9.1-Smoke-Tests ohne Machine
-        # weiter laufen. Phase 9.5 haengt zusaetzlich die effectsBridge
-        # an wenn ``effects_bridge`` gesetzt ist.
+        # WebChannel + StateBridge if a StateMachine was supplied.
+        # This is optional so Phase 9.1 smoke tests keep working
+        # without a machine. Phase 9.5 additionally attaches the
+        # effectsBridge if ``effects_bridge`` is set.
         self._channel: Optional[QWebChannel] = None
         self._bridge: Optional[StateBridge] = None
         if state_machine is not None:
@@ -229,14 +230,14 @@ class EdgeGlowWindow(QWidget):
                 self._channel.registerObject("effectsBridge", effects_bridge)
             page.setWebChannel(self._channel)
 
-        # HTML laden — wenn nicht vorhanden: about:blank + Warnung.
+        # Load HTML — if it doesn't exist: about:blank + warning.
         if self._html_path.is_file():
             url = QUrl.fromLocalFile(str(self._html_path))
             self._view.setUrl(url)
         else:
             logger.warning(
-                "edge-glow.html nicht gefunden unter %s — "
-                "rendere about:blank (vergiss `npm run build` im overlay-ui/?)",
+                "edge-glow.html not found at %s — "
+                "rendering about:blank (did you forget `npm run build` in overlay-ui/?)",
                 self._html_path,
             )
             self._view.setUrl(QUrl("about:blank"))
@@ -244,18 +245,18 @@ class EdgeGlowWindow(QWidget):
         layout.addWidget(self._view)
 
     def showEvent(self, event) -> None:  # type: ignore[override]
-        """Setzt Win32-Affinity nachdem das HWND existiert."""
+        """Sets the Win32 affinity after the HWND exists."""
         super().showEvent(event)
         hwnd = int(self.winId())
-        # Defense-in-Depth: Qt setzt WS_EX_TRANSPARENT durch
-        # WindowTransparentForInput — wir setzen es nochmal explizit, falls
-        # ein spaeterer setWindowFlags-Call das Bit clearen sollte.
+        # Defense-in-depth: Qt sets WS_EX_TRANSPARENT via
+        # WindowTransparentForInput — we set it again explicitly in case
+        # a later setWindowFlags() call clears the bit.
         apply_click_through(hwnd)
         if self._hide_from_capture:
             exclude_from_capture(hwnd)
-        # Plan §18.1 — bei screenChanged + DPI-Wechseln re-applien.
-        # Wir verbinden das Signal hier (nach winId() existiert), nicht
-        # in __init__, weil windowHandle() vor showEvent None sein kann.
+        # Plan §18.1 — re-apply on screenChanged + DPI changes.
+        # We connect the signal here (after winId() exists), not in
+        # __init__, since windowHandle() can be None before showEvent.
         if not self._screen_change_connected:
             handle = self.windowHandle()
             if handle is not None:
@@ -263,7 +264,7 @@ class EdgeGlowWindow(QWidget):
                 self._screen_change_connected = True
 
     def _on_screen_changed(self, _screen) -> None:
-        """Reapply Affinity nach DPI-Wechsel oder Monitor-Hotplug.
+        """Reapply affinity after a DPI change or monitor hotplug.
         Plan §18.1."""
         if not self._hide_from_capture:
             return
@@ -274,8 +275,8 @@ class EdgeGlowWindow(QWidget):
         reapply_capture_affinity(hwnd)
 
     def set_view_visible(self, visible: bool) -> None:
-        """Plan §17.3 — Hide-on-5-min-Idle macht WebView IsVisible False
-        damit Chromium den View komplett pausiert."""
+        """Plan §17.3 — hide-on-5-min-idle sets the WebView's IsVisible
+        to False so Chromium fully pauses the view."""
         self._view.setVisible(visible)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]

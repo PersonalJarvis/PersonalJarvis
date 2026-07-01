@@ -1,10 +1,10 @@
-"""Task-Queue (Phase 5 Capability 4).
+"""Task queue (Phase 5 Capability 4).
 
-Persistente, crash-safe Tasks mit Retry-Logic. Storage in der Memory-DB
-(ADR-0003), Scheduler ist Lightweight + asyncio (ADR-0005).
+Persistent, crash-safe tasks with retry logic. Storage in the memory DB
+(ADR-0003), scheduler is lightweight + asyncio (ADR-0005).
 
 Exports:
-- Schema-Klassen (TaskSpec, Trigger-Varianten, Action-Varianten) aus
+- Schema classes (TaskSpec, trigger variants, action variants) from
   ``jarvis.tasks.schema``.
 - Implementations: ``TaskStore``, ``TaskScheduler``, ``TaskRunner``.
 """

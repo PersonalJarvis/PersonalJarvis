@@ -58,7 +58,7 @@ export interface DocSearchResult {
   score: number;
 }
 
-// Reihenfolge fuer die Sidebar — analog backend ``/api/docs/grouped``.
+// Order for the sidebar — mirrors backend ``/api/docs/grouped``.
 export const DIATAXIS_ORDER: DocDiataxis[] = [
   "tutorial",
   "howto",

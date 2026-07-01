@@ -2,7 +2,7 @@
 
 Live repro (jarvis_desktop.log, 2026-05-31 14:31:40 .. 14:32:13):
 
-    14:31:40  user: "Kannst du fuer mich bitte eine HTML-Datei erstellen ..."
+    14:31:40  user: "Kannst du fuer mich bitte eine HTML-Datei erstellen ..."  # i18n-allow
     14:31:51  Spawn-ACK suppressed  -> _schedule_spawn_watchdog() armed
     14:32:13  Idle-Timeout -> lege auf.            <-- session hung up
     14:32:20  ClaudeDirectWorker done (still running when the hangup fired)

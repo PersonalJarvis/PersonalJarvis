@@ -1,11 +1,11 @@
 /**
- * Sidebar-Liste der Voice-Sessions, neueste zuerst.
+ * Sidebar list of voice sessions, newest first.
  *
- * Eine Zeile = eine Session-Card mit:
- *  - Datum + Zeit (relativ zu jetzt)
- *  - Dauer / Turn-Count
- *  - Erste User-Utterance als Preview
- *  - Hangup-Reason als Badge
+ * One row = one session card with:
+ *  - Date + time (relative to now)
+ *  - Duration / turn count
+ *  - First user utterance as a preview
+ *  - Hangup reason as a badge
  */
 import { Clock, Loader2, Mic, MicOff } from "lucide-react";
 

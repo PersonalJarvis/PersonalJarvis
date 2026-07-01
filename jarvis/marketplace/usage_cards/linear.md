@@ -1,6 +1,6 @@
 ---
 plugin_id: linear
-keywords: linear, issue, issues, ticket, tickets, aufgabe, aufgaben, task, tasks, bug, bugs, sprint, projekt, project, backlog, roadmap, zyklus, cycle, team, status, priorität, priority
+keywords: linear, issue, issues, ticket, tickets, aufgabe, aufgaben, task, tasks, bug, bugs, sprint, projekt, project, backlog, roadmap, zyklus, cycle, team, status, priorität, priority  # i18n-allow
 ---
 Use linear/* tools to create, update, search, and close issues and projects.
 - Resolve team identifiers before creating issues; do not guess team IDs.

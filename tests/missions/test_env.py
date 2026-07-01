@@ -1,4 +1,4 @@
-"""Tests fuer build_worker_env — Allowlist-Strikt + FIX-Defaults + Optional-Keys."""
+"""Tests for build_worker_env — strict allowlist + fixed defaults + optional keys."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -63,7 +63,7 @@ def test_appdata_is_passed_through(tmp_path: Path) -> None:
 
 
 def test_missing_system_var_is_simply_omitted(tmp_path: Path) -> None:
-    """Wenn z.B. LOCALAPPDATA in os.environ fehlt, fehlt es auch im Output."""
+    """If e.g. LOCALAPPDATA is missing from os.environ, it's also missing from the output."""
     with patch.dict("os.environ", {"PATH": "/bin"}, clear=True):
         env = build_worker_env(run_dir=tmp_path)
     assert "PATH" in env
@@ -85,7 +85,7 @@ def test_fix_defaults_are_set(tmp_path: Path) -> None:
 
 
 def test_fix_defaults_override_inherited_values(tmp_path: Path) -> None:
-    """Auch wenn NO_COLOR/PYTHONIOENCODING in os.environ stehen, gewinnen die FIX-Defaults."""
+    """Even if NO_COLOR/PYTHONIOENCODING are set in os.environ, the fixed defaults win."""
     fake_env = {
         "NO_COLOR": "0",
         "PYTHONIOENCODING": "cp1252",
@@ -93,8 +93,8 @@ def test_fix_defaults_override_inherited_values(tmp_path: Path) -> None:
     }
     with patch.dict("os.environ", fake_env, clear=True):
         env = build_worker_env(run_dir=tmp_path)
-    # FIX-Defaults gewinnen, weil sie nicht in der Whitelist sind und
-    # explizit nach der Whitelist gesetzt werden.
+    # The fixed defaults win because they are not in the allowlist and
+    # are set explicitly after the allowlist.
     assert env["NO_COLOR"] == "1"
     assert env["PYTHONIOENCODING"] == "utf-8"
     assert env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
@@ -211,7 +211,7 @@ def test_openai_key_only_when_provided(tmp_path: Path) -> None:
 
 
 def test_empty_string_key_is_treated_as_missing(tmp_path: Path) -> None:
-    """`anthropic_api_key=""` ist semantisch "nicht gesetzt"."""
+    """`anthropic_api_key=""` is semantically "not set"."""
     with patch.dict("os.environ", {}, clear=True):
         env = build_worker_env(
             run_dir=tmp_path, anthropic_api_key="", openai_api_key=""
@@ -539,7 +539,7 @@ def test_classic_api_key_does_not_set_claude_code_oauth_token(tmp_path: Path) ->
 # NOT contain the Node.js dir. build_worker_env forwarded that broken PATH
 # verbatim, so the codex worker's `codex.CMD` shim resolved bare `node` via PATH,
 # cmd.exe failed "'node' is not recognized" and exited 1 in ~25 ms — every
-# mission died `task_error` ("Der Worker ist abgebrochen."). The env builder must
+# mission died `task_error` ("Der Worker ist abgebrochen."). The env builder must  # i18n-allow: quotes the actual German TTS readback phrase
 # ADDITIVELY repair the worker PATH (never reorder/drop) so essential System32 /
 # Node.js dirs are always present, and forward ComSpec/PATHEXT so .cmd shims and
 # `chcp` resolve regardless of how jarvis itself was launched.

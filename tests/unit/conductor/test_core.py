@@ -49,7 +49,7 @@ async def test_store_upsert_and_list(store: ConductorStore) -> None:
 
 
 async def test_store_denormalized_fields(store: ConductorStore) -> None:
-    """Cron-Expression und Webhook-Token müssen separat queryable sein."""
+    """Cron expression and webhook token must be separately queryable."""
     cron_job = Job(
         name="Cron",
         spec=ShellJobSpec(command="echo cron"),
@@ -177,7 +177,7 @@ async def test_http_handler_status_mismatch(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 async def test_agent_handler_no_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ohne ANTHROPIC_API_KEY muss der Agent einen klaren Fehler liefern."""
+    """Without ANTHROPIC_API_KEY the agent must return a clear error."""
     from conductor.jobs.agent import AgentHandler
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     spec = AgentJobSpec(
@@ -191,7 +191,7 @@ async def test_agent_handler_no_api_key(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 async def test_agent_gemini_no_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Kein GEMINI_API_KEY → klarer Fehler mit aistudio-Link."""
+    """No GEMINI_API_KEY → clear error with an aistudio link."""
     from conductor.jobs.agent import AgentHandler
     for k in ("GEMINI_API_KEY", "GOOGLE_AIStudio_API_KEY", "GOOGLE_API_KEY"):
         monkeypatch.delenv(k, raising=False)
@@ -227,7 +227,7 @@ async def test_agent_gemini_default_model_is_3_1_pro() -> None:
 async def test_agent_anthropic_missing_binary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Wenn 'claude' nicht im PATH: sauberer Fehler mit Setup-Hint."""
+    """When 'claude' is not on PATH: clean error with a setup hint."""
     from conductor.jobs.agent import AgentHandler
     monkeypatch.setattr("shutil.which", lambda name: None)
     spec = AgentJobSpec(
@@ -254,9 +254,9 @@ async def test_agent_anthropic_missing_binary(
 async def test_agent_anthropic_parses_json_output(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """Wir mocken 'claude' durch ein kleines Python-Script, das exakt das
-    JSON-Format von --output-format=json zurueckgibt (Feld 'result').
-    Der Handler muss es parsen und die Text-Antwort als output liefern."""
+    """We mock 'claude' with a small Python script that returns exactly the
+    JSON format of --output-format=json (field 'result').
+    The handler must parse it and return the text answer as output."""
     import json
     import sys
     from conductor.jobs.agent import AgentHandler
@@ -307,7 +307,7 @@ async def test_agent_anthropic_parses_json_output(
 async def test_agent_handler_template_expansion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``{{input.X}}`` muss vor dem LLM-Call expandiert werden."""
+    """``{{input.X}}`` must be expanded before the LLM call."""
     from conductor.jobs.agent import _expand_template
     out = _expand_template(
         "Hallo {{input.name}}, analysiere {{input.topic}}",
@@ -360,7 +360,7 @@ async def test_runner_shell_end_to_end(
 # ---------------------------------------------------------------------
 
 async def test_seed_yaml_loads(store: ConductorStore) -> None:
-    """Die 4 Seed-YAMLs werden ohne Fehler geparst + persistiert."""
+    """The 4 seed YAMLs are parsed and persisted without error."""
     added = await ensure_seed_jobs(store)
     assert added >= 3            # Mindestens 3, wir haben aktuell 4
     rows = await store.list_jobs()

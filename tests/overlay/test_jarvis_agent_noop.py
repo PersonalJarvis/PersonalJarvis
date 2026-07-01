@@ -1,8 +1,8 @@
-"""Sub-Agent No-Op-Pfad. Plan §8.7 + AD-6.
+"""Sub-agent no-op path. Plan §8.7 + AD-6.
 
-Wenn ``JARVIS_DEPTH > 0`` env, ist die OverlayBridge ein No-Op-Stub.
-Caller-Code sieht das gleiche Interface, aber Events werden nirgendwo
-hingesendet.
+When the ``JARVIS_DEPTH > 0`` env var is set, the OverlayBridge is a no-op
+stub. Caller code sees the same interface, but events are not sent
+anywhere.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ def test_get_overlay_returns_noop_stub_in_sub_agent(
 
 
 # -------------------------------------------------------------------------
-# NoOpOverlayBridge — alle emit-Methoden sind no-ops, kein IPC-Traffic
+# NoOpOverlayBridge — all emit methods are no-ops, no IPC traffic
 # -------------------------------------------------------------------------
 
 

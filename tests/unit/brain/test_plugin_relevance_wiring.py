@@ -19,7 +19,7 @@ def test_apply_plugin_relevance_drops_irrelevant():
     }
     for i in range(20):
         tools[f"github/tool_{i}"] = _T(f"github/tool_{i}")
-    out = mgr._apply_plugin_relevance("was habe ich heute für termine", tools)
+    out = mgr._apply_plugin_relevance("was habe ich heute für termine", tools)  # i18n-allow
     assert "run-shell" in out
     assert "google_calendar/list_events" in out
     assert not any(n.startswith("github/") for n in out)

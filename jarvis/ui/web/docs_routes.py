@@ -1,16 +1,16 @@
-"""REST-API fuer die Doc-Sektion der Desktop-UI.
+"""REST API for the doc section of the desktop UI.
 
 Endpoints:
-- ``GET /api/docs``                Liste mit Frontmatter-Metadaten (ohne Body).
-- ``GET /api/docs/grouped``        Gruppiert nach Diataxis-Quadrant — direkt
-                                   verwendbar fuer die Sidebar-Tree-View.
-- ``GET /api/docs/search``         FTS5-Volltextsuche mit BM25-Rank + Snippet.
-- ``GET /api/docs/asset/{path}``   Bilder/Static-Files relativ zum Doc-Pfad.
-- ``GET /api/docs/{slug}``         Voller Body + Frontmatter.
-- ``POST /api/docs/reload``        Forciert Re-Indexing (Dev-Helper).
+- ``GET /api/docs``                List with frontmatter metadata (no body).
+- ``GET /api/docs/grouped``        Grouped by Diataxis quadrant — directly
+                                   usable for the sidebar tree view.
+- ``GET /api/docs/search``         FTS5 full-text search with BM25 rank + snippet.
+- ``GET /api/docs/asset/{path}``   Images/static files relative to the doc path.
+- ``GET /api/docs/{slug}``         Full body + frontmatter.
+- ``POST /api/docs/reload``        Forces re-indexing (dev helper).
 
-Der Router erwartet eine ``DocRegistry`` auf ``app.state.doc_registry`` —
-``WebServer._setup_doc_registry()`` setzt sie beim Startup.
+The router expects a ``DocRegistry`` on ``app.state.doc_registry`` —
+``WebServer._setup_doc_registry()`` sets it at startup.
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ router = APIRouter(prefix="/api/docs", tags=["docs"])
 def _require_registry(request: Request) -> DocRegistry:
     reg = getattr(request.app.state, "doc_registry", None)
     if reg is None:
-        raise HTTPException(status_code=503, detail="DocRegistry nicht verfuegbar")
+        raise HTTPException(status_code=503, detail="DocRegistry not available")
     return reg
 
 
@@ -44,7 +44,7 @@ def _require_registry(request: Request) -> DocRegistry:
 # ----------------------------------------------------------------------
 
 def _frontmatter_dump(doc: Doc) -> dict[str, Any]:
-    """Pydantic ``model_dump`` mit ISO-Date-Strings (statt datetime)."""
+    """Pydantic ``model_dump`` with ISO date strings (instead of datetime)."""
     fm = doc.frontmatter
     return {
         "title": fm.title,
@@ -65,8 +65,8 @@ def _frontmatter_dump(doc: Doc) -> dict[str, Any]:
 
 
 def _doc_to_summary(doc: Doc) -> dict[str, Any]:
-    """Schlanke Repraesentation fuer ``GET /api/docs`` — ohne Body, ohne
-    Headings (TOC laedt das Frontend aus dem rohen Markdown beim Render).
+    """Lean representation for ``GET /api/docs`` — no body, no
+    headings (the frontend loads the TOC from the raw Markdown at render time).
     """
     return {
         **_frontmatter_dump(doc),
@@ -78,7 +78,7 @@ def _doc_to_summary(doc: Doc) -> dict[str, Any]:
 
 
 def _doc_to_detail(doc: Doc) -> dict[str, Any]:
-    """Vollausstattung fuer ``GET /api/docs/{slug}``."""
+    """Full payload for ``GET /api/docs/{slug}``."""
     out = _doc_to_summary(doc)
     out["body"] = doc.body
     out["headings"] = [
@@ -110,9 +110,9 @@ def list_docs(
 
 @router.get("/grouped")
 def grouped_docs(request: Request) -> dict[str, list[dict[str, Any]]]:
-    """Gruppiert nach Diataxis — Sidebar-Tree-Vorlage.
+    """Grouped by Diataxis — sidebar tree template.
 
-    Reihenfolge: tutorial -> howto -> explanation -> reference ->
+    Order: tutorial -> howto -> explanation -> reference ->
     troubleshooting -> adr -> unclassified.
     """
     reg = _require_registry(request)
@@ -145,7 +145,7 @@ def search_docs(
     limit: int = 20,
 ) -> list[dict[str, Any]]:
     if limit < 1 or limit > 100:
-        raise HTTPException(status_code=400, detail="limit muss zwischen 1 und 100 liegen")
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 100")
     reg = _require_registry(request)
     results = reg.search_query(q, diataxis=diataxis, limit=limit)
     return [
@@ -162,20 +162,20 @@ def search_docs(
 
 
 # ----------------------------------------------------------------------
-# Asset (Bilder relativ zum Doc-Pfad)
+# Asset (images relative to the doc path)
 # ----------------------------------------------------------------------
 
 @router.get("/asset/{slug}/{asset_path:path}")
 def get_asset(request: Request, slug: str, asset_path: str) -> FileResponse:
-    """Liefert eine Sibling-Datei (Bild, Diagramm) relativ zum Doc-Pfad.
+    """Returns a sibling file (image, diagram) relative to the doc path.
 
-    Path-Traversal-Schutz: das resolved Asset muss unter dem ``parent``
-    des Doc-Files liegen. Sonst 400.
+    Path-traversal protection: the resolved asset must live under the
+    ``parent`` of the doc file. Otherwise 400.
     """
     reg = _require_registry(request)
     doc = reg.get(slug)
     if doc is None:
-        raise HTTPException(status_code=404, detail=f"Doc '{slug}' nicht gefunden")
+        raise HTTPException(status_code=404, detail=f"Doc '{slug}' not found")
 
     base = doc.path.parent.resolve()
     target = (base / asset_path).resolve()
@@ -183,15 +183,15 @@ def get_asset(request: Request, slug: str, asset_path: str) -> FileResponse:
         target.relative_to(base)
     except ValueError as exc:
         raise HTTPException(
-            status_code=400, detail="Pfad-Traversal nicht erlaubt",
+            status_code=400, detail="path traversal not allowed",
         ) from exc
     if not target.is_file():
-        raise HTTPException(status_code=404, detail="Asset nicht vorhanden")
+        raise HTTPException(status_code=404, detail="asset does not exist")
     return FileResponse(target)
 
 
 # ----------------------------------------------------------------------
-# Detail (muss ans Ende — sonst frisst ``/{slug}`` die anderen Routen)
+# Detail (must go last — otherwise ``/{slug}`` swallows the other routes)
 # ----------------------------------------------------------------------
 
 @router.get("/{slug}")
@@ -199,26 +199,26 @@ def get_doc(request: Request, slug: str) -> dict[str, Any]:
     reg = _require_registry(request)
     doc = reg.get(slug)
     if doc is None:
-        raise HTTPException(status_code=404, detail=f"Doc '{slug}' nicht gefunden")
+        raise HTTPException(status_code=404, detail=f"Doc '{slug}' not found")
     return _doc_to_detail(doc)
 
 
 # ----------------------------------------------------------------------
-# Edit-this-page — oeffnet die .md im Windows-Standard-Editor
+# Edit-this-page — opens the .md in the Windows default editor
 # ----------------------------------------------------------------------
 
 @router.post("/{slug}/open")
 def open_doc_in_editor(request: Request, slug: str) -> dict[str, Any]:
-    """Oeffnet die Markdown-Datei im OS-Standard-Editor.
+    """Opens the Markdown file in the OS default editor.
 
-    Auf Windows: ``os.startfile`` startet den File-Type-Handler (typisch
-    Notepad, VSCode oder ein Markdown-Editor). Wir launchen NICHT als
-    elevated, das ist read+write fuer den User-Owner-Pfad — dem User
-    ist das Doc-Repo ohnehin schon write-zugaenglich.
+    On Windows: ``os.startfile`` launches the file-type handler (typically
+    Notepad, VSCode, or a Markdown editor). We do NOT launch elevated —
+    that path is read+write for the user-owner already; the user
+    already has write access to the doc repo anyway.
 
-    Vorsicht: auf manchen Systemen ist Notepad mit BOM-Save-Behavior
-    konfiguriert; Re-Save kann das Frontmatter zerschiessen. Der
-    ``jarvis-doc-author``-Skill bleibt der bevorzugte Authoring-Pfad.
+    Caution: on some systems Notepad is configured with BOM-save
+    behavior; re-saving can mangle the frontmatter. The
+    ``jarvis-doc-author`` skill remains the preferred authoring path.
     """
     import os
     import subprocess
@@ -226,29 +226,29 @@ def open_doc_in_editor(request: Request, slug: str) -> dict[str, Any]:
     reg = _require_registry(request)
     doc = reg.get(slug)
     if doc is None:
-        raise HTTPException(status_code=404, detail=f"Doc '{slug}' nicht gefunden")
+        raise HTTPException(status_code=404, detail=f"Doc '{slug}' not found")
 
     target = doc.path.resolve()
     if not target.is_file():
-        raise HTTPException(status_code=404, detail="Datei nicht mehr vorhanden")
+        raise HTTPException(status_code=404, detail="file no longer exists")
 
     try:
         if hasattr(os, "startfile"):
-            # Windows-spezifisch — File-Type-Association entscheidet, welcher
-            # Editor aufgeht. Non-blocking.
+            # Windows-specific — the file-type association decides which
+            # editor opens. Non-blocking.
             os.startfile(str(target))  # noqa: S606
-        else:  # pragma: no cover (nur Windows-relevant in dieser App)
+        else:  # pragma: no cover (only relevant to Windows in this app)
             subprocess.Popen(["xdg-open", str(target)])
         return {"path": str(target), "opened": True}
     except OSError as exc:
-        log.warning("open_doc_in_editor fehlgeschlagen fuer %s: %s", slug, exc)
+        log.warning("open_doc_in_editor failed for %s: %s", slug, exc)
         raise HTTPException(
-            status_code=500, detail=f"Editor-Start fehlgeschlagen: {exc}",
+            status_code=500, detail=f"editor start failed: {exc}",
         ) from exc
 
 
 # ----------------------------------------------------------------------
-# Reload (Dev-Helper)
+# Reload (dev helper)
 # ----------------------------------------------------------------------
 
 @router.post("/reload")

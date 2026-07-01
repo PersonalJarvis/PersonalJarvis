@@ -1,5 +1,5 @@
 # === F-FRIENDS [F0] · feature/friends-section · alex-2026-04-30 ===
-"""Unit-Tests fuer :class:`jarvis.friends.registry.FriendRegistry`."""
+"""Unit tests for :class:`jarvis.friends.registry.FriendRegistry`."""
 from __future__ import annotations
 
 from uuid import uuid4
@@ -37,7 +37,7 @@ async def test_open_close_idempotent() -> None:
 @pytest.mark.asyncio
 async def test_require_conn_raises_before_open() -> None:
     reg = FriendRegistry(":memory:")
-    with pytest.raises(FriendRegistryError, match="nicht geoeffnet"):
+    with pytest.raises(FriendRegistryError, match="nicht geoeffnet"):  # i18n-allow: matches the real (German) exception message string
         await reg.list_friends()
 
 

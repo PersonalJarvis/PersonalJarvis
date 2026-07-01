@@ -1,22 +1,22 @@
 // Edge-Glow Renderer Entry — Phase 9.5.
 //
-// Boot-Sequenz:
-//   1. CSS importieren (Vite injected den Style-Tag).
-//   2. SVG-Filter ins DOM injecten (vor dem ersten Frame!).
-//   3. 5 Layer-Divs in den .edge-glow Container haengen.
-//   4. ?debug=1 Flag auf <html> setzen.
-//   5. Effekt-Surfaces aufbauen (ripple-pool, cursor-trail-canvas,
-//      typing-sweep).
-//   6. Noise-Runner starten (12 Hz, ausser bei prefers-reduced-motion).
-//   7. QWebChannel-Bridge connecten.
-//      - State -> data-state Attribut auf <html>.
+// Boot sequence:
+//   1. Import the CSS (Vite injects the style tag).
+//   2. Inject the SVG filter into the DOM (before the first frame!).
+//   3. Append 5 layer divs into the .edge-glow container.
+//   4. Set the ?debug=1 flag on <html>.
+//   5. Build the effect surfaces (ripple pool, cursor-trail canvas,
+//      typing sweep).
+//   6. Start the noise runner (12 Hz, except with prefers-reduced-motion).
+//   7. Connect the QWebChannel bridge.
+//      - State -> data-state attribute on <html>.
 //      - Click -> ripple.triggerRipple.
 //      - Cursor -> cursor-trail.pushCursorPoint.
 //      - Action started/ended (kind=typing) -> typing-sweep.scheduleSweepBurst.
 //
-// Glow-Aktivierung erfolgt komplett ueber data-state-Attribute auf
-// <html> — siehe edge-glow.css. JS pusht nur State-Strings, kein
-// imperatives Animation-Driving.
+// Glow activation happens entirely via data-state attributes on
+// <html> — see edge-glow.css. JS only pushes state strings, no
+// imperative animation driving.
 
 import "./edge-glow.css";
 
@@ -65,20 +65,20 @@ async function boot(): Promise<void> {
     `[edge-glow] booting (debug=${env.debug}, reduced-motion=${env.reducedMotion})`,
   );
 
-  // Sofort idle als Default — matched die StateMachine.IDLE-Initial.
+  // Idle immediately as the default — matches StateMachine.IDLE's initial.
   applyState("idle");
   setStateDisplay("idle", "");
 
-  // 12 Hz Simplex-Noise — startNoise no-op'd bei reduced-motion.
+  // 12 Hz simplex noise — startNoise no-ops with reduced motion.
   const noiseRunner = startNoise();
 
-  // Power-Saving: Wenn die WebView versteckt wird (z.B. Overlay aus, Workspace-
-  // Wechsel), stoppen wir den 12-Hz-setInterval-Tick. Sonst laeuft er die
-  // gesamte WebView-Lifetime und schreibt CSS-Custom-Properties auch im
-  // hidden-State (Style-Recalc-Kosten ohne sichtbaren Effekt). stop() ist
-  // idempotent + macht no-op wenn nicht gestartet (reduced-motion-Pfad).
-  // Re-start bei visible ist nicht in scope — sichtbar werden bedeutet
-  // Page-Reload.
+  // Power saving: when the WebView is hidden (e.g. overlay off, workspace
+  // switch), we stop the 12-Hz setInterval tick. Otherwise it keeps running
+  // for the whole WebView lifetime and writes CSS custom properties even in
+  // the hidden state (style-recalc cost with no visible effect). stop() is
+  // idempotent + no-ops if it was never started (reduced-motion path).
+  // Restarting on visible is out of scope — becoming visible means a
+  // page reload.
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       noiseRunner.stop();
@@ -116,7 +116,7 @@ async function boot(): Promise<void> {
         if (durationHintMs > 0) {
           scheduleSweepBurst(durationHintMs);
         } else {
-          // Kein Hint -> einzelner Sweep beim Start.
+          // No hint -> a single sweep at the start.
           scheduleSweepBurst(0);
         }
       }
@@ -128,8 +128,8 @@ async function boot(): Promise<void> {
       clearCursorTrail();
     });
   } catch (err) {
-    // Standalone-Vite-Dev oder QWebChannel-Boot-Race: idle bleibt
-    // gesetzt (siehe oben), wir aktualisieren nur das Diagnose-Tag.
+    // Standalone Vite dev or a QWebChannel boot race: idle stays set
+    // (see above), we only update the diagnostic tag.
     console.warn("[edge-glow] bridge unavailable", err);
     setStateDisplay("idle", "no-bridge");
   }

@@ -369,7 +369,7 @@ async def test_no_skill_match_keeps_local_action_fast_path() -> None:
 # `plugin-discord` skill matched the bare word "Discord", suppressed the
 # deterministic Computer-Use fast path, and the turn fell through to a
 # tool-less CLI talker (antigravity) that hallucinated a permissions refusal
-# ("ich habe keinen Zugriff auf Discord"). The user wanted it driven on
+# ("ich habe keinen Zugriff auf Discord"). The user wanted it driven on  # i18n-allow: verbatim quote of the hallucinated runtime output
 # screen — exactly what Computer-Use exists for. The fix: when the
 # deterministic local-action gate claims the turn as DIRECT/COMPUTER_USE,
 # the keyword-matched plugin skill stands down (sibling of the AD-S9
@@ -385,7 +385,7 @@ def _seed_plugin_skill(tmp_path: Path, name: str, pattern: str) -> None:
 
 
 async def test_open_app_compound_stands_down_plugin_skill(tmp_path: Path) -> None:
-    """'Discord öffnen und ... raussuchen' is a Computer-Use intent: the
+    """'Discord öffnen und ... raussuchen' is a Computer-Use intent: the  # i18n-allow: quotes the German test utterance under test
     plugin-discord keyword match stands down so the local-action fast path
     (the COMPUTER_USE dispatch) runs instead of falling to the talker."""
     _seed_plugin_skill(tmp_path, "plugin-discord", "(discord)")
@@ -403,7 +403,7 @@ async def test_open_app_compound_stands_down_plugin_skill(tmp_path: Path) -> Non
 
 
 async def test_plain_open_app_stands_down_plugin_skill(tmp_path: Path) -> None:
-    """Even a plain 'öffne Discord' (a DIRECT open) is owned by the
+    """Even a plain 'öffne Discord' (a DIRECT open) is owned by the  # i18n-allow: quotes the German test utterance under test
     deterministic gate, not the keyword-matched plugin skill."""
     _seed_plugin_skill(tmp_path, "plugin-discord", "(discord)")
     m = _make_probe_manager()
@@ -416,7 +416,7 @@ async def test_plain_open_app_stands_down_plugin_skill(tmp_path: Path) -> None:
 
 
 async def test_open_and_operate_stands_down_plugin_skill(tmp_path: Path) -> None:
-    """'öffne Spotify und spiel ...' is a compound open-and-operate
+    """'öffne Spotify und spiel ...' is a compound open-and-operate  # i18n-allow: quotes the German test utterance under test
     Computer-Use intent — the plugin-spotify keyword match stands down."""
     _seed_plugin_skill(tmp_path, "plugin-spotify", "(spotify)")
     m = _make_probe_manager()
@@ -429,8 +429,8 @@ async def test_open_and_operate_stands_down_plugin_skill(tmp_path: Path) -> None
 
 
 async def test_pure_dispatch_keeps_plugin_skill(tmp_path: Path) -> None:
-    """A pure dispatch with NO open/desktop-control verb ('schick eine
-    Discord-Nachricht') is genuine plugin work — the skill KEEPS the turn,
+    """A pure dispatch with NO open/desktop-control verb ('schick eine  # i18n-allow: quotes the German test utterance under test
+    Discord-Nachricht') is genuine plugin work — the skill KEEPS the turn,  # i18n-allow: quotes the German test utterance under test
     the local-action fast path does NOT run (the stand-down is precise: it
     only fires when the gate would handle the turn as DIRECT/COMPUTER_USE)."""
     _seed_plugin_skill(tmp_path, "plugin-discord", "(discord)")

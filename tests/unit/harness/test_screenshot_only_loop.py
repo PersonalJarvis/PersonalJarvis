@@ -912,11 +912,11 @@ def test_execute_type_settles_before_dispatch(monkeypatch) -> None:
 # Per-mission open_app launch cap (window-spam fix, 2026-05-29). A loop that
 # never reaches "done" (a goal it cannot ground, or a model that keeps asking
 # to open the app) used to re-launch the same app every few steps -> 4-7 real
-# windows per mission, dozens across retried missions ("30 Rechner für 7+7",
-# "30 Editoren für Hello World", live: 7 Spotify windows in one 51s mission).
+# windows per mission, dozens across retried missions ("30 calculators for 7+7",
+# "30 text editors for Hello World", live: 7 Spotify windows in one 51s mission).
 # The cap launches each app AT MOST ONCE per mission; any further open_app for
 # the same app is suppressed with a history note pointing the model at the
-# already-open window. "einer langt" (user mandate 2026-05-29).
+# already-open window. "one is enough" (user mandate 2026-05-29).
 # ---------------------------------------------------------------------------
 
 

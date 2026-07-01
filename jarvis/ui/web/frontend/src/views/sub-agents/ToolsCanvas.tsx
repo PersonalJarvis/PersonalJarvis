@@ -1,10 +1,10 @@
 /**
- * ToolsCanvas — Tools eines einzelnen Sub-Agents als Icon-Canvas.
+ * ToolsCanvas — the tools of a single sub-agent as an icon canvas.
  *
- * Ansicht wird aktiv, wenn der User einen Sub-Agent-Knoten in der
- * SubAgentsView anklickt. Jeder Tool-Call wird als Icon-Node gerendert,
- * Status via Rahmenfarbe (sky=running, emerald=completed, red=failed).
- * Klick auf einen Tool-Knoten klappt einen Output-Preview unten auf.
+ * The view becomes active when the user clicks a sub-agent node in
+ * SubAgentsView. Every tool call is rendered as an icon node,
+ * with status shown via border color (sky=running, emerald=completed, red=failed).
+ * Clicking a tool node expands an output preview below it.
  */
 import {
   Background,
@@ -103,7 +103,7 @@ export function ToolsCanvas({
   const t = useT();
   const toolCalls = agent.tool_calls;
 
-  // Layout: Tools in einem Grid, bis zu 4 pro Zeile.
+  // Layout: tools in a grid, up to 4 per row.
   const initialNodes = useMemo<ToolNode[]>(() => {
     const nodes: ToolNode[] = [];
     const perRow = 4;
@@ -130,13 +130,13 @@ export function ToolsCanvas({
   }, [toolCalls]);
 
   const initialEdges = useMemo<Edge[]>(() => {
-    // Chrono-Pfeile: Tool-Call n → Tool-Call n+1 (innerhalb einer Reihe).
+    // Chrono arrows: tool call n → tool call n+1 (within one row).
     const edges: Edge[] = [];
     const perRow = 4;
     for (let i = 0; i < toolCalls.length - 1; i++) {
       const rowI = Math.floor(i / perRow);
       const rowJ = Math.floor((i + 1) / perRow);
-      if (rowI !== rowJ) continue; // Kein Pfeil zwischen Reihen
+      if (rowI !== rowJ) continue; // No arrow between rows
       edges.push({
         id: `e-${i}-${i + 1}`,
         source: toolCalls[i].trace_id || `tool-${i}`,
@@ -241,7 +241,7 @@ export function ToolsCanvas({
           </ReactFlow>
         )}
 
-        {/* Detail-Sheet unten wenn Tool angeklickt */}
+        {/* Detail sheet at the bottom when a tool is clicked */}
         <AnimatePresence>
           {selectedTool && selectedAppearance && (
             <ToolDetailSheet
@@ -256,7 +256,7 @@ export function ToolsCanvas({
   );
 }
 
-// ── Bottom-Sheet fuer Tool-Details ─────────────────────────────────
+// ── Bottom sheet for tool details ─────────────────────────────────
 
 function ToolDetailSheet({
   tool,

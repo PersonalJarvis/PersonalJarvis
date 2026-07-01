@@ -32,7 +32,7 @@ possible ONLY via speech/chat — the web UI is read-only.
 ```
 User:    "Wechsle TTS auf Gemini Flash."
 Jarvis:  "Verstanden — TTS-Provider wechselt von elevenlabs zu
-          gemini-flash-tts. Bestätigen?"
+          gemini-flash-tts. Bestätigen?"  <!-- i18n-allow -->
 User:    "Ja."
 Jarvis:  "Erledigt — TTS-Provider ist jetzt gemini-flash-tts."
 ```
@@ -83,7 +83,7 @@ Before every mutation the `AtomicConfigWriter` creates a backup in
 write, the reload test (`ConfigLoader.load(jarvis.toml)`) crashes — e.g.
 because a subtle schema error slipped through pre-validate — the backup is
 restored **automatically** and a `ReloadError` is raised. The user hears
-a TTS message "Konnte nicht gespeichert werden, hab den vorherigen
+a TTS message "Konnte nicht gespeichert werden, hab den vorherigen <!-- i18n-allow -->
 Zustand wiederhergestellt." (Could not be saved, I restored the previous
 state.) and the audit has `rolled_back=true`.
 
@@ -137,7 +137,7 @@ split (`auto_apply="safe_only"`).
 
 ## 6. Skill authoring (Plan §7.5)
 
-A voice command like "Erstelle einen Skill, der Spotify pausiert wenn ich
+A voice command like "Erstelle einen Skill, der Spotify pausiert wenn ich <!-- i18n-allow -->
 rede" (Create a skill that pauses Spotify when I speak) → main Jarvis
 calls the `spawn_skill_author` tool → a Jarvis-Agent (Opus 4.7) generates
 SKILL.md → forces `state=draft`. The draft lands in

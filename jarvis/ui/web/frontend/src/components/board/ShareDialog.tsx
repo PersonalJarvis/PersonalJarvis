@@ -13,6 +13,7 @@ import {
 } from "@/lib/shareImage";
 import { saveOrDownload } from "@/lib/clipboard";
 import { useCapabilities } from "@/hooks/useCapabilities";
+import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
@@ -41,7 +42,25 @@ export function ShareDialog({ open, onOpenChange, stats }: Props) {
   const t = useT();
   const caps = useCapabilities();
   const native = caps.data?.native_file_actions ?? false;
+  const pushToast = useEventStore((s) => s.pushToast);
   const cardRef = useRef<HTMLDivElement>(null);
+
+  // After a desktop save, surface the same "Show in folder" / "Open" toast the
+  // transcript downloads use, so the share card is reachable the same way.
+  const saveCard = async (): Promise<void> => {
+    const filename = "jarvis-stats.png";
+    const savedPath = await saveOrDownload({
+      filename,
+      blob: await ensureBlob(),
+      native,
+    });
+    if (savedPath) {
+      pushToast("success", `${t("session_detail.saved_to_downloads")} ${savedPath}`, {
+        filePath: savedPath,
+        filename,
+      });
+    }
+  };
   const [handle, setHandle] = useShareHandle();
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
@@ -111,22 +130,14 @@ export function ShareDialog({ open, onOpenChange, stats }: Props) {
       if (res === "copied") {
         setStatus({ kind: "ok", msgKey: "board_view.share.status_copied" });
       } else {
-        await saveOrDownload({
-          filename: "jarvis-stats.png",
-          blob: await ensureBlob(),
-          native,
-        });
+        await saveCard();
         setStatus({ kind: "ok", msgKey: "board_view.share.status_copy_unsupported" });
       }
     });
 
   const onSave = () =>
     run(async () => {
-      await saveOrDownload({
-        filename: "jarvis-stats.png",
-        blob: await ensureBlob(),
-        native,
-      });
+      await saveCard();
       setStatus({ kind: "ok", msgKey: "board_view.share.status_saved" });
     });
 

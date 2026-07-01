@@ -26,10 +26,10 @@ def test_default_pipe_name() -> None:
 
 
 def test_send_recv_roundtrip() -> None:
-    """Server in Thread, Client in Main-Thread: schickt JSON, empfaengt back.
+    """Server in a thread, client in the main thread: sends JSON, receives it back.
 
-    Pipe wird im Main-Thread erzeugt (CreateNamedPipe), erst dann startet
-    der Server-Thread auf ConnectNamedPipe. So gibt es keinen Race vor
+    The pipe is created in the main thread (CreateNamedPipe), only then does
+    the server thread start on ConnectNamedPipe. That way there's no race before
     WaitNamedPipe.
     """
     pytest.importorskip("win32pipe")

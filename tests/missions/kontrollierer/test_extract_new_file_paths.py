@@ -64,15 +64,15 @@ def test_real_live_mission_diff() -> None:
 
 # --- HIGH finding (2026-05-27 hardening audit): non-ASCII deliverable names
 #     dropped because git core.quotepath=true (default) octal-escapes the
-#     path in the diff header (ä -> \303\244). The extractor must decode the
+#     path in the diff header (ä -> \303\244). The extractor must decode the  # i18n-allow: literal umlaut filename, not translatable prose
 #     escape back to the real on-disk name so the artifacts/files/ copy loop
 #     can find the file. A German/bilingual assistant produces umlaut
-#     filenames routinely (Werbungä.html, Lebenslauf-Müller.pdf).
+#     filenames routinely (Werbungä.html, Lebenslauf-Müller.pdf).  # i18n-allow: literal umlaut filenames, not translatable prose
 
 
 def test_octal_escaped_umlaut_path_is_decoded() -> None:
     """git quotepath=true emits `"a/Werbung\\303\\244.html"`; the extractor
-    must return the decoded UTF-8 name `Werbungä.html`, not the literal
+    must return the decoded UTF-8 name `Werbungä.html`, not the literal  # i18n-allow: literal umlaut filename, not translatable prose
     backslash-octal string."""
     diff = (
         'diff --git "a/Werbung\\303\\244.html" "b/Werbung\\303\\244.html"\n'
@@ -81,18 +81,18 @@ def test_octal_escaped_umlaut_path_is_decoded() -> None:
         "--- /dev/null\n"
         '+++ "b/Werbung\\303\\244.html"\n'
     )
-    assert _extract_new_file_paths_from_diff(diff) == ["Werbungä.html"]
+    assert _extract_new_file_paths_from_diff(diff) == ["Werbungä.html"]  # i18n-allow: literal umlaut filename asserted by the decoder
 
 
 def test_octal_escaped_path_with_subdir_is_decoded() -> None:
-    """Multi-segment umlaut path round-trips (Lebenslauf-Müller in a subdir)."""
+    """Multi-segment umlaut path round-trips (Lebenslauf-Müller in a subdir)."""  # i18n-allow: literal umlaut filename, not translatable prose
     diff = (
         'diff --git "a/out/Lebenslauf-M\\303\\274ller.pdf"'
         ' "b/out/Lebenslauf-M\\303\\274ller.pdf"\n'
         "new file mode 100644\n"
     )
     assert _extract_new_file_paths_from_diff(diff) == [
-        "out/Lebenslauf-Müller.pdf"
+        "out/Lebenslauf-Müller.pdf"  # i18n-allow: literal umlaut filename asserted by the decoder
     ]
 
 

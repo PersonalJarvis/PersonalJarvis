@@ -93,7 +93,7 @@ class Merger:
                     else:
                         report.skipped += 1
             except Exception as exc:  # noqa: BLE001
-                log.warning("Merge fehlgeschlagen fuer %s: %s", cand, exc)
+                log.warning("Merge failed for %s: %s", cand, exc)
                 report.failed += 1
 
         # Persist
@@ -101,14 +101,14 @@ class Merger:
             try:
                 self._profile.save()
             except Exception as exc:  # noqa: BLE001
-                log.error("USER.md save fehlgeschlagen: %s", exc)
+                log.error("USER.md save failed: %s", exc)
                 report.failed += 1
 
         for person in people_touched.values():
             try:
                 person.save()
             except Exception as exc:  # noqa: BLE001
-                log.error("Person save fehlgeschlagen (%s): %s", person.name, exc)
+                log.error("Person save failed (%s): %s", person.name, exc)
                 report.failed += 1
 
         # Emit events (after persistence — we do not want events for

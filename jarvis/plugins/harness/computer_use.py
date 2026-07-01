@@ -75,11 +75,12 @@ def _resolve_run_cu_loop():
 
 
 class ComputerUseHarness:
-    """Plugin-Eintrag fuer `entry_points."jarvis.harness".screenshot`.
+    """Plugin entry for `entry_points."jarvis.harness".screenshot`.
 
-    Die App muss vor dem ersten Dispatch einmal
+    The app must call
     `jarvis.harness.computer_use_context.set_computer_use_context(...)`
-    aufrufen. Ohne Kontext wirft `invoke()` einen klaren Fehler.
+    once before the first dispatch. Without a context, `invoke()` raises a
+    clear error.
     """
 
     name: str = "screenshot"
@@ -87,14 +88,14 @@ class ComputerUseHarness:
     supports_versions: str = ">=0.1"
 
     def __init__(self, context: ComputerUseContext | None = None) -> None:
-        # Der Constructor kann mit explicit Context aufgerufen werden (fuer
-        # Tests). Ohne Context faellt `invoke()` auf den globalen zurueck.
+        # The constructor can be called with an explicit context (for
+        # tests). Without a context, `invoke()` falls back to the global one.
         self._explicit_context = context
         self._cancelled = False
-        self._active_token = None           # gesetzt waehrend invoke() laeuft
+        self._active_token = None           # set while invoke() is running
 
     async def health(self) -> bool:
-        """True wenn ein Context gesetzt ist und alle Kern-Deps existieren."""
+        """True when a context is set and all core deps exist."""
         try:
             ctx = self._explicit_context or get_computer_use_context()
         except RuntimeError:
@@ -106,12 +107,12 @@ class ComputerUseHarness:
         ])
 
     async def invoke(self, task: HarnessTask) -> AsyncIterator[HarnessResult]:
-        """Delegiert an `run_cu_loop` innerhalb eines eigenen CancelScope.
+        """Delegates to `run_cu_loop` inside its own CancelScope.
 
-        Der Scope registriert einen dedizierten Token beim KillSwitch. Der
-        KillSwitch cancelt IHN bei `KillRequested`, und der Loop propagiert
-        das bis zum naechsten `is_cancelled()`-Check. Ohne diesen Scope
-        wuerde der Kill-Switch den CU-Loop nicht erreichen (ADR-0004).
+        The scope registers a dedicated token with the KillSwitch. The
+        KillSwitch cancels IT on `KillRequested`, and the loop propagates
+        that until the next `is_cancelled()` check. Without this scope, the
+        kill switch would never reach the CU loop (ADR-0004).
         """
         ctx = self._explicit_context or get_computer_use_context()
         timeout_s = max(0.001, float(task.timeout_s))
@@ -173,11 +174,11 @@ class ComputerUseHarness:
                 unregister_active_cu_token(token)
 
     async def cancel(self) -> None:
-        """Bricht den laufenden Invoke ab.
+        """Aborts the running invoke.
 
-        Cancelt den aktiven Token — der Loop reagiert beim naechsten
-        `_is_cancelled()`-Check und yieldet einen finalen Chunk. Wenn
-        `invoke()` nicht laeuft, ist der Call ein No-Op.
+        Cancels the active token — the loop reacts on the next
+        `_is_cancelled()` check and yields a final chunk. If `invoke()` isn't
+        running, the call is a no-op.
         """
         if self._active_token is not None:
             self._active_token.cancel("harness_direct_cancel")

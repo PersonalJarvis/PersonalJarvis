@@ -1,4 +1,4 @@
-"""Unit-Tests fuer FlightRecorder (ADR-0007)."""
+"""Unit tests for FlightRecorder (ADR-0007)."""
 from __future__ import annotations
 
 import asyncio
@@ -87,7 +87,7 @@ async def test_recorder_can_iterate_by_trace_id(tmp_path):
 
 @pytest.mark.asyncio
 async def test_recorder_is_idempotent_on_attach(tmp_path):
-    """Zweifaches attach() auf denselben Bus darf nicht doppelt subscriben."""
+    """Calling attach() twice on the same bus must not subscribe twice."""
     bus = EventBus()
     rec = FlightRecorder(tmp_path, flush_interval_s=0)
     rec.attach(bus)
@@ -103,7 +103,7 @@ async def test_recorder_is_idempotent_on_attach(tmp_path):
 
 @pytest.mark.asyncio
 async def test_recorder_externalizes_large_blobs(tmp_path):
-    """Bytes > blob_inline_limit_bytes landen in blobs/, nicht inline."""
+    """Bytes > blob_inline_limit_bytes end up in blobs/, not inline."""
     from dataclasses import dataclass
 
     from jarvis.core.events import Event
@@ -155,7 +155,7 @@ async def test_recorder_handles_day_rotation(tmp_path):
 
 @pytest.mark.asyncio
 async def test_flush_interval_respected(tmp_path):
-    """Mit flush_interval_s > 0 wird nicht nach jedem Event geschrieben."""
+    """With flush_interval_s > 0, it does not write after every event."""
     fake_now = [0]
     bus = EventBus()
     rec = FlightRecorder(tmp_path, flush_interval_s=1.0,
@@ -163,18 +163,18 @@ async def test_flush_interval_respected(tmp_path):
     rec.attach(bus)
 
     tid = uuid4()
-    # Erstes Event → Buffer, noch kein Write
+    # First event → buffer, no write yet
     await bus.publish(KillRequested(trace_id=tid, source="a"))
     assert not list(tmp_path.glob("*.jsonl"))
 
-    # Zeit um 0.5s vorspulen → immer noch kein Flush
+    # Advance time by 0.5s → still no flush
     fake_now[0] += 500_000_000
     await bus.publish(KillRequested(trace_id=tid, source="b"))
-    # Event wird zugestellt, aber Flush nur wenn intervall ueberschritten:
+    # Event is delivered, but flush only once the interval is exceeded:
     await asyncio.sleep(0)
-    # Datei ggf. noch nicht da — Test abhaengig von Dispatch-Timing.
+    # File may not exist yet — test depends on dispatch timing.
 
-    # Zeit um 2s vorspulen und noch ein Event
+    # Advance time by 2s and publish one more event
     fake_now[0] += 2_000_000_000
     await bus.publish(KillRequested(trace_id=tid, source="c"))
     await asyncio.sleep(0)

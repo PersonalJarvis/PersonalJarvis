@@ -8,7 +8,7 @@ spinning a throwaway loop — and ``bus.publish`` then dispatched the per-WS-cli
 ``_forward`` subscriber, whose ``asyncio.Lock`` (``send_lock``) is bound to the
 real backend loop. Acquiring it from the throwaway loop raised
 ``RuntimeError: <Lock> is bound to a different event loop`` for every connected
-client (a "WS-Forward fehlgeschlagen" storm). The mute flag flipped ON but the
+client (a "WS forward failed" storm). The mute flag flipped ON but the
 ``VoiceMuteChanged`` broadcast could not reach the UI, so the mic stayed muted
 with no visible cue and the voice session sat in LISTENING — "I spoke and it
 never started thinking" — until the session died ``reason=error`` and the app
@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-# Repo-Root in sys.path, damit Top-Level-Modul `ui.orb.*` importierbar ist.
+# Repo root in sys.path so the top-level module `ui.orb.*` is importable.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) in sys.path:
     sys.path.remove(str(_REPO_ROOT))
@@ -37,7 +37,7 @@ try:  # noqa: SIM105 — bewusster Try-Import wegen Discovery-Quirk
     from ui.orb.bus_bridge import OrbBusBridge  # type: ignore[import-not-found]
 except ModuleNotFoundError:  # pragma: no cover
     pytest.skip(
-        "ui.orb nicht im Pytest-Pythonpath verfügbar — Top-Level-Namespace-Package.",
+        "ui.orb not available on the pytest PYTHONPATH — top-level namespace package.",
         allow_module_level=True,
     )
 

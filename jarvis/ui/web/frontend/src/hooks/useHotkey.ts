@@ -21,7 +21,7 @@ export interface KeyEventLike {
  * hotkey — so the right-hand side here must match the library verbatim.
  *
  * Punctuation / OEM keys are deliberately omitted: ``event.code`` is keyed to
- * physical US-layout positions, so on a German keyboard "BracketLeft" is "ü" —
+ * physical US-layout positions, so on a German keyboard "BracketLeft" is "ü" — (i18n-allow: umlaut char referenced in English prose)
  * binding by position would surprise the user. We stick to the keys whose
  * identity is layout-independent (arrows, the nav/edit cluster, the numpad).
  */

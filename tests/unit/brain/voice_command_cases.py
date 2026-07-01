@@ -10,14 +10,14 @@ RECOGNITION_CASES: list[tuple[str, str, str]] = [
     # provider_switch
     ("wechsel auf gemini", "provider_switch", "gemini"),
     ("switch to openai", "provider_switch", "openai"),
-    ("wechsel von gemini auf openai", "provider_switch", "openai"),
+    ("wechsel von gemini auf openai", "provider_switch", "openai"),  # i18n-allow: fixture
     ("switch from claude to gemini", "provider_switch", "gemini"),
     ("nutze chatgpt", "provider_switch", "chatgpt"),
     ("switch to anthropic", "provider_switch", "anthropic"),
     ("ändere den Provider auf gemini", "provider_switch", "gemini"),  # i18n-allow: fixture
     ("stell den Provider auf claude", "provider_switch", "claude"),   # i18n-allow: fixture
     # subagent_switch
-    ("stell den subagent provider auf gemini", "subagent_switch", "gemini"),
+    ("stell den subagent provider auf gemini", "subagent_switch", "gemini"),  # i18n-allow: fixture
     ("stell den subagent provider von antigravity auf codex um", "subagent_switch", "codex"),  # i18n-allow: fixture
     # language_switch
     ("stell auf Englisch um", "language_switch", "en"),               # i18n-allow: fixture

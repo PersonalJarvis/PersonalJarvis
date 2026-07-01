@@ -1,11 +1,10 @@
-"""Voice-UX-Layer für die Self-Mod-Pipeline (Phase 7.4+).
+"""Voice UX layer for the self-mod pipeline (Phase 7.4+).
 
-`jarvis/voice/` ist neu in Phase 7.4 angelegt — separate vom
-`jarvis/speech/`-Pipeline-Stack. Begründung: die Echo-Confirmation
-ist eine UX-Schicht, die zwischen Brain-Tool-Output und TTS sitzt;
-keine direkte Audio-IO. Phase 7.6 wird einen Adapter zwischen
-`jarvis.speech.pipeline.SpeechPipeline` und `SelfModFlowController`
-einbauen.
+`jarvis/voice/` is newly introduced in Phase 7.4 — separate from the
+`jarvis/speech/` pipeline stack. Rationale: the echo confirmation
+is a UX layer that sits between the brain tool output and TTS;
+no direct audio IO. Phase 7.6 will add an adapter between
+`jarvis.speech.pipeline.SpeechPipeline` and `SelfModFlowController`.
 """
 from __future__ import annotations
 

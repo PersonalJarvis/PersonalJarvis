@@ -1,11 +1,11 @@
-"""Integration-Tests fuer MissionVoiceListener.
+"""Integration tests for MissionVoiceListener.
 
-Verifiziert:
-- Filter: voice-source -> TTS, ui-source -> kein TTS.
-- Event-Routing: MissionApproved -> render_approved, MissionFailed -> render_failed, ...
-- BudgetWarning Pct-Routing: 50 vs 80.
-- WorkerKilled-Reason-Routing: injection_detected vs path_guard.
-- Cache: zweites Event auf gleicher mission ruft store nicht erneut.
+Verifies:
+- Filter: voice-source -> TTS, ui-source -> no TTS.
+- Event routing: MissionApproved -> render_approved, MissionFailed -> render_failed, ...
+- BudgetWarning pct routing: 50 vs 80.
+- WorkerKilled reason routing: injection_detected vs path_guard.
+- Cache: a second event on the same mission does not call the store again.
 """
 from __future__ import annotations
 
@@ -125,7 +125,7 @@ async def test_voice_mission_triggers_tts(store_and_bus) -> None:
     # Name-neutral contract: the readback carries the approved status phrase
     # and the signed summary, no owner name, never "Sir". scrub_for_voice
     # (F-AUDIT-2) is applied on top — "Sir" would be scrubbed anyway.
-    assert "Fertig" in text or "Erledigt" in text or "Abgeschlossen" in text
+    assert "Fertig" in text or "Erledigt" in text or "Abgeschlossen" in text  # i18n-allow: asserts the German TTS readback text
     assert "erledigt" in text.lower()  # the signed summary survives
     assert "Alex" not in text
     assert "Sir" not in text
@@ -149,10 +149,10 @@ async def test_ui_mission_does_not_trigger_tts(store_and_bus) -> None:
     )
     await store.append_and_publish(env)
 
-    # Kein Voice-Call fuer UI-Source
+    # No voice call for UI source
     voice_calls = [c for c in tts.calls if c[1] in ("de", "en")]
-    # Filter: nur Mission-Approval-Calls (nicht Dispatch-Events)
-    assert len(voice_calls) == 0, f"Unerwartete TTS-Calls: {voice_calls}"
+    # Filter: only mission-approval calls (not dispatch events)
+    assert len(voice_calls) == 0, f"Unexpected TTS calls: {voice_calls}"
 
 
 # --- Event-Routing per Payload-Type ---
@@ -308,7 +308,7 @@ async def test_correction_required_silent_by_default(store_and_bus) -> None:
     )
     await store.append_and_publish(env)
 
-    # Default off -> kein TTS-Call fuer correction
+    # Default off -> no TTS call for correction
     correction_calls = [c for c in tts.calls if "iteration" in c[0].lower()]
     assert correction_calls == []
 
@@ -342,7 +342,7 @@ async def test_correction_required_speaks_when_opted_in(store_and_bus) -> None:
 
 @pytest.mark.asyncio
 async def test_correction_instruction_never_in_voice_output(store_and_bus) -> None:
-    """ADR-0009 §1: correction_instruction (LLM-Output) darf NIE in TTS landen."""
+    """ADR-0009 §1: correction_instruction (LLM output) must NEVER end up in TTS."""
     store, bus = store_and_bus
     tts = _CapturingTTS()
     listener = _make_listener(store=store, bus=bus, tts=tts, announce_critic_loop=True)
@@ -369,7 +369,7 @@ async def test_correction_instruction_never_in_voice_output(store_and_bus) -> No
 
 @pytest.mark.asyncio
 async def test_voice_meta_cached_per_mission(store_and_bus) -> None:
-    """Zweites Event auf gleicher Mission triggert KEINE neue store-Abfrage."""
+    """A second event on the same mission triggers NO new store query."""
     store, bus = store_and_bus
     tts = _CapturingTTS()
     listener = _make_listener(store=store, bus=bus, tts=tts)
@@ -395,7 +395,7 @@ async def test_voice_meta_cached_per_mission(store_and_bus) -> None:
         ),
     ))
 
-    assert listener._mission_voice_cache == cached_pre  # unveraendert
+    assert listener._mission_voice_cache == cached_pre  # unchanged
 
 
 # --- Listener-Crash-Defense ---
@@ -403,12 +403,12 @@ async def test_voice_meta_cached_per_mission(store_and_bus) -> None:
 
 @pytest.mark.asyncio
 async def test_tts_crash_does_not_block_bus(store_and_bus) -> None:
-    """Wenn die TTS-Fn raised, darf der Bus weiterlaufen."""
+    """If the TTS fn raises, the bus must keep running."""
     store, bus = store_and_bus
 
     class _CrashingTTS:
         async def __call__(self, text: str, lang: str) -> None:
-            raise RuntimeError("TTS-Provider tot")
+            raise RuntimeError("TTS provider dead")
 
     listener = MissionVoiceListener(
         bus=bus, store=store, readback=MissionReadback(),
@@ -417,7 +417,7 @@ async def test_tts_crash_does_not_block_bus(store_and_bus) -> None:
     await listener.start()
     mid = await _seed_voice_mission(store)
 
-    # Sollte NICHT raisen (listener faengt im _on_event-Handler)
+    # Should NOT raise (listener catches it in the _on_event handler)
     await store.append_and_publish(EventEnvelope(
         mission_id=mid, source_actor="kontrollierer", ts_ms=now_ms(),
         payload=MissionApproved(
@@ -427,19 +427,19 @@ async def test_tts_crash_does_not_block_bus(store_and_bus) -> None:
     ))
 
 
-# --- F-AUDIT-2: scrub_for_voice ist im TTS-Pfad aktiv ---
+# --- F-AUDIT-2: scrub_for_voice is active in the TTS path ---
 
 
 @pytest.mark.asyncio
 async def test_scrub_for_voice_is_applied_to_mission_readback(store_and_bus) -> None:
-    """F-AUDIT-2 (Audit 2026-04-29): MissionVoiceListener muss
-    scrub_for_voice auf das Readback-Template anwenden, bevor TTS
-    aufgerufen wird. Sonst leakten Tool-Use-Markup, Engineering-Jargon
-    oder A1-Verstoesse ungefiltert an den User.
+    """F-AUDIT-2 (audit 2026-04-29): MissionVoiceListener must
+    apply scrub_for_voice to the readback template before TTS
+    is called. Otherwise tool-use markup, engineering jargon,
+    or A1 violations leaked unfiltered to the user.
 
-    Realistischer Test-Trigger: ein MissionApproved mit summary_de, das
-    Engineering-Jargon enthaelt (z.B. "Subprocess fertig"). Der Filter
-    muss "Subprocess" als Standalone-Wort scrubben — siehe
+    Realistic test trigger: a MissionApproved with summary_de that
+    contains engineering jargon (e.g. "Subprocess fertig"). The filter  # i18n-allow: quotes the actual German jargon test fixture
+    must scrub "Subprocess" as a standalone word — see
     JARGON_WORDS in jarvis/brain/output_filter.py.
     """
     store, bus = store_and_bus
@@ -453,7 +453,7 @@ async def test_scrub_for_voice_is_applied_to_mission_readback(store_and_bus) -> 
         payload=MissionApproved(
             result_uri=f"mission://{mid}", tokens_used=100, cost_usd=0.05,
             wall_ms=1000,
-            summary_de="Der Subprocess ist fertig.",
+            summary_de="Der Subprocess ist fertig.",  # i18n-allow: German summary_de voice-readback fixture under test
             summary_en="The subprocess is done.",
         ),
     )
@@ -461,8 +461,8 @@ async def test_scrub_for_voice_is_applied_to_mission_readback(store_and_bus) -> 
 
     assert tts.calls
     text, _ = tts.calls[-1]
-    # Engineering-Jargon "Subprocess" wurde gescrubbt — sonst waere es
-    # als Standalone-Wort im Output. Der Resttext bleibt erhalten.
+    # Engineering jargon "Subprocess" was scrubbed — otherwise it would be
+    # a standalone word in the output. The rest of the text is preserved.
     assert "Subprocess" not in text
     assert "subprocess" not in text.lower().split()
     # "Sir" darf NIE im Output sein (Mandat-A1)

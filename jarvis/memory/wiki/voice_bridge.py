@@ -69,10 +69,10 @@ def _turn_hash(text: str) -> str:
 # Keywords (lowercase, simple substring match) that mark the brain's
 # reply as "yes, I stored this". Keep narrow -- false positives mean
 # noise in the wiki; false negatives are caught by the aggressive path.
-_ACK_KEYWORDS = (
+_ACK_KEYWORDS = (  # i18n-allow: German acknowledgement-phrase matching vocabulary
     "notiert",
     "vermerkt",
-    "gespeichert",
+    "gespeichert",  # i18n-allow: German acknowledgement-phrase matching vocabulary
     "merke ich",
     "merke mir",
     "noted",

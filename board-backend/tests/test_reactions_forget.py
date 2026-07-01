@@ -1,4 +1,4 @@
-"""Tests fuer Reactions-Forwarding, Inbound-Reactions, Forget-Me, Cleanup."""
+"""Tests for reactions forwarding, inbound reactions, forget-me, cleanup."""
 from __future__ import annotations
 
 import time
@@ -47,17 +47,17 @@ def _create_local_item(client: TestClient, *, priv: str, pub: str, vis: str = "f
 
 
 # ----------------------------------------------------------------------
-# Forwarding-Test mit MockTransport
+# Forwarding test with MockTransport
 # ----------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_reaction_propagates_to_author_backend(client: TestClient) -> None:
-    """Plan-Smoke: Owner reagiert auf Friend-Item, Friend-Backend bekommt
-    /federation/reactions/inbound forwarded."""
+    """Plan smoke: owner reacts to a friend's item, the friend's backend
+    gets /federation/reactions/inbound forwarded."""
     owner_priv, owner_pub = generate_keypair()
     _setup_owner(client, owner_pub)
 
-    # Friend (B) registrieren in Owner's friends-Tabelle.
+    # Register friend (B) in the owner's friends table.
     _, friend_pub = generate_keypair()
     factory = client.app.state.session_factory
     with factory() as session:
@@ -69,7 +69,7 @@ async def test_reaction_propagates_to_author_backend(client: TestClient) -> None
         ))
         session.commit()
 
-    # Mock-Transport, der den Forward fängt.
+    # Mock transport that catches the forward.
     captured: dict = {}
 
     async def _handler(req: httpx.Request) -> httpx.Response:
@@ -84,7 +84,7 @@ async def test_reaction_propagates_to_author_backend(client: TestClient) -> None
         transport=transport, base_url="http://x", timeout=5.0,
     )
     try:
-        # Owner reagiert auf Item-ID, das auf Friend's Backend lebt.
+        # Owner reacts to an item ID that lives on the friend's backend.
         body = {
             "ts_ms": _now_ms(),
             "item_id": "fakeitem123",
@@ -103,12 +103,12 @@ async def test_reaction_propagates_to_author_backend(client: TestClient) -> None
 
 
 def test_inbound_reaction_persists_when_friend(client: TestClient) -> None:
-    """Friend (B) signed eine inbound Reaction → Owner-Backend speichert."""
+    """Friend (B) signs an inbound reaction → owner's backend stores it."""
     owner_priv, owner_pub = generate_keypair()
     friend_priv, friend_pub = generate_keypair()
     _setup_owner(client, owner_pub)
 
-    # B als Friend registrieren.
+    # Register B as a friend.
     factory = client.app.state.session_factory
     with factory() as session:
         session.add(Friend(
@@ -182,7 +182,7 @@ def test_inbound_reaction_idempotent(client: TestClient) -> None:
     assert r2.status_code == 200
     with factory() as session:
         rows = session.query(Reaction).filter(Reaction.item_id == iid).all()
-        # UNIQUE constraint hat zweite Reaction blockiert.
+        # UNIQUE constraint blocked the second reaction.
         assert len(rows) == 1
 
 
@@ -191,13 +191,13 @@ def test_inbound_reaction_idempotent(client: TestClient) -> None:
 # ----------------------------------------------------------------------
 
 def test_right_to_be_forgotten_removes_all_traces(client: TestClient) -> None:
-    """Plan-Smoke: signed DELETE /federation/identity/{pubkey} loescht
-    Friendship + Reactions + Activities von dem Pubkey."""
+    """Plan smoke: signed DELETE /federation/identity/{pubkey} deletes
+    friendship + reactions + activities for that pubkey."""
     owner_priv, owner_pub = generate_keypair()
     friend_priv, friend_pub = generate_keypair()
     _setup_owner(client, owner_pub)
 
-    # Friend B registrieren + Reactions hinterlassen.
+    # Register friend B + leave reactions.
     factory = client.app.state.session_factory
     iid = _create_local_item(client, priv=owner_priv, pub=owner_pub)
     with factory() as session:
@@ -239,7 +239,7 @@ def test_right_to_be_forgotten_removes_all_traces(client: TestClient) -> None:
 
 
 def test_forget_me_path_and_signature_must_match(client: TestClient) -> None:
-    """Wenn DELETE-Path-Pubkey != X-Pubkey im Header → 403."""
+    """If the DELETE path pubkey != X-Pubkey in the header → 403."""
     owner_priv, owner_pub = generate_keypair()
     friend_priv, friend_pub = generate_keypair()
     other_priv, other_pub = generate_keypair()
@@ -260,7 +260,7 @@ def test_forget_me_path_and_signature_must_match(client: TestClient) -> None:
 
 
 # ----------------------------------------------------------------------
-# Stories-Cleanup
+# Stories cleanup
 # ----------------------------------------------------------------------
 
 def test_stories_cleanup_removes_only_expired(client: TestClient) -> None:
@@ -268,7 +268,7 @@ def test_stories_cleanup_removes_only_expired(client: TestClient) -> None:
     _setup_owner(client, owner_pub)
     factory = client.app.state.session_factory
 
-    # Eine Story mit expires_at in der Vergangenheit + ein Achievement ohne expires.
+    # A story with expires_at in the past + an achievement without expires.
     expired_id = _create_local_item(client, priv=owner_priv, pub=owner_pub, vis="friends")
     keep_id = _create_local_item(client, priv=owner_priv, pub=owner_pub, vis="friends")
     with factory() as session:

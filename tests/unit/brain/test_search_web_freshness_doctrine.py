@@ -3,8 +3,8 @@
 request) — the "Frische-Grenze" mandate.
 
 Live forensic 2026-06-20 (voice session e0898d6e, 16:12): a plain knowledge
-question — "Kannst du mir sagen, was ich alles beachten muss, wenn ich nach
-Melbourne auswandern moechte?" — made the router LLM fire ``search_web`` THREE
+question — "Kannst du mir sagen, was ich alles beachten muss, wenn ich nach  # i18n-allow
+Melbourne auswandern moechte?" — made the router LLM fire ``search_web`` THREE  # i18n-allow
 times (proven from sessions.db voice_events: 3x ``ActionProposed search_web``,
 ``jarvis_text`` empty) instead of just answering. The Run-Inspector labels a
 ``search_web`` call "Recherche"; the user read that as an unwanted
@@ -46,7 +46,7 @@ def test_search_web_description_reserved_for_fresh_facts() -> None:
     )
     # The old over-eager evergreen triggers must be gone — these turned a plain
     # "explain X" / "what is X" question into a web search (Melbourne forensic).
-    assert "erklär mir x" not in desc and "erklaer mir x" not in desc, (
+    assert "erklär mir x" not in desc and "erklaer mir x" not in desc, (  # i18n-allow
         "search_web description still advertises evergreen 'explain X' as a "
         "primary trigger — that is the over-eager research bug"
     )

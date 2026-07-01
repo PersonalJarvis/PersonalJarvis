@@ -18,8 +18,8 @@ dependencies = [
   "pydantic-settings>=2.4",
   "pynacl>=1.5",
   "python-multipart>=0.0.9",
-  # Phase D: pair.py / reactions.py / background.py forwarden HTTP
-  # zu Friend-Backends — daher Production-Dependency, nicht nur dev.
+  # Phase D: pair.py / reactions.py / background.py forward HTTP
+  # to friend backends — hence a production dependency, not just dev.
   "httpx>=0.27",
 ]
 

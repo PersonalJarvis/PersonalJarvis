@@ -1,11 +1,11 @@
-"""Eval-Pytest fuer die Review-Pipeline (Phase 8.6).
+"""Eval pytest for the review pipeline (Phase 8.6).
 
-Plan-Referenz: §6.6 — Pass-Rate >=80% auf den 17 erfolgreichen Buckets,
-alle 3 Adversarial-Queries liefern fail oder cap_fired.
+Plan reference: §6.6 — pass rate >=80% on the 17 successful buckets,
+all 3 adversarial queries yield fail or cap_fired.
 
-Markierung: `@pytest.mark.eval` — wird vom Standard-Run via
-`pytest -m "not eval and not slow"` ausgeschlossen. Realer Run kostet Zeit
-+ Geld; Mock-Run ist trivial.
+Marker: `@pytest.mark.eval` — excluded from the standard run via
+`pytest -m "not eval and not slow"`. A real run costs time + money;
+the mock run is trivial.
 """
 from __future__ import annotations
 
@@ -30,12 +30,12 @@ def queries() -> list[dict]:
 
 
 def test_queries_file_has_at_least_20_entries(queries: list[dict]) -> None:
-    """Plan-§6.6 fordert ≥20 Golden-Queries."""
+    """Plan §6.6 requires ≥20 golden queries."""
     assert len(queries) >= 20, f"only {len(queries)} queries in golden set"
 
 
 def test_queries_cover_all_buckets(queries: list[dict]) -> None:
-    """Plan §6.6: 6 Buckets müssen alle vertreten sein."""
+    """Plan §6.6: all 6 buckets must be represented."""
     expected_buckets = {
         "code_gen_trivial",
         "code_gen_complex",
@@ -51,21 +51,21 @@ def test_queries_cover_all_buckets(queries: list[dict]) -> None:
 
 
 def test_queries_have_unique_ids(queries: list[dict]) -> None:
-    """IDs sind die Identitaet jeder Query — keine Duplikate."""
+    """IDs are the identity of each query — no duplicates."""
     ids = [q.get("id") for q in queries]
     assert len(ids) == len(set(ids)), "duplicate query IDs"
 
 
 def test_quick_queries_at_most_5(queries: list[dict]) -> None:
-    """`--quick` filtert auf höchstens 5 Queries."""
+    """`--quick` filters down to at most 5 queries."""
     quick = [q for q in queries if q.get("quick") is True]
     assert len(quick) <= 5
-    assert len(quick) >= 1, "no quick queries — pre-commit hook hätte nichts"
+    assert len(quick) >= 1, "no quick queries — pre-commit hook would have nothing"
 
 
 def test_adversarial_have_failure_expectations(queries: list[dict]) -> None:
-    """Adversarial muss `fail` oder `cap_fired` erwarten — sonst ist es
-    keine adversarial Query."""
+    """Adversarial must expect `fail` or `cap_fired` — otherwise it isn't
+    an adversarial query."""
     advs = [q for q in queries if q.get("bucket") == "adversarial"]
     assert len(advs) >= 3
     for q in advs:
@@ -80,8 +80,8 @@ def test_adversarial_have_failure_expectations(queries: list[dict]) -> None:
 
 
 def test_mock_eval_full_suite_match_rate(tmp_path: Path, queries: list[dict]) -> None:
-    """Mock-Pipeline mit deterministischen Verdicts — Match-Rate sollte 100%
-    sein, weil der Mock genau das gewünschte Outcome liefert.
+    """Mock pipeline with deterministic verdicts — match rate should be 100%
+    because the mock returns exactly the desired outcome.
     """
     report = asyncio.run(
         run_eval(
@@ -92,9 +92,9 @@ def test_mock_eval_full_suite_match_rate(tmp_path: Path, queries: list[dict]) ->
         )
     )
     assert report["total"] == len(queries)
-    # Match-Rate >= 0.9 — ein paar Queries (z.B. cap_fired) brauchen
-    # spezielle Mock-Logic; <100% ist ok solange wir die Discrepancy sehen.
-    # Plan-§6.6 fordert >=80%.
+    # Match rate >= 0.9 — a few queries (e.g. cap_fired) need special
+    # mock logic; <100% is ok as long as we see the discrepancy.
+    # Plan §6.6 requires >=80%.
     assert report["match_rate"] >= 0.8, (
         f"mock match-rate too low: {report['match_rate']:.2%} on {report['by_status']}"
     )
@@ -103,7 +103,7 @@ def test_mock_eval_full_suite_match_rate(tmp_path: Path, queries: list[dict]) ->
 def test_mock_eval_adversarial_all_fail_or_cap_fired(
     tmp_path: Path, queries: list[dict]
 ) -> None:
-    """Plan §6.6 AC: alle 3 Adversarial-Queries liefern korrekt fail/cap_fired."""
+    """Plan §6.6 AC: all 3 adversarial queries correctly yield fail/cap_fired."""
     advs = [q for q in queries if q.get("bucket") == "adversarial"]
     report = asyncio.run(
         run_eval(
@@ -122,21 +122,21 @@ def test_mock_eval_adversarial_all_fail_or_cap_fired(
 def test_mock_eval_pass_rate_per_bucket(
     tmp_path: Path, queries: list[dict]
 ) -> None:
-    """Match-Rate pro Bucket >= bucket-spezifischer Threshold.
+    """Match rate per bucket >= bucket-specific threshold.
 
-    Plan-§6.6 fordert ≥80% global auf den 17 erfolgreichen Buckets.
-    Edge-Cases sind per Definition mehrdeutig (Pre-Check kann nicht
-    jede ambige Query erkennen, weil der einzige Pre-Check
-    `task_not_empty > 10 chars` ist und längere Edge-Cases passen das);
-    daher 66% Threshold für `edge_case`. Adversarial separat in
-    `test_mock_eval_adversarial_*`.
+    Plan §6.6 requires ≥80% globally on the 17 successful buckets.
+    Edge cases are ambiguous by definition (the pre-check can't detect
+    every ambiguous query, because the only pre-check is
+    `task_not_empty > 10 chars` and longer edge cases pass that);
+    hence the 66% threshold for `edge_case`. Adversarial is handled
+    separately in `test_mock_eval_adversarial_*`.
     """
     bucket_thresholds = {
         "code_gen_trivial": 0.8,
         "code_gen_complex": 0.8,
         "skill_authoring": 0.8,
         "research": 0.8,
-        "edge_case": 0.66,  # 2/3 ist Realität — siehe docstring
+        "edge_case": 0.66,  # 2/3 is reality — see docstring
     }
     report = asyncio.run(
         run_eval(
@@ -150,7 +150,7 @@ def test_mock_eval_pass_rate_per_bucket(
     bucket_summary = report["by_bucket"]
     for bucket, stats in bucket_summary.items():
         if bucket == "adversarial":
-            continue  # adversarial wird in test_mock_eval_adversarial_* geprüft
+            continue  # adversarial is checked in test_mock_eval_adversarial_*
         threshold = bucket_thresholds.get(bucket, 0.8)
         assert stats["match_rate"] >= threshold, (
             f"bucket {bucket} match-rate {stats['match_rate']:.2%} "
@@ -164,10 +164,10 @@ def test_mock_eval_pass_rate_per_bucket(
 
 
 def test_real_eval_quick_subset(tmp_path: Path, queries: list[dict]) -> None:
-    """Realer Eval-Run mit dem Quick-Subset (5 Queries).
+    """Real eval run with the quick subset (5 queries).
 
-    Skip bei fehlender claude-Auth oder wenn `claude` nicht im PATH —
-    auf einer Auth-fähigen Maschine läuft der Test durch.
+    Skip when claude auth is missing or `claude` isn't on PATH —
+    on an auth-capable machine, the test runs through.
     """
     ok, reason = _can_run_real()
     if not ok:
@@ -185,8 +185,8 @@ def test_real_eval_quick_subset(tmp_path: Path, queries: list[dict]) -> None:
             use_mock=False,
         )
     )
-    # Plan-§6.6 Quick-Pass-Threshold ist laxer (Pre-Commit-Hook nutzt 60%).
-    # Auf realer Pipeline ist 60% noch realistisch; höher würde flaky werden.
+    # Plan §6.6's quick-pass threshold is laxer (the pre-commit hook uses 60%).
+    # 60% is still realistic on the real pipeline; higher would get flaky.
     assert report["match_rate"] >= 0.6, (
         f"real eval quick-subset match-rate {report['match_rate']:.2%} < 60%"
     )

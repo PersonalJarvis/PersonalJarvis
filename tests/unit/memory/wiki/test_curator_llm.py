@@ -186,7 +186,7 @@ def _ok_response() -> str:
         {
             "target": "entities/personal-jarvis-maintainer.md",
             "operation": "update",
-            "new_body": "---\ntype: entity\nslug: personal-jarvis-maintainer\n---\n\n# Personal Jarvis Maintainer\n",
+            "new_body": "---\ntype: entity\nslug: personal-jarvis-maintainer\n---\n\n# Personal Jarvis Maintainer\n",  # i18n-allow: proper name with umlaut used as wiki-page fixture data
             "rename_from": None,
             "reason": "added phase B1 milestone",
         }

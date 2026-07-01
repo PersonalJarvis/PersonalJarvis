@@ -26,7 +26,7 @@ def test_sound_equivalent_spellings_of_the_wake_word_match(heard: str) -> None:
 
 @pytest.mark.parametrize(
     "heard",
-    ["Marco", "Hallo", "Computer", "das war die Welt", "Schule fertig"],
+    ["Marco", "Hallo", "Computer", "das war die Welt", "Schule fertig"],  # i18n-allow
 )
 def test_clearly_different_words_still_do_not_match(heard: str) -> None:
     m = compile_wake_matcher("Nico")

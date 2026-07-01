@@ -71,7 +71,7 @@ log = logging.getLogger("jarvis.telephony.session")
 # HANGUP_RE is re-exported below (see __all__) so importers keep working.
 
 # Default greeting when TwilioConfig.greeting is empty (butler persona).
-DEFAULT_GREETING_DE = "Hier ist Jarvis. Wie kann ich helfen?"
+DEFAULT_GREETING_DE = "Hier ist Jarvis. Wie kann ich helfen?"  # i18n-allow: German TTS greeting spoken to phone callers
 DEFAULT_GREETING_EN = "Jarvis here. How can I help?"
 
 # Send callback signature: an awaitable that ships one JSON-serialisable dict
@@ -572,7 +572,7 @@ class TelephonyCallSession:
     def _fallback_phrase(self) -> str:
         if self._lang_short() == "en":
             return "Sorry, I did not catch that. Could you say it again?"
-        return "Entschuldigung, das habe ich nicht verstanden. Bitte wiederhole es."
+        return "Entschuldigung, das habe ich nicht verstanden. Bitte wiederhole es."  # i18n-allow: German TTS fallback phrase spoken to phone callers
 
     # -- bus events --------------------------------------------------------
 

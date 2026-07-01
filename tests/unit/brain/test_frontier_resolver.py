@@ -1,9 +1,9 @@
-"""Tests fuer jarvis.brain.frontier_resolver.
+"""Tests for jarvis.brain.frontier_resolver.
 
-Drei Schwerpunkte:
-1. Provider-Picker (deterministisch, gegen statische Modell-Listen).
-2. Cache-TTL (fresh = no fetch, stale = fetch).
-3. HTTP-Failure → Cache-Fallback / None.
+Three areas of focus:
+1. Provider picker (deterministic, against static model lists).
+2. Cache TTL (fresh = no fetch, stale = fetch).
+3. HTTP failure → cache fallback / None.
 """
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ class TestPickAnthropic:
         assert _pick_anthropic(models, "deep") == "claude-opus-4-7"
 
     def test_no_match_returns_none(self) -> None:
-        # Nur Sonnet-Modelle, keine Haiku/Opus.
+        # Only Sonnet models, no Haiku/Opus.
         models = ["claude-sonnet-4-6", "claude-sonnet-4-5"]
         assert _pick_anthropic(models, "fast") is None
         assert _pick_anthropic(models, "deep") is None
@@ -78,7 +78,7 @@ class TestPickGemini:
             "gemini-3-pro",
             "gemini-3.1-pro-lite",  # synthetisch — falls Google das releast
         ]
-        # Sollte 3-pro picken, nicht den lite.
+        # Should pick 3-pro, not the lite one.
         assert _pick_gemini(models, "deep") == "gemini-3-pro"
 
     def test_fast_excludes_pro(self) -> None:
@@ -188,7 +188,7 @@ class TestResolveLatest:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         resolver = FrontierResolver(cache_path=tmp_path / "c.json")
-        # Cache-Hit fuer (gemini, fast)
+        # Cache hit for (gemini, fast)
         resolver._cache["gemini"] = {
             "fast": FrontierModel(
                 provider="gemini", tier="fast",
@@ -214,7 +214,7 @@ class TestResolveLatest:
         resolver = FrontierResolver(
             cache_path=tmp_path / "c.json", ttl_hours=0,  # alle stale
         )
-        # Stale Cache-Eintrag
+        # Stale cache entry
         resolver._cache["gemini"] = {
             "fast": FrontierModel(
                 provider="gemini", tier="fast",
@@ -247,11 +247,11 @@ class TestResolveLatest:
         assert resolver._cache["gemini"]["fast"].model_id == "gemini-3-flash"
 
 
-# Synthetischer Exception-Type fuer den HTTP-Failure-Test.
+# Synthetic exception type for the HTTP failure test.
 class httpx_RequestError(Exception):
     pass
 
 
 def test_event_loop_fixture_works() -> None:
-    """Sanity-check: sync test laeuft (keine async-fixture-issue)."""
+    """Sanity check: sync test runs (no async-fixture issue)."""
     assert asyncio.iscoroutinefunction(FrontierResolver.resolve_latest)

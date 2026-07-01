@@ -1,17 +1,17 @@
-"""Pydantic-Models fuer Voice-Session-Recording.
+"""Pydantic models for voice-session recording.
 
-Drei Schichten 1:1 zum SQLite-Schema (schema.sql):
+Three layers mapping 1:1 to the SQLite schema (schema.sql):
 
-- ``VoiceSessionRow``  - Header-Row pro Session.
-- ``VoiceTurnRow``     - Aggregat pro Turn (User+Jarvis).
-- ``VoiceEventRow``    - Roh-Event aus dem Bus, Detail-Replay.
+- ``VoiceSessionRow``  - header row per session.
+- ``VoiceTurnRow``     - aggregate per turn (user+Jarvis).
+- ``VoiceEventRow``    - raw event from the bus, for detail replay.
 
-Plus Composite-DTOs fuer die REST-API (``SessionListItem``,
+Plus composite DTOs for the REST API (``SessionListItem``,
 ``SessionDetail``).
 
-Konvention: ``_ms`` = Wall-Clock-Timestamp in Millisekunden seit Epoch
-(passt zu existierenden Phase-6-Mission-Events). Frontend rechnet das
-selbst zu ISO-Strings um — Backend bleibt bei der numerischen Form.
+Convention: ``_ms`` = wall-clock timestamp in milliseconds since epoch
+(matches existing Phase-6 mission events). The frontend converts this
+to ISO strings itself — the backend stays with the numeric form.
 """
 from __future__ import annotations
 
@@ -21,54 +21,54 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from jarvis.sessions.constants import SPOKEN_KINDS
 
-# BUG-008 (drei Episoden 2026-05-03 / -05 / -10): Pydantic-``Literal`` brach
-# die List-Sessions-API jedes Mal, wenn die Pipeline einen neuen
-# ``hangup_reason``-String einfuehrte (zuletzt ``turn_complete`` aus
-# pipeline.py:1391). Daher: kein ``Literal`` mehr, sondern offener ``str``
-# plus eine **dokumentierende** Konstante mit den heute bekannten Werten.
-# Drift-Detection passiert im Test (siehe ``tests/unit/sessions/
-# test_models_db_drift.py``), nicht im Pydantic-Validator — sonst kollabiert
-# die UI bei jedem neuen Wert.
+# BUG-008 (three episodes 2026-05-03 / -05 / -10): the Pydantic ``Literal``
+# broke the list-sessions API every time the pipeline introduced a new
+# ``hangup_reason`` string (most recently ``turn_complete`` from
+# pipeline.py:1391). So: no more ``Literal``, instead an open ``str``
+# plus a **documenting** constant with the values known today.
+# Drift detection happens in the test (see ``tests/unit/sessions/
+# test_models_db_drift.py``), not in the Pydantic validator — otherwise
+# the UI collapses on every new value.
 KNOWN_HANGUP_REASONS: frozenset[str] = frozenset(
     {
-        "",  # Session laeuft noch (DB-Default solange ``ended_ms IS NULL``)
-        "voice_pattern",  # User-Voice-Hangup ("Tschuess Jarvis")
-        "hotkey",  # User-Hotkey-Hangup
-        "idle_timeout",  # Auto-Hangup nach Inaktivitaet
-        "shutdown",  # App-Shutdown beendet laufende Session
-        "error",  # Pipeline-Crash
-        "turn_complete",  # Normaler Turn-Ende-Pfad (pipeline.py:1391)
+        "",  # session still running (DB default while ``ended_ms IS NULL``)
+        "voice_pattern",  # user voice hangup ("bye Jarvis")
+        "hotkey",  # user hotkey hangup
+        "idle_timeout",  # auto-hangup after inactivity
+        "shutdown",  # app shutdown ends the running session
+        "error",  # pipeline crash
+        "turn_complete",  # normal turn-end path (pipeline.py:1391)
     }
 )
-"""Bekannte ``VoiceSessionEnded.hangup_reason``-Werte. Erweitern wenn die
-Speech-Pipeline einen neuen Wert einfuehrt — Tests fangen Drift, nicht
-Pydantic. Siehe ADR-0009 / BUGS.md BUG-008 fuer Historie."""
+"""Known ``VoiceSessionEnded.hangup_reason`` values. Extend when the
+speech pipeline introduces a new value — tests catch drift, not
+Pydantic. See ADR-0009 / BUGS.md BUG-008 for history."""
 
 HangupReason: TypeAlias = str
-"""Korrespondiert zu ``VoiceSessionEnded.hangup_reason`` (events.py).
-Bewusst ``str`` statt ``Literal`` — siehe ``KNOWN_HANGUP_REASONS``."""
+"""Corresponds to ``VoiceSessionEnded.hangup_reason`` (events.py).
+Deliberately ``str`` instead of ``Literal`` — see ``KNOWN_HANGUP_REASONS``."""
 
 
 KNOWN_VOICE_TIERS: frozenset[str] = frozenset(
     {
-        "",  # Kein Tier-Hinweis (z.B. Smalltalk-Fallback ohne BrainTurnStarted)
+        "",  # no tier hint (e.g. smalltalk fallback without BrainTurnStarted)
         "router",
         "openclaw",
-        "sub_jarvis",  # Legacy bis Welle-4-Loeschung
+        "sub_jarvis",  # legacy, kept until the Welle-4 removal
         "trivial",
         "fast",
         "deep",
         "code",
     }
 )
-"""Routing-Tier wie in CLAUDE.md `Brain-Routing` und `Router-Discipline`."""
+"""Routing tier as in CLAUDE.md `Brain-Routing` and `Router-Discipline`."""
 
 VoiceTier: TypeAlias = str
-"""Bewusst ``str`` statt ``Literal`` — siehe ``KNOWN_VOICE_TIERS``."""
+"""Deliberately ``str`` instead of ``Literal`` — see ``KNOWN_VOICE_TIERS``."""
 
 
 KNOWN_SPOKEN_KINDS: frozenset[str] = frozenset(SPOKEN_KINDS)
-"""Bekannte ``SpeechSpoken.spoken_kind``-Werte (timeout / announcement /
+"""Known ``SpeechSpoken.spoken_kind`` values (timeout / announcement /
 clarify / …). Mirror of ``constants.SPOKEN_KINDS`` — the value rides in the
 ``voice_events`` payload JSON, not a typed column, so an unknown kind degrades
 to a fallback UI label instead of an HTTP 500 (BUG-008 class). Parity guard:
@@ -76,7 +76,7 @@ to a fallback UI label instead of an HTTP 500 (BUG-008 class). Parity guard:
 
 
 class VoiceEventRow(BaseModel):
-    """Ein Roh-Event aus dem Bus, einer Session/Turn zugeordnet."""
+    """A raw event from the bus, associated with a session/turn."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -84,12 +84,12 @@ class VoiceEventRow(BaseModel):
     session_id: str
     turn_id: str | None = None
     ts_ms: int
-    kind: str = Field(description="Event-Typ-Name (z.B. 'TranscriptFinal').")
+    kind: str = Field(description="Event type name (e.g. 'TranscriptFinal').")
     payload: dict[str, object] = Field(default_factory=dict)
 
 
 class VoiceTurnRow(BaseModel):
-    """Aggregat eines einzelnen Voice-Turns."""
+    """Aggregate of a single voice turn."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -109,9 +109,9 @@ class VoiceTurnRow(BaseModel):
     tokens_out: int = 0
     cost_usd: float = 0.0
     latency_total_ms: int = 0
-    # Aufgeschluesselte Latenzen (vom Recorder via SystemStateChanged-Boundaries):
-    # think_ms = wie lang Jarvis "nachgedacht" hat (User-Done -> Jarvis-spricht).
-    # speak_ms = wie lang Jarvis gesprochen hat (TTS-Playback-Dauer).
+    # Broken-down latencies (from the recorder via SystemStateChanged boundaries):
+    # think_ms = how long Jarvis "thought" (user-done -> Jarvis-speaks).
+    # speak_ms = how long Jarvis spoke (TTS playback duration).
     think_ms: int = 0
     speak_ms: int = 0
     tool_calls: list[str] = Field(default_factory=list)
@@ -122,7 +122,7 @@ class VoiceTurnRow(BaseModel):
 
 
 class VoiceSessionRow(BaseModel):
-    """Header einer Voice-Session."""
+    """Header of a voice session."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -140,12 +140,12 @@ class VoiceSessionRow(BaseModel):
 
 
 class SessionListItem(VoiceSessionRow):
-    """Listen-Eintrag mit Anzeige-freundlichen Derivaten.
+    """List entry with display-friendly derived fields.
 
-    ``duration_s`` wird aus ``started_ms``/``ended_ms`` berechnet (None
-    fuer noch laufende Sessions). ``preview`` ist die erste User-Utterance
-    der Session (truncated), damit die UI ohne Detail-Fetch eine Zeile
-    pro Session zeigen kann.
+    ``duration_s`` is computed from ``started_ms``/``ended_ms`` (None
+    for sessions still running). ``preview`` is the session's first
+    user utterance (truncated), so the UI can show one line per
+    session without a detail fetch.
     """
 
     duration_s: float | None = None
@@ -153,7 +153,7 @@ class SessionListItem(VoiceSessionRow):
 
 
 class SessionDetail(BaseModel):
-    """Vollstaendige Session-Sicht: Header + Turns + alle Events."""
+    """Complete session view: header + turns + all events."""
 
     model_config = ConfigDict(extra="ignore")
 

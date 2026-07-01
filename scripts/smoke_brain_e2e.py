@@ -1,10 +1,10 @@
-"""End-to-End-Smoke (2026-04-29): direkter Brain-Call ohne Backend.
+"""End-to-end smoke test (2026-04-29): direct brain call without a backend.
 
-Verifiziert dass die API-Key-Fixes im echten Stack greifen:
-1. Pre-Boot-Key-Check filtert Provider ohne Key.
-2. Gemini-Schema-Sanitizer funktioniert (kein 11-validation-error mehr).
-3. account_blocked-Klassifikation greift (Anthropic credit / xAI tier).
-4. _format_provider_chain_error liefert user-actionable Message.
+Verifies that the API-key fixes take effect in the real stack:
+1. Pre-boot key check filters out providers without a key.
+2. Gemini schema sanitizer works (no more 11-validation-error).
+3. account_blocked classification kicks in (Anthropic credit / xAI tier).
+4. _format_provider_chain_error returns a user-actionable message.
 
 Usage:
     python scripts/smoke_brain_e2e.py
@@ -72,10 +72,10 @@ async def main() -> int:
 
     # 3. Live-Brain-Call mit Test-Frage
     print("\n--- Step 3: Live-Brain-Call ---")
-    print("  Frage: 'Antworte mit genau einem Wort: ja oder nein.'")
+    print("  Question: 'Antworte mit genau einem Wort: ja oder nein.'")  # i18n-allow: quotes the simulated German user utterance sent below
     try:
         response = await bm.generate(
-            "Antworte mit genau einem Wort: ja oder nein.",
+            "Antworte mit genau einem Wort: ja oder nein.",  # i18n-allow: simulated German user utterance under test
             use_history=False,
         )
     except Exception as exc:
@@ -84,8 +84,8 @@ async def main() -> int:
 
     print(f"\n  Response: {response[:400]!r}")
 
-    # 4. Verdict — basiert auf Response-String (nicht auf bm-Attributen,
-    # weil BrainManager keine public last_provider/last_model Attribute hat).
+    # 4. Verdict — based on the response string (not on bm attributes,
+    # because BrainManager has no public last_provider/last_model attributes).
     print("\n--- Step 4: Verdict ---")
     rc = 0
     failure_indicators = ("Account-Problem", "Brain-Key", "Sidebar", "Setup")
@@ -94,12 +94,12 @@ async def main() -> int:
         print("       (Bug-API-1-Fix wirkt: account_blocked-Klassifikation aktiv,")
         print("        User bekommt Billing-URL statt 'Netzwerk pruefen')")
     elif "unerreichbar" in response.lower() and "Account" not in response:
-        print("  [X] Generischer 'Provider unerreichbar'-String — Fix greift NICHT")
+        print("  [X] Generic 'Provider unreachable' string — the fix is NOT working")
         rc = 1
     else:
         STALE = {"grok-3", "grok-2", "gpt-4o", "gpt-4o-mini", "gemini-2.5-flash",
                  "gemini-2.5-pro", "claude-3-opus", "claude-3-haiku"}
-        # Erfolgreiche Antwort — kein STALE-Marker im Text
+        # Successful response — no STALE marker in the text
         for stale in STALE:
             if stale in response.lower():
                 print(f"  [WARN] STALE-Marker im Response-Text: {stale}")

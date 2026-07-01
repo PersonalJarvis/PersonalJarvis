@@ -1,6 +1,6 @@
-"""Hauptjarvis integration. Plan §4.3 + §9.
+"""Main-Jarvis integration. Plan §4.3 + §9.
 
-Public API for the Hauptjarvis main entry point::
+Public API for the main-Jarvis main entry point::
 
     from jarvis.overlay.integration import start_overlay, stop_overlay
 
@@ -128,7 +128,7 @@ def set_overlay(bridge: Optional[OverlayBridge | NoOpOverlayBridge]) -> None:
 async def start_overlay(
     bus: Optional[Any] = None,
 ) -> Optional[OverlayBridge | NoOpOverlayBridge]:
-    """Plan §9.1 — Idempotent startup hook for the Hauptjarvis main entry.
+    """Plan §9.1 — Idempotent startup hook for the main-Jarvis main entry.
 
     Returns:
       - ``None`` when overlay is disabled or the process is a sub-agent.
@@ -144,7 +144,7 @@ async def start_overlay(
     global _bridge, _supervisor, _ipc_server_handle
 
     if is_sub_agent_process():
-        logger.info("Overlay: Sub-Agent-Process -> NoOp-Stub")
+        logger.info("Overlay: sub-agent process -> NoOp stub")
         _bridge = NoOpOverlayBridge()
         return _bridge
 
@@ -174,28 +174,28 @@ async def start_overlay(
         )
         _ipc_server_handle = ipc_handle
         logger.info(
-            "Overlay WS-Server live auf ws://%s:%d", ipc_handle.host, ipc_handle.port
+            "Overlay WS server live on ws://%s:%d", ipc_handle.host, ipc_handle.port
         )
     except Exception:  # noqa: BLE001
         logger.exception(
-            "Overlay WS-Server konnte nicht starten -> Subprocess wird Heartbeat-Timeouts melden"
+            "Overlay WS server failed to start -> subprocess will report heartbeat timeouts"
         )
-        # Bridge bleibt aktiv; Supervisor wird kill+respawn machen.
-        # Wir geben nicht auf, weil _read_overlay_config evtl. anderen Port versucht.
+        # Bridge stays active; supervisor will kill+respawn.
+        # We don't give up, because _read_overlay_config might try a different port.
 
     supervisor = OverlaySupervisor(ws_port=ws_port)
 
-    # Heartbeat-Wiring: WS-incoming-handler ruft notify_heartbeat.
-    # Defensive: jede inbound-message zaehlt als Lebenszeichen, nicht
-    # nur HeartbeatEnvelopes. Damit kann ein Discriminator-Mismatch oder
-    # Schema-Drift den Supervisor nicht blind machen — solange irgendwas
-    # vom Subprocess ankommt, gilt er als alive. Pragmatischer Fallback:
-    # type-Check bleibt fuer Forensik (Logging) drin, Notify ist universal.
+    # Heartbeat wiring: the WS incoming handler calls notify_heartbeat.
+    # Defensive: every inbound message counts as a lifesign, not
+    # just HeartbeatEnvelopes. This way a discriminator mismatch or
+    # schema drift can't blind the supervisor — as long as something
+    # arrives from the subprocess, it counts as alive. Pragmatic fallback:
+    # the type check stays in for forensics (logging), the notify is universal.
     async def _on_inbound(envelope) -> None:
         type_name = type(envelope).__name__
-        # Lifesign-Notify FIRST (immer, nicht nur fuer Heartbeat) —
-        # damit Supervisor selbst dann lebt, wenn Schema/Discriminator
-        # versehentlich rotiert.
+        # Lifesign notify FIRST (always, not just for heartbeat) —
+        # so the supervisor stays alive even if the schema/discriminator
+        # accidentally rotates.
         supervisor.notify_heartbeat()
         if type_name != "HeartbeatEnvelope":
             logger.debug(
@@ -222,8 +222,8 @@ async def start_overlay(
     try:
         await supervisor.start()
     except Exception:  # noqa: BLE001
-        logger.exception("OverlaySupervisor.start failed -> bridge bleibt running")
-        # Bridge stehen lassen; user kann manuell re-enablen.
+        logger.exception("OverlaySupervisor.start failed -> bridge stays running")
+        # Leave the bridge as-is; the user can manually re-enable it.
 
     _bridge = bridge
     _supervisor = supervisor
@@ -231,7 +231,7 @@ async def start_overlay(
 
 
 async def stop_overlay() -> None:
-    """Plan §9.1 — Idempotenter Shutdown."""
+    """Plan §9.1 — idempotent shutdown."""
     global _bridge, _supervisor, _ipc_server_handle
 
     if _supervisor is not None:

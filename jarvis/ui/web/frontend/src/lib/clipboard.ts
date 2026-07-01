@@ -1,28 +1,28 @@
 /**
- * Robust-Clipboard + Download-Helper.
+ * Robust clipboard + download helper.
  *
- * Hintergrund: pywebview verwendet auf Windows die WebView2-Engine
- * (Edge Chromium). Deren ``navigator.clipboard.writeText`` hat fuer
- * **Multi-Line-Strings** (z.B. JSON mit ``indent=2``) ein bekanntes
- * Quirk-Verhalten — es kann passieren, dass nur die erste Zeile (= ``{``)
- * im System-Clipboard landet. Markdown/Plain-Text trifft das seltener,
- * weil deren Header die erste Zeile mit weiteren Zeichen fuellen.
+ * Background: on Windows, pywebview uses the WebView2 engine
+ * (Edge Chromium). Its ``navigator.clipboard.writeText`` has a known
+ * quirk for **multi-line strings** (e.g. JSON with ``indent=2``) —
+ * sometimes only the first line (= ``{``) ends up in the system
+ * clipboard. Markdown/plain text hits this less often, because their
+ * header fills the first line with more characters.
  *
- * Loesung: robustCopy() versucht erst die moderne Clipboard-API. Bei
- * Failure ODER bei verdaechtig kurzem Output (Multi-Line-Truncation)
- * faellt es auf den klassischen ``document.execCommand('copy')``-Pfad
- * zurueck — der via hidden ``textarea`` + Selection arbeitet und in
- * WebView2 zuverlaessig den vollen Inhalt schreibt.
+ * Solution: robustCopy() first tries the modern clipboard API. On
+ * failure OR on suspiciously short output (multi-line truncation), it
+ * falls back to the classic ``document.execCommand('copy')`` path —
+ * which works via a hidden ``textarea`` + selection and reliably
+ * writes the full content in WebView2.
  */
 
 /**
- * Kopiert einen String robust ins System-Clipboard.
+ * Robustly copies a string to the system clipboard.
  *
- * Returns true wenn erfolgreich (oder Fallback-Pfad genutzt wurde),
- * false wenn beide Pfade fehlschlugen.
+ * Returns true if successful (or if the fallback path was used),
+ * false if both paths failed.
  */
 export async function robustCopy(text: string): Promise<boolean> {
-  // Pfad A — moderne Clipboard-API. Schnell und sicher fuer kurze Texte.
+  // Path A — modern clipboard API. Fast and reliable for short texts.
   try {
     if (
       typeof navigator !== "undefined" &&
@@ -30,21 +30,21 @@ export async function robustCopy(text: string): Promise<boolean> {
       typeof navigator.clipboard.writeText === "function"
     ) {
       await navigator.clipboard.writeText(text);
-      // WebView2-Quirk: writeText() resolve()d auch dann, wenn nur ein
-      // Teilstring uebernommen wurde. Wir koennen das Ergebnis nicht
-      // zuverlaessig zurueck-lesen (readText braucht Permissions, die
-      // pywebview nicht standardmaessig grantet). Daher: bei Multi-Line
-      // immer auch den Fallback ausfuehren — er ueberschreibt ggf.
-      // den korrupten Eintrag mit dem vollstaendigen Text.
+      // WebView2 quirk: writeText() resolves even when only a partial
+      // string was applied. We can't reliably read the result back
+      // (readText needs permissions that pywebview doesn't grant by
+      // default). So for multi-line content, always run the fallback
+      // too — it overwrites the corrupted entry with the full text
+      // if needed.
       if (text.includes("\n")) {
         return execCommandCopy(text);
       }
       return true;
     }
   } catch {
-    // Pfad A fehlgeschlagen — durchfallen zu Fallback.
+    // Path A failed — fall through to the fallback.
   }
-  // Pfad B — klassischer Fallback via hidden textarea.
+  // Path B — classic fallback via a hidden textarea.
   return execCommandCopy(text);
 }
 
@@ -52,15 +52,15 @@ function execCommandCopy(text: string): boolean {
   if (typeof document === "undefined") return false;
   const ta = document.createElement("textarea");
   ta.value = text;
-  // Off-screen, damit kein Layout-Shift / Focus-Verlust beim User
+  // Off-screen, so there's no layout shift / focus loss for the user.
   ta.style.position = "fixed";
   ta.style.left = "-9999px";
   ta.style.top = "0";
   ta.style.opacity = "0";
   ta.setAttribute("readonly", "");
   document.body.appendChild(ta);
-  // Wichtig: focus + select muessen passieren bevor execCommand laeuft,
-  // sonst hat WebView2 nichts zum Kopieren.
+  // Important: focus + select must happen before execCommand runs,
+  // otherwise WebView2 has nothing to copy.
   ta.focus();
   ta.select();
   ta.setSelectionRange(0, text.length);
@@ -97,22 +97,22 @@ export function downloadAs(
     const a = document.createElement("a");
     a.href = url;
     a.download = filename;
-    // Off-screen halten, damit kein visueller Flicker beim Click.
+    // Keep it off-screen so there's no visual flicker on click.
     a.style.position = "fixed";
     a.style.left = "-9999px";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
   } finally {
-    // ObjectURL freigeben, sobald der Download-Stream Zeit hatte zu starten.
+    // Release the object URL once the download stream had time to start.
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 }
 
 /**
- * Triggert einen Datei-Download aus einem Blob (binaer-sicher — anders als
- * ``downloadAs``, das einen String nimmt). Gleiches Hidden-Anchor-Muster;
- * genutzt fuer den PNG-Export der Share-Karte.
+ * Triggers a file download from a Blob (binary-safe — unlike
+ * ``downloadAs``, which takes a string). Same hidden-anchor pattern;
+ * used for the PNG export of the share card.
  */
 export function downloadBlob(filename: string, blob: Blob): void {
   const url = URL.createObjectURL(blob);
@@ -131,14 +131,14 @@ export function downloadBlob(filename: string, blob: Blob): void {
 }
 
 /**
- * Erzeugt einen filesystem-tauglichen Filename fuer eine Voice-Session.
+ * Builds a filesystem-safe filename for a voice session.
  *
  * Pattern: ``voice-session-YYYY-MM-DD_HH-mm-{slug}.{ext}``
- *  - YYYY-MM-DD_HH-mm aus session.started_ms (LocalTime)
- *  - slug aus den ersten 3-4 Woertern der ersten User-Utterance falls
- *    vorhanden, sonst der ersten 8 Zeichen der session_id
+ *  - YYYY-MM-DD_HH-mm from session.started_ms (local time)
+ *  - slug from the first 3-4 words of the first user utterance if
+ *    present, otherwise the first 8 characters of the session_id
  *
- * Filesystem-Sanitizing: nur ``[a-z0-9-]`` plus Bindestriche.
+ * Filesystem sanitizing: only ``[a-z0-9-]`` plus hyphens.
  */
 export function buildSessionFilename(
   session: { id: string; started_ms: number },
@@ -158,17 +158,17 @@ function slugify(s: string): string {
   return s
     .toLowerCase()
     .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "") // diacritics weg
-    .replace(/[^a-z0-9\s-]/g, " ") // alles non-alnum zu Space
+    .replace(/[̀-ͯ]/g, "") // strip diacritics
+    .replace(/[^a-z0-9\s-]/g, " ") // turn all non-alnum into a space
     .trim()
     .split(/\s+/)
-    .slice(0, 4) // max 4 Woerter
+    .slice(0, 4) // max 4 words
     .join("-")
     .slice(0, 40); // hard cap
 }
 
 /**
- * Mime-Type fuer ein Export-Format.
+ * MIME type for an export format.
  */
 export function mimeFor(format: "markdown" | "plain" | "json"): string {
   if (format === "json") return "application/json;charset=utf-8";

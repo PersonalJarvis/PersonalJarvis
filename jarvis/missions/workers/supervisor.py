@@ -1,25 +1,25 @@
-"""WorkerSupervisor — Done/Stuck/Waiting-Detection ueber 5 Signale.
+"""WorkerSupervisor — Done/Stuck/Waiting detection across 5 signals.
 
-Aus Risk-Register (Research-Doc §I Rank #3) + ADR-0009 §2:
+From the risk register (research doc §I rank #3) + ADR-0009 §2:
 
-Signal-Hierarchie (in Reihenfolge der Klarheit):
+Signal hierarchy (in order of clarity):
 
-1. **Process exit** — `proc.returncode is not None`. Eindeutigstes Signal.
-   `returncode == 0` -> DONE_OK, sonst DONE_ERR.
-2. **`result`-Event empfangen** (Claude) bzw. `turn.completed/turn.failed/error`
-   (Codex) — logisches End-Signal selbst wenn der Prozess noch ausschwingt.
-3. **`api_retry`-Event** — legitime Pause. Wir verlaengern die Idle-Deadline
-   um `retry_delay_ms`, sonst klassifiziert die Idle-Heuristik faelschlich
-   als 'stuck' waehrend Anthropic backoffs ausspielt.
-4. **Idle-Timeout** — kein Event seit N Sekunden, kein process exit, kein
-   api_retry. Default: 90 s fuer Sonnet-Tier, 300 s fuer extended-thinking
-   (caller setzt das via Konstruktor-Argument).
+1. **Process exit** — `proc.returncode is not None`. The clearest signal.
+   `returncode == 0` -> DONE_OK, otherwise DONE_ERR.
+2. **`result` event received** (Claude) or `turn.completed/turn.failed/error`
+   (Codex) — a logical end signal even while the process is still winding down.
+3. **`api_retry` event** — a legitimate pause. We extend the idle deadline
+   by `retry_delay_ms`, otherwise the idle heuristic wrongly classifies it
+   as 'stuck' while Anthropic is playing out its backoff.
+4. **Idle timeout** — no event for N seconds, no process exit, no
+   api_retry. Default: 90 s for the Sonnet tier, 300 s for extended-thinking
+   (the caller sets this via a constructor argument).
 5. **Hard wall-clock cap** — total_runtime > MAX. Default 900 s. Fail-safe
-   gegen Worker die `result` nie emittieren.
+   against workers that never emit `result`.
 
-Der Supervisor ist *passiv* — er klassifiziert nur den State, er killt nicht.
-Ein Killer-Hook (z.B. `WorkerKilled`-Event-Emitter) gehoert in eine andere
-Schicht (Mission-Manager-Stufe).
+The supervisor is *passive* — it only classifies the state, it does not kill.
+A killer hook (e.g. a `WorkerKilled` event emitter) belongs in a different
+layer (the mission-manager tier).
 """
 from __future__ import annotations
 
@@ -30,21 +30,21 @@ from typing import Any
 
 
 class WorkerState(str, Enum):
-    """Discrete States, in denen ein Worker stehen kann."""
+    """Discrete states a worker can be in."""
 
     RUNNING = "RUNNING"
-    WAITING = "WAITING"  # api_retry — legitimes Schweigen
-    STUCK = "STUCK"  # idle ueber Schwelle ohne erkennbaren Grund
+    WAITING = "WAITING"  # api_retry — legitimate silence
+    STUCK = "STUCK"  # idle past the threshold with no discernible reason
     DONE_OK = "DONE_OK"
     DONE_ERR = "DONE_ERR"
-    TIMED_OUT = "TIMED_OUT"  # Hard wall-clock cap erreicht
+    TIMED_OUT = "TIMED_OUT"  # hard wall-clock cap reached
 
 
 @dataclass
 class WorkerSupervisor:
-    """Lifecycle-Klassifizierer fuer einen einzelnen Worker.
+    """Lifecycle classifier for a single worker.
 
-    Stateful — ruft die Methoden chronologisch auf:
+    Stateful — call the methods in chronological order:
 
         sup = WorkerSupervisor(idle_timeout_s=90, hard_cap_s=900)
         sup.start()
@@ -52,11 +52,11 @@ class WorkerSupervisor:
             state = sup.observe_event(event)
             if state in (WorkerState.DONE_OK, WorkerState.DONE_ERR):
                 break
-        # nach EOF:
+        # after EOF:
         final = sup.observe_exit(returncode=proc.returncode)
 
-    Threading: nicht thread-safe. Pro Worker eine Instanz; Aufrufe aus dem
-    selben Coroutine-Kontext.
+    Threading: not thread-safe. One instance per worker; calls from the
+    same coroutine context.
     """
 
     idle_timeout_s: float = 90.0
@@ -65,7 +65,7 @@ class WorkerSupervisor:
 
     _started_at: float | None = None
     _last_event_at: float | None = None
-    _waiting_until: float | None = None  # bei api_retry: kein Stuck bis hierher
+    _waiting_until: float | None = None  # during api_retry: not stuck until this point
 
     # --- Lifecycle ---
 
@@ -76,18 +76,18 @@ class WorkerSupervisor:
         self._waiting_until = None
 
     def observe_event(self, event: Any) -> WorkerState:
-        """Klassifiziert den Worker-State nach einem empfangenen Event.
+        """Classifies the worker state after a received event.
 
         Args:
-            event: Pydantic-Event aus `parse_*_stream_json`.
+            event: Pydantic event from `parse_*_stream_json`.
 
         Returns:
-            Aktueller WorkerState basierend auf dem Event-Typ. Terminale
-            Events liefern DONE_OK/DONE_ERR. Sonst RUNNING (oder vorher
-            WAITING wenn ein api_retry noch laeuft).
+            The current WorkerState based on the event type. Terminal
+            events return DONE_OK/DONE_ERR. Otherwise RUNNING (or WAITING
+            if an api_retry is still in progress).
         """
         if self._started_at is None:
-            raise RuntimeError("WorkerSupervisor.start() vor observe_event() aufrufen")
+            raise RuntimeError("Call WorkerSupervisor.start() before observe_event()")
 
         now = self.monotonic()
         self._last_event_at = now
@@ -100,54 +100,54 @@ class WorkerSupervisor:
             is_error = bool(getattr(event, "is_error", False))
             return WorkerState.DONE_ERR if is_error else WorkerState.DONE_OK
 
-        # Codex terminale Events.
+        # Codex terminal events.
         if etype == "turn.completed":
             return WorkerState.DONE_OK
         if etype in ("turn.failed", "error"):
             return WorkerState.DONE_ERR
 
-        # api_retry verlaengert die Idle-Deadline um retry_delay_ms.
+        # api_retry extends the idle deadline by retry_delay_ms.
         if etype == "system" and subtype == "api_retry":
             delay_ms = getattr(event, "retry_delay_ms", None) or 0
             self._waiting_until = now + (delay_ms / 1000.0)
             return WorkerState.WAITING
 
-        # Sonst: aktiv.
+        # Otherwise: active.
         return WorkerState.RUNNING
 
     def observe_exit(self, returncode: int | None) -> WorkerState:
-        """Klassifiziert den finalen State nach Subprocess-Exit.
+        """Classifies the final state after the subprocess exits.
 
-        Wird *nach* dem Stream-EOF gerufen. `returncode is None` waehrend
-        wait() noch laeuft -> defensiv DONE_ERR (Caller hat gewartet aber
-        es gibt keinen Code, also nicht-erfolgreich).
+        Called *after* the stream EOF. `returncode is None` while
+        wait() is still running -> defensively DONE_ERR (the caller has
+        waited but there is no code, so not successful).
         """
         if returncode is None:
             return WorkerState.DONE_ERR
         return WorkerState.DONE_OK if returncode == 0 else WorkerState.DONE_ERR
 
     def check_idle(self) -> WorkerState:
-        """Prueft Idle-Timeout + Hard-Cap.
+        """Checks the idle timeout + hard cap.
 
-        Wird typischerweise vom Caller in einer parallelen Watchdog-Schleife
-        gerufen (`asyncio.sleep(5); state = sup.check_idle(); ...`).
+        Typically called by the caller in a parallel watchdog loop
+        (`asyncio.sleep(5); state = sup.check_idle(); ...`).
 
-        Reihenfolge: Hard-Cap zuerst (uebersteuert WAITING), dann Idle.
+        Order: hard cap first (overrides WAITING), then idle.
         """
         if self._started_at is None or self._last_event_at is None:
             return WorkerState.RUNNING
 
         now = self.monotonic()
 
-        # Hard-Cap immer zuerst — gilt auch im WAITING-Zustand.
+        # Hard cap always first — also applies in the WAITING state.
         if now - self._started_at >= self.hard_cap_s:
             return WorkerState.TIMED_OUT
 
-        # WAITING-Toleranz: bis _waiting_until kein Stuck.
+        # WAITING tolerance: not stuck until _waiting_until.
         if self._waiting_until is not None and now < self._waiting_until:
             return WorkerState.WAITING
 
-        # Idle-Heuristik.
+        # Idle heuristic.
         if now - self._last_event_at >= self.idle_timeout_s:
             return WorkerState.STUCK
 

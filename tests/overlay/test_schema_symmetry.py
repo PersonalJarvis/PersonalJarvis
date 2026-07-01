@@ -1,27 +1,28 @@
-"""JSON-Schema-Export als CI-Gate fuer Phase 9.4 Zod-Symmetrie (AD-15).
+"""JSON schema export as a CI gate for Phase 9.4 Zod symmetry (AD-15).
 
-Phase 9.2 liefert die Pydantic-Seite. Phase 9.4 wird das Zod-Schema
-generieren und dieser Test prueft dann strukturelle Gleichheit. Hier
-verifizieren wir vorerst nur, dass:
+Phase 9.2 delivers the Pydantic side. Phase 9.4 will generate the Zod
+schema and this test will then check structural equality. For now we
+only verify that:
 
-1. Pydantic ein vollstaendiges JSON-Schema fuer ``IPCMessage``
-   exportieren kann.
-2. Jeder Envelope-Type einen unique discriminator-Wert hat.
-3. Alle erwarteten Type-Werte praesent sind.
-4. Jeder Envelope-Type funktional roundtrip-faehig ist
+1. Pydantic can export a complete JSON schema for ``IPCMessage``.
+2. Every envelope type has a unique discriminator value.
+3. All expected type values are present.
+4. Every envelope type is functionally round-trip-capable
    (serialize -> deserialize via ``IPCMessage.validate_json``).
-5. Die TS-Seite (``OS-Level/overlay-ui/src/schema.ts``) dokumentiert die
-   Phase-9.4-Scope-Limitation explizit (nur State-Slice gespiegelt).
+5. The TS side (``OS-Level/overlay-ui/src/schema.ts``) explicitly
+   documents the Phase-9.4 scope limitation (only the state slice is
+   mirrored).
 
-Phase-9.10+-TODO (echte Zod<->Pydantic-Symmetrie):
-    Eine vollstaendige strukturelle Gleichheit zwischen Pydantic-JSON-
-    Schema und Zod-Schema ist erst sinnvoll, wenn alle 9 Envelopes auf
-    der TS-Seite gespiegelt sind. Dann muesste der Test einen
-    ``tsc/node``-Subprocess fahren (Zod-Schema -> JSON-Schema via
-    ``zod-to-json-schema``) und gegen den Pydantic-Export diff'en. Das
-    ist zur Phase 9.4 Overhead ohne Gegenwert: der Renderer braucht
-    aktuell nur den State-Slice. Geplant ab Phase 9.10, wenn Overlay
-    selbst Click/Cursor/Action-Envelopes konsumiert.
+Phase-9.10+ TODO (real Zod<->Pydantic symmetry):
+    Full structural equality between the Pydantic JSON schema and the
+    Zod schema only makes sense once all 9 envelopes are mirrored on
+    the TS side. At that point the test would need to run a
+    ``tsc/node`` subprocess (Zod schema -> JSON schema via
+    ``zod-to-json-schema``) and diff it against the Pydantic export.
+    For Phase 9.4 that would be overhead without payoff: the renderer
+    currently only needs the state slice. Planned from Phase 9.10
+    onward, once the overlay itself consumes click/cursor/action
+    envelopes.
 """
 
 from __future__ import annotations
@@ -52,16 +53,16 @@ EXPECTED_TYPES = frozenset(
 def test_json_schema_exportable() -> None:
     schema = IPCMessage.json_schema()
     assert isinstance(schema, dict)
-    # Pydantic v2 emittiert oneOf/discriminator fuer Discriminated Unions.
+    # Pydantic v2 emits oneOf/discriminator for discriminated unions.
     blob = json.dumps(schema)
     for t in EXPECTED_TYPES:
-        assert f'"{t}"' in blob, f"type={t!r} fehlt in JSON-Schema"
+        assert f'"{t}"' in blob, f"type={t!r} missing from JSON schema"
 
 
 def test_all_expected_types_present() -> None:
-    """Jeder Envelope-Type muss validierbar sein."""
+    """Every envelope type must be validatable."""
     for t in EXPECTED_TYPES:
-        # Minimaler Roh-Payload pro Type.
+        # Minimal raw payload per type.
         sample = _sample_for(t)
         msg = IPCMessage.validate_python(sample)
         assert msg.type == t
@@ -85,33 +86,33 @@ def _sample_for(t: str) -> dict:
 
 def test_discriminator_field_in_schema() -> None:
     schema = IPCMessage.json_schema()
-    # Pydantic v2: ``discriminator`` Property unter ``oneOf``-Wrapper oder im
-    # Top-Level. Wir akzeptieren beides — wichtig ist, dass das Feld ``type``
-    # den Discriminator-Hinweis traegt.
+    # Pydantic v2: the ``discriminator`` property is either under the ``oneOf``
+    # wrapper or at the top level. We accept both — what matters is that the
+    # ``type`` field carries the discriminator hint.
     blob = json.dumps(schema)
     assert "discriminator" in blob or "propertyName" in blob or '"type":' in blob
 
 
 def test_schema_export_stable_for_drift_detection(tmp_path) -> None:
-    """Snapshot des JSON-Schemas. Phase 9.4 vergleicht gegen Zod-Output."""
+    """Snapshot of the JSON schema. Phase 9.4 compares against the Zod output."""
     schema = IPCMessage.json_schema()
     snapshot = tmp_path / "ipc-schema.json"
     snapshot.write_text(json.dumps(schema, indent=2, sort_keys=True), encoding="utf-8")
-    # Sanity: nicht leer, parseable.
+    # Sanity: not empty, parseable.
     parsed = json.loads(snapshot.read_text(encoding="utf-8"))
     assert isinstance(parsed, dict)
 
 
 # -----------------------------------------------------------------------------
-# Neue Tests (MAJOR #9 — Plan §10.3 + AD-15 Symmetrie-Audit)
+# New tests (MAJOR #9 — Plan §10.3 + AD-15 symmetry audit)
 # -----------------------------------------------------------------------------
 
 
 def _find_overlay_ui_schema_ts() -> Path | None:
-    """Sucht ``OS-Level/overlay-ui/src/schema.ts`` von der Test-Datei aus.
+    """Looks for ``OS-Level/overlay-ui/src/schema.ts`` from the test file.
 
-    Wir laufen u.U. aus verschiedenen Roots (``Personal Jarvis`` vs.
-    ``Personal Jarvis-main``); also mehrere Kandidaten-Pfade pruefen.
+    We may run from different roots (``Personal Jarvis`` vs.
+    ``Personal Jarvis-main``), so check multiple candidate paths.
     """
     here = Path(__file__).resolve()
     candidates: list[Path] = []
@@ -124,25 +125,25 @@ def _find_overlay_ui_schema_ts() -> Path | None:
 
 
 def test_zod_schema_file_documents_phase94_limitation() -> None:
-    """``schema.ts`` MUSS die Phase-9.4-Scope-Limitation explizit dokumentieren.
+    """``schema.ts`` MUST explicitly document the Phase-9.4 scope limitation.
 
-    Plan AD-15 fordert symmetrische Pydantic<->Zod-Schemas. Phase 9.4
-    spiegelt jedoch nur den State-Slice (StateName + StateChange), nicht
-    alle 9 Envelopes. Diese Scope-Begrenzung muss im TS-File als
-    Kommentar/TODO sichtbar sein, sonst entsteht stille Drift.
+    Plan AD-15 demands symmetric Pydantic<->Zod schemas. Phase 9.4,
+    however, only mirrors the state slice (StateName + StateChange), not
+    all 9 envelopes. This scope limitation must be visible as a
+    comment/TODO in the TS file, otherwise silent drift creeps in.
     """
     schema_ts = _find_overlay_ui_schema_ts()
     if schema_ts is None:
         pytest.skip(
-            "OS-Level/overlay-ui/src/schema.ts nicht gefunden — "
-            "Phase 9.4 Frontend-Tree fehlt in diesem Checkout."
+            "OS-Level/overlay-ui/src/schema.ts not found — "
+            "Phase 9.4 frontend tree is missing in this checkout."
         )
 
     text = schema_ts.read_text(encoding="utf-8")
     head = "\n".join(text.splitlines()[:30]).lower()
 
-    # Akzeptiert: Phase-9.4-Hinweis ODER expliziter TODO/limitation/scope-Hinweis
-    # auf weitere Envelopes (oder AD-15 referenziert).
+    # Accepted: a Phase-9.4 hint OR an explicit TODO/limitation/scope hint
+    # about additional envelopes (or a reference to AD-15).
     phase_marker = any(
         token in head
         for token in (
@@ -159,7 +160,7 @@ def test_zod_schema_file_documents_phase94_limitation() -> None:
         token in head
         for token in (
             "envelope",
-            "weitere envelopes",
+            "weitere envelopes",  # i18n-allow: matched literally against schema.ts content
             "additional envelopes",
             "more envelopes",
             "state-slice",
@@ -169,47 +170,47 @@ def test_zod_schema_file_documents_phase94_limitation() -> None:
 
     if not (phase_marker and envelope_marker):
         pytest.fail(
-            "AD-15 Symmetrie-Audit fehlt: schema.ts dokumentiert die Phase-9.4-"
-            "Scope-Limitation nicht. Bitte 1-5 Zeilen Kommentar oben einfuegen, "
-            "der erklaert dass nur der State-Slice gespiegelt ist und weitere "
-            "Envelopes mit Phase 9.10+ folgen.\n"
-            f"Datei: {schema_ts}\n"
-            f"Erste 30 Zeilen:\n{head}"
+            "AD-15 symmetry audit missing: schema.ts does not document the "
+            "Phase-9.4 scope limitation. Please add a 1-5 line comment at the "
+            "top explaining that only the state slice is mirrored and "
+            "further envelopes follow from Phase 9.10+.\n"
+            f"File: {schema_ts}\n"
+            f"First 30 lines:\n{head}"
         )
 
 
 def test_envelope_round_trip_each_type() -> None:
-    """Jeder der 9 Envelope-Types muss JSON-Roundtrip-faehig sein.
+    """Each of the 9 envelope types must be JSON-round-trip-capable.
 
-    Serialize ein Sample -> validate_json -> assert ``type`` und alle
-    Payload-Keys identisch. Verhindert dass ein zukuenftiger Pydantic-
-    Refactor die Discriminated-Union sprengt, ohne dass ein Test laut
-    wird.
+    Serialize a sample -> validate_json -> assert ``type`` and all
+    payload keys are identical. Prevents a future Pydantic refactor
+    from breaking the discriminated union without any test making
+    noise.
     """
     for t in EXPECTED_TYPES:
         sample = _sample_for(t)
-        # Bytes-Pfad (real-life Wire-Format).
+        # Bytes path (real-life wire format).
         raw = json.dumps(sample).encode("utf-8")
         msg = IPCMessage.validate_json(raw)
 
-        # Discriminator muss erhalten bleiben.
-        assert msg.type == t, f"type-Mismatch fuer {t!r}: got {msg.type!r}"
+        # Discriminator must be preserved.
+        assert msg.type == t, f"type mismatch for {t!r}: got {msg.type!r}"
 
-        # Payload-Keys aus dem Sample muessen alle im deserialisierten
-        # Objekt landen (extra="forbid" auf den Payloads sichert die
-        # Gegenrichtung — kein Key wandert verloren).
+        # All payload keys from the sample must end up in the
+        # deserialized object (extra="forbid" on the payloads secures
+        # the reverse direction — no key gets lost).
         sample_payload = sample["payload"]
         deserialized_payload = msg.payload.model_dump()
         for key, expected in sample_payload.items():
             assert key in deserialized_payload, (
-                f"Payload-Key {key!r} fehlt nach Roundtrip fuer type={t!r}"
+                f"Payload key {key!r} missing after round trip for type={t!r}"
             )
             assert deserialized_payload[key] == expected, (
-                f"Payload-Wert fuer {key!r} weicht ab fuer type={t!r}: "
-                f"erwartet {expected!r}, bekommen {deserialized_payload[key]!r}"
+                f"Payload value for {key!r} differs for type={t!r}: "
+                f"expected {expected!r}, got {deserialized_payload[key]!r}"
             )
 
-        # Envelope-Felder muessen identisch sein.
+        # Envelope fields must be identical.
         assert msg.v == sample["v"]
         assert msg.id == sample["id"]
         assert msg.ts_ns == sample["ts_ns"]

@@ -1,14 +1,13 @@
-"""dispatch_with_review-Tool: vom Hauptjarvis aufrufbar (Phase 8.4).
+"""dispatch_with_review tool: callable by the main Jarvis (Phase 8.4).
 
-Plan-Referenz: §6.4, §AD-6 (selektive Aktivierung). Dieses Tool ist die
-einzige Schaltstelle, die die Quality-Gate-Pipeline aktiviert. Hauptjarvis
-ruft es explizit auf, wenn die Aufgabe es rechtfertigt — Code-Generierung,
-Skill-Authoring, Datei-Mutation, Multi-Schritt-Research. Konversation und
-Smalltalk laufen NIE durch dieses Tool (Plan §AD-6 — Self-Critique-
-Paradox).
+Plan reference: §6.4, §AD-6 (selective activation). This tool is the ONLY
+switch that activates the quality-gate pipeline. The main Jarvis calls it
+explicitly when the task justifies it — code generation, skill authoring,
+file mutation, multi-step research. Conversation and small talk NEVER run
+through this tool (Plan §AD-6 — self-critique paradox).
 
-Tool-Beschreibung ist 1:1 aus Plan §6.4 — sie ist die einzige Heuristik,
-die das LLM zur Aktivierung sieht (Plan-Architektur).
+The tool description is verbatim from Plan §6.4 — it's the only heuristic
+the LLM sees for activation (plan architecture).
 """
 from __future__ import annotations
 
@@ -30,30 +29,30 @@ from jarvis.core.review.spawns import ReviewerSpawner, WorkerSpawner
 from jarvis.core.review.state import PipelineOutcome, PipelineResult
 from jarvis.harness.manager import HarnessManager
 
-# AD-14: Voice-Phrasen sind hier hartcodiert + werden in den Smoke-Tests
-# byte-genau matched. Änderungen erfordern Plan-Update.
-VOICE_HOLDING_PHRASE_DE = "Lass mich kurz an der Aufgabe arbeiten."
+# AD-14: voice phrases are hardcoded here and byte-exact matched in the
+# smoke tests. Changes require a plan update.
+VOICE_HOLDING_PHRASE_DE = "Lass mich kurz an der Aufgabe arbeiten."  # i18n-allow: German TTS phrase
 VOICE_OUTCOME_TEMPLATES_DE = {
-    "success": "Erledigt — {summary}",
-    "cap_fired": "Mein bestes Ergebnis liegt vor, mit einer Einschränkung: {top_issue}",
-    "fail": "Das funktioniert so nicht — {summary}",
-    "precheck_fail": "Die Aufgabe ist zu kurz oder unklar — versuch's nochmal mit mehr Kontext.",
+    "success": "Erledigt — {summary}",  # i18n-allow: German TTS phrase
+    "cap_fired": "Mein bestes Ergebnis liegt vor, mit einer Einschränkung: {top_issue}",  # i18n-allow: German TTS phrase
+    "fail": "Das funktioniert so nicht — {summary}",  # i18n-allow: German TTS phrase
+    "precheck_fail": "Die Aufgabe ist zu kurz oder unklar — versuch's nochmal mit mehr Kontext.",  # i18n-allow: German TTS phrase
 }
 
 
 class DispatchWithReviewTool:
-    """Tool-Wrapper über `ReviewPipeline` für den Hauptjarvis."""
+    """Tool wrapper over `ReviewPipeline` for the main Jarvis."""
 
     name: str = "dispatch_with_review"
     risk_tier: str = "monitor"
     description: str = (
-        "Führt eine OpenClaw-Aufgabe mit Review-Quality-Gate aus. "
-        "NUTZE diesen Tool wenn das Ergebnis user-irreversibel ist (Code-"
-        "Generierung, Datei-Mutation, Skill-Authoring), Multi-Schritt-"
-        "Synthese verlangt (Research, Aggregation), oder schwer rückgängig "
-        "zu machen ist. NUTZE NICHT für Konversation, Smalltalk, einfache "
-        "Tool-Calls (Calendar lesen, Wetter abfragen) — diese laufen über "
-        "dispatch_to_harness oder direkt im Hauptjarvis."
+        "Runs an OpenClaw task with a review quality gate. "
+        "USE this tool when the result is user-irreversible (code "
+        "generation, file mutation, skill authoring), requires multi-step "
+        "synthesis (research, aggregation), or is hard to undo. DO NOT USE "
+        "for conversation, small talk, or simple tool calls (reading the "
+        "calendar, checking the weather) — those go through "
+        "dispatch_to_harness or run directly in the main Jarvis."
     )
     schema: dict[str, Any] = {
         "type": "object",
@@ -63,8 +62,8 @@ class DispatchWithReviewTool:
                 "type": "string",
                 "minLength": 20,
                 "description": (
-                    "Vollständige Task-Beschreibung für OpenClaw. "
-                    "Zwingend, mindestens 20 Zeichen."
+                    "Complete task description for OpenClaw. "
+                    "Required, at least 20 characters."
                 ),
             },
             "rubric_id": {
@@ -77,10 +76,10 @@ class DispatchWithReviewTool:
                 ],
                 "default": "default",
                 "description": (
-                    "Welche Bewertungs-Rubric der Reviewer durchläuft. "
-                    "`default` für allgemeine Aufgaben, `code_generation` "
-                    "für Code+Tests, `skill_authoring` für SKILL.md-Generierung, "
-                    "`research` für Faktenrecherche."
+                    "Which grading rubric the reviewer runs. "
+                    "`default` for general tasks, `code_generation` "
+                    "for code+tests, `skill_authoring` for SKILL.md generation, "
+                    "`research` for fact-finding."
                 ),
             },
             "max_iterations": {
@@ -89,29 +88,29 @@ class DispatchWithReviewTool:
                 "maximum": 5,
                 "default": 3,
                 "description": (
-                    "Maximale Worker→Reviewer-Iterationen bevor Cap-Fire-"
-                    "Fallback (best candidate) ausgeliefert wird."
+                    "Maximum worker→reviewer iterations before the cap-fire "
+                    "fallback (best candidate) is delivered."
                 ),
             },
         },
         "required": ["task"],
         "strict": True,
     }
-    # Beispiele aus Plan-§AD-9-Pattern (Anthropic 2026): erhöht Tool-Trigger-
-    # Genauigkeit + reduziert Schema-Verletzungen.
+    # Examples from the Plan-§AD-9 pattern (Anthropic 2026): improves
+    # tool-trigger accuracy + reduces schema violations.
     input_examples: list[dict[str, Any]] = [
         {
             "task": (
-                "Schreibe ein Python-Script in scripts/rename_notes.py das "
-                "alle .md-Files in ~/notes nach 'YYYY-MM-DD_<slug>.md' "
-                "umbenennt, mit pytest-Tests."
+                "Write a Python script at scripts/rename_notes.py that "
+                "renames every .md file in ~/notes to 'YYYY-MM-DD_<slug>.md', "
+                "with pytest tests."
             ),
             "rubric_id": "code_generation",
         },
         {
             "task": (
-                "Erstelle einen neuen Skill der Spotify pausiert wenn ich "
-                "rede, basierend auf dem Skill-Creator-Pattern."
+                "Create a new skill that pauses Spotify when I'm talking, "
+                "based on the skill-creator pattern."
             ),
             "rubric_id": "skill_authoring",
             "max_iterations": 3,
@@ -133,7 +132,7 @@ class DispatchWithReviewTool:
     ) -> None:
         self._bus = bus
         self._manager = harness_manager or HarnessManager(bus=bus)
-        # Defaults aus Plan §6.4 — Override per ctor-Argument für Tests.
+        # Defaults from Plan §6.4 — override via ctor argument for tests.
         self._runs_root: Path = Path(runs_root or "data/review/runs")
         self._audit = ReviewAudit(
             path=Path(audit_log_path or "data/review.log")
@@ -141,7 +140,7 @@ class DispatchWithReviewTool:
         self._max_iterations = max_iterations
         self._hard_ceiling = hard_ceiling
 
-        # Spawner und Pipeline werden lazy gebaut (oder durch Tests injiziert).
+        # Spawner and pipeline are lazily built (or injected by tests).
         self._worker_spawner = worker_spawner
         self._reviewer_spawner = reviewer_spawner
         self._pipeline = pipeline
@@ -181,17 +180,17 @@ class DispatchWithReviewTool:
     async def execute(
         self, args: dict[str, Any], ctx: ExecutionContext
     ) -> ToolResult:
-        del ctx  # ExecutionContext aktuell nicht benötigt (Phase-8.4-Scope)
+        del ctx  # ExecutionContext not currently needed (Phase-8.4 scope)
         task = (args.get("task") or "").strip()
         rubric_id = args.get("rubric_id") or "default"
-        # max_iterations als Per-Run-Override; sonst Default aus ctor.
+        # max_iterations as a per-run override; otherwise the ctor default.
         max_iter_arg = args.get("max_iterations")
 
         if not task or len(task) < 20:
             return ToolResult(
                 success=False,
                 output=None,
-                error="task fehlt oder ist zu kurz (mindestens 20 Zeichen)",
+                error="task is missing or too short (at least 20 characters)",
             )
         if rubric_id not in {
             "default",
@@ -202,12 +201,12 @@ class DispatchWithReviewTool:
             return ToolResult(
                 success=False,
                 output=None,
-                error=f"unbekannte rubric_id: {rubric_id!r}",
+                error=f"unknown rubric_id: {rubric_id!r}",
             )
 
         pipeline = self._ensure_pipeline()
-        # AD-14: Holding-Phrase EINMAL pro Run — vor dem await pipeline.run().
-        # Bus-Publish ist Best-Effort; falls kein Bus injiziert, kein Side-Effect.
+        # AD-14: holding phrase ONCE per run — before the await pipeline.run().
+        # Bus publish is best-effort; if no bus is injected, no side effect.
         await self._announce_holding_phrase()
         try:
             result = await pipeline.run(
@@ -215,7 +214,7 @@ class DispatchWithReviewTool:
                 rubric_id=rubric_id,
                 max_iterations=int(max_iter_arg) if max_iter_arg else None,
             )
-        except Exception as exc:  # noqa: BLE001 — Tool darf NIE crashen
+        except Exception as exc:  # noqa: BLE001 — the tool must NEVER crash
             return ToolResult(
                 success=False,
                 output=None,
@@ -225,11 +224,11 @@ class DispatchWithReviewTool:
         return self._serialize_result(result)
 
     async def _announce_holding_phrase(self) -> None:
-        """AD-14: Voice-Holding-Phrase einmal pro Run publishen.
+        """AD-14: publish the voice holding phrase once per run.
 
-        Bus-Publish failt nie hart — wenn kein Bus injiziert, no-op. Wenn
-        Bus crash't beim publish, schlucken wir das (Pipeline darf NICHT
-        wegen TTS-Bus-Fehler abbrechen).
+        Bus publish never fails hard — if no bus is injected, it's a no-op.
+        If the bus crashes on publish, we swallow it (the pipeline must NOT
+        abort because of a TTS-bus error).
         """
         if self._bus is None:
             return
@@ -241,7 +240,7 @@ class DispatchWithReviewTool:
                     language="de",
                 )
             )
-        except Exception:  # noqa: BLE001, S110 — Voice-Side-Effect darf nicht crashen
+        except Exception:  # noqa: BLE001, S110 — the voice side effect must not crash
             pass
 
     # ------------------------------------------------------------------
@@ -249,8 +248,8 @@ class DispatchWithReviewTool:
     # ------------------------------------------------------------------
 
     def _serialize_result(self, result: PipelineResult) -> ToolResult:
-        # `success` umfasst Cap-Fire (best-of) — der User bekommt ein Ergebnis.
-        # PRECHECK_FAIL und FAIL sind harte Fehler.
+        # `success` includes cap-fire (best-of) — the user gets a result.
+        # PRECHECK_FAIL and FAIL are hard errors.
         success = result.outcome in (
             PipelineOutcome.SUCCESS,
             PipelineOutcome.CAP_FIRED,
@@ -258,13 +257,13 @@ class DispatchWithReviewTool:
 
         warnings: list[str] = []
         if result.cap_fired and result.final_verdict is not None:
-            # Top-Issue für TTS-Anzeige (Plan §AD-7)
+            # Top issue for TTS display (Plan §AD-7)
             warnings.append(result.final_verdict.summary)
             for issue in result.final_verdict.issues[:3]:  # max 3
                 warnings.append(f"[{issue.severity}] {issue.description}")
 
-        # AD-14: Voice-Outcome-Phrase im Output. Brain rendert das als TTS,
-        # nachdem der Tool-Call abgeschlossen ist.
+        # AD-14: voice outcome phrase in the output. The brain renders this
+        # as TTS after the tool call has completed.
         voice_phrase = self._build_voice_outcome_phrase(result)
 
         output: dict[str, Any] = {
@@ -311,21 +310,21 @@ class DispatchWithReviewTool:
 
     @staticmethod
     def _build_voice_outcome_phrase(result: PipelineResult) -> str:
-        """AD-14: Outcome-Phrase basierend auf PipelineOutcome.
+        """AD-14: outcome phrase based on PipelineOutcome.
 
-        Templates sind hartcodiert (Plan-§Verboten: keine Mutation via
-        Voice/Config). Tests matchen byte-genau auf die Phrase-Anfänge.
+        Templates are hardcoded (Plan-§Forbidden: no mutation via
+        voice/config). Tests match byte-exact on the phrase prefixes.
         """
         outcome = result.outcome
         if outcome is PipelineOutcome.SUCCESS:
             summary = (
                 result.final_verdict.summary
                 if result.final_verdict is not None
-                else "fertig"
+                else "fertig"  # i18n-allow: German TTS phrase fallback
             )
             return VOICE_OUTCOME_TEMPLATES_DE["success"].format(summary=summary)
         if outcome is PipelineOutcome.CAP_FIRED:
-            top_issue = "kleine Restbedenken"
+            top_issue = "kleine Restbedenken"  # i18n-allow: German TTS phrase fallback
             if result.final_verdict is not None:
                 if result.final_verdict.issues:
                     top_issue = result.final_verdict.issues[0].description
@@ -336,7 +335,7 @@ class DispatchWithReviewTool:
             summary = (
                 result.final_verdict.summary
                 if result.final_verdict is not None
-                else "Architektur-Defekt"
+                else "Architektur-Defekt"  # i18n-allow: German TTS phrase fallback
             )
             return VOICE_OUTCOME_TEMPLATES_DE["fail"].format(summary=summary)
         # PRECHECK_FAIL

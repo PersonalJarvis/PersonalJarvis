@@ -333,7 +333,7 @@ Brain claude-api(claude-haiku-4-5-20251001) failed: 400
 Brain grok(grok-4.1-fast) failed: 404
   'The model grok-4.1-fast does not exist or your team does not have
    access to it.'
-Brain gemini(gemini-3-flash) fehlgeschlagen: 11 validation errors for
+Brain gemini(gemini-3-flash) fehlgeschlagen: 11 validation errors for  <!-- i18n-allow -->
   GenerateContentConfig
   tools.0.Tool.functionDeclarations.1.parameters.strict
     Extra inputs are not permitted [type=extra_forbidden, ...]
@@ -782,7 +782,7 @@ Expected: speech unit suite green; a normal response ends with
 - **Verification** (2026-05-02 23:15 — performed directly):
   - `pytest tests/unit/tasks/` → 25/25 green.
   - `Invoke-WebRequest http://127.0.0.1:47821/api/tasks` (old instance
-    before fix): `STATUS=503 detail="TaskStoreNicht verfuegbar"` (TaskStore not available).
+    before fix): `STATUS=503 detail="TaskStoreNicht verfuegbar"` (TaskStore not available).  <!-- i18n-allow -->
   - App restart with patched code → the same endpoint:
     `STATUS=200 BODY={tasks:[],total:0}`.
   - Demo task via `POST /api/tasks {trigger:after_delay 30s, action:tool_call
@@ -1555,7 +1555,7 @@ See also: `docs/anti-drift-three-layer.md` for the general pattern.
     HTTP 200, 268 items, distribution `{idle_timeout: 115, voice_pattern: 106,
     turn_complete: 20, shutdown: 15, hotkey: 12}`.
   - **UI verification** (Chrome screenshot via claude-in-chrome): the tab
-    "Transkription" now shows the full list — newest session "läuft" (running),
+    "Transkription" now shows the full list — newest session "läuft" (running),  <!-- i18n-allow -->
     next to it "Geht up" 4 turns / "Was geht ab?" 2 turns with cost,
     detail panel on the right with Markdown/plain-text/JSON export. Empty state
     gone.
@@ -2166,7 +2166,7 @@ Four new tests in ``tests/unit/speech/test_turn_taking.py``:
 
 Jarvis confirms sending emails, creating calendar entries, posting to social
 media, and other actions it has no registered capability for. The Ack-Brain
-says "wird erledigt", the brain returns a phantom success response, and the TTS
+says "wird erledigt", the brain returns a phantom success response, and the TTS  <!-- i18n-allow -->
 reads a confirmation to the user. The action never happens. The user is deceived.
 
 Classic trigger example: "Send an email to Sam" → TTS plays "Die Email wurde gesendet." → No email was sent. No error was raised. No log entry indicates a failure. <!-- i18n-allow -->

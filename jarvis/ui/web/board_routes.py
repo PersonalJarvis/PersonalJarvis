@@ -1,15 +1,15 @@
-"""REST-API fuer das Personal-Mastery-Dashboard.
+"""REST API for the Personal Mastery dashboard.
 
 Endpoints:
 
-- ``GET  /api/board/personal/summary``       → Totals + 30-Tage-Fenster
-- ``GET  /api/board/personal/heatmap``       → GitHub-Style-Grid (?days=365)
-- ``GET  /api/board/personal/tools``         → Tool-Usage-Histogramm
-- ``GET  /api/board/personal/records``       → Personal Records
-- ``POST /api/board/personal/refresh``       → Manueller Aggregator-Run
-- ``GET  /api/board/achievements``           → Alle Specs mit Unlock-Status
-- ``GET  /api/board/bio``                    → Aktuelle AI-Bio + Alter
-- ``POST /api/board/bio/regenerate``         → Manuell neue Bio generieren
+- ``GET  /api/board/personal/summary``       → totals + 30-day window
+- ``GET  /api/board/personal/heatmap``       → GitHub-style grid (?days=365)
+- ``GET  /api/board/personal/tools``         → tool-usage histogram
+- ``GET  /api/board/personal/records``       → personal records
+- ``POST /api/board/personal/refresh``       → manual aggregator run
+- ``GET  /api/board/achievements``           → all specs with unlock status
+- ``GET  /api/board/bio``                    → current AI bio + age
+- ``POST /api/board/bio/regenerate``         → manually generate a new bio
 """
 from __future__ import annotations
 
@@ -36,14 +36,14 @@ board_router = APIRouter(prefix="/api/board", tags=["board"])
 def _require_store(request: Request) -> BoardStore:
     store = getattr(request.app.state, "board_store", None)
     if store is None:
-        raise HTTPException(status_code=503, detail="BoardStore nicht verfuegbar")
+        raise HTTPException(status_code=503, detail="BoardStore not available")
     return store
 
 
 def _require_aggregator(request: Request) -> BoardAggregator:
     agg = getattr(request.app.state, "board_aggregator", None)
     if agg is None:
-        raise HTTPException(status_code=503, detail="BoardAggregator nicht verfuegbar")
+        raise HTTPException(status_code=503, detail="BoardAggregator not available")
     return agg
 
 
@@ -71,21 +71,21 @@ async def _freshen(request: Request, ttl_s: float = _FRESHEN_TTL_S) -> None:
 def _require_evaluator(request: Request) -> AchievementEvaluator:
     ev = getattr(request.app.state, "achievement_evaluator", None)
     if ev is None:
-        raise HTTPException(status_code=503, detail="AchievementEvaluator nicht verfuegbar")
+        raise HTTPException(status_code=503, detail="AchievementEvaluator not available")
     return ev
 
 
 def _require_bio_generator(request: Request) -> BioGenerator:
     gen = getattr(request.app.state, "bio_generator", None)
     if gen is None:
-        raise HTTPException(status_code=503, detail="BioGenerator nicht verfuegbar")
+        raise HTTPException(status_code=503, detail="BioGenerator not available")
     return gen
 
 
 def _require_bio_store(request: Request) -> BioStore:
     store = getattr(request.app.state, "bio_store", None)
     if store is None:
-        raise HTTPException(status_code=503, detail="BioStore nicht verfuegbar")
+        raise HTTPException(status_code=503, detail="BioStore not available")
     return store
 
 
@@ -243,18 +243,18 @@ async def personal_records(request: Request) -> RecordsResponse:
 
 @router.post("/refresh", response_model=RefreshResponse)
 async def personal_refresh(request: Request) -> RefreshResponse:
-    """Manuell den Aggregator anwerfen. Synchron, bis DB geupsertet ist.
+    """Manually kick off the aggregator. Synchronous, until the DB is upserted.
 
-    Wird vom UI-„Refresh"-Button ausgeloest. Keine Long-Poll-Illusion —
-    der Request kehrt erst zurueck, wenn die DB aktuell ist. Das ist bei
-    <10 k Events ein Bruchteil einer Sekunde.
+    Triggered by the UI's "Refresh" button. No long-poll illusion —
+    the request only returns once the DB is current. For <10k events
+    that's a fraction of a second.
     """
     agg = _require_aggregator(request)
     try:
         await asyncio.to_thread(agg.run)
         return RefreshResponse(ok=True, triggered=True)
     except Exception as exc:  # noqa: BLE001
-        log.exception("manueller Board-Refresh fehlgeschlagen")
+        log.exception("manual board refresh failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
@@ -298,11 +298,11 @@ class BioRegenerateResponse(BaseModel):
 
 
 class BioFeedbackRequest(BaseModel):
-    """Reagier-Klick unter einer Bio. Das Signal kalibriert die NAECHSTE
-    Generation; kein Sofort-Regenerate.
+    """Reaction click under a bio. The signal calibrates the NEXT
+    generation; no immediate regenerate.
     """
     bio_generated_at: str
-    kind: Literal["trifft", "trifft_nicht", "haerter"]
+    kind: Literal["trifft", "trifft_nicht", "haerter"]  # i18n-allow: API contract values matched by frontend logic
 
 
 class BioFeedbackResponse(BaseModel):
@@ -346,10 +346,10 @@ async def regenerate_bio(
     request: Request,
     payload: BioRegenerateRequest | None = None,
 ) -> BioRegenerateResponse:
-    """Triggert eine neue Bio.
+    """Triggers a new bio.
 
-    Bei Brain-Outage: 200 mit ``ok=False`` + ``reason=...``. Kein 500 —
-    die alte Bio ist ja noch verfuegbar via ``GET /bio``.
+    On a brain outage: 200 with ``ok=False`` + ``reason=...``. No 500 —
+    the old bio is still available via ``GET /bio``.
     """
     gen = _require_bio_generator(request)
     body = payload or BioRegenerateRequest()
@@ -360,14 +360,14 @@ async def regenerate_bio(
             triggered_by="manual",
         )
     except Exception as exc:  # noqa: BLE001
-        log.exception("Bio-Regenerate fehlgeschlagen")
+        log.exception("bio regenerate failed")
         return BioRegenerateResponse(
             ok=False, generated_at=None, text=None, reason=str(exc),
         )
     if result is None:
         return BioRegenerateResponse(
             ok=False, generated_at=None, text=None,
-            reason="Brain nicht verfuegbar — alte Bio bleibt",
+            reason="Brain not available — old bio stays",
         )
     return BioRegenerateResponse(
         ok=True,
@@ -381,10 +381,10 @@ async def post_bio_feedback(
     request: Request,
     payload: BioFeedbackRequest,
 ) -> BioFeedbackResponse:
-    """Schreibt einen Reagier-Klick (``Trifft`` / ``Trifft nicht`` / ``Haerter``).
+    """Records a reaction click (``Correct`` / ``Incorrect`` / ``Harder``).
 
-    Der Klick wird als Tone-Vector aggregiert und in den Prompt der naechsten
-    Bio-Generation gefuettert (siehe ``BioStore.recent_feedback`` +
+    The click is aggregated as a tone vector and fed into the prompt of the
+    next bio generation (see ``BioStore.recent_feedback`` +
     ``prompts.render_bio_prompt:_render_feedback``).
     """
     bio_store = _require_bio_store(request)
@@ -395,7 +395,7 @@ async def post_bio_feedback(
     except ValueError as exc:
         return BioFeedbackResponse(ok=False, reason=str(exc))
     except Exception as exc:  # noqa: BLE001
-        log.exception("Bio-Feedback persistieren fehlgeschlagen")
+        log.exception("persisting bio feedback failed")
         return BioFeedbackResponse(ok=False, reason=str(exc))
 
     bus = getattr(request.app.state, "bus", None)
@@ -407,7 +407,7 @@ async def post_bio_feedback(
                 source_layer="ui.board",
             ))
         except Exception:  # noqa: BLE001
-            log.debug("Bio-Feedback Bus-Publish fehlgeschlagen — non-fatal")
+            log.debug("bio feedback bus publish failed — non-fatal")
     return BioFeedbackResponse(ok=True)
 
 

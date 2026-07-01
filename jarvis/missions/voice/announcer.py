@@ -217,13 +217,13 @@ class MissionAnnouncer:
     def _render(
         self, env: EventEnvelope, lang: _Lang,
     ) -> tuple[str, Literal["normal", "interrupt"]]:
-        """Mapped Mission-Event-Typ -> (Voice-Text, Prio).
+        """Maps a mission-event type -> (voice text, priority).
 
-        Pflicht: NUR Runtime-signierte ``summary_de``/``summary_en`` aus
-        ``MissionApproved`` werden voll genommen — siehe ADR-0009 Action/
-        Observation-Invariant. Worker-LLM-Output gelangt NIE als Free-Text
-        in den Voice-Pfad. Failure-/Cancel-/Timeout-Texte sind statisch
-        in dieser Funktion.
+        Mandatory: ONLY runtime-signed ``summary_de``/``summary_en`` from
+        ``MissionApproved`` are taken verbatim — see the ADR-0009 Action/
+        Observation invariant. Worker-LLM output NEVER reaches the voice
+        path as free text. Failure/cancel/timeout texts are static in
+        this function.
         """
         payload = env.payload
 
@@ -235,7 +235,7 @@ class MissionAnnouncer:
             # BUG-LIVE-03 (Recon-Agent 3, 2026-05-16): the announcer used
             # to swallow MissionFailed.reason and emit one nacked German
             # phrase for seven distinct failure modes — user heard the
-            # same "fehlgeschlagen" whether the worker timed out, the
+            # same "fehlgeschlagen" whether the worker timed out, the  # i18n-allow: quoted literal historical TTS output
             # critic ran out of loops, or a stale mission was swept on
             # boot. Map the reason to a short human cue so the user
             # knows what to do next.
@@ -266,8 +266,8 @@ class MissionAnnouncer:
             de_map = FAILURE_REASON_PHRASES["de"]
             en_map = FAILURE_REASON_PHRASES["en"]
             if lang == "de":
-                tail = de_map.get(short_reason, f"Grund: {reason}" if reason else "")
-                text = f"Die Mission ist fehlgeschlagen. {tail}".rstrip()
+                tail = de_map.get(short_reason, f"Grund: {reason}" if reason else "")  # i18n-allow
+                text = f"Die Mission ist fehlgeschlagen. {tail}".rstrip()  # i18n-allow: real German TTS voice output
             else:
                 tail = en_map.get(short_reason, f"Reason: {reason}" if reason else "")
                 text = f"The mission failed. {tail}".rstrip()
@@ -289,7 +289,7 @@ class MissionAnnouncer:
 
         if isinstance(payload, MissionTimedOut):
             text = (
-                "Die Mission lief in das Zeitlimit."
+                "Die Mission lief in das Zeitlimit."  # i18n-allow: real German TTS voice output
                 if lang == "de"
                 else "The mission timed out."
             )
@@ -300,12 +300,12 @@ class MissionAnnouncer:
         return ("", "normal")
 
     async def _resolve_voice_meta(self, mission_id: str) -> tuple[bool, _Lang]:
-        """Cache-Lookup: ist die Mission voice-getriggert? Welche Sprache?
+        """Cache lookup: is the mission voice-triggered? Which language?
 
-        Replikat aus ``MissionVoiceListener._resolve_voice_meta``. Bewusst
-        keine gemeinsame Helper-Klasse, weil die beiden Listener komplett
-        unabhaengige Lifecycles haben — wir wollen eine kaputte Cache-
-        Stufe nicht doppelt austragen.
+        Replicated from ``MissionVoiceListener._resolve_voice_meta``.
+        Deliberately no shared helper class, because the two listeners
+        have completely independent lifecycles — we don't want to record
+        a broken cache tier twice.
         """
         if mission_id in self._mission_voice_cache:
             return self._mission_voice_cache[mission_id]

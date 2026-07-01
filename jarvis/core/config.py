@@ -257,17 +257,20 @@ class STTConfig(BaseModel):
     wake_model: str = "base"
     wake_device: str = "cpu"
     wake_compute_type: str = "int8"
-    # When True (default) AND a CUDA GPU is present AND the post-wake utterance
-    # STT is NOT itself using the GPU, a CUSTOM wake phrase (the transcription-
-    # based ``stt_match`` path) runs on the strong ``large-v3-turbo`` model on the
-    # GPU instead of the small ``base`` model on the CPU. Live-log evidence
-    # (2026-06-30): the base/cpu wake model WEDGED repeatedly under app CPU/GIL
-    # contention (tens of seconds of total deafness -> "say it 2-3 times") and
-    # mis-transcribed the wake name. The GPU model transcribes a window in ~150 ms
-    # so it never blows the wedge timeout, and hears the proper noun accurately.
-    # Set False to force the validated base/cpu + phrase-bias config back — the
-    # escape hatch if the strong model ever over-triggers on a particular voice.
-    wake_high_accuracy: bool = True
+    # When True AND a CUDA GPU is present, a CUSTOM wake phrase (the
+    # transcription-based ``stt_match`` path) runs the strong ``large-v3-turbo``
+    # model on the GPU instead of the small ``base`` model on the CPU.
+    # DEFAULT False (2026-06-30, live-log evidence): on the maintainer's Blackwell
+    # GPU (RTX 5070 Ti / sm_120) CTranslate2's ``model.transcribe`` HANGS on every
+    # live inference (an 8 s timeout every time -> the wake self-heal drops and
+    # rebuilds the model -> a fresh cold inference hangs again -> a vicious cycle
+    # that leaves the wake permanently deaf). Enabling GPU turbo there made the
+    # wake WORSE, not better. It is kept as an opt-in for GPUs where CTranslate2
+    # inference is stable (RTX 30xx/40xx), but the transcription wake fundamentally
+    # cannot reach "Hey Google" reliability — that needs a trained neural
+    # keyword-spotting model (the ``custom_onnx`` engine). Set True only on a GPU
+    # you have verified does not hang on repeated faster-whisper inference.
+    wake_high_accuracy: bool = False
     language: str = "auto"
     # Vocabulary biasing passed to Whisper's ``prompt`` field — the same
     # mechanism dictation tools like Wispr Flow use to keep proper nouns and

@@ -47,8 +47,8 @@ class BrainProviderRegistry:
         self._load()
         if name not in self._classes:
             raise KeyError(
-                f"Brain-Provider '{name}' nicht gefunden. Verfügbar: {self.available()}. "
-                f"Fehlgeschlagen: {list(self._failed.keys())}"
+                f"Brain provider '{name}' not found. Available: {self.available()}. "
+                f"Failed: {list(self._failed.keys())}"
             )
         cls = self._classes[name]
         return cls(**kwargs)
@@ -56,5 +56,5 @@ class BrainProviderRegistry:
     def get_class(self, name: str) -> type:
         self._load()
         if name not in self._classes:
-            raise KeyError(f"Brain-Provider '{name}' nicht gefunden.")
+            raise KeyError(f"Brain provider '{name}' not found.")
         return self._classes[name]

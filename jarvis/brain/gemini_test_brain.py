@@ -43,7 +43,7 @@ SYSTEM_PROMPT = (
     "**CRITICAL HANGUP RULE**: If the user wants to end the conversation "
     "(typical signals regardless of language: 'hang up', 'goodbye', 'bye', "
     "'stop', 'exit', 'quit', 'shut down', 'that's all', 'thanks jarvis', "
-    "'good night', 'ciao', 'auflegen', 'tschüss' — even if Whisper transcribes "
+    "'good night', 'ciao', 'auflegen', 'tschüss' — even if Whisper transcribes "  # i18n-allow: German hangup-trigger vocabulary the LLM must match against user speech
     "it strangely like 'offleging'), reply EXACTLY AND EXCLUSIVELY with the "
     "string: \"Goodbye, Alex.\" (without quotes, exactly 15 characters). "
     "This is the hangup signal — the pipeline detects this response and ends "
@@ -80,7 +80,7 @@ class GeminiTestBrain:
             if val:
                 return val
         raise RuntimeError(
-            "Gemini-API-Key nicht gefunden. Setze GEMINI_API_KEY oder "
+            "Gemini API key not found. Set GEMINI_API_KEY or "
             "GOOGLE_AIStudio_API_KEY in .env / Credential Manager."
         )
 
@@ -106,13 +106,13 @@ class GeminiTestBrain:
                     model=candidate, contents="ok"
                 )
                 self._resolved_model = candidate
-                log.info("Test-Brain: verwende Modell '%s'", candidate)
+                log.info("Test brain: using model '%s'", candidate)
                 return candidate
             except Exception as exc:  # noqa: BLE001
                 log.warning("Model '%s' not available (%s) — trying next.",
                             candidate, type(exc).__name__)
         raise RuntimeError(
-            f"Kein Gemini-Modell verfügbar. Probiert: {MODEL_CANDIDATES}"
+            f"No Gemini model available. Tried: {MODEL_CANDIDATES}"
         )
 
     async def __call__(self, user_text: str) -> str:

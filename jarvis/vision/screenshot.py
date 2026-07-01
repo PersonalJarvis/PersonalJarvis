@@ -1,22 +1,22 @@
-"""ScreenshotSource — Primary-Monitor-Screenshot via mss.
+"""ScreenshotSource — primary-monitor screenshot via mss.
 
-Liefert eine `Observation` mit `source="screenshot_only"` (keine UIA-Nodes,
-die Source ist reiner Bildzug). Falls gewuenscht wird der PNG-Blob unter
-`data/flight_recorder/blobs/<sha256>.png` abgelegt, damit der Flight-Recorder
-die Roh-Observation replayen kann.
+Returns an `Observation` with `source="screenshot_only"` (no UIA nodes,
+the source is pure image capture). If desired, the PNG blob is stored under
+`data/flight_recorder/blobs/<sha256>.png` so the flight recorder can replay
+the raw observation.
 
-Wichtige Windows-Spezifika (ADR-0002 plus Erfahrung aus Phase 1c):
+Important Windows specifics (ADR-0002 plus experience from Phase 1c):
 
-- `SetProcessDpiAwareness(2)` muss einmal beim Init aufgerufen werden.
-  Ohne das liefert Windows auf 125 %/150 %-Scaling-Setups verzerrte
-  Koordinaten (virtuelle statt physische Pixel), was spaeter beim
-  `pyautogui.click(x, y)` zu systematischem Miss fuehrt.
-- mss liefert BGRA; Pillow schreibt PNG aus einem RGB/RGBA-Array. Wir
-  konvertieren explizit, damit der Hash stabil ist (BGRA-Rohbytes sind
-  nicht portabel).
+- `SetProcessDpiAwareness(2)` must be called once at init. Without it,
+  Windows returns distorted coordinates (virtual instead of physical
+  pixels) on 125%/150% scaling setups, which later causes systematic
+  misses in `pyautogui.click(x, y)`.
+- mss delivers BGRA; Pillow writes PNG from an RGB/RGBA array. We
+  convert explicitly so the hash is stable (raw BGRA bytes are not
+  portable).
 
-Der Screenshot ist synchron-blockierend; wir wrappen ihn in
-`asyncio.to_thread` damit der Event-Loop responsive bleibt.
+The screenshot is a synchronous, blocking call; we wrap it in
+`asyncio.to_thread` so the event loop stays responsive.
 """
 from __future__ import annotations
 
@@ -34,8 +34,8 @@ from jarvis.core.protocols import CancelToken, Observation
 
 logger = logging.getLogger(__name__)
 
-# Default-Blob-Verzeichnis — liegt unter Repo-Root/data. Kann ueber den
-# Konstruktor ueberschrieben werden (z.B. fuer Tests).
+# Default blob directory — lives under repo-root/data. Can be overridden via
+# the constructor (e.g. for tests).
 _DEFAULT_BLOB_DIR = Path("data") / "flight_recorder" / "blobs"
 
 # H1 (DEEP-DIVE-AUDIT-2026-06-19): on macOS, screen capture is gated behind a
@@ -77,9 +77,9 @@ def warn_if_screen_recording_denied() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# DPI-Awareness — extrahiert nach jarvis/core/win32_dpi.py (Phase A1).
-# Re-Export hier damit alter Code (Tests, Vision-Engine) ohne Aenderung
-# weiterlaeuft.
+# DPI awareness — extracted to jarvis/core/win32_dpi.py (Phase A1).
+# Re-exported here so old code (tests, vision engine) keeps working
+# without changes.
 # ---------------------------------------------------------------------------
 
 from jarvis.core.win32_dpi import ensure_dpi_awareness as _ensure_dpi_awareness  # noqa: E402
@@ -113,21 +113,21 @@ def select_capture_monitor(
     strategy: MonitorStrategy = "foreground",
     primary_override: str = "primary",
 ) -> dict:
-    """Waehlt den Monitor, von dem ein Screenshot gegrabbt werden soll.
+    """Selects the monitor a screenshot should be grabbed from.
 
-    ``mss.monitors`` ist 1-indexiert fuer physische Bildschirme; ``[0]`` ist
-    die virtuelle Bounding-Box ueber alle. Auf Multi-Monitor-Setups ist
-    hardcoded ``[1]`` falsch, sobald der User auf einem anderen Display
-    arbeitet — Jarvis wuerde sonst einen "leeren" Monitor sehen, waehrend
-    der User auf einem anderen aktiv ist. Die Default-Strategie ``foreground``
-    folgt deshalb dem aktiven Fenster.
+    ``mss.monitors`` is 1-indexed for physical screens; ``[0]`` is
+    the virtual bounding box over all of them. On multi-monitor setups,
+    the hardcoded ``[1]`` is wrong as soon as the user works on a different
+    display — Jarvis would otherwise see an "empty" monitor while the user
+    is active on another one. The default strategy ``foreground`` therefore
+    follows the active window.
 
-    Strategien:
+    Strategies:
 
-    - ``"foreground"`` — Foreground-Window-Center -> Monitor-Lookup.
-      Fallback bei minimiertem/unauffindbarem Fenster: Primary.
-    - ``"primary"`` — explizit der Primaer-Monitor (mss-typisch ``[1]``).
-    - ``"all"`` — virtuelle Bounding-Box ueber alle Monitore (``[0]``).
+    - ``"foreground"`` — foreground-window center -> monitor lookup.
+      Fallback for a minimized/unfindable window: primary.
+    - ``"primary"`` — explicitly the primary monitor (mss-typical ``[1]``).
+    - ``"all"`` — virtual bounding box over all monitors (``[0]``).
     """
     if len(monitors) <= 1:
         return monitors[0]
@@ -162,14 +162,14 @@ def select_capture_monitor(
         hwnd = ctypes.windll.user32.GetForegroundWindow()
         if not hwnd:
             logger.debug(
-                "select_capture_monitor: kein Foreground-Window — fallback auf primary",
+                "select_capture_monitor: no foreground window — falling back to primary",
             )
             return primary
 
         rect = wintypes.RECT()
         if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
             logger.debug(
-                "select_capture_monitor: GetWindowRect fehlgeschlagen — fallback auf primary",
+                "select_capture_monitor: GetWindowRect failed — falling back to primary",
             )
             return primary
 
@@ -183,7 +183,7 @@ def select_capture_monitor(
             if left <= cx < right and top <= cy < bottom:
                 if m is not primary:
                     logger.info(
-                        "select_capture_monitor: Foreground auf %s (left=%d top=%d %dx%d) — capture dort statt Primary",
+                        "select_capture_monitor: foreground on %s (left=%d top=%d %dx%d) — capturing there instead of primary",
                         m.get("name"),
                         left,
                         top,
@@ -192,22 +192,22 @@ def select_capture_monitor(
                     )
                 else:
                     logger.debug(
-                        "select_capture_monitor: Foreground auf Primary %s",
+                        "select_capture_monitor: foreground on primary %s",
                         m.get("name"),
                     )
                 return m
 
-        # Foreground-Center liegt ausserhalb aller physischen Monitore
-        # (z.B. Fenster minimiert -> rect = -32000/-32000).
+        # Foreground center lies outside all physical monitors
+        # (e.g. window minimized -> rect = -32000/-32000).
         logger.debug(
-            "select_capture_monitor: Foreground-Center (%d,%d) auf keinem Monitor — fallback auf primary",
+            "select_capture_monitor: foreground center (%d,%d) is on no monitor — falling back to primary",
             cx,
             cy,
         )
         return primary
     except Exception:  # noqa: BLE001
         logger.warning(
-            "select_capture_monitor: Foreground-Detection fehlgeschlagen, nutze Primary",
+            "select_capture_monitor: foreground detection failed, using primary",
             exc_info=True,
         )
         return primary
@@ -286,22 +286,22 @@ def capture_region(
 
 
 class ScreenshotSource:
-    """Nimmt Screenshots vom richtigen Monitor via mss auf.
+    """Takes screenshots from the correct monitor via mss.
 
-    Erfuellt `jarvis.core.protocols.VisionSource` strukturell — kein
-    `isinstance`-Import noetig.
+    Structurally satisfies `jarvis.core.protocols.VisionSource` — no
+    `isinstance` import needed.
 
-    Monitor-Strategie (Default: ``"foreground"``):
+    Monitor strategy (default: ``"foreground"``):
 
-    - ``"foreground"`` — folgt dem aktiven Fenster (GetForegroundWindow +
-      GetWindowRect → Monitor-Lookup ueber den Window-Mittelpunkt). Damit
-      sieht Jarvis das, was der User gerade vor sich hat, auch auf
-      Multi-Monitor-Setups. Fallback bei minimiertem/unauffindbarem
-      Fenster: Primary-Monitor.
-    - ``"primary"`` — alter Hardcode (mss.monitors[1]). Nur fuer
-      Regression-Tests / explizite Einzel-Monitor-Setups.
-    - ``"all"`` — virtuelle Bounding-Box ueber alle Monitore
-      (mss.monitors[0]). Token-teuer, aber maximaler Kontext.
+    - ``"foreground"`` — follows the active window (GetForegroundWindow +
+      GetWindowRect → monitor lookup via the window's center point). This
+      way Jarvis sees what the user currently has in front of them, even on
+      multi-monitor setups. Fallback for a minimized/unfindable window:
+      the primary monitor.
+    - ``"primary"`` — the old hardcode (mss.monitors[1]). Only for
+      regression tests / explicit single-monitor setups.
+    - ``"all"`` — virtual bounding box over all monitors
+      (mss.monitors[0]). Token-expensive, but maximum context.
     """
 
     name: str = "screenshot"
@@ -343,13 +343,13 @@ class ScreenshotSource:
         self,
         *,
         cancel_token: CancelToken | None = None,
-        window_title_filter: str | None = None,  # noqa: ARG002 — fuer Protocol-Signatur
+        window_title_filter: str | None = None,  # noqa: ARG002 — for the protocol signature
     ) -> Observation | None:
-        """Nimmt einen Primary-Monitor-Screenshot auf.
+        """Takes a primary-monitor screenshot.
 
-        `window_title_filter` wird hier ignoriert — ein reiner Screenshot
-        kann nicht pro-Fenster gefiltert werden. Der Parameter bleibt aber
-        in der Signatur wegen dem Protocol.
+        `window_title_filter` is ignored here — a plain screenshot can't be
+        filtered per window. The parameter still stays in the signature
+        because of the protocol.
 
         Returns None when the GDI/BitBlt grab fails transiently (display
         asleep, locked workstation, resolution change). The caller (engine /
@@ -358,11 +358,11 @@ class ScreenshotSource:
         refresh loop alive during monitor power-save / lock-screen events.
         """
         if self._closed:
-            raise RuntimeError("ScreenshotSource ist geschlossen")
+            raise RuntimeError("ScreenshotSource is closed")
         if cancel_token is not None and cancel_token.is_cancelled():
             raise RuntimeError(f"cancelled: {cancel_token.reason}")
 
-        # Screenshot synchron — Thread-Pool wegen blockierender GDI-Calls.
+        # Screenshot is synchronous — thread pool because of blocking GDI calls.
         image_bytes = await asyncio.to_thread(self._capture_image)
 
         # _capture_image returns None on a transient BitBlt / GDI error.
@@ -380,13 +380,13 @@ class ScreenshotSource:
             try:
                 blob_path = await asyncio.to_thread(self._write_blob, sha, image_bytes)
             except OSError as exc:
-                # Write-Fehler (Permission denied, Disk full, Antivirus-Block)
-                # duerfen die Observation nicht canceln — aber wir muessen es
-                # laut loggen, sonst kriegt der Router spaeter screenshot_path
-                # =None und der Vision-Inject-Pfad wirft ValueError silent.
+                # A write failure (permission denied, disk full, antivirus block)
+                # must not cancel the observation — but we do need to log it
+                # loudly, otherwise the router later gets screenshot_path=None
+                # and the vision-inject path silently raises a ValueError.
                 logger.error(
-                    "ScreenshotSource: Blob-Write nach %s fehlgeschlagen: %s "
-                    "— Observation wird ohne Disk-Pfad zurueckgegeben.",
+                    "ScreenshotSource: blob write to %s failed: %s "
+                    "— observation is returned without a disk path.",
                     self._blob_dir,
                     exc,
                     exc_info=True,
@@ -413,12 +413,12 @@ class ScreenshotSource:
     # ---- Internals ---------------------------------------------------------
 
     def _capture_image(self) -> bytes | None:
-        """Blocking: nimmt Primary-Monitor auf und gibt Bild-Bytes zurueck.
+        """Blocking: takes a primary-monitor capture and returns image bytes.
 
-        Format ist `self._image_format` — JPEG q85 default (8x kleiner als PNG
-        bei identischen Token-Kosten, da Claude/GPT/Gemini in Pixel-Area
-        rechnen, nicht in Bytes). PNG nur fuer Tests/Screenshots wo Pixel-
-        perfekte Reproduktion gebraucht wird.
+        Format is `self._image_format` — JPEG q85 default (8x smaller than PNG
+        at identical token cost, since Claude/GPT/Gemini bill by pixel area,
+        not bytes). PNG only for tests/screenshots where pixel-perfect
+        reproduction is needed.
 
         Returns None on transient GDI/BitBlt failure (display asleep, workstation
         locked, resolution change, disconnected monitor). The caller must treat
@@ -426,18 +426,18 @@ class ScreenshotSource:
         next successful grab.  Only one WARNING is logged per error episode
         (state-change logging: silent while the error persists, INFO on recovery).
         """
-        # Late-Import, damit das Modul auch ohne mss importierbar bleibt
-        # (Contract-Tests laufen so, selbst wenn die Dep fehlt).
+        # Late import, so the module stays importable even without mss
+        # (contract tests run this way even when the dep is missing).
         try:
             import mss  # type: ignore[import-not-found]  # noqa: PLC0415
         except ImportError as exc:
             raise RuntimeError(
-                "mss ist nicht installiert — Dependency aus pyproject.toml fehlt"
+                "mss is not installed — dependency from pyproject.toml is missing"
             ) from exc
         try:
             from PIL import Image  # noqa: PLC0415
         except ImportError as exc:
-            raise RuntimeError("pillow ist nicht installiert") from exc
+            raise RuntimeError("pillow is not installed") from exc
 
         # Lazy import of the exception class — same pattern as the mss import
         # above; keeps this module importable without mss installed.
@@ -501,16 +501,16 @@ class ScreenshotSource:
         return buf.getvalue()
 
     def _select_capture_monitor(self, monitors: list[dict]) -> dict:
-        """Delegiert an die Modul-Funktion, damit andere Pfade
-        (z.B. das ``screenshot``-Router-Tool) dieselbe Logik teilen koennen.
+        """Delegates to the module function, so other paths
+        (e.g. the ``screenshot`` router tool) can share the same logic.
         """
         return select_capture_monitor(monitors, strategy=self._monitor_strategy)
 
     def _write_blob(self, sha: str, image_bytes: bytes) -> str:
-        """Speichert den Bild-Blob unter `<blob_dir>/<sha><ext>`."""
+        """Stores the image blob under `<blob_dir>/<sha><ext>`."""
         self._blob_dir.mkdir(parents=True, exist_ok=True)
         target = self._blob_dir / f"{sha}{self.file_extension}"
         if not target.exists():
-            # Atomares Write ist hier uebertrieben; sha im Namen ist Idempotenz.
+            # An atomic write is overkill here; the sha in the name gives idempotency.
             target.write_bytes(image_bytes)
         return str(target)

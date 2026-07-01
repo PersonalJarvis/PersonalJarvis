@@ -39,14 +39,14 @@ function makeWorker(overrides: Partial<OpenClawWorkerSnapshot> = {}): OpenClawWo
 }
 
 describe("JarvisAgentPanel", () => {
-  it("zeigt Empty-State wenn keine Mission ausgewaehlt ist", () => {
+  it("shows the empty state when no mission is selected", () => {
     render(<JarvisAgentPanel />);
     expect(
       screen.getByText("Select a mission to see Jarvis-Agent workers."),
     ).toBeDefined();
   });
 
-  it("zeigt Empty-State wenn Mission keine Jarvis-Agent-Worker hat", () => {
+  it("shows the empty state when the mission has no Jarvis-Agent workers", () => {
     useMissionsStore.setState({
       selectedMissionId: "mid-1",
       workerSnapshotsByMission: { "mid-1": [] },
@@ -57,14 +57,14 @@ describe("JarvisAgentPanel", () => {
     ).toBeDefined();
   });
 
-  it("rendert alle Spalten fuer einen live OpenClaw-Worker", () => {
+  it("renders all columns for a live OpenClaw worker", () => {
     useMissionsStore.setState({
       selectedMissionId: "mid-1",
       workerSnapshotsByMission: { "mid-1": [makeWorker()] },
     });
     render(<JarvisAgentPanel />);
 
-    // Modell
+    // Model
     const model = screen.getByTestId("openclaw-model");
     expect(model.textContent).toBe("gemini/gemini-3.1-pro-preview");
 
@@ -89,7 +89,7 @@ describe("JarvisAgentPanel", () => {
     expect(badge.textContent).toBe("live");
   });
 
-  it("zeigt killed-Badge mit ended-reason wenn Worker explicit gekillt wurde", () => {
+  it("shows the killed badge with ended-reason when the worker was explicitly killed", () => {
     useMissionsStore.setState({
       selectedMissionId: "mid-1",
       workerSnapshotsByMission: {
@@ -112,7 +112,7 @@ describe("JarvisAgentPanel", () => {
     expect(reason.textContent).toBe("user");
   });
 
-  it("zeigt mehrere Worker in der Reihenfolge der Aggregator-Liste", () => {
+  it("shows multiple workers in the order of the aggregator list", () => {
     useMissionsStore.setState({
       selectedMissionId: "mid-1",
       workerSnapshotsByMission: {
@@ -134,7 +134,7 @@ describe("JarvisAgentPanel", () => {
     expect(rows[0].getAttribute("data-worker-id")).toBe("w-aaa");
     expect(rows[1].getAttribute("data-worker-id")).toBe("w-bbb");
 
-    // Cost == 0 wird als "—" gerendert
+    // Cost == 0 is rendered as "—"
     const costs = screen.getAllByTestId("openclaw-cost");
     expect(costs[1].textContent).toContain("—");
   });

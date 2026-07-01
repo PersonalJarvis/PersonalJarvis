@@ -1,10 +1,10 @@
-"""Tests fuer WorktreeManager — create / remove / prune mit echtem git im tmp-Repo.
+"""Tests for WorktreeManager — create / remove / prune with a real git repo in tmp.
 
-Statt subprocess.run zu mocken nutzen wir ein echtes git-Repo unter tmp_path
-(billig: <50ms init + commit). Damit verifizieren wir auch dass der git-Aufruf
-korrekt geformt ist und cwd richtig gesetzt ist.
+Instead of mocking subprocess.run, we use a real git repo under tmp_path
+(cheap: <50ms init + commit). This also lets us verify that the git call
+is correctly shaped and cwd is set correctly.
 
-Skip-Strategie: wenn `git` nicht im PATH gefunden wird, alle Tests skippen.
+Skip strategy: if `git` is not found in PATH, skip all tests.
 """
 from __future__ import annotations
 
@@ -17,9 +17,9 @@ import pytest
 
 from jarvis.missions.isolation.worktree import WorktreeManager
 
-# Skip-Marker fuer alles wenn git fehlt (CI-Faelle).
+# Skip marker for everything if git is missing (CI cases).
 _GIT_AVAILABLE = shutil.which("git") is not None
-pytestmark = pytest.mark.skipif(not _GIT_AVAILABLE, reason="git nicht im PATH")
+pytestmark = pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not in PATH")
 
 
 # --- Fixtures ----------------------------------------------------------------
@@ -27,10 +27,10 @@ pytestmark = pytest.mark.skipif(not _GIT_AVAILABLE, reason="git nicht im PATH")
 
 @pytest.fixture
 def tmp_git_repo(tmp_path: Path) -> Path:
-    """Ein frisches Mini-Repo mit einem Initial-Commit auf 'main'."""
+    """A fresh mini repo with an initial commit on 'main'."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    # Initial-Setup mit deterministischem Branch-Namen (Git-Defaults variieren)
+    # Initial setup with a deterministic branch name (git defaults vary)
     subprocess.run(
         ["git", "init", "-b", "main"],
         cwd=repo,
@@ -81,9 +81,9 @@ def test_create_returns_workspace_path(manager: WorktreeManager) -> None:
 
 def test_create_workspace_has_git_files(manager: WorktreeManager) -> None:
     workspace = manager.create(mission_slug="m", task_id="01-x")
-    # `git worktree add` erzeugt einen Worktree mit checked-out HEAD
+    # `git worktree add` creates a worktree with checked-out HEAD
     assert (workspace / "README.md").exists()
-    assert (workspace / ".git").exists()  # File (link), nicht Verzeichnis
+    assert (workspace / ".git").exists()  # file (link), not a directory
 
 
 def test_create_two_tasks_get_different_paths(manager: WorktreeManager) -> None:
@@ -304,7 +304,7 @@ def test_create_path_layout_matches_spec(manager: WorktreeManager, tmp_path: Pat
 
 def test_create_raises_when_path_too_long(tmp_git_repo: Path, tmp_path: Path) -> None:
     """Pfad-Length-Cap: wirft ValueError wenn Worktree-Wurzel >200 Chars."""
-    # Sehr tiefes outputs_root um den Cap zu reissen
+    # Very deep outputs_root to exceed the cap
     very_deep = tmp_path / ("x" * 220)
     mgr = WorktreeManager(repo_root=tmp_git_repo, outputs_root=very_deep)
     with pytest.raises(ValueError, match="zu lang"):
@@ -424,21 +424,21 @@ def test_remove_without_force_raises_after_retries(
 
 
 def test_prune_orphans_runs_without_error(manager: WorktreeManager) -> None:
-    """Smoke: prune darf laufen auch wenn nichts zu prunen ist."""
-    manager.prune_orphans()  # darf nicht raisen
+    """Smoke: prune must run even when there's nothing to prune."""
+    manager.prune_orphans()  # must not raise
 
 
 def test_prune_after_manual_rmtree_clears_registration(
     manager: WorktreeManager,
 ) -> None:
-    """Wenn jemand den Worktree-Ordner manuell loescht, prune raeumt git's Eintrag auf."""
+    """If someone manually deletes the worktree folder, prune cleans up git's entry."""
     workspace = manager.create(mission_slug="m", task_id="01-orphan")
-    # Manuell loeschen statt git worktree remove (simuliert externe Loeschung)
+    # Delete manually instead of git worktree remove (simulates external deletion)
     shutil.rmtree(workspace)
     manager.prune_orphans()
-    # Der Branch-Eintrag wird durch prune aus .git/worktrees/ entfernt — wir
-    # verifizieren das indem create() denselben Task-Slug mit anderem ts/uuid
-    # erneut anlegen kann ohne Konflikt.
+    # The branch entry gets removed from .git/worktrees/ by prune — we
+    # verify this by having create() re-create the same task slug with a
+    # different ts/uuid without conflict.
     new = manager.create(mission_slug="m", task_id="01-orphan")
     assert new.exists()
 

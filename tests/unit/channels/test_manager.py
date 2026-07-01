@@ -1,5 +1,5 @@
 # === F-FRIENDS [F0] · feature/friends-section · alex-2026-04-30 ===
-"""Unit-Tests fuer :class:`jarvis.channels.manager.ChannelManager`."""
+"""Unit tests for :class:`jarvis.channels.manager.ChannelManager`."""
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
@@ -140,7 +140,7 @@ def test_discovery_failed_load_isolated(monkeypatch: pytest.MonkeyPatch) -> None
 def test_get_unknown_channel_raises_keyerror(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_entry_points(monkeypatch, [])
     mgr = ChannelManager(ChannelContext(bus=EventBus()))
-    with pytest.raises(KeyError, match="not.+verfuegbar|nicht verfuegbar"):
+    with pytest.raises(KeyError, match="not.+verfuegbar|nicht verfuegbar"):  # i18n-allow: matches the real (German) exception message string
         mgr.get("nonexistent")
 
 

@@ -1,10 +1,10 @@
-"""Runner — dispatcht einen Job an seinen Handler und persistiert den Run.
+"""Runner — dispatches a job to its handler and persists the run.
 
-Ein Runner = viele gleichzeitige Runs. Jeder Run wird als eigener
-``asyncio.Task`` gestartet; der Store bekommt die Terminal-State-
-Updates. Observer werden per ``on_event``-Callback informiert — so kann
-Jarvis (oder jede andere Embed-Situation) Live-Updates im Frontend
-rendern ohne vom Conductor-Package abhaengig zu sein.
+One runner = many concurrent runs. Each run is started as its own
+``asyncio.Task``; the store gets the terminal-state updates. Observers
+are informed via the ``on_event`` callback — so Jarvis (or any other
+embed situation) can render live updates in the frontend without
+depending on the Conductor package.
 """
 from __future__ import annotations
 
@@ -23,12 +23,12 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-#: Callback-Signatur — (event_name, payload)
+#: Callback signature — (event_name, payload)
 EventCallback = Callable[[str, dict[str, Any]], Any]
 
 
 class Runner:
-    """Fuehrt einen Job-Run end-to-end aus und persistiert alles."""
+    """Runs a job end-to-end and persists everything."""
 
     def __init__(
         self,
@@ -50,10 +50,10 @@ class Runner:
         trigger: str = "manual",
         input_data: dict[str, Any] | None = None,
     ) -> str:
-        """Startet einen neuen Run (fire-and-forget). Returnt die Run-ID."""
+        """Starts a new run (fire-and-forget). Returns the run ID."""
         job_row = await self._store.get_job(job_id)
         if job_row is None:
-            raise KeyError(f"Job {job_id} nicht gefunden")
+            raise KeyError(f"Job {job_id} not found")
         run_id = await self._store.create_run(
             job_id, trigger=trigger, input_data=input_data,
         )
@@ -75,10 +75,10 @@ class Runner:
         job_id = job_row["id"]
         spec_json = job_row["spec_json"]
 
-        # JobSpec aus JSON zurueckbauen — wir wissen den Typ aus 'type'
+        # Reconstruct JobSpec from JSON — we know the type from 'type'
         try:
             spec_data = json.loads(spec_json)
-            # Pydantic-Discriminator macht die Typ-Zuordnung selbst.
+            # Pydantic's discriminator handles the type mapping itself.
             from pydantic import TypeAdapter
             spec = TypeAdapter(JobSpec).validate_python(spec_data)
         except Exception as exc:  # noqa: BLE001
@@ -95,7 +95,7 @@ class Runner:
         if handler is None:
             await self._store.update_run(
                 run_id, state="failed",
-                error=f"kein Handler fuer type={spec.type}",
+                error=f"no handler for type={spec.type}",
             )
             self._emit("run.failed", {
                 "run_id": run_id, "job_id": job_id,
@@ -153,7 +153,7 @@ class Runner:
             return
         try:
             res = self._on_event(event, payload)
-            # Async callback ist ok — wir warten nicht, aber starten ihn.
+            # An async callback is fine — we don't await it, but we start it.
             if asyncio.iscoroutine(res):
                 asyncio.create_task(res)
         except Exception as exc:  # noqa: BLE001

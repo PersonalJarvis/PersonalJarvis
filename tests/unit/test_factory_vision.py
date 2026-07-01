@@ -1,9 +1,8 @@
-"""Tests fuer VisionContextProvider-Wiring in build_default_brain (Wave-2 B6).
+"""Tests for VisionContextProvider wiring in build_default_brain (Wave-2 B6).
 
-Verifiziert dass `_phase2_full_brain` je nach Config den
-`manager._vision_provider` setzt oder auf None laesst. Mockt
-`BrainManager` und die schweren Bootstrap-Dependencies aus, damit der
-Test schnell und ohne Credentials laeuft.
+Verifies that `_phase2_full_brain` sets `manager._vision_provider` or leaves
+it at None depending on config. Mocks out `BrainManager` and the heavy
+bootstrap dependencies so the test runs fast and without credentials.
 """
 from __future__ import annotations
 
@@ -20,16 +19,16 @@ def _call_factory_with_vision_cfg(
     max_staleness_s: float = 2.0,
     capture_mode: str = "screenshot",
 ):
-    """Ruft _phase2_full_brain mit einem heavily-gemockten Bootstrap auf.
+    """Calls _phase2_full_brain with a heavily-mocked bootstrap.
 
-    Mockt BrainManager + Memory + Tool-Loading weg, damit der Test keine
-    echten API-Keys / Model-Loads braucht. Wir wollen nur sehen wie
-    `manager._vision_provider` gesetzt wird basierend auf config.
+    Mocks out BrainManager + Memory + tool loading so the test doesn't need
+    real API keys / model loads. We only want to see how
+    `manager._vision_provider` gets set based on config.
     """
     from jarvis.brain import factory as factory_mod
     from jarvis.core.config import RouterVisionConfig
 
-    # FakeManager: reicht einfach .vision_provider-Assignments durch.
+    # FakeManager: just passes through .vision_provider assignments.
     class _FakeManager:
         def __init__(self, **kw):
             self._vision_provider = None
@@ -40,7 +39,7 @@ def _call_factory_with_vision_cfg(
         def _fast_model(self, name):
             return "fake"
 
-    # FakeConfig mit vision-section
+    # FakeConfig with a vision section
     fake_vision = RouterVisionConfig(
         enabled=enabled,
         refresh_interval_s=refresh_interval_s,
@@ -58,7 +57,7 @@ def _call_factory_with_vision_cfg(
         harness=fake_harness_cfg,
     )
 
-    # Monkeypatch die schweren Dependencies
+    # Monkeypatch the heavy dependencies
     with patch.object(factory_mod, "BrainManager", _FakeManager), \
          patch("jarvis.core.config.load_config", return_value=fake_cfg), \
          patch("jarvis.core.config.DATA_DIR") as mock_data_dir, \
@@ -75,7 +74,7 @@ def _call_factory_with_vision_cfg(
         mock_data_dir.mkdir = lambda **kw: None
         mock_data_dir.__truediv__ = lambda self, other: SimpleNamespace()
 
-        # Workspace.ensure gibt ein SimpleNamespace mit den path-Attributen zurueck
+        # Workspace.ensure returns a SimpleNamespace with the path attributes
         _ws.ensure.return_value = SimpleNamespace(
             user_path="/tmp/user.md",
             soul_path="/tmp/soul.md",
@@ -86,17 +85,17 @@ def _call_factory_with_vision_cfg(
 
 
 def test_factory_wires_vision_provider_when_enabled():
-    """config.brain.router.vision.enabled=True -> manager._vision_provider gesetzt."""
+    """config.brain.router.vision.enabled=True -> manager._vision_provider is set."""
     try:
         manager = _call_factory_with_vision_cfg(enabled=True)
     except Exception as exc:
-        pytest.skip(f"factory-internals haben sich geaendert, skipping: {exc}")
+        pytest.skip(f"factory internals have changed, skipping: {exc}")
 
     assert hasattr(manager, "_vision_provider")
-    # Bei enabled=True wird der Provider instantiiert — es sei denn Import-Error
-    # o.ae. fuehrt zu None (try/except im factory-Code deckt das ab).
-    # Der Test ist primaer dafuer dass das Attribut ueberhaupt gesetzt wird
-    # und nicht None-left-over ist wenn Config aktiv.
+    # With enabled=True the provider gets instantiated — unless an import
+    # error or similar leads to None (try/except in the factory code covers
+    # that). The test is primarily there to check that the attribute gets
+    # set at all and isn't left over as None when config is active.
     if manager._vision_provider is not None:
         from jarvis.vision.context_provider import VisionContextProvider
         assert isinstance(manager._vision_provider, VisionContextProvider)
@@ -107,12 +106,12 @@ def test_factory_skips_vision_when_disabled():
     try:
         manager = _call_factory_with_vision_cfg(enabled=False)
     except Exception as exc:
-        pytest.skip(f"factory-internals haben sich geaendert, skipping: {exc}")
+        pytest.skip(f"factory internals have changed, skipping: {exc}")
 
     assert hasattr(manager, "_vision_provider")
     assert manager._vision_provider is None
 
 
 def test_factory_shutdown_stops_provider():
-    """Shutdown-Hook ist offen — AC16-Follow-up."""
-    pytest.skip("manager.close()/shutdown() noch nicht implementiert — AC16-Follow-up")
+    """Shutdown hook is open — AC16 follow-up."""
+    pytest.skip("manager.close()/shutdown() not implemented yet — AC16 follow-up")

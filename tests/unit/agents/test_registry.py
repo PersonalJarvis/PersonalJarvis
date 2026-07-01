@@ -1,14 +1,14 @@
-"""Unit-Tests fuer jarvis.agents.registry.JarvisAgentRegistry.
+"""Unit tests for jarvis.agents.registry.JarvisAgentRegistry.
 
-Deckt:
-- Event-Ingestion pro Event-Typ (9 Typen: OpenClawTask*, BrainTurn*, ToolCall*,
-  Harness* — zwei letztere als kombinierte Paare).
-- Parent-Child-Linking ueber ``parent_trace_id``.
-- Heuristisches Parent-Linking fuer HarnessDispatched (juengster running
-  OpenClaw-Worker).
+Covers:
+- Event ingestion per event type (9 types: OpenClawTask*, BrainTurn*, ToolCall*,
+  Harness* — the latter two as combined pairs).
+- Parent-child linking via ``parent_trace_id``.
+- Heuristic parent linking for HarnessDispatched (newest running
+  OpenClaw worker).
 - tree() vs. snapshot() vs. to_json().
-- TTL-basiertes Removal nach Completion.
-- Tolerantes Verhalten bei Orphan-Events (parent not yet registered).
+- TTL-based removal after completion.
+- Tolerant behavior on orphan events (parent not yet registered).
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def registry(bus: EventBus) -> JarvisAgentRegistry:
 
 
 # ────────────────────────────────────────────────────────────────
-# Sub-Jarvis-Lifecycle
+# Sub-Jarvis lifecycle
 # ────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -55,7 +55,7 @@ async def test_openclaw_task_started_creates_running_node(
     await bus.publish(
         JarvisAgentTaskStarted(
             trace_id=tid,
-            utterance="bau mir eine Flask-App",
+            utterance="build me a Flask app",
             context_hints=["Port 8000", "single file"],
             provider="gemini",
             model="opus",
@@ -67,7 +67,7 @@ async def test_openclaw_task_started_creates_running_node(
     node = snap[tid.hex]
     assert node.kind == "jarvis_agent"
     assert node.status == "running"
-    assert node.utterance == "bau mir eine Flask-App"
+    assert node.utterance == "build me a Flask app"
     assert node.context_hints == ["Port 8000", "single file"]
     assert node.provider == "gemini"
     assert node.model == "opus"
@@ -89,7 +89,7 @@ async def test_openclaw_task_completed_marks_success_with_metrics(
         JarvisAgentTaskCompleted(
             trace_id=tid,
             success=True,
-            summary="Fertig",
+            summary="Done",
             full_log_len=1200,
             duration_s=14.2,
             cost_estimate_usd=0.034,
@@ -99,7 +99,7 @@ async def test_openclaw_task_completed_marks_success_with_metrics(
     assert node.status == "completed"
     assert node.duration_ms == pytest.approx(14200.0)
     assert node.cost_usd == pytest.approx(0.034)
-    assert any("Fertig" in p for p in node.prompts)
+    assert any("Done" in p for p in node.prompts)
 
 
 @pytest.mark.asyncio
@@ -134,7 +134,7 @@ async def test_review_triggered_updates_iteration_counter(
 
 
 # ────────────────────────────────────────────────────────────────
-# Brain-Turn-Aggregation (in den juengsten Sub-Jarvis)
+# Brain-turn aggregation (into the newest Sub-Jarvis)
 # ────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -149,7 +149,7 @@ async def test_brain_turn_tokens_aggregate_into_newest_openclaw(
             parent_trace_id=sj,
             provider="gemini",
             model="opus",
-            system_prompt_preview="Du bist der Sub-Jarvis",
+            system_prompt_preview="You are the Sub-Jarvis",
         )
     )
     await bus.publish(
@@ -159,12 +159,12 @@ async def test_brain_turn_tokens_aggregate_into_newest_openclaw(
     assert node.tokens_in == 1400
     assert node.tokens_out == 320
     assert node.cost_usd == pytest.approx(0.034)
-    # Der system_prompt_preview landete in parent.prompts
-    assert any("Du bist der Sub-Jarvis" in p for p in node.prompts)
+    # The system_prompt_preview ended up in parent.prompts
+    assert any("You are the Sub-Jarvis" in p for p in node.prompts)
 
 
 # ────────────────────────────────────────────────────────────────
-# Tool-Call-Listen
+# Tool-call lists
 # ────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -211,7 +211,7 @@ async def test_tool_call_completed_updates_matching_entry(
 
 
 # ────────────────────────────────────────────────────────────────
-# Harness (Child-Heuristik)
+# Harness (child heuristic)
 # ────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -227,7 +227,7 @@ async def test_harness_dispatched_links_to_newest_running_openclaw(
     assert harness.hex in snap
     assert snap[harness.hex].kind == "harness"
     assert snap[harness.hex].parent_trace_id == sj.hex
-    # Parent-Seite: Harness in children_trace_ids
+    # Parent side: harness in children_trace_ids
     assert harness.hex in snap[sj.hex].children_trace_ids
 
 
@@ -254,7 +254,7 @@ async def test_harness_completed_nonzero_exit_marks_failed(
 
 
 # ────────────────────────────────────────────────────────────────
-# Tree / snapshot / JSON-Serialisierung
+# Tree / snapshot / JSON serialization
 # ────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -283,7 +283,7 @@ async def test_to_json_is_serializable_shape(
     assert "server_ts_ns" in payload
     assert payload["count"] == 1
     assert payload["server_ts_ns"] > 0
-    # Alle Roots sind JSON-safe dicts
+    # All roots are JSON-safe dicts
     for root in payload["roots"]:
         assert isinstance(root, dict)
         assert "trace_id" in root
@@ -307,12 +307,12 @@ async def test_clear_removes_all_nodes(
 
 @pytest.mark.asyncio
 async def test_ttl_removes_completed_node_after_timeout(bus: EventBus) -> None:
-    # Sehr kurzes TTL fuer den Test
+    # Very short TTL for the test
     reg = JarvisAgentRegistry(bus, ttl_completed_s=0).attach()
     tid = uuid4()
     await bus.publish(JarvisAgentTaskStarted(trace_id=tid))
     await bus.publish(JarvisAgentTaskCompleted(trace_id=tid, success=True))
-    # Event-Loop Runde lassen, damit der Cleanup-Task laeuft
+    # Yield an event-loop round so the cleanup task runs
     await asyncio.sleep(0.05)
     assert tid.hex not in reg.snapshot()
 
@@ -321,18 +321,18 @@ async def test_ttl_removes_completed_node_after_timeout(bus: EventBus) -> None:
 async def test_orphan_child_tolerated_without_parent(
     bus: EventBus, registry: JarvisAgentRegistry
 ) -> None:
-    # HarnessDispatched ohne running Sub-Jarvis → Harness als Root (parent=None)
+    # HarnessDispatched without a running Sub-Jarvis → harness as root (parent=None)
     h = uuid4()
     await bus.publish(HarnessDispatched(trace_id=h, harness="openclaw"))
     node = registry.snapshot()[h.hex]
     assert node.parent_trace_id is None
-    # tree() sollte ihn als Root zeigen
+    # tree() should show it as a root
     assert any(r.trace_id == h.hex for r in registry.tree())
 
 
 @pytest.mark.asyncio
 async def test_agent_node_default_fields_are_empty() -> None:
-    """Regressions-Guard: AgentNode-Defaults sind JSON-safe und leer."""
+    """Regression guard: AgentNode defaults are JSON-safe and empty."""
     node = AgentNode(trace_id="x", kind="openclaw", name="test")
     assert node.context_hints == []
     assert node.prompts == []
@@ -390,7 +390,7 @@ async def test_mission_bus_bridge_creates_openclaw_node(
                 tokens_used=1234,
                 cost_usd=0.42,
                 wall_ms=5000,
-                summary_de="fertig",
+                summary_de="fertig",  # i18n-allow
                 summary_en="done",
             ),
         )
@@ -399,7 +399,7 @@ async def test_mission_bus_bridge_creates_openclaw_node(
     node = registry.snapshot()[tid]
     assert node.status == "completed"
     assert node.cost_usd == pytest.approx(0.42)
-    assert any("fertig" in p for p in node.prompts)
+    assert any("fertig" in p for p in node.prompts)  # i18n-allow
 
 
 @pytest.mark.asyncio

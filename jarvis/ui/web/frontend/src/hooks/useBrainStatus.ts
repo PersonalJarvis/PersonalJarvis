@@ -2,18 +2,18 @@ import { useEffect } from "react";
 import { useEventStore } from "@/store/events";
 
 /**
- * Halt den Sidebar-Footer-Brain-Status im Zustand-Store synchron.
+ * Keeps the sidebar-footer brain status in sync with the Zustand store.
  *
- * Drei Update-Pfade — Defense-in-Depth:
- *   1. Mount-Fetch von /api/brain/status (initialer Wert).
- *   2. Live via WS-Event BrainProviderSwitched (siehe useWebSocket.ts:110).
- *   3. Custom-Event jarvis:brain-switched (vom ApiKeysView dispatched, falls
- *      WS-Pfad eine Race-Condition oder einen Disconnect hatte).
+ * Three update paths — defense in depth:
+ *   1. Mount fetch of /api/brain/status (initial value).
+ *   2. Live via WS event BrainProviderSwitched (see useWebSocket.ts:110).
+ *   3. Custom event jarvis:brain-switched (dispatched by ApiKeysView, in case
+ *      the WS path had a race condition or a disconnect).
  *
- * Pfad 3 war bis 2026-04-25 nicht verdrahtet — Klick auf eine Provider-
- * Karte wechselte den Brain backendseitig, aber der Sidebar-Footer blieb
- * auf dem Mount-Wert haengen, wenn der WS-Event-Round-Trip aus irgendeinem
- * Grund nicht durchkam.
+ * Path 3 wasn't wired up until 2026-04-25 — clicking a provider card
+ * switched the brain on the backend, but the sidebar footer stayed
+ * stuck on the mount value whenever the WS event round trip didn't
+ * come through for whatever reason.
  */
 export function useBrainStatus(): void {
   const setBrainProvider = useEventStore((s) => s.setBrainProvider);
@@ -39,15 +39,15 @@ export function useBrainStatus(): void {
           }
         })
         .catch(() => {
-          // Fetch fail (network/timeout) — Store bleibt auf altem Wert,
-          // Sidebar zeigt "—" bis ein WS-Event die Lücke füllt.
+          // Fetch failed (network/timeout) — store stays on the old value,
+          // sidebar shows "—" until a WS event fills the gap.
         });
 
     void fetchStatus(ctrl.signal);
 
     const onBrainSwitched = () => {
-      // Frischen Fetch — der Endpoint liest aus app.state.brain.active_provider,
-      // also ist er nach dem Switch authoritativ.
+      // Fresh fetch — the endpoint reads from app.state.brain.active_provider,
+      // so it's authoritative right after the switch.
       void fetchStatus();
     };
     window.addEventListener("jarvis:brain-switched", onBrainSwitched);

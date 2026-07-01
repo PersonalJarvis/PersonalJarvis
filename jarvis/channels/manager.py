@@ -126,8 +126,8 @@ class ChannelManager:
             return self._instances[name]
         if name not in self._classes:
             raise KeyError(
-                f"Channel '{name}' nicht verfuegbar. "
-                f"Bekannt: {self.available()}. Failed: {list(self._failed_load)}."
+                f"Channel '{name}' not available. "
+                f"Known: {self.available()}. Failed: {list(self._failed_load)}."
             )
         cls = self._classes[name]
         instance = self._instantiate(cls)
@@ -151,11 +151,11 @@ class ChannelManager:
             channel = self.get(name)
             await channel.start()
             self._started.add(name)
-            log.info("Channel '%s' gestartet", name)
+            log.info("Channel '%s' started", name)
         except Exception as exc:  # noqa: BLE001
             self._start_errors[name] = f"{type(exc).__name__}: {exc}"
             log.error("Channel '%s' start failed: %s", name, exc)
-            raise ChannelStartError(f"Channel '{name}' konnte nicht starten: {exc}") from exc
+            raise ChannelStartError(f"Channel '{name}' could not start: {exc}") from exc
 
     async def reload(self, name: str) -> None:
         """Stop, drop the cached instance, and start ``name`` afresh.

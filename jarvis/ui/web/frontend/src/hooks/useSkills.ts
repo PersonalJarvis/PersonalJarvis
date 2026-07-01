@@ -271,7 +271,7 @@ export function useReorderSkills() {
 }
 
 // ----------------------------------------------------------------------
-// Skill-Creation (User-authored, ueber Desktop-App)
+// Skill creation (user-authored, via the desktop app)
 // ----------------------------------------------------------------------
 
 export interface SkillCreatePayload {
@@ -519,10 +519,10 @@ async function queryLocalSkills(
 }
 
 /**
- * React-Query-Hook fuer die lokale Skill-Suche. Wird durch jede Filter-
- * Aenderung getriggert. Der Hook laeuft bei leerer Query + leeren Filtern
- * **nicht** — die Sidebar faellt dann auf die normale ``useSkillsList``
- * zurueck (Kategorie-gruppierte Vollansicht).
+ * React Query hook for the local skill search. Triggered on every filter
+ * change. The hook does **not** run when the query and all filters are
+ * empty — the sidebar then falls back to the normal ``useSkillsList``
+ * (category-grouped full view).
  */
 export function useLocalSkillSearch(
   filters: LocalSkillQueryFilters,

@@ -25,8 +25,8 @@ These are the **7 required fields**. Everything else is optional.
 
 ```yaml
 ---
-title: "How-To: Einen neuen Brain-Provider hinzufuegen"
-slug: brain-provider-hinzufuegen
+title: "How-To: Add a new Brain provider"
+slug: add-brain-provider
 diataxis: howto
 status: active
 owner: sam
@@ -76,10 +76,10 @@ sidebar.
 
 | Bad (too long, truncated) | Good (compact, fully readable) |
 |---|---|
-| ``"ADR-0001 — IPC zwischen Jarvis-App und Admin-Helper: Named Pipe + HMAC"`` (66) | ``"ADR-0001: IPC via Named Pipe + HMAC"`` (35) |
-| ``"ADR-0008 — Computer-Use-Harness laeuft in-process (Ausnahme zum Subprocess-Pattern)"`` (84) | ``"ADR-0008: Computer-Use in-process"`` (33) |
-| ``"ADR-0009 — Self-Healing Worker-Critic-Loop mit Action/Observation-Invariante"`` (76) | ``"ADR-0009: Self-Healing Worker-Critic"`` (37) |
-| ``"How-To: Einen neuen Brain-Provider zu jarvis.toml hinzufuegen und registrieren"`` (78) | ``"How-To: Neuen Brain-Provider hinzufuegen"`` (40) |
+| ``"ADR-0001 — IPC between Jarvis App and Admin Helper: Named Pipe + HMAC"`` (69) | ``"ADR-0001: IPC via Named Pipe + HMAC"`` (35) |
+| ``"ADR-0008 — Computer-Use harness runs in-process (exception to the subprocess pattern)"`` (85) | ``"ADR-0008: Computer-Use in-process"`` (33) |
+| ``"ADR-0009 — Self-Healing Worker-Critic loop with an action/observation invariant"`` (79) | ``"ADR-0009: Self-Healing Worker-Critic"`` (37) |
+| ``"How-To: Add a new Brain provider to jarvis.toml and register it"`` (63) | ``"How-To: Add a new Brain provider"`` (32) |
 
 ### ``slug`` (string, kebab-case)
 
@@ -92,10 +92,8 @@ URL-stable identifier. Makes the doc referenceable by others
   slug + set ``deprecated_by``, redirect hint in the old doc.
 - Lowercase, kebab-case (``router-discipline``, not ``RouterDiscipline``
   or ``router_discipline``).
-- English or transliterated German without umlauts (``oeffnen`` instead of
-  ``öffnen``, ``brueckenmodul`` instead of ``brückenmodul``).
-- Language-free where possible — the slug is a technical identifier, not a UI
-  string.
+- English only — the repo is English-only for committed artifacts, and a slug
+  is a technical identifier, not a UI string, so there is no exception for it.
 
 ### ``diataxis`` (enum)
 
@@ -268,8 +266,8 @@ related:
   - <further-references>
 ```
 
-A how-to slug ideally starts with a verb: ``hinzufuegen`` (add),
-``deploy``, ``aktivieren`` (activate). Makes the intent immediately clear.
+A how-to slug ideally starts with a verb: ``add``,
+``deploy``, ``activate``. Makes the intent immediately clear.
 
 ### Reference
 

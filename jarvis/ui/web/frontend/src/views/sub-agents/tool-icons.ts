@@ -1,10 +1,10 @@
 /**
- * Tool-Name → Icon + Farbe + Anzeige-Label.
+ * Tool name → icon + color + display label.
  *
- * Die Heuristik schaut zuerst auf den Tool-Namen (run_shell, search_web, ...)
- * und verfeinert dann anhand des args_preview (open_app chrome → Chrome-Icon,
- * dispatch_to_harness openclaw → OpenClaw). So bekommen wir einen
- * erkennbaren Brand-artigen Look ohne extra Icon-Package.
+ * The heuristic first looks at the tool name (run_shell, search_web, ...)
+ * and then refines based on args_preview (open_app chrome → Chrome icon,
+ * dispatch_to_harness openclaw → OpenClaw). This gives us a
+ * recognizable, brand-like look without an extra icon package.
  */
 import {
   AppWindow,
@@ -32,7 +32,7 @@ import {
 export interface ToolAppearance {
   Icon: LucideIcon;
   label: string;
-  /** Tailwind-Klassen fuer den Node-Hintergrund + Rahmen. */
+  /** Tailwind classes for the node background + border. */
   bg: string;
   ring: string;
   iconColor: string;
@@ -51,7 +51,7 @@ function matches(haystack: string, needle: string): boolean {
 }
 
 /**
- * Liefert Icon/Label/Farbe fuer ein Tool, basierend auf Namen + Argument-Preview.
+ * Returns icon/label/color for a tool, based on the name + argument preview.
  */
 export function getToolAppearance(
   toolName: string,

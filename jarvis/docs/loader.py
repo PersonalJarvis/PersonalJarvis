@@ -61,8 +61,8 @@ def _slugify(text: str) -> str:
     characters.
     """
     s = text.strip().lower()
-    s = (s.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")
-           .replace("ß", "ss").replace("é", "e").replace("è", "e")
+    s = (s.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")  # i18n-allow: umlaut-folding lookup, matched in logic
+           .replace("ß", "ss").replace("é", "e").replace("è", "e")  # i18n-allow: umlaut-folding lookup, matched in logic
            .replace("ê", "e").replace("á", "a").replace("à", "a"))
     # Allow underscores — they are normalised to hyphens in the next step.
     # Filtering with ``[^a-z0-9\s-]`` here would drop the underscore before the

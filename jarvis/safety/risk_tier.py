@@ -1,14 +1,14 @@
-"""Risk-Tier-Evaluation: Blacklist > Whitelist > Tool-Default.
+"""Risk-tier evaluation: blacklist > whitelist > tool default.
 
-Die Priorität ist wichtig und nicht verhandelbar:
+The priority order matters and is non-negotiable:
 
-1. **Blacklist** trumpft alles — Match → `ActionBlocked` Exception.
-2. **Whitelist** downgraded Tier zu `safe` + `approved_by="whitelist"`.
-   Auch wenn das Tool selbst `ask`-Tier deklariert. Das ist die konkrete
-   Lösung für "Anti-Confirmation-Fatigue" (User-Pref).
-3. **Tool-Default** oder Fallback auf `config.safety.default_tier`.
+1. **Blacklist** beats everything — a match raises an `ActionBlocked` exception.
+2. **Whitelist** downgrades the tier to `safe` + `approved_by="whitelist"`,
+   even if the tool itself declares the `ask` tier. This is the concrete
+   solution for "anti-confirmation-fatigue" (user preference).
+3. **Tool default**, or fallback to `config.safety.default_tier`.
 
-Matching läuft per `fnmatch`-Glob gegen `"<tool_name> <serialized_args>"`.
+Matching runs via an `fnmatch` glob against `"<tool_name> <serialized_args>"`.
 """
 from __future__ import annotations
 
@@ -29,25 +29,25 @@ log = logging.getLogger(__name__)
 #: would miss both checks and behave as the most permissive option silently.
 _VALID_TIERS: frozenset[str] = frozenset(get_args(RiskTier))
 
-# Callable that returns (whitelist_patterns, blacklist_patterns). Wird bei jedem
-# evaluate() aufgerufen — billig halten. Aktueller Nutzer: CliToolRegistry
-# flattened Spec-Patterns pro verbundener CLI in dieses Tupel, damit
-# ``gcloud * delete *`` geblockt wird ohne Eintrag in jarvis.toml.
+# Callable that returns (whitelist_patterns, blacklist_patterns). Called on every
+# evaluate() call — keep it cheap. Current user: CliToolRegistry flattens spec
+# patterns per connected CLI into this tuple, so that
+# ``gcloud * delete *`` gets blocked without an entry in jarvis.toml.
 ExtraPatternsFn = Callable[[], "tuple[list[str], list[str]]"]
 
 
 class ActionBlocked(Exception):
-    """Wird geworfen wenn ein Tool-Call gegen die Blacklist matched."""
+    """Raised when a tool call matches the blacklist."""
 
     def __init__(self, pattern: str, matched: str) -> None:
-        super().__init__(f"Blacklist-Match: '{matched}' blockiert durch Pattern '{pattern}'")
+        super().__init__(f"Blacklist match: '{matched}' blocked by pattern '{pattern}'")
         self.pattern = pattern
         self.matched = matched
 
 
 @dataclass(frozen=True, slots=True)
 class TierDecision:
-    """Ergebnis einer Tier-Evaluation."""
+    """Result of a tier evaluation."""
     tier: RiskTier
     approved_by: str | None   # "whitelist" | None
     matched_pattern: str | None
@@ -55,11 +55,11 @@ class TierDecision:
 
 
 def _serialize_args(args: dict[str, Any]) -> str:
-    """Serialisiert Args zu einem flat-String für Pattern-Matching.
+    """Serializes args into a flat string for pattern matching.
 
-    Wir nutzen für Matching nur String-Values + Zahlen; Dict/List-Werte
-    werden mit `str()` gekennzeichnet, aber Blacklist/Whitelist sollte
-    ohnehin primär `run_shell`-Commands matchen (die Commands sind flach).
+    For matching we only use string values + numbers; dict/list values
+    are stringified with `str()`, but blacklist/whitelist should
+    primarily match `run_shell` commands anyway (those commands are flat).
     """
     parts: list[str] = []
     for k, v in args.items():
@@ -71,14 +71,14 @@ def _serialize_args(args: dict[str, Any]) -> str:
 
 
 class RiskTierEvaluator:
-    """Evaluator mit Config-Snapshot (Whitelist/Blacklist Patterns).
+    """Evaluator with a config snapshot (whitelist/blacklist patterns).
 
-    Optional: ein ``extra_patterns_fn`` liefert zusaetzliche Patterns, die bei
-    jedem ``evaluate()``-Call frisch abgefragt werden. Das ermoeglicht der
-    CLI-Integration, pro verbundener CLI Spec-Patterns aus dem Katalog in die
-    Safety-Gates zu mischen, ohne jarvis.toml zu beruehren. Fehler aus
-    ``extra_patterns_fn`` werden geschluckt — ein kaputter Katalog darf das
-    Safety-Gate nicht haengen lassen.
+    Optional: an ``extra_patterns_fn`` supplies additional patterns that are
+    freshly queried on every ``evaluate()`` call. This lets the CLI
+    integration mix spec patterns from the catalog into the safety gates per
+    connected CLI, without touching jarvis.toml. Errors from
+    ``extra_patterns_fn`` are swallowed — a broken catalog must never hang
+    the safety gate.
     """
 
     def __init__(
@@ -91,7 +91,7 @@ class RiskTierEvaluator:
         self._extra_patterns_fn = extra_patterns_fn
 
     def _collect_patterns(self, kind: str) -> list[str]:
-        """Mergt System-Patterns (jarvis.toml) mit Extra-Patterns (z.B. CLI-Specs)."""
+        """Merges system patterns (jarvis.toml) with extra patterns (e.g. CLI specs)."""
         if kind == "whitelist":
             patterns = list(self._safety.whitelist.commands)
         elif kind == "blacklist":
@@ -109,12 +109,12 @@ class RiskTierEvaluator:
     def evaluate(self, tool: Tool, args: dict[str, Any]) -> TierDecision:
         cmd = f"{tool.name} {_serialize_args(args)}".strip()
 
-        # 1. Blacklist — hartes Block
+        # 1. Blacklist — hard block
         for pattern in self._collect_patterns("blacklist"):
             if fnmatch.fnmatchcase(cmd, pattern) or fnmatch.fnmatchcase(cmd.lower(), pattern.lower()):
                 raise ActionBlocked(pattern=pattern, matched=cmd)
 
-        # 2. Whitelist — Downgrade zu safe
+        # 2. Whitelist — downgrade to safe
         for pattern in self._collect_patterns("whitelist"):
             if fnmatch.fnmatchcase(cmd, pattern) or fnmatch.fnmatchcase(cmd.lower(), pattern.lower()):
                 return TierDecision(
@@ -155,7 +155,7 @@ class RiskTierEvaluator:
                     tool.name, dynamic, tier,
                 )
 
-        # block-Tier wird direkt gebounced
+        # block tier gets bounced directly
         if tier in self._safety.always_block_tiers:
             raise ActionBlocked(pattern="<tool-declared-block>", matched=cmd)
 
@@ -167,7 +167,7 @@ class RiskTierEvaluator:
         )
 
     def needs_user_confirmation(self, decision: TierDecision) -> bool:
-        """True wenn vor Execution eine User-Bestätigung einzuholen ist."""
+        """True if a user confirmation must be obtained before execution."""
         if decision.approved_by is not None:
             return False
         return decision.tier in self._safety.always_confirm_tiers

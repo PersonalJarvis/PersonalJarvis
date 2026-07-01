@@ -1,5 +1,5 @@
-// REST-Aufrufe zu /api/sessions. Alle relativ — der Vite-Dev-Proxy bzw.
-// das pywebview-Fenster routen automatisch zur FastAPI auf 127.0.0.1:47821.
+// REST calls to /api/sessions. All relative — the Vite dev proxy or the
+// pywebview window both route automatically to the FastAPI on 127.0.0.1:47821.
 
 import type { SessionDetail, SessionListItem } from "./types";
 

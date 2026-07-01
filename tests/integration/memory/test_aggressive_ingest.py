@@ -178,7 +178,7 @@ async def test_pad_thai_lands_in_wiki_without_brain_ack(stack) -> None:
     ):
         await _drive_voice_turn(
             bus,
-            user_text="Ich war heute mit Carlos Pad-Thai essen, er hat mir von seinem Boss erzaehlt.",
+            user_text="Ich war heute mit Carlos Pad-Thai essen, er hat mir von seinem Boss erzaehlt.",  # i18n-allow
             brain_text="Klingt lecker, war es scharf?",
         )
 
@@ -287,7 +287,7 @@ async def test_ack_path_still_fires_when_brain_says_notiert(stack) -> None:
     sam_update = PageUpdate(
         target_path=vault_root / "entities" / "sam.md",
         operation="create",
-        new_body=_entity_body("sam", "Sam wurde 1976 geboren."),
+        new_body=_entity_body("sam", "Sam wurde 1976 geboren."),  # i18n-allow
         reason="explicit user note",
     )
 
@@ -296,7 +296,7 @@ async def test_ack_path_still_fires_when_brain_says_notiert(stack) -> None:
     ):
         await _drive_voice_turn(
             bus,
-            user_text="Sam wurde 1976 geboren.",   # 26 chars -- below aggressive min
+            user_text="Sam wurde 1976 geboren.",   # 26 chars -- below aggressive min  # i18n-allow
             brain_text="Notiert.",                     # explicit ack keyword
         )
 
@@ -376,13 +376,13 @@ async def test_rate_limit_drops_second_aggressive_ingest_within_window(stack) ->
     ) as proposer:
         await _drive_voice_turn(
             bus,
-            user_text="Mein Lieblingsfilm ist Inception und ich liebe Nolan-Filme.",
+            user_text="Mein Lieblingsfilm ist Inception und ich liebe Nolan-Filme.",  # i18n-allow
             brain_text="Cool, was hat dich daran beruehrt?",
         )
         # Same window -- second aggressive ingest must NOT fire.
         await _drive_voice_turn(
             bus,
-            user_text="Mein Lieblingsessen ist Pizza und am liebsten mit Salami.",
+            user_text="Mein Lieblingsessen ist Pizza und am liebsten mit Salami.",  # i18n-allow
             brain_text="Klassiker. Italienisch oder amerikanisch?",
         )
 
@@ -415,8 +415,8 @@ async def test_aggressive_mode_off_disables_path_entirely(stack) -> None:
     ) as proposer:
         await _drive_voice_turn(
             bus,
-            user_text="Mein Lieblingsfilm ist Inception und das ist die volle Wahrheit.",
-            brain_text="Klingt nach einem guten Film!",
+            user_text="Mein Lieblingsfilm ist Inception und das ist die volle Wahrheit.",  # i18n-allow
+            brain_text="Klingt nach einem guten Film!",  # i18n-allow
         )
 
     bridge.stop()

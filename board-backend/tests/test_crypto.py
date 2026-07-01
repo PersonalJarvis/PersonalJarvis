@@ -1,4 +1,4 @@
-"""Crypto-Tests fuer das Backend-Skeleton (Phase C, Commit 1)."""
+"""Crypto tests for the backend skeleton (Phase C, Commit 1)."""
 from __future__ import annotations
 
 import json
@@ -37,9 +37,9 @@ def test_canonical_json_handles_nested_structures() -> None:
 
 
 def test_canonical_json_utf8_passthrough() -> None:
-    out = canonical_json({"de": "Hallo Welt mit Umlaut: aeoeue ß"})
+    out = canonical_json({"de": "Hallo Welt mit Umlaut: aeoeue ß"})  # i18n-allow
     parsed = json.loads(out.decode("utf-8"))
-    assert parsed["de"] == "Hallo Welt mit Umlaut: aeoeue ß"
+    assert parsed["de"] == "Hallo Welt mit Umlaut: aeoeue ß"  # i18n-allow
 
 
 # ----------------------------------------------------------------------
@@ -90,16 +90,16 @@ def test_verify_fails_on_garbage_signature() -> None:
 
 
 def test_verify_raw_body_path() -> None:
-    """Der Server-Pfad: parse Body, re-kanonisieren, verify.
+    """The server path: parse body, re-canonicalize, verify.
 
-    Demonstrates dass die Re-Kanonisierung gegen Whitespace-Manipulation
-    durch Proxies robust ist.
+    Demonstrates that re-canonicalization is robust against whitespace
+    manipulation by proxies.
     """
     priv, pub = generate_keypair()
     payload = {"a": 1, "b": "x"}
     sig = sign(payload, privkey_hex=priv)
 
-    # Simuliert einen Reverse-Proxy, der irrelevant whitespace einfuegt.
+    # Simulates a reverse proxy that inserts irrelevant whitespace.
     raw_with_extra_ws = b'{"a":   1,\n   "b": "x"}'
     parsed = json.loads(raw_with_extra_ws)
 
@@ -109,11 +109,11 @@ def test_verify_raw_body_path() -> None:
 
 
 def test_verify_low_level_strict_bytes() -> None:
-    """Die Low-Level-``verify``-API ohne Re-Canonicalize bleibt streng."""
+    """The low-level ``verify`` API without re-canonicalize stays strict."""
     priv, pub = generate_keypair()
     body = canonical_json({"x": 1})
     sig = sign(body, privkey_hex=priv)
     assert verify(pubkey_hex=pub, signature_hex=sig, body=body) is True
-    # Whitespace-Variante laesst die Low-Level-API durchfallen, was OK ist —
-    # der HTTP-Pfad ruft immer verify_with_recanonicalize.
+    # The whitespace variant fails the low-level API, which is OK —
+    # the HTTP path always calls verify_with_recanonicalize.
     assert verify(pubkey_hex=pub, signature_hex=sig, body=b'{"x": 1}') is False

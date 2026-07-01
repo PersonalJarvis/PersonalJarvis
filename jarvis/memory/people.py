@@ -98,7 +98,7 @@ class Person:
 class PersonStore:
     """Manages `data/workspace/people/`.
 
-    Lookup is slug-based (`person_slug("Laura Müller") == "laura_mueller"`)
+    Lookup is slug-based (`person_slug("Laura Müller") == "laura_mueller"`)  # i18n-allow: example name demonstrating umlaut-safe slug conversion
     so that umlauts and special characters do not cause filename issues.
     """
 

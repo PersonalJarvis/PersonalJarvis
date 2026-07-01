@@ -1,8 +1,8 @@
-"""E2E-Test mit echtem Worker und gemocktem Reviewer (Phase 8.3).
+"""E2E test with a real worker and a mocked reviewer (Phase 8.3).
 
-Verifiziert Feedback-Block-Komposition für die zweite Iteration —
-das ist der wichtigste Punkt der Multi-Iter-Loop, ohne dass wir den
-echten Reviewer-Spawn doppelt zahlen müssen.
+Verifies feedback-block composition for the second iteration —
+that's the most important point of the multi-iter loop, without us
+having to pay for a real reviewer spawn twice.
 """
 from __future__ import annotations
 
@@ -44,9 +44,9 @@ pytestmark = [
 
 
 def test_multi_iter_feedback_block_reaches_worker(tmp_path: Path) -> None:
-    """Iter-1: Worker echt + Reviewer-Mock liefert needs_revision mit
-    konkretem Issue. Iter-2: Worker echt — wir capturen den Worker-Prompt
-    und verifizieren, dass das Feedback aus Iter-1 enthalten ist.
+    """Iter 1: real worker + reviewer mock returns needs_revision with
+    a concrete issue. Iter 2: real worker — we capture the worker prompt
+    and verify that the feedback from iter 1 is included.
     """
     runs_root = tmp_path / "review_runs"
     audit = ReviewAudit(path=tmp_path / "review.log")
@@ -59,20 +59,20 @@ def test_multi_iter_feedback_block_reaches_worker(tmp_path: Path) -> None:
     )
 
     async def worker_spawn(state: RunState, iteration: int) -> str:
-        # Wrap real spawner mit Capture für die Verifikation. Der Worker-
-        # Prompt selbst entsteht im real_worker; wir lesen ihn aus
-        # state.iterations vor dem Call (Iter 2: state hat Iter-1 mit Verdict).
+        # Wrap the real spawner with capture for verification. The worker
+        # prompt itself is built inside real_worker; we read it from
+        # state.iterations before the call (iter 2: state has iter 1 with verdict).
         if iteration > 1:
-            # Capture Feedback-Sichtbarkeit — der Spawner build den Prompt
-            # gleich; wir verifizieren über das logische Vorliegen der
-            # Vor-Iteration.
+            # Capture feedback visibility — the spawner builds the prompt
+            # the same way; we verify via the logical presence of the
+            # previous iteration.
             assert any(r.verdict is not None for r in state.iterations)
         result = await real_worker.spawn(state, iteration)
-        # Lese den tatsächlichen Prompt aus iter-N/worker.out + RunDirectory
+        # Read the actual prompt from iter-N/worker.out + RunDirectory
         return result
 
     reviewer_calls = {"count": 0}
-    issue_text = "die Funktion hat keinen docstring"
+    issue_text = "the function has no docstring"
 
     async def reviewer_mock(
         state: RunState, worker_output: str, iteration: int
@@ -81,13 +81,13 @@ def test_multi_iter_feedback_block_reaches_worker(tmp_path: Path) -> None:
         if reviewer_calls["count"] == 1:
             return ReviewVerdict(
                 status=ReviewStatus.NEEDS_REVISION,
-                summary="Funktion fehlt docstring",
+                summary="Function is missing a docstring",
                 issues=[
                     ReviewIssue(
                         severity="warning",
                         description=issue_text,
                         location="add()",
-                        fix_hint="Füge eine 1-Zeilen-docstring hinzu.",
+                        fix_hint="Add a 1-line docstring.",
                     )
                 ],
                 score=0.6,
@@ -106,16 +106,16 @@ def test_multi_iter_feedback_block_reaches_worker(tmp_path: Path) -> None:
     )
 
     task = (
-        "Schreibe eine Python-Funktion `add(a, b)` die ihre Argumente "
-        "addiert und gib eine 1-Zeilen-Bestätigung auf stdout aus."
+        "Write a Python function `add(a, b)` that adds its arguments "
+        "and prints a 1-line confirmation to stdout."
     )
     result = asyncio.run(pipeline.run(task, max_iterations=2))
 
-    # Iter 2 sollte pass gewesen sein
+    # Iter 2 should have passed
     assert result.outcome is PipelineOutcome.SUCCESS
     assert reviewer_calls["count"] == 2
     assert len(result.iterations) == 2
-    # Iter 1 hatte ein needs_revision-Verdict in state.iterations
+    # Iter 1 had a needs_revision verdict in state.iterations
     assert (
         result.iterations[0].verdict is not None
         and result.iterations[0].verdict.status is ReviewStatus.NEEDS_REVISION

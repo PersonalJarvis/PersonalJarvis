@@ -1,4 +1,4 @@
-"""OpenAI GPT-Brain (direct API)."""
+"""OpenAI GPT Brain (direct API)."""
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
@@ -26,7 +26,7 @@ class OpenAIBrain:
         if self._client is None:
             ep = cfg.resolve_provider_endpoint("openai")
             if not ep.credential:
-                raise RuntimeError("Kein OpenAI-API-Key gefunden (openai_api_key / OPENAI_API_KEY).")
+                raise RuntimeError("No OpenAI API key found (openai_api_key / OPENAI_API_KEY).")
             from openai import AsyncOpenAI
             kwargs: dict[str, Any] = {"api_key": ep.credential, "timeout": CLIENT_TIMEOUT}
             if ep.base_url:

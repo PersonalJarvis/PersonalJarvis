@@ -34,11 +34,11 @@ interface Props {
 }
 
 /**
- * Admonition-Block fuer info/warning/tip/note.
+ * Admonition block for info/warning/tip/note.
  *
- * Aktivierung: in Markdown via `> [!info]`, `> [!warning]`, `> [!tip]`,
- * `> [!note]` als ersten Tag innerhalb eines blockquote. Standard-Markdown
- * blockquote ohne Tag bleibt als Default-blockquote (note-Variante).
+ * Activation: in Markdown via `> [!info]`, `> [!warning]`, `> [!tip]`,
+ * `> [!note]` as the first tag inside a blockquote. A standard Markdown
+ * blockquote without a tag stays a default blockquote (the note variant).
  */
 export function Callout({ type = "note", children }: Props) {
   const variant = VARIANTS[type];
@@ -57,11 +57,11 @@ export function Callout({ type = "note", children }: Props) {
 }
 
 /**
- * Heuristik: schaut auf den ersten Text-Knoten eines blockquote. Wenn er
- * mit ``[!info]``, ``[!warning]``, ``[!tip]`` oder ``[!note]`` beginnt
- * (GitHub-Markdown-Convention), liefert den Typ + den Rest als Children.
+ * Heuristic: looks at the first text node of a blockquote. If it
+ * starts with ``[!info]``, ``[!warning]``, ``[!tip]``, or ``[!note]``
+ * (GitHub Markdown convention), returns the type + the rest as children.
  *
- * Kein Match -> ``null``, der Renderer faellt auf normales blockquote.
+ * No match -> ``null``, the renderer falls back to a normal blockquote.
  */
 export function parseCalloutTag(
   text: string,

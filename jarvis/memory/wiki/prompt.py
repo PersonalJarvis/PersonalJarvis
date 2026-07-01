@@ -145,17 +145,17 @@ _RECENT_LOG_ENTRIES = 3
 # Stop-word set for the keyword-overlap top-slugs ranker. German + English
 # function words that appear in almost every source and would dominate the
 # overlap score without carrying signal. Lowercase, ASCII-fold-ready.
-_STOPWORDS: frozenset[str] = frozenset({
+_STOPWORDS: frozenset[str] = frozenset({  # i18n-allow: German stop-word matching vocabulary
     # German
-    "der", "die", "das", "den", "dem", "des", "ein", "eine", "einer",
-    "und", "oder", "aber", "doch", "nicht", "kein", "keine", "ist",
-    "war", "sind", "wird", "wurde", "werden", "hat", "hatte", "haben",
+    "der", "die", "das", "den", "dem", "des", "ein", "eine", "einer",  # i18n-allow
+    "und", "oder", "aber", "doch", "nicht", "kein", "keine", "ist",  # i18n-allow
+    "war", "sind", "wird", "wurde", "werden", "hat", "hatte", "haben",  # i18n-allow
     "ich", "du", "er", "sie", "es", "wir", "ihr", "mir", "mich",
     "dich", "dir", "uns", "euch", "ihm", "ihn", "ihnen",
-    "mit", "ohne", "fuer", "für", "von", "vom", "zum", "zur", "zu",
-    "auf", "aus", "bei", "nach", "vor", "ueber", "über", "unter",
+    "mit", "ohne", "fuer", "für", "von", "vom", "zum", "zur", "zu",  # i18n-allow
+    "auf", "aus", "bei", "nach", "vor", "ueber", "über", "unter",  # i18n-allow
     "an", "in", "im", "am", "als", "wie", "was", "wer", "wenn",
-    "weil", "noch", "schon", "auch", "nur", "mehr", "sehr",
+    "weil", "noch", "schon", "auch", "nur", "mehr", "sehr",  # i18n-allow
     # English
     "the", "a", "an", "of", "to", "in", "on", "for", "with", "by",
     "from", "as", "at", "or", "and", "but", "if", "then", "than",

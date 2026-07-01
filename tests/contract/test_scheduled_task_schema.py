@@ -1,8 +1,8 @@
-"""Contract-Tests fuer TaskSpec + Trigger + Action (Phase 5 Capability 4).
+"""Contract tests for TaskSpec + Trigger + Action (Phase 5 Capability 4).
 
-Mandat-DoD: 'Sag mir in 30 Sekunden Hallo' muss als TaskSpec darstellbar
-sein. Trigger-Scope ist auf `after_delay`, `at_time`, `on_event`
-beschraenkt — kein Cron (ADR-0003 / User-§8.3).
+Mandate DoD: 'Tell me hello in 30 seconds' must be representable as a
+TaskSpec. Trigger scope is limited to `after_delay`, `at_time`, `on_event`
+— no cron (ADR-0003 / User-§8.3).
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def test_trigger_types_scope():
 
 
 def test_mandate_example_in_30s_hallo():
-    """Wort-fuer-Wort DoD-Example aus dem Mandat: 'Sag mir in 30 Sekunden Hallo'."""
+    """DoD example straight from the mandate: 'Tell me hello in 30 seconds'."""
     spec = TaskSpec(
         title="Sag Hallo in 30s",
         trigger=TriggerAfterDelay(delay_seconds=30.0),
@@ -71,7 +71,7 @@ def test_on_event_trigger_with_filter_expr():
 
 
 def test_rejects_cron_trigger():
-    """Es gibt bewusst KEINEN Cron-Trigger. Falsche Nutzung muss failen."""
+    """There is deliberately NO cron trigger. Incorrect usage must fail."""
     adapter = TypeAdapter(TaskSpec)
     with pytest.raises(ValidationError):
         adapter.validate_python({

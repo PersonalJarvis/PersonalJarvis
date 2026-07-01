@@ -1,27 +1,27 @@
-"""Conductor — eine bessere Canvas fuer agentic Workflows.
+"""Conductor — a better canvas for agentic workflows.
 
-Conductor ist ein **eigenstaendiges Open-Source-Tool**, das in diesem
-Monorepo entstanden ist, aber nicht an Jarvis gebunden ist:
+Conductor is a **standalone open-source tool** that originated in this
+monorepo but is not tied to Jarvis:
 
-- Standalone-Modus: ``python -m conductor serve`` startet einen eigenen
-  FastAPI-Server auf Port 7777 mit SQLite in ``~/.conductor/``.
-- Embedded-Modus: Jarvis importiert das Package, mountet den Router in
-  seinen eigenen FastAPI-Server und zeigt eine Dashboard-View.
+- Standalone mode: ``python -m conductor serve`` starts its own
+  FastAPI server on port 7777 with SQLite in ``~/.conductor/``.
+- Embedded mode: Jarvis imports the package, mounts the router in
+  its own FastAPI server, and shows a dashboard view.
 
-Es ist bewusst kein n8n-Clone — keine Drag-and-Drop-Nodes, kein Graph.
-Stattdessen:
+It is deliberately not an n8n clone — no drag-and-drop nodes, no graph.
+Instead:
 
-- **Jobs sind YAML** — git-freundlich, copy-pasteable, diffbar.
-- **Timeline-View** — alle Runs chronologisch statt raeumlich.
-- **Drei Job-Types**: shell, http, agent. Das deckt 95 % aller Scheduled-
-  Task + Agentic-Workflow-Use-Cases ab.
-- **Built-in Observability** — jeder Run hat Live-Logs, Duration,
-  Exit-Code, Tokens, Cost (wenn Agent) — nichts davon muss extra
-  aktiviert werden.
+- **Jobs are YAML** — git-friendly, copy-pasteable, diffable.
+- **Timeline view** — all runs chronological instead of spatial.
+- **Three job types**: shell, http, agent. That covers 95% of all
+  scheduled-task + agentic-workflow use cases.
+- **Built-in observability** — every run has live logs, duration,
+  exit code, tokens, cost (if agent) — none of it needs to be
+  activated separately.
 
 Public API:
-  ``ConductorStore``, ``Runner``, ``Scheduler``, ``Job``, ``Run`` und
-  die drei ``JobHandler``-Implementations.
+  ``ConductorStore``, ``Runner``, ``Scheduler``, ``Job``, ``Run``, and
+  the three ``JobHandler`` implementations.
 """
 from __future__ import annotations
 

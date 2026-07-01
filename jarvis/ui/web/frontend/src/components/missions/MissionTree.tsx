@@ -1,10 +1,10 @@
 /**
- * Linke Pane: Tree der Missions + spawned Workers.
+ * Left pane: tree of missions + spawned workers.
  *
- * react-arborist erwartet ein flat-array mit `children`-Property pro Node.
- * Wir bauen den Tree on-the-fly aus dem Store: jede MissionSummary wird ein
- * Top-Level-Node, jeder eindeutige worker_id aus dem zugehoerigen Event-Stream
- * landet als Child-Node.
+ * react-arborist expects a flat array with a `children` property per node.
+ * We build the tree on-the-fly from the store: each MissionSummary becomes
+ * a top-level node, and each unique worker_id from the corresponding event
+ * stream lands as a child node.
  */
 import { useMemo } from "react";
 import { Tree, type NodeRendererProps } from "react-arborist";
@@ -85,7 +85,7 @@ function buildTree(
 }
 
 function shortPrompt(p: string): string {
-  if (!p) return "(ohne Prompt)";
+  if (!p) return "(no prompt)";
   return p.length > 48 ? p.slice(0, 47) + "…" : p;
 }
 
@@ -131,7 +131,7 @@ export function MissionTree() {
           if (node.data.kind === "mission") {
             selectMission(node.data.id);
           } else if (node.data.kind === "worker" && node.data.mission === undefined) {
-            // Worker-Node ist Child der Mission — Mission-ID extrahieren aus tree-id
+            // Worker node is a child of the mission — extract the mission ID from the tree id
             const missionId = node.data.id.split("::")[0];
             selectMission(missionId);
             selectWorker(node.data.workerId ?? null);

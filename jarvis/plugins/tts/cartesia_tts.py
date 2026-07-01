@@ -45,12 +45,12 @@ DEFAULT_VOICE_ID_ES = "15d0c2e2-8d29-44c3-be23-d585d5f154a1"  # Pedro — Formal
 # so a missing language hint behaves like the previous single-voice plugin.
 DEFAULT_VOICE_ID = DEFAULT_VOICE_ID_EN
 
-_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-ZÄÖÜ])")
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-ZÄÖÜ])")  # i18n-allow (DE letters are part of the sentence-boundary match set)
 
 # Text-detection heuristic: when the caller does not pass a language_code,
 # we look at the transcript to pick the right voice. Cheap, no LLM call,
 # no library dependency. False positives fall back to the generic voice.
-_DE_HINTS = re.compile(r"[äöüÄÖÜß]|\b(ich|nicht|und|der|die|das|ist|mit|für|werde|machen|gerne|bitte)\b", re.IGNORECASE)
+_DE_HINTS = re.compile(r"[äöüÄÖÜß]|\b(ich|nicht|und|der|die|das|ist|mit|für|werde|machen|gerne|bitte)\b", re.IGNORECASE)  # i18n-allow (DE word list a language-detection classifier must match)
 _ES_HINTS = re.compile(r"[ñáéíóúÑÁÉÍÓÚ¿¡]|\b(que|para|con|por|esto|esta|hola|gracias|señor|cómo)\b", re.IGNORECASE)
 
 

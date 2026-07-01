@@ -173,8 +173,8 @@ class PendingMutationStore:
             entry = self._entries.pop(mutation_id, None)
         if entry is None:
             raise KeyError(
-                f"Pending-Mutation {mutation_id} nicht gefunden (abgelaufen "
-                f"oder bereits konsumiert)"
+                f"Pending mutation {mutation_id} not found (expired "
+                f"or already consumed)"
             )
         return self._writer.mutate(entry.request)
 
@@ -214,7 +214,7 @@ class PendingMutationStore:
                 )
             )
         except Exception as exc:  # noqa: BLE001
-            _LOG.warning("Reject-Audit fehlgeschlagen: %s", exc)
+            _LOG.warning("Reject audit failed: %s", exc)
 
     def cleanup_expired(self) -> int:
         """Remove expired pending entries. Returns the number removed."""

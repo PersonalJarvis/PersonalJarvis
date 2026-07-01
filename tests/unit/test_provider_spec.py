@@ -1,8 +1,8 @@
-"""Integritäts-Tests für die deklarative ProviderSpec-Liste.
+"""Integrity tests for the declarative ProviderSpec list.
 
-Wichtig: jeder secret_key, der in PROVIDERS referenziert wird, muss auch im
-Setup-Wizard SECRETS-Set existieren — sonst läuft der API-Endpoint
-POST /api/secrets/{key} ins Whitelist-Loch.
+Important: every secret_key referenced in PROVIDERS must also exist in the
+setup wizard's SECRETS set — otherwise the API endpoint
+POST /api/secrets/{key} falls into the whitelist hole.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def test_every_secret_key_exists_in_wizard() -> None:
         for key in spec.secret_keys:
             assert key in wizard_keys, (
                 f"Provider '{spec.id}' referenziert secret_key '{key}', "
-                f"der nicht in wizard.SECRETS deklariert ist"
+                f"is not declared in wizard.SECRETS"
             )
 
 
@@ -83,11 +83,11 @@ def test_all_secret_keys_collects_unique_set() -> None:
     assert "anthropic_api_key" in keys
     assert "gemini_api_key" in keys
     assert "openai_api_key" in keys
-    assert "elevenlabs_api_key" not in keys, "ElevenLabs ist Dead-Code, darf nicht referenziert sein"
+    assert "elevenlabs_api_key" not in keys, "ElevenLabs is dead code and must not be referenced"
 
 
 def test_no_hardcoded_model_names_in_specs() -> None:
-    """Defensives Smoke-Check: Modellnamen-Indikatoren dürfen NICHT im Spec auftauchen."""
+    """Defensive smoke check: model-name indicators must NOT appear in a spec."""
     forbidden_substrings = [
         "claude-3", "claude-4", "claude-opus", "claude-haiku", "claude-sonnet",
         "gpt-4", "gpt-5", "o1-", "o3-",
@@ -97,7 +97,7 @@ def test_no_hardcoded_model_names_in_specs() -> None:
         haystack = (spec.id + spec.label).lower()
         for needle in forbidden_substrings:
             assert needle not in haystack, (
-                f"Provider '{spec.id}' enthält Modellnamen '{needle}' — laut Spec verboten"
+                f"Provider '{spec.id}' contains model name '{needle}' — forbidden by the spec"
             )
 
 
@@ -108,7 +108,7 @@ def test_provider_spec_is_frozen_dataclass() -> None:
         spec.id = "mutated"  # type: ignore[misc]
     except Exception:
         return
-    raise AssertionError("ProviderSpec sollte frozen sein")
+    raise AssertionError("ProviderSpec should be frozen")
 
 
 # ── New: per-provider credential help + billing classification ───────────────

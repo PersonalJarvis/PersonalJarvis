@@ -2,13 +2,12 @@
 import { Activity } from "lucide-react";
 
 /**
- * Display-Komponente fuer EINEN ausgehenden StatusUpdate.
+ * Display component for a SINGLE outgoing StatusUpdate.
  *
- * In Phase F4 ist diese Komponente nur die UI-Library — sie wird in F5
- * an einen WebSocket-Stream angeschlossen, der die letzten N Updates
- * pro Friend anzeigt.
+ * In phase F4 this component is only the UI library — in F5 it gets wired
+ * to a WebSocket stream that shows the last N updates per friend.
  *
- * Schema-Gleichschritt mit ``jarvis.friends.schemas.StatusUpdate``:
+ * Kept in schema lockstep with ``jarvis.friends.schemas.StatusUpdate``:
  *   - event_type, timestamp_ns, fields, profile_used.
  */
 export interface StatusUpdateView {

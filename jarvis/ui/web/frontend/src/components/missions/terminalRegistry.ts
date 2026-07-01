@@ -1,13 +1,13 @@
 /**
- * Module-level Map fuer xterm.js-Terminal-Instanzen.
+ * Module-level map for xterm.js terminal instances.
  *
- * Lebt EXPLIZIT ausserhalb des Zustand-Stores: jeder PTY-Stream-Chunk wuerde
- * sonst einen kompletten React-Re-Render des Mission-Views ausloesen, was die
- * UI bei beschaeftigten Workern (mehrere KB/s Output) zum Stehen bringt.
+ * Lives EXPLICITLY outside the Zustand store: otherwise every PTY stream
+ * chunk would trigger a full React re-render of the mission view, which
+ * grinds the UI to a halt with busy workers (several KB/s of output).
  *
- * Lifecycle: PtyTerminal-Component registriert beim Mount, dispose im Cleanup.
- * Bei React-StrictMode laufen Mount/Unmount zweimal — die Registry-Eintraege
- * werden im ersten Cleanup wieder freigegeben, das ist okay.
+ * Lifecycle: the PtyTerminal component registers on mount, disposes in
+ * cleanup. Under React StrictMode, mount/unmount runs twice — the registry
+ * entries get freed again on the first cleanup, which is fine.
  */
 import type { Terminal } from "@xterm/xterm";
 
@@ -27,8 +27,8 @@ export function disposeTerminal(workerId: string): void {
     try {
       term.dispose();
     } catch {
-      // dispose ist defensiv — wenn xterm intern bereits zerstoert ist,
-      // dann doppelter dispose-Aufruf darf den Cleanup nicht killen
+      // dispose is defensive — if xterm has already destroyed itself
+      // internally, a duplicate dispose call must not kill the cleanup
     }
     registry.delete(workerId);
   }

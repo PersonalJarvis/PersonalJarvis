@@ -1,26 +1,26 @@
-"""Phase A2 — End-to-End Integration Test.
+"""Phase A2 — End-to-end integration test.
 
-Echte Komponenten verdrahtet (EventBus + RecallStore mit tmpdir DB +
-StoryTracker + FakeVerdichter). Simuliert eine reale Bus-Sequenz:
+Real components wired up (EventBus + RecallStore with a tmpdir DB +
+StoryTracker + FakeVerdichter). Simulates a real bus sequence:
 
   FrameUpdated x N -> IdleEntered
 
-und prueft den Vollpfad:
+and checks the full path:
 
-  - Verdichter wird genau einmal gerufen mit den high-salience Frames
-  - Episode landet in awareness_episodes (SQLite)
-  - FTS-Index awareness_episodes_fts ist befuellt (suchbar)
-  - state.last_episode_summary + last_episode_id wurden gesetzt
-  - EpisodeRecorded-Event wurde publiziert
-  - PrivacyFilter-blockierte Frames sind NICHT im Verdichter-Input
+  - the condenser is called exactly once with the high-salience frames
+  - the episode lands in awareness_episodes (SQLite)
+  - the FTS index awareness_episodes_fts is populated (searchable)
+  - state.last_episode_summary + last_episode_id were set
+  - the EpisodeRecorded event was published
+  - frames blocked by PrivacyFilter are NOT in the condenser input
 
 Plan §6 AC §6:
-  - "Episode wird nach Window-Switch zu anderer App erstellt (Test mit Bus-Replay)" ✅
-  - "Episode landet in SQLite, FTS-Index ist befüllt" ✅
-  - "state.last_episode_summary wird nach jedem Flush updated" ✅
-  - "PrivacyFilter-blockierte Frames sind NICHT im Verdichter-Input" ✅
+  - "Episode is created after a window switch to a different app (test with bus replay)" ✅
+  - "Episode lands in SQLite, FTS index is populated" ✅
+  - "state.last_episode_summary is updated after every flush" ✅
+  - "Frames blocked by PrivacyFilter are NOT in the condenser input" ✅
 
-Konvention: Fakes statt Mocks (CLAUDE.md). FakeVerdichter ist deterministisch.
+Convention: fakes instead of mocks (CLAUDE.md). FakeVerdichter is deterministic.
 """
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ from jarvis.memory.recall import RecallStore
 
 @dataclass
 class FakeVerdichter:
-    """Deterministischer Verdichter — kein echter Brain-Call im e2e-Test."""
+    """Deterministic condenser — no real brain call in the e2e test."""
     summary: str = "E2E Test: User war in Code.exe mit pipeline.py aktiv."
     tokens_in: int = 250
     tokens_out: int = 80
@@ -121,7 +121,7 @@ def _frame_event(frame: FrameSnapshot) -> FrameUpdated:
 async def test_e2e_idle_flush_persists_episode_with_fts(
     recall_store: RecallStore,
 ) -> None:
-    """Bus-Replay: 3 high-salience Frames -> IdleEntered -> Episode in SQLite + FTS."""
+    """Bus replay: 3 high-salience frames -> IdleEntered -> episode in SQLite + FTS."""
     bus = EventBus()
     manager = AwarenessManager(AwarenessConfig.default())
     verdichter = FakeVerdichter(
@@ -138,8 +138,8 @@ async def test_e2e_idle_flush_persists_episode_with_fts(
         received.append(ev)
     bus.subscribe(EpisodeRecorded, collect)
 
-    # 3 saliente Frames (verschiedene Titles, gleicher Process → +30 each)
-    base_ts = time.time_ns() - 2_000_000_000    # 2s in der Vergangenheit
+    # 3 salient frames (different titles, same process → +30 each)
+    base_ts = time.time_ns() - 2_000_000_000    # 2s in the past
     for i, title in enumerate(["pipeline.py", "manager.py", "factory.py"]):
         f = _make_frame(title=title, ts_ns=base_ts + i * 500_000_000)
         manager.state.current_frame = f
@@ -148,7 +148,7 @@ async def test_e2e_idle_flush_persists_episode_with_fts(
     # IdleEntered → flush
     await tracker._on_idle_entered(IdleEntered(idle_since_ns=time.time_ns()))
 
-    # Verdichter wurde 1x gerufen
+    # Condenser was called 1x
     assert len(verdichter.calls) == 1
     call = verdichter.calls[0]
     assert len(call["frames"]) == 3
@@ -165,7 +165,7 @@ async def test_e2e_idle_flush_persists_episode_with_fts(
     assert ep["tokens_in"] == 250
     assert ep["tokens_out"] == 80
 
-    # FTS-Index ist befuellt: search liefert die Episode
+    # FTS index is populated: search returns the episode
     fts_results = await recall_store.search_episodes(query="pipeline", limit=10)
     assert len(fts_results) == 1
     assert fts_results[0]["summary"] == ep["summary"]
@@ -185,7 +185,7 @@ async def test_e2e_idle_flush_persists_episode_with_fts(
 async def test_e2e_privacy_blocked_frames_not_in_verdichter_input(
     recall_store: RecallStore,
 ) -> None:
-    """Hard Negative §6: capture_allowed=False Frames NIE im Verdichter-Input."""
+    """Hard negative §6: capture_allowed=False frames NEVER in the condenser input."""
     bus = EventBus()
     manager = AwarenessManager(AwarenessConfig.default())
     verdichter = FakeVerdichter()
@@ -214,13 +214,13 @@ async def test_e2e_privacy_blocked_frames_not_in_verdichter_input(
 
     await tracker._on_idle_entered(IdleEntered(idle_since_ns=time.time_ns()))
 
-    # Verdichter call enthaelt KEINE blocked-Titles
+    # Condenser call contains NO blocked titles
     assert len(verdichter.calls) == 1
     call = verdichter.calls[0]
     titles_seen = [f["window_title"] for f in call["frames"]]
     assert "Banking - Sparkasse" not in titles_seen
     assert "Password Vault" not in titles_seen
-    # Allowed Titles sind drin (3 Stueck)
+    # Allowed titles are present (3 of them)
     assert len(titles_seen) == 3
     for t in ("file_a.py", "file_b.py", "file_c.py"):
         assert t in titles_seen
@@ -229,7 +229,7 @@ async def test_e2e_privacy_blocked_frames_not_in_verdichter_input(
 async def test_e2e_app_switch_creates_episode_after_min_duration(
     recall_store: RecallStore,
 ) -> None:
-    """Plan §6 AC: Episode wird nach Window-Switch zu anderer App erstellt."""
+    """Plan §6 AC: episode is created after a window switch to a different app."""
     import asyncio as _aio
 
     bus = EventBus()
@@ -266,7 +266,7 @@ async def test_e2e_app_switch_creates_episode_after_min_duration(
 async def test_e2e_short_episode_not_persisted(
     recall_store: RecallStore,
 ) -> None:
-    """Plan §6 AC: Episode NICHT erstellt bei Same-App-Switch ohne 60s-Mindestdauer."""
+    """Plan §6 AC: episode NOT created on a same-app switch without the 60s minimum duration."""
     bus = EventBus()
     manager = AwarenessManager(AwarenessConfig.default())
     verdichter = FakeVerdichter()
@@ -289,7 +289,7 @@ async def test_e2e_short_episode_not_persisted(
     manager.state.current_frame = f2
     await tracker._on_frame_updated(_frame_event(f2))
 
-    # Verdichter NICHT gerufen, recall leer
+    # Condenser NOT called, recall empty
     assert verdichter.calls == []
     episodes = await recall_store.recent_episodes(limit=10)
     assert len(episodes) == 0
@@ -298,7 +298,7 @@ async def test_e2e_short_episode_not_persisted(
 async def test_e2e_state_snapshot_includes_episode_summary(
     recall_store: RecallStore,
 ) -> None:
-    """Plan §6 AC: state.snapshot_for_prompt() enthaelt nach flush das Summary."""
+    """Plan §6 AC: state.snapshot_for_prompt() contains the summary after a flush."""
     bus = EventBus()
     manager = AwarenessManager(AwarenessConfig.default())
     summary = "Du arbeitest seit 23min an pipeline.py in Code.exe."
@@ -317,12 +317,12 @@ async def test_e2e_state_snapshot_includes_episode_summary(
     await tracker._on_idle_entered(IdleEntered(idle_since_ns=time.time_ns()))
 
     snap = manager.state.snapshot_for_prompt(max_chars=600)
-    # current_frame ist None (Watcher wurde nicht gestartet); aber
-    # last_episode_summary ist gesetzt → sollte gerendert werden.
-    # Wenn current_frame is None: snapshot_for_prompt returnt "" — das ist
-    # die A1-Implementation. Lass uns sicherstellen dass es entweder
-    # rendert ODER current_frame gesetzt setzen.
-    # Setzen wir current_frame nochmal damit snapshot rendert:
+    # current_frame is None (the watcher wasn't started); but
+    # last_episode_summary is set → should be rendered.
+    # If current_frame is None: snapshot_for_prompt returns "" — that's
+    # the A1 implementation. Let's make sure it either
+    # renders OR set current_frame.
+    # Set current_frame again so the snapshot renders:
     manager.state.current_frame = f
     snap = manager.state.snapshot_for_prompt(max_chars=600)
     assert summary in snap

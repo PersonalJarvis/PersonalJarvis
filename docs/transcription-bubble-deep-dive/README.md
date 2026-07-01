@@ -29,13 +29,13 @@ wrong rendering assembled from several unstable live-STT intermediate states.
 The user said:
 
 ```text
-Was ist morgen fuer ein Tag?
+Was ist morgen fuer ein Tag?  <!-- i18n-allow -->
 ``` <!-- i18n-allow: STT test fixture -->
 
 The bubble showed:
 
 ```text
-Was? Was ist morgens? Was ist morgen fuer ein Tag? Morgen fuer einen Tag.
+Was? Was ist morgens? Was ist morgen fuer ein Tag? Morgen fuer einen Tag.  <!-- i18n-allow -->
 ``` <!-- i18n-allow: STT test fixture -->
 
 The pattern is typical for the current live-bubble architecture:
@@ -68,20 +68,20 @@ Example:
 ```text
 Partial 1: Was?
 Partial 2: Was ist morgens?
-Partial 3: Was ist morgen fuer ein Tag?
-Partial 4: Morgen fuer einen Tag.
+Partial 3: Was ist morgen fuer ein Tag?  <!-- i18n-allow -->
+Partial 4: Morgen fuer einen Tag.  <!-- i18n-allow -->
 ``` <!-- i18n-allow: STT test fixture -->
 
 The correct display would not be:
 
 ```text
-Was? Was ist morgens? Was ist morgen fuer ein Tag? Morgen fuer einen Tag.
+Was? Was ist morgens? Was ist morgen fuer ein Tag? Morgen fuer einen Tag.  <!-- i18n-allow -->
 ``` <!-- i18n-allow: STT test fixture -->
 
 The better display would be either:
 
 ```text
-Was ist morgen fuer ein Tag?
+Was ist morgen fuer ein Tag?  <!-- i18n-allow -->
 ``` <!-- i18n-allow: STT test fixture -->
 
 or, while speaking live, always only the currently best hypothesis.
@@ -91,7 +91,7 @@ or, while speaking live, always only the currently best hypothesis.
 Not clearly proven as the main cause.
 
 On short tail windows, the STT tool may well recognize "morgen" as "morgens" or
-"fuer ein" as "fuer einen". That is normal for short, context-poor live tails.
+"fuer ein" as "fuer einen". That is normal for short, context-poor live tails. <!-- i18n-allow: quoted STT transcript examples -->
 The decisive point is: such intermediate hypotheses must not be permanently
 preserved in the UI.
 
@@ -140,8 +140,8 @@ from jarvis.speech.pipeline import _merge_partial_transcript
 parts = [
     "Was?",
     "Was ist morgens?",
-    "Was ist morgen fuer ein Tag?",
-    "Morgen fuer einen Tag.",
+    "Was ist morgen fuer ein Tag?",  # i18n-allow
+    "Morgen fuer einen Tag.",  # i18n-allow
 ]
 
 cur = ""
@@ -155,8 +155,8 @@ Result:
 ```text
 Was?
 Was? Was ist morgens?
-Was? Was ist morgens? Was ist morgen fuer ein Tag?
-Was? Was ist morgens? Was ist morgen fuer ein Tag? Morgen fuer einen Tag.
+Was? Was ist morgens? Was ist morgen fuer ein Tag?  <!-- i18n-allow -->
+Was? Was ist morgens? Was ist morgen fuer ein Tag? Morgen fuer einen Tag.  <!-- i18n-allow -->
 ```
 
 The Orb bridge has a very similar merge function:
@@ -180,22 +180,22 @@ That means: the probe does not hear the entire sentence each time, but only the
 last roughly 1.8 seconds. For a sentence like:
 
 ```text
-Was ist morgen fuer ein Tag?
+Was ist morgen fuer ein Tag?  <!-- i18n-allow -->
 ```
 
 a tail can look roughly like this:
 
 ```text
 ... ist morgen
-... morgen fuer ein
-... fuer ein Tag
+... morgen fuer ein  <!-- i18n-allow -->
+... fuer ein Tag  <!-- i18n-allow -->
 ```
 
 On such short excerpts STT can produce intermediate hypotheses:
 
 ```text
 morgen  -> morgens
-fuer ein -> fuer einen
+fuer ein -> fuer einen  <!-- i18n-allow -->
 ```
 
 That is not unusual for live STT. The error is that these intermediate
@@ -214,15 +214,15 @@ This solves the forgetting on cleanly overlapping partials:
 
 ```text
 Hallo ich moechte einen langen Prompt
-langen Prompt der weiter geht
--> Hallo ich moechte einen langen Prompt der weiter geht
+langen Prompt der weiter geht  <!-- i18n-allow -->
+-> Hallo ich moechte einen langen Prompt der weiter geht  <!-- i18n-allow -->
 ```
 
 But it worsens the case where STT corrects its opinion:
 
 ```text
 Was ist morgens?
-Was ist morgen fuer ein Tag?
+Was ist morgen fuer ein Tag?  <!-- i18n-allow -->
 ```
 
 Since "morgens" and "morgen" are not exactly equal, the merge recognizes no
@@ -242,7 +242,7 @@ Problem cases:
 Was?      != Was
 morgens?  != morgen
 Tag?      != Tag
-ein       != einen
+ein       != einen  <!-- i18n-allow -->
 ```
 
 As soon as punctuation or small STT corrections come into play, the overlap is
@@ -435,7 +435,7 @@ Two merge points were changed:
 
 1. `jarvis/speech/pipeline.py::_merge_partial_transcript`
    - normalizes punctuation and small STT variants like `morgens`/`morgen`
-     or `ein`/`einen`;
+     or `ein`/`einen`; <!-- i18n-allow -->
    - recognizes corrected live hypotheses and replaces the old preview text;
    - recognizes repeated tail fragments and does not append them again.
 
@@ -448,25 +448,25 @@ The screenshot case:
 ```text
 Was?
 Was ist morgens?
-Was ist morgen fuer ein Tag?
-Morgen fuer einen Tag.
+Was ist morgen fuer ein Tag?  <!-- i18n-allow -->
+Morgen fuer einen Tag.  <!-- i18n-allow -->
 ```
 
 now becomes:
 
 ```text
-Was ist morgen fuer ein Tag?
+Was ist morgen fuer ein Tag?  <!-- i18n-allow -->
 ```
 
 The previous long-prompt fix is preserved:
 
 ```text
 Hallo ich moechte einen langen Prompt
-langen Prompt der weiter geht
+langen Prompt der weiter geht  <!-- i18n-allow -->
 ```
 
 still becomes:
 
 ```text
-Hallo ich moechte einen langen Prompt der weiter geht
+Hallo ich moechte einen langen Prompt der weiter geht  <!-- i18n-allow -->
 ```

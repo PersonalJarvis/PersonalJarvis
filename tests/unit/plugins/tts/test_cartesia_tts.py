@@ -250,7 +250,7 @@ async def test_text_heuristic_picks_de_when_caller_says_auto(patched_secret) -> 
     mock_client.post = fake_post  # type: ignore[assignment]
     tts._client = mock_client
 
-    [_ async for _ in tts.synthesize("Ich bin Jarvis und freue mich für Sie.")]
+    [_ async for _ in tts.synthesize("Ich bin Jarvis und freue mich für Sie.")]  # i18n-allow: German text synthesized to prove the German voice/locale is picked
 
     assert captured["voice"]["id"] == "DE-VOICE-UUID"
 

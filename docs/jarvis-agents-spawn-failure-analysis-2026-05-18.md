@@ -34,7 +34,7 @@ Read-first, then hypothesis. Source per finding:
 | [`../sub-agents-outputs/mission_019e3c51-d4f4/`](file:///<USER_HOME>/Desktop/sub-agents-outputs/mission_019e3c51-d4f4/) | Previous failed mission, identical pattern |
 | `codex login status` | Live-CLI auth check |
 | `jarvis/core/config.load_config()` | Which provider is currently configured |
-| [`scripts/config-soll.json`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/scripts/config-soll.json) | Drift-Guard target value |
+| [`scripts/config-soll.json`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/scripts/config-soll.json) | Drift-Guard target value  <!-- i18n-allow --> |
 | [`jarvis/missions/kontrollierer/decomposer.py`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/kontrollierer/decomposer.py) | Decomposer defaults |
 | [`jarvis/missions/workers/codex_direct_worker.py`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/workers/codex_direct_worker.py) | Worker model routing |
 
@@ -109,7 +109,7 @@ Categorized by evidence level. File + line + evidence snippet.
 | # | Area | Note |
 |---|---|---|
 | **P1** | OpenClaw slug mapping does not know `chatgpt` | [`provider_map.py`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/openclaw/provider_map.py) lists only claude-api/gemini/grok/openai/openrouter. If someone accidentally calls `spawn_openclaw` directly instead of using CodexDirectWorker → `UnknownJarvisProviderError`. |
-| **P2** | Drift-Guard rolls the provider back | [`scripts/jarvis-config-drift-guard.ps1`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/scripts/jarvis-config-drift-guard.ps1) + [`scripts/config-soll.json`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/scripts/config-soll.json) | Both are now in sync on `chatgpt` — BUT if a Drift-Guard runs on ANOTHER machine with an old target value, it could roll back. Not currently observed. |
+| **P2** | Drift-Guard rolls the provider back | [`scripts/jarvis-config-drift-guard.ps1`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/scripts/jarvis-config-drift-guard.ps1) + [`scripts/config-soll.json`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/scripts/config-soll.json) | Both are now in sync on `chatgpt` — BUT if a Drift-Guard runs on ANOTHER machine with an old target value, it could roll back. Not currently observed.  <!-- i18n-allow --> |
 | **P3** | CODEX_HOME env leak | [`env.py:89`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/isolation/env.py) | `build_worker_env` sets `CODEX_HOME=<run_dir>/.codex` but `CodexDirectWorker` strips it (Welle 6 fix). If someone uses the old `CodexWorker` (non-Direct), the bug comes back. |
 | **P4** | Sandbox mode wrong for Codex-Codex | [`codex_direct_worker.py:50`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/workers/codex_direct_worker.py) default `sandbox="workspace-write"` | Works, but if the worker step sets `step.allowed_tools` that contains `Write` AND the `step.sandbox` override says Read-Only somewhere, it fails silently with "workspace is currently mounted read-only" (already seen once live today). |
 | **P5** | MCP-plugin Cloudflare OAuth expired | `~/.codex/config.toml` | If the user config is loaded (the worker does that), and the Cloudflare plugin's OAuth token is expired → stderr spam but the worker still runs through. The Critic strips the user config, so no issue there. |
@@ -122,7 +122,7 @@ Categorized by evidence level. File + line + evidence snippet.
 | **R1** | OAuth token expired | `codex login status` → "Logged in using ChatGPT" |
 | **R2** | OPENAI_API_KEY ENV overrides OAuth | Explicitly stripped in worker code ([`codex_direct_worker.py:179-184`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/workers/codex_direct_worker.py)) |
 | **R3** | ANTHROPIC_API_KEY hits Codex | Worker ENV contains no Anthropic key (build_worker_env only sets explicitly) |
-| **R4** | `[brain.sub_jarvis].provider` wrong | TOML + config-soll.json both on `chatgpt` — Drift-Guard accepts |
+| **R4** | `[brain.sub_jarvis].provider` wrong | TOML + config-soll.json both on `chatgpt` — Drift-Guard accepts  <!-- i18n-allow --> |
 | **R5** | `chatgpt` provider is not recognized as Codex | [`init.py`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/init.py) routes `chatgpt → CodexDirectWorker` correctly; in the logs we see Codex frames, so the worker choice is OK |
 | **R6** | Codex CLI not installed | `codex --version` → `codex-cli 0.130.0` |
 | **R7** | Worker tool-use detection broken | Not relevant — the bug fires BEFORE any tool use |
@@ -208,7 +208,7 @@ fallback_model = "gemini-3.1-pro-preview"
 ```
 
 ```json
-// scripts/config-soll.json
+// scripts/config-soll.json  <!-- i18n-allow -->
 "brain.sub_jarvis": {
   "provider": "chatgpt",
   "model": "",

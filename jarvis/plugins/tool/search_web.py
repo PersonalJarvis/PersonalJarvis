@@ -1,4 +1,4 @@
-"""search_web-Tool: DuckDuckGo Instant-Answer-API (kein Key nötig).
+"""search_web tool: DuckDuckGo Instant-Answer API (no key needed).
 
 Risk-Tier: safe — reines Readonly.
 
@@ -40,7 +40,7 @@ _GEOCODE_URL: Final[str] = "https://geocoding-api.open-meteo.com/v1/search"
 _FORECAST_URL: Final[str] = "https://api.open-meteo.com/v1/forecast"
 
 # How the brain must consume a non-empty result set. Live forensic 2026-06-28
-# (voice session, Turn 4 "wie viele Punkte brauche ich fuer eine 1"): the brain
+# (voice session, Turn 4 "wie viele Punkte brauche ich fuer eine 1"): the brain  # i18n-allow
 # (Gemini) concatenated the raw DuckDuckGo hits — titles, snippets, dates, URLs,
 # "Weitere Ergebnisse von www.gutefrage.net", a truncated "...Ma" — and read the
 # whole list aloud instead of answering. The results array carries NO consume
@@ -213,27 +213,27 @@ class SearchWebTool:
     # read it as an unwanted research spawn for a trivial question. Pinned by
     # tests/unit/brain/test_search_web_freshness_doctrine.py.
     description: str = (
-        "Web-Suche via DuckDuckGo mit Kurz-Zusammenfassung — fuer FRISCHE, "  # i18n-allow
-        "zeitkritische Fakten. NUTZE DIESES TOOL nur wenn die Antwort AKTUELLE "  # i18n-allow
-        "oder volatile Information braucht, die sich seit deinem Wissensstand "  # i18n-allow
-        "geaendert haben kann: aktuelle News, heutige Preise/Boersenkurse, "  # i18n-allow
-        "Wetter, Sport-Ergebnisse, laufende Ereignisse, "  # i18n-allow
-        "'neueste/aktuelle/heute/gerade' — ODER wenn der User AUSDRUECKLICH zu "  # i18n-allow
-        "suchen bittet ('such mal', 'google das', 'recherchier'). "  # i18n-allow
-        "NICHT NUTZEN fuer Evergreen-/Allgemeinwissen, das du selbst direkt "  # i18n-allow
-        "beantworten kannst (Geografie, Geschichte, Definitionen, 'wie "  # i18n-allow
-        "funktioniert X', allgemeine Ablaeufe / Vorgehensweisen wie 'was muss "  # i18n-allow
-        "ich beim Auswandern beachten', bekannte Konzepte) — solche Fragen "  # i18n-allow
-        "beantwortest du direkt aus deinem Wissen, ohne Suche. "  # i18n-allow
-        "Fuer Wetterfragen die Location in die query schreiben (z.B. 'weather "  # i18n-allow
-        "Berlin tomorrow'). "  # i18n-allow
-        "NICHT NUTZEN fuer Aktionen auf verbundenen Systemen (dafuer cli_* oder "  # i18n-allow
-        "MCP-Tools) — 'meine X' oder 'starte X' sind NIE Such-Intent."  # i18n-allow
+        "Web search via DuckDuckGo with a short summary — for FRESH, "
+        "time-critical facts. USE THIS TOOL only when the answer needs CURRENT "
+        "or volatile information that may have changed since your knowledge "
+        "cutoff: current news, today's prices/stock quotes, weather, sports "
+        "results, ongoing events, 'latest/current/today/right now' — OR when "
+        "the user EXPLICITLY asks you to search ('search for that', 'google "
+        "that', 'look it up'). "
+        "DO NOT USE for evergreen/general knowledge you can answer directly "
+        "yourself (geography, history, definitions, 'how does X work', general "
+        "procedures/processes like 'what do I need to consider when "
+        "emigrating', well-known concepts) — answer such questions directly "
+        "from your own knowledge, without searching. "
+        "For weather questions, put the location in the query (e.g. 'weather "
+        "Berlin tomorrow'). "
+        "DO NOT USE for actions on connected systems (use cli_* or MCP tools "
+        "for that) — 'my X' or 'start X' is NEVER search intent."
     )
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "Suchanfrage"},
+            "query": {"type": "string", "description": "Search query"},
             "max_results": {"type": "integer", "default": 5},
         },
         "required": ["query"],
@@ -243,12 +243,12 @@ class SearchWebTool:
         query = (args.get("query") or "").strip()
         max_results = int(args.get("max_results", 5))
         if not query:
-            return ToolResult(success=False, output=None, error="query fehlt")
+            return ToolResult(success=False, output=None, error="query missing")
 
         try:
             import httpx
         except Exception as exc:  # noqa: BLE001
-            return ToolResult(success=False, output=None, error=f"httpx nicht verfügbar: {exc}")
+            return ToolResult(success=False, output=None, error=f"httpx not available: {exc}")
 
         # Weather fast-path: DDG instant answers have no weather data (every
         # call returns empty), so weather intents go to Open-Meteo. The whole

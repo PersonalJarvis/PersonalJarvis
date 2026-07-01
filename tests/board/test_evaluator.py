@@ -1,4 +1,4 @@
-"""Tests fuer den AchievementEvaluator (Phase B)."""
+"""Tests for the AchievementEvaluator (Phase B)."""
 from __future__ import annotations
 
 import asyncio
@@ -59,7 +59,7 @@ def test_first_mcp_unlocks_on_mcp_success(tmp_path: Path) -> None:
 
 
 def test_evaluator_is_idempotent(tmp_path: Path) -> None:
-    """Plan §5-B: Same event twice darf NICHT zu Double-Unlock fuehren."""
+    """Plan §5-B: same event twice must NOT lead to a double unlock."""
     ev = AchievementEvaluator(tmp_path / "personal.db")
     first = ev.evaluate_sync(_mcp_ok())
     second = ev.evaluate_sync(_mcp_ok())
@@ -92,7 +92,7 @@ def test_tool_ladder(tmp_path: Path) -> None:
             unlocked.add(spec.id)
     assert "tool_dabbler" in unlocked
     assert "tool_journeyman" in unlocked
-    # Master braucht 30 — nicht erreicht mit 20.
+    # Master needs 30 — not reached with 20.
     assert "tool_master" not in unlocked
 
 
@@ -131,7 +131,7 @@ def test_centennial_requires_100_tasks(tmp_path: Path) -> None:
 
 
 def test_restart_restores_counters(tmp_path: Path) -> None:
-    """Der Evaluator rehydriert seinen State aus ``aggregator_meta``."""
+    """The evaluator rehydrates its state from ``aggregator_meta``."""
     db = tmp_path / "personal.db"
     ev = AchievementEvaluator(db)
     for i in range(5):
@@ -148,7 +148,7 @@ def test_action_execution_with_failure_not_counted(tmp_path: Path) -> None:
     ev = AchievementEvaluator(tmp_path / "personal.db")
     for i in range(6):
         ev.evaluate_sync(_action(f"t{i}", success=False))
-    # Kein Tool hat success=True gehabt → tool_dabbler bleibt gelockt.
+    # No tool had success=True → tool_dabbler stays locked.
     ids = {r["id"] for r in ev._connect().execute("SELECT id FROM achievements")}
     assert "tool_dabbler" not in ids
 
@@ -178,10 +178,10 @@ async def test_bus_integration_publishes_unlock(tmp_path: Path) -> None:
 
 
 def test_evaluator_does_not_block_on_evaluator_exception(tmp_path: Path) -> None:
-    """Wenn ein einzelner Evaluator-Callback crasht, darf kein State-Leck passieren."""
+    """If a single evaluator callback crashes, no state leak may occur."""
     ev = AchievementEvaluator(tmp_path / "personal.db")
 
-    # Monkey-Patch: ein kaputter Evaluator in der Chain.
+    # Monkey-patch: a broken evaluator in the chain.
     from jarvis.board import achievements
 
     original = achievements.ACHIEVEMENTS
@@ -193,7 +193,7 @@ def test_evaluator_does_not_block_on_evaluator_exception(tmp_path: Path) -> None
         )
         achievements.ACHIEVEMENTS = [boom, *original]  # type: ignore[attr-defined]
         unlocks = ev.evaluate_sync(_mcp_ok())
-        # Trotz des boom-Evaluators muss first_mcp unlocken.
+        # Despite the boom evaluator, first_mcp must still unlock.
         assert any(spec.id == "first_mcp" for spec, _ in unlocks)
     finally:
         achievements.ACHIEVEMENTS = original  # type: ignore[attr-defined]

@@ -108,7 +108,7 @@ class MissionEventStore:
         """
         if envelope.seq is not None:
             raise ValueError(
-                "append_and_publish: envelope.seq muss None sein (server-assigned)"
+                "append_and_publish: envelope.seq must be None (server-assigned)"
             )
 
         payload_json = envelope.payload.model_dump_json()
@@ -135,7 +135,7 @@ class MissionEventStore:
         row = await cur.fetchone()
         await cur.close()
         if row is None:
-            raise RuntimeError("INSERT ... RETURNING seq lieferte keinen Wert")
+            raise RuntimeError("INSERT ... RETURNING seq returned no value")
         seq = int(row[0])
 
         envelope_with_seq = envelope.model_copy(update={"seq": seq})

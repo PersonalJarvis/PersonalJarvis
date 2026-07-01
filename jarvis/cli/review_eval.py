@@ -331,45 +331,45 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jarvis-review-eval",
         description=(
-            "Führt die Review-Pipeline gegen den Golden-Query-Set aus "
-            "und schreibt einen Pass-Rate-Report."
+            "Runs the review pipeline against the golden query set "
+            "and writes a pass-rate report."
         ),
     )
     parser.add_argument(
         "--queries",
         type=Path,
         default=DEFAULT_QUERIES_PATH,
-        help=f"Queries-JSON. Default: {DEFAULT_QUERIES_PATH}",
+        help=f"Queries JSON. Default: {DEFAULT_QUERIES_PATH}",
     )
     parser.add_argument(
         "--report",
         type=Path,
         default=None,
-        help="Pfad für JSON-Report. Default: stdout.",
+        help="Path for the JSON report. Default: stdout.",
     )
     parser.add_argument(
         "--quick",
         action="store_true",
-        help="Nur Queries mit `quick=true`-Flag (max 5).",
+        help="Only queries with the `quick=true` flag (max 5).",
     )
     parser.add_argument(
         "--bucket",
         default=None,
-        help="Filter auf einen Bucket (z.B. code_gen_trivial).",
+        help="Filter to a single bucket (e.g. code_gen_trivial).",
     )
     parser.add_argument(
         "--parallelism",
         type=int,
         default=1,
-        help="Aktuell auf 1 fixiert (Reproduzierbarkeit). Phase-9-Backlog.",
+        help="Currently fixed at 1 (reproducibility). Phase-9 backlog.",
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
         "--mock",
         action="store_true",
         default=None,
-        help="Deterministische Mock-Pipeline (kein Spawn, keine Kosten). "
-             "Default: True wenn keine claude-Auth verfügbar.",
+        help="Deterministic mock pipeline (no spawn, no cost). "
+             "Default: True when no claude auth is available.",
     )
     mode.add_argument(
         "--real",

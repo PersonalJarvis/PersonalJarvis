@@ -81,7 +81,7 @@ Hyphen compounds (`Browser-Provider`, `Brain-Provider`) are preserved by lookbeh
 
 | # | Drift | Probe scenario | Pattern (code) | Action marker |
 |---|---|---|---|---|
-| 1 | A1 „Sir" address | 03 + 07 (body) | `SIR_OPENER_RE`, `SIR_TAIL_RE` with `QUOTE_PROTECT_RE` (quote protection) | `removed_anrede_drift` |
+| 1 | A1 "Sir" address | 03 + 07 (body) | `SIR_OPENER_RE`, `SIR_TAIL_RE` with `QUOTE_PROTECT_RE` (quote protection) | `removed_anrede_drift`  <!-- i18n-allow --> |
 | 2 | „Sub-Agent"/„Supervisor-Agent" | 03 + 07 + 13 | `JARGON_COMPOUNDS` + `JARGON_COMPOUND_RE` | `removed_engineering_jargon` |
 | 3 | Tool-args YAML block (body leak) | 03 (body) | `TOOL_ARGS_YAML_KEYS` + `TOOL_ARGS_YAML_RE` | `removed_tool_json` |
 | 4 | Post-scrub garbage fallback | 12 (DE+EN) | `MIN_MEANINGFUL_CHARS = 3` + `replaced_with_fallback_residue` | `replaced_with_fallback_residue` (in addition to prior actions) |

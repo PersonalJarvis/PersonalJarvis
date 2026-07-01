@@ -1,7 +1,7 @@
-"""Phase A5 Slice B — FileSystemProbe Tests.
+"""Phase A5 slice B — FileSystemProbe tests.
 
-Mit echtem watchdog gegen tmp_path (Fakes statt Mocks). Real-FS-Events
-mit kurzen Sleep-Window fuer Watchdog-Latency.
+With a real watchdog against tmp_path (fakes instead of mocks). Real FS events
+with a short sleep window for watchdog latency.
 """
 from __future__ import annotations
 
@@ -21,12 +21,12 @@ from jarvis.core.events import FileSaved
 async def _wait_for_event(
     events: list[FileSaved],
     n: int = 1,
-    timeout: float = 2.0,  # noqa: ASYNC109 - intentional Polling-Window pro Test
+    timeout: float = 2.0,  # noqa: ASYNC109 - intentional per-test polling window
 ) -> None:
-    """Pollt bis events.length >= n oder timeout.
+    """Polls until events.length >= n or timeout.
 
-    ASYNC109: timeout-Parameter ist hier intentional — Test-Helper braucht
-    konfigurierbares Polling-Window pro Testfall, nicht asyncio.timeout-Cancel.
+    ASYNC109: the timeout parameter is intentional here — the test helper needs
+    a configurable polling window per test case, not asyncio.timeout cancellation.
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -72,8 +72,8 @@ async def test_watch_then_save_emits_filesaved_event(tmp_path: Path) -> None:
     try:
         ok = p.watch(str(tmp_path))
         assert ok is True
-        # File-write triggert event
-        await asyncio.sleep(0.1)    # watchdog-Init-Window
+        # File write triggers an event
+        await asyncio.sleep(0.1)    # watchdog init window
         (tmp_path / "test.py").write_text("print('hello')")
         await _wait_for_event(received, n=1, timeout=3.0)
         assert len(received) >= 1
@@ -96,12 +96,12 @@ async def test_debounce_collapses_rapid_saves(tmp_path: Path) -> None:
         p.watch(str(tmp_path))
         await asyncio.sleep(0.1)
         f = tmp_path / "rapid.py"
-        # 5 rapid writes innerhalb 100ms — debounce (200ms) sollte alle bis auf 1 droppen
+        # 5 rapid writes within 100ms — debounce (200ms) should drop all but 1
         for _ in range(5):
             f.write_text("x")
             await asyncio.sleep(0.01)
-        await asyncio.sleep(0.5)    # warten bis debounce-window abgelaufen
-        # Erwartung: max 2 events (1 fuer ersten save + evtl. 1 nach debounce-window)
+        await asyncio.sleep(0.5)    # wait for the debounce window to elapse
+        # Expectation: max 2 events (1 for the first save + possibly 1 after the debounce window)
         rapid_events = [e for e in received if "rapid.py" in e.path]
         assert len(rapid_events) <= 2
     finally:
@@ -125,7 +125,7 @@ async def test_blacklist_skips_git_directory(tmp_path: Path) -> None:
         (tmp_path / ".git" / "ignored.txt").write_text("x")
         (tmp_path / "real_file.py").write_text("real")
         await _wait_for_event(received, n=1, timeout=2.0)
-        # Nur real_file.py, NICHT ignored.txt
+        # Only real_file.py, NOT ignored.txt
         paths = [e.path for e in received]
         assert any("real_file.py" in p for p in paths)
         assert not any(".git" in p and "ignored.txt" in p for p in paths)
@@ -150,7 +150,7 @@ async def test_unwatch_stops_events(tmp_path: Path) -> None:
         await asyncio.sleep(0.1)
         (tmp_path / "should_not_emit.py").write_text("x")
         await asyncio.sleep(0.5)
-        # Keine events fuer should_not_emit.py
+        # No events for should_not_emit.py
         paths = [e.path for e in received]
         assert not any("should_not_emit.py" in p for p in paths)
     finally:
@@ -162,12 +162,12 @@ async def test_max_watched_roots_cap(tmp_path: Path) -> None:
     p = FileSystemProbe(bus=bus)
     await p.start()
     try:
-        # Erstelle MAX+1 directories und versuche alle zu watchen
+        # Create MAX+1 directories and try to watch all of them
         for i in range(_MAX_WATCHED_ROOTS):
             d = tmp_path / f"root_{i}"
             d.mkdir()
             assert p.watch(str(d)) is True
-        # Cap+1 muss False returnen
+        # Cap+1 must return False
         d_extra = tmp_path / "root_extra"
         d_extra.mkdir()
         assert p.watch(str(d_extra)) is False

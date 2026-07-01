@@ -86,7 +86,7 @@ def test_select_top_slugs_respects_limit() -> None:
 def test_select_top_slugs_ignores_stopwords() -> None:
     """Common DE/EN function words don't dominate the ranking."""
 
-    source = "der und die das the and the openclaw bridge"
+    source = "der und die das the and the openclaw bridge"  # i18n-allow: German/English stopword mix, content under test
     candidates = ["der-thing", "openclaw-bridge"]
     result = select_top_slugs(source, candidates)
     assert result and result[0] == "openclaw-bridge"

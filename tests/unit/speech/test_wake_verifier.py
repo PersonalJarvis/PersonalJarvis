@@ -110,12 +110,12 @@ PCM_2S_16K = b"\x00\x00" * 16_000 * 2  # 2 s int16 silence
 
 
 async def test_verify_returns_true_when_transcript_has_hey_prefix() -> None:
-    stt = _FakeSTT("Hey Jarvis, was läuft")
+    stt = _FakeSTT("Hey Jarvis, was läuft")  # i18n-allow
 
     matched, transcript = await verify_wake_with_stt(stt, PCM_2S_16K)
 
     assert matched is True
-    assert transcript == "Hey Jarvis, was läuft"
+    assert transcript == "Hey Jarvis, was läuft"  # i18n-allow
     assert stt.calls == [(len(PCM_2S_16K), 16_000, "de")]
 
 
@@ -184,12 +184,12 @@ async def test_verify_retries_transient_error_then_succeeds(monkeypatch) -> None
     import jarvis.speech.wake_verifier as wv
 
     monkeypatch.setattr(wv, "_WAKE_VERIFY_BACKOFF_S", 0.0, raising=False)
-    stt = _FlakySTT("Hey Jarvis, was läuft", fail_times=1)
+    stt = _FlakySTT("Hey Jarvis, was läuft", fail_times=1)  # i18n-allow
 
     matched, transcript = await verify_wake_with_stt(stt, PCM_2S_16K)
 
     assert matched is True
-    assert transcript == "Hey Jarvis, was läuft"
+    assert transcript == "Hey Jarvis, was läuft"  # i18n-allow
     assert stt.calls == 2  # one failure, one successful retry
 
 

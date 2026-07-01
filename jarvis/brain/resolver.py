@@ -79,13 +79,13 @@ def _ensure_bus_subscription(bus: EventBus | None) -> None:
         async def _on_reload(event: object) -> None:
             if isinstance(event, ConfigReloaded):
                 _cache.clear()
-                log.debug("resolver: cache geleert (ConfigReloaded)")
+                log.debug("resolver: cache cleared (ConfigReloaded)")
 
         bus.subscribe_all(_on_reload)
         _subscribed_to_bus_id = id(bus)
     except Exception:  # noqa: BLE001
-        # Bus-API-Inkompatibilitaet → ohne Cache-Invalidation weiterleben.
-        log.debug("resolver: Bus-Subscription fuer ConfigReloaded fehlgeschlagen")
+        # Bus API incompatibility → carry on without cache invalidation.
+        log.debug("resolver: bus subscription for ConfigReloaded failed")
 
 
 # ----------------------------------------------------------------------
@@ -115,8 +115,8 @@ def resolve_frontier_brain(
     chain = list(_resolve_chain(config))
     if not chain:
         raise RuntimeError(
-            "resolve_frontier_brain: keine Provider-Wahl moeglich. "
-            "Pruefe config.brain.primary + entry_points('jarvis.brain')."
+            "resolve_frontier_brain: no provider choice possible. "
+            "Check config.brain.primary + entry_points('jarvis.brain')."
         )
 
     last_err: Exception | None = None
@@ -132,20 +132,20 @@ def resolve_frontier_brain(
         except Exception as exc:  # noqa: BLE001
             last_err = exc
             log.info(
-                "resolve_frontier_brain: %s/%s nicht instanziierbar (%s) — "
-                "naechste Stufe der Fallback-Chain",
+                "resolve_frontier_brain: %s/%s not instantiable (%s) — "
+                "trying next stage of the fallback chain",
                 provider, model or "<default>", type(exc).__name__,
             )
             continue
         _cache[cache_key] = brain
         log.debug(
-            "resolve_frontier_brain: %s/%s instanziiert", provider, model or "<default>",
+            "resolve_frontier_brain: %s/%s instantiated", provider, model or "<default>",
         )
         return brain
 
     raise RuntimeError(
-        "resolve_frontier_brain: alle Stufen der Fallback-Chain fehlgeschlagen. "
-        f"Letzter Fehler: {last_err!r}. Chain: {chain}"
+        "resolve_frontier_brain: all stages of the fallback chain failed. "
+        f"Last error: {last_err!r}. Chain: {chain}"
     )
 
 

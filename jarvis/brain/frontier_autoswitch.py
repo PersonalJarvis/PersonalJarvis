@@ -125,7 +125,7 @@ async def apply_frontier_resolution(
             new_fast = await resolver.resolve_latest(prov_name, "fast")
         except Exception as exc:  # noqa: BLE001 — resolver must not stop the boot.
             log.warning(
-                "Resolver-Crash fuer %s/fast: %s — keep TOML-Default.",
+                "Resolver crashed for %s/fast: %s — keeping TOML default.",
                 prov_name, exc,
             )
             new_fast = None
@@ -186,7 +186,7 @@ async def apply_frontier_resolution(
             new_deep = await resolver.resolve_latest(prov_name, "deep")
         except Exception as exc:  # noqa: BLE001
             log.warning(
-                "Resolver-Crash fuer %s/deep: %s — keep TOML-Default.",
+                "Resolver crashed for %s/deep: %s — keeping TOML default.",
                 prov_name, exc,
             )
             new_deep = None

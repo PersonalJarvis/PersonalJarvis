@@ -68,7 +68,7 @@ def _make_legacy(source: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def test_slugify_lowercases_and_replaces_separators(migrate_module) -> None:
-    assert migrate_module.slugify("Personal Jarvis Maintainer") == "personal-jarvis-maintainer"
+    assert migrate_module.slugify("Jürgen Müller") == "juergen-mueller"  # i18n-allow: umlaut-transliteration test fixture, not translatable prose
 
 
 def test_slugify_strips_punctuation(migrate_module) -> None:

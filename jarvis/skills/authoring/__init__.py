@@ -1,15 +1,15 @@
-"""Skill-Authoring-Pipeline (Phase 7.5).
+"""Skill-authoring pipeline (Phase 7.5).
 
-OpenClaw (Frontier-Worker, Mission-Manager-orchestriert) generiert auf
-Voice-Auftrag neue Skills. Welle-4-Migration: vorher Sub-Jarvis (Opus 4.7),
-heute OpenClaw (siehe docs/openclaw-bridge.md §11, R-6). Plan-§7.5:
-strict-typed Output via `SkillDraft`-Pydantic-Modell, `state=draft`-
-Forcierung beim Schreiben (Plan-§AD-8), Validation-Loop ≤3 Retries,
-Audit-Spur pro Authoring-Versuch.
+OpenClaw (frontier worker, Mission-Manager-orchestrated) generates new skills
+on voice request. Welle-4 migration: previously Sub-Jarvis (Opus 4.7),
+today OpenClaw (see docs/openclaw-bridge.md §11, R-6). Plan-§7.5:
+strict-typed output via the `SkillDraft` Pydantic model, `state=draft`
+enforcement on write (Plan-§AD-8), validation loop ≤3 retries,
+an audit trail per authoring attempt.
 
-Plan-§AP-6 (Auto-Aktivierung verboten): generierter Skill wird IMMER
-mit `state=draft` ins User-Skills-Verzeichnis geschrieben — auch wenn
-der Worker explizit `active` im Frontmatter angibt.
+Plan-§AP-6 (auto-activation forbidden): a generated skill is ALWAYS
+written to the user-skills directory with `state=draft` — even if
+the worker explicitly states `active` in the frontmatter.
 """
 from __future__ import annotations
 

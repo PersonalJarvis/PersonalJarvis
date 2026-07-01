@@ -1,8 +1,8 @@
-"""Smoke-Tests fuer ``BoardAggregator`` — Phase A.
+"""Smoke tests for ``BoardAggregator`` — Phase A.
 
-Entsprechen 1:1 den drei im Plan-Abschnitt §5-A geforderten Tests plus
-einen ``test_no_network``, der dem Done-Criterion ``pytest -k test_no_network``
-entspricht (Plan §5-A „Done-Criteria: Keine externe Netzwerk-Call").
+Match 1:1 the three tests required in plan section §5-A, plus a
+``test_no_network`` that satisfies the done-criterion ``pytest -k
+test_no_network`` (Plan §5-A "Done criteria: no external network call").
 """
 from __future__ import annotations
 
@@ -105,7 +105,7 @@ def synthetic_jsonl_with_retries(tmp_path: Path) -> Path:
     base = datetime.now().astimezone().replace(hour=10, minute=0, second=0, microsecond=0)
 
     events: list[dict] = []
-    # 5 commands, davon 2 innerhalb <8s nach dem vorherigen → 2 retries.
+    # 5 commands, of which 2 are within <8s of the previous one → 2 retries.
     times_s = [0, 3, 15, 18, 60]
     for i, dt_s in enumerate(times_s):
         events.append({
@@ -121,8 +121,8 @@ def synthetic_jsonl_with_retries(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def real_jsonl_with_voice_text(tmp_path: Path) -> Path:
-    """Events mit bewusst eingebettetem geheimen Text — darf nach Aggregation
-    im Federation-Export NICHT mehr auffindbar sein.
+    """Events with a deliberately embedded secret text — must NOT be
+    findable in the federation export after aggregation.
     """
     jsonl_dir = tmp_path / "flight_recorder"
     base = datetime.now().astimezone().replace(hour=10, minute=0, second=0, microsecond=0)
@@ -177,7 +177,7 @@ def test_aggregator_groups_events_by_day(synthetic_jsonl: Path) -> None:
     agg = BoardAggregator(jsonl_dir=synthetic_jsonl, db_path=synthetic_jsonl.parent / "board" / "personal.db")
     agg.run()
     rows = list(agg.db.execute("SELECT date, tasks_completed FROM daily_stats"))
-    assert len(rows) >= 2, "Aggregator muss mindestens zwei Tage erzeugen"
+    assert len(rows) >= 2, "Aggregator must produce at least two days"
     assert any(r["tasks_completed"] >= 1 for r in rows)
 
 
@@ -216,11 +216,11 @@ def test_no_pii_in_aggregated_stats(real_jsonl_with_voice_text: Path) -> None:
 
 
 # ----------------------------------------------------------------------
-# Done-Criterion aus Plan §5-A: Keine externen Netzwerk-Calls
+# Done-criterion from plan §5-A: no external network calls
 # ----------------------------------------------------------------------
 
 def test_no_network(monkeypatch: pytest.MonkeyPatch, synthetic_jsonl: Path) -> None:
-    """Der Aggregator darf NICHT ins Netz. Jeder Socket-Versuch fliegt raus."""
+    """The aggregator must NOT touch the network. Every socket attempt gets rejected."""
 
     orig_socket = socket.socket
 
@@ -233,8 +233,8 @@ def test_no_network(monkeypatch: pytest.MonkeyPatch, synthetic_jsonl: Path) -> N
     # socket (httpx/requests/urllib bauen darauf auf)
     monkeypatch.setattr(socket, "socket", _blocked_socket)
 
-    # Falls httpx / requests schon importiert sind, deren .get/.post bewusst
-    # auch sperren. Das ist defensiv — wenn sie nicht geladen sind, skippen wir.
+    # If httpx / requests are already imported, deliberately block their
+    # .get/.post too. This is defensive — if they aren't loaded, we skip it.
     for mod_name in ("httpx", "requests", "urllib.request", "urllib3"):
         mod = sys.modules.get(mod_name)
         if mod is None:
@@ -254,15 +254,15 @@ def test_no_network(monkeypatch: pytest.MonkeyPatch, synthetic_jsonl: Path) -> N
         db_path=synthetic_jsonl.parent / "board" / "personal.db",
     )
     agg.run()
-    # Wenn wir hier sind, hat der Aggregator keinen Socket angefasst.
+    # If we get here, the aggregator never touched a socket.
     assert agg.db.execute("SELECT COUNT(*) FROM daily_stats").fetchone()[0] >= 1
 
-    # socket wieder freigeben fuer andere Tests in derselben Session
+    # Release the socket patch again for other tests in the same session
     monkeypatch.setattr(socket, "socket", orig_socket)
 
 
 # ----------------------------------------------------------------------
-# Zusatz-Smoke — Personal Records werden gesetzt
+# Extra smoke test — personal records get set
 # ----------------------------------------------------------------------
 
 def test_personal_records_populated(synthetic_jsonl: Path) -> None:
@@ -318,7 +318,7 @@ def test_activity_includes_chat_and_conversation_time(tmp_path: Path) -> None:
 
 
 # ----------------------------------------------------------------------
-# Zusatz — Aggregator haengt nicht an Broken-Lines
+# Extra — aggregator doesn't choke on broken lines
 # ----------------------------------------------------------------------
 
 def test_aggregator_skips_broken_lines(tmp_path: Path) -> None:
@@ -342,7 +342,7 @@ def test_aggregator_skips_broken_lines(tmp_path: Path) -> None:
         jsonl_dir=jsonl_dir,
         db_path=tmp_path / "board" / "personal.db",
     )
-    agg.run()  # darf nicht werfen
+    agg.run()  # must not raise
     total = agg.db.execute(
         "SELECT SUM(tasks_completed) AS s FROM daily_stats"
     ).fetchone()["s"]

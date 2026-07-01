@@ -1,16 +1,16 @@
-"""Regressions-Test: suppress_response-Tool darf KEINEN Fallback ausloesen.
+"""Regression test: the suppress_response tool must NOT trigger a fallback.
 
-Bug 2026-04-29: Fire-and-Forget-Tools wie ``spawn_worker`` setzen
-``suppress_response=True`` → ``ToolUseLoop`` schreibt ``final_agg.text=""``
-und ``finish_reason="suppress_response"``.
+Bug 2026-04-29: fire-and-forget tools like ``spawn_worker`` set
+``suppress_response=True`` → ``ToolUseLoop`` writes ``final_agg.text=""``
+and ``finish_reason="suppress_response"``.
 
-Frueher: Der Empty-Response-Guard im ``BrainManager.generate`` hat dies als
-Safety-Block missinterpretiert und auf den naechsten Provider gefallen. Jeder
-Provider in der Chain hat dann erneut ``spawn_worker`` gerufen, das
-zweite/dritte Mal lief in den ``JARVIS_DEPTH``-Recursion-Guard.
+Previously: the empty-response guard in ``BrainManager.generate``
+misinterpreted this as a safety block and fell back to the next provider.
+Every provider in the chain then called ``spawn_worker`` again, and the
+second/third call hit the ``JARVIS_DEPTH`` recursion guard.
 
-Fix: Empty-Text + Tool-Calls + ``finish_reason="suppress_response"`` ist ein
-LEGITIMER Turn-Abschluss, kein Fallback-Trigger.
+Fix: empty text + tool calls + ``finish_reason="suppress_response"`` is a
+LEGITIMATE turn completion, not a fallback trigger.
 """
 from __future__ import annotations
 
@@ -49,8 +49,8 @@ class _SuppressResponseTool:
 
 @pytest.mark.asyncio
 async def test_suppress_response_does_not_trigger_fallback():
-    """Brain ruft spawn_worker (suppress_response=True). Empty-Text-Guard
-    darf NICHT den naechsten Provider in der Chain probieren."""
+    """Brain calls spawn_worker (suppress_response=True). The empty-text guard
+    must NOT try the next provider in the chain."""
     bus = EventBus()
     config = JarvisConfig()
     config.brain.primary = "claude-subscription"
@@ -87,7 +87,7 @@ async def test_suppress_response_does_not_trigger_fallback():
             )],
         ],
     )
-    fallback = FakeBrain(text_response="ich darf nicht aufgerufen werden")
+    fallback = FakeBrain(text_response="I must not be called")
 
     manager._brain_cache[("claude-subscription", "haiku-model")] = primary
     manager._brain_cache[("claude-subscription", "opus-model")] = fallback
@@ -105,37 +105,37 @@ async def test_suppress_response_does_not_trigger_fallback():
     # we can observe the suppress_response path end-to-end.
     manager._hide_action_tools_on_signalless_turn = lambda tools, user_text: tools  # type: ignore[method-assign]
 
-    # Utterance enthaelt KEIN Verb aus spawn_verbs, sodass die Force-Spawn-
-    # Heuristik nicht greift und der LLM-Pfad wirklich getestet wird.
-    result = await manager.generate("erkläre mir das mal", use_history=False)
+    # The utterance contains NO verb from spawn_verbs, so the Force-Spawn
+    # heuristic does not kick in and the LLM path is genuinely exercised.
+    result = await manager.generate("erkläre mir das mal", use_history=False)  # i18n-allow
 
-    # Spawn-Tool wurde GENAU EINMAL gerufen — nicht zweimal (kein Fallback).
+    # The spawn tool was called EXACTLY ONCE — not twice (no fallback).
     assert len(spawn_tool.calls) == 1, (
-        f"spawn_worker sollte nur einmal gerufen werden — bekam "
-        f"{len(spawn_tool.calls)} Calls. Fallback-Cascade aktiv?"
+        f"spawn_worker should only be called once — got "
+        f"{len(spawn_tool.calls)} calls. Fallback cascade active?"
     )
 
-    # Primary brain wurde gerufen, fallback brain NICHT.
+    # Primary brain was called, fallback brain was NOT.
     assert len(primary.calls) >= 1
     assert len(fallback.calls) == 0, (
-        f"Fallback-Brain wurde {len(fallback.calls)}x gerufen — sollte 0 sein. "
-        f"Empty-Response-Guard hat false-fired auf suppress_response-Turn."
+        f"Fallback brain was called {len(fallback.calls)}x — should be 0. "
+        f"Empty-response guard false-fired on a suppress_response turn."
     )
 
-    # Result darf leer sein (suppress_response) — UI bekommt OpenClawAnnouncement
-    # ueber den Bus, nicht ueber das BrainManager-return.
+    # Result may be empty (suppress_response) — the UI gets OpenClawAnnouncement
+    # via the bus, not via the BrainManager return value.
     assert isinstance(result, str)
-    # Kritisch: result darf NICHT die "alle fehlgeschlagen"-Message enthalten,
-    # auch wenn der Text leer ist (suppress_response ist KEIN Fail).
-    assert "fehlgeschlagen" not in result
-    assert "Keine Brain-Provider" not in result
+    # Critical: the result must NOT contain the "all failed" message,
+    # even when the text is empty (suppress_response is NOT a failure).
+    assert "fehlgeschlagen" not in result  # i18n-allow (matches production error text)
+    assert "Keine Brain-Provider" not in result  # i18n-allow (matches production error text)
     assert "unerreichbar" not in result.lower()
 
 
 @pytest.mark.asyncio
 async def test_truly_empty_response_still_triggers_fallback():
-    """Backward-Compatibility: ein Brain das WIRKLICH nichts tut (kein Text,
-    keine Tool-Calls, kein suppress_response) darf weiterhin fallback'n."""
+    """Backward compatibility: a brain that TRULY does nothing (no text,
+    no tool calls, no suppress_response) may still fall back."""
     bus = EventBus()
     config = JarvisConfig()
     config.brain.primary = "claude-subscription"
@@ -146,7 +146,7 @@ async def test_truly_empty_response_still_triggers_fallback():
     manager = BrainManager(config=config, bus=bus, tools={})
     manager._registry._loaded = True
 
-    # Empty stream: kein content, kein tool_call.
+    # Empty stream: no content, no tool_call.
     empty = FakeBrain(script=[[BrainDelta(content="", finish_reason="stop")]])
     fallback = FakeBrain(text_response="Hallo von Fallback")
 

@@ -14,7 +14,7 @@ passes through unchanged instead of crashing the voice path.
 
 Locale-aware separators: German/Spanish use a comma decimal and dot thousands
 ("3,8" = three-point-eight, "1.000" = one thousand); English is the reverse.
-Times ("20:30") are spoken as "zwanzig Uhr dreißig" before the general pass so
+Times ("20:30") are spoken as "zwanzig Uhr dreißig" before the general pass so  # i18n-allow
 the colon parts are not spelled as two bare integers.
 """
 from __future__ import annotations

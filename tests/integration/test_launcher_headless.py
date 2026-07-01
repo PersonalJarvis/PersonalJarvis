@@ -1,11 +1,11 @@
-"""Integration-Test für `_run_headless` mit Mock-WebServer.
+"""Integration test for `_run_headless` with a mock WebServer.
 
-Simuliert: Launcher startet, wird gecancelt → sauberer Shutdown.
+Simulates: launcher starts, gets cancelled → clean shutdown.
 
-Alle schweren Abhängigkeiten (uvicorn, WebServer, ChatStore, Supervisor,
-MCPRegistry, load_config, …) werden durch leichte Stubs ersetzt, damit
-der Test rein den START/STOP-Lebenszyklus von _run_headless prüft und
-weder echten Port bindet noch auf laufende Dienste angewiesen ist.
+All heavyweight dependencies (uvicorn, WebServer, ChatStore, Supervisor,
+MCPRegistry, load_config, …) are replaced by lightweight stubs so the
+test purely checks the START/STOP lifecycle of _run_headless and
+neither binds a real port nor depends on running services.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import pytest
 
 
 class _FakeBus:
-    """Minimal event-bus — subscribe / publish sind keine-ops."""
+    """Minimal event bus — subscribe / publish are no-ops."""
 
     def subscribe(self, *args: object, **kwargs: object) -> None:
         pass
@@ -36,7 +36,7 @@ class _FakeState:
 
 
 class _FakeApp:
-    """Minimales ASGI-App-Objekt mit veränderbarem state-Bag."""
+    """Minimal ASGI app object with a mutable state bag."""
 
     def __init__(self) -> None:
         self.state = _FakeState()
@@ -51,7 +51,7 @@ class _FakeApp:
 
 
 class _MockWebServer:
-    """Stand-in für jarvis.ui.web.server.WebServer."""
+    """Stand-in for jarvis.ui.web.server.WebServer."""
 
     instances: list["_MockWebServer"] = []
 
@@ -257,7 +257,7 @@ def _make_args(port: int = 18123) -> SimpleNamespace:
 
 
 def test_headless_starts_and_stops_on_signal() -> None:
-    """_run_headless durchläuft start → wait → cancel → stop sauber."""
+    """_run_headless goes through start → wait → cancel → stop cleanly."""
     from jarvis.ui.web import launcher  # noqa: PLC0415
 
     args = _make_args()
@@ -287,7 +287,7 @@ def test_headless_starts_and_stops_on_signal() -> None:
 
 
 def test_headless_stop_event_path() -> None:
-    """Zweiter Pfad: Task wird erst nach kurzer Pause gecancelt."""
+    """Second path: the task is only cancelled after a short pause."""
     from jarvis.ui.web import launcher  # noqa: PLC0415
 
     args = _make_args(port=18222)

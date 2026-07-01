@@ -1,7 +1,7 @@
-"""Integration-Tests für /api/providers, /api/secrets/{key}, /api/brain/switch.
+"""Integration tests for /api/providers, /api/secrets/{key}, /api/brain/switch.
 
-Strategie: keyring + subprocess + Claude-Cred-File werden komplett gemockt.
-Die Tests laufen damit hermetisch ohne echte Credentials zu schreiben.
+Strategy: keyring + subprocess + Claude cred file are fully mocked.
+The tests run hermetically, without writing real credentials.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from jarvis.ui.web.server import WebServer
 
 
 class _InMemorySecretStore:
-    """Simuliert das Keyring per dict — wird per monkeypatch in cfg eingehängt."""
+    """Simulates the keyring via a dict — wired into cfg via monkeypatch."""
 
     def __init__(self) -> None:
         self.data: dict[str, str] = {}
@@ -41,7 +41,7 @@ class _InMemorySecretStore:
 
 
 class _FakeBrainManager:
-    """Minimaler BrainManager-Stub, der nur die switch-Schnittstelle implementiert."""
+    """Minimal BrainManager stub that only implements the switch interface."""
 
     def __init__(self, *, available: list[str], active: str = "openai", bus: EventBus | None = None) -> None:
         self._available = available
@@ -72,8 +72,8 @@ class _FakeBrainManager:
 @pytest.fixture
 def secret_store(monkeypatch: pytest.MonkeyPatch) -> _InMemorySecretStore:
     store = _InMemorySecretStore()
-    # Patches in beiden Importpfaden — provider_routes.py importiert das Modul
-    # unter dem Alias `cfg_mod`, andere Stellen direkt.
+    # Patches both import paths — provider_routes.py imports the module
+    # under the alias `cfg_mod`, other places import it directly.
     from jarvis.core import config as cfg_mod
     monkeypatch.setattr(cfg_mod, "get_secret", store.get)
     monkeypatch.setattr(cfg_mod, "set_secret", store.set)
@@ -117,10 +117,10 @@ def test_list_providers_returns_full_catalog(server_with_brain: WebServer, secre
         assert "openai" in ids
         assert "codex" in ids
         assert "openclaw" not in ids
-        assert "gemini-flash-tts" in ids, "Gemini Flash TTS muss im Katalog sein"
+        assert "gemini-flash-tts" in ids, "Gemini Flash TTS must be in the catalog"
         assert "faster-whisper" in ids, "Lokales STT als 'none'-Auth-Provider"
         assert "elevenlabs" not in ids, "ElevenLabs ist Dead-Code"
-        assert "ollama-local" not in ids, "Ollama wurde 2026-04-21 entfernt"
+        assert "ollama-local" not in ids, "Ollama was removed on 2026-04-21"
 
 
 # ----------------------------------------------------------------------
@@ -273,7 +273,7 @@ def test_list_providers_reports_codex_without_leaking_auth_files(
                 installed=True,
                 connected=True,
                 mode="chatgpt",
-                message="Codex ist verbunden",
+                message="Codex is connected",
                 version="1.2.3",
                 accountLabel="ChatGPT/Codex-Login",
             )
@@ -359,9 +359,9 @@ def test_delete_secret(server_with_brain: WebServer, secret_store: _InMemorySecr
 
 
 def test_brain_switch_calls_manager(server_with_brain: WebServer, secret_store: _InMemorySecretStore) -> None:
-    # Seit dem 409-Credential-Gate wird ein Switch ohne gesetzten Key
-    # abgelehnt. Wir setzen den Key vor dem Switch — exakt der UI-Pfad
-    # (User speichert API-Key, klickt dann "Als aktiv").
+    # Since the 409 credential gate, a switch without a key set is
+    # rejected. We set the key before the switch — exactly the UI path
+    # (user saves the API key, then clicks "Set active").
     secret_store.set("openrouter_api_key", "sk-or-test-123")
     fake: _FakeBrainManager = server_with_brain.app.state.brain
     with TestClient(server_with_brain.app) as client:
@@ -376,18 +376,18 @@ def test_brain_switch_calls_manager(server_with_brain: WebServer, secret_store: 
 def test_brain_switch_rejects_provider_without_key(
     server_with_brain: WebServer, secret_store: _InMemorySecretStore
 ) -> None:
-    """Akzeptanzkriterium: Provider ohne API-Key kann nicht aktiviert werden.
+    """Acceptance criterion: a provider without an API key cannot be activated.
 
-    Liefert 409 mit klarer Message, sodass die UI eine konkrete Fehlermeldung
-    aus `body.detail` darstellen kann (statt eines stillen Erfolgs, der erst
-    beim ersten Voice-Turn sichtbar fehlschlaegt).
+    Returns 409 with a clear message so the UI can show a concrete error
+    from `body.detail` (instead of a silent success that only visibly
+    fails on the first voice turn).
     """
     fake: _FakeBrainManager = server_with_brain.app.state.brain
     with TestClient(server_with_brain.app) as client:
         resp = client.post("/api/brain/switch", json={"provider": "openrouter"})
         assert resp.status_code == 409
         assert "API-Key" in resp.json()["detail"]
-    # BrainManager.switch() darf NICHT aufgerufen worden sein.
+    # BrainManager.switch() must NOT have been called.
     assert fake.calls == []
 
 
@@ -518,7 +518,7 @@ def test_brain_switch_unknown_provider_returns_404(server_with_brain: WebServer,
 
 
 def test_brain_switch_provider_not_in_registry_returns_404(server_with_brain: WebServer, secret_store: _InMemorySecretStore) -> None:
-    # gemini ist im Spec, aber nicht in available_providers des Fakes
+    # gemini is in the spec but not in the fake's available_providers
     with TestClient(server_with_brain.app) as client:
         resp = client.post("/api/brain/switch", json={"provider": "gemini"})
         assert resp.status_code == 404
@@ -536,7 +536,7 @@ def test_brain_switch_blocked_in_airgapped_profile(server_with_brain: WebServer,
 
 
 def test_brain_switch_503_when_brain_missing(web_server: WebServer, secret_store: _InMemorySecretStore) -> None:
-    # Kein app.state.brain → Headless-Mode
+    # No app.state.brain → headless mode
     with TestClient(web_server.app) as client:
         resp = client.post("/api/brain/switch", json={"provider": "openai"})
         assert resp.status_code == 503
@@ -619,8 +619,8 @@ def test_tts_switch_persists_and_acks_restart(
 def test_tts_switch_rejects_unconfigured_provider(
     server_with_brain: WebServer, secret_store: _InMemorySecretStore
 ) -> None:
-    """Ohne API-Key → 409, damit der User erst einen Key setzt."""
-    # Kein grok_api_key gesetzt
+    """Without an API key → 409, so the user sets a key first."""
+    # No grok_api_key set
     with TestClient(server_with_brain.app) as client:
         resp = client.post(
             "/api/tts/switch", json={"provider": "grok-voice", "persist": True}
@@ -631,7 +631,7 @@ def test_tts_switch_rejects_unconfigured_provider(
 def test_tts_switch_rejects_brain_provider(
     server_with_brain: WebServer, secret_store: _InMemorySecretStore
 ) -> None:
-    """Tier-Mismatch: openai ist Brain, kein TTS → 400."""
+    """Tier mismatch: openai is a Brain provider, not TTS → 400."""
     secret_store.set("openai_api_key", "sk-test")
     with TestClient(server_with_brain.app) as client:
         resp = client.post(
@@ -655,7 +655,7 @@ def test_tts_switch_no_persist_skips_toml_write(
     secret_store: _InMemorySecretStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """persist=false → kein TOML-Write, aber Switch-Response weiterhin OK."""
+    """persist=false → no TOML write, but the switch response is still OK."""
     secret_store.set("grok_api_key", "xai-test-key")
 
     write_calls: list[str] = []
@@ -688,7 +688,7 @@ def test_provider_login_returns_409_when_cli_missing(
     with TestClient(server_with_brain.app) as client:
         resp = client.post("/api/providers/openclaw/login")
         assert resp.status_code == 404
-        # Detail kann string oder dict sein — beide zulässig in FastAPI
+        # Detail can be a string or dict — both are valid in FastAPI
         detail = resp.json().get("detail")
         assert detail is not None
 

@@ -1,13 +1,13 @@
-"""Smoke-Test fuer Frontier-Brain-Stack (2026-04-29).
+"""Smoke test for the frontier brain stack (2026-04-29).
 
-Verifiziert:
-1. BrainManager wird mit Frontier-IDs instantiiert (nicht grok-3/gpt-4o/2.5).
-2. Pre-Boot-Key-Check filtert Provider ohne Key aus _dead_providers.
-3. voice_turns-DB nimmt nur den ERFOLGREICHEN Provider auf (Bug C).
+Verifies:
+1. BrainManager is instantiated with frontier IDs (not grok-3/gpt-4o/2.5).
+2. Pre-boot key check filters providers without a key out of _dead_providers.
+3. The voice_turns DB only records the SUCCESSFUL provider (Bug C).
 
 Usage:
-    python scripts/smoke_frontier.py            # alle Checks
-    python scripts/smoke_frontier.py --no-db    # ohne historische DB-Pruefung
+    python scripts/smoke_frontier.py            # all checks
+    python scripts/smoke_frontier.py --no-db    # without historical DB check
 
 Exit-Code 0 = OK, !=0 = STALE-Modell oder Halluzinations-Tag erkannt.
 """
@@ -40,7 +40,7 @@ STALE_MODELS = {
 
 
 def check_toml() -> int:
-    """Liest jarvis.toml und prueft dass alle [brain.providers.*] Frontier sind."""
+    """Reads jarvis.toml and checks that all [brain.providers.*] are frontier."""
     from jarvis.core.config import load_config
 
     cfg = load_config()
@@ -61,12 +61,12 @@ def check_toml() -> int:
             issues.append(f"  sub_jarvis.fallback_model_2 = {sub.fallback_model_2!r}  (STALE)")
 
     if issues:
-        print("FAIL: STALE-Modelle in jarvis.toml:")
+        print("FAIL: STALE models in jarvis.toml:")
         for i in issues:
             print(i)
         return 1
 
-    print("OK: jarvis.toml ist Frontier-konform.")
+    print("OK: jarvis.toml is frontier-compliant.")
     print(f"  primary={cfg.brain.primary}")
     for name in ("claude-api", "gemini", "grok", "openai"):
         p = cfg.brain.providers.get(name)
@@ -78,24 +78,24 @@ def check_toml() -> int:
 
 
 def check_db(post_restart_only: bool = True) -> int:
-    """Prueft data/sessions.db: STALE-Modelle in den letzten N voice_turns.
+    """Checks data/sessions.db: STALE models in the last N voice_turns.
 
-    Wenn ``post_restart_only=True`` (Default): nur Turns nach Backend-
-    Restart-Marker (ENV ``JARVIS_RESTART_TS_MS`` oder Cache-File-mtime).
-    Historische Turns vor Backend-Restart werden ignoriert (sie sind
-    pre-fix-Daten und kein Indikator fuer aktuellen Zustand).
+    When ``post_restart_only=True`` (default): only turns after the backend
+    restart marker (ENV ``JARVIS_RESTART_TS_MS`` or cache-file mtime).
+    Historical turns from before the backend restart are ignored (they are
+    pre-fix data and not an indicator of the current state).
     """
     db = REPO / "data" / "sessions.db"
     if not db.exists():
-        print("INFO: data/sessions.db fehlt — kein DB-Check moeglich. (skip)")
+        print("INFO: data/sessions.db missing — DB check not possible. (skip)")
         return 0
 
-    # Restart-Marker: Cache-File-mtime ist ein guter Proxy. Wenn es nicht
-    # existiert oder leer ist, hat es noch keinen Restart gegeben.
+    # Restart marker: cache-file mtime is a good proxy. If it doesn't
+    # exist or is empty, there hasn't been a restart yet.
     cache = REPO / "data" / "frontier_cache.json"
     cutoff_ms = 0
     if post_restart_only and cache.exists():
-        # mtime in ms — Turns davor sind pre-restart-Daten.
+        # mtime in ms — turns before this are pre-restart data.
         cutoff_ms = int(cache.stat().st_mtime * 1000)
 
     conn = sqlite3.connect(str(db))
@@ -110,9 +110,9 @@ def check_db(post_restart_only: bool = True) -> int:
 
     if not rows:
         print(
-            f"INFO: Keine voice_turns nach Cutoff (cutoff_ms={cutoff_ms}). "
-            f"Backend wurde noch nicht neu gestartet ODER es gab keine Voice-Session "
-            f"seit Restart. Smoke akzeptiert (post-restart-Daten fehlen, kein Fail)."
+            f"INFO: No voice_turns after cutoff (cutoff_ms={cutoff_ms}). "
+            f"The backend hasn't been restarted yet OR there was no voice session "
+            f"since the restart. Smoke accepted (post-restart data missing, not a fail)."
         )
         return 0
 
@@ -122,12 +122,12 @@ def check_db(post_restart_only: bool = True) -> int:
             issues.append(f"  {tid[:24]}...  provider={prov} model={model}")
 
     if issues:
-        print("FAIL: STALE-Modelle in voice_turns NACH Restart:")
+        print("FAIL: STALE models in voice_turns AFTER restart:")
         for i in issues:
             print(i)
         return 1
 
-    print(f"OK: {len(rows)} post-restart voice_turns gepruft, keine STALE-IDs.")
+    print(f"OK: {len(rows)} post-restart voice_turns checked, no STALE IDs.")
     for tid, prov, model in rows[:3]:
         print(f"  {tid[:32]}  {prov}/{model}")
     return 0

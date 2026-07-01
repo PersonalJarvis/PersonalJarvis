@@ -24,8 +24,8 @@ from jarvis.speech.completeness import (
 # ---------------------------------------------------------------------------
 COMPLETE_CASES = [
     # Clear imperatives (must not regress the local-action fast path)
-    "Öffne Chrome",
-    "Öffne mir den Browser",
+    "Öffne Chrome",  # i18n-allow: speech-recognition input vocabulary under test
+    "Öffne mir den Browser",  # i18n-allow: speech-recognition input vocabulary under test
     "Spiel Spotify ab",
     "Mach notepad auf",
     "Starte Firefox",
@@ -39,13 +39,13 @@ COMPLETE_CASES = [
     "Nimm die rote",
     "Gib mir den Bericht",
     # Preposition-tail collisions — complete questions ending in a preposition
-    "Was ist das für",
+    "Was ist das für",  # i18n-allow: speech-recognition input vocabulary under test
     "What is this for",
     # Normal questions / statements
-    "Wie spät ist es",
+    "Wie spät ist es",  # i18n-allow: speech-recognition input vocabulary under test
     "What time is it",
     "Open the terminal",
-    "Schreib eine Mail an Tom dass ich später komme",
+    "Schreib eine Mail an Tom dass ich später komme",  # i18n-allow: speech-recognition input vocabulary under test
     # Historic false-positive that once froze the pipeline mute
     "Kannst du das fixen",
     # Bias: grammatically odd but ambiguous → execute
@@ -64,7 +64,7 @@ def test_complete_utterances_classify_complete(text: str) -> None:
 
 @pytest.mark.parametrize(
     "text",
-    ["Öffne Chrome.", "Wie spät ist es?", "Mach das jetzt!", "Open the terminal."],
+    ["Öffne Chrome.", "Wie spät ist es?", "Mach das jetzt!", "Open the terminal."],  # i18n-allow: speech-recognition input vocabulary under test
 )
 def test_terminal_punctuation_is_complete(text: str) -> None:
     assert classify_completeness(text).label is Completeness.COMPLETE
@@ -74,7 +74,7 @@ def test_terminal_punctuation_is_complete(text: str) -> None:
 # INCOMPLETE — dangling fragments (trailing conjunction / article / subordinator)
 # ---------------------------------------------------------------------------
 INCOMPLETE_CASES = [
-    "Öffne mal eine",      # indefinite article
+    "Öffne mal eine",      # indefinite article  # i18n-allow: speech-recognition input vocabulary under test
     "Ich brauche einen",   # indefinite article
     "Kauf Milch und",      # conjunction
     "Ich glaube dass",     # conjunction (subordinating)
@@ -105,7 +105,7 @@ ABORT_CASES = [
     "vergiss das",
     "ach, lass gut sein",
     "schon gut",
-    "ne doch nicht",
+    "ne doch nicht",  # i18n-allow: speech-recognition input vocabulary under test
     "never mind",
     "nevermind",
     "forget it",
@@ -128,7 +128,7 @@ def test_abort_phrases_classify_abrupt_abort(text: str) -> None:
         "nein",                       # bare "no" is a valid answer, not an abort
         "no",
         "ich vergiss es nie",         # contains "vergiss es" but is a full sentence
-        "mach das doch nicht so laut",  # contains "doch nicht" mid-sentence
+        "mach das doch nicht so laut",  # contains "doch nicht" mid-sentence  # i18n-allow: speech-recognition input vocabulary under test
     ],
 )
 def test_abort_lookalikes_are_not_aborts(text: str) -> None:
@@ -142,7 +142,7 @@ def test_cut_off_at_max_utterance_is_incomplete() -> None:
     """A sentence chopped at the max-utterance cap with no terminal
     punctuation is a cut-off the regex alone would miss."""
     verdict = classify_completeness(
-        "ich möchte dass du die Datei",
+        "ich möchte dass du die Datei",  # i18n-allow: speech-recognition input vocabulary under test
         endpoint_reason="max_utterance",
     )
     assert verdict.label is Completeness.INCOMPLETE
@@ -152,20 +152,20 @@ def test_cut_off_at_max_utterance_is_incomplete() -> None:
 def test_same_text_without_cut_off_signal_is_complete() -> None:
     """Without the C-signal the same content-word-ending text defaults to
     COMPLETE (demonstrates the bias and that C adds value)."""
-    verdict = classify_completeness("ich möchte dass du die Datei")
+    verdict = classify_completeness("ich möchte dass du die Datei")  # i18n-allow: speech-recognition input vocabulary under test
     assert verdict.label is Completeness.COMPLETE
 
 
 def test_terminal_punctuation_overrides_cut_off_signal() -> None:
     verdict = classify_completeness(
-        "Öffne Chrome.",
+        "Öffne Chrome.",  # i18n-allow: speech-recognition input vocabulary under test
         endpoint_reason="max_utterance",
     )
     assert verdict.label is Completeness.COMPLETE
 
 
 def test_normal_endpoint_reason_does_not_force_incomplete() -> None:
-    verdict = classify_completeness("Öffne Chrome", endpoint_reason="silence")
+    verdict = classify_completeness("Öffne Chrome", endpoint_reason="silence")  # i18n-allow: speech-recognition input vocabulary under test
     assert verdict.label is Completeness.COMPLETE
 
 
@@ -183,7 +183,7 @@ def test_empty_is_incomplete(text: str) -> None:
 # Verdict shape & fail-open contract
 # ---------------------------------------------------------------------------
 def test_verdict_is_frozen_with_reason() -> None:
-    verdict = classify_completeness("Öffne Chrome")
+    verdict = classify_completeness("Öffne Chrome")  # i18n-allow: speech-recognition input vocabulary under test
     assert isinstance(verdict, CompletenessVerdict)
     assert isinstance(verdict.reason, str) and verdict.reason
     with pytest.raises((AttributeError, Exception)):
@@ -202,17 +202,17 @@ def test_completeness_enum_is_string_backed() -> None:
 # surfaces must all classify COMPLETE so the fast path is never starved.
 # ---------------------------------------------------------------------------
 ROUTING_LITERALS_THAT_MUST_STAY_COMPLETE = [
-    "öffne chrome",
+    "öffne chrome",  # i18n-allow: speech-recognition input vocabulary under test
     "starte firefox",
     "mach notepad auf",
-    "öffne zwei terminals",
+    "öffne zwei terminals",  # i18n-allow: speech-recognition input vocabulary under test
     "spiel spotify ab",
-    "wie spät ist es",
+    "wie spät ist es",  # i18n-allow: speech-recognition input vocabulary under test
     "wechsel auf gemini",     # provider switch — must reach voice_command_gate
     "stopp",                  # task cancel — must reach voice_command_gate
-    "denk gründlich nach",    # depth override
+    "denk gründlich nach",    # depth override  # i18n-allow: speech-recognition input vocabulary under test
     "wo bist du",             # orb reset
-    "klick auf den button",   # visual target
+    "klick auf den button",   # visual target  # i18n-allow: speech-recognition input vocabulary under test
 ]
 
 

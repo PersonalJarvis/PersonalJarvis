@@ -1,7 +1,7 @@
-"""Tests fuer ReviewAudit JSON-Lines-Logger (Phase 8.1).
+"""Tests for the ReviewAudit JSON-lines logger (Phase 8.1).
 
-Plan-Referenz: §6.1 Akzeptanzkriterium 3 — Concurrent-Write-Test
-(10 Threads x 100 Eintraege), kein Datenverlust.
+Plan reference: §6.1 acceptance criterion 3 — concurrent-write test
+(10 threads x 100 entries), no data loss.
 """
 from __future__ import annotations
 
@@ -41,12 +41,12 @@ def _make_record(
 
 
 # ----------------------------------------------------------------------
-# Path-Override
+# Path override
 # ----------------------------------------------------------------------
 
 
 def test_constructor_path_override(tmp_path: Path) -> None:
-    """Plan-§6.1: Default-Pfad ist hardcoded, ueberschreibbar via ctor."""
+    """Plan §6.1: default path is hardcoded, overridable via the ctor."""
     custom = tmp_path / "subdir" / "review.log"
     audit = ReviewAudit(path=custom)
     assert audit.path == custom
@@ -64,12 +64,12 @@ def test_constructor_accepts_string_path(tmp_path: Path) -> None:
 
 
 # ----------------------------------------------------------------------
-# Single-Write
+# Single write
 # ----------------------------------------------------------------------
 
 
 def test_append_iteration_single_write(tmp_path: Path) -> None:
-    """Eine append_iteration -> exakt eine Zeile, parsebar."""
+    """One append_iteration -> exactly one line, parseable."""
     log = tmp_path / "review.log"
     audit = ReviewAudit(path=log)
     record = _make_record()
@@ -92,7 +92,7 @@ def test_append_iteration_single_write(tmp_path: Path) -> None:
 
 
 def test_append_iteration_creates_parent_dir(tmp_path: Path) -> None:
-    """Parent-Dir wird angelegt, falls fehlend."""
+    """Parent dir is created if missing."""
     log = tmp_path / "deep" / "nested" / "review.log"
     audit = ReviewAudit(path=log)
     audit.append_iteration(_make_record())
@@ -100,7 +100,7 @@ def test_append_iteration_creates_parent_dir(tmp_path: Path) -> None:
 
 
 def test_append_iteration_appends_not_overwrites(tmp_path: Path) -> None:
-    """Mehrere Records -> mehrere Zeilen, alphabetisch geordnet wie geschrieben."""
+    """Multiple records -> multiple lines, ordered as written."""
     log = tmp_path / "review.log"
     audit = ReviewAudit(path=log)
 
@@ -115,7 +115,7 @@ def test_append_iteration_appends_not_overwrites(tmp_path: Path) -> None:
 
 
 def test_append_iteration_with_optional_fields_omitted(tmp_path: Path) -> None:
-    """Pre-Check-Failure schreibt ohne score/tokens — Defaults greifen."""
+    """Pre-check failure writes without score/tokens — defaults kick in."""
     log = tmp_path / "review.log"
     audit = ReviewAudit(path=log)
 
@@ -136,12 +136,12 @@ def test_append_iteration_with_optional_fields_omitted(tmp_path: Path) -> None:
 
 
 # ----------------------------------------------------------------------
-# Concurrent-Write (10 Threads x 100 Eintraege)
+# Concurrent write (10 threads x 100 entries)
 # ----------------------------------------------------------------------
 
 
 def test_concurrent_write_no_corruption(tmp_path: Path) -> None:
-    """Plan-§6.1 AC: 10 Threads x 100 Eintraege -> 1000 Zeilen, alle parsebar."""
+    """Plan §6.1 AC: 10 threads x 100 entries -> 1000 lines, all parseable."""
     log = tmp_path / "review.log"
     audit = ReviewAudit(path=log)
 
@@ -172,15 +172,15 @@ def test_concurrent_write_no_corruption(tmp_path: Path) -> None:
     raw_text = log.read_text(encoding="utf-8")
     lines = [line for line in raw_text.splitlines() if line.strip()]
 
-    # Keine Korruption, keine fehlenden Zeilen
+    # No corruption, no missing lines
     assert len(lines) == n_threads * per_thread, (
         f"expected {n_threads * per_thread} lines, got {len(lines)}"
     )
 
-    # Alle Zeilen sind valides JSON
+    # All lines are valid JSON
     parsed = [json.loads(line) for line in lines]
 
-    # Pro Thread genau `per_thread` Eintraege
+    # Exactly `per_thread` entries per thread
     by_thread: dict[str, list[int]] = {}
     for p in parsed:
         by_thread.setdefault(p["run_id"], []).append(p["iteration"])
@@ -220,12 +220,12 @@ def test_tail_zero_returns_empty(tmp_path: Path) -> None:
 
 
 def test_tail_skips_corrupt_lines(tmp_path: Path) -> None:
-    """Korrupte JSON-Zeilen werden uebersprungen, nicht propagiert."""
+    """Corrupt JSON lines are skipped, not propagated."""
     log = tmp_path / "review.log"
     log.parent.mkdir(parents=True, exist_ok=True)
     audit = ReviewAudit(path=log)
     audit.append_iteration(_make_record(iteration=1))
-    # Kunstvolle Korruption haengen wir manuell an
+    # We manually append artificial corruption
     with log.open("a", encoding="utf-8") as fh:
         fh.write("this is { not valid json\n")
     audit.append_iteration(_make_record(iteration=2))
@@ -236,7 +236,7 @@ def test_tail_skips_corrupt_lines(tmp_path: Path) -> None:
 
 
 # ----------------------------------------------------------------------
-# AuditRecord-Validation
+# AuditRecord validation
 # ----------------------------------------------------------------------
 
 
@@ -290,7 +290,7 @@ def test_audit_record_score_out_of_range_rejected() -> None:
 
 
 def test_audit_record_to_jsonline_no_newline() -> None:
-    """to_jsonline darf KEIN Trailing-Newline enthalten — das fuegt der Logger an."""
+    """to_jsonline must NOT contain a trailing newline — the logger adds that."""
     record = _make_record()
     line = record.to_jsonline()
     assert "\n" not in line

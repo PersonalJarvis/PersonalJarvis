@@ -3,13 +3,13 @@ import type { ChannelLink } from "@/hooks/useFriends";
 import { cn } from "@/lib/utils";
 
 /**
- * Visualisiert, ueber welche Channels ein Friend erreichbar ist.
+ * Visualizes which channels a friend is reachable through.
  *
- * - Telegram-only:  TG-Pille
- * - Jarvis-only:    Jarvis-Pille
- * - Beide:          beide Pillen kompakt nebeneinander
+ * - Telegram-only:  TG pill
+ * - Jarvis-only:    Jarvis pill
+ * - Both:           both pills compactly side by side
  *
- * Reine Display-Komponente — alle Logik lebt in der Channels-Liste.
+ * Pure display component — all logic lives in the channels list.
  */
 export function SourceBadge({
   channels,

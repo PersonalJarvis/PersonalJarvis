@@ -1,10 +1,10 @@
-"""Hauptjarvis-side CursorStreamer + mouse.py-Hook.
+"""Main-Jarvis-side CursorStreamer + mouse.py hook.
 
-Testet:
-  - Writer schreibt korrekt ins SHM (Layout-symmetrisch zur Reader-Seite).
-  - Streamer pollt nur waehrend ``streaming=True``.
-  - mouse.click/move_to/scroll triggern start_streaming/stop_streaming
-    wenn ein Streamer gesetzt ist.
+Tests:
+  - Writer writes correctly into the SHM (layout-symmetric to the reader side).
+  - Streamer only polls while ``streaming=True``.
+  - mouse.click/move_to/scroll trigger start_streaming/stop_streaming
+    when a streamer is set.
 """
 
 from __future__ import annotations
@@ -27,8 +27,8 @@ from overlay.cursor_shm import CursorShmReader
 
 
 # -------------------------------------------------------------------------
-# Layout-Symmetrie: Writer aus jarvis.overlay schreibt, Reader aus
-# OS-Level liest -> beide Seiten muessen denselben struct format kennen.
+# Layout symmetry: writer from jarvis.overlay writes, reader from
+# OS-Level reads -> both sides must know the same struct format.
 # -------------------------------------------------------------------------
 
 
@@ -43,7 +43,7 @@ def test_writer_layout_constants_match_reader() -> None:
 
 
 def test_writer_round_trip_to_reader() -> None:
-    """Hauptjarvis-Writer + OS-Level-Reader symmetrisch."""
+    """Main-Jarvis writer + OS-Level reader symmetric."""
     w = CursorShmWriter.create()
     try:
         r = CursorShmReader.attach(w.name)
@@ -68,12 +68,12 @@ def test_writer_round_trip_to_reader() -> None:
 
 @pytest.fixture()
 def streamer() -> Iterator[CursorStreamer]:
-    """Streamer mit Fake-Position-Reader (kein pyautogui-Aufruf)."""
+    """Streamer with a fake position reader (no pyautogui call)."""
     state = {"x": 100, "y": 200}
 
     def fake_pos() -> tuple[int, int]:
-        # Bewegt den Cursor jeden Tick um +1, damit man im Reader
-        # tatsaechlich Aenderungen sieht.
+        # Moves the cursor by +1 each tick, so the reader
+        # actually sees changes.
         state["x"] += 1
         state["y"] += 2
         return state["x"], state["y"]
@@ -90,11 +90,11 @@ def test_streamer_does_not_write_when_not_streaming(
 ) -> None:
     r = CursorShmReader.attach(streamer.name)
     try:
-        # 50 ms warten — keine Schreibvorgaenge erwartet (start_streaming
-        # nicht gerufen).
+        # Wait 50 ms — no writes expected (start_streaming
+        # not called).
         time.sleep(0.05)
         assert r.read() is None
-        # Internal Writer-seq sollte 0 sein.
+        # Internal writer seq should be 0.
         assert streamer.writer.seq == 0
     finally:
         r.close()
@@ -104,7 +104,7 @@ def test_streamer_writes_during_streaming(streamer: CursorStreamer) -> None:
     r = CursorShmReader.attach(streamer.name)
     try:
         streamer.start_streaming(monitor_idx=1)
-        # 80 ms @ 120 Hz = ~9 Frames; reichlich.
+        # 80 ms @ 120 Hz = ~9 frames; plenty.
         time.sleep(0.08)
         streamer.stop_streaming()
 
@@ -118,7 +118,7 @@ def test_streamer_writes_during_streaming(streamer: CursorStreamer) -> None:
             time.sleep(0.005)
 
         assert len(seen) >= 1
-        # Frames muessen monitor_idx=1 haben.
+        # Frames must have monitor_idx=1.
         for f in seen:
             assert f.monitor_idx == 1
     finally:
@@ -135,13 +135,13 @@ def test_streamer_idempotent_start(streamer: CursorStreamer) -> None:
 
 
 # -------------------------------------------------------------------------
-# mouse.py-Hook: click/move_to triggern den Streamer
+# mouse.py hook: click/move_to trigger the streamer
 # -------------------------------------------------------------------------
 
 
 @pytest.fixture()
 def fake_pyautogui(monkeypatch: pytest.MonkeyPatch) -> mock.MagicMock:
-    """Faked pyautogui-Modul ueber sys.modules."""
+    """Fake pyautogui module via sys.modules."""
     fake = types.ModuleType("pyautogui")
     fake.click = mock.MagicMock()  # type: ignore[attr-defined]
     fake.moveTo = mock.MagicMock()  # type: ignore[attr-defined]
@@ -164,9 +164,9 @@ def test_click_triggers_streamer_start_stop(
         try:
             assert streamer.is_streaming is False
             mouse.click(x=100, y=200, monitor_idx=1)
-            # Nach click ist streaming wieder aus (stop wurde gerufen).
+            # After click, streaming is off again (stop was called).
             assert streamer.is_streaming is False
-            # pyautogui.click wurde gerufen.
+            # pyautogui.click was called.
             fake_pyautogui.click.assert_called_once_with(
                 x=100, y=200, button="left", clicks=1, interval=0.0
             )
@@ -179,7 +179,7 @@ def test_click_triggers_streamer_start_stop(
 def test_move_to_streams_during_animation(
     fake_pyautogui: mock.MagicMock,
 ) -> None:
-    """Verifiziert dass start_streaming gerufen wird BEVOR pyautogui.moveTo."""
+    """Verifies that start_streaming is called BEFORE pyautogui.moveTo."""
     from jarvis.control import mouse
 
     call_order: list[str] = []
@@ -214,13 +214,13 @@ def test_move_to_streams_during_animation(
     finally:
         streamer.shutdown()
 
-    # Erwartete Reihenfolge: start, moveTo, stop.
+    # Expected order: start, moveTo, stop.
     assert call_order == ["start", "moveTo", "stop"], call_order
 
 
 def test_no_streamer_no_op(fake_pyautogui: mock.MagicMock) -> None:
-    """Wenn kein Streamer gesetzt ist, laeuft mouse.click trotzdem
-    sauber durch (Headless / Production-ohne-Overlay)."""
+    """When no streamer is set, mouse.click still runs
+    cleanly through (headless / production without overlay)."""
     from jarvis.control import mouse
 
     mouse.set_cursor_streamer(None)

@@ -1,11 +1,11 @@
-"""Schreibt Skill-Drafts ins User-Skills-Verzeichnis mit forced state=draft.
+"""Writes skill drafts into the user-skills directory with forced state=draft.
 
-Plan-§AD-8: `draft_writer` forciert `state=draft`, auch wenn OpenClaw-Author
-fälschlich `state=active` ins Frontmatter setzt. Plan-§AP-6: keine
-Auto-Aktivierung — der User muss in der UI / via CLI explizit promoten.
+Plan-§AD-8: `draft_writer` forces `state=draft`, even if OpenClaw-Author
+incorrectly sets `state=active` in the frontmatter. Plan-§AP-6: no
+auto-activation — the user must explicitly promote via the UI / CLI.
 
-Plan-§AP-10: Drafts landen NUR im `user_skills_dir` (sonst Hot-Reload-
-Bypass). Path-Traversal-Schutz vor jedem Schreibversuch via
+Plan-§AP-10: drafts land ONLY in `user_skills_dir` (otherwise a hot-reload
+bypass). Path-traversal protection before every write attempt via
 `Path.resolve().relative_to(user_skills_dir.resolve())`.
 """
 from __future__ import annotations
@@ -32,16 +32,16 @@ _SAFE_IMPORTS_FILE: Final[Path] = (
 
 
 class SlugError(ValueError):
-    """Slug ist invalid oder Path-Traversal-Versuch."""
+    """Slug is invalid or a path-traversal attempt."""
 
 
 class UnsafeSkillError(RuntimeError):
-    """Skill-Body enthält verbotenen Code (Plan-§7.5 Sicherheits-Lint)."""
+    """Skill body contains forbidden code (Plan-§7.5 security lint)."""
 
 
 @dataclass(frozen=True)
 class DraftWriteResult:
-    """Resultat eines Draft-Writes."""
+    """Result of a draft write."""
 
     slug: str
     draft_path: Path
@@ -49,7 +49,7 @@ class DraftWriteResult:
 
 
 # ----------------------------------------------------------------------
-# Slug-Sicherheit
+# Slug safety
 # ----------------------------------------------------------------------
 
 
@@ -58,11 +58,11 @@ def _resolve_user_skills_root() -> Path:
 
 
 def _resolved_target(slug: str, root: Path | None = None) -> Path:
-    """Resolved den Skill-Ordner unter user_skills_dir/<slug>/.
+    """Resolves the skill folder under user_skills_dir/<slug>/.
 
-    Garantiert via `Path.resolve().relative_to(root)`, dass das Ergebnis
-    NICHT aus dem User-Skills-Verzeichnis ausbricht — selbst wenn der
-    Slug-Validator umgangen würde.
+    Guarantees via `Path.resolve().relative_to(root)` that the result
+    does NOT escape the user-skills directory — even if the
+    slug validator were bypassed.
     """
     base = root.resolve() if root is not None else _resolve_user_skills_root()
     candidate = (base / slug).resolve()
@@ -78,9 +78,9 @@ def _resolved_target(slug: str, root: Path | None = None) -> Path:
 def _resolve_clash_safe_slug(
     slug: str, base: Path | None = None
 ) -> str:
-    """Falls `<slug>` schon existiert, Suffix `_2`, `_3`, ... anhängen.
+    """If `<slug>` already exists, append the suffix `_2`, `_3`, ...
 
-    Plan-§7.5-Pipeline-Schritt 2: Clash-Check, kein Overwrite.
+    Plan-§7.5 pipeline step 2: clash check, no overwrite.
     """
     base_dir = base if base is not None else _resolve_user_skills_root()
     candidate_path = base_dir / slug
@@ -90,11 +90,11 @@ def _resolve_clash_safe_slug(
         new_slug = f"{slug}_{n}"
         if not (base_dir / new_slug).exists():
             return new_slug
-    raise SlugError(f"Konnte für '{slug}' nach 99 Versuchen keinen Clash-freien Slug finden")
+    raise SlugError(f"Could not find a clash-free slug for '{slug}' after 99 attempts")
 
 
 # ----------------------------------------------------------------------
-# Sicherheits-Lint
+# Security lint
 # ----------------------------------------------------------------------
 
 
@@ -106,7 +106,7 @@ _FORBIDDEN_CALLS: Final[frozenset[str]] = frozenset(
         "__import__",
         "globals",
         "locals",
-        # Sub-Agent-Review-MAJOR (Phase 7.5): Reflektive-Bypass via getattr/vars.
+        # Jarvis-Agent-review-MAJOR (Phase 7.5): reflective bypass via getattr/vars.
         "getattr",
         "vars",
         "setattr",
@@ -129,17 +129,17 @@ _FORBIDDEN_ATTRIBUTES: Final[frozenset[tuple[str, str]]] = frozenset(
         ("subprocess", "check_call"),
         ("subprocess", "check_output"),
         ("subprocess", "getoutput"),
-        # Defense-in-Depth (Sub-Agent-Review-MAJOR): falls jemals `builtins`
-        # oder `importlib` in safe_imports landet, sind die Recursion-Vektoren
-        # explizit blockiert.
+        # Defense-in-depth (Jarvis-Agent-review-MAJOR): if `builtins`
+        # or `importlib` ever lands in safe_imports, the recursion vectors
+        # are explicitly blocked.
         ("builtins", "eval"),
         ("builtins", "exec"),
         ("builtins", "__import__"),
         ("importlib", "import_module"),
     }
 )
-# Sub-Agent-Review-MAJOR: Codefence-Regex breit fassen — alle Sprach-Tags,
-# inkl. `python3`/`pycon`/`ipython`/leer. Plus `~~~`-Tilden-Variante.
+# Jarvis-Agent-review-MAJOR: cast the codefence regex broadly — all language
+# tags, incl. `python3`/`pycon`/`ipython`/empty. Plus the `~~~` tilde variant.
 _CODE_BLOCK_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:```|~~~)([a-zA-Z0-9_+-]*)\s*\n(.*?)(?:```|~~~)",
     re.DOTALL,
@@ -150,30 +150,30 @@ _PYTHON_LANG_TAGS: Final[frozenset[str]] = frozenset(
 
 
 def _load_safe_imports() -> frozenset[str]:
-    """Liest die Allowlist aus `safe_imports.txt`. Fehler → leere Liste
-    (failsafe: bei korrupter Datei lehnt der Lint alle Imports ab).
+    """Reads the allowlist from `safe_imports.txt`. Error → empty list
+    (failsafe: on a corrupt file the lint rejects all imports).
     """
     try:
         text = _SAFE_IMPORTS_FILE.read_text(encoding="utf-8")
     except OSError as exc:
-        _LOG.warning("safe_imports.txt nicht lesbar: %s", exc)
+        _LOG.warning("safe_imports.txt not readable: %s", exc)
         return frozenset()
     allowed: set[str] = set()
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        # Top-Level-Modul (vor dem ersten Punkt)
+        # Top-level module (before the first dot)
         allowed.add(stripped.split(".", 1)[0])
     return frozenset(allowed)
 
 
 def _walk_python_block(code: str, allowed_imports: frozenset[str]) -> list[str]:
-    """Inspiziert einen Python-Block per AST. Liefert Liste von Findings.
+    """Inspects a Python block via AST. Returns a list of findings.
 
-    Sub-Agent-Review-MAJOR-Hardening (Phase 7.5):
-    - `ast.Subscript`-Calls (`__builtins__["eval"](...)`)
-    - reflektive Imports (`getattr(os, "system")`)
+    Jarvis-Agent-review-MAJOR hardening (Phase 7.5):
+    - `ast.Subscript` calls (`__builtins__["eval"](...)`)
+    - reflective imports (`getattr(os, "system")`)
     """
     findings: list[str] = []
     try:
@@ -183,7 +183,7 @@ def _walk_python_block(code: str, allowed_imports: frozenset[str]) -> list[str]:
         return findings
 
     for node in ast.walk(tree):
-        # Imports — nur Allowlist
+        # Imports — allowlist only
         if isinstance(node, ast.Import):
             for alias in node.names:
                 top = alias.name.split(".", 1)[0]
@@ -194,7 +194,7 @@ def _walk_python_block(code: str, allowed_imports: frozenset[str]) -> list[str]:
             if top and top not in allowed_imports:
                 findings.append(f"forbidden_import_from: {node.module}")
 
-        # Calls — direkte Names, Attribute-Pairs und Subscript-Bypass
+        # Calls — direct names, attribute pairs, and subscript bypass
         elif isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Name) and func.id in _FORBIDDEN_CALLS:
@@ -217,7 +217,7 @@ def _walk_python_block(code: str, allowed_imports: frozenset[str]) -> list[str]:
                         findings.append(
                             f"subprocess_shell_true: {pair[0]}.{pair[1]}"
                         )
-                # `builtins.eval(...)` als Attribut-of-Attribut: __builtins__.eval
+                # `builtins.eval(...)` as attribute-of-attribute: __builtins__.eval
                 elif (
                     isinstance(func.value, ast.Attribute)
                     and isinstance(func.value.value, ast.Name)
@@ -227,7 +227,7 @@ def _walk_python_block(code: str, allowed_imports: frozenset[str]) -> list[str]:
                         or func.value.value.id == "__builtins__"
                     ):
                         findings.append(f"forbidden_builtins_access: {func.attr}")
-            # Subscript-Bypass: __builtins__["eval"](), globals()["eval"]()
+            # Subscript bypass: __builtins__["eval"](), globals()["eval"]()
             elif isinstance(func, ast.Subscript):
                 base = func.value
                 if isinstance(base, ast.Name) and base.id in (
@@ -247,11 +247,11 @@ def _walk_python_block(code: str, allowed_imports: frozenset[str]) -> list[str]:
 
 
 def _block_looks_like_python(code: str) -> bool:
-    """Heuristik: ist das Code-Block-Inhalt ein parsbares Python-Snippet?
+    """Heuristic: is the code-block content a parsable Python snippet?
 
-    Ohne Sprach-Tag ist das die einzige Möglichkeit zu wissen, ob wir
-    AST-parsen sollen. `ast.parse` toleriert leere Snippets — wir prüfen
-    zusätzlich, ob mindestens ein Python-Statement-Token vorkommt.
+    Without a language tag this is the only way to know whether we
+    should AST-parse it. `ast.parse` tolerates empty snippets — we
+    additionally check that at least one Python statement token occurs.
     """
     if not code.strip():
         return False
@@ -263,12 +263,12 @@ def _block_looks_like_python(code: str) -> bool:
 
 
 def safe_lint_skill_body(body: str) -> list[str]:
-    """Inspiziert alle Code-Blöcke im Skill-Body.
+    """Inspects all code blocks in the skill body.
 
-    Sub-Agent-Review-MAJOR (Phase 7.5): Codefence-Sprache ist nicht mehr
-    auf `python|py` beschränkt. Alle Tags + tilde-Fences werden gescannt;
-    bei unbekanntem/leerem Tag wird per `ast.parse` heuristisch erkannt,
-    ob es Python-Code ist.
+    Jarvis-Agent-review-MAJOR (Phase 7.5): the codefence language is no
+    longer restricted to `python|py`. All tags + tilde fences are scanned;
+    on an unknown/empty tag, `ast.parse` heuristically detects
+    whether it's Python code.
     """
     allowed = _load_safe_imports()
     findings: list[str] = []
@@ -277,7 +277,7 @@ def safe_lint_skill_body(body: str) -> list[str]:
         code = match.group(2)
         if lang in _PYTHON_LANG_TAGS:
             if not lang and not _block_looks_like_python(code):
-                # Leeres Tag + nicht-Python → ignorieren (z.B. Plain-Text-Block)
+                # Empty tag + not Python → ignore (e.g. a plain-text block)
                 continue
             findings.extend(_walk_python_block(code, allowed))
     return findings
@@ -289,7 +289,7 @@ def safe_lint_skill_body(body: str) -> list[str]:
 
 
 def _render_skill_md(draft: SkillDraft) -> str:
-    """Rendert SKILL.md mit Frontmatter + Body. `state` IMMER `draft`."""
+    """Renders SKILL.md with frontmatter + body. `state` is ALWAYS `draft`."""
     triggers_parsed: list = []
     if draft.triggers_yaml.strip():
         try:
@@ -309,7 +309,7 @@ def _render_skill_md(draft: SkillDraft) -> str:
         "license": "MIT",
         "triggers": triggers_parsed,
         "requires_tools": draft.requires_tools,
-        # **HARTKODIERT**: Plan-§AD-8 — OpenClaw-Author-Output `state` wird verworfen.
+        # **HARDCODED**: Plan-§AD-8 — the OpenClaw-Author output `state` is discarded.
         "state": "draft",
     }
     yaml_text = yaml.safe_dump(
@@ -323,18 +323,18 @@ def write_draft(
     *,
     user_skills_root: Path | None = None,
 ) -> DraftWriteResult:
-    """Schreibt einen OpenClaw-Author-Draft als SKILL.md.
+    """Writes an OpenClaw-Author draft as SKILL.md.
 
-    Plan-§7.5-Pipeline-Schritt 6: state=draft wird IMMER forciert. Wenn
-    der OpenClaw-Author-Draft `state != "draft"` ausgibt, vermerken wir den
-    Override im Resultat (`forced_state_override=True`) — der Caller
-    schreibt das ins Audit.
+    Plan-§7.5 pipeline step 6: state=draft is ALWAYS forced. If
+    the OpenClaw-Author draft outputs `state != "draft"`, we note the
+    override in the result (`forced_state_override=True`) — the caller
+    writes that to the audit.
     """
     base = user_skills_root.resolve() if user_skills_root else _resolve_user_skills_root()
     base.mkdir(parents=True, exist_ok=True)
 
-    # Slug-Validation läuft schon in SkillDraft.field_validator;
-    # zweite Defense-in-Depth-Resolution gegen Path-Traversal hier.
+    # Slug validation already runs in SkillDraft.field_validator;
+    # second defense-in-depth resolution against path traversal here.
     safe_slug = _resolve_clash_safe_slug(draft.slug, base=base)
     target_dir = _resolved_target(safe_slug, root=base)
     target_dir.mkdir(parents=True, exist_ok=True)

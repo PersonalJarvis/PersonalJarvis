@@ -1,8 +1,8 @@
-"""Standalone-FastAPI-App — fuer ``python -m conductor serve``.
+"""Standalone FastAPI app — for ``python -m conductor serve``.
 
-Im Embedded-Modus (Jarvis hat einen WebServer) wird nur ``router`` aus
-``routes.py`` importiert; diese App hier ist der Entry-Point fuer reinen
-Conductor-Betrieb.
+In embedded mode (Jarvis has a web server), only ``router`` is imported
+from ``routes.py``; this app here is the entry point for a standalone
+Conductor deployment.
 """
 from __future__ import annotations
 
@@ -19,10 +19,10 @@ def create_app(
     store: ConductorStore | None = None,
     start_scheduler: bool = True,
 ) -> FastAPI:
-    """Erzeugt eine standalone FastAPI-App inkl. Store + Runner + Scheduler.
+    """Creates a standalone FastAPI app including store + runner + scheduler.
 
-    Lifecycle wird ueber Startup/Shutdown-Events verdrahtet. ``store`` darf
-    vorgegeben werden (z.B. Tests mit tmp-DB); default ist
+    Lifecycle is wired via startup/shutdown events. ``store`` can be
+    provided explicitly (e.g. tests with a tmp DB); the default is
     ``~/.conductor/conductor.sqlite``.
     """
     app = FastAPI(
@@ -33,7 +33,7 @@ def create_app(
     )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],    # OSS-Default; per Env-Var kuerzbar in v0.2
+        allow_origins=["*"],    # OSS default; can be narrowed via env var in v0.2
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -52,14 +52,14 @@ def create_app(
     async def _startup() -> None:
         await active_store.init()
         await active_store.cleanup_interrupted_runs()
-        # Seed-Jobs beim ersten Start pflanzen.
+        # Plant seed jobs on first startup.
         from ..core.seed import ensure_seed_jobs
         try:
             added = await ensure_seed_jobs(active_store)
             if added:
                 import logging
                 logging.getLogger(__name__).info(
-                    "Conductor-Seed: %d Jobs pflanzen", added,
+                    "Conductor seed: planting %d jobs", added,
                 )
         except Exception:  # noqa: BLE001
             pass

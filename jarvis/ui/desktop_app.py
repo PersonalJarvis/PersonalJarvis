@@ -1,12 +1,12 @@
-﻿"""Desktop-App-Wrapper: pywebview-Fenster + FastAPI-Backend-Lifecycle.
+﻿"""Desktop app wrapper: pywebview window + FastAPI backend lifecycle.
 
-Koordiniert:
-  1. Single-Instance-Lock (filelock + PID-Sidecar + Stale-Detection).
-  2. FastAPI/uvicorn-Backend in eigenem Thread mit eigenem asyncio-Loop.
-  3. pywebview-Fenster im Main-Thread (WebView2 ist STA-COM-gebunden).
-  4. Session-Token-Injection (ENV fürs Backend, JS-Eval fürs Frontend).
+Coordinates:
+  1. Single-instance lock (filelock + PID sidecar + stale detection).
+  2. FastAPI/uvicorn backend in its own thread with its own asyncio loop.
+  3. pywebview window on the main thread (WebView2 is STA-COM-bound).
+  4. Session token injection (ENV for the backend, JS eval for the frontend).
 
-CLI-Testlauf ohne ``jarvis.__main__``::
+CLI test run without ``jarvis.__main__``::
 
     python -m jarvis.ui.desktop_app
 """
@@ -25,7 +25,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-# Windows-UTF8-Fix (analog zu jarvis.__main__)
+# Windows UTF-8 fix (analogous to jarvis.__main__)
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
@@ -48,16 +48,16 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# Konstanten
+# Constants
 # ---------------------------------------------------------------------------
 
 LOCK_FILE_PATH = DATA_DIR / "jarvis.lock"
 META_FILE_PATH = DATA_DIR / ".jarvis-running"
 WINDOW_TITLE = "Personal Jarvis"
 
-#: Timeout fuer den initialen Lock-Acquire in Sekunden. 0 = non-blocking,
-#: so sehen wir einen laufenden Prozess sofort und fokussieren ihn statt
-#: still zu warten.
+#: Timeout for the initial lock acquire, in seconds. 0 = non-blocking,
+#: so we detect a running process immediately and focus it instead of
+#: waiting silently.
 _LOCK_ACQUIRE_TIMEOUT = 0.0
 
 
@@ -67,7 +67,7 @@ _LOCK_ACQUIRE_TIMEOUT = 0.0
 
 
 class SingleInstanceError(RuntimeError):
-    """Wird geworfen wenn eine weitere Jarvis-Instanz aktiv laeuft."""
+    """Raised when another Jarvis instance is already running."""
 
 
 # ---------------------------------------------------------------------------
@@ -79,19 +79,19 @@ _DESKTOP_LOG_SINK_INSTALLED = False
 
 
 def _install_desktop_log_sink(log_path: Path) -> None:
-    """Installiert einen Loguru-File-Sink fuer die Desktop-App.
+    """Installs a loguru file sink for the desktop app.
 
-    Warum: ``pythonw.exe`` (Windowed-Mode, via ``run.bat`` ohne Args) hat
-    keinen stderr. Loguru schreibt default nach stderr → jeder Crash im
-    Backend-Thread bleibt unsichtbar, der Prozess wird zum Zombie (Port nicht
-    gebunden, Fenster nicht offen, User sieht Nichts).
+    Why: ``pythonw.exe`` (windowed mode, via ``run.bat`` without args) has
+    no stderr. Loguru writes to stderr by default → any crash in the
+    backend thread stays invisible, and the process becomes a zombie (port
+    not bound, window not open, user sees nothing).
 
-    Dieser Sink schreibt alle ``INFO+``-Events in eine rotierende Log-Datei,
-    und das stdlib-``logging`` wird via ``InterceptHandler`` umgeleitet damit
-    auch ``uvicorn`` / ``httpx`` / ``faster_whisper`` mitgeschrieben werden.
+    This sink writes every ``INFO+`` event to a rotating log file, and
+    stdlib ``logging`` is redirected via ``InterceptHandler`` so that
+    ``uvicorn`` / ``httpx`` / ``faster_whisper`` get captured too.
 
-    Idempotent — mehrfacher Aufruf ist no-op (wichtig falls DesktopApp in
-    Tests mehrfach instanziiert wird).
+    Idempotent — calling it more than once is a no-op (important in case
+    DesktopApp gets instantiated multiple times in tests).
     """
     global _DESKTOP_LOG_SINK_INSTALLED
     if _DESKTOP_LOG_SINK_INSTALLED:
@@ -101,7 +101,7 @@ def _install_desktop_log_sink(log_path: Path) -> None:
     from loguru import logger
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    # Rotation bei 10 MB, max 3 Dateien — verhindert dass Logs die Platte fressen.
+    # Rotate at 10 MB, max 3 files — keeps logs from eating the disk.
     logger.add(
         str(log_path),
         level="INFO",
@@ -113,13 +113,13 @@ def _install_desktop_log_sink(log_path: Path) -> None:
         # desktop/sandbox contexts before the window is created.
         enqueue=False,
         backtrace=True,
-        diagnose=False,  # keine locals ausgeben (Secrets!)
+        diagnose=False,  # don't dump locals (secrets!)
         format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} | {message}",
     )
 
-    # stdlib-logging -> Loguru umleiten, damit uvicorn / httpx / faster_whisper
-    # auch im File-Log landen. Vorherige Handler nicht entfernen (Watchdog-Run
-    # hat eigene Handler via _setup_logging).
+    # Redirect stdlib logging -> loguru so uvicorn / httpx / faster_whisper
+    # also end up in the file log. Don't remove prior handlers (the
+    # watchdog run has its own handlers via _setup_logging).
     import logging as _logging
 
     class _InterceptHandler(_logging.Handler):
@@ -137,13 +137,13 @@ def _install_desktop_log_sink(log_path: Path) -> None:
             )
 
     root = _logging.getLogger()
-    # Nur hinzufuegen wenn nicht bereits ein InterceptHandler da ist.
+    # Only add it if there isn't already an InterceptHandler present.
     if not any(isinstance(h, _InterceptHandler) for h in root.handlers):
         root.addHandler(_InterceptHandler())
     if root.level > _logging.INFO or root.level == 0:
         root.setLevel(_logging.INFO)
 
-    logger.info("Desktop-Log-Sink aktiv: {}", log_path)
+    logger.info("Desktop log sink active: {}", log_path)
 
 
 # ---------------------------------------------------------------------------
@@ -152,23 +152,23 @@ def _install_desktop_log_sink(log_path: Path) -> None:
 
 
 def _generate_session_token() -> str:
-    """Kryptographisch zufaelliges URL-safe Token fuer die WebView-Auth."""
+    """Cryptographically random URL-safe token for the WebView auth."""
     return secrets.token_urlsafe(32)
 
 
 def _pid_alive(pid: int) -> bool:
-    """True wenn der PID gerade einen laufenden Prozess bezeichnet.
+    """True if the PID currently denotes a running process.
 
-    Nutzt psutil (aus Phase-0-Deps). Stolperfalle: ein frisch beendeter PID
-    kann von einem ganz anderen Prozess belegt werden — unwahrscheinlich bei
-    der kurzen Lebenszeit von Jarvis, aber wir prueften den process-name
-    zusaetzlich, falls psutil hilft.
+    Uses psutil (from the Phase-0 deps). Gotcha: a freshly terminated PID
+    can get reused by a completely different process — unlikely given
+    Jarvis's short process lifetime, but we'd additionally check the
+    process name if psutil helps with that.
     """
     try:
         import psutil  # type: ignore[import-not-found]
     except Exception:  # noqa: BLE001
-        # Ohne psutil koennen wir keine Stale-Detection. Sicher-Default:
-        # Prozess gilt als lebendig, Lock bleibt belegt.
+        # Without psutil we can't do stale detection. Safe default:
+        # treat the process as alive, keep the lock held.
         return True
     try:
         return psutil.pid_exists(int(pid))
@@ -177,7 +177,7 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _write_meta(port: int, pid: int) -> None:
-    """Schreibt das PID-Sidecar neben das Lock-File (atomic via tmp+replace)."""
+    """Writes the PID sidecar next to the lock file (atomic via tmp+replace)."""
     try:
         META_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -192,13 +192,13 @@ def _write_meta(port: int, pid: int) -> None:
         try:
             from loguru import logger
 
-            logger.warning("Konnte Jarvis-Meta-Sidecar nicht schreiben: {}", exc)
+            logger.warning("Could not write Jarvis meta sidecar: {}", exc)
         except Exception:
             pass
 
 
 def _read_meta() -> dict[str, Any] | None:
-    """Liest das PID-Sidecar. ``None`` wenn fehlend oder korrupt."""
+    """Reads the PID sidecar. ``None`` if missing or corrupt."""
     try:
         raw = META_FILE_PATH.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -215,11 +215,11 @@ def _read_meta() -> dict[str, Any] | None:
 
 
 def _focus_existing_instance() -> bool:
-    """Bittet die laufende Instanz ihr Fenster nach vorne zu bringen.
+    """Asks the running instance to bring its window to the front.
 
-    Liest Port aus Meta-Sidecar und POSTet auf ``/api/window/focus``. Der
-    Endpunkt kann in Phase 1a noch 404 zurueckgeben — dann geben wir ein
-    freundliches False zurueck statt zu crashen.
+    Reads the port from the meta sidecar and POSTs to ``/api/window/focus``.
+    The endpoint can still return 404 in Phase 1a — in that case we return
+    a friendly False instead of crashing.
     """
     meta = _read_meta()
     if not meta or "port" not in meta:
@@ -237,7 +237,7 @@ def _focus_existing_instance() -> bool:
 
 
 def focus_existing_instance_robust() -> bool:
-    """Aktiviert eine laufende Instanz auch wenn das Sidecar fehlt."""
+    """Activates a running instance even if the sidecar is missing."""
     meta = _read_meta()
     ports: list[int] = []
     if meta and isinstance(meta.get("port"), int):
@@ -280,12 +280,12 @@ def focus_existing_instance_robust() -> bool:
 
 
 def _bring_window_to_front_by_title(title: str) -> bool:
-    """Win32-Fallback fuer versteckte/minimierte pywebview-Fenster.
+    """Win32 fallback for hidden/minimized pywebview windows.
 
-    pywebview reicht ``window.show() + restore()`` nicht zuverlaessig durch wenn
-    das Fenster vorher per Tray-Close versteckt wurde — Edge/WebView2 haelt den
-    HWND minimiert. ``ShowWindow(SW_RESTORE) + SetForegroundWindow`` ueber den
-    Win32-API-Pfad ist die einzig verlaessliche Recovery.
+    pywebview does not reliably pass through ``window.show() + restore()``
+    when the window was previously hidden via a tray close — Edge/WebView2
+    keeps the HWND minimized. ``ShowWindow(SW_RESTORE) + SetForegroundWindow``
+    via the Win32 API path is the only reliable recovery.
     """
     if sys.platform != "win32":
         return False
@@ -318,13 +318,14 @@ def _bring_window_to_front_by_title(title: str) -> bool:
         rect = wintypes.RECT()
         user32.GetWindowRect(hwnd, ctypes.byref(rect))
 
-        # Windows parkt minimierte Fenster bei -32000/-32000. Aus diesem
-        # Zustand zeigt die Taskbar zwar eine Vorschau, bringt die WebView aber
-        # nicht immer sichtbar zurueck. Dann explizit auf den Hauptmonitor.
+        # Windows parks minimized windows at -32000/-32000. From that state
+        # the taskbar does show a preview, but doesn't always bring the
+        # WebView back visibly. In that case, explicitly move to the main
+        # monitor.
         offscreen_minimized = rect.left <= -30000 or rect.top <= -30000
 
-        # Reihenfolge ist wichtig: erst SHOW/RESTORE, dann bei Bedarf bewegen,
-        # dann Foreground+Active fuer Tastatur-Fokus.
+        # Order matters: SHOW/RESTORE first, then move if needed, then
+        # Foreground+Active for keyboard focus.
         user32.ShowWindow(hwnd, 1)  # SW_SHOWNORMAL
         user32.ShowWindow(hwnd, 5)  # SW_SHOW
         user32.ShowWindow(hwnd, 9)  # SW_RESTORE
@@ -343,15 +344,15 @@ def _bring_window_to_front_by_title(title: str) -> bool:
 
 
 def _is_brain_diagnostic(text: str) -> bool:
-    """True fuer Backend-Diagnosen, die nicht als Jarvis-Antwort gelten."""
+    """True for backend diagnostics that don't count as a Jarvis reply."""
     t = text.lower()
     return (
-        t.startswith("kein brain-key gefunden")
-        or t.startswith("keine brain-provider")
-        or t.startswith("brain nicht verfuegbar")
-        or t.startswith("brain-fehler")
+        t.startswith("kein brain-key gefunden")  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
+        or t.startswith("keine brain-provider")  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
+        or t.startswith("brain nicht verfuegbar")  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
+        or t.startswith("brain-fehler")  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
         or "api-key" in t
-        or ("provider" in t and ("unerreichbar" in t or "nicht verfuegbar" in t))
+        or ("provider" in t and ("unerreichbar" in t or "nicht verfuegbar" in t))  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
     )
 
 
@@ -465,11 +466,11 @@ def acquire_single_instance_lock(
     health_probe: Callable[[int], bool] | None = None,
     terminate: Callable[[int], bool] | None = None,
 ) -> FileLock:
-    """Acquire exklusives Lock oder raise :class:`SingleInstanceError`.
+    """Acquire the exclusive lock or raise :class:`SingleInstanceError`.
 
-    Stale-Lock-Erkennung: wenn das Lock belegt ist, lesen wir das
-    PID-Sidecar und pruefen ``psutil.pid_exists(pid)``. Ist der PID tot,
-    loeschen wir Lock + Sidecar und versuchen erneut.
+    Stale-lock detection: when the lock is held, we read the PID sidecar
+    and check ``psutil.pid_exists(pid)``. If the PID is dead, we delete
+    the lock + sidecar and try again.
 
     Lock-zombie eviction (forensic 2026-06-26): a holder PID can be ALIVE yet
     non-functional — its webserver accept-socket died on a transient WinError 64
@@ -480,11 +481,11 @@ def acquire_single_instance_lock(
     reclaim the lock. Never the own pid (no suicide); never a healthy holder.
 
     Args:
-        timeout: Sekunden bis wir den ersten Acquire aufgeben. Default 0.0.
-        lock_path: Override fuer Tests.
-        meta_path: Override fuer Tests.
-        health_probe: Override fuer Tests — ``(port) -> bool`` health check.
-        terminate: Override fuer Tests — ``(pid) -> bool`` process kill.
+        timeout: Seconds until we give up on the first acquire. Default 0.0.
+        lock_path: Override for tests.
+        meta_path: Override for tests.
+        health_probe: Override for tests — ``(port) -> bool`` health check.
+        terminate: Override for tests — ``(pid) -> bool`` process kill.
     """
     lp = lock_path or LOCK_FILE_PATH
     mp = meta_path or META_FILE_PATH
@@ -499,7 +500,7 @@ def acquire_single_instance_lock(
     except Timeout:
         pass
 
-    # Besetzt — ist der Halter noch am Leben?
+    # Held — is the holder still alive?
     meta: dict[str, Any] | None = None
     try:
         raw = mp.read_text(encoding="utf-8")
@@ -516,29 +517,30 @@ def acquire_single_instance_lock(
         # healthy instance, the own pid, or a holder with no recorded port is
         # respected; only a live-but-non-serving lock-zombie is evicted.
         if pid == os.getpid() or port is None or probe(port):
-            raise SingleInstanceError(f"Jarvis laeuft bereits (pid={pid}).")
+            raise SingleInstanceError(f"Jarvis is already running (pid={pid}).")
         with suppress(Exception):
             from loguru import logger
 
             logger.warning(
-                "Jarvis-Lock von einer LEBENDEN, aber nicht-reagierenden Instanz "
-                "belegt (pid={}, port={} antwortet nicht) — Lock-Zombie wird "
-                "beendet, damit dieser Start durchkommt.",
+                "Jarvis lock held by a LIVE but non-responding instance "
+                "(pid={}, port={} not responding) — terminating the lock "
+                "zombie so this start can proceed.",
                 pid,
                 port,
             )
         if not killer(pid):
             raise SingleInstanceError(
-                f"Jarvis-Lock von nicht-reagierender Instanz (pid={pid}) belegt; "
-                "konnte sie nicht beenden."
+                f"Jarvis lock held by a non-responding instance (pid={pid}); "
+                "could not terminate it."
             )
         # fall through to the stale-reclaim path below (sidecar + retry acquire)
 
-    # Stale (toter Halter) ODER eben beendeter Zombie: Sidecar entfernen, Lock
-    # erneut versuchen. Das Lock-File auf Filesystem-Ebene wegzuraeumen ist nicht
-    # noetig — filelock nutzt fcntl/LockFileEx, d.h. sobald der Halter weg ist,
-    # ist das Lock frei. Nach einem Kill braucht Windows allerdings einen Moment,
-    # den Lock-Handle freizugeben — deshalb mehrere kurze Versuche.
+    # Stale (dead holder) OR a zombie we just terminated: remove the sidecar
+    # and try the lock again. There's no need to clean up the lock file at
+    # the filesystem level — filelock uses fcntl/LockFileEx, so as soon as
+    # the holder is gone, the lock is free. After a kill, though, Windows
+    # needs a moment to release the lock handle — hence several short
+    # retries.
     with suppress(Exception):
         mp.unlink(missing_ok=True)
     last_exc: Timeout | None = None
@@ -551,7 +553,7 @@ def acquire_single_instance_lock(
             last_exc = exc
             if time.monotonic() >= deadline:
                 raise SingleInstanceError(
-                    "Jarvis-Lock ist besetzt aber der Halter reagiert nicht."
+                    "Jarvis lock is held but the holder is not responding."
                 ) from last_exc
             time.sleep(0.3)
 
@@ -562,14 +564,14 @@ def acquire_single_instance_lock(
 
 
 class DesktopApp:
-    """Orchestriert pywebview-Fenster + Backend-Thread.
+    """Orchestrates the pywebview window + backend thread.
 
     Lifecycle:
-        1. ``__init__``: Token generieren, ENV setzen, Config laden.
-        2. ``run()``: Backend-Thread starten, auf ``/api/health`` warten,
-           ``webview.start()`` im Main-Thread (blockt bis Fenster zu ist).
-        3. ``shutdown()``: Server-``stop()`` via ``run_coroutine_threadsafe``,
-           Event-Loop stoppen, Meta-Sidecar aufraeumen.
+        1. ``__init__``: generate the token, set ENV, load config.
+        2. ``run()``: start the backend thread, wait for ``/api/health``,
+           run ``webview.start()`` on the main thread (blocks until the window closes).
+        3. ``shutdown()``: server ``stop()`` via ``run_coroutine_threadsafe``,
+           stop the event loop, clean up the meta sidecar.
     """
 
     def __init__(
@@ -581,15 +583,16 @@ class DesktopApp:
         # used for both the server's TokenAuth env (below) and the window's
         # _inject_token. When not injected, generate our own (classic path).
         self.session_token = session_token or _generate_session_token()
-        # ENV muss _vor_ dem Start des Backends gesetzt werden: uvicorn-Thread
-        # liest sie beim FastAPI-App-Build, um den TokenAuth-Guard zu prime.
+        # The ENV must be set _before_ the backend starts: the uvicorn thread
+        # reads it during the FastAPI app build to prime the TokenAuth guard.
         os.environ[self.cfg.ui.auth_token_env] = self.session_token
 
-        # KRITISCH: pythonw.exe hat kein stderr. Ohne File-Sink sehen wir KEINEN
-        # Crash im Backend-Thread — der Prozess lebt dann still als Zombie ohne
-        # gebundenen Port 47821. File-Log in data/jarvis_desktop.log schreiben,
-        # damit jeder Crash sichtbar ist. Idempotent: add() mit identischem sink
-        # würde dupliziert, deshalb ein Modul-Global-Guard.
+        # CRITICAL: pythonw.exe has no stderr. Without the file sink we'd see
+        # NO crash in the backend thread — the process would then live on
+        # silently as a zombie with no bound port 47821. Write a file log to
+        # data/jarvis_desktop.log so every crash is visible. Idempotent:
+        # calling add() with an identical sink would duplicate it, hence the
+        # module-global guard.
         _install_desktop_log_sink(DATA_DIR / "jarvis_desktop.log")
 
         self._backend_thread: threading.Thread | None = None
@@ -604,9 +607,9 @@ class DesktopApp:
         self._tray: Any = None
         self._user_requested_quit = False
         self._window_visible = False
-        # Voice-Stack (Pipeline + Orb-Overlay) — optional, ueber ENV
-        # JARVIS_VOICE=0 abschaltbar. Default an, damit "Hey Jarvis" out-of-the-box
-        # funktioniert wenn `run.bat` die Desktop-App startet.
+        # Voice stack (pipeline + orb overlay) — optional, can be disabled via
+        # ENV JARVIS_VOICE=0. Defaults to on, so "Hey Jarvis" works
+        # out-of-the-box when `run.bat` starts the desktop app.
         self._pipeline_task: asyncio.Task | None = None
         self._orb: Any = None
         # Virtual mouse overlay (Computer-Use). Voice-independent — Computer-Use
@@ -618,7 +621,7 @@ class DesktopApp:
         # visually replace the OS cursor (Windows draws it above any window).
         self._jarvis_cursor: Any = None
 
-    # ---- URL-Resolution ----------------------------------------------------
+    # ---- URL resolution -----------------------------------------------------
 
     def _url(self) -> str:
         if self.cfg.ui.dev_mode:
@@ -629,35 +632,35 @@ class DesktopApp:
         """Return whether voice activation is allowed for the desktop UI."""
         return bool(self._window is not None and self._window_visible)
 
-    # ---- Backend-Thread ----------------------------------------------------
+    # ---- Backend thread ------------------------------------------------------
 
     def _run_backend(self, *, prebound: tuple[Any, Any] | None = None) -> None:
-        """Eintrittspunkt des Backend-Threads.
+        """Entry point of the backend thread.
 
         ``prebound`` (fast-boot launcher path): ``(loop, bootstrap)`` already
         created + bound BEFORE this heavy module was imported, so the port-bind
         beat the import floor. When ``None`` (classic path), this creates the
         loop and binds the bootstrap itself.
 
-        Erstellt einen dedizierten asyncio-Loop, startet den ``WebServer``
-        (``await server.start()``) und laesst den Loop ewig laufen bis
-        ``stop()`` via :meth:`shutdown` durchgereicht wird.
+        Creates a dedicated asyncio loop, starts the ``WebServer``
+        (``await server.start()``), and keeps the loop running forever
+        until ``stop()`` is passed through via :meth:`shutdown`.
 
-        Zusaetzlich werden hier die Phase-1a-Core-Objekte verdrahtet:
-        ``Supervisor`` + ``ChatStore`` + ``BrainManager`` (mit MockBrain als
-        Fallback). Sie haengen an ``server.app.state`` und werden ueber einen
-        Event-Subscriber auf ``MessageSent(role="user")`` aktiviert, damit
-        Chat End-to-End funktioniert ohne Polling.
+        This is also where the Phase-1a core objects get wired up:
+        ``Supervisor`` + ``ChatStore`` + ``BrainManager`` (with MockBrain as
+        a fallback). They hang off ``server.app.state`` and are activated
+        via an event subscriber on ``MessageSent(role="user")``, so chat
+        works end-to-end without polling.
 
-        Seit 2026-04-21: Text-Chat nutzt denselben BrainManager wie die
-        Voice-Pipeline (Shared-Bus + Shared-History). Default-Provider ist
-        ``gemini`` aus ``jarvis.toml`` — umgeht das 429-Problem der
-        direkten OAuth-API-Calls.
+        Since 2026-04-21: text chat uses the same BrainManager as the voice
+        pipeline (shared bus + shared history). The default provider is
+        ``gemini`` from ``jarvis.toml`` — this sidesteps the 429 problem of
+        direct OAuth API calls.
 
-        Seit 2026-04-25: KEIN MockBrain-Fallback mehr im Chat-Pfad. Wenn
-        ``build_default_brain()`` fehlschlaegt, bleibt ``brain = None`` und
-        der Chat antwortet mit einer ehrlichen Setup-Anweisung statt mit
-        scripted Standard-Phrasen. User-Wunsch: kein "dummer Jarvis" ohne LLM.
+        Since 2026-04-25: NO MORE MockBrain fallback in the chat path. If
+        ``build_default_brain()`` fails, ``brain`` stays ``None`` and chat
+        replies with an honest setup instruction instead of scripted
+        canned phrases. User request: no "dumb Jarvis" without an LLM.
         """
         # NOTE: the heavy imports (build_default_brain → the brain graph,
         # WebServer → fastapi + every route schema, etc.) are DELIBERATELY NOT
@@ -815,7 +818,7 @@ class DesktopApp:
         self._server = server
         _db_mark("webserver_ctor")
 
-        # Core-State in den Loop haengen — thread-lokal, nur hier referenziert.
+        # Hang the core state off the loop — thread-local, referenced only here.
         supervisor = Supervisor(bus=server.bus)
         # Persist text chats to data/chats.db (next to sessions.db) so the Chats
         # conversation manager has durable, segmented history across restarts.
@@ -852,13 +855,13 @@ class DesktopApp:
                 "Latency log writer init failed — continuing without JSONL log.",
             )
 
-        # Frontier-Auto-Switch (Phase F.3, 2026-04-29). Hier VOR
-        # ``build_default_brain``, sonst zieht der Brain die alte
-        # jarvis.toml und der Switch wuerde erst beim naechsten Restart wirken.
-        # ``apply_frontier_resolution`` patcht die TOML auf Disk +
-        # mutiert ``self.cfg`` — der direkt darauf folgende Brain-Build
-        # liest dann die Frontier-Werte. STALE_MODELS-Filter im Resolver
-        # verhindert Downgrades wenn die API-Liste stale-IDs enthaelt.
+        # Frontier auto-switch (Phase F.3, 2026-04-29). This runs BEFORE
+        # ``build_default_brain``, otherwise the brain would pick up the old
+        # jarvis.toml and the switch would only take effect on the next
+        # restart. ``apply_frontier_resolution`` patches the TOML on disk +
+        # mutates ``self.cfg`` — the brain build right after this then reads
+        # the frontier values. The resolver's STALE_MODELS filter prevents
+        # downgrades when the API list contains stale IDs.
         try:
             from jarvis.brain.frontier_autoswitch import apply_frontier_resolution
             from jarvis.brain.frontier_resolver import FrontierResolver
@@ -874,31 +877,32 @@ class DesktopApp:
             from loguru import logger as _flog
             if switches:
                 _flog.info(
-                    "Frontier-Autoswitch: {} Modell(e) auf Frontier gehoben.",
+                    "Frontier autoswitch: {} model(s) raised to frontier.",
                     len(switches),
                 )
             else:
-                _flog.info("Frontier-Autoswitch: TOML bereits Frontier-konform.")
-        except Exception as exc:  # noqa: BLE001 — Resolver-Fail darf den Boot nicht stoppen.
+                _flog.info("Frontier autoswitch: TOML already frontier-compliant.")
+        except Exception as exc:  # noqa: BLE001 — a resolver failure must not stop boot.
             from loguru import logger as _flog
             _flog.opt(exception=exc).warning(
-                "Frontier-Autoswitch fehlgeschlagen — TOML-Defaults bleiben.",
+                "Frontier autoswitch failed — keeping TOML defaults.",
             )
 
         server.app.state.supervisor = supervisor
         server.app.state.chat_store = chat_store
         server.app.state.brain = None
-        # shell wird erst in run() gesetzt (nach webview.create_window);
-        # _focus_handler holt sich den Wert dynamisch.
+        # shell only gets set in run() (after webview.create_window);
+        # _focus_handler fetches the value dynamically.
         server.app.state.shell = None
         server.app.state.desktop_app = self
         # Local desktop run: the user IS at this machine, so reveal/open-with-
         # default-app target their own desktop. Enable the native file actions.
         server.app.state.native_file_actions = True
 
-        # BrainManager auf demselben Bus wie das UI — aber nicht mehr auf der
-        # sichtbaren Startstrecke. Der Webserver soll zuerst /api/health bedienen;
-        # erste Chat-/Drop-Interaktionen warten bounded auf den Hintergrund-Build.
+        # BrainManager on the same bus as the UI — but no longer on the
+        # visible startup path. The web server should serve /api/health
+        # first; the first chat/drop interactions wait, bounded, on the
+        # background build.
         brain_holder: dict[str, Any] = {"brain": None, "error": None}
         brain_ready = asyncio.Event()
 
@@ -912,20 +916,20 @@ class DesktopApp:
                     )
                     from loguru import logger as _bootlog
                     _bootlog.info(
-                        "Welle-4 Y bootstrap: Brain.set_mission_command_handlers "
-                        "verdrahtet (status/cancel via MissionManager)."
+                        "Wave-4 Y bootstrap: Brain.set_mission_command_handlers "
+                        "wired up (status/cancel via MissionManager)."
                     )
             except AttributeError:
                 from loguru import logger as _bootlog
                 _bootlog.warning(
-                    "MissionManager fehlt openclaw_status/-_cancel — Status-/Cancel-"
-                    "Voice-Patterns fallen auf den normalen Spawn-Pfad zurueck."
+                    "MissionManager is missing openclaw_status/-_cancel — status/"
+                    "cancel voice patterns fall back to the normal spawn path."
                 )
             except Exception as exc:  # noqa: BLE001
                 from loguru import logger as _bootlog
                 _bootlog.opt(exception=exc).warning(
-                    "Welle-4 Y bootstrap fehlgeschlagen — "
-                    "Status/Cancel-Handler bleiben unverdrahtet."
+                    "Wave-4 Y bootstrap failed — "
+                    "status/cancel handlers stay unwired."
                 )
 
             try:
@@ -936,7 +940,7 @@ class DesktopApp:
             except Exception as exc:  # noqa: BLE001
                 from loguru import logger as _bootlog
                 _bootlog.opt(exception=exc).warning(
-                    "WorkflowRunner.attach_brain nach Deferred-Build fehlgeschlagen."
+                    "WorkflowRunner.attach_brain failed after the deferred build."
                 )
 
             try:
@@ -950,7 +954,7 @@ class DesktopApp:
             except Exception as exc:  # noqa: BLE001
                 from loguru import logger as _bootlog
                 _bootlog.opt(exception=exc).warning(
-                    "TaskRunner-Brain-Wiring nach Deferred-Build fehlgeschlagen."
+                    "TaskRunner brain wiring failed after the deferred build."
                 )
 
         async def _build_brain_bg() -> None:
@@ -962,7 +966,7 @@ class DesktopApp:
                 server.app.state.brain = built
                 from loguru import logger
                 logger.info(
-                    "Text-Chat-Brain: {} aktiv (geteilt mit Voice-Pipeline).",
+                    "Text-chat brain: {} active (shared with the voice pipeline).",
                     getattr(built, "active_provider", "unknown"),
                 )
                 _wire_ready_brain(built)
@@ -983,7 +987,7 @@ class DesktopApp:
                 from loguru import logger
                 brain_holder["error"] = f"{type(exc).__name__}: {exc}"
                 logger.opt(exception=exc).error(
-                    "BrainManager-Build fehlgeschlagen — Chat antwortet mit Setup-Hinweis."
+                    "BrainManager build failed — chat replies with a setup hint."
                 )
             finally:
                 brain_ready.set()
@@ -1097,16 +1101,16 @@ class DesktopApp:
                     yield chunk
 
         async def _on_user_message(evt: MessageSent) -> None:
-            """Brain-Dispatcher: jedes user-turned MessageSent triggert generate.
+            """Brain dispatcher: every user-authored MessageSent triggers generate.
 
-            **Wichtig**: Wir filtern source_layer="chat" raus, weil
-            ChatStore beim Persistieren ein MessageSent publisht.
-            Ohne Filter waere das eine Infinite-Loop.
+            **Important**: we filter out source_layer="chat", because
+            ChatStore publishes a MessageSent when it persists a message.
+            Without that filter this would be an infinite loop.
 
-            Brain-API: ``async (text) -> str`` Callable. Wir machen
-            State-Transitions + Store-Write hier explizit. Wenn ``brain``
-            None ist (Build-Fehler), liefern wir eine ehrliche Setup-Message
-            — KEIN scripted Mock-Reply.
+            Brain API: an ``async (text) -> str`` callable. We do the
+            state transitions + store write explicitly here. When ``brain``
+            is None (build failure), we return an honest setup message
+            — NOT a scripted mock reply.
             """
             if evt.role != "user":
                 return
@@ -1153,11 +1157,11 @@ class DesktopApp:
             except Exception as exc:  # noqa: BLE001
                 # The pre-brain hook is defensive — a crash here must never
                 # block the chat path. Fall through to the brain.
-                logger.opt(exception=exc).debug("Skill-Pre-Hook (chat) skipped")
+                logger.opt(exception=exc).debug("Skill pre-hook (chat) skipped")
 
             if brain is None:
-                # Build-Fehler-Pfad: Systemfehler statt Jarvis-Antwort.
-                detail = brain_holder["error"] or "BrainManager nicht initialisiert"
+                # Build-failure path: a system error instead of a Jarvis reply.
+                detail = brain_holder["error"] or "BrainManager not initialized"
                 message = f"Brain unavailable: {detail}"
                 await server.bus.publish(
                     ErrorOccurred(
@@ -1303,10 +1307,10 @@ class DesktopApp:
         server.bus.subscribe(ShowWindowRequested, self._on_show_window_requested)
         self._install_focus_route(server)
 
-        # Workflow-System (Phase 6) — Store + Runner + Scheduler. Eigene
-        # DB-Datei (``workflows.sqlite``) neben der Memory-DB, damit
-        # Schema-Migrations hier unabhaengig moeglich sind. Failure ist nicht
-        # fatal: dann bleibt die Workflows-View leer (503 auf API-Calls).
+        # Workflow system (Phase 6) — store + runner + scheduler. Its own
+        # DB file (``workflows.sqlite``) next to the memory DB, so schema
+        # migrations here can happen independently. Failure is not fatal:
+        # the workflows view just stays empty (503 on API calls).
         try:
             from jarvis.workflows import (
                 WorkflowRunner,
@@ -1319,7 +1323,7 @@ class DesktopApp:
                 store=workflow_store,
                 bus=server.bus,
                 brain=None,
-                tool_registry=None,       # wird spaeter per attach_tools gesetzt
+                tool_registry=None,       # set later via attach_tools
                 tool_executor=None,
             )
             workflow_scheduler = WorkflowScheduler(
@@ -1335,7 +1339,7 @@ class DesktopApp:
         except Exception as exc:  # noqa: BLE001
             from loguru import logger
             logger.opt(exception=exc).warning(
-                "Workflow-System nicht startbar — Workflows-View bleibt leer."
+                "Workflow system could not start — the workflows view stays empty."
             )
             server.app.state.workflow_store = None
             server.app.state.workflow_runner = None
@@ -1343,9 +1347,9 @@ class DesktopApp:
             self._workflow_store = None
             self._workflow_scheduler = None
 
-        # MCP-Registry + Tool-Registry aufsetzen: Bootstrap-Specs + Overrides
-        # aus mcp.json. Enabled-Server werden nach server.start() im
-        # Hintergrund gestartet, deren Tools in die tool_registry eingetragen.
+        # Set up the MCP registry + tool registry: bootstrap specs + overrides
+        # from mcp.json. Enabled servers get started in the background after
+        # server.start(), and their tools get registered into the tool_registry.
         mcp_registry = MCPRegistry()
         mcp_registry.load_from_mcp_json()
         server.app.state.mcp_registry = mcp_registry
@@ -1415,9 +1419,9 @@ class DesktopApp:
                         "BrainToolsChanged publish failed after MCP autostart",
                     )
 
-        # Conductor (OSS-Tool im selben Monorepo) — eigene Store+Runner+
-        # Scheduler, Port-less, teilt sich nur den Jarvis-Event-Loop und
-        # Jarvis' FastAPI-Server als Embed-Host.
+        # Conductor (an OSS tool in the same monorepo) — its own store +
+        # runner + scheduler, port-less, only shares the Jarvis event loop
+        # and Jarvis's FastAPI server as its embed host.
         try:
             from conductor import ConductorStore as _CStore
             from conductor import Runner as _CRunner
@@ -1434,7 +1438,7 @@ class DesktopApp:
         except Exception as exc:  # noqa: BLE001
             from loguru import logger
             logger.opt(exception=exc).warning(
-                "Conductor-Setup fehlgeschlagen — Conductor-View bleibt leer."
+                "Conductor setup failed — the Conductor view stays empty."
             )
             server.app.state.conductor_store = None
             server.app.state.conductor_runner = None
@@ -1443,7 +1447,7 @@ class DesktopApp:
             self._conductor_scheduler = None
 
         async def _bootstrap_conductor() -> None:
-            """Conductor-Store init + Seed-Jobs + Scheduler-Start."""
+            """Conductor store init + seed jobs + scheduler start."""
             from loguru import logger as _logger
             store = server.app.state.conductor_store
             scheduler = server.app.state.conductor_scheduler
@@ -1454,22 +1458,22 @@ class DesktopApp:
                 await store.cleanup_interrupted_runs()
                 from conductor import ensure_seed_jobs
                 added = await ensure_seed_jobs(store)
-                _logger.info("Conductor-Store ready ({} Seed-Jobs neu).", added)
+                _logger.info("Conductor store ready ({} new seed job(s)).", added)
                 if scheduler is not None:
                     scheduler.start()
-                    _logger.info("Conductor-Scheduler gestartet.")
+                    _logger.info("Conductor scheduler started.")
             except Exception as exc:  # noqa: BLE001
                 _logger.opt(exception=exc).warning(
-                    "Conductor-Bootstrap fehlgeschlagen"
+                    "Conductor bootstrap failed"
                 )
 
         async def _bootstrap_workflows() -> None:
-            """Store-Init + Seed-Workflows + Scheduler-Start.
+            """Store init + seed workflows + scheduler start.
 
-            Fire-and-Forget aus dem Backend-Loop — Fehler werden geloggt aber
-            nicht propagiert, damit die restliche App startet. Ohne Brain-
-            Callable laeuft der Scheduler trotzdem (nur brain_prompt-Steps
-            wuerden beim Run fehlschlagen).
+            Fire-and-forget from the backend loop — errors are logged but
+            not propagated, so the rest of the app still boots. Without a
+            brain callable, the scheduler still runs (only brain_prompt
+            steps would fail during a run).
             """
             from loguru import logger as _logger
 
@@ -1482,19 +1486,19 @@ class DesktopApp:
                 await store.cleanup_interrupted_runs()
                 from jarvis.workflows import ensure_seed_workflows
                 added = await ensure_seed_workflows(store)
-                _logger.info("Workflow-Store ready ({} Seed-Workflows neu).",
+                _logger.info("Workflow store ready ({} new seed workflow(s)).",
                              added)
-                # Tool-Registry-Attach wuerde ``tool_call``-Steps aktivieren,
-                # erfordert aber einen ToolExecutor-Adapter mit Risk-Tier-
-                # Integration. MVP: wir lassen den Runner ohne Tools laufen —
-                # die Seed-Workflows nutzen brain_prompt/harness_dispatch/speak,
-                # dafuer braucht er keinen ToolExecutor.
+                # Attaching the tool registry would activate ``tool_call``
+                # steps, but that requires a ToolExecutor adapter with
+                # risk-tier integration. MVP: we run the runner without
+                # tools — the seed workflows use brain_prompt/harness_dispatch/
+                # speak, which don't need a ToolExecutor.
                 if scheduler is not None:
                     scheduler.start()
-                    _logger.info("Workflow-Scheduler gestartet.")
+                    _logger.info("Workflow scheduler started.")
             except Exception as exc:  # noqa: BLE001
                 _logger.opt(exception=exc).warning(
-                    "Workflow-Bootstrap fehlgeschlagen",
+                    "Workflow bootstrap failed",
                 )
 
         try:
@@ -1513,7 +1517,7 @@ class DesktopApp:
             # backend, so it must not wait ~15-20 s for subsystems it never uses.
             async def _start_overlay_bg() -> None:
                 try:
-                    # Phase 9.8: Overlay-Subprocess starten wenn [overlay].enabled=true.
+                    # Phase 9.8: start the overlay subprocess when [overlay].enabled=true.
                     # Optional package: when it is not installed, desktop boot still serves.
                     from jarvis.overlay.integration import start_overlay
 
@@ -1522,16 +1526,16 @@ class DesktopApp:
                     from loguru import logger as _overlay_logger
                     if exc.name == "overlay":
                         _overlay_logger.debug(
-                            "Overlay-Bootstrap skipped: optional overlay package not installed."
+                            "Overlay bootstrap skipped: optional overlay package not installed."
                         )
                     else:
                         _overlay_logger.opt(exception=exc).warning(
-                            "Overlay-Bootstrap fehlgeschlagen."
+                            "Overlay bootstrap failed."
                         )
                 except Exception as exc:  # noqa: BLE001
                     from loguru import logger as _overlay_logger
                     _overlay_logger.opt(exception=exc).warning(
-                        "Overlay-Bootstrap fehlgeschlagen."
+                        "Overlay bootstrap failed."
                     )
 
             def _log_speech_and_orb_done(task: asyncio.Task) -> None:
@@ -1600,7 +1604,7 @@ class DesktopApp:
                     await server.start(start_serving=False)
                     bootstrap.set_app(server.app)
                     _db_mark("server_start")
-                    # Erst nach erfolgreichem start() ist der Port wirklich belegt.
+                    # The port is only really bound after start() succeeds.
                     _write_meta(self.cfg.ui.admin_api_port, os.getpid())
                 except Exception as exc:  # noqa: BLE001 — never kill the backend loop
                     from loguru import logger as _slog
@@ -1608,7 +1612,7 @@ class DesktopApp:
                         "Heavy backend init (server.start) failed."
                     )
                 loop.create_task(_build_brain_bg(), name="brain-build")
-                # MCP-Autostart als Fire-and-Forget-Task — blockt Backend-Ready nicht.
+                # MCP autostart as a fire-and-forget task — doesn't block backend-ready.
                 loop.create_task(_start_enabled_mcps())
                 loop.create_task(_bootstrap_workflows(), name="workflow-bootstrap")
                 loop.create_task(_bootstrap_conductor(), name="conductor-bootstrap")
@@ -1949,22 +1953,22 @@ class DesktopApp:
         brain: Any,
         server: Any = None,
     ) -> None:
-        """Startet Orb-Overlay (Tk-Daemon-Thread) + Speech-Pipeline (Task im Loop).
+        """Starts the orb overlay (Tk daemon thread) + speech pipeline (a loop task).
 
-        Fehlschlag ist nicht fatal: fehlendes Mic, keine API-Keys, geblockte
-        Audio-Devices — die Desktop-App laeuft ohne Voice weiter. Abschaltbar
-        via ENV ``JARVIS_VOICE=0``.
+        Failure is not fatal: a missing mic, no API keys, blocked audio
+        devices — the desktop app keeps running without voice. Can be
+        disabled via ENV ``JARVIS_VOICE=0``.
 
-        Architektur entspricht ``jarvis.speech.watchdog``: selber ``bus`` +
-        ``supervisor``, damit ``SystemStateChanged`` vom Orb empfangen wird.
+        Architecture matches ``jarvis.speech.watchdog``: same ``bus`` +
+        ``supervisor``, so ``SystemStateChanged`` gets received by the orb.
 
-        ``brain`` ist die geteilte BrainManager-Instanz (oder MockBrain-Fallback)
-        aus ``_run_backend`` — Text-Chat und Voice teilen sich History und
-        Provider-State.
+        ``brain`` is the shared BrainManager instance (or MockBrain fallback)
+        from ``_run_backend`` — text chat and voice share history and
+        provider state.
         """
         if os.environ.get("JARVIS_VOICE", "").strip().lower() in ("0", "off", "false"):
             from loguru import logger
-            logger.info("Voice-Stack per JARVIS_VOICE=0 deaktiviert.")
+            logger.info("Voice stack disabled via JARVIS_VOICE=0.")
             return
 
         # On-screen overlay in its own Tk daemon thread — the bus bridge reacts
@@ -2056,12 +2060,12 @@ class DesktopApp:
             from jarvis.skills.runner import SkillRunner
             from jarvis.skills.skill_context import SkillContext, set_skill_context
 
-            # Bug-Fix 2026-05-09: NICHT eine zweite SkillRegistry erstellen.
-            # Der WebServer (server.py:_setup_skill_registry) hat bereits
-            # eine angelegt + ihren Watchdog gestartet. Eine zweite Instanz
-            # hier hatte einen separaten Cache, der nie reloaded wurde —
-            # SKILL.md-Edits wirkten dann nicht. Stattdessen: die existierende
-            # Registry aus app.state wiederverwenden.
+            # Bug fix 2026-05-09: do NOT create a second SkillRegistry.
+            # The WebServer (server.py:_setup_skill_registry) already
+            # created one + started its watchdog. A second instance here
+            # had a separate cache that never got reloaded — SKILL.md
+            # edits then had no effect. Instead: reuse the existing
+            # registry from app.state.
             skills_root = ensure_user_skills_dir()
             skill_registry = None
             if server is not None and getattr(server, "app", None) is not None:
@@ -2076,12 +2080,11 @@ class DesktopApp:
                 )
                 skill_registry.reload_sync()
 
-            # Mini-Tool-Registry fuer den SkillRunner — laedt alle
-            # Plugin-Tools, die ohne Args instantiierbar sind. Tools mit
-            # komplexen Dependencies (dispatch-to-harness, spawn-worker)
-            # werden geskipped; die sind eh OpenClaw-Spezialitaet, nicht
-            # fuer Skill-Bodies gedacht. ``remember`` und Konsorten passen
-            # alle in dieses Schema.
+            # Mini tool registry for the SkillRunner — loads every plugin
+            # tool that can be instantiated without args. Tools with
+            # complex dependencies (dispatch-to-harness, spawn-worker) are
+            # skipped; those are OpenClaw specialties anyway, not meant for
+            # skill bodies. ``remember`` and friends all fit this schema.
             from importlib.metadata import entry_points as _eps
 
             skill_tool_registry: dict[str, Any] = {}
@@ -2093,7 +2096,7 @@ class DesktopApp:
                     if _name and hasattr(_inst, "execute"):
                         skill_tool_registry[_name] = _inst
                 except Exception:
-                    continue  # Tool braucht Args — fuer Skills nicht relevant.
+                    continue  # Tool needs args — not relevant for skills.
 
             skill_runner = SkillRunner(
                 registry=skill_registry,
@@ -2105,19 +2108,19 @@ class DesktopApp:
             )
             from loguru import logger
             logger.info(
-                "SkillContext aktiv ({} Skills geladen aus {}).",
+                "SkillContext active ({} skill(s) loaded from {}).",
                 len(skill_registry.list()), skills_root,
             )
         except Exception as exc:  # noqa: BLE001
             from loguru import logger
             logger.opt(exception=exc).warning(
-                "SkillContext-Setup fehlgeschlagen — Pipeline laeuft ohne Skill-Hook."
+                "SkillContext setup failed — the pipeline runs without the skill hook."
             )
 
-        # Pipeline-Deps: STT, TTS — Brain wird vom Caller (Text-Chat-Setup)
-        # durchgereicht, damit Voice und Chat sich Provider + History teilen.
-        # Wenn brain ein MockBrain ist (Fallback), funktioniert Voice-TTS auch,
-        # aber ohne echten LLM-Output → erkennbar an scripted Replies.
+        # Pipeline deps: STT, TTS — brain is passed through by the caller
+        # (text-chat setup) so voice and chat share provider + history.
+        # If brain is a MockBrain (fallback), voice TTS still works, but
+        # without real LLM output → recognizable by its scripted replies.
         try:
             from jarvis.plugins.tts import build_tts_from_config
             from jarvis.plugins.wake.openwakeword_provider import (
@@ -2227,25 +2230,27 @@ class DesktopApp:
             # wake-model build started above.
             tts = build_tts_from_config(self.cfg.tts)
             _t_tts = time.perf_counter()
-            # SpeechPipeline.brain_callback braucht Callable[[str], Awaitable[str]].
-            # BrainManager und Echo-/Gemini-Fallback erfüllen das via __call__.
-            # MockBrain erfüllt es nicht (hat nur respond()) → eigener Voice-Brain.
+            # SpeechPipeline.brain_callback needs Callable[[str], Awaitable[str]].
+            # BrainManager and the Echo/Gemini fallback satisfy that via __call__.
+            # MockBrain does not (it only has respond()) → gets its own voice brain.
             voice_brain: Any = brain
             if not callable(voice_brain) or hasattr(voice_brain, "respond"):
                 from loguru import logger
 
                 from jarvis.brain.factory import build_default_brain as _bdb
                 logger.info(
-                    "Shared brain ist nicht direkt callable — eigener Voice-Brain."
+                    "Shared brain is not directly callable — building a dedicated voice brain."
                 )
                 voice_brain = _bdb(tier="router")
-            # output_device aus Config durchreichen — sonst nutzt AudioPlayer
-            # System-Default und das ist auf Windows oft MME idx=3 mit
-            # Mono-auf-8-Channel-Routing-Bug (User hoert dann nichts).
-            # Permanent-Vision: der Voice-Brain (Router-Tier) haengt seinen
-            # VisionContextProvider an `_vision_provider`. Ohne Durchreichen
-            # bleibt der Background-Loop ungestartet und jeder Router-Turn
-            # kriegt `current()=None` → Silent-Failure (kein Bild im Prompt).
+            # Pass output_device through from config — otherwise AudioPlayer
+            # falls back to the system default, which on Windows is often
+            # MME idx=3 with a mono-to-8-channel routing bug (the user then
+            # hears nothing).
+            # Permanent vision: the voice brain (router tier) hangs its
+            # VisionContextProvider off `_vision_provider`. Without passing
+            # it through, the background loop never starts and every
+            # router turn gets `current()=None` → a silent failure (no
+            # image in the prompt).
             voice_vision = getattr(voice_brain, "_vision_provider", None)
             # Pre-Thinking-Ack Flash-Brain: builds an AckGenerator if
             # [ack_brain].enabled = true in jarvis.toml, otherwise returns
@@ -2328,10 +2333,10 @@ class DesktopApp:
                 # "Jarvis" false-fire path without pendulumming the OWW
                 # threshold (BUG-009).
                 require_hey_prefix=self.cfg.trigger.require_hey_prefix,
-                # User-Mandat 2026-05-18: Single-Turn-pro-Wake. ``single_turn_mode``
-                # in jarvis.toml ist die kanonische Quelle; ``continue_listening``
-                # ist hier ihr negiertes Gegenstueck — wenn der User irgendwann
-                # wieder Konversationsmodus will, kippt er den Toml-Eintrag.
+                # User mandate 2026-05-18: single turn per wake. ``single_turn_mode``
+                # in jarvis.toml is the canonical source; ``continue_listening``
+                # is its negated counterpart here — if the user ever wants
+                # conversation mode again, they flip the TOML entry.
                 continue_listening_after_response=(
                     not self.cfg.trigger.single_turn_mode
                 ),
@@ -2369,14 +2374,14 @@ class DesktopApp:
                 (_t_ctor - _t_stt) * 1000.0,
                 (_t_ctor - _t_build0) * 1000.0,
             )
-            # Pipeline-Referenz fuer Live-Provider-Switches (TTS) auf app.state
-            # legen — der /api/tts/switch-Endpoint baut bei einem UI-Wechsel
-            # einen neuen TTS-Provider und ruft pipeline.set_tts() auf, ohne
-            # die ganze Pipeline neu zu starten (Whisper-Reload waere teuer).
-            # Hinweis: ``server`` ist hier nicht im Scope (Methoden-Signatur
-            # nimmt nur loop/bus/supervisor/brain) — wir nutzen ``self._server``,
-            # das ``_run_backend`` direkt nach ``WebServer(...)``-Construction
-            # zuweist.
+            # Put the pipeline reference for live provider switches (TTS) on
+            # app.state — the /api/tts/switch endpoint builds a new TTS
+            # provider on a UI change and calls pipeline.set_tts() without
+            # restarting the whole pipeline (a Whisper reload would be
+            # expensive). Note: ``server`` isn't in scope here (the method
+            # signature only takes loop/bus/supervisor/brain) — we use
+            # ``self._server``, which ``_run_backend`` assigns right after
+            # the ``WebServer(...)`` construction.
             if self._server is not None:
                 self._server.app.state.speech_pipeline = pipeline
             # App-Control: expose the live SpeechPipeline so the
@@ -2393,23 +2398,23 @@ class DesktopApp:
             from loguru import logger
 
             def _on_pipeline_done(task: asyncio.Task) -> None:
-                # Kritisch bei pythonw.exe: ohne dieses Callback stirbt der
-                # Speech-Task stumm. "Task exception was never retrieved"
-                # kommt erst beim GC und ist im Windowed-Mode unsichtbar.
+                # Critical on pythonw.exe: without this callback the speech
+                # task dies silently. "Task exception was never retrieved"
+                # only surfaces at GC time and is invisible in windowed mode.
                 if task.cancelled():
-                    logger.info("Speech-Pipeline sauber gecancelt.")
+                    logger.info("Speech pipeline cancelled cleanly.")
                     return
                 exc = task.exception()
                 if exc is not None:
                     logger.opt(exception=exc).error(
-                        "Speech-Pipeline gestorben — Voice offline bis Restart."
+                        "Speech pipeline died — voice offline until restart."
                     )
 
             self._pipeline_task.add_done_callback(_on_pipeline_done)
             # Log the ACTUAL configured wake word, not a hardcoded "Hey Jarvis"
             # (the custom phrase, e.g. "Luca", or the openWakeWord keyword).
             logger.info(
-                "Speech-Pipeline gestartet — Wake: {!r}.",
+                "Speech pipeline started — wake: {!r}.",
                 wake_plan.phrase or wake_plan.oww_keyword or "?",
             )
             if getattr(self, "_bp", False):
@@ -2546,16 +2551,16 @@ class DesktopApp:
                 )
 
     def _install_focus_route(self, server: WebServer) -> None:
-        """Ersetzt den Placeholder ``/api/window/focus`` durch echten Call.
+        """Replaces the placeholder ``/api/window/focus`` with a real call.
 
-        server.py registriert im Constructor einen No-Op-Handler — wir
-        entfernen ihn aus ``app.routes`` und registrieren unseren eigenen
-        daraufhin neu. Das ist vor ``server.start()`` sicher, weil noch keine
-        Requests geroutet werden.
+        server.py registers a no-op handler in its constructor — we remove
+        it from ``app.routes`` and register our own in its place. This is
+        safe before ``server.start()`` because no requests are being
+        routed yet.
         """
         app = server.app
-        # FastAPI.routes ist eine Property ohne Setter — in-place filtern statt
-        # neu zuweisen. app.router.routes ist die zugrundeliegende Liste.
+        # FastAPI.routes is a property without a setter — filter in place
+        # instead of reassigning. app.router.routes is the underlying list.
         app.router.routes[:] = [
             r
             for r in app.router.routes
@@ -2568,8 +2573,8 @@ class DesktopApp:
             if desktop is None or desktop._window is None:
                 return {"ok": False, "reason": "no_window"}
             try:
-                # pywebview-Window-Methoden sind thread-safe — sie dispatchen
-                # intern an den GUI-Thread.
+                # pywebview window methods are thread-safe — they dispatch
+                # internally to the GUI thread.
                 desktop._window.show()
                 desktop._window.restore()
                 desktop._window_visible = True
@@ -2580,26 +2585,27 @@ class DesktopApp:
             except Exception as exc:  # noqa: BLE001
                 return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
 
-    # ---- WebView-Hooks -----------------------------------------------------
+    # ---- WebView hooks -------------------------------------------------------
 
     def _inject_token(self, window: Any) -> None:
-        """Setzt ``window.__JARVIS_TOKEN`` im Frontend via ``evaluate_js``.
+        """Sets ``window.__JARVIS_TOKEN`` in the frontend via ``evaluate_js``.
 
-        Aufgerufen von ``webview.start(func=..., args=...)`` sobald das
-        Fenster bereit ist. Muss robust gegen Reloads sein — das Frontend
-        liest das Token beim ersten WS-Connect.
+        Called by ``webview.start(func=..., args=...)`` once the window is
+        ready. Must be robust against reloads — the frontend reads the
+        token on its first WS connect.
 
-        Zusätzlich wird hier das Taskbar-/Titlebar-Icon gesetzt. pywebview
-        exposed auf Windows keinen Icon-Parameter — HWND via FindWindowW
-        (unique Title reicht durch Single-Instance-Lock).
+        This is also where the taskbar/titlebar icon gets set. pywebview
+        does not expose an icon parameter on Windows — we go through the
+        HWND via FindWindowW (a unique title is guaranteed by the
+        single-instance lock).
         """
         token_literal = json.dumps(self.session_token)
         js = f"window.__JARVIS_TOKEN = {token_literal};"
         try:
             window.evaluate_js(js)
         except Exception:  # noqa: BLE001
-            # Kein Fatal-Error — Frontend kann Token ueber ``?token=`` URL
-            # oder /api/ui/bootstrap holen als Fallback.
+            # Not a fatal error — the frontend can fall back to fetching the
+            # token via the ``?token=`` URL or /api/ui/bootstrap.
             pass
 
         try:
@@ -2612,19 +2618,19 @@ class DesktopApp:
         except Exception:  # noqa: BLE001
             pass
 
-    # ---- Backend-Ready-Check ----------------------------------------------
+    # ---- Backend-ready check --------------------------------------------------
 
     def _wait_for_backend(self, timeout_s: float = 45.0) -> bool:
-        """Pollt ``/api/health`` bis 200 kommt oder Timeout abgelaufen ist.
+        """Polls ``/api/health`` until it returns 200 or the timeout expires.
 
-        45s Default — Whisper/VAD-Modelle werden bei erster Initialisierung
-        geladen und blockieren den Event-Loop synchron für bis zu ~20s.
+        45s default — Whisper/VAD models are loaded on first initialization
+        and block the event loop synchronously for up to ~20s.
         """
         import httpx
 
         url = f"http://127.0.0.1:{self.cfg.ui.admin_api_port}/api/health"
         start = time.monotonic()
-        # 100 ms Startpuffer damit der Thread den Loop aufsetzen kann.
+        # 100 ms startup buffer so the thread can set up the loop.
         time.sleep(0.05)
         while time.monotonic() - start < timeout_s:
             try:
@@ -2636,10 +2642,10 @@ class DesktopApp:
             time.sleep(0.25)
         return False
 
-    # ---- Main-Entry --------------------------------------------------------
+    # ---- Main entry point ------------------------------------------------------
 
     def run(self) -> int:
-        """Blockt bis der User das Fenster schliesst. Rueckgabe = Exit-Code.
+        """Blocks until the user closes the window. Return value = exit code.
 
         Classic boot: start the backend thread here, then run the window. The
         fast-boot launcher path starts the backend thread itself (so the
@@ -2660,7 +2666,7 @@ class DesktopApp:
         import webview  # type: ignore[import-not-found]
 
         if not self._wait_for_backend():
-            sys.stderr.write("Backend startete nicht in 45s — Abbruch.\n")
+            sys.stderr.write("Backend did not start within 45s — aborting.\n")
             return self.shutdown() or 2
 
         self._window = webview.create_window(
@@ -2675,31 +2681,31 @@ class DesktopApp:
         )
         self._window_visible = True
 
-        # Close-Button = Minimize-to-Tray (User-Entscheidung 2026-04-20).
-        # `closing`-Callback gibt False zurueck → pywebview bricht Destroy ab.
+        # Close button = minimize-to-tray (user decision 2026-04-20).
+        # The `closing` callback returns False → pywebview aborts the destroy.
         # Extracted to a method so the tray-minimise + overlay-clear contract
         # is unit-testable (test_desktop_minimize_to_tray_overlay.py).
         self._window.events.closing += self._on_window_closing
 
-        # Tray + Bridge zum Main-Thread-Window starten. Daemon-Thread, damit
-        # er beim Hauptprogramm-Exit nicht am Leben bleibt.
+        # Start the tray + bridge to the main-thread window. A daemon
+        # thread, so it doesn't stay alive when the main program exits.
         self._start_tray_and_bridge()
 
-        # Taskbar-Icon-Setter als parallelen Polling-Thread starten. Pywebview
-        # ruft ``func`` (``_inject_token``) erst nach dem ``shown``-Event auf —
-        # zu dem Zeitpunkt hat Windows den Taskbar-Eintrag schon mit dem
-        # pythonw.exe-Default-Icon gerendert und cached die Zuordnung. Wir
-        # pollen FindWindowW alle 50 ms ab und setzen WM_SETICON, sobald das
-        # HWND existiert. Das ist der frueheste Zeitpunkt, an dem die Taskbar
-        # das Jarvis-Icon mitbekommt.
+        # Start the taskbar icon setter as a parallel polling thread.
+        # pywebview only calls ``func`` (``_inject_token``) after the
+        # ``shown`` event — by then Windows has already rendered the
+        # taskbar entry with the pythonw.exe default icon and cached that
+        # mapping. We poll FindWindowW every 50 ms and set WM_SETICON as
+        # soon as the HWND exists. That's the earliest point at which the
+        # taskbar can pick up the Jarvis icon.
         self._start_icon_setter_thread()
 
         gui = "edgechromium" if sys.platform == "win32" else None
         debug = os.environ.get("JARVIS_WEBVIEW_DEBUG") == "1"
 
-        # webview.start blockt im Main-Thread. func/args wird nach dem ersten
-        # Load aufgerufen (pywebview-intern), sodass evaluate_js auf einen
-        # DOM-fertigen Context trifft.
+        # webview.start blocks the main thread. func/args gets called after
+        # the first load (pywebview-internal), so evaluate_js hits a
+        # DOM-ready context.
         webview.start(
             func=self._inject_token,
             args=(self._window,),
@@ -2709,14 +2715,14 @@ class DesktopApp:
         return self.shutdown()
 
     def _start_icon_setter_thread(self) -> None:
-        """Polling-Thread: setzt Taskbar-/Titlebar-Icon sobald HWND existiert.
+        """Polling thread: sets the taskbar/titlebar icon once the HWND exists.
 
-        Hintergrund: pywebview's ``func``-Callback feuert erst nach dem
-        ``shown``-Event. Bis dahin ist die Taskbar-Zuordnung schon mit dem
-        Default-Process-Icon (Python-Logo) initialisiert. Wir pollen
-        ``FindWindowW`` parallel zu ``webview.start`` (das im Main-Thread
-        blockt) und rufen ``set_window_icon_by_title`` so frueh wie moeglich.
-        Daemon-Thread, max. 5 s, dann gibt der Thread auf.
+        Background: pywebview's ``func`` callback only fires after the
+        ``shown`` event. Until then, the taskbar mapping is already
+        initialized with the default process icon (the Python logo). We
+        poll ``FindWindowW`` in parallel with ``webview.start`` (which
+        blocks the main thread) and call ``set_window_icon_by_title`` as
+        early as possible. A daemon thread, max. 5 s, then it gives up.
         """
         if sys.platform != "win32":
             return
@@ -2754,14 +2760,14 @@ class DesktopApp:
                     if first_set_at is None:
                         first_set_at = time.monotonic()
                         logger.debug(
-                            "Taskbar-Icon gesetzt; re-arming gegen WebView2-Override."
+                            "Taskbar icon set; re-arming against WebView2 override."
                         )
                     elif time.monotonic() - first_set_at > 8.0:
                         return
                 time.sleep(0.3)
             if first_set_at is None:
                 logger.warning(
-                    "Taskbar-Icon-Setter Timeout — Fenster '{}' nicht gefunden.",
+                    "Taskbar icon setter timeout — window '{}' not found.",
                     WINDOW_TITLE,
                 )
 
@@ -2769,16 +2775,16 @@ class DesktopApp:
             target=_poll, name="jarvis-icon-setter", daemon=True
         ).start()
 
-    # ---- Tray -------------------------------------------------------------
+    # ---- Tray -----------------------------------------------------------------
 
     def _start_tray_and_bridge(self) -> None:
-        """Startet den JarvisTray und einen Daemon-Thread, der Tray-Commands
-        auf pywebview-Window-Operations uebersetzt.
+        """Starts the JarvisTray and a daemon thread that translates tray
+        commands into pywebview window operations.
 
-        Warum eine Bridge statt direktem Callback? pystray-Callbacks laufen im
-        pystray-Thread; pywebview-Methoden zu callen ist zwar dokumentiert-
-        thread-safe, aber ein dedizierter Bridge-Thread macht das Ownership
-        explizit und erlaubt spaeter Back-Pressure/Debounce.
+        Why a bridge instead of a direct callback? pystray callbacks run
+        on the pystray thread; calling pywebview methods is documented as
+        thread-safe, but a dedicated bridge thread makes the ownership
+        explicit and allows for back-pressure/debounce later.
         """
         from jarvis.ui.tray import JarvisState, JarvisTray
 
@@ -2955,16 +2961,16 @@ class DesktopApp:
     # ---- Shutdown ----------------------------------------------------------
 
     def shutdown(self) -> int:
-        """Idempotent. Stoppt Server + Backend-Loop, cleant Meta-File."""
+        """Idempotent. Stops the server + backend loop, cleans the meta file."""
         if self._shutdown_done:
             return 0
         self._shutdown_done = True
         self._window_visible = False
 
-        # Orb-Overlay zuerst verstecken — der Event-Pfad (Pipeline → Supervisor
-        # → Bus → OrbBridge) erreicht die Bridge beim harten Loop-Stop nicht
-        # mehr zuverlaessig. Direktes hide() garantiert, dass das Desktop-Icon
-        # oben rechts verschwindet bevor der Prozess terminiert.
+        # Hide the orb overlay first — the event path (pipeline → supervisor
+        # → bus → OrbBridge) doesn't reliably reach the bridge anymore during a
+        # hard loop stop. A direct hide() guarantees the desktop icon
+        # top-right disappears before the process terminates.
         if self._orb is not None:
             try:
                 # Prefer stop() when the surface has it (jarvis bar:
@@ -3023,8 +3029,8 @@ class DesktopApp:
         loop = self._backend_loop
         server = self._server
         if loop is not None and server is not None and loop.is_running():
-            # Pipeline-Task canceln — sonst haengt HotkeyTrigger im Loop fest
-            # und server.stop() kommt nie dran.
+            # Cancel the pipeline task — otherwise HotkeyTrigger stays stuck in the loop
+            # and server.stop() never gets a turn.
             if self._pipeline_task is not None and not self._pipeline_task.done():
                 try:
                     loop.call_soon_threadsafe(self._pipeline_task.cancel)
@@ -3049,8 +3055,8 @@ class DesktopApp:
                     loop.call_soon_threadsafe(_wml.set)
                 except Exception:  # noqa: BLE001
                     pass
-            # Workflow-Scheduler + Store sauber herunterfahren — verhindert
-            # dass ein cron-Tick mitten im Shutdown noch einen Run triggert.
+            # Cleanly shut down the workflow scheduler + store — prevents
+            # a cron tick from still triggering a run mid-shutdown.
             wf_scheduler = getattr(self, "_workflow_scheduler", None)
             wf_store = getattr(self, "_workflow_store", None)
             cd_scheduler = getattr(self, "_conductor_scheduler", None)
@@ -3075,7 +3081,7 @@ class DesktopApp:
                     ).result(timeout=2.0)
                 except Exception:  # noqa: BLE001
                     pass
-            # PTY-Sessions sauber schliessen — sonst bleiben Zombies
+            # Cleanly close PTY sessions — otherwise zombies remain
             async def _pty_cleanup() -> None:
                 try:
                     srv = self._server
@@ -3121,8 +3127,8 @@ class DesktopApp:
         if self._backend_thread is not None:
             self._backend_thread.join(timeout=3.0)
 
-        # Tray zuletzt — pystray.stop() verhindert dass Tray-Icon nach Prozess-
-        # Ende noch in der Taskbar haengt.
+        # Tray last — pystray.stop() prevents the tray icon from lingering
+        # in the taskbar after the process ends.
         if self._tray is not None:
             try:
                 self._tray.stop()
@@ -3139,17 +3145,17 @@ class DesktopApp:
 
 
 # ---------------------------------------------------------------------------
-# CLI-Entry
+# CLI entry point
 # ---------------------------------------------------------------------------
 
 
 def main() -> int:
-    """CLI-Entry fuer ``python -m jarvis.ui.desktop_app``."""
+    """CLI entry point for ``python -m jarvis.ui.desktop_app``."""
     try:
         lock = acquire_single_instance_lock()
     except SingleInstanceError as exc:
         sys.stderr.write(f"{exc}\n")
-        # Bestehende Instanz in den Vordergrund holen — best-effort.
+        # Bring the existing instance to the front — best-effort.
         focus_existing_instance_robust()
         return 3
 

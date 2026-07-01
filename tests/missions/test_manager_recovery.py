@@ -1,4 +1,4 @@
-"""Tests fuer MissionManager Lifecycle + Recovery (Crash-Restart-Szenario)."""
+"""Tests for MissionManager lifecycle + recovery (crash-restart scenario)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -104,7 +104,7 @@ async def test_transition_illegal_raises(manager: MissionManager) -> None:
 
 
 async def test_transition_unknown_mission_raises(manager: MissionManager) -> None:
-    with pytest.raises(KeyError, match="nicht gefunden"):
+    with pytest.raises(KeyError, match="not found"):
         await manager.transition_state(
             "00000000-0000-0000-0000-000000000000",
             MissionState.RUNNING,
@@ -171,8 +171,8 @@ async def test_recovery_emits_two_events_per_mission(tmp_missions_db: Path) -> N
     m2.bus.subscribe_all(collect)
     await m2.start(recover=True, stale_after_ms=0)  # primary restart: sweep immediately
     try:
-        # Recovery hat 2 weitere Events emittiert (StateChange + Failed)
-        # Aber: collect war erst NACH start() registriert — deshalb pruefen wir die DB
+        # Recovery emitted 2 more events (StateChange + Failed)
+        # But: collect was only registered AFTER start() — so we check the DB instead
         post = await m2.store.events_for_mission(mid)
         assert len(post) == 4
         types = [e.payload.event_type for e in post]
@@ -182,13 +182,13 @@ async def test_recovery_emits_two_events_per_mission(tmp_missions_db: Path) -> N
             "MissionStateChanged",  # RUNNING -> FAILED (recovery)
             "MissionFailed",
         ]
-        # letztes State-Change-Event referenziert RUNNING -> FAILED
+        # last state-change event references RUNNING -> FAILED
         sc = post[2].payload
         assert isinstance(sc, MissionStateChanged)
         assert sc.from_state == "RUNNING"
         assert sc.to_state == "FAILED"
         assert sc.reason == "crash_recovery"
-        # MissionFailed traegt den last_state
+        # MissionFailed carries the last_state
         mf = post[3].payload
         assert isinstance(mf, MissionFailed)
         assert mf.last_state == "RUNNING"
@@ -198,7 +198,7 @@ async def test_recovery_emits_two_events_per_mission(tmp_missions_db: Path) -> N
 
 
 async def test_recovery_publishes_to_bus(tmp_missions_db: Path) -> None:
-    """Recovery-Events landen auf dem Bus eines neu erstellten MissionManager."""
+    """Recovery events land on the bus of a newly created MissionManager."""
     m1 = MissionManager(tmp_missions_db)
     await m1.start()
     mid = await m1.dispatch(prompt="x")
@@ -215,7 +215,7 @@ async def test_recovery_publishes_to_bus(tmp_missions_db: Path) -> None:
     m2 = MissionManager(tmp_missions_db, bus=bus)
     await m2.start(recover=True, stale_after_ms=0)  # primary restart: sweep immediately
     try:
-        # Beim start wurden 2 Recovery-Events publiziert
+        # 2 recovery events were published on start
         types = [e.payload.event_type for e in received]
         assert "MissionStateChanged" in types
         assert "MissionFailed" in types
@@ -224,7 +224,7 @@ async def test_recovery_publishes_to_bus(tmp_missions_db: Path) -> None:
 
 
 async def test_recovery_idempotent_on_terminal_states(tmp_missions_db: Path) -> None:
-    """Wenn alle Missions terminal sind, recovered nichts."""
+    """If all missions are terminal, nothing gets recovered."""
     m1 = MissionManager(tmp_missions_db)
     await m1.start()
     mid = await m1.dispatch(prompt="x")
@@ -293,7 +293,7 @@ async def test_start_skips_recovery_when_recover_false(
 async def test_recovery_preserves_pending_mission_as_failed(
     tmp_missions_db: Path,
 ) -> None:
-    """Eine niemals zu RUNNING transitionierte Mission gilt auch als stale."""
+    """A mission that never transitioned to RUNNING also counts as stale."""
     m1 = MissionManager(tmp_missions_db)
     await m1.start()
     mid = await m1.dispatch(prompt="never-ran")

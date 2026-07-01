@@ -76,7 +76,8 @@ def _build_agy_worker_argv(exe: str, prompt: str, worktree: Path) -> list[str]:
     antigravity mission fails ``critic_loop_exhausted`` even though agy did the
     work (live forensic 2026-06-27: mission_019f07cb wrote
     ``…/brain/<session>/datenmenge_150_petabyte.md`` and was failed for an empty
-    diff; agy itself reported "kein aktives Workspace-Verzeichnis geöffnet").
+    diff; agy itself reported "kein aktives Workspace-Verzeichnis geöffnet"  # i18n-allow (quotes agy's own literal CLI message)
+    — English: "no active workspace directory open").
 
     ``--print-timeout`` is widened from agy's 5-minute default to the worker's own
     time budget so a long "production-quality" task is not cut short by agy before
@@ -165,8 +166,8 @@ class GoogleCliWorker:
         # Billing path (Antigravity dual billing, mirror of Codex): agy runs over
         # the Google subscription OAuth login. If there is NO OAuth login but a
         # Gemini API key is available, bill per token via the proven Gemini API
-        # worker instead — same outcome the user asked for ("über die API
-        # abrechnen"), on the tested path rather than coercing agy to use a key.
+        # worker instead — same outcome the user asked for ("bill via the
+        # API"), on the tested path rather than coercing agy to use a key.
         use_api_billing = not _oauth_login_present(Path(real_gemini_dir())) and bool(
             env.get("GEMINI_API_KEY") or env.get("GOOGLE_API_KEY")
         )
