@@ -256,8 +256,9 @@ if [ -t 1 ]; then
     BOLD=$(printf '\033[1m'); CYAN=$(printf '\033[36m')
     YELLOW=$(printf '\033[33m'); GREEN=$(printf '\033[32m')
     RED=$(printf '\033[31m'); RESET=$(printf '\033[0m')
+    GOLD=$(printf '\033[38;2;231;196;110m'); DIM=$(printf '\033[38;2;140;140;140m')
 else
-    BOLD=""; CYAN=""; YELLOW=""; GREEN=""; RED=""; RESET=""
+    BOLD=""; CYAN=""; YELLOW=""; GREEN=""; RED=""; RESET=""; GOLD=""; DIM=""
 fi
 
 log()  { printf '%s\n' "$*"; }
@@ -265,15 +266,20 @@ note() { printf '%s%s%s\n' "${YELLOW}" "$*" "${RESET}"; }
 ok()   { printf '%s%s%s\n' "${GREEN}"  "$*" "${RESET}"; }
 err()  { printf '%s%s%s\n' "${RED}"    "$*" "${RESET}" >&2; }
 
+# Banner art is machine-generated (figlet "ANSI Shadow"); do not hand-edit —
+# that is how the historical "Harvis" typo crept in.
 cat <<EOF
 
-${CYAN} ____                                  _   _                  _
-|  _ \\ ___ _ __ ___  ___  _ __   __ _ | | | | __ _ _ ____   _(_)___
-| |_) / _ \\ '__/ __|/ _ \\| '_ \\ / _\` || |_| |/ _\` | '__\\ \\ / / / __|
-|  __/  __/ |  \\__ \\ (_) | | | | (_| ||  _  | (_| | |   \\ V /| \\__ \\
-|_|   \\___|_|  |___/\\___/|_| |_|\\__,_||_| |_|\\__,_|_|    \\_/ |_|___/${RESET}
+${GOLD}   P  E  R  S  O  N  A  L
+     ██╗ █████╗ ██████╗ ██╗   ██╗██╗███████╗
+     ██║██╔══██╗██╔══██╗██║   ██║██║██╔════╝
+     ██║███████║██████╔╝██║   ██║██║███████╗
+██   ██║██╔══██║██╔══██╗╚██╗ ██╔╝██║╚════██║
+╚█████╔╝██║  ██║██║  ██║ ╚████╔╝ ██║███████║
+ ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝${RESET}
 
-  ${BOLD}Verifying installer (Sigstore + offline ceremony + SLSA L3, Wave 3)${RESET}
+${GOLD}  ●${RESET} ${BOLD}Verifying installer · macOS / Linux${RESET}
+${DIM}  Sigstore + offline ceremony + SLSA L3 + ML-DSA-65 (Wave 3)${RESET}
 
 EOF
 
