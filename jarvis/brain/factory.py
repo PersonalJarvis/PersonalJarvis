@@ -488,7 +488,7 @@ def _load_tools_for_tier(
             )
             for name, inst in self_mod_tools.items():
                 tools[name] = inst
-        except Exception as exc:  # noqa: BLE001 — defensive, kein Tool-Block fail-stops das Brain
+        except Exception as exc:  # noqa: BLE001 — defensive, no tool block fail-stops the Brain
             log.debug("Self-mod tools not loadable (Phase 7.3): %s", exc)
 
     return tools
@@ -517,7 +517,7 @@ def _load_local_action_tools(
             manager=harness_manager,
             max_output_chars=config.harness.max_output_chars,
         ),
-        # ADR-0016 L2: voice-driven orb recovery ("Orb zurück" /
+        # ADR-0016 L2: voice-driven orb recovery ("Orb zurück" /  # i18n-allow: quoted German voice-trigger phrase
         # "wo bist du" / "reset orb"). Publishes OrbResetRequested
         # on the bus; the orb-side bridge handles the Tk-thread dispatch.
         "reset_orb_position": ResetOrbPositionTool(bus=bus),
@@ -594,8 +594,8 @@ _KONTROLLIERER_REF: list[Any] = []
 # Sentinel that distinguishes "bootstrap not yet attempted" (default,
 # transient) from "bootstrap attempted and crashed" (permanent for this
 # process). spawn_worker checks this so the user gets an honest
-# "OpenClaw konnte nicht initialisiert werden" instead of the misleading
-# "noch nicht bereit, bitte einen Moment warten" the in-progress path
+# "OpenClaw konnte nicht initialisiert werden" instead of the misleading  # i18n-allow: quoted German runtime voice-output phrase
+# "noch nicht bereit, bitte einen Moment warten" the in-progress path  # i18n-allow: quoted German runtime voice-output phrase
 # returns when both the manager and kontrollierer singletons are None
 # but the server is still booting.
 _WORKER_BOOTSTRAP_FAILED: list[bool] = [False]
@@ -633,9 +633,9 @@ def set_worker_bootstrap_failed(flag: bool) -> None:
 
     Called from ``server.py::_init_mission_stack`` when the Mission-Stack
     bootstrap raised. spawn_worker reads this via
-    ``is_worker_bootstrap_failed()`` and surfaces an honest "konnte
-    nicht initialisiert werden" message instead of the transient
-    "noch nicht bereit" the in-progress path returns.
+    ``is_worker_bootstrap_failed()`` and surfaces an honest "could not be
+    initialized" message instead of the transient "not ready yet" the
+    in-progress path returns.
     """
     _WORKER_BOOTSTRAP_FAILED[0] = bool(flag)
 

@@ -1,26 +1,26 @@
-"""REST-API fuer das User-Profile-System (Curator).
+"""REST API for the user-profile system (Curator).
 
 Endpoints:
-    GET    /api/profile                          → UserProfile-Meta + People-Liste + Review-Count
-    GET    /api/profile/raw                       → rohe USER.md (Text) fuer Live-Anzeige
-    PUT    /api/profile/raw                       → hand-edited USER.md zurueckschreiben (atomic)
-    GET    /api/profile/reviews                  → Pending-Review-Queue des Curators
-    POST   /api/profile/reviews/{idx}/accept     → Candidate akzeptieren (via Merger.apply)
-    POST   /api/profile/reviews/{idx}/reject     → Candidate verwerfen
+    GET    /api/profile                          → UserProfile meta + people list + review count
+    GET    /api/profile/raw                       → raw USER.md (text) for live display
+    PUT    /api/profile/raw                       → write a hand-edited USER.md back (atomic)
+    GET    /api/profile/reviews                  → Curator's pending-review queue
+    POST   /api/profile/reviews/{idx}/accept     → accept a candidate (via Merger.apply)
+    POST   /api/profile/reviews/{idx}/reject     → discard a candidate
 
-Wird vom WebServer in `_build_app()` eingehaengt:
+Wired in by the WebServer in `_build_app()`:
 
     from .profile_routes import router as profile_router
     app.include_router(profile_router)
 
-Abhaengigkeiten liegen auf ``app.state.brain``:
+Dependencies live on ``app.state.brain``:
 - ``brain._user_profile`` (UserProfile | None)
 - ``brain._people``       (PersonStore | None)
 - ``brain._curator``      (Curator | None)
 
-Falls einer der drei ``None`` ist (z.B. MockBrain im Headless-Mode), liefern
-wir einen 503 mit einer freundlichen Message — die UI zeigt dann einen
-Empty-State statt eines roten Fehler-Badges.
+If any of the three is ``None`` (e.g. a MockBrain in headless mode), we
+return a 503 with a friendly message — the UI then shows an empty state
+instead of a red error badge.
 """
 from __future__ import annotations
 
@@ -105,18 +105,18 @@ def _has_avatar() -> bool:
 
 
 # ----------------------------------------------------------------------
-# Helpers: Dependencies aus app.state.brain ziehen
+# Helpers: pull dependencies from app.state.brain
 # ----------------------------------------------------------------------
 
 
 def _get_brain(request: Request) -> Any:
-    """Holt den Brain-Container (BrainManager o.ae.) aus der App-State."""
+    """Get the brain container (BrainManager or similar) from the app state."""
     brain = getattr(request.app.state, "brain", None)
     if brain is None:
         raise HTTPException(
             status_code=503,
-            detail="Brain noch nicht initialisiert — das Profil-System braucht "
-                   "einen aktiven BrainManager.",
+            detail="Brain not initialized yet — the profile system needs "
+                   "an active BrainManager.",
         )
     return brain
 
@@ -127,8 +127,8 @@ def _require_curator(request: Request):
     if curator is None:
         raise HTTPException(
             status_code=503,
-            detail="Der Curator laeuft in dieser Session nicht — evtl. "
-                   "Mock-Brain oder ein Provider ohne Memory-Integration.",
+            detail="The Curator isn't running in this session — likely a "
+                   "mock brain or a provider without memory integration.",
         )
     return curator
 
@@ -139,13 +139,13 @@ def _require_profile(request: Request):
     if profile is None:
         raise HTTPException(
             status_code=503,
-            detail="USER.md ist noch nicht geladen — Workspace fehlt vermutlich.",
+            detail="USER.md is not loaded yet — the workspace is probably missing.",
         )
     return profile
 
 
 def _get_people(request: Request):
-    """PersonStore ist optional — None wird zu leerer Liste."""
+    """PersonStore is optional — None becomes an empty list."""
     brain = _get_brain(request)
     return getattr(brain, "_people", None)
 
@@ -156,7 +156,7 @@ def _get_people(request: Request):
 
 
 def _person_to_dict(person: Any) -> dict[str, Any]:
-    """Minimales Person-Summary fuer die UI-Liste."""
+    """Minimal person summary for the UI list."""
     return {
         "name": person.name,
         "relationship": person.relationship,
@@ -166,9 +166,9 @@ def _person_to_dict(person: Any) -> dict[str, Any]:
 
 
 def _candidate_to_dict(cand: Any, reason: str, idx: int) -> dict[str, Any]:
-    """Serialisiert einen Review-Candidate (Extractor.Candidate) + Review-Grund."""
+    """Serializes a review candidate (Extractor.Candidate) + the review reason."""
     value = cand.value
-    # Listen/Dicts lassen wir durch — FastAPI JSONkodiert automatisch.
+    # Lists/dicts pass through as-is — FastAPI JSON-encodes them automatically.
     return {
         "idx": idx,
         "subject": cand.subject,
@@ -192,9 +192,9 @@ def _candidate_to_dict(cand: Any, reason: str, idx: int) -> dict[str, Any]:
 
 @router.get("")
 async def get_profile(request: Request) -> dict[str, Any]:
-    """Liefert das komplette Snapshot fuer die Profil-View.
+    """Returns the complete snapshot for the profile view.
 
-    Shape (stabil fuer Frontend):
+    Shape (stable for the frontend):
         {
           "user":   { "name": str|null, "meta": dict, "path": str },
           "people": [ { name, relationship, aliases, slug }, ... ],
@@ -211,7 +211,7 @@ async def get_profile(request: Request) -> dict[str, Any]:
         try:
             people_list = [_person_to_dict(p) for p in people_store.list_all()]
         except Exception as exc:  # noqa: BLE001
-            log.warning("People.list_all() fehlgeschlagen: %s", exc)
+            log.warning("People.list_all() failed: %s", exc)
             people_list = []
 
     reviews_count = 0
@@ -219,7 +219,7 @@ async def get_profile(request: Request) -> dict[str, Any]:
         try:
             reviews_count = len(curator.pending_reviews())
         except Exception as exc:  # noqa: BLE001
-            log.warning("Curator.pending_reviews() fehlgeschlagen: %s", exc)
+            log.warning("Curator.pending_reviews() failed: %s", exc)
 
     return {
         "user": {
@@ -350,20 +350,20 @@ async def delete_avatar(request: Request) -> dict[str, Any]:
 
 @router.get("/raw")
 async def get_raw(request: Request) -> dict[str, Any]:
-    """Liefert die rohe USER.md als Text fuer Live-Anzeige in der UI.
+    """Returns the raw USER.md as text for live display in the UI.
 
     Shape:
         {
-          "content": str,        # gesamter Markdown-Inhalt
-          "path": str,           # absoluter Pfad (Anzeige-Zweck)
-          "mtime_ms": int|null,  # Filesystem-Modification-Time (UI-Cache-Bust)
-          "size_bytes": int      # Anzeige-Hilfe
+          "content": str,        # full Markdown content
+          "path": str,           # absolute path (display purpose)
+          "mtime_ms": int|null,  # filesystem modification time (UI cache-bust)
+          "size_bytes": int      # display helper
         }
 
-    Live-Sync: Sobald der Curator schreibt, publisht der Merger ein
-    ``ProfileUpdated``-Event auf den Bus, das via WebSocket an die UI gestreamt
-    wird. Das Frontend horcht darauf und invalidiert seinen Query-Cache, was
-    diesen Endpoint erneut aufruft — Datei-Inhalt ist damit immer aktuell.
+    Live sync: as soon as the Curator writes, the Merger publishes a
+    ``ProfileUpdated`` event on the bus, which is streamed to the UI via
+    WebSocket. The frontend listens for it and invalidates its query cache,
+    which calls this endpoint again — so the file content is always current.
     """
     profile = _require_profile(request)
     path = profile.path
@@ -378,7 +378,7 @@ async def get_raw(request: Request) -> dict[str, Any]:
             "size_bytes": 0,
         }
     except Exception as exc:  # noqa: BLE001
-        log.warning("USER.md lesen fehlgeschlagen: %s", exc)
+        log.warning("Reading USER.md failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return {
@@ -454,7 +454,7 @@ async def put_raw(request: Request, body: RawWriteBody) -> dict[str, Any]:
                 pass
             raise
     except Exception as exc:  # noqa: BLE001
-        log.warning("USER.md schreiben fehlgeschlagen: %s", exc)
+        log.warning("Writing USER.md failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     # Re-parse the in-memory profile so cluster cards stay in sync with the file.
@@ -462,7 +462,7 @@ async def put_raw(request: Request, body: RawWriteBody) -> dict[str, Any]:
     try:
         profile.reload()
     except Exception as exc:  # noqa: BLE001
-        log.warning("USER.md reload nach Edit fehlgeschlagen: %s", exc)
+        log.warning("USER.md reload after edit failed: %s", exc)
         reparsed = False
 
     # Heuristic: frontmatter delimiters present but nothing parsed out → almost
@@ -493,7 +493,7 @@ class FieldEditBody(BaseModel):
     """Body for PATCH /api/profile/field — edit one structured profile field.
 
     ``operation`` decides what happens:
-    - ``set``    — overwrite a scalar field (Chef → König). Rejected on list fields.
+    - ``set``    — overwrite a scalar field (e.g. old value → new value). Rejected on list fields.
     - ``clear``  — empty any field so it reads back as "not known yet".
     - ``append`` — add one item to a list field (a chip). Rejected on scalars.
     - ``remove`` — drop one item from a list field (the chip 'x').
@@ -628,18 +628,18 @@ async def patch_field(request: Request, body: FieldEditBody) -> dict[str, Any]:
 
 @router.get("/reviews")
 async def get_reviews(request: Request) -> dict[str, Any]:
-    """Liefert die Pending-Review-Queue des Curators.
+    """Returns the Curator's pending-review queue.
 
-    Jeder Eintrag bekommt seinen Index in der Queue — der ist fuer
-    accept/reject der stabile Identifier innerhalb einer UI-Sitzung.
-    Wenn jemand parallel etwas akzeptiert, kann der Index veralten —
-    das Frontend sollte nach accept/reject neu fetchen.
+    Each entry gets its index in the queue — that is the stable identifier
+    for accept/reject within a UI session. If someone accepts something in
+    parallel, the index can go stale — the frontend should refetch after
+    accept/reject.
     """
     curator = _require_curator(request)
     try:
         pending = curator.pending_reviews()
     except Exception as exc:  # noqa: BLE001
-        log.warning("Review-Queue lesen fehlgeschlagen: %s", exc)
+        log.warning("Reading review queue failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     reviews = [
@@ -651,29 +651,29 @@ async def get_reviews(request: Request) -> dict[str, Any]:
 
 @router.post("/reviews/{idx}/accept")
 async def accept_review(idx: int, request: Request) -> dict[str, Any]:
-    """Akzeptiert einen Kandidaten: Merger anwenden + aus Queue entfernen."""
+    """Accepts a candidate: applies the merger + removes it from the queue."""
     curator = _require_curator(request)
-    queue = curator._review_queue  # noqa: SLF001 — internal, aber Public-API laut Task.
+    queue = curator._review_queue  # noqa: SLF001 — internal, but public API per the task.
     if idx < 0 or idx >= len(queue):
         raise HTTPException(
             status_code=404,
-            detail=f"Kein Review-Eintrag mit Index {idx} (Queue-Size={len(queue)}).",
+            detail=f"No review entry at index {idx} (queue size={len(queue)}).",
         )
     cand, _reason = queue[idx]
     try:
-        # Merger ist async — wir awaiten direkt.
+        # Merger is async — we await it directly.
         report = await curator._merger.apply([cand])  # noqa: SLF001
     except Exception as exc:  # noqa: BLE001
-        log.warning("Merger.apply fehlgeschlagen: %s", exc)
-        raise HTTPException(status_code=500, detail=f"Merge-Fehler: {exc}") from exc
+        log.warning("Merger.apply failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Merge error: {exc}") from exc
 
-    # Aus der Queue entfernen — nach erfolgreichem (oder teilweise erfolgreichem)
-    # Merge. Failures bleiben in den Logs, die UI zeigt danach einen frischen
-    # State via Refetch.
+    # Remove from the queue — after a successful (or partially successful)
+    # merge. Failures stay in the logs; the UI then shows fresh state via
+    # a refetch.
     try:
         del queue[idx]
     except IndexError:
-        # Race — ein anderer Request hat bereits entfernt. Nicht tragisch.
+        # Race — another request already removed it. Not a problem.
         pass
 
     return {
@@ -687,13 +687,13 @@ async def accept_review(idx: int, request: Request) -> dict[str, Any]:
 
 @router.post("/reviews/{idx}/reject")
 async def reject_review(idx: int, request: Request) -> dict[str, Any]:
-    """Verwirft einen Kandidaten: nur aus Queue droppen, kein Merge."""
+    """Discards a candidate: just drops it from the queue, no merge."""
     curator = _require_curator(request)
     queue = curator._review_queue  # noqa: SLF001
     if idx < 0 or idx >= len(queue):
         raise HTTPException(
             status_code=404,
-            detail=f"Kein Review-Eintrag mit Index {idx} (Queue-Size={len(queue)}).",
+            detail=f"No review entry at index {idx} (queue size={len(queue)}).",
         )
     cand, _reason = queue[idx]
     try:
