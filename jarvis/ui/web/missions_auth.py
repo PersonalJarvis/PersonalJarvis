@@ -1,14 +1,14 @@
-"""Kurzlebiger In-Memory-Token-Store fuer Mission-WebSocket-Auth.
+"""Short-lived in-memory token store for mission WebSocket auth.
 
-Localhost-only Setup. Kein Secret-Management noetig (Single-User-Browser):
-- Beim Server-Start wird **kein** Token vorgeneriert; jeder Browser holt
-  sich seinen eigenen via ``GET /api/missions/auth/token``.
-- Tokens leben im Modul-Speicher und werden beim Restart verworfen.
-- ``validate_token()`` ist O(1) Set-Lookup.
+Localhost-only setup. No secret management needed (single-user browser):
+- **No** token is pre-generated at server start; every browser fetches
+  its own via ``GET /api/missions/auth/token``.
+- Tokens live in module memory and are discarded on restart.
+- ``validate_token()`` is an O(1) set lookup.
 
-Bewusst keine JWT-Lib, keine Cookies, keine Sessions — der WS-Handshake
-trennt Auth (hello-Frame) von Frame-Validation, das reicht fuer den
-Single-User-Localhost-Threat-Model.
+Deliberately no JWT library, no cookies, no sessions — the WS handshake
+separates auth (hello frame) from frame validation, which is enough for the
+single-user-localhost threat model.
 """
 from __future__ import annotations
 
@@ -18,21 +18,21 @@ from typing import Final
 
 from fastapi import APIRouter
 
-# Modul-globaler Token-Store. Set fuer O(1) Lookup. Wird durch Restart
-# resetted — fuer den Localhost-Single-User-Use-Case ausreichend.
+# Module-global token store. A set for O(1) lookup. Reset on
+# restart — sufficient for the localhost single-user use case.
 _TOKENS: set[str] = set()
-_TOKEN_BYTES: Final[int] = 32  # 256 bit Entropie
+_TOKEN_BYTES: Final[int] = 32  # 256 bits of entropy
 
 
 def issue_token() -> str:
-    """Generiert einen URL-safe Token und speichert ihn als gueltig."""
+    """Generates a URL-safe token and stores it as valid."""
     tok = secrets.token_urlsafe(_TOKEN_BYTES)
     _TOKENS.add(tok)
     return tok
 
 
 def validate_token(tok: str) -> bool:
-    """True wenn der Token im Store ist (kein Drift, keine Expiration)."""
+    """True if the token is in the store (no drift, no expiration)."""
     if not tok:
         return False
     return tok in _TOKENS
@@ -67,12 +67,12 @@ def register_session_token_from_env(env_var: str) -> str | None:
 
 
 def revoke_token(tok: str) -> None:
-    """Best-effort entfernt den Token. Idempotent."""
+    """Best-effort removal of the token. Idempotent."""
     _TOKENS.discard(tok)
 
 
 def reset_tokens() -> None:
-    """Test-Hook: leert den Store komplett."""
+    """Test hook: clears the store entirely."""
     _TOKENS.clear()
 
 
@@ -81,5 +81,5 @@ router = APIRouter(prefix="/api/missions/auth", tags=["missions-auth"])
 
 @router.get("/token")
 async def get_token() -> dict[str, str]:
-    """Liefert einen frischen Mission-Token. Browser haelt ihn im Memory."""
+    """Returns a fresh mission token. The browser holds it in memory."""
     return {"token": issue_token()}
