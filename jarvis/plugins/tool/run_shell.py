@@ -1,10 +1,10 @@
-"""run_shell-Tool: führt Shell-Commands aus (via subprocess).
+"""run_shell tool: runs shell commands (via subprocess).
 
-Risk-Tier: monitor — Safety-Layer entscheidet via Whitelist/Blacklist ob Confirm nötig.
+Risk tier: monitor — the safety layer decides via whitelist/blacklist whether confirmation is needed.
 
-Das Tool ruft NICHT den `shell=True`-Modus auf. Commands werden durch
-`shlex.split` geparst. Der User kann über `[safety.whitelist].commands`
-gefährliche Commands in safe-Tier schieben (`browser-use *`, `git *`).
+The tool does NOT invoke `shell=True` mode. Commands are parsed through
+`shlex.split`. The user can move dangerous commands into the safe tier
+via `[safety.whitelist].commands` (`browser-use *`, `git *`).
 """
 from __future__ import annotations
 
@@ -21,15 +21,15 @@ class RunShellTool:
     name: str = "run_shell"
     risk_tier: str = "monitor"
     description: str = (
-        "Führt ein Shell-Kommando aus. Commands werden gegen Whitelist/Blacklist "
-        "gematcht. Timeout default 30s."
+        "Runs a shell command. Commands are matched against the whitelist/"
+        "blacklist. Default timeout 30s."
     )
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
-            "command": {"type": "string", "description": "Das Kommando (inkl. Arguments)"},
+            "command": {"type": "string", "description": "The command (incl. arguments)"},
             "timeout_s": {"type": "number", "default": 30},
-            "cwd": {"type": "string", "description": "Working-Directory", "default": ""},
+            "cwd": {"type": "string", "description": "Working directory", "default": ""},
         },
         "required": ["command"],
     }
@@ -39,7 +39,7 @@ class RunShellTool:
         timeout_s = float(args.get("timeout_s", 30))
         cwd = args.get("cwd") or None
         if not command:
-            return ToolResult(success=False, output=None, error="command fehlt")
+            return ToolResult(success=False, output=None, error="command is missing")
 
         try:
             parts = shlex.split(command, posix=(sys.platform != "win32"))
@@ -59,9 +59,9 @@ class RunShellTool:
             except TimeoutError:
                 proc.kill()
                 await proc.wait()
-                return ToolResult(success=False, output=None, error=f"Timeout nach {timeout_s}s")
+                return ToolResult(success=False, output=None, error=f"Timeout after {timeout_s}s")
         except FileNotFoundError as exc:
-            return ToolResult(success=False, output=None, error=f"Nicht gefunden: {exc}")
+            return ToolResult(success=False, output=None, error=f"Not found: {exc}")
         except Exception as exc:  # noqa: BLE001
             return ToolResult(success=False, output=None, error=str(exc))
 

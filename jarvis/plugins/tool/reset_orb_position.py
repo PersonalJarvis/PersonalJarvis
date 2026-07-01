@@ -1,6 +1,6 @@
 """``reset_orb_position`` — voice-driven recovery for a lost orb.
 
-ADR-0016 L2: when the user says "Orb zurück", "wo bist du", or
+ADR-0016 L2: when the user says "Orb zurück", "wo bist du", or  # i18n-allow (quotes DE voice-trigger phrases matched by the local-action gate)
 "reset orb", the local-action gate dispatches this tool. The tool
 publishes :class:`OrbResetRequested` on the EventBus; the orb-side
 bridge (``ui.orb.bus_bridge.OrbBusBridge``) subscribes and marshals
@@ -31,8 +31,8 @@ class ResetOrbPositionTool:
     name: str = "reset_orb_position"
     risk_tier: str = "safe"
     description: str = (
-        "Bringt das Maskottchen / den Orb zurück zum Standard-Anker auf "
-        "dem Hauptbildschirm (Voice-Recovery für BUG-027)."
+        "Brings the mascot / orb back to its default anchor on "
+        "the main screen (voice recovery for BUG-027)."
     )
     schema: dict[str, Any] = {
         "type": "object",
@@ -54,7 +54,7 @@ class ResetOrbPositionTool:
                 output=None,
                 error=f"OrbResetRequested publish failed: {exc!r}",
             )
-        return ToolResult(success=True, output="Orb ist zurück.", error=None)
+        return ToolResult(success=True, output="Orb ist zurück.", error=None)  # i18n-allow (DE TTS voice-confirmation phrase spoken back to the user)
 
 
 __all__ = ["ResetOrbPositionTool"]
