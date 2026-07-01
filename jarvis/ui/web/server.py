@@ -70,7 +70,7 @@ _WS_SEND_TIMEOUT_S = 3.0
 
 
 class WebServer:
-    """In-Process uvicorn + FastAPI, betrieben vom Orchestrator-Loop."""
+    """In-process uvicorn + FastAPI, run by the orchestrator loop."""
 
     def __init__(self, cfg: JarvisConfig, bus: EventBus | None = None) -> None:
         self.cfg = cfg
@@ -78,32 +78,32 @@ class WebServer:
         self._clients: dict[str, WebSocket] = {}
         self._server: uvicorn.Server | None = None
         self._serve_task: asyncio.Task[None] | None = None
-        # PTY-Manager fuer die Desktop-App-Terminal-View. Sessions sind
-        # global pro Server-Instanz — sie ueberleben WS-Reconnects, aber
-        # nicht den Server-Shutdown (siehe stop()).
+        # PTY manager for the desktop-app terminal view. Sessions are
+        # global per server instance — they survive WS reconnects, but
+        # not a server shutdown (see stop()).
         self._pty = PtyManager()
-        # Per-Terminal Line-Buffer fuer Audit-Events.
+        # Per-terminal line buffer for audit events.
         self._pty_input_buffers: dict[str, str] = {}
         self._pty_shell_ids: dict[str, str] = {}
-        # Skill-Registry: nach First-Run-Bootstrap auf user_skills_dir() gewatcht.
-        # Watcher startet in ``start()`` sobald die Event-Loop laeuft.
+        # Skill registry: watched on user_skills_dir() after first-run bootstrap.
+        # The watcher starts in ``start()`` once the event loop is running.
         self._skill_registry: Any | None = None
-        # Doc-Registry: gewatcht auf default_doc_roots(); FTS5-Index unter
-        # docs_index_db_path(). Watcher startet in ``start()``.
+        # Doc registry: watched on default_doc_roots(); FTS5 index under
+        # docs_index_db_path(). Watcher also starts in ``start()``.
         self._doc_registry: Any | None = None
         self._cli_registry: Any | None = None
         self._plugin_registry: Any | None = None
-        # Board-Stack wird in _setup_board() befuellt (im _build_app-Pfad).
+        # Board stack is populated in _setup_board() (in the _build_app path).
         self._board_aggregator: Any | None = None
         self._board_aggregator_task: asyncio.Task[None] | None = None
         self._board_evaluator: Any | None = None
         self._bio_scheduler: Any | None = None
         self._bio_generator: Any | None = None
-        # Voice-Session-Recorder — laeuft am EventBus mit, wird in
-        # _init_session_stack() befuellt. None solange Recorder disabled.
+        # Voice-session recorder — runs alongside the EventBus, populated in
+        # _init_session_stack(). None while the recorder is disabled.
         self._session_recorder: Any | None = None
-        # Phase-5 Task-Stack (Aufgaben-View). _init_task_stack() befuellt
-        # alle drei; ohne Wiring liefert /api/tasks 503 (siehe BUG-007).
+        # Phase-5 task stack (tasks view). _init_task_stack() populates
+        # all three; without wiring /api/tasks returns 503 (see BUG-007).
         self._task_store: Any | None = None
         self._task_scheduler: Any | None = None
         self._task_runner: Any | None = None

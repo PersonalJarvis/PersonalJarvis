@@ -1,4 +1,4 @@
-"""Tests fuer log_summarizer (head/tail/grep + optional Haiku-triage)."""
+"""Tests for log_summarizer (head/tail/grep + optional Haiku triage)."""
 from __future__ import annotations
 
 import asyncio
@@ -84,7 +84,7 @@ async def test_error_grep_dedups_repeated_lines() -> None:
     out = await summarize_log(log, max_chars=10_000)
     error_section_start = out.index("ERRORS")
     error_section = out[error_section_start:]
-    # nur EIN "Error: same"-Eintrag im error-Block (dedup)
+    # only ONE "Error: same" entry in the error block (dedup)
     error_block_lines = error_section.split("\n")
     error_count = sum(1 for line in error_block_lines if line == "Error: same")
     assert error_count == 1
@@ -119,7 +119,7 @@ async def test_triage_fn_called_on_large_log() -> None:
 
     log = "x" * (TRIAGE_THRESHOLD_CHARS + 1)
     out = await summarize_log(log, triage_fn=fake_triage, max_chars=1000)
-    assert called, "triage_fn wurde nicht aufgerufen"
+    assert called, "triage_fn was not called"
     assert "TRIAGED_SUMMARY" in out
 
 
@@ -138,7 +138,7 @@ async def test_triage_fn_not_called_below_threshold() -> None:
 
 @pytest.mark.asyncio
 async def test_triage_fn_crash_falls_back_to_pure_python() -> None:
-    """Triage darf den Critic NIE blockieren — Fallback auf head/tail/grep."""
+    """Triage must NEVER block the Critic — fallback to head/tail/grep."""
 
     async def crashing_triage(_text: str) -> str:
         raise RuntimeError("brain manager kaputt")
@@ -146,7 +146,7 @@ async def test_triage_fn_crash_falls_back_to_pure_python() -> None:
     log = "head\n" * 10 + "tail\n" * 10
     log = log + "x" * (TRIAGE_THRESHOLD_CHARS + 1)
     out = await summarize_log(log, triage_fn=crashing_triage, max_chars=10_000)
-    # Fallback ist head/tail-Rendering (kein Crash, kein leerer String).
+    # Fallback is head/tail rendering (no crash, no empty string).
     assert "HEAD" in out
 
 
