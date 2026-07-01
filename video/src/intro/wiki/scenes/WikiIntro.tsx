@@ -1,6 +1,6 @@
 import { SceneWrap } from "../../components/SceneWrap";
 import { Kicker, Subtitle, Title } from "../../components/Text";
-import { Mascot } from "../Mascot";
+import { Mascot } from "../../onboarding/Mascot";
 import { line, TimelineScene } from "../timeline";
 
 /** Opener: the ghost + the hook line, first-person. */

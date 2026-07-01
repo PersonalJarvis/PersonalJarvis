@@ -1,7 +1,7 @@
 import { spring, useCurrentFrame, useVideoConfig } from "remotion";
 import { SceneWrap } from "../../components/SceneWrap";
 import { Subtitle, Title } from "../../components/Text";
-import { Mascot } from "../Mascot";
+import { Mascot } from "../../onboarding/Mascot";
 import { COLORS, FONT } from "../../theme";
 import { line, TimelineScene } from "../timeline";
 

@@ -33,6 +33,14 @@ export const RemotionRoot: React.FC = () => {
         height={VIDEO.height}
       />
       <Composition
+        id="WikiTutorial"
+        component={WikiTutorialVideo}
+        durationInFrames={TL_WIKI.totalFrames}
+        fps={VIDEO.fps}
+        width={VIDEO.width}
+        height={VIDEO.height}
+      />
+      <Composition
         id="IntroVideo"
         component={IntroVideo}
         durationInFrames={TOTAL_FRAMES}
