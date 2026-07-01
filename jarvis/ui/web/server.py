@@ -1440,7 +1440,7 @@ class WebServer:
             return
         if not self._pty.write(terminal_id, data):
             return
-        # Audit-Log: line-buffer pflegen, bei \r/\n Command emittieren.
+        # Audit log: maintain the line buffer, emit a command on \r/\n.
         buf = self._pty_input_buffers.get(terminal_id, "")
         for ch in data:
             if ch in ("\r", "\n"):
