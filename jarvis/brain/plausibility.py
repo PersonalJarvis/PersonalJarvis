@@ -12,7 +12,7 @@ Reaction:
 
 - ``risk_tier == "ask"``: On uncertainty, sets ``require_confirmation=True``.
   The ``ToolExecutor`` then triggers an additional voice confirmation on top
-  of the normal approval workflow ("Soll ich {action} ausfuehren?").
+  of the normal approval workflow ("Should I go ahead and do {action}?").
 - ``risk_tier == "monitor"``: log-only, no block. Telemetry sees the
   plausibility hit, but the tool runs.
 - ``risk_tier == "safe"``: Plausibility does nothing. Whitelist-downgraded
