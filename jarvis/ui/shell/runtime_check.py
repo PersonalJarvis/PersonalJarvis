@@ -1,10 +1,10 @@
-"""WebView2-Runtime-Check für Windows 11.
+"""WebView2 runtime check for Windows 11.
 
-**Kontext:** Auf Windows 11 ist die Evergreen-WebView2-Runtime standardmässig
-vorinstalliert ([Microsoft Learn: Evergreen vs. Fixed][ms]). LTSC-, Validation-
-und alte Enterprise-Images können sie jedoch missen, und Custom-Deployments
-ebenfalls. Dieser Check verhindert, dass pywebview beim Start mit einer
-kryptischen `InitializationError` bricht.
+**Context:** On Windows 11 the evergreen WebView2 runtime is preinstalled by
+default ([Microsoft Learn: Evergreen vs. Fixed][ms]). LTSC, Validation,
+and old Enterprise images can be missing it, though, and so can custom
+deployments. This check prevents pywebview from crashing at startup with a
+cryptic `InitializationError`.
 
 [ms]: https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/evergreen-vs-fixed-version
 """
@@ -14,8 +14,8 @@ from dataclasses import dataclass
 
 WEBVIEW2_CLIENT_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 
-# 64-Bit-Installationen liegen unter dem WOW6432Node-Pfad (Edge ist als 32-Bit
-# Client registriert, die Binaries selbst sind aber 64-Bit).
+# 64-bit installations live under the WOW6432Node path (Edge is registered as a
+# 32-bit client, but the binaries themselves are 64-bit).
 _CANDIDATE_KEYS: tuple[tuple[int, str], ...] = (
     (0x80000002, rf"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{WEBVIEW2_CLIENT_GUID}"),
     (0x80000002, rf"SOFTWARE\Microsoft\EdgeUpdate\Clients\{WEBVIEW2_CLIENT_GUID}"),
@@ -33,16 +33,16 @@ class WebView2CheckResult:
 
 
 def check_webview2() -> WebView2CheckResult:
-    """Prüft ob WebView2-Runtime installiert ist.
+    """Checks whether the WebView2 runtime is installed.
 
-    Gibt Version + Scope zurück; bei fehlender Installation `installed=False`.
-    Kein Raise — der Aufrufer entscheidet ob er abbricht oder den User zum
-    Bootstrapper-Download weiterleitet.
+    Returns version + scope; `installed=False` if it's missing.
+    No raise — the caller decides whether to abort or redirect the user to
+    the bootstrapper download.
     """
     try:
         import winreg  # type: ignore[import-not-found]
     except ImportError:
-        # Nicht-Windows — WebView2 ist irrelevant, pywebview nutzt andere Engines.
+        # Non-Windows — WebView2 is irrelevant, pywebview uses other engines.
         return WebView2CheckResult(installed=True, version=None, scope="none")
 
     for hive_key, subkey in _CANDIDATE_KEYS:
@@ -57,8 +57,8 @@ def check_webview2() -> WebView2CheckResult:
         except OSError:
             continue
 
-    # Fallback: die HKEYType-Ableitung oben schlägt auf manchen Systemen fehl.
-    # Direkter Zugriff über die OpenKey-Constants.
+    # Fallback: the HKEYType derivation above fails on some systems.
+    # Direct access via the OpenKey constants.
     try:
         import winreg  # type: ignore[import-not-found]
 

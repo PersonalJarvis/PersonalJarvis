@@ -1,10 +1,10 @@
-"""pywebview-Shell für die Desktop-App.
+"""pywebview shell for the desktop app.
 
-**Warum eine eigene Schicht zwischen pywebview und __main__?** pywebview ist
-blocking-callback-driven und hat Main-Thread-Requirement. Der Rest von Jarvis
-ist async und thread-agnostisch. Diese Schicht kapselt die Thread-Grenzen
-hinter einer API die andere Layer (Tray, WebSocket, Single-Instance)
-ansteuern können ohne pywebview-Interna zu kennen.
+**Why a separate layer between pywebview and __main__?** pywebview is
+blocking-callback-driven and has a main-thread requirement. The rest of Jarvis
+is async and thread-agnostic. This layer encapsulates the thread boundaries
+behind an API other layers (tray, WebSocket, single-instance)
+can drive without knowing pywebview internals.
 """
 from __future__ import annotations
 
