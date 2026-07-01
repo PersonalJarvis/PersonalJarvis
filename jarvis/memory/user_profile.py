@@ -174,11 +174,11 @@ class UserProfile:
         return self.get("identity", "preferred_address") or self.name
 
     # ------------------------------------------------------------------
-    # Markdown-Sections
+    # Markdown sections
     # ------------------------------------------------------------------
 
     def append_observation(self, field_label: str, value: str, evidence: str) -> None:
-        """Appends a new observation to `## Observations ueber Zeit`.
+        """Appends a new observation to `## Observations over time`.
 
         Format: `- [YYYY-MM-DD] <field>: <value> — "<evidence>"`.
         """
@@ -192,7 +192,7 @@ class UserProfile:
         self._body = replace_section(self._body, marker, content)
 
     # ------------------------------------------------------------------
-    # Prompt-Rendering
+    # Prompt rendering
     # ------------------------------------------------------------------
 
     def render_for_prompt(self, *, max_chars: int = MAX_PROMPT_CHARS) -> str:
@@ -207,20 +207,20 @@ class UserProfile:
 
         On budget overflow we cut from the bottom (observations first).
         """
-        parts: list[str] = ["## Ueber den User"]
+        parts: list[str] = ["## About the User"]
 
         # 1. Identity
         ident = self._meta.get("identity", {}) or {}
         name = ident.get("name")
         if name:
             addr = ident.get("preferred_address") or name
-            parts.append(f"- **Name:** {name} — spreche ihn an mit \"{addr}\"")
+            parts.append(f"- **Name:** {name} — address them as \"{addr}\"")
         if ident.get("pronouns"):
-            parts.append(f"- **Pronomen:** {ident['pronouns']}")
+            parts.append(f"- **Pronouns:** {ident['pronouns']}")
         langs = ident.get("languages") or []
         if langs:
             primary = ident.get("primary_language", "de")
-            parts.append(f"- **Sprachen:** {', '.join(langs)} (Primary: {primary})")
+            parts.append(f"- **Languages:** {', '.join(langs)} (Primary: {primary})")
         if ident.get("timezone"):
             parts.append(f"- **Timezone:** {ident['timezone']}")
 
@@ -228,7 +228,7 @@ class UserProfile:
         comm = self._meta.get("communication", {}) or {}
         comm_lines = []
         if comm.get("directness") is not None:
-            comm_lines.append(f"Direktheit {comm['directness']}/5")
+            comm_lines.append(f"Directness {comm['directness']}/5")
         if comm.get("formality") is not None:
             comm_lines.append(f"Formality {comm['formality']}/5")
         if comm.get("verbosity"):
@@ -236,14 +236,14 @@ class UserProfile:
         if comm.get("humor_types"):
             comm_lines.append(f"Humor={'+'.join(comm['humor_types'])}")
         if comm.get("emoji_ok") is False:
-            comm_lines.append("KEINE Emojis")
+            comm_lines.append("NO emojis")
         if comm_lines:
-            parts.append(f"- **Kommunikation:** {', '.join(comm_lines)}")
+            parts.append(f"- **Communication:** {', '.join(comm_lines)}")
 
         # 3. Values + pet peeves — short list
         vals = self._meta.get("values", {}) or {}
         if vals.get("top_values"):
-            parts.append(f"- **Werte:** {', '.join(vals['top_values'])}")
+            parts.append(f"- **Values:** {', '.join(vals['top_values'])}")
         if vals.get("pet_peeves"):
             parts.append(f"- **Pet Peeves:** {', '.join(vals['pet_peeves'])}")
 
@@ -255,12 +255,12 @@ class UserProfile:
         if ws.get("planning_horizon"):
             ws_lines.append(f"Horizon={ws['planning_horizon']}")
         if ws_lines:
-            parts.append(f"- **Arbeitsweise:** {', '.join(ws_lines)}")
+            parts.append(f"- **Working style:** {', '.join(ws_lines)}")
 
         # 5. Relationship dynamics
         rel = self._meta.get("relationship", {}) or {}
         if rel.get("feedback_pref"):
-            parts.append(f"- **Feedback-Stil:** {rel['feedback_pref']}")
+            parts.append(f"- **Feedback style:** {rel['feedback_pref']}")
 
         base = "\n".join(parts)
 
@@ -269,7 +269,7 @@ class UserProfile:
         if remaining > 150:
             obs = _extract_last_observations(self._body, n=5)
             if obs:
-                obs_block = "\n\n**Letzte Beobachtungen:**\n" + "\n".join(obs)
+                obs_block = "\n\n**Recent observations:**\n" + "\n".join(obs)
                 if len(base) + len(obs_block) <= max_chars:
                     base += obs_block
                 else:
