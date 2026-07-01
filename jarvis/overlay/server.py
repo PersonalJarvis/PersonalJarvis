@@ -1,8 +1,8 @@
-"""WS-IPC-Server fuer den Hauptjarvis-Prozess.
+"""WS IPC server for the main-Jarvis process.
 
-Plan §10.5 + §20.3: WS-Server bindet auf 127.0.0.1 + freien Port aus
-``[overlay].ws_port..ws_port_range_max``. Bridge ist die Faceade,
-``websockets.serve()`` ist der Wire-Layer.
+Plan §10.5 + §20.3: the WS server binds to 127.0.0.1 + a free port from
+``[overlay].ws_port..ws_port_range_max``. The bridge is the facade,
+``websockets.serve()`` is the wire layer.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class IPCServerHandle:
-    """Was ``start_ipc_server`` zurueckgibt."""
+    """What ``start_ipc_server`` returns."""
 
     bridge: OverlayBridge
     server: Server
@@ -43,18 +43,18 @@ async def start_ipc_server(
     bridge: Optional[OverlayBridge] = None,
     path: str = "/overlay",
 ) -> IPCServerHandle:
-    """Suche freien Port in ``[port, port_range_max]`` und starte WS-Server.
+    """Search for a free port in ``[port, port_range_max]`` and start the WS server.
 
-    Plan-Constraint: ``host`` muss Loopback sein (Pydantic-Validator
-    erzwingt das beim Config-Load; hier defensiv nochmal pruefen).
+    Plan constraint: ``host`` must be loopback (a Pydantic validator
+    enforces this at config load; checked defensively again here).
 
-    ``path`` wird bewusst nicht enforced — der Plan §10 nennt
-    ``/overlay`` als Convention; der ``websockets``-Lib-Handler sieht
-    aber alle URIs unter dem Bind-Host. Pfad-Filter machen wir im
-    Bridge-Handler nur wenn noetig (aktuell nicht).
+    ``path`` is deliberately not enforced — Plan §10 names
+    ``/overlay`` as the convention; the ``websockets`` library handler,
+    however, sees all URIs under the bind host. We only do path
+    filtering in the bridge handler if needed (currently not).
     """
     if host not in {"127.0.0.1", "::1", "localhost"}:
-        raise ValueError(f"WS-Server muss auf Loopback binden, host={host!r}")
+        raise ValueError(f"WS server must bind to loopback, host={host!r}")
     if port_range_max < port:
         raise ValueError(f"port_range_max < port ({port_range_max} < {port})")
 
@@ -71,10 +71,10 @@ async def start_ipc_server(
         logger.info("overlay WS-Server listening on ws://%s:%d%s", host, candidate, path)
         return IPCServerHandle(bridge=bridge, server=server, host=host, port=candidate)
 
-    # Alle Ports belegt.
+    # All ports taken.
     await bridge.stop()
     raise RuntimeError(
-        f"kein freier Port in [{port}, {port_range_max}] (last={last_err!r})"
+        f"no free port in [{port}, {port_range_max}] (last={last_err!r})"
     )
 
 
