@@ -4,8 +4,14 @@
 import { Easing, interpolate, spring } from "remotion";
 import { loadFont as loadInter } from "@remotion/google-fonts/Inter";
 import { loadFont as loadMono } from "@remotion/google-fonts/JetBrainsMono";
+import { loadFont as loadDisplay } from "@remotion/google-fonts/SpaceGrotesk";
 
 // Load fonts at module top (deterministic render) — never inside a render body.
+// Space Grotesk = display (brand wordmark font), Inter = body, JetBrains Mono = labels/code.
+export const { fontFamily: DISPLAY } = loadDisplay("normal", {
+  weights: ["500", "600", "700"],
+  subsets: ["latin"],
+});
 export const { fontFamily: INTER } = loadInter("normal", {
   weights: ["400", "500", "600", "700"],
   subsets: ["latin"],
