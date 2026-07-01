@@ -39,25 +39,27 @@ const MapRow: React.FC<{ a: string; b: string; delay: number }> = ({ a, b, delay
 
 export const S2Idea: React.FC = () => {
   return (
-    <AbsoluteFill style={{ justifyContent: "center" }}>
-      <Eyebrow delay={2}>The idea — Karpathy's LLM Wiki</Eyebrow>
-      <div style={{ height: 24 }} />
-      <Headline size={TYPE.h1} delay={8}>
-        Your assistant <Gold>edits its own memory.</Gold>
-      </Headline>
-      <div style={{ height: 46 }} />
+    <AbsoluteFill style={{ justifyContent: "center", alignItems: "center" }}>
+      <div style={{ width: "100%", maxWidth: 1240 }}>
+        <Eyebrow delay={2}>The idea — Karpathy's LLM Wiki</Eyebrow>
+        <div style={{ height: 24 }} />
+        <Headline size={TYPE.h1} delay={8}>
+          Your assistant <Gold>edits its own memory.</Gold>
+        </Headline>
+        <div style={{ height: 46 }} />
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-        {MAP.map((m, i) => (
-          <MapRow key={m.a} a={m.a} b={m.b} delay={40 + i * 22} />
-        ))}
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          {MAP.map((m, i) => (
+            <MapRow key={m.a} a={m.a} b={m.b} delay={40 + i * 22} />
+          ))}
+        </div>
+
+        <div style={{ height: 46 }} />
+        <Body delay={124} maxWidth={1180} color={COLORS.faint}>
+          Knowledge is compiled once and maintained continuously — not retrieved and
+          re-derived on every single question.
+        </Body>
       </div>
-
-      <div style={{ height: 46 }} />
-      <Body delay={124} maxWidth={1180} color={COLORS.faint}>
-        Knowledge is compiled once and maintained continuously — not retrieved and
-        re-derived on every single question.
-      </Body>
     </AbsoluteFill>
   );
 };

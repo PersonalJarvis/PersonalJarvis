@@ -119,7 +119,8 @@ export const S3Architecture: React.FC = () => {
   const frame = useCurrentFrame();
   const noteO = lerp(frame, [30, 50], [0, 1], EASE.outExpo);
   return (
-    <AbsoluteFill style={{ justifyContent: "center" }}>
+    <AbsoluteFill style={{ justifyContent: "center", alignItems: "center" }}>
+      <div style={{ width: "100%", maxWidth: 1450 }}>
       <Eyebrow delay={2}>Architecture — the sleep-time curator</Eyebrow>
       <div style={{ height: 22 }} />
       <Headline size={58} delay={8}>
@@ -165,6 +166,7 @@ export const S3Architecture: React.FC = () => {
       >
         A cheap, ADD-only pass runs on every turn; the expensive judgment is batched
         later — so a bad extractor can never corrupt what you already know.
+      </div>
       </div>
     </AbsoluteFill>
   );

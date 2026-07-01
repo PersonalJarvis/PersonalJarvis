@@ -31,7 +31,13 @@ export const S6Outro: React.FC = () => {
           height: "auto",
           opacity: markO,
           transform: `translateY(${markY}px)`,
+          // screen drops the banner's black field onto the charcoal stage; the
+          // radial mask feathers the outer glow box so there is no visible seam.
           mixBlendMode: "screen",
+          maskImage:
+            "radial-gradient(72% 82% at 50% 50%, #000 52%, transparent 100%)",
+          WebkitMaskImage:
+            "radial-gradient(72% 82% at 50% 50%, #000 52%, transparent 100%)",
         }}
       />
 
