@@ -32,7 +32,7 @@ from jarvis.core.capabilities import _normalize
 # A genitive contact detail ("Christophs Nummer ist …", "Haralds Mail ist …").
 # High precision on its own: a possessive name + a contact field + "ist/lautet"
 # is almost always "save this person's detail". The non-genitive "<field> von X
-# ist" form is intentionally NOT here (it also matches "die Adresse von Berlin
+# ist" form is intentionally NOT here (it also matches "die Adresse von Berlin  # i18n-allow: quoted German counter-example the classifier must NOT match
 # ist zentral") — it only counts as a corroborating ``_DETAIL_RE`` signal.
 _GENITIVE_DETAIL_RE = re.compile(
     r"\b\w+s\s+(mail|e-?mail|mailadresse|emailadresse|nummer|telefonnummer|"
@@ -40,11 +40,11 @@ _GENITIVE_DETAIL_RE = re.compile(
     r"(ist|lautet|is)\b"
 )
 
-# Any dictated contact field "<field> [von X] ist/lautet …" — corroborating only.
+# Any dictated contact field "<field> [von X] ist/lautet …" — corroborating only.  # i18n-allow: quoted German regex-pattern illustration
 _DETAIL_RE = re.compile(
     r"\b(mail|e-?mail|mailadresse|emailadresse|nummer|telefonnummer|"
     r"handynummer|telefon|adresse|anschrift|number|phone|address)\b"
-    r"(\s+von\s+\w+)?\s+(ist|lautet|is)\b"
+    r"(\s+von\s+\w+)?\s+(ist|lautet|is)\b"  # i18n-allow: German/English input-matching data (contact write-intent detector)
 )
 
 # Imperative/intent to save, create, add, remember, enter a contact.
@@ -52,12 +52,12 @@ _SAVE_VERB_RE = re.compile(
     r"\b("
     r"merk(e|t)?\s+dir"  # merk dir / merke dir
     r"|notier\w*"  # notiere / notier dir
-    r"|speicher\w*"  # speichere / speichern / speicher
+    r"|speicher\w*"  # speichere / speichern / speicher  # i18n-allow: German input-matching data
     r"|anleg\w*"  # anlegen
     r"|leg\w*\b[^?]{0,40}\ban\b"  # leg/legt … an (separable)
-    r"|eintrag\w*"  # eintragen
+    r"|eintrag\w*"  # eintragen  # i18n-allow: German input-matching data
     r"|trag\w*\b[^?]{0,40}\bein\b"  # trag … ein (separable)
-    r"|hinzufueg\w*"  # hinzufuegen
+    r"|hinzufueg\w*"  # hinzufuegen  # i18n-allow: German input-matching data
     r"|fueg\w*\b[^?]{0,40}\bhinzu\b"  # fueg … hinzu (separable)
     r"|nimm\b[^?]{0,40}\bauf\b"  # nimm … auf
     r"|save|remember|store\b|note\s+down|add\b|create\b"
