@@ -196,7 +196,7 @@ export function MascotGigi({
             <ellipse cx="128" cy="146" rx="3" ry="5" fill="#050505" />
           </g>
 
-          {/* Linker Arm — winkt (Drehpunkt an der Schulter via fill-box) */}
+          {/* Left arm — waves (pivot point at the shoulder via fill-box) */}
           <path
             className="gigi-arm gigi-arm-left"
             d="M 58 140 Q 40 148 42 162"
@@ -346,7 +346,7 @@ function useMascotComments(enabled: boolean): string | null {
     dismissTimerRef.current = setTimeout(() => setComment(null), duration);
   }, [enabled]);
 
-  // Section-Wechsel triggert einen Kommentar.
+  // A section change triggers a comment.
   useEffect(() => {
     if (!mountedRef.current) return;
     if (activeSection === lastSectionRef.current) return;
@@ -355,7 +355,7 @@ function useMascotComments(enabled: boolean): string | null {
     if (pool) show(pickRandom(pool));
   }, [activeSection, show]);
 
-  // Voice-State-Wechsel triggert einen Kommentar.
+  // A voice-state change triggers a comment.
   useEffect(() => {
     if (!mountedRef.current) return;
     if (voiceState === lastVoiceRef.current) return;
@@ -375,7 +375,7 @@ function useMascotComments(enabled: boolean): string | null {
     }
   }, [brainProvider, show]);
 
-  // Verbindung verloren/wiederhergestellt.
+  // Connection lost/restored.
   useEffect(() => {
     if (!mountedRef.current) return;
     if (connected === lastConnectedRef.current) return;
@@ -387,7 +387,7 @@ function useMascotComments(enabled: boolean): string | null {
     );
   }, [connected, show]);
 
-  // Mount: begrüßen nach Tageszeit.
+  // Mount: greet based on time of day.
   useEffect(() => {
     mountedRef.current = true;
     const greet = greetByHour();
@@ -407,7 +407,7 @@ function useMascotComments(enabled: boolean): string | null {
     };
   }, [show]);
 
-  // Random-Idle-Chatter: alle 25–60s mit 60 % Wahrscheinlichkeit.
+  // Random idle chatter: every 25–60s with a 60% probability.
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
