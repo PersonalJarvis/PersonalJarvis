@@ -1948,9 +1948,9 @@ class WebServer:
         )
 
     async def _init_mission_stack(self) -> None:
-        """Phase-6 Production-Wiring: bootstrap_missions() liefert den
-        kompletten Stack (Manager, Kontrollierer, Budget, Voice-Listener,
-        Cleanup-Task), inkl. Safety-Hooks und WS-Manager-Bus-Bridge.
+        """Phase-6 production wiring: bootstrap_missions() returns the
+        complete stack (manager, Kontrollierer, budget, voice listener,
+        cleanup task), including safety hooks and the WS-manager bus bridge.
         """
         from jarvis.missions.init import bootstrap_missions
 
@@ -1958,9 +1958,9 @@ class WebServer:
         data_dir.mkdir(parents=True, exist_ok=True)
         db_path = data_dir / "missions.db"
 
-        # Isolation-Root: <repo_parent>/jarvis-agent-outputs/ (preferred; falls back
+        # Isolation root: <repo_parent>/jarvis-agent-outputs/ (preferred; falls back
         # to <repo_parent>/sub-agents-outputs/ if only the old dir exists — see
-        # resolve_outputs_root). Repo-Root ist 4 Ebenen over jarvis/ui/web/server.py:
+        # resolve_outputs_root). The repo root is 4 levels above jarvis/ui/web/server.py:
         # server.py -> web -> ui -> jarvis -> repo.
         repo_root = WEB_DIR.parent.parent.parent
         # Test/benchmark isolation seam: an explicit JARVIS_ISOLATION_ROOT
@@ -1993,15 +1993,15 @@ class WebServer:
             isolation_root=isolation_root,
             repo_root=repo_root,
             recover_missions=_is_primary,
-            tts_speak_fn=None,  # TTS-Wiring kommt aus DesktopApp wenn Voice live
-            brain_caller=None,  # Decomposer arbeitet im Heuristik-only-Modus
-            # Welle-4 Y: Speech-Bus fuer MissionAnnouncer durchreichen, damit
-            # Mission-Completion-Events als AnnouncementRequested auf dem
-            # globalen Bus landen — pipeline._on_announcement subscribed dort.
+            tts_speak_fn=None,  # TTS wiring comes from DesktopApp once voice is live
+            brain_caller=None,  # The decomposer runs in heuristic-only mode
+            # Welle-4 Y: pass the speech bus through for MissionAnnouncer, so
+            # mission-completion events land as AnnouncementRequested on the
+            # global bus — pipeline._on_announcement subscribes there.
             speech_bus=self.bus,
-            # Defaults aus jarvis.toml [phase6.*] (alle ueberschreibbar via cfg later)
+            # Defaults from jarvis.toml [phase6.*] (all overridable via cfg later)
             safety_enabled=True,
-            # User mandate 2026-05-31 ("überhaupt kein Budget", frontier-quality-
+            # User mandate 2026-05-31 ("no budget at all", frontier-quality-
             # over-cost): the per-mission/daily cost cap is DISABLED so a long,
             # high-quality Opus mission is never aborted mid-work for cost. The
             # per_mission_usd/daily_usd values below are inert while disabled.
@@ -2028,14 +2028,14 @@ class WebServer:
         self._missions_voice_listener = result["voice_listener"]
         self._missions_cleanup_task = result["cleanup_task"]
 
-        # Welle-4-Wiring: spawn_worker-Tool im Brain braucht den
-        # MissionManager UND den Kontrollierer. Der Brain wird in
-        # DesktopApp._start_speech_and_orb ueber build_default_brain()
-        # gebaut — die Singleton-Setter machen beide dort verfuegbar
-        # (Lazy-Resolve via _resolve_mission_manager / _resolve_kontrollierer).
-        # Ohne den Kontrollierer-Setter wuerde der Voice-Pfad eine Mission
-        # dispatchen, aber niemand triggert run_mission — die Mission bliebe
-        # PENDING und der User hoerte keine Antwort (BUG-016).
+        # Welle-4 wiring: the spawn_worker tool in the brain needs both the
+        # MissionManager AND the Kontrollierer. The brain is built in
+        # DesktopApp._start_speech_and_orb via build_default_brain() — the
+        # singleton setters make both available there (lazy resolve via
+        # _resolve_mission_manager / _resolve_kontrollierer).
+        # Without the Kontrollierer setter, the voice path would dispatch a
+        # mission but nothing would trigger run_mission — the mission would
+        # stay PENDING and the user would hear no answer (BUG-016).
         try:
             from jarvis.brain.factory import (
                 set_kontrollierer,
@@ -2049,8 +2049,8 @@ class WebServer:
             self.app.state.worker_available = True
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "set_mission_manager/kontrollierer-Wiring fehlgeschlagen — "
-                "spawn_worker wird in diesem Run deaktiviert: %s", exc,
+                "set_mission_manager/kontrollierer wiring failed — "
+                "spawn_worker is disabled for this run: %s", exc,
             )
             # Surface the failure for both downstream readers:
             #  - `self.app.state.worker_available` lets REST routes and
@@ -2058,8 +2058,8 @@ class WebServer:
             #    instead of permanently rendering "loading" / "pending".
             #  - the factory-level singleton lets the Brain's spawn_worker
             #    tool short-circuit at execute()-time with an honest
-            #    "konnte nicht initialisiert werden" message instead of the
-            #    transient "noch nicht bereit" the in-progress path returns.
+            #    "could not be initialized" message instead of the
+            #    transient "not ready yet" the in-progress path returns.
             self.app.state.worker_available = False
             try:
                 from jarvis.brain.factory import set_worker_bootstrap_failed
@@ -2070,7 +2070,7 @@ class WebServer:
                     inner_exc,
                 )
 
-        # WS-Bridge: ConnectionManager aus Phase-4 wird auf den Bus subscribed.
+        # WS bridge: the Phase-4 ConnectionManager is subscribed to the bus.
         ws_mgr = getattr(self.app.state, "missions_ws_manager", None)
         if ws_mgr is not None:
             result["manager"].bus.subscribe_all(ws_mgr.fanout)
