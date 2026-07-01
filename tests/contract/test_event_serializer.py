@@ -1,10 +1,10 @@
-"""Contract-Test: event_to_ws_envelope muss JEDES Event in `core.events`
-verlustfrei serialisieren können.
+"""Contract test: event_to_ws_envelope must serialize EVERY event in
+`core.events` losslessly.
 
-**Hintergrund:** Das Wire-Format zwischen Backend und Frontend hängt daran,
-dass jedes Event in der Codebase durch den Serializer läuft. Wenn jemand
-ein neues Event mit einem nicht-JSON-fähigen Feld-Typ hinzufügt, muss dieser
-Test rot werden — sonst crashed die UI zur Laufzeit.
+**Background:** the wire format between backend and frontend depends on
+every event in the codebase passing through the serializer. If someone
+adds a new event with a non-JSON-able field type, this test must go
+red — otherwise the UI crashes at runtime.
 """
 from __future__ import annotations
 
@@ -44,12 +44,12 @@ _REQUIRED_KWARGS: dict[str, dict] = {
 
 @pytest.mark.parametrize("event_cls", EVENT_CLASSES, ids=[c.__name__ for c in EVENT_CLASSES])
 def test_event_serializes_to_json(event_cls: type[Event]) -> None:
-    """Instanziert Event mit Defaults und serialisiert zu JSON."""
+    """Instantiates the event with defaults and serializes it to JSON."""
     kwargs = _REQUIRED_KWARGS.get(event_cls.__name__, {})
     event = event_cls(**kwargs)
     envelope = event_to_ws_envelope(event)
 
-    # JSON-roundtrip muss klappen
+    # JSON round-trip must work
     raw = json.dumps(envelope)
     decoded = json.loads(raw)
 
@@ -57,14 +57,14 @@ def test_event_serializes_to_json(event_cls: type[Event]) -> None:
     assert decoded["type"] == "event"
     assert decoded["event_name"] == event_cls.__name__
     assert isinstance(decoded["trace_id"], str)
-    # trace_id muss parseable UUID sein
+    # trace_id must be a parseable UUID
     UUID(decoded["trace_id"])
     assert isinstance(decoded["timestamp_ns"], int)
     assert "payload" in decoded
 
 
 def test_system_state_changed_payload_roundtrip() -> None:
-    """Payload-Feldmapping für den am häufigsten gesendeten Event-Typ."""
+    """Payload field mapping for the most frequently sent event type."""
     from jarvis.core.events import SystemStateChanged
 
     evt = SystemStateChanged(
