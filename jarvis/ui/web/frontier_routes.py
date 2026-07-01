@@ -1,9 +1,9 @@
-"""Frontier-Routes — REST-API fuer Auto-Switch-Modal.
+"""Frontier routes — REST API for the auto-switch modal.
 
-GET /api/frontier/pending → Liste der Switches die der User noch nicht
-   mit OK quittiert hat. Frontend rendert ein blockierendes Modal.
-POST /api/frontier/ack → Markiert alle pending Switches als geackt.
-   Modal schliesst.
+GET /api/frontier/pending → the list of switches the user has not yet
+   acknowledged with OK. The frontend renders a blocking modal.
+POST /api/frontier/ack → marks all pending switches as acknowledged.
+   The modal closes.
 """
 from __future__ import annotations
 
@@ -21,18 +21,18 @@ router = APIRouter(prefix="/api/frontier", tags=["frontier"])
 
 @router.get("/pending")
 async def list_pending_switches() -> list[dict[str, Any]]:
-    """Liefert alle noch nicht-geackten Frontier-Switches.
+    """Returns all frontier switches not yet acknowledged.
 
-    Frontend pollt das beim Mount + nach jedem WS-Reconnect, damit das
-    Modal nicht verloren geht falls der User die Tab waehrend des
-    Switches nicht offen hatte.
+    The frontend polls this on mount + after every WS reconnect, so the
+    modal isn't missed if the user didn't have the tab open during the
+    switch.
     """
     return get_pending_switches_as_dict()
 
 
 @router.post("/ack")
 async def ack_switches() -> dict[str, int]:
-    """Markiert alle pending Switches als geackt (User hat OK gedrueckt).
+    """Marks all pending switches as acknowledged (the user pressed OK).
 
     Returns ``{"acked": <count>}``.
     """

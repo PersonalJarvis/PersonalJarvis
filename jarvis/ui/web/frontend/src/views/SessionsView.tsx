@@ -1,9 +1,9 @@
 /**
- * Transkriptions-View — Master-Detail-Layout fuer Voice-Sessions.
+ * Transcription view — master-detail layout for voice sessions.
  *
- * Linke Pane: SessionList (chronologisch). Rechte Pane: Detail mit Header
- * + Turn-Timeline + Click-to-Copy. Live-Updates via useSessions-Hook,
- * der auf VoiceSessionStarted/Ended-Bus-Events reagiert.
+ * Left pane: SessionList (chronological). Right pane: detail with header
+ * + turn timeline + click-to-copy. Live updates via the useSessions hook,
+ * which reacts to VoiceSessionStarted/Ended bus events.
  */
 import { Mic } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -21,16 +21,16 @@ export function SessionsView() {
   const sessionsQuery = useSessions();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // Beim ersten erfolgreichen Load die neueste **abgeschlossene** Session
-  // auto-selektieren. Begruendung: ``list_sessions`` (store.py) listet auch
-  // laufende Sessions (``ended_ms === null``) — die erscheinen ganz oben,
-  // weil sie den juengsten ``started_ms`` haben. Wuerden wir sie
-  // auto-selektieren, sieht der User beim Tab-Wechsel waehrend einer
-  // laufenden Voice-Session eine *leere* Detail-Pane und denkt "die letzte
-  // Transkription ist weg". Wir bevorzugen die juengste Session mit
-  // ``ended_ms !== null`` (= komplett abgeschlossen mit Aggregaten);
-  // erst wenn es keine abgeschlossene gibt, fallen wir auf das erste
-  // Listenelement zurueck.
+  // On the first successful load, auto-select the newest **finished**
+  // session. Rationale: ``list_sessions`` (store.py) also lists sessions
+  // still in progress (``ended_ms === null``) — those show up at the very
+  // top because they have the most recent ``started_ms``. If we
+  // auto-selected one of those, the user would see an *empty* detail pane
+  // when switching tabs during an ongoing voice session and think "my last
+  // transcript is gone". We prefer the newest session with
+  // ``ended_ms !== null`` (= fully finished, with aggregates);
+  // only when there is no finished session do we fall back to the first
+  // list item.
   useEffect(() => {
     if (selectedId !== null) return;
     const list = sessionsQuery.data;

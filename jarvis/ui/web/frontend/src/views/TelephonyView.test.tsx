@@ -221,6 +221,7 @@ describe("TelephonyView — save handler", () => {
 
 describe("TelephonyView — self-test voice", () => {
   it("renders the returned transcript and response_text without clipping", async () => {
+    // i18n-allow: German voice self-test fixture — simulated Jarvis TTS response text
     const LONG_RESPONSE =
       "Selbstverständlich, Sir. Ich habe die Verbindung geprüft und alles " +
       "funktioniert einwandfrei über die gesamte Sprach-Kette hinweg, vom " +
@@ -230,7 +231,7 @@ describe("TelephonyView — self-test voice", () => {
     routes["/api/telephony/selftest"] = () => ({
       body: {
         ok: true,
-        transcript: "Hallo Jarvis, funktioniert das Telefon?",
+        transcript: "Hallo Jarvis, funktioniert das Telefon?", // i18n-allow: simulated German STT transcript, content under test
         response_text: LONG_RESPONSE,
         audio_bytes: 48000,
       },

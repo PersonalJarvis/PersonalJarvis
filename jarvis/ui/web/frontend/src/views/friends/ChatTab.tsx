@@ -7,9 +7,9 @@ import { useFriend, useFriends } from "@/hooks/useFriends";
 import { useT } from "@/i18n";
 
 /**
- * Master-Detail-Layout fuer den Chat-Tab.
- *   Links:  scrollbare FriendsList (FriendListItem)
- *   Rechts: ChatThread fuer den ausgewaehlten Friend
+ * Master-detail layout for the chat tab.
+ *   Left:  scrollable FriendsList (FriendListItem)
+ *   Right: ChatThread for the selected friend
  */
 export function ChatTab() {
   const t = useT();
