@@ -44,10 +44,10 @@ All eight ADRs live under `docs/adr/` and are part of the audit trail.
 |---|---|---|
 | `ac_pytest_phase5` | `pytest -m phase5 -v` runs without fails (except `skip_ci`) | ✅ PASS (17 tests) |
 | `ac_no_regression` | `python -m jarvis` starts without regression (Phase 0–4 green) | ✅ PASS — separate runs, Phase-2/4 suites unchanged |
-| `ac_notepad_e2e` | `"Öffne Notepad, tippe Hallo, speichere als test.txt"` → E2E executed | ⚠️ SIMULATED (see Known Limitations) — `test_cu_harness_runs_notepad_like_plan` covers the Plan-Observe-Act-Verify pipeline with fakes. A real live run requires the user desktop. |
-| `ac_winget_uac` | `"Installiere 7zip via winget"` → UAC prompt, installation, success message | ⚠️ SIMULATED — `test_admin_ipc_loopback` with `skip_ci` tests the round-trip infrastructure. A real UAC prompt requires an interactive session. |
+| `ac_notepad_e2e` | `"Öffne Notepad, tippe Hallo, speichere als test.txt"` → E2E executed | ⚠️ SIMULATED (see Known Limitations) — `test_cu_harness_runs_notepad_like_plan` covers the Plan-Observe-Act-Verify pipeline with fakes. A real live run requires the user desktop. | <!-- i18n-allow -->
+| `ac_winget_uac` | `"Installiere 7zip via winget"` → UAC prompt, installation, success message | ⚠️ SIMULATED — `test_admin_ipc_loopback` with `skip_ci` tests the round-trip infrastructure. A real UAC prompt requires an interactive session. | <!-- i18n-allow -->
 | `ac_kill_switch_2s` | `Ctrl+Alt+Shift+K` aborts a running CU task in <2s | ✅ PASS — `test_kill_switch_via_voice_cancels_cu_token_under_2s` measures <50ms voice→token cancel (the hotkey path is structurally identical). |
-| `ac_reminder_30s` | `"Sag mir in 30 Sekunden Hallo"` → persisted + fires after 30s | ✅ PASS — `test_full_lifecycle_post_get_cancel_get` + `test_scheduler.py` cover the `after_delay` trigger. |
+| `ac_reminder_30s` | `"Sag mir in 30 Sekunden Hallo"` → persisted + fires after 30s | ✅ PASS — `test_full_lifecycle_post_get_cancel_get` + `test_scheduler.py` cover the `after_delay` trigger. | <!-- i18n-allow -->
 | `ac_restart_interrupt` | App restart in the middle of a running task → correctly recognized as interrupted | ✅ PASS — `test_task_queue_startup_cleanup_marks_running_as_interrupted`. |
 | `ac_cost_circuit_trip` | Simulated mock overrun → cooldown active, new tasks blocked | ✅ PASS — `test_cost_circuit_trips_and_cancels_token` + `test_cost_daily_overrun_starts_cooldown_persistent`. |
 | `ac_replay_cli` | Flight-Recorder output replayable via CLI, step history visible | ✅ PASS — `test_flight_recorder_roundtrip_for_cu_task` + `test_cli_exits_zero_when_records_found`. |

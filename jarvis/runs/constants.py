@@ -30,6 +30,20 @@ RUN_DECISION_KINDS: Final[tuple[str, ...]] = (
     DECISION_BRAIN, DECISION_MISSION, DECISION_FALLBACK,
 )
 
+# --- Rationale provenance (the honest "why") --------------------------
+# Where a DecisionStep's rationale came from. NEVER fabricated:
+#   "model" — the brain's own natural-language text emitted next to a tool_use
+#             block (ActionProposed.rationale), captured for free.
+#   "rule"  — a deterministic, honest explanation the analyzer builds from a
+#             CAPTURED fact (approval source, denial reason, provider fallback).
+# An empty source means no rationale was available; the UI says so plainly
+# rather than guessing. This crosses Python -> Pydantic -> TS -> UI, so it is
+# parity-guarded like the other run enums.
+RATIONALE_MODEL: Final[str] = "model"
+RATIONALE_RULE: Final[str] = "rule"
+
+RATIONALE_SOURCES: Final[tuple[str, ...]] = (RATIONALE_MODEL, RATIONALE_RULE)
+
 # --- Run outcome (distinct from SLO latency) --------------------------
 # The functional result of a run, NOT its speed. A slow-but-answered run is a
 # success; only a genuine failure (unrecovered error, no answer, denied action)
@@ -60,6 +74,7 @@ __all__ = [
     "DECISION_TIER", "DECISION_ROUTE", "DECISION_RISK",
     "DECISION_BRAIN", "DECISION_MISSION", "DECISION_FALLBACK",
     "RUN_DECISION_KINDS",
+    "RATIONALE_MODEL", "RATIONALE_RULE", "RATIONALE_SOURCES",
     "OUTCOME_SUCCESS", "OUTCOME_PARTIAL", "OUTCOME_FAILED", "RUN_OUTCOMES",
     "ROLE_USER", "ROLE_JARVIS", "ROLE_SYSTEM", "ROLE_TOOL", "ROLE_ERROR",
     "TRANSCRIPT_ROLES",

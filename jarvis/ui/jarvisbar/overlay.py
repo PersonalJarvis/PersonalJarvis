@@ -15,9 +15,11 @@ Threading mirrors the orb: a daemon thread runs the Tk mainloop; all Tk
 mutations from the bus-subscriber thread go through ``_enqueue_ui`` → a queue
 drained on the Tk thread. ``set_level`` is the sole exception (atomic write).
 
-No ``SetWindowLong`` is ever called, so this surface is not exposed to the
-BUG-030 LWA color-key destruction risk. ``-transparentcolor`` is set once at
-window creation and never mutated.
+No ``SetWindowLong`` is ever called directly, but ``-topmost`` IS re-asserted
+on every reveal (``_do_show``), and Windows can silently drop the layered
+color-key/alpha on that kind of style mutation (BUG-030). ``_do_show``
+re-applies ``-transparentcolor``/``-alpha`` right after, so a dropped
+attribute self-heals on the next reveal instead of leaving a black flash.
 """
 from __future__ import annotations
 
@@ -399,6 +401,20 @@ class JarvisBarOverlay:
             self._root.lift()
         except Exception:  # noqa: BLE001
             log.debug("jarvisbar lift/topmost re-assert failed", exc_info=True)
+        # BUG-030 guard: re-asserting ``-topmost`` is itself a Win32 style
+        # mutation on this layered (color-key + alpha) window, and Windows can
+        # silently drop the layered attributes on such a mutation — the bar
+        # then briefly renders its true opaque black backing surface instead of
+        # the keyed-out magenta until the next repaint ("black border flashes
+        # around the bar, then disappears" forensic, 2026-06-30). Re-apply both
+        # exactly as set at creation so a dropped attribute self-heals on the
+        # very next reveal instead of needing an app restart. Guarded
+        # separately so a failure here can never undo the topmost re-assert.
+        try:
+            self._root.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
+            self._root.wm_attributes("-alpha", self._opacity)
+        except Exception:  # noqa: BLE001
+            log.debug("jarvisbar transparentcolor/alpha re-assert failed", exc_info=True)
 
     def _do_hide(self) -> None:
         if self._root is None:

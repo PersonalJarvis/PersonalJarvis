@@ -166,7 +166,8 @@
     "wake_hint": "Di tu palabra de activación…",
     "brain_label": "Cerebro",
     "brain_tooltip": "Cambiar proveedor de IA",
-    "apikeys_alert": "Un proveedor está configurado pero no funciona — abre API Keys para solucionarlo"
+    "apikeys_alert": "Un proveedor está configurado pero no funciona — abre API Keys para solucionarlo",
+    "plugins_reconnect_alert": "Una conexión de plugin expiró — abre Skills & Tools para volver a conectarla"
   },
   "chats_view": {
     "title": "Chat",
@@ -1205,6 +1206,7 @@
     "open_with_remember": "Recordar como predeterminado",
     "open_with_change": "Cambiar cómo se abre",
     "open_with_empty": "No se detectaron apps para abrir este archivo.",
+    "open_with_loading": "Detectando apps…",
     "opener_default": "App predeterminada del sistema",
     "opener_browser": "Navegador",
     "reveal_in_folder": "Mostrar en la carpeta"

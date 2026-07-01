@@ -6,7 +6,7 @@
 
 `JARVIS_AWARENESS_PLAN.md` §7 introduces a Phase A3 tool, `awareness-recall`,
 that performs a BM25 full-text search over the recent episode log so the
-brain can answer questions like „was war der Befehl von vorhin?" without
+brain can answer questions like "what was the command from earlier?" without
 fabricating an answer. The plan was written before Welle 4 of the
 Jarvis-Agents bridge migration and assumes the existence of a "Jarvis-Agent"
 worker tier. In that world the plan unambiguously assigns the tool to

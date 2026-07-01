@@ -166,7 +166,8 @@
     "wake_hint": "Say your wake word…",
     "brain_label": "Brain",
     "brain_tooltip": "Switch brain provider",
-    "apikeys_alert": "A provider is set up but not working — open API Keys to fix it"
+    "apikeys_alert": "A provider is set up but not working — open API Keys to fix it",
+    "plugins_reconnect_alert": "A plugin connection expired — open Skills & Tools to reconnect it"
   },
   "chats_view": {
     "title": "Chat",
@@ -1206,6 +1207,7 @@
     "open_with_remember": "Remember as default",
     "open_with_change": "Change how this opens",
     "open_with_empty": "No apps detected to open this file.",
+    "open_with_loading": "Detecting apps…",
     "opener_default": "System default app",
     "opener_browser": "Browser",
     "reveal_in_folder": "Reveal in folder"

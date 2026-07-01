@@ -20,17 +20,17 @@ Deliver a compact Markdown table:
 
 | Sub-Phase | Files | Tests | ADR | Status |
 |---|---|---|---|---|
-| 1 Foundation | N/M Files vorhanden | N/M Tests grün | ADR-0009 §X | DONE/PARTIAL/MISSING |
+| 1 Foundation | N/M Files present | N/M Tests passing | ADR-0009 §X | DONE/PARTIAL/MISSING |
 | ... |
 
 ## Letzte Commits
-<git log Output, max 10 Zeilen>
+<git log output, max 10 lines>
 
 ## Offene Follow-Ups
 - B1 Lock-Holding: <FIXED|OPEN>, Beleg `<file:line>`
 - B2 Event-Payload-PII: <FIXED|OPEN>, Beleg `<file:line>`
 
-## Empfohlener nächster Schritt
+## Recommended next step
 <ein Satz>
 ```
 

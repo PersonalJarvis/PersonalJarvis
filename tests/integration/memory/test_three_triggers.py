@@ -116,6 +116,9 @@ class _SpyRegistry:
         self._brain = brain
         self.instantiate_calls: list[tuple[str, dict[str, Any]]] = []
 
+    def available(self) -> set[str]:
+        return {"gemini", "claude-api", "openrouter", "openai"}
+
     def instantiate(self, name: str, **kwargs: Any) -> Any:
         self.instantiate_calls.append((name, dict(kwargs)))
         return self._brain

@@ -32,10 +32,22 @@ _PLACEHOLDER_MARKERS: tuple[str, ...] = (
     "todo",
 )
 
-# Plugins that share one Google OAuth client (per the catalog gmail hint:
-# "shares the Google client with Drive"). Their real client is resolved from the
-# shared `google_oauth_client_id` / `google_oauth_client_secret` secrets.
-_GOOGLE_FAMILY: frozenset[str] = frozenset({"gmail", "google_drive", "google_calendar"})
+# Bring-your-own OAuth client: map each PKCE plugin to the secret "family" whose
+# `<family>_oauth_client_id` / `<family>_oauth_client_secret` secrets override the
+# catalog client. This lets every downloader run their OWN production OAuth app
+# (the only way to stop a provider revoking refresh tokens — e.g. Google drops a
+# "Testing"-mode app's refresh token after 7 days) without editing the tracked
+# catalog or exporting env vars. gmail/drive/calendar share ONE Google client
+# (per the catalog hint "shares the Google client with Drive"); slack and asana
+# each get their own. DCR plugins (notion/linear/cloudflare) register their client
+# dynamically and are intentionally absent — they have no static client to supply.
+_OAUTH_CLIENT_FAMILY: dict[str, str] = {
+    "gmail": "google",
+    "google_drive": "google",
+    "google_calendar": "google",
+    "slack": "slack",
+    "asana": "asana",
+}
 
 
 def is_placeholder_client_id(value: str | None) -> bool:
@@ -54,18 +66,24 @@ def resolve_pkce_client(
 ) -> tuple[str, str | None]:
     """Resolve the effective (client_id, client_secret) for a PKCE plugin.
 
-    Precedence: a secret override wins over the catalog value, so the operator
-    can supply a real Google OAuth client without editing the tracked catalog
-    (which gets re-synced from the seed). For the Google family the shared
-    `google_oauth_client_id` / `google_oauth_client_secret` secrets are used;
-    other PKCE plugins (e.g. Slack) keep their real catalog client untouched.
+    Precedence: a `<family>_oauth_client_*` secret override wins over the catalog
+    value, so a downloader can supply their OWN production OAuth client without
+    editing the tracked catalog (which gets re-synced from the seed) or exporting
+    env vars. The Google family (gmail/drive/calendar) shares one `google_oauth_*`
+    pair; slack and asana each have their own. A plugin with no family mapping
+    keeps its real catalog client untouched. An unset/empty secret never displaces
+    the catalog value (``or`` fallback), so a placeholder catalog client still
+    builds a handler and the scheduler can honestly flag needs_reauth.
     """
-    if plugin_id not in _GOOGLE_FAMILY:
+    family = _OAUTH_CLIENT_FAMILY.get(plugin_id)
+    if family is None:
         return catalog_client_id, catalog_client_secret
     from jarvis.core.config import get_secret
 
-    cid = get_secret("google_oauth_client_id", "GOOGLE_OAUTH_CLIENT_ID")
-    csec = get_secret("google_oauth_client_secret", "GOOGLE_OAUTH_CLIENT_SECRET")
+    cid = get_secret(f"{family}_oauth_client_id", f"{family.upper()}_OAUTH_CLIENT_ID")
+    csec = get_secret(
+        f"{family}_oauth_client_secret", f"{family.upper()}_OAUTH_CLIENT_SECRET"
+    )
     return (cid or catalog_client_id, csec or catalog_client_secret)
 
 

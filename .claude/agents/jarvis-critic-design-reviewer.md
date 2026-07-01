@@ -72,7 +72,7 @@ The constant `MAX_CRITIC_LOOPS` is defined as a module-level `Final[int] = 3`, N
 **Beleg:** `<datei:zeile>`
 <…>
 
-### Kriterium 4 — verdict=approve nur bei allen axes pass: <PASS|FAIL>
+### Criterion 4 — verdict=approve only when all axes pass: <PASS|FAIL>
 **Beleg:** `<datei:zeile>`
 <…>
 
@@ -94,7 +94,7 @@ The constant `MAX_CRITIC_LOOPS` is defined as a module-level `Final[int] = 3`, N
 
 ## Edge cases
 
-- **Critic module does not exist yet** (Phase 3 of Phase 6 not yet implemented): return `CRITIC_MODULE_NOT_FOUND — pruefe `jarvis/missions/critic/` und liefere mir die Pfade nach Implementierung`. Stop.
+- **Critic module does not exist yet** (Phase 3 of Phase 6 not yet implemented): return `CRITIC_MODULE_NOT_FOUND — check `jarvis/missions/critic/` and provide me the paths after implementation`. Stop.
 - **Cross-model Critic is configured** (Worker = Claude, Critic = Codex/GPT): additionally check whether the auth flow is compliant with ADR-0009 §3 (separate `CODEX_HOME` per worker).
 - **Pydantic schema instead of JSON schema:** acceptable — check the Pydantic model instead of the JSON file. The criteria apply analogously.
 - **Prompt templates in a YAML/Jinja file** instead of a Python string: read the template file; the criteria apply against the rendered prompt.

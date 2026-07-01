@@ -60,6 +60,7 @@ from jarvis.core.turn_language import (
 )
 from jarvis.voice.action_phrases import (
     CU_CANCEL_EXIT_CODE,
+    CU_TOOL_OUTCOME_LAYER,
     OUTPUT_LANGUAGE_ENV_KEY,
     action_phrase,
     cu_failure_readback,
@@ -689,6 +690,22 @@ _SPAWN_TOOL_NAMES: frozenset[str] = frozenset({"spawn_worker", "multi_spawn"})
 # works) and ``open_app`` (lighter; naming an app already reads as action-intent).
 _INHERITABLE_ACTION_TOOL_NAMES: frozenset[str] = _SPAWN_TOOL_NAMES | {"computer_use"}
 
+# Deterministic write/record tools that create user-visible state (a contact, a
+# profile field, a wiki note, a calendar event, a phone call). On a turn with NO
+# action signal of its own these must NOT sit in the LLM surface, or the model
+# can pick one on a plain conversational question (deep-dive 2026-06-30: a
+# "does my budget fit?" turn had google_calendar/contact-upsert/wiki-ingest/
+# update-profile ungated). Hidden by the signalless guard, with a hard exemption
+# for any tool the deterministic layer ALREADY mandated this turn (a real "merk
+# dir, dass…" keeps wiki-ingest via resolve_save_mandate; a calendar READ keeps
+# google_calendar via the evidence gate) so the say-do write feature and calendar
+# reads never regress. The background wiki (VoiceFactBridge) is untouched — it is
+# not a model-callable tool (AP-9).
+_DETERMINISTIC_WRITE_TOOL_NAMES: frozenset[str] = frozenset({
+    "contact-upsert", "update-profile", "wiki-ingest", "google_calendar",
+    "call-contact",
+})
+
 # Interrogative opener (DE / EN / ES) — the leading question word of a plain
 # "what/which/who/how/…"-style factual question. Anchored at the start after an
 # optional wake/greeting/politeness run so "Jarvis, welche Firmen …" still
@@ -821,6 +838,31 @@ def _is_opinion_advice_question(user_text: str) -> bool:
     because an everyday word collides with an action verb.
     """
     return bool(_OPINION_ADVICE_QUESTION_RE.search(user_text or ""))
+
+
+def _conversational_turn_suppresses_read_mandate(user_text: str) -> bool:
+    """True when an opinion/advice/conversational turn must stand the READ
+    evidence gate down instead of forcing a tool.
+
+    Live 2026-06-30 (Bora-Bora voice session): the user asked a plain travel
+    question — "...bin jetzt bei meinem Budget bei so 25.000 Euro ... passt es?".
+    The word "budget" matched the cloud-billing domain, the gate FORCED
+    ``cli_gcloud``, the model answered the travel question without that
+    (irrelevant) tool, and the honesty backstop then VOIDED the good answer
+    (``executed=[]``). The very same classifier that already inlines such a turn
+    (force-spawn skip, log "opinion/advice/conversational question — inline")
+    suppresses the read mandate here, so a chat/advice turn is never dead-ended
+    by an irrelevant tool it never needed. The tool stays in the surface, so the
+    model keeps discretion to call it — it is just never *forced*, and the answer
+    is never voided.
+
+    Narrow on purpose (no confab regression): fires ONLY on an actual
+    opinion/advice/conversational opener. A bare data lookup ("Was sind meine
+    Abrechnungen?", live 2026-06-17) matches no opener and stays gated. Pure
+    regex (AP-11). WRITE mandates (``resolve_save_mandate``) are intentional and
+    handled separately — only the READ gate stands down here.
+    """
+    return _is_opinion_advice_question(user_text)
 
 
 # A spawn / sub-agent / worker token in DE/EN/ES (declined forms included). Used
@@ -1125,17 +1167,77 @@ _EVIDENCE_UNFULFILLED_PHRASES: dict[str, str] = {
 }
 
 
-def _evidence_unfulfilled_answer(*, lang: str) -> str:
+# Spoken domain labels for the honest "couldn't reach X" fallback. Mirrors the
+# capability vocabulary already used by evidence_gate's refusal tables, so a
+# mandated-but-unrun READ names the real domain ("…deine Cloud-Abrechnung…")
+# instead of the generic "the tool" — which also seeds the conversation history
+# so a follow-up "welches Werkzeug?" is answerable. Localized for every
+# supported language; an unknown domain falls back to the generic phrase.
+_EVIDENCE_DOMAIN_LABELS: dict[str, dict[str, str]] = {
+    "de": {
+        "calendar": "deinen Kalender",  # i18n-allow: German TTS
+        "email": "dein Postfach",  # i18n-allow: German TTS
+        "tasks": "deine Aufgaben",  # i18n-allow: German TTS
+        "repos": "deine Repositories",  # i18n-allow: German TTS
+        "deployments": "deine Deployments",  # i18n-allow: German TTS
+        "cloud": "deine Cloud-Abrechnung",  # i18n-allow: German TTS
+        "activity": "deinen Aktivitätsverlauf",  # i18n-allow: German TTS
+    },
+    "en": {
+        "calendar": "your calendar",
+        "email": "your inbox",
+        "tasks": "your tasks",
+        "repos": "your repositories",
+        "deployments": "your deployments",
+        "cloud": "your cloud billing",
+        "activity": "your activity history",
+    },
+    "es": {
+        "calendar": "tu calendario",
+        "email": "tu bandeja de entrada",
+        "tasks": "tus tareas",
+        "repos": "tus repositorios",
+        "deployments": "tus despliegues",
+        "cloud": "tu facturación en la nube",
+        "activity": "tu historial de actividad",
+    },
+}
+
+# Domain-aware variant of the unfulfilled phrase — same honesty contract (never
+# claims a "block"/invents a reason), just names the capability via {label}.
+_EVIDENCE_UNFULFILLED_DOMAIN_PHRASES: dict[str, str] = {
+    "de": (
+        "Ich konnte {label} gerade nicht abrufen — der Zugriff ist "  # i18n-allow: German TTS
+        "nicht durchgelaufen. Sag noch mal Bescheid, dann versuche "  # i18n-allow: German TTS
+        "ich es erneut."  # i18n-allow: German TTS
+    ),
+    "en": (
+        "I couldn't pull {label} just now — the access didn't go through. "
+        "Say the word and I'll try again."
+    ),
+    "es": (
+        "No pude obtener {label} ahora mismo — el acceso no se completó. "
+        "Avísame y lo intento de nuevo."
+    ),
+}
+
+
+def _evidence_unfulfilled_answer(*, lang: str, domain: str = "") -> str:
     """Honest spoken fallback for a mandated-tool turn whose tool never ran.
 
     Static, no LLM (AP-11). Never claims the tool "blocked" or invents a reason.
-    Localized for every supported language (de/en/es); an unrecognised code
-    degrades to the default locale so the spoken turn never crashes (Runtime
+    When ``domain`` is a known external-data domain the phrase NAMES the
+    capability ("…deine Cloud-Abrechnung…"); otherwise it degrades to the generic
+    wording. Localized for every supported language (de/en/es); an unrecognised
+    code degrades to the default locale so the spoken turn never crashes (Runtime
     Output Language doctrine).
     """
-    return _EVIDENCE_UNFULFILLED_PHRASES.get(
-        lang, _EVIDENCE_UNFULFILLED_PHRASES[DEFAULT_LOCALE]
-    )
+    if lang not in _EVIDENCE_UNFULFILLED_PHRASES:
+        lang = DEFAULT_LOCALE
+    label = _EVIDENCE_DOMAIN_LABELS.get(lang, {}).get(domain, "")
+    if label:
+        return _EVIDENCE_UNFULFILLED_DOMAIN_PHRASES[lang].format(label=label)
+    return _EVIDENCE_UNFULFILLED_PHRASES[lang]
 
 
 # Honest spoken fallback for a mandated WRITE (e.g. contact-upsert) that never
@@ -1195,6 +1297,7 @@ def _unfulfilled_replacement(
     suppressed: bool,
     is_write: bool,
     lang: str,
+    domain: str = "",
 ) -> "str | None":
     """Decide whether a mandated-tool turn's answer must be replaced for honesty.
 
@@ -1214,7 +1317,7 @@ def _unfulfilled_replacement(
         if "?" in (response_text or ""):
             return None  # honest clarifying question — keep it
         return _action_unfulfilled_answer(required_tool, lang=lang)
-    return _evidence_unfulfilled_answer(lang=lang)
+    return _evidence_unfulfilled_answer(lang=lang, domain=domain)
 
 
 def _render_recovered_tool_output(output: Any) -> str:
@@ -2155,6 +2258,75 @@ class BrainManager:
             system_prompt=system_prompt,
             max_tokens=self._config.brain.max_tokens,
         )
+
+    def _build_tool_ack_emitter(
+        self, user_text: str
+    ) -> Callable[[str, dict[str, Any]], Awaitable[None]] | None:
+        """Grounded per-tool ack emitter for the voice turn (perceived latency).
+
+        Returns an async callback the tool-use loop awaits ONCE, the moment the
+        router brain has actually SELECTED a tool call — so the otherwise-silent
+        tool-execution + readback window speaks a short, deterministic, LLM-free
+        line ("Okay, ich schaue in deine Mails."). This bridges the wait on slow
+        plugin turns (e.g. a cold email/calendar fetch) where the persona forbids
+        any spoken preamble before the tool and round-2 has not started yet.
+
+        Returns ``None`` when there is no bus, the feature is off
+        (``[ack_brain].grounded_tool_ack = false``), or the utterance is a
+        Voice-Control command (the action itself is the confirmation).
+
+        GROUNDED, not speculative: unlike the retired Flash-Brain preamble it
+        fires only after a real tool decision, never on suspicion. The words are
+        rendered by ``generate_ack`` (skip-list-aware, so passive reads / low-
+        latency UI events stay silent) and the language is re-resolved and
+        re-scrubbed authoritatively at the speech layer, so the reply-language
+        pin and conversation stickiness still win there. Publishing with
+        ``source_layer="brain.router.ack"`` means the existing pipeline guard
+        keeps "one ack per turn" when a machine re-enables the Flash-Brain
+        preamble (``jarvis/speech/pipeline.py`` drops this source while the
+        Flash-Brain is active); with the preamble off (the default) it is heard.
+        """
+        if self._bus is None:
+            return None
+        ack_cfg = getattr(self._config, "ack_brain", None) if self._config else None
+        if not getattr(ack_cfg, "grounded_tool_ack", True):
+            return None
+        from .ack_generator import generate_ack, is_voice_control_utterance
+
+        if is_voice_control_utterance(user_text):
+            return None
+        bus = self._bus
+        language = resolve_output_language(
+            self._reply_language,
+            "unknown",
+            user_text,
+            default=DEFAULT_LOCALE,
+            conversation_language=self._conversation_language,
+        )
+        # Fire at most once per turn even if the provider chain retries the
+        # tool-use loop (a provider that emits tool_calls then errors would
+        # otherwise re-announce on the fallback provider's re-run).
+        fired = False
+
+        async def emit(tool_name: str, tool_args: dict[str, Any]) -> None:
+            nonlocal fired
+            if fired:
+                return
+            text = generate_ack(tool_name, tool_args, language=language)
+            if text is None:  # skip-list tool (passive read / UI micro-event)
+                return
+            fired = True
+            await bus.publish(
+                AnnouncementRequested(
+                    text=text,
+                    priority="normal",
+                    language=language,
+                    kind="preamble",
+                    source_layer="brain.router.ack",
+                )
+            )
+
+        return emit
 
     @property
     def reply_language(self) -> str:
@@ -3515,6 +3687,10 @@ class BrainManager:
     # contact-upsert) rather than a read lookup — switches the honest backstop
     # to write wording and lets a clarifying question stand. Reset per turn.
     _evidence_required_is_write: bool = False
+    # The external-data domain (calendar/email/cloud/…) a READ mandate targets,
+    # so an unmet mandate's spoken fallback can NAME the capability instead of
+    # the generic "the tool" (B3, 2026-06-30). Reset per turn.
+    _evidence_required_domain: str = ""
     # Per-turn self-control directive (general settings/config control). Reset
     # at the start of every generate() turn; appended to the system prompt.
     _self_control_directive: str = ""
@@ -3931,10 +4107,17 @@ class BrainManager:
                 or self._get_force_spawn_pattern().search(t)
             ):
                 return tools
+            # Hide computer_use/spawn AND the deterministic write/record tools so
+            # the model cannot pick one on a no-action conversational turn — but
+            # NEVER strip a tool the deterministic layer already mandated this
+            # turn (a say-do write via resolve_save_mandate, or a calendar/email
+            # READ via the evidence gate), or those features regress (AD-CLI8).
+            hidden = _INHERITABLE_ACTION_TOOL_NAMES | _DETERMINISTIC_WRITE_TOOL_NAMES
+            mandated = getattr(self, "_evidence_required_tool", "") or ""
             return {
                 n: tool
                 for n, tool in tools.items()
-                if n not in _INHERITABLE_ACTION_TOOL_NAMES
+                if n not in hidden or n == mandated
             }
         except Exception:  # noqa: BLE001 — gate must never blind the brain
             log.debug("signalless-turn action-hide gate failed", exc_info=True)
@@ -4963,6 +5146,17 @@ class BrainManager:
                 canned=lambda: action_phrase("cu_crashed", lang),
                 latency_budget_ms=2000,
             )
+        # Ground the finished outcome in the LIVE conversation history so the
+        # model's NEXT turn knows the on-screen action ran and how it ended.
+        # The outcome is offloaded fire-and-forget and only ever rode the
+        # announcement bus (spoken, then gone) — it never re-entered _history,
+        # so the model believed the screen action SUCCEEDED (it saw only the
+        # optimistic ACK) and answered a follow-up "why didn't it work?" against
+        # a stale unrelated error (live forensic 2026-06-30: a failed Spotify
+        # screen action was explained with an old Google-Calendar auth error).
+        self._append_cu_outcome_to_history(
+            user_request=user_text, outcome_text=text, diagnostic=diag,
+        )
         # AD-OE6 zero silent drops: ALWAYS speak the outcome at the next turn
         # boundary (announcement -> scrub_for_voice -> TTS).
         try:
@@ -4977,6 +5171,77 @@ class BrainManager:
             ))
         except Exception:  # noqa: BLE001
             log.debug("CU-background completion announce failed", exc_info=True)
+
+    def _append_cu_outcome_to_history(
+        self,
+        *,
+        user_request: str,
+        outcome_text: str,
+        diagnostic: str | None,
+    ) -> None:
+        """Ground a finished background Computer-Use outcome in the live history.
+
+        A desktop action is offloaded fire-and-forget, so its outcome lands AFTER
+        the optimistic ACK ("On it, I'll do that on screen") was already appended
+        as the turn's assistant message. Without this, ``_history`` shows only the
+        ACK and the model never learns whether the screen action actually
+        succeeded — so a later "why didn't it work?" is answered against whatever
+        OTHER failure is still in context (live forensic 2026-06-30: a failed
+        Spotify screen action was explained with a stale Google-Calendar auth
+        error). Append an honest assistant note carrying the spoken outcome PLUS
+        the real technical reason — which the humanized spoken readback hides — so
+        the next turn is grounded in what actually happened. Pure in-memory
+        append, no LLM, no IO (off the hot path anyway). ``user_request`` is
+        accepted for call-site symmetry/debuggability; the ACK already names the
+        request in history, so the note stays compact.
+        """
+        history = getattr(self, "_history", None)
+        if history is None:
+            return
+        spoken = (outcome_text or "").strip()
+        diag = (diagnostic or "").strip()
+        if not spoken and not diag:
+            return
+        note = spoken
+        if diag:
+            # The spoken readback is humanized to "didn't work on screen"; the
+            # model needs the REAL cause to answer a follow-up honestly. Mark it
+            # clearly as a non-spoken background detail so the model treats it as
+            # context, not as something it already said aloud.
+            note = (
+                f"{note}\n\n(Background on-screen-action detail, not spoken aloud "
+                f"— for your context on a follow-up: {diag})"
+            ).strip()
+        history.append(BrainMessage(role="assistant", content=note))
+        if len(history) > self._HISTORY_MAX:
+            self._history = history[-self._HISTORY_MAX:]
+
+    async def _on_cu_tool_completion(self, event: Any) -> None:
+        """Mirror a router-tier ``computer_use`` TOOL outcome into the history.
+
+        The voice fast-path grounds its CU outcome inline (``_run_computer_use_
+        background`` → :meth:`_append_cu_outcome_to_history`). The router-tier
+        ``computer_use`` tool runs in its own module with NO ``_history`` access,
+        so it tags its completion announcement with
+        ``source_layer=CU_TOOL_OUTCOME_LAYER`` and we mirror it here — same
+        grounding, so a text-chat / router-picked desktop action is in the
+        model's next-turn context too (no subsystem confusion). Only the tagged
+        CU-tool completion is mirrored; a mission / worker / other announcement is
+        ignored, so an unrelated background readback never pollutes the grounding.
+        Never raises — a bus subscriber that throws would break the pipeline
+        (AP-18). The fast-path leaves ``source_layer`` empty, so its outcome is
+        NOT double-recorded here.
+        """
+        try:
+            if getattr(event, "source_layer", "") != CU_TOOL_OUTCOME_LAYER:
+                return
+            self._append_cu_outcome_to_history(
+                user_request="",
+                outcome_text=getattr(event, "text", "") or "",
+                diagnostic=getattr(event, "detail", None),
+            )
+        except Exception:  # noqa: BLE001
+            log.debug("CU-tool completion history mirror failed", exc_info=True)
 
     async def _record_response_side_effects(
         self,
@@ -5830,6 +6095,7 @@ class BrainManager:
         self._evidence_directive = ""
         self._evidence_required_tool = ""
         self._evidence_required_is_write = False
+        self._evidence_required_domain = ""
         # General self-control directive — reset here, set below once the
         # smalltalk classification for this turn is known.
         self._self_control_directive = ""
@@ -5988,7 +6254,23 @@ class BrainManager:
                 trace_id=turn_trace_id,
             )
             return verdict.refusal_text
-        if verdict.kind == "require_tool":
+        if verdict.kind == "require_tool" and (
+            _conversational_turn_suppresses_read_mandate(user_text)
+        ):
+            # Opinion/advice/conversational turn: never FORCE a read tool — and so
+            # never void the answer — just because a domain keyword appeared. Live
+            # 2026-06-30 (Bora-Bora): "...bei meinem Budget bei 25.000 Euro ...
+            # passt es?" matched the cloud domain, the gate forced cli_gcloud, and
+            # the backstop then deleted the model's good travel answer. The tool
+            # stays in the surface, so the model keeps discretion to call it; it is
+            # just never forced. A bare data lookup ("Was sind meine Abrechnungen?")
+            # carries no opinion opener and stays gated (no confab regression).
+            log.info(
+                "Evidence gate stood down (conversational): domain=%s tool=%s "
+                "— answering inline, not forcing the tool.",
+                verdict.domain, verdict.tool_name,
+            )
+        elif verdict.kind == "require_tool":
             log.info(
                 "Evidence gate: domain=%s requires tool %s this turn",
                 verdict.domain, verdict.tool_name,
@@ -6021,6 +6303,9 @@ class BrainManager:
             if not injected:
                 self._evidence_directive = verdict.directive
                 self._evidence_required_tool = verdict.tool_name
+                # Persist the domain so the honest "couldn't reach X" fallback can
+                # NAME the capability (B3) instead of the generic "the tool".
+                self._evidence_required_domain = verdict.domain
 
         # Say-do honesty guard for WRITES. The read evidence gate above never
         # fires on a "save this" turn (it is not a lookup), so a confirmed offer
@@ -6246,6 +6531,12 @@ class BrainManager:
             self._pending_drop_images = ()
             images = tuple(_dropped_imgs) + tuple(images)
 
+        # Grounded per-tool ack (perceived-latency): built ONCE per turn so a
+        # provider-chain retry cannot double-announce. The loop fires it the
+        # moment a tool is actually selected; None when the feature is off or
+        # this is a Voice-Control utterance.
+        _tool_ack_emitter = self._build_tool_ack_emitter(user_text)
+
         for idx, (prov_name, model) in enumerate(chain):
             # Skip providers already marked dead in THIS turn.
             # Example: gemini-fast fails with missing_key → gemini-deep would
@@ -6387,6 +6678,7 @@ class BrainManager:
                     intent_level=decision.level,
                     evidence_required_tool=self._evidence_required_tool,
                     text_consumer=_attempt_consumer,
+                    ack_emitter=_tool_ack_emitter,
                     on_progress=on_progress,
                     turn_context=turn_context,
                     reply_language=self._reply_language,
@@ -6644,6 +6936,7 @@ class BrainManager:
                 lang=resolve_output_language(
                     self._reply_language, "unknown", user_text, default="de"
                 ),
+                domain=self._evidence_required_domain,
             )
             if _replacement is not None:
                 log.warning(
@@ -7204,11 +7497,17 @@ class BrainManager:
           provider whose key was just set. Prevents a provider that already
           failed with "no API key" from being excluded from the fallback chain
           until the app is restarted.
+        - ``AnnouncementRequested`` (CU-tool-tagged) → mirror the router-tier
+          ``computer_use`` outcome into the live history (subsystem-confusion fix).
 
         Called separately rather than in ``__init__`` so BrainManager can be
         constructed for tests without a bus subscription.
         """
-        from jarvis.core.events import BrainToolsChanged, SecretConfigured
+        from jarvis.core.events import (
+            AnnouncementRequested,
+            BrainToolsChanged,
+            SecretConfigured,
+        )
 
         target_bus = bus or self._bus
         if target_bus is None:
@@ -7219,6 +7518,7 @@ class BrainManager:
             self.refresh_tools()
 
         target_bus.subscribe(BrainToolsChanged, _on_tools_changed)
+        target_bus.subscribe(AnnouncementRequested, self._on_cu_tool_completion)
 
         async def _on_secret_configured(ev: SecretConfigured) -> None:
             if ev.action != "set":

@@ -61,8 +61,13 @@ class VercelRestTool:
         access_token_provider: Callable[[], str | None] | None = None,
         transport: Any | None = None,
     ) -> None:
+        from ._http_pool import HttpClientPool
+
         self._token_provider = access_token_provider or _default_token_provider
         self._transport = transport
+        # Keep-alive pool: reuse one warm connection across list/get instead of
+        # a fresh TLS handshake per request (mirrors gmail_rest).
+        self._pool = HttpClientPool(transport=transport)
 
     # -- internal helpers ---------------------------------------------------
 
@@ -73,10 +78,8 @@ class VercelRestTool:
         return {"Authorization": f"Bearer {token}", "User-Agent": "Personal-Jarvis/1.0"}
 
     async def _get(self, path: str, params: dict[str, Any], headers: dict[str, str]):
-        import httpx
-
-        async with httpx.AsyncClient(timeout=20.0, transport=self._transport) as client:
-            resp = await client.get(f"{_VERCEL_BASE}{path}", params=params, headers=headers)
+        client = self._pool.client()
+        resp = await client.get(f"{_VERCEL_BASE}{path}", params=params, headers=headers)
         resp.raise_for_status()
         return resp.json()
 

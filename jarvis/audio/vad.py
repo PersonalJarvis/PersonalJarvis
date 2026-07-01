@@ -54,7 +54,12 @@ class SileroEndpointer:
     def __init__(
         self,
         speech_threshold: float = 0.5,
-        silence_ms: int = 1000,
+        # Product default = the configured "Thinking pause" (1.5 s "1.5s rule",
+        # jarvis.core.config.SpeechConfig.vad_silence_ms). Every real caller passes
+        # the configured value explicitly (pipeline from config; wake overrides to
+        # 500 ms); this default only governs a bare construction, and it must match
+        # the product default so a stale pre-1.5s-rule 1.0 s can never creep back.
+        silence_ms: int = 1500,
         min_speech_ms: int = 250,
         max_utterance_s: int = 30,
         min_speech_rms: float = 0.002,

@@ -114,11 +114,13 @@ ACK_SKIP_TOOLS: frozenset[str] = frozenset({
 _FINAL_MARKERS: dict[str, str] = {
     "de": "Erledigt.",
     "en": "Done.",
+    "es": "Listo.",
 }
 
 _GENERIC_ACK: dict[str, str] = {
     "de": "Okay, einen Moment.",
     "en": "Okay, one moment.",
+    "es": "Vale, un momento.",
 }
 
 # A brain text that already opens with one of these is treated as
@@ -139,10 +141,23 @@ def _normalize_tool_name(name: str) -> str:
 
 
 def _normalize_language(language: str | None) -> str:
-    """Reduce any language hint to the two supported codes ('de' or 'en')."""
+    """Reduce any language hint to a supported code ('de', 'en' or 'es').
+
+    The caller resolves the authoritative turn language through the ONE
+    resolver (jarvis/core/turn_language.py) and passes a concrete code, so
+    'es' must survive here — collapsing it to 'de' would flip a Spanish turn's
+    ack to German (a runtime-output-language doctrine violation). Anything
+    unrecognised falls back to 'de' as the module's last resort; the real
+    default-locale decision already happened upstream.
+    """
     if not language:
         return "de"
-    return "en" if language.lower().startswith("en") else "de"
+    low = language.lower()
+    if low.startswith("en"):
+        return "en"
+    if low.startswith("es"):
+        return "es"
+    return "de"
 
 
 def _trim_to_words(text: str, max_chars: int) -> str:
@@ -232,6 +247,29 @@ def _ack_run_skill(args: Mapping[str, Any], lang: str) -> str:
     return _GENERIC_ACK[lang]
 
 
+def _ack_gmail(args: Mapping[str, Any], lang: str) -> str:
+    # Grounded per-tool ack for the email plugin (the user's slow-plugin
+    # example). Action-aware so a SEND is not mis-announced as a read: a
+    # ``send_message`` still goes through echo-confirmation, so it gets a
+    # neutral filler, while reads get the specific "checking your mail" line.
+    action = str(args.get("action") or "list_messages").strip()
+    if action == "send_message":
+        return _GENERIC_ACK[lang]
+    return {
+        "de": "Okay, ich schaue in deine Mails.",
+        "en": "Okay, checking your mail.",
+        "es": "Vale, reviso tu correo.",
+    }[lang]
+
+
+def _ack_google_calendar(args: Mapping[str, Any], lang: str) -> str:
+    return {
+        "de": "Okay, ich schaue in deinen Kalender.",
+        "en": "Okay, checking your calendar.",
+        "es": "Vale, reviso tu calendario.",
+    }[lang]
+
+
 def _ack_remember(args: Mapping[str, Any], lang: str) -> str:
     return {"de": "Okay, ich merk's mir.", "en": "Okay, noted."}[lang]
 
@@ -262,6 +300,8 @@ _TEMPLATES: dict[str, _TemplateFn] = {
     "multi_spawn": _ack_multi_spawn,
     "open_app": _ack_open_app,
     "run_skill": _ack_run_skill,
+    "gmail": _ack_gmail,
+    "google_calendar": _ack_google_calendar,
     "remember": _ack_remember,
     "verify_via_curl": _ack_verify,
     "verify_localhost": _ack_verify,

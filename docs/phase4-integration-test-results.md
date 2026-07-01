@@ -10,11 +10,11 @@
 Your brain can **let real Jarvis-Agents do the work**:
 
 ```
-User (Voice): "Jarvis, frag OpenClaw ob der Build durchläuft"
+User (Voice): "Jarvis, frag OpenClaw ob der Build durchläuft" <!-- i18n-allow -->
    ↓
 BrainManager (Phase 2) → detects tool-use intent
    ↓
-dispatch_to_harness(harness="openclaw", prompt="Build prüfen")
+dispatch_to_harness(harness="openclaw", prompt="Check build")
    ↓
 HarnessManager → openclaw harness → subprocess: openclaw agent --output-format stream-json ...
    ↓
@@ -22,7 +22,7 @@ stream-JSON parsed → HarnessResult events to the bus → WebChannel → UI
    ↓
 Final exit=0, stdout trimmed to max 4000 chars → ToolResult
    ↓
-Brain Turn 2: replies "Der Build läuft durch. Alle Tests grün."
+Brain Turn 2: replies "Der Build läuft durch. Alle Tests grün." <!-- i18n-allow -->
    ↓
 TTS speaks
 ```

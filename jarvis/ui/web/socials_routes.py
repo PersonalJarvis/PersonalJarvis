@@ -74,10 +74,11 @@ def _seed_entries() -> list[dict[str, Any]]:
         ("discord", "Discord", "https://discord.gg/UPu6pFWrJ"),
         ("github", "GitHub (Repo)", "https://github.com/PersonalJarvis/PersonalJarvis"),
         ("github", "GitHub (Profile)", "https://github.com/PersonalJarvis"),
-        # X: two links → X renders as a group with its own detail page, like
-        # GitHub. "Ruben Herz" is the personal profile; "Personal Jarvis" is the
-        # official project X account.
-        ("x", "Ruben Herz", "https://x.com/Ruben_Herz"),
+        # X: the official project account. The first-run seed ships ONLY the
+        # project's own public accounts — never a maintainer's personal profile —
+        # so an arbitrary downloader is not handed a link to someone's private
+        # account (and the depersonalization scrub has nothing to rewrite). A
+        # maintainer adds their own personal profile via the UI if they want it.
         ("x", "Personal Jarvis", "https://x.com/PersonalJarvis"),
         ("instagram", "Instagram", "https://www.instagram.com/personaljarvis/"),
     ]

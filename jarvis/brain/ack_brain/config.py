@@ -97,6 +97,18 @@ class AckBrainConfig(BaseModel):
     # preamble task never spawns; the grounded spawn announcement is
     # unaffected. Set True to opt back into the speculative preamble.
     preamble_enabled: bool = Field(default=False)
+    # GROUNDED per-tool ack (distinct from the speculative preamble above).
+    # A deterministic, LLM-free, sub-millisecond spoken line ("Okay, ich
+    # schaue in deine Mails.") emitted ONLY after the router brain has
+    # actually selected a tool call — so it is grounded in a real action,
+    # never speculative. It bridges the otherwise-silent tool-execution +
+    # readback window on a voice turn (e.g. a slow email/calendar fetch).
+    # Independent of `enabled`: it needs no LLM/provider, so it must work
+    # even when the Flash-Brain subsystem is off (keyless downloaders). The
+    # spoken text is rendered by jarvis/brain/ack_generator.py::generate_ack
+    # (skip-list-aware) and re-scrubbed at the speech layer. Set False to go
+    # back to pure silence during tool execution.
+    grounded_tool_ack: bool = Field(default=True)
     # "follow_brain" mirrors cfg.brain.primary so the Flash-Brain
     # naturally tracks whatever main provider the user is on. Pin to
     # a concrete name (gemini/grok/openai/ollama) to override.

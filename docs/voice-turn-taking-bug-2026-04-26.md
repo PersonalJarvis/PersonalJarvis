@@ -4,7 +4,7 @@
 
 After a successful Jarvis call, the desktop app stayed in `Hört zu` /
 `LISTENING` and Jarvis did not answer a normal smalltalk prompt such as
-`Wie geht es dir, Jarvis?`.
+`Wie geht es dir, Jarvis?`. <!-- i18n-allow -->
 
 ## Root Cause
 
@@ -12,7 +12,7 @@ Two independent turn-taking gaps could produce the same user-visible symptom:
 
 1. The speech pipeline already had a fallback for wellbeing prompts, but the
    fallback was not wired into `_handle_utterance()`. If the brain returned a
-   non-substantive filler such as `Ich bin einsatzbereit.`, the output filter
+   non-substantive filler such as `Ich bin einsatzbereit.`, the output filter  <!-- i18n-allow -->
    suppressed it and the pipeline silently returned to `LISTENING`.
 2. The VAD endpoint trusted Silero probability plus a fixed silence window. In
    noisy rooms or with fan/echo leakage, Silero can keep reporting speech after

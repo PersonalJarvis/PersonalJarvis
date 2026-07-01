@@ -1,0 +1,76 @@
+<svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Gigi — Bit-Ghost (black/gold)">
+  <defs>
+    <filter id="yGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <radialGradient id="ghostBodyBY" cx="50%" cy="35%">
+      <stop offset="0%" stop-color="#232323"/>
+      <stop offset="55%" stop-color="#0E0E0E"/>
+      <stop offset="100%" stop-color="#050505"/>
+    </radialGradient>
+    <linearGradient id="yAccent" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFF200"/>
+      <stop offset="100%" stop-color="#FFB800"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Outer yellow halo -->
+  <path d="M 58 90 Q 58 36 128 36 Q 198 36 198 90 L 198 208 L 180 186 L 160 208 L 140 186 L 120 208 L 100 186 L 80 208 L 58 186 Z"
+        fill="#FFE500" opacity="0.28" filter="url(#softGlow)"/>
+
+  <!-- Ghost body (black gradient) -->
+  <path d="M 58 90 Q 58 36 128 36 Q 198 36 198 90 L 198 208 L 180 186 L 160 208 L 140 186 L 120 208 L 100 186 L 80 208 L 58 186 Z"
+        fill="url(#ghostBodyBY)"
+        stroke="#FFE500" stroke-width="1.8" stroke-opacity="0.85"/>
+
+  <!-- Scanline glitches -->
+  <rect x="58" y="132" width="140" height="2.4" fill="#FFE500" opacity="0.55"/>
+  <rect x="58" y="160" width="140" height="1.4" fill="#FFF200" opacity="0.3"/>
+
+  <!-- Glitch pixels right edge -->
+  <g fill="#FFE500" filter="url(#yGlow)">
+    <rect x="200" y="104" width="6" height="6"/>
+    <rect x="208" y="128" width="4" height="4"/>
+    <rect x="202" y="146" width="9" height="3"/>
+    <rect x="197" y="168" width="3" height="5"/>
+    <rect x="206" y="176" width="5" height="3"/>
+  </g>
+  <!-- Glitch pixels left edge -->
+  <g fill="#FFB800" filter="url(#yGlow)">
+    <rect x="44" y="96" width="6" height="4"/>
+    <rect x="48" y="124" width="4" height="6"/>
+    <rect x="40" y="148" width="8" height="3"/>
+    <rect x="50" y="170" width="3" height="5"/>
+  </g>
+
+  <!-- Chromatic displacement slices -->
+  <rect x="64" y="118" width="18" height="10" fill="#FFE500" opacity="0.32"/>
+  <rect x="170" y="118" width="18" height="10" fill="#FFE500" opacity="0.32"/>
+
+  <!-- Eye glow -->
+  <ellipse cx="102" cy="108" rx="13" ry="17" fill="#FFE500" opacity="0.35" filter="url(#softGlow)"/>
+  <ellipse cx="154" cy="108" rx="13" ry="17" fill="#FFE500" opacity="0.35" filter="url(#softGlow)"/>
+
+  <!-- Eyes -->
+  <ellipse cx="102" cy="108" rx="10" ry="14" fill="url(#yAccent)" filter="url(#yGlow)"/>
+  <ellipse cx="154" cy="108" rx="10" ry="14" fill="url(#yAccent)" filter="url(#yGlow)"/>
+  <!-- Pupils -->
+  <ellipse cx="104" cy="112" rx="4" ry="6" fill="#050505"/>
+  <ellipse cx="156" cy="112" rx="4" ry="6" fill="#050505"/>
+  <!-- Eye sparkle -->
+  <circle cx="106" cy="105" r="2" fill="#FFFFFF"/>
+  <circle cx="158" cy="105" r="2" fill="#FFFFFF"/>
+
+  <!-- Mouth -->
+  <ellipse cx="128" cy="146" rx="7" ry="10" fill="url(#yAccent)" filter="url(#yGlow)"/>
+  <ellipse cx="128" cy="146" rx="3" ry="5" fill="#050505"/>
+
+  <!-- Tiny arms -->
+  <path d="M 58 140 Q 40 148 42 162" stroke="#FFE500" stroke-width="5.5" fill="none" stroke-linecap="round" filter="url(#yGlow)"/>
+  <path d="M 198 140 Q 216 148 214 162" stroke="#FFE500" stroke-width="5.5" fill="none" stroke-linecap="round" filter="url(#yGlow)"/>
+</svg>

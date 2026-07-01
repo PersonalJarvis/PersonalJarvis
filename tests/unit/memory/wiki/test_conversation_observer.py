@@ -72,6 +72,11 @@ class FakeRegistry:
     def __init__(self, brain: Any) -> None:
         self._brain = brain
 
+    def available(self) -> set[str]:
+        # The configured primary is reachable, so the key-aware fallback chain
+        # is a single hop to it.
+        return {"gemini"}
+
     def instantiate(self, name: str, **kwargs: Any) -> Any:
         return self._brain
 
