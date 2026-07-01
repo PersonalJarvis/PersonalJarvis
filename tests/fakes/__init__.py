@@ -1,6 +1,6 @@
-"""Test-Fakes — drop-in Implementierungen für Plugin-Protocols.
+"""Test fakes — drop-in implementations for plugin protocols.
 
-Konvention (CLAUDE.md): "Fakes statt Mocks". Pro Plugin-Protocol existiert
-mindestens ein FakeXxxProvider/FakeXxxProcess mit scripted Responses; Tests
-arbeiten gegen die Fakes statt gegen ``unittest.mock``.
+Convention (CLAUDE.md): "fakes over mocks". Every plugin protocol has
+at least one FakeXxxProvider/FakeXxxProcess with scripted responses; tests
+work against the fakes instead of ``unittest.mock``.
 """
