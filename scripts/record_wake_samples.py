@@ -9,7 +9,7 @@ custom openWakeWord model fires reliably on YOUR voice — the guaranteed path t
 Works alongside the running app (Windows WASAPI shared mode). Cross-platform via
 sounddevice.
 
-usage: python scripts/record_wake_samples.py "Hey Nico" [count]
+usage: python scripts/record_wake_samples.py "Hey Assistant" [count]
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ import wave
 import numpy as np
 import sounddevice as sd
 
-PHRASE = sys.argv[1] if len(sys.argv) > 1 else "Hey Nico"
+PHRASE = sys.argv[1] if len(sys.argv) > 1 else "Hey Assistant"
 COUNT = int(sys.argv[2]) if len(sys.argv) > 2 else 15
 SR = 16000
 DUR = 2.0
@@ -43,6 +43,29 @@ def record_one(path: str) -> float:
     return float(np.sqrt(np.mean((a.astype(np.float32) / 32768.0) ** 2)))
 
 
+NEG_OUT = os.path.join("data", "wake_samples", SLUG + "_neg")
+NEG_SECONDS = 60.0
+
+
+def record_negatives() -> None:
+    """Capture ~60 s of your real environment as NEGATIVES: breathing, silence,
+    and normal talk — but NEVER the wake phrase. This is what teaches the model
+    to STOP false-firing on your breath / room / random words."""
+    os.makedirs(NEG_OUT, exist_ok=True)
+    print(f"\nNow ~{int(NEG_SECONDS)}s of your normal environment as NEGATIVES.")
+    print(f"Breathe, be quiet, talk about anything — but do NOT say '{PHRASE}'.")
+    for c in (3, 2, 1):
+        print(f"  starting in {c}...", end="\r", flush=True)
+        time.sleep(0.8)
+    print("  RECORDING negatives — breathe / talk / stay quiet (no wake word)   ", flush=True)
+    chunk = 3.0
+    n = int(NEG_SECONDS / chunk)
+    for i in range(n):
+        record_one(os.path.join(NEG_OUT, f"neg_{i:02d}.wav"))
+        print(f"  negatives {int((i + 1) * chunk)}/{int(NEG_SECONDS)}s...", end="\r", flush=True)
+    print(f"\n  saved {n} negative clips to {NEG_OUT}")
+
+
 def main() -> None:
     print(f"\nRecording {COUNT} samples of '{PHRASE}'. Speak naturally, at your")
     print("normal distance and volume. Vary it a little (a bit faster/slower).\n")
@@ -58,8 +81,9 @@ def main() -> None:
             print(f"    (very quiet, rms={rms:.3f} — kept, but speak up if you can)")
         kept += 1
         time.sleep(0.3)
-    print(f"\nDone. Saved {kept} samples to {OUT}")
-    print("Tell the assistant you're finished — it will retrain the model on your voice.")
+    print(f"\nSaved {kept} wake samples to {OUT}")
+    record_negatives()
+    print("\nAll done. Tell the assistant you're finished — it retrains on your voice + environment.")
 
 
 main()

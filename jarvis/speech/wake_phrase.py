@@ -253,6 +253,13 @@ def resolve_wake_plan(cfg: Any, *, local_whisper_available: bool) -> WakeWordPla
     fuzzy = float(_read(cfg, "fuzzy_match_ratio", 0.8))
 
     threshold = sensitivity_to_threshold(sensitivity)
+    # A TRAINED custom_onnx model outputs well-calibrated 0..1 scores — a genuine
+    # wake lands ~0.85-0.95 and breath/ambient/other-words well below — NOT the
+    # 0.15-0.23 band the pretrained-openWakeWord 0.06-0.30 sensitivity map was
+    # tuned for. Using that low band for a custom model false-fires on breathing
+    # and random words (live 2026-07-01). So a custom model uses a higher band:
+    # 0.0 -> 0.70 (strict), 0.5 -> 0.50 (balanced default), 1.0 -> 0.30 (sensitive).
+    custom_threshold = 0.70 - 0.40 * max(0.0, min(1.0, sensitivity))
     matcher = compile_wake_matcher(phrase, fuzzy_ratio=fuzzy)
     canonical = _canonical_keyword(phrase)
 
@@ -264,7 +271,7 @@ def resolve_wake_plan(cfg: Any, *, local_whisper_available: bool) -> WakeWordPla
                 engine="custom_onnx",
                 oww_model_path=custom_path,
                 oww_keyword=canonical,
-                threshold=threshold,
+                threshold=custom_threshold,
                 matcher=matcher,
                 needs_local_whisper=False,
                 degraded=False,
