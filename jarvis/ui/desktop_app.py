@@ -177,7 +177,7 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _write_meta(port: int, pid: int) -> None:
-    """Schreibt das PID-Sidecar neben das Lock-File (atomic via tmp+replace)."""
+    """Writes the PID sidecar next to the lock file (atomic via tmp+replace)."""
     try:
         META_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -564,14 +564,14 @@ def acquire_single_instance_lock(
 
 
 class DesktopApp:
-    """Orchestriert pywebview-Fenster + Backend-Thread.
+    """Orchestrates the pywebview window + backend thread.
 
     Lifecycle:
-        1. ``__init__``: Token generieren, ENV setzen, Config laden.
-        2. ``run()``: Backend-Thread starten, auf ``/api/health`` warten,
-           ``webview.start()`` im Main-Thread (blockt bis Fenster zu ist).
-        3. ``shutdown()``: Server-``stop()`` via ``run_coroutine_threadsafe``,
-           Event-Loop stoppen, Meta-Sidecar aufraeumen.
+        1. ``__init__``: generate the token, set ENV, load config.
+        2. ``run()``: start the backend thread, wait for ``/api/health``,
+           run ``webview.start()`` on the main thread (blocks until the window closes).
+        3. ``shutdown()``: server ``stop()`` via ``run_coroutine_threadsafe``,
+           stop the event loop, clean up the meta sidecar.
     """
 
     def __init__(
@@ -2961,16 +2961,16 @@ class DesktopApp:
     # ---- Shutdown ----------------------------------------------------------
 
     def shutdown(self) -> int:
-        """Idempotent. Stoppt Server + Backend-Loop, cleant Meta-File."""
+        """Idempotent. Stops the server + backend loop, cleans the meta file."""
         if self._shutdown_done:
             return 0
         self._shutdown_done = True
         self._window_visible = False
 
-        # Orb-Overlay zuerst verstecken — der Event-Pfad (Pipeline → Supervisor
-        # → Bus → OrbBridge) erreicht die Bridge beim harten Loop-Stop nicht
-        # mehr zuverlaessig. Direktes hide() garantiert, dass das Desktop-Icon
-        # oben rechts verschwindet bevor der Prozess terminiert.
+        # Hide the orb overlay first — the event path (pipeline → supervisor
+        # → bus → OrbBridge) doesn't reliably reach the bridge anymore during a
+        # hard loop stop. A direct hide() guarantees the desktop icon
+        # top-right disappears before the process terminates.
         if self._orb is not None:
             try:
                 # Prefer stop() when the surface has it (jarvis bar:
@@ -3029,8 +3029,8 @@ class DesktopApp:
         loop = self._backend_loop
         server = self._server
         if loop is not None and server is not None and loop.is_running():
-            # Pipeline-Task canceln — sonst haengt HotkeyTrigger im Loop fest
-            # und server.stop() kommt nie dran.
+            # Cancel the pipeline task — otherwise HotkeyTrigger stays stuck in the loop
+            # and server.stop() never gets a turn.
             if self._pipeline_task is not None and not self._pipeline_task.done():
                 try:
                     loop.call_soon_threadsafe(self._pipeline_task.cancel)
@@ -3055,8 +3055,8 @@ class DesktopApp:
                     loop.call_soon_threadsafe(_wml.set)
                 except Exception:  # noqa: BLE001
                     pass
-            # Workflow-Scheduler + Store sauber herunterfahren — verhindert
-            # dass ein cron-Tick mitten im Shutdown noch einen Run triggert.
+            # Cleanly shut down the workflow scheduler + store — prevents
+            # a cron tick from still triggering a run mid-shutdown.
             wf_scheduler = getattr(self, "_workflow_scheduler", None)
             wf_store = getattr(self, "_workflow_store", None)
             cd_scheduler = getattr(self, "_conductor_scheduler", None)
@@ -3081,7 +3081,7 @@ class DesktopApp:
                     ).result(timeout=2.0)
                 except Exception:  # noqa: BLE001
                     pass
-            # PTY-Sessions sauber schliessen — sonst bleiben Zombies
+            # Cleanly close PTY sessions — otherwise zombies remain
             async def _pty_cleanup() -> None:
                 try:
                     srv = self._server
@@ -3127,8 +3127,8 @@ class DesktopApp:
         if self._backend_thread is not None:
             self._backend_thread.join(timeout=3.0)
 
-        # Tray zuletzt — pystray.stop() verhindert dass Tray-Icon nach Prozess-
-        # Ende noch in der Taskbar haengt.
+        # Tray last — pystray.stop() prevents the tray icon from lingering
+        # in the taskbar after the process ends.
         if self._tray is not None:
             try:
                 self._tray.stop()
