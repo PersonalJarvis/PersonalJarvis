@@ -161,7 +161,7 @@ _MONTH_RE = re.compile(
     re.IGNORECASE,
 )
 # Spec §6 calls for `(.*)\s(ist|...)\s(.*)\.` — i.e. multi-word
-# subjects (German example: "Die Hauptstadt von Italien ist Rom." — "Rome
+# subjects (German example: "Die Hauptstadt von Italien ist Rom." — "Rome  # i18n-allow: quoted German input example
 # is the capital of Italy.") must match. The original tightening to
 # `\S+` only caught single-word subjects and silently failed on the very
 # examples the spec listed; broaden to `.+?` so a multi-word noun-phrase

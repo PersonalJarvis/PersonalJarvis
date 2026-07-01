@@ -54,7 +54,7 @@ _VOICE_CONTROL_PATTERN = re.compile(
     # allowing only trailing politeness modifiers ("bitte", "mal", "jetzt",
     # "please") and punctuation. This stops narrative phrases like the German
     # "lauter Applaus war zu hoeren" ("loud applause could be heard") or
-    # "still im Gespraech" ("quiet in conversation") from triggering.
+    # "still im Gespraech" ("quiet in conversation") from triggering.  # i18n-allow: quoted German input example
     r"^\s*(?:"
     # German
     r"(?:mach\s+)?(?:lauter|leiser|laut|leise)(?:\s+machen)?"

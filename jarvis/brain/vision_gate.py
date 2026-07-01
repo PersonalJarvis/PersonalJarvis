@@ -29,7 +29,7 @@ _VISUAL_MARKERS: tuple[str, ...] = (
     # look / show verbs
     "schau", "sieh", "siehst", "guck", "zeig mir", "zeig mal",
     # screen / window / page nouns
-    "auf dem bildschirm", "am bildschirm", "im bild", "auf dem screen",
+    "auf dem bildschirm", "am bildschirm", "im bild", "auf dem screen",  # i18n-allow: German visual-reference input-matching vocabulary
     "bildschirm", "dieses fenster", "das fenster", "diese seite",  # i18n-allow: German visual-reference input-matching vocabulary
     "die seite hier", "fehlermeldung", "knopf", "button", "menü", "menue",  # i18n-allow: German visual-reference input-matching vocabulary
     # "dialog" alone is a false positive in DE (= a conversation); require the
