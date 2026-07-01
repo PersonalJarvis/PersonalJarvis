@@ -73,6 +73,7 @@ dependencies = [
     # Server-side markdown→HTML for the Outputs "view in browser" action
     # (pure-Python; the /view route degrades to <pre> if it is ever absent).
     "markdown>=3.5",
+    "num2words>=0.5.13",  # deterministic number->words for the voice path (spoken-safe)
     "jinja2>=3.1",
     "croniter>=6.0",
     "gitpython>=3.1",

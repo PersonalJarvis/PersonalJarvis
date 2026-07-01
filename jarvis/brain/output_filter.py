@@ -656,6 +656,18 @@ def scrub_for_voice(
         actions.append("removed_em_dash")
         out = new
 
+    # 7d. Numbers -> words. TTS reads a bare digit inconsistently across engines
+    #     and locales, and the persona mandates spelling every number out as
+    #     words. A flash-tier model still emits digits despite that rule, so this
+    #     is the deterministic backstop (num2words, rule-based — NO LLM, AP-11
+    #     safe). Locale-aware; a transparent no-op when num2words is missing.
+    from jarvis.voice.number_speller import spell_out_numbers
+
+    new = spell_out_numbers(out, language=language)
+    if new != out:
+        actions.append("spelled_out_numbers")
+        out = new
+
     # 8. Whitespace normalisieren
     out = re.sub(r"\s{2,}", " ", out).strip()
     out = re.sub(r"\s+([,.!?;:])", r"\1", out)
