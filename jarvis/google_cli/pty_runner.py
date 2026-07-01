@@ -100,7 +100,7 @@ def repair_agy_path(
     agy spawns ``cmd.exe`` + ``npm`` internally (it boots MCP servers even in
     ``--print`` mode). Launched from a degraded environment whose PATH lacks
     ``System32`` (forensic 2026-06-20: jarvis started by an agent runtime →
-    ``chcp nicht erkannt``), those inner spawns fail. We prepend the missing
+    ``chcp not recognized``), those inner spawns fail. We prepend the missing
     standard dirs idempotently. No-op on POSIX (chcp/cmd have no analogue and
     Node resolves via the usual prefixes).
     """

@@ -1,18 +1,18 @@
-"""IPC-Schemas (Hauptjarvis-Seite) — Re-Export aus dem OS-Level-Package.
+"""IPC schemas (main-Jarvis side) — re-export from the OS-Level package.
 
-AD-15: Single-Source. Jede Aenderung am Wire-Format passiert in
-``OS-Level/src/overlay/schema.py``; hier nur Re-Imports.
+AD-15: single source. Every change to the wire format happens in
+``OS-Level/src/overlay/schema.py``; here only re-imports.
 
-Das ``OS-Level/src``-Verzeichnis muss im ``sys.path`` liegen, damit
-``import overlay.schema`` greift. Der Hauptjarvis-Bootstrap-Pfad
-(``jarvis.overlay.server.start_ipc_server``) erweitert ``sys.path`` lazy
-beim ersten Aufruf, damit der Import nicht beim Modul-Load schon failt
-falls jemand ``jarvis.overlay`` einzeln importiert.
+The ``OS-Level/src`` directory must be on ``sys.path`` for
+``import overlay.schema`` to work. The main-Jarvis bootstrap path
+(``jarvis.overlay.server.start_ipc_server``) extends ``sys.path`` lazily
+on first call, so the import doesn't already fail at module load
+if someone imports ``jarvis.overlay`` in isolation.
 """
 
 from __future__ import annotations
 
-# sys.path-Erweiterung lazy in jarvis/overlay/__init__.py geregelt.
+# sys.path extension handled lazily in jarvis/overlay/__init__.py.
 from overlay.schema import (  # noqa: F401  (re-exports)
     AckEnvelope,
     AckPayload,

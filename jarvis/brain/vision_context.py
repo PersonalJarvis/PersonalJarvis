@@ -83,7 +83,7 @@ async def get_active_window_hint(
         )
     except asyncio.TimeoutError:
         log.warning(
-            "Vision-Context: Timeout nach %.0f ms — kein Hint",
+            "Vision context: timeout after %.0f ms — no hint",
             timeout_s * 1000,
         )
         return None
@@ -91,7 +91,7 @@ async def get_active_window_hint(
         # Failure mode 4: pywinauto crash (RDP/headless), UIA source issues,
         # permission denied — none of these are fatal spawn blockers.
         log.warning(
-            "Vision-Context: observe() failed (%s: %s) — kein Hint",
+            "Vision context: observe() failed (%s: %s) — no hint",
             type(exc).__name__, exc,
         )
         return None

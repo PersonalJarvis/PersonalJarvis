@@ -3,7 +3,7 @@
 **Date:** 2026-05-27
 **Author:** Jarvis-Agents (background session)
 **Status:** Pending user review
-**Related plan:** `~/.claude/plans/also-er-muss-auch-lexical-pond.md` (Phase L.4 — Streaming TTS)
+**Related plan:** `~/.claude/plans/also-er-muss-auch-lexical-pond.md` (Phase L.4 — Streaming TTS) <!-- i18n-allow: literal filename identifier, must match the real file -->
 **Related code-pattern:** `jarvis/plugins/tts/grok_voice_tts.py` (template)
 
 ---
@@ -96,7 +96,7 @@ back provider settings (BUG-010, three episodes). Any new TTS provider config mu
 in **all three** layers simultaneously:
 
 1. `jarvis.toml` — declared config (`[tts.cartesia]`).
-2. `scripts/config-soll.json` — drift-guard target the daemon re-applies every 5 min.
+2. `scripts/config-soll.json` — drift-guard target the daemon re-applies every 5 min. <!-- i18n-allow: literal filename identifier -->
 3. Environment variable hint (documented in the new section's comment).
 
 Without this pin, the daemon will silently roll back any cartesia-related edit.
@@ -133,7 +133,7 @@ The implementation plan that follows this design will cover, in this order:
    `model_id="sonic-3.5"`, `language="auto"`, `voice_id="<documented Sarah UUID>"`,
    `chunk_by_sentence=true`, `speed=1.0`, `allow_sapi5_fallback=false`, plus
    inline help comments.
-5. **Drift-guard pin** — add the same key/value triplet to `scripts/config-soll.json`.
+5. **Drift-guard pin** — add the same key/value triplet to `scripts/config-soll.json`. <!-- i18n-allow: literal filename identifier -->
 6. **Unit tests** `tests/unit/plugins/tts/test_cartesia_tts.py`:
    - `test_synthesize_yields_pcm_24k_mono` (mocked httpx, 200 OK, single sentence)
    - `test_multiple_sentences_yield_in_order` (parallel synth, order preserved)
@@ -164,7 +164,7 @@ The implementation plan that follows this design will cover, in this order:
 | Risk | Mitigation |
 |---|---|
 | Cartesia returns 200 OK with empty body (silent failure) | Soft-fail to Gemini via the same `b""`-check used in `grok_voice_tts.py`. AD-OE6 invariant preserved. |
-| Drift-guard rolls back the `[tts.cartesia]` section | AD-CT4 pins all three layers (jarvis.toml + config-soll.json + ENV doc). |
+| Drift-guard rolls back the `[tts.cartesia]` section | AD-CT4 pins all three layers (jarvis.toml + config-soll.json + ENV doc). | <!-- i18n-allow: literal filename identifier -->
 | User accidentally activates Cartesia without a key | `ProviderSpec.auth_mode="api_key"` + `secret_keys=("cartesia_api_key",)`; `ApiKeysView` already shows "needs key" badge and refuses activation (see `ProviderCard.activate` in `ApiKeysView.tsx:135`). |
 | Plugin module name collides with Cartesia's official Python SDK (`cartesia`) | We import lazily inside `_ensure_client()` only and use `httpx` directly. No top-level `import cartesia`. |
 | voice_id becomes invalid (Cartesia removes the example voice) | Plugin logs the upstream `400 invalid voice_id` body verbatim, falls back to Gemini. User updates `[tts.cartesia].voice_id`. |

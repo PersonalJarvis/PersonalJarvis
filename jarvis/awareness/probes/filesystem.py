@@ -123,7 +123,7 @@ class FileSystemProbe:
         try:
             from watchdog.observers import Observer  # noqa: PLC0415
         except ImportError:
-            logger.warning("watchdog nicht installiert — FileSystemProbe ist no-op")
+            logger.warning("watchdog not installed — FileSystemProbe is a no-op")
             self._started = True
             return
         self._loop = asyncio.get_running_loop()

@@ -214,7 +214,7 @@ export function useWikiLive(): { connected: boolean; lastEventAt: number | null 
 | **AP-4** | Don't add network calls inside the voice critical path. | B3 is a UI tab. The user can have it open or not. Never block voice on a UI-tab subscription. |
 | **AP-5** | Don't mock SQLite / the file system in integration tests. | Use real temp directories. BUG-008 came back twice from mocked tests masking drift. |
 | **AP-6** | Don't introduce a new EventBus instance. | Reuse the bus the server already passes via `app.state.bus`. |
-| **AP-7** | Don't write user-facing strings in German inside *code* (comments, docstrings, log messages, exception messages, error responses). | Project Output Language Policy. **Exception:** rendered Markdown content comes from the vault verbatim, which is in whatever language the user dictated — that is *content*, not code. The mockup also shows German labels in the *UI strings* (button captions, section headers) — those follow the existing `MemoryView.tsx` precedent and stay German. The distinction is `console.log("Loading tree")` (English) vs `<button>In Obsidian öffnen</button>` (German UI string, allowed). |
+| **AP-7** | Don't write user-facing strings in German inside *code* (comments, docstrings, log messages, exception messages, error responses). | Project Output Language Policy. **Exception:** rendered Markdown content comes from the vault verbatim, which is in whatever language the user dictated — that is *content*, not code. The mockup also shows German labels in the *UI strings* (button captions, section headers) — those follow the existing `MemoryView.tsx` precedent and stay German. The distinction is `console.log("Loading tree")` (English) vs `<button>In Obsidian öffnen</button>` (German UI string, allowed). <!-- i18n-allow: historical AP-7 exception quoting a literal German UI-string example; superseded by CLAUDE.md's current English-only rule, kept verbatim as the record of the original decision --> |
 | **AP-8** | Don't catch and silently swallow exceptions in the watcher or route handlers. | Log structured (`log.warning("wiki_route_failed", route=..., error=...)`), return `{"ok": false, "error": "..."}`. Silent failures are the most common source of "the UI is empty and we don't know why" bugs. |
 | **AP-9** | Don't read the vault on the asyncio event loop. | All file IO goes through `aiofiles` or `asyncio.to_thread`. Wraps `VaultIndex` if needed. The vault is small, but the principle matters. |
 | **AP-10** | Don't ship a 1 MB JS bundle for the graph. | `react-force-graph-2d` is ~120 KB minified. Use code-splitting (`React.lazy`) so the graph chunk loads only when the user is on the Wiki tab. |
@@ -281,8 +281,8 @@ npx tsc --noEmit -p .   # zero TypeScript errors
 Free text but the **final line must be exactly one of**:
 
 ```
-Goal erfüllt: ja — Grund: <one sentence>
-Goal erfüllt: nein — Grund: <one sentence>
+Goal fulfilled: yes — Reason: <one sentence>
+Goal fulfilled: no — Reason: <one sentence>
 ```
 
 ---
@@ -322,7 +322,7 @@ After all four agents commit and report, the review agent:
    - Lands on the graph view, sees 3 nodes (sam, alex, pixel-art-editor).
    - Clicks the `sam` node → page loads, frontmatter pills visible, body rendered.
    - Clicks the `[[alex]]` wikilink in the body → navigates to alex.md.
-   - Clicks "In Obsidian öffnen" — either Obsidian launches the file (if installed) or a toast says "Obsidian nicht verfügbar — Datei: entities/alex.md".
+   - Clicks "In Obsidian öffnen" — either Obsidian launches the file (if installed) or a toast says "Obsidian nicht verfügbar — Datei: entities/alex.md". <!-- i18n-allow -->
    - Triggers a live test: manually adds a file `entities/test-live.md` via the terminal. Within ~1 s the tree updates, the new file appears, the graph re-fetches.
    - Voice command: "Hey Jarvis, schreib in dein Wiki: meine Lieblingsfarbe ist Blau" — wait ~10 s — the Wiki tab auto-refreshes, alex.md shows the new fact.
 

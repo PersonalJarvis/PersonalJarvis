@@ -101,7 +101,7 @@ When `selectedSlug` becomes non-null, switch the centre tab to "Page" automatica
 
 Then in `react-markdown`'s `components.a` override, detect `href.startsWith("#wiki:")`, render as a custom `<a class="wikilink">…</a>`, and on click call `props.onWikilinkClick(href.slice(6))` — do not navigate.
 
-Broken wikilinks (target slug not in tree) get a `.broken` class. The tree state is fetched once and cached; if a click resolves to a missing slug, show a toast "Page nicht gefunden" and stay on the current page.
+Broken wikilinks (target slug not in tree) get a `.broken` class. The tree state is fetched once and cached; if a click resolves to a missing slug, show a toast "Page not found" and stay on the current page.
 
 ### 4.3 Tree behaviour
 
@@ -133,9 +133,9 @@ Skip `slug` (already in breadcrumb), skip `aliases` (could be very long), skip a
 
 If `/api/wiki/tree` returns `total_pages: 0`, show a centred empty-state card:
 
-> *Dein Wiki ist noch leer.*
-> *Sobald Jarvis in einem Gespräch etwas Wichtiges aufschnappt, landet es hier — Personen, Projekte, Vorlieben, Termine.*
-> *Du kannst auch jederzeit selbst eine `.md`-Datei in `wiki/obsidian-vault/entities/` ablegen.*
+> *Your wiki is still empty.*
+> *As soon as Jarvis picks up something important in a conversation, it lands here — people, projects, preferences, appointments.*
+> *You can also drop a `.md` file into `wiki/obsidian-vault/entities/` yourself at any time.*
 
 German user-facing strings are OK in UI labels (precedent: existing `MemoryView.tsx`). Code/comments/logs stay English.
 
@@ -195,4 +195,4 @@ npx tsc --noEmit -p .     # zero TypeScript errors
 
 ## 8. Closing report
 
-Final line: `Goal erfüllt: ja — Grund: <one sentence>` (or `nein`).
+Final line: `Goal fulfilled: yes — Reason: <one sentence>` (or `no`).

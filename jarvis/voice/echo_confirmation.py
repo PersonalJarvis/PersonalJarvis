@@ -1,17 +1,17 @@
-"""End-Focus-Templater + deterministischer Yes/No-Klassifikator (Phase 7.4).
+"""End-focus templater + deterministic yes/no classifier (Phase 7.4).
 
-Plan-§7.4 Echo-Frage-Templates (DE+EN), End-Focus-Prinzip: der NEUE WERT
-steht in den letzten Tokens des Satzes, damit STT-Misshears beim User
-sofort auffallen.
+Plan-§7.4 echo-question templates (DE+EN), end-focus principle: the NEW
+VALUE sits in the last tokens of the sentence, so STT mis-hears jump out to
+the user immediately.
 
-Defense-in-Depth gegen TTS-Secret-Leak (Plan-§AP-2):
-Sensitive Pfade (FORBIDDEN_PATTERNS oder `MutableSpec.sensitive=True`)
-verschweigen den Wert komplett — der Echo-Satz endet bei „auf einen
-neuen Wert. Bestätigen?" statt den Klartext zu sprechen.
+Defense-in-depth against a TTS secret leak (Plan-§AP-2):
+sensitive paths (FORBIDDEN_PATTERNS or `MutableSpec.sensitive=True`)
+withhold the value entirely — the echo sentence ends with "a
+new value. Confirm?" instead of speaking the plain-text value.
 
-Pattern-Match-Klassifikator (Plan-§AP-12): kein LLM-Call. Veto hat
-Priorität vor Confirm (Sicherheits-Bias). Mehrdeutiges (`vielleicht`,
-`warte`) bleibt `ambiguous` — die State-Machine wartet bis Timeout.
+Pattern-match classifier (Plan-§AP-12): no LLM call. Veto takes
+priority over confirm (safety bias). Ambiguous input (hedging words
+like "maybe", "wait") stays `ambiguous` — the state machine waits until timeout.
 """
 from __future__ import annotations
 
@@ -27,15 +27,15 @@ from jarvis.core.self_mod.errors import (
 )
 
 # ----------------------------------------------------------------------
-# Pattern-Lists
+# Pattern lists
 # ----------------------------------------------------------------------
 
-# Plan-§7.4 + Prompt-Erweiterung. Veto wird als Wort-Grenze-regex
-# geprüft, damit „nichtig" (Zustimmung in Süddeutsch — selten) nicht
-# fälschlich als Veto greift. Das `nicht`-Pattern ist absichtlich strikt.
+# Plan-§7.4 + prompt extension. Veto is checked via a word-boundary
+# regex, so that "nichtig" (an affirmative in southern German dialect — rare) doesn't  # i18n-allow
+# falsely trigger as a veto. The `nicht` pattern is deliberately strict.  # i18n-allow
 _CONFIRM_PATTERNS_DE: tuple[str, ...] = (
     r"\bja\b",
-    r"\bbest(ä|ae)tig(e|en|t)?\b",
+    r"\bbest(ä|ae)tig(e|en|t)?\b",  # i18n-allow
     r"\bmach\b",
     r"\bmach('s| es)\b",
     r"\blos\b",
@@ -65,7 +65,7 @@ _VETO_PATTERNS_DE: tuple[str, ...] = (
     r"\bstop+\b",
     r"\babbruch\b",
     r"\bnicht\b",
-    r"\bdoch nicht\b",
+    r"\bdoch nicht\b",  # i18n-allow
     r"\blass\b",
     r"\blass das\b",
     r"\bfalsch\b",
@@ -84,8 +84,8 @@ _AMBIGUOUS_PATTERNS_DE: tuple[str, ...] = (
     r"\bvielleicht\b",
     r"\bwarte\b",
     r"\bmoment\b",
-    r"\b(öh|öhm|äh|ähm|ehm|hmm|hm)\b",
-    r"\bwei(ß|ss) (ich )?nicht\b",
+    r"\b(öh|öhm|äh|ähm|ehm|hmm|hm)\b",  # i18n-allow
+    r"\bwei(ß|ss) (ich )?nicht\b",  # i18n-allow
     r"\bunklar\b",
 )
 
@@ -145,11 +145,11 @@ ResponseVerdict = Literal["confirm", "veto", "ambiguous", "unknown"]
 
 
 def classify_response(transcript: str, *, language: str = "de") -> ResponseVerdict:
-    """Klassifiziert die User-Antwort deterministisch (kein LLM-Call).
+    """Deterministically classifies the user's answer (no LLM call).
 
-    Reihenfolge: Veto > Confirm > Ambiguous > Unknown.
-    Veto-Priorität ist eine **Sicherheits-Eigenschaft** (Plan-§AP-12):
-    bei „nein, doch ja" wird das `nein` ernst genommen, nicht ignoriert.
+    Order: Veto > Confirm > Ambiguous > Unknown.
+    Veto priority is a **safety property** (Plan-§AP-12): for input like
+    "no, actually yes" the negation is taken seriously, not ignored.
     """
     if not transcript:
         return "unknown"
@@ -183,17 +183,17 @@ def classify_response(transcript: str, *, language: str = "de") -> ResponseVerdi
 
 
 # ----------------------------------------------------------------------
-# Sensitive-Path-Check
+# Sensitive path check
 # ----------------------------------------------------------------------
 
 
 def is_sensitive_path(path: str) -> bool:
-    """True wenn der Pfad einen Wert enthält, der NICHT vorgelesen werden darf.
+    """True if the path holds a value that must NOT be read aloud.
 
-    Drei Quellen:
+    Three sources:
     1. `SelfModRegistry.is_forbidden(path)` (FORBIDDEN_PATTERNS)
-    2. `MutableSpec.sensitive == True` (explizit gesetzt)
-    3. Heuristik: Pfad enthält key/secret/token/password als Substring
+    2. `MutableSpec.sensitive == True` (explicitly set)
+    3. Heuristic: path contains key/secret/token/password as a substring
     """
     from jarvis.core.self_mod.registry import SelfModRegistry
 
@@ -202,9 +202,9 @@ def is_sensitive_path(path: str) -> bool:
     spec = SelfModRegistry.get_spec(path)
     if spec is not None and spec.sensitive:
         return True
-    # Defense-in-Depth: Heuristik gegen versehentliche Allowlist-Erweiterungen.
-    # Sub-Agent-Review-MINOR (2026-04-26): Marker-Liste um `bearer`, `oauth`,
-    # `pat` (Personal Access Token), `cookie`, `session_id` erweitert.
+    # Defense-in-depth: heuristic against accidental allowlist expansions.
+    # Sub-agent-review-MINOR (2026-04-26): marker list expanded with `bearer`,
+    # `oauth`, `pat` (Personal Access Token), `cookie`, `session_id`.
     lowered = path.lower()
     return any(
         marker in lowered
@@ -223,36 +223,36 @@ def is_sensitive_path(path: str) -> bool:
             "cookie",
         )
     ) or any(
-        # `pat` als ganzes Wort (Github-PAT), nicht als Substring von z.B. "patch".
+        # `pat` as a whole word (GitHub PAT), not as a substring of e.g. "patch".
         re.search(rf"(?:^|[._-]){marker}(?:$|[._-])", lowered)
         for marker in ("pat",)
     )
 
 
 # ----------------------------------------------------------------------
-# Voice-Label-Extraktion
+# Voice label extraction
 # ----------------------------------------------------------------------
 
 
 def _voice_label(description: str) -> str:
-    """Voice-tauglicher Label aus der Description.
+    """Voice-friendly label derived from the description.
 
-    Schneidet alles ab der ersten Klammer ab: „TTS-Provider (Hot-Reload
-    abgedeckt)" → „TTS-Provider". Trailing-Punctuation wird ebenfalls
-    entfernt, damit der Templater eine saubere Phrase einsetzen kann.
+    Cuts everything from the first parenthesis: "TTS provider (hot-reload
+    covered)" → "TTS provider". Trailing punctuation is also stripped, so
+    the templater can slot in a clean phrase.
     """
     head = description.split("(")[0].strip()
     return head.rstrip(",;:.!?")
 
 
 def _format_value_for_speech(value: Any) -> str:
-    """Voice-tauglicher String aus einem primitiven Wert.
+    """Voice-friendly string from a primitive value.
 
-    Phase 7.4 hält das einfach — Number-Wörterung („eins Komma drei")
-    ist Phase 7.6 (TTS macht das idealerweise selbst). Hier: stringify.
+    Phase 7.4 keeps this simple — number verbalization ("one point three")
+    is Phase 7.6 (ideally TTS handles that itself). Here: stringify.
     """
     if isinstance(value, bool):
-        # bool muss VOR int geprüft werden (bool ist int-Subtype).
+        # bool must be checked BEFORE int (bool is an int subtype).
         return "an" if value else "aus"
     if value is None:
         return "leer"
@@ -260,18 +260,18 @@ def _format_value_for_speech(value: Any) -> str:
 
 
 # ----------------------------------------------------------------------
-# Echo-Frage-Templates (Plan-§7.4 End-Focus)
+# Echo question templates (Plan-§7.4 end-focus)
 # ----------------------------------------------------------------------
 
 
 _ECHO_TEMPLATE_DE = (
-    "Verstanden — {label} wechselt von {old} zu {new}. Bestätigen?"
+    "Verstanden — {label} wechselt von {old} zu {new}. Bestätigen?"  # i18n-allow
 )
 _ECHO_TEMPLATE_EN = (
     "Got it — {label} switches from {old} to {new}. Confirm?"
 )
 _ECHO_TEMPLATE_SENSITIVE_DE = (
-    "Verstanden — {label} auf einen neuen Wert. Bestätigen?"
+    "Verstanden — {label} auf einen neuen Wert. Bestätigen?"  # i18n-allow
 )
 _ECHO_TEMPLATE_SENSITIVE_EN = (
     "Got it — {label} to a new value. Confirm?"
@@ -281,11 +281,11 @@ _ECHO_TEMPLATE_SENSITIVE_EN = (
 def format_confirmation(
     pending: PendingMutation, *, language: str = "de"
 ) -> str:
-    """Rendert die Echo-Frage gemäß Plan-§7.4 + Sensitive-Schutz.
+    """Renders the echo question per Plan-§7.4 + sensitive protection.
 
-    End-Focus: der `new_value` steht in den letzten 3 Tokens des Satzes
-    (vor `Bestätigen?`/`Confirm?`). Bei Sensitive-Pfaden wird der Wert
-    komplett ausgelassen — Defense-in-Depth gegen TTS-Secret-Leak.
+    End-focus: the `new_value` sits in the last 3 tokens of the sentence
+    (right before the localized "Confirm?" word). For sensitive paths, the
+    value is omitted entirely — defense-in-depth against a TTS secret leak.
     """
     label = _voice_label(pending.description)
     if is_sensitive_path(pending.path):
@@ -300,15 +300,15 @@ def format_confirmation(
 
 
 # ----------------------------------------------------------------------
-# Outcome-Templates (Plan-§7.4-Tabelle)
+# Outcome templates (Plan-§7.4 table)
 # ----------------------------------------------------------------------
 
 
 OutcomeKind = Literal[
-    "safe_applied",  # SAFE-Tier-Bypass
-    "applied",       # SUCCESS, kein Restart
-    "applied_restart",  # SUCCESS, mit Restart
-    "validate_failed",  # PRE-VALIDATION-FAIL
+    "safe_applied",  # SAFE tier bypass
+    "applied",       # SUCCESS, no restart
+    "applied_restart",  # SUCCESS, with restart
+    "validate_failed",  # PRE-VALIDATION FAIL
     "rollback",      # ROLLBACK
     "vetoed",        # REJECT
     "timeout",       # TIMEOUT
@@ -322,13 +322,13 @@ def format_outcome(
     language: str = "de",
     short_error: str | None = None,
 ) -> str:
-    """Plan-§7.4 Voice-Output-Templates.
+    """Plan-§7.4 voice-output templates.
 
-    Sub-Agent-Review-BLOCKER (2026-04-26): bei `is_sensitive_path == True`
-    werden NICHT NUR `new_value`/`old_value`, sondern AUCH `short_error`
-    durch eine generische Phrase ersetzt — eine Pydantic-Pre-Validate-
-    Message kann den Klartext-Wert via `repr()` enthalten und würde
-    sonst leaken (Plan-§AP-2).
+    Sub-agent-review-BLOCKER (2026-04-26): when `is_sensitive_path == True`,
+    NOT ONLY `new_value`/`old_value` but ALSO `short_error` is
+    replaced with a generic phrase — a Pydantic pre-validate
+    message can contain the plaintext value via `repr()` and would
+    otherwise leak it (Plan-§AP-2).
     """
     label = _voice_label(pending.description)
     is_sens = is_sensitive_path(pending.path)
@@ -343,7 +343,7 @@ def format_outcome(
         else _format_value_for_speech(pending.old_value)
     )
     if is_sens:
-        # Generische Phrase — kein Klartext-Leak via Exception-Message.
+        # Generic phrase — no plaintext leak via the exception message.
         err = (
             "Validierung schlug fehl"
             if language == "de"
@@ -351,7 +351,7 @@ def format_outcome(
         )
     else:
         err = short_error or (
-            "unbekannter Fehler" if language == "de" else "unknown error"
+            "unbekannter Fehler" if language == "de" else "unknown error"  # i18n-allow
         )
 
     if language == "de":
@@ -365,16 +365,16 @@ def format_outcome(
                 "Bitte einmal Jarvis neustarten, damit's wirkt."
             )
         if kind == "validate_failed":
-            return f"Geht nicht — {err}. Setting bleibt {old_str}."
+            return f"Geht nicht — {err}. Setting bleibt {old_str}."  # i18n-allow
         if kind == "rollback":
             return (
-                "Konnte nicht gespeichert werden, hab den vorherigen "
-                f"Zustand wiederhergestellt. {err}"
+                "Konnte nicht gespeichert werden, hab den vorherigen "  # i18n-allow
+                f"Zustand wiederhergestellt. {err}"  # i18n-allow
             )
         if kind == "vetoed":
             return "Okay, lass ich."
         if kind == "timeout":
-            return f"Hab keine Antwort gehört, brech ich ab. Setting bleibt {old_str}."
+            return f"Hab keine Antwort gehört, brech ich ab. Setting bleibt {old_str}."  # i18n-allow
         return ""
 
     # English
@@ -401,21 +401,21 @@ def format_outcome(
 
 
 def short_error_from_exception(exc: BaseException) -> str:
-    """Kürzt eine Pipeline-Exception auf eine Voice-taugliche Phrase.
+    """Shortens a pipeline exception to a voice-friendly phrase.
 
-    Sub-Agent-Review-MAJOR (2026-04-26): der Fallback-Branch reichte
-    früher beliebige Exception-Strings durch — wenn ein zukünftiger Caller
-    den Catch-Block weitet (z.B. `except Exception`), würde der Fallback
-    Klartext-Werte ins TTS leiten. Jetzt: nur eine harte Allowlist von
-    Phrasen, plus Pydantic-Field-Path (kein Wert) für PreValidateError.
+    Sub-agent-review-MAJOR (2026-04-26): the fallback branch used to pass
+    arbitrary exception strings through — if a future caller
+    widens the catch block (e.g. `except Exception`), the fallback
+    would leak plaintext values into TTS. Now: only a hard allowlist of
+    phrases, plus the Pydantic field path (no value) for PreValidateError.
     """
     if isinstance(exc, PreValidateError):
-        # `str(exc)` enthält in writer.py:_mutate_locked den `repr(new_value)`.
-        # Wir verwerfen die Message komplett und liefern eine generische
-        # Phrase. Der detaillierte Trace landet im Audit-Log, nicht im TTS.
-        return "Pre-Validate hat den Wert abgelehnt"
+        # `str(exc)` contains `repr(new_value)` in writer.py:_mutate_locked.
+        # We discard the message entirely and return a generic
+        # phrase. The detailed trace lands in the audit log, not in the TTS.
+        return "Pre-Validate hat den Wert abgelehnt"  # i18n-allow
     if isinstance(exc, ReloadError):
-        return "der Reload-Test hat den neuen Wert abgelehnt"
+        return "der Reload-Test hat den neuen Wert abgelehnt"  # i18n-allow
     if isinstance(exc, RollbackError):
-        return "der Rollback selbst ist fehlgeschlagen — manueller Restore nötig"
-    return "unerwarteter Fehler in der Mutation-Pipeline"
+        return "der Rollback selbst ist fehlgeschlagen — manueller Restore nötig"  # i18n-allow
+    return "unerwarteter Fehler in der Mutation-Pipeline"  # i18n-allow

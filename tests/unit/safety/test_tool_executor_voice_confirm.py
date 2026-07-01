@@ -172,8 +172,8 @@ async def test_gmail_read_is_not_deferred_for_voice_confirm() -> None:
     """Repro 2026-06-19 (session dc533e39): a read-only gmail call (the
     morning-routine "check unread mail" step) must NOT trigger the send
     confirmation on a voice turn. Before the per-action risk fix the whole
-    gmail tool was ask-tier, so "Was habe ich heute auf dem Plan?" produced
-    "Soll ich die E-Mail wirklich senden?"."""
+    gmail tool was ask-tier, so "Was habe ich heute auf dem Plan?" produced  # i18n-allow: quotes the actual German voice utterance/output forensic bug content
+    "Soll ich die E-Mail wirklich senden?"."""  # i18n-allow: quotes the actual German voice utterance/output forensic bug content
     import httpx
 
     from jarvis.plugins.tool.gmail_rest import GmailRestTool

@@ -1,16 +1,16 @@
-"""Performance-Audit für v1.0.
+"""Performance audit for v1.0.
 
-Drei Targets aus dem Release-Prompt:
+Three targets from the release prompt:
 
-1. **Aggregator-Run mit 365 Tage Daten** — Soll < 30 s.
-2. **Federation-Pull mit 10 Friends** — Bandbreite pro Pull < 100 KB.
-3. **Frontend `/board` Initial-Load** — Soll < 500 ms.
+1. **Aggregator run with 365 days of data** — should be < 30 s.
+2. **Federation pull with 10 friends** — bandwidth per pull < 100 KB.
+3. **Frontend `/board` initial load** — should be < 500 ms.
 
-Items 1 + 2 misst dieses Skript direkt. Item 3 erfordert eine Browser-
-Session und wird separat in PERFORMANCE_AUDIT.md dokumentiert (mit
-``mcp__playwright`` oder per Hand).
+This script measures items 1 + 2 directly. Item 3 requires a browser
+session and is documented separately in PERFORMANCE_AUDIT.md (with
+``mcp__playwright`` or by hand).
 
-Aufruf: ``python tools/board_perf.py``
+Run: ``python tools/board_perf.py``
 """
 from __future__ import annotations
 
@@ -33,12 +33,12 @@ from jarvis.board.aggregator import BoardAggregator
 
 
 # ----------------------------------------------------------------------
-# (1) Aggregator: 365 Tage Synthetic-JSONL → run()-Dauer
+# (1) Aggregator: 365 days of synthetic JSONL → run() duration
 # ----------------------------------------------------------------------
 
 def _emit_year_of_events(jsonl_dir: Path, *, days: int = 365, events_per_day: int = 50) -> int:
-    """Schreibt ``days * events_per_day`` Events ueber ``days`` Tage,
-    aufgeteilt auf Tagesschritte. Returns total events count.
+    """Writes ``days * events_per_day`` events across ``days`` days,
+    split into daily steps. Returns total events count.
     """
     jsonl_dir.mkdir(parents=True, exist_ok=True)
     rng = Random(7)
@@ -117,15 +117,15 @@ def benchmark_aggregator() -> dict:
 
 
 # ----------------------------------------------------------------------
-# (2) Federation-Pull-Bandbreite mit 10 Friends
+# (2) Federation pull bandwidth with 10 friends
 # ----------------------------------------------------------------------
 
 async def benchmark_federation_pull() -> dict:
-    """Misst Body-Größe + Latenz für /federation/feed mit 10 Friends.
+    """Measures body size + latency for /federation/feed with 10 friends.
 
-    Wir spawnen ein Backend mit Owner + 10 Friend-Rows + ~50
-    Activity-Items. Dann pullt der erste Friend den Feed. Bandbreite =
-    Response-Body-Größe.
+    We spawn a backend with an owner + 10 friend rows + ~50
+    activity items. Then the first friend pulls the feed. Bandwidth =
+    response body size.
     """
     from board_backend.models import ActivityItem, Friend
 
@@ -143,7 +143,7 @@ async def benchmark_federation_pull() -> dict:
                          json={"pubkey": owner_pub, "display_name": "Owner"},
                          headers={"X-Admin-Token": "x"})
 
-            # 10 Friends + 50 Activity-Items.
+            # 10 friends + 50 activity items.
             from datetime import datetime, timezone
             with app.state.session_factory() as session:
                 friends_priv = []
@@ -167,7 +167,7 @@ async def benchmark_federation_pull() -> dict:
                     ))
                 session.commit()
 
-            # Friend 0 pullt.
+            # Friend 0 pulls.
             f0_priv, f0_pub = friends_priv[0]
             payload = {"ts_ms": int(time.time() * 1000)}
             body = canonical_json(payload)
@@ -210,7 +210,7 @@ def main() -> None:
     print()
 
     print("=" * 72)
-    print("FEDERATION-PULL (10 friends, 50 items)")
+    print("FEDERATION PULL (10 friends, 50 items)")
     print("=" * 72)
     res_fed = asyncio.run(benchmark_federation_pull())
     print(json.dumps(res_fed, indent=2))

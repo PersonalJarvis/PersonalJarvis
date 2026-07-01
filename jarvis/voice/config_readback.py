@@ -41,25 +41,25 @@ _PHRASES: dict[str, dict[str, str]] = {
     },
     # Hard-refuse (secrets / self-lockout) — an honest decline, never a question.
     "refused": {
-        "de": "Das ändere ich nicht per Stimme — das bitte bewusst in den "
-              "Einstellungen.",
+        "de": "Das ändere ich nicht per Stimme — das bitte bewusst in den "  # i18n-allow
+              "Einstellungen.",  # i18n-allow
         "en": "I won't change that by voice — please do that deliberately in "
               "Settings.",
         "es": "Eso no lo cambio por voz — hazlo a propósito en los Ajustes.",
     },
     "unknown_setting": {
-        "de": "Das ist keine Einstellung, die ich ändern kann.",
+        "de": "Das ist keine Einstellung, die ich ändern kann.",  # i18n-allow
         "en": "That isn't a setting I can change.",
         "es": "Ese no es un ajuste que pueda cambiar.",
     },
     "invalid_value": {
-        "de": "Das geht so nicht — die Einstellung bleibt unverändert.",
+        "de": "Das geht so nicht — die Einstellung bleibt unverändert.",  # i18n-allow
         "en": "That doesn't work — the setting stays unchanged.",
         "es": "Eso no funciona — el ajuste queda sin cambios.",
     },
     "rollback": {
-        "de": "Konnte ich nicht speichern, ich habe den vorherigen Stand "
-              "wiederhergestellt.",
+        "de": "Konnte ich nicht speichern, ich habe den vorherigen Stand "  # i18n-allow
+              "wiederhergestellt.",  # i18n-allow
         "en": "I couldn't save it, I restored the previous state.",
         "es": "No pude guardarlo, restauré el estado anterior.",
     },

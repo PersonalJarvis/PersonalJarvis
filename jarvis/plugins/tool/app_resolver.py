@@ -254,7 +254,8 @@ def _resolve_windows(
     # install a per-user Squirrel build registered ONLY as a Start Menu .lnk —
     # absent from both App Paths and PATH. Without this step the resolver fell
     # through to os.startfile("discord"), which raises FileNotFoundError
-    # ("Anwendung 'discord' nicht gefunden"), and the computer-use loop was then
+    # (reported in Windows' localized text as "application 'discord' not
+    # found"), and the computer-use loop was then
     # forced into unreliable taskbar pixel-clicking (it hit Spotify, the icon
     # next to Discord). Match the friendly name AND the canonical alias to a
     # shortcut and hand the launcher that .lnk (os.startfile follows it).

@@ -1,23 +1,23 @@
-"""dispatch_to_admin-Tool — Brain ruft Admin-Ops via UAC-elevatetem Helper auf.
+"""dispatch_to_admin tool — brain calls admin ops via a UAC-elevated helper.
 
-Risk-Tier = ``ask``. Das bedeutet: jeder Brain-Call wird durch den
-Approval-Workflow gereicht, **ausser** der User hat via
-``[safety.whitelist]`` ein Pattern wie ``dispatch_to_admin *`` gesetzt.
-Destruktive Ops (DESTRUCTIVE_OPS) bekommen on top einen zweiten Prompt,
-auch bei globaler Whitelist — das ist Absicht.
+Risk tier = ``ask``. That means every brain call is routed through the
+approval workflow, **unless** the user has set a pattern like
+``dispatch_to_admin *`` via ``[safety.whitelist]``. Destructive ops
+(DESTRUCTIVE_OPS) get a second prompt on top, even with a global whitelist —
+that is intentional.
 
-Call-Flow:
+Call flow:
 
-1. Brain ruft ``{"op": {...AdminOperation JSON...}}`` auf.
-2. Tool validiert das JSON gegen das Pydantic-Schema.
+1. Brain calls ``{"op": {...AdminOperation JSON...}}``.
+2. Tool validates the JSON against the Pydantic schema.
 3. ``AdminClient.execute(op, destructive_approved=...)``.
-4. Bei ``DestructiveRequiresApproval``:
-   → Tool returnt ``ToolResult(success=False, error="destructive_requires_approval",
-   output={"op_id": ..., "op_type": ...})``. Der Caller (Risk-Tier-Executor)
-   zeigt dem User einen Prompt und ruft das Tool erneut mit
+4. On ``DestructiveRequiresApproval``:
+   → Tool returns ``ToolResult(success=False, error="destructive_requires_approval",
+   output={"op_id": ..., "op_type": ...})``. The caller (risk-tier executor)
+   shows the user a prompt and calls the tool again with
    ``destructive_approved=True``.
-5. Bei Erfolg/Fehler: das ``AdminResponse``-Model wird als dict ins
-   ``ToolResult.output`` gepackt.
+5. On success/failure: the ``AdminResponse`` model is packed into
+   ``ToolResult.output`` as a dict.
 """
 from __future__ import annotations
 
@@ -34,16 +34,16 @@ _ADMIN_OP_ADAPTER: TypeAdapter[AdminOperation] = TypeAdapter(AdminOperation)
 
 
 class DispatchToAdminTool:
-    """Protocol-kompatibles Tool. Wird von Brain via Tool-Call aufgerufen."""
+    """Protocol-compatible tool. Called by the brain via a tool call."""
 
     name: str = "dispatch_to_admin"
     risk_tier: str = "ask"
     description: str = (
-        "Schickt eine Admin-Operation (winget install, service start/stop, "
-        "firewall, registry-write, scheduled task, write_protected_path) "
-        "an den UAC-elevateten Admin-Helper. Destruktive Ops "
+        "Sends an admin operation (winget install, service start/stop, "
+        "firewall, registry write, scheduled task, write_protected_path) "
+        "to the UAC-elevated admin helper. Destructive ops "
         "(uninstall, remove, write_registry_hklm, write_protected_path) "
-        "brauchen explizite Zustimmung."
+        "need explicit approval."
     )
     schema: dict[str, Any] = {
         "type": "object",
@@ -51,17 +51,17 @@ class DispatchToAdminTool:
             "op": {
                 "type": "object",
                 "description": (
-                    "AdminOperation-JSON. Muss einen 'type'-Key haben "
-                    "(z.B. 'install_winget') und die fuer den Op-Typ "
-                    "noetigen Felder. Siehe jarvis.admin.schema."
+                    "AdminOperation JSON. Must have a 'type' key "
+                    "(e.g. 'install_winget') and the fields required for "
+                    "that op type. See jarvis.admin.schema."
                 ),
             },
             "destructive_approved": {
                 "type": "boolean",
                 "description": (
-                    "Wenn true, wird die Op auch bei destruktivem Typ "
-                    "ausgefuehrt. Default false — der Risk-Tier-Executor "
-                    "setzt das nach User-Zustimmung."
+                    "If true, the op runs even for a destructive type. "
+                    "Default false — the risk-tier executor sets this "
+                    "after the user's approval."
                 ),
                 "default": False,
             },
@@ -76,7 +76,7 @@ class DispatchToAdminTool:
         client_factory: Any = None,
     ) -> None:
         self._bus = bus
-        # Optional-Injection fuer Tests — sonst lazy in execute.
+        # Optional injection for tests — otherwise lazily built in execute.
         self._client_factory = client_factory
 
     async def execute(
@@ -88,7 +88,7 @@ class DispatchToAdminTool:
         if not isinstance(op_payload, dict):
             return ToolResult(
                 success=False, output=None,
-                error="'op' muss ein JSON-Objekt sein.",
+                error="'op' must be a JSON object.",
             )
 
         try:

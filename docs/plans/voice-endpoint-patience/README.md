@@ -114,7 +114,7 @@ only catches:
 - **exactly five** dangling starters: `"wenn"`, `"falls"`, `"if"`, `"when"`, `"ob du"`,
   `"jarvis wenn"` (`pipeline.py:318-326`).
 
-So "Erstelle mir eine Liste mit den wichtigsten …" (pause) ends on "wichtigsten" → not a
+So "Erstelle mir eine Liste mit den wichtigsten …" (pause) ends on "wichtigsten" → not a <!-- i18n-allow -->
 dangling conjunction, > 2 words, no punctuation → **judged complete → submitted instantly.**
 The vast majority of natural mid-thought pauses fall straight through this filter.
 
@@ -158,7 +158,7 @@ the exact pattern the user describes.
 
 ### Config truth table (verified — note: NOT a config-drift bug this time)
 
-| Parameter | Code default | `jarvis.toml` | `config-soll.json` | ENV | Notes |
+| Parameter | Code default | `jarvis.toml` | `config-soll.json` | ENV | Notes <!-- i18n-allow: "soll" is part of the config-soll.json filename, not German prose --> |
 |---|---|---|---|---|---|
 | `vad_silence_ms` | `1200` `pipeline.py:447` | — | — | — | Hardcoded; drift-guard does not touch it. |
 | `max_utterance_s` | `8` `pipeline.py:581` | — | — | — | Hardcoded. |
@@ -273,7 +273,7 @@ unrelated feature edit fail loudly instead of silently regressing the user.
 - Modify: `jarvis/core/config.py` (add a `TurnEndpointConfig` with the params below)
 - Modify: `jarvis.toml` (`[turn.endpoint]` section with comments)
 - Modify: `jarvis/speech/pipeline.py:572-589` (read from config instead of hardcoded literals)
-- Modify: `scripts/config-soll.json` (so the drift-guard pins the patience values too)
+- Modify: `scripts/config-soll.json` (so the drift-guard pins the patience values too) <!-- i18n-allow: "soll" is part of the config-soll.json filename, not German prose -->
 
 - [ ] **Step 1:** Define one source of truth: `silence_ms`, `max_utterance_s`,
   `cancel_hysteresis_ms`, `probe_interval_ms`, `probe_min_active_ms`, `probe_tail_ms`,
@@ -281,7 +281,7 @@ unrelated feature edit fail loudly instead of silently regressing the user.
 - [ ] **Step 2:** Wire `desktop_app.py:1169` and `watchdog.py:124` to pass these through
   (today they pass none → defaults win silently).
 - [ ] **Step 3:** Add a parity test asserting the `jarvis.toml` keys, `config.py` fields, and
-  `config-soll.json` keys match (the five-layer anti-drift pattern from
+  `config-soll.json` keys match (the five-layer anti-drift pattern from <!-- i18n-allow: "soll" is part of the config-soll.json filename, not German prose -->
   `docs/anti-drift-three-layer.md`).
 - [ ] **Step 4:** Commit (`refactor(speech): single source of truth for turn-endpoint timing`).
 
@@ -324,7 +324,7 @@ unrelated feature edit fail loudly instead of silently regressing the user.
 | `jarvis/audio/vad.py` | Endpoint engine; 3 triggers; cancel-hysteresis | `94`, `146-160`, `182-219`, `228-236`, `240-284` |
 | `jarvis/speech/pipeline.py` | Probe logic; config defaults; post-submit buffer | `293-326`, `447-466`, `544`, `572-622`, `842-962`, `2150`, `2430-2535` |
 | `jarvis/core/config.py` | `heavy_local_whisper`, `single_turn_mode` defaults | `95`, `102` |
-| `jarvis.toml` / `scripts/config-soll.json` | Config layers | `[turn]` §, `single_turn_mode` |
+| `jarvis.toml` / `scripts/config-soll.json` | Config layers | `[turn]` §, `single_turn_mode` <!-- i18n-allow: "soll" is part of the config-soll.json filename, not German prose --> |
 | `tests/unit/audio/test_vad_turn_taking.py` | Existing VAD test (fixture pattern) | — |
 
 ---

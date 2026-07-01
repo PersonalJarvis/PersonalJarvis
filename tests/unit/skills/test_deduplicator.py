@@ -1,4 +1,4 @@
-"""Unit-Tests für den Skill-Deduplicator."""
+"""Unit tests for the skill deduplicator."""
 from __future__ import annotations
 
 from pathlib import Path

@@ -61,7 +61,7 @@ describe("WikiGraph", () => {
       expect(screen.getByTestId("wiki-graph-empty")).toBeDefined();
     });
     expect(screen.getByTestId("wiki-graph-empty").textContent).toContain(
-      "Memory-Graph ist noch leer",
+      "Your memory graph is still empty",
     );
   });
 

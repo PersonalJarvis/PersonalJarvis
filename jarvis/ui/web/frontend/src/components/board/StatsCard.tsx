@@ -16,7 +16,7 @@ const TONE: Record<NonNullable<StatsCardProps["tone"]>, string> = {
   warn: "border-amber-500/30 bg-amber-500/5 text-amber-200",
 };
 
-/** Kompakte grosse Zahl + Label fuer Board-Metriken. */
+/** Compact large number + label for board metrics. */
 export function StatsCard({
   label,
   value,

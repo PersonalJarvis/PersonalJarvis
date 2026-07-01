@@ -1,14 +1,14 @@
-"""Vision-Engine (Phase 5 Capability 1).
+"""Vision engine (Phase 5 Capability 1).
 
 Exports:
-    - ScreenshotSource — Primary-Monitor-Screenshot via mss.
-    - UIATreeSource — gepruneder UIA-Tree via pywinauto.
-    - VisionEngine — orchestrierter Entry-Point mit Heuristik + Cache.
-    - VisionCache — Hash-basierter Observation-Cache.
-    - Pruning-Helpers (pruning.py) — reine Funktionen, testbar ohne Windows.
+    - ScreenshotSource — primary-monitor screenshot via mss.
+    - UIATreeSource — pruned UIA tree via pywinauto.
+    - VisionEngine — orchestrated entry point with heuristics + cache.
+    - VisionCache — hash-based observation cache.
+    - Pruning helpers (pruning.py) — pure functions, testable without Windows.
 
-Siehe ADR-0002 fuer die Pruning-Strategie und
-`jarvis.core.protocols.VisionSource` fuer den Contract.
+See ADR-0002 for the pruning strategy and
+`jarvis.core.protocols.VisionSource` for the contract.
 """
 from __future__ import annotations
 

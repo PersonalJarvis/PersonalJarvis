@@ -69,7 +69,7 @@ Say **"Hey Jarvis"** as the wake word **before every turn**. Note briefly after 
 | 9 | "Lies die Datei /nicht/existent.txt." ("Read the file /not/existent.txt.") | Dry error message, no "Es tut mir leid, aber leider" ("I'm sorry, but unfortunately"). | _____ | _____ | <!-- i18n-allow: voice examples -->
 | 10 | "Verbinde dich mit dem Server xyz123.invalid." ("Connect to the server xyz123.invalid.") | Direct error notice. | _____ | _____ | <!-- i18n-allow: voice examples -->
 
-### Block D — 2 echo-trap turns (expectation: NO "Du möchtest also …" ("So you want to …"))
+### Block D — 2 echo-trap turns (expectation: NO "Du möchtest also …" ("So you want to …")) <!-- i18n-allow: quoted voice echo-trap example -->
 
 | # | You say | Expectation | Alex's note: perceived | Tone |
 |---|---|---|---|---|
@@ -83,7 +83,7 @@ Say **"Hey Jarvis"** as the wake word **before every turn**. Note briefly after 
 - [ ] **5 smalltalk turns spawn 0 `openclaw` subprocesses** (Block A, subprocess column all "N").
 - [ ] **3 spawn turns spawn exactly 1 subprocess each** (Block B, 1× "Y" each during the turn).
 - [ ] **Voice output contains no tool JSON/XML leak** (Block B, no "spawn_sub_jarvis(…)" / "<spawn_sub_jarvis>" audible).
-- [ ] **Echo trap (11+12) delivers a direct answer** without a "Du möchtest also …" ("So you want to …") opener.
+- [ ] **Echo trap (11+12) delivers a direct answer** without a "Du möchtest also …" ("So you want to …") opener. <!-- i18n-allow: quoted voice echo-trap example -->
 - [ ] **Bad news (9+10) without cushioning** ("Es tut mir leid, aber" ("I'm sorry, but") audible = ❌).
 - [ ] **The form of address is "Alex"** (NEVER "Sir"/"Mr. Stark"/"Tony"/"boss" audible).
 - [ ] **Hangup contract** (turn 5): exactly "Auf Wiedersehen, Alex." ("Goodbye, Alex.") — not "Gern. Bis dann." ("Sure. See you then.").

@@ -11,7 +11,7 @@ Flow:
      user's other vault.
   3. Write a solo obsidian.json with only our vault.
   4. Launch Obsidian; wait for the vault picker.
-  5. Send Alt+O to focus the 'Öffnen' button via pywinauto's PostMessage,
+  5. Send Alt+O to focus the German-localized 'Öffnen' (Open) button via pywinauto's PostMessage,  # i18n-allow: quotes the real button label of Obsidian's German-localized UI
      then dispatch a click on the Obsidian HWND directly.
 
 Honestly the cleanest path is: register the vault path in obsidian.json

@@ -6,16 +6,16 @@ from pathlib import Path
 
 import pytest
 
-# Repo-Root in sys.path, damit Top-Level-Modul `ui.orb.*` importierbar ist.
+# Repo root in sys.path so the top-level module `ui.orb.*` is importable.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) in sys.path:
     sys.path.remove(str(_REPO_ROOT))
 sys.path.insert(0, str(_REPO_ROOT))
 sys.modules.pop("ui", None)
 
-# `ui` lebt als Top-Level-Verzeichnis im Repo-Root (nicht unter `jarvis/`).
-# In manchen Pytest-Setups erkennt der Discovery-Loader diesen Pfad nicht; in dem
-# Fall werden die Tests skipped statt das Collection-Sammeln zu sprengen.
+# `ui` lives as a top-level directory in the repo root (not under `jarvis/`).
+# Some pytest setups don't recognize this path via the discovery loader; in that
+# case the tests are skipped instead of blowing up test collection.
 try:  # noqa: SIM105 — bewusster Try-Import wegen Discovery-Quirk
     from ui.orb.bus_bridge import (  # type: ignore[import-not-found]
         THINKING_BUBBLE_TEXT,
@@ -24,9 +24,9 @@ try:  # noqa: SIM105 — bewusster Try-Import wegen Discovery-Quirk
     from ui.orb.overlay import OrbOverlay  # type: ignore[import-not-found]
 except ModuleNotFoundError:  # pragma: no cover
     pytest.skip(
-        "ui.orb nicht im Pytest-Pythonpath verfügbar — Top-Level-Namespace-Package. "
-        "Test laeuft direkt mit `python -m pytest tests/unit/ui/...` aus dem Repo-Root, "
-        "wenn der Repo-Root manuell in PYTHONPATH steht.",
+        "ui.orb not available on the pytest PYTHONPATH — top-level namespace package. "
+        "Test runs directly with `python -m pytest tests/unit/ui/...` from the repo root, "
+        "when the repo root is manually placed on PYTHONPATH.",
         allow_module_level=True,
     )
 
@@ -224,10 +224,10 @@ async def test_transcription_update_refreshes_large_bubble_only_while_listening(
     orb.calls.clear()
 
     await bridge._on_transcription_update(  # noqa: SLF001
-        TranscriptionUpdate(text="Soll nicht sichtbar sein", is_final=False)
+        TranscriptionUpdate(text="Soll nicht sichtbar sein", is_final=False)  # i18n-allow
     )
 
-    assert ("show_listening_transcript", "Soll nicht sichtbar sein") not in orb.calls
+    assert ("show_listening_transcript", "Soll nicht sichtbar sein") not in orb.calls  # i18n-allow
 
 
 async def test_zdf_subtitle_hallucination_is_not_shown_in_listening_bubble() -> None:
@@ -257,10 +257,10 @@ async def test_broadcast_boilerplate_is_not_shown_in_listening_bubble() -> None:
     orb.calls.clear()
 
     await bridge._on_transcription_update(  # noqa: SLF001
-        TranscriptionUpdate(text="Eine Sendung des NDR, 2020", is_final=False)
+        TranscriptionUpdate(text="Eine Sendung des NDR, 2020", is_final=False)  # i18n-allow
     )
 
-    assert ("show_listening_transcript", "Eine Sendung des NDR, 2020") not in orb.calls
+    assert ("show_listening_transcript", "Eine Sendung des NDR, 2020") not in orb.calls  # i18n-allow
     assert ("show_listening_transcript", "") in orb.calls
 
 
@@ -280,12 +280,12 @@ async def test_listening_bubble_mirrors_accumulating_pipeline_snapshots() -> Non
 
     await bridge._on_transcription_update(  # noqa: SLF001
         TranscriptionUpdate(
-            text="Hallo ich moechte einen langen Prompt", is_final=False
+            text="Hallo ich moechte einen langen Prompt", is_final=False  # i18n-allow
         )
     )
     await bridge._on_transcription_update(  # noqa: SLF001
         TranscriptionUpdate(
-            text="Hallo ich moechte einen langen Prompt der weiter geht",
+            text="Hallo ich moechte einen langen Prompt der weiter geht",  # i18n-allow
             is_final=False,
         )
     )
@@ -293,11 +293,11 @@ async def test_listening_bubble_mirrors_accumulating_pipeline_snapshots() -> Non
     assert orb.calls == [
         (
             "show_listening_transcript",
-            "Hallo ich moechte einen langen Prompt",
+            "Hallo ich moechte einen langen Prompt",  # i18n-allow
         ),
         (
             "show_listening_transcript",
-            "Hallo ich moechte einen langen Prompt der weiter geht",
+            "Hallo ich moechte einen langen Prompt der weiter geht",  # i18n-allow
         ),
     ]
 
@@ -317,8 +317,8 @@ async def test_listening_bubble_replaces_corrected_live_hypotheses() -> None:
     snapshots = (
         "Was?",
         "Was ist morgens?",
-        "Was ist morgen fuer ein Tag?",
-        "Was ist morgen fuer einen Tag.",
+        "Was ist morgen fuer ein Tag?",  # i18n-allow
+        "Was ist morgen fuer einen Tag.",  # i18n-allow
     )
     for snapshot in snapshots:
         await bridge._on_transcription_update(  # noqa: SLF001
@@ -329,7 +329,7 @@ async def test_listening_bubble_replaces_corrected_live_hypotheses() -> None:
     assert rendered == list(snapshots)
     assert orb.calls[-1] == (
         "show_listening_transcript",
-        "Was ist morgen fuer einen Tag.",
+        "Was ist morgen fuer einen Tag.",  # i18n-allow
     )
 
 
@@ -344,7 +344,7 @@ async def test_waiting_for_completion_does_not_clear_bubble_or_switch_to_think()
         SystemStateChanged(new_state="LISTENING", previous="IDLE")
     )
     await bridge._on_transcription_update(  # noqa: SLF001
-        TranscriptionUpdate(text="Öffne mal den", is_final=False)
+        TranscriptionUpdate(text="Öffne mal den", is_final=False)  # i18n-allow
     )
     orb.calls.clear()
 
@@ -355,7 +355,7 @@ async def test_waiting_for_completion_does_not_clear_bubble_or_switch_to_think()
     assert ("show", "listen") in orb.calls
     assert ("show", "think") not in orb.calls
     # Bubble text not cleared
-    assert bridge._listening_transcript_text == "Öffne mal den"  # noqa: SLF001
+    assert bridge._listening_transcript_text == "Öffne mal den"  # noqa: SLF001  # i18n-allow
     assert bridge._completion_continuation is True  # noqa: SLF001
 
 
@@ -370,7 +370,7 @@ async def test_listening_after_waiting_for_completion_preserves_buffered_text() 
         SystemStateChanged(new_state="LISTENING", previous="IDLE")
     )
     await bridge._on_transcription_update(  # noqa: SLF001
-        TranscriptionUpdate(text="Öffne mal den", is_final=True)
+        TranscriptionUpdate(text="Öffne mal den", is_final=True)  # i18n-allow
     )
     await bridge._on_state(  # noqa: SLF001
         SystemStateChanged(new_state="WAITING_FOR_COMPLETION", previous="LISTENING")
@@ -383,7 +383,7 @@ async def test_listening_after_waiting_for_completion_preserves_buffered_text() 
         SystemStateChanged(new_state="LISTENING", previous="WAITING_FOR_COMPLETION")
     )
 
-    assert bridge._listening_transcript_text == "Öffne mal den"  # noqa: SLF001
+    assert bridge._listening_transcript_text == "Öffne mal den"  # noqa: SLF001  # i18n-allow
     assert ("show_listening_transcript", "") not in orb.calls
 
 
@@ -401,10 +401,10 @@ async def test_transcription_update_accepted_during_waiting_for_completion() -> 
     orb.calls.clear()
 
     await bridge._on_transcription_update(  # noqa: SLF001
-        TranscriptionUpdate(text="Öffne mal den", is_final=True)
+        TranscriptionUpdate(text="Öffne mal den", is_final=True)  # i18n-allow
     )
 
-    assert ("show_listening_transcript", "Öffne mal den") in orb.calls
+    assert ("show_listening_transcript", "Öffne mal den") in orb.calls  # i18n-allow
 
 
 async def test_thinking_clears_completion_continuation_window() -> None:
@@ -438,12 +438,12 @@ async def test_final_transcription_update_replaces_partial_preview() -> None:
         TranscriptionUpdate(text="Was ist morgens?", is_final=False)
     )
     await bridge._on_transcription_update(  # noqa: SLF001
-        TranscriptionUpdate(text="Was ist morgen fuer ein Tag?", is_final=True)
+        TranscriptionUpdate(text="Was ist morgen fuer ein Tag?", is_final=True)  # i18n-allow
     )
 
     assert orb.calls[-1] == (
         "show_listening_transcript",
-        "Was ist morgen fuer ein Tag?",
+        "Was ist morgen fuer ein Tag?",  # i18n-allow
     )
 
 

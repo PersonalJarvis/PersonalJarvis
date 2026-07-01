@@ -75,7 +75,7 @@ active_provider = "claude-subagent"   # one of: claude-subagent, codex-subagent,
 test_cooldown_seconds = 60             # per-provider cooldown for Test button
 ```
 
-`SubagentConfig` in `jarvis/core/config.py` validates the four provider IDs as a `Literal`. Drift-guard pins `active_provider` in `scripts/config-soll.json`.
+`SubagentConfig` in `jarvis/core/config.py` validates the four provider IDs as a `Literal`. Drift-guard pins `active_provider` in `scripts/config-soll.json`. <!-- i18n-allow: literal filename identifier -->
 
 ### 3.4 Worker Dispatch Switch
 
@@ -119,7 +119,7 @@ OAuth expiry is detected by reading `~/.claude/.credentials.json` (Anthropic) or
 1. Server-side cooldown check (60s per provider, in-memory dict). If hot → HTTP 429 with `Retry-After` header.
 2. Validates that the requested provider is configured (OAuth present OR API-Key present). If neither → HTTP 412 "provider not configured".
 3. Dispatches a mission via `MissionManager.dispatch` with:
-   - `prompt = "Schreibe eine Datei `ok.txt` mit Inhalt `OK`."` (German runtime literal — "Write a file `ok.txt` with content `OK`.")
+   - `prompt = "Schreibe eine Datei `ok.txt` mit Inhalt `OK`."` (German runtime literal — "Write a file `ok.txt` with content `OK`.") <!-- i18n-allow: quoted German runtime test literal -->
    - `source_actor = "subagent_test"`
    - `worker_override = provider_id` (new field, lets the test bypass the active-provider switch)
    - `max_critic_loops = 1` (telemetry/budget reduction)
@@ -247,7 +247,7 @@ After implementation:
 | `jarvis/ui/web/subagent_routes.py` | **new** — activate, test, auth-status, oauth-login endpoints |
 | `jarvis/ui/web/api.py` | mount the new router |
 | `jarvis.toml` (default) | `[subagent] active_provider = "claude-subagent"` |
-| `scripts/config-soll.json` | drift-guard pin for `active_provider` |
+| `scripts/config-soll.json` | drift-guard pin for `active_provider` | <!-- i18n-allow: literal filename identifier -->
 
 ### Frontend
 
@@ -315,7 +315,7 @@ Three sequential phases, each independently shippable, each with green tests at 
 |---|---|
 | OAuth token in wrong env-slot regression (the BUG that prompted this work) | Explicit `unset` of the alternative env in `_env_builder()`. Test `test_env_builder_auth_priority.py` is the regression guard. |
 | New worker (Grok) doesn't pass artifact-archive correctly (`_archive_task_artifacts` ate three files yesterday) | Wave A diff-extraction fix from earlier today already in main; new Grok worker piggybacks on the same path. |
-| Drift-guard rolls `active_provider` back to old value | Drift-guard pin must list `subagent.active_provider` in `config-soll.json` *before* Phase 1 ships, otherwise a parallel session can roll the value. |
+| Drift-guard rolls `active_provider` back to old value | Drift-guard pin must list `subagent.active_provider` in `config-soll.json` *before* Phase 1 ships, otherwise a parallel session can roll the value. | <!-- i18n-allow: literal filename identifier -->
 | 60s test cooldown too short during dev | Configurable via `[subagent].test_cooldown_seconds`. Drift-guard pinned to 60. |
 | `claude /login` subprocess on Windows blocks the FastAPI event loop | Run with `asyncio.create_subprocess_exec`, stream-read stdout off-loop; `NO_WINDOW_CREATIONFLAGS` mandatory (AP-1). |
 | User switches active provider during an in-flight mission | Active mission retains its original worker (constructed at dispatch time). New spawns pick up the new active provider. No mid-mission swap. |

@@ -5,7 +5,7 @@ DID dispatch to the screenshot harness (routing fixed), but the harness gave up:
 
     exit 2 · [cu] giving up after 3 model failures … ComputerUseLoop provider
     chain failed: 3 provider(s) skipped — no vision; claude-api(haiku):
-    incomplete chunked read; openrouter(opus-4.8): Kein O…
+    incomplete chunked read; openrouter(opus-4.8): Kein O…  # i18n-allow: verbatim forensic log excerpt from the live incident, not translatable without falsifying the record
 
 Root cause: ``screenshot_only_loop._call_brain`` skips every provider whose
 ``supports_vision`` is False when a screenshot is attached, and the one live

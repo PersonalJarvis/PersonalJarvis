@@ -1,14 +1,14 @@
-"""WorkflowScheduler — Cron-basierter Auto-Trigger.
+"""WorkflowScheduler — cron-based auto-trigger.
 
-Analog zu ``jarvis.tasks.scheduler``, aber mit echtem Cron via ``croniter``.
-Ein einziger ``asyncio``-Loop pollt die Workflow-Liste, berechnet das naechste
-``next_run_at_ns`` pro aktivem Cron-Workflow und schlaeft bis zum frueheste
-Termin. Beim Feuern: ``runner.trigger(workflow_id, trigger_reason="cron")``.
+Analogous to ``jarvis.tasks.scheduler``, but with real cron via ``croniter``.
+A single ``asyncio`` loop polls the workflow list, computes the next
+``next_run_at_ns`` for each active cron workflow, and sleeps until the
+earliest one. On firing: ``runner.trigger(workflow_id, trigger_reason="cron")``.
 
-Das ist bewusst nicht dieselbe Code-Pfad-Architektur wie Skills-Cron
-(``skills/trigger_matcher.run_cron_scheduler``) — Skills liefern einen
-``AsyncIterator`` den der Supervisor konsumiert; hier schiesst der Scheduler
-direkt auf den Runner.
+This is deliberately not the same code-path architecture as skills-cron
+(``skills/trigger_matcher.run_cron_scheduler``) — skills yield an
+``AsyncIterator`` that the supervisor consumes; here the scheduler fires
+directly at the runner.
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ log = logging.getLogger(__name__)
 
 
 class WorkflowScheduler:
-    """Poll-Schleife — berechnet und feuert Cron-basierte Workflow-Runs."""
+    """Poll loop — computes and fires cron-based workflow runs."""
 
     def __init__(
         self,
@@ -55,7 +55,7 @@ class WorkflowScheduler:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """Startet den Hintergrund-Loop. Idempotent."""
+        """Starts the background loop. Idempotent."""
         if self._task is not None and not self._task.done():
             return
         self._stop.clear()
@@ -71,17 +71,17 @@ class WorkflowScheduler:
     # ------------------------------------------------------------------
 
     async def _loop(self) -> None:
-        """Main-Loop — pollt, berechnet, schlaeft, triggert.
+        """Main loop — polls, computes, sleeps, triggers.
 
-        Poll-Intervall: bei leerer Cron-Liste 60s, sonst bis zum naechsten
-        faelligen Termin (mind. 1s, max 60s — damit neue Workflows via API
-        binnen einer Minute aufgepickt werden).
+        Poll interval: 60s when the cron list is empty, otherwise until the
+        next due time (min 1s, max 60s — so new workflows added via the API
+        are picked up within a minute).
         """
         while not self._stop.is_set():
             try:
                 wait_s = await self._tick()
             except Exception as exc:  # noqa: BLE001
-                log.exception("WorkflowScheduler-Tick crashed: %s", exc)
+                log.exception("WorkflowScheduler tick crashed: %s", exc)
                 wait_s = 30.0
 
             try:
@@ -91,8 +91,8 @@ class WorkflowScheduler:
                 continue
 
     async def _tick(self) -> float:
-        """Ein Tick: naechstes Cron-Event berechnen, triggern wenn faellig,
-        bis zum naechsten Termin schlafen (Rueckgabe in Sekunden).
+        """One tick: computes the next cron event, triggers when due,
+        sleeps until the next due time (returns in seconds).
         """
         if not _HAVE_CRONITER:
             return 60.0
@@ -134,11 +134,11 @@ class WorkflowScheduler:
                 if upcoming_min_ns is None or stored_next < upcoming_min_ns:
                     upcoming_min_ns = stored_next
 
-        # Faellige Workflows triggern
+        # Trigger due workflows
         for _due_ns, wid in due:
             next_after = _compute_next_cron_ns(
                 _cron_expr_for(rows, wid),
-                now_ns + 60_000_000_000,  # mindestens 60s in Zukunft, um Drift
+                now_ns + 60_000_000_000,  # at least 60s in the future, to avoid drift
             )
             await self._store.set_next_run(wid, next_after)
             if next_after is not None:
@@ -155,7 +155,7 @@ class WorkflowScheduler:
             try:
                 await self._runner.trigger(wid, trigger_reason="cron")
             except Exception as exc:  # noqa: BLE001
-                log.warning("Cron-Trigger fuer %s fehlgeschlagen: %s", wid, exc)
+                log.warning("Cron trigger for %s failed: %s", wid, exc)
 
         if upcoming_min_ns is None:
             return 60.0
@@ -168,7 +168,7 @@ class WorkflowScheduler:
 # ----------------------------------------------------------------------
 
 def _compute_next_cron_ns(cron_expr: str, base_ns: int) -> int | None:
-    """Naechste Fire-Time in ns oder None wenn Cron-Syntax kaputt."""
+    """Next fire time in ns, or None if the cron syntax is broken."""
     if not _HAVE_CRONITER:
         return None
     try:

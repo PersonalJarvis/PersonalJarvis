@@ -1,4 +1,4 @@
-"""Integration-Test: run_shell("format C:") wird blockiert."""
+"""Integration test: run_shell("format C:") gets blocked."""
 from __future__ import annotations
 
 import pytest
@@ -41,7 +41,7 @@ async def test_format_is_blacklisted():
     assert result.success is False
     assert "blacklist" in (result.error or "").lower() or "blockiert" in (result.error or "").lower()
 
-    # ActionDenied-Event wurde publiziert
+    # ActionDenied event was published
     assert len(denied_events) == 1
     assert "blacklist" in denied_events[0].reason.lower()
 

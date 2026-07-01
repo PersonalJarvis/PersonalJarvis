@@ -1,4 +1,4 @@
-"""Unit-Tests fuer den VisionCache (FIFO, Hash-Dedup)."""
+"""Unit tests for VisionCache (FIFO, hash dedup)."""
 from __future__ import annotations
 
 import time
@@ -39,7 +39,7 @@ def test_cache_miss_on_new_hash():
 
 def test_cache_miss_on_empty_hash():
     cache = VisionCache(capacity=5)
-    # Empty-Hash sollte garnicht erst gecached werden.
+    # An empty hash should never be cached in the first place.
     cache.put(_obs(""))
     assert len(cache) == 0
     assert cache.get("") is None
@@ -59,14 +59,14 @@ def test_cache_fifo_evicts_oldest():
 
 
 def test_cache_overwrite_refreshes_position():
-    """Wenn ein Hash erneut geputted wird, sollte er als 'neu' zaehlen und
-    nicht bei naechstem Evict als erstes fliegen.
+    """When a hash is put again, it should count as 'new' and
+    not be the first one evicted next time.
     """
     cache = VisionCache(capacity=3)
     cache.put(_obs("a"))
     cache.put(_obs("b"))
     cache.put(_obs("c"))
-    cache.put(_obs("a"))  # 'a' bekommt frische Position, 'b' wird bei Evict als erstes fliegen
+    cache.put(_obs("a"))  # 'a' gets a fresh position, 'b' will be the first evicted
     cache.put(_obs("d"))  # evict: 'b' war aeltestes
     assert cache.get("a") is not None
     assert cache.get("b") is None

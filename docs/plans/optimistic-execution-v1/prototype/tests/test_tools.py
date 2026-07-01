@@ -126,7 +126,7 @@ class TestGmailMissingInfo:
         from optimistic.tools import MissingInfoError, SmartTool
         tool = SmartTool("gmail", work_seconds=0.01)
         with pytest.raises(MissingInfoError) as exc_info:
-            run(tool.execute("Schreib Anna eine kurze Nachricht", {}))
+            run(tool.execute("Schreib Anna eine kurze Nachricht", {}))  # i18n-allow: test content — user voice utterance DE
         err = exc_info.value
         assert "Anna" in err.detail
 

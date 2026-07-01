@@ -1,13 +1,13 @@
-"""Live-Tests fuer die Vision-Engine (Phase 5 Capability 1).
+"""Live tests for the vision engine (Phase 5 Capability 1).
 
-Diese Tests brauchen einen echten Windows-Desktop (mss, pywinauto,
-Foreground-Window). Sie sind standardmaessig **skipped**, weil sie in
-CI-/Sandbox-Umgebungen ohne GUI fehlschlagen. Lokal manuell via:
+These tests need a real Windows desktop (mss, pywinauto,
+foreground window). They are **skipped** by default, because they
+fail in CI/sandbox environments without a GUI. Run locally manually via:
 
     pytest tests/integration/test_vision_live.py -m phase5 --runlive
 
-(Die `--runlive`-Konvention ist eine Placeholder-Marker-Kombination, die
-der Haupt-Dev spaeter verdrahtet. Solange gilt: die Tests skippen.)
+(The `--runlive` convention is a placeholder-marker combination that
+the lead dev will wire up later. Until then: the tests skip.)
 """
 from __future__ import annotations
 
@@ -41,10 +41,10 @@ async def test_screenshot_roundtrip_live():
 
 @pytest.mark.asyncio
 async def test_uia_tree_budget_on_notepad_under_2000ms():
-    """Notepad -> UIA-Tree muss unter 2000ms bleiben (Performance-Budget).
+    """Notepad -> UIA tree must stay under 2000ms (performance budget).
 
-    Voraussetzung: Notepad ist geoeffnet und im Vordergrund. Wird vom
-    Haupt-Dev vor dem Smoke-Run manuell arrangiert.
+    Prerequisite: Notepad is open and in the foreground. Arranged
+    manually by the lead dev before the smoke run.
     """
     from jarvis.vision.uia_tree import UIATreeSource
 
@@ -53,7 +53,7 @@ async def test_uia_tree_budget_on_notepad_under_2000ms():
     obs = await src.observe()
     elapsed_ms = (time.perf_counter() - start) * 1000
     assert elapsed_ms < 2000, f"UIA-Tree took {elapsed_ms:.1f}ms, budget 2000ms"
-    # Sanity-Check: mindestens Root ist drin oder overflow.
+    # Sanity check: at least root is present, or overflow.
     assert obs.source in ("ui_tree_only", "screenshot_only")
     await src.close()
 

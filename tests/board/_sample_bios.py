@@ -1,9 +1,9 @@
-"""Ad-hoc Script — druckt 3 Bio-Szenarien fuer den PHASE_B_DONE-Report.
+"""Ad-hoc script — prints 3 bio scenarios for the PHASE_B_DONE report.
 
-Wird nicht als Test ausgefuehrt (Filename beginnt mit Underscore). Wir
-nutzen hier einen Scripted-FakeBrain, weil echte API-Keys im CI nicht
-vorausgesetzt werden — die Outputs zeigen, was die _Pipeline_ produziert,
-nicht was Claude Opus im Feld schreibt.
+Not run as a test (filename starts with an underscore). We use a
+scripted FakeBrain here because real API keys aren't guaranteed to be
+available in CI — the outputs show what the _pipeline_ produces, not
+what Claude Opus would write in the field.
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ async def main() -> None:
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         await _run_sample(
             Path(tmp), SCRIPTED_POWER_USER_BIO, _power_user_db,
-            memory="User ist Nicht-Coder, arbeitet autonom. Multi-Provider-Brain.",
+            memory="User is a non-coder, works autonomously. Multi-provider brain.",
             soul="Jarvis: lakonisch, trocken, kurz.",
         )
 

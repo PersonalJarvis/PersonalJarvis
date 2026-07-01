@@ -136,7 +136,7 @@ def test_hey_nico_fires_on_partial_and_drifted_windows() -> None:
     assert m.search("nico") is not None            # prefix split — name-only window
     assert m.search("ja nico komm") is not None    # name mid-utterance
     assert m.search("niko") is not None            # STT drift (one char)
-    assert m.search("wie spät ist es") is None     # unrelated -> no wake
+    assert m.search("wie spät ist es") is None     # unrelated -> no wake  # i18n-allow
 
 
 def test_multi_word_core_phrase_matches_in_order() -> None:

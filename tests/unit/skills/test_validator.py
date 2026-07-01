@@ -1,4 +1,4 @@
-"""Unit-Tests für den Skill-Validator."""
+"""Unit tests for the skill validator."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -58,7 +58,7 @@ def test_validate_good_skill(tmp_path: Path):
 
 def test_validate_bad_regex(tmp_path: Path):
     sk = _parse(tmp_path, "bad", BAD_REGEX_SKILL)
-    # Trigger-payload-check fängt die regex nicht, aber validator compiliert
+    # The trigger-payload check doesn't catch the regex, but the validator compiles it
     report = validate_skill(sk, tool_registry=[])
     assert not report.ok
     assert any("regex" in e.lower() for e in report.errors)
@@ -72,8 +72,8 @@ def test_validate_missing_tool_warns(tmp_path: Path):
 
 
 def test_validate_budget_too_big(tmp_path: Path):
-    # Budget wird schon vom pydantic-Schema abgefangen (ge=1, le=100_000 aber
-    # Validator prüft zusätzlich > 10_000)
+    # The budget is already caught by the pydantic schema (ge=1, le=100_000, but
+    # the validator additionally checks > 10_000)
     sk = _parse(tmp_path, "big", TOO_BIG_BUDGET)
     assert sk.frontmatter is not None
     report = validate_skill(sk, tool_registry=[])

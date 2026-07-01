@@ -1,20 +1,21 @@
-"""Bus-Listener fuer Mission-Events -> TTS-Pipeline.
+"""Bus listener for mission events -> TTS pipeline.
 
-Subscribed alle Mission-Events via `MissionBus.subscribe_all`, filtert auf
-voice-getriggerte Missionen (source_actor=`hauptjarvis`), mapped Event-Types
-auf MissionReadback-Methods und ruft die TTS-Synthesize-Funktion.
+Subscribes to all mission events via `MissionBus.subscribe_all`, filters
+for voice-triggered missions (source_actor=`hauptjarvis`), maps event
+types onto MissionReadback methods, and calls the TTS synthesize function.
 
-ADR-0009 Decision §"Voice-Readback nur fuer voice-getriggerte Missionen":
-UI-getriggerte Missionen kriegen Toast (UI hat Live-Updates via WS).
+ADR-0009 Decision §"Voice readback only for voice-triggered missions":
+UI-triggered missions get a toast (the UI has live updates via WS).
 
-Filterung: lookup MissionDispatched-Event aus Store (das Dispatched-Event
-ist persistiert via WAL — kein Race zwischen Mission-Start und Subscriber-
-Wiring). Cached pro Mission-ID damit der Lookup nicht pro Event passiert.
+Filtering: looks up the MissionDispatched event from the store (the
+Dispatched event is persisted via WAL — no race between mission start and
+subscriber wiring). Cached per mission ID so the lookup does not happen
+per event.
 
-Audit F-AUDIT-2 (2026-04-29): Mission-Readback-Texte laufen jetzt durch
-``scrub_for_voice`` bevor sie an TTS gehen. Ohne diesen Filter gingen
-Tool-Use-Markup, "Sir"-Anrede oder Engineering-Jargon ungefiltert an den
-User — siehe ``docs/persona-audit-report.md`` F-AUDIT-2.
+Audit F-AUDIT-2 (2026-04-29): mission-readback texts now go through
+``scrub_for_voice`` before reaching TTS. Without this filter, tool-use
+markup, "Sir" address, or engineering jargon reached the user unfiltered
+— see ``docs/persona-audit-report.md`` F-AUDIT-2.
 """
 from __future__ import annotations
 
@@ -46,14 +47,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Type fuer die TTS-Synthesize-Funktion. Signatur kompatibel mit
-# `SpeechPipeline._tts.synthesize(text, language_code=...)` — wir wrappen
-# das im Bootstrap zu einer einfachen `async fn(text, lang)`.
+# Type for the TTS synthesize function. Signature compatible with
+# `SpeechPipeline._tts.synthesize(text, language_code=...)` — we wrap it
+# in the bootstrap into a simple `async fn(text, lang)`.
 TTSSpeakFn = Callable[[str, Lang], Awaitable[None]]
 
 
 class MissionVoiceListener:
-    """Subscribes auf MissionBus + filtert auf voice-source-Missions."""
+    """Subscribes to MissionBus + filters for voice-sourced missions."""
 
     def __init__(
         self,
@@ -77,24 +78,24 @@ class MissionVoiceListener:
         # rephrases it, honesty-bound for the signed MissionApproved summary
         # (ADR-0009). None => canned line spoken unchanged (risk-free).
         self._readback_composer = readback_composer
-        # Cache: mission_id -> (is_voice, language). Fuellung lazy beim ersten
-        # Event pro Mission. None = noch nicht aufgeloest.
+        # Cache: mission_id -> (is_voice, language). Filled lazily on the
+        # first event per mission. None = not yet resolved.
         self._mission_voice_cache: dict[str, tuple[bool, Lang]] = {}
 
     async def start(self) -> None:
-        """Registriert den Subscriber. Idempotent: subscribe_all ist append-only."""
+        """Registers the subscriber. Idempotent: subscribe_all is append-only."""
         self._bus.subscribe_all(self._on_event)
         logger.info("MissionVoiceListener: bus-subscribe registered")
 
     async def _on_event(self, env: EventEnvelope) -> None:
-        """Bus-Handler. Drop-in-No-Op bei Fehler — TTS darf den Bus nie blocken."""
+        """Bus handler. Drop-in no-op on error — TTS must never block the bus."""
         try:
             await self._dispatch(env)
         except Exception:  # noqa: BLE001
             logger.warning("MissionVoiceListener crashed", exc_info=True)
 
     async def _dispatch(self, env: EventEnvelope) -> None:
-        # Pre-filter: ist die Mission voice-getriggert?
+        # Pre-filter: is the mission voice-triggered?
         is_voice, lang = await self._resolve_voice_meta(env.mission_id)
         if not is_voice:
             return
@@ -121,11 +122,11 @@ class MissionVoiceListener:
         if not text:
             return
 
-        # Audit F-AUDIT-2: Mission-Readback durch Output-Filter schicken,
-        # bevor wir an TTS uebergeben. Sonst leakten Mission-Outputs mit
-        # Tool-Use-Markup / "Sir"-Anrede / Engineering-Jargon ungefiltert
-        # an den User. Sprache der Mission (de/en) wird an scrub_for_voice
-        # uebergeben fuer die richtige Fallback-Phrase.
+        # Audit F-AUDIT-2: send the mission readback through the output
+        # filter before handing it to TTS. Otherwise mission outputs with
+        # tool-use markup / "Sir" address / engineering jargon reached the
+        # user unfiltered. The mission's language (de/en) is passed to
+        # scrub_for_voice so it picks the right fallback phrase.
         scrubbed = scrub_for_voice(text, language=lang)
         if scrubbed.actions:
             logger.info(
@@ -133,7 +134,7 @@ class MissionVoiceListener:
                 lang, scrubbed.actions, scrubbed.fallback_used,
             )
         if not scrubbed.cleaned.strip():
-            logger.info("MissionVoiceListener: text leer nach filter — skip")
+            logger.info("MissionVoiceListener: text empty after filter — skip")
             return
 
         await self._tts(scrubbed.cleaned, lang)
@@ -171,8 +172,8 @@ class MissionVoiceListener:
         return ("A background task the user asked for has an update.", False)
 
     def _render(self, env: EventEnvelope, lang: Lang) -> str:
-        """Map Event-Payload -> Voice-Text. Empty string wenn der Event-Type
-        keine Voice-Antwort hat.
+        """Map event payload -> voice text. Empty string if the event type
+        has no voice response.
         """
         payload = env.payload
 
@@ -216,11 +217,11 @@ class MissionVoiceListener:
         return ""
 
     async def _resolve_voice_meta(self, mission_id: str) -> tuple[bool, Lang]:
-        """Liest MissionDispatched aus Store, cached pro Mission.
+        """Reads MissionDispatched from the store, cached per mission.
 
-        Returns (is_voice_source, language). is_voice_source=True wenn
-        source_actor=`hauptjarvis`. Default-Lang aus dispatched.language oder
-        listener-default.
+        Returns (is_voice_source, language). is_voice_source=True if
+        source_actor=`hauptjarvis`. Default language from dispatched.language
+        or the listener default.
         """
         if mission_id in self._mission_voice_cache:
             return self._mission_voice_cache[mission_id]

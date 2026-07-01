@@ -100,7 +100,7 @@ Node radius scales with backlink count (use a simple `Math.max(8, Math.min(24, 8
 
 ### 4.4 Empty state
 
-If `nodes.length === 0`: render a centred message — `Dein Memory-Graph ist noch leer. Sobald Jarvis Notizen anlegt, verbinden sich die Knoten hier automatisch.` No graph component, just text.
+If `nodes.length === 0`: render a centred message — `Your memory graph is still empty. As soon as Jarvis creates notes, the nodes will connect here automatically.` No graph component, just text.
 
 ### 4.5 Performance
 
@@ -127,8 +127,8 @@ Use `cmdk`'s `<Command.Dialog>` for the modal. It handles keyboard nav out of th
 
 ### 5.3 Empty / error states
 
-- 0 hits → "Keine Treffer für '<query>'. Versuche andere Stichworte oder schau in den Graph."
-- API error → "Suche gerade nicht verfügbar." plus a small retry button.
+- 0 hits → "No results for '<query>'. Try different keywords or check the graph."
+- API error → "Search is currently unavailable." plus a small retry button.
 
 ---
 
@@ -179,4 +179,4 @@ npx tsc --noEmit -p .     # zero TS errors
 
 ## 9. Closing report
 
-Final line: `Goal erfüllt: ja — Grund: <one sentence>` (or `nein`).
+Final line: `Goal fulfilled: yes — Reason: <one sentence>` (or `no`).

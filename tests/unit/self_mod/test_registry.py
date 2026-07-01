@@ -1,9 +1,9 @@
-"""Tests für SelfModRegistry (Phase 7.1).
+"""Tests for SelfModRegistry (Phase 7.1).
 
-Plan-Akzeptanzkriterien §7.1:
-- Unit-Tests für Registry (List, Lookup, Reject `security.*`)
+Plan acceptance criteria §7.1:
+- Unit tests for the registry (list, lookup, reject `security.*`)
 - Public API: `is_mutable(path)`, `get_spec(path)`, `list_all()`
-- Keine Datei-IO auf `jarvis.toml` in dieser Phase
+- No file I/O on `jarvis.toml` in this phase
 """
 from __future__ import annotations
 
@@ -94,14 +94,14 @@ class TestIsMutable:
             # Plan-§AC §7.1: Reject security.*
             "security.admin_password_hash",
             "security.foo",
-            # Plan-§AP-9 erweitert auf weitere geschützte Sektionen
+            # Plan-§AP-9 extended to further protected sections
             "mcp_server.transport",
             "mcp_server.auth_token_env",
             # Risk-tier whitelist/blacklist — added 2026-06-08 for the Control API
             "safety.whitelist",
             "safety.blacklist.commands",
             "harness.default_timeout_s",
-            # Suffix-Patterns für Secrets
+            # Suffix patterns for secrets
             "anthropic_api_key",
             "openai_token",
             "deepgram_secret",
@@ -135,12 +135,12 @@ class TestGetSpec:
         assert SelfModRegistry.get_spec("security.admin_password_hash") is None
 
     def test_safe_tier_paths_match_plan(self) -> None:
-        """Plan-§AD-10 Bypass-Whitelist: tts.speed und ui.theme sind SAFE."""
+        """Plan-§AD-10 bypass whitelist: tts.speed and ui.theme are SAFE."""
         for path in SAFE_TIER_PATHS:
             spec = SelfModRegistry.get_spec(path)
             assert spec is not None
             assert spec.risk_tier == "safe", (
-                f"{path} sollte risk_tier='safe' haben"
+                f"{path} should have risk_tier='safe'"
             )
 
     def test_ask_tier_paths_match_plan(self) -> None:
@@ -148,7 +148,7 @@ class TestGetSpec:
             spec = SelfModRegistry.get_spec(path)
             assert spec is not None
             assert spec.risk_tier == "ask", (
-                f"{path} sollte risk_tier='ask' haben"
+                f"{path} should have risk_tier='ask'"
             )
 
     def test_restart_flags_match_plan(self) -> None:
@@ -179,20 +179,20 @@ class TestRequireSpec:
             SelfModRegistry.require_spec("security.admin_password_hash")
 
     def test_secret_takes_precedence_over_unknown(self) -> None:
-        """Ein Pfad, der sowohl forbidden als auch nicht in ALLOWED ist,
-        muss SecretAccessError werfen — nicht AllowlistViolationError."""
+        """A path that is both forbidden and not in ALLOWED
+        must raise SecretAccessError — not AllowlistViolationError."""
         with pytest.raises(SecretAccessError):
             SelfModRegistry.require_spec("foo_api_key")
 
 
-# --- Defense-in-Depth: Allowlist und Forbidden disjunkt ---
+# --- Defense-in-depth: allowlist and forbidden are disjoint ---
 
 
 class TestForbiddenPatterns:
     def test_no_allowed_path_matches_forbidden_patterns(self) -> None:
         for spec in SelfModRegistry.list_all():
             assert not SelfModRegistry.is_forbidden(spec.path), (
-                f"Allowlist-Pfad '{spec.path}' überlappt mit FORBIDDEN_PATTERNS"
+                f"Allowlist path '{spec.path}' overlaps with FORBIDDEN_PATTERNS"
             )
 
     def test_forbidden_patterns_non_empty(self) -> None:
@@ -204,26 +204,26 @@ class TestForbiddenPatterns:
     def test_secret_suffix_patterns_present(self) -> None:
         for pattern in ("*_api_key", "*_token", "*_secret", "*_password"):
             assert pattern in FORBIDDEN_PATTERNS, (
-                f"Plan-§AP-9 verlangt Pattern {pattern}"
+                f"Plan-§AP-9 requires pattern {pattern}"
             )
 
 
-# --- AP-11: kein dynamisches register() ---
+# --- AP-11: no dynamic register() ---
 
 
 class TestNoDynamicRegistration:
     def test_registry_has_no_register_method(self) -> None:
-        """AP-11: Allowlist darf nicht zur Laufzeit erweiterbar sein."""
+        """AP-11: the allowlist must not be extensible at runtime."""
         for forbidden in ("register", "add", "register_path", "append"):
             assert not hasattr(SelfModRegistry, forbidden), (
-                f"AP-11-Verletzung: SelfModRegistry hat unerwartete Methode "
-                f"'{forbidden}', die dynamische Allowlist-Erweiterung erlauben "
-                f"würde."
+                f"AP-11 violation: SelfModRegistry has an unexpected method "
+                f"'{forbidden}' that would allow dynamic allowlist "
+                f"extension."
             )
 
     def test_mutable_spec_is_frozen(self) -> None:
-        """Wenn ein Spec mutabel wäre, könnte ein Tool den risk_tier
-        eines Pfads umstellen (`ask → safe`) und Confirmation umgehen.
+        """If a spec were mutable, a tool could switch a path's risk_tier
+        (`ask → safe`) and bypass confirmation.
         """
         spec = SelfModRegistry.list_all()[0]
         with pytest.raises(ValidationError):
@@ -254,7 +254,7 @@ class TestMutableSpecValidation:
             )
 
     def test_extra_fields_rejected(self) -> None:
-        """`MutableSpec` ist `extra='forbid'`."""
+        """`MutableSpec` is `extra='forbid'`."""
         with pytest.raises(ValidationError):
             MutableSpec(
                 path="x.y",
@@ -265,22 +265,22 @@ class TestMutableSpecValidation:
             )
 
 
-# --- Plan-AC: keine Datei-IO auf jarvis.toml ---
+# --- Plan-AC: no file I/O on jarvis.toml ---
 
 
 class TestNoConfigFileIO:
     def test_registry_works_without_jarvis_toml(
         self, tmp_path, monkeypatch
     ) -> None:
-        """Plan-AC §7.1: Registry darf in dieser Phase keine Datei lesen.
+        """Plan-AC §7.1: the registry must not read any file in this phase.
 
-        Beweis: Im leeren CWD ohne `jarvis.toml` arbeitet die Registry
-        weiterhin korrekt, weil sie ausschließlich aus der ClassVar liest.
+        Proof: in an empty CWD without `jarvis.toml`, the registry still
+        works correctly because it reads exclusively from the ClassVar.
         """
         monkeypatch.chdir(tmp_path)
         assert not (tmp_path / "jarvis.toml").exists()
 
-        # Alle drei Public-API-Aufrufe müssen funktionieren.
+        # All three public-API calls must work.
         assert len(SelfModRegistry.list_all()) > 50
         assert SelfModRegistry.is_mutable("tts.provider") is True
         assert SelfModRegistry.is_mutable("security.admin_password_hash") is False

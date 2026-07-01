@@ -225,7 +225,7 @@ class OopsProtocol:
         words = stripped.split()
         for word in words[1:]:
             # Remove punctuation tails
-            clean = re.sub(r"[^A-Za-zÄÖÜäöüß]", "", word)
+            clean = re.sub(r"[^A-Za-zÄÖÜäöüß]", "", word)  # i18n-allow: regex charset matches German name characters
             if clean and clean[0].isupper():
                 return clean
         return None

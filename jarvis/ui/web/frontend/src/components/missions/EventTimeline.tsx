@@ -1,9 +1,9 @@
 /**
- * Vertikale Timeline der Events einer selektierten Mission.
+ * Vertical timeline of a selected mission's events.
  *
- * Auto-scroll zum Ende: ScrollArea-ref + scrollHeight, getriggert wenn neue
- * Events ankommen. Wir scrollen nur wenn der User bereits "in der Naehe vom
- * Ende" ist (toleranz 60px), sonst stoeren wir manuelles Scrollen.
+ * Auto-scroll to the end: ScrollArea ref + scrollHeight, triggered when new
+ * events arrive. We only scroll if the user is already "near the end"
+ * (60px tolerance), otherwise we don't interfere with manual scrolling.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Clock } from "lucide-react";

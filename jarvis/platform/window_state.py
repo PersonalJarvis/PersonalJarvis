@@ -69,15 +69,15 @@ class WindowInfo:
 
 
 def _find_and_focus_windows(title_contains: str) -> tuple[bool, str]:
-    """Sucht nach einem sichtbaren Fenster mit Titel-Substring und fokussiert es.
+    """Looks for a visible window with a title substring and focuses it.
 
     Returns:
-        (found, message). ``found`` ist True wenn ein passendes Fenster
-        gefunden UND erfolgreich fokussiert wurde. ``message`` enthaelt
-        entweder den Fenster-Titel oder eine Fehlerursache.
+        (found, message). ``found`` is True when a matching window
+        was found AND successfully focused. ``message`` contains
+        either the window title or a failure reason.
     """
     if os.name != "nt":
-        raise RuntimeError("Window-Switch ist nur auf Windows verfuegbar")
+        raise RuntimeError("Window switch is only available on Windows")
 
     import ctypes
     from ctypes import wintypes
@@ -112,7 +112,7 @@ def _find_and_focus_windows(title_contains: str) -> tuple[bool, str]:
     EnumWindows(EnumWindowsProc(_callback), 0)
 
     if not found_hwnd:
-        return False, f"Kein sichtbares Fenster mit Titel-Substring '{title_contains}' gefunden"
+        return False, f"No visible window found with title substring '{title_contains}'"
 
     hwnd = found_hwnd[0]
     title = found_title[0]
@@ -125,8 +125,8 @@ def _find_and_focus_windows(title_contains: str) -> tuple[bool, str]:
     # already-running path) on one robust mechanism.
     if not _force_foreground_windows(hwnd):
         return False, (
-            f"Fenster '{title}' gefunden, aber Fokus-Setzen scheiterte "
-            "(Foreground-Lock — User muss Alt+Tab manuell drücken)"
+            f"Window '{title}' found, but setting focus failed "
+            "(foreground lock — the user must press Alt+Tab manually)"
         )
     return True, title
 

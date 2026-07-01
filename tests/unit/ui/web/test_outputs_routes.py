@@ -632,8 +632,8 @@ async def test_get_output_plan_returns_empty_stub(
     """The Plan tab is intentionally a placeholder (Welle-4 not plumbed).
 
     Confirmed as out-of-scope per the B1 brief: returns ``{plan: null,
-    steps: []}`` rather than 404. The UI renders "Single-Shot-Run — kein
-    strukturierter Plan" for this shape.
+    steps: []}`` rather than 404. The UI renders "Single-shot run — no
+    structured plan" for this shape.
     """
     _make_mission_dir(tmp_path, "019e3600-eeee-7000-8000-000000000040")
     with TestClient(app) as client:

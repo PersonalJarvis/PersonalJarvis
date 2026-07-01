@@ -33,24 +33,24 @@ from jarvis.ui.tray import JarvisState, JarvisTray, TrayCommand
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jarvis",
-        description="Personal Jarvis — voice-gesteuerter Meta-Orchestrator.",
+        description="Personal Jarvis — voice-driven meta-orchestrator.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument("--wizard", action="store_true", help="Setup-Wizard neu starten.")
-    parser.add_argument("--check", action="store_true", help="Nur Hardware-Analyse zeigen.")
-    parser.add_argument("--plugins", action="store_true", help="Plugin-Registry auflisten.")
-    parser.add_argument("--debug", action="store_true", help="Debug-Logging + Console-Attach.")
+    parser.add_argument("--wizard", action="store_true", help="Restart the setup wizard.")
+    parser.add_argument("--check", action="store_true", help="Only show the hardware analysis.")
+    parser.add_argument("--plugins", action="store_true", help="List the plugin registry.")
+    parser.add_argument("--debug", action="store_true", help="Debug logging + console attach.")
     # Phase 5:
     parser.add_argument("--phase5-doctor", action="store_true", dest="phase5_doctor",
-                        help="Prueft Phase-5-Voraussetzungen (Admin-Helper, "
-                             "Vision-Deps, Kill-Hotkey, Cost-Config).")
+                        help="Checks Phase-5 prerequisites (admin helper, "
+                             "vision deps, kill hotkey, cost config).")
     parser.add_argument("--install-admin-helper", action="store_true",
                         dest="install_admin_helper",
-                        help="Generiert HMAC-Secret + registriert Admin-Helper-Shortcut.")
+                        help="Generates the HMAC secret + registers the admin helper shortcut.")
     parser.add_argument("--orb-doctor", action="store_true", dest="orb_doctor",
-                        help="Dry-run-Diagnose: wo würde der Orb spawnen? "
-                             "Liest jarvis.toml + EnumDisplayMonitors, ohne ein "
-                             "Tk-Fenster zu öffnen (BUG-027 / ADR-0016).")
+                        help="Dry-run diagnostic: where would the orb spawn? "
+                             "Reads jarvis.toml + EnumDisplayMonitors, without "
+                             "opening a Tk window (BUG-027 / ADR-0016).")
     parser.add_argument("--doctor", action="store_true", dest="doctor",
                         help="Completeness self-check: honestly report what is "
                              "registered & ready vs. advertised but missing "
@@ -103,27 +103,27 @@ def _cmd_phase5_doctor() -> int:
     lines.append(f"Jarvis {__version__} — Phase-5-Doctor")
     lines.append("=" * 60)
 
-    # Entry-points
+    # Entry points
     try:
         # Computer-use harness name sourced from the local action gate
         # (single home for the literal).
         from jarvis.brain.local_action_gate import HARNESS_NAME
         eps = list(_md.entry_points(group="jarvis.harness"))
         have_cu = any(ep.name == HARNESS_NAME for ep in eps)
-        lines.append(f"[{'OK' if have_cu else 'FAIL'}] Harness-Plugin "
-                      f"{HARNESS_NAME!r} im Entry-Points-Index: {have_cu}")
+        lines.append(f"[{'OK' if have_cu else 'FAIL'}] Harness plugin "
+                      f"{HARNESS_NAME!r} in entry-points index: {have_cu}")
     except Exception as exc:  # noqa: BLE001
-        lines.append(f"[FAIL] Harness-Entry-Points nicht lesbar: {exc}")
+        lines.append(f"[FAIL] Harness entry points not readable: {exc}")
 
     try:
         eps = list(_md.entry_points(group="jarvis.tool"))
         have_admin = any(ep.name == "dispatch-to-admin" for ep in eps)
-        lines.append(f"[{'OK' if have_admin else 'FAIL'}] Tool-Plugin "
-                      f"'dispatch-to-admin' im Entry-Points-Index: {have_admin}")
+        lines.append(f"[{'OK' if have_admin else 'FAIL'}] Tool plugin "
+                      f"'dispatch-to-admin' in entry-points index: {have_admin}")
     except Exception as exc:  # noqa: BLE001
-        lines.append(f"[FAIL] Tool-Entry-Points nicht lesbar: {exc}")
+        lines.append(f"[FAIL] Tool entry points not readable: {exc}")
 
-    # Config-Sections
+    # Config sections
     raw = cfg._RAW_CONFIG if hasattr(cfg, "_RAW_CONFIG") else {}
     phase5_sections = [
         "vision", "computer_use", "admin_helper", "task_queue",
@@ -135,25 +135,25 @@ def _cmd_phase5_doctor() -> int:
         lines.append(f"[{'ON ' if enabled else 'OFF'}] jarvis.toml:[{section}] "
                       f"enabled={enabled}")
 
-    # Admin-HMAC
+    # Admin HMAC
     try:
         secret = cfg.get_secret("jarvis_admin_hmac", "JARVIS_ADMIN_HMAC")
-        lines.append(f"[{'OK' if secret else 'MISS'}] HMAC-Secret "
-                      f"im Credential-Manager: {'vorhanden' if secret else 'fehlt'}")
+        lines.append(f"[{'OK' if secret else 'MISS'}] HMAC secret "
+                      f"in credential manager: {'present' if secret else 'missing'}")
     except Exception as exc:  # noqa: BLE001
-        lines.append(f"[FAIL] HMAC-Secret-Pruefung: {exc}")
+        lines.append(f"[FAIL] HMAC secret check: {exc}")
 
-    # Vision-Deps
+    # Vision deps
     try:
         import mss  # noqa: F401
-        lines.append("[OK ] mss (Screenshot) importierbar")
+        lines.append("[OK ] mss (screenshot) importable")
     except Exception:  # noqa: BLE001
-        lines.append("[FAIL] mss (Screenshot) nicht importierbar")
+        lines.append("[FAIL] mss (screenshot) not importable")
     try:
         import pywinauto  # noqa: F401
-        lines.append("[OK ] pywinauto (UIA-Tree) importierbar")
+        lines.append("[OK ] pywinauto (UIA tree) importable")
     except Exception:  # noqa: BLE001
-        lines.append("[FAIL] pywinauto (UIA-Tree) nicht importierbar")
+        lines.append("[FAIL] pywinauto (UIA tree) not importable")
 
     _ = config  # suppress unused
     print("\n".join(lines))
@@ -282,7 +282,8 @@ def _cmd_orb_doctor() -> int:
             lines.append("")
             lines.append(
                 "Warning: orb will spawn on a non-primary monitor. Say "
-                "'Orb zurück' or use the right-click menu to reset."
+                "'Orb zurück'"  # i18n-allow: recognized voice-trigger phrase (ADR-0016 L2)
+                " or use the right-click menu to reset."
             )
 
     print("\n".join(lines))
@@ -312,24 +313,24 @@ def _cmd_install_admin_helper() -> int:
     try:
         from jarvis.admin.launcher import ensure_admin_secret
     except ImportError as exc:
-        print(f"Admin-Helper-Launcher nicht importierbar: {exc}", file=sys.stderr)
+        print(f"Admin helper launcher not importable: {exc}", file=sys.stderr)
         return 1
     try:
         secret = ensure_admin_secret()
     except Exception as exc:  # noqa: BLE001
-        print(f"Admin-HMAC-Generation fehlgeschlagen: {exc}", file=sys.stderr)
+        print(f"Admin HMAC generation failed: {exc}", file=sys.stderr)
         return 2
-    print(f"Admin-HMAC-Secret bereit (Laenge: {len(secret)} Bytes).")
-    print("Der Helper wird beim naechsten Admin-Op via UAC-Prompt gestartet.")
+    print(f"Admin HMAC secret ready (length: {len(secret)} bytes).")
+    print("The helper will be launched via UAC prompt on the next admin op.")
     return 0
 
 
 async def _run_tray_app(debug: bool = False) -> int:
     """Tray app event loop."""
     config = cfg.load_config()
-    print(f"Jarvis {__version__} gestartet (Profile: {config.profile.name}).")
+    print(f"Jarvis {__version__} started (profile: {config.profile.name}).")
     if debug:
-        print(f"Config-Datei: {cfg.DEFAULT_CONFIG_FILE}")
+        print(f"Config file: {cfg.DEFAULT_CONFIG_FILE}")
         print(f"Brain primary: {config.brain.primary}")
         print(f"STT: {config.stt.provider} / {config.stt.model}")
         print(f"TTS: {config.tts.provider}")
@@ -352,7 +353,7 @@ async def _run_tray_app(debug: bool = False) -> int:
         # Windows + subprocess contexts sometimes do not allow signal registration
         pass
 
-    print("Tray-Icon läuft. Rechtsklick für Menu. Beenden mit Strg+C oder Tray → Beenden.")
+    print("Tray icon running. Right-click for menu. Quit with Ctrl+C or Tray → Quit.")
 
     async def _command_handler() -> None:
         while not stop_event.is_set():
@@ -370,9 +371,9 @@ async def _run_tray_app(debug: bool = False) -> int:
             elif cmd.action == "reload_config":
                 try:
                     cfg.load_config()
-                    print("Config neu geladen.")
+                    print("Config reloaded.")
                 except Exception as exc:  # noqa: BLE001
-                    print(f"Config-Reload fehlgeschlagen: {exc}")
+                    print(f"Config reload failed: {exc}")
                     tray.set_error(str(exc))
 
     handler_task = asyncio.create_task(_command_handler())
@@ -381,7 +382,7 @@ async def _run_tray_app(debug: bool = False) -> int:
     finally:
         handler_task.cancel()
         tray.stop()
-    print("Jarvis beendet.")
+    print("Jarvis stopped.")
     return 0
 
 

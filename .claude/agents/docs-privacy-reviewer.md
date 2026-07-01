@@ -26,7 +26,7 @@ You are the *semantic* half of a two-layer defence. The *deterministic* half is 
 
 **(A) Real secrets / credentials** — API keys (`sk-…`, `sk-ant-…`, `AIza…`, `sk-or-…`, `ghp_/gho_/ghs_`, `AKIA…`, Twilio `AC…`+token, Slack `xox…`, Discord bot tokens, Bearer/JWT with a real payload), OAuth `client_secret`/refresh/access tokens, private keys (`-----BEGIN … PRIVATE KEY-----`), hardcoded passwords, DB connection strings with credentials, webhook URLs carrying a secret token. A real one is the most serious finding — flag it loudly.
 
-**(B) Maintainer identity** — real name in any spelling/casing (`Ruben`/`Rubén`/`Lütke`/`Luetke`), alt name (`Harald`/`Harald Herz`), personal GitHub login (`rubenluetke10-beep`), private emails (`ruben.luetke10@gmail.com`, `harald.herz@gmx.de`), `owner: <personal-name>` frontmatter.
+**(B) Maintainer identity** — real name in any spelling/casing (`Ruben`/`Rubén`/`Lütke`/`Luetke`), alt name (`Harald`/`Harald Herz`), personal GitHub login (`rubenluetke10-beep`), private emails (`ruben.luetke10@gmail.com`, `harald.herz@gmx.de`), `owner: <personal-name>` frontmatter.  <!-- i18n-allow -->
 
 **(C) Personal filesystem / machine identifiers** — `C:\Users\Administrator\…`, personal OneDrive paths, the `C--Users-Administrator-…` memory-dir slug, Windows SID (`S-1-5-21-…`), machine/account name, internal GCP/project ids.
 

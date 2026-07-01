@@ -5,10 +5,10 @@
  * Obsidian is connected to the on-disk vault. Five visual states:
  *
  *   - LOADING    grey, animated dots, no interaction
- *   - OK         green "Obsidian: verbunden", tooltip shows vault + version
- *   - REGISTER   orange "Obsidian: nicht registriert", click opens setup
- *   - INSTALL    yellow "Obsidian: nicht installiert", click opens setup
- *   - UNCLEAR    grey "Obsidian: Status unklar", click opens setup
+ *   - OK         green "Obsidian: connected", tooltip shows vault + version
+ *   - REGISTER   orange "Obsidian: not registered", click opens setup
+ *   - INSTALL    yellow "Obsidian: not installed", click opens setup
+ *   - UNCLEAR    grey "Obsidian: status unclear", click opens setup
  *
  * The click handler is intentionally minimal — Sub-Agent 5 wires the real
  * setup dialog in. This component only owns presentation + polling.

@@ -1,13 +1,13 @@
-"""Phase-5 E2E-Integration-Tests — abbildend was der Mandat-DoD verlangt.
+"""Phase-5 E2E integration tests — covering what the mandate DoD requires.
 
-Nicht live: keine echten Screenshots, kein echter UAC-Prompt, keine
-echten API-Calls. Stattdessen verdrahten wir die Komponenten mit ihren
-Fakes und pruefen die Propagation durch die Schichten.
+Not live: no real screenshots, no real UAC prompt, no real API calls.
+Instead we wire up the components with their fakes and verify the
+propagation through the layers.
 
-Live-Tests mit echtem Desktop/Admin sind in `test_vision_live.py` und
-`test_admin_ipc_loopback.py` mit `@pytest.mark.skip_ci`.
+Live tests with a real desktop/admin are in `test_vision_live.py` and
+`test_admin_ipc_loopback.py`, marked `@pytest.mark.skip_ci`.
 
-Dieser File ist die Referenz-Abnahme fuer den DoD im Phase-5-Report.
+This file is the reference sign-off for the DoD in the Phase-5 report.
 """
 from __future__ import annotations
 
@@ -37,10 +37,10 @@ pytestmark = pytest.mark.phase5
 
 
 # ======================================================================
-# DoD 1 — `pytest -m phase5` laeuft durch
+# DoD 1 — `pytest -m phase5` passes
 # ======================================================================
-# Dieser File traegt den Marker; die Ausfuehrung dieser Tests deckt das
-# ab. Die `skip_ci`-Live-Tests sind separat.
+# This file carries the marker; running these tests covers that.
+# The `skip_ci` live tests are separate.
 
 
 # ======================================================================
@@ -85,12 +85,12 @@ async def test_kill_switch_via_voice_cancels_cu_token_under_2s():
 
 
 def test_voice_intent_regex_covers_mandate_phrases():
-    """Alle Mandat-Phrasen werden vom Regex gefangen."""
+    """All mandate phrases are caught by the regex."""
     for phrase in [
         "Notfall-Stopp", "Jarvis, stopp", "kill switch", "emergency stop",
         "alles stoppen",
     ]:
-        assert voice_matches_kill_intent(phrase), f"Fehlgeschlagen: {phrase!r}"
+        assert voice_matches_kill_intent(phrase), f"Failed: {phrase!r}"
 
 
 # ======================================================================
@@ -122,13 +122,13 @@ async def test_cost_circuit_trips_and_cancels_token(tmp_path):
         meter.add(CostRecord(
             trace_id=tid, provider="test", model="test",
             tokens_in=1, tokens_out=1, tokens_cache_hit=0,
-            usd=1.0,                                   # weit ueber 0.5 EUR
+            usd=1.0,                                   # well over 0.5 EUR
             timestamp_ns=0,
         ))
         for _ in range(5):
             await asyncio.sleep(0)
 
-        assert events, "BudgetExceeded wurde nicht publiziert"
+        assert events, "BudgetExceeded was not published"
         assert events[0].scope == "task"
         assert token.is_cancelled()
         assert token.reason == "budget_task_exceeded"
@@ -238,6 +238,6 @@ def test_phase5_sections_are_disabled_by_default():
         data = raw.get(section, {}) if isinstance(raw, dict) else {}
         if isinstance(data, dict) and "enabled" in data:
             assert data["enabled"] is False, (
-                f"jarvis.toml:[{section}] default MUSS enabled=false sein, "
-                f"fand: {data.get('enabled')!r}"
+                f"jarvis.toml:[{section}] default MUST be enabled=false, "
+                f"found: {data.get('enabled')!r}"
             )

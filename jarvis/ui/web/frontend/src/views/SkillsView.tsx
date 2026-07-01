@@ -104,9 +104,9 @@ function isSkillOn(state: SkillState): boolean {
   return state === "active" || state === "validated";
 }
 
-// In-memory Admin-Pass — haelt den Pass fuer die Session, damit der User ihn
-// nicht bei jedem Edit neu eingibt. Absichtlich kein localStorage: wer die
-// App schliesst, gibt den Pass beim naechsten Start neu ein.
+// In-memory admin pass — holds the pass for the session so the user doesn't
+// have to re-enter it on every edit. Deliberately not localStorage: whoever
+// closes the app has to re-enter the pass on the next start.
 let sessionAdminPass: string | null = null;
 
 export function SkillsView() {
@@ -352,9 +352,9 @@ export function SkillsView() {
       )}
 
       <div className="flex min-h-0 flex-1">
-        {/* Linke Spalte: Liste */}
+        {/* Left column: list */}
         <div className="flex w-[340px] flex-col border-r border-border">
-          {/* Suchleiste + Filter-Chips */}
+          {/* Search bar + filter chips */}
           <div className="space-y-2 border-b border-border bg-muted/20 px-3 py-2.5">
             <div className="relative">
               <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -370,7 +370,7 @@ export function SkillsView() {
                   type="button"
                   onClick={() => setQueryInput("")}
                   className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  aria-label="Suche leeren"
+                  aria-label={t("skills_view.clear_search")}
                 >
                   <XIcon className="h-3 w-3" />
                 </button>
@@ -378,12 +378,12 @@ export function SkillsView() {
             </div>
             <div className="flex flex-wrap gap-1">
               <FilterChip
-                label="Alle"
+                label={t("skills_view.filter_all")}
                 active={ownerFilter === "all"}
                 onClick={() => setOwnerFilter("all")}
               />
               <FilterChip
-                label="Meine"
+                label={t("skills_view.filter_mine")}
                 active={ownerFilter === "user"}
                 onClick={() => setOwnerFilter("user")}
               />
@@ -869,9 +869,9 @@ function SkillDetailPanel({ name }: { name: string }) {
   const save = useSaveSkill();
   const setEnabled = useSetSkillEnabled();
 
-  // Link-Health nur laden, wenn das Frontmatter tatsaechlich URLs enthaelt —
-  // sonst wuerde der Endpoint fuer jedes Skill-Opening feuern, was vor allem
-  // bei grossen Skill-Listen unnoetigen HEAD-Traffic produziert.
+  // Only load link health when the frontmatter actually contains URLs —
+  // otherwise the endpoint would fire on every skill opening, which
+  // produces unnecessary HEAD traffic especially with large skill lists.
   const hasLinks = useMemo(() => {
     const fm = data?.frontmatter as Record<string, unknown> | null | undefined;
     if (!fm) return false;
@@ -891,7 +891,7 @@ function SkillDetailPanel({ name }: { name: string }) {
   } | null>(null);
 
   useEffect(() => {
-    // Reset den Draft + Resource-Viewer, wenn das geladene Skill wechselt
+    // Reset the draft + resource viewer when the loaded skill changes
     if (data) {
       setDraft(buildSkillMdText(data));
       setDirty(false);
@@ -1158,9 +1158,9 @@ function AdminPassDialog({
 // ----------------------------------------------------------------------
 
 /**
- * Baut die SKILL.md-Textrepraesentation aus Frontmatter + Body. Die PUT-Route
- * erwartet das vollstaendige File — wir rekonstruieren es hier clientseitig,
- * statt das Backend einen separaten "nur-body"-Endpoint bieten zu lassen.
+ * Builds the SKILL.md text representation from frontmatter + body. The PUT
+ * route expects the complete file — we reconstruct it here client-side,
+ * instead of having the backend offer a separate "body-only" endpoint.
  */
 function buildSkillMdText(
   data: { body: string; frontmatter: Record<string, unknown> | null },
@@ -1171,8 +1171,8 @@ function buildSkillMdText(
 }
 
 function serializeFrontmatter(fm: Record<string, unknown>): string {
-  // Minimaler YAML-Dumper — keine komplexen Cases (Refs, Ankers). Wir wissen,
-  // dass SkillFrontmatter nur primitive + Listen + flache Dicts enthaelt.
+  // Minimal YAML dumper — no complex cases (refs, anchors). We know that
+  // SkillFrontmatter only contains primitives + lists + flat dicts.
   const lines: string[] = [];
   const dump = (key: string, val: unknown, indent = 0): void => {
     const pad = " ".repeat(indent);
@@ -1221,7 +1221,7 @@ function formatScalar(val: unknown): string {
   if (typeof val === "boolean" || typeof val === "number") return String(val);
   const str = String(val);
   if (/[:#\n]/.test(str) || str.trim() !== str || str === "") {
-    // Mit Doppelpunkten, Hashes oder Leerzeichen-Paddding → quoten
+    // Quote when there are colons, hashes, or leading/trailing whitespace
     return JSON.stringify(str);
   }
   return str;

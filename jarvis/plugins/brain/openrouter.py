@@ -58,7 +58,7 @@ class OpenRouterBrain:
         if self._client is None:
             ep = cfg.resolve_provider_endpoint("openrouter", vendor_default_base_url=BASE_URL)
             if not ep.credential:
-                raise RuntimeError("Kein OpenRouter-API-Key gefunden (openrouter_api_key).")
+                raise RuntimeError("No OpenRouter API key found (openrouter_api_key).")
             from openai import AsyncOpenAI
             self._client = AsyncOpenAI(
                 api_key=ep.credential,

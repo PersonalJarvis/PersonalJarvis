@@ -58,28 +58,28 @@ log = logging.getLogger(__name__)
 
 _QUESTIONS: tuple[str, ...] = (
     # 0: Name + form of address
-    "Wie heisst Du, und wie soll ich Dich ansprechen?",
+    "Wie heisst Du, und wie soll ich Dich ansprechen?",  # i18n-allow
     # 1: Languages
-    "Welche Sprachen sprichst Du mit mir? Default ist Deutsch und Englisch.",
+    "Welche Sprachen sprichst Du mit mir? Default ist Deutsch und Englisch.",  # i18n-allow
     # 2: Role
-    "Was machst Du beruflich? Kurz, ein paar Worte reichen.",
+    "Was machst Du beruflich? Kurz, ein paar Worte reichen.",  # i18n-allow
     # 3: Directness
-    "Magst Du direkte, kurze Antworten, oder lieber ausfuehrliche Erklaerungen?",
+    "Magst Du direkte, kurze Antworten, oder lieber ausfuehrliche Erklaerungen?",  # i18n-allow
     # 4: Pet peeves
-    "Gibt es Sachen, die Dich nerven sollen? Zum Beispiel keine Emojis, keine "
-    "Rueckfragen, kein Small-Talk.",
+    "Gibt es Sachen, die Dich nerven sollen? Zum Beispiel keine Emojis, keine "  # i18n-allow
+    "Rueckfragen, kein Small-Talk.",  # i18n-allow
 )
 
 _GREETING = (
-    "Hey, ich bin Jarvis. Bevor wir richtig starten, frag ich Dich einmal "
-    "kurz durch fuenf Basis-Dinge durch — damit ich weiss, mit wem ich's zu "
-    "tun habe. "
+    "Hey, ich bin Jarvis. Bevor wir richtig starten, frag ich Dich einmal "  # i18n-allow
+    "kurz durch fuenf Basis-Dinge durch — damit ich weiss, mit wem ich's zu "  # i18n-allow
+    "tun habe. "  # i18n-allow
 )
 
 _FAREWELL = (
-    "Danke, das reicht fuers Erste. Ich hab alles in USER.md gespeichert und "
-    "lerne den Rest im laufenden Betrieb dazu. Du kannst jederzeit direkt in "
-    "der Datei editieren."
+    "Danke, das reicht fuers Erste. Ich hab alles in USER.md gespeichert und "  # i18n-allow
+    "lerne den Rest im laufenden Betrieb dazu. Du kannst jederzeit direkt in "  # i18n-allow
+    "der Datei editieren."  # i18n-allow
 )
 
 
@@ -87,10 +87,10 @@ _FAREWELL = (
 # Parser regexes
 # ----------------------------------------------------------------------
 
-# "Ich heisse Ruben", "ich heiße ruben", "mein Name ist Ruben Lütke",
+# "Ich heisse Ruben", "ich heiße ruben", "mein Name ist Ruben Lütke",  # i18n-allow
 # "ich bin Harald". Case-insensitive. Capture group = name remainder.
 _NAME_INTRO_RE = re.compile(
-    r"(?:ich\s+heisse|ich\s+heiße|mein\s+name\s+ist|ich\s+bin|my\s+name\s+is|i\s+am|i'm)\s+(.+)",
+    r"(?:ich\s+heisse|ich\s+heiße|mein\s+name\s+ist|ich\s+bin|my\s+name\s+is|i\s+am|i'm)\s+(.+)",  # i18n-allow
     re.IGNORECASE,
 )
 
@@ -102,45 +102,45 @@ _ADDRESS_RE = re.compile(
 
 # Strip trailing junk after the actual name (e.g. "Ruben, aber nenn
 # mich gerne Rube" → we want "Ruben"). Cut at first comma / " aber ".
-_NAME_TRAIL_RE = re.compile(r"[,;.!?]|\s+aber\s+|\s+und\s+|\s+but\s+", re.IGNORECASE)
+_NAME_TRAIL_RE = re.compile(r"[,;.!?]|\s+aber\s+|\s+und\s+|\s+but\s+", re.IGNORECASE)  # i18n-allow
 
 # Language keywords → ISO-639-1. Key match is case-insensitive substring.
 _LANGUAGE_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (("deutsch", "german", "allemand", " de ", " de,", " de."), "de"),
     (("englisch", "english", "anglais", " en ", " en,", " en."), "en"),
     (("spanisch", "spanish", "espanol", "español", " es ", " es,"), "es"),
-    (("franzoesisch", "französisch", "french", "francais", "français", " fr "), "fr"),
+    (("franzoesisch", "französisch", "french", "francais", "français", " fr "), "fr"),  # i18n-allow
     (("italienisch", "italian", "italiano", " it ", " it,"), "it"),
-    (("niederlaendisch", "niederländisch", "dutch", "nederlands", " nl "), "nl"),
+    (("niederlaendisch", "niederländisch", "dutch", "nederlands", " nl "), "nl"),  # i18n-allow
     (("portugiesisch", "portuguese", " pt ", " pt,"), "pt"),
     (("polnisch", "polish", "polski", " pl "), "pl"),
-    (("tuerkisch", "türkisch", "turkish", "türkçe", " tr "), "tr"),
+    (("tuerkisch", "türkisch", "turkish", "türkçe", " tr "), "tr"),  # i18n-allow
 )
 
 # Directness signals — keyword lists. First match wins.
 _DIRECT_KEYWORDS = (
-    "direkt", "kurz", "knapp", "tldr", "no fluff", "auf den punkt",
+    "direkt", "kurz", "knapp", "tldr", "no fluff", "auf den punkt",  # i18n-allow
     "to the point", "brief", "short", "concise",
 )
 _VERBOSE_KEYWORDS = (
-    "ausfuehrlich", "ausführlich", "detailliert", "erklaer", "erklär",
+    "ausfuehrlich", "ausführlich", "detailliert", "erklaer", "erklär",  # i18n-allow
     "verbose", "deep dive", "deep-dive", "tief", "genau", "mit details",
 )
 
 # Pet-peeves splitter: ",", " und ", " sowie ", " plus ", " & "
 _PEEVE_SPLIT_RE = re.compile(r"\s*(?:,|;|\bund\b|\bsowie\b|\bplus\b|\band\b|&)\s*", re.IGNORECASE)
 
-# Extract "Emojis" from "Keine Emojis". Analogous to English "no X".
+# Extract "Emojis" from "Keine Emojis". Analogous to English "no X".  # i18n-allow
 _NEGATIVE_PREFIX_RE = re.compile(
-    r"^\s*(?:keine?|kein|no|nicht|never|please\s+no|bitte\s+kein(?:e)?)\s+",
+    r"^\s*(?:keine?|kein|no|nicht|never|please\s+no|bitte\s+kein(?:e)?)\s+",  # i18n-allow
     re.IGNORECASE,
 )
 
-# "Weiss nicht" / "egal" — user skips the question
+# "Weiss nicht" / "egal" — user skips the question  # i18n-allow
 _SKIP_KEYWORDS = (
-    "weiss nicht", "weiß nicht", "keine ahnung", "egal", "ist mir egal",
+    "weiss nicht", "weiß nicht", "keine ahnung", "egal", "ist mir egal",  # i18n-allow
     "dont know", "don't know", "pass", "skip", "ueberspring",
-    "überspring", "weiter",
+    "überspring", "weiter",  # i18n-allow
 )
 
 
@@ -211,7 +211,7 @@ class BootstrapRunner:
             return _FAREWELL
         if not self._started:
             self._started = True
-            log.info("Bootstrap-Interview gestartet (Workspace=%s)",
+            log.info("Bootstrap interview started (workspace=%s)",
                      self.workspace.root)
             return _GREETING + (_QUESTIONS[0] if _QUESTIONS else "")
         # Already started → just re-deliver the current question
@@ -277,7 +277,7 @@ class BootstrapRunner:
         3. Fallback: take the whole text as the name (trimmed).
         """
         if self._is_skip(text):
-            log.info("Bootstrap-Name uebersprungen — setze auf 'User'")
+            log.info("Bootstrap name skipped — defaulting to 'User'")
             self.profile.set("identity", "name", "User")
             return
 
@@ -298,7 +298,7 @@ class BootstrapRunner:
             # "Ich bin Ruben, nenn mich Rube": the address group can overlap the
             # name — we keep both.
 
-        # Remove trailing junk (comma, "aber ...", "und ...")
+        # Remove trailing junk (comma, "aber ...", "und ...")  # i18n-allow
         name = _trim_name(name_candidate)
         address = _trim_name(address_candidate) if address_candidate else None
 
@@ -313,7 +313,7 @@ class BootstrapRunner:
         else:
             self.profile.set("identity", "preferred_address", name)
 
-        log.info("Bootstrap-Name: name=%r address=%r", name, address or name)
+        log.info("Bootstrap name: name=%r address=%r", name, address or name)
 
     def _parse_languages(self, text: str) -> None:
         """Question 2: languages. Default [de, en] if nothing detected."""
@@ -328,12 +328,12 @@ class BootstrapRunner:
         for code in langs:
             self.profile.append_list("identity", "languages", code)
         self.profile.set("identity", "primary_language", langs[0])
-        log.info("Bootstrap-Languages: %s (primary=%s)", langs, langs[0])
+        log.info("Bootstrap languages: %s (primary=%s)", langs, langs[0])
 
     def _parse_role(self, text: str) -> None:
         """Question 3: role. Stored as a free observation — there is no dedicated role field."""
         if not text or self._is_skip(text):
-            log.info("Bootstrap-Rolle uebersprungen")
+            log.info("Bootstrap role skipped")
             return
         # Role goes into the observations section — Curator can structure it later.
         self.profile.append_observation(
@@ -341,7 +341,7 @@ class BootstrapRunner:
             _truncate(text, 200),
             evidence=text,
         )
-        log.info("Bootstrap-Rolle notiert: %r", _truncate(text, 80))
+        log.info("Bootstrap role noted: %r", _truncate(text, 80))
 
     def _parse_directness(self, text: str) -> None:
         """Question 4: directness / verbosity.
@@ -362,25 +362,25 @@ class BootstrapRunner:
 
         self.profile.set("communication", "directness", directness)
         self.profile.set("communication", "verbosity", verbosity)
-        log.info("Bootstrap-Directness: directness=%d verbosity=%s",
+        log.info("Bootstrap directness: directness=%d verbosity=%s",
                  directness, verbosity)
 
     def _parse_pet_peeves(self, text: str) -> None:
-        """Question 5: pet peeves. Split + optionally remove "keine X" prefix."""
+        """Question 5: pet peeves. Split + optionally remove "keine X" prefix."""  # i18n-allow
         if not text or self._is_skip(text):
-            log.info("Bootstrap-Pet-Peeves uebersprungen")
+            log.info("Bootstrap pet peeves skipped")
             return
 
         peeves = _extract_peeves(text)
         for peeve in peeves:
             self.profile.append_list("values", "pet_peeves", peeve)
 
-        # Special case: "keine Emojis" also sets the structured field directly
+        # Special case: "keine Emojis" also sets the structured field directly  # i18n-allow
         lowered = text.lower()
         if "emoji" in lowered and _has_negation_near(lowered, "emoji"):
             self.profile.set("communication", "emoji_ok", False)
 
-        log.info("Bootstrap-Pet-Peeves: %s", peeves)
+        log.info("Bootstrap pet peeves: %s", peeves)
 
     # ------------------------------------------------------------------
     # Finalize
@@ -390,16 +390,16 @@ class BootstrapRunner:
         """Persists the profile and deletes BOOTSTRAP.md."""
         try:
             self.profile.save()
-            log.info("Bootstrap: USER.md gespeichert nach %s", self.profile.path)
+            log.info("Bootstrap: USER.md saved to %s", self.profile.path)
         except Exception:
-            log.exception("Bootstrap: USER.md konnte nicht gespeichert werden")
+            log.exception("Bootstrap: USER.md could not be saved")
             # Still mark as finished — no re-run is better than an infinite loop.
 
         try:
             self.workspace.consume_bootstrap()
-            log.info("Bootstrap: BOOTSTRAP.md geloescht")
+            log.info("Bootstrap: BOOTSTRAP.md deleted")
         except Exception:
-            log.exception("Bootstrap: BOOTSTRAP.md konnte nicht geloescht werden")
+            log.exception("Bootstrap: BOOTSTRAP.md could not be deleted")
 
         self._finished = True
 
@@ -422,9 +422,9 @@ class BootstrapRunner:
 def _trim_name(raw: str | None) -> str:
     """Strips trailing junk after the name and capitalizes it.
 
-    Examples:
-        "ruben, aber nenn mich rube" → "Ruben"
-        "Ruben Lütke"                → "Ruben Lütke"
+    Examples (real German voice input the parser must handle):
+        "ruben, aber nenn mich rube" → "Ruben"  # i18n-allow
+        "Ruben Lütke"                → "Ruben Lütke"  # i18n-allow
         "  harald  "                 → "Harald"
     """
     if not raw:
@@ -463,7 +463,7 @@ def _detect_languages(text: str) -> list[str]:
 def _extract_peeves(text: str) -> list[str]:
     """Splits a pet-peeves text into clean fragments.
 
-    "keine Emojis, keine Confirmation-Fragen und kein Small-Talk" →
+    "keine Emojis, keine Confirmation-Fragen und kein Small-Talk" →  # i18n-allow
     ["Emojis", "Confirmation-Fragen", "Small-Talk"]
     """
     fragments = _PEEVE_SPLIT_RE.split(text)
@@ -486,17 +486,17 @@ def _extract_peeves(text: str) -> list[str]:
 def _clean_peeve(fragment: str) -> str:
     """Normalises a single pet-peeve fragment.
 
-    - "keine Emojis" → "Emojis"
+    - "keine Emojis" → "Emojis"  # i18n-allow
     - "no fluff"     → "fluff"
-    - "  und dann "  → "" (empty, dropped)
+    - "  und dann "  → "" (empty, dropped)  # i18n-allow
     """
     s = fragment.strip().strip('"\'.,;:!?')
     if not s:
         return ""
-    # "keine X" → "X"
+    # "keine X" → "X"  # i18n-allow
     s = _NEGATIVE_PREFIX_RE.sub("", s).strip()
     # Drop overly generic fragments
-    if s.lower() in {"", "nichts", "nix", "keine", "kein", "nothing", "none"}:
+    if s.lower() in {"", "nichts", "nix", "keine", "kein", "nothing", "none"}:  # i18n-allow
         return ""
     return s
 
@@ -508,7 +508,7 @@ def _has_negation_near(text: str, keyword: str) -> bool:
         return False
     window_start = max(0, idx - 15)
     window = text[window_start:idx]
-    return bool(re.search(r"\b(kein(?:e)?|no|not|nicht|ohne|without)\b", window, re.IGNORECASE))
+    return bool(re.search(r"\b(kein(?:e)?|no|not|nicht|ohne|without)\b", window, re.IGNORECASE))  # i18n-allow
 
 
 def _truncate(s: str, n: int) -> str:
@@ -568,8 +568,8 @@ if __name__ == "__main__":  # pragma: no cover
         assert r == _QUESTIONS[1]
 
         # --- Stage 1 → 2: languages ---
-        r = runner.handle_answer("Deutsch und English, manchmal Spanisch")
-        print(f"[A2] Sprachen -> next: {r}")
+        r = runner.handle_answer("Deutsch und English, manchmal Spanisch")  # i18n-allow
+        print(f"[A2] languages -> next: {r}")
         langs = profile.get("identity", "languages") or []
         assert "de" in langs and "en" in langs and "es" in langs, langs
         assert profile.get("identity", "primary_language") == "de"
@@ -588,7 +588,7 @@ if __name__ == "__main__":  # pragma: no cover
         assert r == _QUESTIONS[4]
 
         # --- Stage 4 → finished ---  (pet peeves)
-        r = runner.handle_answer("keine Emojis, keine Confirmation-Fragen und kein Small-Talk")
+        r = runner.handle_answer("keine Emojis, keine Confirmation-Fragen und kein Small-Talk")  # i18n-allow
         print(f"[A5] Peeves -> final: {r}")
         peeves = profile.get("values", "pet_peeves") or []
         assert "Emojis" in peeves, peeves

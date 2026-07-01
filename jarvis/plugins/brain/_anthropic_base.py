@@ -1,7 +1,7 @@
-﻿"""Gemeinsame Anthropic-Logik für claude-api & claude-api.
+﻿"""Shared Anthropic logic for claude-api & claude-api.
 
-Die beiden Provider unterscheiden sich fast nur in den Key-Quellen. Alles
-Streaming + Tool-Use ist identisch (Anthropic-API-Format).
+The two providers differ almost only in their key sources. All
+streaming + tool-use logic is identical (Anthropic API format).
 """
 from __future__ import annotations
 
@@ -18,26 +18,26 @@ from jarvis.core.protocols import BrainDelta, BrainMessage, BrainRequest
 # ``tools.N.custom.name`` 400 on the direct claude-api path.
 from ._openai_base import _openai_tool_name_map
 
-# Latenz-Sprint-2: Beta-Header fuer 1h-Cache-TTL. Der Default ist 5 min;
-# 1h verlaengert die effektive Cache-Dauer und schluckt mehr Voice-Sessions.
-# Konstante zentral, damit beide Provider-Klassen denselben Header setzen.
+# Latency-sprint-2: beta header for the 1h cache TTL. The default is 5 min;
+# 1h extends the effective cache duration and covers more voice sessions.
+# Kept as one central constant so both provider classes set the same header.
 _ANTHROPIC_CACHE_TTL_BETA = "extended-cache-ttl-2025-04-11"
 
-# ENV-Switch fuer Sprint-2 Caching. Wird vom BrainManager gesetzt, wenn
-# ``[performance].anthropic_prompt_cache = true``. Bei "1" wird ``cache_control``
-# auf System-Prompt + letztem Tool-Schema gesetzt + Beta-Header angefordert.
+# ENV switch for sprint-2 caching. Set by the BrainManager when
+# ``[performance].anthropic_prompt_cache = true``. At "1", ``cache_control``
+# is set on the system prompt + last tool schema, and the beta header is requested.
 _ENV_PROMPT_CACHE = "JARVIS_ANTHROPIC_PROMPT_CACHE"
 
 
 def _to_anthropic_messages(messages: tuple[BrainMessage, ...]) -> list[dict[str, Any]]:
-    """BrainMessages → Anthropic API-Messages-Array.
+    """BrainMessages → Anthropic API messages array.
 
-    Anthropic unterstützt Rollen: "user", "assistant". "system" geht separat,
-    "tool" wird als "user"-Message mit tool_result-Block.
+    Anthropic supports roles: "user", "assistant". "system" is passed
+    separately, "tool" becomes a "user" message with a tool_result block.
 
-    Multimodal: `BrainMessage.images` wird für user-Messages als
-    `{"type": "image", "source": {"type": "base64", ...}}`-Blöcke angehängt.
-    Backwards-Compat: Ohne images bleibt String-content ein String.
+    Multimodal: `BrainMessage.images` is appended to user messages as
+    `{"type": "image", "source": {"type": "base64", ...}}` blocks.
+    Backwards compat: without images, string content stays a string.
     """
     out: list[dict[str, Any]] = []
     for m in messages:
@@ -45,10 +45,10 @@ def _to_anthropic_messages(messages: tuple[BrainMessage, ...]) -> list[dict[str,
         content = m.content
 
         if role == "system":
-            continue  # system wird extern als `system`-Parameter übergeben
+            continue  # system is passed externally as the `system` parameter
 
         if role == "tool":
-            # Tool-Result wird als user-Message mit tool_result-Content
+            # Tool result becomes a user message with tool_result content
             out.append({
                 "role": "user",
                 "content": content if isinstance(content, list) else [
@@ -57,10 +57,10 @@ def _to_anthropic_messages(messages: tuple[BrainMessage, ...]) -> list[dict[str,
             })
             continue
 
-        # role: user | assistant — Multimodal nur für user (Anthropic akzeptiert
-        # images nur dort; assistant-images sind nicht Teil der public API).
-        # `getattr`-Fallback für Backwards-Compat falls BrainMessage noch kein
-        # `images`-Attribut hat (Protocol-Version pre-Wave-1-B1).
+        # role: user | assistant — multimodal only for user (Anthropic accepts
+        # images only there; assistant images are not part of the public API).
+        # `getattr` fallback for backwards compat in case BrainMessage doesn't
+        # have an `images` attribute yet (protocol version pre-Wave-1-B1).
         images = getattr(m, "images", ()) or ()
         has_images = role == "user" and bool(images)
         if has_images:
@@ -69,7 +69,7 @@ def _to_anthropic_messages(messages: tuple[BrainMessage, ...]) -> list[dict[str,
                 if content:
                     content_blocks.append({"type": "text", "text": content})
             elif isinstance(content, list):
-                # Bereits Blocks (z.B. tool_result-Passthrough) — übernehmen.
+                # Already blocks (e.g. tool_result passthrough) — keep as-is.
                 content_blocks.extend(content)
             for img in images:
                 content_blocks.append({
@@ -83,7 +83,7 @@ def _to_anthropic_messages(messages: tuple[BrainMessage, ...]) -> list[dict[str,
             out.append({"role": role, "content": content_blocks})
             continue
 
-        # Kein Image — Legacy-Pfad 1:1 erhalten.
+        # No image — legacy path preserved 1:1.
         if isinstance(content, str):
             out.append({"role": role, "content": content})
         else:
@@ -92,7 +92,7 @@ def _to_anthropic_messages(messages: tuple[BrainMessage, ...]) -> list[dict[str,
 
 
 def _extract_system(messages: tuple[BrainMessage, ...], extra_system: str | None) -> str | None:
-    """Sammelt alle role=system-Messages + zusätzlichen extra_system."""
+    """Collects all role=system messages + the extra extra_system."""
     parts: list[str] = []
     for m in messages:
         if m.role == "system" and isinstance(m.content, str):
@@ -106,7 +106,7 @@ def _tools_anthropic_format(
     tools: tuple[dict[str, Any], ...],
     name_map: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Normalisiert Tool-Schemas auf Anthropic-Format (Namen sanitisiert)."""
+    """Normalizes tool schemas to the Anthropic format (names sanitized)."""
     name_map = name_map if name_map is not None else _openai_tool_name_map(tools)
     out: list[dict[str, Any]] = []
     for t in tools:
@@ -121,7 +121,7 @@ def _tools_anthropic_format(
 
 
 def _is_reasoning_model(model: str) -> bool:
-    """Claude Opus-4.x und Sonnet-4.x akzeptieren `temperature` nicht mehr."""
+    """Claude Opus-4.x and Sonnet-4.x no longer accept `temperature`."""
     m = (model or "").lower()
     return "opus-4" in m or "sonnet-4" in m or "haiku-4" in m
 
@@ -131,7 +131,7 @@ async def stream_complete(
     model: str,
     req: BrainRequest,
 ) -> AsyncIterator[BrainDelta]:
-    """Führt ein streamendes messages.create aus und yielded BrainDeltas."""
+    """Runs a streaming messages.create and yields BrainDeltas."""
     messages = _to_anthropic_messages(req.messages)
     system = _extract_system(req.messages, req.system)
     # Sanitize tool names + keep a reverse map so the inbound tool_use name maps
@@ -140,15 +140,15 @@ async def stream_complete(
     reverse_name_map = {safe: original for original, safe in name_map.items()}
     tools_payload = _tools_anthropic_format(req.tools, name_map) if req.tools else None
 
-    # Latenz-Sprint-2: Prompt-Caching wenn aktiviert. Wandelt System-Prompt
-    # in einen Block-Array mit ``cache_control`` und markiert das letzte
-    # Tool-Schema als Cache-Boundary (Anthropic cached alles bis zum
-    # markierten Block einschliesslich).
+    # Latency-sprint-2: prompt caching when enabled. Converts the system
+    # prompt into a block array with ``cache_control`` and marks the last
+    # tool schema as the cache boundary (Anthropic caches everything up
+    # to and including the marked block).
     prompt_cache_enabled = os.environ.get(_ENV_PROMPT_CACHE) == "1"
     extra_headers: dict[str, str] = {}
     system_payload: Any = system
     if prompt_cache_enabled and system:
-        # System wird zu Block-Array, damit ``cache_control`` greift.
+        # System becomes a block array so ``cache_control`` applies.
         system_payload = [
             {
                 "type": "text",
@@ -158,8 +158,8 @@ async def stream_complete(
         ]
         extra_headers["anthropic-beta"] = _ANTHROPIC_CACHE_TTL_BETA
     if prompt_cache_enabled and tools_payload:
-        # Letztes Tool als Cache-Boundary: alles davor (System + Tools)
-        # wird gemeinsam gecached. Keine Aenderung am Tool-Inhalt.
+        # Last tool as cache boundary: everything before it (system + tools)
+        # is cached together. No change to the tool content itself.
         cached_tools = [dict(t) for t in tools_payload]
         cached_tools[-1]["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
         tools_payload = cached_tools
@@ -170,9 +170,9 @@ async def stream_complete(
         "max_tokens": req.max_tokens,
         "messages": messages,
     }
-    # `temperature` ist auf Reasoning-Modellen (opus-4.x, sonnet-4.x) deprecated.
-    # Nur für explizit-klassische Modelle senden; bei den neuen Defaults ist
-    # temperature=1 ohnehin hardcoded im Backend.
+    # `temperature` is deprecated on reasoning models (opus-4.x, sonnet-4.x).
+    # Only send it for explicitly classic models; on the new defaults,
+    # temperature=1 is hardcoded on the backend anyway.
     if not _is_reasoning_model(model):
         kwargs["temperature"] = req.temperature
     if system_payload:
@@ -183,14 +183,14 @@ async def stream_complete(
         kwargs["extra_headers"] = extra_headers
 
     async with client.messages.stream(**kwargs) as stream:
-        # Tool-Call-Akkumulator (Anthropic streamt tool_use als separate blocks)
+        # Tool-call accumulator (Anthropic streams tool_use as separate blocks)
         current_tool: dict[str, Any] | None = None
         current_tool_json = ""
 
         async for event in stream:
             etype = getattr(event, "type", None) or getattr(event, "event", None)
 
-            # Text-Delta
+            # Text delta
             if etype == "content_block_delta":
                 delta = getattr(event, "delta", None)
                 if delta is None:
@@ -205,7 +205,7 @@ async def stream_complete(
                         partial = getattr(delta, "partial_json", "") or ""
                         current_tool_json += partial
 
-            # Tool-Use-Block start
+            # Tool-use block start
             elif etype == "content_block_start":
                 block = getattr(event, "content_block", None)
                 if block is not None and getattr(block, "type", None) == "tool_use":
@@ -216,7 +216,7 @@ async def stream_complete(
                     }
                     current_tool_json = ""
 
-            # Tool-Use-Block ende
+            # Tool-use block end
             elif etype == "content_block_stop":
                 if current_tool is not None:
                     try:
@@ -228,7 +228,7 @@ async def stream_complete(
                     current_tool = None
                     current_tool_json = ""
 
-            # Message-Ende mit Usage
+            # Message end with usage
             elif etype == "message_delta":
                 delta = getattr(event, "delta", None)
                 finish = getattr(delta, "stop_reason", None) if delta else None

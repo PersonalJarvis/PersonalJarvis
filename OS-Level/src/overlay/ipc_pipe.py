@@ -1,11 +1,11 @@
-"""Named-Pipe-Fallback. Plan §5 AD-5 + §10.
+"""Named-pipe fallback. Plan §5 AD-5 + §10.
 
-Skeleton: Connect-Helper + send/recv-Roundtrip. Vollstaendige Auto-
-Failover-Logik (WS down + Pipe up) ist Phase 9.7-Thema. Hier nur die
-Bausteine, damit die Tests den Pipe-Pfad simulieren koennen.
+Skeleton: connect helper + send/recv roundtrip. The full auto-failover
+logic (WS down + pipe up) is a Phase 9.7 topic. This only has the
+building blocks, so tests can simulate the pipe path.
 
-Fuer Non-Windows-Umgebungen: ``CAPABLE`` ist ``False``, ``connect`` und
-``send_recv`` raisen ``RuntimeError``. Tests skippen entsprechend.
+For non-Windows environments: ``CAPABLE`` is ``False``, ``connect``
+and ``send_recv`` raise ``RuntimeError``. Tests skip accordingly.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PIPE_NAME = r"\\.\pipe\jarvis-overlay"
 
-# Pipe-Buffer-Defaults — unkritisch, beide Richtungen je 64 KiB.
+# Pipe buffer defaults — uncritical, 64 KiB each direction.
 _BUF = 64 * 1024
 
 
@@ -28,15 +28,15 @@ def _is_windows() -> bool:
 
 
 def _import_win32() -> tuple[Any, Any]:
-    """Lazy-Import. Gibt (win32file, win32pipe) zurueck."""
+    """Lazy import. Returns (win32file, win32pipe)."""
     if not _is_windows():
-        raise RuntimeError("Named-Pipe ist Windows-only")
+        raise RuntimeError("Named pipes are Windows-only")
     try:
         import win32file  # type: ignore[import-not-found]
         import win32pipe  # type: ignore[import-not-found]
     except ImportError as exc:
         raise RuntimeError(
-            "pywin32 nicht installiert — `pip install pywin32`"
+            "pywin32 not installed — `pip install pywin32`"
         ) from exc
     return win32file, win32pipe
 
@@ -46,20 +46,20 @@ CAPABLE: bool = _is_windows()
 
 @contextmanager
 def open_client(pipe_name: str = DEFAULT_PIPE_NAME, *, timeout_ms: int = 5000) -> Iterator[Any]:
-    """Verbindet als Client zur existierenden Pipe.
+    """Connects as a client to the existing pipe.
 
-    Yieldet das ``HANDLE``. Schliesst es sauber im Exit-Branch. Raised
-    ``RuntimeError`` falls die Pipe nicht existiert oder wir auf Non-
-    Windows laufen.
+    Yields the ``HANDLE``. Closes it cleanly in the exit branch. Raises
+    ``RuntimeError`` if the pipe doesn't exist or we're running on
+    non-Windows.
     """
     win32file, win32pipe = _import_win32()
     import pywintypes  # type: ignore[import-not-found]
     import time as _time
 
-    # ``WaitNamedPipe`` ist auf Win11 unreliable (returnt False obwohl der
-    # Server in ``ConnectNamedPipe`` blockiert). Robusterer Pfad: direkt
-    # ``CreateFile`` aufrufen und bei ``ERROR_PIPE_BUSY``/``FILE_NOT_FOUND``
-    # in kurzen Abstaenden retry-en.
+    # ``WaitNamedPipe`` is unreliable on Win11 (returns False even
+    # though the server is blocked in ``ConnectNamedPipe``). A more
+    # robust path: call ``CreateFile`` directly and retry at short
+    # intervals on ``ERROR_PIPE_BUSY``/``FILE_NOT_FOUND``.
     deadline = _time.monotonic() + (timeout_ms / 1000.0)
     last_err: Exception | None = None
     handle = None
@@ -79,14 +79,14 @@ def open_client(pipe_name: str = DEFAULT_PIPE_NAME, *, timeout_ms: int = 5000) -
             last_err = exc
             if _time.monotonic() >= deadline:
                 raise RuntimeError(
-                    f"Named-Pipe Connect-Fehler: {pipe_name} ({exc})"
+                    f"Named-pipe connect error: {pipe_name} ({exc})"
                 ) from exc
             _time.sleep(0.025)
     assert handle is not None, "unreachable: handle must be set after loop"
     del last_err  # unused outside loop
 
     try:
-        # PIPE_READMODE_MESSAGE: jede WriteFile entspricht einer ReadFile.
+        # PIPE_READMODE_MESSAGE: every WriteFile corresponds to one ReadFile.
         win32pipe.SetNamedPipeHandleState(
             handle, win32pipe.PIPE_READMODE_MESSAGE, None, None
         )
@@ -99,11 +99,11 @@ def open_client(pipe_name: str = DEFAULT_PIPE_NAME, *, timeout_ms: int = 5000) -
 
 
 def create_server_pipe(pipe_name: str = DEFAULT_PIPE_NAME) -> Any:
-    """Reine ``CreateNamedPipe``. Returnt das Handle ohne zu blockieren.
+    """Pure ``CreateNamedPipe``. Returns the handle without blocking.
 
-    ``accept_server_connection(handle)`` blockiert dann separat bis ein
-    Client verbindet. Splittet das Lifecycle damit Tests den Race vor
-    ``WaitNamedPipe`` nicht durch Sleep loesen muessen.
+    ``accept_server_connection(handle)`` then blocks separately until a
+    client connects. Splits the lifecycle so tests don't have to
+    resolve the race before ``WaitNamedPipe`` via sleep.
     """
     win32file, win32pipe = _import_win32()
     return win32pipe.CreateNamedPipe(
@@ -121,13 +121,13 @@ def create_server_pipe(pipe_name: str = DEFAULT_PIPE_NAME) -> Any:
 
 
 def accept_server_connection(handle: Any) -> None:
-    """Blockiert auf ``ConnectNamedPipe(handle)``."""
+    """Blocks on ``ConnectNamedPipe(handle)``."""
     _, win32pipe = _import_win32()
     win32pipe.ConnectNamedPipe(handle, None)
 
 
 def close_server_pipe(handle: Any) -> None:
-    """Disconnect + Close-Handle. Idempotent."""
+    """Disconnect + close handle. Idempotent."""
     win32file, win32pipe = _import_win32()
     try:
         win32pipe.DisconnectNamedPipe(handle)
@@ -141,11 +141,11 @@ def close_server_pipe(handle: Any) -> None:
 
 @contextmanager
 def open_server(pipe_name: str = DEFAULT_PIPE_NAME) -> Iterator[Any]:
-    """Server-seitige Pipe. Erzeugt sie und blockiert auf ``ConnectNamedPipe``.
+    """Server-side pipe. Creates it and blocks on ``ConnectNamedPipe``.
 
-    Wird in Phase 9.7 durch eine Multi-Connection-Variante ersetzt; hier
-    nur das Single-Connection-Skelett, damit Tests den Roundtrip pruefen
-    koennen. Fuer feinere Test-Kontrolle siehe ``create_server_pipe`` +
+    Gets replaced by a multi-connection variant in Phase 9.7; this is
+    only the single-connection skeleton, so tests can verify the
+    roundtrip. For finer test control see ``create_server_pipe`` +
     ``accept_server_connection``.
     """
     handle = create_server_pipe(pipe_name)
@@ -157,7 +157,7 @@ def open_server(pipe_name: str = DEFAULT_PIPE_NAME) -> Iterator[Any]:
 
 
 def send(handle: Any, payload: bytes) -> int:
-    """Schreibt eine Message. Returnt geschriebene Bytes."""
+    """Writes a message. Returns the number of bytes written."""
     win32file, _ = _import_win32()
     err, written = win32file.WriteFile(handle, payload)
     if err != 0:
@@ -166,7 +166,7 @@ def send(handle: Any, payload: bytes) -> int:
 
 
 def recv(handle: Any, max_bytes: int = _BUF) -> bytes:
-    """Liest eine Message. Returnt rohe Bytes (UTF-8 JSON erwartet)."""
+    """Reads a message. Returns the raw bytes (UTF-8 JSON expected)."""
     win32file, _ = _import_win32()
     err, data = win32file.ReadFile(handle, max_bytes)
     if err != 0:

@@ -1,7 +1,7 @@
-"""Self-Test ohne GUI-Dependencies.
+"""Self-test without GUI dependencies.
 
-Importiert NUR Foundation-Module (config, state, schema). Beruehrt KEIN Qt,
-damit headless-CI-Runs ohne Display funktionieren.
+Imports ONLY foundation modules (config, state, schema). Touches NO Qt,
+so headless CI runs without a display work.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ def run() -> int:
     from .config import OverlayConfig
     from .state import OverlayState
 
-    # Pydantic-Default-Roundtrip als Sanity-Check.
+    # Pydantic default roundtrip as a sanity check.
     cfg = OverlayConfig()
     assert cfg.enabled is True
     assert OverlayState.IDLE.value == "idle"

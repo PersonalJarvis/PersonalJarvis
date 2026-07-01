@@ -1,16 +1,16 @@
-"""Workflow-System (Phase 6) — AI-Agent-Orchestration-Dashboard.
+"""Workflow system (Phase 6) — AI-agent orchestration dashboard.
 
-Ein **Workflow** ist eine benannte, wiederverwendbare Sequenz von Steps.
-Getrennt von ``jarvis.tasks`` (single-action, persistente Task-Queue)
-und ``jarvis.skills`` (voice/hotkey-triggered SKILL.md-Files):
+A **workflow** is a named, reusable sequence of steps.
+Separate from ``jarvis.tasks`` (single-action, persistent task queue)
+and ``jarvis.skills`` (voice/hotkey-triggered SKILL.md files):
 
-- Tasks = "einmal ausfuehren, dann weg" (Erinnerungen, Ad-hoc).
-- Skills = Natural-Language-Shortcuts (voice-triggered Macros).
-- **Workflows = gehostete Multi-Step-Pipelines** mit Cron- oder Manual-
-  Trigger, die Brain-Prompts, Harness-Calls, Tool-Aufrufe und TTS-Ansagen
-  zu einer Sequenz verketten. Das ist die AI-Agent-Antwort auf n8n.
+- Tasks = "run once, then gone" (reminders, ad hoc).
+- Skills = natural-language shortcuts (voice-triggered macros).
+- **Workflows = hosted multi-step pipelines** with a cron or manual
+  trigger that chain brain prompts, harness calls, tool calls, and TTS
+  announcements into a sequence. This is the AI-agent answer to n8n.
 
-Gehoert in Layer L6 (Orchestrator) laut Plan §3.
+Belongs in Layer L6 (Orchestrator) per Plan §3.
 """
 from __future__ import annotations
 

@@ -1,10 +1,10 @@
 /**
- * Zustand-Store fuer den Mission-Control-View.
+ * Zustand store for the mission-control view.
  *
- * Wichtig: xterm.js-Terminal-Instanzen leben NICHT im Store. Sie werden in
- * einer Module-Level-Map (terminalRegistry) gehalten — sonst verursacht jeder
- * PTY-Stream-Chunk einen React-Re-Render der gesamten View. Der Store haelt
- * nur die seri­ali­sier­bare Mission-/Event-/Verdict-State.
+ * Important: xterm.js terminal instances do NOT live in the store. They are
+ * kept in a module-level map (terminalRegistry) — otherwise every PTY stream
+ * chunk would trigger a full React re-render of the whole view. The store
+ * only holds the serializable mission/event/verdict state.
  */
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
@@ -108,7 +108,7 @@ export const useMissionsStore = create<MissionsStore>()(
               ...missions,
               [env.mission_id]: {
                 id: env.mission_id,
-                prompt: "(unbekannt)",
+                prompt: "(unknown)",
                 state: newState,
                 language: "de",
                 created_ms: env.ts_ms,

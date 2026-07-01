@@ -1,4 +1,4 @@
-"""Unit-Tests für CacheHeartbeat."""
+"""Unit tests for CacheHeartbeat."""
 from __future__ import annotations
 
 import asyncio
@@ -17,7 +17,7 @@ async def test_heartbeat_fires_periodically():
 
     hb = CacheHeartbeat(interval_s=0.05, probe=probe)
     hb.start()
-    await asyncio.sleep(0.18)  # erwartet ~3 ticks
+    await asyncio.sleep(0.18)  # expects ~3 ticks
     await hb.stop()
     assert counter["n"] >= 2
 
@@ -35,7 +35,7 @@ async def test_heartbeat_stops_cleanly():
     await hb.stop()
     mid = counter["n"]
     await asyncio.sleep(0.12)
-    # Nach stop keine neuen Ticks mehr
+    # No new ticks after stop
     assert counter["n"] == mid
 
 
@@ -52,5 +52,5 @@ async def test_heartbeat_probe_failures_are_swallowed():
     hb.start()
     await asyncio.sleep(0.15)
     await hb.stop()
-    # Loop darf nach fehlerhaftem probe weiterlaufen
+    # Loop is allowed to keep running after a failing probe
     assert counter["n"] >= 2

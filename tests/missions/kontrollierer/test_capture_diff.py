@@ -286,8 +286,8 @@ def test_archive_copies_non_ascii_deliverable(
     must land in artifacts/files/. git core.quotepath=true octal-escapes the
     name in both `ls-files` and the staged diff; the archive path must
     round-trip it to the real on-disk name."""
-    (worktree / "Werbungä.html").write_text(
-        "<h1>Hallo Welt</h1>\n", encoding="utf-8"
+    (worktree / "Werbungä.html").write_text(  # i18n-allow: literal umlaut filename under test
+        "<h1>Hallo Welt</h1>\n", encoding="utf-8"  # i18n-allow: arbitrary file content, not user-facing prose
     )
     mission_dir = tmp_path / "mission_root"
     mission_dir.mkdir()
@@ -301,7 +301,7 @@ def test_archive_copies_non_ascii_deliverable(
 
     assert artifacts is not None
     files_dir = artifacts / "files"
-    copied = files_dir / "Werbungä.html"
+    copied = files_dir / "Werbungä.html"  # i18n-allow: literal umlaut filename under test
     present = (
         sorted(p.name for p in files_dir.iterdir())
         if files_dir.exists()

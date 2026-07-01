@@ -1,11 +1,11 @@
-"""Tests fuer jarvis.awareness.verdichter.Verdichter.
+"""Tests for jarvis.awareness.verdichter.Verdichter.
 
 Plan §6 AC:
-- Verdichter-Call mit FakeBrain returnt deterministische Summary
-- Timeout (5s) liefert empty summary + error_reason="timeout", crashed nicht
-- Token-Cap: bei len(frames+events) > 30 werden 30 neueste genommen
-- Empty input (frames=[], events=[]) -> skip mit error_reason="empty_input"
-- Verdichter NIEMALS via spawn_worker-Mechanik (direct BrainProviderRegistry)
+- Verdichter call with FakeBrain returns a deterministic summary
+- Timeout (5s) yields an empty summary + error_reason="timeout", does not crash
+- Token cap: for len(frames+events) > 30, the 30 newest are kept
+- Empty input (frames=[], events=[]) -> skip with error_reason="empty_input"
+- Verdichter NEVER goes through the spawn_worker mechanism (direct BrainProviderRegistry)
 """
 from __future__ import annotations
 
@@ -48,14 +48,14 @@ def _event(ts_ns: int, kind: str = "FileSaved", payload: dict | None = None) -> 
 
 
 def _default_config(**overrides) -> AwarenessVerdichterConfig:
-    """AwarenessVerdichterConfig mit kurzem Timeout fuer Tests."""
+    """AwarenessVerdichterConfig with a short timeout for tests."""
     base = {
         "enabled": True,
         "provider": "claude-api",
         "model": "claude-haiku-4-5-20251001",
         "max_input_tokens": 800,
         "max_output_tokens": 200,
-        "timeout_s": 1.0,    # kurz fuer schnelle Tests
+        "timeout_s": 1.0,    # short, for fast tests
     }
     base.update(overrides)
     return AwarenessVerdichterConfig(**base)
@@ -81,12 +81,12 @@ async def test_call_with_fake_brain_returns_summary() -> None:
 
     assert summary == "Du arbeitest seit 12min an pipeline.py in VS Code."
     assert usage["error_reason"] is None
-    assert usage["tokens_in"] == 0    # FakeBrain emittet keine usage
+    assert usage["tokens_in"] == 0    # FakeBrain does not emit usage
     assert usage["tokens_out"] == 0
     assert usage["duration_ms"] >= 0
-    # FakeBrain wurde EINMAL aufgerufen (kein Sub-Jarvis-Spawn-Loop)
+    # FakeBrain was called ONCE (no Sub-Jarvis spawn loop)
     assert len(brain.calls) == 1
-    # Verifiziere dass System-Prompt aus prompts.py uebergeben wurde
+    # Verify that the system prompt from prompts.py was passed through
     assert brain.calls[0].system == VERDICHTER_SYSTEM_PROMPT
 
 
@@ -96,7 +96,7 @@ async def test_call_with_fake_brain_returns_summary() -> None:
 
 @pytest.mark.asyncio
 async def test_call_with_empty_input_returns_empty_input_reason() -> None:
-    """frames=[] + events=[] -> ('', error_reason='empty_input'), kein Brain-Call."""
+    """frames=[] + events=[] -> ('', error_reason='empty_input'), no brain call."""
     brain = FakeBrain(text_response="should not be called")
     cfg = _default_config()
     verdichter = Verdichter(brain=brain, config=cfg)
@@ -110,7 +110,7 @@ async def test_call_with_empty_input_returns_empty_input_reason() -> None:
     assert usage["tokens_in"] == 0
     assert usage["tokens_out"] == 0
     assert usage["duration_ms"] == 0
-    # KEIN Brain-Call bei Empty-Input
+    # NO brain call on empty input
     assert len(brain.calls) == 0
 
 
@@ -119,7 +119,7 @@ async def test_call_with_empty_input_returns_empty_input_reason() -> None:
 # ----------------------------------------------------------------------
 
 class _SlowBrain:
-    """Brain das absichtlich laenger schlaeft als der Timeout."""
+    """Brain that deliberately sleeps longer than the timeout."""
 
     name: str = "slow-brain"
     context_window: int = 8192
@@ -166,7 +166,7 @@ async def test_call_with_timeout_returns_timeout_reason() -> None:
 # ----------------------------------------------------------------------
 
 class _SpyBrain:
-    """Brain das den uebergebenen Prompt fuer Inspection speichert."""
+    """Brain that stores the passed-in prompt for inspection."""
 
     name: str = "spy-brain"
     context_window: int = 8192
@@ -179,7 +179,7 @@ class _SpyBrain:
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
         self.calls.append(req)
-        # Letzte Message (User-Prompt) speichern
+        # Store the last message (user prompt)
         for msg in req.messages:
             if msg.role == "user" and isinstance(msg.content, str):
                 self.last_prompt = msg.content
@@ -193,12 +193,12 @@ class _SpyBrain:
 async def test_call_caps_to_30_frames_plus_events() -> None:
     """50 Frames + 0 Events -> nur 30 Frames im finalen Prompt.
 
-    Strategy: NEUESTE 30 (chronological tail). Die aeltesten 20 Frames
-    werden gedroppt — das verifizieren wir indem wir die "alte" und
-    "neue" Marker im Prompt suchen.
+    Strategy: NEWEST 30 (chronological tail). The oldest 20 frames are
+    dropped — we verify this by looking for the "old" and "new" markers
+    in the prompt.
     """
     brain = _SpyBrain()
-    cfg = _default_config(max_input_tokens=10_000)    # gross genug, kein Trunc
+    cfg = _default_config(max_input_tokens=10_000)    # large enough, no truncation
     verdichter = Verdichter(brain=brain, config=cfg)
 
     base_ts = 1_700_000_000_000_000_000
@@ -215,12 +215,12 @@ async def test_call_caps_to_30_frames_plus_events() -> None:
     assert summary == "ok"
     # Cap: max 30 Frames+Events. 50 Frames -> 30 neueste.
     assert MAX_FRAMES_PLUS_EVENTS == 30
-    # Pruefen: die alten Frames file_00..file_19 fehlen, file_20..file_49 sind drin.
+    # Check: the old frames file_00..file_19 are missing, file_20..file_49 are present.
     prompt = brain.last_prompt
-    assert "file_49.py" in prompt, "Neuester Frame muss im Prompt sein"
-    assert "file_20.py" in prompt, "Erster nicht-getrimmter Frame muss da sein"
-    assert "file_19.py" not in prompt, "file_19 sollte gedroppt sein (zu alt)"
-    assert "file_00.py" not in prompt, "file_00 sollte gedroppt sein (aeltester)"
+    assert "file_49.py" in prompt, "Newest frame must be in the prompt"
+    assert "file_20.py" in prompt, "First non-trimmed frame must be present"
+    assert "file_19.py" not in prompt, "file_19 should have been dropped (too old)"
+    assert "file_00.py" not in prompt, "file_00 should have been dropped (oldest)"
     # Genau 30 Frame-Zeilen
     frame_lines = re.findall(r"^- \[\d\d:\d\d:\d\d\] Code\.exe: file_\d\d\.py$",
                              prompt, flags=re.MULTILINE)
@@ -288,7 +288,7 @@ def test_build_verdichter_prompt_truncation() -> None:
 
     prompt = build_verdichter_prompt(
         frames=frames, events=[], primary_app="Code.exe",
-        max_chars=500,    # zu klein fuer alles
+        max_chars=500,    # too small for everything
     )
 
     assert "[...]" in prompt, f"Truncation-Marker fehlt im Prompt:\n{prompt!r}"
@@ -302,12 +302,12 @@ def test_build_verdichter_prompt_truncation() -> None:
 # ----------------------------------------------------------------------
 
 def _strip_string_literals_and_comments(src: str) -> str:
-    """Entfernt Python-Docstrings/String-Literals und Kommentare aus src.
+    """Strips Python docstrings/string literals and comments out of src.
 
-    Tokenize-basiert. Wird im NEVER-spawn-Test genutzt, damit Hard-Negative-
-    Erwaehnungen in Docstrings (z.B. "NIEMALS spawn_worker") nicht
-    falsch positiv triggern. Wir wollen nur tatsaechliche Code-References
-    (Imports, Function-Calls, Identifier).
+    Tokenize-based. Used in the NEVER-spawn test so that hard-negative
+    mentions in docstrings (e.g. "NEVER spawn_worker") don't false-positive
+    trigger. We only want actual code references (imports, function
+    calls, identifiers).
     """
     import io
     import token as _token_mod
@@ -327,65 +327,65 @@ def _strip_string_literals_and_comments(src: str) -> str:
 
 
 def test_verdichter_NEVER_calls_spawn_worker() -> None:
-    """Hard Negative §6: Verdichter darf NICHT via spawn_worker laufen.
+    """Hard negative §6: Verdichter must NOT run via spawn_worker.
 
-    Welle-4-Migration: vorher hiess das Tool ``spawn_sub_jarvis``. Die
-    Regression-Guards bleiben fuer beide Namen aktiv, um zu verhindern dass
-    je wieder eine Spawn-Abhaengigkeit eingeschleust wird.
+    Welle-4 migration: the tool used to be called ``spawn_sub_jarvis``. The
+    regression guards stay active for both names, to prevent a spawn
+    dependency from ever being reintroduced.
 
-    Pruefung 1 (Code, nicht Docstrings): Source-Code von Verdichter +
-    prompts.py enthaelt KEINE Code-Reference auf spawn_worker /
-    spawn_sub_jarvis / SubJarvisManager / jarvis.sub_jarvis. Docstring-
-    Erwaehnungen sind erlaubt — wir strippen Strings + Kommentare via
-    tokenize bevor wir matchen.
-    Pruefung 2: Verdichter.__init__ akzeptiert ``brain`` + ``config``
-    direkt — kein Hidden-Manager-Wiring.
+    Check 1 (code, not docstrings): the source code of Verdichter +
+    prompts.py contains NO code reference to spawn_worker /
+    spawn_sub_jarvis / SubJarvisManager / jarvis.sub_jarvis. Docstring
+    mentions are allowed — we strip strings + comments via tokenize
+    before matching.
+    Check 2: Verdichter.__init__ accepts ``brain`` + ``config``
+    directly — no hidden manager wiring.
     """
-    # Pruefung 1: Source des Moduls (Code-Only, keine Docstrings)
+    # Check 1: source of the module (code-only, no docstrings)
     import jarvis.awareness.verdichter as v_mod
     src_code = _strip_string_literals_and_comments(inspect.getsource(v_mod))
     assert "spawn_worker" not in src_code, (
-        "Verdichter-CODE darf spawn_worker nicht referenzieren "
-        "(Docstring-Erwaehnungen waeren OK)"
+        "Verdichter CODE must not reference spawn_worker "
+        "(docstring mentions would be OK)"
     )
     assert "SubJarvisManager" not in src_code, (
-        "Verdichter-CODE darf SubJarvisManager nicht importieren/instanziieren"
+        "Verdichter CODE must not import/instantiate SubJarvisManager"
     )
     assert "jarvis.sub_jarvis" not in src_code, (
-        "Verdichter-CODE darf jarvis.sub_jarvis nicht importieren"
+        "Verdichter CODE must not import jarvis.sub_jarvis"
     )
 
-    # Pruefung 2: prompts.py auch sauber (Code-Only)
+    # Check 2: prompts.py is also clean (code-only)
     import jarvis.awareness.prompts as p_mod
     p_code = _strip_string_literals_and_comments(inspect.getsource(p_mod))
     assert "spawn_worker" not in p_code
     assert "jarvis.sub_jarvis" not in p_code
     assert "SubJarvisManager" not in p_code
 
-    # Pruefung 3: Verdichter-Klasse haengt direkt am Brain-Protocol, nicht
-    # an einem Manager. inspect.signature(__init__) muss "brain" haben.
+    # Check 3: the Verdichter class hangs directly off the Brain protocol,
+    # not off a manager. inspect.signature(__init__) must have "brain".
     sig = inspect.signature(Verdichter.__init__)
-    assert "brain" in sig.parameters, "Verdichter.__init__ muss brain= akzeptieren"
-    assert "config" in sig.parameters, "Verdichter.__init__ muss config= akzeptieren"
+    assert "brain" in sig.parameters, "Verdichter.__init__ must accept brain="
+    assert "config" in sig.parameters, "Verdichter.__init__ must accept config="
     assert "manager" not in sig.parameters, (
-        "Verdichter.__init__ darf KEINEN manager= haben (sonst Sub-Jarvis-Wiring)"
+        "Verdichter.__init__ must NOT have a manager= (otherwise Sub-Jarvis wiring)"
     )
 
-    # Pruefung 4: Source-File existiert und ist im awareness-Modul
+    # Check 4: source file exists and lives in the awareness module
     src_file = Path(inspect.getfile(v_mod))
     assert src_file.exists()
     assert src_file.parent.name == "awareness", (
-        f"verdichter.py muss in jarvis/awareness/ liegen, ist in {src_file.parent}"
+        f"verdichter.py must live in jarvis/awareness/, is in {src_file.parent}"
     )
 
 
 @pytest.mark.asyncio
 async def test_verdichter_brain_call_uses_brain_complete_directly() -> None:
-    """Behavior-Check: Verdichter.call() ruft brain.complete() EINMAL.
+    """Behavior check: Verdichter.call() calls brain.complete() ONCE.
 
-    Sub-Jarvis-Spawn wuerde mehrere Brain-Calls + Tool-Use-Loop ausloesen.
-    Ein einzelner brain.complete()-Call ist der Beweis dass es ein direkter
-    Brain-Call ist (Hard Negative §6).
+    A Sub-Jarvis spawn would trigger multiple brain calls + a tool-use loop.
+    A single brain.complete() call is the proof that this is a direct
+    brain call (hard negative §6).
     """
     brain = FakeBrain(text_response="ok")
     cfg = _default_config()
@@ -397,29 +397,30 @@ async def test_verdichter_brain_call_uses_brain_complete_directly() -> None:
         frames=frames, events=[], primary_app="Code.exe",
     )
 
-    # GENAU EIN Brain-Call (kein Tool-Use-Loop, kein Spawn-Loop)
+    # EXACTLY ONE brain call (no tool-use loop, no spawn loop)
     assert len(brain.calls) == 1, (
-        f"Verdichter darf nur 1 Brain-Call machen, gefunden {len(brain.calls)}. "
-        "Mehr Calls = Tool-Use-Loop = vermutlich Sub-Jarvis-Spawn."
+        f"Verdichter must make only 1 brain call, found {len(brain.calls)}. "
+        "More calls = tool-use loop = probably a Sub-Jarvis spawn."
     )
-    # Request hat KEINE Tools (Sub-Jarvis-Spawn waere ein Tool)
+    # Request has NO tools (a Sub-Jarvis spawn would be a tool)
     assert brain.calls[0].tools == (), (
-        "Verdichter-BrainRequest darf KEINE Tools haben (sonst Tool-Use-Loop)"
+        "Verdichter BrainRequest must NOT have tools (otherwise tool-use loop)"
     )
     assert summary == "ok"
 
 
 async def test_verdichter_latency_p95_under_2s() -> None:
-    """Plan §6 AC: Verdichter-Call p95 < 2s.
+    """Plan §6 AC: Verdichter call p95 < 2s.
 
-    100 Calls mit FakeBrain (deterministische Response, kein Network).
-    Verifiziert dass die Verdichter-Implementation selbst (Prompt-Build,
-    Stream-Aggregate, asyncio-Overhead) keinen Pfad-Latency > 2s einfuehrt.
+    100 calls with FakeBrain (deterministic response, no network).
+    Verifies that the Verdichter implementation itself (prompt build,
+    stream aggregate, asyncio overhead) does not introduce a path latency
+    > 2s.
 
-    Echte Latency-Regression gegen Anthropic-API ist out-of-scope (braucht
-    API-Key, ist netzwerkabhaengig). Dieser Test schuetzt vor Verdichter-
-    Implementations-Regressions (z.B. unbeschraenkte Schleife im Prompt-
-    Builder, blocking I/O das den asyncio-Loop staut).
+    Real latency regression against the Anthropic API is out of scope
+    (needs an API key, is network-dependent). This test guards against
+    Verdichter implementation regressions (e.g. an unbounded loop in the
+    prompt builder, blocking I/O that stalls the asyncio loop).
     """
     import time as _time
 

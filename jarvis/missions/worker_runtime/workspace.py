@@ -83,8 +83,9 @@ def _agents_md(mission_id: str) -> str:
     Jarvis control that the worker LLM reads BEFORE seeing the user task.
 
     Live repro 2026-05-15 (mission_019e2d35, gemini-3.1-pro-preview): the
-    worker burned 24-26k tokens, claimed `"Habe Datei erfolgreich erstellt"`
-    in its reply text, but never invoked the `Write`/`file_write` tool —
+    worker burned 24-26k tokens, claimed `"Habe Datei erfolgreich erstellt"`  # i18n-allow (quotes the worker LLM's actual reply text)
+    (English: "Have successfully created file") in its reply text, but
+    never invoked the `Write`/`file_write` tool —
     `_capture_diff(worktree)` returned empty. This is a well-known
     Gemini-3.1-Pro-Preview tool-skip pattern (OpenClaw issue #3344). The
     contract below makes the tool-invocation obligation explicit so the
@@ -174,7 +175,7 @@ def _agents_md(mission_id: str) -> str:
         f"A bare skeleton, a placeholder, a `TODO`, an `Inhalt folgt` / `content\n"
         f"follows` shell, or a handful of lines where a real document/page/program\n"
         f"was asked for is a FAILURE, not an acceptable default — even when the\n"
-        f"task brief or a hint sounds minimal (for example says \"Grundgerüst\" /\n"
+        f"task brief or a hint sounds minimal (for example says \"Grundgerüst\" /\n"  # i18n-allow (DE task-brief example a bilingual user might send)
         f"\"skeleton\"). Treat every hint as a FLOOR, never a CEILING: build the\n"
         f"full, finished thing the first time. This raises the QUALITY of the\n"
         f"requested work; it does NOT license unrequested features (Rule 4 still\n"

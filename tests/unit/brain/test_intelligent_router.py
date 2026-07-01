@@ -127,7 +127,7 @@ async def test_router_with_no_tool_falls_through_to_chosen_talker() -> None:
     mgr._brain_cache[(TALKER_PROVIDER, TALKER_MODEL)] = talker
 
     reply = await mgr.generate(
-        "Erzähl mir bitte etwas über die Geschichte von Rom", use_history=False
+        "Erzähl mir bitte etwas über die Geschichte von Rom", use_history=False  # i18n-allow
     )
 
     assert "TALKER_ANSWER" in reply, "must fall through to the chosen talker's voice"
@@ -160,7 +160,7 @@ async def test_streaming_path_does_not_double_speak_the_router_lead() -> None:
 
     chunks: list[str] = []
     async for c in mgr.generate_stream(
-        "Erzähl mir bitte etwas über die Geschichte von Rom", use_history=False
+        "Erzähl mir bitte etwas über die Geschichte von Rom", use_history=False  # i18n-allow
     ):
         chunks.append(c)
     streamed = "".join(chunks)

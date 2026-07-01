@@ -210,8 +210,8 @@ export function ObsidianButton({ vaultRelPath }: ObsidianButtonProps): JSX.Eleme
       // We can't actually detect success/failure of obsidian:// in the browser.
       // The toast informs the user what was attempted.
       toast({
-        title: "An Obsidian übergeben",
-        description: `${vaultRelPath} — falls Obsidian nicht startet, ist es nicht installiert.`,
+        title: "Hand off to Obsidian",
+        description: `${vaultRelPath} — if Obsidian doesn't launch, it isn't installed.`,
       });
     }, 800);
   };
@@ -302,4 +302,4 @@ One end-to-end test:
 
 ## 8. Closing report
 
-Final line: `Goal erfüllt: ja — Grund: <one sentence>` (or `nein`).
+Final line: `Goal fulfilled: yes — Reason: <one sentence>` (or `no`).

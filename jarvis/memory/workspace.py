@@ -38,9 +38,9 @@ BOOTSTRAP_MD = "BOOTSTRAP.md"
 PEOPLE_DIR = "people"
 
 
-# Filename-safe slug: e.g. "Laura Müller" → "laura_mueller"
-_UMLAUT_MAP = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",
-                             "Ä": "Ae", "Ö": "Oe", "Ü": "Ue"})
+# Filename-safe slug: e.g. "Laura Müller" → "laura_mueller"  # i18n-allow: example name demonstrating umlaut-folding logic
+_UMLAUT_MAP = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",  # i18n-allow: umlaut-folding lookup table used by person_slug()
+                             "Ä": "Ae", "Ö": "Oe", "Ü": "Ue"})  # i18n-allow: umlaut-folding lookup table used by person_slug()
 _NON_SAFE = re.compile(r"[^a-z0-9_-]+")
 
 
@@ -48,7 +48,7 @@ def person_slug(name: str) -> str:
     """Normalise a name to a safe filename slug.
 
     Examples:
-        "Laura Müller"  → "laura_mueller"
+        "Laura Müller"  → "laura_mueller"  # i18n-allow: example name demonstrating umlaut-folding logic
         "Dr. Paul O."   → "dr_paul_o"
         "Anne-Marie"    → "anne-marie"
     """
@@ -78,12 +78,12 @@ class Workspace:
         user = p / USER_MD
         if not user.exists():
             user.write_text(render_user_md(), encoding="utf-8")
-            log.info("USER.md erstellt: %s", user)
+            log.info("USER.md created: %s", user)
 
         soul = p / SOUL_MD
         if not soul.exists():
             soul.write_text(render_soul_md(), encoding="utf-8")
-            log.info("SOUL.md erstellt: %s", soul)
+            log.info("SOUL.md created: %s", soul)
 
         boot = p / BOOTSTRAP_MD
         # BOOTSTRAP is only created on the absolute first run (when USER.md

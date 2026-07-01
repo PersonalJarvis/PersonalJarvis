@@ -77,7 +77,7 @@ def probe_stage_2_action_verbs() -> list[tuple[str, bool, bool]]:
         "Erstelle Datei test.md mit Hello",
         "Analysiere die letzte Mission",
         "Schreib mir eine Zusammenfassung",
-        "Mach einen Screenshot vom Code",
+        "Mach einen Screenshot vom Code",  # i18n-allow: simulated German user utterance under test (force-spawn router probe)
         "Spawn einen OpenClaw-Agenten",
     ]
     rows: list[tuple[str, bool, bool]] = []
@@ -89,7 +89,7 @@ def probe_stage_2_action_verbs() -> list[tuple[str, bool, bool]]:
 
 def probe_stage_2_smalltalk() -> list[tuple[str, bool]]:
     mgr = make_manager_with_spawn_tool()
-    prompts = ["Hallo", "Wie geht's", "Danke", "Was ist Hauptstadt von Frankreich"]
+    prompts = ["Hallo", "Wie geht's", "Danke", "Was ist Hauptstadt von Frankreich"]  # i18n-allow: simulated German user utterances under test (smalltalk/knowledge router probe)
     rows: list[tuple[str, bool]] = []
     for p in prompts:
         out = mgr._should_force_openclaw(p)
@@ -106,7 +106,7 @@ def probe_stage_2_permissive_mode() -> list[tuple[str, bool]]:
         "Erstelle Datei test.md mit Hello",
         "Analysiere die letzte Mission",
         "Schreib mir eine Zusammenfassung",
-        "Mach einen Screenshot vom Code",
+        "Mach einen Screenshot vom Code",  # i18n-allow: simulated German user utterance under test (permissive-mode router probe)
     ]
     rows: list[tuple[str, bool]] = []
     for p in prompts:
@@ -159,15 +159,15 @@ def probe_drift() -> tuple[str | None, str | None]:
     except Exception as exc:  # noqa: BLE001
         toml_provider = f"<error: {exc}>"
 
-    soll_provider: str | None = None
+    soll_provider: str | None = None  # i18n-allow: identifier name, mirrors the config-soll.json filename; not translatable prose
     try:
-        with open(ROOT / "scripts" / "config-soll.json", encoding="utf-8") as f:
+        with open(ROOT / "scripts" / "config-soll.json", encoding="utf-8") as f:  # i18n-allow: filename identifier, not translatable prose
             doc = json.load(f)
-        soll_provider = doc.get("brain.sub_jarvis", {}).get("provider")
+        soll_provider = doc.get("brain.sub_jarvis", {}).get("provider")  # i18n-allow: identifier name, not translatable prose
     except Exception as exc:  # noqa: BLE001
-        soll_provider = f"<error: {exc}>"
+        soll_provider = f"<error: {exc}>"  # i18n-allow: identifier name, not translatable prose
 
-    return toml_provider, soll_provider
+    return toml_provider, soll_provider  # i18n-allow: identifier name, not translatable prose
 
 
 # ---- main ----
@@ -227,14 +227,14 @@ def main() -> int:
         if not ok:
             fails.append(f"worker_factory({prov}) -> {got}, want {want}")
 
-    print("\n=== Drift: jarvis.toml vs scripts/config-soll.json ===")
-    toml_p, soll_p = probe_drift()
+    print("\n=== Drift: jarvis.toml vs scripts/config-soll.json ===")  # i18n-allow: filename identifier, not translatable prose
+    toml_p, soll_p = probe_drift()  # i18n-allow: identifier name, not translatable prose
     print(f"  jarvis.toml [brain.sub_jarvis].provider          = {toml_p!r}")
-    print(f"  config-soll.json brain.sub_jarvis.provider       = {soll_p!r}")
-    if toml_p == soll_p == "claude-api":
+    print(f"  config-soll.json brain.sub_jarvis.provider       = {soll_p!r}")  # i18n-allow: filename identifier, not translatable prose
+    if toml_p == soll_p == "claude-api":  # i18n-allow: identifier name, not translatable prose
         print("  PASS (both = claude-api)")
     else:
-        fails.append(f"drift: toml={toml_p}, soll={soll_p}")
+        fails.append(f"drift: toml={toml_p}, soll={soll_p}")  # i18n-allow: identifier name, not translatable prose
         print("  FAIL drift detected")
 
     print("\n=== SUMMARY ===")

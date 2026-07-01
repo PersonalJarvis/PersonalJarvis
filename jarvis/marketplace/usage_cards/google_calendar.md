@@ -1,6 +1,6 @@
 ---
 plugin_id: google_calendar
-keywords: termin, termine, kalender, calendar, meeting, appointment, schedule, heute, morgen, übermorgen, woche, wochenende, tagesplan, plan, vorhaben, was habe ich, was steht an, was steht drin, eintragen, eintrag, verschieben, absagen, nachhilfe, prüfung, klausur
+keywords: termin, termine, kalender, calendar, meeting, appointment, schedule, heute, morgen, übermorgen, woche, wochenende, tagesplan, plan, vorhaben, was habe ich, was steht an, was steht drin, eintragen, eintrag, verschieben, absagen, nachhilfe, prüfung, klausur  # i18n-allow
 ---
 Use the google_calendar tool to read and manage the user's calendar. This is a
 direct, router-tier action — NEVER spawn a worker / sub-agent for a calendar

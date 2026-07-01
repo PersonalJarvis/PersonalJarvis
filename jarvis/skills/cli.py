@@ -1,20 +1,21 @@
-"""Standalone-CLI fuer Skill-Management.
+"""Standalone CLI for skill management.
 
-Aufruf (ohne __main__.py-Touch, um Merge-Konflikte mit Phase 1b zu vermeiden):
+Invocation (without touching __main__.py, to avoid merge conflicts with
+Phase 1b):
 
     python -m jarvis.skills.cli --list
     python -m jarvis.skills.cli --info morning-routine
     python -m jarvis.skills.cli --run deep-work-mode
     python -m jarvis.skills.cli --import-claude-skills ~/.claude/skills/
 
-Die CLI laedt Skills aus:
-  1. user_skills_dir()                       (User-Skills; Windows: %LOCALAPPDATA%\Jarvis\skills)
-  2. <project>/jarvis/skills/builtin/        (mitgelieferte Skills)
+The CLI loads skills from:
+  1. user_skills_dir()                       (user skills; Windows: %LOCALAPPDATA%\Jarvis\skills)
+  2. <project>/jarvis/skills/builtin/        (bundled skills)
 
-Beide Roots werden rekursiv durchsucht. Der Aufruf geht gracefully mit
-fehlenden B1/B2-Komponenten um — wenn `registry.py` oder MCP-Adapter
-noch nicht existieren, zeigen wir was wir haben und weisen auf fehlende
-Abhaengigkeiten hin, crashen aber nicht.
+Both roots are searched recursively. The call degrades gracefully when
+B1/B2 components are missing — if `registry.py` or the MCP adapter don't
+exist yet, we show what we have and point out the missing dependencies,
+but we don't crash.
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-# Windows: stdout auf UTF-8, damit Umlaute und Unicode-Symbole funktionieren.
+# Windows: switch stdout to UTF-8 so umlauts and Unicode symbols work.
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
@@ -36,7 +37,7 @@ if sys.platform == "win32":
 # ----------------------------------------------------------------------
 
 def _skill_roots() -> list[Path]:
-    """Liste der Skill-Root-Verzeichnisse in Such-Reihenfolge."""
+    """List of skill root directories in search order."""
     try:
         from jarvis.core.config import PROJECT_ROOT
     except Exception:  # noqa: BLE001
@@ -52,7 +53,7 @@ def _skill_roots() -> list[Path]:
 
 
 def _collect_skills() -> list:
-    """Laed alle Skills aus allen Roots. Robust gegen fehlendes registry-Modul."""
+    """Loads all skills from all roots. Robust against a missing registry module."""
     from jarvis.skills.loader import discover_skills
 
     skills = []
@@ -60,7 +61,7 @@ def _collect_skills() -> list:
         try:
             skills.extend(discover_skills(root))
         except Exception as e:  # noqa: BLE001
-            print(f"[warn] Konnte Skills aus {root} nicht laden: {e}", file=sys.stderr)
+            print(f"[warn] Could not load skills from {root}: {e}", file=sys.stderr)
     return skills
 
 
@@ -73,9 +74,9 @@ def _list_skills() -> int:
 
     skills = _collect_skills()
     if not skills:
-        print("Keine Skills gefunden.")
+        print("No skills found.")
         print("")
-        print("Erwartete Pfade:")
+        print("Expected paths:")
         for r in [user_skills_dir(),
                   Path(__file__).resolve().parents[2] / "jarvis" / "skills" / "builtin"]:
             print(f"  - {r}")
@@ -105,11 +106,11 @@ def _skill_info(name: str) -> int:
         None,
     )
     if match is None:
-        print(f"Skill '{name}' nicht gefunden.")
+        print(f"Skill '{name}' not found.")
         return 2
 
     fm = match.frontmatter
-    print(f"Pfad:        {match.path}")
+    print(f"Path:        {match.path}")
     print(f"State:       {match.state.value}")
     if match.error:
         print(f"Error:       {match.error}")
@@ -123,7 +124,7 @@ def _skill_info(name: str) -> int:
     print(f"Author:      {fm.author or '-'}")
     print(f"License:     {fm.license}")
     print(f"Description: {fm.description.strip()}")
-    print(f"Token-Est:   {fm.token_budget_estimate}")
+    print(f"Token-Est.:  {fm.token_budget_estimate}")
     print("Triggers:")
     for t in fm.triggers:
         details = (
@@ -152,25 +153,25 @@ async def _skill_run(name: str) -> int:
         None,
     )
     if match is None:
-        print(f"Skill '{name}' nicht gefunden oder nicht validiert.")
+        print(f"Skill '{name}' not found or not validated.")
         return 2
 
-    # Vollstaendiges Run benoetigt Tool-Registry + MCP — beides wird
-    # parallel von B1/B2 gebaut. Wir machen best-effort.
+    # A full run needs the tool registry + MCP — both are being built in
+    # parallel by B1/B2. We do best-effort.
     try:
         from jarvis.core.bus import EventBus
         from jarvis.skills.runner import SkillRunner  # type: ignore
     except Exception as e:  # noqa: BLE001
-        print(f"[info] SkillRunner nicht verfuegbar: {e}")
-        print("[info] Ausfuehrung benoetigt Phase-1c-B1 + B2 (Tool-Registry + MCP).")
-        print(f"[info] Dry-Run: Skill '{name}' wuerde laufen mit Triggern "
+        print(f"[info] SkillRunner not available: {e}")
+        print("[info] Running requires Phase-1c-B1 + B2 (tool registry + MCP).")
+        print(f"[info] Dry run: skill '{name}' would run with triggers "
               f"{[t.type for t in match.frontmatter.triggers]}")
         return 0
 
     bus = EventBus()
     try:
-        # SkillRegistry ist mandatory (kein Default). Wir nutzen die gleiche
-        # Discovery-Logik wie _list_skills(): alle Roots kombinieren.
+        # SkillRegistry is mandatory (no default). We use the same
+        # discovery logic as _list_skills(): combine all roots.
         from jarvis.core.paths import user_skills_dir
         from jarvis.skills.registry import SkillRegistry
 
@@ -183,13 +184,13 @@ async def _skill_run(name: str) -> int:
             if root.exists():
                 reg = SkillRegistry(root, bus)
                 reg.reload()
-                combined_registry = reg  # letzter gewinnt, fallback-Pattern
+                combined_registry = reg  # last one wins, fallback pattern
                 if reg.get(name) is not None:
                     break
         runner = SkillRunner(registry=combined_registry, bus=bus)  # type: ignore[call-arg]
         result = await runner.run(match)  # type: ignore[attr-defined]
     except Exception as e:  # noqa: BLE001
-        print(f"[error] Skill-Run fehlgeschlagen: {e}")
+        print(f"[error] Skill run failed: {e}")
         return 1
 
     print(f"Skill: {result.skill_name}")
@@ -201,14 +202,14 @@ async def _skill_run(name: str) -> int:
 
 
 def _import_claude_skills(src: str) -> int:
-    """Liest OpenClaw-Skills (.md), ergaenzt fehlende Frontmatter-Defaults,
-    kopiert nach ``user_skills_dir()/<name>/SKILL.md``.
+    """Reads OpenClaw skills (.md), fills in missing frontmatter defaults,
+    copies them to ``user_skills_dir()/<name>/SKILL.md``.
     """
     from jarvis.core.paths import user_skills_dir
 
     src_dir = Path(src).expanduser()
     if not src_dir.exists():
-        print(f"Quell-Verzeichnis existiert nicht: {src_dir}")
+        print(f"Source directory does not exist: {src_dir}")
         return 2
 
     dst_dir = user_skills_dir()
@@ -218,7 +219,7 @@ def _import_claude_skills(src: str) -> int:
     skipped = 0
     for md in src_dir.rglob("*.md"):
         rel = md.relative_to(src_dir)
-        # Name = Parent-Dir oder Dateistem
+        # name = parent dir or file stem
         name = md.parent.name if md.parent != src_dir else md.stem
         name = name.replace(" ", "-").lower()
         out = dst_dir / name / "SKILL.md"
@@ -233,13 +234,13 @@ def _import_claude_skills(src: str) -> int:
         imported += 1
         print(f"  imported: {rel} -> {out}")
 
-    print(f"Imported {imported} OpenClaw-Skills (skipped {skipped} existing).")
-    print(f"Ziel: {dst_dir}")
+    print(f"Imported {imported} OpenClaw skills (skipped {skipped} existing).")
+    print(f"Destination: {dst_dir}")
     return 0
 
 
 def _ensure_frontmatter(text: str, default_name: str) -> str:
-    """Prueft ob `text` bereits YAML-Frontmatter hat. Falls nicht, prepend default."""
+    """Checks whether `text` already has YAML frontmatter. If not, prepends a default."""
     stripped = text.lstrip()
     if stripped.startswith("---"):
         return text
@@ -266,19 +267,19 @@ def _ensure_frontmatter(text: str, default_name: str) -> str:
 # ----------------------------------------------------------------------
 
 def _list_drafts() -> int:
-    """Phase 7.5: tabellarische Übersicht aller DRAFT-Skills."""
+    """Phase 7.5: tabular overview of all DRAFT skills."""
     from jarvis.core.paths import user_skills_dir
     from jarvis.skills.registry import SkillRegistry
 
     root = user_skills_dir()
     if not root.exists():
-        print("Kein user_skills_dir vorhanden — keine Drafts.")
+        print("No user_skills_dir present — no drafts.")
         return 0
     registry = SkillRegistry(root, bus=None)
     registry.reload_sync()
     drafts = registry.list_drafts()
     if not drafts:
-        print("Keine Draft-Skills vorhanden.")
+        print("No draft skills present.")
         return 0
     print(f"{'SLUG':<32} {'STATE':<10} {'DESCRIPTION'}")
     for skill in sorted(drafts, key=lambda s: s.path.parent.name):
@@ -290,11 +291,11 @@ def _list_drafts() -> int:
 
 
 def _promote_skill(slug: str) -> int:
-    """Phase 7.5: setzt einen DRAFT-Skill auf state=active.
+    """Phase 7.5: sets a DRAFT skill to state=active.
 
-    Plan-§AP-6: User-explizite Aktivierung — der Skill triggert erst
-    nach diesem Schritt. Der Sicherheits-Lint im Registry prüft den
-    Body vor dem Promote.
+    Plan §AP-6: explicit user activation — the skill only triggers after
+    this step. The registry's safety lint checks the body before the
+    promote.
     """
     from jarvis.core.paths import user_skills_dir
     from jarvis.skills.authoring.draft_writer import UnsafeSkillError
@@ -302,7 +303,7 @@ def _promote_skill(slug: str) -> int:
 
     root = user_skills_dir()
     if not root.exists():
-        print(f"[error] user_skills_dir existiert nicht: {root}", file=sys.stderr)
+        print(f"[error] user_skills_dir does not exist: {root}", file=sys.stderr)
         return 1
     registry = SkillRegistry(root, bus=None)
     registry.reload_sync()
@@ -315,37 +316,37 @@ def _promote_skill(slug: str) -> int:
         print(f"[error] {exc}", file=sys.stderr)
         return 1
     except UnsafeSkillError as exc:
-        print(f"[error] Promote blockiert (unsafe code): {exc}", file=sys.stderr)
+        print(f"[error] Promote blocked (unsafe code): {exc}", file=sys.stderr)
         return 1
-    print(f"Skill '{slug}' ist jetzt aktiv (state={skill.state.value}).")
+    print(f"Skill '{slug}' is now active (state={skill.state.value}).")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jarvis-skills")
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--list", action="store_true", help="Alle Skills auflisten")
-    group.add_argument("--info", type=str, metavar="NAME", help="Details zu einem Skill")
-    group.add_argument("--run", type=str, metavar="NAME", help="Skill ausfuehren (requires MCP)")
+    group.add_argument("--list", action="store_true", help="List all skills")
+    group.add_argument("--info", type=str, metavar="NAME", help="Details for a skill")
+    group.add_argument("--run", type=str, metavar="NAME", help="Run a skill (requires MCP)")
     group.add_argument(
         "--import-claude-skills",
         type=str,
         metavar="PATH",
         dest="import_claude_skills",
-        help="OpenClaw-Skills aus einem Verzeichnis importieren",
+        help="Import OpenClaw skills from a directory",
     )
-    # Phase 7.5: Draft-Skill-Management (Plan-§7.5 Voice-Output + UI in Phase 7.6).
+    # Phase 7.5: draft skill management (Plan §7.5 voice output + UI in Phase 7.6).
     group.add_argument(
         "--list-drafts",
         action="store_true",
         dest="list_drafts",
-        help="Alle OpenClaw-authored Drafts auflisten (state=draft).",
+        help="List all OpenClaw-authored drafts (state=draft).",
     )
     group.add_argument(
         "--promote",
         type=str,
         metavar="SLUG",
-        help="Einen Draft-Skill auf state=active promoten.",
+        help="Promote a draft skill to state=active.",
     )
 
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])

@@ -82,17 +82,17 @@ is_cancel(text: str) -> bool
 string for telemetry) when the transcript ends on an unambiguous open marker,
 else `None`. It fires when the **trailing token(s)** are:
 
-- **Subordinating / coordinating conjunctions:** `dass, weil, damit, sodass,
-  sobald, wenn, falls, ob, und, oder, aber, denn, sondern, dann`
+- **Subordinating / coordinating conjunctions:** `dass, weil, damit, sodass,  <!-- i18n-allow: German input vocabulary -->
+  sobald, wenn, falls, ob, und, oder, aber, denn, sondern, dann`  <!-- i18n-allow: German input vocabulary -->
   (EN mirror: `that, because, so that, and, or, but, then`)
-- **Prepositions expecting an object:** `mit, für, an, auf, in, zu, von, über,
+- **Prepositions expecting an object:** `mit, für, an, auf, in, zu, von, über,  <!-- i18n-allow: German input vocabulary -->
   bei, durch, gegen, ohne, …` (EN: `with, for, to, about, at, …`)
-- **Articles / determiners expecting a noun:** `der, die, das, ein, eine, einen,
-  dem, den, mein, meine, meinen, …` (EN: `the, a, an, my, …`)
-- Trailing `dass ich` / `weil ich` style subject-without-predicate tails.
+- **Articles / determiners expecting a noun:** `der, die, das, ein, eine, einen,  <!-- i18n-allow: German input vocabulary -->
+  dem, den, mein, meine, meinen, …` (EN: `the, a, an, my, …`) <!-- i18n-allow: German input vocabulary -->
+- Trailing `dass ich` / `weil ich` style subject-without-predicate tails.  <!-- i18n-allow: German input vocabulary -->
 
 `is_cancel` matches abort phrases that discard a pending fragment:
-`vergiss das, ach nein, lass stecken, never mind, schon gut`.
+`vergiss das, ach nein, lass stecken, never mind, schon gut`.  <!-- i18n-allow: German input vocabulary -->
 
 Because STT frequently drops terminal punctuation, the classifier keys on
 trailing-token morphology, not on the presence/absence of a period. A short
@@ -187,8 +187,8 @@ Final transcript ready
 
 The timeout is the **per-gap** budget, not a total. Every continuation resets the
 timer, and the Max-Chain of 3 absorbs piecewise dictation such as:
-"…dass ich… [pause] …wenn ich im Büro bin… [pause] …die Müllers anrufe"
-("…that I… [pause] …when I'm in the office… [pause] …call the Müllers").
+"…dass ich… [pause] …wenn ich im Büro bin… [pause] …die Müllers anrufe"  <!-- i18n-allow: quoted German voice-input example -->
+("…that I… [pause] …when I'm in the office… [pause] …call the Müllers").  <!-- i18n-allow: quoted German voice-input example -->
 Only the *first* formulation pause (typically the longest) actually races the
 clock.
 

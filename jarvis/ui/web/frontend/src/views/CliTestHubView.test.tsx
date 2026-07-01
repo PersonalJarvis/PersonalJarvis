@@ -110,7 +110,7 @@ function listResponse(clis: ReturnType<typeof cliSummary>[]) {
 
 const SUCCESS_RESPONSE = {
   ok: true,
-  instruction: "liste meine projekte",
+  instruction: "list my projects",
   tool_called: "cli_gcloud",
   command: "gcloud projects list --format=json",
   risk_tier: "safe",
@@ -118,7 +118,7 @@ const SUCCESS_RESPONSE = {
   stdout: '[{"projectId":"alpha"}]',
   stderr: "",
   duration_ms: 1234,
-  summary: "Du hast 1 Google-Cloud-Projekt: alpha.",
+  summary: "You have 1 Google Cloud project: alpha.",
   error: null,
   steps: [{ tool: "cli_gcloud", command: "gcloud projects list", exit_code: 0 }],
 };
@@ -180,13 +180,13 @@ describe("CliTestHubView — run flow (success)", () => {
     renderWithClient(<CliTestHubView />);
 
     const runBtn = (await screen.findByLabelText(
-      "Anweisung ausführen",
+      "Run instruction",
     )) as HTMLButtonElement;
     // Empty instruction → button disabled.
     expect(runBtn.disabled).toBe(true);
 
-    const textarea = screen.getByLabelText("Anweisung an Jarvis");
-    fireEvent.change(textarea, { target: { value: "liste meine projekte" } });
+    const textarea = screen.getByLabelText("Instruction for Jarvis");
+    fireEvent.change(textarea, { target: { value: "list my projects" } });
     expect(runBtn.disabled).toBe(false);
 
     fireEvent.click(runBtn);
@@ -197,7 +197,7 @@ describe("CliTestHubView — run flow (success)", () => {
 
     // Summary is rendered prominently.
     expect(screen.getByTestId("result-summary").textContent).toContain(
-      "1 Google-Cloud-Projekt",
+      "1 Google Cloud project",
     );
     // Exact command in a monospace block.
     expect(screen.getByTestId("result-command").textContent).toContain(
@@ -228,7 +228,7 @@ describe("CliTestHubView — run flow (success)", () => {
             exit_code: 1,
             stderr: "ERROR: permission denied",
             risk_tier: "block",
-            summary: "Der Befehl wurde blockiert.",
+            summary: "The command was blocked.",
           },
         }),
       "/api/clis": () => ({ body: listResponse([cliSummary("gcloud", "connected")]) }),
@@ -236,10 +236,10 @@ describe("CliTestHubView — run flow (success)", () => {
 
     renderWithClient(<CliTestHubView />);
 
-    fireEvent.change(screen.getByLabelText("Anweisung an Jarvis"), {
-      target: { value: "loesche alles" },
+    fireEvent.change(screen.getByLabelText("Instruction for Jarvis"), {
+      target: { value: "delete everything" },
     });
-    fireEvent.click(await screen.findByLabelText("Anweisung ausführen"));
+    fireEvent.click(await screen.findByLabelText("Run instruction"));
 
     await waitFor(() => {
       expect(screen.getByTestId("result-exit-code")).toBeDefined();
@@ -272,10 +272,10 @@ describe("CliTestHubView — run flow (success)", () => {
 
     renderWithClient(<CliTestHubView />);
 
-    fireEvent.change(screen.getByLabelText("Anweisung an Jarvis"), {
-      target: { value: "zwei schritte" },
+    fireEvent.change(screen.getByLabelText("Instruction for Jarvis"), {
+      target: { value: "two steps" },
     });
-    fireEvent.click(await screen.findByLabelText("Anweisung ausführen"));
+    fireEvent.click(await screen.findByLabelText("Run instruction"));
 
     await waitFor(() => {
       expect(screen.getByTestId("result-steps")).toBeDefined();
@@ -293,10 +293,10 @@ describe("CliTestHubView — run flow (success)", () => {
 
     renderWithClient(<CliTestHubView />);
 
-    fireEvent.change(screen.getByLabelText("Anweisung an Jarvis"), {
-      target: { value: "ein schritt" },
+    fireEvent.change(screen.getByLabelText("Instruction for Jarvis"), {
+      target: { value: "one step" },
     });
-    fireEvent.click(await screen.findByLabelText("Anweisung ausführen"));
+    fireEvent.click(await screen.findByLabelText("Run instruction"));
 
     await waitFor(() => {
       expect(screen.getByTestId("result-panel")).toBeDefined();
@@ -314,10 +314,10 @@ describe("CliTestHubView — request error", () => {
 
     renderWithClient(<CliTestHubView />);
 
-    fireEvent.change(screen.getByLabelText("Anweisung an Jarvis"), {
-      target: { value: "tu was" },
+    fireEvent.change(screen.getByLabelText("Instruction for Jarvis"), {
+      target: { value: "do something" },
     });
-    fireEvent.click(await screen.findByLabelText("Anweisung ausführen"));
+    fireEvent.click(await screen.findByLabelText("Run instruction"));
 
     await waitFor(() => {
       expect(screen.getByTestId("request-error")).toBeDefined();
@@ -333,10 +333,10 @@ describe("CliTestHubView — request error", () => {
 
     renderWithClient(<CliTestHubView />);
 
-    fireEvent.change(screen.getByLabelText("Anweisung an Jarvis"), {
-      target: { value: "tu was" },
+    fireEvent.change(screen.getByLabelText("Instruction for Jarvis"), {
+      target: { value: "do something" },
     });
-    fireEvent.click(await screen.findByLabelText("Anweisung ausführen"));
+    fireEvent.click(await screen.findByLabelText("Run instruction"));
 
     await waitFor(() => {
       expect(screen.getByTestId("request-error")).toBeDefined();

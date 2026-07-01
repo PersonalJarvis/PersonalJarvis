@@ -1,11 +1,11 @@
-"""Bus-Wildcard-Subscriber, der Voice-Sessions in den SessionStore schreibt.
+"""Bus wildcard subscriber that writes voice sessions into the SessionStore.
 
-Architekturentscheidung: read-only zur Pipeline. Der Recorder dockt nur
-ueber ``bus.subscribe_all`` an und produziert keine Events zurueck —
-damit ist er garantiert latenzneutral fuer den Voice-Hot-Path.
+Architecture decision: read-only with respect to the pipeline. The recorder
+only docks on via ``bus.subscribe_all`` and produces no events back —
+which guarantees it is latency-neutral for the voice hot path.
 
-State-Machine pro Session (linear, da Pipeline nur 1 aktive Voice-
-Session zulaesst):
+State machine per session (linear, since the pipeline allows only 1 active
+voice session):
 
   IDLE
    |  VoiceSessionStarted
@@ -19,16 +19,16 @@ Session zulaesst):
                                        v
                                     VoiceTurnCompleted
                                        v
-                                    ACTIVE  (naechster Turn moeglich)
+                                    ACTIVE  (next turn possible)
    |  VoiceSessionEnded
    v
   IDLE
 
 
-Whitelist fuer ``voice_events``-Append: nicht jedes Bus-Event landet in
-der DB — TerminalOutput-Streams oder MissionEvents sind irrelevant.
-``_RAW_EVENT_KINDS`` (siehe unten) listet die fuer Replay relevanten
-Klassen.
+Whitelist for the ``voice_events`` append: not every bus event lands in
+the DB — TerminalOutput streams or MissionEvents are irrelevant.
+``_RAW_EVENT_KINDS`` (see below) lists the classes relevant for
+replay.
 """
 from __future__ import annotations
 
@@ -109,7 +109,7 @@ _RAW_EVENT_KINDS: frozenset[str] = frozenset(
 
 @dataclass
 class _TurnState:
-    """In-Memory-State eines laufenden Turns, bevor er finalisiert wird."""
+    """In-memory state of a running turn, before it is finalized."""
 
     turn_id: str
     idx: int
@@ -126,9 +126,9 @@ class _TurnState:
     cost_usd: float = 0.0
     latency_total_ms: int = 0
     tool_calls: list[str] = field(default_factory=list)
-    # Stage-Boundaries fuer Think-/Speak-Latenz-Berechnung. Werden aus
-    # TranscriptFinal + SystemStateChanged(SPEAKING/LISTENING) abgeleitet,
-    # weil diese Pipeline-Variante keine Phase-L.1-Stage-Events emittiert.
+    # Stage boundaries for think/speak latency calculation. Derived from
+    # TranscriptFinal + SystemStateChanged(SPEAKING/LISTENING),
+    # because this pipeline variant does not emit Phase-L.1 stage events.
     transcript_final_ms: int = 0
     speaking_started_ms: int = 0
     think_ms: int = 0
@@ -142,7 +142,7 @@ class _TurnState:
 
 @dataclass
 class _SessionState:
-    """In-Memory-Aggregat einer Session."""
+    """In-memory aggregate of a session."""
 
     session_id: str
     started_ms: int
@@ -156,13 +156,13 @@ class _SessionState:
 
 
 class SessionRecorder:
-    """EventBus-Wildcard-Subscriber, persistiert Voice-Sessions."""
+    """EventBus wildcard subscriber, persists voice sessions."""
 
     def __init__(self, store: SessionStore) -> None:
         self._store = store
         self._state: _SessionState | None = None
-        # Fallback wenn Pipeline VoiceTurnStarted vergisst — wir vergeben
-        # selbst eine turn_id beim ersten Turn-relevanten Event.
+        # Fallback when the pipeline forgets VoiceTurnStarted — we assign
+        # our own turn_id at the first turn-relevant event.
         self._auto_turn_counter: int = 0
         # (session_id, last_turn_id) of the most recently FINALIZED session.
         # A background mission's readback can be voiced after the user hung up
@@ -174,19 +174,19 @@ class SessionRecorder:
         self._afterglow: tuple[str, str | None] | None = None
 
     def attach(self, bus: EventBus) -> None:
-        """Wildcard-Subscribe an den Bus."""
+        """Wildcard-subscribe to the bus."""
         bus.subscribe_all(self._on_event)
         log.info("SessionRecorder attached to bus")
 
     # -----------------------------------------------------------------
-    # Haupt-Dispatch
+    # Main dispatch
     # -----------------------------------------------------------------
 
     async def _on_event(self, event: Event) -> None:
-        """Wird vom Bus fuer JEDES Event aufgerufen.
+        """Called by the bus for EVERY event.
 
-        Defensive: jede Exception schlucken — der Bus catcht zwar selbst,
-        aber wir wollen sicher kein Error-Log-Spam pro Voice-Turn.
+        Defensive: swallow every exception — the bus does catch itself,
+        but we definitely don't want error-log spam per voice turn.
         """
         try:
             self._dispatch(event)
@@ -226,7 +226,7 @@ class SessionRecorder:
         elif isinstance(event, VoiceTurnCompleted):
             self._on_turn_completed(event)
         elif isinstance(event, WakeWordDetected):
-            # Wake im Multi-Turn-Modus — zaehlt als Turn-Boundary.
+            # Wake in multi-turn mode — counts as a turn boundary.
             self._ensure_turn_open(event.timestamp_ns // 1_000_000)
         elif isinstance(event, ListeningStarted):
             self._ensure_turn_open(event.timestamp_ns // 1_000_000)
@@ -257,7 +257,7 @@ class SessionRecorder:
         self._maybe_append_raw(event, kind)
 
     # -----------------------------------------------------------------
-    # Session-Lifecycle
+    # Session lifecycle
     # -----------------------------------------------------------------
 
     def _on_session_started(self, event: VoiceSessionStarted) -> None:
@@ -290,7 +290,7 @@ class SessionRecorder:
     def _on_session_ended(self, event: VoiceSessionEnded) -> None:
         if self._state is None:
             return
-        # Offenen Turn auto-finalisieren falls noch da
+        # Auto-finalize an open turn if one still exists
         if self._state.current_turn is not None and not self._state.current_turn.finalized:
             self._finalize_current_turn(end_ms=event.timestamp_ns // 1_000_000)
         self._store.finalize_session(
@@ -318,8 +318,8 @@ class SessionRecorder:
         self._state = None
 
     def _force_finalize_session(self, *, reason: str) -> None:
-        """Notbremse — wenn ein neues VoiceSessionStarted ohne vorheriges
-        Ended kommt (Pipeline-Bug oder Crash-Recovery)."""
+        """Emergency brake — when a new VoiceSessionStarted arrives without a
+        preceding Ended (pipeline bug or crash recovery)."""
         if self._state is None:
             return
         ts_ms = _now_ms()
@@ -338,12 +338,12 @@ class SessionRecorder:
         self._state = None
 
     # -----------------------------------------------------------------
-    # Turn-Lifecycle
+    # Turn lifecycle
     # -----------------------------------------------------------------
 
     def _on_turn_started(self, event: VoiceTurnStarted) -> None:
         assert self._state is not None
-        # Falls ein vorheriger Turn nicht sauber finalisiert wurde — auto-close
+        # If a previous turn wasn't cleanly finalized — auto-close
         if self._state.current_turn and not self._state.current_turn.finalized:
             self._finalize_current_turn(end_ms=event.timestamp_ns // 1_000_000)
         idx = event.turn_index if event.turn_index >= 0 else self._state.turn_count
@@ -362,12 +362,12 @@ class SessionRecorder:
 
     def _on_turn_completed(self, event: VoiceTurnCompleted) -> None:
         assert self._state is not None
-        # Werte aus dem Event uebernehmen falls sie konsistent sind
+        # Adopt values from the event if they are consistent
         if self._state.current_turn is None or self._state.current_turn.turn_id != event.turn_id:
-            log.debug("VoiceTurnCompleted ohne offenen Turn — ignoriere")
+            log.debug("VoiceTurnCompleted without an open turn — ignoring")
             return
         t = self._state.current_turn
-        # Event-Werte gewinnen (Pipeline weiss es genau)
+        # Event values win (the pipeline knows exactly)
         if event.user_text:
             t.user_text = event.user_text
         if event.user_lang:
@@ -394,14 +394,14 @@ class SessionRecorder:
         self._finalize_current_turn(end_ms=event.timestamp_ns // 1_000_000)
 
     def _ensure_turn_open(self, ts_ms: int) -> None:
-        """Falls Pipeline keinen VoiceTurnStarted schickt — selber einen erfinden.
+        """If the pipeline doesn't send a VoiceTurnStarted — invent one ourselves.
 
-        Wird bei WakeWordDetected/ListeningStarted aufgerufen — neuer Turn
-        beginnt nur wenn der vorige finalisiert ist.
+        Called on WakeWordDetected/ListeningStarted — a new turn only
+        starts once the previous one is finalized.
         """
         assert self._state is not None
         if self._state.current_turn is not None and not self._state.current_turn.finalized:
-            return  # Turn laeuft noch
+            return  # turn still running
         self._auto_turn_counter += 1
         auto_id = f"{self._state.session_id}-auto-{self._auto_turn_counter}"
         self._state.current_turn = _TurnState(
@@ -421,12 +421,12 @@ class SessionRecorder:
         t = self._state.current_turn
         if t is None or t.finalized:
             return
-        # Latenz default: end - start, falls nicht via AudioOutFirst gesetzt.
+        # Latency default: end - start, if not set via AudioOutFirst.
         if t.latency_total_ms == 0:
             t.latency_total_ms = max(0, end_ms - t.started_ms)
-        # Speak-Latenz: falls Pipeline noch in SPEAKING war beim Turn-End,
-        # rechnen wir bis end_ms hoch; sonst war sie schon gesetzt durch
-        # SystemStateChanged(LISTENING)-Transition.
+        # Speak latency: if the pipeline was still SPEAKING at turn end,
+        # we compute up to end_ms; otherwise it was already set by the
+        # SystemStateChanged(LISTENING) transition.
         if t.speak_ms == 0 and t.speaking_started_ms > 0:
             t.speak_ms = max(0, end_ms - t.speaking_started_ms)
         self._store.finalize_turn(
@@ -448,7 +448,7 @@ class SessionRecorder:
             speak_ms=t.speak_ms,
             awaiting_confirmation=t.awaiting_confirmation,
         )
-        # Aggregate hochzaehlen
+        # Bump aggregates
         self._state.turn_count += 1
         self._state.total_cost_usd += t.cost_usd
         self._state.total_tokens_in += t.tokens_in
@@ -458,7 +458,7 @@ class SessionRecorder:
         t.finalized = True
 
     # -----------------------------------------------------------------
-    # Per-Event Handler
+    # Per-event handlers
     # -----------------------------------------------------------------
 
     def _on_transcript_final(self, event: TranscriptFinal) -> None:
@@ -502,22 +502,22 @@ class SessionRecorder:
             self._state.current_turn.user_text = event.transcript.text
             lang = getattr(event.transcript, "language", None) or self._state.language
             self._state.current_turn.user_lang = lang
-            # Stage-Anker fuer think_ms = TranscriptFinal -> SPEAKING.
+            # Stage anchor for think_ms = TranscriptFinal -> SPEAKING.
             self._state.current_turn.transcript_final_ms = ts_ms
 
     def _on_system_state(self, event: SystemStateChanged) -> None:
-        """Tracke SPEAKING/LISTENING-Boundaries fuer think_ms + speak_ms.
+        """Track SPEAKING/LISTENING boundaries for think_ms + speak_ms.
 
-        Diese Pipeline-Variante emittiert keine Phase-L.1-Stage-Events
-        (AudioOutFirst, TTSFirstByte). Stattdessen markiert sie via
-        ``_set_turn_state`` -> ``_transition`` den High-Level-State:
-        IDLE | LISTENING | THINKING | SPEAKING. Wir nehmen:
-          - SPEAKING-Start  = Anker fuer think_ms (User-Done -> Jarvis-spricht)
-          - LISTENING-Start nach SPEAKING = Anker fuer speak_ms-Ende UND
-            **Turn-Boundary** — der Turn ist fertig, der naechste TranscriptFinal
-            oeffnet via ``_ensure_turn_open`` einen neuen Turn. Ohne diese
-            explizite Finalisierung bleibt in Multi-Turn-Sessions Turn 1 offen
-            und alle folgenden user_text/jarvis_text-Werte ueberschreiben sich.
+        This pipeline variant does not emit Phase-L.1 stage events
+        (AudioOutFirst, TTSFirstByte). Instead it marks the high-level
+        state via ``_set_turn_state`` -> ``_transition``:
+        IDLE | LISTENING | THINKING | SPEAKING. We take:
+          - SPEAKING start  = anchor for think_ms (user-done -> Jarvis speaks)
+          - LISTENING start after SPEAKING = anchor for speak_ms end AND
+            **turn boundary** — the turn is done, the next TranscriptFinal
+            opens a new turn via ``_ensure_turn_open``. Without this
+            explicit finalization, turn 1 stays open in multi-turn sessions
+            and every following user_text/jarvis_text value overwrites the last.
         """
         assert self._state is not None
         t = self._state.current_turn
@@ -527,40 +527,40 @@ class SessionRecorder:
         new = (event.new_state or "").upper()
         prev = (event.previous or "").upper()
         if new == "SPEAKING" and prev != "SPEAKING":
-            # Anker setzen — speak_ms beginnt jetzt.
+            # Set anchor — speak_ms starts now.
             t.speaking_started_ms = ts_ms
-            # think_ms = transcript_final_ms -> jetzt
+            # think_ms = transcript_final_ms -> now
             if t.transcript_final_ms > 0 and t.think_ms == 0:
                 t.think_ms = max(0, ts_ms - t.transcript_final_ms)
         elif prev == "SPEAKING" and new != "SPEAKING":
-            # Sprech-Phase ist vorbei — speak_ms = SPEAKING_start -> jetzt.
+            # Speaking phase is over — speak_ms = SPEAKING_start -> now.
             if t.speaking_started_ms > 0 and t.speak_ms == 0:
                 t.speak_ms = max(0, ts_ms - t.speaking_started_ms)
-            # Turn-Boundary: dieser Turn ist abgeschlossen. Nicht-finalisieren
-            # waere falsch — sonst akkumulieren sich Werte ueber alle Turns
-            # einer Multi-Turn-Session und nur der letzte Turn bleibt sichtbar.
+            # Turn boundary: this turn is complete. Not finalizing here
+            # would be wrong — otherwise values would accumulate across all
+            # turns of a multi-turn session and only the last turn stays visible.
             self._finalize_current_turn(end_ms=ts_ms)
 
     def _on_brain_started(self, event: BrainTurnStarted) -> None:
-        # Defensive: kein hartes assert — bei Race-Conditions zwischen
-        # BrainTurnStarted und VoiceSessionEnded landet das Event sonst
-        # nur im Logger statt im Turn (BUG-Diagnose 2026-04-28).
+        # Defensive: no hard assert — on race conditions between
+        # BrainTurnStarted and VoiceSessionEnded the event would otherwise
+        # land only in the logger instead of the turn (bug diagnosis 2026-04-28).
         if self._state is None:
             return
         self._ensure_turn_open(event.timestamp_ns // 1_000_000)
         t = self._state.current_turn
         if t is None:
             return
-        # Bug C Fix (2026-04-29): provider/model NICHT mehr aus Started
-        # uebernehmen. Stattdessen aus BrainTurnCompleted — dort steht
-        # nur der ERFOLGREICHE Provider, kein Fallback-Versuch der spaeter
-        # gecrashed ist. Verhindert Halluzinations-Tags in voice_turns
-        # (z.B. "openai/gpt-4o" obwohl kein OpenAI-Key existiert).
-        # intent_level ist die Router-Decision (z.B. "spawn_worker"/
-        # "direct_action"/"trivial"). Das Recorder-Schema erlaubt fuer
-        # ``tier`` aber nur die echten Tier-Namen ({"router", "openclaw",
-        # "trivial", "fast", "deep", "code"}). Werte ausserhalb mappen wir
-        # auf "router" — der Hauptjarvis-Brain hat geantwortet.
+        # Bug C fix (2026-04-29): no longer adopt provider/model from Started.
+        # Instead take it from BrainTurnCompleted — that holds
+        # only the SUCCESSFUL provider, not a fallback attempt that later
+        # crashed. Prevents hallucination tags in voice_turns
+        # (e.g. "openai/gpt-4o" even though no OpenAI key exists).
+        # intent_level is the router decision (e.g. "spawn_worker"/
+        # "direct_action"/"trivial"). The recorder schema, however, only
+        # allows the real tier names for ``tier`` ({"router", "openclaw",
+        # "trivial", "fast", "deep", "code"}). Values outside that set are
+        # mapped to "router" — the main Jarvis brain answered.
         if event.intent_level and not t.tier:
             t.tier = _normalize_intent_level_to_tier(event.intent_level)
 
@@ -598,12 +598,12 @@ class SessionRecorder:
         t.tokens_in += event.tokens_in
         t.tokens_out += event.tokens_out
         t.cost_usd += event.cost_usd
-        # Bug C Fix (2026-04-29): provider/model aus Completed-Event
-        # uebernehmen — das ist die ERFOLGREICHE Quelle. Wenn ein spaeterer
-        # Fallback-Versuch nochmal Tokens liefert (selten — Multi-Step-Tool-
-        # Loop), gewinnt der spaetere Wert; das ist OK weil beide erfolgreich
-        # sind. Im Normalfall einer Voice-Session wird _on_brain_completed
-        # nur einmal pro Turn mit echten Daten aufgerufen.
+        # Bug C fix (2026-04-29): adopt provider/model from the Completed
+        # event — that is the SUCCESSFUL source. If a later fallback
+        # attempt delivers tokens again (rare — multi-step tool
+        # loop), the later value wins; that's OK because both were
+        # successful. In the normal case of a voice session, _on_brain_completed
+        # is called only once per turn with real data.
         if event.provider:
             t.provider = event.provider
         if event.model:
@@ -624,7 +624,7 @@ class SessionRecorder:
             t.tool_calls.append(event.tool_name)
 
     def _on_tool_completed(self, event: ToolCallCompleted) -> None:
-        # Nur Roh-Event-Append — Liste wurde in _on_tool_started gepflegt.
+        # Raw-event append only — the list was maintained in _on_tool_started.
         return
 
     def _on_action_executed(self, event: ActionExecuted) -> None:
@@ -655,7 +655,7 @@ class SessionRecorder:
         t.latency_total_ms = max(0, ts_ms - t.started_ms)
 
     # -----------------------------------------------------------------
-    # Raw-Event-Append (selektiv via Whitelist)
+    # Raw-event append (selective via whitelist)
     # -----------------------------------------------------------------
 
     def _maybe_append_raw(self, event: Event, kind: str) -> None:
@@ -712,25 +712,26 @@ class SessionRecorder:
 # --- Helpers ----------------------------------------------------------
 
 
-# VoiceTurnRow.tier-Literal — synchron mit jarvis/sessions/models.py halten.
-# Welle-4-Migration: ``sub_jarvis`` Legacy-Wert weiter akzeptiert fuer
-# Backwards-Kompatibilitaet alter Voice-Sessions in der DB; neue Turns
-# nutzen ``openclaw``.
+# VoiceTurnRow.tier literal — keep in sync with jarvis/sessions/models.py.
+# Welle-4 migration: the ``sub_jarvis`` legacy value is still accepted for
+# backwards compatibility with old voice sessions in the DB; new turns
+# use ``openclaw``.
 _VALID_TIERS: frozenset[str] = frozenset(
     {"router", "openclaw", "sub_jarvis", "trivial", "fast", "deep", "code"}
 )
 
 
 def _normalize_intent_level_to_tier(intent_level: str) -> str:
-    """Mappt eine Router-Decision (``decision.level``) auf einen Tier-Namen.
+    """Maps a router decision (``decision.level``) to a tier name.
 
-    Der Router emittiert ``BrainTurnStarted.intent_level`` als die getroffene
-    Routing-Decision (``trivial`` / ``direct_action`` / ``spawn_worker``).
-    Recorder-Schema erlaubt fuer ``tier`` aber nur die Tier-Bezeichner
-    ``router``/``openclaw``/usw. Alles ausserhalb wird zu ``"router"`` —
-    semantisch korrekt, weil in beiden Faellen (direct_action, spawn) der
-    Router-Brain den Turn beantwortet hat. OpenClaw-Tier wird in
-    ``_on_openclaw_task_started`` explizit ueberschrieben.
+    The router emits ``BrainTurnStarted.intent_level`` as the routing
+    decision it made (``trivial`` / ``direct_action`` / ``spawn_worker``).
+    The recorder schema, however, only allows the tier identifiers
+    ``router``/``openclaw``/etc. for ``tier``. Anything outside that set
+    becomes ``"router"`` — semantically correct, because in both cases
+    (direct_action, spawn) the router brain answered the turn. The
+    OpenClaw tier is explicitly overridden in
+    ``_on_openclaw_task_started``.
     """
     if intent_level in _VALID_TIERS:
         return intent_level
@@ -742,10 +743,10 @@ def _now_ms() -> int:
 
 
 def _payload_for(event: Event) -> dict[str, Any]:
-    """Selektiert die fuer Replay relevanten Felder eines Events.
+    """Selects the fields of an event relevant for replay.
 
-    Vermeidet Riesen-Payloads (z.B. komplette Transcript-Audio-Refs)
-    und filtert privacy-sensitive Felder. Whitelist > Blacklist.
+    Avoids giant payloads (e.g. complete transcript audio refs)
+    and filters privacy-sensitive fields. Whitelist > blacklist.
     """
     fields_whitelist = {
         "keyword",
@@ -824,10 +825,10 @@ def _payload_for(event: Event) -> dict[str, Any]:
         v = getattr(event, k)
         if v is None:
             continue
-        # Tuples zu Listen fuer JSON-Serialisierbarkeit
+        # Tuples to lists for JSON serializability
         if isinstance(v, tuple):
             v = list(v)
-        # Transcript-Sub-Object: nur text + language
+        # Transcript sub-object: only text + language
         if k == "transcript" and v is not None:
             payload["text"] = getattr(v, "text", "")
             payload["lang"] = getattr(v, "language", "")

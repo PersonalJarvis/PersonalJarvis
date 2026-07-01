@@ -148,7 +148,7 @@ execution, so it is `ask` tier and the added server starts **disabled**.
   bootstrap still loads them (they return an honest "not yet ready" otherwise).
 - Routing: extend the smalltalk/action heuristics so utterances like
   "aktualisiere die Settings", "welche Provider hab ich", "switch to Gemini",
-  "füge einen MCP-Server hinzu" route to these tools and are **not**
+  "füge einen MCP-Server hinzu" route to these tools and are **not** <!-- i18n-allow: quoted German voice-input example -->
   force-spawned to a worker (`BrainManager._should_force_openclaw`). Add a short
   note to `router.py` SYSTEM_PROMPT so the brain knows the overview tool exists.
 

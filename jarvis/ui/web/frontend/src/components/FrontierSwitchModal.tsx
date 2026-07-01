@@ -1,9 +1,9 @@
-// FrontierSwitchModal — blockierendes Modal das beim Boot oeffnet wenn
-// Hauptjarvis automatisch auf ein neueres Provider-Modell gewechselt hat.
+// FrontierSwitchModal — blocking modal that opens at boot when
+// main Jarvis has automatically switched to a newer provider model.
 //
-// User-Mandat 2026-04-28: Auto-Switch ist erlaubt; nach Switch muss der
-// User mit OK bestaetigen. Das Modal verschwindet nicht ohne OK.
-// Quelle: GET /api/frontier/pending; Quittung via POST /api/frontier/ack.
+// User mandate 2026-04-28: auto-switch is allowed; after a switch the
+// user must confirm with OK. The modal doesn't disappear without OK.
+// Source: GET /api/frontier/pending; ack via POST /api/frontier/ack.
 import { useEffect, useState } from "react";
 import { Sparkles, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -26,9 +26,9 @@ export function FrontierSwitchModal() {
   const [pending, setPending] = useState<FrontierSwitch[]>([]);
   const [acking, setAcking] = useState(false);
 
-  // Initial-Load + Polling. WS-Subscribe waere robuster, aber Polling
-  // mit 30s ist genug — der Switch passiert nur einmal beim Boot, und
-  // das Modal blockiert sowieso bis der User klickt.
+  // Initial load + polling. A WS subscribe would be more robust, but
+  // polling every 30s is enough — the switch only happens once at boot,
+  // and the modal blocks anyway until the user clicks.
   useEffect(() => {
     let cancelled = false;
 
@@ -39,7 +39,7 @@ export function FrontierSwitchModal() {
         const data = (await res.json()) as FrontierSwitch[];
         if (!cancelled) setPending(data);
       } catch {
-        // ignoriert — naechster Tick versucht's wieder
+        // ignored — the next tick will retry
       }
     };
 
@@ -58,8 +58,8 @@ export function FrontierSwitchModal() {
       await fetch("/api/frontier/ack", { method: "POST" });
       setPending([]);
     } catch {
-      // Falls der Ack-Call failt: Modal sichtbar lassen, User kann
-      // erneut klicken. Server-Side bleibt der Pending-State erhalten.
+      // If the ack call fails: leave the modal visible, the user can
+      // click again. Server-side the pending state is preserved.
     } finally {
       setAcking(false);
     }
@@ -67,8 +67,8 @@ export function FrontierSwitchModal() {
 
   if (pending.length === 0) return null;
 
-  // Group by provider fuer schoenere Darstellung wenn beide Tiers
-  // gleichzeitig gewechselt sind (z.B. Anthropic Opus 4.7 → 4.8 + Haiku 4.5 → 4.6).
+  // Group by provider for nicer display when both tiers switched at the
+  // same time (e.g. Anthropic Opus 4.7 → 4.8 + Haiku 4.5 → 4.6).
   const byProvider = pending.reduce<Record<string, FrontierSwitch[]>>((acc, s) => {
     if (!acc[s.provider]) acc[s.provider] = [];
     acc[s.provider].push(s);

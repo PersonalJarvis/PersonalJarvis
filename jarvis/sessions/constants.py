@@ -31,7 +31,7 @@ from __future__ import annotations
 from typing import Final
 
 HANGUP_VOICE_PATTERN: Final[str] = "voice_pattern"
-"""User said a hangup phrase ('auflegen', 'tschüss', 'bye') or it was
+"""User said a hangup phrase ('auflegen', 'tschüss', 'bye') or it was i18n-allow
 inferred from a closing intent."""
 
 HANGUP_HOTKEY: Final[str] = "hotkey"

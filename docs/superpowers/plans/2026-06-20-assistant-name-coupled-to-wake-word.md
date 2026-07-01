@@ -475,10 +475,10 @@ const WAKE_PREFIXES = new Set([
 ]);
 
 export function deriveAssistantName(phrase: string): string {
-  // Normalize phrase: lowercase, punctuation → space, split (preserves umlauts/ß).
+  // Normalize phrase: lowercase, punctuation → space, split (preserves umlauts/ß).  // i18n-allow: refers to German diacritics, not German prose
   const tokens = (phrase || "")
     .toLowerCase()
-    .replace(/[^0-9a-zäöüß]+/g, " ")
+    .replace(/[^0-9a-zäöüß]+/g, " ")  // i18n-allow: preserves German diacritics for wake-phrase normalization
     .trim()
     .split(/\s+/)
     .filter(Boolean);

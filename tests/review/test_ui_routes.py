@@ -1,13 +1,13 @@
-"""Tests fuer Review-UI-API-Routes (Phase 8.5).
+"""Tests for the review-UI API routes (Phase 8.5).
 
-Plan-Referenz: §6.5 Akzeptanzkriterium 1 — alle 4 GET-Endpunkte gegen
-gemocktes Audit-Log und gemockte Run-Directories.
+Plan reference: §6.5 acceptance criterion 1 — all 4 GET endpoints against
+a mocked audit log and mocked run directories.
 
-Skip-Bedingung: lokale fastapi==0.119.1 + starlette==1.0.0 sind nicht
-kompatibel (Starlette hat `on_startup` entfernt; FastAPI reicht es noch
-durch). Pre-existing — gleicher Bug in tests/missions/api/*,
-tests/board/*, tests/unit/test_voice_bridge_routes.py. Auf einem
-kompatiblen Stack laufen die Tests durch.
+Skip condition: the local fastapi==0.119.1 + starlette==1.0.0 are not
+compatible (Starlette removed `on_startup`; FastAPI still passes it
+through). Pre-existing — same bug in tests/missions/api/*,
+tests/board/*, tests/unit/test_voice_bridge_routes.py. On a
+compatible stack the tests run through.
 """
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-# Module-level skip wenn der pre-existing FastAPI/Starlette-Versions-Drift
-# das ganze APIRouter-Import-Pattern blockiert.
+# Module-level skip when the pre-existing FastAPI/Starlette version drift
+# blocks the whole APIRouter import pattern.
 try:
     from fastapi import APIRouter as _APIRouter
 
@@ -55,7 +55,7 @@ def _build_app(audit: ReviewAudit, runs_root: Path) -> FastAPI:
 
 
 def _seed_audit(audit: ReviewAudit, run_id: str, *, statuses: list[str]) -> None:
-    """Schreibt für `run_id` worker_spawn + reviewer_spawn pro Iter."""
+    """Writes worker_spawn + reviewer_spawn per iter for `run_id`."""
     for iteration, status_value in enumerate(statuses, start=1):
         audit.append_iteration(
             AuditRecord(
@@ -83,7 +83,7 @@ def _seed_audit(audit: ReviewAudit, run_id: str, *, statuses: list[str]) -> None
 
 @pytest.fixture
 def client_factory(tmp_path: Path):
-    """Factory die einen TestClient + audit + runs_root liefert."""
+    """Factory that returns a TestClient + audit + runs_root."""
 
     def make() -> tuple[TestClient, ReviewAudit, Path]:
         audit = ReviewAudit(path=tmp_path / "review.log")
@@ -124,7 +124,7 @@ def test_runs_aggregates_audit_to_summary(client_factory) -> None:
 
     assert by_id["abc-2"]["iterations"] == 3
     assert by_id["abc-2"]["final_status"] == "pass"
-    # Latency-Summen kommen aus den Audit-Einträgen
+    # Latency sums come from the audit entries
     assert by_id["abc-2"]["total_latency_ms"] > 0
 
 
@@ -140,7 +140,7 @@ def test_runs_pagination_limit(client_factory) -> None:
 
 def test_runs_cap_fired_classified(client_factory) -> None:
     client, audit, _ = client_factory()
-    # Drei needs_revision-Verdicts → cap_fired
+    # Three needs_revision verdicts → cap_fired
     _seed_audit(audit, "cap-run", statuses=["needs_revision"] * 3)
     res = client.get("/api/review/runs")
     assert res.status_code == 200
@@ -165,9 +165,9 @@ def test_run_detail_includes_iteration_data(client_factory) -> None:
     client, audit, runs_root = client_factory()
     _seed_audit(audit, "detail-run", statuses=["pass"])
 
-    # Run-Dir mit task.json + iter-1/worker.out + iter-1/verdict.json
+    # Run dir with task.json + iter-1/worker.out + iter-1/verdict.json
     run_dir = RunDirectory(runs_root, "detail-run").ensure()
-    run_dir.write_task(task="schreibe ein test-script", rubric_id="code_generation")
+    run_dir.write_task(task="write a test script", rubric_id="code_generation")
     run_dir.write_worker_output(1, "produced artifact body" * 5)
     run_dir.write_verdict(
         1,
@@ -184,7 +184,7 @@ def test_run_detail_includes_iteration_data(client_factory) -> None:
     assert res.status_code == 200
     data = res.json()
     assert data["run_id"] == "detail-run"
-    assert data["task"] == "schreibe ein test-script"
+    assert data["task"] == "write a test script"
     assert data["rubric_id"] == "code_generation"
     assert data["final_status"] == "pass"
     assert len(data["iterations_detail"]) == 1
@@ -226,7 +226,7 @@ def test_audit_returns_entries(client_factory) -> None:
     assert res.status_code == 200
     data = res.json()
     assert isinstance(data, list)
-    # 2 Einträge pro Iter (worker + reviewer), 1 Iter
+    # 2 entries per iter (worker + reviewer), 1 iter
     assert len(data) == 2
     phases = {e["phase"] for e in data}
     assert phases == {"worker_spawn", "reviewer_spawn"}
@@ -236,7 +236,7 @@ def test_audit_limit_parameter(client_factory) -> None:
     client, audit, _ = client_factory()
     for i in range(5):
         _seed_audit(audit, f"r{i}", statuses=["pass"])
-    # Insgesamt 10 Audit-Einträge, limit=3 → 3
+    # 10 audit entries total, limit=3 → 3
     res = client.get("/api/review/audit?limit=3")
     assert res.status_code == 200
     assert len(res.json()) == 3
@@ -267,9 +267,9 @@ def test_stats_aggregates_pass_rate(client_factory) -> None:
     assert res.status_code == 200
     data = res.json()
     assert data["runs_total"] == 3
-    # 2 pass aus 3 → 0.6667
+    # 2 pass out of 3 → 0.6667
     assert data["pass_rate"] == pytest.approx(2 / 3, abs=0.01)
-    # 1 cap_fired aus 3
+    # 1 cap_fired out of 3
     assert data["cap_fire_rate"] == pytest.approx(1 / 3, abs=0.01)
 
 
@@ -283,10 +283,10 @@ def test_stats_window_days_invalid_rejected(client_factory) -> None:
 
 
 def test_stats_cached_within_60s(client_factory, monkeypatch) -> None:
-    """Wiederholter Aufruf mit gleichem window_days → Cache-Hit (kein Re-Read)."""
+    """Repeated call with the same window_days → cache hit (no re-read)."""
     from jarvis.ui.web import review_routes
 
-    # Cache leeren falls vom anderen Test gefüllt
+    # Clear the cache in case another test filled it
     review_routes._STATS_CACHE.clear()
 
     client, audit, _ = client_factory()
@@ -294,8 +294,8 @@ def test_stats_cached_within_60s(client_factory, monkeypatch) -> None:
 
     res1 = client.get("/api/review/stats?window_days=7")
     assert res1.status_code == 200
-    # Audit modifizieren — neuer Run hinzu
+    # Modify the audit — add a new run
     _seed_audit(audit, "y", statuses=["pass"])
     res2 = client.get("/api/review/stats?window_days=7")
-    # Wegen Cache: gleicher runs_total wie res1 (nicht 2)
+    # Because of the cache: same runs_total as res1 (not 2)
     assert res2.json()["runs_total"] == res1.json()["runs_total"]

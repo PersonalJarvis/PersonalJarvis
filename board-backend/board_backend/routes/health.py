@@ -1,6 +1,6 @@
-"""``GET /healthz`` — public, kein Auth.
+"""``GET /healthz`` — public, no auth.
 
-Liefert nur Liveness/Schema-Status. Wird von Docker-Healthchecks gepollt.
+Returns only liveness/schema status. Polled by Docker healthchecks.
 """
 from __future__ import annotations
 

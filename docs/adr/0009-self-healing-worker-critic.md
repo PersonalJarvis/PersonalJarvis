@@ -117,7 +117,7 @@ Heuristic: a mission is Phase-6-eligible if the router classifier returns `code`
 - Phase-6 plan: `docs/phase6-plan.md` (TBD).
 - Prompt chain: `docs/phase6-prompt-chain.md` (skeleton created).
 - Persona mandate: `Jarvis-Behavior/persona-delegation-mandate.md` §"Phase 4 — Multi-Step-Missions".
-- Master plan: `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md` §"Phase 6 — Self-Healing".
+- Master plan: `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md` §"Phase 6 — Self-Healing".  <!-- i18n-allow -->
 - Existing code (NOT to be changed): `jarvis/brain/sub_jarvis.py:SubJarvisManager`.
 - Planned new modules: `jarvis/missions/{manager,state_machine,kontrollierer,workers,critic,isolation}/*`.
 - Subagents for the Phase-6 implementation: `.claude/agents/jarvis-{architect-explorer,test-runner,critic-design-reviewer}.md`.

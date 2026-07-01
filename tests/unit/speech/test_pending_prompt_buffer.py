@@ -43,8 +43,8 @@ def test_start_sets_fragment_and_initial_chain_count() -> None:
 def test_extend_concatenates_with_single_space() -> None:
     buf = PendingPromptBuffer()
     buf.start("Erinnere mich daran, dass")
-    buf.extend("ich morgen Brötchen kaufe")
-    assert buf.fragment == "Erinnere mich daran, dass ich morgen Brötchen kaufe"
+    buf.extend("ich morgen Brötchen kaufe")  # i18n-allow
+    assert buf.fragment == "Erinnere mich daran, dass ich morgen Brötchen kaufe"  # i18n-allow
     assert buf.chain_count == 2
 
 

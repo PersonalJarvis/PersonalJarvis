@@ -1,8 +1,9 @@
-"""SyncClient-Tests — laufen gegen ASGI-In-Memory-Backend ohne Netzwerk.
+"""SyncClient tests — run against an ASGI in-memory backend, no network.
 
-Statt einen echten httpx-Server zu starten, mounten wir die FastAPI-App
-des Backends via ``httpx.ASGITransport``. Die Sig-Crypto + Replay-Logik
-wird so 1:1 wie im Docker-Compose-Pfad geuebt — nur ohne TCP-Roundtrip.
+Instead of starting a real httpx server, we mount the backend's FastAPI
+app via ``httpx.ASGITransport``. The sig-crypto + replay logic gets
+exercised 1:1 like in the Docker-Compose path — just without the TCP
+round-trip.
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ from jarvis.core.events import ActionExecuted
 
 
 class _MemKeyring:
-    """In-Memory-Stub fuer ``keyring`` mit set_password/get_password."""
+    """In-memory stub for ``keyring`` with set_password/get_password."""
 
     def __init__(self, initial: dict | None = None) -> None:
         self._store: dict[tuple[str, str], str] = {}
@@ -119,7 +120,7 @@ async def test_first_tick_registers_and_pushes(board, asgi_client) -> None:
         secrets=keyring,
         http_client=asgi_client,
     )
-    # Privkey-Generierung ist Teil von start(); wir rufen das hier ohne start().
+    # Privkey generation is part of start(); we call it here without start().
     client._privkey_hex, client._pubkey_hex = (
         # Generate via stub-keyring path
         __import__("board_backend.crypto", fromlist=["generate_keypair"]).generate_keypair()
@@ -130,15 +131,15 @@ async def test_first_tick_registers_and_pushes(board, asgi_client) -> None:
     assert ok is True
     assert client._registered
 
-    # Zweiter Tick: Push only, kein Register-Call mehr.
+    # Second tick: push only, no more register call.
     ok2 = await client.tick()
     assert ok2 is True
 
 
 @pytest.mark.asyncio
 async def test_payload_filters_extra_fields(board, asgi_client) -> None:
-    """Auch wenn der lokale Aggregator-Export Schadensoutput liefert, filtert
-    der SyncClient die Whitelist auf Daily-Keys."""
+    """Even if the local aggregator export returns malicious output, the
+    SyncClient filters the whitelist down to daily keys."""
     agg, db = board
     keyring = _MemKeyring(initial={
         ("jarvis-board", "admin_token"): "test-admin",
@@ -169,7 +170,7 @@ async def test_payload_filters_extra_fields(board, asgi_client) -> None:
 
 @pytest.mark.asyncio
 async def test_unknown_admin_token_skips_register(board) -> None:
-    """Ohne admin_token im Keyring: kein Register-Versuch, kein Crash."""
+    """Without an admin_token in the keyring: no register attempt, no crash."""
     agg, db = board
     keyring = _MemKeyring()  # leer
 

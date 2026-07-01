@@ -27,7 +27,7 @@ os.chdir(REPO)
 from jarvis.core.bus import EventBus  # noqa: E402
 from jarvis.core.config import load_config  # noqa: E402
 
-UTTERANCE = "Was ist die Hauptstadt von Frankreich?"
+UTTERANCE = "Was ist die Hauptstadt von Frankreich?"  # i18n-allow: simulated German user utterance used to probe prompt cost
 RUNS = 3
 
 

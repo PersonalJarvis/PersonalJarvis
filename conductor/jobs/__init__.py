@@ -1,8 +1,8 @@
-"""Job-Handler — drei Implementations, alle via ``JobHandler``-Protocol.
+"""Job handlers — three implementations, all via the ``JobHandler`` protocol.
 
-Registry-Pattern: ``HANDLERS[spec.type]`` gibt den passenden Handler
-zurueck. Neue Job-Types sind eine 2-Datei-Aenderung (Spec-Model in
-``core/schema.py`` + Handler hier).
+Registry pattern: ``HANDLERS[spec.type]`` returns the matching handler.
+A new job type is a 2-file change (spec model in ``core/schema.py`` +
+handler here).
 """
 from __future__ import annotations
 

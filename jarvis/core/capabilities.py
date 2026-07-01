@@ -25,13 +25,13 @@ from typing import Literal, Optional
 # ---------------------------------------------------------------------------
 
 _UMLAUT_MAP: list[tuple[str, str]] = [
-    ("ä", "ae"),
-    ("ö", "oe"),
-    ("ü", "ue"),
-    ("Ä", "ae"),
-    ("Ö", "oe"),
-    ("Ü", "ue"),
-    ("ß", "ss"),
+    ("ä", "ae"),  # i18n-allow: German-umlaut transliteration map, matched in logic (speech-input normalization)
+    ("ö", "oe"),  # i18n-allow: German-umlaut transliteration map, matched in logic (speech-input normalization)
+    ("ü", "ue"),  # i18n-allow: German-umlaut transliteration map, matched in logic (speech-input normalization)
+    ("Ä", "ae"),  # i18n-allow: German-umlaut transliteration map, matched in logic (speech-input normalization)
+    ("Ö", "oe"),  # i18n-allow: German-umlaut transliteration map, matched in logic (speech-input normalization)
+    ("Ü", "ue"),  # i18n-allow: German-umlaut transliteration map, matched in logic (speech-input normalization)
+    ("ß", "ss"),  # i18n-allow: German-umlaut transliteration map, matched in logic (speech-input normalization)
 ]
 
 
@@ -59,7 +59,7 @@ def _normalize(text: str) -> str:
 #    (email/calendar/whatsapp/order/post — the canonical hallucination cases)
 #  - Common German + English imperatives for digital actions
 #
-# Already umlaut-normalised (no ä/ö/ü/ß).
+# Already umlaut-normalised (no ä/ö/ü/ß).  # i18n-allow: English comment; literal umlaut characters named for illustration only
 _UNIVERSAL_ACTION_VERBS: frozenset[str] = frozenset({
     # Existing spawn_verbs (synced with config.py for backwards compatibility)
     "umsetz", "reparier", "fix", "behebe", "korrigier",
@@ -76,7 +76,7 @@ _UNIVERSAL_ACTION_VERBS: frozenset[str] = frozenset({
     # that made the email/calendar/whatsapp utterances slip past the gate).
     "schick", "schicke", "schickt", "sende", "send", "sendet",
     "verschick", "verschicke", "verschickt",
-    "trag", "trage", "tragt", "eintrag", "eintrage",
+    "trag", "trage", "tragt", "eintrag", "eintrage",  # i18n-allow: German speech-input action-verb vocabulary, matched in logic
     "bestell", "bestelle", "bestellt", "order", "orders",
     "kauf", "kaufe", "kauft", "buy", "purchase",
     "buch", "buche", "bucht", "book", "reserviere", "reservier", "reserve",

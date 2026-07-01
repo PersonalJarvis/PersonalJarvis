@@ -1,4 +1,4 @@
-"""Integration-Tests für REST-Endpoints des WebServers."""
+"""Integration tests for the WebServer's REST endpoints."""
 from __future__ import annotations
 
 import pytest
@@ -13,7 +13,7 @@ from jarvis.ui.web.server import WebServer
 @pytest.fixture
 def web_server() -> WebServer:
     cfg = JarvisConfig()
-    cfg.ui.dev_mode = True  # kein Static-Mount während Tests
+    cfg.ui.dev_mode = True  # no static mount during tests
     bus = EventBus()
     return WebServer(cfg, bus=bus)
 
@@ -32,7 +32,7 @@ def test_config_endpoint(web_server: WebServer) -> None:
         resp = client.get("/api/config")
         assert resp.status_code == 200
         body = resp.json()
-        # Muss die Top-Level-Sections enthalten.
+        # Must contain the top-level sections.
         for section in ("profile", "trigger", "stt", "tts", "brain", "ui"):
             assert section in body
 

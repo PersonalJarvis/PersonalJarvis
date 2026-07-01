@@ -93,7 +93,7 @@ def test_build_delivered_summary_single(tmp_path: Path) -> None:
     out = build_delivered_summary([f])
     assert "report.html" in out
     assert "Jarvis-Outputs" in out
-    assert out.startswith("Fertig.")
+    assert out.startswith("Fertig.")  # i18n-allow: asserts the German TTS readback text
 
 
 def test_build_delivered_summary_empty() -> None:

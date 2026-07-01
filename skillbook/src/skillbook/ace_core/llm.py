@@ -22,7 +22,7 @@ The previous in-tree ``MockLLM`` deterministic fallback lives in
 ``tests/fakes/llm.py:FakeLLM`` per ADR-0010 — production paths never fall
 back to test doubles. The original ADR-0004 named Anthropic as the only
 production LLM; that was the wrong default for this project (parent
-``MEMORY.md``: "kein Anthropic-Konto, alles über cfg.brain.primary =
+``MEMORY.md``: "no Anthropic account, everything via cfg.brain.primary =
 Gemini"). The multi-provider design here makes the active-brain choice
 explicit at the call site.
 """

@@ -1,7 +1,7 @@
-"""Unit-Tests fuer `jarvis.memory.user_profile.UserProfile`.
+"""Unit tests for `jarvis.memory.user_profile.UserProfile`.
 
-Deckt: get/set, append_list mit Dedupe, save+reload-Roundtrip,
-render_for_prompt (Name + Budget), reload nach manueller File-Edits.
+Covers: get/set, append_list with dedupe, save+reload roundtrip,
+render_for_prompt (name + budget), reload after manual file edits.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ class TestSetAndGet:
 
     def test_set_same_value_returns_false(self, profile: UserProfile) -> None:
         profile.set("identity", "name", "Ruben")
-        # Gleicher Wert → kein Change
+        # Same value → no change
         assert profile.set("identity", "name", "Ruben") is False
 
     def test_set_overwrites_existing_value(self, profile: UserProfile) -> None:
@@ -41,7 +41,7 @@ class TestSetAndGet:
             profile.get("unknown_cluster", "field")
 
     def test_get_returns_none_for_unset_field(self, profile: UserProfile) -> None:
-        # Template setzt "name" auf null — das wird als None durchgereicht
+        # The template sets "name" to null — this is passed through as None
         assert profile.get("identity", "name") is None
 
 
@@ -163,13 +163,13 @@ class TestPersistence:
         profile.set("identity", "name", "Ruben")
         profile.save()
         reloaded = UserProfile.load(profile.path)
-        # last_updated wird automatisch bei jedem save gesetzt
+        # last_updated is set automatically on every save
         assert reloaded.meta.get("last_updated") is not None
 
     def test_reload_picks_up_manual_file_edits(
         self, profile: UserProfile, tmp_path: Path
     ) -> None:
-        """reload() muss manuelle Edits an USER.md einlesen (User-Edits respektieren)."""
+        """reload() must pick up manual edits to USER.md (respect user edits)."""
         # Zustand: leeres Profile.
         assert profile.get("identity", "name") is None
 
@@ -188,7 +188,7 @@ class TestPersistence:
         # In-Memory-Instanz weiss davon noch nichts
         assert profile.get("identity", "name") is None
 
-        # Nach reload aber schon
+        # But it does after reload
         profile.reload()
         assert profile.get("identity", "name") == "HandEdited"
 
@@ -207,7 +207,7 @@ class TestAppendObservation:
         profile.append_observation(
             field_label="communication.humor_types",
             value="dry",
-            evidence="User: 'bitte nicht zu albern'",
+            evidence="User: 'bitte nicht zu albern'",  # i18n-allow: simulated German user evidence quote, content under test
         )
         profile.save()
         text = profile.path.read_text(encoding="utf-8")
@@ -221,7 +221,7 @@ class TestAppendObservation:
         profile.append_observation("x.y", "v", "evidence")
         profile.save()
         text = profile.path.read_text(encoding="utf-8")
-        # Nur eine Instanz
+        # Only one instance
         assert text.count("x.y: v") == 1
 
 
@@ -234,11 +234,11 @@ class TestRenderForPrompt:
         profile.set("identity", "name", "Ruben")
         out = profile.render_for_prompt()
         assert "Ruben" in out
-        # Header bleibt dabei
-        assert "Ueber den User" in out
+        # Header is still included
+        assert "Ueber den User" in out  # i18n-allow: matches the real (currently German) header rendered by UserProfile.render_for_prompt
 
     def test_render_stays_within_budget(self, profile: UserProfile) -> None:
-        """Selbst mit viel Content darf das Rendering den Budget-Cap nicht sprengen."""
+        """Even with a lot of content, rendering must not exceed the budget cap."""
         profile.set("identity", "name", "Ruben")
         profile.set("communication", "verbosity", "deep-dive")
         profile.append_list("communication", "humor_types", "dry")
@@ -250,7 +250,7 @@ class TestRenderForPrompt:
             profile.append_observation(
                 "communication.misc",
                 f"value_{i}_" + "x" * 80,
-                f"evidence fuer #{i}",
+                f"evidence for #{i}",
             )
 
         out = profile.render_for_prompt()
@@ -262,10 +262,10 @@ class TestRenderForPrompt:
         assert len(short) <= 80
 
     def test_render_without_name_still_works(self, profile: UserProfile) -> None:
-        """Template hat name=null — Render darf trotzdem nicht crashen."""
+        """Template has name=null — rendering must not crash regardless."""
         out = profile.render_for_prompt()
         assert isinstance(out, str)
-        assert "Ueber den User" in out
+        assert "Ueber den User" in out  # i18n-allow: matches the real (currently German) header rendered by UserProfile.render_for_prompt
 
 
 # ======================================================================

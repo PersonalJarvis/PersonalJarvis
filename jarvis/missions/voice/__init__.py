@@ -1,9 +1,9 @@
-"""Phase-6 Voice-Layer fuer Mission-Status-Readback.
+"""Phase-6 voice layer for mission-status readback.
 
-Re-Exports der Public-API.
+Re-exports of the public API.
 
-Foundation: ADR-0009 §"Offen" — Voice-Readback bei MissionApproved/Failed
-nutzt PhrasePicker-Pattern (anti-repeat-window). Tone aus
+Foundation: ADR-0009 §"Open" — voice readback on MissionApproved/Failed
+uses the PhrasePicker pattern (anti-repeat window). Tone from
 `jarvis/brain/JARVIS_PERSONA.md`: butler register, never "Sir". The
 mission-status templates are name-neutral (they carry no hardcoded owner
 name) so a fresh clone never speaks the maintainer's name.

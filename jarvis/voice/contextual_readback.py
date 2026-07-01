@@ -90,11 +90,11 @@ _FORBIDDEN_VOCAB_RE = re.compile(
 # in-progress situation (dispatch ack: the work has not started), so reject the
 # candidate there. Shared shape with the spawn announcer's guard.
 _COMPLETION_CLAIM_RE = re.compile(
-    r"(?:\b(?:ist|sind|wurde|wurden|is|are|was|were|has\s+been|have\s+been)\s+"
-    r"(?:bereits\s+|schon\s+|already\s+)?"
-    r"(?:erledigt|fertig|abgeschlossen|gesendet|verschickt|done|finished|"
+    r"(?:\b(?:ist|sind|wurde|wurden|is|are|was|were|has\s+been|have\s+been)\s+"  # i18n-allow
+    r"(?:bereits\s+|schon\s+|already\s+)?"  # i18n-allow
+    r"(?:erledigt|fertig|abgeschlossen|gesendet|verschickt|done|finished|"  # i18n-allow
     r"complete|completed|sent)\b"
-    r"|^\s*(?:erledigt|fertig|done|finished|completed|listo)\s*[.!]?\s*$)",
+    r"|^\s*(?:erledigt|fertig|done|finished|completed|listo)\s*[.!]?\s*$)",  # i18n-allow
     re.IGNORECASE,
 )
 

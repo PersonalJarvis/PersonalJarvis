@@ -1,7 +1,7 @@
-"""Tests fuer ReviewPolicy-Klassifikation (Phase 8.4).
+"""Tests for ReviewPolicy classification (Phase 8.4).
 
-Plan-Referenz: §AD-6 (selektive Aktivierung). Klassifikations-Matrix
-mit 10+ Test-Queries pro Erwartung; Pass-Rate 100% auf den Cases.
+Plan reference: §AD-6 (selective activation). Classification matrix
+with 10+ test queries per expectation; 100% pass rate on the cases.
 """
 from __future__ import annotations
 
@@ -10,58 +10,61 @@ import pytest
 from jarvis.core.review.policy import PolicyDecision, ReviewPolicy
 
 # ----------------------------------------------------------------------
-# Klassifikations-Matrix
+# Classification matrix
 # ----------------------------------------------------------------------
 
-# Tasks die als "review" klassifiziert werden müssen (Aktions-Keywords,
-# user-irreversibel oder Multi-Schritt-Synthese).
+# Tasks that must be classified as "review" (action keywords,
+# user-irreversible, or multi-step synthesis).
+# NOTE: the task strings below are simulated German user utterances —
+# they are the content under test for ReviewPolicy's German keyword
+# matcher (jarvis/core/review/policy.py) and must stay German.
 SHOULD_REVIEW_CASES: list[tuple[str, str]] = [
     (
-        "schreibe ein Python-Script in scripts/foo.py das alle .md-Files umbenennt",
-        "schreib + Datei-Schreib-Aktion",
+        "schreibe ein Python-Script in scripts/foo.py das alle .md-Files umbenennt",  # i18n-allow
+        "write + file-write action",
     ),
     (
-        "erstelle einen Skill der Spotify pausiert wenn ich rede",
-        "erstelle + skill",
+        "erstelle einen Skill der Spotify pausiert wenn ich rede",  # i18n-allow
+        "create + skill",
     ),
     (
-        "generiere mir einen FastAPI-Endpoint mit Pydantic-Validation",
-        "generier + code-spezifisch",
+        "generiere mir einen FastAPI-Endpoint mit Pydantic-Validation",  # i18n-allow
+        "generate + code-specific",
     ),
     (
-        "refactor jarvis/core/protocols.py — extract HarnessTask in eigenes Modul",
+        "refactor jarvis/core/protocols.py — extract HarnessTask in eigenes Modul",  # i18n-allow
         "refactor + code-edit",
     ),
     (
-        "schreib mir Tests für die neue ReviewPipeline mit pytest",
-        "schreib + script",
+        "schreib mir Tests für die neue ReviewPipeline mit pytest",  # i18n-allow
+        "write + script",
     ),
     (
-        "modifizier die TTS-Provider-Config — wechsle auf gemini-flash und teste die Latenz",
-        "modifizier + datei-mutation",
+        "modifizier die TTS-Provider-Config — wechsle auf gemini-flash und teste die Latenz",  # i18n-allow
+        "modify + file mutation",
     ),
     (
-        "erstelle einen Workflow der jeden Morgen meine Mails triagiert",
-        "erstelle + skill-äquivalent",
+        "erstelle einen Workflow der jeden Morgen meine Mails triagiert",  # i18n-allow
+        "create + skill-equivalent",
     ),
     (
-        "schreib eine SKILL.md für einen Excalidraw-Diagram-Skill",
-        "schreib + skill",
+        "schreib eine SKILL.md für einen Excalidraw-Diagram-Skill",  # i18n-allow
+        "write + skill",
     ),
 ]
 
-# Tasks die NICHT reviewt werden (Smalltalk, Trivial-Aufrufe, Konversation).
+# Tasks that must NOT be reviewed (smalltalk, trivial calls, conversation).
 SHOULD_NOT_REVIEW_CASES: list[tuple[str, str]] = [
-    ("hi", "smalltalk + zu kurz"),
-    ("hallo Jarvis", "smalltalk pattern"),
-    ("danke", "thanks pattern"),
-    ("was ist die hauptstadt von frankreich", "wissensfrage smalltalk"),
-    ("wer ist der bundespräsident", "smalltalk pattern"),
-    ("wie spät ist es", "wie spät pattern"),
-    ("kurz", "<30 chars"),
-    ("erzähl einen Witz über Programmierer", "konversation, kein review-keyword"),
-    ("wie geht's dir heute", "smalltalk, kein review-keyword"),
-    ("welcher Tag ist heute", "smalltalk wissensfrage"),
+    ("hi", "smalltalk + too short"),
+    ("hallo Jarvis", "smalltalk pattern"),  # i18n-allow
+    ("danke", "thanks pattern"),  # i18n-allow
+    ("was ist die hauptstadt von frankreich", "knowledge-question smalltalk"),  # i18n-allow
+    ("wer ist der bundespräsident", "smalltalk pattern"),  # i18n-allow
+    ("wie spät ist es", "'wie spät' keyword pattern"),  # i18n-allow
+    ("short", "<30 chars"),
+    ("erzähl einen Witz über Programmierer", "conversation, no review keyword"),  # i18n-allow
+    ("wie geht's dir heute", "smalltalk, no review keyword"),  # i18n-allow
+    ("welcher Tag ist heute", "smalltalk knowledge-question"),  # i18n-allow
 ]
 
 
@@ -113,9 +116,9 @@ def test_whitespace_only_no_review() -> None:
 
 
 def test_smalltalk_beats_action_keyword() -> None:
-    """Tasks mit Smalltalk-Pattern UND Action-Keyword werden als
-    Smalltalk klassifiziert (Smalltalk-Allowlist gewinnt — Plan-§AD-6
-    Persona-Mandat: Smalltalk-Allowlist ist der erste Cut).
+    """Tasks with a smalltalk pattern AND an action keyword are classified
+    as smalltalk (the smalltalk allowlist wins — plan §AD-6 persona
+    mandate: the smalltalk allowlist is the first cut).
     """
     policy = ReviewPolicy()
     decision = policy.should_review(
@@ -126,20 +129,20 @@ def test_smalltalk_beats_action_keyword() -> None:
 
 
 def test_word_boundary_does_not_match_substring() -> None:
-    """`code` als Substring in `decode` matcht NICHT — word boundary."""
+    """`code` as a substring of `decode` does NOT match — word boundary."""
     policy = ReviewPolicy()
     decision = policy.should_review(
-        "ich kann den decoder ausgabewert nicht interpretieren bitte hilf mir mal damit"
+        "ich kann den decoder ausgabewert nicht interpretieren bitte hilf mir mal damit"  # i18n-allow
     )
-    # 'decode' soll nicht als 'code' triggern
+    # 'decode' should not trigger as 'code'
     assert decision.should_review is False, decision
 
 
 def test_default_no_review_without_keywords() -> None:
-    """Plan-§AD-6: Default ist konservativ — ohne Match → kein Review."""
+    """Plan §AD-6: default is conservative — no match → no review."""
     policy = ReviewPolicy()
     decision = policy.should_review(
-        "Was war die Antwort auf meine letzte Frage von gestern Abend?"
+        "Was war die Antwort auf meine letzte Frage von gestern Abend?"  # i18n-allow
     )
     assert decision.should_review is False
 
@@ -153,13 +156,13 @@ def test_decision_reason_is_specific() -> None:
     assert "smalltalk" in d_smalltalk.reason.lower()
 
     d_action = policy.should_review(
-        "schreibe ein Python-Module das die Datenbank migriert"
+        "schreibe ein Python-Module das die Datenbank migriert"  # i18n-allow
     )
     assert "action" in d_action.reason.lower()
 
 
 def test_custom_keywords_override() -> None:
-    """Caller kann eigene Keyword-Listen mitgeben (Phase 8.4-API)."""
+    """Caller can supply custom keyword lists (Phase 8.4 API)."""
     policy = ReviewPolicy(
         review_keywords=("nuke", "bomb"),
         noreview_keywords=("foo",),

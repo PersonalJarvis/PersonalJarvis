@@ -1,8 +1,8 @@
-"""Selbst-Mod-Allowlist enthält KEINE review.*-Pfade (Phase 8.4).
+"""Self-mod allowlist contains NO review.* paths (Phase 8.4).
 
-Plan-Referenz: §AD-1 (Allowlist statt Denylist), Plan-§6.4 — review.*
-darf NIE per Voice/Chat mutiert werden, nur Datei-Edit + Code-Review.
-Das verhindert Constraint-Self-Bypass via Tool-Choice.
+Plan reference: §AD-1 (allowlist instead of denylist), plan §6.4 — review.*
+must NEVER be mutated via voice/chat, only via file edit + code review.
+This prevents a constraint self-bypass via tool choice.
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def test_review_reviewer_model_not_in_allowlist() -> None:
 
 
 def test_no_review_path_in_explicit_allowlist() -> None:
-    """Defense-in-Depth: kein einziger ALLOWED-Spec hat review-prefix."""
+    """Defense-in-depth: not a single ALLOWED spec has a review prefix."""
     review_specs = [
         spec for spec in SelfModRegistry.list_all() if spec.path.startswith("review.")
     ]

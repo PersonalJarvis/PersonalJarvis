@@ -45,7 +45,7 @@ _WHITESPACE_PAT = re.compile(r"\s{2,}")
 # Pattern to extract a capitalised proper name from a detail/command string.
 # Matches a word starting with an uppercase letter that is NOT the very
 # first word (verbs / articles at position 0 are excluded).
-_CAPITALISED_NAME_PAT = re.compile(r"(?<!\A)\b([A-ZÄÖÜ][a-zäöüß]{1,})\b")
+_CAPITALISED_NAME_PAT = re.compile(r"(?<!\A)\b([A-ZÄÖÜ][a-zäöüß]{1,})\b")  # i18n-allow: speech input vocabulary pattern DE
 
 
 class OopsProtocol:
@@ -150,39 +150,39 @@ class OopsProtocol:
         name = self._extract_recipient(ev.detail) or self._extract_recipient(ev.command)
         if name:
             return (
-                f"Kurzer Nachtrag zur Mail an {name}: "
-                f"mir fehlt noch seine E-Mail-Adresse. "
-                f"Hast du die kurz für mich?"
+                f"Kurzer Nachtrag zur Mail an {name}: "  # i18n-allow: product voice output DE
+                f"mir fehlt noch seine E-Mail-Adresse. "  # i18n-allow: product voice output DE
+                f"Hast du die kurz für mich?"  # i18n-allow: product voice output DE
             )
         # No recognisable name — generic fallback
         return (
-            "Ich brauche noch eine Information, um die Aufgabe abzuschließen. "
-            "Kannst du mir kurz helfen?"
+            "Ich brauche noch eine Information, um die Aufgabe abzuschließen. "  # i18n-allow: product voice output DE
+            "Kannst du mir kurz helfen?"  # i18n-allow: product voice output DE
         )
 
     @staticmethod
     def _phrase_auth_required(ev: WorkerCorrectionNeeded) -> str:
         """AUTH_REQUIRED: inform the user that authorisation is needed."""
         return (
-            "Ich brauche noch kurz deine Freigabe, um das erledigen zu können. "
-            "Könntest du dich einmal kurz einloggen?"
+            "Ich brauche noch kurz deine Freigabe, um das erledigen zu können. "  # i18n-allow: product voice output DE
+            "Könntest du dich einmal kurz einloggen?"  # i18n-allow: product voice output DE
         )
 
     @staticmethod
     def _phrase_network_error(ev: WorkerCorrectionNeeded) -> str:
         """NETWORK_ERROR: note the transient problem and suggest retrying."""
         return (
-            "Ich hatte kurz ein Verbindungsproblem und konnte die Aufgabe "
-            "leider nicht abschließen. Soll ich es gleich noch einmal versuchen?"
+            "Ich hatte kurz ein Verbindungsproblem und konnte die Aufgabe "  # i18n-allow: product voice output DE
+            "leider nicht abschließen. Soll ich es gleich noch einmal versuchen?"  # i18n-allow: product voice output DE
         )
 
     @staticmethod
     def _phrase_fatal(ev: WorkerCorrectionNeeded) -> str:
         """FATAL: brief, warm apology — the task could not be completed."""
         return (
-            "Es tut mir leid — bei dieser Aufgabe ist leider etwas Unerwartetes "
-            "passiert und ich konnte sie nicht zu Ende bringen. "
-            "Magst du es mir noch einmal sagen?"
+            "Es tut mir leid — bei dieser Aufgabe ist leider etwas Unerwartetes "  # i18n-allow: product voice output DE
+            "passiert und ich konnte sie nicht zu Ende bringen. "  # i18n-allow: product voice output DE
+            "Magst du es mir noch einmal sagen?"  # i18n-allow: product voice output DE
         )
 
     @staticmethod
@@ -202,7 +202,7 @@ class OopsProtocol:
         # Fallback: scan all words for a capitalised one, skip the very first.
         words = stripped.split()
         for word in words[1:]:
-            clean = re.sub(r"[^A-Za-zÄÖÜäöüß]", "", word)
+            clean = re.sub(r"[^A-Za-zÄÖÜäöüß]", "", word)  # i18n-allow: regex charset matches German name characters
             if clean and clean[0].isupper():
                 return clean
         return None

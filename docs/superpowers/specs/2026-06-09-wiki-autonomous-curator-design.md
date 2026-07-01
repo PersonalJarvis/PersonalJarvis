@@ -151,4 +151,4 @@ STAGE 2 — Consolidator  (cheap dedicated model, body-aware judge)
 - Conversation-fed extraction quality on a cheap model — mitigated by recall-biased Stage 1 + body-aware Stage-2 judge; tunable.
 - FTS5-only k-nearest may under-cluster near-duplicate entities until embeddings land (Wave 3).
 - `VaultLock` `time.monotonic` stale-clock bug **must** be fixed before wiring the scheduler.
-- The named master plan `~/.claude/plans/also-er-muss-auch-lexical-pond.md` is missing on disk; vision was reconstructed from ADR-0013/0014/0015 + the B1 README + `schema.md` (all agree on the autonomous-editor ambition).
+- The named master plan `~/.claude/plans/also-er-muss-auch-lexical-pond.md` is missing on disk; vision was reconstructed from ADR-0013/0014/0015 + the B1 README + `schema.md` (all agree on the autonomous-editor ambition). <!-- i18n-allow: literal plan filename, not translatable prose -->

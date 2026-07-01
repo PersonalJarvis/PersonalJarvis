@@ -12,19 +12,19 @@
 
 ## Evidence (measured 2026-06-10, `data/jarvis_desktop.log`)
 
-Run 20:46:07 — *"Öffne Chrome und gehe auf x.com"* (planner produced a 6-step plan):
+Run 20:46:07 — *"Öffne Chrome und gehe auf x.com"* (planner produced a 6-step plan): <!-- i18n-allow: quoted German voice-command evidence -->
 
 | What | Evidence | Cost |
 |---|---|---|
 | **CU loop blocks on TTS progress announcements.** `screenshot_only_loop.py:2694` does `await ctx.bus.publish(AnnouncementRequested(...))`. `EventBus.publish` awaits typed subscribers **uncapped** (`jarvis/core/bus.py:82-86`, by design), and `SpeechPipeline._on_announcement` (`pipeline.py:1804`) runs the full Gemini-TTS synthesis + playback start *inside* that dispatch. | Log gaps end **exactly** at `AudioOutFirst published`: 20:46:12.4 announcement → step 2 at 20:46:22.5 (10.1 s); 27.9 → 33.6 (5.8 s); 42.4 → 48.1 (5.7 s); 53.3 → 59.1 (5.8 s). | **~27 s of the first 55 s (≈50 %)** |
-| **No deterministic path for browser+URL goals.** "öffne Chrome und gehe auf x.com" matches `_COMPOUND_OPEN_CONTROL_RE` (`local_action_gate.py:109`) → full CU loop + planner, although `open_app` already accepts URLs and an `arguments` field (`open_app.py:154,191`). | The whole 3-minute mission existed to do what `open_app("chrome", "https://x.com")` does in ~1 s. | **entire mission** |
+| **No deterministic path for browser+URL goals.** "öffne Chrome und gehe auf x.com" matches `_COMPOUND_OPEN_CONTROL_RE` (`local_action_gate.py:109`) → full CU loop + planner, although `open_app` already accepts URLs and an `arguments` field (`open_app.py:154,191`). | The whole 3-minute mission existed to do what `open_app("chrome", "https://x.com")` does in ~1 s. | **entire mission** | <!-- i18n-allow: quoted German voice-command evidence -->
 | **Every pixel click pays a refine LLM call up front.** `_click_with_refine` (`screenshot_only_loop.py:1622-1626`) calls `_refine_click_point` (one brain call, ~1.3–1.7 s) *before* the first click attempt. | Log: refine moved the click by ≤5 px ("(1797,2128) -> (1792,2124)") — a near-no-op for a full LLM round-trip. Misses then trigger 1–2 more refine calls + 0.6 s settle each. | **~2–6 s per click** |
 | **Done-judge is an extra LLM call even for trivially verifiable goals.** `_verify_goal_done` (`screenshot_only_loop.py:2532` call site) judges "is Chrome open?" with a vision LLM call although the foreground window title already proves it. | One extra ~1.5 s call per `done`, plus done-reject loops (`_MAX_DONE_REJECTS = 3`). | **1.5–5 s per mission** |
 | **Relaunch suppression doesn't count as a guard hit.** `open_app` SUPPRESSED (`screenshot_only_loop.py:2456-2471`) only appends a history note; the model relaunched chrome in steps 7 AND 8 (20:47:00 / 20:47:02), burning full observe+think rounds. Toggle-stop clicks DO count (`guard_hits` at :2515), relaunches don't. | 19:21 Spotify run: 12+ suppressed actions, mission ran to step 20. | **~2 s per wasted step** |
 
 Healthy parts (do NOT touch): per-step think on `gemini-3.5-flash` is 1.3–1.7 s, observe is ~120 ms, screenshot already capped at ~300 KB, screenshot+UIA already run concurrently. The screenshot-loop *pattern* itself is the industry standard (Anthropic Computer Use, OpenAI Operator) — no fundamental redesign needed; the waste is in the plumbing around it.
 
-**Expected outcome:** "öffne Chrome (und gehe auf x.com)" ≈ 1–2 s (DIRECT, zero LLM). Genuine CU-loop missions ≈ 1.5–2 s per step (think-bound), i.e. a 6-step mission lands at ~12 s instead of 3 minutes.
+**Expected outcome:** "öffne Chrome (und gehe auf x.com)" ≈ 1–2 s (DIRECT, zero LLM). Genuine CU-loop missions ≈ 1.5–2 s per step (think-bound), i.e. a 6-step mission lands at ~12 s instead of 3 minutes. <!-- i18n-allow: quoted German voice-command evidence -->
 
 ---
 
@@ -72,7 +72,7 @@ async def test_progress_announcement_does_not_block_the_loop() -> None:
     ctx = dataclasses.replace(ctx, bus=bus)
 
     start = time.monotonic()
-    await run_loop(ctx, "öffne chrome und gehe auf x.com")
+    await run_loop(ctx, "öffne chrome und gehe auf x.com")  # i18n-allow: German voice-command test fixture
     elapsed = time.monotonic() - start
 
     # With the old blocking publish, two announced state changes cost
@@ -153,7 +153,7 @@ git commit -m "fix(cu): fire progress announcements without awaiting TTS (6-10s/
 
 ### Task 2: Deterministic DIRECT fast-path for browser/URL goals
 
-"öffne chrome und gehe auf x.com", "geh auf x.com", "open firefox and go to github.com" must resolve to a single `open_app` tool call (browsers accept a URL argv on all three OSes; `open_app` already whitelists `http(s)://` app_names and supports `arguments` — `open_app.py:154,191`). Zero LLM calls, no CU loop.
+"öffne chrome und gehe auf x.com", "geh auf x.com", "open firefox and go to github.com" must resolve to a single `open_app` tool call (browsers accept a URL argv on all three OSes; `open_app` already whitelists `http(s)://` app_names and supports `arguments` — `open_app.py:154,191`). Zero LLM calls, no CU loop. <!-- i18n-allow: quoted German voice-command example -->
 
 **Files:**
 - Modify: `jarvis/brain/local_action_gate.py` (new regexes + branch in `match_local_action` BEFORE the `_matches_visual_target` / `_looks_like_desktop_control` checks, i.e. before line 596)
@@ -164,7 +164,7 @@ git commit -m "fix(cu): fire progress announcements without awaiting TTS (6-10s/
 ```python
 class TestBrowserUrlFastPath:
     def test_open_browser_and_goto_site_is_direct(self) -> None:
-        plan = match_local_action("öffne chrome und gehe auf x.com")
+        plan = match_local_action("öffne chrome und gehe auf x.com")  # i18n-allow: German voice-command test fixture
         assert plan is not None
         assert plan.mode is LocalActionMode.DIRECT
         call = plan.tool_calls[0]
@@ -187,11 +187,11 @@ class TestBrowserUrlFastPath:
         assert plan.tool_calls[0].args["app_name"] == "https://x.com"
 
     def test_existing_url_scheme_is_preserved(self) -> None:
-        plan = match_local_action("öffne chrome und gehe auf https://x.com")
+        plan = match_local_action("öffne chrome und gehe auf https://x.com")  # i18n-allow: German voice-command test fixture
         assert plan.tool_calls[0].args["arguments"] == "https://x.com"
 
     def test_negated_open_stays_off_the_fast_path(self) -> None:
-        plan = match_local_action("öffne chrome bitte nicht und geh auf x.com")
+        plan = match_local_action("öffne chrome bitte nicht und geh auf x.com")  # i18n-allow: German voice-command test fixture
         assert plan is None or plan.mode is not LocalActionMode.DIRECT
 
     def test_howto_question_stays_brain(self) -> None:
@@ -201,7 +201,7 @@ class TestBrowserUrlFastPath:
     def test_browser_with_followup_work_still_goes_to_cu(self) -> None:
         # Site + further UI work must keep the CU loop (it has to act there).
         plan = match_local_action(
-            "öffne chrome und gehe auf x.com und poste einen tweet"
+            "öffne chrome und gehe auf x.com und poste einen tweet"  # i18n-allow: German voice-command test fixture
         )
         assert plan is not None
         assert plan.mode is LocalActionMode.COMPUTER_USE
@@ -227,9 +227,9 @@ _BROWSER_TOKENS = (
 #: A bare domain or URL ("x.com", "https://github.com/foo"). Deliberately
 #: requires a dot + TLD so "geh auf nummer sicher" never matches.
 _SITE_RE = r"(?P<site>(?:https?://)?[\w-]+(?:\.[\w-]+)+(?:/\S*)?)"
-_GOTO_VERBS = r"(?:geh(?:e|st)?\s+(?:auf|zu|nach)|navigiere\s+(?:zu|auf|nach)|go\s+to|navigate\s+to|oeffne|open)"
+_GOTO_VERBS = r"(?:geh(?:e|st)?\s+(?:auf|zu|nach)|navigiere\s+(?:zu|auf|nach)|go\s+to|navigate\s+to|oeffne|open)"  # i18n-allow: German input vocabulary
 
-#: "oeffne chrome und gehe auf x.com" — browser named, site named, and
+#: "oeffne chrome und gehe auf x.com" — browser named, site named, and  # i18n-allow: quoted German input example
 #: NOTHING after the site (further work means the CU loop must drive the UI).
 _OPEN_BROWSER_GOTO_RE = re.compile(
     r"^(?:hey\s+)?(?:jarvis[,\s]+)?(?:oeffne|starte|open|start|launch)\b[^.]*?"
@@ -251,7 +251,7 @@ def _site_to_url(site: str) -> str:
 
 def _match_browser_url_fast_path(normalized: str) -> LocalActionPlan | None:
     """Deterministic browser+URL launch — the single biggest CU-latency win:
-    'oeffne chrome und gehe auf x.com' is ONE argv launch, not a vision-LLM
+    'oeffne chrome und gehe auf x.com' is ONE argv launch, not a vision-LLM  # i18n-allow: quoted German input example
     mission (2026-06-10: the LLM loop took ~3 min for exactly this goal)."""
     if _OPEN_NEGATION_RE.search(normalized):
         return None
@@ -289,7 +289,7 @@ Wire it into `match_local_action` immediately BEFORE the `_matches_visual_target
         return browser_url
 ```
 
-The `$`-anchored regexes guarantee the "…und poste einen tweet" case falls through to the existing `COMPUTER_USE` branches unchanged. Reuse the existing `_OPEN_NEGATION_RE` / `_OPEN_INSTRUCTIONAL_RE` constants (both already exist in this module from the 2026-06-09 work); if `_OPEN_NEGATION_RE` covers only German, extend it with `\bnot\b|\bdon'?t\b|\bnever\b`.
+The `$`-anchored regexes guarantee the "…und poste einen tweet" case falls through to the existing `COMPUTER_USE` branches unchanged. <!-- i18n-allow: quoted German input example --> Reuse the existing `_OPEN_NEGATION_RE` / `_OPEN_INSTRUCTIONAL_RE` constants (both already exist in this module from the 2026-06-09 work); if `_OPEN_NEGATION_RE` covers only German, extend it with `\bnot\b|\bdon'?t\b|\bnever\b`.
 
 - [ ] **Step 4: Verify the launch actually works with a URL argument (manual, once)**
 
@@ -421,7 +421,7 @@ async def test_open_app_done_is_verified_without_an_llm_call() -> None:
         '{"action": "done"}',
     ])
     ctx = make_ctx(brain, titles=["Program Manager", "New Tab - Google Chrome"])
-    results = await run_loop(ctx, "öffne chrome")
+    results = await run_loop(ctx, "öffne chrome")  # i18n-allow: German voice-command test fixture
     assert results[-1].exit_code == 0
     # 2 think calls only — NO third judge call.
     assert brain.calls == 2
@@ -441,9 +441,9 @@ Above `_verify_goal_done`, add:
 ```python
 _OPEN_GOAL_RE = re.compile(
     r"^(?:hey\s+)?(?:jarvis[,\s]+)?"
-    r"(?:oeffne|öffne|öffnest|starte|open|start|launch)\s+"
-    r"(?:mir\s+|mal\s+|bitte\s+|einmal\s+|den\s+|die\s+|das\s+|my\s+|the\s+)*"
-    r"(?P<app>[\w .-]{2,40}?)\s*(?:fuer mich|für mich|bitte)?\s*[.!?]?\s*$",
+    r"(?:oeffne|öffne|öffnest|starte|open|start|launch)\s+"  # i18n-allow: German input vocabulary
+    r"(?:mir\s+|mal\s+|bitte\s+|einmal\s+|den\s+|die\s+|das\s+|my\s+|the\s+)*"  # i18n-allow: German input vocabulary
+    r"(?P<app>[\w .-]{2,40}?)\s*(?:fuer mich|für mich|bitte)?\s*[.!?]?\s*$",  # i18n-allow: German input vocabulary
     re.I,
 )
 
@@ -581,7 +581,7 @@ async def test_open_app_waits_for_the_window_before_next_think() -> None:
     ctx = make_ctx(brain, titles=[
         "Program Manager", "Program Manager", "New Tab - Google Chrome",
     ])
-    results = await run_loop(ctx, "öffne chrome")
+    results = await run_loop(ctx, "öffne chrome")  # i18n-allow: German voice-command test fixture
     assert results[-1].exit_code == 0
     # Without the settle probe, think #2 sees 'Program Manager' and the
     # model would have to issue a third action. With it, 2 calls suffice.
@@ -634,7 +634,7 @@ async def test_mission_profile_summary_is_emitted() -> None:
         '{"action": "done"}',
     ])
     ctx = make_ctx(brain, titles=["New Tab - Google Chrome"] * 4)
-    results = await run_loop(ctx, "öffne chrome")
+    results = await run_loop(ctx, "öffne chrome")  # i18n-allow: German voice-command test fixture
     stderr = "".join(r.stderr or "" for r in results)
     assert "[cu] mission profile:" in stderr
     assert "think=" in stderr and "observe=" in stderr and "act=" in stderr
@@ -694,9 +694,9 @@ git commit -m "feat(cu): per-phase mission profile + loop-overhead regression ne
 
 - [ ] **Step 1: Restart the app** (working tree is the live import path; restart suffices — `run.bat --debug`).
 - [ ] **Step 2: Voice/chat probes, stopwatch + log:**
-  1. "Öffne Chrome" → expect DIRECT, < 2 s, no `[cu]` lines.
-  2. "Öffne Chrome und gehe auf x.com" → expect DIRECT (Task 2), < 3 s.
-  3. "Öffne Chrome und such auf x.com nach Elon und like den ersten Post" → expect CU loop; read the new `[cu] mission profile:` line — `announce` blocking must be gone (step cadence ≈ think time ~1.5 s), total ≈ steps × 2 s.
+  1. "Öffne Chrome" → expect DIRECT, < 2 s, no `[cu]` lines. <!-- i18n-allow: quoted German voice-command probe -->
+  2. "Öffne Chrome und gehe auf x.com" → expect DIRECT (Task 2), < 3 s. <!-- i18n-allow: quoted German voice-command probe -->
+  3. "Öffne Chrome und such auf x.com nach Elon und like den ersten Post" → expect CU loop; read the new `[cu] mission profile:` line — `announce` blocking must be gone (step cadence ≈ think time ~1.5 s <!-- i18n-allow: quoted German voice-command probe -->), total ≈ steps × 2 s.
 - [ ] **Step 3: Run `python scripts/cu_bench.py` (or its documented invocation) and record the numbers in this plan file under a "Results" heading.**
 - [ ] **Step 4: Full sweep:** `pytest tests/unit/harness tests/unit/brain -q` green; `ruff check jarvis/`.
 

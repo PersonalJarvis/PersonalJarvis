@@ -1,7 +1,7 @@
-"""Tests fuer Pre/Post-Check-Runner und Built-In-Checks (Phase 8.1).
+"""Tests for the pre/post check runner and built-in checks (Phase 8.1).
 
-Plan-Referenz: §6.1 Akzeptanzkriterium 2 — alle 5 Built-Ins,
-Pre-Fail-Short-Circuit.
+Plan reference: §6.1 acceptance criterion 2 — all 5 built-ins,
+pre-fail short circuit.
 """
 from __future__ import annotations
 
@@ -27,27 +27,27 @@ from jarvis.core.review.checks import (
 
 
 def test_task_not_empty_positive() -> None:
-    """Task >10 Chars (gestrippt) ist ok."""
-    result = task_not_empty("schreib mir ein Skript das X tut")
+    """Task >10 chars (stripped) is ok."""
+    result = task_not_empty("write me a script that does X")
     assert result.ok is True
     assert result.name == "task_not_empty"
 
 
 def test_task_not_empty_negative_short() -> None:
-    """Task <=10 Chars (gestrippt) wird abgelehnt."""
+    """Task <=10 chars (stripped) is rejected."""
     result = task_not_empty("hi")
     assert result.ok is False
     assert "task too short" in result.message
 
 
 def test_task_not_empty_negative_only_whitespace() -> None:
-    """Whitespace-only zaehlt als 0 Chars."""
+    """Whitespace-only counts as 0 chars."""
     result = task_not_empty("            \n\t   ")
     assert result.ok is False
 
 
 def test_task_not_empty_boundary_exactly_11() -> None:
-    """Schwellwert ist `> 10`, also 11 ist ok, 10 nicht."""
+    """Threshold is `> 10`, so 11 is ok, 10 is not."""
     assert task_not_empty("a" * 11).ok is True
     assert task_not_empty("a" * 10).ok is False
 
@@ -80,7 +80,7 @@ def test_output_within_budget_positive() -> None:
 
 
 def test_output_within_budget_negative_at_limit() -> None:
-    """`<` (strikt) — bei genau `max_output_chars` muss abgelehnt werden."""
+    """`<` (strict) — at exactly `max_output_chars` it must be rejected."""
     check = make_output_budget_check(100)
     assert check("a" * 100).ok is False
 
@@ -130,13 +130,13 @@ def test_no_stub_code_negative_each_marker(marker: str) -> None:
 
 
 def test_no_stub_code_inline_comment_allowed() -> None:
-    """Inline-Kommentare wie `x = 1  # TODO` sind keine Stub-Lines."""
+    """Inline comments like `x = 1  # TODO` are not stub lines."""
     code = "x = 1  # TODO: add docstring later\n"
     assert no_stub_code(code).ok is True
 
 
 def test_no_stub_code_word_in_string_allowed() -> None:
-    """`pass` als Substring in legitimem Code ist erlaubt."""
+    """`pass` as a substring in legitimate code is allowed."""
     code = 'msg = "Please pass the test"\n'
     assert no_stub_code(code).ok is True
 
@@ -175,14 +175,14 @@ def test_valid_json_negative_empty() -> None:
 
 def test_pre_runner_all_pass() -> None:
     runner = PreCheckRunner([task_not_empty])
-    result = runner.run("ein hinreichend langer Task")
+    result = runner.run("a sufficiently long task")
     assert result.ok is True
     assert result.failed is None
     assert len(result.executed) == 1
 
 
 def test_pre_runner_short_circuit() -> None:
-    """Plan-§6.1 AC: zweiter Check wird nicht aufgerufen wenn erster failt."""
+    """Plan §6.1 AC: the second check is not called when the first fails."""
     calls: list[str] = []
 
     def first(payload: str) -> CheckResult:
@@ -198,12 +198,12 @@ def test_pre_runner_short_circuit() -> None:
     assert result.ok is False
     assert result.failed is not None
     assert result.failed.name == "first"
-    assert calls == ["first"]  # second wurde NICHT aufgerufen
+    assert calls == ["first"]  # second was NOT called
     assert len(result.executed) == 1
 
 
 def test_pre_runner_empty_list_passes() -> None:
-    """Leere Check-Liste = trivial bestanden."""
+    """Empty check list = trivially passed."""
     runner = PreCheckRunner([])
     result = runner.run("anything")
     assert result.ok is True
@@ -216,7 +216,7 @@ def test_pre_runner_empty_list_passes() -> None:
 
 
 def test_post_runner_short_circuit_at_third() -> None:
-    """Short-Circuit funktioniert auch im PostRunner, an beliebiger Stelle."""
+    """Short circuit also works in the PostRunner, at any position."""
     calls: list[str] = []
 
     def make(name: str, ok: bool) -> Check:
@@ -236,7 +236,7 @@ def test_post_runner_short_circuit_at_third() -> None:
 
 
 def test_post_runner_with_real_builtins() -> None:
-    """End-to-End mit drei echten Built-Ins."""
+    """End-to-end with three real built-ins."""
     runner = PostCheckRunner(
         [output_not_empty, make_output_budget_check(1000), no_stub_code]
     )
@@ -251,32 +251,32 @@ def test_post_runner_with_real_builtins() -> None:
 
 
 def test_post_runner_with_valid_json_optional() -> None:
-    """valid_json ist nur aktiv, wenn der Caller ihn in den Runner einfuegt."""
+    """valid_json is only active when the caller adds it to the runner."""
     runner_with_json = PostCheckRunner([output_not_empty, valid_json])
     assert runner_with_json.run('{"x": 1}').ok is True
     assert runner_with_json.run("not json").ok is False
 
     runner_without_json = PostCheckRunner([output_not_empty])
-    assert runner_without_json.run("not json").ok is True  # optional uebersprungen
+    assert runner_without_json.run("not json").ok is True  # optional, skipped
 
 
 # ----------------------------------------------------------------------
-# Smoke: Built-In-Checks zusammen mit json-Loads-Konsistenz
+# Smoke: built-in checks together with json.loads consistency
 # ----------------------------------------------------------------------
 
 
 def test_valid_json_negative_message_format() -> None:
-    """Sicherstellen, dass die Fehler-Message eine Zeilennummer enthaelt."""
+    """Ensure that the error message contains a line number."""
     result = valid_json("{ invalid")
     assert result.ok is False
-    # JSONDecodeError liefert mind. die Position; wir testen dass das nicht
-    # explodiert wenn man sie formatiert.
+    # JSONDecodeError at least provides the position; we test that this
+    # doesn't blow up when formatted.
     assert isinstance(result.message, str)
     assert "line" in result.message
 
 
 def test_valid_json_with_real_verdict_json_passes() -> None:
-    """Realistischer Reviewer-Output ist gueltiges JSON."""
+    """Realistic reviewer output is valid JSON."""
     payload = json.dumps(
         {"status": "pass", "summary": "ok", "issues": [], "score": 1.0}
     )

@@ -143,13 +143,13 @@ async def scripted() -> None:
 
 # --- interactive REPL -----------------------------------------------------------
 
-INTERACTIVE_HELP = """\
-Type a prompt and press Enter. Jarvis answers instantly; the worker runs in the
-background (its log is the |bg| line). Special commands:
-    \\boundary   surface any pending background correction (simulates end-of-turn)
-    \\quit       exit
-Try:  'spiel etwas Musik'  ·  'trag morgen einen Termin ein'  ·  'Schreib Max eine Mail'
-"""
+INTERACTIVE_HELP = (
+    "Type a prompt and press Enter. Jarvis answers instantly; the worker runs in the\n"
+    "background (its log is the |bg| line). Special commands:\n"
+    "    \\boundary   surface any pending background correction (simulates end-of-turn)\n"
+    "    \\quit       exit\n"
+    "Try:  'spiel etwas Musik'  ·  'trag morgen einen Termin ein'  ·  'Schreib Max eine Mail'\n"  # i18n-allow: test content — user voice utterance DE
+)
 
 
 def interactive() -> None:

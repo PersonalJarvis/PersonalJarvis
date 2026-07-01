@@ -1,9 +1,9 @@
-"""SQLAlchemy-Models.
+"""SQLAlchemy models.
 
 Phase C: Identity + PushLog.
 Phase D: Friend + PairToken + ActivityItem + Reaction.
 
-Schema bleibt additiv via ``create_all`` — keine Migration noetig.
+The schema stays additive via ``create_all`` — no migration needed.
 """
 from __future__ import annotations
 
@@ -30,11 +30,11 @@ def _utc_now() -> datetime:
 
 
 class Identity(Base):
-    """Eine registrierte Jarvis-Instanz (User).
+    """A registered Jarvis instance (user).
 
-    ``pubkey`` ist der einzige Identitaets-Anker (Plan §C-Decision-2: Pubkey-
-    only). Der ``display_name`` darf sich pro Push aendern — er wird
-    deshalb auch hier geupdatet und ist nicht der Primary Key.
+    ``pubkey`` is the only identity anchor (Plan §C-Decision-2: pubkey
+    only). The ``display_name`` may change per push — that's why it's
+    updated here too and is not the primary key.
     """
 
     __tablename__ = "identity"
@@ -47,12 +47,12 @@ class Identity(Base):
 
 
 class PushLog(Base):
-    """Audit-Log eines erfolgreichen Sync-Calls.
+    """Audit log of a successful sync call.
 
-    Wir speichern bewusst NUR Metadaten (welcher Pubkey, wann, wie viele
-    Tage / Achievements im Payload), nicht den Payload selbst. Phase D wird
-    den Payload in `friends_activity` umsortieren — bis dahin ist der
-    Sync-Inhalt nur ein Acknowledge.
+    We deliberately store ONLY metadata (which pubkey, when, how many
+    days / achievements in the payload), not the payload itself. Phase D
+    will re-sort the payload into `friends_activity` — until then the
+    sync content is just an acknowledge.
     """
 
     __tablename__ = "push_log"
@@ -73,12 +73,12 @@ Index("ix_pushlog_pubkey_received", PushLog.pubkey, PushLog.received_at)
 # ----------------------------------------------------------------------
 
 class Friend(Base):
-    """Freundschaftsverbindung des Owners zu einem anderen Backend.
+    """The owner's friendship link to another backend.
 
-    Single-Tenant-Modell (siehe Plan §C-Decision-2): es gibt **eine**
-    Identity pro Backend, ``owner_pubkey`` ist also derselbe fuer alle
-    ``Friend``-Rows. Wir speichern ihn trotzdem explizit, damit das Schema
-    in der Zukunft skalierbar ist.
+    Single-tenant model (see Plan §C-Decision-2): there is **one**
+    identity per backend, so ``owner_pubkey`` is the same for all
+    ``Friend`` rows. We still store it explicitly so the schema stays
+    scalable in the future.
     """
 
     __tablename__ = "friends"
@@ -96,10 +96,10 @@ class Friend(Base):
 
 
 class PairToken(Base):
-    """Time-limited Pair-Token. Plan §D-Decision-1: 10 min Gueltigkeit.
+    """Time-limited pair token. Plan §D-Decision-1: 10 min validity.
 
-    Einmal-Verwendung: ``used_at`` wird beim Accept gesetzt, ein zweiter
-    Accept mit demselben Token failed mit 401.
+    Single use: ``used_at`` is set on accept, a second accept with the
+    same token fails with 401.
     """
 
     __tablename__ = "pair_tokens"
@@ -114,15 +114,15 @@ class PairToken(Base):
 
 
 class ActivityItem(Base):
-    """Eine Aktivitaet auf dem Owner-Board: achievement_unlocked, story, …
+    """An activity on the owner's board: achievement_unlocked, story, …
 
-    ``visibility`` ist die Plan-§D-Sichtbarkeitsachse: ``private`` (nur
-    Owner), ``friends`` (paired Friends), ``public`` (jeder).
+    ``visibility`` is the Plan-§D visibility axis: ``private`` (owner
+    only), ``friends`` (paired friends), ``public`` (everyone).
 
-    ``payload`` ist ein JSON-String mit kind-spezifischem Inhalt — z.B.
-    ``{"achievement_id": "tool_master"}`` oder ``{"text": "what I worked on"}``.
+    ``payload`` is a JSON string with kind-specific content — e.g.
+    ``{"achievement_id": "tool_master"}`` or ``{"text": "what I worked on"}``.
 
-    ``expires_at`` ist nur fuer Stories gesetzt (24 h, Plan §D).
+    ``expires_at`` is only set for stories (24 h, Plan §D).
     """
 
     __tablename__ = "activity_items"
@@ -142,11 +142,11 @@ Index("ix_activity_visibility_created", ActivityItem.visibility, ActivityItem.cr
 
 
 class Reaction(Base):
-    """Reaktion auf einen Activity-Item.
+    """A reaction to an activity item.
 
-    Plan §D §0: Owner sieht eigene Reaction-Counts mit Zahl, andere User
-    sehen nur die Reaction-Icons. Die Tabelle speichert die Rohdaten —
-    die Visibility-Logik passiert beim Query.
+    Plan §D §0: the owner sees their own reaction counts as a number,
+    other users only see the reaction icons. The table stores the raw
+    data — the visibility logic happens at query time.
     """
 
     __tablename__ = "reactions"

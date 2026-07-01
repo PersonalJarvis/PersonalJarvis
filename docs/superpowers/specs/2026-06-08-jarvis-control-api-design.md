@@ -80,7 +80,7 @@ A single FastAPI dependency `require_control_key(request)` on the `/api/control/
 ## 5. API key lifecycle
 
 - **Generation:** `"jctl_" + secrets.token_urlsafe(32)` (256-bit, greppable prefix à la `ghp_`).
-- **Storage (cross-platform, mandatory headless fallback):** primary `cfg.set_secret("jarvis_control_api_key", key)` (Credential Manager / Keychain / Secret Service under `KEYRING_SERVICE="personal-jarvis"`). **Check the return value** — `set_secret` silently returns False on headless Linux. Fallback: `data/.control_api_key`, `0600` on POSIX / per-user NTFS ACL on Windows. Read order: keyring → file → `JARVIS_CONTROL_API_KEY` env. Never assume keyring persisted. Never in `jarvis.toml` / `config-soll.json` / committed `.env` (AP-12).
+- **Storage (cross-platform, mandatory headless fallback):** primary `cfg.set_secret("jarvis_control_api_key", key)` (Credential Manager / Keychain / Secret Service under `KEYRING_SERVICE="personal-jarvis"`). **Check the return value** — `set_secret` silently returns False on headless Linux. Fallback: `data/.control_api_key`, `0600` on POSIX / per-user NTFS ACL on Windows. Read order: keyring → file → `JARVIS_CONTROL_API_KEY` env. Never assume keyring persisted. Never in `jarvis.toml` / `config-soll.json` / committed `.env` (AP-12). <!-- i18n-allow: literal filename identifier -->
 - **Bootstrap:** generate-once **before** the FastAPI app is created. Idempotent — reuse an existing key, never silently regenerate (would lock out cached agents). Wizard shows "stored ✓" (mirrors `jarvis_admin_hmac`, `wizard.py:187-194`). Headless boot prints once to stdout.
 - **Copy/display:** `GET /api/control/api-key` → full key to the same-origin panel; `robustCopy()` (`clipboard.ts:24`, WebView2-safe). Logs/lists show only `jctl_…last4`.
 - **Rotation:** `POST /api/control/api-key/rotate {confirm:true}` requires the current Bearer (or same-origin loopback + optional admin_password_hash). New → persist → old invalidated by overwrite (single-key model). Emits `ControlApiKeyRotated`. No TTL in v1.
@@ -98,7 +98,7 @@ A single FastAPI dependency `require_control_key(request)` on the `/api/control/
 One new built-in skill `control-api` (`jarvis/skills/builtin/control-api/SKILL.md`), added to `BUILTIN_SKILL_NAMES` (`builtin/__init__.py`).
 
 - `state: validated` — **AP-15 critical**: NOT `active` (would bypass review) and NOT left `draft` (would never trigger). Loader maps None→VALIDATED, which `list_active()` includes.
-- `intent_verbs: [switch, change, set, wechsel, stell, ändere]`, `intent_objects: [language, sprache, provider, brain, voice, stimme, theme, setting, einstellung]` — domain-agnostic verbs + config nouns, disjoint from the plugin-paired domain nouns (no capability collision).
+- `intent_verbs: [switch, change, set, wechsel, stell, ändere]`, `intent_objects: [language, sprache, provider, brain, voice, stimme, theme, setting, einstellung]` — domain-agnostic verbs + config nouns, disjoint from the plugin-paired domain nouns (no capability collision). <!-- i18n-allow: German input vocabulary -->
 - Triggers: **anchored narrow** regex, `language: [de, en]`. Never broad `^(change|switch)`.
 - `requires_tools: []` — skill bodies are Supervisor markdown, cannot make HTTP calls. The skill is **documentation**: it teaches the router to call `set_config_value` (countering force-spawn via `run_skill` preference, `router.py:112-118`) **and** gives Codex CLI / Claude Code a copy-paste `curl` recipe + a pointer to `GET /api/control/allowlist`.
 - Tests: parity (in `BUILTIN_SKILL_NAMES`), bootstrap-drift (no drift on second boot), AP-15 (loads VALIDATED not ACTIVE).
@@ -109,7 +109,7 @@ One new built-in skill `control-api` (`jarvis/skills/builtin/control-api/SKILL.m
 
 - **THE cloud-first blocker:** config path is hardcoded `PROJECT_ROOT / "jarvis.toml"` (`config.py:46`) with no env override. Add a `JARVIS_CONFIG` env var honored by `load_config` + `AtomicConfigWriter`.
 - Keyring fails silently on headless Linux → file fallback wired from day one.
-- 3-layer persist's ENV layer is `winreg` (Windows-only) → no-op elsewhere; add `brain.reply_language` to the drift-soll layer so the Windows drift-guard does not revert a switch within 5 min (BUG-010).
+- 3-layer persist's ENV layer is `winreg` (Windows-only) → no-op elsewhere; add `brain.reply_language` to the drift-soll layer so the Windows drift-guard does not revert a switch within 5 min (BUG-010). <!-- i18n-allow: literal identifier ("soll" = drift-guard target layer) -->
 - Desktop-only settings (overlay/bar/ducking) return `{applied:false, requires_ui:true}` on a VPS (reuse the 503/graceful pattern), never crash.
 - Control API is pure FastAPI + stdlib `secrets` + keyring (all in base) → boots on the slim Linux image unchanged. No new GUI dep.
 

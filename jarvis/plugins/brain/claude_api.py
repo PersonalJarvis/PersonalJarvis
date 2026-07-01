@@ -1,4 +1,4 @@
-"""Claude via direkter Anthropic-API (Standard-API-Key).
+"""Claude via the direct Anthropic API (standard API key).
 
 Keyring/ENV: `anthropic_api_key` / `ANTHROPIC_API_KEY`.
 """
@@ -32,8 +32,8 @@ class ClaudeAPIBrain:
             ep = cfg.resolve_provider_endpoint("claude-api")
             if not ep.credential:
                 raise RuntimeError(
-                    "Kein Anthropic-API-Key gefunden. Bitte via Wizard setzen oder "
-                    "ANTHROPIC_API_KEY in ENV."
+                    "No Anthropic API key found. Please set one via the wizard or "
+                    "ANTHROPIC_API_KEY in the environment."
                 )
             from anthropic import AsyncAnthropic
             # max_retries=0 → BrainManager-Fallback greift schneller bei 429
@@ -49,6 +49,6 @@ class ClaudeAPIBrain:
             yield delta
 
     def estimate_cost(self, req: BrainRequest) -> float:
-        # Grobe Claude-Opus-Schätzung: $15/M-in + $75/M-out
+        # Rough Claude-Opus estimate: $15/M-in + $75/M-out
         in_tokens = sum(len(str(m.content)) for m in req.messages) // 4
         return (in_tokens * 15 + req.max_tokens * 75) / 1_000_000

@@ -1,4 +1,4 @@
-"""Tests fuer SQLite-WAL Event-Store + persist-vor-publish-Atomicitaet."""
+"""Tests for the SQLite-WAL event store + persist-before-publish atomicity."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -25,7 +25,7 @@ from jarvis.missions.ids import uuid7_str
 
 @pytest_asyncio.fixture
 async def open_store(tmp_missions_db: Path):
-    """Geoeffneter MissionEventStore + Bus-Pair, automatisches close()."""
+    """Opened MissionEventStore + bus pair, automatic close()."""
     bus = MissionBus()
     store = MissionEventStore(tmp_missions_db, bus)
     await store.open()
@@ -64,7 +64,7 @@ async def test_open_creates_db_file(tmp_missions_db: Path) -> None:
 
 async def test_open_is_idempotent(open_store) -> None:
     store, _bus = open_store
-    await store.open()  # zweiter Aufruf darf nicht crashen
+    await store.open()  # second call must not crash
     assert store.conn is not None
 
 
@@ -90,7 +90,7 @@ async def test_seq_monotonically_increasing(open_store) -> None:
 async def test_append_rejects_envelope_with_seq_already_set(open_store) -> None:
     store, _bus = open_store
     env = _envelope().model_copy(update={"seq": 99})
-    with pytest.raises(ValueError, match="seq muss None sein"):
+    with pytest.raises(ValueError, match="seq must be None"):
         await store.append_and_publish(env)
 
 
@@ -221,7 +221,7 @@ async def test_persist_survives_when_bus_publish_raises(open_store) -> None:
 
 
 async def test_recovery_can_replay_unpublished_event(open_store) -> None:
-    """Nach simuliertem Crash: events_since liefert das Event zum Re-Broadcast."""
+    """After a simulated crash: events_since returns the event for re-broadcast."""
     store, bus = open_store
     mid = uuid7_str()
     env = _envelope(mission_id=mid, prompt="lost-publish")

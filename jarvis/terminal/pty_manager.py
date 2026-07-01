@@ -36,7 +36,7 @@ ClosedCallback = Callable[[str, int], Awaitable[None]]
 
 @dataclass(slots=True)
 class PtySession:
-    """Haelt State fuer eine laufende PTY-Session."""
+    """Holds state for a running PTY session."""
 
     terminal_id: str
     shell_id: str
@@ -47,7 +47,7 @@ class PtySession:
 
 
 class PtyManager:
-    """Pool aller aktiven PTY-Sessions des Web-Servers."""
+    """Pool of all active PTY sessions of the web server."""
 
     def __init__(self) -> None:
         self._sessions: dict[str, PtySession] = {}
@@ -115,7 +115,7 @@ class PtyManager:
 
         reader_thread.start()
         logger.info(
-            "PTY gespawned",
+            "PTY spawned",
             terminal_id=terminal_id,
             shell=shell_id,
             pid=pid,
@@ -125,7 +125,7 @@ class PtyManager:
         return session
 
     def write(self, terminal_id: str, data: str) -> bool:
-        """Schreibt Bytes an die PTY. Liefert False wenn Session unbekannt."""
+        """Writes bytes to the PTY. Returns False if the session is unknown."""
         session = self._get(terminal_id)
         if session is None:
             return False
@@ -133,7 +133,7 @@ class PtyManager:
             session.proc.write(data)
             return True
         except Exception as exc:  # noqa: BLE001
-            logger.warning("PTY-Write fehlgeschlagen", terminal_id=terminal_id, error=str(exc))
+            logger.warning("PTY write failed", terminal_id=terminal_id, error=str(exc))
             return False
 
     def resize(self, terminal_id: str, cols: int, rows: int) -> bool:
@@ -144,7 +144,7 @@ class PtyManager:
             session.proc.setwinsize(rows, cols)
             return True
         except Exception as exc:  # noqa: BLE001
-            logger.warning("PTY-Resize fehlgeschlagen", terminal_id=terminal_id, error=str(exc))
+            logger.warning("PTY resize failed", terminal_id=terminal_id, error=str(exc))
             return False
 
     def close(self, terminal_id: str) -> bool:
@@ -166,7 +166,7 @@ class PtyManager:
         return self._get(terminal_id) is not None
 
     # ------------------------------------------------------------------
-    # Intern
+    # Internal
     # ------------------------------------------------------------------
 
     def _get(self, terminal_id: str) -> PtySession | None:
@@ -179,8 +179,8 @@ class PtyManager:
             session.proc.terminate(force=True)
         except Exception:  # noqa: BLE001, S110 - terminate is best-effort cleanup
             pass
-        # Kein join — der Reader-Thread ist Daemon und laeuft evtl. noch
-        # durch einen letzten read(). Das ist ok; Python-Exit cleant ihn.
+        # No join — the reader thread is a daemon and may still be running
+        # through one last read(). That's fine; Python exit cleans it up.
 
     def _reader_loop(
         self,
@@ -202,7 +202,7 @@ class PtyManager:
                 except Exception as exc:  # noqa: BLE001
                     # Process closed / pipe broken — normal end of life.
                     logger.debug(
-                        "PTY-Read Exception (Prozess vermutlich tot)",
+                        "PTY read exception (process presumably dead)",
                         terminal_id=terminal_id,
                         error=str(exc),
                     )
@@ -219,12 +219,12 @@ class PtyManager:
                 else:
                     text = str(data)
 
-                # Callback in den asyncio-Loop dispatchen
+                # Dispatch the callback into the asyncio loop
                 fut = asyncio.run_coroutine_threadsafe(
                     on_output(terminal_id, text), loop
                 )
-                # Wir warten NICHT auf das Future — der Reader darf den
-                # Producer nicht throttlen. Das Future wird GC'd.
+                # We do NOT wait for the future — the reader must not
+                # throttle the producer. The future gets garbage-collected.
                 del fut
         finally:
             try:
@@ -236,10 +236,10 @@ class PtyManager:
                     on_closed(terminal_id, exit_code), loop
                 )
             except RuntimeError:
-                # Loop ist bereits geschlossen — Server-Shutdown
+                # Loop is already closed — server shutdown
                 pass
             logger.info(
-                "PTY-Reader beendet",
+                "PTY reader terminated",
                 terminal_id=terminal_id,
                 exit_code=exit_code,
             )

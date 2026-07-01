@@ -1,9 +1,9 @@
-"""Tests fuer ``jarvis.brain.vision_context`` (Phase 5).
+"""Tests for ``jarvis.brain.vision_context`` (Phase 5).
 
-Mandat-Anforderungen:
-  - 3 Cases: VS Code Foreground / Browser Foreground / Vision-Context disabled
-  - Failure-Mode 4: pywinauto-Crash -> kein Hint, kein Spawn-Block
-  - Latenz-Budget 250 ms — Timeout muss greifen
+Mandate requirements:
+  - 3 cases: VS Code foreground / browser foreground / vision-context disabled
+  - Failure mode 4: pywinauto crash -> no hint, no spawn block
+  - Latency budget 250 ms — timeout must kick in
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from jarvis.core.protocols import Observation
 
 
 # ---------------------------------------------------------------------------
-# Helper: Fake VisionEngine mit kontrollierbaren Ergebnissen
+# Helper: fake VisionEngine with controllable results
 # ---------------------------------------------------------------------------
 
 
@@ -65,14 +65,14 @@ class _FakeEngine:
 
 
 def test_is_enabled_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Default: kein ENV, kein Config-Flag -> deaktiviert."""
+    """Default: no ENV, no config flag -> disabled."""
     monkeypatch.delenv("JARVIS_VISION_CONTEXT", raising=False)
     assert is_enabled() is False
     assert is_enabled(VisionContextConfig()) is False
 
 
 def test_is_enabled_env_flag(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``JARVIS_VISION_CONTEXT=1`` aktiviert Phase 5 ueber den Config-Flag hinaus."""
+    """``JARVIS_VISION_CONTEXT=1`` enables Phase 5 regardless of the config flag."""
     monkeypatch.setenv("JARVIS_VISION_CONTEXT", "1")
     assert is_enabled() is True
     monkeypatch.setenv("JARVIS_VISION_CONTEXT", "true")
@@ -82,27 +82,27 @@ def test_is_enabled_env_flag(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_is_enabled_config_flag(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``[vision].context_hint_on_spawn = true`` aktiviert Phase 5."""
+    """``[vision].context_hint_on_spawn = true`` enables Phase 5."""
     monkeypatch.delenv("JARVIS_VISION_CONTEXT", raising=False)
     cfg = VisionContextConfig(context_hint_on_spawn=True)
     assert is_enabled(cfg) is True
 
 
 # ---------------------------------------------------------------------------
-# 3 Mandat-Cases: VS Code, Browser, Disabled
+# 3 mandate cases: VS Code, browser, disabled
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_vscode_foreground_yields_hint(monkeypatch: pytest.MonkeyPatch) -> None:
-    """VS Code Foreground + 'Bau ne Landingpage' -> hint enthaelt 'code'/'Visual Studio Code'."""
+    """VS Code foreground + 'Bau ne Landingpage' -> hint contains 'code'/'Visual Studio Code'."""  # i18n-allow: quotes the German test utterance under test
     monkeypatch.setenv("JARVIS_VISION_CONTEXT", "1")
     engine = _FakeEngine(
         window_title="phase5.py - Visual Studio Code",
         active_pid=4242,
     )
 
-    # psutil mocken — wir wollen kein echtes psutil-Lookup auf 4242.
+    # Mock psutil — we don't want a real psutil lookup on 4242.
     import jarvis.brain.vision_context as mod
     monkeypatch.setattr(mod, "_process_name_for_pid", lambda pid: "Code.exe")
 
@@ -115,7 +115,7 @@ async def test_vscode_foreground_yields_hint(monkeypatch: pytest.MonkeyPatch) ->
 
 @pytest.mark.asyncio
 async def test_browser_foreground_yields_hint(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Chrome Foreground + 'Recherchier X' -> hint enthaelt 'chrome'/'firefox'."""
+    """Chrome foreground + 'Recherchier X' -> hint contains 'chrome'/'firefox'."""  # i18n-allow: quotes the German test utterance under test
     monkeypatch.setenv("JARVIS_VISION_CONTEXT", "1")
     engine = _FakeEngine(
         window_title="ChatGPT - Google Chrome",
@@ -134,10 +134,10 @@ async def test_browser_foreground_yields_hint(monkeypatch: pytest.MonkeyPatch) -
 async def test_vision_context_disabled_returns_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Default (kein ENV, kein Config-Flag) -> None, kein Engine-Call.
+    """Default (no ENV, no config flag) -> None, no engine call.
 
-    Backward-Compat: ohne explizite Aktivierung kostet Phase 5 keinen
-    Latenz-Cycle.
+    Backward-compat: without explicit activation, Phase 5 costs no
+    latency cycle.
     """
     monkeypatch.delenv("JARVIS_VISION_CONTEXT", raising=False)
     engine = _FakeEngine(window_title="something", active_pid=1)
@@ -153,7 +153,7 @@ async def test_vision_context_disabled_returns_none(
 
 @pytest.mark.asyncio
 async def test_pywinauto_crash_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    """observe() crasht (Failure-Mode 4) -> kein Hint, kein Re-Raise."""
+    """observe() crashes (failure mode 4) -> no hint, no re-raise."""
     monkeypatch.setenv("JARVIS_VISION_CONTEXT", "1")
     engine = _FakeEngine(crash=RuntimeError("pywinauto: GetForegroundWindow failed"))
 
@@ -168,9 +168,9 @@ async def test_pywinauto_crash_returns_none(monkeypatch: pytest.MonkeyPatch) -> 
 
 @pytest.mark.asyncio
 async def test_timeout_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    """observe() haengt > timeout_s -> None, kein Hang."""
+    """observe() hangs > timeout_s -> None, no hang."""
     monkeypatch.setenv("JARVIS_VISION_CONTEXT", "1")
-    # Fake-Engine mit 500 ms-Delay, Timeout auf 50 ms gesetzt.
+    # Fake engine with a 500 ms delay, timeout set to 50 ms.
     engine = _FakeEngine(window_title="Slow App", active_pid=1, delay_s=0.5)
     cfg = VisionContextConfig(context_hint_on_spawn=True, timeout_s=0.05)
 
@@ -179,13 +179,13 @@ async def test_timeout_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Edge-Cases
+# Edge cases
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_no_window_no_pid_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Observation ohne window_title und ohne pid -> None statt Pseudo-Hint."""
+    """Observation without window_title and without pid -> None instead of a pseudo-hint."""
     monkeypatch.setenv("JARVIS_VISION_CONTEXT", "1")
     engine = _FakeEngine(window_title="", active_pid=None)
     hint = await get_active_window_hint(engine=engine)
@@ -194,7 +194,7 @@ async def test_no_window_no_pid_returns_none(monkeypatch: pytest.MonkeyPatch) ->
 
 @pytest.mark.asyncio
 async def test_window_only_no_process(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Nur window_title verfuegbar -> hint ohne Process-Name."""
+    """Only window_title available -> hint without a process name."""
     monkeypatch.setenv("JARVIS_VISION_CONTEXT", "1")
     engine = _FakeEngine(window_title="Nur Titel", active_pid=None)
     hint = await get_active_window_hint(engine=engine)

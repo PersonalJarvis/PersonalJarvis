@@ -307,7 +307,7 @@ class Tool(Protocol):
     """Einzelne Jarvis-Action (open_app, type_text, search_web, …)."""
 
     name: str
-    schema: dict[str, Any]  # JSON-Schema für LLM-Tool-Use
+    schema: dict[str, Any]  # JSON schema for LLM tool use
     description: str
     risk_tier: RiskTier
     # Optional extension (recognized by RiskTierEvaluator via getattr, NOT part
@@ -374,7 +374,7 @@ class ChannelAdapter(Protocol):
 
 
 # ----------------------------------------------------------------------
-# Plugin-Groups (für Registry/Discovery)
+# Plugin groups (for registry/discovery)
 # ----------------------------------------------------------------------
 
 PLUGIN_GROUPS: tuple[str, ...] = (
@@ -421,14 +421,14 @@ class UIANode:
 
 @dataclass(frozen=True, slots=True)
 class Observation:
-    """Ergebnis eines Vision-Observe-Calls — enthält Screenshot-Referenz und
-    gepruneden UIA-Tree. Eine Observation ist die Input-Einheit für den
+    """Result of a vision-observe call — contains a screenshot reference and
+    a pruned UIA tree. An Observation is the input unit for the
     Plan-Observe-Act-Verify-Loop.
     """
     trace_id: UUID
     timestamp_ns: int
-    screenshot_path: str | None       # Pfad zum Screenshot-Blob (PNG) oder None
-    screenshot_hash: str              # SHA256 des PNG-Inhalts (für Cache)
+    screenshot_path: str | None       # path to the screenshot blob (PNG) or None
+    screenshot_hash: str              # SHA256 of the PNG content (for cache)
     nodes: tuple[UIANode, ...] = field(default_factory=tuple)
     window_title: str = ""
     active_pid: int = 0
@@ -445,9 +445,9 @@ class Observation:
 
 @runtime_checkable
 class VisionSource(Protocol):
-    """Liefert Observations — entweder als reiner Screenshot, reiner UIA-Tree
-    oder als Kombination. Der `VisionEngine` entscheidet pro Frage, welche
-    Source billiger/robuster ist (Mandat Capability 1).
+    """Provides observations — either as a pure screenshot, a pure UIA tree,
+    or a combination. The `VisionEngine` decides per query which
+    source is cheaper/more robust (Capability 1 mandate).
     """
 
     name: str
@@ -459,7 +459,7 @@ class VisionSource(Protocol):
         cancel_token: CancelToken | None = None,
         window_title_filter: str | None = None,
     ) -> Observation:
-        """Fängt einen einzelnen Observation-Snapshot ab."""
+        """Captures a single observation snapshot."""
         ...
 
     async def close(self) -> None:
@@ -473,10 +473,10 @@ class VisionSource(Protocol):
 
 @runtime_checkable
 class CancelToken(Protocol):
-    """Propagiert Abbruch-Signale durch die Async-Hierarchie.
+    """Propagates cancellation signals through the async hierarchy.
 
-    Kein `asyncio.Event` direkt, weil wir zusätzlich `reason` und einen
-    stabilen Polling-Pfad brauchen. Die konkrete Implementierung liegt in
+    Not a direct `asyncio.Event`, because we additionally need `reason` and a
+    stable polling path. The concrete implementation lives in
     `jarvis.control.cancel`.
     """
 
@@ -487,7 +487,7 @@ class CancelToken(Protocol):
     def reason(self) -> str | None: ...
 
     async def wait_until_cancelled(self) -> None:
-        """Blockiert, bis `cancel()` aufgerufen wurde."""
+        """Blocks until `cancel()` is called."""
         ...
 
 
@@ -497,7 +497,7 @@ class CancelToken(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class CostRecord:
-    """Ein atomarer Kosten-Eintrag für einen Brain-Delta."""
+    """An atomic cost entry for one brain delta."""
     trace_id: UUID
     provider: str
     model: str
@@ -510,10 +510,10 @@ class CostRecord:
 
 @runtime_checkable
 class CostMeter(Protocol):
-    """Akkumuliert Kosten pro trace_id und prüft gegen Task-/Tagesbudget.
+    """Accumulates cost per trace_id and checks it against the task/daily budget.
 
-    Wird vom `BrainManager` nach jedem `BrainDelta` mit Usage gefüttert.
-    Bei Overrun wird via `CancelToken.cancel(reason=...)` gestoppt, siehe
+    Fed by `BrainManager` after every `BrainDelta` that carries usage.
+    On overrun it is stopped via `CancelToken.cancel(reason=...)`, see
     ADR-0006.
     """
 
@@ -534,29 +534,29 @@ class CostMeter(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class IntentClassification:
-    """Ergebnis des RouterBrain-Klassifikators.
+    """Result of the RouterBrain classifier.
 
-    Drei Routing-Klassen (siehe Plan §6 CL-3, Welle-4-Migration):
-    - `trivial`         → Hauptjarvis antwortet direkt (Smalltalk, Bestätigung).
-    - `direct_action`   → Hauptjarvis ruft ein First-Class-Tool auf (bash,
+    Three routing classes (see Plan §6 CL-3, Wave-4 migration):
+    - `trivial`         → main Jarvis answers directly (small talk, acknowledgement).
+    - `direct_action`   → main Jarvis calls a first-class tool (bash,
                           screenshot, multi_spawn).
-    - `spawn_worker`  → Task geht verbatim an die OpenClaw-Bridge via
-                          Mission-Manager. (vorher ``spawn_sub_jarvis``.)
+    - `spawn_worker`  → task goes verbatim to the OpenClaw bridge via
+                          the mission manager. (formerly ``spawn_sub_jarvis``.)
     """
     intent: Literal["trivial", "direct_action", "spawn_worker"]
     confidence: float                       # 0.0–1.0
-    suggested_tool: str | None = None       # für direct_action: "bash" | "screenshot" | ...
-    rationale: str = ""                     # 1-Satz-Begründung fürs Debug-Log
+    suggested_tool: str | None = None       # for direct_action: "bash" | "screenshot" | ...
+    rationale: str = ""                     # one-sentence rationale for the debug log
 
 
 @runtime_checkable
 class IntentClassifier(Protocol):
-    """Klassifiziert eine User-Utterance in eine der drei Routing-Klassen.
+    """Classifies a user utterance into one of the three routing classes.
 
-    Implementierungen liegen in `jarvis.brain.router` (RouterBrain nutzt
-    Tool-Choice des Low-Latency-Modells als implizite Klassifikation) — das
-    Protocol erlaubt alternative Fakes in Tests und spätere Heuristik-Varianten
-    ohne Extra-LLM-Call.
+    Implementations live in `jarvis.brain.router` (RouterBrain uses the
+    low-latency model's tool choice as an implicit classification) — the
+    Protocol allows alternative fakes in tests and later heuristic variants
+    without an extra LLM call.
     """
 
     name: str

@@ -1,13 +1,13 @@
-"""Standalone-Launcher für die Desktop-App.
+"""Standalone launcher for the desktop app.
 
-Aufruf:
-    python -m jarvis.ui.web.launcher           # volle Desktop-App
-    python -m jarvis.ui.web.launcher --headless # nur Backend, kein Fenster
+Usage:
+    python -m jarvis.ui.web.launcher           # full desktop app
+    python -m jarvis.ui.web.launcher --headless # backend only, no window
     python -m jarvis.ui.web.launcher --dev      # dev_mode=True
 
-Dieser Launcher ist BEWUSST getrennt von jarvis/__main__.py damit Phase 1a und
-Phase 1b parallel entwickelt werden können ohne Merge-Konflikte.
-Die Integration in __main__.py erfolgt in einem späteren Merge-Turn.
+This launcher is DELIBERATELY separate from jarvis/__main__.py so Phase 1a and
+Phase 1b can be developed in parallel without merge conflicts.
+Integration into __main__.py happens in a later merge turn.
 """
 
 from __future__ import annotations
@@ -51,32 +51,32 @@ def _ensure_windows_app_identity() -> None:
 
 
 def _is_brain_diagnostic(text: str) -> bool:
-    """True fuer Backend-Diagnosen, die nicht als Jarvis-Antwort gelten."""
+    """True for backend diagnostics that don't count as a Jarvis reply."""
     t = text.lower()
     return (
-        t.startswith("kein brain-key gefunden")
-        or t.startswith("keine brain-provider")
-        or t.startswith("brain nicht verfuegbar")
-        or t.startswith("brain-fehler")
+        t.startswith("kein brain-key gefunden")  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
+        or t.startswith("keine brain-provider")  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
+        or t.startswith("brain nicht verfuegbar")  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
+        or t.startswith("brain-fehler")  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
         or "api-key" in t
-        or "provider" in t and ("unerreichbar" in t or "nicht verfuegbar" in t)
+        or ("provider" in t and ("unerreichbar" in t or "nicht verfuegbar" in t))  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
     )
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="jarvis-launcher",
-        description="Phase 1a Desktop-App Standalone-Launcher",
+        description="Phase 1a desktop app standalone launcher",
     )
     p.add_argument(
         "--headless",
         action="store_true",
-        help="Nur FastAPI-Backend, kein Fenster (für Dev/Test)",
+        help="FastAPI backend only, no window (for dev/test)",
     )
     p.add_argument(
         "--dev",
         action="store_true",
-        help="Setzt ui.dev_mode=True (lädt Frontend von Vite-Dev-Server)",
+        help="Sets ui.dev_mode=True (loads the frontend from the Vite dev server)",
     )
     p.add_argument(
         "--port",
@@ -87,7 +87,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument(
         "--no-lock",
         action="store_true",
-        help="Kein Single-Instance-Lock (für parallele Dev-Sessions)",
+        help="No single-instance lock (for parallel dev sessions)",
     )
     return p.parse_args(argv)
 
@@ -432,8 +432,8 @@ async def _run_headless(args) -> int:
     server = WebServer(cfg)
     _lx_mark("webserver_ctor")
 
-    # Core-State an die App hängen + MessageSent-Subscriber — identisch zur
-    # Desktop-App-Verdrahtung. Wichtig: source_layer-Filter gegen Loop.
+    # Attach core state to the app + MessageSent subscriber — identical to the
+    # desktop-app wiring. Important: the source_layer filter guards against a loop.
     supervisor = Supervisor(bus=server.bus)
     # Persist text chats to data/chats.db (next to sessions.db) so the Chats
     # conversation manager has durable, segmented history across restarts.
@@ -503,7 +503,7 @@ async def _run_headless(args) -> int:
                 pass
         brain = brain_holder["brain"]
         if brain is None:
-            detail = brain_holder["error"] or "BrainManager nicht initialisiert"
+            detail = brain_holder["error"] or "BrainManager not initialized"
             message = f"Brain unavailable: {detail}"
             await server.bus.publish(
                 ErrorOccurred(
@@ -563,8 +563,8 @@ async def _run_headless(args) -> int:
 
     server.bus.subscribe(MessageSent, _on_user_message)
 
-    # MCP-Registry + Tool-Registry auch im Headless-Mode aufsetzen — sonst
-    # sind die /api/mcps + /api/tools Endpoints ohne registry_ready=True.
+    # Set up the MCP registry + tool registry in headless mode too — otherwise
+    # the /api/mcps + /api/tools endpoints never see registry_ready=True.
     from jarvis.mcp import state as mcp_state
     from jarvis.mcp.registry import MCPRegistry
 
@@ -608,8 +608,8 @@ async def _run_headless(args) -> int:
     # first request WAIT, which the functional smoke proves).
     asyncio.create_task(_build_brain_bg(), name="brain-build")
 
-    # Phase 9.8: Overlay-Subprocess starten wenn [overlay].enabled=true.
-    # No-op wenn disabled oder JARVIS_DEPTH>0 (Sub-Agent).
+    # Phase 9.8: start the overlay subprocess when [overlay].enabled=true.
+    # No-op when disabled or JARVIS_DEPTH>0 (sub-agent).
     # Bus is passed so mascot-originated user events (mute toggle on
     # doubleClick) can be republished on the EventBus where the voice
     # pipeline subscribes.
@@ -718,8 +718,8 @@ async def _run_headless(args) -> int:
     except (ValueError, AttributeError):
         pass
 
-    print(f"Jarvis-Backend läuft auf http://127.0.0.1:{cfg.ui.admin_api_port}")
-    print("Strg+C zum Beenden.")
+    print(f"Jarvis backend is running at http://127.0.0.1:{cfg.ui.admin_api_port}")
+    print("Ctrl+C to quit.")
 
     try:
         await stop_event.wait()
@@ -751,7 +751,7 @@ async def _run_headless(args) -> int:
 
 
 def _run_desktop(cfg, use_lock: bool) -> int:
-    """Vollständige Desktop-App mit pywebview-Fenster."""
+    """Full desktop app with a pywebview window."""
     # AUMID must be set before pywebview creates the window (taskbar icon).
     _ensure_windows_app_identity()
     from jarvis.ui.desktop_app import (
@@ -766,7 +766,7 @@ def _run_desktop(cfg, use_lock: bool) -> int:
         try:
             lock = acquire_single_instance_lock()
         except SingleInstanceError:
-            print("Jarvis läuft bereits.", file=sys.stderr)
+            print("Jarvis is already running.", file=sys.stderr)
             focus_existing_instance_robust()
             return 3
 
@@ -969,7 +969,7 @@ def _run_desktop_fast(args) -> int | None:
         if holder["already_running"]:
             from jarvis.ui.desktop_app import focus_existing_instance_robust
 
-            print("Jarvis läuft bereits.", file=sys.stderr)
+            print("Jarvis is already running.", file=sys.stderr)
             focus_existing_instance_robust()
             return 3
         app = holder["app"]

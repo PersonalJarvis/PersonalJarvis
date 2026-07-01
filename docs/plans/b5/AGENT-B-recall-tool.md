@@ -213,8 +213,8 @@ python -m pytest tests/unit/memory/test_wiki_search.py -v -k latency
 Free-form Markdown, final line **must be exactly** one of:
 
 ```
-Goal erfüllt: ja — Grund: <one sentence>
-Goal erfüllt: nein — Grund: <one sentence>
+Goal fulfilled: yes — Reason: <one sentence>
+Goal fulfilled: no — Reason: <one sentence>
 ```
 
 Recommended sections (order is yours): Files changed · What I did · Assumptions made · Verification (paste the §9 outputs) · Open follow-ups · the mandatory line.

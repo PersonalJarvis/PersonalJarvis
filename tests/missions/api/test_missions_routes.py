@@ -1,14 +1,14 @@
-"""REST-Route-Tests fuer das Phase-6 Mission-API.
+"""REST route tests for the Phase-6 Mission API.
 
-Pattern: FastAPI ``TestClient`` + frischer ``MissionManager`` pro Test
-(via ``tmp_path``-Fixture). Deckt:
-- 503 wenn ``app.state.mission_manager`` nicht gesetzt ist.
-- Listing leer / mit Eintraegen / mit State-Filter.
-- Detail mit Events + Verdicts.
-- Dispatch ohne Kontrollierer (Mission landet in PENDING, ``started=false``).
-- Dispatch mit Stub-Kontrollierer (BackgroundTask wird scheduled).
-- Cancel happy + 404 + 409 (terminal-state).
-- Kill 503 ohne Kontrollierer.
+Pattern: FastAPI ``TestClient`` + a fresh ``MissionManager`` per test
+(via the ``tmp_path`` fixture). Covers:
+- 503 when ``app.state.mission_manager`` is not set.
+- Listing empty / with entries / with a state filter.
+- Detail with events + verdicts.
+- Dispatch without a Kontrollierer (mission lands in PENDING, ``started=false``).
+- Dispatch with a stub Kontrollierer (BackgroundTask gets scheduled).
+- Cancel happy + 404 + 409 (terminal state).
+- Kill 503 without a Kontrollierer.
 """
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ async def manager(tmp_path: Path):
 
 @pytest.fixture
 def app_no_manager() -> FastAPI:
-    """FastAPI ohne mission_manager — fuer 503-Pfad."""
+    """FastAPI without mission_manager — for the 503 path."""
     app = FastAPI()
     app.include_router(missions_router)
     return app
@@ -112,7 +112,7 @@ def test_dispatch_then_list_contains_mission(
         )
         assert d.status_code == 201
         mission_id = d.json()["mission_id"]
-        # Ohne Kontrollierer wird nicht gestartet
+        # Without a Kontrollierer, it doesn't start
         assert d.json()["started"] == "false"
 
         r = client.get("/api/missions")
@@ -139,7 +139,7 @@ def test_list_state_filter_excludes_unmatched(
         ids = [m["id"] for m in r1.json()["missions"]]
         assert mid in ids
 
-        # Filter APPROVED enthaelt sie nicht
+        # Filter APPROVED does not contain it
         r2 = client.get("/api/missions?state=APPROVED")
         assert r2.status_code == 200
         assert r2.json()["total"] == 0
@@ -166,8 +166,8 @@ def test_get_returns_404_for_unknown(app_with_manager: FastAPI) -> None:
 async def test_get_returns_events_and_verdicts(
     manager: MissionManager,
 ) -> None:
-    """Erzeugt eine Mission, hangt manuell einen CriticVerdictReady-Event an
-    und prueft dass /api/missions/{id} ihn unter ``verdicts`` listet."""
+    """Creates a mission, manually appends a CriticVerdictReady event,
+    and checks that /api/missions/{id} lists it under ``verdicts``."""
     mid = await manager.dispatch(prompt="critic test")
 
     env = EventEnvelope(
@@ -222,7 +222,7 @@ def test_dispatch_with_kontrollierer_schedules_background_task(
     assert r.status_code == 201
     body = r.json()
     assert body["started"] == "true"
-    # BackgroundTask laeuft NACH dem Response — TestClient awaitet das.
+    # BackgroundTask runs AFTER the response — TestClient awaits that.
     assert calls == [body["mission_id"]]
 
 
@@ -368,8 +368,8 @@ def test_kill_invokes_kontrollierer_method_when_present(
 async def test_get_returns_empty_openclaw_workers_when_no_openclaw_marker(
     manager: MissionManager,
 ) -> None:
-    """Ohne step.harness=='openclaw' Marker: ``worker_snapshots`` ist [] aber
-    immer im Response (Frontend kann sich darauf verlassen)."""
+    """Without a step.harness=='openclaw' marker: ``worker_snapshots`` is []
+    but always present in the response (the frontend can rely on that)."""
     mid = await manager.dispatch(prompt="non-openclaw mission")
 
     spawn_env = EventEnvelope(

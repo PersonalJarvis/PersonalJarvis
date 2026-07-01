@@ -1,10 +1,10 @@
-﻿"""Deklarative Beschreibung aller Brain/TTS/STT-Provider für die Desktop-App.
+﻿"""Declarative description of all Brain/TTS/STT providers for the desktop app.
 
-Single-Source-of-Truth für die UI: welche Provider gibt es, welches Auth-Verfahren
-brauchen sie, welcher Credential-Manager-Slot speichert ihren Key, welche Login-CLI
-muss gespawnt werden? Ganz bewusst KEINE Modellnamen — Modelle wechseln zu oft,
-und der Default kommt aus jarvis.toml. Die UI rendert pro Provider ein generisches
-Widget anhand des auth_mode.
+Single source of truth for the UI: which providers exist, what auth method
+do they need, which credential-manager slot stores their key, which login
+CLI needs to be spawned? Deliberately NO model names — models change too
+often, and the default comes from jarvis.toml. The UI renders a generic
+widget per provider based on auth_mode.
 """
 from __future__ import annotations
 
@@ -304,7 +304,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
 
 
 def get_spec(provider_id: str) -> ProviderSpec | None:
-    """Lookup eines Specs anhand der ID. None wenn unbekannt."""
+    """Look up a spec by ID. None if unknown."""
     for spec in PROVIDERS:
         if spec.id == provider_id:
             return spec
@@ -312,5 +312,5 @@ def get_spec(provider_id: str) -> ProviderSpec | None:
 
 
 def all_secret_keys() -> set[str]:
-    """Set aller Secret-Keys, die von den deklarierten Provider-Specs referenziert werden."""
+    """Set of all secret keys referenced by the declared provider specs."""
     return {key for spec in PROVIDERS for key in spec.secret_keys}

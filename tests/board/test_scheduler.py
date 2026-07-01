@@ -1,4 +1,4 @@
-"""Tests fuer BioScheduler (Phase B)."""
+"""Tests for BioScheduler (Phase B)."""
 from __future__ import annotations
 
 import asyncio
@@ -85,7 +85,7 @@ async def test_weekly_date_guard_respected(tmp_path: Path) -> None:
     today = "2026-04-24"
     await sched._run_and_mark(triggered_by="weekly", today_iso=today)
     await sched._run_and_mark(triggered_by="weekly", today_iso=today)
-    assert brain.calls == 2  # beide Calls liefen, weil _run_and_mark kein Guard
-    # Aber: _maybe_run_weekly wuerde den zweiten Run ueberspringen wegen
-    # last_bio_run_date-Check. Verifizieren:
+    assert brain.calls == 2  # both calls ran, because _run_and_mark has no guard
+    # But: _maybe_run_weekly would skip the second run because of the
+    # last_bio_run_date check. Verify:
     assert sched._read_meta("last_bio_run_date") == today

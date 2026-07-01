@@ -1,7 +1,7 @@
 /**
- * REST-Wrapper fuer den Mission-Bus (Backend-Sub-Agent baut die Endpoints
- * unter `/api/missions/*`). Trennen wir bewusst von den WS-Hooks, damit
- * React-Query die List-/Detail-Abfragen cachen kann.
+ * REST wrapper for the mission bus (a backend Jarvis-Agent builds the
+ * endpoints under `/api/missions/*`). Kept deliberately separate from the
+ * WS hooks so React Query can cache the list/detail queries.
  */
 import type {
   CriticVerdictReady,
@@ -32,7 +32,7 @@ export async function fetchMissionDetail(id: string): Promise<MissionDetail> {
   const res = await fetch(`${API_BASE}/${encodeURIComponent(id)}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
-  // Verdicts ggf. aus Events ableiten falls Backend sie nicht separat liefert
+  // Derive verdicts from events if the backend doesn't return them separately
   const events: EventEnvelope[] = data.events ?? [];
   const verdicts: CriticVerdictReady[] =
     data.verdicts ??

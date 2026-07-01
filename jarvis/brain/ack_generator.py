@@ -52,19 +52,20 @@ __all__ = [
 _VOICE_CONTROL_PATTERN = re.compile(
     # Full-match style: the entire utterance must be a voice-control command,
     # allowing only trailing politeness modifiers ("bitte", "mal", "jetzt",
-    # "please") and punctuation. This stops narrative phrases like "lauter
-    # Applaus war zu hoeren" or "still im Gespraech" from triggering.
+    # "please") and punctuation. This stops narrative phrases like the German
+    # "lauter Applaus war zu hoeren" ("loud applause could be heard") or
+    # "still im Gespraech" ("quiet in conversation") from triggering.  # i18n-allow: quoted German input example
     r"^\s*(?:"
     # German
     r"(?:mach\s+)?(?:lauter|leiser|laut|leise)(?:\s+machen)?"
     r"|sei\s+(?:bitte\s+)?(?:still|leise|stiller)"
     r"|halt(?:\s+(?:die\s+)?klappe)?"
     r"|stop(?:p)?(?:\s+(?:sprechen|reden|talking))?"
-    r"|pause(?:\s+(?:die\s+)?(?:wiedergabe|musik|sprache))?"
+    r"|pause(?:\s+(?:die\s+)?(?:wiedergabe|musik|sprache))?"  # i18n-allow: German voice-control input vocabulary, matched against the user's utterance
     r"|pausier(?:e|en|t)?"
     r"|stumm(?:\s+schalten)?"
     r"|schweig(?:e|en)?"
-    r"|nicht\s+(?:so\s+)?(?:laut|leise)"
+    r"|nicht\s+(?:so\s+)?(?:laut|leise)"  # i18n-allow: German voice-control input vocabulary
     # English
     r"|(?:be\s+)?quiet"
     r"|shut\s+up"
@@ -126,7 +127,7 @@ _GENERIC_ACK: dict[str, str] = {
 # A brain text that already opens with one of these is treated as
 # self-confirming, so we don't double up with "Erledigt. Okay, ..."
 _ALREADY_CONFIRMING_RE = re.compile(
-    r"^\s*(erledigt|fertig|okay|ok|alright|done|got\s+it|verstanden|in\s+ordnung|sure)\b",
+    r"^\s*(erledigt|fertig|okay|ok|alright|done|got\s+it|verstanden|in\s+ordnung|sure)\b",  # i18n-allow: bilingual (de/en) self-confirmation matching data, checked against generated brain text
     re.IGNORECASE,
 )
 

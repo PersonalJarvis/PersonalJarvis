@@ -1,22 +1,21 @@
-"""UIATreeSource — gepruneder UIA-Tree via pywinauto.
+"""UIATreeSource — pruned UIA tree via pywinauto.
 
-Der Ablauf:
+The flow:
 
-1. Aktives Fenster ermitteln (GetForegroundWindow + pywinauto-Wrapper).
-2. Tree rekursiv bis `max_depth` traversieren und in `RawNode`-Liste flachlegen.
-3. Pruning-Pipeline (ADR-0002): Depth -> Role -> OnScreen.
-4. Wenn nach Pipeline > 150 Nodes: Retry mit Depth 5, dann 4.
-5. Wenn immer noch > 150: `source="screenshot_only"`, Nodes leer.
+1. Determine the active window (GetForegroundWindow + pywinauto wrapper).
+2. Traverse the tree recursively up to `max_depth` and flatten it into a `RawNode` list.
+3. Pruning pipeline (ADR-0002): Depth -> Role -> OnScreen.
+4. If still > 150 nodes after the pipeline: retry with depth 5, then 4.
+5. If still > 150: `source="screenshot_only"`, nodes empty.
 
-Warum UIA-Tree kein AsyncIterator ist: Der Contract (`observe()`) gibt
-genau eine Observation zurueck — Streaming ergibt auf Tree-Ebene keinen
-Sinn, weil die Struktur pro Frame atomar ist.
+Why the UIA tree is not an AsyncIterator: the contract (`observe()`) returns
+exactly one Observation — streaming makes no sense at the tree level, because
+the structure is atomic per frame.
 
-Performance-Hinweis: Das Problem sind nicht die paar hundert interessanten
-Nodes, sondern die 5.000-8.000-Node-Trees von Chrome/VSCode/Slack, durch
-die wir traversieren MUESSEN, bevor wir filtern koennen. Deshalb ist die
-Depth-Grenze kritisch — sie begrenzt die Traversal selbst, nicht nur das
-Ergebnis.
+Performance note: the problem isn't the few hundred interesting
+nodes, it's the 5,000-8,000-node trees from Chrome/VSCode/Slack that we MUST
+traverse before we can filter. That's why the depth limit is critical —
+it bounds the traversal itself, not just the result.
 """
 from __future__ import annotations
 
@@ -43,7 +42,7 @@ _DEPTH_RETRY_LADDER: tuple[int, ...] = (6, 5, 4)
 
 
 class UIATreeSource:
-    """Liest den UIAutomation-Tree des aktiven Fensters und prunet ihn."""
+    """Reads the UIAutomation tree of the active window and prunes it."""
 
     name: str = "ui-tree"
     kind: Literal["screenshot", "ui_tree", "composite"] = "ui_tree"
@@ -55,14 +54,14 @@ class UIATreeSource:
         interesting_roles: tuple[str, ...] = DEFAULT_INTERESTING_ROLES,
         min_on_screen_overlap: float = 0.5,
         monitor_bounds: tuple[int, int, int, int] | None = None,
-        # Dependency-Injection fuer Tests: eine Funktion, die Depth-Parameter
-        # akzeptiert und einen Tuple (root_title, pid, list[RawNode]) liefert.
+        # Dependency injection for tests: a function that accepts a depth
+        # parameter and returns a tuple (root_title, pid, list[RawNode]).
         traverser: Callable[..., tuple[str, int, list[RawNode]]] | None = None,
     ) -> None:
         self._max_nodes = max_nodes
         self._interesting_roles = interesting_roles
         self._min_overlap = min_on_screen_overlap
-        self._monitor_bounds = monitor_bounds  # None = zur Laufzeit ermitteln
+        self._monitor_bounds = monitor_bounds  # None = detect at runtime
         self._traverser = traverser
         self._closed = False
 
@@ -75,7 +74,7 @@ class UIATreeSource:
         window_title_filter: str | None = None,
     ) -> Observation:
         if self._closed:
-            raise RuntimeError("UIATreeSource ist geschlossen")
+            raise RuntimeError("UIATreeSource is closed")
         if cancel_token is not None and cancel_token.is_cancelled():
             raise RuntimeError(f"cancelled: {cancel_token.reason}")
 
@@ -83,7 +82,7 @@ class UIATreeSource:
             self._detect_primary_monitor_bounds
         )
 
-        # Retry-Ladder: bei Node-Overflow kuerzen wir die Depth.
+        # Retry ladder: on node overflow we shorten the depth.
         nodes_before = 0
         depth_used = _DEPTH_RETRY_LADDER[0]
         pruned: list[RawNode] = []
@@ -112,10 +111,10 @@ class UIATreeSource:
 
         overflow = len(pruned) > self._max_nodes
         if overflow:
-            # Kein brauchbarer UIA-Tree — fallback. Der Aufrufer entscheidet,
-            # ob er stattdessen einen Screenshot nimmt.
+            # No usable UIA tree — fall back. The caller decides
+            # whether to take a screenshot instead.
             logger.warning(
-                "UIA-Tree Pruning Overflow: %d Nodes nach Depth %d Retry-Ladder",
+                "UIA tree pruning overflow: %d nodes after depth %d retry ladder",
                 len(pruned),
                 depth_used,
             )
@@ -125,8 +124,8 @@ class UIATreeSource:
             nodes = tuple(self._to_uia_nodes(pruned))
             source = "ui_tree_only"
 
-        # Hash ueber die serialisierte Tree-Struktur, damit der Cache auch
-        # auf reinen UIA-Trees deduplizieren kann.
+        # Hash over the serialized tree structure, so the cache can also
+        # deduplicate on pure UIA trees.
         tree_hash = self._hash_tree(window_title, active_pid, nodes)
 
         return Observation(
@@ -152,11 +151,11 @@ class UIATreeSource:
 
     @staticmethod
     def _detect_primary_monitor_bounds() -> tuple[int, int, int, int]:
-        """Primary-Monitor-Bounds ermitteln.
+        """Detect the primary monitor bounds.
 
-        Best effort: ohne Windows-API gibt's einen FullHD-Default. Der
-        ScreenshotSource hat DPI-Awareness bereits gesetzt — wir muessen
-        das hier nicht mehr.
+        Best effort: without the Windows API there's a FullHD default. The
+        ScreenshotSource has already set DPI awareness — we don't need to
+        do that here again.
         """
         import os  # noqa: PLC0415
         if os.name == "nt":
@@ -168,9 +167,9 @@ class UIATreeSource:
                 h = user32.GetSystemMetrics(1)
                 return (0, 0, int(w), int(h))
             except Exception:  # noqa: BLE001
-                # Fallback: FullHD. Der einzige Effekt ist, dass OnScreen-Filter
-                # konservativ arbeitet — das ist ok.
-                logger.debug("GetSystemMetrics nicht verfuegbar", exc_info=True)
+                # Fallback: FullHD. The only effect is that the OnScreen filter
+                # works conservatively — that's fine.
+                logger.debug("GetSystemMetrics not available", exc_info=True)
         return (0, 0, 1920, 1080)
 
     @staticmethod
@@ -178,21 +177,21 @@ class UIATreeSource:
         max_depth: int,
         window_title_filter: str | None,
     ) -> tuple[str, int, list[RawNode]]:
-        """Flatten-Traversal ab Foreground-Window bis max_depth.
+        """Flatten traversal from the foreground window down to max_depth.
 
-        Liefert (window_title, pid, nodes). Bei Fehlern (kein aktives Fenster,
-        UIA nicht verfuegbar) wird ein leeres Ergebnis zurueckgegeben —
-        niemals eine Exception, damit die Pipeline robust bleibt.
+        Returns (window_title, pid, nodes). On errors (no active window,
+        UIA unavailable) an empty result is returned —
+        never an exception, so the pipeline stays robust.
         """
         try:
             from pywinauto.uia_element_info import UIAElementInfo  # noqa: PLC0415
         except ImportError:
-            logger.warning("pywinauto nicht installiert — UIA-Tree leer")
+            logger.warning("pywinauto not installed — UIA tree empty")
             return ("", 0, [])
 
         try:
-            # Foreground-Window finden. UIAElementInfo() ohne Argumente ist
-            # das Desktop-Root — wir brauchen das Foreground-Fenster.
+            # Find the foreground window. UIAElementInfo() with no arguments is
+            # the desktop root — we need the foreground window.
             import ctypes  # noqa: PLC0415
 
             hwnd = ctypes.windll.user32.GetForegroundWindow()
@@ -200,10 +199,10 @@ class UIATreeSource:
                 return ("", 0, [])
             root = UIAElementInfo(hwnd)
         except Exception:  # noqa: BLE001
-            logger.debug("Foreground-UIA-Lookup gescheitert", exc_info=True)
+            logger.debug("Foreground UIA lookup failed", exc_info=True)
             return ("", 0, [])
 
-        # Titel + PID vom Root-Window.
+        # Title + PID from the root window.
         try:
             window_title = str(root.name or "")
         except Exception:  # noqa: BLE001
@@ -213,28 +212,28 @@ class UIATreeSource:
         except Exception:  # noqa: BLE001
             active_pid = 0
 
-        # Wenn Filter gesetzt und nicht passt, liefern wir trotzdem aus — der
-        # Engine-Layer entscheidet, ob er das Ergebnis verwerfen will. Das
-        # ist robuster als hart zu filtern.
+        # If a filter is set and doesn't match, we still return it — the
+        # engine layer decides whether to discard the result. That's
+        # more robust than filtering hard here.
         _ = window_title_filter
 
         nodes: list[RawNode] = []
         try:
             _flatten(root, depth=0, max_depth=max_depth, parent_index=-1, out=nodes)
         except Exception:  # noqa: BLE001
-            logger.warning("UIA-Traversal abgebrochen", exc_info=True)
+            logger.warning("UIA traversal aborted", exc_info=True)
 
         return (window_title, active_pid, nodes)
 
-    # ---- Pruning + Serialisierung ------------------------------------------
+    # ---- Pruning + Serialization ------------------------------------------
 
     @staticmethod
     def _to_uia_nodes(raw: list[RawNode]) -> list[UIANode]:
-        """Konvertiert RawNode -> UIANode.
+        """Converts RawNode -> UIANode.
 
-        ``parent_index`` wurde bereits in ``prune_tree`` (via
-        ``_remap_parent_indices``) auf den Subset-Index remapped — hier nur
-        noch kopieren.
+        ``parent_index`` has already been remapped to the subset index in
+        ``prune_tree`` (via ``_remap_parent_indices``) — here we just
+        copy it over.
         """
         return [
             UIANode(
@@ -257,11 +256,11 @@ class UIATreeSource:
         pid: int,
         nodes: tuple[UIANode, ...],
     ) -> str:
-        """Stabiler Hash ueber Titel + PID + Tree-Struktur.
+        """Stable hash over title + PID + tree structure.
 
-        Wir hashen (role, name, automation_id, bounds) pro Node — das
-        reicht, um zwei Trees als "identisch" zu erkennen, wenn User
-        nichts angeklickt hat.
+        We hash (role, name, automation_id, bounds) per node — that's
+        enough to recognize two trees as "identical" when the user
+        hasn't clicked anything.
         """
         h = hashlib.sha256()
         h.update(window_title.encode("utf-8", errors="replace"))
@@ -279,7 +278,7 @@ class UIATreeSource:
 
 
 # ---------------------------------------------------------------------------
-# Module-level Flatten-Helper — haengt an pywinauto UIAElementInfo
+# Module-level flatten helper — hangs off pywinauto UIAElementInfo
 # ---------------------------------------------------------------------------
 
 def _flatten(
@@ -290,7 +289,7 @@ def _flatten(
     parent_index: int,
     out: list[RawNode],
 ) -> None:
-    """Rekursiver Flatten-Traverse. Haelt sich strikt an `max_depth`."""
+    """Recursive flatten traversal. Strictly obeys `max_depth`."""
     if depth > max_depth:
         return
     try:
@@ -299,7 +298,7 @@ def _flatten(
         automation_id = str(getattr(element, "automation_id", "") or "")
         rect = getattr(element, "rectangle", None)
         if rect is not None:
-            # pywinauto rect hat .left/.top/.right/.bottom
+            # pywinauto rect has .left/.top/.right/.bottom
             left = int(getattr(rect, "left", 0))
             top = int(getattr(rect, "top", 0))
             right = int(getattr(rect, "right", 0))
@@ -357,7 +356,7 @@ def _flatten(
     if depth >= max_depth:
         return
 
-    # Children iterieren. Bei Exception (seltene COM-Fehler) Teilbaum skippen.
+    # Iterate children. On exception (rare COM errors) skip the subtree.
     try:
         children = list(element.children())
     except Exception:  # noqa: BLE001
@@ -373,40 +372,40 @@ def _flatten(
 
 
 # ---------------------------------------------------------------------------
-# Subtree-Stable-Hash — Foundation fuer Phase C (Multi-Action)
+# Subtree stable hash — foundation for Phase C (Multi-Action)
 # ---------------------------------------------------------------------------
 
 def subtree_stable_hash(nodes: Sequence[UIANode]) -> str:
-    """Stabiler Strukturhash ueber einen UIA-Subtree.
+    """Stable structural hash over a UIA subtree.
 
-    Hasht ausschliesslich die strukturell relevanten Felder:
-    ``role``, ``name``, ``automation_id`` und ``parent_index``. Damit ist
-    der Hash:
+    Hashes only the structurally relevant fields:
+    ``role``, ``name``, ``automation_id``, and ``parent_index``. This makes
+    the hash:
 
-    - **stabil** bei Cursor-Bewegung, Focus-/Selection-/Hover-Toggle und
-      kleinen Bound-Verschiebungen (``bounds`` und ``enabled`` werden
-      bewusst ignoriert).
-    - **sensitiv** bei strukturellen Aenderungen: Element hinzugefuegt
-      oder entfernt, Window-Title/Role/Name geaendert, AutomationId
-      geaendert, Hierarchie umgebaut, Reihenfolge veraendert.
+    - **stable** across cursor movement, focus/selection/hover toggles, and
+      small bound shifts (``bounds`` and ``enabled`` are
+      deliberately ignored).
+    - **sensitive** to structural changes: an element added
+      or removed, window title/role/name changed, automation ID
+      changed, hierarchy restructured, order changed.
 
-    Reihenfolge der Nodes ist Teil der Hierarchie und fliesst implizit
-    ueber ``parent_index`` (das auf Tuple-Indizes zeigt) plus die
-    Position im Iteriervorgang ein — Reorder zweier Nodes aendert den
-    Hash also.
+    The order of the nodes is part of the hierarchy and flows in implicitly
+    via ``parent_index`` (which points to tuple indices) plus the
+    position in the iteration — so reordering two nodes also changes the
+    hash.
 
-    Returns: 64-Zeichen Hex-SHA256.
+    Returns: 64-character hex SHA256.
     """
     h = hashlib.sha256()
-    # Versionsmarker, damit zukuenftige Hash-Schema-Aenderungen nicht
-    # heimlich kollidieren — wer das Schema aendert, bumpt den Marker.
+    # Version marker, so future hash schema changes don't
+    # silently collide — whoever changes the schema bumps the marker.
     h.update(b"uia-subtree-v1\x00")
-    # Anzahl Nodes als Trennzeichen vor dem Body, damit "leerer Tree"
-    # vom "Tree mit einem leeren Node" unterscheidbar bleibt.
+    # Node count as a separator before the body, so "empty tree"
+    # stays distinguishable from "tree with one empty node".
     h.update(len(nodes).to_bytes(4, "little", signed=False))
     for idx, n in enumerate(nodes):
         h.update(idx.to_bytes(4, "little", signed=False))
-        h.update(b"\x1f")  # Unit-Separator zwischen Index und Body
+        h.update(b"\x1f")  # unit separator between index and body
         h.update(n.role.encode("utf-8", errors="replace"))
         h.update(b"\x00")
         h.update(n.name.encode("utf-8", errors="replace"))
@@ -414,5 +413,5 @@ def subtree_stable_hash(nodes: Sequence[UIANode]) -> str:
         h.update(n.automation_id.encode("utf-8", errors="replace"))
         h.update(b"\x00")
         h.update(int(n.parent_index).to_bytes(4, "little", signed=True))
-        h.update(b"\x1e")  # Record-Separator zwischen Nodes
+        h.update(b"\x1e")  # record separator between nodes
     return h.hexdigest()

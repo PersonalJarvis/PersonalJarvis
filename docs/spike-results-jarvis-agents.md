@@ -334,7 +334,7 @@ On Windows, `openclaw` is **not a standalone binary**, but three files in the `n
 - `openclaw.cmd` (cmd batch wrapper, startable by `Start-Process`)
 - `openclaw.ps1` (PowerShell wrapper)
 
-`Start-Process -FilePath "openclaw"` fails (`%1 ist keine zulässige Win32-Anwendung` — "%1 is not a valid Win32 application"), because PowerShell finds the `.ps1` wrapper and the Windows process API cannot start it. The bridge must reference the `.cmd` variant explicitly or call `node.exe + openclaw.mjs` directly.
+`Start-Process -FilePath "openclaw"` fails (`%1 ist keine zulässige Win32-Anwendung` — "%1 is not a valid Win32 application"), because PowerShell finds the `.ps1` wrapper and the Windows process API cannot start it. The bridge must reference the `.cmd` variant explicitly or call `node.exe + openclaw.mjs` directly. <!-- i18n-allow -->
 
 ### B-8: Provider idle timeout (architecture-critical)
 

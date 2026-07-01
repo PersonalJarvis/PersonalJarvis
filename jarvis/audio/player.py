@@ -46,7 +46,7 @@ TTS_WRITE_BUFFER_MS = 120
 _BLOCKED_OUTPUT_SUBSTRINGS = (
     "NVIDIA High Definition",  # NVIDIA GPU audio (monitor via HDMI/DP)
     "AMD HD Audio",            # AMD GPU audio
-    "Primärer Soundtreiber",  # Windows primary hook, ambiguous
+    "Primärer Soundtreiber",  # i18n-allow: Windows primary hook, ambiguous — matched against a localized (German) Windows device name
     "Microsoft Soundmapper",
     "SPDIF",                   # digital-out with no target on unknown setups
 )
@@ -179,7 +179,7 @@ def _resolve_output_device(device: int | str | None) -> int | str | None:
         devices = sd.query_devices()
         hostapis = sd.query_hostapis()
     except Exception as exc:  # noqa: BLE001
-        log.warning("Device-Query fehlgeschlagen, nutze System-Default: %s", exc)
+        log.warning("Device query failed, using system default: %s", exc)
         return None
 
     # Candidates: real output devices that are not on the blocklist.
@@ -201,15 +201,15 @@ def _resolve_output_device(device: int | str | None) -> int | str | None:
         )
         raw_candidates.append((idx, d, hostapi_name))
 
-    # WDM-KS crasht beim OutputStream-Open (-9999 'Blocking API not supported
-    # yet'). Solange IRGENDEIN sicheres Output-Device existiert, waehlen wir NIE
-    # ein WDM-KS-Device. Wichtig — und der Bugfix gegenueber der alten Same-Name-
-    # Logik: auch dann nicht, wenn ein Geraetename NUR auf WDM-KS existiert
-    # (z.B. "Speakers (Realtek HD Audio output)" hat keinen MME/WASAPI-Zwilling).
-    # Der frueher genutzte Same-Name-Filter liess genau solche WDM-KS-only-
-    # Devices durch; sie gewannen per Name-Rang und crashten beim Playback
-    # (BUG-014 Wiederholung 2026-05-24: Brain+TTS ok, User hoert nichts).
-    # Nur wenn ALLE Kandidaten WDM-KS sind, nehmen wir als letztes Mittel eins.
+    # WDM-KS crashes on OutputStream open (-9999 'Blocking API not supported
+    # yet'). As long as ANY safe output device exists, we NEVER choose a
+    # WDM-KS device. Important — and the bugfix versus the old same-name
+    # logic: not even when a device name exists ONLY on WDM-KS (e.g.
+    # "Speakers (Realtek HD Audio output)" has no MME/WASAPI twin).
+    # The previously used same-name filter let exactly such WDM-KS-only
+    # devices through; they won on name rank and crashed on playback
+    # (BUG-014 recurrence 2026-05-24: Brain+TTS ok, user hears nothing).
+    # Only when ALL candidates are WDM-KS do we take one as a last resort.
     safe_exists = any(
         ha not in _FORBIDDEN_OUTPUT_HOSTAPIS for _, _, ha in raw_candidates
     )
@@ -249,7 +249,7 @@ def _resolve_output_device(device: int | str | None) -> int | str | None:
         )
         return idx
 
-    log.warning("auto-headset fand kein passendes Device — System-Default.")
+    log.warning("auto-headset found no matching device — using system default.")
     return None
 
 
@@ -397,11 +397,11 @@ class AudioPlayer:
             else:
                 dev_info = sd.query_devices(self._device)
                 log.info(
-                    "AudioPlayer nutzt Device: %s (idx=%s)",
+                    "AudioPlayer using device: %s (idx=%s)",
                     dev_info.get("name"), self._device,
                 )
         except Exception as exc:  # noqa: BLE001
-            log.warning("AudioPlayer Device-Abfrage fehlgeschlagen: %s", exc)
+            log.warning("AudioPlayer device query failed: %s", exc)
 
     async def play_pcm(self, pcm: bytes, sample_rate: int | None = None) -> None:
         """Play a complete PCM byte blob — single-shot (ACK chimes, alerts).
@@ -500,13 +500,13 @@ class AudioPlayer:
                 if "-9997" not in str(exc) and "Invalid sample rate" not in str(exc):
                     raise
                 log.warning(
-                    "OutputStream @ %dHz failed (%s) — naechste Rate …",
+                    "OutputStream @ %dHz failed (%s) — trying next rate …",
                     target_rate, exc,
                 )
 
         if last_exc is not None:
             raise last_exc
-        raise RuntimeError("Keine unterstuetzte Samplerate gefunden")
+        raise RuntimeError("No supported sample rate found")
 
     def _write_samples(
         self,

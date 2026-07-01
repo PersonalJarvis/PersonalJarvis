@@ -1,4 +1,4 @@
-"""Unit-Tests fuer `jarvis.memory.people.PersonStore`."""
+"""Unit tests for `jarvis.memory.people.PersonStore`."""
 from __future__ import annotations
 
 from jarvis.memory.people import PersonStore
@@ -16,21 +16,21 @@ class TestGetOrCreate:
         person = person_store.get_or_create("Laura", relationship="partner")
         assert person.path.exists()
         assert person.path.stem == person_slug("Laura")
-        # Relationship wurde aus Template gesetzt
+        # Relationship was set from the template
         assert person.relationship == "partner"
 
     def test_same_name_returns_same_file_no_duplicate(
         self, person_store: PersonStore
     ) -> None:
-        """Zweiter get_or_create-Aufruf legt KEINE neue Datei an."""
+        """A second get_or_create call creates NO new file."""
         p1 = person_store.get_or_create("Laura", relationship="partner")
         p2 = person_store.get_or_create("Laura", relationship="partner")
         assert p1.path == p2.path
-        # Nur eine Datei im people/
+        # Only one file in people/
         assert len(person_store.list_all()) == 1
 
     def test_umlauts_in_name_become_slug(self, person_store: PersonStore) -> None:
-        p = person_store.get_or_create("Laura Müller", relationship="partner")
+        p = person_store.get_or_create("Laura Müller", relationship="partner")  # i18n-allow: German umlaut name, matched by the slug-normalization logic under test
         assert p.path.stem == "laura_mueller"
 
 
@@ -52,7 +52,7 @@ class TestFindByAlias:
         assert found.name == "Laura"
 
     def test_finds_by_alias_field(self, person_store: PersonStore) -> None:
-        """Wenn Person einen Spitznamen im `aliases`-Feld hat, muss find_by_alias matchen."""
+        """If a person has a nickname in the `aliases` field, find_by_alias must match it."""
         person = person_store.get_or_create("Laura", relationship="partner")
         assert person.add_alias("Lora") is True
         person.save()

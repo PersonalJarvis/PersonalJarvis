@@ -78,7 +78,7 @@ def _sweep_blocking(
     stats = {"scanned": 0, "removed": 0, "errors": 0}
 
     if not isolation_root.exists():
-        logger.info("startup_sweep: %s existiert nicht — skip", isolation_root)
+        logger.info("startup_sweep: %s does not exist — skip", isolation_root)
         return stats
 
     cutoff_seconds = cleanup_days * 24 * 60 * 60

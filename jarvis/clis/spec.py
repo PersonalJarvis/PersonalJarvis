@@ -207,8 +207,8 @@ class AuthConfigModel(BaseModel):
         secret_keys = info.data.get("secret_keys", [])
         if v and secret_keys and len(v) != len(secret_keys):
             raise ValueError(
-                f"env_vars ({len(v)}) muss zu secret_keys ({len(secret_keys)}) passen "
-                "oder leer sein."
+                f"env_vars ({len(v)}) must match secret_keys ({len(secret_keys)}) "
+                "or be empty."
             )
         return v
 
@@ -253,7 +253,7 @@ class CliSpecModel(BaseModel):
             v.pip_package, v.cargo_package, v.script_url, v.manual_url,
         ]):
             raise ValueError(
-                "Mindestens eine Install-Methode oder manual_url muss gesetzt sein."
+                "At least one install method or manual_url must be set."
             )
         return v
 

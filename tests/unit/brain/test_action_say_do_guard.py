@@ -22,8 +22,8 @@ def test_action_unfulfilled_answer_is_honest_and_localized():
     # Never claims the save happened.
     for txt in (de, en, es):
         assert txt.strip()
-        assert "gespeichert habe ich" not in txt.lower()
-    assert "noch nicht" in de.lower()  # "not yet saved"
+        assert "gespeichert habe ich" not in txt.lower()  # i18n-allow
+    assert "noch nicht" in de.lower()  # "not yet saved"  # i18n-allow
     assert "haven't" in en.lower() or "not" in en.lower()
     assert "todav" in es.lower() or "aún" in es.lower() or "no he" in es.lower()
 
@@ -64,7 +64,7 @@ def test_write_mandate_clarifying_question_is_kept():
     out = _unfulfilled_replacement(
         required_tool="contact-upsert",
         executed=set(),
-        response_text="Wie lautet Haralds vollständige E-Mail-Adresse?",
+        response_text="Wie lautet Haralds vollständige E-Mail-Adresse?",  # i18n-allow
         suppressed=False,
         is_write=True,
         lang="de",
@@ -76,7 +76,7 @@ def test_write_mandate_with_executed_tool_stands():
     out = _unfulfilled_replacement(
         required_tool="contact-upsert",
         executed={"contact-upsert"},
-        response_text="Hab ich gespeichert.",
+        response_text="Hab ich gespeichert.",  # i18n-allow
         suppressed=False,
         is_write=True,
         lang="de",

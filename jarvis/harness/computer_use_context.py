@@ -286,8 +286,8 @@ def get_computer_use_context() -> ComputerUseContext:
     """Return the configured context, or raise a clear error if unset."""
     if _CONTEXT is None:
         raise RuntimeError(
-            "ComputerUseHarness-Context nicht gesetzt. "
-            "Die Haupt-App muss vor dem ersten Dispatch "
-            "`set_computer_use_context(...)` aufrufen.",
+            "ComputerUseHarness context not set. "
+            "The main app must call `set_computer_use_context(...)` "
+            "before the first dispatch.",
         )
     return _CONTEXT

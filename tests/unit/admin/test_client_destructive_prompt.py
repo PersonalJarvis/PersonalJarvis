@@ -1,7 +1,7 @@
-"""AdminClient: destruktive Ops triggern DestructiveRequiresApproval.
+"""AdminClient: destructive ops trigger DestructiveRequiresApproval.
 
-Wir nutzen ein FakePipeClient-Pattern — kein echter Named-Pipe-Traffic,
-nur die Dispatch-Logik.
+We use a FakePipeClient pattern — no real named-pipe traffic,
+just the dispatch logic.
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ from jarvis.core.events import (
 
 
 class _FakePipeClient:
-    """Minimale Fake-Implementation. Antwortet mit success=True."""
+    """Minimal fake implementation. Responds with success=True."""
 
     def __init__(self) -> None:
         self.sends: list[AdminOperation] = []
@@ -54,7 +54,7 @@ def _make_client(bus: EventBus | None = None,
 
 
 def _representative(op_type: str) -> AdminOperation:
-    """Baut eine gueltige Op-Instanz fuer den gegebenen Op-Type."""
+    """Builds a valid op instance for the given op type."""
     match op_type:
         case "install_winget":
             return InstallWingetOp(package_id="7zip.7zip")
@@ -130,7 +130,7 @@ async def test_destructive_ops_raise_without_approval(op_type):
     with pytest.raises(DestructiveRequiresApproval) as exc:
         await client.execute(op)
     assert exc.value.op_type == op_type
-    # Fake-Pipe darf NICHT aufgerufen worden sein.
+    # The fake pipe must NOT have been called.
     assert fake.sends == []
 
 

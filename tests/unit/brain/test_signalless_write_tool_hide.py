@@ -61,7 +61,7 @@ def test_action_intent_keeps_the_write_tools():
     m = _mgr()
     m._turn_has_action_intent = lambda _t: True  # type: ignore[method-assign]
     out = m._hide_action_tools_on_signalless_turn(
-        _surface(), "Trag meinen Urlaub in den Kalender ein"
+        _surface(), "Trag meinen Urlaub in den Kalender ein"  # i18n-allow
     )
     assert "google_calendar" in out
     assert "contact-upsert" in out
@@ -74,7 +74,7 @@ def test_mandated_write_tool_is_exempt_say_do_stays_green():
     m = _mgr()
     m._evidence_required_tool = "wiki-ingest"
     out = m._hide_action_tools_on_signalless_turn(
-        _surface(), "Merk dir, dass ich nach Bora Bora will"
+        _surface(), "Merk dir, dass ich nach Bora Bora will"  # i18n-allow
     )
     assert "wiki-ingest" in out          # the mandated tool survives
     assert "contact-upsert" not in out   # other write tools still hidden
@@ -84,7 +84,7 @@ def test_explicit_subagent_vehicle_keeps_tools():
     m = _mgr()
     m._force_spawn_pattern = re.compile(r"deep dive|subagent", re.I)
     out = m._hide_action_tools_on_signalless_turn(
-        _surface(), "Mach einen deep dive und trag das ein"
+        _surface(), "Mach einen deep dive und trag das ein"  # i18n-allow
     )
     assert "spawn_worker" in out
     assert "google_calendar" in out

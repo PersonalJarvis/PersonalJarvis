@@ -1,6 +1,6 @@
 """Google Gemini Brain (via google-genai async SDK).
 
-Gemini hat sein eigenes functionCall-Format. Wir normalisieren auf
+Gemini has its own functionCall format. We normalize to
 `BrainDelta.tool_call = {id, name, input}`.
 """
 from __future__ import annotations
@@ -20,13 +20,13 @@ log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gemini-3-flash"
 
-# Latenz-Sprint-2: ENV-Switch fuer Context-Cache. BrainManager setzt diesen
-# wenn ``[performance].gemini_context_cache = true``. Im Cache landen
-# System-Prompt + Tools; Vision-Frames bleiben non-cached (variabel pro Turn).
+# Latency-Sprint-2: ENV switch for the context cache. BrainManager sets this
+# when ``[performance].gemini_context_cache = true``. The cache holds the
+# system prompt + tools; vision frames stay non-cached (they vary per turn).
 _ENV_CONTEXT_CACHE = "JARVIS_GEMINI_CONTEXT_CACHE"
-# Cache-Mindestgroesse: Gemini-Caches haben Token-Floor (>= ~4096 Tokens je
-# nach Modell). Bei kleineren Prefixes lehnt die API ab oder der Cache lohnt
-# sich nicht — dann skippen wir und fallen auf den Direct-Pfad.
+# Minimum cache size: Gemini caches have a token floor (>= ~4096 tokens
+# depending on the model). For smaller prefixes the API either rejects it or
+# the cache isn't worth it — then we skip it and fall back to the direct path.
 _MIN_CACHE_TOKENS = 4096
 
 
@@ -58,16 +58,16 @@ def _is_stale_context_cache_error(exc: Exception) -> bool:
 
 
 def _to_gemini_contents(messages: tuple[BrainMessage, ...]) -> list[dict[str, Any]]:
-    """BrainMessages → Gemini-Contents-Array. Role mapping: assistant→model.
+    """BrainMessages → Gemini contents array. Role mapping: assistant→model.
 
-    Multimodal: `BrainMessage.images` werden als `inline_data`-Parts
-    angehängt (`{"inline_data": {"mime_type": ..., "data": ...}}`) — nur
-    bei user-Messages, da Gemini model-role-images nicht als Input akzeptiert.
+    Multimodal: `BrainMessage.images` are appended as `inline_data` parts
+    (`{"inline_data": {"mime_type": ..., "data": ...}}`) — only for user
+    messages, since Gemini doesn't accept model-role images as input.
     """
     contents: list[dict[str, Any]] = []
     for m in messages:
         if m.role == "system":
-            continue  # system geht via system_instruction
+            continue  # system goes via system_instruction
         role = "user" if m.role in ("user", "tool") else "model"
         if m.role == "tool":
             # FunctionResponse
@@ -83,9 +83,9 @@ def _to_gemini_contents(messages: tuple[BrainMessage, ...]) -> list[dict[str, An
             continue
         text = m.content if isinstance(m.content, str) else json.dumps(m.content, default=str)
 
-        # Multimodal nur auf user-Role sinnvoll — images werden an die Text-Part
-        # angehängt. Wenn text leer ist, lassen wir den Text-Part weg.
-        # `getattr` für Backwards-Compat (Protocol pre-Wave-1-B1 hat kein images).
+        # Multimodal only makes sense on the user role — images are appended to
+        # the text part. If text is empty, we leave the text part out.
+        # `getattr` for backwards-compat (Protocol pre-Wave-1-B1 had no images).
         images = getattr(m, "images", ()) or ()
         parts: list[dict[str, Any]] = []
         if text:
@@ -99,14 +99,14 @@ def _to_gemini_contents(messages: tuple[BrainMessage, ...]) -> list[dict[str, An
                     }
                 })
         if not parts:
-            # Defensive: ein Gemini-Content darf nicht leer sein.
+            # Defensive: a Gemini content must not be empty.
             parts.append({"text": ""})
         contents.append({"role": role, "parts": parts})
     return contents
 
 
-# OpenAI-spezifische JSON-Schema-Felder die Gemini's `Tool.functionDeclarations`
-# Pydantic-Validator NICHT akzeptiert. Phase 7.3 Self-Mod-Tools setzen
+# OpenAI-specific JSON-schema fields that Gemini's `Tool.functionDeclarations`
+# Pydantic validator does NOT accept. Phase 7.3 self-mod tools set
 # `strict=True` + `input_examples=[...]` an die Schema-Wurzel — diese Felder
 # fliegen sonst mit "11 validation errors for GenerateContentConfig" durch
 # (Bug #API-1, 2026-04-29).
@@ -166,14 +166,14 @@ def _convert_exclusive_bounds(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def _sanitize_for_gemini(schema: dict[str, Any]) -> dict[str, Any]:
-    """Entfernt OpenAI-spezifische Felder rekursiv aus einem JSON-Schema.
+    """Recursively removes OpenAI-specific fields from a JSON schema.
 
-    Gemini's google-genai SDK validiert Tool.functionDeclarations.parameters
-    via Pydantic mit `extra="forbid"`. Felder wie `strict`/`input_examples`
-    sind OpenAI-Tool-Use-Konventionen und nicht im Gemini-Schema-Subset
-    erlaubt. Statt einen Tool-Call ohne Tools zu liefern, strippen wir die
-    Felder out — die Tools selbst funktionieren unveraendert, nur die
-    OpenAI-spezifischen Hints sind weg.
+    Gemini's google-genai SDK validates Tool.functionDeclarations.parameters
+    via Pydantic with `extra="forbid"`. Fields like `strict`/`input_examples`
+    are OpenAI tool-use conventions and not allowed in Gemini's schema
+    subset. Instead of delivering a tool call without tools, we strip those
+    fields out — the tools themselves keep working unchanged, only the
+    OpenAI-specific hints are gone.
 
     Exclusive numeric bounds (``exclusiveMinimum``/``exclusiveMaximum`` from
     Pydantic ``Field(gt=...)``/``Field(lt=...)``) are first converted to the
@@ -303,15 +303,15 @@ class GeminiBrain:
     ) -> None:
         self._model = model or DEFAULT_MODEL
         self._client: Any = None
-        # Latenz-Sprint-1: Thinking-Budget steuert wie viel "extended
-        # thinking" Gemini 3.x macht. ``None`` = SDK-Default (Auto, hoeher
-        # Latenz). ``0`` = aus, ``-1`` = dynamic, ``>0`` = fester Cap.
+        # Latency-Sprint-1: thinking budget controls how much "extended
+        # thinking" Gemini 3.x does. ``None`` = SDK default (auto, higher
+        # latency). ``0`` = off, ``-1`` = dynamic, ``>0`` = fixed cap.
         self._thinking_budget = thinking_budget
-        # Latenz-Sprint-2: Context-Cache-Name (lazy erstellt beim ersten Call
-        # mit System+Tools). Key: (system_hash, tools_hash) → cache_name.
-        # Nur ein Eintrag pro Instanz, weil System+Tools bei einer laufenden
-        # Voice-Session konstant sind. Bei Aenderung (z.B. Tool-Reload) wird
-        # der Cache via ``invalidate_cache()`` weggeworfen.
+        # Latency-Sprint-2: context-cache name (lazily created on the first
+        # call with system+tools). Key: (system_hash, tools_hash) → cache_name.
+        # Only one entry per instance, because system+tools are constant for
+        # a running voice session. On change (e.g. a tool reload), the cache
+        # is discarded via ``invalidate_cache()``.
         self._cached_content_name: str | None = None
         self._cache_signature: tuple[str, str] | None = None
 
@@ -320,7 +320,7 @@ class GeminiBrain:
             ep = cfg.resolve_provider_endpoint("gemini")
             if not ep.credential:
                 raise RuntimeError(
-                    "Kein Gemini-API-Key gefunden. Setze GEMINI_API_KEY oder "
+                    "No Gemini API key found. Set GEMINI_API_KEY or "
                     "GOOGLE_AIStudio_API_KEY in .env / Credential Manager."
                 )
             from google import genai
@@ -335,17 +335,17 @@ class GeminiBrain:
     async def _ensure_cache(
         self, system_text: str, tools_payload: list[dict[str, Any]] | None,
     ) -> str | None:
-        """Latenz-Sprint-2: Lazy-Init des Context-Caches.
+        """Latency-Sprint-2: lazy init of the context cache.
 
-        Erstellt einen Gemini-Cache (System+Tools) beim ersten Call und
-        gibt den Cache-Namen zurueck — nachfolgende Calls koennen via
-        ``cached_content`` referenzieren. Bei zu kleinem Prefix oder
-        API-Fehler liefert ``None``, dann faellt der Caller auf den
-        Direct-Pfad zurueck (Brain bleibt funktional).
+        Creates a Gemini cache (system+tools) on the first call and returns
+        the cache name — subsequent calls can reference it via
+        ``cached_content``. On too-small a prefix or an API error, returns
+        ``None``, and the caller falls back to the direct path (brain stays
+        functional).
         """
-        # Cache-Signatur: hashen + cachen, damit ein Tool-Reload die Lazy-Init
-        # neu triggert. Hash auf den serialisierten Inhalt — billig und
-        # ausreichend fuer Identitaetspruefung.
+        # Cache signature: hash + cache, so a tool reload re-triggers the
+        # lazy init. Hash on the serialized content — cheap and sufficient
+        # for an identity check.
         sig = (
             str(hash(system_text)),
             str(hash(json.dumps(tools_payload, sort_keys=True, default=str))) if tools_payload else "",
@@ -353,11 +353,11 @@ class GeminiBrain:
         if self._cache_signature == sig and self._cached_content_name:
             return self._cached_content_name
 
-        # Mindestgroesse abschaetzen (Heuristik: 1 Token ~ 4 Chars).
+        # Estimate the minimum size (heuristic: 1 token ~ 4 chars).
         approx_tokens = (len(system_text) + len(json.dumps(tools_payload or []))) // 4
         if approx_tokens < _MIN_CACHE_TOKENS:
             log.debug(
-                "Gemini-Cache geskippt (Prefix ~%d Tokens < %d Mindestgroesse)",
+                "Gemini cache skipped (prefix ~%d tokens < %d minimum size)",
                 approx_tokens, _MIN_CACHE_TOKENS,
             )
             return None
@@ -374,11 +374,11 @@ class GeminiBrain:
             )
             self._cached_content_name = getattr(cache, "name", None)
             self._cache_signature = sig
-            log.info("Gemini Context-Cache erstellt: %s (Tokens ~%d)",
+            log.info("Gemini context cache created: %s (tokens ~%d)",
                      self._cached_content_name, approx_tokens)
             return self._cached_content_name
         except Exception as exc:  # noqa: BLE001
-            log.warning("Gemini Cache-Create fehlgeschlagen, fallback Direct: %s", exc)
+            log.warning("Gemini cache create failed, falling back to direct: %s", exc)
             return None
 
     def invalidate_cache(self) -> None:
@@ -420,18 +420,18 @@ class GeminiBrain:
         # there are no tools). See _build_gemini_tool_declarations.
         tool_name_reverse = {safe: original for original, safe in _tool_name_map.items()}
 
-        # Latenz-Sprint-2: Wenn Caching aktiviert ist, versuche System+Tools
-        # in einen Cache-Eintrag zu legen. Bei Erfolg: ``cached_content``
-        # statt ``system_instruction``+``tools`` setzen (Gemini erlaubt
-        # nicht beides gleichzeitig). Bei Skip/Fail: Direct-Pfad.
+        # Latency-Sprint-2: if caching is enabled, try to put system+tools
+        # into a cache entry. On success, set ``cached_content`` instead of
+        # ``system_instruction``+``tools`` (Gemini doesn't allow both at
+        # once). On skip/fail: direct path.
         cache_name: str | None = None
         if os.environ.get(_ENV_CONTEXT_CACHE) == "1":
             cache_name = await self._ensure_cache(system_text, tools_payload)
 
         if cache_name:
             config_dict["cached_content"] = cache_name
-            # System-Instruction + Tools liegen jetzt im Cache — NICHT erneut
-            # senden, sonst lehnt Gemini ab.
+            # System instruction + tools now live in the cache — do NOT send
+            # them again, or Gemini rejects the request.
         else:
             if system_text:
                 config_dict["system_instruction"] = system_text
@@ -457,12 +457,12 @@ class GeminiBrain:
         except Exception:  # noqa: BLE001 — never break the brain call over an SDK shape change
             log.debug("could not disable Gemini automatic_function_calling", exc_info=True)
 
-        # Latenz-Sprint-1: Thinking-Budget. Nur wenn explizit gesetzt — sonst
-        # ueberlassen wir die Wahl dem SDK-Default (vorheriges Verhalten).
-        # ``ThinkingConfig`` ist ab google-genai >= 0.7 verfuegbar; aelteren
-        # SDK-Versionen haben das Feld nicht und werfen AttributeError. In
-        # dem Fall ignorieren wir den Wert, statt den ganzen Brain-Call zu
-        # killen (Best-Effort-Optimierung).
+        # Latency-Sprint-1: thinking budget. Only when explicitly set —
+        # otherwise we leave the choice to the SDK default (previous
+        # behavior). ``ThinkingConfig`` is available from google-genai >= 0.7;
+        # older SDK versions don't have the field and raise AttributeError. In
+        # that case we ignore the value instead of killing the whole brain
+        # call (best-effort optimization).
         if self._thinking_budget is not None:
             try:
                 from google.genai import types as _genai_types
@@ -483,7 +483,7 @@ class GeminiBrain:
         # ║                                                              ║
         # ║ Log trace per failing turn (data/jarvis_desktop.log):        ║
         # ║   T+0.0   → Brain ...                                        ║
-        # ║   T+0.7   Brain gemini(gemini-3-flash-preview) fehlgeschlagen║
+        # ║   T+0.7   Brain gemini(gemini-3-flash-preview) failed        ║
         # ║           403 Forbidden. "CachedContent not found            ║
         # ║           (or permission denied)"                            ║
         # ║   T+40.0  Brain-Stream timed out after 40.0s — back to       ║
@@ -512,7 +512,7 @@ class GeminiBrain:
         # ║     in time. The pipeline's hard cap (``brain_timeout_s =    ║
         # ║     40.0`` in ``speech/pipeline.py``) trips and returns to   ║
         # ║     LISTENING with an empty response — which then hits the   ║
-        # ║     "Filler-/ACK-Response unterdrueckt" branch in            ║
+        # ║     "filler/ack response suppressed" branch in               ║
         # ║     ``_handle_utterance`` and silently `return True`s        ║
         # ║     without calling ``_speak``.                              ║
         # ║   * That is the silent THINKING → LISTENING transition the   ║

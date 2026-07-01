@@ -1,13 +1,13 @@
-"""Reactions-Routes (Phase D).
+"""Reactions routes (Phase D).
 
-- ``POST /api/v1/reactions`` (signed by owner) — Owner reagiert auf einen
-  Item, dessen Author ein Friend ist. Owner's Backend forwardet die Reaction
-  zum Friend-Backend via ``POST /api/v1/federation/reactions/inbound``.
+- ``POST /api/v1/reactions`` (signed by owner) — the owner reacts to an
+  item whose author is a friend. The owner's backend forwards the reaction
+  to the friend's backend via ``POST /api/v1/federation/reactions/inbound``.
 
 - ``POST /api/v1/federation/reactions/inbound`` (signed by friend) —
-  Friend's Backend pusht eine Reaction auf einen Item, dessen Author das
-  Owner-Backend ist. Wir verifizieren, dass der ``viewer_pubkey`` ein
-  bekannter Friend ist, und persistieren.
+  the friend's backend pushes a reaction to an item whose author is the
+  owner's backend. We verify that ``viewer_pubkey`` is a known friend, then
+  persist.
 """
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ fed_router = APIRouter(prefix="/api/v1/federation", tags=["federation"])
 
 
 # ----------------------------------------------------------------------
-# Owner side — eine Reaktion auf einen Friend-Item
+# Owner side — a reaction to a friend's item
 # ----------------------------------------------------------------------
 
 @router.post("/reactions", response_model=ReactionAck)
@@ -59,7 +59,7 @@ async def post_reaction(
             raise HTTPException(status_code=403, detail="not the owner")
 
         if body.author_pubkey == owner.pubkey:
-            # Self-Reaction (selten, aber moeglich): direkt persistieren.
+            # Self-reaction (rare, but possible): persist directly.
             local_item = session.get(ActivityItem, body.item_id)
             if local_item is None:
                 raise HTTPException(status_code=404, detail="item not found")
@@ -72,8 +72,8 @@ async def post_reaction(
             raise HTTPException(status_code=404, detail="not a friend")
         target_url = friend.friend_url
 
-    # HTTP-Forward ausserhalb der Session. ``auth.body_bytes`` enthaelt den
-    # bereits gelesenen raw-Body (require_signed_request konsumiert ihn).
+    # HTTP forward outside the session. ``auth.body_bytes`` holds the
+    # raw body already read (require_signed_request consumes it).
     ok = await _forward_reaction(request, target_url, auth.body_bytes)
     if not ok:
         raise HTTPException(status_code=502, detail="friend backend unreachable")
@@ -81,7 +81,7 @@ async def post_reaction(
 
 
 # ----------------------------------------------------------------------
-# Federation side — eine eingehende Reaktion vom Friend-Backend
+# Federation side — an incoming reaction from the friend's backend
 # ----------------------------------------------------------------------
 
 @fed_router.post("/reactions/inbound", response_model=ReactionAck)
@@ -96,7 +96,7 @@ def reactions_inbound(
 
     with get_db(request) as session:
         owner = get_owner_identity(session)
-        # Reactor muss ein friend sein.
+        # Reactor must be a friend.
         friend = session.get(Friend, (owner.pubkey, auth.viewer_pubkey))
         if friend is None:
             raise HTTPException(status_code=403, detail="not a friend")
@@ -113,7 +113,7 @@ def reactions_inbound(
 # ----------------------------------------------------------------------
 
 def _persist_reaction(session, item_id: str, reactor_pubkey: str, reaction: str) -> None:
-    """Idempotent insert via UNIQUE-Constraint."""
+    """Idempotent insert via UNIQUE constraint."""
     from sqlalchemy.exc import IntegrityError
     session.add(Reaction(
         item_id=item_id,
@@ -124,22 +124,23 @@ def _persist_reaction(session, item_id: str, reactor_pubkey: str, reaction: str)
         session.flush()
     except IntegrityError:
         session.rollback()
-        # bereits vorhanden, OK
+        # already present, OK
 
 
 async def _forward_reaction(request: Request, target_url: str, raw_body: bytes) -> bool:
-    """Forwardet den signed Body 1:1 an Friend-Backend.
+    """Forwards the signed body 1:1 to the friend's backend.
 
-    Owner-Backend hat **keinen Privkey** — die Sig wurde im Frontend (oder
-    im lokalen Jarvis-Client) generiert und im X-Jarvis-Sig-Header
-    geliefert. Wir leiten den raw-Body + die Sig-Header weiter; Friend-
-    Backend verifiziert mit dem (gleichen) Owner-Pubkey.
+    The owner's backend has **no private key** — the signature was
+    generated in the frontend (or the local Jarvis client) and delivered
+    in the X-Jarvis-Sig header. We pass the raw body + the signature
+    header through as-is; the friend's backend verifies against the
+    (same) owner pubkey.
 
-    Sicherer Pfad, weil der Friend-Empfaenger ``InboundReactionRequest``
-    mit ``extra='forbid'`` validiert und die Sig gegen den Reactor-Pubkey
-    aus dem ``X-Pubkey``-Header prueft — also gegen den Owner. Der
-    Friend-Backend muss diesen Owner als ``Friend`` registriert haben,
-    sonst 403.
+    This is a safe path because the friend receiver validates
+    ``InboundReactionRequest`` with ``extra='forbid'`` and checks the
+    signature against the reactor pubkey from the ``X-Pubkey`` header —
+    i.e. against the owner. The friend's backend must have this owner
+    registered as a ``Friend``, otherwise 403.
     """
     headers_pass = {
         "Content-Type": "application/json",
@@ -148,8 +149,8 @@ async def _forward_reaction(request: Request, target_url: str, raw_body: bytes) 
     }
     timeout = httpx.Timeout(5.0)
     try:
-        # Tests koennen ueber app.state.federation_http einen MockTransport
-        # injizieren — Production nutzt den Default.
+        # Tests can inject a MockTransport via app.state.federation_http —
+        # production uses the default.
         forwarder = getattr(request.app.state, "federation_http", None)
         if forwarder is None:
             async with httpx.AsyncClient(timeout=timeout) as client:

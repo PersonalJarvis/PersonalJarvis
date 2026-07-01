@@ -1,7 +1,7 @@
-"""Laufzeit-State fuer die Desktop-App (Supervisor, ChatStore).
+"""Runtime state for the desktop app (Supervisor, ChatStore).
 
-Diese Objekte sind Prozess-weit eindeutig und werden vom `WebServer` ueber
-`bind_*`-Setter an die FastAPI-State-Map angebunden.
+These objects are unique per process and are wired into the FastAPI state map
+by the `WebServer` via `bind_*` setters.
 """
 from __future__ import annotations
 

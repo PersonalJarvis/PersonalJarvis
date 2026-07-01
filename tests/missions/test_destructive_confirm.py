@@ -1,4 +1,4 @@
-"""Tests fuer destructive_confirm — Pre-Mission-Gate."""
+"""Tests for destructive_confirm — pre-mission gate."""
 from __future__ import annotations
 
 import pytest
@@ -25,7 +25,7 @@ def test_explain_code_not_destructive() -> None:
 
 
 def test_review_code_not_destructive() -> None:
-    found, _ = is_destructive("Review meinen pull request fuer das auth-modul")
+    found, _ = is_destructive("Review meinen pull request fuer das auth-modul")  # i18n-allow: simulated German user prompt, bilingual safety-gate coverage
     assert found is False
 
 
@@ -36,7 +36,7 @@ def test_empty_prompt_not_destructive() -> None:
 
 
 def test_delete_unused_imports_not_destructive() -> None:
-    """`delete unused imports` darf nicht triggern — kein All/All-Files-Quantifier."""
+    """`delete unused imports` must not trigger — no all/all-files quantifier."""
     found, _ = is_destructive("delete unused imports in src/main.py")
     assert found is False
 
@@ -145,8 +145,8 @@ def test_remove_all_directories_destructive() -> None:
     assert det is not None
 
 
-def test_datenbank_loeschen_destructive() -> None:
-    found, det = is_destructive("Datenbank prod_users loeschen")
+def test_german_delete_database_destructive() -> None:
+    found, det = is_destructive("Datenbank prod_users loeschen")  # i18n-allow: German destructive-command input vocabulary under test
     assert found is True
     assert det is not None
     assert det.pattern_id == "drop_database_de"

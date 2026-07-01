@@ -1,8 +1,8 @@
-"""OverlayState Enum + StateMachine gemaess Plan §6.
+"""OverlayState enum + StateMachine per Plan §6.
 
-Plan §6.1: 8 States, Glow ist NUR aktiv in TYPING und CLICKING.
-Plan AD-8: State-Machine lebt im Overlay-Prozess (nicht im Hauptjarvis).
-Plan AD-17: 16 ms Coalescing fuer identische Folge-Transitionen.
+Plan §6.1: 8 states, glow is ONLY active in TYPING and CLICKING.
+Plan AD-8: the state machine lives in the overlay process (not in Main-Jarvis).
+Plan AD-17: 16 ms coalescing for identical consecutive transitions.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class OverlayState(str, Enum):
-    """8 States laut Plan §6.1. String-Werte sind stable Wire-Format."""
+    """8 states per Plan §6.1. String values are the stable wire format."""
 
     IDLE = "idle"
     LISTENING = "listening"
@@ -34,35 +34,35 @@ GLOW_ACTIVE_STATES: frozenset[OverlayState] = frozenset(
 )
 
 
-# Plan AD-17 — 16 ms = 1 Frame @ 60 Hz.
+# Plan AD-17 — 16 ms = 1 frame @ 60 Hz.
 COALESCE_WINDOW_NS: int = 16_000_000
 
 
-# (old, new, reason) — reason kann None sein wenn keine angegeben wurde.
+# (old, new, reason) — reason can be None if none was given.
 StateChangeCallback = Callable[[OverlayState, OverlayState, Optional[str]], None]
 
 
 class StateMachine:
-    """Authoritative state holder fuer das Overlay.
+    """Authoritative state holder for the overlay.
 
-    Plan AD-8: lebt im Overlay-Prozess. Hauptjarvis sendet Events ueber
-    IPC, der EventRouter mappt sie auf ``transition_to()``-Aufrufe.
+    Plan AD-8: lives in the overlay process. Main-Jarvis sends events
+    over IPC, and the EventRouter maps them to ``transition_to()`` calls.
 
-    Plan §6.2 Coalescing-Regel: ``any -> same state within 16 ms : ignored``.
-    Identische Folge-Transitionen innerhalb von ``COALESCE_WINDOW_NS`` sind
-    no-op und feuern keine Subscriber.
+    Plan §6.2 coalescing rule: ``any -> same state within 16 ms : ignored``.
+    Identical consecutive transitions within ``COALESCE_WINDOW_NS`` are
+    a no-op and do not fire subscribers.
 
-    Subscriber-Callbacks werden SYNCHRON im Caller-Thread von
-    ``transition_to()`` aufgerufen — Subscriber muessen schnell sein und
-    nicht blockieren. Wenn ein Callback aus einem Worker-Thread feuert,
-    ist Marshalling auf den Qt-Thread Aufgabe des Subscribers (z.B. ueber
-    ``QMetaObject.invokeMethod`` oder Qt-Signals).
+    Subscriber callbacks are called SYNCHRONOUSLY on the caller thread
+    of ``transition_to()`` — subscribers must be fast and non-blocking.
+    If a callback fires from a worker thread, marshalling onto the Qt
+    thread is the subscriber's responsibility (e.g. via
+    ``QMetaObject.invokeMethod`` or Qt signals).
     """
 
     def __init__(self, *, initial: OverlayState = OverlayState.IDLE) -> None:
         self._state = initial
-        # monotonic_ns() ist immun gegen Wallclock-Skews — hier sicherer
-        # als time.time_ns() weil es nur fuer Coalescing-Diff dient.
+        # monotonic_ns() is immune to wallclock skew — safer here than
+        # time.time_ns() since it's only used for the coalescing diff.
         self._last_transition_ns: int = 0
         self._lock = threading.RLock()
         self._subscribers: list[StateChangeCallback] = []
@@ -73,7 +73,7 @@ class StateMachine:
             return self._state
 
     def subscribe(self, callback: StateChangeCallback) -> Callable[[], None]:
-        """Registriert einen Subscriber, returnt eine ``unsubscribe``-Funktion."""
+        """Registers a subscriber, returns an ``unsubscribe`` function."""
         with self._lock:
             self._subscribers.append(callback)
 
@@ -90,21 +90,21 @@ class StateMachine:
         *,
         reason: Optional[str] = None,
     ) -> bool:
-        """Wechselt nach ``target``. Returnt ``True`` wenn echte Transition.
+        """Switches to ``target``. Returns ``True`` if it was a real transition.
 
-        Coalescing-Regeln:
-        - ``target == current`` und letzter Wechsel < 16 ms -> ignoriert.
-        - ``target == current`` aber letzter Wechsel >= 16 ms -> ebenfalls
-          ignoriert (kein State-Change), aber das ist kein Coalescing-Hit.
-        - ``target != current`` -> immer transitionieren.
+        Coalescing rules:
+        - ``target == current`` and the last change was < 16 ms ago -> ignored.
+        - ``target == current`` but the last change was >= 16 ms ago -> also
+          ignored (no state change), but that is not a coalescing hit.
+        - ``target != current`` -> always transitions.
         """
         now_ns = time.monotonic_ns()
         with self._lock:
             old = self._state
             if target == old:
-                # Kein State-Change. Coalescing-Spec ist hier streng
-                # genommen redundant, aber wir loggen den Hit damit
-                # Drift-Diagnose moeglich bleibt.
+                # No state change. The coalescing spec is strictly
+                # speaking redundant here, but we log the hit so
+                # drift diagnosis stays possible.
                 if (now_ns - self._last_transition_ns) < COALESCE_WINDOW_NS:
                     logger.debug(
                         "state coalesced: %s -> %s within %d ns",
@@ -117,8 +117,8 @@ class StateMachine:
             self._last_transition_ns = now_ns
             subscribers_snapshot = list(self._subscribers)
 
-        # Subscriber-Dispatch ausserhalb des Locks — verhindert Deadlocks
-        # falls ein Subscriber re-entrant transition_to() ruft.
+        # Subscriber dispatch outside the lock — prevents deadlocks
+        # in case a subscriber re-entrantly calls transition_to().
         for cb in subscribers_snapshot:
             try:
                 cb(old, target, reason)
@@ -132,8 +132,8 @@ class StateMachine:
 
 
     def transition_to_hidden(self, *, reason: Optional[str] = None) -> bool:
-        """Plan §17.3 + §20.2 — Convenience fuer Fullscreen-Detector
-        und Hide-Timeout-Pfade."""
+        """Plan §17.3 + §20.2 — convenience for the fullscreen detector
+        and hide-timeout paths."""
         return self.transition_to(OverlayState.HIDDEN, reason=reason)
 
 

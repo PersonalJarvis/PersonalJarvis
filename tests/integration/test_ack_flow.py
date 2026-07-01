@@ -201,7 +201,7 @@ async def test_voice_control_bypass_does_not_invoke_flash_brain() -> None:
     """
     # Use the existing voice-control regex as the gate (it's the
     # canonical detector).
-    fake = FakeAckProvider(response="Ich höre auf.")
+    fake = FakeAckProvider(response="Ich höre auf.")  # i18n-allow
     ack = build_ack_generator_with_fake(fake)
     config = SimpleNamespace(ack_brain=ack._config)
     stub = _make_pipeline_stub(ack_brain=ack, config=config)

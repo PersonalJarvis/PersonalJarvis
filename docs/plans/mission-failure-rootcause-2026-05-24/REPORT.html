@@ -214,7 +214,7 @@ FailoverError: CLI produced no output for 480s and was terminated.</pre>
     <li>
       <div class="step-t">FIX-A · Route worker to the proven direct path <span class="pill p-crit">Highest impact</span></div>
       <p>Provider <code>"openclaw-claude" → "claude-api"</code> → factory selects <code>ClaudeDirectWorker</code> (calls <code>claude --print --permission-mode bypassPermissions</code> directly, without OpenClaw live session → no 480-s hang). <strong>Atomic in BOTH files</strong> (else drift-guard rollback in 5 min):</p>
-      <div class="flow"><b>scripts/config-soll.json:33</b> &nbsp;FIRST&nbsp; → then &nbsp;<b>jarvis.toml:277</b> (toggle read-only, write BOM-free)</div>
+      <div class="flow"><b>scripts/config-soll.json:33</b> &nbsp;FIRST&nbsp; → then &nbsp;<b>jarvis.toml:277</b> (toggle read-only, write BOM-free)</div>  <!-- i18n-allow -->
       <p class="meta">model="" is safe → falls back to <code>[brain.providers.claude-api].deep_model = claude-opus-4-7</code>. Critic path untouched.</p>
     </li>
     <li>
@@ -241,9 +241,9 @@ FailoverError: CLI produced no output for 480s and was terminated.</pre>
 
   <!-- ====================== CONFIG PROCEDURE ====================== -->
   <h2>4 · Safe config procedure (FIX-A in detail)</h2>
-  <p>The drift-guard daemon (<code>scripts/jarvis-config-drift-guard.ps1</code>) reads <code>config-soll.json</code> every 5 min and rolls back any TOML drift (BUG-010). That's why this order — else the problem comes back after 5 minutes.</p>
+  <p>The drift-guard daemon (<code>scripts/jarvis-config-drift-guard.ps1</code>) reads <code>config-soll.json</code> every 5 min and rolls back any TOML drift (BUG-010). That's why this order — else the problem comes back after 5 minutes.</p>  <!-- i18n-allow -->
 <pre><span class="c"># 1) Desired source FIRST (else rollback):</span>
-scripts/config-soll.json:33   "provider": "openclaw-claude"  →  "claude-api"
+scripts/config-soll.json:33   "provider": "openclaw-claude"  →  "claude-api"  <!-- i18n-allow -->
 
 <span class="c"># 2) Unlock jarvis.toml, write BOM-free, lock again:</span>
 Set-ItemProperty jarvis.toml -Name IsReadOnly -Value $false

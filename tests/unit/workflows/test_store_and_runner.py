@@ -1,14 +1,14 @@
-"""Smoke-Tests fuers Workflow-System.
+"""Smoke tests for the workflow system.
 
 Scope:
 - Store CRUD (insert, list, upsert, run-create, run-step-update).
-- Seed-Idempotenz.
-- Runner mit Fake-Brain: brain_prompt-Step produziert erwarteten Output.
-- Runner mit Template-Expansion (``{{prev.output}}`` + ``{{input.X}}``).
-- Runner Error-Pfad: speak ohne kaputtes Dep geht durch, tool_call ohne Registry faillt sauber.
+- Seed idempotency.
+- Runner with fake brain: brain_prompt step produces the expected output.
+- Runner with template expansion (``{{prev.output}}`` + ``{{input.X}}``).
+- Runner error path: speak without a broken dep goes through, tool_call without a registry fails cleanly.
 
-Keine echten Brain-Provider, keine echte SQLite-Datei auf Platte — alles
-tempdir + Fakes. Pattern spiegelt ``tests/unit/clis/test_smoke.py`` etc.
+No real brain providers, no real SQLite file on disk — everything is
+tempdir + fakes. The pattern mirrors ``tests/unit/clis/test_smoke.py`` etc.
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ async def store(tmp_path: Path) -> WorkflowStore:
 
 
 class FakeBrain:
-    """Async-callable das den Prompt echoed — ausreichend fuer Runner-Tests."""
+    """Async callable that echoes the prompt — sufficient for runner tests."""
 
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -100,7 +100,7 @@ async def test_store_upsert_is_idempotent(store: WorkflowStore) -> None:
 
 async def test_seed_is_idempotent(store: WorkflowStore) -> None:
     first = await ensure_seed_workflows(store)
-    # Aktuelle Seed-Count ergibt sich aus SEED_WORKFLOWS — robust gegen Zufuegungen.
+    # The current seed count derives from SEED_WORKFLOWS — robust against additions.
     from jarvis.workflows.seed import SEED_WORKFLOWS
     assert first == len(SEED_WORKFLOWS)
     second = await ensure_seed_workflows(store)
@@ -152,7 +152,7 @@ async def test_runner_brain_prompt_executes_and_publishes_events(
     wid = await store.upsert_workflow(wf)
     run_id = await runner.trigger(wid)
 
-    # Einen Micro-Turn warten — Runner laeuft als asyncio.create_task.
+    # Wait one micro-turn — the runner runs as an asyncio.create_task.
     import asyncio
     for _ in range(50):
         await asyncio.sleep(0.01)
@@ -160,7 +160,7 @@ async def test_runner_brain_prompt_executes_and_publishes_events(
         if run and run["state"] == "completed":
             break
     else:
-        pytest.fail("Run wurde nicht in 500ms fertig")
+        pytest.fail("Run did not finish within 500ms")
 
     assert brain.calls == ["sag hallo"]
     run = await store.get_run(run_id)
@@ -201,13 +201,13 @@ async def test_runner_input_variable_expansion(store: WorkflowStore) -> None:
         if run and run["state"] == "completed":
             break
     else:
-        pytest.fail("Run nicht fertig")
+        pytest.fail("Run not finished")
 
     assert brain.calls == ["Fasse https://x.test zusammen"]
 
 
 async def test_runner_without_brain_fails_cleanly(store: WorkflowStore) -> None:
-    """brain_prompt ohne BrainManager → sauberer Error-State, kein Crash."""
+    """brain_prompt without a BrainManager → clean error state, no crash."""
     bus = EventBus()
     runner = WorkflowRunner(store=store, bus=bus, brain=None)
 
@@ -238,10 +238,10 @@ async def test_runner_without_brain_fails_cleanly(store: WorkflowStore) -> None:
 async def test_runner_shell_cmd_captures_stdout(
     store: WorkflowStore, tmp_path: Path,
 ) -> None:
-    """shell_cmd mit einem einfachen Python-Script — stdout landet in output.
+    """shell_cmd with a simple Python script — stdout lands in output.
 
-    Ein File-basiertes Script vermeidet die Escape-Hoelle von ``-c "print(...)"``
-    auf Windows und prueft den realistischen Case (gws/git-style-CLI).
+    A file-based script avoids the escaping hell of ``-c "print(...)"``
+    on Windows and tests the realistic case (gws/git-style CLI).
     """
     import sys
 
@@ -313,11 +313,11 @@ async def test_runner_shell_cmd_nonzero_exit_fails(
 async def test_runner_telegram_without_token_fails_cleanly(
     store: WorkflowStore, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """telegram_send ohne Token → sauberer Fehler mit Setup-Hinweis."""
+    """telegram_send without a token → clean error with setup hint."""
     from jarvis.workflows.schema import TelegramSendStep
 
-    # Token-Lookup garantiert leer. monkeypatch stellt sicher, dass kein
-    # eingeloggter keyring-Key aus der echten Dev-Maschine reingelesen wird.
+    # Token lookup guaranteed empty. monkeypatch makes sure no
+    # logged-in keyring key from the real dev machine gets read in.
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.setattr(
         "jarvis.core.config.get_secret",
@@ -352,10 +352,10 @@ async def test_runner_telegram_without_token_fails_cleanly(
 async def test_runner_telegram_posts_to_api(
     store: WorkflowStore, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """telegram_send mit Token + Chat-ID → POST an Bot-API, Payload korrekt.
+    """telegram_send with token + chat ID → POST to the bot API, payload correct.
 
-    Wir mocken ``httpx.AsyncClient.post`` um einen 200-OK zurueckzugeben und
-    pruefen, dass Body chat_id/text wie erwartet enthaelt.
+    We mock ``httpx.AsyncClient.post`` to return a 200 OK and
+    check that the body contains chat_id/text as expected.
     """
     from jarvis.workflows.schema import TelegramSendStep
 
@@ -402,7 +402,7 @@ async def test_runner_telegram_posts_to_api(
             break
 
     run = await store.get_run(run_id)
-    assert run["state"] == "completed", f"Fehler: {run['error']}"
+    assert run["state"] == "completed", f"Error: {run['error']}"
     assert len(captured_payloads) == 1
     body = captured_payloads[0]["body"]
     assert body["chat_id"] == "987654"

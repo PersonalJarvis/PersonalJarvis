@@ -67,13 +67,13 @@ from jarvis.speech.hangup import (
         "lege auf",
         "legen sie auf",
         "aufgelegt",
-        "tschüss",
+        "tschüss",  <!-- i18n-allow -->
         "tschuess",
         "beenden",
-        "gespräch beenden",
-        "auf wiederhören",
+        "gespräch beenden",  <!-- i18n-allow -->
+        "auf wiederhören",  <!-- i18n-allow -->
         "auf wiedersehen",
-        "bis später",
+        "bis später",  <!-- i18n-allow -->
         "gute nacht",
         "jarvis aus",
         "schluss jetzt",
@@ -103,15 +103,15 @@ def test_hangup_re_matches_explicit_commands(phrase: str) -> None:
         # so the INSTANT regex must NOT fire on them.
         "vielen dank",
         "danke jarvis",
-        "danke schön",
+        "danke schön",  <!-- i18n-allow -->
         "thanks jarvis",
         "das war's",
         # Normal speech must never match.
         "wie geht es dir",
-        "erzähl mir was",
+        "erzähl mir was",  <!-- i18n-allow -->
         "kannst du das nochmal machen",
-        "geh mal auf die seite",
-        "öffne die datei",
+        "geh mal auf die seite",  <!-- i18n-allow -->
+        "öffne die datei",  <!-- i18n-allow -->
     ],
 )
 def test_hangup_re_ignores_ambiguous_and_normal_speech(phrase: str) -> None:
@@ -119,14 +119,14 @@ def test_hangup_re_ignores_ambiguous_and_normal_speech(phrase: str) -> None:
 
 
 def test_contains_end_signal_detects_token() -> None:
-    assert contains_end_signal("Bis später, Alex. [[END_CALL]]") is True
-    assert contains_end_signal("Bis später, Alex.") is False
+    assert contains_end_signal("Bis später, Alex. [[END_CALL]]") is True  <!-- i18n-allow -->
+    assert contains_end_signal("Bis später, Alex.") is False  <!-- i18n-allow -->
     assert contains_end_signal("") is False
     assert contains_end_signal(None) is False  # type: ignore[arg-type]
 
 
 def test_strip_end_signal_removes_token_and_trims() -> None:
-    assert strip_end_signal("Bis später, Alex. [[END_CALL]]") == "Bis später, Alex."
+    assert strip_end_signal("Bis später, Alex. [[END_CALL]]") == "Bis später, Alex."  <!-- i18n-allow -->
     assert strip_end_signal("[[END_CALL]]") == ""
     assert strip_end_signal("Auf Wiedersehen.") == "Auf Wiedersehen."
 
@@ -151,7 +151,7 @@ def test_is_legacy_farewell_matches_old_exact_phrases(phrase: str) -> None:
 
 
 def test_is_legacy_farewell_rejects_other_text() -> None:
-    assert is_legacy_farewell("auf wiedersehen alex war mir ein vergnügen") is False
+    assert is_legacy_farewell("auf wiedersehen alex war mir ein vergnügen") is False  <!-- i18n-allow -->
     assert is_legacy_farewell("hallo alex") is False
     assert is_legacy_farewell("") is False
 ```
@@ -219,21 +219,21 @@ _HANGUP_PATTERNS: Final[tuple[str, ...]] = (
     r"\bdrauf\s*leg\w*\b",
     r"\bableg\w*\b",
     # German — other explicit closings
-    r"\btschüss\b",
+    r"\btschüss\b",  <!-- i18n-allow -->
     r"\btschuess\b",
     r"\bbeenden\b",
-    r"\bgespräch beenden\b",
-    r"\bauf wiederhören\b",
+    r"\bgespräch beenden\b",  <!-- i18n-allow -->
+    r"\bauf wiederhören\b",  <!-- i18n-allow -->
     r"\bauf wiederhoeren\b",
     r"\bauf wiedersehen\b",
-    r"\bbis später\b",
+    r"\bbis später\b",  <!-- i18n-allow -->
     r"\bgute nacht\b",
     r"\bjarvis aus\b",
     r"\bjarvis ende\b",
     r"\bende jarvis\b",
     r"\bschluss jetzt\b",
     r"\bfertig jarvis\b",
-    r"\bjarvis fertig\b",
+    r"\bjarvis fertig\b",  <!-- i18n-allow -->
     r"\bstopp jarvis\b",
     r"\bjarvis stopp\b",
     # English — explicit closings
@@ -338,9 +338,9 @@ Append to `tests/unit/brain/test_output_filter.py` (module already imports `scru
 def test_scrub_strips_end_call_sentinel() -> None:
     from jarvis.speech.hangup import END_CALL_SIGNAL
 
-    result = scrub_for_voice(f"Bis später, Alex. {END_CALL_SIGNAL}", language="de")
+    result = scrub_for_voice(f"Bis später, Alex. {END_CALL_SIGNAL}", language="de")  <!-- i18n-allow -->
     assert END_CALL_SIGNAL not in result.cleaned
-    assert result.cleaned.strip() == "Bis später, Alex."
+    assert result.cleaned.strip() == "Bis später, Alex."  <!-- i18n-allow -->
     assert "stripped_end_signal" in result.actions
 
 
@@ -439,11 +439,11 @@ with:
 ```
 - ENDING THE CALL — only when Alex clearly wants to end the conversation
   (an explicit goodbye, a dismissal such as "you can go now" / "kannst du
-  jetzt gehen" / "das war's für heute", or telling you to hang up): say a
+  jetzt gehen" / "das war's für heute", or telling you to hang up): say a  <!-- i18n-allow -->
   short, natural farewell in HIS language AND append the control token
   [[END_CALL]] as the very last characters of your reply.
     EN: "Goodbye, Alex. [[END_CALL]]" / "Until next time, Alex. [[END_CALL]]"
-    DE: "Auf Wiedersehen, Alex. [[END_CALL]]" / "Bis später, Alex. [[END_CALL]]"
+    DE: "Auf Wiedersehen, Alex. [[END_CALL]]" / "Bis später, Alex. [[END_CALL]]"  <!-- i18n-allow -->
   The token is silent — it is stripped before anything is spoken and only
   tells the system to hang up. If you are NOT sure he wants to end (he merely
   paused, is thinking, or just thanked you), do NOT append the token and do
@@ -455,12 +455,12 @@ Then update the documentation prose **outside** the fence so it stays accurate. 
 ```
 ## Hangup-Signal (Pipeline-Contract)
 
-Die Pipeline erkennt Hangup wenn die Brain-Antwort (normalisiert) equals einer von:
-- `"goodbye, alex"` (englisch)
-- `"auf wiedersehen, alex"` (deutsch)
+The pipeline detects a hangup when the brain response (normalized) equals one of:
+- `"goodbye, alex"` (English)
+- `"auf wiedersehen, alex"` (German)
 
-Der Brain MUSS exakt eine dieser beiden Phrasen ausgeben um aufzulegen — sprachabhängig
-entsprechend der User-Sprache.
+The brain MUST output exactly one of these two phrases to hang up — depending on
+the user's language.
 ```
 
 with:
@@ -480,7 +480,7 @@ Backward compatibility: the old exact phrases `"goodbye, alex"` /
 And update the cross-reference line (currently line 133):
 
 ```
-- Hangup-Matcher: `pipeline.py` — normalized equals gegen `"goodbye, alex"` oder `"auf wiedersehen, alex"`
+- Hangup-Matcher: `pipeline.py` — normalized equals against `"goodbye, alex"` or `"auf wiedersehen, alex"`
 ```
 
 to:
@@ -520,14 +520,14 @@ async def test_brain_end_call_sentinel_hangs_up_and_is_not_spoken() -> None:
     # command, so the brain decides — and signals end via the sentinel.
     pipe = _make_pipeline(
         FakeSTT(text="Ich glaube wir sind durch"),
-        brain_response="Bis später, Alex. [[END_CALL]]",
+        brain_response="Bis später, Alex. [[END_CALL]]",  <!-- i18n-allow -->
         continue_listening_after_response=True,  # prove hangup overrides stay-open
     )
 
     keep_session = await pipe._handle_utterance(b"\x01\x00" * 1024)
 
     assert keep_session is False
-    assert pipe._spoken == [("Bis später, Alex.", "de")]  # sentinel stripped
+    assert pipe._spoken == [("Bis später, Alex.", "de")]  # sentinel stripped  <!-- i18n-allow -->
     assert pipe._session_end_reason == "voice_pattern"
     assert pipe._hangup_event.is_set()
 
@@ -569,7 +569,7 @@ async def test_brain_streaming_strips_sentinel_but_keeps_it_in_full_text() -> No
 
     class _StreamBrain:
         async def generate_stream(self, _text: str, **_kw):
-            for ch in ["Alles erledigt. ", "Bis später, Alex. ", "[[END_CALL]]"]:
+            for ch in ["Alles erledigt. ", "Bis später, Alex. ", "[[END_CALL]]"]:  <!-- i18n-allow -->
                 yield ch
 
     pipe._brain = _StreamBrain()
@@ -578,7 +578,7 @@ async def test_brain_streaming_strips_sentinel_but_keeps_it_in_full_text() -> No
 
     assert "[[END_CALL]]" in full  # detection in _handle_utterance reads this
     assert all("[[END_CALL]]" not in t for (t, _l) in pipe._spoken)  # never spoken
-    assert any("Bis später" in t for (t, _l) in pipe._spoken)
+    assert any("Bis später" in t for (t, _l) in pipe._spoken)  <!-- i18n-allow -->
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -600,7 +600,7 @@ from jarvis.speech.hangup import (
 
 - [ ] **Step 4: Remove the inline regex**
 
-Delete the inline pattern block in `jarvis/speech/pipeline.py` — the lines from the comment `# Hangup-Pattern großzügig ...` (the "hang-up pattern generously matched" block) through the `HANGUP_RE = re.compile(...)` line (currently lines 122-180). Replace the whole block with a single pointer comment:
+Delete the inline pattern block in `jarvis/speech/pipeline.py` — the lines from the comment `# Hangup-Pattern großzügig ...` (the "hang-up pattern generously matched" block) through the `HANGUP_RE = re.compile(...)` line (currently lines 122-180). Replace the whole block with a single pointer comment: <!-- i18n-allow -->
 
 ```python
 # Hang-up patterns + the END_CALL sentinel live in jarvis/speech/hangup.py
@@ -653,8 +653,8 @@ and insert immediately ABOVE it:
 Then remove the now-redundant recomputation. Replace this exact block (currently `pipeline.py:2429-2436`):
 
 ```python
-        # Brain-basiertes Hangup: Claude antwortet bei Hangup-Intent mit exakt
-        # "Goodbye, Alex." (EN) oder "Auf Wiedersehen, Alex." (DE).
+        # Brain-based hangup: Claude replies to hangup intent with exactly
+        # "Goodbye, Alex." (EN) or "Auf Wiedersehen, Alex." (DE).
         normalized = response.strip().rstrip("!.").strip().lower()
         is_hangup = normalized in (
             "goodbye, alex", "goodbye alex",
@@ -784,7 +784,7 @@ with:
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `python -m pytest tests/unit/telephony/test_session.py -q`
-Expected: PASS (the new test plus all existing telephony tests — including the regex parametrizations, which still expect "beenden"/"goodbye" to match and "danke schön" (thank you) not to).
+Expected: PASS (the new test plus all existing telephony tests — including the regex parametrizations, which still expect "beenden"/"goodbye" to match and "danke schön" (thank you) not to). <!-- i18n-allow -->
 
 - [ ] **Step 6: Commit**
 

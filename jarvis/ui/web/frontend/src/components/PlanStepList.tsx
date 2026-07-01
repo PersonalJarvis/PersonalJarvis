@@ -1,8 +1,8 @@
 /**
- * PlanStepList — Stub nach Filesystem-Reset 2026-04-25.
+ * PlanStepList — stub after the filesystem reset 2026-04-25.
  *
- * Voller Component mit Status-Icons + expandable Errors folgt; aktuell
- * eine flache Liste die alle Step-Felder als kompakte Karten zeigt.
+ * A full component with status icons + expandable errors is coming; currently
+ * a flat list showing all step fields as compact cards.
  */
 import { CheckCircle2, Circle, Loader2, XCircle } from "lucide-react";
 import { useT } from "@/i18n";

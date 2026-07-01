@@ -1,1 +1,1 @@
-"""Fake-Harness-Fixtures für Tests."""
+"""Fake-Harness fixtures for tests."""

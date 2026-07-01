@@ -23,12 +23,12 @@ def test_merge_partial_transcript_replaces_corrected_live_hypotheses() -> None:
     for partial in (
         "Was?",
         "Was ist morgens?",
-        "Was ist morgen fuer ein Tag?",
-        "Morgen fuer einen Tag.",
+        "Was ist morgen fuer ein Tag?",  # i18n-allow
+        "Morgen fuer einen Tag.",  # i18n-allow
     ):
         text = _merge_partial_transcript(text, partial)
 
-    assert text == "Was ist morgen fuer ein Tag?"
+    assert text == "Was ist morgen fuer ein Tag?"  # i18n-allow
 
 
 async def test_stt_probe_publishes_partial_transcription_update() -> None:
@@ -68,7 +68,7 @@ async def test_stt_probe_publishes_partial_transcription_update() -> None:
     "hallucination",
     [
         "Untertitelung des ZDF, 2020",
-        "Untertitelung des ZDF fuer funk, 2017",
+        "Untertitelung des ZDF fuer funk, 2017",  # i18n-allow
     ],
 )
 async def test_stt_probe_suppresses_subtitle_hallucination_partials(
@@ -121,7 +121,7 @@ async def test_stt_probe_suppresses_broadcast_boilerplate_partial() -> None:
     class _STT:
         async def transcribe_pcm(self, _pcm: bytes) -> Transcript:
             return Transcript(
-                text="Eine Sendung des NDR, 2020",
+                text="Eine Sendung des NDR, 2020",  # i18n-allow
                 language="de",
                 confidence=0.88,
             )

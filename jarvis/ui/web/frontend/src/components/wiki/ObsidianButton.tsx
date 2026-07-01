@@ -6,7 +6,7 @@ import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 
 /**
- * Per-page "In Obsidian öffnen" button.
+ * Per-page "Open in Obsidian" button.
  *
  * Hands editing off to the real Obsidian desktop app via the
  * `obsidian://open?vault=…&file=…` URL scheme. There is no reliable way

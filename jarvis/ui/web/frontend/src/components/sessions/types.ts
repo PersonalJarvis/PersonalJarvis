@@ -1,10 +1,10 @@
-// 1:1 Spiegel zu jarvis/sessions/models.py — Pydantic JSON-Output.
-// Halten wir absichtlich getrennt vom Mission-Types-Modul, damit der
-// Tab eigenstaendig erweitert werden kann ohne API-Coupling.
+// 1:1 mirror of jarvis/sessions/models.py — Pydantic JSON output.
+// Kept deliberately separate from the mission-types module, so the tab can
+// be extended independently without API coupling.
 //
-// BUG-008 (drei Episoden): Backend nutzt ``str`` statt ``Literal`` —
-// hier daher ebenfalls ``string``, nicht Union. Die Konstante
-// ``KNOWN_HANGUP_REASONS`` dokumentiert die heute erwarteten Werte.
+// BUG-008 (three episodes): the backend uses ``str`` instead of ``Literal`` —
+// hence ``string`` here too, not a union. The ``KNOWN_HANGUP_REASONS``
+// constant documents the values expected today.
 
 export const KNOWN_HANGUP_REASONS = [
   "",

@@ -1,4 +1,4 @@
-"""Route-Tests fuer Phase C, Commit 2 — Sicherheitsanforderungen aus PLAN.md."""
+"""Route tests for Phase C, Commit 2 — security requirements from PLAN.md."""
 from __future__ import annotations
 
 import json
@@ -104,8 +104,8 @@ def test_register_rejects_non_hex_pubkey(client: TestClient) -> None:
 
 
 def test_register_rate_limit_enforced(client: TestClient) -> None:
-    """11. Request in einer Minute → 429 (Limit ist 10)."""
-    headers = {"X-Admin-Token": "wrong"}  # invalid token, aber Rate-Limit greift VOR der Token-Pruefung
+    """11th request in one minute → 429 (limit is 10)."""
+    headers = {"X-Admin-Token": "wrong"}  # invalid token, but rate limit kicks in BEFORE token check
     last = None
     for i in range(12):
         resp = client.post(
@@ -160,7 +160,7 @@ def test_signed_sync_rejects_tampered_payload(client: TestClient) -> None:
     }]
     sig = sign(payload, privkey_hex=priv)
 
-    # Manipulate after signing — typischer Replay-Tamper-Vector.
+    # Manipulate after signing — a typical replay-tamper vector.
     tampered = dict(payload)
     tampered["daily_stats"] = [{**payload["daily_stats"][0], "tasks_completed": 99999}]
     body = canonical_json(tampered)
@@ -185,18 +185,18 @@ def test_signed_sync_rejects_unregistered_pubkey(client: TestClient) -> None:
 
 
 def test_signed_sync_rejects_old_timestamp(client: TestClient) -> None:
-    """Plan §C-Sec: Replay-Protection bei ts > 5min Vergangenheit."""
+    """Plan §C-Sec: replay protection when ts is > 5min in the past."""
     priv, pub = generate_keypair()
     _register(client, pubkey=pub)
     payload = _minimal_payload()
-    payload["ts_ms"] = _now_ms() - 6 * 60 * 1000   # 6 min alt
+    payload["ts_ms"] = _now_ms() - 6 * 60 * 1000   # 6 min old
     resp = _signed_post(client, "/api/v1/sync", priv=priv, pub=pub, payload=payload)
     assert resp.status_code == 401
     assert "replay" in resp.json()["detail"].lower()
 
 
 def test_signed_sync_rejects_future_timestamp(client: TestClient) -> None:
-    """Drift in beide Richtungen — Plan §C-Sec implizit."""
+    """Drift in both directions — implicit in Plan §C-Sec."""
     priv, pub = generate_keypair()
     _register(client, pubkey=pub)
     payload = _minimal_payload()
@@ -215,21 +215,21 @@ def test_signed_sync_missing_signature_header(client: TestClient) -> None:
         content=body,
         headers={"X-Pubkey": pub, "Content-Type": "application/json"},
     )
-    assert resp.status_code == 422  # FastAPI Header-Pflichtfeld
+    assert resp.status_code == 422  # FastAPI required header field
 
 
 # ----------------------------------------------------------------------
-# PII-Filter — Plan §C-Sec, kein Voice-Text/Tool-IO am Backend
+# PII filter — Plan §C-Sec, no voice text / tool I/O on the backend
 # ----------------------------------------------------------------------
 
 def test_no_pii_in_sync_payload(client: TestClient) -> None:
-    """Forbidden-Phrases-Liste analog zu Phase A test_no_pii_in_aggregated_stats."""
+    """Forbidden-phrases list analogous to Phase A test_no_pii_in_aggregated_stats."""
     priv, pub = generate_keypair()
     _register(client, pubkey=pub)
 
     payload = _minimal_payload()
-    # Bewusster PII-Leak-Versuch: extra Top-Level-Feld
-    payload["voice_transcript"] = "Mein passwort ist hunter2"
+    # Deliberate PII leak attempt: extra top-level field
+    payload["voice_transcript"] = "My password is hunter2"
     resp = _signed_post(client, "/api/v1/sync", priv=priv, pub=pub, payload=payload)
     assert resp.status_code == 422
 
@@ -254,7 +254,7 @@ def test_no_pii_in_daily_stats_extra_field(client: TestClient) -> None:
 
 
 def test_pushlog_contains_no_payload_inhalte(client: TestClient) -> None:
-    """Server speichert nur Metadaten, keinen Payload-Inhalt."""
+    """Server stores only metadata, no payload content."""
     priv, pub = generate_keypair()
     _register(client, pubkey=pub)
 
@@ -271,7 +271,7 @@ def test_pushlog_contains_no_payload_inhalte(client: TestClient) -> None:
     resp = _signed_post(client, "/api/v1/sync", priv=priv, pub=pub, payload=payload)
     assert resp.status_code == 200
 
-    # Inspiziere die DB direkt via app.state.engine
+    # Inspect the DB directly via app.state.engine
     from sqlalchemy import select
     from board_backend.models import PushLog
     factory = client.app.state.session_factory
@@ -279,7 +279,7 @@ def test_pushlog_contains_no_payload_inhalte(client: TestClient) -> None:
         rows = session.execute(select(PushLog)).scalars().all()
         assert len(rows) == 1
         row = rows[0]
-        # Kein Inhalt-Feld in PushLog-Schema vorhanden
+        # No content field present in the PushLog schema
         assert not hasattr(row, "payload")
         assert not hasattr(row, "tools_used")
         assert row.daily_stats_count == 1
@@ -305,7 +305,7 @@ def test_me_returns_identity_after_register(client: TestClient) -> None:
 def test_me_push_count_increments(client: TestClient) -> None:
     priv, pub = generate_keypair()
     _register(client, pubkey=pub)
-    # Drei Pushes
+    # Three pushes
     for _ in range(3):
         payload = _minimal_payload()
         payload["ts_ms"] = _now_ms()
@@ -321,14 +321,15 @@ def test_me_push_count_increments(client: TestClient) -> None:
 # ----------------------------------------------------------------------
 
 def test_signature_replay_with_changed_body_rejected(client: TestClient) -> None:
-    """Klassischer Replay-Vector: Sig + Body von vorhin, ts neu — sig matcht
-    aber den re-canonicalized body nicht (weil ts geaendert wurde)."""
+    """Classic replay vector: signature + body from before, new ts — the
+    signature matches but not the re-canonicalized body (because ts
+    changed)."""
     priv, pub = generate_keypair()
     _register(client, pubkey=pub)
     payload = _minimal_payload()
     sig = sign(payload, privkey_hex=priv)
 
-    # Replay: ts_ms ueberschreiben → Sig matcht nicht mehr
+    # Replay: overwrite ts_ms → signature no longer matches
     replayed = dict(payload)
     replayed["ts_ms"] = _now_ms() + 1
     body = canonical_json(replayed)

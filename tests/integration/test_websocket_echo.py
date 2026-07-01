@@ -1,10 +1,10 @@
-"""Integration-Tests für den WebSocket-Endpoint des WebServers.
+"""Integration tests for the WebServer's WebSocket endpoint.
 
-Verifiziert:
-- Welcome-Frame kommt unmittelbar nach Connect.
-- Ein per bus.publish() gefeuerter Event landet als Envelope beim Client.
-- Ping-Command bekommt Pong-Antwort.
-- Invalide Frames werden nicht weitergeleitet, aber publishen ErrorOccurred.
+Verifies:
+- The welcome frame arrives immediately after connect.
+- An event fired via bus.publish() lands as an envelope at the client.
+- A ping command gets a pong response.
+- Invalid frames are not forwarded, but publish ErrorOccurred.
 """
 from __future__ import annotations
 
@@ -46,9 +46,9 @@ def test_bus_event_forwarded_as_envelope(web_server: WebServer) -> None:
         with client.websocket_connect("/ws") as ws:
             _receive_welcome(ws)
 
-            # Publishe direkt auf dem Bus — muss <500ms als Envelope ankommen.
-            # TestClient läuft die Server-Coroutinen synchron; wir senden einen
-            # Command der intern bus.publish aufruft.
+            # Publish directly on the bus — must arrive as an envelope in <500ms.
+            # TestClient runs the server coroutines synchronously; we send a
+            # command that internally calls bus.publish.
             start = time.monotonic()
             ws.send_json({"type": "command", "action": "test_event", "payload": {}})
 
@@ -65,24 +65,24 @@ def test_bus_event_forwarded_as_envelope(web_server: WebServer) -> None:
 
 
 def test_direct_bus_publish_reaches_client(web_server: WebServer) -> None:
-    """Ein außerhalb des WS gefeuertes Event muss beim Client als Envelope landen."""
+    """An event fired outside the WS must land at the client as an envelope."""
     import asyncio
 
     with TestClient(web_server.app) as client:
         with client.websocket_connect("/ws") as ws:
             _receive_welcome(ws)
 
-            # Publishe über einen eigenen Loop — der TestClient hat seinen
-            # eigenen asyncio-Loop, daher direkt die Handler des Bus aufrufen.
+            # Publish via our own loop — the TestClient has its own
+            # asyncio loop, so call the bus handlers directly.
             async def _pub() -> None:
                 await web_server.bus.publish(
                     SystemStarted(version="test-direct", source_layer="test")
                 )
 
-            # Zwischen den send/receive-Ops des TestClients gibt es einen
-            # internen Loop — wir rufen publish in der gleichen Instanz.
-            # Einfacher: ein Ping-Command macht einen Server-Roundtrip, dann
-            # sehen wir publish als nächstes Frame.
+            # Between the TestClient's send/receive ops there is an
+            # internal loop — we call publish on the same instance.
+            # Simpler: a ping command does a server roundtrip, then we
+            # see publish as the next frame.
             loop = asyncio.new_event_loop()
             try:
                 loop.run_until_complete(_pub())
@@ -119,7 +119,7 @@ def test_invalid_frame_publishes_error_event(web_server: WebServer) -> None:
             _receive_welcome(ws)
             ws.send_json({"type": "bogus-frame-type"})
 
-            # Der ErrorOccurred kommt zurück als Envelope (Wildcard-Subscription).
+            # The ErrorOccurred comes back as an envelope (wildcard subscription).
             frame = ws.receive_json()
             assert frame["type"] == "event"
             assert frame["event_name"] == "ErrorOccurred"
@@ -135,8 +135,8 @@ def test_client_disconnect_cleans_up_subscription(web_server: WebServer) -> None
             _receive_welcome(ws)
             during = len(web_server.bus._wildcard_subscribers)  # type: ignore[attr-defined]
             assert during == before + 1
-        # Nach dem with-Block: Disconnect → Unsubscribe
-        # TestClient gibt der Server-Coroutine Zeit zum Cleanup.
+        # After the with block: disconnect → unsubscribe
+        # TestClient gives the server coroutine time to clean up.
         time.sleep(0.1)
         after = len(web_server.bus._wildcard_subscribers)  # type: ignore[attr-defined]
         assert after == before, f"Leak: {before} → {after}"

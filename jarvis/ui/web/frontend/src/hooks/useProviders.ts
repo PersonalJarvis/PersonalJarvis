@@ -122,10 +122,9 @@ interface ProvidersResponse {
 }
 
 /**
- * Lädt /api/providers und re-fetched bei relevanten WS-Events. Die Hook stellt
- * den UI-State live ein, wenn Backend-seitig ein Secret gesetzt oder ein
- * Brain-Provider gewechselt wurde — ohne dass die Komponente das selbst
- * tracken muss.
+ * Loads /api/providers and re-fetches on relevant WS events. The hook updates
+ * the UI state live whenever a secret is set on the backend or a brain
+ * provider was switched — without the component having to track that itself.
  */
 export function useProviders() {
   const [providers, setProviders] = useState<ProviderDescriptor[]>([]);
@@ -387,16 +386,16 @@ export interface PipelineSwitchResult {
   restart_required: boolean;
 }
 
-// Backwards-compat alias — alter Name war TTS-spezifisch.
+// Backwards-compat alias — the old name was TTS-specific.
 export type TtsSwitchResult = PipelineSwitchResult;
 
 /**
- * Wechselt den aktiven TTS-Provider. Persistiert in jarvis.toml.
+ * Switches the active TTS provider. Persists to jarvis.toml.
  *
- * Anders als beim Brain gibt es keinen Live-Manager — die SpeechPipeline
- * haelt ihre TTS-Instanz fest. Der Switch greift erst beim naechsten
- * Pipeline-Start (Voice-Toggle oder App-Restart). Die Backend-Response
- * setzt `restart_required = true` damit die UI das transparent macht.
+ * Unlike the brain, there's no live manager — the SpeechPipeline holds onto
+ * its TTS instance. The switch only takes effect on the next pipeline start
+ * (voice toggle or app restart). The backend response sets
+ * `restart_required = true` so the UI makes that transparent.
  */
 export async function switchTtsProvider(
   providerId: string,
@@ -414,11 +413,11 @@ export async function switchTtsProvider(
 }
 
 /**
- * Wechselt den aktiven STT-Provider. Persistiert in jarvis.toml.
+ * Switches the active STT provider. Persists to jarvis.toml.
  *
- * Genau wie TTS: der Whisper/Cloud-STT wird beim Pipeline-Bootstrap
- * einmalig instanziiert (Model-Load ist teuer), daher greift der
- * Switch erst beim naechsten Voice-Restart.
+ * Just like TTS: the Whisper/cloud STT is instantiated once at pipeline
+ * bootstrap (model load is expensive), so the switch only takes effect
+ * on the next voice restart.
  */
 export async function switchSttProvider(
   providerId: string,
@@ -436,11 +435,11 @@ export async function switchSttProvider(
 }
 
 /**
- * Wechselt den aktiven Heavy-Task SUBAGENT-Provider
- * (`[brain.sub_jarvis].provider`). Persistiert 3-schichtig
- * (jarvis.toml + config-soll.json + ENV), damit der Drift-Guard den Switch
- * nicht zurueckrollt. Der Worker liest den Provider beim Mission-Bootstrap
- * einmalig, daher setzt das Backend `restart_required = true`.
+ * Switches the active heavy-task WORKER provider
+ * (`[brain.sub_jarvis].provider`). Persists across 3 layers
+ * (jarvis.toml + config-soll.json + ENV) so the drift guard doesn't roll (i18n-allow: "soll" is part of the config-soll.json filename)
+ * back the switch. The worker reads the provider once at mission bootstrap,
+ * so the backend sets `restart_required = true`.
  */
 export async function switchSubagentProvider(
   providerId: string,

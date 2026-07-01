@@ -1,31 +1,31 @@
-"""``OverlaySupervisor`` — Subprocess-Lifecycle. Plan §4.3 + AD-9 + AD-10.
+"""``OverlaySupervisor`` — subprocess lifecycle. Plan §4.3 + AD-9 + AD-10.
 
-Spawnt das Overlay-Subprocess unter einem Win32 Job-Object mit
-``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE``. Das Job-Handle bleibt im
-Hauptjarvis-Prozess; bei Hauptjarvis-Crash schliesst Windows den
-Handle und killt das Overlay als Job-Member innerhalb 1 s
-(Raymond-Chen-Pattern).
+Spawns the overlay subprocess under a Win32 job object with
+``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE``. The job handle stays in the
+main-Jarvis process; on a main-Jarvis crash, Windows closes the
+handle and kills the overlay as a job member within 1 s
+(the Raymond Chen pattern).
 
 Lifecycle::
 
     sup = OverlaySupervisor()
     await sup.start()
-    sup.notify_heartbeat()           # vom IPC-Listener gerufen
+    sup.notify_heartbeat()           # called by the IPC listener
     ...
     await sup.stop()
 
-Restart-Backoff (AD-10)::
+Restart backoff (AD-10)::
 
     delay = min(30, 0.5 * 2**failures) * jitter(0.8, 1.2)
 
-Cap: 5 Restarts in einem 5-Min-Window. Bei Cap-Fire wird
-``cap_fired_callback`` gefeuert (Tray-Notification, Disable-Switch).
-Stable-Reset: nach ``stable_reset_s`` (60 s) Uptime ohne Crash wird
-der Failure-Counter zurueckgesetzt.
+Cap: 5 restarts within a 5-minute window. When the cap fires,
+``cap_fired_callback`` is invoked (tray notification, disable switch).
+Stable reset: after ``stable_reset_s`` (60 s) of uptime without a crash,
+the failure counter is reset.
 
-Auf Nicht-Windows: Subprocess wird gespawnt, aber kein Job-Object
-verkabelt; Auto-Kill funktioniert dort nur ueber den expliziten
-shutdown im stop()-Pfad. Phase-9.8-Tests fokussieren Windows.
+On non-Windows: the subprocess is spawned, but no job object is
+wired up; auto-kill there only works via the explicit shutdown
+in the stop() path. Phase-9.8 tests focus on Windows.
 """
 
 from __future__ import annotations
@@ -46,13 +46,13 @@ logger = logging.getLogger(__name__)
 # AD-10 Defaults.
 DEFAULT_HEARTBEAT_TIMEOUT_S: float = 3.0
 DEFAULT_RESTART_CAP_COUNT: int = 5
-DEFAULT_RESTART_CAP_WINDOW_S: float = 300.0  # 5 Minuten
+DEFAULT_RESTART_CAP_WINDOW_S: float = 300.0  # 5 minutes
 DEFAULT_STABLE_RESET_S: float = 60.0
 
-# Plan AD-9: KILL_ON_JOB_CLOSE Konstante (Win32 winnt.h).
+# Plan AD-9: KILL_ON_JOB_CLOSE constant (Win32 winnt.h).
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: int = 0x2000
 
-# Plan-Vorgabe: Subprocess args.
+# Plan requirement: subprocess args.
 DEFAULT_OVERLAY_ENTRY: tuple[str, ...] = ("-m", "overlay")
 
 
@@ -60,14 +60,14 @@ CapFiredCallback = Callable[[], None]
 
 
 def _backoff_delay(failures: int, *, rng: random.Random) -> float:
-    """AD-10 Formel: ``min(30, 0.5 * 2**failures) * jitter(0.8, 1.2)``."""
+    """AD-10 formula: ``min(30, 0.5 * 2**failures) * jitter(0.8, 1.2)``."""
     base = min(30.0, 0.5 * (2 ** max(0, failures)))
     jitter = rng.uniform(0.8, 1.2)
     return max(0.05, base * jitter)
 
 
 class OverlaySupervisor:
-    """Process-Manager fuer das Overlay-Subprocess."""
+    """Process manager for the overlay subprocess."""
 
     def __init__(
         self,
@@ -81,7 +81,7 @@ class OverlaySupervisor:
         restart_cap_window_s: float = DEFAULT_RESTART_CAP_WINDOW_S,
         stable_reset_s: float = DEFAULT_STABLE_RESET_S,
         cap_fired_callback: Optional[CapFiredCallback] = None,
-        # Test-Hooks (production-defaults sind die echten APIs):
+        # Test hooks (production defaults are the real APIs):
         spawn_fn: Optional[Callable[..., subprocess.Popen]] = None,
         rng: Optional[random.Random] = None,
     ) -> None:
@@ -119,7 +119,7 @@ class OverlaySupervisor:
 
     @property
     def cap_active(self) -> bool:
-        """True wenn der 5/5min-Cap gefired hat — Auto-Restart pausiert."""
+        """True when the 5-in-5-min cap has fired — auto-restart is paused."""
         return self._cap_active
 
     @property
@@ -127,7 +127,7 @@ class OverlaySupervisor:
         return self._failures
 
     def notify_heartbeat(self) -> None:
-        """Sync-API. Vom WS-Listener gerufen wenn Overlay sich meldet."""
+        """Sync API. Called by the WS listener when the overlay checks in."""
         self._last_heartbeat_ts = time.monotonic()
 
     async def start(self) -> None:
@@ -147,7 +147,7 @@ class OverlaySupervisor:
         )
 
     async def stop(self) -> None:
-        """Beendet Monitor + Subprocess. Idempotent."""
+        """Stops the monitor + subprocess. Idempotent."""
         self._stop_requested = True
         if self._monitor_task is not None:
             self._monitor_task.cancel()
@@ -198,39 +198,39 @@ class OverlaySupervisor:
         return base
 
     def _build_creationflags(self) -> int:
-        """Plan-Vorgabe: CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW."""
+        """Plan requirement: CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW."""
         if sys.platform != "win32":
             return 0
-        # subprocess Konstanten (auch via creationflags-Bits aus winbase.h).
+        # subprocess constants (also via creationflags bits from winbase.h).
         CREATE_NEW_PROCESS_GROUP = 0x00000200
         CREATE_NO_WINDOW = 0x08000000
         return CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
 
     def _build_env(self) -> dict[str, str]:
-        """Subprocess-Env: parent inherit + JARVIS_DEPTH unset/0 damit das
-        Overlay nicht als Sub-Agent erkannt wird."""
+        """Subprocess env: parent inherit + JARVIS_DEPTH unset/0 so the
+        overlay is not recognized as a sub-agent."""
         env = dict(os.environ)
         if self._env is not None:
             env.update(self._env)
-        # Overlay-Process selbst ist NICHT Sub-Agent.
+        # The overlay process itself is NOT a sub-agent.
         env.pop("JARVIS_DEPTH", None)
         return env
 
     async def _spawn_locked(self) -> None:
-        """Spawnt Subprocess + bindet ans Job-Object. Lock muss gehalten werden."""
+        """Spawns the subprocess + binds it to the job object. The lock must be held."""
         if self._cap_active:
-            logger.warning("Supervisor: Cap aktiv, kein Auto-Spawn")
+            logger.warning("Supervisor: cap active, no auto-spawn")
             return
 
         now = time.monotonic()
-        # Cap-Check (rolling 5-min Window).
+        # Cap check (rolling 5-min window).
         self._spawn_attempts.append(now)
         cutoff = now - self._cap_window
         while self._spawn_attempts and self._spawn_attempts[0] < cutoff:
             self._spawn_attempts.popleft()
         if len(self._spawn_attempts) > self._cap_count:
             logger.error(
-                "Supervisor: Cap-fired (%d Restarts in %.0f s) - Auto-Restart aus",
+                "Supervisor: cap fired (%d restarts in %.0f s) - auto-restart off",
                 len(self._spawn_attempts),
                 self._cap_window,
             )
@@ -246,10 +246,10 @@ class OverlaySupervisor:
         creationflags = self._build_creationflags()
         env = self._build_env()
 
-        # Stderr in Datei statt DEVNULL: sonst sind Subprocess-Crashes
-        # unsichtbar (Loglos). Append-Mode, damit alle Restarts in derselben
-        # Datei landen — User/Agent kann nach Crash Forensik betreiben.
-        # data/-Verzeichnis ist im git-ignore.
+        # Stderr to a file instead of DEVNULL: otherwise subprocess crashes
+        # are invisible (no log). Append mode, so all restarts land in the
+        # same file — the user/agent can do forensics after a crash.
+        # The data/ directory is in .gitignore.
         from pathlib import Path
         log_dir = Path("data")
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -268,7 +268,7 @@ class OverlaySupervisor:
                 args,
                 creationflags=creationflags,
                 env=env,
-                close_fds=False,  # Job-Handle muss inheritable sein NICHT
+                close_fds=False,  # the job handle must be inheritable — must NOT be closed
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=stderr_handle,
@@ -282,8 +282,8 @@ class OverlaySupervisor:
         self._last_spawn_ts = now
         self._last_heartbeat_ts = now  # Initial-Grace: 1 Heartbeat-Period
 
-        # Plan AD-9: Job-Object via pywin32. Test-Pfad uebergibt
-        # spawn_fn der das Hooking ueberspringen kann (proc ist dann
+        # Plan AD-9: job object via pywin32. The test path passes a
+        # spawn_fn that can skip the hooking (proc is then a
         # MagicMock).
         if sys.platform == "win32" and not _is_mock_proc(proc):
             try:
@@ -300,7 +300,7 @@ class OverlaySupervisor:
     def _assign_to_job(self, pid: int) -> None:
         """Plan AD-9: CreateJobObject + SetInformationJobObject +
         AssignProcessToJobObject."""
-        # pywin32 lazy importieren damit non-Windows Hosts nicht crashen.
+        # Lazy-import pywin32 so non-Windows hosts don't crash.
         import win32api
         import win32con
         import win32job
@@ -335,12 +335,12 @@ class OverlaySupervisor:
             win32api.CloseHandle(proc_handle)
 
     async def _terminate_locked(self) -> None:
-        """Killt Subprocess + Closes Job-Handle. Lock muss gehalten werden."""
+        """Kills the subprocess + closes the job handle. The lock must be held."""
         proc = self._proc
         if proc is not None and proc.poll() is None:
             try:
                 proc.terminate()
-                # Plan §4.3: shutdown sollte innerhalb 1 s wirken.
+                # Plan §4.3: shutdown should take effect within 1 s.
                 try:
                     await asyncio.wait_for(
                         asyncio.to_thread(proc.wait), timeout=1.5
@@ -353,15 +353,15 @@ class OverlaySupervisor:
                         )
                     except asyncio.TimeoutError:
                         logger.warning(
-                            "Supervisor: proc PID=%s nicht killable", proc.pid
+                            "Supervisor: proc PID=%s not killable", proc.pid
                         )
             except Exception:  # noqa: BLE001
                 logger.exception("Subprocess terminate failed")
 
         self._proc = None
 
-        # Job-Handle schliessen — durch KILL_ON_JOB_CLOSE killt das
-        # automatisch alle Job-Members (auch Children des Overlay).
+        # Close the job handle — KILL_ON_JOB_CLOSE automatically kills
+        # all job members (including children of the overlay).
         if self._job_handle is not None:
             try:
                 import win32api
@@ -388,8 +388,8 @@ class OverlaySupervisor:
 
                 now = time.monotonic()
 
-                # Stable-Reset (AD-10): wenn proc alive UND seit
-                # last_spawn > stable_reset_s, dann failures=0.
+                # Stable reset (AD-10): if proc is alive AND
+                # last_spawn > stable_reset_s, then failures=0.
                 if (
                     proc is not None
                     and proc.poll() is None
@@ -399,8 +399,8 @@ class OverlaySupervisor:
                     logger.debug("Supervisor: stable uptime -> reset failures")
                     self._failures = 0
 
-                # Heartbeat-Timeout: wenn proc alive aber kein Heartbeat
-                # in 3 s -> kill + respawn.
+                # Heartbeat timeout: if proc is alive but no heartbeat
+                # for 3 s -> kill + respawn.
                 if proc is not None and proc.poll() is None:
                     last_hb = self._last_heartbeat_ts or now
                     if (now - last_hb) > self._heartbeat_timeout:
@@ -413,7 +413,7 @@ class OverlaySupervisor:
                         await self._restart_with_backoff()
                         continue
 
-                # Process gestorben / nie gestartet -> respawn.
+                # Process died / never started -> respawn.
                 if proc is None or proc.poll() is not None:
                     await self._restart_with_backoff()
 
@@ -443,9 +443,9 @@ class OverlaySupervisor:
 
 
 def _is_mock_proc(proc: Any) -> bool:
-    """Test-Helper: ein MagicMock hat keine echte pid. Wir erkennen das
-    am Type-Namen damit wir das Job-Hooking ueberspringen koennen ohne
-    in Tests pywin32 zu brauchen."""
+    """Test helper: a MagicMock has no real pid. We detect this
+    by the type name so we can skip the job hooking without
+    needing pywin32 in tests."""
     return type(proc).__module__.startswith("unittest.mock")
 
 

@@ -3,8 +3,8 @@
 2026-05-24 recurrence: the user heard nothing while the brain answered and
 TTS synthesized fine. The runtime log showed::
 
-    AudioPlayer nutzt Device: Speakers (Realtek HD Audio output) (idx=22)
-    ACK-Playback fehlgeschlagen: ... [PaErrorCode -9999]
+    AudioPlayer using device: Speakers (Realtek HD Audio output) (idx=22)
+    ACK playback failed: ... [PaErrorCode -9999]
         'Blocking API not supported yet' [Windows WDM-KS error -9999]
 
 Root cause: ``_resolve_output_device`` filtered a WDM-KS device only when the

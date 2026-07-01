@@ -1,9 +1,9 @@
 // === F-FRIENDS [F2] · feature/friends-section · ruben-2026-04-30 ===
 /**
- * Friends-API-Hooks (Phase F2).
+ * Friends API hooks (Phase F2).
  *
- * Spiegelt die Endpoints aus jarvis/ui/web/friends_routes.py.
- * Pattern wie useFederation.ts: React-Query, eigene fetch-Wrapper.
+ * Mirrors the endpoints from jarvis/ui/web/friends_routes.py.
+ * Same pattern as useFederation.ts: React Query, own fetch wrappers.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 

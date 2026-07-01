@@ -1,15 +1,15 @@
-"""TTS-Output-Sanity-Check: spricht einen festen Satz via SAPI5-Fallback.
+"""TTS output sanity check: speaks a fixed sentence via the SAPI5 fallback.
 
-Benutzung:
+Usage:
     python scripts/tts_output_sanity.py
 
-Nutze das wenn du:
-- Watchdog startest und nichts hörst
-- Nicht sicher bist ob das richtige Output-Device aktiv ist
-- Wissen willst ob Windows-TTS (Hedda) überhaupt spielbar ist
+Use this when you:
+- Start the watchdog and hear nothing
+- Aren't sure whether the right output device is active
+- Want to know whether Windows TTS (Hedda) can play at all
 
-Das Script umgeht Gemini komplett und nutzt direkt den Windows-nativen
-SAPI5-Fallback aus `jarvis/plugins/tts/gemini_flash_tts.py`.
+This script bypasses Gemini entirely and directly uses the native Windows
+SAPI5 fallback from `jarvis/plugins/tts/gemini_flash_tts.py`.
 """
 from __future__ import annotations
 
@@ -30,19 +30,19 @@ async def main() -> int:
     from jarvis.plugins.tts.gemini_flash_tts import SAPI5_SAMPLE_RATE, _sapi5_synthesize
 
     text = (
-        "Test eins zwei drei. Wenn du mich hörst, ist dein Audio-Output "
-        "korrekt eingerichtet und Windows-TTS funktioniert."
+        "Test eins zwei drei. Wenn du mich hörst, ist dein Audio-Output "  # i18n-allow
+        "korrekt eingerichtet und Windows-TTS funktioniert."  # i18n-allow
     )
 
-    print(f"[1] SAPI5-Synthese starten: {text!r}")
+    print(f"[1] Starting SAPI5 synthesis: {text!r}")
     pcm = await asyncio.to_thread(_sapi5_synthesize, text, "de-DE")
     if not pcm:
-        print("    !! SAPI5 lieferte keine Bytes. Prüfe ob pywin32 installiert ist:")
+        print("    !! SAPI5 returned no bytes. Check whether pywin32 is installed:")
         print("       pip install pywin32")
         return 1
     print(f"    OK: {len(pcm)} bytes PCM ({len(pcm) / 2 / SAPI5_SAMPLE_RATE:.2f}s)")
 
-    print("[2] Audio abspielen auf System-Default-Output …")
+    print("[2] Playing audio on the system default output …")
     player = AudioPlayer()
     chunk = AudioChunk(
         pcm=pcm,
@@ -55,12 +55,12 @@ async def main() -> int:
         yield chunk
 
     await player.play_chunks(_gen())
-    print("[3] Fertig. Hast du den Test-Satz gehört?")
+    print("[3] Done. Did you hear the test sentence?")
     print()
-    print("   - JA  → TTS + Audio-Pfad stimmt. Wenn Jarvis trotzdem stumm,")
-    print("           liegt's am Brain oder an der Pipeline-Verdrahtung.")
-    print("   - NEIN → Audio-Device ist falsch. Windows-Sound-Einstellungen:")
-    print("           Rechtsklick Lautsprecher-Icon → 'Audioausgabe auswählen'.")
+    print("   - YES → TTS + audio path is fine. If Jarvis is still silent,")
+    print("           the problem is in the Brain or the pipeline wiring.")
+    print("   - NO  → the audio device is wrong. Windows sound settings:")
+    print("           right-click the speaker icon → 'Choose audio output'.")
     return 0
 
 

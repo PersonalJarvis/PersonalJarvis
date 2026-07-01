@@ -1,9 +1,9 @@
-"""Executor-Tests: winget-Dispatch mit gemocktem Subprocess.
+"""Executor tests: winget dispatch with a mocked subprocess.
 
-Wichtig:
-- Die Command-Line wird auf Liste-Argumente geprueft (keine Shell).
-- package_id-Injection ist durch Pydantic-Regex + fehlendes `shell=True`
-  doppelt abgefangen.
+Important:
+- The command line is checked as list arguments (no shell).
+- package_id injection is caught twice, by the Pydantic regex + the
+  missing `shell=True`.
 """
 from __future__ import annotations
 
@@ -21,9 +21,9 @@ from jarvis.admin.schema import (
 
 
 class _SubprocessRecorder:
-    """Ersatz fuer ``AdminExecutor._run_subprocess``.
+    """Replacement for ``AdminExecutor._run_subprocess``.
 
-    Speichert die argv-Aufrufe und liefert scripted Return-Werte.
+    Records the argv calls and returns scripted return values.
     """
 
     def __init__(self, scripted: list[tuple[int, str, str]] | None = None) -> None:
@@ -49,7 +49,7 @@ async def test_install_winget_command_line_no_shell_meta():
     assert resp.success is True
     assert len(rec.calls) == 1
     argv, _to = rec.calls[0]
-    # Argumente als Liste — keine Shell-Metazeichen, kein shell=True.
+    # Arguments as a list — no shell metacharacters, no shell=True.
     assert argv[0] == "winget"
     assert argv[1] == "install"
     assert "--id" in argv
@@ -57,7 +57,7 @@ async def test_install_winget_command_line_no_shell_meta():
     assert "--silent" in argv
     assert "--accept-package-agreements" in argv
     assert "--accept-source-agreements" in argv
-    # Kein einziges Argument darf ein Semikolon oder &&-artigen Meta haben.
+    # Not a single argument may contain a semicolon or &&-style meta char.
     for a in argv:
         assert ";" not in a
         assert "&&" not in a
@@ -139,10 +139,10 @@ async def test_run_subprocess_rejects_non_str_argv():
 
 @pytest.mark.asyncio
 async def test_read_registry_hkcu_environment_smoke(monkeypatch):
-    """``read_registry`` auf HKCU\\Environment sollte zumindest eine
-    Response liefern — ob success=True haengt davon ab, ob PATH o.ae.
-    auf der Test-Maschine gesetzt ist. Wir pruefen nur: keine Exception,
-    richtiger Response-Typ, error_code bei key-not-found ist korrekt.
+    """``read_registry`` on HKCU\\Environment should at least return a
+    response — whether success=True depends on whether PATH or similar
+    is set on the test machine. We only check: no exception,
+    the correct response type, error_code is correct on key-not-found.
     """
     ex = AdminExecutor()
     op = ReadRegistryOp(hive="HKCU", key_path="Environment",

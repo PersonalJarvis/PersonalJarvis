@@ -1,7 +1,7 @@
-"""HMAC-Verifikation + Nonce-Replay-Schutz + Timestamp-Window (ADR-0001).
+"""HMAC verification + nonce replay protection + timestamp window (ADR-0001).
 
-Die Tests prueften ``AdminPipeServer._decode_request`` direkt auf
-Bytes-Ebene — so brauchen wir weder echte Named-Pipe noch UAC-Elevation.
+The tests exercise ``AdminPipeServer._decode_request`` directly at the
+byte level — this way we need neither a real named pipe nor UAC elevation.
 """
 from __future__ import annotations
 
@@ -68,17 +68,17 @@ def test_hmac_invalid_rejected():
 
 
 def test_nonce_replay_rejected():
-    """H5-Fix: Cache-Key ist (nonce, timestamp_ns). Replay = exakt derselbe
-    Envelope ein zweites Mal. Ein Angreifer, der die gesnifferte Message
-    wiederholt, sendet identische Bytes. Mit neuer Nonce oder neuem
-    Timestamp waere die HMAC ohnehin anders und wuerde separat scheitern."""
+    """H5 fix: the cache key is (nonce, timestamp_ns). Replay = the exact same
+    envelope a second time. An attacker who replays the sniffed message
+    sends identical bytes. With a new nonce or new timestamp the HMAC
+    would be different anyway and would fail separately."""
     server = _make_server()
     op = InstallWingetOp(package_id="7zip.7zip")
     nonce = "deadbeef" * 4
     raw = _build_envelope(op, nonce=nonce)
-    # Erster Call ok
+    # First call ok
     server._decode_request(raw)
-    # Zweiter Call mit EXAKT demselben Envelope → Replay
+    # Second call with the EXACT same envelope → replay
     with pytest.raises(_AuthFailure) as exc:
         server._decode_request(raw)
     assert "nonce_replay" in str(exc.value)
@@ -104,8 +104,8 @@ def test_wrong_secret_rejected():
 
 
 def test_tampered_op_args_breaks_hmac():
-    """HMAC deckt die Args mit ab — Manipulation an package_id nach Signatur
-    muss scheitern."""
+    """HMAC also covers the args — tampering with package_id after signing
+    must fail."""
     server = _make_server()
     op = InstallWingetOp(package_id="HarmlessPkg")
     op_dump = op.model_dump(mode="json")
@@ -114,7 +114,7 @@ def test_tampered_op_args_breaks_hmac():
     args_json = _canonical_args_json(op_dump)
     sig = _compute_hmac(SECRET, nonce, ts, op_dump["type"],
                         op_dump["op_id"], args_json)
-    # Angriff: nach Signatur die package_id auf was Boeses patchen.
+    # Attack: after signing, patch package_id to something malicious.
     op_dump_tampered = {**op_dump, "package_id": "7zip.7zip"}
     env = {"nonce": nonce, "timestamp_ns": ts, "hmac": sig,
            "op": op_dump_tampered}
@@ -125,20 +125,20 @@ def test_tampered_op_args_breaks_hmac():
 
 
 def test_lru_evicts_oldest_nonce():
-    """Nach mehr als LRU-Groesse Eintraegen wird der aelteste verdraengt.
+    """Once more than the LRU size worth of entries is added, the oldest is evicted.
 
-    Seit dem H5-Fix ist der Cache-Key ``(nonce, timestamp_ns)`` — selbst
-    wenn eine Nonce verdraengt wird, kann sie nur replayed werden wenn
-    ALSO der exakte Timestamp wiederverwendet wird, was ausserhalb des
-    30s-Fensters ohnehin scheitert. Der Test deckt nur die Evict-Mechanik
-    ab, nicht das Replay-Szenario selbst (das ist durch den Timestamp-
-    Check separat gesichert).
+    Since the H5 fix, the cache key is ``(nonce, timestamp_ns)`` — even
+    if a nonce is evicted, it can only be replayed if the exact
+    timestamp is ALSO reused, which fails separately anyway outside the
+    30s window. This test only covers the eviction mechanics,
+    not the replay scenario itself (that is secured separately by the
+    timestamp check).
     """
     server = _make_server()
     lru_size = 10_000
-    # Wir pruefen die Evict-Logik an einer kleineren Grenze: wir
-    # fuellen LRU_SIZE + 5 Eintraege und checken die ersten 5 sind weg.
-    # Das gibt dem Test eine konstante Laufzeit.
+    # We test the eviction logic at a smaller boundary: we
+    # fill LRU_SIZE + 5 entries and check that the first 5 are gone.
+    # This gives the test a constant runtime.
     ts = 1_000_000_000
     for i in range(lru_size + 5):
         server._check_and_record_nonce(f"n{i:06d}", ts + i)
@@ -156,20 +156,20 @@ def test_envelope_not_object_rejected():
 
 
 def test_compute_hmac_is_constant_time_compare():
-    """Sanity: `_compute_hmac` ist deterministisch und die Verifikation
-    nutzt `hmac.compare_digest` statt `==` — das pruefen wir indirekt,
-    indem wir identische Aufrufe vergleichen."""
+    """Sanity: `_compute_hmac` is deterministic and the verification
+    uses `hmac.compare_digest` instead of `==` — we check this indirectly
+    by comparing identical calls."""
     sig1 = _compute_hmac(SECRET, "n", 123, "t", "id", "{}")
     sig2 = _compute_hmac(SECRET, "n", 123, "t", "id", "{}")
     assert _hmac.compare_digest(sig1, sig2)
-    # Und noch: Laenge wie erwartet (sha256 hex = 64 chars).
+    # And also: length as expected (sha256 hex = 64 chars).
     assert len(sig1) == 64
-    # Sanity-Check: nicht mit blossen sha256 identisch.
+    # Sanity check: not identical to a plain sha256.
     assert sig1 != hashlib.sha256(b"whatever").hexdigest()
 
 
 def test_read_registry_envelope_happy_path():
-    """Auch non-install Ops gehen durch."""
+    """Non-install ops go through too."""
     server = _make_server()
     op = ReadRegistryOp(hive="HKCU", key_path="Environment")
     raw = _build_envelope(op)

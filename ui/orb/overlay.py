@@ -1,43 +1,43 @@
-"""Jarvis-Orb als natives Desktop-Overlay (Tkinter + Pillow + numpy).
+"""Jarvis-Orb as a native desktop overlay (Tkinter + Pillow + numpy).
 
-Historie der Ansaetze und warum wir bei Tkinter gelandet sind:
-    - pywebview + WebView2 Canvas: WebView2 rendert ueber DirectComposition,
-      SetWindowRgn/LWA_COLORKEY greifen nicht → rechteckiger Kasten blieb.
-    - PySide6 + WA_TranslucentBackground: Qt6+DWM auf Windows 11 liefert
-      haeufig nur einen opaken schwarzen Backing-Buffer + DropShadow-Rahmen
-      statt echter Transparenz. Dutzende bekannter Qt-Bugs, kein robuster Fix.
-    - Tkinter + wm_attributes('-transparentcolor'): nutzt die klassische
-      Win32 SetLayeredWindowAttributes-API mit LWA_COLORKEY. Stabil seit
-      Windows 2000, unabhaengig von DWM-Compositor-Quirks. Magenta (#FF00FF)
-      wird pixel-perfect transparent — Windows routet diese Pixel direkt
-      zum Desktop durch.
+History of approaches tried and why we landed on Tkinter:
+    - pywebview + WebView2 Canvas: WebView2 renders via DirectComposition,
+      so SetWindowRgn/LWA_COLORKEY have no effect → a rectangular box remained.
+    - PySide6 + WA_TranslucentBackground: Qt6+DWM on Windows 11 frequently
+      delivers only an opaque black backing buffer + a DropShadow frame
+      instead of real transparency. Dozens of known Qt bugs, no robust fix.
+    - Tkinter + wm_attributes('-transparentcolor'): uses the classic
+      Win32 SetLayeredWindowAttributes API with LWA_COLORKEY. Stable since
+      Windows 2000, independent of DWM compositor quirks. Magenta (#FF00FF)
+      becomes pixel-perfect transparent — Windows routes those pixels
+      straight through to the desktop.
 
-Rendering-Pipeline:
-    numpy berechnet pro Frame einen 108x108 RGB-Puffer. Radiale Gradienten,
-    additive Swirls und der helle Core werden als Vektor-Operationen auf
-    den Distance-Arrays ausgefuehrt (einmalig precomputed im Konstruktor).
-    Harter Kreis-Rand, kein Alpha-Fade nach aussen — sonst entstuenden
-    pinke Anti-Aliasing-Pixel an der Color-Key-Grenze. Pillow verpackt
-    das Array in ein PhotoImage, das Tkinter in einen Canvas rendert.
+Rendering pipeline:
+    numpy computes a 108x108 RGB buffer per frame. Radial gradients,
+    additive swirls, and the bright core are executed as vector operations
+    on the distance arrays (precomputed once in the constructor).
+    Hard circle edge, no alpha fade outward — otherwise pink anti-aliasing
+    pixels would appear at the color-key boundary. Pillow wraps the array
+    into a PhotoImage that Tkinter renders onto a Canvas.
 
-Public-API:
-    overlay = OrbOverlay(style="mascot")    # SWG/Gigi-PNG
-    overlay.start()                         # blockt bis mainloop Exit
+Public API:
+    overlay = OrbOverlay(style="mascot")    # SWG/Gigi PNG
+    overlay.start()                         # blocks until mainloop exit
     overlay.show(mode="listen")
     overlay.show(mode="speak")
     overlay.hide()
     overlay.set_level(0.42)
-    overlay.set_style("mascot")             # Runtime-Switch ohne Restart
+    overlay.set_style("mascot")             # runtime switch, no restart
 
-ENV-Overrides:
+ENV overrides:
     JARVIS_ORB_STYLE=mascot                 # legacy "orb" requests are ignored
-    JARVIS_ORB_MASCOT_PATH=<pfad.png>       # alternativer Mascot-Pfad
+    JARVIS_ORB_MASCOT_PATH=<path.png>       # alternative mascot path
 
-Standalone-Test:
-    python -m ui.orb.overlay                    # Demo-Sequenz (Mascot)
-    python -m ui.orb.overlay --sticky           # dauerhaft sichtbar (Preview)
-    python -m ui.orb.overlay --sticky --mascot  # SWG-Maskottchen statisch
-    python -m ui.orb.overlay --mic --mascot     # SWG + Mic-reaktiv
+Standalone test:
+    python -m ui.orb.overlay                    # demo sequence (mascot)
+    python -m ui.orb.overlay --sticky           # permanently visible (preview)
+    python -m ui.orb.overlay --sticky --mascot  # SWG mascot, static
+    python -m ui.orb.overlay --mic --mascot     # SWG + mic-reactive
 """
 
 from __future__ import annotations
@@ -98,7 +98,7 @@ class _DragState:
     offset_y: int
     moved: bool = False
 
-# 108x108 — rund 1/3 kleiner als die alte 160er-Groesse
+# 108x108 — roughly 1/3 smaller than the old 160-px size
 WIN_W = 108
 WIN_H = 108
 MARGIN_RIGHT = 24
@@ -160,8 +160,8 @@ _WS_EX_TOOLWINDOW = 0x00000080
 
 TAU = math.tau
 
-# Default-Pfad fuer das SWG/Gigi-Maskottchen. Wird von MascotRenderer gesucht,
-# wenn kein expliziter Pfad uebergeben wird. Relativ zum Projekt-Root aufgeloest.
+# Default path for the SWG/Gigi mascot. Looked up by MascotRenderer when no
+# explicit path is passed in. Resolved relative to the project root.
 DEFAULT_MASCOT_REL = "assets/icons/jarvis-gigi-256.png"
 
 
@@ -178,10 +178,10 @@ def _transcript_body_height(line_count: int, line_height: int) -> int:
 
 
 def _resolve_mascot_path(path_str: str | None) -> Path | None:
-    """Sucht das Maskottchen-PNG in gaengigen Ablagen.
+    """Looks for the mascot PNG in the common locations.
 
-    Reihenfolge: expliziter Pfad → ENV ``JARVIS_ORB_MASCOT_PATH`` → Projekt-Root
-    (vom Modul hochlaufend). Returns None when no asset is available; callers
+    Order: explicit path → ENV ``JARVIS_ORB_MASCOT_PATH`` → project root
+    (walking up from the module). Returns None when no asset is available; callers
     keep the overlay invisible instead of falling back to the removed legacy orb.
     """
     candidates: list[Path] = []
@@ -190,7 +190,7 @@ def _resolve_mascot_path(path_str: str | None) -> Path | None:
     env_path = os.environ.get("JARVIS_ORB_MASCOT_PATH")
     if env_path:
         candidates.append(Path(env_path))
-    # Projekt-Root finden: diese Datei liegt in <root>/ui/orb/overlay.py
+    # Find the project root: this file lives at <root>/ui/orb/overlay.py
     here = Path(__file__).resolve()
     for parent in [here.parent, here.parent.parent, here.parent.parent.parent]:
         candidates.append(parent / DEFAULT_MASCOT_REL)
@@ -262,7 +262,7 @@ def _apply_jarvis_icon_to_tk_root(root: tk.Tk) -> None:
 
 
 def _hide_tk_window_from_task_switcher(root: tk.Tk) -> None:
-    """Markiert das Orb-Fenster als Toolwindow, damit es nicht als App zaehlt."""
+    """Marks the orb window as a toolwindow so it doesn't count as an app."""
     if sys.platform != "win32":
         return
     try:
@@ -276,8 +276,8 @@ def _hide_tk_window_from_task_switcher(root: tk.Tk) -> None:
         style = (style | _WS_EX_TOOLWINDOW) & ~_WS_EX_APPWINDOW
         set_long(hwnd, _GWL_EXSTYLE, style)
     except Exception:
-        # Reine Desktop-Kosmetik. Wenn Win32 nicht greift, bleibt der Orb
-        # funktional und wird nur evtl. als zusaetzliches Fenster angezeigt.
+        # Pure desktop cosmetics. If Win32 doesn't take effect, the orb
+        # stays functional and may just show up as an extra window.
         return
 
 
@@ -287,41 +287,41 @@ class MascotRenderer:
     Implements the render interface ``render(t, mode, ext_level) -> Image.Image``
     used by ``OrbOverlay``.
 
-    Besonderheiten:
-        - Alpha-Threshold (binär): Antialiasing-Kanten wuerden beim Composite
-          auf Magenta rosa Fringes erzeugen. Fuer den pixeligen Gigi-Stil ist
-          binäre Alpha ohnehin stimmig.
-        - Weicher Glow: Ein gaussian-blur'ed Alpha-Mask-Derivat liefert einen
-          warmen Halo um den Mascot, der mit ``energy`` pulsiert.
-        - Breathing-Scale: Der Mascot atmet (±3%) und skaliert mit Energie auf
-          bis ~107%. Skaliert wird mit NEAREST — das passt zum pixel-artigen
-          Look und ist per-frame fast kostenlos.
+    Notable details:
+        - Alpha threshold (binary): antialiasing edges would create pink
+          fringes on magenta during compositing. For the pixel-art Gigi
+          style, binary alpha is a good fit anyway.
+        - Soft glow: a gaussian-blurred alpha-mask derivative provides a
+          warm halo around the mascot that pulses with ``energy``.
+        - Breathing scale: the mascot breathes (±3%) and scales with
+          energy up to ~107%. Scaling uses NEAREST — this matches the
+          pixel-art look and is nearly free per frame.
     """
 
     def __init__(self, image_path: Path) -> None:
         raw = Image.open(image_path).convert("RGBA")
-        # Einmal auf Zielgroesse; fuer per-frame Scale reicht NEAREST.
+        # Once to target size; NEAREST is enough for per-frame scaling.
         base = raw.resize((WIN_W, WIN_H), Image.LANCZOS)
         self._base_rgba = np.asarray(base).copy()  # (H,W,4) uint8
         self._base_pil = base
         self._image_path = image_path
 
-        # Weicher Glow-Mask aus gaussian-geblurrter Alpha. Werte 0..1.
-        # Radius 6 gibt einen deutlich sichtbaren, aber tightt Halo.
+        # Soft glow mask from a gaussian-blurred alpha. Values 0..1.
+        # Radius 6 gives a clearly visible but tight halo.
         alpha_only = base.split()[3]
         blurred = alpha_only.filter(ImageFilter.GaussianBlur(radius=6))
         self._glow_mask = np.asarray(blurred).astype(np.float32) / 255.0
-        # Alpha-Threshold fuer den Mascot selbst (binär).
+        # Alpha threshold for the mascot itself (binary).
         self._solid_mask = np.asarray(alpha_only) >= 128
 
-        # Body-Part-Decomposition: extrahiere die echten Arm-Stummel als
-        # eigene Sprites mit Pivot-Punkt. So koennen Animationen den
-        # ECHTEN Arm rotieren statt einen zweiten daneben zu zeichnen.
-        # _arm_left_sprite, _arm_right_sprite: kleine RGBA-Bilder mit Arm + transparent.
-        # _arm_left_pivot, _arm_right_pivot: (x, y) im Frame-Koord-System,
-        #     Punkt um den die Rotation laeuft (Schulter zum Body).
-        # _body_no_arms_pil: Mascot-PIL ohne die Arm-Pixel (Alpha=0 dort).
-        # _arm_left_local_pivot: Pivot relativ zum Sprite-Rechteck (in Sprite-Pixeln).
+        # Body-part decomposition: extract the actual arm stubs as their
+        # own sprites with a pivot point. This lets animations rotate the
+        # REAL arm instead of drawing a second one next to it.
+        # _arm_left_sprite, _arm_right_sprite: small RGBA images with arm + transparent.
+        # _arm_left_pivot, _arm_right_pivot: (x, y) in the frame coordinate system,
+        #     the point the rotation runs around (shoulder toward the body).
+        # _body_no_arms_pil: mascot PIL without the arm pixels (alpha=0 there).
+        # _arm_left_local_pivot: pivot relative to the sprite rectangle (in sprite pixels).
         decomp = self._decompose_arms(base)
         self._arm_left_sprite: Image.Image = decomp["left_sprite"]
         self._arm_right_sprite: Image.Image = decomp["right_sprite"]
@@ -333,9 +333,9 @@ class MascotRenderer:
 
         self._level: float = 0.0
 
-        # Aktive Animationen — werden pro Frame gefiltert (is_finished).
-        # Liste statt Set, damit FIFO-Reihenfolge fuer Layering deterministisch
-        # ist (frueh hinzugefuegte Animationen zeichnen unter spaeteren).
+        # Active animations — filtered per frame (is_finished).
+        # A list rather than a set so FIFO order stays deterministic for
+        # layering (animations added earlier draw beneath later ones).
         self._animations: list[Animation] = []
 
         # Mouth-anim deadline (in render-time `t` seconds). Mouth runs only
@@ -343,15 +343,15 @@ class MascotRenderer:
         # original PNG mouth shows through unchanged.
         self._mouth_anim_until_t: float = -1.0
 
-    # Hard-coded Arm-Bounding-Boxes (gemessen am 108x108-Render des
-    # jarvis-gigi-256.png 2026-04-25). Heuristic-Detection war unzuverlaessig
-    # weil die Body-Outline auch gelbe Pixel enthaelt (Cluster ueberlappen).
-    # Diese BBoxes erfassen NUR den echten Stummel — saubere Trennung.
-    # Wenn das Asset wechselt: nochmal manuell ausmessen + hier eintragen.
-    # Sprite-BBox: gross genug um den Stummel + alle Outline-Spitzen zu erfassen.
-    # Body-Erase-BBox: enger, exakt am Stummel — sonst entstehen "Loecher" im
-    # Body bei Default-Pose (rot=0), weil das Sprite den geleerten Bereich
-    # nicht voll fuellt.
+    # Hard-coded arm bounding boxes (measured on the 108x108 render of
+    # jarvis-gigi-256.png, 2026-04-25). Heuristic detection was unreliable
+    # because the body outline also contains yellow pixels (clusters overlap).
+    # These bboxes capture ONLY the actual stub — a clean separation.
+    # If the asset changes: re-measure manually and update these here.
+    # Sprite bbox: large enough to capture the stub + all outline tips.
+    # Body-erase bbox: tighter, exactly on the stub — otherwise "holes"
+    # appear in the body at the default pose (rot=0), because the sprite
+    # doesn't fully fill the cleared area.
     ARM_LEFT_BBOX = (10, 55, 22, 79)
     ARM_LEFT_PIVOT = (20, 62)
     ARM_LEFT_ERASE_BBOX = (12, 58, 21, 76)
@@ -376,16 +376,16 @@ class MascotRenderer:
 
     @classmethod
     def _decompose_arms(cls, base: Image.Image) -> dict:
-        """Trennt die Arm-Stummel des Mascots vom Body als separate Sprites.
+        """Separates the mascot's arm stubs from the body as separate sprites.
 
-        Verwendet hard-coded Bounding-Boxes (ARM_LEFT_BBOX/ARM_RIGHT_BBOX)
-        statt heuristischer Yellow-Cluster-Detection — letztere erfasste auch
-        die Body-Outline-Pixel und produzierte unsaubere Sprites mit fremden
-        Pixeln, die nach Rotation den Arm verzogen.
+        Uses hard-coded bounding boxes (ARM_LEFT_BBOX/ARM_RIGHT_BBOX)
+        instead of heuristic yellow-cluster detection — the latter also
+        picked up the body-outline pixels and produced unclean sprites with
+        stray pixels that distorted the arm after rotation.
 
-        Body-Erase: BBox + 2px Padding wird komplett auf alpha=0 gesetzt,
-        damit der rotierte Arm freie Bahn hat (keine Outline-Reste in der
-        Schulter-Region, die den hochgehobenen Arm verdecken).
+        Body erase: bbox + 2px padding is set entirely to alpha=0, so the
+        rotated arm has a clear path (no leftover outline in the shoulder
+        region that would otherwise cover the raised arm).
         """
         arr = np.asarray(base)  # (H,W,4)
 
@@ -395,14 +395,14 @@ class MascotRenderer:
             erase_bbox: tuple[int, int, int, int],
         ) -> dict:
             x0, y0, x1, y1 = sprite_bbox
-            # Sprite-Crop: bbox + Padding fuer Rotation-Headroom
+            # Sprite crop: bbox + padding for rotation headroom
             pad = 3
             sprite_x0 = max(0, x0 - pad)
             sprite_y0 = max(0, y0 - pad)
             sprite_x1 = min(arr.shape[1], x1 + 1 + pad)
             sprite_y1 = min(arr.shape[0], y1 + 1 + pad)
             crop = arr[sprite_y0:sprite_y1, sprite_x0:sprite_x1].copy()
-            # Sprite-Maske: nur Pixel innerhalb des sprite_bbox behalten
+            # Sprite mask: keep only pixels inside sprite_bbox
             local_x0 = x0 - sprite_x0
             local_y0 = y0 - sprite_y0
             local_x1 = x1 + 1 - sprite_x0
@@ -412,14 +412,14 @@ class MascotRenderer:
             crop[~mask, 3] = 0
             sprite = Image.fromarray(crop, mode="RGBA")
 
-            # Body-Erase: enger als sprite_bbox, exakt am Stummel.
-            # So fuellt die Default-Pose (rot=0) das Erase-Loch komplett aus
-            # und der Body sieht im Idle normal aus.
+            # Body erase: tighter than sprite_bbox, exactly on the stub.
+            # This way the default pose (rot=0) fully fills the erase hole
+            # and the body looks normal at idle.
             ex0, ey0, ex1, ey1 = erase_bbox
             body_erase = np.zeros(arr.shape[:2], dtype=bool)
             body_erase[ey0 : ey1 + 1, ex0 : ex1 + 1] = True
 
-            # Lokaler Pivot relativ zum Sprite-Crop
+            # Local pivot relative to the sprite crop
             pivot_local = (pivot_abs[0] - sprite_x0, pivot_abs[1] - sprite_y0)
             return {
                 "sprite": sprite,
@@ -435,10 +435,9 @@ class MascotRenderer:
             cls.ARM_RIGHT_BBOX, cls.ARM_RIGHT_PIVOT, cls.ARM_RIGHT_ERASE_BBOX,
         )
 
-        # Body ohne Arme: alle Pixel innerhalb der dilatierten Arm-Region
-        # auf alpha=0 setzen — entfernt sowohl die gelben Stummel als auch
-        # angrenzende Outline-Konturen, die sonst den hochgehobenen Arm
-        # ueberdecken wuerden.
+        # Body without arms: set all pixels inside the dilated arm region
+        # to alpha=0 — removes both the yellow stubs and the adjacent
+        # outline contours that would otherwise cover the raised arm.
         body_arr = arr.copy()
         for entry in (left, right):
             mask = entry.get("body_erase_mask")
@@ -458,18 +457,18 @@ class MascotRenderer:
         }
 
     # ------------------------------------------------------------------
-    # Animation-API (vom OrbOverlay aufgerufen, Tk-Main-Thread)
+    # Animation API (called by OrbOverlay, Tk main thread)
     # ------------------------------------------------------------------
 
     def add_animation(self, animation: Animation) -> None:
-        """Fuegt eine laufende Animation hinzu. Threading: Caller stellt sicher
-        dass das im Tk-Main-Thread passiert (OrbOverlay queued via root.after).
+        """Adds a running animation. Threading: the caller ensures this
+        happens on the Tk main thread (OrbOverlay queues via root.after).
         """
         self._animations.append(animation)
 
     def stop_animation(self, name: str) -> int:
-        """Entfernt alle laufenden Animationen mit dem gegebenen Namen.
-        Gibt Anzahl gestoppter Instanzen zurueck."""
+        """Removes all running animations with the given name.
+        Returns the number of stopped instances."""
         before = len(self._animations)
         self._animations = [a for a in self._animations if a.name != name]
         return before - len(self._animations)
@@ -552,14 +551,14 @@ class MascotRenderer:
         frame[y0:y1, x0:x1] = np.asarray(small)
 
     def _aggregate_transform(self, t: float) -> Transform:
-        """Faltet alle aktiven Animations-Transforms in eine kombinierte Transform."""
+        """Folds all active animation transforms into one combined transform."""
         result = identity_transform()
         for anim in self._animations:
             result = result.combine(anim.transform(t))
         return result
 
     def _aggregate_arm_transforms(self, t: float) -> tuple[ArmTransform, ArmTransform]:
-        """Faltet linke und rechte Arm-Transforms aus allen aktiven Animationen."""
+        """Folds the left and right arm transforms from all active animations."""
         left = identity_arm()
         right = identity_arm()
         for anim in self._animations:
@@ -568,7 +567,7 @@ class MascotRenderer:
         return left, right
 
     # ------------------------------------------------------------------
-    # Render-Pipeline
+    # Render pipeline
     # ------------------------------------------------------------------
 
     def render(self, t: float, mode: str, ext_level: float | None) -> Image.Image:
@@ -587,29 +586,29 @@ class MascotRenderer:
         breath = 0.5 + 0.5 * math.sin(t * 0.9)
         energy = max(self._level, breath * 0.1)
 
-        # --- Animations-Lifecycle: finished-Animationen jetzt entfernen,
-        # damit ihre Transforms und Overlays keinen "letzten Frame" mehr
-        # einbringen. Wichtig vor dem aggregate_transform-Call.
+        # --- Animation lifecycle: remove finished animations now, so their
+        # transforms and overlays no longer contribute a "last frame".
+        # Important before the aggregate_transform call.
         if self._animations:
             self._animations = [a for a in self._animations if not a.is_finished(t)]
 
         anim_transform = self._aggregate_transform(t)
 
-        # Magenta-Hintergrund (Color-Key → transparent)
+        # Magenta background (color key → transparent)
         frame = np.empty((WIN_H, WIN_W, 3), dtype=np.uint8)
         frame[:] = COLOR_KEY_RGB
 
-        # --- 1. Warmer Halo um den Mascot (gaussian-blurrte Alpha als Maske)
-        # Color-Key ist magenta — ein Weichblend mit Magenta erzeugt rosa Fringes.
-        # Darum Halo HART: Pixel entweder sichtbar (volle Gold-Mischung) oder
-        # magenta (transparent). Die Threshold-Grenze wird mit energy dynamisch
-        # verschoben — bei hoher Energie wird mehr vom Blur-Gradient sichtbar
-        # und der Halo wirkt "atmend/expandierend".
-        halo_threshold = 0.55 - energy * 0.35  # 0.55 ruhig → 0.20 laut
+        # --- 1. Warm halo around the mascot (gaussian-blurred alpha as mask)
+        # The color key is magenta — soft-blending with magenta creates pink
+        # fringes. So the halo is HARD: a pixel is either visible (full gold
+        # mix) or magenta (transparent). The threshold boundary shifts
+        # dynamically with energy — at high energy more of the blur gradient
+        # becomes visible and the halo feels "breathing/expanding".
+        halo_threshold = 0.55 - energy * 0.35  # 0.55 calm → 0.20 loud
         halo_mask = (self._glow_mask > halo_threshold) & ~self._solid_mask
         if halo_mask.any():
-            # Innerhalb des Halos: Intensity steigt mit glow_mask-Wert
-            # (dicht am Mascot = heller, Aussenkante = dunkler Gold).
+            # Inside the halo: intensity rises with the glow_mask value
+            # (close to the mascot = brighter, outer edge = darker gold).
             intensity = np.clip(
                 (self._glow_mask[halo_mask] - halo_threshold) / (1.0 - halo_threshold),
                 0.0, 1.0,
@@ -619,15 +618,15 @@ class MascotRenderer:
             frame[halo_mask, 1] = (50 + 160 * intensity).astype(np.uint8)
             frame[halo_mask, 2] = (0 + 80 * intensity).astype(np.uint8)
 
-        # --- 2. PRE-Layer aus Animationen (z.B. Wind-Striche hinter dem Ghost)
+        # --- 2. PRE layer from animations (e.g. wind streaks behind the ghost)
         if self._animations:
             pre_layer = self._make_overlay_layer(t, which="pre")
             if pre_layer is not None:
                 self._composite_layer(frame, pre_layer)
 
-        # --- 3. Body (ohne Arme) + Arme separat mit Pivot-Rotation
-        # Animations-Transform (scale, rotation, dx/dy, brightness) wird hier
-        # ON TOP der Atem-Skalierung addiert/multipliziert.
+        # --- 3. Body (without arms) + arms rendered separately with pivot rotation
+        # The animation transform (scale, rotation, dx/dy, brightness) is
+        # added/multiplied ON TOP of the breathing scale here.
         breath_scale = 1.0 + 0.04 * math.sin(t * 0.9) + 0.03 * energy
         total_scale = breath_scale * anim_transform.scale
         sx = total_scale * anim_transform.skew_x
@@ -639,10 +638,9 @@ class MascotRenderer:
         body_rot_deg = -math.degrees(anim_transform.rotation)
         brightness_factor = (1.0 + 0.08 * energy) * anim_transform.brightness
 
-        # Body ohne Arme rendern (Body-Pixel + Augen + Mund + zackiger Boden,
-        # NUR die Arm-Stummel sind ge-erased). Damit ueberlappen rotierte
-        # Arme nicht mit dem statischen Stub und es entstehen keine
-        # "Doppelarm"-Artefakte.
+        # Render the body without arms (body pixels + eyes + mouth + jagged
+        # base, ONLY the arm stubs are erased). This way rotated arms don't
+        # overlap the static stub and no "double-arm" artifacts appear.
         self._composite_sprite_centered(
             frame=frame,
             sprite_pil=self._body_no_arms_pil,
@@ -654,11 +652,11 @@ class MascotRenderer:
             brightness=brightness_factor,
         )
 
-        # Arm-Transforms aus den aktiven Animationen aggregieren
+        # Aggregate arm transforms from the active animations
         arm_left_t, arm_right_t = self._aggregate_arm_transforms(t)
 
-        # Linker Arm — Pivot ist der Body-naechste Punkt des Stummels.
-        # Bei body-Skalierung skaliert auch der Pivot mit (Body-Scale-Aware).
+        # Left arm — the pivot is the point of the stub closest to the body.
+        # When the body scales, the pivot scales with it (body-scale-aware).
         if arm_left_t.visible:
             self._composite_arm(
                 frame=frame,
@@ -693,7 +691,7 @@ class MascotRenderer:
         # from OrbBusBridge on AudioOutFirst events).
         self._overlay_mouth(frame, t)
 
-        # --- 4. POST-Layer aus Animationen (Hand, Gedankenblase, Phone, Z-Z-Z…)
+        # --- 4. POST layer from animations (hand, thought bubble, phone, Z-Z-Z…)
         if self._animations:
             post_layer = self._make_overlay_layer(t, which="post")
             if post_layer is not None:
@@ -702,13 +700,13 @@ class MascotRenderer:
         return Image.fromarray(frame, mode="RGB")
 
     # ------------------------------------------------------------------
-    # Overlay-Helper
+    # Overlay helpers
     # ------------------------------------------------------------------
 
     def _make_overlay_layer(self, t: float, which: str) -> Image.Image | None:
-        """Bittet alle Animationen, ihre Overlays in einen RGBA-Layer zu malen.
-        Gibt None zurueck wenn keine Animation den Layer beruehrt hat
-        (Pixel-Check ueber Alpha-Kanal-Sum, billig).
+        """Asks all animations to paint their overlays into an RGBA layer.
+        Returns None if no animation touched the layer
+        (a cheap pixel check via the alpha-channel sum).
         """
         layer = Image.new("RGBA", (WIN_W, WIN_H), (0, 0, 0, 0))
         draw = ImageDraw.Draw(layer)
@@ -721,8 +719,8 @@ class MascotRenderer:
             any_drawn = True
         if not any_drawn:
             return None
-        # Fast-Path: wenn die ganze Layer leer (alpha=0) → None statt composite.
-        # Wir koennen das pruefen ohne extra-Walk: Pillow hat getbbox().
+        # Fast path: if the whole layer is empty (alpha=0) → None instead of compositing.
+        # We can check this without an extra walk: Pillow has getbbox().
         if layer.getbbox() is None:
             return None
         return layer
@@ -738,11 +736,11 @@ class MascotRenderer:
         offset_dy: int,
         brightness: float,
     ) -> None:
-        """Skaliert und rotiert ein Sprite, plaziert es zentriert + offset im Frame.
+        """Scales and rotates a sprite, placing it centered + offset in the frame.
 
-        Genutzt fuer den Body (gesamtes Mascot ohne Arme). Der Sprite wird auf
-        target_w x target_h skaliert, dann optional rotiert (around center),
-        dann mit binaerer Alpha (>= 128) auf den Frame gesetzt.
+        Used for the body (the whole mascot minus arms). The sprite is
+        scaled to target_w x target_h, then optionally rotated (around
+        center), then placed onto the frame using binary alpha (>= 128).
         """
         if target_w == WIN_W and target_h == WIN_H and abs(rot_deg) < 0.05:
             tmp = sprite_pil
@@ -772,76 +770,76 @@ class MascotRenderer:
         body_rotation_rad: float,
         brightness: float,
     ) -> None:
-        """Rendert ein Arm-Sprite mit Pivot-Rotation um die Schulter.
+        """Renders an arm sprite with pivot rotation around the shoulder.
 
-        Mathematik:
-            1. Sprite hat einen lokalen Pivot (Schulter im Sprite-Koord-System).
-            2. Welt-Pivot ist die Schulter im Frame (108x108-System).
-            3. Body-Transform (Scale + Body-Rotation um Body-Center) verschiebt
-               den Welt-Pivot — wir muessen die Schulter mitbewegen.
-            4. Arm-Eigenrotation rotiert das Sprite UM seinen lokalen Pivot.
-            5. Sprite wird so plaziert, dass der lokale Pivot auf dem
-               (verschobenen) Welt-Pivot landet.
+        Math:
+            1. The sprite has a local pivot (shoulder in the sprite coordinate system).
+            2. The world pivot is the shoulder in the frame (108x108 system).
+            3. The body transform (scale + body rotation around the body center)
+               moves the world pivot — we have to move the shoulder along with it.
+            4. The arm's own rotation rotates the sprite AROUND its local pivot.
+            5. The sprite is placed so that the local pivot lands on the
+               (shifted) world pivot.
 
-        PIL.rotate(center=...) rotiert ein Bild um einen frei waehlbaren Punkt
-        — wir nutzen das fuer die Pivot-Rotation. expand=True vergroessert die
-        Bounds, damit der rotierte Arm nicht clippt.
+        PIL.rotate(center=...) rotates an image around a freely chosen point
+        — we use that for the pivot rotation. expand=True enlarges the
+        bounds so the rotated arm doesn't clip.
         """
         if arm_sprite.size == (1, 1):
-            return  # Decomposition lieferte leeres Sprite (Asset-Mismatch)
+            return  # Decomposition produced an empty sprite (asset mismatch)
 
         rot_deg_arm = -math.degrees(arm_t.rotation)
         if abs(rot_deg_arm) < 0.05:
             rotated = arm_sprite
             new_pivot = local_pivot
         else:
-            # Standard-Trick: Sprite in eine groessere Leinwand padden, so dass
-            # der Pivot exakt im Zentrum liegt. Dann mit center=Zentrum rotieren —
-            # das verhaelt sich vorhersehbar (PIL.rotate ohne center, expand=False
-            # rotiert pixel-stabil um die Bildmitte).
+            # Standard trick: pad the sprite into a larger canvas so the
+            # pivot sits exactly in the center. Then rotate with center=center —
+            # this behaves predictably (PIL.rotate without center, expand=False,
+            # rotates pixel-stably around the image midpoint).
             sw, sh = arm_sprite.size
             px, py = local_pivot
-            # Wie weit ist der Pivot vom rechten/unteren Rand entfernt?
-            # Die neue Leinwand muss so gross sein, dass die maximale Distanz
-            # vom Pivot zu jeder Sprite-Ecke in alle Richtungen Platz hat
-            # (sonst clippt die Rotation Sprite-Pixel).
+            # How far is the pivot from the right/bottom edge?
+            # The new canvas must be large enough that the maximum distance
+            # from the pivot to any sprite corner has room in every direction
+            # (otherwise the rotation clips sprite pixels).
             max_dist = int(math.ceil(math.hypot(
                 max(px, sw - px), max(py, sh - py)
             )))
             canvas_size = 2 * max_dist + 4
             canvas = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
-            # Pivot des Sprites soll im Zentrum der Leinwand landen
+            # The sprite's pivot should land at the canvas center
             paste_x = canvas_size // 2 - px
             paste_y = canvas_size // 2 - py
             canvas.paste(arm_sprite, (paste_x, paste_y))
-            # Rotation um Bildmitte — center-Default greift, expand=False
+            # Rotation around the image midpoint — the center default applies, expand=False
             rotated = canvas.rotate(rot_deg_arm, resample=Image.NEAREST, fillcolor=(0, 0, 0, 0))
-            # Neue Pivot-Position ist die Bildmitte
+            # The new pivot position is the image midpoint
             new_pivot = (canvas_size // 2, canvas_size // 2)
 
-        # Welt-Pivot der Schulter, abgeleitet vom Body-Center + Mascot-relativer
-        # Position. Der ungescalte Welt-Pivot ist `world_pivot` im 108er Frame.
-        # Bei Skalierung muss er relativ zum Body-Center skaliert werden.
+        # World pivot of the shoulder, derived from the body center + the
+        # mascot-relative position. The unscaled world pivot is `world_pivot`
+        # in the 108-frame. When scaling, it must be scaled relative to the body center.
         cx_body = WIN_W / 2.0
         cy_body = WIN_H / 2.0
-        # Body-relative Schulter-Position (vor Skalierung)
+        # Body-relative shoulder position (before scaling)
         rel_x = world_pivot[0] - cx_body
         rel_y = world_pivot[1] - cy_body
-        # Skalieren
+        # Scale
         rel_x *= body_scale_x
         rel_y *= body_scale_y
-        # Body-Rotation: rotiere die Schulter mit dem Body
+        # Body rotation: rotate the shoulder with the body
         if abs(body_rotation_rad) >= 1e-4:
             cr = math.cos(body_rotation_rad)
             sr = math.sin(body_rotation_rad)
             rel_x_r = rel_x * cr - rel_y * sr
             rel_y_r = rel_x * sr + rel_y * cr
             rel_x, rel_y = rel_x_r, rel_y_r
-        # Welt-Pivot nach Body-Transform
+        # World pivot after the body transform
         world_pivot_x = cx_body + rel_x + body_offset_dx + arm_t.dx
         world_pivot_y = cy_body + rel_y + body_offset_dy + arm_t.dy
 
-        # Plaziere Sprite so, dass new_pivot auf world_pivot landet
+        # Place the sprite so that new_pivot lands on world_pivot
         x0 = int(round(world_pivot_x - new_pivot[0]))
         y0 = int(round(world_pivot_y - new_pivot[1]))
 
@@ -856,10 +854,10 @@ class MascotRenderer:
         y0: int,
         brightness: float,
     ) -> None:
-        """Blittet ein RGBA-Sprite an Position (x0, y0) in den 108er-Frame.
+        """Blits an RGBA sprite at position (x0, y0) into the 108-px frame.
 
-        Binaere Alpha-Threshold (>= 128) damit Color-Key-Magenta nicht angefasst
-        wird. Brightness multipliziert die RGB-Werte (clip auf 255).
+        Binary alpha threshold (>= 128) so the color-key magenta is never
+        touched. Brightness multiplies the RGB values (clipped to 255).
         """
         ph, pw = rgba_arr.shape[:2]
         src_x0 = max(0, -x0)
@@ -882,17 +880,17 @@ class MascotRenderer:
 
     @staticmethod
     def _composite_layer(frame: np.ndarray, layer: Image.Image) -> None:
-        """In-place RGBA-over-RGB Composite, Color-Key-sicher (Magenta).
+        """In-place RGBA-over-RGB composite, color-key-safe (magenta).
 
-        Strategie:
-            - Layer-Pixel mit alpha < 64 → ignorieren (nicht zeichnen).
-            - Pixel mit alpha >= 64:
-                * Wenn Frame-Pixel = Magenta (Color-Key, transparent) → HARTE
-                  Setzung. Sonst entstuenden rosa Misch-Pixel die im Tk-Fenster
-                  als Fringes durchscheinen.
-                * Wenn Frame-Pixel = nicht-magenta (innerhalb Halo/Mascot) →
-                  Soft-Blend ueber Alpha. Hier ist der Frame ohnehin opak,
-                  Misch-Pixel bleiben sichtbar als sauberer Uebergang.
+        Strategy:
+            - Layer pixels with alpha < 64 → ignore (don't draw).
+            - Pixels with alpha >= 64:
+                * If the frame pixel is magenta (color key, transparent) → HARD
+                  set. Otherwise pink mixed pixels would appear as fringes
+                  showing through in the Tk window.
+                * If the frame pixel is non-magenta (inside the halo/mascot) →
+                  soft-blend over alpha. Here the frame is opaque anyway,
+                  so mixed pixels stay visible as a clean transition.
         """
         layer_arr = np.asarray(layer)  # (H,W,4)
         alpha = layer_arr[:, :, 3]
@@ -901,20 +899,20 @@ class MascotRenderer:
             return
         src_rgb = layer_arr[:, :, :3].astype(np.float32)
 
-        # Color-Key-Detection: Frame-Pixel die genau magenta sind → "transparent"
+        # Color-key detection: frame pixels that are exactly magenta → "transparent"
         is_magenta = (
             (frame[:, :, 0] == COLOR_KEY_RGB[0])
             & (frame[:, :, 1] == COLOR_KEY_RGB[1])
             & (frame[:, :, 2] == COLOR_KEY_RGB[2])
         )
 
-        # 1) Hard-set ueber Magenta (jeder draw_mask-Pixel ueber Magenta wird
-        #    1:1 mit der Layer-Farbe ueberschrieben — kein Blend).
+        # 1) Hard-set over magenta (every draw_mask pixel over magenta is
+        #    overwritten 1:1 with the layer color — no blending).
         hard_mask = draw_mask & is_magenta
         if hard_mask.any():
             frame[hard_mask] = src_rgb[hard_mask].astype(np.uint8)
 
-        # 2) Soft-Blend ueber bereits-belegten Pixeln (Halo, Mascot)
+        # 2) Soft-blend over already-occupied pixels (halo, mascot)
         soft_mask = draw_mask & ~is_magenta
         if soft_mask.any():
             a = (alpha[soft_mask].astype(np.float32) / 255.0)[:, None]
@@ -1234,11 +1232,11 @@ class OrbCommentBubble:
 
 
 class OrbOverlay:
-    """Public Facade — Tkinter-basiert, Thread-safe via root.after(0, ...).
+    """Public facade — Tkinter-based, thread-safe via root.after(0, ...).
 
-    tkinter selbst ist nicht thread-safe, aber `root.after(0, fn)` schedult
-    fn sicher in den Tk-Main-Loop. Daher wickeln wir alle Aufrufe aus
-    fremden Threads (Jarvis-Core, Demo-Thread) darueber ab.
+    tkinter itself is not thread-safe, but `root.after(0, fn)` schedules
+    fn safely onto the Tk main loop. So we route every call from other
+    threads (Jarvis-Core, demo thread) through it.
     """
 
     def __init__(
@@ -1251,7 +1249,7 @@ class OrbOverlay:
         """
         style: only ``"mascot"`` is accepted. Legacy ``"orb"`` requests are
         coerced to ``"mascot"``.
-        mascot_path: optionaler expliziter Pfad, sonst via ENV oder Default-Asset.
+        mascot_path: optional explicit path, otherwise via ENV or the default asset.
         ENV-Override: ``JARVIS_ORB_STYLE=mascot`` may request mascot explicitly;
         legacy ``orb`` values are ignored.
         """
@@ -1302,8 +1300,8 @@ class OrbOverlay:
         self._started = threading.Event()
         self._ui_queue: queue.Queue = queue.Queue()
         self._tk_thread_id: int | None = None
-        # Lazy-Import, damit der Orb auch ohne sounddevice startbar bleibt
-        # (Mic-Reactive ist optional).
+        # Lazy import so the orb stays startable even without sounddevice
+        # (mic-reactive mode is optional).
         self._mic = None
 
         # Style resolution: mascot-only. Keep accepting the old knobs so
@@ -1342,7 +1340,7 @@ class OrbOverlay:
         _ensure_dpi_awareness()
         self._root = tk.Tk()
         self._root.title("JarvisOrb")
-        self._root.overrideredirect(True)  # Frameless, kein DropShadow
+        self._root.overrideredirect(True)  # Frameless, no drop shadow
         self._root.wm_attributes("-topmost", True)
         self._root.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
         self._root.configure(bg=COLOR_KEY_HEX)
@@ -1505,16 +1503,16 @@ class OrbOverlay:
 
         self._started.set()
 
-        # Mic-Listener erst nach Window-Creation starten, damit eventuelle
-        # sounddevice-Fehler (kein Mic, PortAudio-Init) erst nach sichtbarem
-        # Orb auftreten und nicht stumm beim Start verschluckt werden.
+        # Start the mic listener only after window creation, so any
+        # sounddevice errors (no mic, PortAudio init) surface only after the
+        # orb is visible and aren't silently swallowed at startup.
         if self._mic_reactive:
             try:
                 from ui.orb.mic_listener import MicListener
                 self._mic = MicListener(on_level=self.set_level)
                 self._mic.start()
             except Exception as exc:
-                print(f"[orb] Mic-Reactive konnte nicht starten: {exc}")
+                print(f"[orb] Mic-reactive mode failed to start: {exc}")
 
         if auto_demo:
             threading.Thread(target=self._run_demo, daemon=True).start()
@@ -2061,25 +2059,25 @@ class OrbOverlay:
     def set_level(self, level: float) -> None:
         self._ext_level = max(0.0, min(1.0, float(level)))
 
-    # --- Animations-API ------------------------------------------------
+    # --- Animation API ------------------------------------------------
 
     def play_animation(self, name: str, **params) -> None:
-        """Startet eine benannte Animation (z.B. 'wave', 'salute', 'think').
+        """Starts a named animation (e.g. 'wave', 'salute', 'think').
 
-        Thread-safe: queued via ``root.after(0, ...)`` in den Tk-Mainloop.
-        Funktioniert nur am MascotRenderer.
+        Thread-safe: queued via ``root.after(0, ...)`` onto the Tk mainloop.
+        Only works with the MascotRenderer.
 
-        Stack-Verhalten: mehrere Animationen koennen gleichzeitig laufen.
-        Eine erneute play_animation('wave') waehrend ein 'wave' noch lebt
-        addiert eine zweite Instanz — das ist gewollt (mehrfaches Winken).
-        Fuer "ersetzen" zuerst stop_animation('wave') aufrufen.
+        Stacking behavior: several animations can run at the same time.
+        Calling play_animation('wave') again while a 'wave' is still active
+        adds a second instance — this is intentional (multiple waves).
+        To "replace" it, call stop_animation('wave') first.
         """
         if not isinstance(self._renderer, MascotRenderer):
             return
         if name not in ANIMATION_REGISTRY:
             import logging
             logging.getLogger("jarvis.orb").warning(
-                "play_animation(%r) unbekannt — verfuegbar: %s",
+                "play_animation(%r) unknown — available: %s",
                 name, sorted(ANIMATION_REGISTRY),
             )
             return
@@ -2099,10 +2097,10 @@ class OrbOverlay:
         self._enqueue_ui(_start)
 
     def stop_animation(self, name: str) -> None:
-        """Stoppt alle laufenden Instanzen einer Animation (z.B. 'think').
+        """Stops all running instances of an animation (e.g. 'think').
 
-        No-op wenn keine Instanz existiert oder Renderer kein Mascot ist.
-        Wichtig fuer endlos-loopende Animationen wie 'think', 'sleep'.
+        No-op if no instance exists or the renderer isn't the mascot.
+        Important for endlessly-looping animations like 'think', 'sleep'.
         """
         if not isinstance(self._renderer, MascotRenderer):
             return
@@ -2110,27 +2108,27 @@ class OrbOverlay:
         self._enqueue_ui(lambda: renderer.stop_animation(name))
 
     def clear_animations(self) -> None:
-        """Beendet alle aktiven Animationen sofort."""
+        """Ends all active animations immediately."""
         if not isinstance(self._renderer, MascotRenderer):
             return
         renderer = self._renderer
         self._enqueue_ui(renderer.clear_animations)
 
     def active_animations(self) -> list[str]:
-        """Snapshot der aktuell laufenden Animations-Namen.
+        """Snapshot of the currently running animation names.
 
-        NICHT Thread-safe (Read ohne Lock); nur fuer Tests/Debug gedacht.
+        NOT thread-safe (read without a lock); intended for tests/debugging only.
         """
         if not isinstance(self._renderer, MascotRenderer):
             return []
         return self._renderer.active_animation_names()
 
     def set_style(self, style: str) -> None:
-        """Wechselt den Renderer zur Laufzeit (``"orb"`` oder ``"mascot"``).
+        """Switches the renderer at runtime (``"orb"`` or ``"mascot"``).
 
-        Thread-safe — queued via root.after. Wenn ``"mascot"`` angefordert aber
-        das PNG nicht gefunden wird, bleibt der aktuelle Renderer unveraendert
-        (der Caller bekommt darueber den Logger-Warn-Eintrag).
+        Thread-safe — queued via root.after. If ``"mascot"`` is requested but
+        the PNG is not found, the current renderer stays unchanged
+        (the caller learns about it via the logger warning entry).
         """
         style = (style or "").lower()
         if style == "orb":
@@ -2142,9 +2140,9 @@ class OrbOverlay:
             )
             style = "mascot"
         if style != "mascot":
-            raise ValueError(f"Unbekannter Style: {style!r} (erlaubt: mascot)")
+            raise ValueError(f"Unknown style: {style!r} (allowed: mascot)")
         if self._root is None:
-            # Noch nicht gestartet → Style merken, start() picks it up
+            # Not started yet → remember the style, start() picks it up
             self._style = style
             return
         self._enqueue_ui(lambda: self._apply_style(style))
@@ -2152,7 +2150,7 @@ class OrbOverlay:
     def _apply_style(self, style: str) -> None:
         new_renderer = self._build_renderer(style)
         if new_renderer is None:
-            return  # Fallback-Fall wurde bereits in _build_renderer geloggt
+            return  # The fallback case was already logged in _build_renderer
         self._renderer = new_renderer
         self._style = style
 
@@ -2162,8 +2160,8 @@ class OrbOverlay:
             if mascot_path is None:
                 import logging
                 logging.getLogger("jarvis.orb").warning(
-                    "Mascot-Style angefordert, aber PNG nicht gefunden "
-                    "(gesucht: %s, ENV JARVIS_ORB_MASCOT_PATH, %s) — "
+                    "Mascot style requested but PNG not found "
+                    "(looked in: %s, ENV JARVIS_ORB_MASCOT_PATH, %s) — "
                     "overlay will stay hidden.",
                     self._mascot_path_hint, DEFAULT_MASCOT_REL,
                 )
@@ -2179,11 +2177,11 @@ class OrbOverlay:
                 return None
         return None
 
-    # --- Intern --------------------------------------------------------
+    # --- Internal --------------------------------------------------------
 
     def _set_mode(self, mode: str) -> None:
         if mode not in ("idle", "listen", "speak", "think"):
-            raise ValueError(f"Unbekannter Modus: {mode}")
+            raise ValueError(f"Unknown mode: {mode}")
         self._mode = mode
 
     def _enqueue_ui(self, fn) -> None:
@@ -2216,18 +2214,18 @@ class OrbOverlay:
                 logging.getLogger("jarvis.orb").exception("Orb UI command failed")
         self._root.after(20, self._schedule_ui_queue)
 
-    # --- Thread-Lifecycle fuer Integration in async/asyncio-Welten -----
+    # --- Thread lifecycle for integration into async/asyncio worlds -----
 
     def start_in_thread(self, auto_demo: bool = False, timeout: float = 3.0) -> None:
-        """Startet den Tk-Mainloop in einem Daemon-Thread und kehrt zurueck.
+        """Starts the Tk mainloop on a daemon thread and returns.
 
-        Auf Windows ist Tk im Background-Thread stabil, solange alle
-        UI-Mutationen ueber `root.after(0, fn)` gequeued werden — das tun
-        unsere show/hide/set_mode/set_level-Methoden bereits.
+        On Windows, Tk is stable on a background thread as long as all
+        UI mutations are queued via `root.after(0, fn)` — our
+        show/hide/set_mode/set_level methods already do this.
 
-        Blockt bis das Fenster wirklich existiert (self._started-Event),
-        damit der Caller danach sicher show()/hide() aufrufen kann ohne
-        in ein None-root zu laufen.
+        Blocks until the window actually exists (self._started event),
+        so the caller can safely call show()/hide() afterward without
+        running into a None root.
         """
         import logging
         _log = logging.getLogger("jarvis.orb")
@@ -2236,19 +2234,19 @@ class OrbOverlay:
             try:
                 self.start(auto_demo=auto_demo)
             except Exception as exc:
-                # pythonw.exe hat kein stdout → print geht ins Leere. Logger
-                # schreibt ins Watchdog-Log und macht silent-deaths sichtbar.
-                _log.exception("Orb-Thread-Start fehlgeschlagen: %s", exc)
+                # pythonw.exe has no stdout → print goes nowhere. The logger
+                # writes to the watchdog log and makes silent deaths visible.
+                _log.exception("Orb thread start failed: %s", exc)
         t = threading.Thread(target=_run, name="orb-tk-mainloop", daemon=True)
         t.start()
         ok = self._started.wait(timeout=timeout)
         if not ok:
             _log.error(
-                "Orb-Fenster nicht innerhalb %.1fs initialisiert — UI wird nicht poppen.",
+                "Orb window not initialized within %.1fs — UI will not pop up.",
                 timeout,
             )
         else:
-            _log.info("Orb-Overlay Tk-Mainloop läuft (Fenster initialisiert).")
+            _log.info("Orb overlay Tk mainloop is running (window initialized).")
 
     def _schedule_frame(self) -> None:
         if not self._running or not self._root or not self._canvas or not self._renderer:
@@ -2256,8 +2254,8 @@ class OrbOverlay:
         t = time.perf_counter() - self._t0
         img = self._renderer.render(t, self._mode, self._ext_level)
 
-        # PhotoImage muss als self._photo gehalten werden — sonst GC'd
-        # Tkinter das Image weg bevor es gerendert wird.
+        # The PhotoImage must be kept as self._photo — otherwise Tkinter
+        # garbage-collects the image before it gets rendered.
         self._photo = ImageTk.PhotoImage(img)
         if self._image_id is None:
             self._image_id = self._canvas.create_image(
@@ -2291,25 +2289,25 @@ def main() -> int:
     parser.add_argument(
         "--sticky",
         action="store_true",
-        help="Fenster dauerhaft sichtbar (Design-Preview)",
+        help="Window permanently visible (design preview)",
     )
     parser.add_argument(
         "--mic",
         action="store_true",
-        help="Mic-reaktiv: pulsiert mit Mikrofon-Lautstaerke + Shockwave-Ringe",
+        help="Mic-reactive: pulses with microphone volume + shockwave rings",
     )
     parser.add_argument(
         "--mascot",
         action="store_true",
-        help="Verwendet das SWG/Gigi-Maskottchen.",
+        help="Uses the SWG/Gigi mascot.",
     )
     parser.add_argument(
         "--mascot-path",
         type=str,
         default=None,
         help=(
-            "Optional: expliziter Pfad zu einem Mascot-PNG "
-            "(sonst assets/icons/jarvis-gigi-256.png)."
+            "Optional: explicit path to a mascot PNG "
+            "(otherwise assets/icons/jarvis-gigi-256.png)."
         ),
     )
     parser.add_argument(
@@ -2317,22 +2315,22 @@ def main() -> int:
         type=str,
         default=None,
         help=(
-            "Visual-QA: spielt eine bestimmte Animation in Endlosschleife "
-            "(impliziert --mascot --sticky). Verfuegbar: "
+            "Visual QA: plays a specific animation in an endless loop "
+            "(implies --mascot --sticky). Available: "
             + ", ".join(sorted(ANIMATION_REGISTRY))
         ),
     )
     parser.add_argument(
         "--all-animations",
         action="store_true",
-        help="Spielt alle Animationen nacheinander durch (impliziert --mascot --sticky).",
+        help="Plays all animations one after another (implies --mascot --sticky).",
     )
     args = parser.parse_args()
 
     if args.animation and args.animation not in ANIMATION_REGISTRY:
         print(
-            f"[orb] Unbekannte Animation {args.animation!r}. "
-            f"Verfuegbar: {', '.join(sorted(ANIMATION_REGISTRY))}"
+            f"[orb] Unknown animation {args.animation!r}. "
+            f"Available: {', '.join(sorted(ANIMATION_REGISTRY))}"
         )
         return 2
 
@@ -2347,17 +2345,17 @@ def main() -> int:
         mascot_path=args.mascot_path,
     )
 
-    # Demo-Threads je nach CLI-Argument
+    # Demo threads depending on the CLI argument
     auto_demo = False
     if args.animation:
-        # Loopt die gewuenschte Animation alle 2.5s neu — fuer Visual-QA
+        # Re-loops the requested animation every 2.5s — for visual QA
         def _loop_anim() -> None:
             overlay._started.wait(timeout=5.0)
             overlay.show(mode="listen")
             while True:
                 overlay.play_animation(args.animation)
-                # Sleep so lange wie die Animation dauert + 0.6s Pause; loopende
-                # Animationen (duration=0) loopen wir alle 4s neu (Re-trigger).
+                # Sleep as long as the animation takes + a 0.6s pause; looping
+                # animations (duration=0) we re-loop every 4s (re-trigger).
                 cls = ANIMATION_REGISTRY[args.animation]
                 wait = cls.duration if cls.duration > 0 else 4.0
                 time.sleep(wait + 0.6)
@@ -2379,9 +2377,9 @@ def main() -> int:
                     time.sleep(0.3)
         threading.Thread(target=_all_demo, daemon=True).start()
     else:
-        # Klassisches Demo (zeigt listen/speak-Wechsel) wenn nichts spezifiziert.
-        # Mit --mic kein auto_demo (sonst wuerde das Demo-Skript den Orb
-        # ausblenden, genau waehrend man reinspricht).
+        # Classic demo (shows the listen/speak switch) when nothing is specified.
+        # No auto_demo with --mic (otherwise the demo script would hide the
+        # orb exactly while the user is speaking into the mic).
         auto_demo = not (args.sticky or args.mic)
 
     overlay.start(auto_demo=auto_demo)

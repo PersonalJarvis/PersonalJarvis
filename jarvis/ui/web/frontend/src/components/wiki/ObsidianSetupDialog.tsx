@@ -307,7 +307,7 @@ export function ObsidianSetupDialog({
       window.location.href = url;
     } catch {
       // jsdom or sandboxed embed: nothing we can do, the failure message
-      // shows up on the "Hat nicht geklappt" branch anyway.
+      // shows up on the "It didn't work" branch anyway.
     }
   }, [vaultName]);
 

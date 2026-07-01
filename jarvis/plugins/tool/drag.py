@@ -39,21 +39,21 @@ class DragTool:
     name: str = "drag"
     risk_tier: str = "monitor"
     description: str = (
-        "Zieht (Press-Move-Release) von einer Pixel-Koordinate zu einer anderen "
-        "— fuer Karten/Globus-Rotation, Schwenken oder Schieberegler. "
-        "Koordinaten sind absolute Bildschirm-Pixel."
+        "Drags (press-move-release) from one pixel coordinate to another "
+        "— for map/globe rotation, panning, or sliders. "
+        "Coordinates are absolute screen pixels."
     )
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
-            "x1": {"type": "integer", "description": "Start-X (Pixel)"},
-            "y1": {"type": "integer", "description": "Start-Y (Pixel)"},
-            "x2": {"type": "integer", "description": "End-X (Pixel)"},
-            "y2": {"type": "integer", "description": "End-Y (Pixel)"},
+            "x1": {"type": "integer", "description": "Start X (pixels)"},
+            "y1": {"type": "integer", "description": "Start Y (pixels)"},
+            "x2": {"type": "integer", "description": "End X (pixels)"},
+            "y2": {"type": "integer", "description": "End Y (pixels)"},
             "duration_ms": {
                 "type": "integer",
                 "default": _DEFAULT_DRAG_DURATION_MS,
-                "description": "Dauer der Ziehbewegung in Millisekunden",
+                "description": "Duration of the drag motion in milliseconds",
             },
         },
         "required": ["x1", "y1", "x2", "y2"],

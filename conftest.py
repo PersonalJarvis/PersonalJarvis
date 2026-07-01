@@ -1,8 +1,8 @@
-"""Repo-Root-conftest fuer Pytest-Discovery.
+"""Repo-root conftest for pytest discovery.
 
-Pytest laedt diese Datei VOR allen Test-Modulen und VOR `tests/conftest.py`.
-Wir nutzen das, um den Repo-Root in `sys.path` aufzunehmen, damit Tests
-Top-Level-Module wie `ui.orb.bus_bridge` importieren koennen.
+Pytest loads this file BEFORE all test modules and BEFORE `tests/conftest.py`.
+We use this to add the repo root to `sys.path` so tests can import
+top-level modules like `ui.orb.bus_bridge`.
 """
 from __future__ import annotations
 

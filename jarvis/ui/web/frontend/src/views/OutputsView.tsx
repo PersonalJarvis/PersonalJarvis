@@ -148,7 +148,7 @@ export function OutputsView() {
     [sessions, selectedSlug],
   );
 
-  // Auto-select: erster Eintrag, sobald Daten da sind und nichts ausgewaehlt ist.
+  // Auto-select: the first entry, as soon as data is present and nothing is selected.
   const effectiveSlug =
     selectedSlug ?? (sessions.length > 0 ? sessions[0].slug : null);
   const effectiveSelected =
@@ -158,7 +158,7 @@ export function OutputsView() {
     try {
       await fetch(`/api/outputs/${slug}/open`, { method: "POST" });
     } catch {
-      // ignoriert — Toast waere nice-to-have, aber der Call ist best-effort.
+      // Ignored — a toast would be nice-to-have, but the call is best-effort.
     }
   };
 
@@ -562,11 +562,11 @@ function ArtifactsSection({ slug }: { slug: string }) {
       <div className="mb-3 flex items-center gap-2">
         <FileText className="h-4 w-4 text-primary" />
         <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Ergebnisse
+          {t("outputs_view.results")}
         </span>
         {!q.isLoading && (
           <span className="text-[11px] text-muted-foreground">
-            {files.length} {files.length === 1 ? "Datei" : "Dateien"}
+            {files.length} {files.length === 1 ? t("outputs_view.file") : t("outputs_view.files")}
           </span>
         )}
       </div>
@@ -776,9 +776,9 @@ function ArtifactRow({
 }
 
 /**
- * Linkifiziert URLs im Text. Regex ist bewusst simpel — fuer saubere
- * Markdown-Unterstuetzung muesste ein Parser her, aber die Summary ist
- * Plain-Text mit gelegentlichen Links.
+ * Linkifies URLs in the text. The regex is deliberately simple — proper
+ * Markdown support would need a real parser, but the summary is
+ * plain text with the occasional link.
  */
 function LinkifiedText({ text }: { text: string }) {
   const parts = useMemo(() => {

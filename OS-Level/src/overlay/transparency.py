@@ -1,13 +1,13 @@
-"""ctypes-Wrappers fuer Win32-Window-Flags.
+"""ctypes wrappers for Win32 window flags.
 
-Plan §12.1 / §12.4: Transparente Click-Through Layered-Windows mit
-``WDA_EXCLUDEFROMCAPTURE`` damit Screen-Sharing und OBS das Overlay nicht
-mit-aufnehmen. Qt setzt ``WindowTransparentForInput`` selbst, der ctypes-Pfad
-hier ist (a) Defense-in-Depth fuer Affinity, (b) bereitet Phase 9.6 vor
-(Mascot braucht selektiv ``WS_EX_NOACTIVATE``).
+Plan §12.1 / §12.4: transparent click-through layered windows with
+``WDA_EXCLUDEFROMCAPTURE`` so screen sharing and OBS don't pick up the
+overlay. Qt sets ``WindowTransparentForInput`` itself; the ctypes path
+here is (a) defense-in-depth for affinity, (b) prepares for Phase 9.6
+(mascot needs ``WS_EX_NOACTIVATE`` selectively).
 
-Auf Nicht-Windows-Hosts sind alle Funktionen No-Ops, damit Tests headless
-auf jeder Plattform durchlaufen koennen.
+On non-Windows hosts all functions are no-ops, so tests can run
+headless on any platform.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import ctypes
 import sys
 from ctypes import wintypes
 
-# Win32-Konstanten — Plan §12.1, §12.2.
+# Win32 constants — Plan §12.1, §12.2.
 GWL_EXSTYLE = -20
 WS_EX_LAYERED = 0x00080000
 WS_EX_TRANSPARENT = 0x00000020
@@ -33,17 +33,17 @@ def _is_windows() -> bool:
     return sys.platform == "win32"
 
 
-def get_user32():  # pragma: no cover — Plattform-Branch
-    """Lazy-Loader. Nur auf Windows aufrufen."""
+def get_user32():  # pragma: no cover — platform branch
+    """Lazy loader. Only call on Windows."""
     if not _is_windows():
-        raise RuntimeError("user32 ist Windows-only")
+        raise RuntimeError("user32 is Windows-only")
     return ctypes.windll.user32
 
 
 def apply_click_through(hwnd: int) -> None:
-    """Ergaenzt ``WS_EX_LAYERED | WS_EX_TRANSPARENT`` an einem HWND.
+    """Adds ``WS_EX_LAYERED | WS_EX_TRANSPARENT`` to an HWND.
 
-    Idempotent: bestehende Style-Bits werden mit OR ergaenzt, nichts geloescht.
+    Idempotent: existing style bits are OR'd in, nothing is cleared.
     """
     if not _is_windows():
         return
@@ -61,10 +61,10 @@ def apply_click_through(hwnd: int) -> None:
 
 
 def apply_mascot_styles(hwnd: int) -> None:
-    """Mascot-Window — Plan §12.2: Layered + NoActivate + Toolwindow.
+    """Mascot window — Plan §12.2: layered + no-activate + tool window.
 
-    Bewusst KEIN ``WS_EX_TRANSPARENT``, damit Klicks/Drag durchkommen.
-    Phase 9.6 nutzt das.
+    Deliberately NO ``WS_EX_TRANSPARENT``, so clicks/drag come through.
+    Phase 9.6 uses this.
     """
     if not _is_windows():
         return
@@ -84,8 +84,8 @@ def apply_mascot_styles(hwnd: int) -> None:
 def exclude_from_capture(hwnd: int) -> bool:
     """``SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)``.
 
-    Returnt ``True`` bei Erfolg, ``False`` falls unsupported (alte Win10-Builds)
-    oder Aufruf auf Nicht-Windows.
+    Returns ``True`` on success, ``False`` if unsupported (old Win10 builds)
+    or when called on non-Windows.
     """
     if not _is_windows():
         return False
@@ -99,13 +99,13 @@ def exclude_from_capture(hwnd: int) -> bool:
 
 
 def reapply_capture_affinity(hwnd: int) -> bool:
-    """Plan §18.1 — Reapply WDA_EXCLUDEFROMCAPTURE.
+    """Plan §18.1 — reapply WDA_EXCLUDEFROMCAPTURE.
 
-    Identisch zu ``exclude_from_capture``, aber als named entry-point
-    fuer Window-Hooks (showEvent, screenChanged, screenAdded). DWM
-    cacht das Affinity-Flag nicht ueber Re-Composite-Boundaries; nach
-    DPI-Wechseln oder Monitor-Hotplug hat das Flag schon mal verloren
-    gewirkt. Daher idempotent re-applien.
+    Identical to ``exclude_from_capture``, but exposed as a named entry
+    point for window hooks (showEvent, screenChanged, screenAdded). DWM
+    doesn't cache the affinity flag across re-composite boundaries; after
+    DPI changes or a monitor hotplug the flag has been observed to get
+    lost. Hence re-apply it idempotently.
     """
     return exclude_from_capture(hwnd)
 
@@ -113,9 +113,9 @@ def reapply_capture_affinity(hwnd: int) -> bool:
 def set_per_monitor_dpi_awareness() -> None:
     """``SetProcessDpiAwareness(2)`` — PROCESS_PER_MONITOR_DPI_AWARE.
 
-    Muss VOR der QApplication-Erzeugung laufen (Plan §12.3). Schluckt alle
-    Fehler, weil der Aufruf bei bereits gesetztem Awareness-Level
-    ``E_ACCESSDENIED`` zurueckgibt.
+    Must run BEFORE the QApplication is created (Plan §12.3). Swallows
+    all errors, since the call returns ``E_ACCESSDENIED`` when the
+    awareness level is already set.
     """
     if not _is_windows():
         return

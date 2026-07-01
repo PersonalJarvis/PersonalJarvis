@@ -1,7 +1,7 @@
-"""Integration-Tests fuer ScreenSnapshotTool (Phase 5, CL-9).
+"""Integration tests for ScreenSnapshotTool (Phase 5, CL-9).
 
-Skippen wenn `mss` nicht installiert ist oder kein Display verfuegbar ist
-(Headless-CI). Lokal auf Windows mit GUI muessen sie durchgruenen.
+Skip when `mss` isn't installed or no display is available
+(headless CI). Locally on Windows with a GUI they must pass green.
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def _have_mss() -> bool:
 
 
 def _has_display() -> bool:
-    """Heuristik: auf Linux/Mac braucht mss ein Display; Windows hat immer eins."""
+    """Heuristic: on Linux/Mac mss needs a display; Windows always has one."""
     if os.name == "nt":
         return True
     return bool(os.environ.get("DISPLAY"))
@@ -48,7 +48,7 @@ def _ctx() -> ExecutionContext:
 
 
 def test_tool_contract_compliance():
-    """Tool muss Protocol-Shape erfuellen: name, description, schema, risk_tier, async execute."""
+    """Tool must satisfy the Protocol shape: name, description, schema, risk_tier, async execute."""
     tool = ScreenSnapshotTool()
     assert tool.name == "screenshot"
     assert tool.risk_tier == "monitor"
@@ -56,9 +56,9 @@ def test_tool_contract_compliance():
     assert isinstance(tool.schema, dict)
     assert tool.schema.get("type") == "object"
     assert "reason" in tool.schema.get("properties", {})
-    # schema.required sollte vorhanden sein (hier leer)
+    # schema.required should be present (empty here)
     assert isinstance(tool.schema.get("required", []), list)
-    # execute ist Coroutine
+    # execute is a coroutine
     import inspect
 
     assert inspect.iscoroutinefunction(tool.execute)
@@ -67,22 +67,22 @@ def test_tool_contract_compliance():
 @needs_capture
 @pytest.mark.asyncio
 async def test_screenshot_returns_valid_jpeg():
-    """Artifact-Data muss dekodiert mit JPEG-Magic-Bytes starten (SOI-Marker)."""
+    """Decoded artifact data must start with the JPEG magic bytes (SOI marker)."""
     tool = ScreenSnapshotTool()
     result = await tool.execute({}, _ctx())
     assert isinstance(result, ToolResult)
-    assert result.success, f"Tool fehlgeschlagen: {result.error}"
+    assert result.success, f"Tool failed: {result.error}"
     assert len(result.artifacts) == 1
     artifact = result.artifacts[0]
     raw = base64.b64decode(artifact["data"])
-    # JPEG SOI: 0xFF 0xD8, dann meist 0xFF 0xE0 (JFIF) oder 0xFF 0xE1 (Exif)
-    assert raw[:2] == b"\xff\xd8", "Artifact-Data ist kein gueltiges JPEG"
+    # JPEG SOI: 0xFF 0xD8, then usually 0xFF 0xE0 (JFIF) or 0xFF 0xE1 (Exif)
+    assert raw[:2] == b"\xff\xd8", "Artifact data is not a valid JPEG"
 
 
 @needs_capture
 @pytest.mark.asyncio
 async def test_screenshot_size_under_500kb():
-    """Auch bei 4K-Monitor muss der Artifact-Blob <= 500KB sein."""
+    """Even with a 4K monitor, the artifact blob must be <= 500KB."""
     tool = ScreenSnapshotTool()
     result = await tool.execute({"reason": "size-check"}, _ctx())
     assert result.success, result.error

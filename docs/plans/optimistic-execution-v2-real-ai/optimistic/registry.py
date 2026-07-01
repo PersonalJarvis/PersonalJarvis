@@ -42,7 +42,7 @@ DUMB_TOOLS: tuple[ToolDef, ...] = (
     ToolDef(
         name="volume",
         kind=RouteKind.DUMB_TOOL,
-        triggers=("lauter", "leiser", "lautstaerke", "lautstärke", "volume"),
+        triggers=("lauter", "leiser", "lautstaerke", "lautstärke", "volume"),  # i18n-allow: speech input vocabulary DE
         description="local volume control",
     ),
 )
@@ -82,7 +82,7 @@ SMALLTALK_TRIGGERS: tuple[str, ...] = (
     "danke",
     "alles klar",
     "erzaehl",
-    "erzähl",
+    "erzähl",  # i18n-allow: speech input vocabulary DE
     "witz",
 )
 
@@ -94,7 +94,7 @@ ACTION_VERBS: tuple[str, ...] = (
     "baue",
     "installier",
     "oeffne",
-    "öffne",
+    "öffne",  # i18n-allow: speech input vocabulary DE
     "mach",
     "zeig",
     "erstell",

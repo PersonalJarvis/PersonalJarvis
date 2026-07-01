@@ -1,15 +1,15 @@
-"""IPC-Envelope -> StateMachine-Transition Mapping. Plan §6.3.
+"""IPC envelope -> StateMachine transition mapping. Plan §6.3.
 
-Der EventRouter ist die einzige Komponente die IPC-Wire-Format-Wissen mit
-State-Semantik verbindet. Er kennt KEINE Qt- und KEINE asyncio-APIs —
-das macht ihn unabhaengig testbar und in Subprocess- wie Worker-Thread-
-Kontexten verwendbar.
+The EventRouter is the only component that connects IPC wire-format
+knowledge with state semantics. It knows NO Qt and NO asyncio APIs —
+that makes it independently testable and usable in both subprocess and
+worker-thread contexts.
 
-Mapping (gemaess Plan §6.3):
+Mapping (per Plan §6.3):
 
 | Envelope                   | Transition                       |
 |----------------------------|----------------------------------|
-| StateEnvelope              | direkt nach payload.state        |
+| StateEnvelope              | direct, from payload.state       |
 | ActionStartedEnvelope      | TYPING (kind in {type, hotkey})  |
 |                            | CLICKING (kind in {click, move,  |
 |                            |   navigate, scroll})             |
@@ -41,32 +41,32 @@ from .state import OverlayState, StateMachine
 logger = logging.getLogger(__name__)
 
 
-# Action-Kind -> State Buckets. Plan §6.3 listet nur TYPING und CLICKING
-# als Action-States; alle 6 Computer-Use-Kinds werden auf eines davon
-# gemappt damit jeder Action-Started-Event auch wirklich Glow ausloest.
+# Action-kind -> state buckets. Plan §6.3 lists only TYPING and CLICKING
+# as action states; all 6 Computer-Use kinds are mapped onto one of
+# those two so every action-started event actually triggers the glow.
 TYPING_KINDS: frozenset[str] = frozenset({"type", "hotkey"})
 CLICKING_KINDS: frozenset[str] = frozenset({"click", "move", "navigate", "scroll"})
 
-# Reasons fuer programmatic Transitions — Plan-Erlaubt: ``StateReason`` Literal.
+# Reasons for programmatic transitions — plan-allowed: ``StateReason`` literal.
 REASON_TOOL = "tool"
 REASON_ERROR = "error"
 
 
 class EventRouter:
-    """Konvertiert IPC-Envelopes nach StateMachine-Transitionen.
+    """Converts IPC envelopes into StateMachine transitions.
 
-    Plan AD-8: State-Logic lebt im Overlay-Prozess — diese Klasse ist die
-    Bruecke zwischen Wire-Format (``schema.py``) und State-Holder
-    (``state.py``).
+    Plan AD-8: state logic lives in the overlay process — this class is
+    the bridge between the wire format (``schema.py``) and the state
+    holder (``state.py``).
 
-    Aufruf typischerweise via ``WSClient.set_on_message(router.handle)``.
+    Typically invoked via ``WSClient.set_on_message(router.handle)``.
     """
 
     def __init__(self, machine: StateMachine) -> None:
         self._machine = machine
-        # Phase 9.5 Effect-Hooks. Subscriber bekommen das Envelope-Objekt
-        # selbst (nicht nur Payload) damit sie auf alle Felder zugreifen
-        # koennen.
+        # Phase 9.5 effect hooks. Subscribers receive the envelope
+        # object itself (not just the payload) so they can access all
+        # fields.
         self._click_hooks: list[Any] = []
         self._action_started_hooks: list[Any] = []
         self._action_ended_hooks: list[Any] = []
@@ -77,19 +77,19 @@ class EventRouter:
         return self._machine
 
     def add_click_hook(self, fn: Any) -> None:
-        """Wird mit ``ClickEnvelope`` gerufen, sync, im Caller-Thread."""
+        """Called with ``ClickEnvelope``, sync, on the caller thread."""
         self._click_hooks.append(fn)
 
     def add_action_started_hook(self, fn: Any) -> None:
-        """Wird mit ``ActionStartedEnvelope`` gerufen."""
+        """Called with ``ActionStartedEnvelope``."""
         self._action_started_hooks.append(fn)
 
     def add_action_ended_hook(self, fn: Any) -> None:
-        """Wird mit ``ActionEndedEnvelope`` gerufen."""
+        """Called with ``ActionEndedEnvelope``."""
         self._action_ended_hooks.append(fn)
 
     def add_cursor_hook(self, fn: Any) -> None:
-        """Wird mit ``CursorEnvelope`` gerufen (WS-Fallback wenn SHM aus)."""
+        """Called with ``CursorEnvelope`` (WS fallback when SHM is off)."""
         self._cursor_hooks.append(fn)
 
     def _safe_dispatch(self, hooks: list[Any], envelope: Any) -> None:
@@ -100,12 +100,12 @@ class EventRouter:
                 logger.exception("EventRouter hook raised on %s", type(envelope).__name__)
 
     def handle(self, envelope: Any) -> bool:
-        """Verarbeitet einen einzelnen Envelope.
+        """Processes a single envelope.
 
-        Returnt ``True`` wenn eine echte State-Transition ausgeloest wurde,
-        ``False`` bei No-Op (Heartbeat, Coalescing-Hit, unbekannter Type).
+        Returns ``True`` if a real state transition was triggered,
+        ``False`` on a no-op (heartbeat, coalescing hit, unknown type).
         """
-        # StateEnvelope: Hauptjarvis sagt explizit "neuer State".
+        # StateEnvelope: Hauptjarvis explicitly says "new state".
         if isinstance(envelope, StateEnvelope):
             try:
                 target = OverlayState(envelope.payload.state)
@@ -119,7 +119,7 @@ class EventRouter:
                 target, reason=envelope.payload.reason
             )
 
-        # ActionStarted: Hauptjarvis bedient Maus/Tastatur -> Glow an.
+        # ActionStarted: Hauptjarvis is operating the mouse/keyboard -> glow on.
         if isinstance(envelope, ActionStartedEnvelope):
             self._safe_dispatch(self._action_started_hooks, envelope)
             kind = envelope.payload.kind
@@ -131,36 +131,37 @@ class EventRouter:
                 return self._machine.transition_to(
                     OverlayState.CLICKING, reason=REASON_TOOL
                 )
-            logger.debug("EventRouter: action_started kind %r ohne Mapping", kind)
+            logger.debug("EventRouter: action_started kind %r has no mapping", kind)
             return False
 
-        # ActionEnded: Action vorbei -> zurueck nach IDLE.
-        # Hoehere Layer (Wakeword/STT/TTS) restoren danach selbst die
-        # naechste Action-State per eigenem Event.
+        # ActionEnded: action is over -> back to IDLE.
+        # Higher layers (wakeword/STT/TTS) then restore the next action
+        # state themselves via their own event.
         if isinstance(envelope, ActionEndedEnvelope):
             self._safe_dispatch(self._action_ended_hooks, envelope)
             return self._machine.transition_to(
                 OverlayState.IDLE, reason=REASON_TOOL
             )
 
-        # ClickEvent: Atomare Klick-Notification (Plan §6.3 +
-        # Click-Visualization §14). State-Bump nach CLICKING + Hook
-        # fires fuer Ripple-Trigger.
+        # ClickEvent: atomic click notification (Plan §6.3 +
+        # click-visualization §14). State bump to CLICKING + hook
+        # fires for the ripple trigger.
         if isinstance(envelope, ClickEnvelope):
             self._safe_dispatch(self._click_hooks, envelope)
             return self._machine.transition_to(
                 OverlayState.CLICKING, reason=REASON_TOOL
             )
 
-        # Cursor: WS-Fallback Plan §11.5 — wenn SHM disabled. Hook
-        # forwarded coords. KEIN State-Change.
+        # Cursor: WS fallback Plan §11.5 — when SHM is disabled. Hook
+        # forwards the coords. NO state change.
         if isinstance(envelope, CursorEnvelope):
             self._safe_dispatch(self._cursor_hooks, envelope)
             return False
 
-        # Recoverable Error -> ERROR State (kurze Amber/Red-Phase, Plan
-        # §6.1). Non-recoverable wird nicht visualisiert weil Hauptjarvis
-        # ohnehin gleich crasht; Supervisor fangt das auf Process-Level.
+        # Recoverable error -> ERROR state (brief amber/red phase, Plan
+        # §6.1). Non-recoverable isn't visualized because Hauptjarvis
+        # is about to crash anyway; the supervisor catches that at the
+        # process level.
         if isinstance(envelope, ErrorEnvelope):
             if envelope.payload.recoverable:
                 return self._machine.transition_to(
@@ -168,10 +169,10 @@ class EventRouter:
                 )
             return False
 
-        # No-Op-Envelope-Typen — explizit gelistet damit unbekannte
-        # Envelope-Klassen unten als WARNING auffliegen. (CursorEnvelope
-        # ist oben behandelt, weil es nur Hook-fired aber kein State-
-        # Change.)
+        # No-op envelope types — listed explicitly so unknown envelope
+        # classes surface as a WARNING below. (CursorEnvelope is
+        # handled above because it only fires a hook but has no state
+        # change.)
         if isinstance(
             envelope,
             (HeartbeatEnvelope, ConfigEnvelope, AckEnvelope),

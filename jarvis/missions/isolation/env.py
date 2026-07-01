@@ -146,7 +146,7 @@ def build_worker_env(
     # (hermes-agent) with a degraded PATH that lacks the Node.js dir / System32.
     # Because this env REPLACES os.environ, the worker inherits that broken PATH
     # verbatim, the codex `codex.CMD` shim can't find `node`, and EVERY mission
-    # dies `task_error` in ~25 ms ("Der Worker ist abgebrochen."). Repair the
+    # dies `task_error` in ~25 ms ("The worker was aborted."). Repair the
     # PATH additively and forward the Windows shell vars a `.cmd` shim / `chcp`
     # need, so a worker runs regardless of how jarvis itself was started.
     if _worker_path_repair_is_windows():

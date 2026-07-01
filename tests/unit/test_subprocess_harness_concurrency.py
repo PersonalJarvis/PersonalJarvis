@@ -1,13 +1,13 @@
-"""Regressions-Test: ``SubprocessHarness.invoke()`` ist concurrency-safe.
+"""Regression test: ``SubprocessHarness.invoke()`` is concurrency-safe.
 
-Bug 2026-04-29: ``multi_spawn`` mit 3 parallelen openclaw-Calls schlug in
-Production deterministisch in <10ms fehl. Wurzelursache: ``HarnessManager.get()``
-cached EINE ``OpenClawHarness``-Instance; concurrent ``invoke()``-Calls auf
-derselben Instance racen auf ``self._process`` und ``self._cancelled``.
+Bug 2026-04-29: ``multi_spawn`` with 3 parallel openclaw calls failed
+deterministically in production in <10ms. Root cause: ``HarnessManager.get()``
+caches ONE ``OpenClawHarness`` instance; concurrent ``invoke()`` calls on
+the same instance raced on ``self._process`` and ``self._cancelled``.
 
-Fix: invocation-lokale Variablen + ``self._active_processes: set`` fuer
-cancel-Tracking. Dieser Test reproduziert das Pattern (3 parallele ``invoke()``
-auf derselben Instance) und stellt sicher, dass alle drei sauber durchlaufen.
+Fix: invocation-local variables + ``self._active_processes: set`` for
+cancel tracking. This test reproduces the pattern (3 parallel ``invoke()``
+calls on the same instance) and makes sure all three complete cleanly.
 """
 from __future__ import annotations
 
@@ -21,11 +21,11 @@ from jarvis.harness.base import SubprocessHarness
 
 
 class _SlowFakeHarness(SubprocessHarness):
-    """Faked Subprocess: kein echter Spawn, asyncio.sleep simuliert Subprocess-Run.
+    """Faked subprocess: no real spawn, asyncio.sleep simulates the subprocess run.
 
-    Wir ueberschreiben ``invoke`` direkt um den Subprocess-Spawn zu vermeiden
-    (sonst muessten wir python-CLI o.ae. spawnen). Der Test prueft dass mehrere
-    parallele invoke()-Calls ihre eigenen lokalen Variablen behalten.
+    We override ``invoke`` directly to avoid the subprocess spawn
+    (otherwise we'd have to spawn a python CLI or similar). The test checks
+    that multiple parallel invoke() calls keep their own local variables.
     """
 
     name = "slow-fake"
@@ -33,7 +33,7 @@ class _SlowFakeHarness(SubprocessHarness):
     def __init__(self) -> None:
         super().__init__()
         self.invocation_count = 0
-        # Lokale Tracking-Variablen — werden VON jedem invoke()-Call inkrementiert.
+        # Local tracking variables — incremented BY each invoke() call.
         self.concurrent_peak = 0
         self._active = 0
 
@@ -61,7 +61,7 @@ class _SlowFakeHarness(SubprocessHarness):
 
 @pytest.mark.asyncio
 async def test_concurrent_invoke_calls_dont_race():
-    """3 parallele ``invoke()`` auf derselben Instance liefern alle ihren Output."""
+    """3 parallel ``invoke()`` calls on the same instance all deliver their output."""
     harness = _SlowFakeHarness()
 
     async def collect(prompt: str) -> list[HarnessResult]:
@@ -85,7 +85,7 @@ async def test_concurrent_invoke_calls_dont_race():
         f"Race-Condition oder Sequential-Lock?"
     )
 
-    # Jede invocation hat ihre EIGENEN chunks (kein Vermischen via shared state).
+    # Each invocation has its OWN chunks (no mixing via shared state).
     a_chunks = "".join(c.stdout for c in results[0] if c.stdout)
     b_chunks = "".join(c.stdout for c in results[1] if c.stdout)
     c_chunks = "".join(c.stdout for c in results[2] if c.stdout)
@@ -96,7 +96,7 @@ async def test_concurrent_invoke_calls_dont_race():
 
 @pytest.mark.asyncio
 async def test_subprocess_harness_init_has_active_processes_set():
-    """SubprocessHarness.__init__ muss ``_active_processes`` initialisieren."""
+    """SubprocessHarness.__init__ must initialize ``_active_processes``."""
     h = _SlowFakeHarness()
     assert hasattr(h, "_active_processes")
     assert h._active_processes == set()
@@ -123,7 +123,7 @@ async def test_cancel_killed_all_active_processes():
 
     await h.cancel()
 
-    # Beide wurden terminate'd
+    # Both were terminate'd
     proc1.terminate.assert_called_once()
     proc2.terminate.assert_called_once()
     assert h._cancelled is True

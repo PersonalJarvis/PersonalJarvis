@@ -1,8 +1,8 @@
 """Contact write-intent detection — the input side of the say-do honesty guard.
 
-The recurring failure (voice session 2026-06-30): Jarvis offered "Soll ich die
-anlegen?", the user confirmed "ja, legt die mal an … die Mailadresse von Harald
-ist …", and Jarvis replied "Okay, sehr gut" WITHOUT ever calling the
+The recurring failure (voice session 2026-06-30): Jarvis offered "Soll ich die  # i18n-allow
+anlegen?", the user confirmed "ja, legt die mal an … die Mailadresse von Harald  # i18n-allow
+ist …", and Jarvis replied "Okay, sehr gut" WITHOUT ever calling the  # i18n-allow
 ``contact-upsert`` tool — the address book stayed empty. The detector below
 mandates the real tool on a contact-write turn so the read-style evidence gate's
 backstop can catch a fake confirmation. Pure regex, no LLM (AP-9/AP-11).
@@ -23,7 +23,7 @@ def test_reported_transcript_turn_fires():
     # The exact utterance from the live session (save verb + dictated detail).
     assert (
         detect_contact_write_intent(
-            "Ähm, ja, legt die mal an. Also die Mailadresse von Harald ist harald.10.de."
+            "Ähm, ja, legt die mal an. Also die Mailadresse von Harald ist harald.10.de."  # i18n-allow
         )
         is True
     )
@@ -38,7 +38,7 @@ def test_genitive_detail_alone_fires():
 def test_save_verb_plus_contact_noun_fires():
     assert detect_contact_write_intent("Speichere Laura als Kontakt.") is True
     assert detect_contact_write_intent("Leg Tom als Kontakt an.") is True
-    assert detect_contact_write_intent("Füge Anna zu meinen Kontakten hinzu.") is True
+    assert detect_contact_write_intent("Füge Anna zu meinen Kontakten hinzu.") is True  # i18n-allow
 
 
 def test_english_and_spanish_fire():
@@ -54,7 +54,7 @@ def test_lookup_questions_do_not_fire():
     assert detect_contact_write_intent("Was steht heute in meinem Kalender?") is False
     assert detect_contact_write_intent("Habe ich irgendwelche Kontakte?") is False
     assert detect_contact_write_intent("Was geht ab?") is False
-    assert detect_contact_write_intent("Wie ist das Wetter?") is False
+    assert detect_contact_write_intent("Wie ist das Wetter?") is False  # i18n-allow
 
 
 def test_send_or_call_actions_do_not_fire():
@@ -65,9 +65,9 @@ def test_send_or_call_actions_do_not_fire():
 
 def test_bare_detail_statement_does_not_fire():
     # A non-possessive "the number is wrong" must not be mistaken for a save.
-    assert detect_contact_write_intent("Die Nummer ist falsch.") is False
+    assert detect_contact_write_intent("Die Nummer ist falsch.") is False  # i18n-allow
     assert detect_contact_write_intent("Harald ist 1976 geboren.") is False
-    assert detect_contact_write_intent("Die Adresse von Berlin ist zentral.") is False
+    assert detect_contact_write_intent("Die Adresse von Berlin ist zentral.") is False  # i18n-allow
 
 
 def test_empty_input_is_safe():
@@ -92,18 +92,18 @@ def test_directive_forces_the_real_tool_and_clarifies_bad_fields():
 
 
 def test_memory_save_intent_fires_on_explicit_remember():
-    assert detect_memory_save_intent("Merk dir, dass Harald gerne Fußball schaut.") is True
+    assert detect_memory_save_intent("Merk dir, dass Harald gerne Fußball schaut.") is True  # i18n-allow
     assert detect_memory_save_intent("Notier dir, dass Joy am 14. August Geburtstag hat.") is True
     assert detect_memory_save_intent("Remember that Tom prefers tea over coffee.") is True
     assert (
-        detect_memory_save_intent("Behalte im Hinterkopf, dass ich allergisch gegen Nüsse bin.")
+        detect_memory_save_intent("Behalte im Hinterkopf, dass ich allergisch gegen Nüsse bin.")  # i18n-allow
         is True
     )
 
 
 def test_memory_save_intent_needs_a_remember_cue_and_substance():
     assert detect_memory_save_intent("Was geht ab?") is False
-    assert detect_memory_save_intent("Wie ist das Wetter?") is False
+    assert detect_memory_save_intent("Wie ist das Wetter?") is False  # i18n-allow
     # "speichere die Datei" is file/config, not a personal memory note.
     assert detect_memory_save_intent("Speichere die Datei.") is False
     assert detect_memory_save_intent("Merk.") is False  # no real content
@@ -114,7 +114,7 @@ def test_memory_save_intent_needs_a_remember_cue_and_substance():
 
 def test_resolve_save_mandate_routes_contact_data_to_contact_upsert():
     mandate = resolve_save_mandate(
-        "Ähm, ja, legt die mal an. Also die Mailadresse von Harald ist harald.10.de."
+        "Ähm, ja, legt die mal an. Also die Mailadresse von Harald ist harald.10.de."  # i18n-allow
     )
     assert mandate is not None
     tool, directive = mandate
@@ -123,7 +123,7 @@ def test_resolve_save_mandate_routes_contact_data_to_contact_upsert():
 
 
 def test_resolve_save_mandate_routes_general_fact_to_wiki_ingest():
-    mandate = resolve_save_mandate("Merk dir, dass Harald gerne Fußball schaut.")
+    mandate = resolve_save_mandate("Merk dir, dass Harald gerne Fußball schaut.")  # i18n-allow
     assert mandate is not None
     tool, directive = mandate
     assert tool == "wiki-ingest"
@@ -133,14 +133,14 @@ def test_resolve_save_mandate_routes_general_fact_to_wiki_ingest():
 def test_resolve_save_mandate_prefers_contact_when_both_match():
     # "merk dir … Nummer ist …" is BOTH a remember cue AND contact data — the
     # address-book path wins so the number lands where it belongs.
-    mandate = resolve_save_mandate("Merk dir, Christophs Nummer ist 0171 1234567.")
+    mandate = resolve_save_mandate("Merk dir, Christophs Nummer ist 0171 1234567.")  # i18n-allow
     assert mandate is not None
     assert mandate[0] == "contact-upsert"
 
 
 def test_resolve_save_mandate_none_on_plain_turn():
-    assert resolve_save_mandate("Was geht ab?") is None
-    assert resolve_save_mandate("Wie ist das Wetter?") is None
+    assert resolve_save_mandate("Was geht ab?") is None  # i18n-allow
+    assert resolve_save_mandate("Wie ist das Wetter?") is None  # i18n-allow
 
 
 def test_wiki_ingest_directive_forces_the_real_tool():

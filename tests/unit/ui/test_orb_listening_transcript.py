@@ -76,10 +76,10 @@ async def test_transcription_update_refreshes_large_bubble_only_while_listening(
     orb.calls.clear()
 
     await bridge._on_transcription_update(  # noqa: SLF001
-        TranscriptionUpdate(text="Soll nicht sichtbar sein", is_final=False)
+        TranscriptionUpdate(text="Soll nicht sichtbar sein", is_final=False)  # i18n-allow
     )
 
-    assert ("show_listening_transcript", "Soll nicht sichtbar sein") not in orb.calls
+    assert ("show_listening_transcript", "Soll nicht sichtbar sein") not in orb.calls  # i18n-allow
 
 
 def test_transcript_bubble_height_grows_by_visible_line_count() -> None:

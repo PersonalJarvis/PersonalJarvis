@@ -124,10 +124,10 @@ logs, transcripts, or example API responses with secrets.
 
 ### 9. Per-category search results (every hit with evidence)
 
-**Maintainer real name (Lütke / Luetke + first name)**
-- Surname "Ruben Lütke": **only in pixels** of `video/public/shot-github.png`
+**Maintainer real name (Lütke / Luetke + first name)**  <!-- i18n-allow -->
+- Surname "Ruben Lütke": **only in pixels** of `video/public/shot-github.png`  <!-- i18n-allow -->
   (contributor list). **Zero** hits as text in any tracked `video/` file
-  (full-text scan of all tracked non-binary files returned no `Lütke`/`Luetke`;
+  (full-text scan of all tracked non-binary files returned no `Lütke`/`Luetke`;  <!-- i18n-allow -->
   the one `luetke` match was a false positive — "queue-microtask" in
   `video/package-lock.json:4264`).
 - First name "Ruben": text in 11 tracked files — `video/vo-script.json:15,16,53`
@@ -166,7 +166,7 @@ and that screenshot is not used in the film.)
 
 ### 10. Screenshots / images — do they show secrets?
 
-- `video/public/shot-github.png` — **shows the real name "Ruben Lütke" + login
+- `video/public/shot-github.png` — **shows the real name "Ruben Lütke" + login  <!-- i18n-allow -->
   "rubenluetke10-beep"** (contributor list). **Appears in the film** (CreatorIntro,
   `video/src/intro/onboarding/scenes/CreatorIntro.tsx:29`, displayed near native
   width → readable at 4K). **Primary finding.**
@@ -235,9 +235,9 @@ ship gate **never exports or scans it** — it is cut at step 1 (tracked-files-o
 + the denylist. So the scanner output for these files is "not shipped", by design.
 
 Applying the `pii-scrub.tsv` rules **manually** to the tracked *text* would mask:
-- `Ruben Lütke` → `Personal Jarvis Maintainer`
+- `Ruben Lütke` → `Personal Jarvis Maintainer`  <!-- i18n-allow -->
 - `Ruben` → `Alex` (e.g. `video/vo-script.json:15,16,53`)
-- `Lütke` → `Maintainer`
+- `Lütke` → `Maintainer`  <!-- i18n-allow -->
 - `rubenluetke10-beep` → `octocat`
 - `ruben.luetke10@gmail.com` → **block-only** (would block a ship if it appeared
   in a non-exempt shipping file)

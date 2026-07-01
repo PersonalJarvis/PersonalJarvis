@@ -1,4 +1,4 @@
-"""Integration-Tests fuer /api/docs Routes via FastAPI TestClient."""
+"""Integration tests for /api/docs routes via FastAPI TestClient."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -30,7 +30,7 @@ Direkt-Aktion via Sub-Jarvis-Spawn.
 """
 
 HOWTO_MD = """---
-title: "How-To: Provider hinzufuegen"
+title: "How-To: Add a provider"
 slug: provider-add
 diataxis: howto
 status: active
@@ -183,7 +183,7 @@ def test_get_asset_returns_file(client: TestClient) -> None:
 
 def test_get_asset_path_traversal_blocked(client: TestClient) -> None:
     resp = client.get("/api/docs/asset/router-discipline/..%2F..%2Fetc%2Fpasswd")
-    # Entweder 400 (Traversal) oder 404 — Hauptsache nicht 200
+    # Either 400 (traversal) or 404 — as long as it's not 200
     assert resp.status_code in (400, 404)
 
 
@@ -227,8 +227,8 @@ phase: 6
 # ----------------------------------------------------------------------
 
 def test_open_doc_in_editor(client: TestClient, monkeypatch) -> None:
-    """``os.startfile`` ist Windows-only und blocking-frei. Wir patchen es
-    weg und checken nur, dass der Endpoint die Pfad-Auflösung korrekt macht.
+    """``os.startfile`` is Windows-only and non-blocking. We patch it
+    away and only check that the endpoint resolves the path correctly.
     """
     import os as os_module
 

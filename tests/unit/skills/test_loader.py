@@ -1,4 +1,4 @@
-"""Unit-Tests für den Skill-Loader."""
+"""Unit tests for the skill loader."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -24,7 +24,7 @@ token_budget_estimate: 500
 
 # Test Skill Body
 
-Das ist der Body der Skill.
+This is the skill's body.
 
 TOOL: echo {"text": "hi"}
 """
@@ -68,7 +68,7 @@ def test_parse_valid_skill(skill_dir: Path):
     assert sk.state == SkillLifecycleState.VALIDATED
     assert sk.error is None
     assert sk.body_hash != ""
-    assert "Das ist der Body" in sk.body
+    assert "This is the skill's body" in sk.body
 
 
 def test_parse_invalid_frontmatter(skill_dir: Path):

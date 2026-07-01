@@ -1,7 +1,7 @@
-"""Unit-Tests fuer VisionContextProvider.
+"""Unit tests for VisionContextProvider.
 
-Verifiziert Background-Refresh, Force-Refresh, Pause/Resume, Loop-
-Resilience gegen Exceptions und Clean-Shutdown-Timing.
+Verifies background refresh, force refresh, pause/resume, loop
+resilience against exceptions, and clean-shutdown timing.
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def _make_obs(hash_: str = "abc", *, timestamp_ns: int | None = None) -> Observa
 
 
 class FakeEngine:
-    """Minimaler VisionEngine-Ersatz fuer Provider-Tests."""
+    """Minimal VisionEngine stand-in for provider tests."""
 
     def __init__(self, *, raise_once: bool = False) -> None:
         self.calls = 0
@@ -58,7 +58,7 @@ async def test_provider_holds_fresh_observation():
         obs = await prov.current()
         assert obs is not None
         assert obs.screenshot_hash.startswith("hash-")
-        # current() sollte NICHT zusaetzlich observen - Cache ist frisch.
+        # current() should NOT additionally observe - the cache is fresh.
         assert engine.calls == calls_after_loop
     finally:
         await prov.stop()
@@ -66,7 +66,7 @@ async def test_provider_holds_fresh_observation():
 
 @pytest.mark.asyncio
 async def test_provider_force_refresh_always_captures():
-    """force_refresh=True erzwingt einen Engine-Call, auch bei frischem Cache."""
+    """force_refresh=True forces an engine call, even with a fresh cache."""
     engine = FakeEngine()
     prov = VisionContextProvider(
         engine, refresh_interval_s=10.0, max_staleness_s=10.0
@@ -106,12 +106,12 @@ async def test_provider_pause_resume():
 
 @pytest.mark.asyncio
 async def test_provider_loop_survives_exception():
-    """Exception im observe() killt den Loop nicht - retry auf naechster Tick."""
+    """An exception in observe() does not kill the loop - it retries on the next tick."""
     engine = FakeEngine(raise_once=True)
     prov = VisionContextProvider(engine, refresh_interval_s=0.05)
     await prov.start()
     try:
-        # Genug Zeit fuer mindestens 2 Tick-Versuche (erster raised, zweiter ok).
+        # Enough time for at least 2 tick attempts (first raises, second is ok).
         for _ in range(40):
             if engine.calls >= 2:
                 break
@@ -124,7 +124,7 @@ async def test_provider_loop_survives_exception():
 
 @pytest.mark.asyncio
 async def test_provider_clean_shutdown_under_500ms():
-    """stop() cancelt den Task und kehrt in <500ms zurueck."""
+    """stop() cancels the task and returns in <500ms."""
     engine = FakeEngine()
     prov = VisionContextProvider(engine, refresh_interval_s=10.0)
     await prov.start()

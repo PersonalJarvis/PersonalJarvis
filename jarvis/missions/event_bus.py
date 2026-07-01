@@ -78,7 +78,7 @@ class MissionBus:
             try:
                 await handler(envelope)
             except Exception:
-                log.exception("MissionBus: Wildcard-Handler-Fehler verworfen")
+                log.exception("MissionBus: wildcard handler error discarded")
 
     @asynccontextmanager
     async def subscribe(

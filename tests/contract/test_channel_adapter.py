@@ -1,8 +1,8 @@
-"""Contract-Tests fuer alle ChannelAdapter-Plugins (Phase 1a).
+"""Contract tests for all ChannelAdapter plugins (Phase 1a).
 
-Parametrisiert ueber ``entry_points(group="jarvis.channel")`` — jeder
-registrierte Adapter muss das strukturelle Protocol erfuellen und die
-Start/Stop-Bus-Subscription korrekt managen.
+Parametrized over ``entry_points(group="jarvis.channel")`` — every
+registered adapter must satisfy the structural protocol and manage
+the start/stop bus subscription correctly.
 """
 from __future__ import annotations
 

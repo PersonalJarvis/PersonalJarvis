@@ -1,4 +1,4 @@
-"""Unit-Tests fuer den Doc-Loader."""
+"""Unit tests for the doc loader."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -66,8 +66,8 @@ phase: 6
 
 # How-To: Worker spawnen
 
-Die Datei hat keinen ``title`` und keinen ``slug`` — Loader muss
-synthetisieren.
+The file has neither ``title`` nor ``slug`` — the loader must
+synthesize them.
 """
 
 
@@ -78,7 +78,7 @@ synthetisieren.
 def test_slugify_basic() -> None:
     assert _slugify("Hello World") == "hello-world"
     assert _slugify("Concept: Router-Discipline") == "concept-router-discipline"
-    assert _slugify("Über uns") == "ueber-uns"
+    assert _slugify("Über uns") == "ueber-uns"  # i18n-allow: German umlaut input matched in logic
     assert _slugify("   ") == "untitled"
 
 
@@ -159,7 +159,7 @@ def test_parse_doc_broken_yaml_returns_error(tmp_path: Path) -> None:
 
 def test_parse_doc_unreadable_returns_error(tmp_path: Path) -> None:
     p = tmp_path / "ghost.md"
-    # Datei existiert nicht — read() raised OSError
+    # File does not exist — read() raised OSError
     doc = parse_doc(p, root=tmp_path)
     assert doc.error is not None
     assert "read failed" in doc.error
@@ -172,11 +172,11 @@ def test_parse_doc_unreadable_returns_error(tmp_path: Path) -> None:
 
 @pytest.fixture
 def doc_tree(tmp_path: Path) -> Path:
-    """Baut einen typischen Jarvis-Doc-Tree mit Mix aus modern/legacy."""
+    """Builds a typical Jarvis doc tree with a mix of modern/legacy."""
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "adr").mkdir()
     (tmp_path / "Latenz").mkdir()
-    # Versteckter Ordner — soll ausgeschlossen werden
+    # Hidden folder — should be excluded
     (tmp_path / ".git").mkdir()
     (tmp_path / "node_modules").mkdir()
     (tmp_path / "docs" / "concept-routing.md").write_text(
@@ -191,13 +191,13 @@ def doc_tree(tmp_path: Path) -> Path:
     (tmp_path / "Latenz" / "PHASE_L_P.md").write_text(
         "# Phase L+P\n\nLatenz-Optimierung.\n", encoding="utf-8"
     )
-    # SKILL.md soll ausgeschlossen werden
+    # SKILL.md should be excluded
     (tmp_path / "docs" / "SKILL.md").write_text("---\nname: foo\n---\n", encoding="utf-8")
-    # .git-File soll ausgeschlossen werden
+    # .git file should be excluded
     (tmp_path / ".git" / "config.md").write_text("# git config\n", encoding="utf-8")
-    # node_modules-File soll ausgeschlossen werden
+    # node_modules file should be excluded
     (tmp_path / "node_modules" / "readme.md").write_text("# node\n", encoding="utf-8")
-    # Andere Extensions ignorieren
+    # Ignore other extensions
     (tmp_path / "docs" / "data.txt").write_text("foo\n", encoding="utf-8")
     return tmp_path
 
@@ -238,7 +238,7 @@ def test_discover_docs_handles_missing_root(tmp_path: Path) -> None:
 
 
 def test_discover_docs_dedupes_overlapping_roots(doc_tree: Path) -> None:
-    """Wenn zwei Roots ueberlappen, jeder File nur einmal."""
+    """When two roots overlap, each file appears only once."""
     docs = discover_docs([doc_tree / "docs", doc_tree / "docs" / "adr"])
     slugs = [d.frontmatter.slug for d in docs]
     assert len(slugs) == len(set(slugs))

@@ -1,7 +1,7 @@
-"""Lifecycle-Manager: State-Transitions + optionales Git-Auto-Versioning.
+"""Lifecycle manager: state transitions + optional git auto-versioning.
 
-Git-Support ist optional: wenn ``gitpython`` nicht installiert ist oder
-``autoversion=False`` gesetzt wurde, arbeitet der Manager rein in-memory.
+Git support is optional: if ``gitpython`` is not installed or
+``autoversion=False`` was set, the manager works purely in-memory.
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ _ALLOWED_TRANSITIONS: dict[SkillLifecycleState, set[SkillLifecycleState]] = {
 
 @dataclass
 class AuditEntry:
-    """Ein Eintrag im In-Memory-Audit-Log."""
+    """An entry in the in-memory audit log."""
     skill_name: str
     from_state: SkillLifecycleState
     to_state: SkillLifecycleState
@@ -52,7 +52,7 @@ class AuditEntry:
 
 
 class LifecycleManager:
-    """Verwaltet Skill-State-Transitions + optional Git-Commits."""
+    """Manages skill state transitions + optional git commits."""
 
     def __init__(self, root: Path, autoversion: bool = True) -> None:
         self.root = Path(root)
@@ -63,7 +63,7 @@ class LifecycleManager:
             self._ensure_repo()
 
     # ------------------------------------------------------------------
-    # Git-Init
+    # Git init
     # ------------------------------------------------------------------
 
     def _ensure_repo(self) -> None:
@@ -76,7 +76,7 @@ class LifecycleManager:
                 self._repo = _git.Repo(self.root)  # type: ignore[union-attr]
             except _git.InvalidGitRepositoryError:  # type: ignore[attr-defined]
                 self._repo = _git.Repo.init(self.root)  # type: ignore[union-attr]
-                log.info("skill-root initialisiert als git-repo: %s", self.root)
+                log.info("skill-root initialized as a git repo: %s", self.root)
             except _git.NoSuchPathError:  # type: ignore[attr-defined]
                 self.root.mkdir(parents=True, exist_ok=True)
                 self._repo = _git.Repo.init(self.root)  # type: ignore[union-attr]
@@ -86,7 +86,7 @@ class LifecycleManager:
             self._repo = None
 
     # ------------------------------------------------------------------
-    # State-Transitions
+    # State transitions
     # ------------------------------------------------------------------
 
     def transition(
@@ -96,9 +96,9 @@ class LifecycleManager:
         to_state: SkillLifecycleState,
         reason: str = "",
     ) -> Skill:
-        """Validiert die Transition + gibt einen neuen Skill mit neuem State zurück.
+        """Validates the transition + returns a new skill with the new state.
 
-        Raises ``ValueError`` wenn die Transition nicht erlaubt ist.
+        Raises ``ValueError`` if the transition is not allowed.
         """
         if to_state not in _ALLOWED_TRANSITIONS.get(from_state, set()):
             raise ValueError(
@@ -127,11 +127,11 @@ class LifecycleManager:
         return list(self._audit)
 
     # ------------------------------------------------------------------
-    # Git-Commits
+    # Git commits
     # ------------------------------------------------------------------
 
     def commit_change(self, skill: Skill, message: str) -> str | None:
-        """Committet die SKILL.md-Änderung. Gibt Commit-Hash oder None zurück."""
+        """Commits the SKILL.md change. Returns a commit hash or None."""
         if not self.autoversion or self._repo is None:
             return None
         try:

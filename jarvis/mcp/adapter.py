@@ -78,9 +78,9 @@ class MCPToolAdapter:
         raw_desc = mcp_tool_def.get("description", "") or ""
         self.description: str = (
             f"[ACTION-ONLY · MCP: {client.spec.name}] {raw_desc} "
-            f"Fuehrt Operationen auf dem verbundenen {client.spec.name}-System aus. "
-            f"NUR fuer gezielte Aktionen nutzen, NICHT fuer allgemeine Recherche "
-            f"ueber {client.spec.name} als Thema — dafuer search_web."
+            f"Performs operations on the connected {client.spec.name} system. "
+            f"USE ONLY for targeted actions, NOT for general research "
+            f"about {client.spec.name} as a topic — use search_web for that."
         )
         # Flag for the tool-use-loop guard: MCP tools are always action-centric.
         self.is_action_tool: bool = True
@@ -123,7 +123,7 @@ class MCPToolAdapter:
             )
         except Exception as e:  # noqa: BLE001
             log.warning(
-                "MCPTool %s Fehler nach %d ms: %s",
+                "MCPTool %s error after %d ms: %s",
                 self.name,
                 (time.time_ns() - start_ns) // 1_000_000,
                 e,

@@ -1,8 +1,8 @@
 """Explicit "use Computer-Use" requests must reach the screenshot harness.
 
-Live repro (user, 2026-06-21): "Kannst du für mich bitte mit Computer-Use in
-Spotify das Lied Perfect von Ed Sheeran abspielen?" was only ACKNOWLEDGED
-("Ich schau gerade in Spotify nach dem Lied …") — the Computer-Use action never
+Live repro (user, 2026-06-21): "Kannst du für mich bitte mit Computer-Use in  # i18n-allow
+Spotify das Lied Perfect von Ed Sheeran abspielen?" was only ACKNOWLEDGED  # i18n-allow
+("Ich schau gerade in Spotify nach dem Lied …") — the Computer-Use action never  # i18n-allow
 dispatched or executed.
 
 Root cause: the deterministic ``match_local_action`` gate had no pattern for an
@@ -39,18 +39,18 @@ from jarvis.brain.local_action_gate import (
 # The exact live utterance that broke, plus adjacent explicit-CU phrasings that
 # carry NO open verb (so the open-app fallback can never save them).
 REPRO_PHRASE = (
-    "Kannst du für mich bitte mit Computer-Use in Spotify das Lied Perfect "
+    "Kannst du für mich bitte mit Computer-Use in Spotify das Lied Perfect "  # i18n-allow
     "von Ed Sheeran abspielen?"
 )
 
 _EXPLICIT_CU_UTTERANCES = [
     REPRO_PHRASE,
-    "Spiel mit Computer-Use das nächste Lied",
+    "Spiel mit Computer-Use das nächste Lied",  # i18n-allow
     "Mach das per Computer-Use",
-    "Erledige das über Computer-Use",
-    "Nutze Computer-Use und like den obersten Post",
-    "Benutze die Computer-Use Funktion dafür",
-    "Verwende Computer-Use um durch mein Spotify zu blättern",
+    "Erledige das über Computer-Use",  # i18n-allow
+    "Nutze Computer-Use und like den obersten Post",  # i18n-allow
+    "Benutze die Computer-Use Funktion dafür",  # i18n-allow
+    "Verwende Computer-Use um durch mein Spotify zu blättern",  # i18n-allow
     "Use computer use to skip to the next track in Spotify",
     "Do it with computer use",
     "Using computer use, pause the music",
@@ -85,11 +85,11 @@ def test_explicit_computer_use_request_routes_to_harness(utterance: str) -> None
         # How-to / explain mentions are NOT a command to drive the screen.
         "Was ist Computer-Use?",
         "Wie funktioniert Computer-Use?",
-        "Erklär mir Computer-Use",
+        "Erklär mir Computer-Use",  # i18n-allow
         "What is computer use",
         # No harness mention at all — unaffected normal answers.
-        "schreib mir ein Gedicht über den Herbst",
-        "was ist die Hauptstadt von Frankreich",
+        "schreib mir ein Gedicht über den Herbst",  # i18n-allow
+        "was ist die Hauptstadt von Frankreich",  # i18n-allow
     ],
 )
 def test_non_command_computer_use_mentions_do_not_route_to_harness(

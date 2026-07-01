@@ -621,7 +621,7 @@ function DetailPanel({
 }
 
 // ---------------------------------------------------------------------------
-// OAuth-Connect Button (inline — startet und zeigt Toast)
+// OAuth connect button (inline — starts the flow and shows a toast)
 // ---------------------------------------------------------------------------
 
 function ConnectOAuthButton({
@@ -635,15 +635,15 @@ function ConnectOAuthButton({
   loginCommand: string;
   statusCommand: string | null;
 }) {
-  // Spawnt ein **echtes** externes Windows Terminal (wt/pwsh) und tippt
-  // den login_command direkt rein — User sieht das Terminal-Fenster
-  // aufpoppen, OAuth-Browser-Flow startet, Terminal bleibt offen.
+  // Spawns a **real** external Windows Terminal (wt/pwsh) and types
+  // the login_command straight in — the user sees the terminal window
+  // pop up, the OAuth browser flow starts, and the terminal stays open.
   //
-  // Zusaetzlich wird ``cliConnectCoach`` im Store gesetzt — der globale
-  // ``CliConnectPoller`` (in App.tsx) checkt dann alle 3s den Auth-Status
-  // und setzt den Coach-State zurueck wenn der Login durch ist. Damit
-  // erscheint der Toast "X ist verbunden" und die CLIs-Liste refreshed
-  // automatisch, egal in welcher Sektion der User gerade ist.
+  // It also sets ``cliConnectCoach`` in the store — the global
+  // ``CliConnectPoller`` (in App.tsx) then checks the auth status every 3s
+  // and resets the coach state once the login completes. That's what makes
+  // the "X is connected" toast appear and the CLIs list refresh
+  // automatically, no matter which section the user is currently in.
   const t = useT();
   const spawn = useSpawnExternalTerminal();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -659,7 +659,7 @@ function ConnectOAuthButton({
           {
             onSuccess: (res) => {
               if (res.ok) {
-                // Coach setzen damit der Headless-Poller los polled.
+                // Set the coach so the headless poller starts polling.
                 setCoach({
                   cliName: name,
                   displayName,
@@ -792,11 +792,11 @@ function InstallDialog({
   detail: CliDetail;
   onClose: () => void;
 }) {
-  // Wir nutzen Spawn-External (echtes Windows Terminal) statt das interne
-  // xterm. ``useInstallCli`` (Background-Subprocess + Output-Streaming)
-  // bleibt im Repo erhalten fuer headless/Voice-Pfade — UI-seitig haben
-  // wir aber explizit das externe Terminal, weil der User sehen will
-  // wie der Install in einer "echten" PowerShell laeuft.
+  // We use spawn-external (a real Windows Terminal) instead of the internal
+  // xterm. ``useInstallCli`` (background subprocess + output streaming)
+  // stays in the repo for headless/voice paths — but on the UI side we
+  // deliberately use the external terminal, because the user wants to see
+  // the install running in a "real" PowerShell.
   const t = useT();
   const spawn = useSpawnExternalTerminal();
   const pushToast = useEventStore((s) => s.pushToast);

@@ -1,8 +1,8 @@
-"""Unit-Tests fuer BrainHealthChecker (Phase 5, CL-4).
+"""Unit tests for BrainHealthChecker (Phase 5, CL-4).
 
-Statt der echten `BrainProviderRegistry` (entry_points-Discovery) wird hier
-ein In-Memory-Stub mit derselben API genutzt: `instantiate(name, **kwargs)`.
-Das ist der einzige Registry-Call, den der HealthChecker macht.
+Instead of the real `BrainProviderRegistry` (entry_points discovery), this uses
+an in-memory stub with the same API: `instantiate(name, **kwargs)`.
+That is the only registry call the HealthChecker makes.
 """
 from __future__ import annotations
 
@@ -196,5 +196,5 @@ async def test_probe_tier_without_fallbacks_returns_single() -> None:
 
 
 def test_brain_config_error_is_exception() -> None:
-    """Smoke-Test: BrainConfigError ist importierbar und eine Exception."""
+    """Smoke test: BrainConfigError is importable and is an Exception."""
     assert issubclass(BrainConfigError, Exception)

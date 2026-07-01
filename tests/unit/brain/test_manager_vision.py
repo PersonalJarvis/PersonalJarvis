@@ -1,4 +1,4 @@
-"""Regression-Tests fuer Vision-Inject im produktiven BrainManager-Pfad."""
+"""Regression tests for vision inject in the production BrainManager path."""
 from __future__ import annotations
 
 import base64
@@ -163,7 +163,7 @@ async def test_brain_manager_skips_vision_when_paused() -> None:
 @pytest.mark.asyncio
 async def test_brain_manager_continues_on_vision_failure(caplog) -> None:
     manager, recorder = _manager_with_recorder()
-    manager._vision_provider = _FakeVisionProvider(exc=ValueError("kein screenshot_path"))
+    manager._vision_provider = _FakeVisionProvider(exc=ValueError("no screenshot_path"))
 
     # Non-smalltalk utterance so the Wave-1 conditional-vision gate keeps the
     # screenshot and actually exercises the vision-failure path (smalltalk like
@@ -172,4 +172,4 @@ async def test_brain_manager_continues_on_vision_failure(caplog) -> None:
         await manager.generate("was siehst du", use_history=False)
 
     assert recorder.calls[0]["images"] == ()
-    assert any("Vision-Inject fehlgeschlagen" in rec.message for rec in caplog.records)
+    assert any("Vision-Inject fehlgeschlagen" in rec.message for rec in caplog.records)  # i18n-allow

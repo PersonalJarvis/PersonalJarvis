@@ -80,7 +80,7 @@ class ListeningStarted(Event):
 
 @dataclass(frozen=True, slots=True)
 class UtteranceCaptured(Event):
-    audio_ref: str = ""      # Content-Hash für Flight-Recorder
+    audio_ref: str = ""      # content hash for the flight recorder
     duration_ms: int = 0
 
 
@@ -557,7 +557,7 @@ class KillAcknowledged(Event):
 
 @dataclass(frozen=True, slots=True)
 class TaskCancelled(Event):
-    """Eine konkrete Task/Operation wurde durch den Kill gestoppt."""
+    """A concrete task/operation was stopped by the kill signal."""
     task_id: str = ""
     reason: str = "kill_switch"
 
@@ -613,14 +613,14 @@ class VisionInjected(Event):
     """
     screenshot_hash: str = ""
     bytes_size: int = 0                 # Groesse des PNG-Rohdatenblocks
-    capture_age_ms: int = 0             # Alter der Observation bei Inject
+    capture_age_ms: int = 0             # age of the observation at inject time
 
 
 @dataclass(frozen=True, slots=True)
 class ActionPlanned(Event):
     """The CU loop planner proposed the next action (before execution)."""
     action_kind: str = ""               # "click" | "type" | "hotkey" | "wait" | "verify"
-    target_hint: str = ""               # z.B. "{role:Button,name:Speichern}"
+    target_hint: str = ""               # e.g. "{role:Button,name:Save}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -628,7 +628,7 @@ class ActionVerified(Event):
     """Post-execution verify: did the action produce the expected effect?"""
     action_kind: str = ""
     success: bool = False
-    reason: str = ""                    # bei Fail: was hat der Verify-Observer gesehen?
+    reason: str = ""                    # on fail: what did the verify observer see?
 
 
 @dataclass(frozen=True, slots=True)
@@ -848,7 +848,7 @@ class WorkflowStepCompleted(Event):
     step_index: int = 0
     success: bool = False
     duration_ms: int = 0
-    output_preview: str = ""        # max 240 Zeichen, fuer UI-Timeline
+    output_preview: str = ""        # max 240 characters, for the UI timeline
     error: str | None = None
 
 
@@ -1087,7 +1087,7 @@ class JarvisAgentBackgroundCompleted(Event):
     a standardised voice announcement.
     """
     success: bool = False
-    utterance: str = ""       # was der User urspruenglich gesagt hatte
+    utterance: str = ""       # what the user originally said
     summary: str = ""          # TTS-tauglich, max 120 Tokens
     error: str | None = None
     duration_s: float = 0.0
@@ -1127,13 +1127,13 @@ class BioFeedbackRecorded(Event):
     """The user clicked a reaction button under the AI profile.
 
     Emitted by the ``POST /api/board/bio/feedback`` endpoint. Three kinds:
-    ``trifft`` (bio feels accurate), ``trifft_nicht`` (off the mark),
+    ``trifft`` (bio feels accurate), ``trifft_nicht`` (off the mark),  # i18n-allow: API/DB contract identifiers, matched in logic
     ``haerter`` (make the next bio more pointed). The signal flows as a
     ``feedback_vector_block`` into the bio prompt for the next generation;
     no immediate regeneration.
     """
     bio_generated_at: str = ""
-    kind: str = ""        # "trifft" | "trifft_nicht" | "haerter"
+    kind: str = ""        # "trifft" | "trifft_nicht" | "haerter"  # i18n-allow: API/DB contract identifiers, matched in logic
 
 
 # ----------------------------------------------------------------------
@@ -1292,7 +1292,7 @@ class UserVisibleFeedback(Event):
 class OrbResetRequested(Event):
     """User asked to reset the orb to its default anchor (BUG-027 / L2).
 
-    Triggered by the local_action_gate when the user says "Orb zurück",
+    Triggered by the local_action_gate when the user says "Orb zurück",  # i18n-allow: literal German voice-trigger phrase matched in logic
     "wo bist du", or "reset orb". ``ui.orb.bus_bridge`` subscribes and
     dispatches the actual reset onto the Tk thread. Decouples the voice
     trigger from the Tk-thread mutation — bus stays sync-friendly.

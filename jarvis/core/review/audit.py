@@ -42,7 +42,7 @@ class AuditStatus(StrEnum):
     involved no LLM call.
     """
 
-    PASS = "pass"  # noqa: S105 — Audit-Status, kein Secret
+    PASS = "pass"  # noqa: S105 — audit status, not a secret
     NEEDS_REVISION = "needs_revision"
     FAIL = "fail"
     PRECHECK_FAIL = "precheck_fail"
@@ -122,7 +122,7 @@ class ReviewAudit:
                     fh.write("\n")
         except Exception as exc:  # noqa: BLE001 — Caller darf nie crashen
             _LOG.warning(
-                "ReviewAudit.append_iteration fehlgeschlagen: %s (path=%s)",
+                "ReviewAudit.append_iteration failed: %s (path=%s)",
                 exc,
                 self._path,
             )
@@ -143,7 +143,7 @@ class ReviewAudit:
             ) as fh:
                 lines = fh.readlines()
         except Exception as exc:  # noqa: BLE001 — Lesen darf nie crashen
-            _LOG.warning("ReviewAudit.tail fehlgeschlagen: %s", exc)
+            _LOG.warning("ReviewAudit.tail failed: %s", exc)
             return []
 
         result: list[dict[str, Any]] = []
@@ -155,6 +155,6 @@ class ReviewAudit:
                 result.append(json.loads(stripped))
             except json.JSONDecodeError as exc:
                 _LOG.warning(
-                    "Korrupte Review-Audit-Zeile übersprungen: %s", exc
+                    "Corrupt review-audit line skipped: %s", exc
                 )
         return result

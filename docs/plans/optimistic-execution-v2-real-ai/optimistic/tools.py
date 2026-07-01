@@ -81,7 +81,7 @@ def _extract_capitalised_name(command: str) -> str | None:
         return None
     for word in words[1:]:
         # Strip punctuation before the capital check.
-        clean = re.sub(r"[^A-Za-zÄÖÜäöüß]", "", word)
+        clean = re.sub(r"[^A-Za-zÄÖÜäöüß]", "", word)  # i18n-allow: regex charset matches German name characters
         if clean and clean[0].isupper():
             return clean
     return None

@@ -169,14 +169,14 @@ def test_extracts_tool_calls_and_final_answer() -> None:
         {"type": "assistant", "message": {"content": [
             {"type": "text", "text": "Du hast 32 aktive Repositories."}]}},
         {"type": "result",
-         "result": "Du hast 32 aktive Repositories (1 öffentlich, 31 privat).",
+         "result": "Du hast 32 aktive Repositories (1 öffentlich, 31 privat).",  # i18n-allow: simulated German voice-readback worker answer
          "subtype": "success", "is_error": False},
     ])
     ev = extract_stream_evidence(stream)
 
     assert "mcp__github__get_me" in ev.tool_calls
     assert "mcp__github__search_repositories" in ev.tool_calls
-    assert ev.final_answer == "Du hast 32 aktive Repositories (1 öffentlich, 31 privat)."
+    assert ev.final_answer == "Du hast 32 aktive Repositories (1 öffentlich, 31 privat)."  # i18n-allow: simulated German voice-readback worker answer
     # at least one tool result captured (truncated form is fine)
     assert any("total_count" in r or "32" in r for r in ev.tool_results)
 
@@ -186,10 +186,10 @@ def test_final_answer_falls_back_to_last_assistant_text_without_result() -> None
         {"type": "assistant", "message": {"content": [
             {"type": "tool_use", "name": "Read", "input": {"path": "x"}}]}},
         {"type": "assistant", "message": {"content": [
-            {"type": "text", "text": "Die Datei erklärt das Modul X."}]}},
+            {"type": "text", "text": "Die Datei erklärt das Modul X."}]}},  # i18n-allow: simulated German voice-readback worker answer
     ])
     ev = extract_stream_evidence(stream)
-    assert ev.final_answer == "Die Datei erklärt das Modul X."
+    assert ev.final_answer == "Die Datei erklärt das Modul X."  # i18n-allow: simulated German voice-readback worker answer
     assert "Read" in ev.tool_calls
 
 
@@ -308,9 +308,9 @@ def test_is_informational_request_true_for_questions() -> None:
         "Could you please tell me which city you would recommend if I would "
         "like to book a trip to Australia?"
     )
-    assert is_informational_request("Was hältst du von exp.com?")
+    assert is_informational_request("Was hältst du von exp.com?")  # i18n-allow: simulated German user question, bilingual classifier coverage
     assert is_informational_request("Explain how the event bus works.")
-    assert is_informational_request("Welche Stadt empfiehlst du für eine Reise?")
+    assert is_informational_request("Welche Stadt empfiehlst du für eine Reise?")  # i18n-allow: simulated German user question, bilingual classifier coverage
     # behind the standing quality directive (the real dispatched shape)
     assert is_informational_request(
         f"{_DIRECTIVE}\n\nWhich city would you recommend for a trip to Australia?"

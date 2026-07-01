@@ -1,8 +1,8 @@
-"""Integration-Tests fuer den Kontrollierer.run_mission-Loop.
+"""Integration tests for the Kontrollierer.run_mission loop.
 
-Nutzt FakeWorker + FakeCriticRunner — KEINE echten Subprocess-Spawns,
-keine echten claude-CLI-Calls. Verifiziert state-machine, iteration-cap,
-reflections, budget-integration.
+Uses FakeWorker + FakeCriticRunner — NO real subprocess spawns,
+no real claude-CLI calls. Verifies state machine, iteration cap,
+reflections, budget integration.
 """
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ from jarvis.missions.workers.base import SpawnedWorker
 
 @dataclass
 class _FakeWorkerEvent:
-    """Simuliert ein Claude-Stream-Result-Event mit cost_usd."""
+    """Simulates a Claude stream result event with cost_usd."""
 
     type: str = "result"
     cost_usd: float = 0.05
@@ -48,7 +48,7 @@ class _FakeWorkerEvent:
 
 
 class FakeWorker:
-    """Worker-Stub: yielded ein einziges result-event mit Cost+Session."""
+    """Worker stub: yields a single result event with cost + session."""
 
     cli = "claude"
 
@@ -76,20 +76,20 @@ class FakeWorker:
             "worktree": str(worktree),
             **kwargs,
         })
-        # Schreibe ein paar Zeilen Log fuer den Critic
+        # Write a few log lines for the critic
         log_dir.mkdir(parents=True, exist_ok=True)
         (log_dir / "stream.jsonl").write_text(
             '{"type":"result","subtype":"success"}\n', encoding="utf-8"
         )
-        # Schreibe einen kleinen Diff-File damit `git diff` was zeigt — dafuer
-        # muesste worktree ein git-repo sein, was im Test nicht der Fall ist.
-        # Wir verlassen uns auf leeren diff (capture_diff returned "") — der
-        # Critic-Stub interessiert sich nicht.
+        # Write a small diff file so `git diff` would show something — that
+        # would require worktree to be a git repo, which it is not in the test.
+        # We rely on an empty diff (capture_diff returned "") — the
+        # critic stub doesn't care.
         yield _FakeWorkerEvent(cost_usd=self._cost, total_tokens=self._tokens, session_id=self._session)
 
 
 class FakeCriticRunner:
-    """Critic-Stub: liefert hardcoded Verdicts in Reihenfolge."""
+    """Critic stub: returns hardcoded verdicts in order."""
 
     def __init__(self, *verdicts: CriticVerdict) -> None:
         self._verdicts = list(verdicts)
@@ -99,7 +99,7 @@ class FakeCriticRunner:
     async def run(self, **kwargs: Any) -> CriticVerdict:
         self.calls.append(kwargs)
         if self._idx >= len(self._verdicts):
-            # Default: revise mit empty-evidence-Avoidance
+            # Default: revise with empty-evidence avoidance
             return _make_revise_verdict()
         v = self._verdicts[self._idx]
         self._idx += 1
@@ -107,7 +107,7 @@ class FakeCriticRunner:
 
 
 class FakeJobObject:
-    """No-op async-context-manager fuer Job-Object."""
+    """No-op async context manager for the job object."""
 
     async def __aenter__(self) -> "FakeJobObject":
         return self
@@ -198,7 +198,7 @@ def _make_kontrollierer(
     decomposer_plan: MissionPlan | None = None,
     budget: BudgetTracker | None = None,
 ) -> Kontrollierer:
-    """Hilfsfunktion zum Bauen eines Kontrollierer mit Fakes."""
+    """Helper function to build a Kontrollierer with fakes."""
 
     decomposer = MagicMock(spec=MissionDecomposer)
     if decomposer_plan is None:
@@ -265,7 +265,7 @@ async def test_two_iterations_approve_on_second(
     assert end_state == MissionState.APPROVED
     assert len(critic.calls) == 2
 
-    # Reflection-File enthaelt einen Eintrag
+    # Reflection file contains one entry
     mission_dir = tmp_path / "missions" / f"mission_{mid[:13]}"
     refl = ReflectionMemory(mission_dir)
     last = refl.last_n(5)
@@ -397,7 +397,7 @@ async def test_three_iter_exhaustion_fails_mission(
 async def test_reject_early_stops_loop(
     manager: MissionManager, tmp_path: Path
 ) -> None:
-    """Iter 0 reject -> MissionFailed sofort, kein Retry."""
+    """Iter 0 reject -> MissionFailed immediately, no retry."""
     critic = FakeCriticRunner(_make_reject_verdict())
     shared_worker = FakeWorker()
     k = _make_kontrollierer(
@@ -438,7 +438,7 @@ async def test_budget_exceeded_aborts_loop(
 async def test_reflections_persist_across_iterations(
     manager: MissionManager, tmp_path: Path
 ) -> None:
-    """Worker-prompt der zweiten Iteration sollte die erste reflection enthalten."""
+    """The worker prompt of the second iteration should contain the first reflection."""
     critic = FakeCriticRunner(
         _make_revise_verdict("first iteration issue"),
         _make_approve_verdict(),
@@ -524,7 +524,7 @@ async def test_unknown_mission_id_raises(
 ) -> None:
     critic = FakeCriticRunner()
     k = _make_kontrollierer(manager=manager, tmp_path=tmp_path, critic=critic)
-    with pytest.raises(KeyError, match="Mission nicht gefunden"):
+    with pytest.raises(KeyError, match="Mission not found"):
         await k.run_mission("00000000-0000-0000-0000-000000000000")
 
 
@@ -738,7 +738,7 @@ async def test_readonly_mission_speaks_worker_answer(
     """Empty diff + tool evidence + answer -> MissionApproved.summary_de IS the answer."""
     critic = FakeCriticRunner(_make_approve_verdict())
     worker = _ReadonlyAnswerWorker(
-        "Du hast 32 aktive Repositories (1 öffentlich, 31 privat)."
+        "Du hast 32 aktive Repositories (1 öffentlich, 31 privat)."  # i18n-allow: simulated German voice-readback answer (summary_de)
     )
     k = _make_kontrollierer(
         manager=manager, tmp_path=tmp_path, critic=critic,

@@ -20,7 +20,7 @@
 **Material inspection of the verbatim outputs:** ⚠️ **several drift classes visible** that the probe heuristic does not catch:
 1. **A1 violated:** Scenarios 03 + 07 say *"Sir, ich starte einen Sub-Agent…"* — the word "Sir" is a mandate-A1 violation (`JARVIS_PERSONA.md:32-33` forbids it explicitly). <!-- i18n-allow -->
 2. **Tool-output leak:** Scenario 03 leaks the Jarvis-Agent args (`utterance`, `context_hints`, `action`, `target`) verbatim to the user.
-3. **Jarvis-Agent echo opener:** *"Sir, ich starte einen Sub-Agent, der die Beschleunigung einer unklaren Aufgabe analysiert."* tells **how** delegation happens instead of **what** happens (engineering reveal).
+3. **Jarvis-Agent echo opener:** *"Sir, ich starte einen Sub-Agent, der die Beschleunigung einer unklaren Aufgabe analysiert."* <!-- i18n-allow --> tells **how** delegation happens instead of **what** happens (engineering reveal).
 4. **Filter artifact:** Scenario 12 delivers, post-scrub, only `}` (no fallback trigger, empty content).
 5. **Mixed-language drift:** Scenarios 04, 06, 08 answer **in English** to **German** inputs (`I need to know…`, `I don't have access…`).
 6. **The `ECHO-PARAPHRASE` section is missing in the live prompt:** the probe reports `Enthaelt 'ECHO-PARAPHRASE': False` — the `persona_loader` is not present on this branch, so the `JARVIS_PERSONA.md` section never lands in the brain system prompt at all.
@@ -247,7 +247,7 @@ The mandate-phase-4 spec requires:
 
 ### 5.1 Master Plan §22 vs. Code State
 
-| Point | Master plan §22 (`also-er-muss-auch-lexical-pond.md:1604+`) | Code state 2026-04-28 |
+| Point | Master plan §22 (`also-er-muss-auch-lexical-pond.md:1604+`) | Code state 2026-04-28 |  <!-- i18n-allow -->
 |---|---|---|
 | Four router tools | `screen_snapshot`, `multi_spawn`, `spawn_sub_jarvis`, `run_shell` (l. 1617) | **6 tools** + 3 self-mod tools (Phase 7.3) → 9 effective in the router tier |
 | Jarvis-Agent stateless, hard cap 30 min | l. 1616 | ✅ implemented (`sub_jarvis/manager.py`) |
@@ -310,7 +310,7 @@ Both documents address the same bug (every Hello command spawns a subprocess), b
 
 | Mandate point | Master plan | Conflict? |
 |---|---|---|
-| A1 (Alex instead of Sir) | the master-plan path `also-er-muss-auch-lexical-pond.md` references no "Sir/Alex" requirement; `JARVIS_PERSONA.md:33` says "never 'Sir'" explicitly. | ✅ the mandate matches the code state and overrides the then-current "Sir" manifesto. |
+| A1 (Alex instead of Sir) | the master-plan path `also-er-muss-auch-lexical-pond.md` references no "Sir/Alex" requirement; `JARVIS_PERSONA.md:33` says "never 'Sir'" explicitly. | ✅ the mandate matche  <!-- i18n-allow -->s the code state and overrides the then-current "Sir" manifesto. |
 | Phase 3: EXACTLY four router tools | master plan §22 l. 1617 says **four tools**. | ✅ the original requirement; later phases 7+8 extend it deliberately. |
 | Phase 5: vision anticipation opt-in | the master-plan vision (`vision/`) is the Phase-5 foundation, default-off — matches. | ✅ no conflict. |
 
@@ -365,7 +365,7 @@ C) **Full mandate:** you decide the mandate should run despite the formal pass. 
 | 11 | `docs/adr/0010-output-filter-pattern-based.md` + `0011-router-pure-dispatcher.md` | ✅ full (two ADRs, ~70 lines each) |
 
 **Additionally read for the conflict analysis:**
-- `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md` §22 (l. 1602-1644)
+- `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md` §22 (l. 1602-1644)  <!-- i18n-allow -->
 - `jarvis/core/config.py` `BrainRoutingConfig` (l. 138-195)
 - `docs/persona-refactor-results.md` (for the before state of 2026-04-25)
 

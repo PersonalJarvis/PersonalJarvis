@@ -1,12 +1,12 @@
-"""Phase A1 — System-Prompt-Injection des Awareness-Snapshots.
+"""Phase A1 — system-prompt injection of the awareness snapshot.
 
-Plan §5 'Files to Modify' verlangt, dass ``BrainManager._build_system_prompt``
-einen kompakten Live-Snapshot aus ``AwarenessManager.state`` injiziert —
-als Fallback fuer den Fall dass das LLM das ``awareness-snapshot``-Tool
-NICHT ruft.
+Plan §5 'Files to Modify' requires that ``BrainManager._build_system_prompt``
+injects a compact live snapshot from ``AwarenessManager.state`` — as a
+fallback for the case where the LLM does NOT call the
+``awareness-snapshot`` tool.
 
-AC-5 (Plan-Verifier): Hauptjarvis (Router) bekommt das Tool im Schema und
-hat den State auch passiv im Prompt; Sub-Jarvis bekommt KEIN
+AC-5 (plan verifier): the main Jarvis (router) gets the tool in its schema
+and also has the state passively in the prompt; Sub-Jarvis gets NO
 ``awareness_manager`` (stateless).
 """
 from __future__ import annotations
@@ -37,17 +37,17 @@ def _make_brain(awareness_manager: AwarenessManager | None) -> BrainManager:
 
 
 def test_no_awareness_manager_no_snapshot_in_prompt() -> None:
-    """Backward-Compat: ohne ``awareness_manager`` darf NICHTS injiziert werden."""
+    """Backward compat: without ``awareness_manager``, NOTHING may be injected."""
     brain = _make_brain(awareness_manager=None)
     prompt = brain._build_system_prompt()
     assert "AKTUELLER KONTEXT" not in prompt
 
 
 def test_awareness_manager_with_empty_state_no_snapshot() -> None:
-    """``state.snapshot_for_prompt()`` returnt '' wenn ``current_frame is None``.
+    """``state.snapshot_for_prompt()`` returns '' when ``current_frame is None``.
 
-    In dem Fall darf der Injection-Block KEIN leeres ``AKTUELLER KONTEXT:``-
-    Marker emittieren — der Prompt soll sauber bleiben.
+    In that case the injection block must NOT emit an empty
+    ``AKTUELLER KONTEXT:`` marker — the prompt should stay clean.
     """
     mgr = AwarenessManager(AwarenessConfig.default())
     assert mgr.state.current_frame is None
@@ -57,7 +57,7 @@ def test_awareness_manager_with_empty_state_no_snapshot() -> None:
 
 
 def test_awareness_manager_with_frame_injects_snapshot() -> None:
-    """Ein gesetzter ``current_frame`` muss als ``AKTUELLER KONTEXT`` im Prompt landen."""
+    """A set ``current_frame`` must land in the prompt as ``AKTUELLER KONTEXT``."""
     mgr = AwarenessManager(AwarenessConfig.default())
     mgr.state.current_frame = FrameSnapshot(
         timestamp_ns=time.time_ns(),
@@ -77,8 +77,8 @@ def test_awareness_manager_with_frame_injects_snapshot() -> None:
 
 
 def test_snapshot_failure_does_not_break_prompt_build() -> None:
-    """Defensive try/except: ein kaputter ``snapshot_for_prompt`` darf den
-    System-Prompt-Build nicht kippen."""
+    """Defensive try/except: a broken ``snapshot_for_prompt`` must not
+    topple the system-prompt build."""
     mgr = AwarenessManager(AwarenessConfig.default())
 
     class _BadState:
@@ -88,7 +88,7 @@ def test_snapshot_failure_does_not_break_prompt_build() -> None:
     mgr._state = _BadState()  # type: ignore[assignment]
 
     brain = _make_brain(awareness_manager=mgr)
-    # Darf nicht raisen
+    # Must not raise
     prompt = brain._build_system_prompt()
     assert isinstance(prompt, str)
     assert len(prompt) > 0

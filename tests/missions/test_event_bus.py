@@ -1,4 +1,4 @@
-"""Tests fuer per-Subscriber bounded-queue MissionBus."""
+"""Tests for the per-subscriber bounded-queue MissionBus."""
 from __future__ import annotations
 
 import asyncio
@@ -56,8 +56,8 @@ async def test_drop_oldest_when_subscriber_queue_full() -> None:
     async with bus.subscribe() as sub:
         await bus.publish(_envelope("a"))
         await bus.publish(_envelope("b"))
-        await bus.publish(_envelope("c"))  # sollte 'a' rausschmeissen
-        # Queue enthaelt jetzt b, c
+        await bus.publish(_envelope("c"))  # should evict 'a'
+        # Queue now contains b, c
         first = await sub.queue.get()
         second = await sub.queue.get()
         assert first.payload.prompt == "b"  # type: ignore[union-attr]
@@ -109,7 +109,7 @@ async def test_wildcard_handler_error_does_not_break_publish() -> None:
     bus.subscribe_all(bad)
     bus.subscribe_all(good)
 
-    await bus.publish(_envelope("x"))  # darf nicht raisen
+    await bus.publish(_envelope("x"))  # must not raise
     assert len(received_good) == 1
 
 
@@ -133,7 +133,7 @@ async def test_subscription_async_iterator() -> None:
                     return
 
     consumer_task = asyncio.create_task(consumer())
-    # kurz warten damit Subscription registriert ist
+    # wait briefly so the subscription is registered
     await asyncio.sleep(0.01)
     await bus.publish(_envelope("one"))
     await bus.publish(_envelope("two"))

@@ -186,7 +186,7 @@ def _ok_response() -> str:
         {
             "target": "entities/ruben-luetke.md",
             "operation": "update",
-            "new_body": "---\ntype: entity\nslug: ruben-luetke\n---\n\n# Ruben Lütke\n",
+            "new_body": "---\ntype: entity\nslug: ruben-luetke\n---\n\n# Ruben Lütke\n",  # i18n-allow: proper name with umlaut used as wiki-page fixture data
             "rename_from": None,
             "reason": "added phase B1 milestone",
         }

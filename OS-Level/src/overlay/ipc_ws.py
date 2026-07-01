@@ -1,12 +1,12 @@
-"""WS-Client. Verbindet zum Hauptjarvis-WS-Server.
+"""WS client. Connects to the Hauptjarvis WS server.
 
-Plan §10.5 — Lifecycle:
-- Initial-Connect: probiert Ports ``[ws_port..ws_port_range_max]`` durch.
-- Heartbeat: client sendet alle 1s, erwartet ebenfalls 1s-Frequenz vom
-  Server. Wenn 3s lang KEIN Frame ankommt -> Connection als broken markieren.
-- Reconnect-Backoff: 0.5, 1, 2, 4, 8, 30 Sekunden mit +/- 20% Jitter.
-- State-Resync: erstes Frame vom Server nach Connect ist der aktuelle
-  State; wir reichen ihn unaendert an ``on_message`` durch.
+Plan §10.5 — lifecycle:
+- Initial connect: tries ports ``[ws_port..ws_port_range_max]`` in order.
+- Heartbeat: the client sends every 1s, and also expects a 1s cadence
+  from the server. If NO frame arrives for 3s -> mark the connection broken.
+- Reconnect backoff: 0.5, 1, 2, 4, 8, 30 seconds with +/- 20% jitter.
+- State resync: the first frame from the server after connect is the
+  current state; we pass it through unchanged to ``on_message``.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from .schema import (
 
 logger = logging.getLogger(__name__)
 
-# Plan §10.5 — fixed backoff slots in Sekunden.
+# Plan §10.5 — fixed backoff slots in seconds.
 BACKOFF_SCHEDULE: tuple[float, ...] = (0.5, 1.0, 2.0, 4.0, 8.0, 30.0)
 JITTER_FRACTION = 0.2
 
@@ -43,7 +43,7 @@ def _backoff_with_jitter(slot: int, *, rng: random.Random | None = None) -> floa
 
 
 class WSClient:
-    """Self-restarting WS-Client.
+    """Self-restarting WS client.
 
     Usage::
 
@@ -124,16 +124,16 @@ class WSClient:
                 logger.warning("WSClient outbox still full after evict — drop new")
 
     async def run(self) -> None:
-        """Hauptloop. Returnt nach ``aclose()``."""
+        """Main loop. Returns after ``aclose()``."""
         slot = 0
         while not self._stop.is_set():
             ws = await self._try_connect_any()
             if ws is None:
-                # Kein Port im Range erreichbar -> Backoff und retry.
+                # No port in range reachable -> backoff and retry.
                 await self._sleep_backoff(slot)
                 slot = min(slot + 1, len(BACKOFF_SCHEDULE) - 1)
                 continue
-            slot = 0  # Reset bei erfolgreicher Connection.
+            slot = 0  # Reset on a successful connection.
             self._connection_count += 1
             self._connected_evt.set()
             try:
@@ -169,11 +169,11 @@ class WSClient:
         try:
             await asyncio.wait_for(self._stop.wait(), timeout=delay)
         except asyncio.TimeoutError:
-            return  # Backoff abgelaufen, weiter.
+            return  # Backoff expired, continue.
 
     async def _serve_connection(self, ws) -> None:
         loop = asyncio.get_running_loop()
-        self._last_recv_ns = loop.time() * 1e9  # nutzt monotonic clock fuers Timeout
+        self._last_recv_ns = loop.time() * 1e9  # uses the monotonic clock for the timeout
         self._active_ws = ws
         hb_task = asyncio.create_task(self._heartbeat_loop(ws), name="ipcws-hb")
         watchdog = asyncio.create_task(self._watchdog_loop(ws), name="ipcws-watchdog")
@@ -236,11 +236,11 @@ class WSClient:
                 continue
 
     async def _watchdog_loop(self, ws) -> None:
-        """Schliesst ``ws`` wenn ``heartbeat_timeout_s`` lang nichts kommt.
+        """Closes ``ws`` when nothing arrives for ``heartbeat_timeout_s``.
 
-        Plan §10.5: Das forciert die ``async for`` Schleife im
-        ``_serve_connection`` zu beenden, ``run()`` triggert dann den
-        Reconnect-Pfad mit Backoff.
+        Plan §10.5: this forces the ``async for`` loop in
+        ``_serve_connection`` to end, then ``run()`` triggers the
+        reconnect path with backoff.
         """
         loop = asyncio.get_running_loop()
         check_interval = max(0.05, self._heartbeat_timeout / 3)

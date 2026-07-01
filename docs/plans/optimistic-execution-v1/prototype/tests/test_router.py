@@ -36,7 +36,7 @@ class TestClassifyDumbTool:
         assert classify("leiser bitte") == RouteKind.DUMB_TOOL
 
     def test_lautstaerke_is_dumb(self):
-        assert classify("Lautstärke erhöhen") == RouteKind.DUMB_TOOL
+        assert classify("Lautstärke erhöhen") == RouteKind.DUMB_TOOL  # i18n-allow: test content — user voice utterance DE
 
     def test_adjust_is_dumb(self):
         assert classify("adjustier das Fenster") == RouteKind.DUMB_TOOL
@@ -59,16 +59,16 @@ class TestClassifySmartTool:
         assert classify("Schick eine Email an Lisa") == RouteKind.SMART_TOOL
 
     def test_termin_is_smart(self):
-        assert classify("Erstell einen Termin für morgen") == RouteKind.SMART_TOOL
+        assert classify("Erstell einen Termin für morgen") == RouteKind.SMART_TOOL  # i18n-allow: test content — user voice utterance DE
 
     def test_kalender_is_smart(self):
-        assert classify("Trag das in den Kalender ein") == RouteKind.SMART_TOOL
+        assert classify("Trag das in den Kalender ein") == RouteKind.SMART_TOOL  # i18n-allow: test content — user voice utterance DE
 
     def test_drive_is_smart(self):
         assert classify("Lade das Dokument in Drive hoch") == RouteKind.SMART_TOOL
 
     def test_schreib_triggers_gmail(self):
-        assert classify("schreib eine Nachricht") == RouteKind.SMART_TOOL
+        assert classify("schreib eine Nachricht") == RouteKind.SMART_TOOL  # i18n-allow: test content — user voice utterance DE
 
 
 # ---------------------------------------------------------------------------
@@ -83,16 +83,16 @@ class TestClassifyActionVerbEscalation:
         assert classify("installier das Update") == RouteKind.SMART_TOOL
 
     def test_oeffne_is_smart(self):
-        assert classify("öffne den Browser") == RouteKind.SMART_TOOL
+        assert classify("öffne den Browser") == RouteKind.SMART_TOOL  # i18n-allow: test content — user voice utterance DE
 
     def test_baue_is_smart(self):
         assert classify("baue die App") == RouteKind.SMART_TOOL
 
     def test_erstell_unknown_is_smart(self):
-        assert classify("erstell eine Präsentation") == RouteKind.SMART_TOOL
+        assert classify("erstell eine Präsentation") == RouteKind.SMART_TOOL  # i18n-allow: test content — user voice utterance DE
 
     def test_such_is_smart(self):
-        assert classify("such nach dem Ordner") == RouteKind.SMART_TOOL
+        assert classify("such nach dem Ordner") == RouteKind.SMART_TOOL  # i18n-allow: test content — user voice utterance DE
 
 
 # ---------------------------------------------------------------------------
@@ -112,10 +112,10 @@ class TestClassifySmallTalk:
         assert classify("wie geht es dir heute") == RouteKind.SMALLTALK
 
     def test_danke_is_smalltalk(self):
-        assert classify("danke schön") == RouteKind.SMALLTALK
+        assert classify("danke schön") == RouteKind.SMALLTALK  # i18n-allow: test content — user voice utterance DE
 
     def test_witz_is_smalltalk(self):
-        assert classify("erzähl mir einen Witz") == RouteKind.SMALLTALK
+        assert classify("erzähl mir einen Witz") == RouteKind.SMALLTALK  # i18n-allow: test content — user voice utterance DE
 
     def test_hey_is_smalltalk(self):
         assert classify("hey") == RouteKind.SMALLTALK
@@ -125,7 +125,7 @@ class TestClassifySmallTalk:
 
     def test_unrecognized_no_verb_is_smalltalk(self):
         """A completely unknown command with no action verb defaults to SMALLTALK."""
-        assert classify("blah blah keine Ahnung") == RouteKind.SMALLTALK
+        assert classify("blah blah keine Ahnung") == RouteKind.SMALLTALK  # i18n-allow: test content — user voice utterance DE
 
 
 # ---------------------------------------------------------------------------
@@ -154,9 +154,9 @@ class TestClassifyEdgeCases:
         assert classify("mach es lauter") == RouteKind.DUMB_TOOL
 
     def test_action_verb_mach_without_dumb_trigger(self):
-        """'mach das Fenster auf' — 'mach' action verb but no dumb tool trigger."""
+        """'mach das Fenster auf' — 'mach' action verb but no dumb tool trigger."""  # i18n-allow: test content — user voice utterance DE
         # No dumb trigger, no smart trigger, but 'mach' is an action verb
-        result = classify("mach das Fenster auf")
+        result = classify("mach das Fenster auf")  # i18n-allow: test content — user voice utterance DE
         assert result == RouteKind.SMART_TOOL
 
     def test_smalltalk_trigger_plus_action_verb_prefers_smart(self):
@@ -180,22 +180,22 @@ class TestClassifyLatency:
         "spiel Musik",
         "spiel die mail-melodie ab",
         "Schreib Max eine Mail",
-        "Trag einen Termin ein",
+        "Trag einen Termin ein",  # i18n-allow: test content — user voice utterance DE
         "installier das Update",
-        "öffne den Browser",
+        "öffne den Browser",  # i18n-allow: test content — user voice utterance DE
         "hi Jarvis",
         "wie geht es dir",
         "danke",
-        "Lautstärke erhöhen",
+        "Lautstärke erhöhen",  # i18n-allow: test content — user voice utterance DE
         "Lade das Dokument in Drive hoch",
         "baue die App",
-        "erstell eine Präsentation",
-        "such nach dem Ordner",
+        "erstell eine Präsentation",  # i18n-allow: test content — user voice utterance DE
+        "such nach dem Ordner",  # i18n-allow: test content — user voice utterance DE
         "lauter bitte",
         "leiser",
         "Kalender Termin morgen",
-        "erzähl mir einen Witz",
-        "blah blah keine Ahnung",
+        "erzähl mir einen Witz",  # i18n-allow: test content — user voice utterance DE
+        "blah blah keine Ahnung",  # i18n-allow: test content — user voice utterance DE
     ]
 
     def test_classify_worst_case_latency(self):

@@ -39,7 +39,7 @@ def test_missing_email_surfaces_organic_correction_at_turn_boundary() -> None:
             r = await http.post(
                 "/api/utterance",
                 json={
-                    "text": "Schreib Max eine Mail, dass sich das Projekt verschiebt",
+                    "text": "Schreib Max eine Mail, dass sich das Projekt verschiebt",  # i18n-allow: test content — user voice utterance DE
                     "session_id": "s1",
                 },
             )

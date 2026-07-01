@@ -1,4 +1,4 @@
-"""Unit-Tests für den StreamingAggregate-Akkumulator."""
+"""Unit tests for the StreamingAggregate accumulator."""
 from __future__ import annotations
 
 from collections.abc import AsyncIterator

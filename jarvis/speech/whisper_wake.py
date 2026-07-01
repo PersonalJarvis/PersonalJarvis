@@ -1,16 +1,16 @@
-"""Whisper-basierter Wake-Word-Fallback.
+"""Whisper-based wake-word fallback.
 
-Läuft parallel zu openWakeWord als zweite, robustere Detection: nimmt
-Audio-Chunks, endpointet via Silero-VAD, transkribiert jede erkannte
-Utterance kurz durch Whisper und matcht das Transkript gegen ein
-Keyword-Pattern (Default: "jarvis" als Einzelwort oder in "hey jarvis").
+Runs in parallel with openWakeWord as a second, more robust detector: takes
+audio chunks, endpoints them via Silero VAD, transcribes each detected
+utterance briefly through Whisper, and matches the transcript against a
+keyword pattern (default: "jarvis" as a standalone word or within "hey jarvis").
 
-Vorteil: versteht deutsche Aussprache nativ (Whisper ist multilingual
-trainiert). Nachteil: ~800-1200 ms Latenz (VAD-Endpoint + Whisper).
+Advantage: understands German pronunciation natively (Whisper is trained
+multilingually). Disadvantage: ~800-1200 ms latency (VAD endpoint + Whisper).
 
-Wir nutzen beide parallel — openWakeWord für schnelle Hits (15-30 ms),
-Whisper-Wake als Sicherheitsnetz für alle Fälle wo openWakeWord nicht
-zuschlägt (z.B. deutscher Akzent, niedriger Mic-Pegel).
+We use both in parallel — openWakeWord for fast hits (15-30 ms), Whisper wake
+as a safety net for all the cases where openWakeWord doesn't catch it (e.g. a
+German accent, low mic level).
 """
 from __future__ import annotations
 
@@ -39,15 +39,15 @@ DEFAULT_PATTERN = re.compile(
 
 
 class WhisperWakeDetector:
-    """VAD-endpointed Whisper-Transkription mit Keyword-Match."""
+    """VAD-endpointed Whisper transcription with keyword matching."""
 
     def __init__(
         self,
         stt: FasterWhisperProvider,
         vad: SileroEndpointer | None = None,
         pattern: re.Pattern[str] = DEFAULT_PATTERN,
-        vad_silence_ms: int = 500,      # kürzer als bei regulärer Utterance
-        min_speech_ms: int = 150,        # kürzer, "jarvis" allein reicht
+        vad_silence_ms: int = 500,      # shorter than for a regular utterance
+        min_speech_ms: int = 150,        # shorter — "jarvis" alone is enough
     ) -> None:
         self._stt = stt
         self._vad = vad or SileroEndpointer(
@@ -59,17 +59,17 @@ class WhisperWakeDetector:
     async def detect(
         self, chunks: AsyncIterator[AudioChunk]
     ) -> AsyncIterator[str]:
-        """Konsumiert Audio, yielded matched-Keyword-String bei Hit."""
+        """Consumes audio, yields the matched keyword string on a hit."""
         async for utterance_pcm in self._vad.utterances(chunks):
             try:
                 transcript = await self._stt.transcribe_pcm(utterance_pcm)
             except Exception as exc:  # noqa: BLE001
-                log.warning("Whisper-Wake Transkriptions-Fehler: %s", exc)
+                log.warning("Whisper wake transcription error: %s", exc)
                 continue
             text = transcript.text.strip()
             if not text:
                 continue
-            log.info("whisper-wake hört: '%s'", text)
+            log.info("whisper-wake heard: '%s'", text)
             m = self._pattern.search(text)
             if m:
                 yield m.group(0)

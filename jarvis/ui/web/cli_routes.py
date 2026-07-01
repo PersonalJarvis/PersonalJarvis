@@ -1,18 +1,18 @@
-"""REST-API fuer die CLI-Integration (Desktop-UI).
+"""REST API for the CLI integration (desktop UI).
 
 Endpoints:
-- ``GET  /api/clis``                     → Liste aller Katalog-Eintraege + Status
-- ``GET  /api/clis/{name}``              → Voller Detail-Datensatz
-- ``POST /api/clis/{name}/check``        → Live Binary-/Auth-Probe
-- ``POST /api/clis/{name}/install``      → Install-Job starten (streamt via WS)
-- ``DELETE /api/clis/{name}/install/{job_id}`` → Install abbrechen
-- ``POST /api/clis/{name}/connect``      → Auth-Flow starten (OAuth/APIKey)
-- ``POST /api/clis/{name}/disconnect``   → Auth entfernen
-- ``GET  /api/clis/{name}/usage``        → Paginierte Usage-History
-- ``GET  /api/clis/{name}/usage/stats``  → Stats-Aggregation
-- ``POST /api/clis/custom``              → Custom-CLI registrieren
-- ``DELETE /api/clis/custom/{name}``     → Custom-CLI entfernen
-- ``DELETE /api/clis/{name}/usage``      → History loeschen
+- ``GET  /api/clis``                     → list of all catalog entries + status
+- ``GET  /api/clis/{name}``              → full detail record
+- ``POST /api/clis/{name}/check``        → live binary/auth probe
+- ``POST /api/clis/{name}/install``      → start install job (streams via WS)
+- ``DELETE /api/clis/{name}/install/{job_id}`` → cancel install
+- ``POST /api/clis/{name}/connect``      → start auth flow (OAuth/API key)
+- ``POST /api/clis/{name}/disconnect``   → remove auth
+- ``GET  /api/clis/{name}/usage``        → paginated usage history
+- ``GET  /api/clis/{name}/usage/stats``  → stats aggregation
+- ``POST /api/clis/custom``              → register a custom CLI
+- ``DELETE /api/clis/custom/{name}``     → remove a custom CLI
+- ``DELETE /api/clis/{name}/usage``      → delete history
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ _TEST_RUN_TIMEOUT_S = 90.0
 def _require_registry(request: Request) -> CliToolRegistry:
     reg = getattr(request.app.state, "cli_registry", None)
     if reg is None:
-        raise HTTPException(status_code=503, detail="CliToolRegistry nicht verfuegbar")
+        raise HTTPException(status_code=503, detail="CliToolRegistry not available")
     return reg
 
 
@@ -173,15 +173,15 @@ class DisconnectResponse(BaseModel):
 
 
 class SpawnExternalRequest(BaseModel):
-    """Anfrage an /spawn-external — oeffnet ein **echtes** Windows Terminal
-    (wt/pwsh) und fuehrt dort entweder den Install- oder den Login-Command
-    fuer die angegebene CLI aus. Im Gegensatz zum eingebetteten xterm im
-    Frontend laeuft das Terminal als detached Subprocess in der User-
-    Session (cwd = USERPROFILE), getrennt von der Jarvis-App.
+    """Request to /spawn-external — opens a **real** Windows terminal
+    (wt/pwsh) and runs either the install or the login command for the
+    given CLI in it. Unlike the embedded xterm in the frontend, the
+    terminal runs as a detached subprocess in the user session
+    (cwd = USERPROFILE), separate from the Jarvis app.
     """
 
     kind: Literal["install", "login"]
-    method: str | None = None  # nur fuer kind=install: "winget"|"scoop"|"npm"|...
+    method: str | None = None  # only for kind=install: "winget"|"scoop"|"npm"|...
 
 
 class SpawnExternalResponse(BaseModel):
@@ -408,7 +408,7 @@ async def get_cli(name: str, request: Request) -> CliDetail:
     reg = _require_registry(request)
     spec = reg.catalog().get(name)
     if spec is None:
-        raise HTTPException(status_code=404, detail=f"CLI '{name}' nicht im Katalog")
+        raise HTTPException(status_code=404, detail=f"CLI '{name}' not in catalog")
     status = reg.status_of(name)
     usage = reg.usage_log()
     count_7d = usage.count_for(name, since_ms=int(time.time() * 1000) - _WEEK_MS)
@@ -445,10 +445,10 @@ async def get_cli(name: str, request: Request) -> CliDetail:
 async def check_cli(name: str, request: Request) -> CheckResponse:
     reg = _require_registry(request)
     if reg.catalog().get(name) is None:
-        raise HTTPException(status_code=404, detail=f"CLI '{name}' nicht im Katalog")
+        raise HTTPException(status_code=404, detail=f"CLI '{name}' not in catalog")
     status = await reg.refresh_status(name)
     if status is None:
-        raise HTTPException(status_code=500, detail="Refresh fehlgeschlagen")
+        raise HTTPException(status_code=500, detail="refresh failed")
     spec = reg.catalog().get(name)
     assert spec is not None
     return CheckResponse(
@@ -477,7 +477,7 @@ async def list_usage(
 ) -> UsageListResponse:
     reg = _require_registry(request)
     if reg.catalog().get(name) is None:
-        raise HTTPException(status_code=404, detail=f"CLI '{name}' nicht im Katalog")
+        raise HTTPException(status_code=404, detail=f"CLI '{name}' not in catalog")
     usage = reg.usage_log()
     offset = (page - 1) * page_size
     rows = usage.list_for(
@@ -519,7 +519,7 @@ async def usage_stats(
 ) -> UsageStatsResponse:
     reg = _require_registry(request)
     if reg.catalog().get(name) is None:
-        raise HTTPException(status_code=404, detail=f"CLI '{name}' nicht im Katalog")
+        raise HTTPException(status_code=404, detail=f"CLI '{name}' not in catalog")
     stats = reg.usage_log().stats_for(name, since_ms=since_ms)
     success_rate = (stats.success_calls / stats.total_calls) if stats.total_calls else 0.0
     return UsageStatsResponse(
@@ -539,34 +539,34 @@ async def spawn_external(
     request: Request,
     body: SpawnExternalRequest,
 ) -> SpawnExternalResponse:
-    """Spawnt ein externes Windows Terminal (wt/pwsh) und fuehrt entweder
-    den Install- oder den Login-Command darin aus.
+    """Spawns an external Windows terminal (wt/pwsh) and runs either the
+    install or the login command in it.
 
-    Im Gegensatz zum POST /install (das eine eigene asyncio-Subprocess-Pipeline
-    fuehrt + Output-Streaming an die UI macht) ist dieser Endpoint reine
-    Spawn-And-Forget-Logik: Wir oeffnen ein echtes Terminal-Fenster (wie
-    der User es erwartet, wenn er ``wt`` selber tippt) und lassen den User
-    dort interagieren. Status-Polling laeuft separat ueber /check.
+    Unlike POST /install (which runs its own asyncio subprocess pipeline
+    + streams output to the UI), this endpoint is pure spawn-and-forget
+    logic: we open a real terminal window (as the user expects when they
+    type ``wt`` themselves) and let the user interact there. Status
+    polling runs separately via /check.
     """
     from jarvis.clis.external_terminal import spawn_external_terminal
 
     reg = _require_registry(request)
     spec = reg.catalog().get(name)
     if spec is None:
-        raise HTTPException(status_code=404, detail=f"CLI '{name}' nicht im Katalog")
+        raise HTTPException(status_code=404, detail=f"CLI '{name}' not in catalog")
 
     if body.kind == "install":
         if not body.method:
             return SpawnExternalResponse(
                 ok=False,
-                error="method required fuer kind=install",
+                error="method required for kind=install",
             )
         installer = reg.installer()
         cmd_argv = installer.build_command(spec, body.method)  # type: ignore[arg-type]
         if not cmd_argv:
             return SpawnExternalResponse(
                 ok=False,
-                error=f"Keine Install-Methode '{body.method}' fuer {name}",
+                error=f"No install method '{body.method}' for {name}",
             )
         command = " ".join(cmd_argv)
         title = f"Install: {spec.display_name}"
@@ -574,7 +574,7 @@ async def spawn_external(
         if spec.auth.type != "oauth_cli" or not spec.auth.login_command:
             return SpawnExternalResponse(
                 ok=False,
-                error=f"{name} hat keinen interaktiven login_command (auth.type={spec.auth.type})",
+                error=f"{name} has no interactive login_command (auth.type={spec.auth.type})",
             )
         command = " ".join(spec.auth.login_command)
         title = f"Login: {spec.display_name}"
@@ -584,7 +584,7 @@ async def spawn_external(
         ok=ok,
         method=method,
         command=command if ok else None,
-        error=None if ok else "Kein externes Terminal verfuegbar (wt/pwsh/powershell)",
+        error=None if ok else "No external terminal available (wt/pwsh/powershell)",
     )
 
 
@@ -597,7 +597,7 @@ async def install_cli(
     reg = _require_registry(request)
     spec = reg.catalog().get(name)
     if spec is None:
-        raise HTTPException(status_code=404, detail=f"CLI '{name}' nicht im Katalog")
+        raise HTTPException(status_code=404, detail=f"CLI '{name}' not in catalog")
     installer = reg.installer()
     bus = reg.bus()
 
@@ -646,7 +646,7 @@ async def install_cli(
             ok=False,
             job_id="",
             command="",
-            error=f"Methode '{body.method}' fuer {name} nicht verfuegbar",
+            error=f"Method '{body.method}' not available for {name}",
         )
     return InstallStartResponse(
         ok=True,
@@ -671,7 +671,7 @@ async def connect_cli(
     reg = _require_registry(request)
     spec = reg.catalog().get(name)
     if spec is None:
-        raise HTTPException(status_code=404, detail=f"CLI '{name}' nicht im Katalog")
+        raise HTTPException(status_code=404, detail=f"CLI '{name}' not in catalog")
     auth = reg.auth()
     bus = reg.bus()
 
@@ -680,7 +680,7 @@ async def connect_cli(
             return ConnectResponse(
                 ok=False,
                 status="error",
-                error=f"{name} nutzt auth.type='{spec.auth.type}', nicht 'api_key'",
+                error=f"{name} uses auth.type='{spec.auth.type}', not 'api_key'",
             )
         ok, err = await auth.connect_api_key(
             spec,
@@ -698,7 +698,7 @@ async def connect_cli(
         return ConnectResponse(
             ok=False,
             status="error",
-            error=f"{name} nutzt auth.type='{spec.auth.type}', nicht 'oauth_cli'",
+            error=f"{name} uses auth.type='{spec.auth.type}', not 'oauth_cli'",
         )
     from uuid import uuid4
 
@@ -724,7 +724,7 @@ async def connect_cli(
     handle = auth.start_oauth_login(spec, job_id=job_id, on_line=_on_line)
     if handle is None:
         return ConnectResponse(
-            ok=False, status="error", error="login bereits aktiv oder nicht verfuegbar"
+            ok=False, status="error", error="login already active or not available"
         )
 
     if bus is not None:
@@ -736,7 +736,7 @@ async def connect_cli(
                 source_layer="clis.auth",
                 cli_name=name,
                 job_id=job_id,
-                line="Login gestartet",
+                line="Login started",
                 step="browser_open",
                 done=False,
             ),
@@ -770,19 +770,19 @@ async def disconnect_cli(name: str, request: Request) -> DisconnectResponse:
     reg = _require_registry(request)
     spec = reg.catalog().get(name)
     if spec is None:
-        raise HTTPException(status_code=404, detail=f"CLI '{name}' nicht im Katalog")
+        raise HTTPException(status_code=404, detail=f"CLI '{name}' not in catalog")
     auth = reg.auth()
     if spec.auth.type == "api_key":
         ok = auth.disconnect_api_key(spec)
         await reg.refresh_status(name)
-        return DisconnectResponse(ok=ok, error=None if ok else "Keyring-Delete fehlgeschlagen")
+        return DisconnectResponse(ok=ok, error=None if ok else "keyring delete failed")
     if spec.auth.type == "oauth_cli":
         ok, err = await auth.disconnect_oauth(spec)
         await reg.refresh_status(name)
         return DisconnectResponse(ok=ok, error=err)
     return DisconnectResponse(
         ok=False,
-        error=f"auth.type '{spec.auth.type}' unterstuetzt disconnect nicht",
+        error=f"auth.type '{spec.auth.type}' does not support disconnect",
     )
 
 
@@ -839,7 +839,7 @@ async def unregister_custom(name: str, request: Request) -> dict[str, Any]:
     reg = _require_registry(request)
     ok = reg.catalog().remove_custom(name)
     if not ok:
-        raise HTTPException(status_code=404, detail=f"Custom-CLI '{name}' existiert nicht")
+        raise HTTPException(status_code=404, detail=f"Custom CLI '{name}' does not exist")
     return {"ok": True}
 
 
@@ -847,7 +847,7 @@ async def unregister_custom(name: str, request: Request) -> dict[str, Any]:
 async def clear_usage(name: str, request: Request) -> dict[str, int]:
     reg = _require_registry(request)
     if reg.catalog().get(name) is None:
-        raise HTTPException(status_code=404, detail=f"CLI '{name}' nicht im Katalog")
+        raise HTTPException(status_code=404, detail=f"CLI '{name}' not in catalog")
     deleted = reg.usage_log().delete_for(name)
     return {"deleted": deleted}
 

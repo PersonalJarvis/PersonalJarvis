@@ -1,6 +1,6 @@
-"""Fake-CancelToken fuer Tests — strukturell kompatibel zum Protocol.
+"""Fake CancelToken for tests — structurally compatible with the protocol.
 
-Die echte Implementierung in `jarvis.control.cancel` kommt mit Task 4.
+The real implementation in `jarvis.control.cancel` lands with Task 4.
 """
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import asyncio
 
 
 class FakeCancelToken:
-    """Minimale Protocol-kompatible Implementierung mit zusaetzlichen Test-Hooks."""
+    """Minimal protocol-compatible implementation with extra test hooks."""
 
     def __init__(self) -> None:
         self._event = asyncio.Event()

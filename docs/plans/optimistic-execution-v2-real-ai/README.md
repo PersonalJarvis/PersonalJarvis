@@ -23,7 +23,7 @@ cp .env.example .env        # edit to taste; defaults to Ollama qwen2.5:7b
 python -m optimistic.server          # http://127.0.0.1:8008
 
 # 3. In another terminal, talk to it
-python demo_client.py "Erstelle eine kurze Erklaerung von Optimistic Execution."
+python demo_client.py "Erstelle eine kurze Erklaerung von Optimistic Execution."  # i18n-allow: test content — user voice utterance DE
 python demo_client.py --oops          # the missing-info self-correction scenario
 
 # 4. Run the test suite (mock LLM, no network, no Ollama needed)
@@ -97,7 +97,7 @@ FastAPI ── Talker.handle_utterance ──► instant ACK in the HTTP respons
 
 - **Routing heuristic (from v1):** a command routes to the worker only if it hits
   a tool trigger (mail/termin/…) or an action verb (`erstelle/such/zeig/…`).
-  Open questions like "Erkläre X" fall to the smalltalk path (a canned reply).
+  Open questions like "Erkläre X" fall to the smalltalk path (a canned reply). <!-- i18n-allow: test content — speech input vocabulary DE -->
   Use an action verb to exercise the LLM, or extend `registry.ACTION_VERBS`.
 - **Tests never touch the network** — they use the `mock` LLM backend and a direct
   ASGI streaming client. CI-safe, hardware-agnostic.

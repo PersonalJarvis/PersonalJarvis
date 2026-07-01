@@ -1,14 +1,14 @@
-"""Bug-C-Tests (2026-04-29): BrainTurnCompleted enthaelt provider/model.
+"""Bug-C tests (2026-04-29): BrainTurnCompleted now carries provider/model.
 
-Hintergrund: Vorher schrieb der SessionRecorder provider/model aus
-BrainTurnStarted in voice_turns. Bei Fallback-Chain (5 Provider-Versuche
-hintereinander) gewann der LETZTE Started-Event — auch wenn der Call
-crashte. Resultat: voice_turns hatte Halluzinations-Tags wie
-"openai/gpt-4o" obwohl kein OpenAI-Key existierte.
+Background: previously the SessionRecorder wrote provider/model from
+BrainTurnStarted into voice_turns. In a fallback chain (5 consecutive
+provider attempts), the LAST Started event won — even if that call
+crashed. Result: voice_turns ended up with hallucinated tags like
+"openai/gpt-4o" even though no OpenAI key existed.
 
-Fix: BrainTurnCompleted hat jetzt provider/model. Recorder zieht von dort.
-Manager.generate publisht beide Events nur wenn der Stream wirklich Daten
-lieferte.
+Fix: BrainTurnCompleted now carries provider/model. The recorder reads
+from there. Manager.generate only publishes both events when the stream
+actually delivered data.
 """
 from __future__ import annotations
 
@@ -30,14 +30,14 @@ def test_brain_turn_completed_has_provider_field() -> None:
 
 
 def test_brain_turn_completed_provider_optional() -> None:
-    """Backwards-Compat: alte Caller ohne provider/model funktionieren weiter."""
+    """Backwards-compat: old callers without provider/model keep working."""
     e = BrainTurnCompleted(tokens_in=100, tokens_out=20)
     assert e.provider == ""
     assert e.model == ""
 
 
 def test_brain_turn_started_unchanged() -> None:
-    """Schema von BrainTurnStarted bleibt rueckwaerts-kompatibel."""
+    """Schema of BrainTurnStarted stays backwards-compatible."""
     e = BrainTurnStarted(
         provider="gemini",
         model="gemini-3-flash",

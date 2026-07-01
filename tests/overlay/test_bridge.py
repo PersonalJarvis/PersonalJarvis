@@ -26,7 +26,7 @@ def test_outbox_drops_oldest_non_state_when_full() -> None:
     box.put("click", b"c1")
     box.put("click", b"c2")
     box.put("click", b"c3")
-    # Voll. Naechster click: c1 wird gedroppt.
+    # Full. Next click: c1 gets dropped.
     box.put("click", b"c4")
     assert box.dropped == 1
     assert len(box) == 3
@@ -38,8 +38,8 @@ def test_outbox_state_messages_are_protected() -> None:
     box.put("click", b"c1")
     box.put("click", b"c2")
     box.put("click", b"c3")
-    # Voll. Click drueckt rein -> aelteste non-state (c1) raus.
-    # state s1 BLEIBT.
+    # Full. Click pushes in -> oldest non-state (c1) drops out.
+    # state s1 STAYS.
     assert box.dropped == 1
     assert len(box) == 3
 
@@ -63,7 +63,7 @@ async def test_outbox_get_blocks_until_item() -> None:
 
 # -------------------------------------------------------------------------
 # emit_state / emit_action_started / emit_action_ended / emit_click /
-# emit_error — alle produzieren korrekt schema'd Envelopes auf der Queue.
+# emit_error — all produce correctly schema'd envelopes on the queue.
 # -------------------------------------------------------------------------
 
 
@@ -154,7 +154,7 @@ async def test_emit_error_produces_error_envelope() -> None:
 
 @pytest.mark.asyncio
 async def test_state_emit_caches_last_state_envelope() -> None:
-    """§10.5 Resync — last state envelope wird beim Reconnect zuerst gesendet."""
+    """§10.5 Resync — last state envelope is sent first on reconnect."""
     bridge = OverlayBridge()
     await bridge.start()
     try:

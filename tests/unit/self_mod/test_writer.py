@@ -1,12 +1,12 @@
-"""Tests für AtomicConfigWriter (Phase 7.2).
+"""Tests for AtomicConfigWriter (Phase 7.2).
 
-Plan-Akzeptanzkriterien §7.2:
-- Happy-Path-Test: Mutation persistiert, ConfigReloaded-Event feuert
-- Pre-Validation-Reject: kein Schreiben, keine Backup-Datei
-- Rollback-Test mit Monkeypatched Reload-Crash
-- Kommentar-Preservation: User-Kommentar überlebt 100 Mutationen
-- Concurrent-Test: 10 parallele Mutationen serialisieren korrekt
-- Backup-GC: nach 11 Mutationen wird älteste >30d gelöscht, letzte 10 erhalten
+Plan acceptance criteria §7.2:
+- Happy-path test: mutation persists, ConfigReloaded event fires
+- Pre-validation reject: no write, no backup file
+- Rollback test with a monkeypatched reload crash
+- Comment preservation: user comment survives 100 mutations
+- Concurrency test: 10 parallel mutations serialize correctly
+- Backup GC: after 11 mutations the oldest >30d is deleted, the last 10 are kept
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "minimal_jarvis.toml"
 
 
 def _isolated_loader(path: Path) -> JarvisConfig:
-    """Loader ohne ENV-Overrides (Test-Isolation gegen JARVIS__*)."""
+    """Loader without ENV overrides (test isolation against JARVIS__*)."""
     raw = path.read_bytes()
     if raw.startswith(b"\xef\xbb\xbf"):
         raw = raw[3:]
@@ -54,7 +54,7 @@ def _isolated_loader(path: Path) -> JarvisConfig:
 
 
 class CaptureBus:
-    """Einfacher EventBus-Stub: sammelt publishe Events in-memory."""
+    """Simple EventBus stub: collects published events in-memory."""
 
     def __init__(self) -> None:
         self.events: list[ConfigReloaded] = []
@@ -176,13 +176,13 @@ class TestHappyPath:
         writer: AtomicConfigWriter,
         fixture_path: Path,
     ) -> None:
-        """Alle anderen Felder bleiben unverändert."""
+        """All other fields remain unchanged."""
         before = _isolated_loader(fixture_path)
         writer.mutate(_make_request("tts.speed", 1.5))
         after = _isolated_loader(fixture_path)
 
         assert after.tts.speed == 1.5
-        # Beweis: alle anderen Felder identisch
+        # Proof: all other fields identical
         assert after.tts.provider == before.tts.provider
         assert after.tts.voice_de == before.tts.voice_de
         assert after.profile.name == before.profile.name
@@ -200,22 +200,22 @@ class TestCommentPreservation:
     ) -> None:
         writer.mutate(_make_request("tts.speed", 1.5))
         text = fixture_path.read_text(encoding="utf-8")
-        # Plan-Fixture-Kommentare:
-        assert "Personal Jarvis — Test-Fixture" in text
-        assert "Trailing-Kommentar" in text
-        assert "100 Mutationen" in text  # Header-Kommentar
+        # Plan fixture comments:
+        assert "Personal Jarvis — test fixture" in text
+        assert "Trailing comment" in text
+        assert "100 mutations" in text  # header comment
 
     def test_user_comments_survive_100_mutations(
         self, writer: AtomicConfigWriter, fixture_path: Path
     ) -> None:
-        """Plan-AC §7.2: User-Kommentar überlebt 100 Mutationen."""
+        """Plan-AC §7.2: user comment survives 100 mutations."""
         for i in range(100):
             value = 0.5 + (i % 10) * 0.1
             writer.mutate(_make_request("tts.speed", round(value, 2)))
         text = fixture_path.read_text(encoding="utf-8")
-        assert "Personal Jarvis — Test-Fixture" in text
-        assert "Trailing-Kommentar" in text
-        # Datei ist immer noch valide
+        assert "Personal Jarvis — test fixture" in text
+        assert "Trailing comment" in text
+        # File is still valid
         config = _isolated_loader(fixture_path)
         assert config.profile.name == "test-runner"
 
@@ -291,7 +291,7 @@ class TestPreValidateReject:
     def test_invalid_value_creates_no_backup(
         self, writer: AtomicConfigWriter, tmp_path: Path
     ) -> None:
-        """Plan-AC §7.2: Pre-Validation-Reject — kein Schreiben, keine Backup-Datei."""
+        """Plan-AC §7.2: pre-validation reject — no write, no backup file."""
         with pytest.raises(PreValidateError):
             writer.mutate(_make_request("tts.provider", ["x"]))
         backup_dir = tmp_path / "backups"
@@ -334,7 +334,7 @@ class TestReloadFailRollback:
         )
         with pytest.raises(ReloadError):
             writer.mutate(_make_request("tts.provider", "elevenlabs"))
-        # Original byte-identisch wiederhergestellt
+        # Original restored byte-identical
         assert fixture_path.read_bytes() == original_bytes
 
     def test_audit_reports_post_validate_failure(
@@ -366,8 +366,8 @@ class TestReloadFailRollback:
         tmp_path: Path,
         audit_log: SelfModAudit,
     ) -> None:
-        """Backup wird nicht entfernt, damit der User später manuell
-        recovern kann (über `rollback(backup_filename)`)."""
+        """Backup is not removed, so the user can later recover manually
+        (via `rollback(backup_filename)`)."""
 
         def crashing_loader(_path: Path) -> JarvisConfig:
             raise RuntimeError("nope")
@@ -385,7 +385,7 @@ class TestReloadFailRollback:
 
 
 # ----------------------------------------------------------------------
-# Atomic-Write-Safety (kein orphan .tmp)
+# Atomic-write safety (no orphan .tmp)
 # ----------------------------------------------------------------------
 
 
@@ -397,11 +397,11 @@ class TestAtomicWrite:
         audit_log: SelfModAudit,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Wenn `os.replace` knallt, darf kein `.tmp` neben jarvis.toml liegen.
+        """If `os.replace` blows up, no `.tmp` may be left next to jarvis.toml.
 
-        Das Backup nutzt `mkstemp` ohne `os.replace`; nur der atomic_write
-        ruft `os.replace`. Wir lassen den Backup-Pfad durchlaufen und
-        crashen erst beim Final-Replace.
+        The backup uses `mkstemp` without `os.replace`; only the atomic_write
+        calls `os.replace`. We let the backup path run through and
+        crash only at the final replace.
         """
         original_bytes = fixture_path.read_bytes()
         writer = AtomicConfigWriter(
@@ -419,11 +419,11 @@ class TestAtomicWrite:
         with pytest.raises(BackupError):
             writer.mutate(_make_request("tts.provider", "elevenlabs"))
 
-        # Original-Datei intakt (byte-identisch — replace nie passiert)
+        # Original file intact (byte-identical — replace never happened)
         assert fixture_path.read_bytes() == original_bytes
-        # Kein orphan .tmp neben jarvis.toml
+        # No orphan .tmp next to jarvis.toml
         orphans = list(fixture_path.parent.glob("jarvis.toml.*.tmp"))
-        assert orphans == [], f"Orphan-tmp gefunden: {orphans}"
+        assert orphans == [], f"Orphan tmp found: {orphans}"
 
 
 # ----------------------------------------------------------------------
@@ -438,7 +438,7 @@ class TestBackupGC:
         tmp_path: Path,
         audit_log: SelfModAudit,
     ) -> None:
-        """Prompt-AC: 51 Sets mit max=50 → genau 50 erhalten."""
+        """Prompt-AC: 51 sets with max=50 → exactly 50 retained."""
         writer = AtomicConfigWriter(
             config_path=fixture_path,
             backup_dir=tmp_path / "backups",
@@ -458,18 +458,18 @@ class TestBackupGC:
         tmp_path: Path,
         audit_log: SelfModAudit,
     ) -> None:
-        """Plan-AC §7.2: nach 11 Mutationen ist die älteste >30d gelöscht,
-        die letzten 10 erhalten."""
+        """Plan-AC §7.2: after 11 mutations, the oldest >30d is deleted,
+        the last 10 are kept."""
         writer = AtomicConfigWriter(
             config_path=fixture_path,
             backup_dir=tmp_path / "backups",
-            max_backups=100,  # Cap aushebeln, nur Age-GC testen
+            max_backups=100,  # bypass the cap, test only age-based GC
             backup_min_keep=10,
             backup_max_age_days=30,
             audit=audit_log,
             config_loader=_isolated_loader,
         )
-        # 11 Mutationen
+        # 11 mutations
         for i in range(11):
             writer.mutate(_make_request("tts.speed", 1.0 + i * 0.001))
         backups = sorted(
@@ -478,17 +478,17 @@ class TestBackupGC:
         )
         assert len(backups) == 11
 
-        # Älteste auf >30 Tage altern
+        # Age the oldest one to >30 days
         ancient = time.time() - 31 * 86400
         os.utime(backups[0], (ancient, ancient))
 
-        # Erneute Mutation triggert GC
+        # Another mutation triggers GC
         writer.mutate(_make_request("tts.speed", 1.99))
         remaining = sorted(
             (tmp_path / "backups").glob("jarvis.toml.*.bak"),
             key=lambda p: p.stat().st_mtime,
         )
-        # Alte Datei (31 Tage) gelöscht, weil >min_keep nach Cap-Check
+        # Old file (31 days) deleted because >min_keep after the cap check
         assert backups[0] not in remaining
 
     def test_min_keep_floor_protects_against_aggressive_gc(
@@ -497,7 +497,7 @@ class TestBackupGC:
         tmp_path: Path,
         audit_log: SelfModAudit,
     ) -> None:
-        """Selbst wenn alle Backups ancient wären, min_keep schützt die letzten 10."""
+        """Even if all backups were ancient, min_keep protects the last 10."""
         writer = AtomicConfigWriter(
             config_path=fixture_path,
             backup_dir=tmp_path / "backups",
@@ -511,13 +511,13 @@ class TestBackupGC:
             writer.mutate(_make_request("tts.speed", 1.0 + i * 0.001))
 
         backup_dir = tmp_path / "backups"
-        # Alle Backups künstlich altern
+        # Artificially age all backups
         ancient = time.time() - 100 * 86400
         for path in backup_dir.glob("jarvis.toml.*.bak"):
             os.utime(path, (ancient, ancient))
 
         writer.mutate(_make_request("tts.speed", 9.99))
-        # Min-Keep: 10 + 1 (frische) sollte erhalten bleiben
+        # Min-keep: 10 + 1 (fresh) should be retained
         remaining = list(backup_dir.glob("jarvis.toml.*.bak"))
         assert len(remaining) >= 10
 
@@ -542,8 +542,8 @@ class TestConcurrencyDifferentPaths:
             config_loader=_isolated_loader,
         )
 
-        # Plan-AC §7.2: 10 parallele Mutationen serialisieren korrekt.
-        # Wir mischen ALLOWED-Pfade durch.
+        # Plan-AC §7.2: 10 parallel mutations serialize correctly.
+        # We mix ALLOWED paths together.
         targets: list[tuple[str, Any]] = [
             ("tts.speed", 1.0),
             ("tts.provider", "elevenlabs"),
@@ -566,13 +566,13 @@ class TestConcurrencyDifferentPaths:
         for thread in threads:
             thread.join()
 
-        # 10 Backups, 10 Audit-Einträge, Datei ist valide
+        # 10 backups, 10 audit entries, file is valid
         backups = list((tmp_path / "backups").glob("jarvis.toml.*.bak"))
         assert len(backups) == 10
         entries = _read_audit_lines(audit_log)
         assert len(entries) == 10
         assert all(e["ok"] is True for e in entries)
-        # Datei lädt ohne Fehler
+        # File loads without error
         _isolated_loader(fixture_path)
 
 
@@ -594,7 +594,7 @@ class TestConcurrencySamePath:
 
         def worker(value: float) -> None:
             writer.mutate(_make_request("tts.speed", value))
-            # Nach dem mutate ist tts.speed == value (oder bereits überschrieben)
+            # After the mutate, tts.speed == value (or already overwritten)
             with lock:
                 results.append(value)
 
@@ -605,11 +605,11 @@ class TestConcurrencySamePath:
         t1.join()
         t2.join()
 
-        # Beide Mutationen sind Audit + Backup
+        # Both mutations have audit + backup
         assert len(_read_audit_lines(audit_log)) == 2
         assert len(list((tmp_path / "backups").glob("jarvis.toml.*.bak"))) == 2
 
-        # Final-Wert ist einer der beiden
+        # Final value is one of the two
         config = _isolated_loader(fixture_path)
         assert config.tts.speed in (1.25, 1.75)
 
@@ -662,7 +662,7 @@ class TestRollbackPublic:
 
         writer.rollback(first_backup_filename)
         config = _isolated_loader(fixture_path)
-        # Erstes Backup zeigt auf den Stand VOR der ersten Mutation (also 1.0)
+        # First backup points to the state BEFORE the first mutation (i.e. 1.0)
         assert config.tts.speed == 1.0
 
     def test_rollback_path_traversal_blocked(
@@ -699,10 +699,10 @@ class TestBusDispatchInRunningLoop:
             bus=bus,  # type: ignore[arg-type]
             config_loader=_isolated_loader,
         )
-        # mutate() ist sync. Der Dispatch-Pfad muss `get_running_loop`
-        # erkennen und via create_task scheduln.
+        # mutate() is sync. The dispatch path must detect `get_running_loop`
+        # and schedule via create_task.
         writer.mutate(_make_request("tts.speed", 1.42))
-        # Dem create_task einen Tick zum Laufen geben
+        # Give create_task one tick to run
         await asyncio.sleep(0.05)
         assert len(bus.events) == 1
         assert bus.events[0].changed_keys == ("tts.speed",)

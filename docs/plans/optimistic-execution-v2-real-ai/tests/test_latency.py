@@ -25,13 +25,13 @@ ROUTER_SAMPLES = [
     "mach mal lauter",
     "mach die Adjusties",
     "Schreib Max eine E-Mail",
-    "Maile dem Team den Status",
-    "Trag morgen einen Termin ein",
-    "Lad das Dokument auf Drive hoch",
-    "Erzähl mir einen Witz",
-    "Buche mir einen Flug nach Berlin",
-    "öffne die Projektseite",
-    "Wie spät ist es?",
+    "Maile dem Team den Status",  # i18n-allow: test content — user voice utterance DE
+    "Trag morgen einen Termin ein",  # i18n-allow: test content — user voice utterance DE
+    "Lad das Dokument auf Drive hoch",  # i18n-allow: test content — user voice utterance DE
+    "Erzähl mir einen Witz",  # i18n-allow: test content — user voice utterance DE
+    "Buche mir einen Flug nach Berlin",  # i18n-allow: test content — user voice utterance DE
+    "öffne die Projektseite",  # i18n-allow: test content — user voice utterance DE
+    "Wie spät ist es?",  # i18n-allow: test content — user voice utterance DE
     "spiel Spotify ab",
     "leiser bitte",
     "schreib eine Notiz",
@@ -61,7 +61,7 @@ def test_ack_emitted_before_worker_completes() -> None:
         oops = OopsProtocol(bus)
         talker = Talker(bus, worker=worker, oops=oops)
 
-        await talker.handle_utterance("Schreib eine Mail an das Team über den Launch")
+        await talker.handle_utterance("Schreib eine Mail an das Team über den Launch")  # i18n-allow: test content — user voice utterance DE
         assert flight.has(AckEmitted), "ACK must exist the instant handle_utterance returns"
         assert not flight.has(WorkerCompleted), "worker must not have completed yet (AD-OE1)"
         await worker.drain()
@@ -78,7 +78,7 @@ def test_p95_ack_latency_under_budget() -> None:
             oops = OopsProtocol(bus)
             talker = Talker(bus, worker=worker, oops=oops)
             t0 = time.perf_counter()
-            await talker.handle_utterance(f"Schreib eine Mail an das Team ueber Thema {i}")
+            await talker.handle_utterance(f"Schreib eine Mail an das Team ueber Thema {i}")  # i18n-allow: test content — user voice utterance DE
             latencies.append(time.perf_counter() - t0)
             await worker.drain()
         p95 = percentile(latencies, 95)

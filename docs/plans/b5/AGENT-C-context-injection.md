@@ -16,7 +16,7 @@ Latency is sacred here. The voice path budget is ~1.5 s p95 for the whole turn. 
 
 1. **Unit tests for `WikiContextInjector` pass**, including the latency-budget short-circuit, the no-keyword case, the no-hits case, and the prompt-augmentation case.
 2. **Pre-flight unit-test suite stays at baseline failure count.**
-3. **Live voice demo (Wave 2):** with the same `Alex.md` note as Agent B's demo, asking "Was weißt du über Alex?" produces a brain answer that includes "1985", **even if `wiki-recall` is not explicitly called by the brain**. Verified by checking `data/jarvis_desktop.log` for a `WikiContextInjector injected=` line right before the brain call.
+3. **Live voice demo (Wave 2):** with the same `Alex.md` note as Agent B's demo, asking "Was weißt du über Alex?" <!-- i18n-allow: live voice-demo utterance, real speech input example --> produces a brain answer that includes "1985", **even if `wiki-recall` is not explicitly called by the brain**. Verified by checking `data/jarvis_desktop.log` for a `WikiContextInjector injected=` line right before the brain call.
 4. **No measurable regression in tier-1 voice latency** — your hook adds < 20 ms p50 to `BrainManager.generate` when vault has 5 notes.
 
 ---
@@ -177,8 +177,8 @@ python -m pytest tests/unit/brain/test_wiki_context.py -v -k timeout
 Free-form Markdown, final line **must be exactly**:
 
 ```
-Goal erfüllt: ja — Grund: <one sentence>
-Goal erfüllt: nein — Grund: <one sentence>
+Goal fulfilled: yes — Reason: <one sentence>
+Goal fulfilled: no — Reason: <one sentence>
 ```
 
 Recommended sections: Files changed · What I did · Assumptions made (especially around the stopword list and the keyword heuristic — these are judgment calls) · Verification (paste §9 outputs) · Open follow-ups · the mandatory line.

@@ -1,27 +1,27 @@
-"""VisionContextProvider - Background-Cache frischer Screen-Observations.
+"""VisionContextProvider - background cache of fresh screen observations.
 
-Hybrid-Refresh-Strategie: Ein async Background-Task refresht alle
-`refresh_interval_s` ueber `VisionEngine.observe(mode=capture_mode)` und
-haelt die letzte Observation im Cache. `current()` liefert sie sofort -
-oder forced einen Fresh-Capture wenn der Cache aelter als
-`max_staleness_s` ist (Liveness-Garantie).
+Hybrid refresh strategy: an async background task refreshes every
+`refresh_interval_s` via `VisionEngine.observe(mode=capture_mode)` and
+keeps the latest observation in the cache. `current()` returns it
+immediately - or forces a fresh capture if the cache is older than
+`max_staleness_s` (the liveness guarantee).
 
 Lifecycle:
     provider = VisionContextProvider(engine, bus=bus)
-    await provider.start()       # Task laeuft
+    await provider.start()       # task is running
     obs = await provider.current()
-    provider.pause()             # Privacy-Toggle
+    provider.pause()             # privacy toggle
     provider.resume()
-    await provider.stop()        # Task canceled, < 500ms
+    await provider.stop()        # task canceled, < 500ms
 
-Pausiert `current()` wirft `VisionPaused`. Exceptions im Loop werden
-geloggt, Loop laeuft weiter (stirbt nur via stop()).
+While paused, `current()` raises `VisionPaused`. Exceptions in the loop are
+logged; the loop keeps running (it only dies via stop()).
 
-Design-Notiz (Reality-Check: Provider.start() sync-startbar): `start()`
-ist zwar `async def`, macht aber nur `asyncio.create_task(...)` - das
-laeuft in jedem Event-Loop-Kontext und blockiert nicht. Wer den Provider
-aus sync-Code startet, kann `asyncio.run(provider.start())` nutzen oder
-den Task spaeter in seinem eigenen Loop erzeugen.
+Design note (reality check: Provider.start() is sync-startable): `start()`
+is declared `async def`, but only does `asyncio.create_task(...)` - that
+runs in any event-loop context and does not block. Anyone starting the
+provider from sync code can use `asyncio.run(provider.start())` or create
+the task later in their own loop.
 """
 from __future__ import annotations
 
@@ -42,16 +42,16 @@ CaptureMode = Literal["auto", "screenshot", "ui_tree", "composite"]
 
 
 class VisionPaused(RuntimeError):
-    """Raised by VisionContextProvider.current() wenn pausiert."""
+    """Raised by VisionContextProvider.current() while paused."""
 
 
 class VisionContextProvider:
-    """Background-Cache-Layer vor einer VisionEngine.
+    """Background cache layer in front of a VisionEngine.
 
-    Haelt die juengste Observation im Speicher und refresht sie periodisch
-    im Hintergrund. Konsumenten bekommen so Screen-Kontext ohne die
-    Latenz eines frischen Captures - es sei denn der Cache ist aelter
-    als `max_staleness_s`, dann wird synchron nachgezogen.
+    Keeps the most recent observation in memory and refreshes it
+    periodically in the background. Consumers thus get screen context
+    without the latency of a fresh capture - unless the cache is older
+    than `max_staleness_s`, in which case it catches up synchronously.
     """
 
     def __init__(
@@ -76,9 +76,9 @@ class VisionContextProvider:
     # ---------- Lifecycle ----------
 
     async def start(self) -> None:
-        """Startet den Background-Refresh-Loop auf dem aktuellen Event-Loop.
+        """Starts the background refresh loop on the current event loop.
 
-        Idempotent: Mehrfacher Aufruf ohne vorheriges stop() ist ein No-op.
+        Idempotent: calling it again without a prior stop() is a no-op.
         """
         if self._task is not None and not self._task.done():
             return
@@ -89,9 +89,9 @@ class VisionContextProvider:
         )
 
     async def stop(self) -> None:
-        """Cancelt den Loop und wartet max 500ms auf sauberes Beenden.
+        """Cancels the loop and waits at most 500ms for a clean shutdown.
 
-        Nach stop() ist der Provider wieder startbar via start().
+        After stop(), the provider is startable again via start().
         """
         self._stopping = True
         t = self._task
@@ -110,17 +110,17 @@ class VisionContextProvider:
     # ---------- Public Access ----------
 
     async def current(self, *, force_refresh: bool = False) -> Observation:
-        """Liefert aktuellste Observation.
+        """Returns the most recent observation.
 
-        Forced einen frischen Capture wenn (a) explizit via `force_refresh`,
-        (b) noch keine Observation vorliegt oder (c) die vorhandene aelter
-        als `max_staleness_s` ist.
+        Forces a fresh capture if (a) explicitly via `force_refresh`,
+        (b) no observation exists yet, or (c) the existing one is older
+        than `max_staleness_s`.
 
         Raises:
-            VisionPaused: wenn der Provider gerade pausiert ist.
+            VisionPaused: if the provider is currently paused.
         """
         if self._paused:
-            raise VisionPaused("Vision pausiert")
+            raise VisionPaused("Vision paused")
         need_fresh = (
             force_refresh
             or self._latest is None
@@ -140,11 +140,11 @@ class VisionContextProvider:
         return self._latest
 
     def pause(self) -> None:
-        """Privacy-Toggle: Loop refresht nicht, current() wirft VisionPaused."""
+        """Privacy toggle: the loop stops refreshing, current() raises VisionPaused."""
         self._paused = True
 
     def resume(self) -> None:
-        """Hebt pause() auf. Loop refresht beim naechsten Tick wieder."""
+        """Undoes pause(). The loop resumes refreshing on the next tick."""
         self._paused = False
 
     @property
@@ -157,28 +157,28 @@ class VisionContextProvider:
 
     @property
     def latest(self) -> Observation | None:
-        """Letzte gecachte Observation ohne Refresh-Check (kann stale sein)."""
+        """Last cached observation without a refresh check (may be stale)."""
         return self._latest
 
     # ---------- Internals ----------
 
     @staticmethod
     def _age_s(obs: Observation) -> float:
-        """Alter der Observation in Sekunden, geclampt auf >= 0."""
+        """Age of the observation in seconds, clamped to >= 0."""
         return max(0.0, time.time_ns() / 1e9 - obs.timestamp_ns / 1e9)
 
     async def _refresh_loop(self) -> None:
-        """Background-Task: periodisch observe() aufrufen und cachen.
+        """Background task: periodically call observe() and cache the result.
 
-        Exceptions werden geloggt aber nicht propagiert - der Loop stirbt
-        ausschliesslich ueber stop() (-> CancelledError).
+        Exceptions are logged but not propagated - the loop only dies via
+        stop() (-> CancelledError).
 
-        Error-Logging: die ERSTE Exception (oder erste nach 5 aufeinander
-        folgenden Fehlern) wird als `error` mit Stacktrace geloggt, damit sie
-        im Flight-Recorder + UI sichtbar ist. Weitere gleichartige Fehler
-        werden nur als `warning` ohne Trace reported, damit die Logs nicht
-        fluten (typischer Fall: mss scheitert wegen RDP-Lock-Screen und
-        wiederholt sich alle 2s bis zum Unlock).
+        Error logging: the FIRST exception (or the first after 5 consecutive
+        failures) is logged as `error` with a stack trace, so it's visible in
+        the flight recorder + UI. Further errors of the same kind are only
+        reported as `warning` without a trace, so the logs don't flood
+        (typical case: mss fails due to an RDP lock screen and repeats every
+        2s until unlock).
 
         None return from engine.observe(): ScreenshotSource already handled the
         BitBlt error (logged once), returning None means "skip this frame".
@@ -198,7 +198,7 @@ class VisionContextProvider:
                         self._latest = obs
                         if consecutive_errors > 0:
                             log.info(
-                                "VisionContextProvider recovered nach %d Fehlern.",
+                                "VisionContextProvider recovered after %d errors.",
                                 consecutive_errors,
                             )
                         consecutive_errors = 0
@@ -206,7 +206,7 @@ class VisionContextProvider:
                 raise
             except Exception as exc:  # noqa: BLE001
                 consecutive_errors += 1
-                # Erster Fehler sowie jeder 5. Folgefehler: laut mit Trace.
+                # The first error and every 5th subsequent one: log loudly with a trace.
                 if consecutive_errors == 1 or consecutive_errors % 5 == 0:
                     log.error(
                         "VisionContextProvider Loop-Exception (#%d): %s "

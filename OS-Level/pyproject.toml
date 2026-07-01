@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "overlay"
 version = "0.1.0"
-description = "OS-Level Edge-Glow Overlay für Personal Jarvis (Phase 9)"
+description = "OS-Level Edge-Glow Overlay for Personal Jarvis (Phase 9)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }
-authors = [{ name = "Ruben Lütke" }]
+authors = [{ name = "Ruben Lütke" }]  # i18n-allow: personal name, not translatable prose
 dependencies = [
     "PySide6>=6.7",
     "websockets>=12",

@@ -62,7 +62,7 @@ def test_cardless_mcp_dropped_on_unrelated_flight_turn():
     kept = [
         t.name
         for t in filter_plugin_tools(
-            "Was ist der kürzeste Flug von München nach Bora Bora?", tools
+            "Was ist der kürzeste Flug von München nach Bora Bora?", tools  # i18n-allow: simulated German user utterance, content under test
         )
     ]
     assert "search_web" in kept  # native tool survives
@@ -129,7 +129,7 @@ def test_cardless_mcp_kept_when_user_names_it():
     tools = [_Tool("notebooklm-mcp/notebook_query"), _Tool("search_web")]
     for utter in (
         "ask NotebookLM about my sources",
-        "frag das Notebook LM nach der Zusammenfassung",
+        "frag das Notebook LM nach der Zusammenfassung",  # i18n-allow: simulated German user utterance, content under test
         "use notebook-lm for this",
     ):
         kept = [t.name for t in filter_plugin_tools(utter, tools)]
@@ -152,7 +152,7 @@ def test_carded_plugin_kept_when_relevant():
 
 def test_carded_plugin_dropped_on_unrelated_turn():
     tools = _heavy("github", 37) + _heavy("linear", 35) + [_Tool("run-shell")]
-    kept = [t.name for t in filter_plugin_tools("erzähl mir einen witz", tools)]
+    kept = [t.name for t in filter_plugin_tools("erzähl mir einen witz", tools)]  # i18n-allow: simulated German user utterance, content under test
     assert "run-shell" in kept
     assert all(
         not n.startswith("github/") and not n.startswith("linear/") for n in kept
@@ -161,7 +161,7 @@ def test_carded_plugin_dropped_on_unrelated_turn():
 
 def test_native_tools_never_touched():
     tools = [_Tool("run-shell"), _Tool("screen-snapshot"), _Tool("github/create_issue")]
-    kept = [t.name for t in filter_plugin_tools("erzähl einen witz", tools)]
+    kept = [t.name for t in filter_plugin_tools("erzähl einen witz", tools)]  # i18n-allow: simulated German user utterance, content under test
     assert "run-shell" in kept and "screen-snapshot" in kept  # native always kept
     assert all("github/" not in n for n in kept)  # irrelevant plugin dropped
 

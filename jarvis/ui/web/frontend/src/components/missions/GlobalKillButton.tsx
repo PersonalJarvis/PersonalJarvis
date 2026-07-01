@@ -1,9 +1,9 @@
 /**
- * Top-Bar-Button: cancelt ALLE non-terminalen Missions.
+ * Top-bar button: cancels ALL non-terminal missions.
  *
- * shadcn-AlertDialog ist nicht installiert (siehe Brief), darum bauen wir das
- * Confirmation-Modal selbst — basierend auf den vorhandenen Card-Primitives.
- * Ein Wrapper-Backdrop + Esc/Outside-Click schliesst, "Bestaetigen" cancelled.
+ * shadcn's AlertDialog isn't installed (see the brief), so we build the
+ * confirmation modal ourselves — based on the existing Card primitives.
+ * A wrapper backdrop + Esc/outside click closes it, "Confirm" cancels.
  */
 import { useEffect, useState } from "react";
 import { AlertTriangle, Loader2, Skull } from "lucide-react";

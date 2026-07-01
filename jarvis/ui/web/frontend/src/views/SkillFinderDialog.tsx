@@ -36,9 +36,9 @@ interface SkillFinderDialogProps {
 }
 
 /**
- * Interaktiver Skill-Finder: Mini-Agent, der den kuratierten Katalog
- * filtert und das Brain zum Ranken nutzt. Die Dropdown-Felder mappen
- * auf Backend-Filter (trust, min_stars, category, language, max_risk).
+ * Interactive skill finder: a mini-agent that filters the curated catalog
+ * and uses the brain for ranking. The dropdown fields map to
+ * backend filters (trust, min_stars, category, language, max_risk).
  */
 export function SkillFinderDialog({ open, onClose }: SkillFinderDialogProps) {
   const t = useT();
@@ -120,13 +120,12 @@ export function SkillFinderDialog({ open, onClose }: SkillFinderDialogProps) {
               <Sparkles className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold">Skill-Finder</h2>
+              <h2 className="text-lg font-semibold">{t("skill_finder_dialog.title")}</h2>
               <p className="text-xs text-muted-foreground">
-                Beschreibe, was du brauchst — der Mini-Agent sucht im Katalog
-                und rankt per KI.
+                {t("skill_finder_dialog.subtitle")}
                 {brainUsed && (
                   <span className="ml-2 text-primary">
-                    • Brain-Ranking aktiv
+                    • {t("skill_finder_dialog.brain_ranking_active")}
                   </span>
                 )}
               </p>
@@ -297,7 +296,7 @@ export function SkillFinderDialog({ open, onClose }: SkillFinderDialogProps) {
 }
 
 // ----------------------------------------------------------------------
-// Dropdown-Picker (native <details>-basiert, kein Radix-Dependency)
+// Dropdown picker (native <details>-based, no Radix dependency)
 // ----------------------------------------------------------------------
 
 interface DropdownOption {

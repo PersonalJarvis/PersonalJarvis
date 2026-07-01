@@ -29,8 +29,8 @@ A connected Marketplace plugin reaches **only** the heavy `claude-cli`
 actually holds the conversation never sees the plugin as a callable tool. And the
 only way the router reaches the worker — the force-spawn heuristic — runs in
 `strict` mode (`manager.py:1552-1554`), firing only on explicit heavy-work
-keywords ("spawn", "deep dive", "OpenClaw", "gründliche Recherche") and only when
-`brain.primary` is `claude-api`/`gemini`. So a casual "was habe ich heute für
+keywords ("spawn", "deep dive", "OpenClaw", "gründliche Recherche") and only when <!-- i18n-allow: German input vocabulary -->
+`brain.primary` is `claude-api`/`gemini`. So a casual "was habe ich heute für <!-- i18n-allow: quoted German voice-input example -->
 Termine?" produces **nothing**.
 
 **Symptom in the user's words:** "he doesn't actively call these things, and when
@@ -147,7 +147,7 @@ Tokens stay in the keyring, injected at client construction, **never** in tool
 args or descriptions (AP-2). Where the API supports it, deletes/writes are
 reversible (e.g. Calendar event recovery) — surfaced, not prompted.
 
-## 6. Data flow — "was habe ich heute für Termine?"
+## 6. Data flow — "was habe ich heute für Termine?" <!-- i18n-allow: quoted German voice-input example -->
 
 ```
 Utterance → router turn
@@ -237,7 +237,7 @@ worker; the Plugins tab honestly reflects callability.
 - Contract: each `MCPToolAdapter`-wrapped plugin tool passes the Tool contract.
 - Integration: connect a fake plugin → tool appears in the live brain surface →
   call returns data inline; disconnect → tool gone, no restart.
-- E2E (pilot): "was habe ich heute für Termine?" → Calendar read inline, on both
+- E2E (pilot): "was habe ich heute für Termine?" → Calendar read inline, on both <!-- i18n-allow: quoted German voice-input example -->
   voice and chat paths, through `scrub_for_voice`.
 - Regression: parity test for any new wire enum; assert `plugin-tools` never
   enters a worker tool-set (AP-5/AP-14 guard).

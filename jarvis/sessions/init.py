@@ -1,7 +1,7 @@
-"""Bootstrap fuer den Voice-Session-Recorder.
+"""Bootstrap for the voice-session recorder.
 
-Wird beim App-Start aus ``jarvis/ui/web/server.py`` aufgerufen,
-analog zu ``bootstrap_missions`` (Phase 6).
+Called at app startup from ``jarvis/ui/web/server.py``,
+analogous to ``bootstrap_missions`` (Phase 6).
 """
 from __future__ import annotations
 
@@ -25,14 +25,14 @@ def bootstrap_sessions(
     enabled: bool = True,
     retention_days: int = 30,
 ) -> dict[str, Any]:
-    """Initialisiert SessionStore + SessionRecorder, dockt am Bus an.
+    """Initializes SessionStore + SessionRecorder and attaches them to the bus.
 
     Args:
-        bus: Der Haupt-EventBus der Desktop-App.
-        db_path: Pfad zur sessions.db (Default: ``data/sessions.db``).
-        enabled: Wenn False, gibt ``None``-Recorder zurueck (Feature off).
-        retention_days: Sessions aelter als N Tage werden beim Bootstrap
-            entfernt. ``0`` deaktiviert das Pruning.
+        bus: The desktop app's main EventBus.
+        db_path: Path to sessions.db (default: ``data/sessions.db``).
+        enabled: If False, returns a ``None`` recorder (feature off).
+        retention_days: Sessions older than N days are removed at
+            bootstrap. ``0`` disables pruning.
 
     Returns:
         ``{"store": SessionStore | None, "recorder": SessionRecorder | None}``.
@@ -48,10 +48,10 @@ def bootstrap_sessions(
     if pruned:
         log.info("SessionRecorder: pruned %d sessions older than %d days", pruned, retention_days)
 
-    # Crash-Recovery: Sessions ohne ended_ms stammen aus einem nicht
-    # sauberen Shutdown des Vorgaenger-Prozesses (Hard-Kill, Crash). Ohne
-    # diese Bereinigung erscheinen sie permanent als "laeuft" in der UI.
-    # Mark sie als "shutdown" mit ended_ms = startup-Zeit.
+    # Crash recovery: sessions without ended_ms stem from an unclean
+    # shutdown of the previous process (hard kill, crash). Without
+    # this cleanup they would show up permanently as "running" in the UI.
+    # Mark them as "shutdown" with ended_ms = startup time.
     import time as _time
     open_ids = store.list_open_sessions()
     for sid in open_ids:
@@ -60,7 +60,7 @@ def bootstrap_sessions(
                 session_id=sid,
                 ended_ms=int(_time.time() * 1000),
                 hangup_reason=HANGUP_SHUTDOWN,
-                turn_count=0,  # konservativ: Aggregate kennen wir nicht
+                turn_count=0,  # conservative: we don't know the aggregates
                 total_cost_usd=0.0,
                 total_tokens_in=0,
                 total_tokens_out=0,
@@ -79,7 +79,7 @@ def bootstrap_sessions(
 
 
 def shutdown_sessions(bootstrap_result: dict[str, Any]) -> None:
-    """Schliesst den Store sauber. Recorder hat keinen eigenen State zum Cleanup."""
+    """Closes the store cleanly. The recorder has no own state to clean up."""
     store: SessionStore | None = bootstrap_result.get("store")
     if store is not None:
         try:

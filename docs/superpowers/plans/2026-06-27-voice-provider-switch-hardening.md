@@ -261,7 +261,7 @@ In `jarvis/brain/voice_command_gate.py`, replace the `_PROVIDER_PATTERN` definit
 ```python
 _PROVIDER_PATTERN = re.compile(
     r"\b(?:wechsel[n]?|wechsle|switch(?:\s+to)?|benutze?|nutze|use|nimm)"
-    r"(?:\s+(?:den|die|das|der|the|deinen|deine|dein|meinen|meine|mein|my))?"
+    r"(?:\s+(?:den|die|das|der|the|deinen|deine|dein|meinen|meine|mein|my))?"  # i18n-allow: German input vocabulary
     r"(?:\s+(?:brain[-\s]*provider|provider|anbieter|sprach[-\s]*modell|modell|model))?"
     # Optional "von/from <source>" so "switch FROM gemini TO openai" targets the
     # destination after auf/zu/to, not the source (forensic 2026-06-27).

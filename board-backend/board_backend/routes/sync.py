@@ -1,13 +1,13 @@
-"""``POST /api/v1/sync`` — signed Stats-Push.
+"""``POST /api/v1/sync`` — signed stats push.
 
-Auth via ``require_signed_request`` (Pubkey + Sig + Replay-Window).
-PII-Filter via Pydantic-``extra='forbid'`` im ``SyncPayload``.
+Auth via ``require_signed_request`` (pubkey + signature + replay window).
+PII filter via Pydantic ``extra='forbid'`` on ``SyncPayload``.
 
-Schreibt:
-- ``identity.display_name`` + ``identity.bio`` werden bei jedem Push
-  aktualisiert (Plan §C-Decision-2: display_name pro Push).
-- ``identity.last_sync_at`` wird gesetzt.
-- ``push_log`` bekommt eine Audit-Zeile mit Counts (kein Inhalt).
+Writes:
+- ``identity.display_name`` + ``identity.bio`` are updated on every push
+  (Plan §C-Decision-2: display_name per push).
+- ``identity.last_sync_at`` is set.
+- ``push_log`` gets an audit row with counts (no content).
 """
 from __future__ import annotations
 
@@ -30,14 +30,14 @@ def sync(
     request: Request,
     auth: SignedAuth = Depends(require_signed_request),
 ) -> SyncAck:
-    # Pydantic validiert das Body-Dict — extra-keys wie "text" oder
-    # "transcript" → 422 mit "Extra inputs are not permitted".
+    # Pydantic validates the body dict — extra keys such as "text" or
+    # "transcript" → 422 with "Extra inputs are not permitted".
     try:
         body = SyncPayload.model_validate(auth.payload)
     except ValidationError as exc:
-        # Bewusst 422 mit detaillierter Pydantic-Message — der Client kann
-        # daraus lernen, welches Feld er nicht haette schicken sollen.
-        # Aber niemals den Body selbst echoen — nur die Pfade.
+        # Deliberately 422 with a detailed Pydantic message — the client
+        # can learn from it which field it should not have sent.
+        # But never echo the body itself — only the paths.
         forbidden = [
             ".".join(str(x) for x in err["loc"])
             for err in exc.errors() if err.get("type") == "extra_forbidden"
@@ -54,7 +54,7 @@ def sync(
     with get_db(request) as session:
         ident = session.get(Identity, auth.identity.pubkey)
         if ident is None:
-            # Race: zwischen Auth und hier wurde die Identity geloescht.
+            # Race: the identity was deleted between auth and here.
             raise HTTPException(status_code=401, detail="identity revoked")
         ident.display_name = body.display_name
         ident.last_sync_at = received_at

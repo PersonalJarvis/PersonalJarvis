@@ -1,4 +1,4 @@
-"""Live Computer-Use smoke — the user-reported "Öffne Chrome" failure case.
+"""Live Computer-Use smoke — the user-reported "Öffne Chrome" failure case.  # i18n-allow: quotes the real German user command that reproduces the bug
 
 Drives the REAL wired ComputerUseHarness end-to-end with the exact goal that
 used to fail (the agent typed "Chrome" into a search box, never clicked the
@@ -64,7 +64,7 @@ def foreground_title() -> str:
 
 async def main() -> int:
     print("=" * 64)
-    print('LIVE COMPUTER-USE SMOKE — goal: "Öffne Chrome"')
+    print('LIVE COMPUTER-USE SMOKE — goal: "Öffne Chrome"')  # i18n-allow: quotes the real German user command under test
     print("=" * 64)
 
     pids_before = chrome_pids()
@@ -98,7 +98,7 @@ async def main() -> int:
         return 3
 
     task = HarnessTask(
-        prompt="Öffne Chrome",
+        prompt="Öffne Chrome",  # i18n-allow: simulated German user command under test
         timeout_s=180,
         risk_tier="monitor",
         allow_computer_use=True,

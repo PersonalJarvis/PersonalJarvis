@@ -1,4 +1,4 @@
-"""Tests fuer MissionDecomposer (Heuristik + LLM-Pfad)."""
+"""Tests for MissionDecomposer (heuristic + LLM path)."""
 from __future__ import annotations
 
 import json
@@ -50,12 +50,12 @@ def test_mission_plan_max_steps_enforced() -> None:
         MissionPlan(steps=too_many, n_workers=MAX_STEPS + 1)
 
 
-# --- Heuristik: short prompt ---
+# --- Heuristic: short prompt ---
 
 
 @pytest.mark.asyncio
 async def test_short_prompt_returns_single_step_no_brain() -> None:
-    """Kein BrainCaller noetig wenn Prompt < 200 chars."""
+    """No BrainCaller needed when prompt < 200 chars."""
     d = MissionDecomposer(brain=None)
     plan = await d.decompose("Build palindrome function")
     assert len(plan.steps) == 1
@@ -65,7 +65,7 @@ async def test_short_prompt_returns_single_step_no_brain() -> None:
 
 @pytest.mark.asyncio
 async def test_short_prompt_skips_brain_even_if_provided() -> None:
-    """Heuristik trumpft LLM-Call (Latenz-Sparen)."""
+    """Heuristic beats an LLM call (saves latency)."""
     called: list[str] = []
 
     async def brain(p: str) -> str:
@@ -77,13 +77,13 @@ async def test_short_prompt_skips_brain_even_if_provided() -> None:
     assert called == []
 
 
-# --- Heuristik: external markers ---
+# --- Heuristic: external markers ---
 
 
 @pytest.mark.asyncio
 async def test_long_prompt_with_one_marker_single_step() -> None:
-    """Lang aber nur 1 marker -> single step (kein parallel-split sinnvoll)."""
-    long_prompt = "Bitte oeffne mir das github repo openhands-cli und " * 5
+    """Long but only 1 marker -> single step (no parallel split makes sense)."""
+    long_prompt = "Please open the github repo openhands-cli for me and " * 5
     long_prompt += "x" * 100
     assert len(long_prompt) > SHORT_PROMPT_CHAR_LIMIT
     d = MissionDecomposer(brain=None)
@@ -105,7 +105,7 @@ async def test_whitespace_prompt_raises() -> None:
         await d.decompose("   \n\t  ")
 
 
-# --- LLM-Pfad ---
+# --- LLM path ---
 
 
 def _valid_plan_json() -> str:
@@ -141,12 +141,12 @@ async def test_llm_path_returns_multi_step_plan() -> None:
         captured.append(p)
         return _valid_plan_json()
 
-    # Long prompt mit 3+ markers -> LLM-Pfad
+    # Long prompt with 3+ markers -> LLM path
     prompt = (
-        "Bitte oeffne das github repository openhands-cli, lies das issue #42, "
-        "schreibe einen pull request fuer den branch fix/auth, und committe die "
-        "Aenderung mit einer message die das jira ticket referenziert. Achte auf "
-        "den slack-channel #engineering fuer Feedback."
+        "Please open the github repository openhands-cli, read issue #42, "
+        "write a pull request for the branch fix/auth, and commit the "
+        "change with a message that references the jira ticket. Watch "
+        "the slack-channel #engineering for feedback."
     )
     assert len(prompt) >= SHORT_PROMPT_CHAR_LIMIT
     d = MissionDecomposer(brain=brain)
@@ -159,7 +159,7 @@ async def test_llm_path_returns_multi_step_plan() -> None:
 
 @pytest.mark.asyncio
 async def test_llm_path_handles_json_in_prose() -> None:
-    """LLM gibt JSON manchmal mit Pre-/Post-Prosa zurueck — Decomposer muss extrahieren."""
+    """The LLM sometimes returns JSON with leading/trailing prose — the decomposer must extract it."""
 
     async def brain(p: str) -> str:
         return f"Sure, here's the plan:\n```json\n{_valid_plan_json()}\n```\nDone."
@@ -194,7 +194,7 @@ async def test_llm_path_brain_crash_falls_back_single() -> None:
 
 @pytest.mark.asyncio
 async def test_llm_path_fills_missing_n_workers() -> None:
-    """Wenn LLM `n_workers` vergisst, Decomposer leitet aus len(steps) ab."""
+    """When the LLM omits `n_workers`, the decomposer derives it from len(steps)."""
 
     async def brain(p: str) -> str:
         return json.dumps(
@@ -213,7 +213,7 @@ async def test_llm_path_fills_missing_n_workers() -> None:
     assert plan.n_workers == 2
 
 
-# --- Decomposition-Prompt enthaelt Anchor-Token ---
+# --- Decomposition prompt contains anchor token ---
 
 
 @pytest.mark.asyncio
@@ -291,7 +291,7 @@ async def test_external_artefact_task_is_lean() -> None:
 async def test_german_html_news_task_is_lean() -> None:
     """German external-artefact prompt → lean workspace (no repo markers)."""
     d = MissionDecomposer(brain=None)
-    plan = await d.decompose("Erstelle eine HTML-Datei von den aktuellen Tagesnews")
+    plan = await d.decompose("Erstelle eine HTML-Datei von den aktuellen Tagesnews")  # i18n-allow: simulated German user utterance verifying bilingual input handling
     assert len(plan.steps) == 1
     assert plan.steps[0].needs_repo is False
 
@@ -371,10 +371,10 @@ async def test_multi_step_plan_always_keeps_full_worktree() -> None:
         return _valid_plan_json()
 
     prompt = (
-        "Bitte oeffne das github repository openhands-cli, lies das issue #42, "
-        "schreibe einen pull request fuer den branch fix/auth, und committe die "
-        "Aenderung mit einer message die das jira ticket referenziert. Achte auf "
-        "den slack-channel #engineering fuer Feedback."
+        "Please open the github repository openhands-cli, read issue #42, "
+        "write a pull request for the branch fix/auth, and commit the "
+        "change with a message that references the jira ticket. Watch "
+        "the slack-channel #engineering for feedback."
     )
     d = MissionDecomposer(brain=brain)
     plan = await d.decompose(prompt)

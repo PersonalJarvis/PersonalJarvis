@@ -70,7 +70,7 @@ async def test_computer_use_acks_immediately_not_blocking_on_harness(monkeypatch
     monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
 
     start = time.monotonic()
-    reply = await mgr._run_local_action_fast_path("öffne chrome")
+    reply = await mgr._run_local_action_fast_path("öffne chrome")  # i18n-allow
     elapsed = time.monotonic() - start
 
     # The voice turn must NOT block on the 0.5 s harness — it ACKs and returns.
@@ -102,7 +102,7 @@ async def test_computer_use_result_announced_when_done(monkeypatch) -> None:
     )
     monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
 
-    await mgr._run_local_action_fast_path("öffne chrome")
+    await mgr._run_local_action_fast_path("öffne chrome")  # i18n-allow
     await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
 
     assert executor.called
@@ -128,7 +128,7 @@ async def test_computer_use_failure_is_announced_not_dropped(monkeypatch) -> Non
     )
     monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
 
-    await mgr._run_local_action_fast_path("öffne chrome")
+    await mgr._run_local_action_fast_path("öffne chrome")  # i18n-allow
     await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
 
     completions = [e for e in bus.published if getattr(e, "kind", None) == "completion"]
@@ -144,7 +144,7 @@ async def test_user_cancel_offload_is_silent_not_announced(monkeypatch) -> None:
     immediately-silent kill-switch), so the cancel readback is redundant — and
     with N parallel offloaded missions it spams the phrase N times. Live forensic
     2026-06-27: three CU missions all cancelled by one F1+F2 hangup spoke
-    "Die Aktion am Bildschirm wurde abgebrochen." three times. The cancel is the
+    "Die Aktion am Bildschirm wurde abgebrochen." three times. The cancel is the  # i18n-allow
     receipt of an abort the user already made — not a result they are waiting on,
     so AD-OE6's zero-silent-drop (which protects real outcomes) does not apply.
     """
@@ -204,7 +204,7 @@ async def test_three_parallel_cancels_speak_nothing(monkeypatch) -> None:
     )
     mgr = _make_manager(executor, bus)
     for _ in range(3):
-        await mgr._run_local_action_fast_path("öffentlich, dann screenshot")
+        await mgr._run_local_action_fast_path("öffentlich, dann screenshot")  # i18n-allow
     await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
 
     completions = [e for e in bus.published if getattr(e, "kind", None) == "completion"]
@@ -252,7 +252,7 @@ async def test_cu_failure_outcome_is_written_back_to_history(monkeypatch) -> Non
     )
     monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
 
-    await mgr._run_local_action_fast_path("öffne mein spotify und spiel das lied")
+    await mgr._run_local_action_fast_path("öffne mein spotify und spiel das lied")  # i18n-allow
     await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
 
     # The failed screen action must be grounded in the live history so the model
@@ -287,7 +287,7 @@ async def test_cu_success_outcome_is_written_back_to_history(monkeypatch) -> Non
     )
     monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
 
-    await mgr._run_local_action_fast_path("öffne spotify und spiel das lied")
+    await mgr._run_local_action_fast_path("öffne spotify und spiel das lied")  # i18n-allow
     await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
 
     assert mgr._history, "a successful CU outcome must also be recorded in history"

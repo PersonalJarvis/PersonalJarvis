@@ -1,14 +1,14 @@
-"""Bug-E-Tests (2026-04-29): Pre-Boot-Key-Check filtert Provider ohne Key.
+"""Bug-E tests (2026-04-29): pre-boot key check filters providers without a key.
 
-Hintergrund: Vorher konnten Provider ohne API-Key in der Fallback-Chain
-landen, mit BrainTurnStarted publishen, dann beim _ensure_client crashen
-und einen Halluzinations-Tag in voice_turns hinterlassen
-("openai/gpt-4o" obwohl kein OpenAI-Key existiert).
+Background: previously, providers without an API key could land in the fallback
+chain, publish BrainTurnStarted, then crash at _ensure_client and
+leave a hallucination tag in voice_turns
+("openai/gpt-4o" even though no OpenAI key exists).
 
-Jetzt: BrainManager.from_tier_config() macht einen Pre-Boot-Healthcheck
-ueber alle bekannten Provider und schiebt fehlende Keys direkt in
-_dead_providers — kein BrainTurnStarted-Event mehr fuer Halluzinations-
-Provider.
+Now: BrainManager.from_tier_config() runs a pre-boot healthcheck
+across all known providers and pushes missing keys straight into
+_dead_providers — no more BrainTurnStarted event for hallucination-
+prone providers.
 """
 from __future__ import annotations
 
@@ -63,8 +63,8 @@ def _make_cfg() -> JarvisConfig:
 def test_provider_without_key_lands_in_dead_providers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Wenn nur claude-api+gemini Keys haben, sind openai+grok+openrouter
-    in _dead_providers nach from_tier_config().
+    """When only claude-api+gemini have keys, openai+grok+openrouter are
+    in _dead_providers after from_tier_config().
     """
     from jarvis.core import config as _cfg_mod
 
@@ -88,7 +88,7 @@ def test_provider_without_key_lands_in_dead_providers(
 def test_all_keys_missing_kills_all_providers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Worst-Case: kein einziger Key. Alle Provider sind dead."""
+    """Worst case: not a single key. All providers are dead."""
     from jarvis.core import config as _cfg_mod
 
     monkeypatch.setattr(

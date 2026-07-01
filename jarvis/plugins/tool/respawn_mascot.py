@@ -1,7 +1,7 @@
 """``respawn_mascot`` — voice-driven recovery for a lost / hidden mascot.
 
 Mirrors :mod:`jarvis.plugins.tool.reset_orb_position` (ADR-0016 L2): when
-the user says "Maskottchen wieder auftauchen", "respawn mascot", "der
+the user says "Maskottchen wieder auftauchen", "respawn mascot", "der  # i18n-allow (quotes DE voice-trigger phrases matched by the local-action gate)
 Spawner" etc., the local-action gate dispatches this tool. It clears the
 ``OverlaySupervisor``'s cap-state and forces a fresh subprocess spawn so
 the mascot reappears even when the prior subprocess was hidden, hung, or
@@ -24,9 +24,9 @@ class RespawnMascotTool:
     name: str = "respawn_mascot"
     risk_tier: str = "safe"
     description: str = (
-        "Bringt das Maskottchen / den Overlay-Spawner zurück, indem die "
-        "OverlaySupervisor-Cap geleert und der Subprocess frisch gespawnt "
-        "wird (Voice-Recovery für BUG-012-Klasse)."
+        "Brings the mascot / overlay spawner back by clearing the "
+        "OverlaySupervisor cap state and spawning a fresh subprocess "
+        "(voice recovery for the BUG-012 class)."
     )
     schema: dict[str, Any] = {
         "type": "object",
@@ -51,7 +51,7 @@ class RespawnMascotTool:
         if supervisor is None:
             return ToolResult(
                 success=False,
-                output="Maskottchen-Overlay ist nicht aktiv.",
+                output="Maskottchen-Overlay ist nicht aktiv.",  # i18n-allow (DE TTS voice-confirmation phrase spoken back to the user)
                 error="overlay supervisor not initialised",
             )
 
@@ -66,7 +66,7 @@ class RespawnMascotTool:
 
         return ToolResult(
             success=True,
-            output="Maskottchen ist wieder da.",
+            output="Maskottchen ist wieder da.",  # i18n-allow (DE TTS voice-confirmation phrase spoken back to the user)
             error=None,
         )
 

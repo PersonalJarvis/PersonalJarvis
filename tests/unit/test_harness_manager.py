@@ -1,4 +1,4 @@
-"""Unit-Tests für HarnessManager mit FakeHarness."""
+"""Unit tests for HarnessManager with FakeHarness."""
 from __future__ import annotations
 
 import pytest

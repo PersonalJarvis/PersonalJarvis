@@ -2,7 +2,7 @@
 
 Live 2026-06-30 (Bora-Bora voice session, ``voice-session-2026-06-30_17-58``):
 the user asked a plain travel question — "...bin jetzt bei meinem Budget bei so
-25.000 Euro für zwei Personen, passt es?". The word **"budget"** sat in the
+25.000 Euro für zwei Personen, passt es?". The word **"budget"** sat in the  # i18n-allow
 Google-Cloud-billing keyword list, so the evidence gate FORCED ``cli_gcloud``;
 the model answered the travel question without that (irrelevant) tool, and the
 honesty backstop then VOIDED the good answer with a canned failure phrase
@@ -25,11 +25,11 @@ from jarvis.core.capabilities import CapabilityRegistry
 from jarvis.core.config import EvidenceDomainsConfig
 
 _RECOMBINED_BORA = (
-    "Was geht ab? Was ist morgen für ein Tag? Guten Tag, ich habe noch eine "
-    "Frage an dich und zwar möchte ich nach Bora Bora, was würdest du mir "
-    "empfehlen, was ich für den Urlaub brauche? Ich hab jetzt so für zwei "
-    "Wochen geplant und bin jetzt bei meinem Budget bei so 25.000 Euro für "
-    "zwei Personen, passt es?"
+    "Was geht ab? Was ist morgen für ein Tag? Guten Tag, ich habe noch eine "  # i18n-allow
+    "Frage an dich und zwar möchte ich nach Bora Bora, was würdest du mir "  # i18n-allow
+    "empfehlen, was ich für den Urlaub brauche? Ich hab jetzt so für zwei "  # i18n-allow
+    "Wochen geplant und bin jetzt bei meinem Budget bei so 25.000 Euro für "  # i18n-allow
+    "zwei Personen, passt es?"  # i18n-allow
 )
 
 
@@ -50,7 +50,7 @@ def _cloud_gate(text: str):
 def test_bare_travel_budget_does_not_force_gcloud():
     # A travel / household / project budget is not a cloud bill (mirror of the
     # existing "was kostet X" hard negative).
-    v = _cloud_gate("Was ist mit meinem Budget für den Urlaub?")
+    v = _cloud_gate("Was ist mit meinem Budget für den Urlaub?")  # i18n-allow
     assert v.kind == "pass"
 
 
@@ -73,7 +73,7 @@ def test_conversational_turn_suppresses_read_mandate():
     # The exact Bora-Bora turn (continuation-recombined) is opinion/advice.
     assert _conversational_turn_suppresses_read_mandate(_RECOMBINED_BORA) is True
     assert _conversational_turn_suppresses_read_mandate(
-        "Was würdest du mir empfehlen für meinen Urlaub?"
+        "Was würdest du mir empfehlen für meinen Urlaub?"  # i18n-allow
     ) is True
 
 

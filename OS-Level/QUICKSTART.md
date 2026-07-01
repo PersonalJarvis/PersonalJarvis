@@ -128,8 +128,8 @@ run.bat --debug
 | **idle** | Mascot only, no glow | Default after boot |
 | **listening** | Mascot pulses slightly brighter | Say "Jarvis" (wake word) |
 | **thinking** | Mascot pulses faster | Ask a question |
-| **typing** | Yellow rotating edge stroke + bottom sweep per keystroke | "Jarvis, tippe Hallo Welt in Notepad" |
-| **clicking** | Faster edge stroke + yellow ripple on every click | "Jarvis, klick auf den OK-Button" |
+| **typing** | Yellow rotating edge stroke + bottom sweep per keystroke | "Jarvis, type Hello World in Notepad" |
+| **clicking** | Faster edge stroke + yellow ripple on every click | "Jarvis, click the OK button" |
 | **error** | Brief red flash | When an action fails |
 
 ---

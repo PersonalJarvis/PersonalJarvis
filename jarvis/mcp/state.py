@@ -62,7 +62,7 @@ def _read_mcp_json() -> dict[str, Any]:
     try:
         data = json.loads(MCP_JSON_PATH.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
-        log.warning("mcp.json nicht lesbar (%s) — Default", exc)
+        log.warning("mcp.json not readable (%s) — using default", exc)
         return _empty_config()
     if not isinstance(data, dict):
         return _empty_config()
@@ -79,7 +79,7 @@ def _write_mcp_json(data: dict[str, Any]) -> None:
 
 
 # ----------------------------------------------------------------------
-# Migration von legacy data/mcp_state.json
+# Migration from legacy data/mcp_state.json
 # ----------------------------------------------------------------------
 
 def _migrate_legacy_if_needed() -> None:
@@ -121,7 +121,7 @@ def _migrate_legacy_if_needed() -> None:
         LEGACY_STATE_PATH.rename(LEGACY_STATE_PATH.with_suffix(".json.bak"))
     except OSError:
         pass
-    log.info("mcp.json aus legacy state migriert (%d server)", len(cfg["mcpServers"]))
+    log.info("mcp.json migrated from legacy state (%d servers)", len(cfg["mcpServers"]))
 
 
 # ----------------------------------------------------------------------
@@ -198,7 +198,7 @@ def remove_server(name: str) -> bool:
 
 
 # ----------------------------------------------------------------------
-# Claude-Desktop-Import
+# Claude Desktop import
 # ----------------------------------------------------------------------
 
 def import_claude_desktop() -> tuple[int, list[str], str]:
@@ -211,23 +211,23 @@ def import_claude_desktop() -> tuple[int, list[str], str]:
     """
     appdata = os.environ.get("APPDATA")
     if not appdata:
-        return (0, [], "APPDATA-Variable nicht gesetzt.")
+        return (0, [], "APPDATA variable not set.")
     src = Path(appdata) / "Claude" / "claude_desktop_config.json"
     if not src.exists():
         return (
             0,
             [],
-            f"Claude-Desktop-Config nicht gefunden unter {src}.",
+            f"Claude Desktop config not found at {src}.",
         )
 
     try:
         raw = json.loads(src.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
-        return (0, [], f"Config nicht lesbar: {exc}")
+        return (0, [], f"Config not readable: {exc}")
 
     claude_servers = raw.get("mcpServers", {})
     if not isinstance(claude_servers, dict) or not claude_servers:
-        return (0, [], "Keine mcpServers in Claude-Desktop-Config gefunden.")
+        return (0, [], "No mcpServers found in the Claude Desktop config.")
 
     added: list[str] = []
     skipped: list[str] = []
@@ -248,14 +248,14 @@ def import_claude_desktop() -> tuple[int, list[str], str]:
                 "args": list(entry.get("args", [])),
                 "env": dict(entry.get("env", {})),
                 "enabled": False,
-                "description": "Importiert aus Claude Desktop.",
+                "description": "Imported from Claude Desktop.",
             }
             added.append(name)
         _write_mcp_json(cfg)
 
-    note = f"{len(added)} neue Server importiert"
+    note = f"{len(added)} new servers imported"
     if skipped:
-        note += f", {len(skipped)} übersprungen (existieren bereits)"
+        note += f", {len(skipped)} skipped (already exist)"
     return (len(added), added, note + ".")
 
 

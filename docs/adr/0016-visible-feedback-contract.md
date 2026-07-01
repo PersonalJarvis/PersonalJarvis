@@ -135,7 +135,7 @@ class UserVisibleFeedback(Event):
 - The recovery path (L2) is discoverable: any user who recovers from
   a lost orb once will remember the phrase. The phrase corpus is
   intentionally small and anchored at `^`, so false-positive risk on
-  general queries ("wo bist du gerade?", "weißt du wo der Bus ist?")
+  general queries ("wo bist du gerade?", "weißt du wo der Bus ist?")  <!-- i18n-allow -->
   stays low. The false-positive corpus in
   `tests/unit/brain/test_local_action_gate.py` documents 10
   intentional non-matches as a regression guard.

@@ -1,7 +1,7 @@
-"""Verifiziert dass BrainTierConfig.model optional ist.
+"""Verifies that BrainTierConfig.model is optional.
 
-Integration mit dem Resolver aus manager.py ist in test_tier_defaults.py
-getestet; hier nur das Config-Schema.
+Integration with the resolver from manager.py is tested in
+test_tier_defaults.py; here we only cover the config schema.
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ class TestBrainTierConfigOptional:
         assert cfg.fallback_model_2 == "gpt-5-mini"
 
     def test_extra_fields_allowed(self):
-        # Backward-compat: alte Configs mit "deep_model" oder anderen
-        # Feldern sollen nicht crashen
+        # Backward-compat: old configs with "deep_model" or other
+        # fields should not crash
         cfg = BrainTierConfig(provider="gemini", model=None, custom_field="ignored")
         assert cfg.provider == "gemini"

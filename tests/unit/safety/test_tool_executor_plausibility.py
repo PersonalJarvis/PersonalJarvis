@@ -1,12 +1,12 @@
-"""Integration-Tests fuer den Plausibility-Hook im ``ToolExecutor`` (Phase 4).
+"""Integration tests for the plausibility hook in ``ToolExecutor`` (Phase 4).
 
-Kein voller End-to-End-Voice-Test — nur die drei kritischen Pfade:
+Not a full end-to-end voice test — just the three critical paths:
 
-  1. Ohne ``plausibility_context_fn``: Workflow laeuft wie vor Phase 4.
-  2. Mit Context-Provider + low confidence + ``ask``-Tool: Approval wird
-     angefordert (auch wenn der Tier-Workflow das ohnehin tun wuerde).
-  3. Whitelist-Downgrade: Plausibility-Check wird uebersprungen — sonst
-     wuerde der Guard die Whitelist-Logik kaputtmachen.
+  1. Without ``plausibility_context_fn``: the workflow runs as before Phase 4.
+  2. With a context provider + low confidence + an ``ask`` tool: approval is
+     requested (even if the tier workflow would do so anyway).
+  3. Whitelist downgrade: the plausibility check is skipped — otherwise
+     the guard would break the whitelist logic.
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ class _MonitorTool(_FakeTool):
 
 
 class _AutoApproval(ApprovalWorkflow):
-    """Approval die immer auto-approved — Test isoliert das Confirmation-Trigger."""
+    """Approval that always auto-approves — isolates the confirmation trigger under test."""
 
     def __init__(self, bus: EventBus, *, approve: bool = True) -> None:
         super().__init__(bus)
@@ -76,11 +76,11 @@ def _executor_with_plausibility(
 
 @pytest.mark.asyncio
 async def test_no_context_fn_runs_like_before() -> None:
-    """Ohne registrierte ``plausibility_context_fn`` greift kein Guard."""
+    """Without a registered ``plausibility_context_fn`` no guard kicks in."""
     executor, approval = _executor_with_plausibility(context_fn=None)
     tool = _FakeTool()
     result = await executor.execute(tool, args={})
-    # ``ask``-Tier triggert ohnehin Approval -> 1 Call durch Tier-Workflow.
+    # ``ask`` tier triggers approval anyway -> 1 call via the tier workflow.
     assert approval.wait_calls == 1
     assert result.success is True
     assert tool.called is True
@@ -88,15 +88,15 @@ async def test_no_context_fn_runs_like_before() -> None:
 
 @pytest.mark.asyncio
 async def test_low_confidence_monitor_does_not_force_approval() -> None:
-    """Bei ``monitor``-Tier + low confidence: Plausibility logged nur, kein Approval."""
+    """At ``monitor`` tier + low confidence: plausibility only logs, no approval."""
     transcript = Transcript(text="x", language="de", confidence=0.2)
     executor, approval = _executor_with_plausibility(
         context_fn=lambda: (transcript, 5.0),
     )
     tool = _MonitorTool()
     result = await executor.execute(tool, args={})
-    # ``monitor``-Tier triggert nicht von sich aus Approval, und Plausibility
-    # bei monitor verlangt auch nichts -> 0 Approval-Calls.
+    # ``monitor`` tier doesn't trigger approval by itself, and plausibility
+    # at monitor doesn't require anything either -> 0 approval calls.
     assert approval.wait_calls == 0
     assert result.success is True
     assert tool.called is True
@@ -104,12 +104,12 @@ async def test_low_confidence_monitor_does_not_force_approval() -> None:
 
 @pytest.mark.asyncio
 async def test_low_confidence_ask_with_normal_tier_workflow() -> None:
-    """Low confidence + ask: Approval wird angefordert (Tier ODER Plausibility)."""
+    """Low confidence + ask: approval is requested (tier OR plausibility)."""
     transcript = Transcript(text="x", language="de", confidence=0.2)
     executor, approval = _executor_with_plausibility(
         context_fn=lambda: (transcript, 5.0),
     )
-    tool = _FakeTool()  # ask-Tier
+    tool = _FakeTool()  # ask tier
     result = await executor.execute(tool, args={})
     assert approval.wait_calls == 1
     assert result.success is True
@@ -117,24 +117,23 @@ async def test_low_confidence_ask_with_normal_tier_workflow() -> None:
 
 @pytest.mark.asyncio
 async def test_whitelist_downgrade_skips_plausibility() -> None:
-    """Whitelist-Downgrade -> Plausibility-Check uebersprungen.
+    """Whitelist downgrade -> plausibility check skipped.
 
-    Mandat: "Whitelist-downgraded Tools laufen weiter ohne Plausibility-Check
-    (sonst ist Whitelist sinnlos)."
+    Mandate: "Whitelist-downgraded tools keep running without a plausibility
+    check (otherwise the whitelist would be pointless)."
     """
     from jarvis.core.config import SafetyWhitelistConfig
 
-    # Whitelist-Pattern muss gegen ``"<tool_name> <serialized_args>"``
-    # matchen — bei leerem ``args`` strippt der Evaluator das trailing
-    # Space, also nutzen wir ein nicht-leeres Arg.
+    # The whitelist pattern must match against ``"<tool_name> <serialized_args>"``
+    # — with empty ``args`` the evaluator strips the trailing
+    # space, so we use a non-empty arg.
     safety = SafetyConfig(
         whitelist=SafetyWhitelistConfig(commands=["monitor_tool *"]),
     )
     transcript = Transcript(text="x", language="de", confidence=0.1)
 
-    # Wir spy'en den Plausibility-Aufruf via den Context-Fn — wenn er
-    # NICHT aufgerufen wird, hat der Executor das Whitelist-Skip-Branch
-    # genommen.
+    # We spy on the plausibility call via the context fn — if it's
+    # NOT called, the executor took the whitelist-skip branch.
     calls: list[bool] = []
 
     def fake_context() -> tuple[Transcript, float]:
@@ -147,36 +146,36 @@ async def test_whitelist_downgrade_skips_plausibility() -> None:
     )
     tool = _MonitorTool()
     result = await executor.execute(tool, args={"target": "foo"})
-    # Whitelist downgraded ``monitor_tool`` zu ``safe`` -> kein Approval.
+    # Whitelist downgraded ``monitor_tool`` to ``safe`` -> no approval.
     assert approval.wait_calls == 0
-    # Context-Fn darf NICHT aufgerufen werden, weil Whitelist-Skip.
+    # Context fn must NOT be called, because of the whitelist skip.
     assert calls == []
     assert result.success is True
 
 
 @pytest.mark.asyncio
 async def test_high_confidence_recent_wake_no_extra_confirmation() -> None:
-    """Bei guter Plausibility wird kein extra Approval angefordert."""
+    """With good plausibility, no extra approval is requested."""
     transcript = Transcript(text="x", language="de", confidence=0.9)
     executor, approval = _executor_with_plausibility(
         context_fn=lambda: (transcript, 2.0),
     )
     tool = _MonitorTool()
     result = await executor.execute(tool, args={})
-    # ``monitor`` + plausibility=ok -> kein Approval.
+    # ``monitor`` + plausibility=ok -> no approval.
     assert approval.wait_calls == 0
     assert result.success is True
 
 
 @pytest.mark.asyncio
 async def test_context_fn_exception_is_swallowed() -> None:
-    """Wenn der Context-Provider crasht, faellt der Executor auf "kein Check" zurueck."""
+    """If the context provider crashes, the executor falls back to "no check"."""
     def broken_fn() -> tuple[Transcript, float]:
         raise RuntimeError("context-provider down")
 
     executor, approval = _executor_with_plausibility(context_fn=broken_fn)
     tool = _MonitorTool()
     result = await executor.execute(tool, args={})
-    # Trotz crash: Tool laeuft, kein Approval.
+    # Despite the crash: the tool runs, no approval.
     assert approval.wait_calls == 0
     assert result.success is True

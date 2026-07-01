@@ -1,27 +1,27 @@
-"""MCP-Server-Selection-Step fuer den Setup-Wizard.
+"""MCP-server-selection step for the setup wizard.
 
-Dieser Schritt ist **separat** vom eigentlichen Wizard-Modul (wizard.py), damit
-er parallel zur Phase-1b-Arbeit am Wizard entwickelt werden kann. Die Integration
-ins Wizard erfolgt spaeter als expliziter Merge-Schritt:
+This step is **separate** from the actual wizard module (wizard.py), so it
+can be developed in parallel with the Phase-1b work on the wizard. Integration
+into the wizard happens later as an explicit merge step:
 
     from jarvis.setup.mcp_selection import run_mcp_selection_step
 
     def step_3_mcp(state: WizardState) -> None:
         state.enabled_mcp_servers = run_mcp_selection_step()
 
-Der Schritt kann auch standalone aufgerufen werden:
+The step can also be invoked standalone:
 
     python -m jarvis.setup.mcp_selection
 
-In dem Fall gibt er die Auswahl nur aus — persistiert wird nichts, das
-uebernimmt der Wizard.
+In that case it only prints the selection — nothing is persisted, that's
+handled by the wizard.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 # ----------------------------------------------------------------------
-# Fallback-Spec falls jarvis.mcp.registry noch nicht existiert (B2 parallel)
+# Fallback spec in case jarvis.mcp.registry doesn't exist yet (B2 parallel)
 # ----------------------------------------------------------------------
 
 @dataclass(frozen=True, slots=True)
@@ -37,49 +37,49 @@ _FALLBACK_BOOTSTRAP: tuple[_FallbackSpec, ...] = (
     _FallbackSpec(
         name="filesystem-mcp",
         display="Filesystem",
-        description="Lokaler Datei-Zugriff (read/write/list).",
+        description="Local file access (read/write/list).",
         mandatory=True,
     ),
     _FallbackSpec(
         name="memory-mcp",
         display="Memory",
-        description="Persistenter Key-Value-Store fuer Fakten, Notizen, Context.",
+        description="Persistent key-value store for facts, notes, context.",
         mandatory=True,
     ),
     _FallbackSpec(
         name="gmail-mcp",
         display="Gmail",
-        description="Email lesen, triagieren, senden (nach Bestaetigung).",
+        description="Read, triage, send email (after confirmation).",
         required_auth=("google_oauth",),
     ),
     _FallbackSpec(
         name="google-calendar-mcp",
         display="Google Calendar",
-        description="Termine lesen, anlegen, verschieben.",
+        description="Read, create, move appointments.",
         required_auth=("google_oauth",),
     ),
     _FallbackSpec(
         name="fetch-mcp",
         display="Fetch / Web",
-        description="HTTP-Requests, Wetter, RSS, APIs.",
+        description="HTTP requests, weather, RSS, APIs.",
     ),
     _FallbackSpec(
         name="github-mcp",
         display="GitHub",
-        description="Repos, Issues, PRs, Workflows.",
+        description="Repos, issues, PRs, workflows.",
         required_auth=("github_token",),
     ),
     _FallbackSpec(
         name="windows-mcp",
         display="Windows OS",
-        description="DND, Fenstermanagement, Shell-Commands.",
+        description="DND, window management, shell commands.",
         mandatory=True,
     ),
 )
 
 
 def _load_bootstrap() -> tuple:
-    """Laedt BOOTSTRAP_SERVERS aus jarvis.mcp.registry oder nutzt Fallback."""
+    """Loads BOOTSTRAP_SERVERS from jarvis.mcp.registry or uses the fallback."""
     try:
         from jarvis.mcp.registry import BOOTSTRAP_SERVERS  # type: ignore
 
@@ -89,7 +89,7 @@ def _load_bootstrap() -> tuple:
 
 
 # ----------------------------------------------------------------------
-# Wizard-IO Helpers (Stil aus wizard.py uebernommen)
+# Wizard IO helpers (style taken from wizard.py)
 # ----------------------------------------------------------------------
 
 def _println(msg: str = "") -> None:
@@ -112,18 +112,18 @@ def _ask_yesno(prompt: str, default: bool = True) -> bool:
 # ----------------------------------------------------------------------
 
 def run_mcp_selection_step() -> list[str]:
-    """Interaktive Auswahl der MCP-Server.
+    """Interactive selection of the MCP servers.
 
     Returns:
-        Liste der `name`-Strings der aktivierten Server.
+        List of the `name` strings of the enabled servers.
     """
     specs = _load_bootstrap()
 
     _println("=" * 60)
-    _println(" MCP-Server auswaehlen")
+    _println(" Select MCP servers")
     _println("=" * 60)
-    _println("Mandatory-Server sind vorausgewaehlt (empfohlen).")
-    _println("Optional-Server werden nur aktiviert wenn Du 'j' sagst.")
+    _println("Mandatory servers are pre-selected (recommended).")
+    _println("Optional servers are only enabled if you say 'y'.")
     _println("")
 
     selected: list[str] = []
@@ -138,8 +138,8 @@ def run_mcp_selection_step() -> list[str]:
             required_auth = getattr(spec, "required_auth", ()) or ()
             if required_auth:
                 _println(
-                    f"      -> benoetigt Auth: {', '.join(required_auth)} "
-                    f"(kann spaeter im Wizard eingegeben werden)"
+                    f"      -> requires auth: {', '.join(required_auth)} "
+                    f"(can be entered later in the wizard)"
                 )
         _println("")
 
@@ -150,12 +150,12 @@ def main() -> int:
     try:
         sel = run_mcp_selection_step()
     except KeyboardInterrupt:
-        _println("\nAbgebrochen.")
+        _println("\nAborted.")
         return 130
     _println("")
-    _println(f"Ausgewaehlt: {sel}")
+    _println(f"Selected: {sel}")
     _println("")
-    _println("Diese Auswahl muss in jarvis.toml unter [mcp].enabled eingetragen werden:")
+    _println("This selection must be entered in jarvis.toml under [mcp].enabled:")
     _println(f"  enabled = {sel}")
     return 0
 

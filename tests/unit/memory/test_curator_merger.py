@@ -1,11 +1,11 @@
-"""Unit-Tests fuer `jarvis.memory.curator.merger.Merger`.
+"""Unit tests for `jarvis.memory.curator.merger.Merger`.
 
-Deckt ab:
-- User-Facts landen in USER.md (set + Observation-Log).
-- Person-Facts legen people/<slug>.md an und schreiben Observations.
-- Listen-Felder werden appended + dedupliziert.
-- Duplikat-Append → report.skipped inkrementiert (nicht applied).
-- Bus-Events `ProfileUpdated` werden nach Persistenz emittiert.
+Covers:
+- User facts land in USER.md (set + observation log).
+- Person facts create people/<slug>.md and write observations.
+- List fields get appended + deduplicated.
+- Duplicate append → report.skipped is incremented (not applied).
+- Bus events `ProfileUpdated` are emitted after persistence.
 """
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ class TestUserScalarMerge:
     async def test_also_writes_observation_log_for_scalar_set(
         self, merger: Merger, profile: UserProfile
     ) -> None:
-        """Bei jedem Scalar-Set zusaetzlich Observations-Append fuer Audit-Trail."""
+        """Every scalar set also appends an observation for the audit trail."""
         cand = _cand(
             "user", "identity", "name", "Ruben", evidence="User: 'ich bin Ruben'"
         )
@@ -83,7 +83,7 @@ class TestUserScalarMerge:
     async def test_same_value_counts_as_skipped(
         self, merger: Merger, profile: UserProfile
     ) -> None:
-        """Wenn der Wert schon gesetzt ist, erhoeht der Merger report.skipped."""
+        """If the value is already set, the merger increments report.skipped."""
         profile.set("identity", "name", "Ruben")
         profile.save()
 
@@ -167,7 +167,7 @@ class TestPersonMerge:
         assert report.applied == 1
         assert report.failed == 0
 
-        # Datei wurde angelegt
+        # File was created
         persons = person_store.list_all()
         assert len(persons) == 1
         laura = persons[0]
@@ -183,7 +183,7 @@ class TestPersonMerge:
         merger: Merger,
         profile: UserProfile,
     ) -> None:
-        """Kernregel: person:Laura darf USER.md NICHT anfassen."""
+        """Core rule: person:Laura must NOT touch USER.md."""
         before_meta = dict(profile.meta)
 
         cand = _cand(
@@ -238,10 +238,10 @@ class TestBusEvents:
     async def test_no_events_when_nothing_applied(
         self, merger: Merger, fake_bus, profile: UserProfile
     ) -> None:
-        """Bei `applied == 0` duerfen keine Events publiziert werden."""
+        """When `applied == 0`, no events may be published."""
         profile.set("identity", "name", "Ruben")
         profile.save()
-        # Candidate setzt den gleichen Wert → skipped, nicht applied
+        # Candidate sets the same value → skipped, not applied
         cand = _cand("user", "identity", "name", "Ruben")
         report = await merger.apply([cand])
 
@@ -282,7 +282,7 @@ class TestEdgeCases:
     async def test_observation_field_falls_into_markdown(
         self, merger: Merger, profile: UserProfile
     ) -> None:
-        """Ein Candidate mit field='observation' landet nur in der Markdown-Section."""
+        """A candidate with field='observation' lands only in the markdown section."""
         cand = _cand(
             "user",
             "values",

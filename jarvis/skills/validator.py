@@ -1,11 +1,11 @@
-"""Semantische Validierung von Skills — über die Frontmatter-Schema-Ebene hinaus.
+"""Semantic validation of skills — beyond the frontmatter schema layer.
 
-- Requires-Tools: existieren im Tool-Registry (jarvis.tool entry_points) oder
-  als MCP-Server-Name (best-effort via optional mcp_registry).
-- Voice-Patterns müssen compilieren.
-- Cron-Expressions müssen parsebar sein (croniter optional).
-- Hotkey-Combos müssen parsebar sein (simple Key-Token-Check).
-- Risk-Tier-Overrides dürfen keine global geblacklisteten Patterns treffen.
+- Requires-Tools: must exist in the tool registry (jarvis.tool entry_points)
+  or as an MCP server name (best-effort via the optional mcp_registry).
+- Voice patterns must compile.
+- Cron expressions must be parsable (croniter optional).
+- Hotkey combos must be parsable (simple key-token check).
+- Risk-tier overrides must not hit a globally blacklisted pattern.
 - token_budget ≤ 10_000.
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import Any
 
 from .schema import Skill, SkillLifecycleState
 
-# Optional: croniter für Cron-Validation
+# Optional: croniter for cron validation
 try:
     from croniter import croniter  # type: ignore
     _HAVE_CRONITER = True
@@ -34,7 +34,7 @@ _ALLOWED_HOTKEY_MODS = {
 
 @dataclass
 class ValidationReport:
-    """Ergebnis einer Validierung. `ok=True` heißt alle Checks bestanden."""
+    """Result of a validation. `ok=True` means all checks passed."""
     ok: bool = True
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -48,20 +48,20 @@ class ValidationReport:
 
 
 def _validate_hotkey(combo: str) -> str | None:
-    """None wenn OK, sonst Error-Message."""
+    """None if OK, otherwise an error message."""
     if not combo:
         return "empty combo"
     parts = [p.strip().lower() for p in combo.split("+") if p.strip()]
     if not parts:
         return "empty combo"
-    # Letzter Token muss eine Key sein (kein Modifier allein)
+    # Last token must be a key (not a modifier alone)
     if len(parts) == 1 and parts[0] in _ALLOWED_HOTKEY_MODS:
-        return f"combo '{combo}' enthält nur einen Modifier"
+        return f"combo '{combo}' contains only a modifier"
     return None
 
 
 def _list_tool_plugins() -> set[str]:
-    """Alle via entry_points registrierten Tool-Plugins."""
+    """All tool plugins registered via entry_points."""
     try:
         from jarvis.core import registry as plugin_registry
         return set(plugin_registry.list_plugins("jarvis.tool"))
@@ -74,18 +74,18 @@ def validate_skill(
     tool_registry: Any | None = None,
     mcp_registry: Any | None = None,
 ) -> ValidationReport:
-    """Führt alle semantischen Checks aus.
+    """Runs all semantic checks.
 
     Args:
-        skill: Geladener Skill (darf auch DRAFT sein — dann wird der
-               vorhandene Error propagiert).
-        tool_registry: Optional — Objekt mit ``list_plugins("jarvis.tool")``
-                        oder eine Iterable von Tool-Namen.
-        mcp_registry: Optional — Objekt mit ``.list_servers()``.
+        skill: Loaded skill (may also be DRAFT — in which case the
+               existing error is propagated).
+        tool_registry: Optional — object with ``list_plugins("jarvis.tool")``
+                        or an iterable of tool names.
+        mcp_registry: Optional — object with ``.list_servers()``.
     """
     report = ValidationReport()
 
-    # DRAFT-Skills erben ihren Parse-Fehler
+    # DRAFT skills inherit their parse error
     if skill.frontmatter is None:
         report.add_error(skill.error or "skill could not be parsed")
         return report
@@ -98,7 +98,7 @@ def validate_skill(
             f"token_budget_estimate={fm.token_budget_estimate} > 10000"
         )
 
-    # 2. Tools existieren
+    # 2. Tools exist
     known_tools: set[str] = set()
     if tool_registry is not None:
         if hasattr(tool_registry, "list_plugins"):
@@ -123,12 +123,12 @@ def validate_skill(
             continue
         if tool in mcp_servers:
             continue
-        # Accept "mcp:<name>" prefix as MCP-Server-Reference
+        # Accept "mcp:<name>" prefix as an MCP server reference
         if tool.startswith("mcp:") and tool[4:] in mcp_servers:
             continue
-        report.add_warning(f"required tool '{tool}' nicht im Registry gefunden")
+        report.add_warning(f"required tool '{tool}' not found in registry")
 
-    # 3. Risk-Policy
+    # 3. Risk policy
     for tool, tier in fm.risk_policy.per_tool_overrides.items():
         if tier not in ("safe", "monitor", "ask", "block"):
             report.add_error(f"invalid risk tier '{tier}' for tool '{tool}'")
@@ -138,7 +138,7 @@ def validate_skill(
         label = f"trigger[{idx}]({trig.type})"
         if trig.type == "voice":
             if trig.pattern is None:
-                report.add_error(f"{label}: pattern fehlt")
+                report.add_error(f"{label}: pattern missing")
             else:
                 try:
                     re.compile(trig.pattern)
@@ -150,7 +150,7 @@ def validate_skill(
                 report.add_error(f"{label}: {err}")
         elif trig.type == "schedule":
             if not trig.cron:
-                report.add_error(f"{label}: cron fehlt")
+                report.add_error(f"{label}: cron missing")
             elif _HAVE_CRONITER:
                 try:
                     if not croniter.is_valid(trig.cron):  # type: ignore[union-attr]
@@ -158,22 +158,22 @@ def validate_skill(
                 except Exception as exc:  # noqa: BLE001
                     report.add_error(f"{label}: cron parse failed — {exc}")
             else:
-                # Minimal-Fallback: 5 oder 6 Felder
+                # Minimal fallback: 5 or 6 fields
                 field_count = len(trig.cron.split())
                 if field_count not in (5, 6):
                     report.add_error(
-                        f"{label}: cron '{trig.cron}' hat {field_count} Felder (erwarte 5 oder 6)"
+                        f"{label}: cron '{trig.cron}' has {field_count} fields (expected 5 or 6)"
                     )
                 else:
                     report.add_warning(
-                        "croniter nicht installiert — cron nur oberflächlich geprüft"
+                        "croniter not installed — cron checked only superficially"
                     )
 
     return report
 
 
 def apply_validation(skill: Skill, report: ValidationReport) -> Skill:
-    """Gibt einen Skill mit aktualisiertem State zurück, basierend auf Report."""
+    """Returns a skill with an updated state, based on the report."""
     if not report.ok:
         return Skill(
             path=skill.path,

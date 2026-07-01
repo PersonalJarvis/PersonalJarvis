@@ -1,8 +1,8 @@
 """Integration-Test: MultiSpawnTool (CL-10, Phase 5).
 
-Nutzt FakeHarness statt echter openclaw/codex-CLI. HarnessManager wird
-mit injizierten Fakes bestückt, damit Tests deterministisch und offline
-laufen.
+Uses FakeHarness instead of a real openclaw/codex CLI. HarnessManager is
+equipped with injected fakes so tests run deterministically and
+offline.
 """
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ from tests.fixtures.harness.fake_harness import FakeHarness
 
 
 def _make_manager_with_fake(bus: EventBus, harness_name: str, fake: FakeHarness) -> HarnessManager:
-    """Baut einen HarnessManager, der `harness_name` immer als Fresh-Copy
-    der gegebenen FakeHarness instanziiert — sodass `dispatch` N-fach
-    dieselbe Fake-Klasse abruft ohne Konflikt."""
+    """Builds a HarnessManager that always instantiates `harness_name` as a
+    fresh copy of the given FakeHarness — so `dispatch` can call the
+    same fake class N times without conflict."""
     mgr = HarnessManager(bus=bus)
     mgr._loaded = True
     mgr._classes[harness_name] = type(fake)
@@ -50,9 +50,9 @@ async def test_three_parallel_openclaw_calls(ctx):
         {
             "harness": "openclaw",
             "prompts": [
-                "schreib die Tests für modul X",
-                "schreib die Impl für modul X",
-                "schreib die Docstrings für modul X",
+                "write the tests for module X",
+                "write the implementation for module X",
+                "write the docstrings for module X",
             ],
             "aggregation": "merge",
         },
@@ -94,7 +94,7 @@ async def test_aggregation_merge_joins_all_outputs(ctx):
 
 @pytest.mark.asyncio
 async def test_aggregation_first_success_returns_first_ok(ctx):
-    """first_success-Mode returnt nur die gewinnende Section."""
+    """first_success mode returns only the winning section."""
     bus = EventBus()
     fake = FakeHarness(scripted_output="winner-output")
     mgr = _make_manager_with_fake(bus, "openclaw", fake)
@@ -180,7 +180,7 @@ async def test_too_few_prompts_fails(ctx):
 
 @pytest.mark.asyncio
 async def test_merge_failure_propagates(ctx):
-    """Wenn ein Section-Exit != 0, wird success=False gesetzt."""
+    """When a section exit != 0, success=False is set."""
     bus = EventBus()
     fake = FakeHarness(fail=True)
     mgr = _make_manager_with_fake(bus, "openclaw", fake)

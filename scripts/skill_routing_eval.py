@@ -51,19 +51,19 @@ if sys.platform == "win32":
 # voice-trigger tokens, so only the model-judged path can fire it.
 GOLDEN: list[tuple[str, str | None]] = [
     ("fass mir mal kurz zusammen was heute alles ansteht", "morning-routine"),
-    ("ich brauch jetzt ruhe zum arbeiten, blende mir die ablenkungen aus",
+    ("ich brauch jetzt ruhe zum arbeiten, blende mir die ablenkungen aus",  # i18n-allow: simulated German user utterance under test
      "deep-work-mode"),
-    ("schau mal ob heute schon was wichtiges per e-mail reingekommen ist",
+    ("schau mal ob heute schon was wichtiges per e-mail reingekommen ist",  # i18n-allow: simulated German user utterance under test
      "plugin-gmail"),
     ("wie viel kostet mich gerade meine google cloud diesen monat?",
      "cli-gcloud"),
-    ("sind bei mir eigentlich noch issues offen, die ich angehen muss?",
+    ("sind bei mir eigentlich noch issues offen, die ich angehen muss?",  # i18n-allow: simulated German user utterance under test
      "plugin-github"),
     ("wie viel hab ich diesen monat eigentlich eingenommen?", "plugin-stripe"),
     # --- negative controls: the app is only the SUBJECT of a knowledge
     #     question; the definitional guard must keep the skill from firing ---
-    ("was ist eigentlich GitHub fuer eine plattform?", None),
-    ("was ist Stripe ueberhaupt und wofuer nutzt man das?", None),
+    ("was ist eigentlich GitHub fuer eine plattform?", None),  # i18n-allow: simulated German user utterance under test (negative control)
+    ("was ist Stripe ueberhaupt und wofuer nutzt man das?", None),  # i18n-allow: simulated German user utterance under test (negative control)
 ]
 
 PER_TURN_TIMEOUT_S = 60.0

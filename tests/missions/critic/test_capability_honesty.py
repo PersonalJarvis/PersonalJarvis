@@ -183,7 +183,7 @@ def test_gate_passes_codex_worker_with_real_actions() -> None:
         ]
     )
     check = enforce_capability_honesty(
-        user_request="Erstelle eine HTML-Datei und analysiere meine E-Mails",
+        user_request="Erstelle eine HTML-Datei und analysiere meine E-Mails",  # i18n-allow (simulated German user request)
         verdict=_approval_verdict(),
         worker_output=stream,
     )
@@ -255,9 +255,9 @@ def test_request_is_messaging_action() -> None:
     assert _request_is_messaging_action("reply to the message from Tom") is True
     # artefact tasks that only MENTION the topic must NOT be misclassified
     assert _request_is_messaging_action(
-        "Erstelle einen HTML-Report über meine E-Mails"
+        "Erstelle einen HTML-Report über meine E-Mails"  # i18n-allow (simulated German user request)
     ) is False
-    assert _request_is_messaging_action("Mach eine HTML-Datei zum Aktienmarkt") is False
+    assert _request_is_messaging_action("Mach eine HTML-Datei zum Aktienmarkt") is False  # i18n-allow (simulated German user request)
 
 
 def _force_requires_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -278,7 +278,7 @@ def test_gate_credits_worktree_diff_for_prose_worker(
     still said 'made no tool call' and burned all three critic loops)."""
     _force_requires_evidence(monkeypatch)
     check = enforce_capability_honesty(
-        user_request="Mach eine visuell ansprechende HTML-Datei zum Aktienmarkt",
+        user_request="Mach eine visuell ansprechende HTML-Datei zum Aktienmarkt",  # i18n-allow (simulated German user request)
         verdict=_approval_verdict(),
         worker_output=_AGY_PROSE,  # NO tool_use frames at all
         worker_diff=_REAL_GIT_DIFF,
@@ -295,7 +295,7 @@ def test_gate_still_blocks_prose_worker_with_empty_diff(
     tool frame still fails, even for a CLI worker."""
     _force_requires_evidence(monkeypatch)
     check = enforce_capability_honesty(
-        user_request="Mach eine visuell ansprechende HTML-Datei zum Aktienmarkt",
+        user_request="Mach eine visuell ansprechende HTML-Datei zum Aktienmarkt",  # i18n-allow (simulated German user request)
         verdict=_approval_verdict(),
         worker_output=_AGY_PROSE,
         worker_diff="",  # nothing written
@@ -312,7 +312,7 @@ def test_gate_messaging_action_ignores_file_diff(
     credit must not re-open the 'I have sent the email' hallucination)."""
     _force_requires_evidence(monkeypatch)
     check = enforce_capability_honesty(
-        user_request="Sende eine E-Mail an Max mit der Zusammenfassung",
+        user_request="Sende eine E-Mail an Max mit der Zusammenfassung",  # i18n-allow (simulated German user request)
         verdict=_approval_verdict(),
         worker_output=_AGY_PROSE,
         worker_diff=_REAL_GIT_DIFF,  # wrote a file, but that's not a sent email

@@ -1,10 +1,10 @@
-"""Voice-Session-Recording-Subsystem.
+"""Voice-session recording subsystem.
 
-Schreibt jede Voice-Session (Wake -> Hangup) inkl. User-Transkripten,
-Jarvis-Antworten, Tool-Calls und Latenzen in ``data/sessions.db``.
-Wird in der Desktop-App unter dem "Transkription"-Tab angezeigt.
+Writes every voice session (wake -> hangup), including user transcripts,
+Jarvis replies, tool calls, and latencies, into ``data/sessions.db``.
+Shown in the desktop app under the "Transcription" tab.
 
-Bootstrapping in ``server.py::_init_sessions_stack()`` via
+Bootstrapped in ``server.py::_init_sessions_stack()`` via
 ``bootstrap_sessions(bus, db_path)``.
 """
 from .init import bootstrap_sessions, shutdown_sessions

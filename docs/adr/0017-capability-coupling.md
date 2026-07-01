@@ -102,8 +102,8 @@ response via the same TTS path as a short reply.
 
 Deterministic response phrasing (no LLM, constant strings):
 
-- DE: *"Das kann ich noch nicht. Mir fehlt dafür ein Werkzeug — wenn du mir
-  verrätst welches MCP oder welche Integration zuständig wäre, kann ich's
+- DE: *"Das kann ich noch nicht. Mir fehlt dafür ein Werkzeug — wenn du mir  <!-- i18n-allow -->
+  verrätst welches MCP oder welche Integration zuständig wäre, kann ich's  <!-- i18n-allow -->
   lernen."*
 - EN: *"I can't do that yet. I don't have a registered tool for it. Tell me
   which MCP or integration should handle it and I can learn."*
@@ -115,13 +115,13 @@ in `manager.py:770-786` is replaced with `registry.render_for_prompt(lang)`.
 A hard rule is appended:
 
 > You must never claim to perform an action that is not listed above. If the
-> user asks for one, respond with: "Das kann ich noch nicht — mir fehlt das
+> user asks for one, respond with: "Das kann ich noch nicht — mir fehlt das  <!-- i18n-allow -->
 > passende Werkzeug." Do not invent tools.
 
 **3b. Ack-Brain forbidden vocabulary** (`jarvis/brain/ack_brain/persona_prompt.py`)
 — extend the forbidden vocabulary with action-promise patterns:
-`"mache ich"`, `"wird erledigt"`, `"ist gesendet"`, `"ist eingetragen"`,
-`"kümmere mich"`, `"I'll do that"`, `"will be sent"`, `"will be scheduled"`,
+`"mache ich"`, `"wird erledigt"`, `"ist gesendet"`, `"ist eingetragen"`,  <!-- i18n-allow -->
+`"kümmere mich"`, `"I'll do that"`, `"will be sent"`, `"will be scheduled"`,  <!-- i18n-allow -->
 `"consider it done"`. The Ack-Brain is permitted only: acoustic acknowledgment,
 context-restating clarifying questions, or silence on uncertainty.
 
@@ -191,7 +191,7 @@ contributor guide.
 ## Alternatives Considered
 
 **Alt-A — Post-generation regex scrub (rejected).**
-Scan every brain output for action-confirmation phrases ("wird erledigt",
+Scan every brain output for action-confirmation phrases ("wird erledigt",  <!-- i18n-allow -->
 "I'll send", "gesendet") and replace them with an UNSUPPORTED message. Rejected
 for three reasons: (1) false positives on valid tool-call confirmations that
 *do* have a registered capability; (2) requires maintaining a phrase blacklist

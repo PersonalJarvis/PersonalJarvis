@@ -5,7 +5,7 @@ Live forensic 2026-06-14 14:24 (data/jarvis_desktop.log): with
 EVERY utterance as German. Clear English usually survived, but marginal/short
 English audio was mangled into German tokens — e.g. the English "Hello, what's
 the weather like in Melbourne?" came out as
-``'Hallo, was ist der West-Like in Melbourne?'`` (confidence 0.654), and
+``'Hallo, was ist der West-Like in Melbourne?'`` (confidence 0.654), and  # i18n-allow
 "Is it currently winter in Melbourne?" became ``'Ist es gerade Winter in
 Melbourne?'``. The text itself was corrupted at the STT layer, so the
 downstream ``resolve_turn_language`` (which trusts the transcribed text) had no

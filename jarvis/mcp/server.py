@@ -1,29 +1,30 @@
-"""Jarvis-als-MCP-Server.
+"""Jarvis as an MCP server.
 
-Externe MCP-Clients (OpenClaw CLI, Cursor, VSCode Extension) können
-Jarvis-interne Fähigkeiten nutzen:
+External MCP clients (OpenClaw CLI, Cursor, VSCode Extension) can use
+Jarvis-internal capabilities:
 
 Tools:
-  - memory_search(query, k)          — FTS5-BM25 Recall-Search
-  - memory_recent(limit, role)       — Letzte N Messages
-  - memory_add_fact(fact, category)  — Core-Memory-Fact ergänzen
-  - skills_list()                    — Alle registrierten Skills
-  - skills_run(skill_name)           — Skill ausführen
+  - memory_search(query, k)          — FTS5-BM25 recall search
+  - memory_recent(limit, role)       — last N messages
+  - memory_add_fact(fact, category)  — append a core-memory fact
+  - skills_list()                    — all registered skills
+  - skills_run(skill_name)           — run a skill
 
 Resources:
-  - jarvis://core-memory/persona     — Live-Dump des Persona-Blocks
-  - jarvis://core-memory/all         — Vollständiges Core-Memory JSON
+  - jarvis://core-memory/persona     — live dump of the persona block
+  - jarvis://core-memory/all         — full core-memory JSON
 
-Registrierung in OpenClaw:
+Registration in OpenClaw:
   claude mcp add jarvis python -m jarvis.mcp.server
 
-Loop-Detection:
-  Jeder Request-Handler prüft `JARVIS_MCP_DEPTH` env-var. Wenn >= max_call_depth,
-  gibt's Fehler (verhindert infinite dispatch_to_harness→openclaw→jarvis-mcp).
+Loop detection:
+  Every request handler checks the `JARVIS_MCP_DEPTH` env var. If it is
+  >= max_call_depth, it raises an error (prevents an infinite
+  dispatch_to_harness→openclaw→jarvis-mcp loop).
 
 Auth (optional):
-  Setze ENV `JARVIS_MCP_TOKEN` um einen Bearer-Header auf HTTP-Transport zu
-  verlangen. Stdio nutzt Env-Inheritance — kein extra Auth nötig.
+  Set the `JARVIS_MCP_TOKEN` env var to require a bearer header on the
+  HTTP transport. Stdio uses env inheritance — no extra auth needed.
 """
 from __future__ import annotations
 
@@ -166,7 +167,7 @@ def build_app() -> tuple[object, dict]:
                     })
             return {"count": len(all_skills), "skills": all_skills}
         except Exception as exc:  # noqa: BLE001
-            return {"error": f"Skills-System nicht verfügbar: {exc}"}
+            return {"error": f"Skills system unavailable: {exc}"}
 
     # ------------------------------------------------------------------
     # Resources

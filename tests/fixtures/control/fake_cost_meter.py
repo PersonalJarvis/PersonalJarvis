@@ -1,8 +1,8 @@
-"""Fake-CostMeter fuer Tests.
+"""Fake CostMeter for tests.
 
-Laesst sich mit `over_task_after_usd=0.5` so verdrahten, dass der Meter
-nach 0.50 USD Ueberschreitung `over_task_budget()` true liefert —
-perfekt fuer den Budget-Exceed-Integration-Test.
+Can be wired up with `over_task_after_usd=0.5` so the meter returns
+true from `over_task_budget()` once it exceeds 0.50 USD —
+perfect for the budget-exceed integration test.
 """
 from __future__ import annotations
 

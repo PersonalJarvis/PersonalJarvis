@@ -11,7 +11,7 @@ Design: docs/superpowers/specs/2026-05-25-utterance-completeness-design.md
 Bias is **"when in doubt, execute"**: the default verdict is COMPLETE, and only
 high-precision rules raise INCOMPLETE / ABRUPT_ABORT. This keeps the fast
 local-action path (``match_local_action``) and the meta-command gates
-(``match_voice_command``) un-starved — a clear command like "Öffne Chrome" must
+(``match_voice_command``) un-starved — a clear command like "Open Chrome" must
 always pass through.
 
 Standard-library only (``re``), like ``jarvis/speech/hangup.py`` — no
@@ -53,7 +53,7 @@ class CompletenessVerdict:
 # --- Rule 2: abrupt-abort phrases (explicit self-cancel) ------------------
 # Anchored full-utterance match (optional leading interjection + optional
 # trailing "jarvis"). Anchoring keeps precision high: "ich vergiss es nie" and
-# "mach das doch nicht so laut" do NOT match because there is extra content
+# "mach das doch nicht so laut" do NOT match because there is extra content  # i18n-allow
 # outside the phrase. A bare "nein" / "no" is a valid answer, not an abort.
 _ABORT_INTERJECTIONS: Final[str] = r"ach|oh|ne|nee|nein|ok|okay|also|ja|na|hm|ah"
 
@@ -63,13 +63,13 @@ _ABORT_PHRASES: Final[tuple[str, ...]] = (
     "lass mal gut sein",
     "lass es gut sein",
     "lass gut sein",
-    "ist schon gut",
+    "ist schon gut",  # i18n-allow
     "is schon gut",
     "schon gut",
-    "nein doch nicht",
-    "nee doch nicht",
-    "ne doch nicht",
-    "doch nicht",
+    "nein doch nicht",  # i18n-allow
+    "nee doch nicht",  # i18n-allow
+    "ne doch nicht",  # i18n-allow
+    "doch nicht",  # i18n-allow
     "nein egal",
     "nee egal",
     "ne egal",
@@ -108,9 +108,9 @@ _ABORT_RE: Final[re.Pattern[str]] = re.compile(
 _DANGLING: Final[frozenset[str]] = frozenset(
     {
         # DE conjunctions
-        "und", "oder", "aber", "weil", "dass", "daß", "denn", "sondern", "sowie",
+        "und", "oder", "aber", "weil", "dass", "daß", "denn", "sondern", "sowie",  # i18n-allow
         # DE indefinite articles (almost always pre-nominal)
-        "eine", "einen", "einem", "einer", "eines",
+        "eine", "einen", "einem", "einer", "eines",  # i18n-allow
         # DE subordinators
         "wenn", "falls", "ob",
         # EN conjunctions

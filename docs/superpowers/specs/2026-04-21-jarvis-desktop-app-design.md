@@ -3,7 +3,7 @@
 **Status:** Draft
 **Date:** 2026-04-21
 **Scope:** L7 UI/UX layer for Personal Jarvis (desktop app)
-**Related:** Master plan `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md`
+**Related:** Master plan `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md` <!-- i18n-allow: literal filename identifier, must match the real file -->
 
 ---
 

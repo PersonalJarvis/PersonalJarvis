@@ -16,7 +16,7 @@ After you ship: starting the desktop app launches a background subscription on `
 
 1. **All tests in `tests/unit/memory/wiki/test_integration.py` (new, by you) pass.**
 2. **Pre-flight unit-test suite stays at its baseline failure count** — see §6 of the overview.
-3. **Live voice demo (executed by the review agent in Wave 2):** speaking "Hey Jarvis, merk dir bitte: Alex wurde 1985 geboren" and waiting for idle produces a new page under `wiki/obsidian-vault/` containing the phrase "1985". This succeeds even when Agent D's work is **not yet merged**, by falling back to direct `WikiCurator.ingest` calls.
+3. **Live voice demo (executed by the review agent in Wave 2):** speaking "Hey Jarvis, merk dir bitte: Alex wurde 1985 geboren" <!-- i18n-allow: live voice-demo utterance, real speech input example --> and waiting for idle produces a new page under `wiki/obsidian-vault/` containing the phrase "1985". This succeeds even when Agent D's work is **not yet merged**, by falling back to direct `WikiCurator.ingest` calls.
 4. **No regression in `python -m jarvis.ui.web.launcher --headless`** — the desktop app boots cleanly.
 
 ---
@@ -192,8 +192,8 @@ Get-Content data/jarvis_desktop.log -Tail 30
 Free-form Markdown, but the **final line must be exactly** one of:
 
 ```
-Goal erfüllt: ja — Grund: <one sentence>
-Goal erfüllt: nein — Grund: <one sentence>
+Goal fulfilled: yes — Reason: <one sentence>
+Goal fulfilled: no — Reason: <one sentence>
 ```
 
 Recommended sections (free-form, the order is yours):

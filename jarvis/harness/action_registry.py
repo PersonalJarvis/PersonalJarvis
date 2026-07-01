@@ -86,8 +86,8 @@ class ActionSpec:
         has_comp = self.composite is not None
         if has_tool == has_comp:
             raise ValueError(
-                f"ActionSpec '{self.name}' muss entweder tool_name ODER "
-                f"composite haben — nicht beides und nicht keines."
+                f"ActionSpec '{self.name}' must have either tool_name OR "
+                f"composite — not both and not neither."
             )
 
 
@@ -105,7 +105,7 @@ class ActionRegistry:
     def register(self, spec: ActionSpec) -> None:
         spec.validate()
         if spec.name in self._actions:
-            log.debug("Action '%s' wird ueberschrieben", spec.name)
+            log.debug("Action '%s' is being overwritten", spec.name)
         self._actions[spec.name] = spec
 
     def get(self, name: str) -> ActionSpec | None:
@@ -135,8 +135,8 @@ class ActionRegistry:
         handlers never drift.
         """
         lines: list[str] = [
-            "Verfuegbare Actions im Computer-Use-Loop "
-            "(nutze EXAKT die gelisteten args-Namen):",
+            "Available actions in the computer-use loop "
+            "(use EXACTLY the listed args names):",
         ]
         for spec in self.all():
             schema = getattr(spec, "arg_schema", None) or {}
@@ -149,7 +149,7 @@ class ActionRegistry:
 
 
 # ----------------------------------------------------------------------
-# Argument-Transformer (Aliased Actions)
+# Argument transformers (aliased actions)
 # ----------------------------------------------------------------------
 
 
@@ -160,7 +160,7 @@ def _transform_press_key(args: dict[str, Any]) -> dict[str, Any]:
         return {"keys": [key]}
     if isinstance(key, list):
         return {"keys": [str(k) for k in key]}
-    raise ValueError("press_key braucht 'key' (string) oder 'keys' (list)")
+    raise ValueError("press_key needs 'key' (string) or 'keys' (list)")
 
 
 def _transform_press_shortcut(args: dict[str, Any]) -> dict[str, Any]:
@@ -173,11 +173,11 @@ def _transform_press_shortcut(args: dict[str, Any]) -> dict[str, Any]:
     combo = args.get("combo") or args.get("shortcut")
     if not isinstance(combo, str):
         raise ValueError(
-            "press_shortcut braucht 'combo' (z.B. 'ctrl+t') oder 'keys' (Liste)"
+            "press_shortcut needs 'combo' (e.g. 'ctrl+t') or 'keys' (list)"
         )
     parts = [p.strip().lower() for p in combo.split("+") if p.strip()]
     if not parts:
-        raise ValueError(f"Leere combo: {combo!r}")
+        raise ValueError(f"Empty combo: {combo!r}")
     return {"keys": parts}
 
 
@@ -222,7 +222,7 @@ async def _composite_open_new_tab(
     if hotkey_tool is None:
         return ToolResult(
             success=False, output=None,
-            error="hotkey-Tool nicht verfuegbar — open_new_tab kann nicht ausgefuehrt werden",
+            error="hotkey tool not available — open_new_tab cannot be executed",
         )
     return await executor.execute(
         hotkey_tool,
@@ -251,14 +251,14 @@ async def _composite_run_terminal_command(
     if not isinstance(command, str) or not command.strip():
         return ToolResult(
             success=False, output=None,
-            error="run_terminal_command_through_ui braucht 'command' (string)",
+            error="run_terminal_command_through_ui needs 'command' (string)",
         )
     type_tool = tools.get("type_text")
     hotkey_tool = tools.get("hotkey")
     if type_tool is None or hotkey_tool is None:
         return ToolResult(
             success=False, output=None,
-            error="type_text oder hotkey-Tool fehlt — Composite kann nicht laufen",
+            error="type_text or hotkey tool missing — composite cannot run",
         )
     type_result = await executor.execute(
         type_tool, {"text": command},
@@ -273,7 +273,7 @@ async def _composite_run_terminal_command(
 
 
 # ----------------------------------------------------------------------
-# Default-Registry-Aufbau
+# Default registry construction
 # ----------------------------------------------------------------------
 
 
@@ -287,32 +287,32 @@ def build_default_registry() -> ActionRegistry:
     """
     reg = ActionRegistry()
 
-    # ---- Direct (1:1 Tool-Mapping) -----------------------------------
+    # ---- Direct (1:1 tool mapping) -----------------------------------
     reg.register(ActionSpec(
         name="open_app",
         tool_name="open_app",
-        description="Oeffnet eine Windows-Anwendung per Name oder Pfad.",
+        description="Opens a Windows application by name or path.",
         arg_schema={"app_name": "string", "arguments": "string?"},
         risk_hint="monitor",
     ))
     reg.register(ActionSpec(
         name="type_text",
         tool_name="type_text",
-        description="Tippt Text in das aktive Fenster.",
+        description="Types text into the active window.",
         arg_schema={"text": "string", "delay_s": "number?"},
         risk_hint="safe",
     ))
     reg.register(ActionSpec(
         name="click",
         tool_name="click",
-        description="Klickt mit der Maus auf eine Bildschirm-Koordinate.",
+        description="Clicks the mouse at a screen coordinate.",
         arg_schema={"x": "int", "y": "int", "button": "left|right|middle?", "double": "bool?"},
         risk_hint="monitor",
     ))
     reg.register(ActionSpec(
         name="move_mouse",
         tool_name="move_mouse",
-        description="Bewegt den Mauszeiger ohne zu klicken.",
+        description="Moves the mouse cursor without clicking.",
         arg_schema={"x": "int", "y": "int"},
         risk_hint="safe",
     ))
@@ -320,8 +320,8 @@ def build_default_registry() -> ActionRegistry:
         name="click_element",
         tool_name="click_element",
         description=(
-            "Klickt ein UIA-Element per Name/Rolle (statt per Koordinate). "
-            "Robuster als click — keine Pixel-Schaetzung noetig."
+            "Clicks a UIA element by name/role (instead of by coordinate). "
+            "More robust than click — no pixel guessing needed."
         ),
         arg_schema={
             "name": "string",
@@ -337,8 +337,8 @@ def build_default_registry() -> ActionRegistry:
         name="scroll",
         tool_name="scroll",
         description=(
-            "Scrollt das Mausrad in eine Richtung, um verdeckte Elemente "
-            "sichtbar zu machen (Listen, Chats, Dateiauswahl)."
+            "Scrolls the mouse wheel in a direction to bring hidden elements "
+            "into view (lists, chats, file pickers)."
         ),
         arg_schema={
             "direction": "up|down|left|right",
@@ -352,8 +352,8 @@ def build_default_registry() -> ActionRegistry:
         name="wait_for_element",
         tool_name="wait_for_element",
         description=(
-            "Wartet (pollt UIA) bis ein Element mit Rolle/Name erscheint und "
-            "liefert dessen Mittelpunkt zurueck — fuer App-Start/Ladewartezeiten."
+            "Waits (polling UIA) until an element with a matching role/name appears "
+            "and returns its midpoint — for app-start/load waits."
         ),
         arg_schema={
             "name_contains": "string?",
@@ -367,7 +367,7 @@ def build_default_registry() -> ActionRegistry:
     reg.register(ActionSpec(
         name="switch_window",
         tool_name="switch_window",
-        description="Wechselt zu einem Fenster, das einen Titel-Substring matcht.",
+        description="Switches to a window whose title matches a substring.",
         arg_schema={"title_contains": "string"},
         risk_hint="monitor",
     ))
@@ -375,8 +375,8 @@ def build_default_registry() -> ActionRegistry:
         name="wait_for_ui_state",
         tool_name="wait_for_ui_state",
         description=(
-            "Wartet bis sich der UI-State aendert (z.B. neues Fenster sichtbar, "
-            "Text in einem Element). Polling auf Vision/UIA-Snapshot."
+            "Waits until the UI state changes (e.g. a new window becomes visible, "
+            "text appears in an element). Polls the vision/UIA snapshot."
         ),
         arg_schema={
             "title_contains": "string?",
@@ -389,18 +389,18 @@ def build_default_registry() -> ActionRegistry:
         name="read_visible_ui_state",
         tool_name="read_visible_ui_state",
         description=(
-            "Liest den aktuellen UI-Zustand (Fenster-Titel, sichtbarer Text) "
-            "als strukturiertes Feedback fuer den Agent."
+            "Reads the current UI state (window title, visible text) "
+            "as structured feedback for the agent."
         ),
         arg_schema={"include_screenshot": "bool?"},
         risk_hint="safe",
     ))
 
-    # ---- Aliased (Tool-Mapping mit Arg-Transform) --------------------
+    # ---- Aliased (tool mapping with arg transform) --------------------
     reg.register(ActionSpec(
         name="press_key",
         tool_name="hotkey",
-        description="Drueckt eine einzelne Taste (z.B. enter, esc, tab, f5).",
+        description="Presses a single key (e.g. enter, esc, tab, f5).",
         arg_schema={"key": "string"},
         arg_transform=_transform_press_key,
         risk_hint="monitor",
@@ -409,10 +409,10 @@ def build_default_registry() -> ActionRegistry:
         name="press_shortcut",
         tool_name="hotkey",
         description=(
-            "Sendet eine Tastenkombination wie 'ctrl+t' (neuer Tab), "
-            "'alt+tab' (Window-Switch), 'ctrl+shift+t' (Tab wiederherstellen)."
+            "Sends a key combination such as 'ctrl+t' (new tab), "
+            "'alt+tab' (window switch), 'ctrl+shift+t' (restore tab)."
         ),
-        arg_schema={"combo": "string (z.B. 'ctrl+t')"},
+        arg_schema={"combo": "string (e.g. 'ctrl+t')"},
         arg_transform=_transform_press_shortcut,
         risk_hint="monitor",
     ))
@@ -420,7 +420,7 @@ def build_default_registry() -> ActionRegistry:
         name="open_terminal",
         tool_name="open_app",
         description=(
-            "Oeffnet ein Terminal-Fenster. Default: Windows Terminal (wt). "
+            "Opens a terminal window. Default: Windows Terminal (wt). "
             "Optional: profile='cmd'|'powershell'|'pwsh'."
         ),
         arg_schema={"profile": "string?"},
@@ -428,11 +428,11 @@ def build_default_registry() -> ActionRegistry:
         risk_hint="monitor",
     ))
 
-    # ---- Composite (Multi-Tool-Sequenzen) ----------------------------
+    # ---- Composite (multi-tool sequences) ----------------------------
     reg.register(ActionSpec(
         name="open_new_tab",
         tool_name=None,
-        description="Oeffnet einen neuen Tab im aktiven Fenster (sendet Strg+T).",
+        description="Opens a new tab in the active window (sends Ctrl+T).",
         arg_schema={},
         composite=_composite_open_new_tab,
         risk_hint="monitor",
@@ -441,8 +441,8 @@ def build_default_registry() -> ActionRegistry:
         name="run_terminal_command_through_ui",
         tool_name=None,
         description=(
-            "Tippt einen Befehl ins aktive Terminal und drueckt Enter. "
-            "Erfordert: Terminal muss vorher geoeffnet & fokussiert sein."
+            "Types a command into the active terminal and presses Enter. "
+            "Requires: the terminal must already be open & focused."
         ),
         arg_schema={"command": "string"},
         composite=_composite_run_terminal_command,
@@ -455,14 +455,14 @@ def build_default_registry() -> ActionRegistry:
     reg.register(ActionSpec(
         name="wait",
         tool_name="__loop_wait__",
-        description="Pausiert die Ausfuehrung fuer N Sekunden (max 60s).",
+        description="Pauses execution for N seconds (max 60s).",
         arg_schema={"seconds": "number"},
         risk_hint="safe",
     ))
     reg.register(ActionSpec(
         name="done",
         tool_name="__loop_done__",
-        description="Markiert den Plan als fertig — beendet den Loop.",
+        description="Marks the plan as done — ends the loop.",
         arg_schema={},
         risk_hint="safe",
     ))

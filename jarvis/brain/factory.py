@@ -40,7 +40,7 @@ BrainCallback = Callable[[str], Awaitable[str]]
 # registered harness (Welle-4 removal, ~92% hang; pyproject.toml registers only
 # open-interpreter / mcp-remote / python-script / screenshot). A "start a
 # subagent" turn then dispatched to a phantom harness and surfaced the raw
-# "Harness 'openclaw' nicht verfügbar" KeyError to voice. Heavy sub-agent work
+# "Harness 'openclaw' nicht verfügbar" KeyError to voice. Heavy sub-agent work  # i18n-allow: forensic quote of the actual historical German KeyError text
 # is ``spawn-worker`` (Mission-Manager → ClaudeDirectWorker); live desktop work
 # is ``computer-use``. The tool class itself still exists for the INTERNAL,
 # non-LLM local-action fast path (see ``_load_local_action_tools``, called
@@ -149,8 +149,9 @@ ROUTER_TOOLS = frozenset({
     # any GUI). The router previously had no honest desktop path — spawn-worker
     # runs in an isolated worktree (cannot touch the desktop) and the
     # dispatch-to-harness indirection was never described as desktop control, so
-    # the model refused or hallucinated a tool for "öffne ein Terminal". This
-    # tool delegates to the in-process computer-use harness; it is a direct
+    # the model refused or hallucinated a tool for the German "öffne ein Terminal"  # i18n-allow: quoted German input example
+    # ("open a terminal"). This tool delegates to the in-process
+    # computer-use harness; it is a direct
     # safe-gated action (per-action risk gating inside the loop, ADR-0008),
     # NOT a spawn — so it never enters a worker tool-set (AP-5/AP-14). See
     # ADR-0011 amendment "Computer-Use Router Tool".
@@ -334,8 +335,8 @@ def _load_tools_for_tier(
 
     if tier != "router":
         raise ValueError(
-            f"Unbekannter Tier {tier!r}. Sub-Jarvis-Tier wurde in Welle 4 "
-            f"durch die OpenClaw-Bridge ersetzt — nur 'router' bleibt."
+            f"Unknown tier {tier!r}. The Sub-Jarvis tier was replaced by the "
+            f"OpenClaw bridge in Welle 4 — only 'router' remains."
         )
 
     allow = ROUTER_TOOLS
@@ -464,7 +465,7 @@ def _load_tools_for_tier(
             else:
                 tools[inst.name] = inst
         except Exception as exc:  # noqa: BLE001
-            log.debug("Tool %s nicht ladbar: %s", ep.name, exc)
+            log.debug("Tool %s not loadable: %s", ep.name, exc)
 
     # Phase 7.3 — self-mod tools are not discoverable via entry_points
     # (they require a shared state writer + PendingMutationStore). Plan-§AD-2:
@@ -488,7 +489,7 @@ def _load_tools_for_tier(
             )
             for name, inst in self_mod_tools.items():
                 tools[name] = inst
-        except Exception as exc:  # noqa: BLE001 — defensive, kein Tool-Block fail-stops das Brain
+        except Exception as exc:  # noqa: BLE001 — defensive, no tool block fail-stops the Brain
             log.debug("Self-mod tools not loadable (Phase 7.3): %s", exc)
 
     return tools
@@ -517,7 +518,7 @@ def _load_local_action_tools(
             manager=harness_manager,
             max_output_chars=config.harness.max_output_chars,
         ),
-        # ADR-0016 L2: voice-driven orb recovery ("Orb zurück" /
+        # ADR-0016 L2: voice-driven orb recovery ("Orb zurück" /  # i18n-allow: quoted German voice-trigger phrase
         # "wo bist du" / "reset orb"). Publishes OrbResetRequested
         # on the bus; the orb-side bridge handles the Tk-thread dispatch.
         "reset_orb_position": ResetOrbPositionTool(bus=bus),
@@ -594,8 +595,8 @@ _KONTROLLIERER_REF: list[Any] = []
 # Sentinel that distinguishes "bootstrap not yet attempted" (default,
 # transient) from "bootstrap attempted and crashed" (permanent for this
 # process). spawn_worker checks this so the user gets an honest
-# "OpenClaw konnte nicht initialisiert werden" instead of the misleading
-# "noch nicht bereit, bitte einen Moment warten" the in-progress path
+# "OpenClaw konnte nicht initialisiert werden" instead of the misleading  # i18n-allow: quoted German runtime voice-output phrase
+# "noch nicht bereit, bitte einen Moment warten" the in-progress path  # i18n-allow: quoted German runtime voice-output phrase
 # returns when both the manager and kontrollierer singletons are None
 # but the server is still booting.
 _WORKER_BOOTSTRAP_FAILED: list[bool] = [False]
@@ -633,9 +634,9 @@ def set_worker_bootstrap_failed(flag: bool) -> None:
 
     Called from ``server.py::_init_mission_stack`` when the Mission-Stack
     bootstrap raised. spawn_worker reads this via
-    ``is_worker_bootstrap_failed()`` and surfaces an honest "konnte
-    nicht initialisiert werden" message instead of the transient
-    "noch nicht bereit" the in-progress path returns.
+    ``is_worker_bootstrap_failed()`` and surfaces an honest "could not be
+    initialized" message instead of the transient "not ready yet" the
+    in-progress path returns.
     """
     _WORKER_BOOTSTRAP_FAILED[0] = bool(flag)
 
@@ -692,7 +693,7 @@ def _phase2_full_brain(
         soul = Soul.load(workspace.soul_path)
         people = PersonStore(workspace)
     except Exception as exc:  # noqa: BLE001
-        log.warning("Workspace-Load fehlgeschlagen: %s — continuing without profile", exc)
+        log.warning("Workspace load failed: %s — continuing without profile", exc)
         user_profile = None
         soul = None
         people = None
@@ -780,7 +781,7 @@ def _phase2_full_brain(
                     v_provider, v_model, v_cfg.timeout_s,
                 )
             except Exception as exc:    # noqa: BLE001
-                log.warning("Verdichter konnte nicht initialisiert werden: %s", exc)
+                log.warning("Verdichter could not be initialized: %s", exc)
                 awareness_manager._verdichter = None    # noqa: SLF001
 
         # Phase A2: build the StoryTracker and attach it to the manager. Lifecycle
@@ -806,7 +807,7 @@ def _phase2_full_brain(
                     s_cfg.hard_timer_min,
                 )
             except Exception as exc:    # noqa: BLE001
-                log.warning("StoryTracker konnte nicht initialisiert werden: %s", exc)
+                log.warning("StoryTracker could not be initialized: %s", exc)
                 awareness_manager._story_tracker = None    # noqa: SLF001
 
         # Phase A5-Lite: probes (GitProbe + FileSystemProbe). Called by the
@@ -834,7 +835,7 @@ def _phase2_full_brain(
                     [type(p).__name__ for p in probes_list], p_cfg.total_budget_ms,
                 )
             except Exception as exc:    # noqa: BLE001
-                log.warning("Probes konnten nicht initialisiert werden: %s", exc)
+                log.warning("Probes could not be initialized: %s", exc)
                 awareness_manager._probes = []    # noqa: SLF001
                 awareness_manager._fs_probe = None    # noqa: SLF001
 
@@ -931,7 +932,7 @@ def _phase2_full_brain(
     try:
         manager.attach_to_bus(bus)
     except Exception as exc:  # noqa: BLE001
-        log.warning("attach_to_bus fehlgeschlagen: %s", exc)
+        log.warning("attach_to_bus failed: %s", exc)
 
     cu_cfg = getattr(config, "computer_use", None)
     cu_enabled = bool(cu_cfg and cu_cfg.enabled)
@@ -997,7 +998,7 @@ def _phase2_full_brain(
                         "Computer-Use on-demand capture only (max-speed mode)."
                     )
             except Exception as exc:  # noqa: BLE001
-                log.warning("Vision-Engine/Provider konnte nicht gebaut werden: %s", exc)
+                log.warning("Vision engine/provider could not be built: %s", exc)
                 manager._vision_provider = None
                 vision_engine_for_cu = None
 
@@ -1033,7 +1034,7 @@ def _phase2_full_brain(
                 "read-visible-ui-state",
                 "switch-window",
                 # Primary action tools — without these every plan from the
-                # CU loop fails at execute-time with "Tool '<name>' nicht im
+                # CU loop fails at execute-time with "Tool '<name>' nicht im  # i18n-allow: forensic quote of the actual German error text
                 # Computer-Use-Tool-Set verdrahtet". The ActionRegistry in
                 # action_registry.py:278-368 maps the corresponding action
                 # names (type_text, click, hotkey, move_mouse, open_app) to
@@ -1126,14 +1127,14 @@ def _phase2_full_brain(
                 cu_cfg.max_replans,
             )
         except Exception as exc:  # noqa: BLE001
-            log.warning("ComputerUseContext konnte nicht gesetzt werden: %s", exc)
+            log.warning("ComputerUseContext could not be set: %s", exc)
     elif tier == "router" and cu_cfg is not None and not cu_enabled:
-        log.info("ComputerUseContext deaktiviert ([computer_use].enabled = false)")
+        log.info("ComputerUseContext disabled ([computer_use].enabled = false)")
     elif tier == "router" and cu_enabled and vision_engine_for_cu is None:
         log.warning(
-            "ComputerUseContext konnte nicht verdrahtet werden: "
-            "[computer_use].enabled = true, aber Vision-Engine fehlt "
-            "(prüfe [brain.router.vision].enabled)"
+            "ComputerUseContext could not be wired up: "
+            "[computer_use].enabled = true, but the vision engine is missing "
+            "(check [brain.router.vision].enabled)"
         )
 
     # Router tier: inject system prompt
@@ -1162,9 +1163,9 @@ def _phase2_full_brain(
                 people=people,
                 bus=bus,
             )
-            log.info("Curator aktiv fuer Router-Tier (legacy_curator.enabled=true)")
+            log.info("Curator active for router tier (legacy_curator.enabled=true)")
         except Exception as exc:  # noqa: BLE001
-            log.warning("Curator konnte nicht initialisiert werden: %s", exc)
+            log.warning("Curator could not be initialized: %s", exc)
     elif not legacy_enabled:
         log.info(
             "Legacy-Curator soft-disabled (cfg.memory.legacy_curator.enabled=false) "
@@ -1337,7 +1338,7 @@ def _legacy_full_brain(bus: Any | None = None) -> Any:
                 capture_mode=vision_cfg.capture_mode,
             )
         except Exception as exc:  # noqa: BLE001
-            log.warning("VisionContextProvider konnte nicht gebaut werden: %s", exc)
+            log.warning("VisionContextProvider could not be built: %s", exc)
             manager._vision_provider = None
 
     # B4 Soft-Disable (2026-05-17) — see the matching gate in
@@ -1357,7 +1358,7 @@ def _legacy_full_brain(bus: Any | None = None) -> Any:
             )
             log.info("Curator active (legacy path, legacy_curator.enabled=true)")
         except Exception as exc:  # noqa: BLE001
-            log.warning("Curator konnte nicht initialisiert werden: %s", exc)
+            log.warning("Curator could not be initialized: %s", exc)
 
     return manager
 
@@ -1400,7 +1401,7 @@ def build_default_brain(
     # the single authoritative brain entry point, so EVERY runtime (voice, REST,
     # headless) has a populated registry before the first turn. Without this the
     # registry stays empty and BrainManager._check_unsupported_intent rejects
-    # every action utterance with "Das kann ich noch nicht ...", pre-empting the
+    # every action utterance with "Das kann ich noch nicht ...", pre-empting the  # i18n-allow: quoted German runtime voice-output phrase
     # deterministic force-spawn path (live bug 2026-05-25 — "Kannst du einen
     # Subagent spawnen"). seed_registry is idempotent (re-registration replaces
     # by id), so repeated brain builds AND the dynamic MCP registration in
@@ -1477,24 +1478,24 @@ def build_default_brain(
         return _echo_brain
 
     if mode == "legacy":
-        log.info("JARVIS_BRAIN=legacy → Legacy-BrainManager (vor Tiered-Routing).")
+        log.info("JARVIS_BRAIN=legacy → Legacy BrainManager (before tiered routing).")
         try:
             return _legacy_full_brain(bus=bus)
         except Exception as exc:  # noqa: BLE001
-            log.warning("Legacy-BrainManager nicht initialisierbar: %s — Fallback.", exc)
+            log.warning("Legacy BrainManager could not be initialized: %s — falling back.", exc)
             try:
                 return _phase1_gemini_fallback()
             except Exception as exc2:  # noqa: BLE001
-                log.error("GeminiTestBrain-Fallback auch gescheitert: %s", exc2)
+                log.error("GeminiTestBrain fallback also failed: %s", exc2)
                 return _echo_brain
 
     if mode == "gemini" or not allow_phase2:
         try:
             brain = _phase1_gemini_fallback()
-            log.info("Brain-Stack: GeminiTestBrain (Phase-1b-Kompat-Modus).")
+            log.info("Brain stack: GeminiTestBrain (Phase-1b compat mode).")
             return brain
         except Exception as exc:  # noqa: BLE001
-            log.warning("GeminiTestBrain nicht verfügbar: %s — Echo-Fallback.", exc)
+            log.warning("GeminiTestBrain not available: %s — falling back to echo.", exc)
             return _echo_brain
 
     # Default: full BrainManager with tier routing. No silent echo/test-brain
@@ -1503,14 +1504,14 @@ def build_default_brain(
     try:
         brain = _phase2_full_brain(tier=tier, bus=bus)
         log.info(
-            "Brain-Stack: BrainManager tier=%s aktiv — provider=%s, tools=%d",
+            "Brain stack: BrainManager tier=%s active — provider=%s, tools=%d",
             tier,
             getattr(brain, "active_provider", "?"),
             len(getattr(brain, "_tools", {})),
         )
         return brain
     except Exception as exc:  # noqa: BLE001
-        log.error("BrainManager (tier=%s) nicht initialisierbar: %s", tier, exc)
+        log.error("BrainManager (tier=%s) could not be initialized: %s", tier, exc)
         raise
 
 

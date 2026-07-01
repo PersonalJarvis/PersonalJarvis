@@ -1,21 +1,20 @@
-"""TaskScheduler — asyncio + heapq-basierter Scheduler (ADR-0005).
+"""TaskScheduler — asyncio + heapq-based scheduler (ADR-0005).
 
-Einfach, zwei Paths:
+Simple, two paths:
 
-1. **Zeit-basiert** (``after_delay`` + ``at_time``) — ein min-heap nach
-   ``due_at_ns``. Die ``run()``-Schleife poppt alle faelligen Eintraege und
-   dispatcht sie an den ``TaskRunner``, bevor sie auf den naechsten wartet.
+1. **Time-based** (``after_delay`` + ``at_time``) — a min-heap ordered by
+   ``due_at_ns``. The ``run()`` loop pops every due entry and dispatches it to
+   the ``TaskRunner`` before waiting for the next one.
 
-2. **Event-basiert** (``on_event``) — der Scheduler registriert sich als
-   wildcard-subscriber am Bus und dispatcht jede Event-Klasse, die ein
-   ``on_event``-Task als ``event_selector`` hinterlegt hat.
+2. **Event-based** (``on_event``) — the scheduler registers itself as a
+   wildcard subscriber on the bus and dispatches every event class that an
+   ``on_event`` task has recorded as its ``event_selector``.
 
-**Keine** Cron-Semantik, **kein** APScheduler, **kein** zweiter Thread.
-Alles laeuft im Main-Async-Loop — das ist mit Absicht (ADR-0005).
+**No** cron semantics, **no** APScheduler, **no** second thread.
+Everything runs on the main async loop — that is deliberate (ADR-0005).
 
-Der Scheduler nutzt einen ``CancelToken`` als oberste Abbruch-Bedingung
-(ADR-0004). Laufende Tasks bekommen einen eigenen Runner-Task, die von
-diesem Token abgeleitet sind.
+The scheduler uses a ``CancelToken`` as its top-level abort condition
+(ADR-0004). Running tasks get their own runner task, derived from this token.
 """
 from __future__ import annotations
 
@@ -47,10 +46,10 @@ class _Dispatchable(Protocol):
 
 
 def parse_iso_timestamp_to_ns(iso: str) -> int:
-    """Konvertiert ISO-8601 (optional mit ``Z``) in UTC-Nanosekunden.
+    """Converts ISO-8601 (optionally with ``Z``) into UTC nanoseconds.
 
-    Local-Time ohne TZ wird als System-Zone interpretiert — das entspricht
-    dem TriggerAtTime-Kontrakt (siehe schema.py).
+    Local time without a TZ is interpreted as the system zone — matching the
+    TriggerAtTime contract (see schema.py).
     """
     dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
     if dt.tzinfo is None:
@@ -59,16 +58,16 @@ def parse_iso_timestamp_to_ns(iso: str) -> int:
 
 
 class TaskScheduler:
-    """Lightweight asyncio-Scheduler.
+    """Lightweight asyncio scheduler.
 
     Lifecycle:
-    1. ``__init__`` — Konstruktor, bindet an Bus + Store + Runner.
-    2. ``bind_bus()`` — subscribe_all fuer Event-Dispatch (optional; kann
-       bei Bedarf spaeter aufgerufen werden).
-    3. ``run(cancel_token)`` — Main-Loop. Hydratisiert aus DB, schlaeft,
-       dispatcht, wartet. Beendet beim Token-Cancel.
-    4. ``schedule(spec)`` — extern gerufen, wenn das UI einen neuen Task
-       anlegt. Schreibt in den Store + in den Heap + wakeup-Event.
+    1. ``__init__`` — constructor, binds to bus + store + runner.
+    2. ``bind_bus()`` — subscribe_all for event dispatch (optional; can be
+       called later if needed).
+    3. ``run(cancel_token)`` — main loop. Hydrates from the DB, sleeps,
+       dispatches, waits. Terminates on token cancel.
+    4. ``schedule(spec)`` — called externally when the UI creates a new
+       task. Writes to the store + the heap + a wakeup event.
     """
 
     def __init__(
@@ -80,23 +79,22 @@ class TaskScheduler:
         self._store = store
         self._bus = bus
         self._runner = runner
-        # Heap-Eintraege: (due_at_ns, task_id). task_id als str ist
-        # vergleichbar — heapq nutzt das nur als Tiebreaker bei identischen
-        # due_at_ns.
+        # Heap entries: (due_at_ns, task_id). task_id as str is
+        # comparable — heapq only uses it as a tiebreaker for identical
+        # due_at_ns values.
         self._heap: list[tuple[int, str]] = []
         self._wakeup = asyncio.Event()
-        # On-Event-Tasks — Map Event-Klassenname → set von task_ids.
-        # Wildcard-Subscriber checked die Event-Klasse gegen diesen Index.
+        # On-event tasks — map event class name → set of task_ids.
+        # The wildcard subscriber checks the event class against this index.
         self._on_event_index: dict[str, set[str]] = {}
         self._bound = False
         self._hydrated = False
-        # Track bereits registrierte Task-IDs — verhindert doppelte Heap-Eintraege
-        # bei Race zwischen ``hydrate()`` und ``schedule()``.
+        # Track already-registered task IDs — prevents duplicate heap entries
+        # on a race between ``hydrate()`` and ``schedule()``.
         self._known: set[str] = set()
-        # H10-Fix: max_firings wird pro Task in-memory mitgezaehlt.
-        # None = unbegrenzt. Beim on_event-Match wird dekrementiert;
-        # bei 0 fliegt der Task aus dem Index und wird als "completed"
-        # markiert.
+        # H10 fix: max_firings is tracked per task in memory.
+        # None = unlimited. Decremented on each on_event match; at 0 the task
+        # is removed from the index and marked as "completed".
         self._firings_left: dict[str, int | None] = {}
         # Fire-once dedup for event-triggered rules: an (task_id, subject) pair
         # that has already fired is never fired again. ``subject`` is the event's
@@ -105,11 +103,11 @@ class TaskScheduler:
         # if a terminal event is somehow re-published. Insertion-ordered dict used
         # as a bounded FIFO set (see _DEDUP_CAP) to keep memory bounded.
         self._fired_dedup: dict[tuple[str, str], None] = {}
-        # Pending Runner-Tasks, damit wir beim Cancel aufraeumen koennen.
+        # Pending runner tasks, so we can clean up on cancel.
         self._runner_tasks: set[asyncio.Task[Any]] = set()
 
     # ------------------------------------------------------------------
-    # Runner-Wiring (DI — der Runner kann nach Konstruktor gesetzt werden)
+    # Runner wiring (DI — the runner can be set after construction)
     # ------------------------------------------------------------------
 
     def attach_runner(self, runner: _Dispatchable | TaskRunner) -> None:
@@ -120,10 +118,10 @@ class TaskScheduler:
     # ------------------------------------------------------------------
 
     async def schedule(self, spec: TaskSpec, *, trace_id: str | None = None) -> str:
-        """Persistiert Spec, fuegt dem Heap/Event-Index zu, weckt den Loop."""
+        """Persists the spec, adds it to the heap/event index, wakes the loop."""
         task_id = await self._store.insert(spec, trace_id=trace_id)
         self._register_in_memory(spec, task_id)
-        # TaskScheduled-Event zur Transparenz (UI listet)
+        # TaskScheduled event for transparency (the UI lists it)
         due_at_ns = self._due_at_ns_for(spec)
         await self._bus.publish(
             TaskScheduled(
@@ -138,29 +136,28 @@ class TaskScheduler:
         return task_id
 
     async def cancel_task(self, task_id: str, reason: str = "user_cancel") -> bool:
-        """Markiert einen Task als ``cancelled``, wenn er noch nicht final ist.
+        """Marks a task as ``cancelled`` if it isn't already terminal.
 
-        Entfernt ihn auch aus den In-Memory-Strukturen. Laufende Runner
-        werden NICHT direkt unterbrochen — dafuer haben wir den
-        KillSwitch-Pfad. Hier ist der Use-Case: "Task war scheduled, User
-        drueckt X."
+        Also removes it from the in-memory structures. Running runners are
+        NOT interrupted directly — that's what the kill-switch path is for.
+        The use case here is: "task was scheduled, user hits X."
         """
         task = await self._store.get(task_id)
         if task is None:
             return False
         if task["state"] in ("completed", "failed", "cancelled", "interrupted"):
             return False
-        # Aus Heap entfernen (linear scan, klein genug — typische Queue < 100).
+        # Remove from heap (linear scan, small enough — a typical queue is < 100).
         self._heap = [(due, tid) for (due, tid) in self._heap if tid != task_id]
         heapq.heapify(self._heap)
-        # Aus Event-Index loeschen
+        # Remove from the event index
         for ids in self._on_event_index.values():
             ids.discard(task_id)
         self._known.discard(task_id)
 
         await self._store.update_state(task_id, "cancelled", error=reason)
         await self._store.append_step(task_id, "log", {"event": "cancelled", "reason": reason})
-        # Event auf dem Bus
+        # Event on the bus
         from jarvis.core.events import TaskCancelled
         await self._bus.publish(
             TaskCancelled(task_id=task_id, reason=reason, source_layer="tasks.scheduler")
@@ -169,24 +166,24 @@ class TaskScheduler:
         return True
 
     # ------------------------------------------------------------------
-    # Event-Bus Wiring
+    # Event-bus wiring
     # ------------------------------------------------------------------
 
     def bind_bus(self) -> None:
-        """Registriert den Wildcard-Handler fuer ``on_event``-Dispatch."""
+        """Registers the wildcard handler for ``on_event`` dispatch."""
         if self._bound:
             return
         self._bus.subscribe_all(self._on_any_event)
         self._bound = True
 
     async def _on_any_event(self, event: Event) -> None:
-        """Wildcard-Handler: wenn eine Event-Klasse einem ``on_event``-Task
-        entspricht, den Runner fire-and-forget dispatchen.
+        """Wildcard handler: if an event class matches an ``on_event`` task,
+        dispatch the runner fire-and-forget.
 
-        Filter-Expression (``filter_expr``) wird via ``_match_filter`` im
-        Runner-Dispatch gecheckt — wir haetten hier zwar Zugriff auf das
-        Event, aber die Spec ist in der DB, und wir wollen in diesem Handler
-        nicht blockieren. Deshalb: Handler enqueues + Runner prueft.
+        The filter expression (``filter_expr``) is checked via ``_match_filter``
+        during the runner dispatch — we do have access to the event here, but
+        the spec lives in the DB, and we don't want to block in this handler.
+        Hence: the handler enqueues, and the runner checks.
         """
         cls_name = type(event).__name__
         task_ids = self._on_event_index.get(cls_name)
@@ -195,16 +192,16 @@ class TaskScheduler:
         # Snapshot the event's flat fields once — handed to the runner as the
         # ``trigger_event`` template context ({result_uri}, {status}, ...).
         event_ctx = _event_to_dict(event)
-        # Copy, damit der Runner-Loop die Menge modifizieren darf.
+        # Copy, so the runner loop is allowed to modify the set.
         for tid in list(task_ids):
-            # Filter-Matching hier vorziehen — das spart einen Runner-
-            # Launch bei Events, die offensichtlich nicht passen.
+            # Filter-match here first — this avoids a runner launch for
+            # events that obviously don't match.
             spec = await self._store.get_spec(tid)
             if spec is None:
                 task_ids.discard(tid)
                 continue
             if spec.trigger.type != "on_event":
-                # Defensive: sollte nie passieren, aber wenn ja, raus damit.
+                # Defensive: should never happen, but if it does, drop it.
                 task_ids.discard(tid)
                 continue
             if not _match_filter(event, spec.trigger.filter_expr):
@@ -218,8 +215,8 @@ class TaskScheduler:
                     continue
                 self._fired_dedup[dedup_key] = None
                 self._trim_dedup()
-            # H10-Fix: max_firings in-memory tracken. Wenn 0 → Task aus
-            # Index entfernen, auf "completed" setzen, NICHT dispatchen.
+            # H10 fix: track max_firings in memory. When 0 → remove the task
+            # from the index, mark it "completed", and do NOT dispatch it.
             left = self._firings_left.get(tid)
             if left is not None:
                 if left <= 0:
@@ -228,7 +225,7 @@ class TaskScheduler:
                     continue
                 self._firings_left[tid] = left - 1
             await self._dispatch_runner(tid, trigger_event=event_ctx)
-            # Wenn das der letzte Fire war: cleanup.
+            # If that was the last fire: clean up.
             if left is not None and left - 1 <= 0:
                 task_ids.discard(tid)
                 self._firings_left.pop(tid, None)
@@ -236,23 +233,23 @@ class TaskScheduler:
                 try:
                     await self._store.update_state(tid, "completed")
                 except Exception:  # noqa: BLE001
-                    log.exception("max_firings cleanup: update_state fehlgeschlagen "
-                                  "fuer task_id=%s", tid)
+                    log.exception("max_firings cleanup: update_state failed "
+                                  "for task_id=%s", tid)
 
     # ------------------------------------------------------------------
     # Hydration
     # ------------------------------------------------------------------
 
     async def hydrate(self) -> None:
-        """Liest alle ``scheduled`` Tasks und baut Heap + Event-Index wieder auf.
+        """Reads all ``scheduled`` tasks and rebuilds the heap + event index.
 
-        Idempotent: zweiter Aufruf ist no-op. Schuetzt davor, dass
-        ``run()``-intern und ein expliziter ``await hydrate()`` einen Task
-        doppelt registrieren.
+        Idempotent: a second call is a no-op. Protects against ``run()``'s
+        internal call and an explicit ``await hydrate()`` registering a task
+        twice.
 
-        H9-Fix: Der in der DB gespeicherte ``due_at_ns`` wird **direkt**
-        genutzt statt neu zu rechnen. Sonst wuerde ein "in 30s" nach einem
-        20s-Crash erneut 30s warten (insgesamt 50s statt 30s).
+        H9 fix: the ``due_at_ns`` stored in the DB is used **directly**
+        instead of being recomputed. Otherwise an "in 30s" task would wait
+        another 30s after a 20s crash (50s total instead of 30s).
         """
         if self._hydrated:
             return
@@ -273,11 +270,11 @@ class TaskScheduler:
         *,
         stored_due_at_ns: int | None = None,
     ) -> None:
-        """Fuegt einen Task dem Heap oder dem Event-Index zu — idempotent.
+        """Adds a task to the heap or the event index — idempotent.
 
-        Wenn ``stored_due_at_ns`` gegeben ist (Hydration-Pfad), wird der
-        persistierte Wert genutzt; sonst berechnet der Trigger neu
-        (Schedule-Pfad bei Neu-Inserts).
+        If ``stored_due_at_ns`` is given (the hydration path), the persisted
+        value is used; otherwise the trigger recomputes it (the schedule path
+        for new inserts).
         """
         if task_id in self._known:
             return
@@ -302,7 +299,7 @@ class TaskScheduler:
             heapq.heappush(self._heap, (due, task_id))
         elif trig.type == "on_event":
             self._on_event_index.setdefault(trig.event_name, set()).add(task_id)
-            self._firings_left[task_id] = trig.max_firings   # None = unbegrenzt
+            self._firings_left[task_id] = trig.max_firings   # None = unlimited
         self._known.add(task_id)
 
     def _due_at_ns_for(self, spec: TaskSpec) -> int | None:
@@ -324,13 +321,13 @@ class TaskScheduler:
         return None
 
     # ------------------------------------------------------------------
-    # Main-Loop
+    # Main loop
     # ------------------------------------------------------------------
 
     async def run(self, cancel_token: CancelToken | None = None) -> None:
-        """Main-Loop — laeuft bis ``cancel_token.is_cancelled()``.
+        """Main loop — runs until ``cancel_token.is_cancelled()``.
 
-        Typische Verwendung aus dem DesktopApp/Orchestrator:
+        Typical usage from the DesktopApp/orchestrator:
 
             token = CancelToken()
             scheduler = TaskScheduler(store, bus, runner)
@@ -347,7 +344,7 @@ class TaskScheduler:
             now_ns = time.time_ns()
             await self._drain_due_tasks(now_ns)
 
-            # Naechstes Wake-up: entweder next-due oder unendlich
+            # Next wakeup: either the next-due time or indefinitely
             if self._heap:
                 timeout = max(0.05, (self._heap[0][0] - now_ns) / 1e9)
             else:
@@ -400,7 +397,7 @@ class TaskScheduler:
         trigger_event: dict[str, Any] | None = None,
     ) -> None:
         if self._runner is None:
-            log.warning("TaskScheduler.run: kein Runner attached, Task %s faellt durch", task_id)
+            log.warning("TaskScheduler.run: no runner attached, task %s falls through", task_id)
             return
         task = asyncio.create_task(
             self._safe_run(task_id, trigger_event), name=f"task-runner-{task_id}"
@@ -417,7 +414,7 @@ class TaskScheduler:
             log.exception("TaskRunner crashed task=%s: %s", task_id, exc)
 
     async def shutdown(self) -> None:
-        """Wartet auf Runner-Tasks ab (mit Timeout). Aufrufer stoppt vorher den Loop."""
+        """Waits for runner tasks to finish (with a timeout). The caller must stop the loop first."""
         tasks = list(self._runner_tasks)
         if not tasks:
             return
@@ -456,18 +453,18 @@ def _dedup_key(task_id: str, event: Event) -> tuple[str, str] | None:
 
 
 # ----------------------------------------------------------------------
-# Filter-Expression — sichere Auswertung
+# Filter expression — safe evaluation
 # ----------------------------------------------------------------------
 
 def _match_filter(event: Event, filter_expr: str | None) -> bool:
-    """Wertet eine Filter-Expression gegen ein Event aus.
+    """Evaluates a filter expression against an event.
 
-    Unterstuetzte Operatoren: ``==``, ``!=``, ``and``, ``or``, ``not``,
-    sowie Zugriff auf einfache Feld-Namen (z.B. ``role``, ``text``).
+    Supported operators: ``==``, ``!=``, ``and``, ``or``, ``not``, plus
+    access to plain field names (e.g. ``role``, ``text``).
 
-    Die Implementierung ist AST-basiert (``ast.parse`` + ``ast.walk``),
-    akzeptiert nur eine Whitelist von Node-Typen — **kein** ``eval()``,
-    keine Attribute-Access-Chain, keine Function-Calls.
+    The implementation is AST-based (``ast.parse`` + ``ast.walk``) and
+    accepts only a whitelist of node types — **no** ``eval()``, no
+    attribute-access chains, no function calls.
     """
     if filter_expr is None or filter_expr.strip() == "":
         return True
@@ -489,8 +486,8 @@ def _match_filter(event: Event, filter_expr: str | None) -> bool:
             return False
 
     env: dict[str, Any] = {}
-    # Bau ein flaches Namespace aus den Event-Feldern. Nested Dicts werden
-    # bewusst NICHT unterstuetzt — der Scope ist Feld-Gleichheit auf top-level.
+    # Build a flat namespace from the event's fields. Nested dicts are
+    # deliberately NOT supported — the scope is top-level field equality.
     for field in getattr(event, "__dataclass_fields__", {}).keys():
         env[field] = getattr(event, field, None)
 
@@ -522,5 +519,4 @@ def _eval_ast_node(node: Any, env: dict[str, Any]) -> Any:
             left = right_val
         return True
     return False
-
 

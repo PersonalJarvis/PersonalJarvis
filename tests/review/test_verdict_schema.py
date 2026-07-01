@@ -1,7 +1,7 @@
-"""Tests fuer ReviewVerdict-Pydantic-Modelle (Phase 8.1).
+"""Tests for the ReviewVerdict Pydantic models (Phase 8.1).
 
-Plan-Referenz: §6.1 Akzeptanzkriterium 1 — Roundtrip JSON↔Pydantic,
-Status-Enum-Reject auf invalide Werte.
+Plan reference: §6.1 acceptance criterion 1 — JSON↔Pydantic roundtrip,
+status-enum rejection on invalid values.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from jarvis.core.review.verdict import (
 
 
 def test_review_status_values() -> None:
-    """Plan-§AD-3: genau drei lowercase string values."""
+    """Plan §AD-3: exactly three lowercase string values."""
     assert ReviewStatus.PASS.value == "pass"
     assert ReviewStatus.NEEDS_REVISION.value == "needs_revision"
     assert ReviewStatus.FAIL.value == "fail"
@@ -29,8 +29,8 @@ def test_review_status_values() -> None:
 
 
 def test_review_status_str_subclass() -> None:
-    """ReviewStatus ist `str, Enum` — Vergleich mit Strings funktioniert."""
-    assert ReviewStatus.PASS == "pass"  # noqa: S105 — Status-Wert
+    """ReviewStatus is `str, Enum` — comparison with strings works."""
+    assert ReviewStatus.PASS == "pass"  # noqa: S105 — status value
     assert ReviewStatus("pass") is ReviewStatus.PASS
 
 
@@ -66,7 +66,7 @@ def _full_verdict_dict() -> dict:
 
 
 def test_review_verdict_roundtrip_full() -> None:
-    """Pydantic <-> JSON Roundtrip mit voll besetztem Verdict."""
+    """Pydantic <-> JSON roundtrip with a fully populated verdict."""
     payload = _full_verdict_dict()
     verdict = ReviewVerdict.model_validate(payload)
     assert verdict.status is ReviewStatus.NEEDS_REVISION
@@ -75,14 +75,14 @@ def test_review_verdict_roundtrip_full() -> None:
     assert verdict.issues[0].location == "scripts/foo.py:42"
     assert verdict.score == 0.55
 
-    # JSON-Roundtrip: dump -> load -> dump muss idempotent sein
+    # JSON roundtrip: dump -> load -> dump must be idempotent
     serialized = verdict.model_dump(mode="json")
     reparsed = ReviewVerdict.model_validate(serialized)
     assert reparsed.model_dump(mode="json") == serialized
 
 
 def test_review_verdict_minimal() -> None:
-    """Default-Factories: issues/rubric_results sind leere Listen."""
+    """Default factories: issues/rubric_results are empty lists."""
     verdict = ReviewVerdict(
         status=ReviewStatus.PASS,
         summary="All good.",
@@ -98,9 +98,9 @@ def test_review_verdict_minimal() -> None:
 
 
 def test_invalid_status_rejected() -> None:
-    """Plan-§6.1 AC: Reject auf invalide Status-Strings."""
+    """Plan §6.1 AC: rejects invalid status strings."""
     payload = _full_verdict_dict()
-    payload["status"] = "approved"  # nicht im Enum
+    payload["status"] = "approved"  # not in the enum
     with pytest.raises(ValidationError) as exc:
         ReviewVerdict.model_validate(payload)
     assert "status" in str(exc.value).lower()
@@ -121,7 +121,7 @@ def test_invalid_status_variants_rejected(bad: str) -> None:
 
 @pytest.mark.parametrize("bad_score", [-0.01, 1.01, 1.5, 2.0, -1.0])
 def test_score_out_of_range_rejected(bad_score: float) -> None:
-    """Plan-§6.1: score muss in [0.0, 1.0] liegen."""
+    """Plan §6.1: score must lie in [0.0, 1.0]."""
     payload = _full_verdict_dict()
     payload["score"] = bad_score
     with pytest.raises(ValidationError) as exc:
@@ -131,7 +131,7 @@ def test_score_out_of_range_rejected(bad_score: float) -> None:
 
 @pytest.mark.parametrize("good_score", [0.0, 0.5, 1.0])
 def test_score_boundary_values_accepted(good_score: float) -> None:
-    """Grenzwerte 0.0 und 1.0 sind inklusiv erlaubt."""
+    """Boundary values 0.0 and 1.0 are inclusively allowed."""
     payload = _full_verdict_dict()
     payload["score"] = good_score
     verdict = ReviewVerdict.model_validate(payload)
@@ -139,7 +139,7 @@ def test_score_boundary_values_accepted(good_score: float) -> None:
 
 
 def test_score_required() -> None:
-    """score ist Pflicht (kein Default)."""
+    """score is required (no default)."""
     payload = _full_verdict_dict()
     del payload["score"]
     with pytest.raises(ValidationError):
@@ -153,7 +153,7 @@ def test_score_required() -> None:
 
 @pytest.mark.parametrize("bad_severity", ["info", "error", "fatal", "", "WARNING"])
 def test_invalid_severity_rejected(bad_severity: str) -> None:
-    """Severity ist Literal['critical','warning','suggestion']."""
+    """Severity is Literal['critical','warning','suggestion']."""
     with pytest.raises(ValidationError) as exc:
         ReviewIssue(severity=bad_severity, description="x")  # type: ignore[arg-type]
     assert "severity" in str(exc.value).lower()
@@ -171,7 +171,7 @@ def test_valid_severities() -> None:
 
 
 def test_summary_max_length_enforced() -> None:
-    """Plan-§9.2: summary maxLength=200 — Voice-Tauglichkeit."""
+    """Plan §9.2: summary maxLength=200 — voice suitability."""
     payload = _full_verdict_dict()
     payload["summary"] = "x" * 201
     with pytest.raises(ValidationError) as exc:

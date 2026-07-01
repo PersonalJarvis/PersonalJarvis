@@ -1,18 +1,18 @@
-"""REST-API fuer das Phase-6-Mission-Subsystem.
+"""REST API for the Phase-6 mission subsystem.
 
 Endpoints:
-- ``GET    /api/missions``                 → Liste aller Missions (filterbar).
-- ``GET    /api/missions/{id}``            → Mission-Detail + Events + Verdicts.
-- ``POST   /api/missions/dispatch``        → Neue Mission anlegen + Run starten.
-- ``POST   /api/missions/{id}/cancel``     → Best-effort State-Transition.
-- ``POST   /api/missions/kill/{worker}``   → Worker-Stub (volle Job-Object-Logik
-                                              kommt in Phase-5-Production-Wiring).
+- ``GET    /api/missions``                 → list of all missions (filterable).
+- ``GET    /api/missions/{id}``            → mission detail + events + verdicts.
+- ``POST   /api/missions/dispatch``        → create a new mission + start the run.
+- ``POST   /api/missions/{id}/cancel``     → best-effort state transition.
+- ``POST   /api/missions/kill/{worker}``   → worker stub (full Job Object logic
+                                              lands in the Phase-5 production wiring).
 
-Pattern wie ``tasks_routes.py``:
-- Resource (``MissionManager``/``Kontrollierer``) wird beim Server-Start in
-  ``app.state.<name>`` gehaengt.
-- Wenn nicht gesetzt → ``HTTPException(503)``.
-- Pydantic-Body-Models inline, kein extra Schema-Modul.
+Pattern like ``tasks_routes.py``:
+- The resource (``MissionManager``/``Kontrollierer``) is attached to
+  ``app.state.<name>`` at server start.
+- If not set → ``HTTPException(503)``.
+- Pydantic body models inline, no separate schema module.
 """
 from __future__ import annotations
 
@@ -42,21 +42,21 @@ router = APIRouter(prefix="/api/missions", tags=["missions"])
 
 
 def _require_manager(request: Request) -> MissionManager:
-    """MissionManager aus app.state oder 503."""
+    """MissionManager from app.state, or 503."""
     mgr = getattr(request.app.state, "mission_manager", None)
     if mgr is None:
         raise HTTPException(
-            status_code=503, detail="MissionManager nicht verfuegbar"
+            status_code=503, detail="MissionManager not available"
         )
     return mgr
 
 
 def _optional_kontrollierer(request: Request) -> Any | None:
-    """Kontrollierer ist erst nach Phase-5-Production-Wiring verfuegbar.
+    """The Kontrollierer only becomes available after the Phase-5 production wiring.
 
-    Wenn None: ``dispatch`` legt zwar die Mission an, startet sie aber
-    nicht — der Caller muss das wissen oder einen 503 akzeptieren, wenn er
-    den Run-Start zwingend braucht.
+    If None: ``dispatch`` still creates the mission, but doesn't start it —
+    the caller has to know that, or accept a 503 if it strictly needs the
+    run to start.
     """
     return getattr(request.app.state, "kontrollierer", None)
 
@@ -67,7 +67,7 @@ def _optional_kontrollierer(request: Request) -> Any | None:
 
 
 class DispatchBody(BaseModel):
-    """Payload fuer POST /dispatch."""
+    """Payload for POST /dispatch."""
 
     prompt: str
     language: Literal["de", "en"] = "de"
@@ -98,11 +98,11 @@ async def list_missions(
     state: str | None = None,
     limit: int = 100,
 ) -> dict[str, Any]:
-    """Liste aller Missions, optional gefiltert nach State.
+    """List of all missions, optionally filtered by state.
 
-    Query-Parameter:
-    - ``state``: Komma-Liste aus MissionState-Werten (z.B. ``RUNNING,PENDING``).
-    - ``limit``: max. Anzahl Eintraege (Server-Cap 1000).
+    Query parameters:
+    - ``state``: comma-separated list of MissionState values (e.g. ``RUNNING,PENDING``).
+    - ``limit``: max number of entries (server cap 1000).
     """
     mgr = _require_manager(request)
 
@@ -114,7 +114,7 @@ async def list_missions(
         if unknown:
             raise HTTPException(
                 status_code=400,
-                detail=f"Unbekannte mission-states: {unknown}",
+                detail=f"Unknown mission states: {unknown}",
             )
         state_filter = candidates
 
@@ -157,19 +157,19 @@ async def list_missions(
 
 @router.get("/{mission_id}")
 async def get_mission(mission_id: str, request: Request) -> dict[str, Any]:
-    """Detail-View: Header + alle Events + alle Critic-Verdicts.
+    """Detail view: header + all events + all critic verdicts.
 
-    ``verdicts`` ist die abgeleitete Liste der ``CriticVerdictReady``-Payloads
-    (zur UI-Convenience — der Frontend-Verdict-Tab muss nicht selbst filtern).
+    ``verdicts`` is the derived list of ``CriticVerdictReady`` payloads
+    (for UI convenience — the frontend verdict tab doesn't have to filter itself).
     """
     mgr = _require_manager(request)
 
     view = await mgr.store.get_mission_view(mission_id)
     if view is None:
-        raise HTTPException(status_code=404, detail="Mission nicht gefunden")
+        raise HTTPException(status_code=404, detail="Mission not found")
     prompt, state, language, iteration, cost_usd = view
 
-    # Header-Timestamps separat lesen (get_mission_view liefert sie nicht).
+    # Read header timestamps separately (get_mission_view doesn't return them).
     cur = await mgr.store.conn.execute(
         "SELECT created_ms, updated_ms FROM missions WHERE id = ?",
         (mission_id,),
@@ -222,21 +222,21 @@ async def dispatch_mission(
     request: Request,
     background_tasks: BackgroundTasks,
 ) -> Any:
-    """Legt eine Mission an und startet ``Kontrollierer.run_mission`` im Hintergrund.
+    """Creates a mission and starts ``Kontrollierer.run_mission`` in the background.
 
-    Wenn kein Kontrollierer verdrahtet ist (Phase-4-MVP-Mode), wird die Mission
-    nur dispatched (PENDING-Header + MissionDispatched-Event) — der Caller
-    bekommt die ``mission_id`` zurueck und kann den Lifecycle ueber WS verfolgen.
+    If no Kontrollierer is wired up (Phase-4 MVP mode), the mission is
+    only dispatched (PENDING header + MissionDispatched event) — the caller
+    gets the ``mission_id`` back and can follow the lifecycle via WS.
 
-    Phase-5 Safety-Gate: wenn der Prompt destruktiv aussieht (rm -rf, drop table,
-    git push --force, etc.) UND ``confirmed=false`` -> HTTP 409 mit
-    ``requires_confirm: true``. UI zeigt AlertDialog, User klickt OK,
-    Re-POST mit ``confirmed: true``.
+    Phase-5 safety gate: if the prompt looks destructive (rm -rf, drop table,
+    git push --force, etc.) AND ``confirmed=false`` -> HTTP 409 with
+    ``requires_confirm: true``. The UI shows an AlertDialog, the user clicks OK,
+    and re-POSTs with ``confirmed: true``.
     """
     from fastapi.responses import JSONResponse
     from jarvis.missions.safety.destructive_confirm import is_destructive
 
-    # Phase-5 destructive_confirm gate (UI-Path, voice-Path noch nicht aktiv)
+    # Phase-5 destructive_confirm gate (UI path; the voice path isn't active yet)
     if not body.confirmed:
         is_destr, det = is_destructive(body.prompt)
         if is_destr and det is not None:
@@ -248,8 +248,8 @@ async def dispatch_mission(
                     "matched_text": det.matched_text,
                     "target_hint": det.target_hint,
                     "warning": (
-                        "Destruktive Mission erkannt. Re-POST mit "
-                        '"confirmed": true zum Bestaetigen.'
+                        "Destructive mission detected. Re-POST with "
+                        '"confirmed": true to proceed.'
                     ),
                 },
             )
@@ -264,8 +264,8 @@ async def dispatch_mission(
         started = True
     else:
         logger.info(
-            "dispatch_mission %s: kein Kontrollierer verdrahtet — "
-            "Mission bleibt PENDING bis Phase-5-Production-Wiring",
+            "dispatch_mission %s: no Kontrollierer wired up — "
+            "mission stays PENDING until the Phase-5 production wiring",
             mission_id,
         )
         started = False
@@ -288,7 +288,7 @@ async def cancel_mission(mission_id: str, request: Request) -> dict[str, Any]:
     mgr = _require_manager(request)
     view = await mgr.mission(mission_id)
     if view is None:
-        raise HTTPException(status_code=404, detail="Mission nicht gefunden")
+        raise HTTPException(status_code=404, detail="Mission not found")
 
     try:
         env = await mgr.transition_state(
@@ -514,18 +514,18 @@ async def rerun_mission(
 
 @router.post("/kill/{worker_id}")
 async def kill_worker(worker_id: str, request: Request) -> dict[str, Any]:
-    """Best-effort Worker-Kill (Stub fuer Phase-4-MVP).
+    """Best-effort worker kill (stub for the Phase-4 MVP).
 
-    Volle Job-Object-Map + KillSwitch-Wiring kommt in Phase-5. Aktuell:
-    - Wenn ``app.state.kontrollierer`` eine ``kill_worker(worker_id)``-Methode
-      hat, wird sie aufgerufen.
-    - Sonst: ``503`` mit Hinweis dass das Feature noch nicht verdrahtet ist.
+    The full Job Object map + kill-switch wiring lands in Phase 5. Currently:
+    - If ``app.state.kontrollierer`` has a ``kill_worker(worker_id)`` method,
+      it gets called.
+    - Otherwise: ``503`` noting that the feature isn't wired up yet.
     """
     kontrollierer = _optional_kontrollierer(request)
     if kontrollierer is None:
         raise HTTPException(
             status_code=503,
-            detail="Kontrollierer nicht verfuegbar — kill noch nicht verdrahtet",
+            detail="Kontrollierer not available — kill not wired up yet",
         )
     killer = getattr(kontrollierer, "kill_worker", None)
     if killer is None:
@@ -537,6 +537,6 @@ async def kill_worker(worker_id: str, request: Request) -> dict[str, Any]:
     try:
         result = await killer(worker_id)
     except Exception as exc:  # noqa: BLE001
-        logger.exception("kill_worker(%s) fehlgeschlagen", worker_id)
+        logger.exception("kill_worker(%s) failed", worker_id)
         raise HTTPException(status_code=500, detail=str(exc)) from None
     return {"killed": bool(result), "worker_id": worker_id, "reason": "ok"}

@@ -1,18 +1,18 @@
-"""Erzeugt Jarvis-Icon + Desktop-Shortcut + Autostart-Shortcut.
+"""Creates the Jarvis icon + desktop shortcut + autostart shortcut.
 
-Einmalig ausführen:
+Run once:
 
     python scripts/install_shortcuts.py
 
-Ergebnis:
-  1. assets/icons/jarvis.ico — Multi-size Windows-Icon (Schwarz + Signal-Yellow)
-  2. Desktop\\Personal Jarvis.lnk — Doppelklick öffnet das Fenster
-  3. shell:startup\\Personal Jarvis.lnk — startet Jarvis beim Windows-Login
+Result:
+  1. assets/icons/jarvis.ico — multi-size Windows icon (black + signal yellow)
+  2. Desktop\\Personal Jarvis.lnk — double-click opens the window
+  3. shell:startup\\Personal Jarvis.lnk — starts Jarvis at Windows login
 
-Beide Shortcuts zeigen auf run.bat im Projekt-Ordner. run.bat nutzt
-pythonw.exe, damit kein Console-Fenster aufpoppt.
+Both shortcuts point to run.bat in the project folder. run.bat uses
+pythonw.exe, so no console window pops up.
 
-Deinstallieren:
+Uninstall:
     python scripts/install_shortcuts.py --uninstall
 """
 
@@ -33,9 +33,9 @@ RUN_BAT = PROJECT_ROOT / "run.bat"
 
 SHORTCUT_NAME = "Personal Jarvis.lnk"
 APP_USER_MODEL_ID = "PersonalJarvis.PersonalJarvis"
-DESCRIPTION = "Personal Jarvis — voice-gesteuerter Meta-Orchestrator"
+DESCRIPTION = "Personal Jarvis — voice-controlled meta-orchestrator"
 
-# Jarvis-Launcher-Modul (pywebview-Fenster, kein Console)
+# Jarvis launcher module (pywebview window, no console)
 LAUNCHER_MODULE = "jarvis.ui.web.launcher"
 
 
@@ -65,7 +65,7 @@ def generate_icon() -> None:
     size = 512
     master = Image.new("RGBA", (size, size), (0, 0, 0, 0))
 
-    # Glow-Layer (separater Canvas, dann blurren und unter das Icon legen)
+    # Glow layer (separate canvas, then blur and place beneath the icon)
     glow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     glow_draw = ImageDraw.Draw(glow)
     glow_draw.ellipse((40, 40, size - 40, size - 40), fill=(255, 214, 10, 90))
@@ -105,28 +105,28 @@ def generate_icon() -> None:
 
     sizes = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
     master.save(ICON_PATH, format="ICO", sizes=sizes)
-    print(f"[ok] Icon geschrieben: {ICON_PATH}")
+    print(f"[ok] Icon written: {ICON_PATH}")
 
 
 def _detect_pythonw() -> Path:
-    """Findet pythonw.exe — bevorzugt ein venv im Projekt, sonst sys.executable.
+    """Finds pythonw.exe — prefers a venv in the project, else sys.executable.
 
-    Grund für pythonw statt python: python.exe zeigt eine schwarze Console-
-    Fenster für die Lebensdauer des Prozesses. pythonw.exe ist ein Windows-
-    GUI-Subsystem-Binary → kein Console-Fenster, nur das pywebview-Fenster.
+    Why pythonw instead of python: python.exe shows a black console
+    window for the lifetime of the process. pythonw.exe is a Windows
+    GUI-subsystem binary → no console window, just the pywebview window.
     """
-    # 1. Venv im Projekt
+    # 1. Venv in the project
     venv_pyw = PROJECT_ROOT / ".venv" / "Scripts" / "pythonw.exe"
     if venv_pyw.exists():
         return venv_pyw
 
-    # 2. System-Python neben sys.executable
+    # 2. System Python next to sys.executable
     sys_py = Path(sys.executable)
     candidate = sys_py.with_name("pythonw.exe")
     if candidate.exists():
         return candidate
 
-    # 3. Letzter Fallback: PATH-Search via where.exe
+    # 3. Last fallback: PATH search via where.exe
     try:
         result = subprocess.run(
             ["where", "pythonw.exe"],
@@ -142,13 +142,13 @@ def _detect_pythonw() -> Path:
         pass
 
     raise RuntimeError(
-        "pythonw.exe nicht gefunden. Shortcut würde Console-Fenster zeigen. "
-        "Installiere Python mit 'tcl/tk and IDLE'-Option oder nutze ein .venv.",
+        "pythonw.exe not found. The shortcut would show a console window. "
+        "Install Python with the 'tcl/tk and IDLE' option or use a .venv.",
     )
 
 
 def _set_shortcut_app_id(link: Path) -> bool:
-    """Best-effort: schreibt die AppUserModelID in den .lnk-PropertyStore."""
+    """Best-effort: writes the AppUserModelID into the .lnk property store."""
     try:
         import pywintypes  # type: ignore[import-not-found]
         from win32com.propsys import propsys, pscon  # type: ignore[import-not-found]
@@ -166,7 +166,7 @@ def _set_shortcut_app_id(link: Path) -> bool:
         store.Commit()
         return True
     except Exception as exc:  # noqa: BLE001
-        print(f"[warn] Shortcut-AppID nicht gesetzt: {exc}")
+        print(f"[warn] Shortcut AppID not set: {exc}")
         return False
 
 
@@ -180,14 +180,14 @@ def create_shortcut(
     description: str,
     window_style: int = 1,
 ) -> None:
-    """Legt einen .lnk-Shortcut via PowerShell/WScript.Shell an.
+    """Creates a .lnk shortcut via PowerShell/WScript.Shell.
 
-    Kein pywin32 nötig — WScript.Shell ist seit Windows 2000 eingebaut.
-    WindowStyle=1 = Normal, 7 = Minimized (Autostart-/Tray-friendly).
+    No pywin32 needed — WScript.Shell has been built in since Windows 2000.
+    WindowStyle=1 = normal, 7 = minimized (autostart-/tray-friendly).
     """
     link.parent.mkdir(parents=True, exist_ok=True)
 
-    # PowerShell-Script als Heredoc — Pfade werden via PS-String-Quoting eingesetzt
+    # PowerShell script as a heredoc — paths are inserted via PS string quoting
     ps_script = (
         "$ErrorActionPreference = 'Stop'\n"
         "$ws = New-Object -ComObject WScript.Shell\n"
@@ -253,23 +253,23 @@ def uninstall() -> None:
         dp.unlink()
         print(f"[rm] {dp}")
     else:
-        print(f"[--] nicht vorhanden: {dp}")
+        print(f"[--] not present: {dp}")
     # Autostart entry — delegate to the port (also clears the persisted toggle
     # and any legacy .bat/.lnk names).
     _disable_autostart_via_port()
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Jarvis-Shortcuts installieren")
+    parser = argparse.ArgumentParser(description="Install Jarvis shortcuts")
     parser.add_argument(
         "--uninstall",
         action="store_true",
-        help="Entfernt Desktop- und Autostart-Shortcut",
+        help="Removes the desktop and autostart shortcut",
     )
     parser.add_argument(
         "--no-autostart",
         action="store_true",
-        help="Nur Desktop-Shortcut, kein Autostart",
+        help="Desktop shortcut only, no autostart",
     )
     args = parser.parse_args()
 
@@ -278,13 +278,13 @@ def main() -> int:
         return 0
 
     if sys.platform != "win32":
-        print("Fehler: nur Windows unterstützt.", file=sys.stderr)
+        print("Error: only Windows is supported.", file=sys.stderr)
         return 1
 
     try:
         pythonw = _detect_pythonw()
     except RuntimeError as exc:
-        print(f"Fehler: {exc}", file=sys.stderr)
+        print(f"Error: {exc}", file=sys.stderr)
         return 2
 
     print(f"[ok] Launcher: {pythonw}")
@@ -309,10 +309,10 @@ def main() -> int:
         _enable_autostart_via_port()
     else:
         _disable_autostart_via_port()
-        print("\nAutostart übersprungen — nur Desktop-Shortcut angelegt.")
+        print("\nAutostart skipped — desktop shortcut created only.")
 
-    print(f"\nDoppelklick auf '{SHORTCUT_NAME}' auf dem Desktop startet Jarvis.")
-    print("(pythonw.exe -> kein Console-Fenster, nur die Jarvis-App)")
+    print(f"\nDouble-clicking '{SHORTCUT_NAME}' on the desktop starts Jarvis.")
+    print("(pythonw.exe -> no console window, just the Jarvis app)")
     return 0
 
 

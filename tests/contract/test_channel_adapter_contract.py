@@ -1,8 +1,8 @@
-"""Contract-Tests für alle ChannelAdapter-Implementierungen.
+"""Contract tests for all ChannelAdapter implementations.
 
-Parametrisiert über alle via `jarvis.channel`-Entry-Point registrierten Plugins.
-Wenn noch keine Plugins installiert sind (z.B. weil Phase-1a-Agents noch bauen),
-skippen die Tests graceful, statt zu crashen.
+Parametrized over all plugins registered via the `jarvis.channel` entry point.
+If no plugins are installed yet (e.g. because Phase-1a agents are still
+building), the tests skip gracefully instead of crashing.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from jarvis.core.protocols import ChannelAdapter
 
 
 def _discover_channel_classes() -> list[tuple[str, type]]:
-    """Lädt alle `jarvis.channel`-Entry-Points, die ladbar sind."""
+    """Loads all `jarvis.channel` entry points that are loadable."""
     discovered: list[tuple[str, type]] = []
     try:
         from importlib.metadata import entry_points
@@ -28,7 +28,7 @@ def _discover_channel_classes() -> list[tuple[str, type]]:
             try:
                 discovered.append((ep.name, ep.load()))
             except Exception:
-                # Nicht-ladbare Entry-Points ignorieren (z.B. fehlende optionale Deps)
+                # Ignore entry points that fail to load (e.g. missing optional deps)
                 continue
     except Exception:
         pass
@@ -42,13 +42,13 @@ _PARAMS = CHANNEL_CLASSES or [("skip", None)]
 @pytest.mark.parametrize("name,cls", _PARAMS)
 @pytest.mark.asyncio
 async def test_channel_is_protocol_conformant(name, cls):
-    """Instanz muss strukturell dem ChannelAdapter-Protocol entsprechen."""
+    """Instance must structurally conform to the ChannelAdapter protocol."""
     if cls is None:
-        pytest.skip("keine ChannelAdapter-Plugins installiert (pip install -e .)")
+        pytest.skip("no ChannelAdapter plugins installed (pip install -e .)")
     bus = EventBus()
     inst = cls(bus)
     assert isinstance(inst, ChannelAdapter), (
-        f"{name} erfüllt das ChannelAdapter-Protocol nicht"
+        f"{name} does not satisfy the ChannelAdapter protocol"
     )
     assert hasattr(inst, "name") and isinstance(inst.name, str)
 
@@ -56,9 +56,9 @@ async def test_channel_is_protocol_conformant(name, cls):
 @pytest.mark.parametrize("name,cls", _PARAMS)
 @pytest.mark.asyncio
 async def test_channel_lifecycle(name, cls):
-    """start() subscribed den Bus, stop() cleant wieder auf."""
+    """start() subscribes to the bus, stop() cleans it back up."""
     if cls is None:
-        pytest.skip("keine ChannelAdapter-Plugins installiert")
+        pytest.skip("no ChannelAdapter plugins installed")
     bus = EventBus()
     inst = cls(bus)
 
@@ -70,22 +70,22 @@ async def test_channel_lifecycle(name, cls):
     after_stop = len(bus._wildcard_subscribers)
 
     assert after_start >= before_start + 1, (
-        "start() sollte einen Wildcard-Subscriber registrieren"
+        "start() should register a wildcard subscriber"
     )
-    assert after_stop <= after_start, "stop() sollte den Subscriber entfernen"
+    assert after_stop <= after_start, "stop() should remove the subscriber"
 
 
 @pytest.mark.parametrize("name,cls", _PARAMS)
 @pytest.mark.asyncio
 async def test_channel_broadcast_event(name, cls):
-    """broadcast_event darf ohne connected Clients nicht crashen."""
+    """broadcast_event must not crash without connected clients."""
     if cls is None:
-        pytest.skip("keine ChannelAdapter-Plugins installiert")
+        pytest.skip("no ChannelAdapter plugins installed")
     bus = EventBus()
     inst = cls(bus)
     await inst.start()
     try:
-        # Auch ohne Clients darf das nicht hochgehen
+        # This must not blow up even without clients
         await inst.broadcast_event(SystemStarted(version="test"))
     finally:
         await inst.stop()

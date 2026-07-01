@@ -1,23 +1,23 @@
-"""Single-Instance-Durchsetzung für die Desktop-App.
+"""Single-instance enforcement for the desktop app.
 
-**Zwei-Schicht-Strategie:**
+**Two-layer strategy:**
 
-1. **Named-Mutex via pywin32** — atomarer Primary-Claim. OS-garantierte
-   Bereinigung bei Crash (Handle wird vom Kernel freigegeben), keine stale
-   Lock-Files. Robuster als `filelock` auf Windows.
+1. **Named mutex via pywin32** — atomic primary claim. OS-guaranteed
+   cleanup on crash (the kernel releases the handle), no stale
+   lock files. More robust than `filelock` on Windows.
 
-2. **Session-File** (`%LOCALAPPDATA%\\Jarvis\\session.json`) — speichert Port +
-   Token der laufenden Primary-Instanz, damit ein Secondary ihn auf
-   ``/internal/activate`` pingen kann. Token-geschützt, 0600-ähnlich
-   (User-ACL).
+2. **Session file** (`%LOCALAPPDATA%\\Jarvis\\session.json`) — stores the port +
+   token of the running primary instance, so a secondary can ping it on
+   ``/internal/activate``. Token-protected, roughly 0600
+   (user ACL).
 
-Ablauf bei Start einer Secondary:
+Flow when a secondary starts:
 
-1. Mutex-Claim schlägt fehl → Primary existiert.
-2. Session-File lesen → Port+Token → HTTP-POST.
-3. Primary bringt Fenster nach vorne, Secondary beendet sich.
-4. Falls Session-File fehlt / HTTP fehlschlägt → Primary ist zombifiziert;
-   Fallback = Warnung und Exit (User muss Task-Manager benutzen).
+1. Mutex claim fails → a primary already exists.
+2. Read the session file → port+token → HTTP POST.
+3. The primary brings its window to the front, the secondary exits.
+4. If the session file is missing / the HTTP call fails → the primary is a
+   zombie; fallback = show a warning and exit (the user has to use Task Manager).
 """
 from __future__ import annotations
 
@@ -39,22 +39,22 @@ SESSION_FILENAME = "session.json"
 
 
 def _app_data_dir() -> Path:
-    """App-Data-Verzeichnis — delegiert an ``jarvis.core.paths``.
+    """App-data directory — delegates to ``jarvis.core.paths``.
 
-    Wrapper bleibt fuer Rueckwaertskompatibilitaet mit internen Aufrufern,
-    die ``_app_data_dir()`` direkt importieren.
+    The wrapper stays for backward compatibility with internal callers
+    that import ``_app_data_dir()`` directly.
     """
     return ensure_user_dirs()
 
 
 @dataclass(slots=True)
 class InstanceClaim:
-    """Handle auf den aktiven Mutex — `release()` bei Shutdown aufrufen."""
+    """Handle to the active mutex — call `release()` on shutdown."""
     _mutex: Any = None
     _session_file: Path | None = None
 
     def release(self) -> None:
-        # Mutex freigeben
+        # Release the mutex
         if self._mutex is not None:
             try:
                 import win32api  # type: ignore[import-not-found]
@@ -65,7 +65,7 @@ class InstanceClaim:
             except Exception:  # noqa: BLE001
                 pass
             self._mutex = None
-        # Session-File aufräumen
+        # Clean up the session file
         if self._session_file is not None:
             try:
                 self._session_file.unlink(missing_ok=True)
@@ -75,7 +75,7 @@ class InstanceClaim:
 
 
 class SingleInstance:
-    """Coordinator — Claim am Start, Release am Ende, Activate-Fallback."""
+    """Coordinator — claim on start, release on end, activate fallback."""
 
     def __init__(self, app_dir: Path | None = None) -> None:
         self._app_dir = app_dir or _app_data_dir()
@@ -99,21 +99,21 @@ class SingleInstance:
             logger.debug("boot screenshot sweep failed", exc_info=True)
 
     def try_claim(self) -> InstanceClaim | None:
-        """Primary-Claim — liefert `InstanceClaim` oder None wenn bereits ein
-        anderer Prozess aktiv ist.
+        """Primary claim — returns an `InstanceClaim`, or None if another
+        process is already active.
         """
         try:
             import win32event  # type: ignore[import-not-found]
             import winerror  # type: ignore[import-not-found]
         except ImportError:
-            # Nicht-Windows — kein Mutex, einfach als Primary melden.
+            # Not Windows — no mutex, just report as primary.
             self._on_primary_claim()
             return InstanceClaim(_mutex=None, _session_file=self.session_file)
 
         mutex = win32event.CreateMutex(None, False, MUTEX_NAME)
         last_error = _get_last_error()
         if last_error == winerror.ERROR_ALREADY_EXISTS:
-            # Bereits aktiv — Handle sofort wieder schließen.
+            # Already active — close the handle right away.
             try:
                 import win32api
 
@@ -139,10 +139,10 @@ class SingleInstance:
             return None
 
     def activate_existing(self, timeout: float = 2.0) -> bool:
-        """Schickt Bring-to-Front-Request an die Primary-Instanz.
+        """Sends a bring-to-front request to the primary instance.
 
-        Gibt True zurück wenn der Ping erfolgreich war. False → Primary ist
-        zombifiziert oder nie vollständig gestartet.
+        Returns True if the ping succeeded. False → the primary is a
+        zombie or never fully started.
         """
         session = self.read_session()
         if not session:

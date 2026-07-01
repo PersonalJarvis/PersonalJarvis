@@ -1,15 +1,16 @@
-"""Minimaler MCP-Server für Tests — spricht MCP via stdio.
+"""Minimal MCP server for tests — speaks MCP via stdio.
 
-Nutzt die offizielle `mcp`-Python-Lib (FastMCP), damit das Protokoll
-korrekt implementiert ist — wir würden sonst zu viel Handshake-Logik
-(initialize, notifications/initialized, capabilities) selbst bauen.
+Uses the official `mcp` Python lib (FastMCP) so the protocol is
+implemented correctly — otherwise we'd have to build too much
+handshake logic ourselves (initialize, notifications/initialized,
+capabilities).
 
-Modi (via ENV `FAKE_MCP_MODE`):
-- "ok"        → echo-Tool liefert `{"echoed": args["msg"]}`
-- "fail"      → echo-Tool wirft Exception
+Modes (via ENV `FAKE_MCP_MODE`):
+- "ok"        → the echo tool returns `{"echoed": args["msg"]}`
+- "fail"      → the echo tool raises an exception
 
-Das Script wird als Subprocess (`python fake_mcp_server.py`) durch
-einen `MCPClient` gestartet.
+The script is started as a subprocess (`python fake_mcp_server.py`) by
+an `MCPClient`.
 """
 from __future__ import annotations
 
@@ -31,7 +32,7 @@ def echo(msg: str) -> str:
 
 
 if __name__ == "__main__":
-    # FastMCP.run() mit default "stdio" — blockiert bis Transport schließt
+    # FastMCP.run() with default "stdio" — blocks until the transport closes
     try:
         mcp.run("stdio")
     except Exception as e:  # noqa: BLE001

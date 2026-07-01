@@ -1,25 +1,25 @@
-"""Pydantic-Schema fuer Workflows — Defs, Steps, Trigger, Runs.
+"""Pydantic schema for workflows — defs, steps, trigger, runs.
 
-Sechs Step-Kinds — bewusst klein, damit Users klare Primitive komponieren
-koennen ohne Turing-complete Node-Editor:
+Six step kinds — deliberately small, so users can compose clear
+primitives without a Turing-complete node editor:
 
-- ``brain_prompt``     → schickt ein Prompt an den aktiven BrainManager,
-  schreibt die Antwort als ``output`` in den Run-Context.
-- ``harness_dispatch`` → dispatcht einen HarnessTask (OpenClaw, Codex,
-  Computer-Use, MCP-Remote, Python-Script).
-- ``speak``            → emittiert ``AnnouncementRequested``-Event; die TTS-
-  Pipeline hoert zu und spricht den Text. Ohne TTS: Event bleibt im Log.
-- ``tool_call``        → fuehrt ein Tool aus der ``tool_registry`` aus.
-- ``shell_cmd``        → fuehrt eine Shell-Command aus (``gws gmail +triage``,
-  ``git status`` etc.). Captures stdout als Step-Output. Timeout + Output-Cap.
-- ``telegram_send``    → schickt eine Nachricht via Telegram-Bot-API.
-  Bot-Token kommt aus dem Credential Manager (Key ``telegram_bot_token``),
-  Chat-ID aus Step oder ``[integrations.telegram]``-Config.
+- ``brain_prompt``     → sends a prompt to the active BrainManager,
+  writes the reply as ``output`` into the run context.
+- ``harness_dispatch`` → dispatches a HarnessTask (OpenClaw, Codex,
+  Computer-Use, MCP-Remote, Python script).
+- ``speak``            → emits an ``AnnouncementRequested`` event; the TTS
+  pipeline listens and speaks the text. Without TTS: the event stays in the log.
+- ``tool_call``        → executes a tool from the ``tool_registry``.
+- ``shell_cmd``        → runs a shell command (``gws gmail +triage``,
+  ``git status`` etc.). Captures stdout as the step output. Timeout + output cap.
+- ``telegram_send``    → sends a message via the Telegram Bot API.
+  The bot token comes from the credential manager (key ``telegram_bot_token``),
+  the chat ID from the step or the ``[integrations.telegram]`` config.
 
-**Template-Variablen:** Jedes Step-Feld darf ``{{prev.output}}``,
-``{{step_N.output}}`` oder ``{{input.<key>}}`` enthalten — der Runner
-expandiert sie vor Execution. Kein Jinja (wuerde Risiko erhoehen),
-nur simpler Placeholder-Replace.
+**Template variables:** every step field may contain ``{{prev.output}}``,
+``{{step_N.output}}``, or ``{{input.<key>}}`` — the runner expands them
+before execution. No Jinja (would raise the risk), just a simple
+placeholder replace.
 """
 from __future__ import annotations
 
@@ -34,25 +34,25 @@ from pydantic import BaseModel, ConfigDict, Field
 # ---------------------------------------------------------------------
 
 class ManualTrigger(BaseModel):
-    """Workflow laeuft nur wenn User ``run`` klickt oder per API triggert."""
+    """Workflow only runs when the user clicks ``run`` or triggers it via the API."""
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: Literal["manual"] = "manual"
 
 
 class CronTrigger(BaseModel):
-    """Cron-Expression (5 Felder, Standard-Syntax). Nutzt ``croniter``.
+    """Cron expression (5 fields, standard syntax). Uses ``croniter``.
 
-    Beispiele:
-        ``30 7 * * *``   — taeglich 07:30
-        ``0 */2 * * *``  — alle 2 Stunden
-        ``0 9 * * 1-5``  — Werktags 09:00
+    Examples:
+        ``30 7 * * *``   — daily at 07:30
+        ``0 */2 * * *``  — every 2 hours
+        ``0 9 * * 1-5``  — weekdays at 09:00
     """
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: Literal["cron"] = "cron"
     expression: str = Field(min_length=9, max_length=128,
-                             description="Cron-Ausdruck mit 5 Feldern.")
+                             description="Cron expression with 5 fields.")
     timezone: str = Field(default="local",
-                          description="'local' oder IANA-Zone (z.B. 'Europe/Berlin').")
+                          description="'local' or an IANA zone (e.g. 'Europe/Berlin').")
 
 
 WorkflowTrigger = Annotated[
@@ -66,11 +66,10 @@ WorkflowTrigger = Annotated[
 # ---------------------------------------------------------------------
 
 class BrainPromptStep(BaseModel):
-    """Schickt ein Prompt an den aktiven BrainManager.
+    """Sends a prompt to the active BrainManager.
 
-    Der Runner schreibt die Antwort in ``run.outputs[step_id]``. Nachfolgende
-    Steps koennen darauf via ``{{prev.output}}`` oder ``{{step_1.output}}``
-    zugreifen.
+    The runner writes the reply into ``run.outputs[step_id]``. Subsequent
+    steps can access it via ``{{prev.output}}`` or ``{{step_1.output}}``.
     """
     model_config = ConfigDict(frozen=True, extra="forbid")
     kind: Literal["brain_prompt"] = "brain_prompt"
@@ -80,10 +79,10 @@ class BrainPromptStep(BaseModel):
 
 
 class HarnessDispatchStep(BaseModel):
-    """Dispatcht an einen Harness (openclaw, codex, computer-use, ...).
+    """Dispatches to a harness (openclaw, codex, computer-use, ...).
 
-    Ergebnis ist ``stdout`` der finalen Runde; wird als ``output`` im
-    Run-Context gespeichert.
+    The result is the ``stdout`` of the final round; stored as ``output``
+    in the run context.
     """
     model_config = ConfigDict(frozen=True, extra="forbid")
     kind: Literal["harness_dispatch"] = "harness_dispatch"
@@ -94,10 +93,10 @@ class HarnessDispatchStep(BaseModel):
 
 
 class SpeakStep(BaseModel):
-    """Emittiert einen ``AnnouncementRequested``-Event.
+    """Emits an ``AnnouncementRequested`` event.
 
-    Wenn die TTS-Pipeline laeuft, wird der Text gesprochen. Sonst
-    bleibt das Event im Flight-Recorder und der Step gilt als erfolgreich.
+    If the TTS pipeline is running, the text is spoken. Otherwise
+    the event stays in the flight recorder and the step counts as successful.
     """
     model_config = ConfigDict(frozen=True, extra="forbid")
     kind: Literal["speak"] = "speak"
@@ -108,7 +107,7 @@ class SpeakStep(BaseModel):
 
 
 class ToolCallStep(BaseModel):
-    """Fuehrt einen Tool-Aufruf auf der Tool-Registry aus (Risk-Tier-konform)."""
+    """Executes a tool call against the tool registry (risk-tier compliant)."""
     model_config = ConfigDict(frozen=True, extra="forbid")
     kind: Literal["tool_call"] = "tool_call"
     label: str = Field(default="", max_length=128)
@@ -117,39 +116,39 @@ class ToolCallStep(BaseModel):
 
 
 class ShellCmdStep(BaseModel):
-    """Fuehrt eine Shell-Command-Line aus. stdout wird als Step-Output
-    persistiert, stderr in ``error`` wenn exit_code != 0.
+    """Executes a shell command line. stdout is persisted as the step
+    output, stderr in ``error`` when exit_code != 0.
 
-    **Sicherheits-Hinweis:** Dieser Step-Typ ist maechtig — User, die fremde
-    Workflows importieren, sollten ``command`` vor Aktivierung pruefen. Wir
-    fuehren ``shell=False``, d.h. keine Pipe/Redirect-Unterstuetzung; fuer
-    komplexere Pipelines mehrere shell_cmd-Steps hintereinander nutzen.
+    **Security note:** this step type is powerful — users who import
+    third-party workflows should review ``command`` before activation. We
+    run with ``shell=False``, i.e. no pipe/redirect support; for more
+    complex pipelines, chain multiple shell_cmd steps.
     """
     model_config = ConfigDict(frozen=True, extra="forbid")
     kind: Literal["shell_cmd"] = "shell_cmd"
     label: str = Field(default="", max_length=128)
     command: str = Field(min_length=1, max_length=4096,
-                          description="Kommando-Zeile; whitespace-split zu argv.")
+                          description="Command line; whitespace-split into argv.")
     cwd: str = Field(default="", max_length=512,
-                      description="Working-Directory, leer = App-Verzeichnis.")
+                      description="Working directory, empty = app directory.")
     timeout_s: float = Field(default=60.0, ge=1.0, le=900.0)
     max_output_chars: int = Field(default=8000, ge=200, le=200_000)
 
 
 class TelegramSendStep(BaseModel):
-    """Sendet eine Telegram-Nachricht via Bot-API.
+    """Sends a Telegram message via the Bot API.
 
-    Bot-Token kommt aus dem Credential Manager; Chat-ID aus diesem Step
-    (hat Vorrang) oder ``[integrations.telegram].chat_id`` in der Config.
+    The bot token comes from the credential manager; the chat ID from this
+    step (takes precedence) or ``[integrations.telegram].chat_id`` in the config.
     """
     model_config = ConfigDict(frozen=True, extra="forbid")
     kind: Literal["telegram_send"] = "telegram_send"
     label: str = Field(default="", max_length=128)
     text: str = Field(min_length=1, max_length=4096,
-                       description="Nachrichten-Text; supports Markdown/HTML "
-                       "je nach parse_mode der Config.")
+                       description="Message text; supports Markdown/HTML "
+                       "depending on the config's parse_mode.")
     chat_id: str = Field(default="", max_length=64,
-                          description="Leer = Default-Chat aus Config.")
+                          description="Empty = default chat from config.")
 
 
 WorkflowStep = Annotated[
@@ -164,7 +163,7 @@ WorkflowStep = Annotated[
 # ---------------------------------------------------------------------
 
 class WorkflowDef(BaseModel):
-    """Die Blaupause eines Workflows. Persistiert in Tabelle ``workflows``."""
+    """The blueprint of a workflow. Persisted in the ``workflows`` table."""
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: UUID = Field(default_factory=uuid4)
@@ -179,18 +178,18 @@ class WorkflowDef(BaseModel):
 
 
 WorkflowRunState = Literal[
-    "pending",      # gerade angelegt, noch nicht gestartet
-    "running",      # Steps werden abgearbeitet
-    "completed",    # alle Steps erfolgreich
-    "failed",       # ein Step hat ge-raised
-    "cancelled",    # manuell abgebrochen
+    "pending",      # just created, not started yet
+    "running",      # steps are being processed
+    "completed",    # all steps succeeded
+    "failed",       # a step raised
+    "cancelled",    # manually cancelled
 ]
 
 
 class WorkflowRun(BaseModel):
-    """Ein konkreter Lauf eines WorkflowDef. Persistiert in ``workflow_runs``.
+    """A concrete run of a WorkflowDef. Persisted in ``workflow_runs``.
 
-    Steps-Fortschritt steht in ``workflow_run_steps``; hier nur Aggregat.
+    Step progress lives in ``workflow_run_steps``; this holds only the aggregate.
     """
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -201,16 +200,16 @@ class WorkflowRun(BaseModel):
     started_at_ns: int = 0
     finished_at_ns: int = 0
     error: str | None = None
-    input_json: str = "{}"              # User-Input beim Trigger (fuer {{input.X}}-Expansion)
+    input_json: str = "{}"              # user input at trigger time (for {{input.X}} expansion)
 
 
 # ---------------------------------------------------------------------
-# Utility — Step-Preview-Label
+# Utility — step preview label
 # ---------------------------------------------------------------------
 
 def step_display_label(step: WorkflowStep) -> str:
-    """Gibt einen Display-Label fuer UI-Timelines zurueck — expliziter Label
-    schlaegt generischer Kind-Beschreibung.
+    """Returns a display label for UI timelines — an explicit label
+    beats a generic kind description.
     """
     if step.label:
         return step.label
@@ -219,7 +218,7 @@ def step_display_label(step: WorkflowStep) -> str:
     if step.kind == "harness_dispatch":
         return f"{step.harness}: {step.prompt[:60]}..."
     if step.kind == "speak":
-        return f"Sprich: {step.text[:60]}..."
+        return f"Speak: {step.text[:60]}..."
     if step.kind == "tool_call":
         return f"Tool: {step.tool_name}"
     if step.kind == "shell_cmd":

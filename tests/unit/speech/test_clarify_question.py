@@ -1,6 +1,6 @@
-"""Clarifying-question ("Zwischenfrage") for an abandoned incomplete utterance.
+"""Clarifying-question ("Zwischenfrage") for an abandoned incomplete utterance.  # i18n-allow: German gloss of the feature name
 
-Root cause (user report 2026-06-08, "Jarvis hört für immer zu"): when the user
+Root cause (user report 2026-06-08, "Jarvis hört für immer zu"): when the user  # i18n-allow: quotes the actual German forensic user-report phrase
 trails off on an open-ended fragment ("…erinnere mich daran, dass" + silence),
 the ``ContinuationBuffer`` holds it with NO active timeout — it only drops the
 stale fragment lazily on the *next* ``process()`` call. So a user who stops
@@ -83,7 +83,7 @@ def test_voice_config_has_clarify_defaults() -> None:
     # was constantly interrogated with "Wie meinst du das genau?" because every
     # empty brain turn (Gemini function_call without narration / Codex CLI
     # timing out on the voice path) fell through to the clarifying question. The
-    # original "Jarvis hört für immer zu" cause was the watchdog stale-counter
+    # original "Jarvis hört für immer zu" cause was the watchdog stale-counter  # i18n-allow: quotes the actual German forensic user-report phrase
     # (BUG-032), fixed separately — so the clarify question lost its only real
     # purpose and now just blames the user for a brain glitch. Shipped default
     # is OFF; the feature stays available as an explicit opt-in.
@@ -430,12 +430,12 @@ async def test_successful_action_turn_speaks_confirmation_not_clarify() -> None:
     # (Gemini) emitted a function_call to `computer_use`, the CU loop opened
     # Chrome ([cu] step 1.1 open_app chrome → step 2 done), but Gemini produced
     # NO narration text. `_handle_silent_brain_turn` then spoke the clarifying
-    # question "Wie meinst du das genau?" — making a SUCCESSFUL desktop action
-    # look like incomprehension ("er checkt das nicht"). A turn that executed a
+    # question "Wie meinst du das genau?" — making a SUCCESSFUL desktop action  # i18n-allow: quotes the actual German clarify-question voice phrase
+    # look like incomprehension ("er checkt das nicht"). A turn that executed a  # i18n-allow: quotes the maintainer's actual forensic report
     # desktop-action tool must speak a positive CONFIRMATION, never the clarify
     # question.
     pipe = _make_silent_pipe(failed=False, suppressed=False, executed_action=True)
-    await pipe._handle_silent_brain_turn("de", "kannst du chrome oeffnen")
+    await pipe._handle_silent_brain_turn("de", "kannst du chrome oeffnen")  # i18n-allow: simulated German user utterance under test
     assert len(pipe._spoken) == 1, pipe._spoken
     text, lang = pipe._spoken[0]
     assert lang == "de"
@@ -565,8 +565,8 @@ async def test_armed_clarify_stays_silent_when_field_absent_from_config() -> Non
 
 @pytest.mark.asyncio
 async def test_default_config_empty_turn_does_not_interrogate_user() -> None:
-    # User mandate 2026-06-09 ("er fragt mich ständig 'Wie meinst du das?' —
-    # ich will, dass er einfach normal antwortet wie damals"): with the SHIPPED
+    # User mandate 2026-06-09 ("er fragt mich ständig 'Wie meinst du das?' —  # i18n-allow: quotes the maintainer's actual mandate wording
+    # ich will, dass er einfach normal antwortet wie damals"): with the SHIPPED  # i18n-allow: quotes the maintainer's actual mandate wording
     # default config (no [voice] override in jarvis.toml → the dataclass
     # default governs), an empty brain turn must NOT speak the clarifying
     # question. This ties the behaviour to the real ``VoiceConfig`` default
@@ -575,6 +575,6 @@ async def test_default_config_empty_turn_does_not_interrogate_user() -> None:
     pipe = _make_silent_pipe(
         failed=False, suppressed=False, enabled=default_enabled
     )
-    await pipe._handle_silent_brain_turn("de", "kannst du mein spotify öffnen")
+    await pipe._handle_silent_brain_turn("de", "kannst du mein spotify öffnen")  # i18n-allow: simulated German user utterance under test
     assert pipe._spoken == [], pipe._spoken
     assert TurnTakingState.JARVIS_SPEAKING not in pipe._state_history

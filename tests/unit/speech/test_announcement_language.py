@@ -45,7 +45,7 @@ async def test_announcement_uses_text_not_mistagged_event_language() -> None:
 
     await bus.publish(
         AnnouncementRequested(
-            text="Das Dokument ist fertig und liegt bereit.", language="en"
+            text="Das Dokument ist fertig und liegt bereit.", language="en"  # i18n-allow: simulated German voice text under test (mistagged as "en")
         )
     )
 

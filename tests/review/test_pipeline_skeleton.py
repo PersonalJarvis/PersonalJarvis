@@ -1,7 +1,7 @@
-"""Tests fuer ReviewPipeline-Skelett: trivialer Single-Iteration-Run (Phase 8.2).
+"""Tests for the ReviewPipeline skeleton: trivial single-iteration run (Phase 8.2).
 
-Plan-Referenz: §6.2 Akzeptanzkriterium 2 — Mock-HarnessManager liefert
-immer pass, Pipeline returnt success in Iteration 1.
+Plan reference: §6.2 acceptance criterion 2 — the mock HarnessManager always
+returns pass, the pipeline returns success in iteration 1.
 """
 from __future__ import annotations
 
@@ -29,13 +29,13 @@ def _pass_verdict(*, score: float = 1.0) -> ReviewVerdict:
 
 
 def test_single_iteration_pass(tmp_path: Path) -> None:
-    """Worker liefert Output, Reviewer pass — return success in iter 1."""
+    """Worker returns output, reviewer passes — return success in iter 1."""
     worker_calls: list[int] = []
     reviewer_calls: list[tuple[int, str]] = []
 
     async def worker_spawn(state: RunState, i: int) -> str:
         worker_calls.append(i)
-        # Vor der ersten Iteration sind keine Vor-Records da.
+        # Before the first iteration there are no previous records.
         assert state.iterations == []
         return f"produced artifact iter {i}"
 
@@ -55,7 +55,7 @@ def test_single_iteration_pass(tmp_path: Path) -> None:
         max_iterations=3,
     )
 
-    result = asyncio.run(pipeline.run("ein hinreichend langer Task fuer die Pipeline"))
+    result = asyncio.run(pipeline.run("a sufficiently long task for the pipeline"))
 
     assert result.outcome is PipelineOutcome.SUCCESS
     assert result.success is True
@@ -70,8 +70,8 @@ def test_single_iteration_pass(tmp_path: Path) -> None:
 
 
 def test_audit_records_three_lines_per_iteration(tmp_path: Path) -> None:
-    """Pro Iteration: worker_spawn + reviewer_spawn (postcheck nur bei Fail).
-    Single-Pass = 2 Audit-Zeilen.
+    """Per iteration: worker_spawn + reviewer_spawn (postcheck only on fail).
+    Single pass = 2 audit lines.
     """
     log = tmp_path / "review.log"
 
@@ -91,7 +91,7 @@ def test_audit_records_three_lines_per_iteration(tmp_path: Path) -> None:
         audit=audit,
     )
 
-    asyncio.run(pipeline.run("ein hinreichend langer Task"))
+    asyncio.run(pipeline.run("a sufficiently long task"))
 
     entries = audit.tail()
     phases = [e["phase"] for e in entries]
@@ -115,8 +115,8 @@ def test_run_id_is_unique_per_run(tmp_path: Path) -> None:
         audit=ReviewAudit(path=tmp_path / "r.log"),
     )
 
-    r1 = asyncio.run(pipeline.run("hinreichend langer Task A"))
-    r2 = asyncio.run(pipeline.run("hinreichend langer Task B"))
+    r1 = asyncio.run(pipeline.run("sufficiently long task A"))
+    r2 = asyncio.run(pipeline.run("sufficiently long task B"))
     assert r1.run_id != r2.run_id
 
 
@@ -144,12 +144,12 @@ def test_max_iterations_invalid_rejected(tmp_path: Path) -> None:
             worker_spawn=noop_w,
             reviewer_spawn=noop_r,
             audit=ReviewAudit(path=tmp_path / "r.log"),
-            max_iterations=10,  # ueber Hard-Ceiling 5
+            max_iterations=10,  # above the hard ceiling of 5
         )
 
 
 def test_precheck_failure_short_circuits(tmp_path: Path) -> None:
-    """Pre-Check fail → kein Worker-Spawn, kein Reviewer-Spawn."""
+    """Pre-check fail → no worker spawn, no reviewer spawn."""
     worker_calls: list[int] = []
     reviewer_calls: list[int] = []
 
@@ -166,11 +166,11 @@ def test_precheck_failure_short_circuits(tmp_path: Path) -> None:
     pipeline = ReviewPipeline(
         worker_spawn=worker_spawn,
         reviewer_spawn=reviewer_spawn,
-        prechecks=PreCheckRunner([task_not_empty]),  # task_not_empty failt auf <=10 chars
+        prechecks=PreCheckRunner([task_not_empty]),  # task_not_empty fails on <=10 chars
         audit=ReviewAudit(path=tmp_path / "r.log"),
     )
 
-    result = asyncio.run(pipeline.run("kurz"))  # <10 chars
+    result = asyncio.run(pipeline.run("short"))  # <10 chars
 
     assert result.outcome is PipelineOutcome.PRECHECK_FAIL
     assert result.precheck_failure is not None
@@ -183,7 +183,7 @@ def test_precheck_failure_short_circuits(tmp_path: Path) -> None:
 
 
 def test_max_iterations_param_overrides_default(tmp_path: Path) -> None:
-    """Pro-Run-Override per `run(..., max_iterations=2)`."""
+    """Per-run override via `run(..., max_iterations=2)`."""
     iters: list[int] = []
 
     async def worker_spawn(state: RunState, i: int) -> str:
@@ -207,7 +207,7 @@ def test_max_iterations_param_overrides_default(tmp_path: Path) -> None:
     )
 
     asyncio.run(
-        pipeline.run("ein hinreichend langer Task", max_iterations=2)
+        pipeline.run("a sufficiently long task", max_iterations=2)
     )
 
     assert iters == [1, 2]

@@ -53,7 +53,7 @@ async def test_approved_becomes_mission_completed() -> None:
                 tokens_used=100,
                 cost_usd=0.01,
                 wall_ms=5000,
-                summary_de="Fertig.",
+                summary_de="Fertig.",  # i18n-allow: German summary_de voice-readback field under test
                 summary_en="Done.",
             ),
             mission_id="abc",
@@ -64,7 +64,7 @@ async def test_approved_becomes_mission_completed() -> None:
     assert sig.mission_id == "abc"
     assert sig.status == "approved"
     assert sig.result_uri == "/out/result.md"
-    assert sig.summary_de == "Fertig."
+    assert sig.summary_de == "Fertig."  # i18n-allow: asserts the German summary_de voice-readback field
     assert sig.summary_en == "Done."
 
 

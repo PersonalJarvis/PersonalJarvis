@@ -60,7 +60,7 @@ def test_ack_emitted_before_worker_completes() -> None:
         oops = OopsProtocol(bus)
         talker = Talker(bus, worker=worker, oops=oops)
 
-        await talker.handle_utterance("Schreib eine Mail an das Team über den Launch")
+        await talker.handle_utterance("Schreib eine Mail an das Team über den Launch")  # i18n-allow: test content — user voice utterance DE
         assert flight.has(AckEmitted), "ACK must exist the instant handle_utterance returns"
         assert not flight.has(WorkerCompleted), "worker must not have completed yet (AD-OE1)"
         await worker.drain()
@@ -77,7 +77,7 @@ def test_p95_ack_latency_under_budget() -> None:
             oops = OopsProtocol(bus)
             talker = Talker(bus, worker=worker, oops=oops)
             t0 = time.perf_counter()
-            await talker.handle_utterance(f"Schreib eine Mail an das Team ueber Thema {i}")
+            await talker.handle_utterance(f"Schreib eine Mail an das Team ueber Thema {i}")  # i18n-allow: test content — user voice utterance DE
             latencies.append(time.perf_counter() - t0)
             await worker.drain()
         p95 = percentile(latencies, 95)

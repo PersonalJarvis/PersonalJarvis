@@ -291,8 +291,8 @@ If `post-flight.log` shows new failures that are not in `pre-flight.log`, the ag
 Free text but the **final line must be exactly one of**:
 
 ```
-Goal erfüllt: ja — Grund: <one sentence>
-Goal erfüllt: nein — Grund: <one sentence>
+Goal fulfilled: yes — Reason: <one sentence>
+Goal fulfilled: no — Reason: <one sentence>
 ```
 
 No quotation marks, no markdown around it. The review agent greps for this line.
@@ -341,10 +341,10 @@ After all four agents commit and report, the review agent:
 
 6. Runs the live voice demo:
    - Launch desktop app: `Start-Process pythonw -ArgumentList "-m","jarvis.ui.web.launcher"`
-   - Say: "Hey Jarvis, schreib in dein Wiki: Alex wurde 1985 geboren."
+   - Say: "Hey Jarvis, schreib in dein Wiki: Alex wurde 1985 geboren."  <!-- i18n-allow: live voice-demo utterance, real speech input example -->
    - Wait for `IdleEntered` (~2 minutes) or trigger `flush_session()` manually via the existing CLI.
    - Verify a new note appears under `wiki/obsidian-vault/10-notes/` mentioning Alex + 1985.
-   - Say: "Hey Jarvis, wann ist Alex geboren?"
+   - Say: "Hey Jarvis, wann ist Alex geboren?"  <!-- i18n-allow: live voice-demo utterance, real speech input example -->
    - Verify the TTS response references 1985, sourced from the wiki.
 
 If the voice demo passes, B5 is done.

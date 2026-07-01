@@ -1,10 +1,10 @@
-"""System-Tray-Icon als primäre UI für Jarvis.
+"""System tray icon as the primary UI for Jarvis.
 
-State-Icons werden dynamisch per PIL gerendert (keine .ico-Assets nötig für MVP).
-Später können hochwertige .ico-Files unter assets/icons/ abgelegt werden.
+State icons are rendered dynamically via PIL (no .ico assets needed for MVP).
+Higher-quality .ico files can later be placed under assets/icons/.
 
-Threading: pystray läuft in einem eigenen Thread (nicht asyncio-fähig).
-Kommunikation mit dem Event-Loop über einen thread-safe Queue.
+Threading: pystray runs on its own thread (not asyncio-capable).
+It communicates with the event loop via a thread-safe queue.
 """
 from __future__ import annotations
 
@@ -32,21 +32,21 @@ class JarvisState(str, Enum):
 
 
 _STATE_COLORS: dict[JarvisState, tuple[int, int, int]] = {
-    JarvisState.IDLE: (80, 120, 200),        # ruhiges Blau
-    JarvisState.LISTENING: (60, 200, 90),    # Grün
-    JarvisState.THINKING: (230, 190, 40),    # Gelb
-    JarvisState.SPEAKING: (220, 100, 180),   # Pink
-    JarvisState.ERROR: (220, 60, 60),        # Rot
-    JarvisState.PAUSED: (130, 130, 130),     # Grau
+    JarvisState.IDLE: (80, 120, 200),        # calm blue
+    JarvisState.LISTENING: (60, 200, 90),    # green
+    JarvisState.THINKING: (230, 190, 40),    # yellow
+    JarvisState.SPEAKING: (220, 100, 180),   # pink
+    JarvisState.ERROR: (220, 60, 60),        # red
+    JarvisState.PAUSED: (130, 130, 130),     # gray
 }
 
 
 def _make_icon(state: JarvisState, size: int = 64) -> Any:
-    """Liefert PIL-Image für den Tray.
+    """Returns a PIL image for the tray.
 
-    IDLE nutzt ``assets/icons/jarvis.ico`` (User-Branding), aktive Zustände
-    bekommen einen farbigen Kreis — so bleibt die State-Rückmeldung erhalten
-    und der User sieht trotzdem im Default das echte Jarvis-Logo.
+    IDLE uses ``assets/icons/jarvis.ico`` (user branding); active states
+    get a colored circle — so the state feedback is preserved while the
+    user still sees the real Jarvis logo by default.
     """
     from PIL import Image, ImageDraw  # type: ignore[import-untyped]
 
@@ -74,17 +74,17 @@ def _make_icon(state: JarvisState, size: int = 64) -> Any:
 
 @dataclass(slots=True)
 class TrayCommand:
-    """Vom Tray → Jarvis-Core geschickte Action."""
+    """Action sent from the tray → Jarvis core."""
     action: str  # "quit" | "pause" | "resume" | "reload_config" | "open_settings"
     payload: dict[str, Any] | None = None
 
 
 class JarvisTray:
-    """Tray-Icon-Wrapper mit Status-States und Menu.
+    """Tray icon wrapper with status states and a menu.
 
     Usage:
         tray = JarvisTray(on_command=handle)
-        tray.start()              # eigener Thread
+        tray.start()              # its own thread
         tray.set_state(JarvisState.LISTENING)
         ...
         tray.stop()
@@ -176,7 +176,7 @@ class JarvisTray:
         self._icon = None
 
     def set_state(self, state: JarvisState) -> None:
-        """Thread-safe State-Update — rerendert Icon und Tooltip."""
+        """Thread-safe state update — re-renders the icon and tooltip."""
         if state == self._state:
             return
         self._state = state
@@ -197,10 +197,10 @@ class JarvisTray:
                 pass
 
     async def command_stream(self) -> asyncio.Queue[TrayCommand]:
-        """Async-Bridge: yieldet Tray-Commands als asyncio-Queue.
+        """Async bridge: yields tray commands as an asyncio queue.
 
-        Der Aufrufer kann `await queue.get()` machen; Ein Background-Task liest
-        aus dem thread-safen queue.Queue und forwarded.
+        The caller can do `await queue.get()`; a background task reads
+        from the thread-safe queue.Queue and forwards them.
         """
         aq: asyncio.Queue[TrayCommand] = asyncio.Queue()
         loop = asyncio.get_running_loop()

@@ -1,19 +1,19 @@
-"""WorkflowRunner — fuehrt WorkflowDefs Step-fuer-Step aus.
+"""WorkflowRunner — executes WorkflowDefs step by step.
 
-Design-Prinzipien:
+Design principles:
 
-1. **Sequenziell**, nicht parallel. Die meisten User-Workflows sind
-   "tu dies, dann das, dann sage das Ergebnis" — DAG-Parallelismus kommt
-   erst in v2 wenn jemand es tatsaechlich braucht.
-2. **Alle Abhaengigkeiten sind optional.** Fehlt der BrainManager, wirft
-   der ``brain_prompt``-Step einen sauberen Fehler, aber der Runner
-   crasht nicht. So koennen Tests ohne volle Infrastruktur laufen.
-3. **Template-Variablen** werden vor der Execution per Substring-Replace
-   expandiert. Scope: ``{{prev.output}}``, ``{{step_N.output}}``,
-   ``{{input.<key>}}`` — alles andere bleibt literal stehen.
-4. **Events** gehen an den Bus (``WorkflowStarted``, ``WorkflowStepStarted``,
-   ``WorkflowStepCompleted``, ``WorkflowCompleted``). Die UI hoert darauf
-   und rendert Live-Updates.
+1. **Sequential**, not parallel. Most user workflows are
+   "do this, then that, then say the result" — DAG parallelism only
+   comes in v2, once someone actually needs it.
+2. **All dependencies are optional.** If the BrainManager is missing,
+   the ``brain_prompt`` step raises a clean error, but the runner
+   doesn't crash. This lets tests run without the full infrastructure.
+3. **Template variables** are expanded via substring replace before
+   execution. Scope: ``{{prev.output}}``, ``{{step_N.output}}``,
+   ``{{input.<key>}}`` — everything else stays literal.
+4. **Events** go to the bus (``WorkflowStarted``, ``WorkflowStepStarted``,
+   ``WorkflowStepCompleted``, ``WorkflowCompleted``). The UI listens for
+   these and renders live updates.
 """
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ _PREVIEW_MAX = 240
 
 
 # ----------------------------------------------------------------------
-# Protokoll-Stubs fuer Dependency-Injection
+# Protocol stubs for dependency injection
 # ----------------------------------------------------------------------
 
 class _BrainLike(Protocol):
@@ -70,7 +70,7 @@ class _ToolExecutorLike(Protocol):
 # ----------------------------------------------------------------------
 
 class WorkflowRunner:
-    """Executor fuer WorkflowDefs — eine Instanz pro App, viele parallele Runs."""
+    """Executor for WorkflowDefs — one instance per app, many parallel runs."""
 
     def __init__(
         self,
@@ -90,8 +90,8 @@ class WorkflowRunner:
         self._executor = tool_executor
 
     # ------------------------------------------------------------------
-    # Dependency-Swap zur Laufzeit (der BrainManager wird erst nach dem
-    # Workflow-Store gebaut; wir ueberschreiben ihn dann hot).
+    # Runtime dependency swap (the BrainManager is only built after the
+    # workflow store; we hot-swap it in afterward).
     # ------------------------------------------------------------------
 
     def attach_brain(self, brain: _BrainLike) -> None:
@@ -105,7 +105,7 @@ class WorkflowRunner:
         self._executor = executor
 
     # ------------------------------------------------------------------
-    # Public-API
+    # Public API
     # ------------------------------------------------------------------
 
     async def trigger(
@@ -115,15 +115,15 @@ class WorkflowRunner:
         trigger_reason: str = "manual",
         input_data: dict[str, Any] | None = None,
     ) -> str:
-        """Startet einen Workflow-Run fire-and-forget. Returnt die Run-ID.
+        """Starts a workflow run fire-and-forget. Returns the run ID.
 
-        Der eigentliche Run laeuft als ``asyncio.create_task`` — Aufrufer
-        (REST-Route, Cron-Scheduler) darf sofort weiterlaufen und den Run
-        via ``run_id`` polled/Live-Event verfolgen.
+        The actual run runs as an ``asyncio.create_task`` — the caller
+        (REST route, cron scheduler) can continue immediately and track
+        the run via ``run_id`` polling/live events.
         """
         wf = await self._store.get_def(workflow_id)
         if wf is None:
-            raise KeyError(f"Workflow {workflow_id} nicht gefunden")
+            raise KeyError(f"Workflow {workflow_id} not found")
         run_id = await self._store.create_run(
             workflow_id,
             trigger=trigger_reason,
@@ -196,7 +196,7 @@ class WorkflowRunner:
                 )
                 success = False
                 error_msg = error_text
-                log.warning("Workflow %s step %d fehlgeschlagen: %s",
+                log.warning("Workflow %s step %d failed: %s",
                             wf.name, idx, error_text)
                 break
 
@@ -233,7 +233,7 @@ class WorkflowRunner:
         )
 
     # ------------------------------------------------------------------
-    # Step-Dispatch
+    # Step dispatch
     # ------------------------------------------------------------------
 
     async def _execute_step(
@@ -254,18 +254,18 @@ class WorkflowRunner:
             return await self._run_shell_cmd(step, step_outputs, input_data)
         if step.kind == "telegram_send":
             return await self._run_telegram_send(step, step_outputs, input_data)
-        raise RuntimeError(f"Unbekannter Step-Kind: {step.kind}")
+        raise RuntimeError(f"Unknown step kind: {step.kind}")
 
     async def _run_brain_prompt(
         self, step: Any, outputs: dict[str, str], input_data: dict[str, Any],
     ) -> str:
         if self._brain is None:
             raise RuntimeError(
-                "Kein Brain verfuegbar — Workflow erfordert BrainManager"
+                "No brain available — workflow requires a BrainManager"
             )
         prompt = _expand_template(step.prompt, outputs, input_data)
         reply = await _maybe_await_brain(self._brain, prompt)
-        # Cap auf User-definiertes max_output_chars
+        # Cap at the user-defined max_output_chars
         cap = getattr(step, "max_output_chars", 2000)
         if len(reply) > cap:
             reply = reply[:cap] + "…"
@@ -275,7 +275,7 @@ class WorkflowRunner:
         self, step: Any, outputs: dict[str, str], input_data: dict[str, Any],
     ) -> str:
         if self._harness is None:
-            raise RuntimeError("Kein HarnessManager verfuegbar")
+            raise RuntimeError("No HarnessManager available")
         from jarvis.core.protocols import HarnessTask
 
         prompt = _expand_template(step.prompt, outputs, input_data)
@@ -320,7 +320,7 @@ class WorkflowRunner:
         self, step: Any, outputs: dict[str, str], input_data: dict[str, Any],
     ) -> str:
         if self._tools is None or self._executor is None:
-            raise RuntimeError("Tool-Registry/Executor nicht verfuegbar")
+            raise RuntimeError("Tool registry/executor not available")
         tool = None
         try:
             if step.tool_name in self._tools:
@@ -332,7 +332,7 @@ class WorkflowRunner:
             if callable(getter):
                 tool = getter(step.tool_name)
         if tool is None:
-            raise KeyError(f"Tool '{step.tool_name}' nicht in Registry")
+            raise KeyError(f"Tool '{step.tool_name}' not in registry")
 
         expanded_args: dict[str, Any] = {}
         for k, v in (step.args or {}).items():
@@ -346,7 +346,7 @@ class WorkflowRunner:
         )
         success = bool(getattr(result, "success", False))
         if not success:
-            err = getattr(result, "error", None) or "tool call fehlgeschlagen"
+            err = getattr(result, "error", None) or "tool call failed"
             raise RuntimeError(err)
         payload = getattr(result, "output", None)
         if payload is None:
@@ -358,30 +358,29 @@ class WorkflowRunner:
     async def _run_shell_cmd(
         self, step: Any, outputs: dict[str, str], input_data: dict[str, Any],
     ) -> str:
-        """Startet einen Subprozess mit Timeout + Output-Cap.
+        """Starts a subprocess with a timeout + output cap.
 
-        Design-Notiz: wir shell-splitten mit ``shlex.split`` und nutzen
-        ``create_subprocess_exec`` (``shell=False``). Das heisst: Pipes/
-        Redirects (``|``, ``>``) funktionieren nicht out-of-the-box — wer
-        sie braucht, macht Cmd=``powershell -c "..."`` oder splittet in
-        zwei shell_cmd-Steps mit Template-Variable.
+        Design note: we shell-split with ``shlex.split`` and use
+        ``create_subprocess_exec`` (``shell=False``). That means pipes/
+        redirects (``|``, ``>``) don't work out of the box — anyone who
+        needs them uses ``cmd=powershell -c "..."`` or splits into
+        two shell_cmd steps with a template variable.
         """
         import shlex
 
         cmd_expanded = _expand_template(step.command, outputs, input_data)
         try:
-            # posix=False damit Windows-Pfade mit Backslashes nicht als
-            # Escape-Sequenz interpretiert werden. Nachteil: Quotes bleiben
-            # als Token-Teil erhalten — wir stripen sie per Hand, damit
-            # '"C:\\Program Files\\app.exe"' zu 'C:\\Program Files\\app.exe'
-            # wird.
+            # posix=False so Windows paths with backslashes aren't
+            # interpreted as escape sequences. Downside: quotes stay
+            # part of the token — we strip them by hand, so
+            # '"C:\\Program Files\\app.exe"' becomes 'C:\\Program Files\\app.exe'.
             argv = shlex.split(cmd_expanded, posix=False)
         except ValueError as exc:
-            raise RuntimeError(f"Shell-Command parsing failed: {exc}") from exc
+            raise RuntimeError(f"Shell command parsing failed: {exc}") from exc
         argv = [a[1:-1] if len(a) >= 2 and a[0] == a[-1] and a[0] in ('"', "'")
                 else a for a in argv]
         if not argv:
-            raise RuntimeError("Leere Shell-Command")
+            raise RuntimeError("Empty shell command")
 
         cwd = step.cwd or None
 
@@ -400,14 +399,14 @@ class WorkflowRunner:
             with contextlib.suppress(ProcessLookupError):
                 proc.kill()
             raise RuntimeError(
-                f"Shell-Command Timeout nach {step.timeout_s}s: {cmd_expanded[:80]}"
+                f"Shell command timed out after {step.timeout_s}s: {cmd_expanded[:80]}"
             ) from exc
 
         stdout = (stdout_b or b"").decode("utf-8", errors="replace")
         stderr = (stderr_b or b"").decode("utf-8", errors="replace")
         if proc.returncode != 0:
             raise RuntimeError(
-                f"Shell-Command exit_code={proc.returncode}: "
+                f"Shell command exit_code={proc.returncode}: "
                 f"{stderr[-400:] or stdout[-400:]}"
             )
         cap = step.max_output_chars
@@ -419,19 +418,19 @@ class WorkflowRunner:
     async def _run_telegram_send(
         self, step: Any, outputs: dict[str, str], input_data: dict[str, Any],
     ) -> str:
-        """POST an Telegram-Bot-API. Token + Default-Chat-ID aus Config."""
+        """POST to the Telegram Bot API. Token + default chat ID come from config."""
         from jarvis.core.config import get_secret, load_config
 
         token = get_secret("telegram_bot_token", "TELEGRAM_BOT_TOKEN")
         if not token:
             raise RuntimeError(
-                "Telegram-Bot-Token nicht gesetzt — "
-                "ENV TELEGRAM_BOT_TOKEN oder Credential-Manager-Key "
-                "'telegram_bot_token' konfigurieren. "
-                "Bot via @BotFather erstellen."
+                "Telegram bot token not set — "
+                "configure ENV TELEGRAM_BOT_TOKEN or the credential manager "
+                "key 'telegram_bot_token'. "
+                "Create a bot via @BotFather."
             )
 
-        # Chat-ID: Step > Config > Fehler
+        # Chat ID: step > config > error
         chat_id = step.chat_id.strip() if step.chat_id else ""
         parse_mode = "Markdown"
         if not chat_id:
@@ -443,13 +442,13 @@ class WorkflowRunner:
                 pass
         if not chat_id:
             raise RuntimeError(
-                "Telegram-Chat-ID nicht gesetzt — entweder im Step als "
-                "'chat_id' angeben oder '[integrations.telegram].chat_id' "
-                "in jarvis.toml eintragen."
+                "Telegram chat ID not set — either specify 'chat_id' in "
+                "the step or set '[integrations.telegram].chat_id' "
+                "in jarvis.toml."
             )
 
         text = _expand_template(step.text, outputs, input_data)
-        # Telegram-Max ist 4096 Zeichen — schneiden statt Fehler.
+        # Telegram max is 4096 characters — truncate instead of erroring.
         if len(text) > 4096:
             text = text[:4090] + "\n…"
 
@@ -467,10 +466,10 @@ class WorkflowRunner:
             try:
                 r = await client.post(url, json=payload)
             except Exception as exc:  # noqa: BLE001
-                raise RuntimeError(f"Telegram-Request fehlgeschlagen: {exc}") from exc
+                raise RuntimeError(f"Telegram request failed: {exc}") from exc
 
         if r.status_code >= 400:
-            # Telegram antwortet mit ``{"ok": false, "description": "..."}``
+            # Telegram responds with ``{"ok": false, "description": "..."}``
             try:
                 detail = r.json().get("description") or r.text[:200]
             except Exception:  # noqa: BLE001
@@ -478,7 +477,7 @@ class WorkflowRunner:
             raise RuntimeError(
                 f"Telegram HTTP {r.status_code}: {detail}"
             )
-        return f"gesendet an chat_id={chat_id} ({len(text)} Zeichen)"
+        return f"sent to chat_id={chat_id} ({len(text)} characters)"
 
 
 # ----------------------------------------------------------------------
@@ -491,10 +490,10 @@ _TEMPLATE_RE = re.compile(r"\{\{\s*([^}]+?)\s*\}\}")
 def _expand_template(
     s: str, outputs: dict[str, str], input_data: dict[str, Any],
 ) -> str:
-    """Expandiert ``{{prev.output}}`` / ``{{step_N.output}}`` / ``{{input.X}}``.
+    """Expands ``{{prev.output}}`` / ``{{step_N.output}}`` / ``{{input.X}}``.
 
-    Unbekannte Platzhalter bleiben literal stehen — so merkt der User beim
-    Debug schnell, wenn er einen Typo hat.
+    Unknown placeholders stay literal — so the user quickly notices
+    during debugging if they made a typo.
     """
     def repl(m: re.Match[str]) -> str:
         token = m.group(1).strip()
@@ -512,9 +511,9 @@ def _expand_template(
 
 
 async def _maybe_await_brain(brain: Any, prompt: str) -> str:
-    """Brain kann sein: callable(str) -> Awaitable[str], oder Objekt mit
-    ``__call__``, oder respond(thread_id, text, store)-like. Wir probieren
-    das Callable-Pattern (BrainManager) und faillen graceful.
+    """The brain can be: callable(str) -> Awaitable[str], or an object with
+    ``__call__``, or respond(thread_id, text, store)-like. We try the
+    callable pattern (BrainManager) and fail gracefully.
     """
     if callable(brain):
         try:
@@ -527,6 +526,6 @@ async def _maybe_await_brain(brain: Any, prompt: str) -> str:
         except TypeError:
             pass
     raise RuntimeError(
-        "Brain ist nicht direkt callable — nur BrainManager-kompatible "
-        "Provider werden unterstuetzt"
+        "Brain is not directly callable — only BrainManager-compatible "
+        "providers are supported"
     )

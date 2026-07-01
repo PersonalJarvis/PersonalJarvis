@@ -47,8 +47,8 @@ async def test_wait_until_cancelled_unblocks():
 
 @pytest.mark.asyncio
 async def test_first_reason_wins_on_multiple_cancels():
-    """Nur die erste `cancel()` Reason gilt — damit ein spaeterer Kill-Switch
-    nicht eine Budget-Ueberschreitungs-Reason ueberschreibt.
+    """Only the first `cancel()` reason counts — so a later kill switch
+    can't overwrite a budget-exceeded reason.
     """
     tok = FakeCancelToken()
     tok.cancel("budget_task_exceeded")

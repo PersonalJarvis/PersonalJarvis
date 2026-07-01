@@ -76,10 +76,10 @@ def slugify(name: str) -> str:
     """Map a free-form name to a kebab-case ASCII slug."""
     s = name.strip().lower()
     s = (
-        s.replace("ä", "ae")
-        .replace("ö", "oe")
-        .replace("ü", "ue")
-        .replace("ß", "ss")
+        s.replace("ä", "ae")  # i18n-allow
+        .replace("ö", "oe")  # i18n-allow
+        .replace("ü", "ue")  # i18n-allow
+        .replace("ß", "ss")  # i18n-allow
     )
     s = _SLUG_RE.sub("-", s).strip("-")
     return s or "unnamed"

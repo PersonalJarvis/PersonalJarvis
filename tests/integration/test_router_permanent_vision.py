@@ -1,15 +1,15 @@
-"""E2E-Integration-Tests fuer Permanent-Vision (Wave-3 B9).
+"""E2E integration tests for Permanent Vision (Wave-3 B9).
 
-Setup: echte VisionContextProvider + FakeVisionEngine + FakeBrain +
-RouterBrain. Testet den kompletten Vision-Capture → Provider-Cache →
-Router-Inject → BrainDispatcher.dispatch-Pfad.
+Setup: a real VisionContextProvider + FakeVisionEngine + FakeBrain +
+RouterBrain. Tests the full vision-capture → provider-cache →
+router-inject → BrainDispatcher.dispatch path.
 
-Welle-4-Migration: der ehemals "kritische" Test
-``test_sub_jarvis_isolated_from_vision`` testete dass der ``SubJarvisManager``
-keine Vision-Images weiterreicht. Sub-Jarvis-Tier wurde durch die OpenClaw-
-Bridge ersetzt (siehe docs/openclaw-bridge.md §11) — der OpenClaw-Worker
-ist ein externer Subprocess ohne Image-Kanal, Vision-Isolation strukturell
-garantiert. Dieser Test wurde entfernt.
+Wave-4 migration: the formerly "critical" test
+``test_sub_jarvis_isolated_from_vision`` verified that ``SubJarvisManager``
+does not pass along any vision images. The Sub-Jarvis tier was replaced by
+the OpenClaw bridge (see docs/openclaw-bridge.md §11) — the OpenClaw
+worker is an external subprocess with no image channel, so vision
+isolation is structurally guaranteed. This test was removed.
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ pytestmark = pytest.mark.integration
 
 
 def _make_png_file(size_kb: int = 1) -> tuple[str, bytes]:
-    """PNG-Datei mit Fake-Bytes. `size_kb` steuert die Byte-Groesse."""
+    """PNG file with fake bytes. `size_kb` controls the byte size."""
     header = b"\x89PNG\r\n\x1a\n"
     filler = b"x" * max(0, size_kb * 1024 - len(header))
     data = header + filler
@@ -48,10 +48,10 @@ def _make_png_file(size_kb: int = 1) -> tuple[str, bytes]:
 
 
 class FakeVisionEngine:
-    """Emuliert VisionEngine.observe() ohne mss/UIA.
+    """Emulates VisionEngine.observe() without mss/UIA.
 
-    Liefert eine Observation mit einer echten (temp-)PNG-Datei, damit der
-    Router-Helper `_read_observation_png_b64` File-I/O machen kann.
+    Returns an observation with a real (temp) PNG file, so the
+    router helper `_read_observation_png_b64` can do file I/O.
     """
 
     def __init__(
@@ -190,16 +190,16 @@ async def test_router_handle_includes_image():
 
 
 # ======================================================================
-# Test 2: OpenClaw-Worker-Isolation
+# Test 2: OpenClaw worker isolation
 #
-# Welle-4-Migration: Der ursprueliche ``test_sub_jarvis_isolated_from_vision``-
-# Test verifizierte dass ``SubJarvisManager.run(task)`` keine Vision-Images
-# weiterreicht. ``SubJarvisManager`` wurde durch die OpenClaw-Bridge ersetzt
-# (siehe docs/openclaw-bridge.md §11). Vision-Isolation ist beim OpenClaw-
-# Worker strukturell garantiert: er ist ein externer Subprocess, der nur
-# einen ``--message <prompt>``-String bekommt — keinen Image-Kanal. Der
-# alte Test wird daher entfernt; ein vergleichbarer Smoke-Test fuer den
-# OpenClaw-Subprocess-Stream lebt in ``tests/integration/test_openclaw_*``.
+# Wave-4 migration: the original ``test_sub_jarvis_isolated_from_vision``
+# test verified that ``SubJarvisManager.run(task)`` does not pass along any
+# vision images. ``SubJarvisManager`` was replaced by the OpenClaw bridge
+# (see docs/openclaw-bridge.md §11). Vision isolation is structurally
+# guaranteed for the OpenClaw worker: it is an external subprocess that
+# only receives a ``--message <prompt>`` string — no image channel. The
+# old test was therefore removed; a comparable smoke test for the
+# OpenClaw subprocess stream lives in ``tests/integration/test_openclaw_*``.
 # ======================================================================
 
 
@@ -307,13 +307,13 @@ def test_idle_state_pauses_provider_loop():
 
 
 # ======================================================================
-# Test 5: Provider recovert nach Engine-Fehler
+# Test 5: provider recovers after an engine error
 # ======================================================================
 
 
 @pytest.mark.asyncio
 async def test_provider_recovers_from_engine_error():
-    """Engine wirft 1x, naechster Tick klappt — Loop stirbt nicht."""
+    """Engine throws once, next tick succeeds — the loop doesn't die."""
     from jarvis.vision.context_provider import VisionContextProvider
 
     path, _ = _make_png_file(size_kb=1)
@@ -339,11 +339,11 @@ async def test_provider_recovers_from_engine_error():
 
 @pytest.mark.asyncio
 async def test_image_block_size_under_budget():
-    """Captured Image bleibt unter 500-KB-Budget.
+    """Captured image stays under the 500 KB budget.
 
-    Mit einem 300-KB-PNG als Input: Der Provider-Pfad encodet es als
-    base64 und reicht es durch — assertet dass die Rohdaten unter Budget
-    bleiben (Base64-Overhead ~33% wird separat gemessen).
+    With a 300 KB PNG as input: the provider path base64-encodes it and
+    passes it through — asserts that the raw data stays under budget
+    (the ~33% base64 overhead is measured separately).
     """
     from jarvis.brain.router import _read_observation_png_b64
     from jarvis.core.protocols import Observation
@@ -363,7 +363,7 @@ async def test_image_block_size_under_budget():
         )
         b64 = await _read_observation_png_b64(obs)
         raw_bytes = len(base64.b64decode(b64))
-        assert raw_bytes <= 500 * 1024, f"Image ueber Budget: {raw_bytes} bytes"
+        assert raw_bytes <= 500 * 1024, f"Image over budget: {raw_bytes} bytes"
         assert raw_bytes == len(data)
     finally:
         os.unlink(path)

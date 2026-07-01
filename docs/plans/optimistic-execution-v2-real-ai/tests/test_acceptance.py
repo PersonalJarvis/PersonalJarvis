@@ -43,7 +43,7 @@ def test_definition_of_done_instant_ack_then_async_worker() -> None:
 
         t0 = time.perf_counter()
         reply = await talker.handle_utterance(
-            "Trag mir morgen 15 Uhr einen Termin mit dem Steuerberater ein"
+            "Trag mir morgen 15 Uhr einen Termin mit dem Steuerberater ein"  # i18n-allow: test content — user voice utterance DE
         )
         ack_latency = time.perf_counter() - t0
 

@@ -13,14 +13,14 @@ import {
 } from "@/hooks/useFriends";
 
 /**
- * Status-Sharing-Konfiguration pro Friend.
+ * Status sharing configuration per friend.
  *
- * Phase F4 (live): pro Friend wird das aktive Sharing-Profile angezeigt
- * und ueber 3-Radio-Selektion ge-PATCHt. Live-Status-Cards (vergangene
- * Updates pro Friend) kommen mit dem WebSocket-Stream in F5.
+ * Phase F4 (live): the active sharing profile is shown per friend
+ * and PATCHed via a 3-radio selection. Live status cards (past
+ * updates per friend) arrive with the WebSocket stream in F5.
  *
- * Hard-Blacklist-Hinweis am Ende: rohe Utterances, Tool-Args, Stacktraces,
- * Memory-Updates verlassen die Maschine NIE — egal welches Profile aktiv ist.
+ * Hard-blacklist note at the end: raw utterances, tool args, stack traces,
+ * and memory updates NEVER leave the machine — no matter which profile is active.
  */
 export function StatusTab() {
   const t = useT();

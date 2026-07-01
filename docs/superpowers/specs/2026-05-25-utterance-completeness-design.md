@@ -106,7 +106,7 @@ def classify_completeness(
 
 - **DE:** `nein egal`, `nein, egal`, `ach egal`, `vergiss es`, `vergiss das`,
   `lass gut sein`, `lass mal gut sein`, `ach nichts`, `ach, nichts`,
-  `schon gut`, `ne doch nicht`, `nee doch nicht`, `doch nicht`, `halt stopp` (only when not a running-task cancel — task cancel stays in `voice_command_gate`).
+  `schon gut`, `ne doch nicht`, `nee doch nicht`, `doch nicht`, `halt stopp` (only when not a running-task cancel — task cancel stays in `voice_command_gate`).  <!-- i18n-allow: German input vocabulary -->
 - **EN:** `never mind`, `nevermind`, `forget it`, `forget that`, `nvm`,
   `scratch that`, `no wait`.
 
@@ -118,14 +118,14 @@ def classify_completeness(
 Matched on the **last token** (lowercased, punctuation stripped).
 
 **DE — high-precision set (separable-verb particles AND prepositions deliberately EXCLUDED):**
-- Conjunctions: `und`, `oder`, `aber`, `weil`, `dass`, `daß`, `denn`, `sondern`, `sowie`
-- Indefinite articles (almost always pre-nominal): `eine`, `einen`, `einem`, `einer`, `eines`
+- Conjunctions: `und`, `oder`, `aber`, `weil`, `dass`, `daß`, `denn`, `sondern`, `sowie`  <!-- i18n-allow: German input vocabulary -->
+- Indefinite articles (almost always pre-nominal): `eine`, `einen`, `einem`, `einer`, `eines`  <!-- i18n-allow: German input vocabulary -->
 - Subordinators (open a clause that needs completion): `wenn`, `falls`, `ob`
 
 **Explicitly NOT in the DE set** (would cause false positives):
-- Separable-verb particles `zu, auf, an, ab, ein, mit, vor, nach, um, in, bei, los, hin, her, weg, da, fest, weiter` — "mach das Fenster **zu**", "mach das Licht **an**" are *complete* commands.
-- Bare definite articles / demonstratives `der, die, das, den, dem` — collide with pronouns: "mach **das**", "lass **das**", "nimm **die**" are complete.
-- All prepositions `für, von, wegen, mit, …` — collide with question tails: "was ist das **für**", "wo kommst du **her**" are *complete*. Under the "when in doubt, execute" bias they are dropped entirely.
+- Separable-verb particles `zu, auf, an, ab, ein, mit, vor, nach, um, in, bei, los, hin, her, weg, da, fest, weiter` — "mach das Fenster **zu**", "mach das Licht **an**" are *complete* commands.  <!-- i18n-allow: German input vocabulary -->
+- Bare definite articles / demonstratives `der, die, das, den, dem` — collide with pronouns: "mach **das**", "lass **das**", "nimm **die**" are complete.  <!-- i18n-allow: German input vocabulary -->
+- All prepositions `für, von, wegen, mit, …` — collide with question tails: "was ist das **für**", "wo kommst du **her**" are *complete*. Under the "when in doubt, execute" bias they are dropped entirely.  <!-- i18n-allow: German input vocabulary -->ely.
 
 **EN set** (no separable-particle / pronoun collision):
 - Conjunctions: `and`, `or`, `but`, `because`
@@ -199,26 +199,26 @@ trap. If the verdict ever needs to reach SQL/TS, apply the five-layer pattern
 **Unit — `tests/unit/speech/test_completeness.py`** (this milestone):
 
 - **COMPLETE** (must pass through to the brain/fast-path):
-  - "Öffne Chrome", "Öffne mir den Browser", "Wie spät ist es",
+  - "Öffne Chrome", "Öffne mir den Browser", "Wie spät ist es",  <!-- i18n-allow: German test-fixture utterances -->
     "Spiel Spotify ab", "Mach das Fenster zu", "Mach das Licht an", "Mach das",
-    "Lass das", "Nimm die rote", "Gib mir den Bericht",
-    "Was ist das für" (preposition-tail collision — locked to COMPLETE),
+    "Lass das", "Nimm die rote", "Gib mir den Bericht",  <!-- i18n-allow: German test-fixture utterances -->
+    "Was ist das für" (preposition-tail collision — locked to COMPLETE),  <!-- i18n-allow: German test-fixture utterances -->
     "What is this for" (same collision in EN),
-    "Schreib eine Mail an Tom dass ich später komme",
+    "Schreib eine Mail an Tom dass ich später komme",  <!-- i18n-allow: German test-fixture utterances -->
     "Kannst du das fixen" (historic false-positive — locked to COMPLETE),
     "What time is it", "Open the terminal", "Turn it off",
     any text ending in `.` / `!` / `?`.
 - **INCOMPLETE**:
-  - "Öffne mal eine", "Ich brauche einen", "Kauf Milch und",
-    "Ich glaube dass", "Jarvis wenn", "wenn", "falls",
+  - "Öffne mal eine", "Ich brauche einen", "Kauf Milch und",  <!-- i18n-allow: German test-fixture utterances -->
+    "Ich glaube dass", "Jarvis wenn", "wenn", "falls",  <!-- i18n-allow: German test-fixture utterances -->
     "Send a mail to", "I want to", "Open the".
 - **ABRUPT_ABORT**:
   - "nein, egal", "vergiss es", "ach, lass gut sein", "schon gut",
     "never mind", "forget it", "scratch that".
 - **C-signals**:
-  - "ich möchte dass du die Datei" with `endpoint_reason="max_utterance"`
+  - "ich möchte dass du die Datei" with `endpoint_reason="max_utterance"`  <!-- i18n-allow: German test-fixture utterances -->
     → INCOMPLETE (`reason="cut_off"`); same text with terminal punctuation
-    → COMPLETE; "Öffne Chrome." with `endpoint_reason="max_utterance"`
+    → COMPLETE; "Öffne Chrome." with `endpoint_reason="max_utterance"`  <!-- i18n-allow: German test-fixture utterances -->
     → COMPLETE (terminal overrides).
 - **Bias** (ambiguous → COMPLETE): "das Wetter heute", lone content word
   "Browser".

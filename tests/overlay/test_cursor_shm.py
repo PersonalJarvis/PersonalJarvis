@@ -1,10 +1,10 @@
-"""Cursor SHM Round-Trip — Plan §11 Layout + Seqlock.
+"""Cursor SHM round-trip — Plan §11 layout + seqlock.
 
-1000-Frame-Producer/Consumer-Test mit zwei Threads. Verifiziert:
-  - Layout-Konstanten (32 Bytes, struct format).
-  - Writer published korrekt (seq monoton, gerade nach Write).
-  - Reader skipped torn reads sauber (kein gemischter Frame).
-  - Reader sieht nichts mehr nach Writer-close (block ggf. weg).
+1000-frame producer/consumer test with two threads. Verifies:
+  - Layout constants (32 bytes, struct format).
+  - Writer publishes correctly (seq monotonic, even after write).
+  - Reader cleanly skips torn reads (no mixed frame).
+  - Reader sees nothing after writer close (block possibly gone).
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from overlay.cursor_shm import (
 
 
 # -------------------------------------------------------------------------
-# Konstanten
+# Constants
 # -------------------------------------------------------------------------
 
 
@@ -54,7 +54,7 @@ def test_make_name_is_unique_pattern() -> None:
 
 
 def test_writer_first_write_yields_seq_2() -> None:
-    """Plan §11.4: ``_seq`` startet bei 0, erstes Frame endet mit seq=2."""
+    """Plan §11.4: ``_seq`` starts at 0, first frame ends with seq=2."""
     w = CursorShmWriter.create()
     try:
         seq = w.write(100, 200, 0)
@@ -69,7 +69,7 @@ def test_reader_returns_none_when_no_data_yet() -> None:
     try:
         r = CursorShmReader.attach(w.name)
         try:
-            assert r.read() is None  # seq=0 -> noch nie publiziert
+            assert r.read() is None  # seq=0 -> never published yet
         finally:
             r.close()
     finally:
@@ -103,7 +103,7 @@ def test_reader_returns_none_on_no_new_seq() -> None:
         try:
             w.write(1, 1, 0)
             assert r.read() is not None
-            # nochmal lesen ohne neuen Write -> None.
+            # read again without a new write -> None.
             assert r.read() is None
         finally:
             r.close()
@@ -112,16 +112,16 @@ def test_reader_returns_none_on_no_new_seq() -> None:
 
 
 # -------------------------------------------------------------------------
-# Producer/Consumer Threading-Stress (1000 Frames, kein Torn-Read)
+# Producer/consumer threading stress (1000 frames, no torn read)
 # -------------------------------------------------------------------------
 
 
 def test_thousand_frames_no_torn_read() -> None:
-    """Plan §11.3: Reader darf NIE einen halb-geschriebenen Frame sehen.
+    """Plan §11.3: the reader must NEVER see a half-written frame.
 
-    Wir schreiben 1000 Frames mit predictable Werten (x = i, y = i*2,
-    monitor = i % 4) und verifizieren reader-side dass jeder gelesene
-    Frame intern konsistent ist (y == 2*x, monitor == x % 4).
+    We write 1000 frames with predictable values (x = i, y = i*2,
+    monitor = i % 4) and verify reader-side that every frame read
+    is internally consistent (y == 2*x, monitor == x % 4).
     """
     w = CursorShmWriter.create()
     received: list[CursorFrame] = []
@@ -130,13 +130,13 @@ def test_thousand_frames_no_torn_read() -> None:
     def producer() -> None:
         for i in range(1, 1001):
             w.write(i, i * 2, i % 4)
-            # kein sleep — wir wollen tight loop um Race-Bedingungen
-            # zu erzwingen.
+            # no sleep — we want a tight loop to force
+            # race conditions.
 
     def consumer() -> None:
         r = CursorShmReader.attach(w.name)
         try:
-            # Polling bis Producer fertig; ggf. ein paar Frames mehr.
+            # Poll until producer is done; possibly a few extra frames.
             poll_count = 0
             while not stop.is_set() or poll_count < 10:
                 f = r.read()
@@ -153,16 +153,16 @@ def test_thousand_frames_no_torn_read() -> None:
     try:
         producer()
     finally:
-        # Bischen Zeit damit der Consumer die letzten Frames noch
-        # einsammelt, dann stop.
+        # A bit of time so the consumer still collects the last frames,
+        # then stop.
         time.sleep(0.05)
         stop.set()
         consumer_thread.join(timeout=2.0)
 
-    # Wir koennen NICHT garantieren dass alle 1000 Frames gelesen wurden
-    # (Reader ist langsamer als Writer, frames werden ueberschrieben). Was
-    # wir garantieren: jeder GELESENE Frame ist intern konsistent UND
-    # die Sequenz monoton steigend.
+    # We CANNOT guarantee that all 1000 frames were read
+    # (the reader is slower than the writer, frames get overwritten). What
+    # we DO guarantee: every frame READ is internally consistent AND
+    # the sequence is monotonically increasing.
     assert len(received) > 0
     last_seq = 0
     for f in received:
@@ -182,16 +182,16 @@ def test_thousand_frames_no_torn_read() -> None:
 
 
 def test_reader_skips_odd_seq_mid_write() -> None:
-    """Manueller Pin: setze seq auf ungerade -> Reader returns None."""
+    """Manual pin: set seq to odd -> reader returns None."""
     w = CursorShmWriter.create()
     try:
         r = CursorShmReader.attach(w.name)
         try:
-            # Erst sauber publishen
+            # First publish cleanly
             w.write(10, 20, 0)
-            assert r.read() is not None  # seq=2 jetzt last_seq
+            assert r.read() is not None  # seq=2 is now last_seq
 
-            # Manuell odd seq setzen — busy marker.
+            # Manually set odd seq — busy marker.
             struct.pack_into("<I", w._buf, 16, 3)  # noqa: SLF001 — test reads private buf
             assert r.read() is None
         finally:

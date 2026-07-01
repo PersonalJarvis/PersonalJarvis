@@ -1,14 +1,14 @@
-"""wait_for_ui_state-Tool: pollt bis ein gewuenschter UI-State erreicht ist.
+"""wait_for_ui_state tool: polls until a desired UI state is reached.
 
-Beispiele:
-  - ``wait_for_ui_state(title_contains='Notepad', timeout_s=5)`` wartet bis
-    ein Fenster mit "Notepad" im Titel sichtbar ist.
-  - ``wait_for_ui_state(text_contains='OK')`` wartet bis irgendwo im UIA-
-    Tree ein Element mit Text "OK" erscheint (z.B. ein Dialog-Button).
+Examples:
+  - ``wait_for_ui_state(title_contains='Notepad', timeout_s=5)`` waits until
+    a window with "Notepad" in its title is visible.
+  - ``wait_for_ui_state(text_contains='OK')`` waits until an element with
+    text "OK" appears anywhere in the UIA tree (e.g. a dialog button).
 
-Polling-Intervall: 250ms. Default-Timeout: 5s. Hartes Maximum: 60s.
+Polling interval: 250ms. Default timeout: 5s. Hard maximum: 60s.
 
-Risk-Tier: ``safe`` — reine Beobachtung, kein State-Change.
+Risk tier: ``safe`` — pure observation, no state change.
 """
 from __future__ import annotations
 
@@ -28,25 +28,25 @@ class WaitForUIStateTool:
     name: str = "wait_for_ui_state"
     risk_tier: str = "safe"
     description: str = (
-        "Wartet bis ein UI-Match auftritt — entweder ein Fenster-Titel-"
-        "Substring (title_contains) oder ein Text irgendwo im UIA-Tree "
-        "(text_contains). Liefert nach Erfolg den gefundenen Titel zurueck."
+        "Waits until a UI match occurs — either a window-title substring "
+        "(title_contains) or text appearing anywhere in the UIA tree "
+        "(text_contains). Returns the found title on success."
     )
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
             "title_contains": {
                 "type": "string",
-                "description": "Substring, der im Fenstertitel auftauchen muss",
+                "description": "Substring that must appear in the window title",
             },
             "text_contains": {
                 "type": "string",
-                "description": "Substring, der irgendwo im UIA-Tree erscheinen muss",
+                "description": "Substring that must appear anywhere in the UIA tree",
             },
             "timeout_s": {
                 "type": "number",
                 "default": _DEFAULT_TIMEOUT_S,
-                "description": f"Maximale Wartezeit (max {_MAX_TIMEOUT_S}s)",
+                "description": f"Maximum wait time (max {_MAX_TIMEOUT_S}s)",
             },
         },
         "required": [],
@@ -61,7 +61,7 @@ class WaitForUIStateTool:
         if not title_needle and not text_needle:
             return ToolResult(
                 success=False, output=None,
-                error="Mindestens eines von 'title_contains' oder 'text_contains' angeben",
+                error="Provide at least one of 'title_contains' or 'text_contains'",
             )
 
         timeout = min(float(args.get("timeout_s", _DEFAULT_TIMEOUT_S)), _MAX_TIMEOUT_S)
@@ -84,13 +84,13 @@ class WaitForUIStateTool:
                 obs = await source.observe()
                 last_observed_title = obs.window_title
             except Exception as exc:  # noqa: BLE001
-                # UIA kann transient failen (z.B. waehrend Window-Animationen).
-                # Wir loggen still und versuchen es im naechsten Tick weiter.
+                # UIA can fail transiently (e.g. during window animations).
+                # We log silently and keep retrying on the next tick.
                 obs = None
                 if time.monotonic() >= deadline:
                     return ToolResult(
                         success=False, output=None,
-                        error=f"UIA-Polling failed durchgehend: {exc}",
+                        error=f"UIA polling failed consistently: {exc}",
                     )
 
             if obs is not None:
@@ -116,9 +116,9 @@ class WaitForUIStateTool:
                 return ToolResult(
                     success=False, output=None,
                     error=(
-                        f"Timeout nach {timeout}s. "
-                        f"Letzter Fenster-Titel: {last_observed_title!r}. "
-                        f"Suchte: title~{title_needle!r}, text~{text_needle!r}"
+                        f"Timed out after {timeout}s. "
+                        f"Last window title: {last_observed_title!r}. "
+                        f"Searched for: title~{title_needle!r}, text~{text_needle!r}"
                     ),
                 )
             await asyncio.sleep(_POLL_INTERVAL_S)

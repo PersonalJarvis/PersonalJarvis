@@ -1,18 +1,18 @@
-"""Speech-Diagnose-CLI — hilft wenn Wake-Word / Mic / TTS nicht funktionieren.
+"""Speech diagnostics CLI — helps when wake word / mic / TTS aren't working.
 
-Aufruf:
+Usage:
     python -m jarvis.speech.diagnose
 
-Zeigt:
-  1. Alle Audio-Devices (Input + Output)
-  2. Live-Mic-Pegel (dBFS) über 10 Sekunden — damit du siehst ob dein Mic
-     überhaupt ankommt
-  3. Live-Wake-Word-Score über 20 Sekunden — sag "Hey Jarvis" / "Jarvis"
-     und sieh was openWakeWord misst
-  4. Whisper-Transkriptions-Test — sag irgendwas 3 Sek, Jarvis zeigt was
-     er verstanden hat
-  5. Chime-Playback — kurzer Ton zum Output-Device
-  6. TTS-Rundlauf — Jarvis sagt einen Satz via Gemini
+Shows:
+  1. All audio devices (input + output)
+  2. Live mic level (dBFS) over 10 seconds — so you can see whether your mic
+     is picking anything up at all
+  3. Live wake-word score over 20 seconds — say "Hey Jarvis" / "Jarvis"
+     and see what openWakeWord measures
+  4. Whisper transcription test — say something for 3 sec, Jarvis shows
+     what it understood
+  5. Chime playback — short tone on the output device
+  6. TTS round-trip — Jarvis says a sentence via Gemini
 """
 from __future__ import annotations
 
@@ -72,19 +72,19 @@ def _print_header(n: int, title: str) -> None:
 
 
 def step_devices() -> None:
-    _print_header(1, "Audio-Devices")
+    _print_header(1, "Audio devices")
     devices = sd.query_devices()
     default_in, default_out = sd.default.device
     print(f"Default Input : #{default_in}  →  {devices[default_in]['name']}")
     print(f"Default Output: #{default_out}  →  {devices[default_out]['name']}")
     print()
-    print("Alle Inputs:")
+    print("All inputs:")
     for i, d in enumerate(devices):
         if d["max_input_channels"] > 0:
             marker = " ★" if i == default_in else "  "
             print(f"  {marker} #{i:2d}  {d['name']}  (ch={d['max_input_channels']}, rate={int(d['default_samplerate'])})")
     print()
-    print("Alle Outputs:")
+    print("All outputs:")
     for i, d in enumerate(devices):
         if d["max_output_channels"] > 0:
             marker = " ★" if i == default_out else "  "
@@ -92,10 +92,10 @@ def step_devices() -> None:
 
 
 async def step_mic_level(duration_s: float = 10.0) -> float:
-    """Misst Live-Mic-Pegel — User sollte laut sprechen, Max-dBFS wird gemerkt."""
-    _print_header(2, f"Mic-Pegel-Test ({int(duration_s)} Sekunden — SPRICH JETZT!)")
-    print("Sprich laut — zähl bis zehn oder sing ein bisschen.")
-    print("Max-Pegel sollte im Bereich -20 bis -5 dBFS liegen.")
+    """Measures the live mic level — the user should speak loudly, max dBFS is recorded."""
+    _print_header(2, f"Mic level test ({int(duration_s)} seconds — SPEAK NOW!)")
+    print("Speak loudly — count to ten or sing a bit.")
+    print("Max level should be in the range -20 to -5 dBFS.")
     print()
     max_dbfs = -120.0
     samples_seen = 0
@@ -109,27 +109,27 @@ async def step_mic_level(duration_s: float = 10.0) -> float:
             dbfs = 20.0 * np.log10(rms)
             max_dbfs = max(max_dbfs, dbfs)
             samples_seen += len(arr)
-            bar_len = max(0, int((dbfs + 60) / 2))  # skaliert [-60 .. 0] → [0 .. 30]
+            bar_len = max(0, int((dbfs + 60) / 2))  # scales [-60 .. 0] → [0 .. 30]
             bar = "█" * min(bar_len, 30)
             sys.stdout.write(f"\r  level: {dbfs:6.1f} dBFS  {bar:<30s}  (max: {max_dbfs:6.1f})")
             sys.stdout.flush()
     print()
-    print(f"→ Samples empfangen: {samples_seen}   Max-Pegel: {max_dbfs:.1f} dBFS")
+    print(f"→ Samples received: {samples_seen}   Max level: {max_dbfs:.1f} dBFS")
     if samples_seen == 0:
-        print("  ⚠ KEIN Audio! Mic-Auswahl in Windows prüfen.")
+        print("  ⚠ NO audio! Check mic selection in Windows.")
     elif max_dbfs < -40:
-        print("  ⚠ Sehr leiser Mic-Pegel. Windows-Mic-Volume hochdrehen oder Headset näher.")
+        print("  ⚠ Very quiet mic level. Turn up the Windows mic volume or move the headset closer.")
     elif max_dbfs > -3:
-        print("  ⚠ Übersteuert! Mic-Volume in Windows reduzieren.")
+        print("  ⚠ Clipping! Reduce the mic volume in Windows.")
     else:
-        print("  ✓ Pegel sieht gut aus.")
+        print("  ✓ Level looks good.")
     return max_dbfs
 
 
 async def step_wake_live(duration_s: float = 20.0) -> None:
-    _print_header(3, f"Wake-Word Live-Score ({int(duration_s)} Sekunden)")
-    print("Sag MEHRMALS dein Wake-Word — versuche verschiedene Aussprachen.")
-    print("Zeigt den höchsten Wake-Score pro Sekunde live.")
+    _print_header(3, f"Wake-word live score ({int(duration_s)} seconds)")
+    print("Say your wake word SEVERAL times — try different pronunciations.")
+    print("Shows the highest wake score per second live.")
     print()
     from jarvis.plugins.wake.openwakeword_provider import (
         OWW_FRAME_SAMPLES,
@@ -138,7 +138,7 @@ async def step_wake_live(duration_s: float = 20.0) -> None:
     prov = OpenWakeWordProvider(
         keywords=("hey_jarvis",),
         activation_threshold=0.15,
-        score_log_threshold=1.1,  # disable inline logging, wir zeigen eigene
+        score_log_threshold=1.1,  # disable inline logging, we show our own
     )
     prov._ensure_model()
     assert prov._model is not None
@@ -177,17 +177,17 @@ async def step_wake_live(duration_s: float = 20.0) -> None:
                 last_report_t = now
                 max_in_window = 0.0
     print()
-    print(f"→ Global-Max-Score: {max_score_global:.3f}")
+    print(f"→ Global max score: {max_score_global:.3f}")
     if max_score_global < 0.15:
-        print("  ⚠ openWakeWord erkennt dein Wake-Word nicht zuverlässig.")
-        print("    → Whisper-Wake-Fallback übernimmt in der vollen Pipeline.")
+        print("  ⚠ openWakeWord does not reliably detect your wake word.")
+        print("    → The Whisper-wake fallback takes over in the full pipeline.")
     else:
-        print("  ✓ openWakeWord würde triggern bei Threshold 0.15.")
+        print("  ✓ openWakeWord would trigger at threshold 0.15.")
 
 
 async def step_whisper(duration_s: float = 4.0) -> None:
-    _print_header(4, f"Whisper-Transkriptions-Test ({int(duration_s)} Sekunden)")
-    print("Sag einen kurzen Satz. Jarvis transkribiert und zeigt was er verstand.")
+    _print_header(4, f"Whisper transcription test ({int(duration_s)} seconds)")
+    print("Say a short sentence. Jarvis transcribes it and shows what it understood.")
     print()
     from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
     stt = FasterWhisperProvider()
@@ -200,38 +200,38 @@ async def step_whisper(duration_s: float = 4.0) -> None:
             if time.time() >= t_end:
                 break
             collected.extend(chunk.pcm)
-    print("  Transkribiere …")
+    print("  Transcribing …")
     transcript = await stt.transcribe_pcm(bytes(collected))
-    print(f"  Sprache:    {transcript.language}")
+    print(f"  Language:   {transcript.language}")
     print(f"  Confidence: {transcript.confidence:.2f}")
     print(f"  Text:       {transcript.text!r}")
 
 
 async def step_chime() -> None:
-    _print_header(5, "Chime-Playback")
-    print("Sollte jetzt einen kurzen Ding-Ton über die Lautsprecher spielen …")
+    _print_header(5, "Chime playback")
+    print("Should now play a short ding tone over the speakers …")
     player = AudioPlayer()
     await player.play_pcm(CHIME_PCM, sample_rate=CHIME_SAMPLE_RATE)
-    print("  ✓ Chime abgespielt.")
+    print("  ✓ Chime played.")
 
 
 async def step_tts() -> None:
-    _print_header(6, "TTS-Rundlauf (Gemini 3.1 Flash)")
-    print("Jarvis sagt jetzt einen Test-Satz …")
+    _print_header(6, "TTS round-trip (Gemini 3.1 Flash)")
+    print("Jarvis is now saying a test sentence …")
     from jarvis.plugins.tts.gemini_flash_tts import GeminiFlashTTS
     tts = GeminiFlashTTS(default_voice="Algieba", language_code="de-DE")
     tts._ensure_client()
     player = AudioPlayer()
-    text = "Hallo, ich bin Jarvis. Diagnose abgeschlossen. Du kannst mich jetzt nutzen."
+    text = "Hallo, ich bin Jarvis. Diagnose abgeschlossen. Du kannst mich jetzt nutzen."  # i18n-allow
     async for chunk in tts.synthesize(text):
         await player.play_pcm(chunk.pcm, sample_rate=chunk.sample_rate)
-    print("  ✓ TTS-Ausgabe fertig.")
+    print("  ✓ TTS output done.")
 
 
 async def _main() -> None:
     _setup_stdout()
     _load_env()
-    logging.basicConfig(level=logging.WARNING)  # leise, wir printen selbst
+    logging.basicConfig(level=logging.WARNING)  # quiet, we print ourselves
 
     step_devices()
     await step_mic_level(10.0)
@@ -241,7 +241,7 @@ async def _main() -> None:
     await step_tts()
     print()
     print("=" * 64)
-    print("  Diagnose abgeschlossen.")
+    print("  Diagnostics complete.")
     print("=" * 64)
 
 
@@ -249,4 +249,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(_main())
     except KeyboardInterrupt:
-        print("\nAbgebrochen.")
+        print("\nAborted.")

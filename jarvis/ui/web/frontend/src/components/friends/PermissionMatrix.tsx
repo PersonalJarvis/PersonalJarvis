@@ -3,16 +3,16 @@ import { cn } from "@/lib/utils";
 import type { StatusProfile } from "@/hooks/useFriends";
 
 /**
- * 3-Radio-Selector fuer das Sharing-Profile eines Friends.
+ * 3-radio selector for a friend's sharing profile.
  *
- * Stateless / kontrolliert: ``current`` zeigt den aktuellen Wert,
- * ``onChange`` wird beim Wechsel gerufen. ``disabled`` setzt alle
- * Radios visuell + funktional inaktiv (z.B. waehrend des Mutation-Calls).
+ * Stateless / controlled: ``current`` shows the current value, ``onChange``
+ * is called on change. ``disabled`` makes all radios visually and
+ * functionally inactive (e.g. during the mutation call).
  */
 const PROFILES: { value: StatusProfile; label: string; subline: string }[] = [
-  { value: "minimal", label: "minimal", subline: "Nur online/offline" },
-  { value: "standard", label: "standard", subline: "+ Mission-Titel" },
-  { value: "detailed", label: "detailed", subline: "+ Jarvis-Agent-Summary" },
+  { value: "minimal", label: "minimal", subline: "Online/offline only" },
+  { value: "standard", label: "standard", subline: "+ mission title" },
+  { value: "detailed", label: "detailed", subline: "+ Jarvis-Agent summary" },
 ];
 
 export function PermissionMatrix({

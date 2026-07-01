@@ -1,8 +1,8 @@
-"""Shared Fixtures fuer die Curator-/Memory-Unit-Tests.
+"""Shared fixtures for the curator/memory unit tests.
 
-Fakes statt Mocks:
-- `FakeBus` fuer den Merger (sammelt alle publizierten Events in einer Liste).
-- Fresh-Workspace pro Test via `tmp_path` — keine Kollision zwischen Tests.
+Fakes instead of mocks:
+- `FakeBus` for the merger (collects all published events in a list).
+- Fresh workspace per test via `tmp_path` — no collision between tests.
 """
 from __future__ import annotations
 
@@ -20,20 +20,20 @@ from jarvis.memory.workspace import Workspace
 
 
 # ----------------------------------------------------------------------
-# FakeBus — sammelt publizierte Events statt wirklich zu dispatchen
+# FakeBus — collects published events instead of actually dispatching them
 # ----------------------------------------------------------------------
 
 @dataclass
 class FakeBus:
-    """Minimaler Bus-Fake fuer Merger-Tests. Speichert Events in `published`."""
+    """Minimal bus fake for merger tests. Stores events in `published`."""
 
     published: list[Event] = field(default_factory=list)
 
     async def publish(self, event: Event) -> None:
         self.published.append(event)
 
-    # Der Merger nutzt nur .publish — die restlichen EventBus-Methoden brauchen
-    # wir nicht. Stubs halten mypy-mässig ruhig.
+    # The merger only uses .publish — we don't need the rest of the
+    # EventBus methods. Stubs keep mypy quiet.
     def subscribe(self, *_args, **_kwargs) -> None:  # pragma: no cover
         pass
 
@@ -55,7 +55,7 @@ def fake_bus() -> FakeBus:
 
 @pytest.fixture
 def workspace(tmp_path: Path) -> Workspace:
-    """Frischer Workspace im tmp_path; initialisiert via Workspace.ensure."""
+    """Fresh workspace in tmp_path; initialized via Workspace.ensure."""
     return Workspace.ensure(tmp_path / "ws")
 
 

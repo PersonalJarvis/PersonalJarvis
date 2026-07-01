@@ -106,7 +106,7 @@ export function useWebSocket(): void {
             Math.floor(env.timestamp_ns / 1_000_000),
           );
 
-        // Sub-Agent-Dashboard: Live-Tree aus den Phase-5.5-Events bauen.
+        // Jarvis-Agents dashboard: build the live tree from the Phase-5.5 events.
         if (SUB_AGENT_EVENT_NAMES.has(env.event_name)) {
           useSubAgentStore
             .getState()
@@ -154,7 +154,7 @@ export function useWebSocket(): void {
             };
             pushMessage(msg);
             console.log("[ChatThinking] MessageSent role=", p.role);
-            // Brain-Reply (oder System-Diagnostic) ist eingegangen — Thinking aus.
+            // Brain reply (or system diagnostic) has arrived — thinking off.
             // The "preamble" role is the Flash-Brain pre-ack; it does NOT end
             // the thinking state because the assistant's main reply is still
             // pending. Only "assistant" / "system" clear the indicator.
@@ -171,8 +171,8 @@ export function useWebSocket(): void {
         }
 
         if (env.event_name === "ErrorOccurred") {
-          // Brain-Errors brechen den Wait-Cycle ab, sonst haengt der Indikator
-          // bis zum 60s-Timeout. Andere Layer-Errors ignorieren wir hier.
+          // Brain errors abort the wait cycle, otherwise the indicator hangs
+          // until the 60s timeout. We ignore other layer errors here.
           const p = env.payload as { layer?: string; source_layer?: string };
           if (p.layer === "brain" || p.source_layer === "brain") {
             setChatThinking(false);
@@ -225,7 +225,7 @@ export function useWebSocket(): void {
         }
 
         if (env.event_name === "SecretConfigured") {
-          // Trigger nur — die ApiKeysView refresht ihre Provider-Liste selbst.
+          // Trigger only — ApiKeysView refreshes its own provider list.
           window.dispatchEvent(new CustomEvent("jarvis:secret-configured", { detail: env.payload }));
         }
 
@@ -268,8 +268,8 @@ export function useWebSocket(): void {
           if (typeof p.title === "string" && p.title.length > 0) {
             pushToast("success", `Achievement: ${p.title}`);
           }
-          // Lokale Custom-Event: AchievementGrid hoert darauf und invalidiert
-          // die React-Query-Liste, damit der Unlock sofort sichtbar wird.
+          // Local custom event: AchievementGrid listens for it and invalidates
+          // the React Query list, so the unlock becomes visible immediately.
           window.dispatchEvent(
             new CustomEvent("jarvis:achievement-unlocked", { detail: p }),
           );

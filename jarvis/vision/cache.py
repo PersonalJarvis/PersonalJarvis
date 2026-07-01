@@ -1,16 +1,16 @@
-"""VisionCache — Screenshot-Hash-basierter Dedup fuer Observations.
+"""VisionCache — screenshot-hash-based dedup for observations.
 
-Hintergrund: Der CU-Loop ruft `VisionEngine.observe()` mehrmals pro Step.
-Wenn der Bildschirm sich zwischen zwei Calls nicht veraendert hat, ist
-das UIA-Pruning (Haupt-Kostenfaktor) Verschwendung. Wir cachen daher
-Observations unter ihrem Screenshot-Hash.
+Background: the CU loop calls `VisionEngine.observe()` several times per
+step. If the screen hasn't changed between two calls, the UIA pruning (the
+main cost factor) is wasted work. So we cache observations under their
+screenshot hash.
 
-Strategie: FIFO, Kapazitaet 10 Eintraege. Wenn ein Screenshot-Hash
-gecached ist und die UIA-Tree-Struktur (node_count, window_title) passt,
-gib die alte Observation zurueck. Andernfalls Cache-Miss.
+Strategy: FIFO, capacity 10 entries. If a screenshot hash is cached and the
+UIA tree structure (node_count, window_title) matches, return the old
+observation. Otherwise it's a cache miss.
 
-Der Cache lebt im Prozess — keine Persistenz. Das ist ok, weil der erste
-Observe eines neuen Prozesses ohnehin einen frischen Screenshot braucht.
+The cache lives in-process — no persistence. That's fine, because the first
+observe of a new process needs a fresh screenshot anyway.
 """
 from __future__ import annotations
 
@@ -20,9 +20,9 @@ from jarvis.core.protocols import Observation
 
 
 class VisionCache:
-    """FIFO-Cache fuer Observations, gekeyt auf Screenshot-Hash.
+    """FIFO cache for observations, keyed on the screenshot hash.
 
-    Nutzung:
+    Usage:
 
         cache = VisionCache(capacity=10)
         cached = cache.get(hash_of_current_screenshot)
@@ -35,34 +35,34 @@ class VisionCache:
 
     def __init__(self, *, capacity: int = 10) -> None:
         if capacity < 1:
-            raise ValueError("capacity muss >= 1 sein")
+            raise ValueError("capacity must be >= 1")
         self._capacity = capacity
-        # OrderedDict gibt uns FIFO ueber `popitem(last=False)`.
+        # OrderedDict gives us FIFO via `popitem(last=False)`.
         self._store: OrderedDict[str, Observation] = OrderedDict()
 
     def get(self, screenshot_hash: str) -> Observation | None:
-        """Gibt eine gecachte Observation zurueck oder None."""
+        """Returns a cached observation, or None."""
         if not screenshot_hash:
             return None
         return self._store.get(screenshot_hash)
 
     def put(self, obs: Observation) -> None:
-        """Legt eine Observation unter ihrem Screenshot-Hash ab.
+        """Stores an observation under its screenshot hash.
 
-        Wenn der Hash leer ist, wird der Put ignoriert — ein Cache ohne
-        Key macht keinen Sinn. Das kann bei `source='ui_tree_only'`
-        vorkommen, wo es keinen Screenshot gibt.
+        If the hash is empty, the put is ignored — a cache without a key
+        makes no sense. This can happen with `source='ui_tree_only'`,
+        where there is no screenshot.
         """
         if not obs.screenshot_hash:
             return
-        # Bei Hash-Collision ueberschreiben wir und die Ordering bleibt FIFO.
+        # On a hash collision we overwrite, and the ordering stays FIFO.
         if obs.screenshot_hash in self._store:
-            # Move-to-end wuerde LRU sein, wir wollen FIFO: entfernen + neu einfuegen,
-            # damit ein ueberschriebener Eintrag seine urspruengliche Position verliert.
-            # Fuer Cache-Hit-Tests ist FIFO die klarere Semantik.
+            # Move-to-end would be LRU; we want FIFO: remove + re-insert,
+            # so an overwritten entry loses its original position.
+            # FIFO is the clearer semantics for cache-hit tests.
             del self._store[obs.screenshot_hash]
         self._store[obs.screenshot_hash] = obs
-        # Evict bei Ueberlauf — aelteste Entry raus.
+        # Evict on overflow — drop the oldest entry.
         while len(self._store) > self._capacity:
             self._store.popitem(last=False)
 

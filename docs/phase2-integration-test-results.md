@@ -2,7 +2,7 @@
 
 **Date**: 2026-04-21
 **Test runner**: main model (without sub-agents, direct implementation)
-**Plan reference**: `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md` §20
+**Plan reference**: `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md` §20  <!-- i18n-allow -->
 
 ---
 

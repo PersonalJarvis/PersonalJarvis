@@ -1,19 +1,19 @@
-"""Unit-Tests für den Persona-Loader (`jarvis.brain.persona_loader`).
+"""Unit tests for the persona loader (`jarvis.brain.persona_loader`).
 
-Deckt ab:
-- Extraktion des ersten Code-Fence nach `## System-Prompt`.
-- Cache-Verhalten (lru_cache + invalidate).
-- Fehlende Datei / fehlender Fence → leerer String (kein Raise).
+Covers:
+- Extraction of the first code fence after `## System-Prompt`.
+- Cache behavior (lru_cache + invalidate).
+- Missing file / missing fence → empty string (no raise).
 """
 from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
 
-# `jarvis.brain.__init__` zieht den BrainManager + Safety-Chain mit —
-# letztere hat zur Refactor-Zeit WIP-Dependencies ausserhalb dieses Scopes.
-# Der Persona-Loader selbst hat keine Brain-Imports, daher isolieren wir
-# ihn mit `importlib.util` aus dem Datei-Pfad.
+# `jarvis.brain.__init__` pulls in the BrainManager + safety chain —
+# the latter had WIP dependencies outside this scope at refactor time.
+# The persona loader itself has no brain imports, so we isolate it
+# with `importlib.util` from the file path.
 _loader_spec = importlib.util.spec_from_file_location(
     "jarvis.brain.persona_loader",
     Path(__file__).resolve().parents[3]
@@ -46,7 +46,7 @@ def test_extract_fence_returns_code_block_body() -> None:
     block = _extract_fence_after_marker(md)
     assert "You are JARVIS." in block
     assert "Be concise." in block
-    # Quellen-Sektion danach darf nicht drin sein
+    # The "Quellen" section after it must not be included
     assert "Quellen" not in block
 
 
@@ -76,10 +76,11 @@ def test_extract_fence_missing_fence_returns_empty() -> None:
 
 
 def test_load_persona_prompt_extracts_real_persona(monkeypatch) -> None:
-    """Integrationstest gegen die echte JARVIS_PERSONA.md im Repo.
+    """Integration test against the real JARVIS_PERSONA.md in the repo.
 
-    Geprueft werden Sektionen, die seit Persona-Mandat-Phase-2 (2026-04-25)
-    in der MD live sind — kritisch fuer Hangup-Contract und Echo-Schutz.
+    Checks sections that have been live in the MD since persona mandate
+    phase 2 (2026-04-25) — critical for the hangup contract and echo
+    protection.
     """
     invalidate_cache()
     try:
@@ -94,16 +95,17 @@ def test_load_persona_prompt_extracts_real_persona(monkeypatch) -> None:
     assert "JARVIS" not in prompt
     assert "voice companion" in prompt
     assert "LANGUAGE POLICY" in prompt
-    # Mandat-Phase-2: ECHO-PARAPHRASE-Sektion direkt nach OUTPUT RULES
+    # Mandate phase 2: ECHO-PARAPHRASE section right after OUTPUT RULES
     assert "ECHO-PARAPHRASE" in prompt
-    # Hangup-Contract muss im Persona-Block sein, sonst kommt er nie beim
-    # Brain an (Probe-Drift Szenario 10: 'Bis dann.' statt einem klaren Abschied).
+    # The hangup contract must be in the persona block, otherwise it never
+    # reaches the brain (probe drift scenario 10: 'Bis dann.' instead of a
+    # clear farewell).
     # The farewell is now profile-name-driven — no hardcoded owner name.
-    assert "Goodbye" in prompt or "Auf Wiedersehen" in prompt
+    assert "Goodbye" in prompt or "Auf Wiedersehen" in prompt  # i18n-allow
 
 
 def test_load_persona_prompt_missing_file_returns_empty(monkeypatch, tmp_path) -> None:
-    """Wenn die MD fehlt, liefert der Loader leeren String — kein Raise."""
+    """When the MD is missing, the loader returns an empty string — no raise."""
     invalidate_cache()
     fake_missing = tmp_path / "does_not_exist.md"
     monkeypatch.setattr(pl, "_persona_md_path", lambda: fake_missing)
@@ -114,7 +116,7 @@ def test_load_persona_prompt_missing_file_returns_empty(monkeypatch, tmp_path) -
 
 
 def test_load_persona_prompt_cache_reuses_read(monkeypatch, tmp_path) -> None:
-    """`load_persona_prompt` liest die Datei nur einmal pro Cache-Fenster."""
+    """`load_persona_prompt` reads the file only once per cache window."""
     invalidate_cache()
     md_file = tmp_path / "JARVIS_PERSONA.md"
     md_file.write_text(
@@ -124,12 +126,12 @@ def test_load_persona_prompt_cache_reuses_read(monkeypatch, tmp_path) -> None:
     try:
         first = load_persona_prompt()
         assert "First version." in first
-        # Datei ändern — ohne invalidate bleibt der Cache-Wert.
+        # Change the file — without invalidate, the cached value stays.
         md_file.write_text(
             "## System-Prompt\n```\nSecond version.\n```\n", encoding="utf-8"
         )
         cached = load_persona_prompt()
-        assert cached == first  # Cache-Hit
+        assert cached == first  # cache hit
         invalidate_cache()
         fresh = load_persona_prompt()
         assert "Second version." in fresh
@@ -138,7 +140,7 @@ def test_load_persona_prompt_cache_reuses_read(monkeypatch, tmp_path) -> None:
 
 
 def test_load_persona_prompt_crlf_normalized(monkeypatch, tmp_path) -> None:
-    """Windows-CRLF wird als LF verarbeitet."""
+    """Windows CRLF is processed as LF."""
     invalidate_cache()
     md_file = tmp_path / "JARVIS_PERSONA.md"
     md_file.write_bytes(
@@ -153,10 +155,10 @@ def test_load_persona_prompt_crlf_normalized(monkeypatch, tmp_path) -> None:
 
 
 def test_persona_loader_path_points_to_real_file() -> None:
-    """Sanity: Der Default-Pfad zeigt auf eine existierende Datei."""
+    """Sanity: the default path points to an existing file."""
     path = pl._persona_md_path()
     assert isinstance(path, Path)
-    assert path.exists(), f"Erwartet: {path} existiert"
+    assert path.exists(), f"expected: {path} exists"
 
 
 def test_persona_fence_carries_end_call_sentinel() -> None:

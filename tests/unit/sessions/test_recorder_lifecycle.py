@@ -53,7 +53,7 @@ async def test_recorder_persists_transcript_when_pipeline_emits_session_lifecycl
             TranscriptFinal(
                 source_layer="speech.stt",
                 transcript=Transcript(
-                    text="neue Transkription speichern",
+                    text="neue Transkription speichern",  # i18n-allow: simulated German transcript content under test
                     language="de",
                     confidence=0.9,
                     is_partial=False,
@@ -72,9 +72,9 @@ async def test_recorder_persists_transcript_when_pipeline_emits_session_lifecycl
         turns = store.get_turns("session-1")
 
         assert len(sessions) == 1
-        assert sessions[0].preview == "neue Transkription speichern"
+        assert sessions[0].preview == "neue Transkription speichern"  # i18n-allow: matches simulated German transcript above
         assert sessions[0].turn_count == 1
-        assert turns[0].user_text == "neue Transkription speichern"
+        assert turns[0].user_text == "neue Transkription speichern"  # i18n-allow: matches simulated German transcript above
     finally:
         store.close()
 
@@ -120,7 +120,7 @@ async def test_multiple_transcript_finals_in_suppressed_session_keep_each_uttera
                 new_state="LISTENING",
             )
         )
-        await bus.publish(_final("Wie spät ist es"))
+        await bus.publish(_final("Wie spät ist es"))  # i18n-allow: simulated German user utterance under test
         await bus.publish(
             SystemStateChanged(
                 source_layer="speech",
@@ -150,7 +150,7 @@ async def test_multiple_transcript_finals_in_suppressed_session_keep_each_uttera
         assert len(turns) == 3, (
             f"expected one turn per utterance, got {len(turns)}: {user_texts}"
         )
-        assert user_texts == ["Hallo Jarvis", "Wie spät ist es", "Auflegen."]
+        assert user_texts == ["Hallo Jarvis", "Wie spät ist es", "Auflegen."]  # i18n-allow: simulated German utterances under test
     finally:
         store.close()
 
@@ -179,9 +179,9 @@ async def test_continuation_finals_merge_into_one_turn(tmp_path) -> None:
         await bus.publish(ListeningStarted(source_layer="speech"))
         # First utterance, then two follow-ups WHILE the brain is still thinking
         # (no SPEAKING boundary yet) — flagged as continuations.
-        await bus.publish(_final("Was ist der weiteste Ort"))
-        await bus.publish(_final("nicht australische", continues=True))
-        await bus.publish(_final("sondern wirklich der weiteste", continues=True))
+        await bus.publish(_final("Was ist der weiteste Ort"))  # i18n-allow: simulated German user utterance under test
+        await bus.publish(_final("nicht australische", continues=True))  # i18n-allow: simulated German user utterance under test
+        await bus.publish(_final("sondern wirklich der weiteste", continues=True))  # i18n-allow: simulated German user utterance under test
         # Brain finally speaks the combined answer → SPEAKING boundary finalizes.
         await bus.publish(
             SystemStateChanged(
@@ -189,7 +189,7 @@ async def test_continuation_finals_merge_into_one_turn(tmp_path) -> None:
             )
         )
         await bus.publish(
-            ResponseGenerated(source_layer="brain", text="Das ist Sydney.", language="de")
+            ResponseGenerated(source_layer="brain", text="Das ist Sydney.", language="de")  # i18n-allow: simulated German brain/voice output under test
         )
         await bus.publish(
             SystemStateChanged(
@@ -209,7 +209,7 @@ async def test_continuation_finals_merge_into_one_turn(tmp_path) -> None:
         assert len(turns) == 1, user_texts
         assert (
             turns[0].user_text
-            == "Was ist der weiteste Ort nicht australische sondern wirklich der weiteste"
+            == "Was ist der weiteste Ort nicht australische sondern wirklich der weiteste"  # i18n-allow: matches simulated German utterances above
         )
     finally:
         store.close()
@@ -274,7 +274,7 @@ async def test_voice_confirm_pending_turn_is_flagged_awaiting_confirmation(
     confirmation ends the turn with ``finish_reason='voice_confirm_pending'``.
     The persisted turn must carry ``awaiting_confirmation=True`` so the
     transcript can label the reply as a pending yes/no question instead of an
-    ordinary answer (forensic 2026-06-19: "Soll ich die E-Mail senden?" was
+    ordinary answer (forensic 2026-06-19: "Soll ich die E-Mail senden?" was  # i18n-allow: quotes the actual German voice-output forensic bug content
     indistinguishable from a normal reply in the transcript)."""
     store = SessionStore(tmp_path / "sessions.db")
     store.open()
@@ -294,7 +294,7 @@ async def test_voice_confirm_pending_turn_is_flagged_awaiting_confirmation(
         await bus.publish(
             ResponseGenerated(
                 source_layer="brain",
-                text="Soll ich die E-Mail wirklich senden? Sag ja oder nein.",
+                text="Soll ich die E-Mail wirklich senden? Sag ja oder nein.",  # i18n-allow: simulated German brain/voice output under test
                 language="de",
             )
         )
@@ -382,7 +382,7 @@ async def test_normal_turn_is_not_flagged_awaiting_confirmation(tmp_path) -> Non
             )
         )
         await bus.publish(ListeningStarted(source_layer="speech"))
-        await bus.publish(_final("wie spät ist es"))
+        await bus.publish(_final("wie spät ist es"))  # i18n-allow: simulated German user utterance under test
         await bus.publish(
             ResponseGenerated(source_layer="brain", text="Es ist 15 Uhr.", language="de")
         )

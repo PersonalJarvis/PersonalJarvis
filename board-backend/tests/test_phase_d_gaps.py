@@ -1,4 +1,4 @@
-"""Tests fuer Phase-D-Spec-Luecken: /stories, since-Param, friend-PATCH."""
+"""Tests for Phase D spec gaps: /stories, since param, friend PATCH."""
 from __future__ import annotations
 
 import time
@@ -35,7 +35,7 @@ def _setup_owner(client: TestClient, pub: str, name: str = "Alice") -> None:
 
 
 # ----------------------------------------------------------------------
-# /stories — separate Route
+# /stories — separate route
 # ----------------------------------------------------------------------
 
 def test_stories_route_creates_story_with_24h_expiry(client: TestClient) -> None:
@@ -43,17 +43,17 @@ def test_stories_route_creates_story_with_24h_expiry(client: TestClient) -> None
     _setup_owner(client, pub)
     body = {
         "ts_ms": _now_ms(),
-        "text": "Heute viel Code geschrieben.",
+        "text": "Wrote a lot of code today.",
         "visibility": "friends",
     }
     resp = _signed("POST", client, "/api/v1/stories", priv=priv, pub=pub, payload=body)
     assert resp.status_code == 200, resp.text
     item = resp.json()
     assert item["kind"] == "story"
-    assert item["payload"]["text"] == "Heute viel Code geschrieben."
+    assert item["payload"]["text"] == "Wrote a lot of code today."
     assert item["expires_at"] is not None
 
-    # 24h-Default verifizieren.
+    # Verify the 24h default.
     factory = client.app.state.session_factory
     with factory() as session:
         row = session.get(ActivityItem, item["id"])
@@ -92,29 +92,29 @@ def test_stories_rejects_extra_fields(client: TestClient) -> None:
 # ----------------------------------------------------------------------
 
 def test_feed_since_filters_old_items(client: TestClient) -> None:
-    """Plan §D-Spec: ``since`` filtert items mit created_at < since raus."""
+    """Plan §D-Spec: ``since`` filters out items with created_at < since."""
     priv, pub = generate_keypair()
     _setup_owner(client, pub)
 
-    # Item 1: alt
+    # Item 1: old
     old = _signed("POST", client, "/api/v1/activities",
                   priv=priv, pub=pub,
                   payload={"ts_ms": _now_ms(), "kind": "milestone",
                            "payload": {}, "visibility": "public"}).json()["id"]
-    # Item-1 created_at zurueckdatieren.
+    # Backdate item 1's created_at.
     factory = client.app.state.session_factory
     with factory() as session:
         row = session.get(ActivityItem, old)
         row.created_at = datetime.now(timezone.utc) - timedelta(days=2)
         session.commit()
 
-    # Item 2: neu
+    # Item 2: new
     new = _signed("POST", client, "/api/v1/activities",
                   priv=priv, pub=pub,
                   payload={"ts_ms": _now_ms(), "kind": "milestone",
                            "payload": {}, "visibility": "public"}).json()["id"]
 
-    # Pull mit since=gestern soll nur das neue Item liefern.
+    # Pulling with since=yesterday should only return the new item.
     sp_priv, sp_pub = generate_keypair()
     yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
     resp = _signed("GET", client, "/api/v1/federation/feed",

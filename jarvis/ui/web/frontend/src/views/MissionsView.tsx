@@ -1,14 +1,14 @@
 /**
- * Phase-6 Mission-Control-View.
+ * Phase-6 mission control view.
  *
- * 4-Pane CSS-Grid (kein Resizable fuer MVP):
- *  - Top-Bar: Counter + Connection-Status + Global-Kill-Button
+ * 4-pane CSS grid (not resizable for the MVP):
+ *  - Top bar: counter + connection status + global kill button
  *  - Left:    MissionTree (react-arborist)
  *  - Center:  PtyTerminal (lazy) + EventTimeline
  *  - Right:   Tabs: Verdicts / Reasoning / Plan
  *
- * useMissionWebSocket() wird genau einmal beim Mount aufgerufen und teilt sich
- * via `share: true` die Verbindung mit hypothetisch weiteren Subscribern.
+ * useMissionWebSocket() is called exactly once on mount and shares its
+ * connection, via `share: true`, with any hypothetical further subscribers.
  */
 import { Suspense, lazy, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";

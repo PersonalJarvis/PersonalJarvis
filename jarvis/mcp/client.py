@@ -124,7 +124,7 @@ class MCPClient:
                 )
             else:
                 raise NotImplementedError(
-                    f"Transport {self.spec.transport!r} (noch) nicht unterstützt"
+                    f"Transport {self.spec.transport!r} not (yet) supported"
                 )
 
             session = await stack.enter_async_context(ClientSession(read, write))
@@ -152,12 +152,12 @@ class MCPClient:
         try:
             await self._exit_stack.aclose()
         except Exception as e:  # noqa: BLE001
-            log.warning("MCPClient[%s] stop-Fehler: %s", self.spec.name, e)
+            log.warning("MCPClient[%s] stop error: %s", self.spec.name, e)
         finally:
             self._exit_stack = None
             self._session = None
 
-    # ---- Interaktion --------------------------------------------------
+    # ---- Interaction ----------------------------------------------------
 
     async def list_tools(self) -> list[dict[str, Any]]:
         """Return the cached tool list (list of dicts)."""

@@ -72,7 +72,7 @@ def test_monitor_manager_connects_callbacks(qapp) -> None:
         on_screen_removed=removed_calls.append,
     )
     mgr.attach()
-    # Idempotent — zweiter attach() darf nicht doppelt connecten.
+    # Idempotent — a second attach() must not connect twice.
     mgr.attach()
     mgr.detach()
     # Detach idempotent.

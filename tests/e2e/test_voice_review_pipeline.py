@@ -1,18 +1,18 @@
-"""E2E-Smoke-Tests für Voice → DispatchWithReview-Pfad (Phase 8.7).
+"""E2E smoke tests for the voice → DispatchWithReview path (Phase 8.7).
 
-Plan-Referenz: §6.7. Die 4 kanonischen Scenarios:
-- Trivial-Path: Smalltalk → KEIN dispatch_with_review-Call.
-- Code-Gen-Path: Pass in Iter 1, voice_completion_phrase = success.
-- Multi-Iter-Path: needs_revision×1 → pass, voice_completion enthält Hinweis.
-- Cap-Fire-Path: needs_revision×3, voice_completion = cap_fired-Phrase.
+Plan reference: §6.7. The 4 canonical scenarios:
+- Trivial path: smalltalk → NO dispatch_with_review call.
+- Code-gen path: pass in iter 1, voice_completion_phrase = success.
+- Multi-iter path: needs_revision×1 → pass, voice_completion includes a hint.
+- Cap-fire path: needs_revision×3, voice_completion = cap_fired phrase.
 
-Approach: Wir testen die Tool/Pipeline-Schicht (nicht den vollen Voice-
-Loop), aber mit byte-genauen TTS-Phrasen-Assertions (AD-14).
-STT/TTS sind nicht real verdrahtet — der "Voice-E2E"-Charakter steckt
-darin, dass die Phrasen so an die TTS-Pipeline gerendert würden.
+Approach: we test the tool/pipeline layer (not the full voice loop), but
+with byte-exact TTS phrase assertions (AD-14). STT/TTS aren't really
+wired up — the "voice E2E" character comes from the phrases being
+rendered exactly as they would be for the TTS pipeline.
 
-Markiert mit `@pytest.mark.e2e`: läuft nur via `pytest -m e2e`, nicht
-im Standard-Run.
+Marked with `@pytest.mark.e2e`: only runs via `pytest -m e2e`, not in
+the standard run.
 """
 from __future__ import annotations
 
@@ -68,23 +68,23 @@ def _captured_announcements(bus: EventBus) -> list[str]:
 
 
 # ----------------------------------------------------------------------
-# Scenario 1: Trivial-Path — KEIN dispatch_with_review
+# Scenario 1: trivial path — NO dispatch_with_review
 # ----------------------------------------------------------------------
 
 
 def test_trivial_smalltalk_does_not_trigger_review() -> None:
-    """Plan §6.7 Smoke #1: Hauptjarvis-Smalltalk-Klassifikator weist
-    Trivial-Tasks ab — der dispatch_with_review-Pfad wird NIE betreten.
+    """Plan §6.7 Smoke #1: Main-Jarvis's smalltalk classifier rejects
+    trivial tasks — the dispatch_with_review path is NEVER entered.
 
-    Verifiziert via ReviewPolicy (Phase 8.4). Production-Pfad: das LLM
-    liest die Tool-Description (Plan §AD-6) und entscheidet, das Tool
-    NICHT aufzurufen — analog zu unserem Klassifikator.
+    Verified via ReviewPolicy (Phase 8.4). Production path: the LLM
+    reads the tool description (Plan §AD-6) and decides NOT to call
+    the tool — analogous to our classifier.
     """
     policy = ReviewPolicy()
     smalltalk_inputs = [
         "hallo Jarvis, wie geht's?",
         "danke dir!",
-        "wie spät ist es",
+        "wie spät ist es",  # i18n-allow: simulated German smalltalk utterance, matched by ReviewPolicy
     ]
     for utterance in smalltalk_inputs:
         decision = policy.should_review(utterance)
@@ -99,23 +99,23 @@ def test_trivial_smalltalk_does_not_trigger_review() -> None:
 
 
 def test_code_gen_path_pass_iter1(tmp_path: Path) -> None:
-    """Plan §6.7 Smoke #2: dispatch_with_review wird aufgerufen, Reviewer
-    pass in Iter 1, ToolResult.output enthält success-voice-phrase.
-    Holding-Phrase wurde EINMAL emittiert.
+    """Plan §6.7 Smoke #2: dispatch_with_review gets called, the reviewer
+    passes in iter 1, ToolResult.output contains the success voice phrase.
+    The holding phrase was emitted EXACTLY ONCE.
     """
     bus = EventBus()
     captured = _captured_announcements(bus)
     audit = ReviewAudit(path=tmp_path / "review.log")
 
     async def worker_spawn(state: RunState, i: int) -> str:
-        return "scripts/convert_webp.py wurde geschrieben"
+        return "scripts/convert_webp.py was written"
 
     async def reviewer_spawn(
         state: RunState, output: str, i: int
     ) -> ReviewVerdict:
         return ReviewVerdict(
             status=ReviewStatus.PASS,
-            summary="Skript ist OK, alle Tests grün.",
+            summary="Skript ist OK, alle Tests grün.",  # i18n-allow: becomes the German voice-completion phrase, asserted below
             score=0.95,
         )
 
@@ -138,7 +138,7 @@ def test_code_gen_path_pass_iter1(tmp_path: Path) -> None:
         tool.execute(
             {
                 "task": (
-                    "schreib mir ein Python-Script das alle Bilder "
+                    "schreib mir ein Python-Script das alle Bilder "  # i18n-allow: simulated German user task request (product voice/chat input)
                     "in ~/downloads in webp konvertiert"
                 ),
                 "rubric_id": "code_generation",
@@ -168,10 +168,10 @@ def test_code_gen_path_pass_iter1(tmp_path: Path) -> None:
 
 
 def test_multi_iter_path_needs_revision_then_pass(tmp_path: Path) -> None:
-    """Plan §6.7 Smoke #3: Reviewer liefert Iter-1 needs_revision,
-    Iter-2 pass. ToolResult.output ist success; voice_completion_phrase
-    ist success-template (das Brain könnte selber „nach einer Korrektur"
-    appenden — der Tool selbst rendert nur den Endzustand).
+    """Plan §6.7 Smoke #3: the reviewer returns needs_revision on iter 1,
+    pass on iter 2. ToolResult.output is success; voice_completion_phrase
+    is the success template (the brain itself might append "after one
+    correction" — the tool itself only renders the final state).
     """
     bus = EventBus()
     captured = _captured_announcements(bus)
@@ -185,8 +185,8 @@ def test_multi_iter_path_needs_revision_then_pass(tmp_path: Path) -> None:
             issues=[
                 ReviewIssue(
                     severity="warning",
-                    description="add() hat keine docstring",
-                    fix_hint="füg eine 1-Zeilen-docstring hinzu",
+                    description="add() has no docstring",
+                    fix_hint="add a one-line docstring",
                 )
             ],
             score=0.6,
@@ -226,7 +226,7 @@ def test_multi_iter_path_needs_revision_then_pass(tmp_path: Path) -> None:
     result = asyncio.run(
         tool.execute(
             {
-                "task": "schreibe eine Python-Funktion add(a, b) mit docstring und pytest-Tests",
+                "task": "schreibe eine Python-Funktion add(a, b) mit docstring und pytest-Tests",  # i18n-allow: simulated German user task request (product voice/chat input)
                 "rubric_id": "code_generation",
             },
             _make_ctx(),
@@ -236,7 +236,7 @@ def test_multi_iter_path_needs_revision_then_pass(tmp_path: Path) -> None:
     assert result.success is True
     assert result.output["outcome"] == "success"
     assert result.output["iterations_total"] == 2
-    # Holding-Phrase EINMAL pro Run, nicht pro Iter (AD-14)
+    # Holding phrase EXACTLY ONCE per run, not per iter (AD-14)
     assert captured == [VOICE_HOLDING_PHRASE_DE]
 
     voice = result.output["voice_completion_phrase"]
@@ -250,9 +250,9 @@ def test_multi_iter_path_needs_revision_then_pass(tmp_path: Path) -> None:
 
 
 def test_cap_fire_path_returns_best_of_with_warning(tmp_path: Path) -> None:
-    """Plan §6.7 Smoke #4: Reviewer liefert immer needs_revision, cap=3.
-    ToolResult.output.cap_fired=True, warnings nicht-leer,
-    voice_completion_phrase ist cap_fired-template.
+    """Plan §6.7 Smoke #4: the reviewer always returns needs_revision, cap=3.
+    ToolResult.output.cap_fired=True, warnings non-empty,
+    voice_completion_phrase is the cap_fired template.
     """
     bus = EventBus()
     captured = _captured_announcements(bus)
@@ -270,7 +270,7 @@ def test_cap_fire_path_returns_best_of_with_warning(tmp_path: Path) -> None:
             issues=[
                 ReviewIssue(
                     severity="warning",
-                    description="kein pytest-Test für die neue Funktion",
+                    description="kein pytest-Test für die neue Funktion",  # i18n-allow: may surface in the German voice-completion phrase, asserted below
                 )
             ],
             score=0.5,
@@ -294,14 +294,14 @@ def test_cap_fire_path_returns_best_of_with_warning(tmp_path: Path) -> None:
     result = asyncio.run(
         tool.execute(
             {
-                "task": "schreib eine Funktion die Listen mergt mit Duplikat-Filter",
+                "task": "schreib eine Funktion die Listen mergt mit Duplikat-Filter",  # i18n-allow: simulated German user task request (product voice/chat input)
                 "rubric_id": "code_generation",
             },
             _make_ctx(),
         )
     )
 
-    # Cap-Fire ist `success=True` mit Warning (AD-7: nie fail-closed)
+    # Cap-fire is `success=True` with a warning (AD-7: never fail-closed)
     assert result.success is True
     assert result.output["cap_fired"] is True
     assert result.output["outcome"] == "cap_fired"
@@ -312,8 +312,8 @@ def test_cap_fire_path_returns_best_of_with_warning(tmp_path: Path) -> None:
     assert captured == [VOICE_HOLDING_PHRASE_DE]
 
     voice = result.output["voice_completion_phrase"]
-    assert voice.startswith("Mein bestes Ergebnis liegt vor, mit einer Einschränkung:")
-    assert "kein pytest-Test" in voice or "Tests fehlen" in voice
+    assert voice.startswith("Mein bestes Ergebnis liegt vor, mit einer Einschränkung:")  # i18n-allow: asserts the German voice-completion phrase (product voice output)
+    assert "kein pytest-Test" in voice or "Tests fehlen" in voice  # i18n-allow: asserts the German voice-completion phrase (product voice output)
 
 
 # ----------------------------------------------------------------------
@@ -346,12 +346,12 @@ def test_precheck_fail_renders_specific_voice_phrase(tmp_path: Path) -> None:
         pipeline=pipeline,
     )
 
-    # 25-Char-Task — passt das Tool-Schema-min, aber pre-check task_not_empty
-    # > 10 Chars greift nur bei strip ≤ 10. Wir nutzen 21 char string mit
+    # 25-char task — passes the tool schema min, but pre-check task_not_empty
+    # > 10 chars only kicks in when stripped ≤ 10. We use a 21-char string with
     # extra spaces.
     result = asyncio.run(
         tool.execute(
-            {"task": "          weiß nicht  "},
+            {"task": "          weiß nicht  "},  # i18n-allow: exact char length after strip is the content under test
             _make_ctx(),
         )
     )
@@ -359,6 +359,6 @@ def test_precheck_fail_renders_specific_voice_phrase(tmp_path: Path) -> None:
     # 21 chars → tool-schema akzeptiert (>=20), pre-check stripped → 10 chars → fail
     if result.output and result.output.get("outcome") == "precheck_fail":
         voice = result.output["voice_completion_phrase"]
-        assert voice.startswith("Die Aufgabe ist zu kurz")
-        # Holding-Phrase wurde trotzdem emittiert (vor pre-check abort)
+        assert voice.startswith("Die Aufgabe ist zu kurz")  # i18n-allow: asserts the German voice-completion phrase (product voice output)
+        # Holding phrase was still emitted (before the pre-check abort)
         assert captured == [VOICE_HOLDING_PHRASE_DE]

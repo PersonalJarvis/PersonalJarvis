@@ -10,7 +10,7 @@
 ## 1. Problem
 
 Today Jarvis only ends a voice session reliably when the user says one of a fixed
-list of literal phrases ("auflegen", "leg auf", "tschüss", "bye jarvis", …). The
+list of literal phrases ("auflegen", "leg auf", "tschüss", "bye jarvis", …). The  <!-- i18n-allow: German input vocabulary -->
 user wants Jarvis to **understand the intent to end the conversation**, not just
 match a keyword — e.g. "Kannst du jetzt bitte gehen", "that's all for today,
 thanks", "ich glaube wir sind durch". This must work in both configured
@@ -51,8 +51,8 @@ Matched pre-brain at `session.py:231`. **No brain-signal path.**
 
 The semantic mechanism (layer 2) is the right idea — an LLM is the correct tool
 to understand "Kannst du jetzt bitte gehen" — but it is coupled to an **exact
-magic string**. If the brain paraphrases ("Auf Wiedersehen, Alex! War mir ein
-Vergnügen."), the exact match fails and no hang-up occurs. The fix is to make
+magic string**. If the brain paraphrases ("Auf Wiedersehen, Alex! War mir ein  <!-- i18n-allow: quoted German voice-output example -->
+Vergnügen."), the exact match fails and no hang-up occurs. The fix is to make  <!-- i18n-allow: quoted German voice-output example -->
 that path **robust**, not to add a new classifier.
 
 Both surfaces share the same brain: telephony uses
@@ -190,10 +190,10 @@ Satisfies AP-9 / AP-11.
   farewell fallback, then hang up (never silent — AD-OE6).
 - **STT mis-transcription of "auflegen" as polite phrases:** previously caught
   by the over-broad regex; now the brain handles these with context. Because the
-  brain sees the full turn, "vielen Dank, und mach mir noch X" correctly does
+  brain sees the full turn, "vielen Dank, und mach mir noch X" correctly does  <!-- i18n-allow: quoted German voice-input example -->
   *not* end the call.
 - **Negative cases that must NOT hang up:** "kannst du das nochmal machen", "geh
-  mal auf die Seite", "danke, und jetzt …" — covered by tests.
+  mal auf die Seite", "danke, und jetzt …" — covered by tests.  <!-- i18n-allow: quoted German voice-input example -->
 
 ## 9. Testing
 

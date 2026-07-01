@@ -1,4 +1,4 @@
-"""MascotWindow smoke — instantiiert headless, ohne show()."""
+"""MascotWindow smoke — instantiates headless, without show()."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def test_mascot_window_instantiates_headless(qapp, tmp_path) -> None:
     )
     try:
         flags = win.windowFlags()
-        # Plan §12.2 — exakt diese Flag-Kombination, OHNE
+        # Plan §12.2 — exactly this flag combination, WITHOUT
         # WindowTransparentForInput.
         assert flags & Qt.WindowType.FramelessWindowHint
         assert flags & Qt.WindowType.WindowStaysOnTopHint
@@ -42,14 +42,14 @@ def test_mascot_window_instantiates_headless(qapp, tmp_path) -> None:
         assert win.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         assert win.testAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
         assert win.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        # WICHTIG: Mascot ist NICHT TransparentForMouseEvents.
+        # IMPORTANT: mascot is NOT TransparentForMouseEvents.
         assert not win.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
         # Geometry + Mask.
         assert win.size().width() == 160
         assert win.size().height() == 160
-        # Mask ist gesetzt (kann nicht direkt verglichen werden,
-        # nur dass mask().isEmpty() False ist).
+        # Mask is set (can't be compared directly,
+        # just that mask().isEmpty() is False).
         assert not win.mask().isEmpty()
 
         # Position.
@@ -70,7 +70,7 @@ def test_mascot_window_skips_state_bridge_without_machine(qapp) -> None:
         hide_from_capture=False,
     )
     try:
-        # Bridge sollte None sein wenn keine Machine.
+        # Bridge should be None when there's no machine.
         assert win._bridge is None  # noqa: SLF001
         assert win._channel is None  # noqa: SLF001
     finally:

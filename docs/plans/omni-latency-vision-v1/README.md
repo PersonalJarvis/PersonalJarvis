@@ -181,5 +181,5 @@ red test (`test_ack_flow` `_hangup_event`) via defensive getattr in `_on_announc
 **Open follow-ups:** (1) router-tier thinking-budget decision; (2) CoreMemory
 mtime-guard (micro-opt, deferred — deterministic render keeps the cache valid);
 (3) wire LatencySpan/BrainTTFT into a CI SLO-gate; (4) expose the four flags in
-`jarvis.toml` + `scripts/config-soll.json` (today they ride model defaults, which
+`jarvis.toml` + `scripts/config-soll.json` (today they ride model defaults, which  <!-- i18n-allow -->
 is cloud-first-correct but invisible to the maintainer's drift-guard).

@@ -89,13 +89,13 @@ throws:</p>
             return found
     return name        # last resort: bare name; let CreateProcess raise loud</pre>
 
-<p>Beide Code-Pfade (Claude und Gemini) routen argv[0] durch den Helper.
-Zusätzlich <code>DEFAULT_TIMEOUT_SECONDS</code> von <strong>120 s → 240 s</strong>
-hochgesetzt (Gemini-Cold-Start braucht Context-Cache-Create).</p>
+<p>Both code paths (Claude and Gemini) route argv[0] through the helper.
+Additionally, <code>DEFAULT_TIMEOUT_SECONDS</code> was raised from <strong>120 s to 240 s</strong>
+(Gemini cold start needs Context-Cache-Create).</p>
 
 <div class="ok">
 <strong>Verifikation Schicht 1.</strong><br>
-Manueller Subprocess-Repro mit aufgelöstem Pfad:
+Manual subprocess repro with resolved path:
 <code>EXIT=0</code>, <code>STDOUT_LEN=1236</code>,
 <code>response="{\"v\":\"ok\"}"</code>.<br>
 Resolved argv[0]:
