@@ -85,4 +85,4 @@ The prompt chain is **complete** — all 5 prompts implemented. The next steps a
   - `<USER_HOME>\.claude\plans\glistening-wobbling-owl.md` (Phase 6 tooling bootstrap)
   - `<USER_HOME>\.claude\plans\phase6-critic-loop-plan.md` (Prompt 3)
   - `<USER_HOME>\.claude\plans\phase6-safety-voice-cleanup-plan.md` (Prompt 5)
-- Master plan: `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md`
+- Master plan: `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md`  <!-- i18n-allow -->

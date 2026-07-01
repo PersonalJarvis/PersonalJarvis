@@ -41,7 +41,7 @@ def test_phase2_instant_ack_then_async_answer_over_sse() -> None:
                 captured["resp"] = await http.post(
                     "/api/utterance",
                     json={
-                        "text": "Erstelle eine kurze Zusammenfassung der Quartalszahlen",
+                        "text": "Erstelle eine kurze Zusammenfassung der Quartalszahlen",  # i18n-allow: test content — user voice utterance DE
                         "session_id": "s1",
                     },
                 )

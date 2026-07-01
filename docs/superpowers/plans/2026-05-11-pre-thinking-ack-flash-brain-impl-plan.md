@@ -843,21 +843,21 @@ __all__ = ["PERSONA_PROMPT_DE", "PERSONA_PROMPT_EN", "get_persona_prompt"]
 
 
 PERSONA_PROMPT_DE = """Du bist JARVIS, der persönliche Assistent von Alex. Sprich kurz, natürlich <!-- i18n-allow -->
-und kontextspezifisch — wie ein cleverer Kollege, der weiß, was er tut.
+und kontextspezifisch — wie ein cleverer Kollege, der weiß, was er tut.  <!-- i18n-allow -->
 
-Deine einzige Aufgabe: ein kurzer Bestätigungssatz, BEVOR die eigentliche
-Arbeit beginnt. Der User hört diesen Satz innerhalb von Sekunden, damit er
-weiß, dass du verstanden hast und gerade arbeitest.
+Deine einzige Aufgabe: ein kurzer Bestätigungssatz, BEVOR die eigentliche  <!-- i18n-allow -->
+Arbeit beginnt. Der User hört diesen Satz innerhalb von Sekunden, damit er  <!-- i18n-allow -->
+weiß, dass du verstanden hast und gerade arbeitest.  <!-- i18n-allow -->
 
 Regeln:
-- EXAKT EIN Satz. Maximal 12 Wörter.
-- Sprich Alex gelegentlich mit "Chef" an (etwa 1 von 3 Sätzen), nicht
-  immer. Sei locker, nicht förmlich. Niemals "Sehr wohl" oder "Sir".
-- Nenne wenn möglich das konkrete Thema.
-- Passe die Tonalität an:
-  * Aktion ("Mach X auf"):       "Mache ich, X öffnet sich."
+- EXAKT EIN Satz. Maximal 12 Wörter.  <!-- i18n-allow -->
+- Sprich Alex gelegentlich mit "Chef" an (etwa 1 von 3 Sätzen), nicht  <!-- i18n-allow -->
+  immer. Sei locker, nicht förmlich. Niemals "Sehr wohl" oder "Sir".  <!-- i18n-allow -->
+- Nenne wenn möglich das konkrete Thema.  <!-- i18n-allow -->
+- Passe die Tonalität an:  <!-- i18n-allow -->
+  * Aktion ("Mach X auf"):       "Mache ich, X öffnet sich."  <!-- i18n-allow -->
   * Wissensfrage ("Wann ist Y?"): "Lass mich kurz nachschauen."
-  * Reflexion ("Was soll ich?"):  "Hmm, kurz überlegen."
+  * Reflexion ("Was soll ich?"):  "Hmm, kurz überlegen."  <!-- i18n-allow -->
   * Smalltalk ("Hallo"):          "Hallo!" / "Tag, Chef."
   * Voice-Control ("Sei still"):  Antworte mit leerem String "".
 - VERBOTEN: "Subagent", "Sub-Agent", "Worker", "Provider" (allein),
@@ -866,13 +866,13 @@ Regeln:
 
 Beispiele:
 User: "Mach Spotify auf."
-Du:   "Mache ich, Spotify öffnet sich gleich."
+Du:   "Mache ich, Spotify öffnet sich gleich."  <!-- i18n-allow -->
 
-User: "Wann wird Albel eingestellt?"
+User: "Wann wird Albel eingestellt?"  <!-- i18n-allow -->
 Du:   "Lass mich kurz nachschauen."
 
-User: "Such mir Flüge nach San Francisco für morgen."
-Du:   "Klar Chef, ich gebe das an OpenClaw weiter."
+User: "Such mir Flüge nach San Francisco für morgen."  <!-- i18n-allow -->
+Du:   "Klar Chef, ich gebe das an OpenClaw weiter."  <!-- i18n-allow -->
 
 User: "Hallo Jarvis."
 Du:   "Hallo!"
@@ -880,17 +880,17 @@ Du:   "Hallo!"
 User: "Sei still."
 Du:   ""
 
-User: "Was sollte ich heute essen?"
-Du:   "Hmm, lass mich kurz überlegen."
+User: "Was sollte ich heute essen?"  <!-- i18n-allow -->
+Du:   "Hmm, lass mich kurz überlegen."  <!-- i18n-allow -->
 
 User: "Wie geht's dir?"
 Du:   "Gut, danke der Nachfrage."
 
-User: "Ändere die TTS-Stimme auf Lara."
+User: "Ändere die TTS-Stimme auf Lara."  <!-- i18n-allow -->
 Du:   "Okay, wechsle auf Lara."
 
-Antworte AUSSCHLIESSLICH mit dem Bestätigungssatz oder leerem String.
-Kein Markdown, kein Kommentar, keine Erklärung."""
+Antworte AUSSCHLIESSLICH mit dem Bestätigungssatz oder leerem String.  <!-- i18n-allow -->
+Kein Markdown, kein Kommentar, keine Erklärung."""  <!-- i18n-allow -->
 
 
 PERSONA_PROMPT_EN = """You are JARVIS, Alex's personal assistant. Speak short, natural, and
@@ -1003,42 +1003,42 @@ EOF
 ### Ready-to-paste prompt for Stage 2
 
 ```text
-Du implementierst Etappe 2 ("Persona Prompt Module") des Pre-Thinking-Ack
-Flash-Brain Features.
+You are implementing Stage 2 ("Persona Prompt Module") of the Pre-Thinking-Ack
+Flash-Brain feature.
 
-Pflichtlektüre:
+Required reading:
 1. docs/superpowers/specs/2026-05-11-pre-thinking-ack-flash-brain-design.md
-   — §4 "Persona-Prompt (locked in this spec)", PERSONA_PROMPT_DE und
-   PERSONA_PROMPT_EN müssen 1:1 wie in der Spec übernommen werden
+   — §4 "Persona-Prompt (locked in this spec)", PERSONA_PROMPT_DE and
+   PERSONA_PROMPT_EN must be taken over 1:1 as in the spec
 2. docs/superpowers/plans/2026-05-11-pre-thinking-ack-flash-brain-impl-plan.md
-   — Section "Etappe 2 — Persona Prompt Module"
-3. CLAUDE.md — Testing-Konventionen, Language Policy
+   — Section "Stage 2 — Persona Prompt Module"
+3. CLAUDE.md — testing conventions, language policy
 
-Scope dieser Etappe:
-- jarvis/brain/ack_brain/persona_prompt.py mit PERSONA_PROMPT_DE,
-  PERSONA_PROMPT_EN und get_persona_prompt(language) Helper
-- tests/unit/brain/test_ack_brain/test_persona_prompt.py mit Regressions-
-  Tests für Substrings, Längen-Constraints und Sprachpicker
+Scope of this stage:
+- jarvis/brain/ack_brain/persona_prompt.py with PERSONA_PROMPT_DE,
+  PERSONA_PROMPT_EN, and a get_persona_prompt(language) helper
+- tests/unit/brain/test_ack_brain/test_persona_prompt.py with regression
+  tests for substrings, length constraints, and the language picker
 
-Was du NICHT machst:
-- KEIN Refactor des bestehenden ack_generator.py (das kommt in E5)
-- KEINE Provider-Implementierung (das ist E4)
-- KEINE Verdrahtung mit Router (das ist E5)
-- Den Prompt-Text NICHT kreativ umformulieren — er ist gelockt in der Spec
+What you do NOT do:
+- NO refactor of the existing ack_generator.py (that comes in E5)
+- NO provider implementation (that is E4)
+- NO wiring with the router (that is E5)
+- Do NOT creatively reword the prompt text — it is locked in the spec
 
-WICHTIG:
-- Die Prompts sind Daten, kein Code. Keine f-strings, keine
-  Interpolation. Triple-quoted Strings, verbatim aus Spec §4.
-- Umlaute korrekt erhalten: ä ö ü ß, niemals ae oe ue ss
+IMPORTANT:
+- The prompts are data, not code. No f-strings, no
+  interpolation. Triple-quoted strings, verbatim from spec §4.
+- Preserve umlauts correctly: ä ö ü ß, never ae oe ue ss
 
-Akzeptanzkriterien:
+Acceptance criteria:
 1. pytest tests/unit/brain/test_ack_brain/test_persona_prompt.py -v → 18 pass
-2. PERSONA_PROMPT_DE und PERSONA_PROMPT_EN < 1500 Zeichen jeweils
-3. Beide Prompts enthalten "Subagent" (im verbotenen-Block) und "OpenClaw"
-   (im erlaubten-Block)
+2. PERSONA_PROMPT_DE and PERSONA_PROMPT_EN < 1500 characters each
+3. Both prompts contain "Subagent" (in the forbidden block) and "OpenClaw"
+   (in the allowed block)
 4. get_persona_prompt("de-DE") → PERSONA_PROMPT_DE
-5. get_persona_prompt(None) → PERSONA_PROMPT_DE (Default)
-6. Ein Commit
+5. get_persona_prompt(None) → PERSONA_PROMPT_DE (default)
+6. One commit
 ```
 
 ---
@@ -1457,36 +1457,36 @@ EOF
 ### Ready-to-paste prompt for Stage 3
 
 ```text
-Du implementierst Etappe 3 ("Provider Protocol + Circuit Breaker") des
-Pre-Thinking-Ack Flash-Brain Features.
+You are implementing Stage 3 ("Provider Protocol + Circuit Breaker") of the
+Pre-Thinking-Ack Flash-Brain feature.
 
-Pflichtlektüre:
+Required reading:
 1. docs/superpowers/specs/2026-05-11-pre-thinking-ack-flash-brain-design.md
    — §6 Failure Handling F8 (Circuit Breaker), §4 Components Backend
 2. docs/superpowers/plans/2026-05-11-pre-thinking-ack-flash-brain-impl-plan.md
-   — Section "Etappe 3"
+   — Section "Stage 3"
 3. CLAUDE.md
 
-Pre-Condition: Etappe 1 und 2 sind committet. Wenn nicht, STOPP und sag
-dem User Bescheid.
+Pre-condition: Stages 1 and 2 are committed. If not, STOP and tell
+the user.
 
 Scope:
-- jarvis/brain/ack_brain/circuit_breaker.py mit CircuitBreaker + CircuitState
+- jarvis/brain/ack_brain/circuit_breaker.py with CircuitBreaker + CircuitState
 - jarvis/brain/ack_brain/providers/__init__.py
-- jarvis/brain/ack_brain/providers/base.py mit AbstractAckProvider Protocol
+- jarvis/brain/ack_brain/providers/base.py with the AbstractAckProvider protocol
 - Tests in tests/unit/brain/test_ack_brain/
 
-Was du NICHT machst:
-- KEINE konkreten Provider (Gemini/Grok/OpenAI/Ollama) — das ist E4
-- KEINE AckGenerator-Klasse — das ist E5
-- KEINEN Threading-Lock im CircuitBreaker — asyncio single-loop reicht
-  laut Spec
+What you do NOT do:
+- NO concrete providers (Gemini/Grok/OpenAI/Ollama) — that is E4
+- NO AckGenerator class — that is E5
+- NO threading lock in the CircuitBreaker — a single asyncio loop is enough
+  per the spec
 
-Akzeptanzkriterien:
+Acceptance criteria:
 1. pytest tests/unit/brain/test_ack_brain/test_circuit_breaker.py -v → 8 pass
 2. pytest tests/unit/brain/test_ack_brain/providers/test_base.py -v → 3 pass
-3. Zwei Commits, jeweils ein Task aus der Plan-Datei
-4. Kein Regressions-Failure auf E1/E2 Tests
+3. Two commits, one task per plan file each
+4. No regression failure on E1/E2 tests
 ```
 
 ---
@@ -1600,7 +1600,7 @@ async def test_gemini_extracts_text_from_happy_response(
     )
     fake = _FakeClient(_FakeResponse({
         "candidates": [
-            {"content": {"parts": [{"text": "Mache ich, Spotify öffnet sich."}]}}
+            {"content": {"parts": [{"text": "Mache ich, Spotify öffnet sich."}]}}  <!-- i18n-allow -->
         ]
     }))
     monkeypatch.setattr(
@@ -1609,7 +1609,7 @@ async def test_gemini_extracts_text_from_happy_response(
     )
     provider = GeminiFlashAck(config)
     result = await provider.complete("Mach Spotify auf", language="de")
-    assert result == "Mache ich, Spotify öffnet sich."
+    assert result == "Mache ich, Spotify öffnet sich."  <!-- i18n-allow -->
 
 
 @pytest.mark.asyncio
@@ -1826,7 +1826,7 @@ async def test_grok_extracts_content(
         lambda **kw: fake,
     )
     provider = GrokFlashAck(config)
-    result = await provider.complete("öffne Discord", language="de")
+    result = await provider.complete("öffne Discord", language="de")  <!-- i18n-allow -->
     assert result == "Klar Chef, mach ich."
 
 
@@ -2111,7 +2111,7 @@ async def test_ollama_extracts_message_content(
         lambda **kw: fake,
     )
     provider = OllamaFlashAck(config)
-    result = await provider.complete("öffne Notepad", language="de")
+    result = await provider.complete("öffne Notepad", language="de")  <!-- i18n-allow -->
     assert result == "Mache ich."
 
 
@@ -2362,48 +2362,48 @@ EOF
 ### Ready-to-paste prompt for Stage 4
 
 ```text
-Du implementierst Etappe 4 ("Provider Plugins") des Pre-Thinking-Ack
-Flash-Brain Features.
+You are implementing Stage 4 ("Provider Plugins") of the Pre-Thinking-Ack
+Flash-Brain feature.
 
-Pflichtlektüre:
+Required reading:
 1. docs/superpowers/specs/2026-05-11-pre-thinking-ack-flash-brain-design.md
-   — §4 Components Backend (Provider-Adapter), §6 Failure Handling
+   — §4 Components Backend (provider adapter), §6 Failure Handling
 2. docs/superpowers/plans/2026-05-11-pre-thinking-ack-flash-brain-impl-plan.md
-   — Section "Etappe 4 — Provider Plugins"
-3. CLAUDE.md — Plugin-System mit entry_points, Streaming-First-Class
-4. Bestehender Provider als Stilvorbild: jarvis/plugins/tts/grok_voice_tts.py
+   — Section "Stage 4 — Provider Plugins"
+3. CLAUDE.md — plugin system with entry_points, streaming-first-class
+4. Existing provider as a style template: jarvis/plugins/tts/grok_voice_tts.py
 
-Pre-Condition: Etappen 1–3 sind committet. Wenn nicht, STOPP.
+Pre-condition: Stages 1–3 are committed. If not, STOP.
 
 Scope:
-- Vier Provider-Adapter unter jarvis/brain/ack_brain/providers/:
+- Four provider adapters under jarvis/brain/ack_brain/providers/:
   gemini.py, grok.py, openai.py, ollama.py
 - Tests in tests/unit/brain/test_ack_brain/providers/
-- Entry-Points in pyproject.toml unter [project.entry-points."jarvis.ack_provider"]
-- Contract-Test tests/contract/test_ack_provider_protocol.py
+- Entry points in pyproject.toml under [project.entry-points."jarvis.ack_provider"]
+- Contract test tests/contract/test_ack_provider_protocol.py
 
-Was du NICHT machst:
-- KEIN AckGenerator (das ist E5)
-- KEINE Verdrahtung mit dem Router (das ist E5)
-- KEIN Subprocess-Code — alle Provider sind in-process HTTP-Clients
-- KEINE google-genai oder openai SDKs — direkt httpx, weniger Import-Kosten
+What you do NOT do:
+- NO AckGenerator (that is E5)
+- NO wiring with the router (that is E5)
+- NO subprocess code — all providers are in-process HTTP clients
+- NO google-genai or openai SDKs — httpx directly, lower import cost
 
-Spec-Konformität:
-- Alle Provider MÜSSEN scrub_for_voice NICHT selbst aufrufen — das macht
-  AckGenerator in E5
-- Alle Provider MÜSSEN den persona_prompt via get_persona_prompt(language)
-  laden, nicht selbst zusammenbauen
-- Empty-Utterance → "" zurück, nie crashen
-- HTTP 5xx → Exception werfen lassen (AckGenerator fängt sie in E5)
+Spec conformance:
+- All providers MUST NOT call scrub_for_voice themselves — AckGenerator
+  does that in E5
+- All providers MUST load the persona_prompt via get_persona_prompt(language),
+  not assemble it themselves
+- Empty utterance → return "", never crash
+- HTTP 5xx → let the exception propagate (AckGenerator catches it in E5)
 
-Akzeptanzkriterien:
-1. pytest tests/unit/brain/test_ack_brain/providers/ -v → mindestens 13 pass
-2. pytest tests/contract/test_ack_provider_protocol.py -v → alle pass
+Acceptance criteria:
+1. pytest tests/unit/brain/test_ack_brain/providers/ -v → at least 13 pass
+2. pytest tests/contract/test_ack_provider_protocol.py -v → all pass
 3. python -c "from importlib.metadata import entry_points; print(sorted(e.name for e in entry_points(group='jarvis.ack_provider')))"
-   gibt ['gemini', 'grok', 'ollama', 'openai']
-4. NACH dem pyproject.toml-Edit: pip install -e . --no-deps gelaufen
-5. Sechs Commits, einer pro Provider + Entry-Points + Contract-Test
-6. Kein bestehender Test bricht
+   returns ['gemini', 'grok', 'ollama', 'openai']
+4. AFTER the pyproject.toml edit: pip install -e . --no-deps has run
+5. Six commits, one per provider + entry points + contract test
+6. No existing test breaks
 ```
 
 ---
@@ -2486,11 +2486,11 @@ def config() -> AckBrainConfig:
 
 @pytest.mark.asyncio
 async def test_happy_path_returns_scrubbed_text(config: AckBrainConfig):
-    provider = FakeProvider(returns="Mache ich, Chef, Spotify öffnet sich.")
+    provider = FakeProvider(returns="Mache ich, Chef, Spotify öffnet sich.")  <!-- i18n-allow -->
     gen = AckGenerator(config=config, provider=provider)
-    result = await gen.run("öffne Spotify", language="de")
-    assert result == "Mache ich, Chef, Spotify öffnet sich."
-    assert provider.calls == [("öffne Spotify", "de")]
+    result = await gen.run("öffne Spotify", language="de")  <!-- i18n-allow -->
+    assert result == "Mache ich, Chef, Spotify öffnet sich."  <!-- i18n-allow -->
+    assert provider.calls == [("öffne Spotify", "de")]  <!-- i18n-allow -->
 
 
 @pytest.mark.asyncio
@@ -2526,12 +2526,12 @@ async def test_whitespace_only_returns_none(config: AckBrainConfig):
 @pytest.mark.asyncio
 async def test_truncates_long_output_at_first_sentence(config: AckBrainConfig):
     long_text = (
-        "Mache ich, Chef. Hier sind die Details, die du wissen musst, weil "
-        "es sehr lang sein könnte und der User nicht alles hören will."
+        "Mache ich, Chef. Hier sind die Details, die du wissen musst, weil "  <!-- i18n-allow -->
+        "es sehr lang sein könnte und der User nicht alles hören will."  <!-- i18n-allow -->
     )
     provider = FakeProvider(returns=long_text)
     gen = AckGenerator(config=config, provider=provider)
-    result = await gen.run("erkläre mir das System", language="de")
+    result = await gen.run("erkläre mir das System", language="de")  <!-- i18n-allow -->
     assert result is not None
     assert result.endswith(".")
     assert "Details" not in result  # truncated before second sentence
@@ -2541,7 +2541,7 @@ async def test_truncates_long_output_at_first_sentence(config: AckBrainConfig):
 async def test_scrubbed_empty_returns_none(config: AckBrainConfig):
     # The output_filter strips banned vocabulary. A provider that only
     # emits "Sub-Agent" produces "" after scrub.
-    provider = FakeProvider(returns="Der Sub-Agent läuft.")
+    provider = FakeProvider(returns="Der Sub-Agent läuft.")  <!-- i18n-allow -->
     gen = AckGenerator(config=config, provider=provider)
     result = await gen.run("hi", language="de")
     # Depends on scrub_for_voice — must return None if the scrub strips
@@ -2729,9 +2729,9 @@ Note: existing tests against the template implementation. Many will need updatin
 History: this module used to host per-tool template handlers
 (_ack_search_web, _ack_open_app, ...) plus a _GENERIC_ACK fallback.
 That approach was rejected because the generic fallback emitted
-"Verstanden, ich kümmere mich darum." for every spawn_sub_jarvis call,
+"Verstanden, ich kümmere mich darum." for every spawn_sub_jarvis call,  <!-- i18n-allow -->
 regardless of whether the user asked an action ("Mach Spotify auf") or
-a knowledge question ("Wann wird Albel eingestellt?"). The new design
+a knowledge question ("Wann wird Albel eingestellt?"). The new design  <!-- i18n-allow -->
 delegates to a provider-pluggable LLM (see jarvis.brain.ack_brain) and
 this module only exposes the legacy surface that router.py expects.
 
@@ -2785,11 +2785,11 @@ _VOICE_CONTROL_PATTERN = re.compile(
     r"|sei\s+(?:bitte\s+)?(?:still|leise|stiller)"
     r"|halt(?:\s+(?:die\s+)?klappe)?"
     r"|stop(?:p)?(?:\s+(?:sprechen|reden|talking))?"
-    r"|pause(?:\s+(?:die\s+)?(?:wiedergabe|musik|sprache))?"
+    r"|pause(?:\s+(?:die\s+)?(?:wiedergabe|musik|sprache))?"  <!-- i18n-allow -->
     r"|pausier(?:e|en|t)?"
     r"|stumm(?:\s+schalten)?"
     r"|schweig(?:e|en)?"
-    r"|nicht\s+(?:so\s+)?(?:laut|leise)"
+    r"|nicht\s+(?:so\s+)?(?:laut|leise)"  <!-- i18n-allow -->
     r"|(?:be\s+)?quiet"
     r"|shut\s+up"
     r"|louder|quieter|softer"
@@ -2806,7 +2806,7 @@ _VOICE_CONTROL_PATTERN = re.compile(
 _FINAL_MARKERS: dict[str, str] = {"de": "Erledigt.", "en": "Done."}
 
 _ALREADY_CONFIRMING_RE = re.compile(
-    r"^\s*(erledigt|fertig|okay|ok|alright|done|got\s+it|verstanden|in\s+ordnung|sure)\b",
+    r"^\s*(erledigt|fertig|okay|ok|alright|done|got\s+it|verstanden|in\s+ordnung|sure)\b",  <!-- i18n-allow -->
     re.IGNORECASE,
 )
 
@@ -2901,8 +2901,8 @@ def test_voice_control_detected(utterance: str):
 
 @pytest.mark.parametrize("utterance", [
     "lauter Applaus war zu hoeren",  # narrative, not command
-    "still im Gespraech",
-    "öffne Spotify",
+    "still im Gespraech",  <!-- i18n-allow -->
+    "öffne Spotify",  <!-- i18n-allow -->
     "wann ist Mittag",
     "",
     None,
@@ -2929,7 +2929,7 @@ def test_should_prepend_on_empty():
 
 
 def test_should_not_prepend_when_self_confirming():
-    assert should_prepend_marker("Okay, das ist erledigt.") is False
+    assert should_prepend_marker("Okay, das ist erledigt.") is False  <!-- i18n-allow -->
 
 
 @pytest.mark.asyncio
@@ -3133,7 +3133,7 @@ async def test_ack_published_on_bus_with_preamble_kind():
     provider = _ScriptedProvider("Lass mich kurz nachschauen.")
     gen = AckGenerator(config=config, provider=provider)
 
-    text = await gen.run("Wann wird Albel eingestellt?", language="de")
+    text = await gen.run("Wann wird Albel eingestellt?", language="de")  <!-- i18n-allow -->
     assert text == "Lass mich kurz nachschauen."
 
     await bus.publish(
@@ -3269,51 +3269,51 @@ EOF
 ### Ready-to-paste prompt for Stage 5
 
 ```text
-Du implementierst Etappe 5 ("AckGenerator Core + Wiring") des Pre-Thinking-Ack
-Flash-Brain Features. Das ist die anspruchsvollste Etappe — nimm dir Zeit.
+You are implementing Stage 5 ("AckGenerator Core + Wiring") of the Pre-Thinking-Ack
+Flash-Brain feature. This is the most demanding stage — take your time.
 
-Pflichtlektüre:
+Required reading:
 1. docs/superpowers/specs/2026-05-11-pre-thinking-ack-flash-brain-design.md
-   — komplette Spec, besonders §3 Architecture, §4 Components, §6 Failure
+   — the complete spec, especially §3 Architecture, §4 Components, §6 Failure
 2. docs/superpowers/plans/2026-05-11-pre-thinking-ack-flash-brain-impl-plan.md
-   — Section "Etappe 5"
-3. CLAUDE.md — Brain-Routing & BrainManager, Streaming-First-Class
-4. jarvis/brain/router.py:324-348 (bestehender _build_ack_emitter)
+   — Section "Stage 5"
+3. CLAUDE.md — brain routing & BrainManager, streaming-first-class
+4. jarvis/brain/router.py:324-348 (existing _build_ack_emitter)
 5. jarvis/brain/factory.py (build_default_brain)
-6. jarvis/brain/output_filter.py:scrub_for_voice (40 Schwarzlist-Patterns)
+6. jarvis/brain/output_filter.py:scrub_for_voice (40 blacklist patterns)
 
-Pre-Condition: Etappen 1–4 sind committet. Wenn nicht, STOPP.
+Pre-condition: Stages 1–4 are committed. If not, STOP.
 
 Scope:
-- jarvis/brain/ack_brain/generator.py mit AckGenerator
+- jarvis/brain/ack_brain/generator.py with AckGenerator
 - Tests in tests/unit/brain/test_ack_brain/test_generator.py
-- REFACTOR jarvis/brain/ack_generator.py (Templates raus, Adapter rein)
+- REFACTOR jarvis/brain/ack_generator.py (templates out, adapter in)
 - REWRITE tests/unit/brain/test_ack_generator.py
-- MODIFY jarvis/brain/router.py:324-348 (neue _build_ack_emitter)
-- MODIFY jarvis/brain/factory.py (AckGenerator instantiierung)
+- MODIFY jarvis/brain/router.py:324-348 (new _build_ack_emitter)
+- MODIFY jarvis/brain/factory.py (AckGenerator instantiation)
 - Integration tests: tests/integration/test_ack_flow.py
 - Integration tests: tests/integration/test_ack_provider_swap.py
 
-Was du NICHT machst:
-- KEINE UI-Änderungen (das ist E6)
-- KEIN Wizard-Step (das ist E6)
-- KEINE neuen Provider — die vier aus E4 reichen
-- KEIN automatischer Provider-Fallback bei Failure — Silent ist by design
-- KEIN Retry-Loop — ein Ack der nach 3s kommt ist sinnlos
+What you do NOT do:
+- NO UI changes (that is E6)
+- NO wizard step (that is E6)
+- NO new providers — the four from E4 are enough
+- NO automatic provider fallback on failure — silent is by design
+- NO retry loop — an ack that arrives after 3s is pointless
 
-WICHTIGSTE Design-Eigenschaft (Spec §3): Der Flash-Brain sieht NUR die
-User-Utterance, NICHT den Router-Tool-Output. Das ist die strukturelle
-Lösung für das Albel-Problem.
+MOST IMPORTANT design property (Spec §3): the Flash-Brain sees ONLY the
+user utterance, NOT the router tool output. That is the structural
+solution to the Albel problem.
 
-Akzeptanzkriterien:
+Acceptance criteria:
 1. pytest tests/unit/brain/test_ack_brain/test_generator.py -v → 8 pass
 2. pytest tests/unit/brain/test_ack_generator.py -v → all pass
 3. pytest tests/integration/test_ack_flow.py -v → 2 pass
 4. pytest tests/integration/test_ack_provider_swap.py -v → 3 pass
 5. python -c "from jarvis.brain.factory import build_default_brain; build_default_brain(); print('ok')" → "ok"
-6. Drei Commits (generator + ack_generator-refactor + router/factory-wiring)
-7. Voller Test-Run: pytest tests/ -v zeigt keinen neuen Regressions-Failure
-   gegenüber dem Stand vor E5
+6. Three commits (generator + ack_generator refactor + router/factory wiring)
+7. Full test run: pytest tests/ -v shows no new regression failure
+   compared to the state before E5
 ```
 
 ---
@@ -3496,9 +3496,9 @@ def _step_ack_brain_provider(state: WizardState) -> WizardState:
     available.append("ollama")  # always available, local
 
     choice = _prompt_choice(
-        "Welcher schnelle LLM-Provider soll fuer Pre-Thinking-Acks "
-        "verwendet werden? (Ack = der kurze Satz den du hoerst bevor "
-        "Jarvis seine eigentliche Antwort gibt.)",
+        "Which fast LLM provider should be used for Pre-Thinking Acks? "
+        "(Ack = the short sentence you hear before "
+        "Jarvis gives its actual answer.)",
         choices=available,
     )
 
@@ -3564,8 +3564,8 @@ $ErrorActionPreference = "Stop"
 $Utterances = @{
     "de" = @(
         "Mach Spotify auf",
-        "Wann wird Albel eingestellt?",
-        "Such mir Fluege nach San Francisco fuer morgen",
+        "Wann wird Albel eingestellt?",  <!-- i18n-allow -->
+        "Such mir Fluege nach San Francisco fuer morgen",  <!-- i18n-allow -->
         "Hallo Jarvis",
         "Sei still"
     )
@@ -3725,61 +3725,61 @@ EOF
 - [ ] `docs/ack-brain.md` exists and is referenced in CLAUDE.md
 - [ ] Five commits
 - [ ] Full repo test suite: `pytest tests/ -v` → no new regressions
-- [ ] Manual smoke run: enabling `[ack_brain].enabled = true` in `jarvis.toml`, restarting Jarvis, saying "Wann wird Albel eingestellt?" produces audible "Lass mich kurz nachschauen." within ~1 second, followed by the main reply
+- [ ] Manual smoke run: enabling `[ack_brain].enabled = true` in `jarvis.toml`, restarting Jarvis, saying "Wann wird Albel eingestellt?" produces audible "Lass mich kurz nachschauen." within ~1 second, followed by the main reply <!-- i18n-allow -->
 
 ### Ready-to-paste prompt for Stage 6
 
 ```text
-Du implementierst Etappe 6 ("UI + Smoke + Wizard + Docs") des
-Pre-Thinking-Ack Flash-Brain Features. Letzte Etappe — final polish.
+You are implementing Stage 6 ("UI + Smoke + Wizard + Docs") of the
+Pre-Thinking-Ack Flash-Brain feature. Final stage — final polish.
 
-Pflichtlektüre:
+Required reading:
 1. docs/superpowers/specs/2026-05-11-pre-thinking-ack-flash-brain-design.md
    — §4 UI/Frontend section
 2. docs/superpowers/plans/2026-05-11-pre-thinking-ack-flash-brain-impl-plan.md
-   — Section "Etappe 6"
-3. CLAUDE.md — Desktop-App & Channels
+   — Section "Stage 6"
+3. CLAUDE.md — desktop app & channels
 4. jarvis/ui/web/server.py (existing _on_announcement WS forwarding)
 5. jarvis/setup/wizard.py (existing wizard step pattern)
 
-Pre-Condition: Etappen 1–5 sind committet UND der Backend-Pfad funktioniert
-(test_ack_flow.py grün). Wenn nicht, STOPP.
+Pre-condition: Stages 1–5 are committed AND the backend path works
+(test_ack_flow.py green). If not, STOP.
 
 Scope:
-- jarvis/ui/web/server.py: AnnouncementRequested.kind="preamble" als
-  neue WebSocket-Rolle forwarden
+- jarvis/ui/web/server.py: forward AnnouncementRequested.kind="preamble"
+  as a new WebSocket role
 - jarvis/ui/web/frontend/src/types/messages.ts: MessageRole = "user" |
   "jarvis" | "preamble"
-- jarvis/ui/web/frontend/src/views/ChatView.tsx: Preamble-Bubble
-  rendern (italic, muted, "ack"-Chip)
-- jarvis/setup/wizard.py: Provider-Auswahl-Step für ack_brain
-- scripts/smoke-test-ack.ps1: 5 Utterances pro Sprache + 5 manuelle Checks
-- docs/ack-brain.md: User-facing One-Pager
-- CLAUDE.md: Eine Zeile Referenz unter Phasen-Section
+- jarvis/ui/web/frontend/src/views/ChatView.tsx: render the preamble
+  bubble (italic, muted, "ack" chip)
+- jarvis/setup/wizard.py: provider-selection step for ack_brain
+- scripts/smoke-test-ack.ps1: 5 utterances per language + 5 manual checks
+- docs/ack-brain.md: user-facing one-pager
+- CLAUDE.md: one line of reference under the phases section
 
-Was du NICHT machst:
-- KEINE Backend-Änderungen (alles ist in E1-E5 done)
-- KEINE neuen Tests in tests/unit/ (Backend-Coverage steht)
-- KEINE Persona-Prompt-Änderungen
-- KEINE neuen Provider
+What you do NOT do:
+- NO backend changes (everything is done in E1-E5)
+- NO new tests in tests/unit/ (backend coverage is in place)
+- NO persona-prompt changes
+- NO new providers
 
-Manueller Final-Smoke (Acceptance):
-1. jarvis.toml: [ack_brain].enabled = true setzen, provider auswählen
-2. Restart-Sequenz: pip install -e . --no-deps, dann Jarvis neu starten
-3. "Wann wird Albel eingestellt?" sprechen
-4. Audio innerhalb 1 Sekunde: "Lass mich kurz nachschauen."
-5. Audio danach: Hauptantwort vom Brain
-6. Chat-UI zeigt beide als getrennte Bubbles
-7. Voice-control "Sei still" produziert kein Preamble-Audio
+Manual final smoke test (acceptance):
+1. jarvis.toml: set [ack_brain].enabled = true, choose a provider
+2. Restart sequence: pip install -e . --no-deps, then restart Jarvis
+3. Say "Wann wird Albel eingestellt?"  <!-- i18n-allow -->
+4. Audio within 1 second: "Lass mich kurz nachschauen."  <!-- i18n-allow -->
+5. Audio afterward: the main reply from the brain
+6. The chat UI shows both as separate bubbles
+7. Voice control "Sei still" produces no preamble audio  <!-- i18n-allow -->
 
-Akzeptanzkriterien:
-1. cd jarvis/ui/web/frontend && npm run build → keine TS-Fehler
-2. python -m jarvis --wizard → neuer ack_brain-Step erscheint
-3. scripts/smoke-test-ack.ps1 existiert
-4. docs/ack-brain.md existiert + CLAUDE.md referenziert es
-5. Fünf Commits
-6. pytest tests/ -v → keine neuen Regressions
-7. Manueller End-to-End-Smoke wie oben beschrieben → green
+Acceptance criteria:
+1. cd jarvis/ui/web/frontend && npm run build → no TS errors
+2. python -m jarvis --wizard → the new ack_brain step appears
+3. scripts/smoke-test-ack.ps1 exists
+4. docs/ack-brain.md exists + CLAUDE.md references it
+5. Five commits
+6. pytest tests/ -v → no new regressions
+7. Manual end-to-end smoke test as described above → green
 ```
 
 ---
@@ -3792,7 +3792,7 @@ After all six stages are committed:
 - [ ] `pytest tests/unit/brain/test_ack_brain/ -v` → ~35 tests pass
 - [ ] `pytest tests/contract/test_ack_provider_protocol.py -v` → all pass
 - [ ] `pytest tests/integration/test_ack_flow.py tests/integration/test_ack_provider_swap.py -v` → all pass
-- [ ] Manual E2E: set `[ack_brain].enabled = true`, restart, say "Wann wird Albel eingestellt?", hear "Lass mich kurz nachschauen." within ~1 second, hear final answer after
+- [ ] Manual E2E: set `[ack_brain].enabled = true`, restart, say "Wann wird Albel eingestellt?", hear "Lass mich kurz nachschauen." within ~1 second, hear final answer after <!-- i18n-allow -->
 - [ ] No `"Subagent"` / `"Worker"` / `"Sir"` / `"Sehr wohl"` audible in any test
 - [ ] Voice-control utterances produce zero preamble audio
 - [ ] Switching `[ack_brain].provider` between `gemini` / `grok` / `openai` / `ollama` and restarting → next utterance uses the new provider

@@ -638,10 +638,10 @@
 
     <article class="bug" data-sev="BLOCKER">
       <div class="bug-head"><span class="bug-id">BUG-Y-2</span><span class="bug-title">Drift-Guard auto-reverts every self-mod mutation within 5 minutes</span><span class="bug-sev">BLOCKER</span></div>
-      <div class="bug-loc">scripts/drift-guard-daemon.ps1 · scripts/config-soll.json</div>
+      <div class="bug-loc">scripts/drift-guard-daemon.ps1 · scripts/config-soll.json</div>  <!-- i18n-allow -->
       <div class="bug-body">
-        <strong>Symptom.</strong> A successful voice-mutation writes <code>tts.provider</code>, audits OK, says "set" — then within 300 s the drift-guard daemon overwrites <code>jarvis.toml</code> from <code>config-soll.json</code>. Six of the eight ALLOWED self-mod paths (<code>tts.provider</code>, <code>tts.voice_*</code>, <code>brain.primary</code>, <code>stt.provider</code>) are in the daemon's enforcement set. EK-1 ("voice changes TTS provider, persists, reloads") is unachievable in production.<br><br>
-        <strong>Fix direction.</strong> Teach the drift-guard to update <code>config-soll.json</code> after acknowledged self-mod writes (single source of truth), or pause it during self-mod windows.
+        <strong>Symptom.</strong> A successful voice-mutation writes <code>tts.provider</code>, audits OK, says "set" — then within 300 s the drift-guard daemon overwrites <code>jarvis.toml</code> from <code>config-soll.json</code>. Six of the eight ALLOWED self-mod paths (<code>tts.provider</code>, <code>tts.voice_*</code>, <code>brain.primary</code>, <code>stt.provider</code>) are in the daemon's enforcement set. EK-1 ("voice changes TTS provider, persists, reloads") is unachievable in production.<br><br>  <!-- i18n-allow -->
+        <strong>Fix direction.</strong> Teach the drift-guard to update <code>config-soll.json</code> after acknowledged self-mod writes (single source of truth), or pause it during self-mod windows.  <!-- i18n-allow -->
         <div class="recap">If you tell Jarvis by voice to change a setting, it changes — and then a background watchdog notices the change and undoes it, because it thinks the new value is a mistake. Both systems are doing their job; nobody told them about each other.</div>
       </div>
     </article>

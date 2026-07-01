@@ -90,7 +90,7 @@ fallback-only when `[ack_brain]` is off.
   ("don't confirm something that wasn't done"), already names the concrete setting
   + value (barely a "stock phrase"), and sits on the turn-critical tool loop. Kept
   deterministic; revisit if desired (threading a composer through the dispatcher).
-- **`open_app` DIRECT ack** ("Gestartet: Chrome"): the deliberately fastest path
+- **`open_app` DIRECT ack** ("Gestartet: Chrome"): the deliberately fastest path <!-- i18n-allow: quoted voice-ack output example -->
   (no-LLM by design) that already names the concrete app. Kept fast.
 - **Harness-internal pause prompts** (`cu_awaiting_elevation`/`cu_awaiting_human`):
   produced inside the harness subprocess (cannot reach the in-process composer),

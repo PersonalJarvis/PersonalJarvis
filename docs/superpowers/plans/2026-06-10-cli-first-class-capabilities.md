@@ -992,7 +992,7 @@ def test_domain_word_in_passing_passes():
 
 
 def test_definition_question_passes():
-    assert _gate("Was ist ein Pull Request?").kind == "pass"
+    assert _gate("Was ist ein Pull Request?").kind == "pass"  # i18n-allow: German test utterance under test
     assert _gate("What is an issue tracker?").kind == "pass"
 
 
@@ -1051,9 +1051,9 @@ _LOOKUP_SHAPE_RE = re.compile(
 )
 
 # Definitional/explanatory questions are general knowledge, not a data lookup
-# ("Was ist ein Pull Request?") — never force a tool call for them.
+# ("Was ist ein Pull Request?") — never force a tool call for them.  # i18n-allow: quotes German input example
 _DEFINITION_RE = re.compile(
-    r"\b(was ist ein|was ist eine|was sind|was bedeutet|wofuer steht|"
+    r"\b(was ist ein|was ist eine|was sind|was bedeutet|wofuer steht|"  # i18n-allow: German input vocabulary
     r"what is a|what is an|what are|what does|explain|erklaer)\b"
 )
 
@@ -1089,7 +1089,7 @@ _REFUSAL_EN_FALLBACK = "I have no data access for that right now."
 
 
 def _detect_lang(text: str) -> str:
-    if re.search(r"[äöüÄÖÜß]", text):
+    if re.search(r"[äöüÄÖÜß]", text):  # i18n-allow: German diacritic detection
         return "de"
     if re.search(
         r"\b(was|wie|welche|welcher|steht|stehen|heute|morgen|hab|habe|"
@@ -1652,7 +1652,7 @@ Remaining 13 entries — same JSON shape, exact values (one `capabilities` decl 
 | `pscale` | `["database"]` | `["planetscale", "pscale", "datenbank", "database", "branch", "branches"]` | `["zeig", "zeige", "list", "show", "check"]` | `PlanetScale: list databases, branches, deploy requests.` | `pscale database list*`, `pscale branch list*`, `pscale org list*` | `pscale database delete*`, `pscale branch delete*` |
 | `neonctl` | `["database"]` | `["neon", "datenbank", "database", "branch", "branches", "projekt", "project", "projects"]` | `["zeig", "zeige", "list", "show", "check"]` | `Neon: list projects, branches, databases.` | `neonctl projects list*`, `neonctl branches list*`, `neonctl me*` | `neonctl projects delete*`, `neonctl branches delete*` |
 | `glab` | `["repos"]` | `["gitlab", "merge request", "merge requests", "mr", "mrs", "issue", "issues", "repo", "repos", "pipeline", "pipelines"]` | `["zeig", "zeige", "lies", "list", "show", "check", "create", "erstell", "erstelle"]` | `GitLab: list/read merge requests, issues, pipelines.` | `glab mr list*`, `glab issue list*`, `glab pipeline list*`, `glab repo view*`, `glab auth status*` | `glab repo delete*` |
-| `twilio` | `["messaging"]` | `["twilio", "sms", "nachricht", "nachrichten", "message", "messages", "anruf", "anrufe", "call", "calls"]` | `["zeig", "zeige", "list", "show", "check"]` | `Twilio: list messages, calls, phone numbers.` | `twilio api:core:messages:list*`, `twilio api:core:calls:list*`, `twilio phone-numbers:list*` | `twilio api:core:* :remove*` |
+| `twilio` | `["messaging"]` | `["twilio", "sms", "nachricht", "nachrichten", "message", "messages", "anruf", "anrufe", "call", "calls"]` | `["zeig", "zeige", "list", "show", "check"]` | `Twilio: list messages, calls, phone numbers.` | `twilio api:core:messages:list*`, `twilio api:core:calls:list*`, `twilio phone-numbers:list*` | `twilio api:core:* :remove*` | <!-- i18n-allow: German input-vocabulary table row -->
 
 (For entries that already have some of these patterns, merging means: keep existing entries, append the missing ones, no duplicates.)
 

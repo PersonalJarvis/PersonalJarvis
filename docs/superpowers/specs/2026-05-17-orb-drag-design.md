@@ -332,7 +332,7 @@ if persisted and persisted.monitor:
 7. Check `jarvis.toml` → three position keys are gone.
 8. Restart Jarvis. Orb appears bottom-right. (Default behavior restored.)
 
-Capture step-by-step output in the verification log entry (per CLAUDE.md autonomy rule 2: "Verifikation ist Pflichtteil — nicht optional" / "Verification is a mandatory part — not optional").
+Capture step-by-step output in the verification log entry (per CLAUDE.md autonomy rule 2: "Verification is a mandatory part — not optional").
 
 ---
 
@@ -364,7 +364,7 @@ Single commit on a new branch `feature/orb-drag`. No feature flag — the behavi
 ## 11. Out of scope
 
 - Right-click context menu (saved for a future change — Q2 picked double-click).
-- Snap-to-edge while dragging (off — user said "bleibt wo man loslässt" / "stays where you let go").
+- Snap-to-edge while dragging (off — user said "stays where you let go").
 - Hotkey to summon orb to cursor (different feature, future).
 - Per-monitor preferred positions (one persisted position; multi-monitor handled by stick-to-current-monitor on drag-release).
 - Editing the comment bubble's behavior — bubble follows the orb's `_mascot_x/y` as today.

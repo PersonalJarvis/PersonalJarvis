@@ -106,7 +106,7 @@ the last 16:45 success.
 
 **Root cause #2 — the codex worker's Node.js runtime was missing** (Facet C; the
 genuine "renewable-energy market research" task, `019ecc5a`). **Disk-proven:** both
-worktrees' `logs/stderr.log` read *"node … konnte nicht gefunden werden"* and the
+worktrees' `logs/stderr.log` read *"node … could not be found"* and the
 diff patches are **0 bytes**. `codex.cmd` is a Node app; with `node` absent from
 the worker subprocess's inherited PATH it exited code 1 with no stdout → empty
 diff. The codex→claude fallback did **not** fire because the error text matches

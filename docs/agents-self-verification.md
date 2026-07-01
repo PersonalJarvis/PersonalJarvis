@@ -159,7 +159,7 @@ This is where false positives land that reviewers repeatedly flag incorrectly as
 | Jarvis-Agents bridge doc | `docs/jarvis-agents-bridge.md` | AD-1..AD-21, AP-OC1..OC13, test strategy |
 | Phase-7 doc | `docsplansphase-7-self-mod/PROJEKT_KONTEXT.md` | AD-1..AD-10, AP-SM1..SM14, EK-1..EK-4 |
 | Awareness Plan | `Jarvis  Long-Term Memory/Unbenanntes Dokument (3).md` | A0–A5 specification, §10 anti-pattern register |
-| Master plan | `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md` | Binding architecture document |
+| Master plan | `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md` | Binding architecture document  <!-- i18n-allow --> |
 
 ---
 

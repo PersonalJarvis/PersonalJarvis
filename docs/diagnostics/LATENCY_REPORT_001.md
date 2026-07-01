@@ -137,7 +137,7 @@ real baseline data:
    ```
 
    *Note:* the drift-guard daemon mirrors `[latency]` keys from
-   `scripts/config-soll.json`. If you want this to survive a drift sweep, add
+   `scripts/config-soll.json`. If you want this to survive a drift sweep, add  <!-- i18n-allow -->
    `latency.log_jsonl = true` there too. For a one-off measurement, ENV is
    simpler.
 

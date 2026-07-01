@@ -95,7 +95,7 @@ class TestDelegationIsInstant:
         async def scenario():
             bus = FakeBus()
             worker = HeavyDutyWorker(bus)
-            spawn = make_spawn("Termin buche für morgen", tool_name="calendar")
+            spawn = make_spawn("Termin buche für morgen", tool_name="calendar")  # i18n-allow: test content — user voice utterance DE
             # Use a slow work_seconds so the task is definitely still running.
             # We patch via monkeypatching after construction is not practical here,
             # so we use a zero-delay spawn and check the property synchronously

@@ -154,7 +154,7 @@ class TestClassifyEdgeCases:
         assert classify("mach es lauter") == RouteKind.DUMB_TOOL
 
     def test_action_verb_mach_without_dumb_trigger(self):
-        """'mach das Fenster auf' — 'mach' action verb but no dumb tool trigger."""
+        """'mach das Fenster auf' — 'mach' action verb but no dumb tool trigger."""  # i18n-allow: test content — user voice utterance DE
         # No dumb trigger, no smart trigger, but 'mach' is an action verb
         result = classify("mach das Fenster auf")  # i18n-allow
         assert result == RouteKind.SMART_TOOL

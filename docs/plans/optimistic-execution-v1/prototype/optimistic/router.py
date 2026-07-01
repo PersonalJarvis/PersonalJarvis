@@ -27,7 +27,7 @@ from optimistic.registry import (
 )
 
 # ---------------------------------------------------------------------------
-# Acknowledgement templates — butler-tone, correct German umlauts (ä ö ü ß)
+# Acknowledgement templates — butler-tone, correct German umlauts (ä ö ü ß)  # i18n-allow: umlaut characters cited as examples, comment is English
 # ---------------------------------------------------------------------------
 
 _ACK_SMART: str = "Geht klar, ich kümmere mich drum."  # i18n-allow: product voice output DE

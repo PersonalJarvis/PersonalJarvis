@@ -10,15 +10,15 @@
 
 ## 1. Symptom (verbatim from the user)
 
-> "Manchmal schmeißt er einfach irgendwelche komischen Phrases rein, die
-> gar keinen Sinn machen. Ich habe eine simple Aufgabe gestellt, und er
+> "Manchmal schmeißt er einfach irgendwelche komischen Phrases rein, die <!-- i18n-allow -->
+> gar keinen Sinn machen. Ich habe eine simple Aufgabe gestellt, und er <!-- i18n-allow -->
 > hat gesagt:
 >
->     „Die Mission ist fehlgeschlagen, drei Versuche haben nicht
+>     „Die Mission ist fehlgeschlagen, drei Versuche haben nicht <!-- i18n-allow -->
 >      gereicht. Dann schauen wir einfach mal in die letzte
 >      Transkription, was ich gesagt habe."
 >
-> Das hat wirklich überhaupt nichts mit dem Kontext zu tun."
+> Das hat wirklich überhaupt nichts mit dem Kontext zu tun." <!-- i18n-allow -->
 >
 > (English gloss: "Sometimes it just throws in random weird phrases that
 > make no sense at all. I gave it a simple task, and it said:
@@ -39,7 +39,7 @@ That mismatch is the headline of the bug.
 
 | # | Phrase                                                                                                                                                                      | Surface character                          |
 |---|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------|
-| 1 | "Die Mission ist fehlgeschlagen, drei Versuche haben nicht gereicht." ("The mission has failed, three attempts were not enough.")                                            | Static template, terminal-failure summary  |
+| 1 | "Die Mission ist fehlgeschlagen, drei Versuche haben nicht gereicht." ("The mission has failed, three attempts were not enough.")                                            | Static template, terminal-failure summary  <!-- i18n-allow --> |
 | 2 | "Dann schauen wir einfach mal in die letzte Transkription, was ich gesagt habe." ("Then let's just take a look at the last transcription to see what I said.")              | First-person, mid-thought reasoning prose  |
 
 **Hypothesis (to be proven, not assumed):** the two phrases were emitted
@@ -58,15 +58,15 @@ the `MissionFailed` branch.
 ```python
 # announcer.py:177-193 (extract)
 de_map = {
-    "critic_loop_exhausted": "Drei Versuche haben nicht gereicht.",
-    "critic_rejected":       "Die Prüfung war nicht zufrieden.",
-    "task_error":            "Der Worker ist abgebrochen.",
+    "critic_loop_exhausted": "Drei Versuche haben nicht gereicht.",  <!-- i18n-allow -->
+    "critic_rejected":       "Die Prüfung war nicht zufrieden.",  <!-- i18n-allow -->
+    "task_error":            "Der Worker ist abgebrochen.",  <!-- i18n-allow -->
     ...
 }
 short_reason = reason.split(":", 1)[0].strip()
 if lang == "de":
     tail = de_map.get(short_reason, f"Grund: {reason}" if reason else "")
-    text = f"Die Mission ist fehlgeschlagen. {tail}".rstrip()
+    text = f"Die Mission ist fehlgeschlagen. {tail}".rstrip()  <!-- i18n-allow -->
 ```
 
 ### 3.2 Why this fires
@@ -198,7 +198,7 @@ own meta-narration that leaked into the spoken stream.
 
 The Mission-Failure announcement is loud enough for the microphone to
 re-capture it through the speakers. STT then transcribes a fragment of
-"Mission fehlgeschlagen, drei Versuche …" ("mission failed, three attempts
+"Mission fehlgeschlagen, drei Versuche …" ("mission failed, three attempts <!-- i18n-allow -->
 …") as user input on the next turn. The router-brain receives this
 self-echo as a query and answers with planning prose ("then let's look at
 the last transcript …").
@@ -266,7 +266,7 @@ data.
    t=Δ4  worker iter 3 → critic reject
          MissionFailed(reason="critic_loop_exhausted") published
    t=Δ5  MissionAnnouncer renders:
-         "Die Mission ist fehlgeschlagen. Drei Versuche haben nicht gereicht."
+         "Die Mission ist fehlgeschlagen. Drei Versuche haben nicht gereicht."  <!-- i18n-allow -->
          (= "The mission has failed. Three attempts were not enough.")
          priority="interrupt", language="de"
          → AnnouncementRequested → _on_announcement → scrub_for_voice
@@ -360,7 +360,7 @@ Before a fix is attempted, the following evidence must be gathered the
 | Hypothesis | Expected log signature                                                                                  |
 |------------|----------------------------------------------------------------------------------------------------------|
 | H1 (brain) | `MissionFailed` → `AnnouncementRequested(priority=interrupt)` → `LISTENING` → STT turn with **user-shaped** transcription → `_handle_utterance` → brain reply with Phrase 2. |
-| H2 (echo)  | Same prefix, but the STT turn just before Phrase 2 transcribes fragments of Phrase 1 itself (e.g. "Mission fehlgeschlagen drei Versuche" — "mission failed three attempts"). That is the smoking gun. |
+| H2 (echo)  | Same prefix, but the STT turn just before Phrase 2 transcribes fragments of Phrase 1 itself (e.g. "Mission fehlgeschlagen drei Versuche" — "mission failed three attempts"). That is the smoking gun. <!-- i18n-allow --> |
 | H3 (ack)   | Phrase 2 appears in an `AnnouncementRequested(source_layer="brain.ack_brain", kind="preamble")` log line **before** the main brain reply for the next turn — i.e. without an intervening `_handle_utterance` arrow at all. |
 | H4 (skill) | Phrase 2 appears in an `AnnouncementRequested` with a `source_layer` other than `brain.ack_brain` or the mission bridges. |
 

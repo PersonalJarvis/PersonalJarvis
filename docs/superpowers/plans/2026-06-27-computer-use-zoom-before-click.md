@@ -372,7 +372,7 @@ git commit -m "feat(cu): proactively zoom-refine before the first click when opt
 ## Manual verification (after both tasks, optional live check)
 
 1. Restart the running app: `POST /api/settings/restart-app`.
-2. Enable the flag (voice "schalte Zoom vor dem Klick ein", or set `[computer_use].zoom_before_click = true` via the config path / Self-Mod). It hot-reloads — no second restart needed.
+2. Enable the flag (voice "schalte Zoom vor dem Klick ein", or set `[computer_use].zoom_before_click = true` via the config path / Self-Mod). It hot-reloads — no second restart needed. <!-- i18n-allow: quoted German voice-command example -->
 3. Run a Computer-Use task that previously mis-clicked a small/dense control. Confirm: nothing visibly zooms on screen; the click lands on the intended element; and a deliberately-wrong target description produces a re-plan rather than a wrong click.
 
 ## Self-review notes (author check against the spec)

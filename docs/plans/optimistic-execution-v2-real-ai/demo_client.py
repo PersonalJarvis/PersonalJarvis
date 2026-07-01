@@ -40,7 +40,7 @@ async def main() -> None:
     args = parser.parse_args()
 
     session_id = "demo-" + uuid.uuid4().hex[:6]
-    prompt = "Schreib Max eine Mail, dass sich das Projekt verschiebt" if args.oops else args.prompt
+    prompt = "Schreib Max eine Mail, dass sich das Projekt verschiebt" if args.oops else args.prompt  # i18n-allow: test content — user voice utterance DE
 
     async with httpx.AsyncClient(base_url=args.base, timeout=180.0) as client:
         health = (await client.get("/api/health")).json()

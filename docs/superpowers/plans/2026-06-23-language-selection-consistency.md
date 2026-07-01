@@ -567,7 +567,7 @@ Expected: green except the *known* pre-existing foreign failures recorded in T0 
 - [ ] **Live mic verification (the real proof):** with `reply_language = "auto"`, run four turns and confirm voice + text + announcement all match:
   1. German turn → German text, German announcement, German voice (Sebastian, no British accent).
   2. English turn ("What's on my calendar?") → English everywhere.
-  3. German turn ending on a loanword ("…und dann der Boss.") → no English tail.
+  3. German turn ending on a loanword ("…und dann der Boss.") → no English tail. <!-- i18n-allow: quoted German voice test utterance -->
   4. A scheduled/skill announcement while the conversation is German → German announcement (the screenshot scenario).
 
 ---

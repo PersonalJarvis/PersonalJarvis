@@ -82,7 +82,7 @@ SMALLTALK_TRIGGERS: tuple[str, ...] = (  # i18n-allow: speech input vocabulary D
     "danke",
     "alles klar",
     "erzaehl",
-    "erzähl",
+    "erzähl",  # i18n-allow: speech input vocabulary DE
     "witz",
 )
 
@@ -94,7 +94,7 @@ ACTION_VERBS: tuple[str, ...] = (  # i18n-allow: speech input vocabulary DE
     "baue",
     "installier",
     "oeffne",
-    "öffne",
+    "öffne",  # i18n-allow: speech input vocabulary DE
     "mach",
     "zeig",
     "erstell",

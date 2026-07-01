@@ -19,7 +19,7 @@
 | `pyproject.toml:149` | **Modify** | Rename entry-point `cartesia-sonic3` → `cartesia`, repoint to new class. |
 | `jarvis/ui/web/provider_spec.py:122` | **Modify** | Append `ProviderSpec(id="cartesia", …)` after the Grok-Voice spec so the API Keys view renders a card. |
 | `jarvis.toml` | **Modify** | Add `[tts.cartesia]` section with defaults; clean up the stray sonic-3 comment in `[tts]`. |
-| `scripts/config-soll.json` | **Modify** | Mirror the `[tts.cartesia]` defaults so the drift-guard daemon doesn't roll them back. |
+| `scripts/config-soll.json` | **Modify** | Mirror the `[tts.cartesia]` defaults so the drift-guard daemon doesn't roll them back. |  <!-- i18n-allow -->
 
 ---
 
@@ -68,7 +68,7 @@ DEFAULT_MODEL_ID = "sonic-3.5"
 # User-configurable via [tts.cartesia].voice_id.
 DEFAULT_VOICE_ID = "694f9389-aac1-45b6-b726-9d9369183238"
 
-_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-ZÄÖÜ])")
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-ZÄÖÜ])")  <!-- i18n-allow -->
 
 
 class _CartesiaFatalError(RuntimeError):
@@ -600,15 +600,15 @@ Keys view renders a Cartesia card under the TTS tier.
 
 **Files:**
 - Modify: `jarvis.toml` (insert `[tts.cartesia]` section after `[tts]`)
-- Modify: `scripts/config-soll.json` (mirror the keys)
+- Modify: `scripts/config-soll.json` (mirror the keys)  <!-- i18n-allow -->
 
 - [ ] **Step 4.1: Clean up the stray Sonic-3 comment in `[tts]`**
 
 In `jarvis.toml`, replace lines 100-102
 
 ```toml
-# Sonic-3 voice_id leer-lassen wenn nicht aktiv. Bei aktivem cartesia-sonic3
-# muss voice_id gesetzt sense, sonst raises der Plugin-Konstruktor.
+# Leave the Sonic-3 voice_id empty when not active. When cartesia-sonic3
+# is active, voice_id must be set, otherwise the plugin constructor raises.
 voice_id = ""
 ```
 
@@ -645,7 +645,7 @@ allow_sapi5_fallback = false
 
 - [ ] **Step 4.3: Mirror to drift-guard target**
 
-Open `scripts/config-soll.json`. Locate the top-level `tts` object and add a `cartesia` child mirroring the same keys:
+Open `scripts/config-soll.json`. Locate the top-level `tts` object and add a `cartesia` child mirroring the same keys:  <!-- i18n-allow -->
 
 ```json
 "tts": {
@@ -674,11 +674,11 @@ Expected: a dict with `model_id`, `voice_id`, `language`, etc. (TTSConfig has `m
 - [ ] **Step 4.5: Commit**
 
 ```bash
-git add jarvis.toml scripts/config-soll.json
+git add jarvis.toml scripts/config-soll.json  <!-- i18n-allow -->
 git commit -m "config(tts): three-layer pin for [tts.cartesia]
 
 Adds the Cartesia provider config to jarvis.toml plus its drift-guard
-mirror in scripts/config-soll.json (BUG-010 defense). Default model
+mirror in scripts/config-soll.json (BUG-010 defense). Default model  <!-- i18n-allow -->
 sonic-3.5, default voice Sarah (UUID 694f9389-...). Replaces the stale
 sonic-3 comment in [tts].
 "

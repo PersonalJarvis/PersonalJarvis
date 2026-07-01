@@ -16,8 +16,8 @@ Agent C done.
   `has_action_intent=True and resolve_intent=None and not smalltalk`.
   No LLM call (AP-11 compliant).
 - `jarvis/brain/ack_brain/persona_prompt.py`: extended forbidden-vocabulary list
-  with action-promise patterns (DE: "mache ich", "wird erledigt", "ist
-  gesendet", "ist eingetragen", "kümmere mich"; EN: "I'll do that", "will be
+  with action-promise patterns (DE: "mache ich", "wird erledigt", "ist  <!-- i18n-allow -->
+  gesendet", "ist eingetragen", "kümmere mich"; EN: "I'll do that", "will be  <!-- i18n-allow -->
   sent", "will be scheduled", "consider it done").  Added explicit positive rule:
   Ack-Brain may only emit (a) acoustic ack, (b) context-restating questions,
   (c) silence on uncertainty.

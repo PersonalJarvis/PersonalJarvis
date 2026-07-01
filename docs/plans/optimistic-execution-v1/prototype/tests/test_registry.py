@@ -41,7 +41,7 @@ def test_match_gmail_is_smart() -> None:
 
 
 def test_no_match_returns_none() -> None:
-    assert match_tool("erzaehl mir einen Witz ueber Katzen") is None
+    assert match_tool("erzaehl mir einen Witz ueber Katzen") is None  # i18n-allow: test content — user voice utterance DE
 
 
 def test_dumb_is_checked_before_smart() -> None:

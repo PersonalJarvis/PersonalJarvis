@@ -124,7 +124,7 @@ Mounts the *full* server (`jarvis.ui.web.server:create_app`), populates `wiki/ob
 Free text, but the final line must be exactly:
 
 ```
-Goal erfüllt: ja — Grund: <one sentence>
+Goal fulfilled: yes — Reason: <one sentence>
 ```
 
-or `nein` with the reason.
+or `no` with the reason.

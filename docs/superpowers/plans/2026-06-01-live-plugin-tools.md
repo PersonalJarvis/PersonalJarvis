@@ -912,8 +912,8 @@ def test_unknown_plugin_returns_none():
 
 def test_keyword_match_is_case_insensitive_substring():
     card = UsageCard(plugin_id="x", keywords=["kalender", "termine"], body="...")
-    assert card.matches("Was habe ich heute für TERMINE?") is True
-    assert card.matches("erzähl mir einen witz") is False
+    assert card.matches("Was habe ich heute für TERMINE?") is True  <!-- i18n-allow -->
+    assert card.matches("erzähl mir einen witz") is False  <!-- i18n-allow -->
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -1009,13 +1009,13 @@ class _Tool:
 
 def test_keeps_only_relevant_plugin_namespace():
     tools = [_Tool("google-calendar/list_events"), _Tool("github/create_issue")]
-    kept = filter_plugin_tools("was habe ich heute für termine", tools)
+    kept = filter_plugin_tools("was habe ich heute für termine", tools)  <!-- i18n-allow -->
     assert [t.name for t in kept] == ["google-calendar/list_events"]
 
 
 def test_non_plugin_tools_always_kept():
     tools = [_Tool("run-shell"), _Tool("github/create_issue")]
-    kept = filter_plugin_tools("erzähl einen witz", tools)
+    kept = filter_plugin_tools("erzähl einen witz", tools)  <!-- i18n-allow -->
     assert any(t.name == "run-shell" for t in kept)        # non-namespaced survive
     assert all("github/" not in t.name for t in kept)      # irrelevant plugin dropped
 
@@ -1148,7 +1148,7 @@ def test_apply_plugin_relevance_drops_irrelevant(monkeypatch):
         "github/create_issue": _T("github/create_issue"),
         "notion/search": _T("notion/search"),
     }
-    out = mgr._apply_plugin_relevance("was habe ich heute für termine", tools)
+    out = mgr._apply_plugin_relevance("was habe ich heute für termine", tools)  <!-- i18n-allow -->
     assert "run-shell" in out
     assert "google-calendar/list_events" in out
     assert "github/create_issue" not in out
@@ -1425,7 +1425,7 @@ git commit -m "feat(ui): live-callable badge for connected plugins"
 ## Final verification (after all waves)
 
 - [ ] Full relevant suite: `pytest tests/unit/marketplace tests/integration/marketplace tests/unit/brain/test_routing.py -v` → all green.
-- [ ] Boot the app, connect Google Calendar, ask (voice AND chat): "Was habe ich heute für Termine?" → Jarvis calls `google-calendar/list_events` inline and answers from real data, through `scrub_for_voice`. (memory: verify UI/behavior, don't claim done blind.)
+- [ ] Boot the app, connect Google Calendar, ask (voice AND chat): "Was habe ich heute für Termine?" → Jarvis calls `google-calendar/list_events` inline and answers from real data, through `scrub_for_voice`. (memory: verify UI/behavior, don't claim done blind.) <!-- i18n-allow -->
 - [ ] Headless boot guard: `python -m jarvis.ui.web.launcher --headless` still boots with zero plugins connected (loader returns `[]`, no crash) — cloud-first base-install invariant.
 
 ---

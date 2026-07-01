@@ -229,8 +229,8 @@ Remove-Item data/test.lock -ErrorAction SilentlyContinue
 Free-form Markdown, final line **must be exactly**:
 
 ```
-Goal erfüllt: ja — Grund: <one sentence>
-Goal erfüllt: nein — Grund: <one sentence>
+Goal fulfilled: yes — Reason: <one sentence>
+Goal fulfilled: no — Reason: <one sentence>
 ```
 
 Recommended sections: Files changed · What I did · Assumptions made · Verification (paste §10 outputs) · Open follow-ups · the mandatory line.

@@ -44,10 +44,10 @@ from jarvis.brain.vision_gate import has_visual_marker, should_attach_screenshot
 _VISUAL = [
     "was siehst du hier",
     "schau mal das hier",
-    "klick auf den Button", <!-- i18n-allow -->
-    "warum ist das rot?", <!-- i18n-allow -->
+    "klick auf den Button",  # i18n-allow
+    "warum ist das rot?",  # i18n-allow
     "lies mir die Fehlermeldung vor",
-    "was steht da auf dem Bildschirm", <!-- i18n-allow -->
+    "was steht da auf dem Bildschirm",  # i18n-allow
     "mach das Fenster zu",
     "look at this window",
 ]
@@ -56,9 +56,9 @@ _VISUAL = [
 # not "smalltalk". This is the user's reported case.
 _NON_VISUAL = [
     "was haben wir gerade besprochen?",
-    "erklär mir nochmal das Thema", <!-- i18n-allow -->
-    "wie spät ist es", <!-- i18n-allow -->
-    "was ist die Hauptstadt von Frankreich", <!-- i18n-allow -->
+    "erklär mir nochmal das Thema",  # i18n-allow
+    "wie spät ist es",  # i18n-allow
+    "was ist die Hauptstadt von Frankreich",  # i18n-allow
     "warum ist das so wichtig?",  # i18n-allow   # "warum ist das" is NOT a marker without a colour
     "fass das bitte zusammen",
 ]
@@ -114,25 +114,25 @@ import re
 # kept specific on purpose: a false negative is recoverable (the brain can call
 # the screenshot tool), a false positive re-introduces the per-turn image tax
 # this change exists to remove. Deliberately NOT included: bare "tab", "dort",
-# "warum ist das" (without a colour), "was ist das" (without "hier") — too broad,
+# "warum ist das" (without a colour), "was ist das" (without "hier") — too broad,  # i18n-allow
 # they fire on non-visual turns.
 _VISUAL_MARKERS: tuple[str, ...] = (
     # deictic / pointing
-    "das hier", "das da", "hier auf", "da auf", "hier oben", "hier unten", <!-- i18n-allow -->
+    "das hier", "das da", "hier auf", "da auf", "hier oben", "hier unten",  # i18n-allow
     "hier links", "hier rechts", "hier im", "hier in der",
     # look / show verbs
     "schau", "sieh", "siehst", "guck", "zeig mir", "zeig mal",
     # screen / window / page nouns
-    "auf dem bildschirm", "am bildschirm", "im bild", "auf dem screen", <!-- i18n-allow -->
+    "auf dem bildschirm", "am bildschirm", "im bild", "auf dem screen",  # i18n-allow
     "bildschirm", "dieses fenster", "das fenster", "diese seite",
-    "die seite hier", "fehlermeldung", "knopf", "button", "menü", "menue", <!-- i18n-allow -->
+    "die seite hier", "fehlermeldung", "knopf", "button", "menü", "menue",  # i18n-allow
     "dialog",
     # actions on the screen
-    "klick", "markier", "scroll", "öffne das", "oeffne das", "mach das zu", <!-- i18n-allow -->
-    "mach das fenster", "schließ das fenster", "schliess das fenster", <!-- i18n-allow -->
+    "klick", "markier", "scroll", "öffne das", "oeffne das", "mach das zu",  # i18n-allow
+    "mach das fenster", "schließ das fenster", "schliess das fenster",  # i18n-allow
     # diagnosis / read-out
-    "warum ist das rot", "warum ist das grau", "warum ist das blau", <!-- i18n-allow -->
-    "was steht da", "was steht hier", "was ist das hier", "lies vor", <!-- i18n-allow -->
+    "warum ist das rot", "warum ist das grau", "warum ist das blau",  # i18n-allow
+    "was steht da", "was steht hier", "was ist das hier", "lies vor",  # i18n-allow
     "lies mir das", "lies das", "vorlesen",
     # English
     "this here", "that there", "look at", "see this", "on screen",
@@ -171,7 +171,7 @@ Expected: PASS (all parametrized cases).
 - [ ] **Step 5: Verify existing integration wiring still passes**
 
 Run: `pytest tests/integration/test_conditional_vision.py -v`
-Expected: PASS — "wie spät ist es" → `()`, "was siehst du hier" → 1 image ("siehst"), "schau mal das hier" → 1 image ("schau"). The inversion does not break these because the kept-image cases all carr <!-- i18n-allow -->y markers.
+Expected: PASS — "wie spät ist es" → `()`, "was siehst du hier" → 1 image ("siehst"), "schau mal das hier" → 1 image ("schau"). The inversion does not break these because the kept-image cases all carry markers. <!-- i18n-allow -->
 
 - [ ] **Step 6: Add the user's regression case to the integration test**
 
@@ -328,8 +328,9 @@ Confirm where tool usage is described.
 Insert into the SYSTEM_PROMPT (tool-guidance section) a single sentence, English source per output policy is NOT required here because router.py prompt is German user-facing instruction text — match the surrounding language of SYSTEM_PROMPT. Add (matching existing prompt language):
 
 ```
-Wenn du unsicher bist, ob du den aktuellen Bildschirm sehen musst, um eine Frage zu beantworten, rufe das Tool `screenshot` auf — du bekommst kein Bild automatisch, sondern nur wenn du danach fragst o <!-- i18n-allow -->der der Nutzer klar auf den Bildschirm verweist.
+Wenn du unsicher bist, ob du den aktuellen Bildschirm sehen musst, um eine Frage zu beantworten, rufe das Tool `screenshot` auf — du bekommst kein Bild automatisch, sondern nur wenn du danach fragst oder der Nutzer klar auf den Bildschirm verweist.
 ```
+<!-- i18n-allow -->
 
 - [ ] **Step 3: Verify the screenshot tool is reachable by the router**
 
@@ -352,4 +353,4 @@ git commit -m "feat(vision): tell the router it can pull the screen on demand (W
   Expected: all PASS.
 - [ ] Run the broader brain suite for regressions:
   `pytest tests/unit/brain/ -v`
-- [ ] Manual (after app restart): voice session — "merk dir die Zahl 12" → "und 5 dazu" → "welche Zahl hatten wir?" answers from conversation, no screen fixation; "was siehst du auf dem Bildschirm?" s <!-- i18n-allow -->till attaches the image; "warum ist das rot?" attaches; a vague screen question with no marker triggers a `screenshot` tool call instead of going blind.
+- [ ] Manual (after app restart): voice session — "merk dir die Zahl 12" → "und 5 dazu" → "welche Zahl hatten wir?" answers from conversation, no screen fixation; "was siehst du auf dem Bildschirm?" still attaches the image; "warum ist das rot?" attaches; a vague screen question with no marker triggers a `screenshot` tool call instead of going blind. <!-- i18n-allow -->

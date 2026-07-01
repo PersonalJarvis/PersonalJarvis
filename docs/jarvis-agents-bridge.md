@@ -449,7 +449,7 @@ Full list of all code paths that are migrated or deleted in Wave 4 (phases 6-10 
 - OpenClaw repo: https://github.com/openclaw/openclaw
 - OpenClaw website: https://openclaw.ai/
 - Peter Steinberger's blog post: https://steipete.me/posts/2026/openclaw
-- Jarvis plan: `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md` §22 (historical Sub-Jarvis-tier plan, superseded by this doc)
+- Jarvis plan: `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md` §22 (historical Sub-Jarvis-tier plan, superseded by this doc)  <!-- i18n-allow -->
 - ADR-0009 Self-Healing-Worker-Critic
 - ADR-0011 Router-Discipline (amended in Wave 4)
 - CLAUDE.md (Phase-5/6 status, plugin system, streaming, event bus — the Phase-5 Sub-Jarvis section is rewritten in Drift-Edit #2)

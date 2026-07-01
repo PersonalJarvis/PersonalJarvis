@@ -4,7 +4,7 @@
 
 **Goal:** Make every deterministic spoken meta-command answer truthfully — never silent, never a blind "done" — and close the recognition gaps that let plausible phrasings fall through, with a regression net that prevents the whole failure class from returning.
 
-**Architecture:** The `voice_command_gate` recognises 6 deterministic command kinds (provider_switch, subagent_switch, language_switch, cancel, depth_deep, depth_fast); `BrainManager.generate()` intercepts each BEFORE the LLM and executes it. An audit (2026-06-27) found two failure classes: (a) HONESTY — provider_switch/cancel/depth return `""` (silent, even on failure) and language_switch speaks success even when persist fails; (b) RECOGNITION — natural phrasings ("ändere den Anbieter", "halt") are not matched. We route the provider switch through the already-validated `app_control.apply_provider_switch("brain", …)` (exact mirror of the subagent fix already shipped), give cancel/depth honest readbacks, make language persist honest, fill the recognition gaps, and add a data-driven recognition checklist + an anti-drift completeness guard so a new command kind cannot be added without an honesty test.
+**Architecture:** The `voice_command_gate` recognises 6 deterministic command kinds (provider_switch, subagent_switch, language_switch, cancel, depth_deep, depth_fast); `BrainManager.generate()` intercepts each BEFORE the LLM and executes it. An audit (2026-06-27) found two failure classes: (a) HONESTY — provider_switch/cancel/depth return `""` (silent, even on failure) and language_switch speaks success even when persist fails; (b) RECOGNITION — natural phrasings ("ändere den Anbieter", "halt") are not matched. We route the provider switch through the already-validated `app_control.apply_provider_switch("brain", …)` (exact mirror of the subagent fix already shipped), give cancel/depth honest readbacks, make language persist honest, fill the recognition gaps, and add a data-driven recognition checklist + an anti-drift completeness guard so a new command kind cannot be added without an honesty test. <!-- i18n-allow: quoted German voice-command examples -->
 
 **Tech Stack:** Python 3.11, pytest (`asyncio_mode=auto`), the existing `jarvis/brain/voice_command_gate.py` + `jarvis/brain/manager.py` + `jarvis/brain/app_control.py`. Tests run with `C:\Program Files\Python311\python.exe -m pytest`.
 
@@ -25,13 +25,13 @@
 | File | Responsibility | Change |
 |---|---|---|
 | `jarvis/brain/manager.py` | Spoken phrase tables + the 6 intercept handlers in `generate()` | Modify: add provider/cancel/depth/session-persist phrase tables + `_apply_main_provider_switch` + `_provider_switch_failure_phrase`; rewrite the cancel/switch/depth intercepts to speak; make language persist honest |
-| `jarvis/brain/voice_command_gate.py` | Deterministic recognition regexes | Modify: add `ändere/setze/stell` provider verbs; add `halt` cancel verb |
+| `jarvis/brain/voice_command_gate.py` | Deterministic recognition regexes | Modify: add `ändere/setze/stell` provider verbs; add `halt` cancel verb | <!-- i18n-allow: German input-vocabulary table row -->
 | `tests/unit/brain/test_voice_command_honesty.py` | NEW — the honesty regression net (success speaks real result; failure is honest; never silent) per command kind | Create |
 | `tests/unit/brain/voice_command_cases.py` | NEW — the growing recognition checklist: real utterances → expected (kind, target) | Create |
 | `tests/unit/brain/test_voice_command_checklist.py` | NEW — runs every checklist case + the anti-drift completeness guard | Create |
 | `tests/unit/brain/test_voice_command_gate.py` | Existing recognition unit tests | Modify: add the new-verb recognition tests |
 
-**Out of scope (documented, not fixed):** `jarvis/plugins/tool/open_app.py` speaks "Gestartet: X" from a fire-and-forget `subprocess.Popen` without a launch proof. The common failure (app not found) IS already honest (`FileNotFoundError` → error result, open_app.py:333); verifying a GUI window actually appeared would add latency without a reliable signal. Tracked as a known low-risk limitation, not addressed here (YAGNI). `_apply_reply_language_switch`'s persist honesty IS in scope (Task 4) because it is a one-line truthfulness fix.
+**Out of scope (documented, not fixed):** `jarvis/plugins/tool/open_app.py` speaks "Gestartet: X" from a fire-and-forget `subprocess.Popen` without a launch proof. <!-- i18n-allow: quoted German voice-output example --> The common failure (app not found) IS already honest (`FileNotFoundError` → error result, open_app.py:333); verifying a GUI window actually appeared would add latency without a reliable signal. Tracked as a known low-risk limitation, not addressed here (YAGNI). `_apply_reply_language_switch`'s persist honesty IS in scope (Task 4) because it is a one-line truthfulness fix.
 
 ---
 
@@ -646,7 +646,7 @@ In `jarvis/brain/voice_command_gate.py`, change the first line of `_PROVIDER_PAT
 to:
 
 ```python
-    r"\b(?:wechsel[n]?|wechsle|änder\w*|aender\w*|setz\w*|stell\w*"
+    r"\b(?:wechsel[n]?|wechsle|änder\w*|aender\w*|setz\w*|stell\w*"  # i18n-allow: German input vocabulary
     r"|switch(?:\s+to)?|benutze?|nutze|use|nimm)"
 ```
 
@@ -658,7 +658,7 @@ In `jarvis/brain/voice_command_gate.py`, change `_CANCEL_PATTERN` (lines 57-60) 
 
 ```python
 _CANCEL_PATTERN = re.compile(
-    r"^(?:jarvis[,\s]+)?(?:stopp?|abbruch|abbrechen|cancel|stop\s+sub)\b",
+    r"^(?:jarvis[,\s]+)?(?:stopp?|abbruch|abbrechen|cancel|stop\s+sub)\b",  # i18n-allow: German input vocabulary
     re.IGNORECASE,
 )
 ```
@@ -667,7 +667,7 @@ to:
 
 ```python
 _CANCEL_PATTERN = re.compile(
-    r"^(?:jarvis[,\s]+)?(?:stopp?|abbruch|abbrechen|cancel|stop\s+sub|halt)\b",
+    r"^(?:jarvis[,\s]+)?(?:stopp?|abbruch|abbrechen|cancel|stop\s+sub|halt)\b",  # i18n-allow: German input vocabulary
     re.IGNORECASE,
 )
 ```

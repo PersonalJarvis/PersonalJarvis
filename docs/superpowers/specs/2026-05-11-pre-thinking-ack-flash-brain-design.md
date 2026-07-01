@@ -5,7 +5,7 @@
 **Owner:** AlexMaintainer (driver) + Claude (architect)
 **Supersedes:** `docs/superpowers/specs/2026-05-10-context-rich-preamble-design.md` (Router-Extended approach — explicitly rejected by driver in favor of a separate, provider-pluggable Flash-Brain)
 **Revision history:**
-- 2026-05-13: §1 example, §4 persona-prompts, and §5 behavior matrix rewritten. The original §4 used 8 few-shot examples per language; in practice this caused mode-collapse: the LLM reproduced the example phrases ("Lass mich kurz nachschauen", "Mache ich") regardless of whether they fit the actual user utterance. Driver explicitly identified two failure cases ("Wann wurde Einstein geboren?" → "Jawohl Sir", "Wann ist Montag?" → "Mache ich") as evidence that few-shot priming defeats the contextual-acknowledgment goal. The revised §4 uses rules + negative examples only, no positive template phrases, and adds an explicit "stay silent" branch for smalltalk and quick factual questions.
+- 2026-05-13: §1 example, §4 persona-prompts, and §5 behavior matrix rewritten. The original §4 used 8 few-shot examples per language; in practice this caused mode-collapse: the LLM reproduced the example phrases ("Lass mich kurz nachschauen", "Mache ich") regardless of whether they fit the actual user utterance. Driver explicitly identified two failure cases ("Wann wurde Einstein geboren?" → "Jawohl Sir", "Wann ist Montag?" → "Mache ich") as evidence that few-shot priming defeats the contextual-acknowledgment goal. The revised §4 uses rules + negative examples only, no positive template phrases, and adds an explicit "stay silent" branch for smalltalk and quick factual questions. <!-- i18n-allow: quoted German voice-output examples -->
 **Cross-references:** ADR-0011 (Router-Discipline), `jarvis/brain/ack_generator.py` (current template-based implementation), `jarvis/brain/output_filter.py` (40-pattern voice blacklist), `jarvis/missions/voice/announcer.py` (sibling MissionAnnouncer pattern)
 
 ---
@@ -16,24 +16,24 @@
 
 Replace the template-based, per-tool acknowledgment generator with a dedicated, provider-pluggable **Flash-Brain** that runs **in parallel** with the Router-Brain on every user utterance. The Flash-Brain emits a single short, context-aware, butler-style sentence that the user hears within ~500-900 ms of finishing their utterance — before deep reasoning and tool execution start.
 
-The defining property of "this time it works": the spoken acknowledgment must be **specific to what the user said**, not a generic phrase. The user's failure example — "Wann wird Albel eingestellt?" answered with "Verstanden, ich kümmere mich darum." — must be impossible by construction.
+The defining property of "this time it works": the spoken acknowledgment must be **specific to what the user said**, not a generic phrase. The user's failure example — "Wann wird Albel eingestellt?" answered with "Verstanden, ich kümmere mich darum." — must be impossible by construction. <!-- i18n-allow: quoted German voice interaction example -->
 
 ### Concrete Before / After
 
 ```
 Today (template generator, ack_generator.py:166-251):
-  User:   "Wann wird Albel eingestellt?"
+  User:   "Wann wird Albel eingestellt?"  <!-- i18n-allow: quoted German voice-input example -->
   Router: search_web(query="Albel")
-  Ack:    "Verstanden, ich kümmere mich darum."      ← generic, wrong tonality
+  Ack:    "Verstanden, ich kümmere mich darum."      ← generic, wrong tonality  <!-- i18n-allow: quoted German voice-output example -->
 
 Goal (Flash-Brain, parallel):
-  User:   "Wann wird Albel eingestellt?"
-  Flash:  "Hole die Einstellungs-Info zu Albel."     ← topic-specific (names "Albel" + "Einstellung")
-  Router: search_web(query="Albel Einstellung")
-  Final:  "Albel beginnt voraussichtlich im Juli."
+  User:   "Wann wird Albel eingestellt?"  <!-- i18n-allow: quoted German voice-input example -->
+  Flash:  "Hole die Einstellungs-Info zu Albel."     ← topic-specific (names "Albel" + "Einstellung")  <!-- i18n-allow: quoted German voice-output example -->
+  Router: search_web(query="Albel Einstellung")  <!-- i18n-allow: quoted German search query example -->
+  Final:  "Albel beginnt voraussichtlich im Juli."  <!-- i18n-allow: quoted German voice-output example -->
 
 Counter-example for the same kind of question that should NOT trigger an ack:
-  User:   "Wann wurde Albert Einstein geboren?"
+  User:   "Wann wurde Albert Einstein geboren?"  <!-- i18n-allow: quoted German voice-input example -->
   Flash:  ""                                          ← silent: factual question with a
                                                         single canonical answer the main
                                                         brain returns in < 1 s. A pre-sentence
@@ -63,7 +63,7 @@ Counter-example for the same kind of question that should NOT trigger an ack:
 > As Alex, when I say "Hallo Jarvis" or "wie geht's", I want a brief, natural acknowledgment from Jarvis — same persona, same voice — without it sounding like a robotic preamble. The Flash-Brain is the only entity that speaks on every turn.
 
 **US-4 (silence is golden on failure):**
-> As Alex, when the Flash-Brain hits a timeout, provider error, scrub-empty, or any other failure, I want nothing to be spoken from the ack path. The main brain still answers. A generic "Verstanden, ich kümmere mich darum." across all my requests was exactly the failure mode of the previous template-based attempt; it must never come back.
+> As Alex, when the Flash-Brain hits a timeout, provider error, scrub-empty, or any other failure, I want nothing to be spoken from the ack path. The main brain still answers. A generic "Verstanden, ich kümmere mich darum." across all my requests was exactly the failure mode of the previous template-based attempt; it must never come back. <!-- i18n-allow: quoted German voice-output example -->
 
 **US-5 (provider flexibility):**
 > As Alex, when a new fast LLM (Grok-4-Flash, Gemini 3.1 Flash, GPT-5-mini, Groq-Llama) comes out, I want to be able to switch the Flash-Brain to it through configuration alone, without touching the rest of Jarvis. Default should never be on a deprecated model (Gemini 2.5 Flash is out as of today).
@@ -90,20 +90,20 @@ When the Router-Brain finishes, the tool-use-loop executes the chosen tool. When
 
 The Flash-Brain sees **only the user's utterance** and a static persona prompt. It does **not** see the Router-Brain's tool decision. Therefore it cannot be misled by "search_web was selected, so this must be an action" — it classifies tonality purely from the language of the request itself:
 
-- `"Wann wird X eingestellt?"` → reads as a question → emits `"Lass mich kurz nachschauen."`
-- `"Mach X auf."` → reads as an action → emits `"Mache ich, X öffnet sich gleich."`
+- `"Wann wird X eingestellt?"` → reads as a question → emits `"Lass mich kurz nachschauen."` <!-- i18n-allow: quoted German voice example -->
+- `"Mach X auf."` → reads as an action → emits `"Mache ich, X öffnet sich gleich."` <!-- i18n-allow: quoted German voice example -->
 
 This decoupling is the central correctness property.
 
 ### Data Flow
 
 ```
-                User: "Wann wird Albel eingestellt?"
+                User: "Wann wird Albel eingestellt?"  <!-- i18n-allow: quoted German voice-input example -->
                                   │
                                   ▼
                        [STT: faster-whisper]
                                   │
-                Final: "Wann wird Albel eingestellt?"
+                Final: "Wann wird Albel eingestellt?"  <!-- i18n-allow: quoted German voice-input example -->
                                   │
                                   ▼
                   pipeline emits FinalTranscriptReady on bus
@@ -283,7 +283,7 @@ max_output_tokens = 40
 ```
 
 The Setup-Wizard ([`jarvis/setup/wizard.py`](../../../jarvis/setup/wizard.py)) gets a new step (German wizard prompt shown to the user, "Which fast LLM provider should Jarvis use for the short acknowledgment sentences you hear before the main answer?"):
-> "Welchen schnellen LLM-Provider soll Jarvis für die kurzen Bestätigungssätze verwenden, die du vor der Hauptantwort hörst?"
+> "Welchen schnellen LLM-Provider soll Jarvis für die kurzen Bestätigungssätze verwenden, die du vor der Hauptantwort hörst?" <!-- i18n-allow: quoted German wizard UI prompt -->
 
 Options listed dynamically based on which API keys the user already has in the Credential Manager.
 
@@ -303,57 +303,57 @@ Committed verbatim as `PERSONA_PROMPT_DE` and `PERSONA_PROMPT_EN` constants in `
 #### PERSONA_PROMPT_DE (verbatim)
 
 ```text
-Du bist JARVIS, der persönliche Assistent des Nutzers. Du bist gerade in
-deiner "Vor-Antwort"-Rolle: kurz und kontextbezogen sprechen, BEVOR die
-eigentliche Antwort fertig ist — aber nur dann, wenn es dem Nutzer wirklich
+Du bist JARVIS, der persönliche Assistent des Nutzers. Du bist gerade in  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+deiner "Vor-Antwort"-Rolle: kurz und kontextbezogen sprechen, BEVOR die  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+eigentliche Antwort fertig ist — aber nur dann, wenn es dem Nutzer wirklich  <!-- i18n-allow: PERSONA_PROMPT_DE -->
 hilft. Lieber schweigen als kontextlos plappern.
 
 KRITISCH — du beantwortest die Frage NIEMALS inhaltlich:
-Du bist NICHT das Hauptmodell. Ein anderes, größeres Modell beantwortet
-die Frage direkt nach dir, oft in weniger als einer Sekunde. Deine
-einzige Aufgabe ist ein kurzer Vor-Satz ODER Schweigen. Wenn du die
+Du bist NICHT das Hauptmodell. Ein anderes, größeres Modell beantwortet  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+die Frage direkt nach dir, oft in weniger als einer Sekunde. Deine  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+einzige Aufgabe ist ein kurzer Vor-Satz ODER Schweigen. Wenn du die  <!-- i18n-allow: PERSONA_PROMPT_DE -->
 Frage selbst beantwortest (mit Fakten, Datum, Name, Definition,
-Erklärung), hört der User die Antwort doppelt — einmal von dir, einmal
-vom Hauptmodell. Das ist IMMER falsch. Beispiele für verbotene
+Erklärung), hört der User die Antwort doppelt — einmal von dir, einmal  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+vom Hauptmodell. Das ist IMMER falsch. Beispiele für verbotene  <!-- i18n-allow: PERSONA_PROMPT_DE -->
 Eigen-Antworten:
-- "Albert Einstein wurde am 14. März 1879 geboren." → FALSCH, schweige.
-- "Die Hauptstadt von Italien ist Rom." → FALSCH, schweige.
-- "Albel wird am 15. Oktober eingestellt." → FALSCH (Halluzination),
-  schweige oder beschreibe nur die Suche.
+- "Albert Einstein wurde am 14. März 1879 geboren." → FALSCH, schweige.  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+- "Die Hauptstadt von Italien ist Rom." → FALSCH, schweige.  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+- "Albel wird am 15. Oktober eingestellt." → FALSCH (Halluzination),  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+  schweige oder beschreibe nur die Suche.  <!-- i18n-allow: PERSONA_PROMPT_DE -->
 
-OBERSTE REGEL — keine generischen Floskeln:
-Verboten sind Bestätigungen ohne konkreten Bezug zur Anfrage:
-- "Mache ich" / "Klar" / "Verstanden" / "Ich kümmere mich darum"
-- "Jawohl" / "Sehr wohl" / "Sir" / "Chef" / "Boss" als Anrede
-- "Lass mich kurz nachschauen" / "Ich überlege" als reine Floskel
-- Jede Phrase, die auf jede beliebige andere Anfrage genauso passen würde
+OBERSTE REGEL — keine generischen Floskeln:  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+Verboten sind Bestätigungen ohne konkreten Bezug zur Anfrage:  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+- "Mache ich" / "Klar" / "Verstanden" / "Ich kümmere mich darum"  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+- "Jawohl" / "Sehr wohl" / "Sir" / "Chef" / "Boss" als Anrede  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+- "Lass mich kurz nachschauen" / "Ich überlege" als reine Floskel  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+- Jede Phrase, die auf jede beliebige andere Anfrage genauso passen würde  <!-- i18n-allow: PERSONA_PROMPT_DE -->
 
-WANN DU SPRICHST (ein einziger Satz, max 12 Wörter):
-- Wenn die Anfrage offensichtlich eine längere Aufgabe auslöst:
+WANN DU SPRICHST (ein einziger Satz, max 12 Wörter):  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+- Wenn die Anfrage offensichtlich eine längere Aufgabe auslöst:  <!-- i18n-allow: PERSONA_PROMPT_DE -->
   Recherche, mehrstufige Aktion, externer Dienst, Datenabfrage.
-- Dein Satz muss das KONKRETE Thema der Anfrage erwähnen
-  (Suchgegenstand, App-Name, Datenobjekt, Ort, Person). KEINE
-  memorierten Standardphrasen — jeder Satz wird neu formuliert für
-  genau diese Anfrage.
+- Dein Satz muss das KONKRETE Thema der Anfrage erwähnen  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+  (Suchgegenstand, App-Name, Datenobjekt, Ort, Person). KEINE  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+  memorierten Standardphrasen — jeder Satz wird neu formuliert für  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+  genau diese Anfrage.  <!-- i18n-allow: PERSONA_PROMPT_DE -->
 
 WANN DU SCHWEIGST (Output: leerer String ""):
 - Smalltalk ("Hallo", "Wie geht's", "Hey", "Danke").
-- Schnelle Faktenfragen ("Wann wurde Einstein geboren?", "Wieviel Uhr
-  ist es?", "Hauptstadt von Italien?"). Das Hauptmodell antwortet
-  direkt — ein Vor-Satz würde nur stören.
+- Schnelle Faktenfragen ("Wann wurde Einstein geboren?", "Wieviel Uhr  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+  ist es?", "Hauptstadt von Italien?"). Das Hauptmodell antwortet  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+  direkt — ein Vor-Satz würde nur stören.  <!-- i18n-allow: PERSONA_PROMPT_DE -->
 - Voice-Control ("Sei still", "Stopp", "Pause").
-- Wenn du unsicher bist, ob ein Vor-Satz hier passt: schweigen.
+- Wenn du unsicher bist, ob ein Vor-Satz hier passt: schweigen.  <!-- i18n-allow: PERSONA_PROMPT_DE -->
 
-VERBOTENES VOKABULAR (auch in erlaubten Sätzen, defense-in-depth):
+VERBOTENES VOKABULAR (auch in erlaubten Sätzen, defense-in-depth):  <!-- i18n-allow: PERSONA_PROMPT_DE -->
 "Subagent", "Sub-Agent", "Worker", "Provider" (alleinstehend),
 "Sir", "Sehr wohl", "Jawohl", "Boss".
 
 ERLAUBT in deinem Satz:
 "OpenClaw", "Jarvis", Marken-Namen (Spotify, Discord, GitHub, Outlook,
-…), sachliche Themen-Wörter (Kalender, Termin, Flüge, Wetter, …).
+…), sachliche Themen-Wörter (Kalender, Termin, Flüge, Wetter, …).  <!-- i18n-allow: PERSONA_PROMPT_DE -->
 
-Output: Genau ein Satz mit konkretem Themenbezug, ODER leerer String.
-Kein Markdown, kein Kommentar, kein Begleitsatz.
+Output: Genau ein Satz mit konkretem Themenbezug, ODER leerer String.  <!-- i18n-allow: PERSONA_PROMPT_DE -->
+Kein Markdown, kein Kommentar, kein Begleitsatz.  <!-- i18n-allow: PERSONA_PROMPT_DE -->
 ``` <!-- i18n-allow: PERSONA_PROMPT_DE -->
 
 #### PERSONA_PROMPT_EN (verbatim)
@@ -424,7 +424,7 @@ A 10-utterance smoke battery against the v2.1 prompt (Grok-4-Fast-Non-Reasoning 
 | Quick factual → silent | Einstein, Italy capital | PASS for both (`""`) |
 | Quick factual → silent | "Wann ist Montag?" | FAIL — got next-Monday date |
 | Voice control → silent | "Sei still" | PASS (`""`) |
-| Action → topic-aware | Spotify, TTS-voice, Flüge | PASS (all reference the concrete topic) |
+| Action → topic-aware | Spotify, TTS-voice, Flüge | PASS (all reference the concrete topic) | <!-- i18n-allow: quoted German test-fixture noun -->
 | External lookup → topic-aware | Albel | FAIL — got `""` (over-silent after disclaimer) |
 
 Pure prompt engineering plateaus around 70% on this battery. The three residual failure shapes (greeting echo, factual self-answer, over-silence on lookup) are all detectable post-hoc by the F10 heuristic in §6. Combined with the prompt, the dual-layer design SHOULD reach 10/10 on this exact battery and is the binding architecture for E3.
@@ -472,20 +472,20 @@ Two columns matter: whether the Flash-Brain produces text at all (silent vs spea
 
 | User Input                            | Expected Flash-Brain Output            | Reason                                                        | Spoken Order                                |
 |---------------------------------------|----------------------------------------|---------------------------------------------------------------|---------------------------------------------|
-| `"Mach Spotify auf"`                  | Topic-specific sentence mentioning "Spotify" (LLM-generated, e.g. "Spotify öffne ich grad.") | Action with visible execution lag | Ack → app launch → Main response            |
-| `"Such mir SF-Flüge für morgen"`      | Topic-specific sentence mentioning "Flüge" and/or "San Francisco" | Multi-step external task             | Ack → spawn_openclaw → Final answer         |
-| `"Wann wird Albel eingestellt?"`      | Topic-specific sentence referencing "Albel" or "Einstellung" | External lookup needed                       | Ack → search_web → Main answer              |
-| `"Wann wurde Einstein geboren?"`      | `""` (silent)                          | Quick factual question, main brain answers directly in < 1 s  | Main response only                          |
-| `"Was ist die Hauptstadt von Italien?"`| `""` (silent)                         | Same — main brain trivia                                      | Main response only                          |
+| `"Mach Spotify auf"`                  | Topic-specific sentence mentioning "Spotify" (LLM-generated, e.g. "Spotify öffne ich grad.") | Action with visible execution lag | Ack → app launch → Main response            | <!-- i18n-allow: quoted German voice example -->
+| `"Such mir SF-Flüge für morgen"`      | Topic-specific sentence mentioning "Flüge" and/or "San Francisco" | Multi-step external task             | Ack → spawn_openclaw → Final answer         | <!-- i18n-allow: quoted German voice example -->
+| `"Wann wird Albel eingestellt?"`      | Topic-specific sentence referencing "Albel" or "Einstellung" | External lookup needed                       | Ack → search_web → Main answer              | <!-- i18n-allow: quoted German voice example -->
+| `"Wann wurde Einstein geboren?"`      | `""` (silent)                          | Quick factual question, main brain answers directly in < 1 s  | Main response only                          | <!-- i18n-allow: quoted German voice example -->
+| `"Was ist die Hauptstadt von Italien?"`| `""` (silent)                         | Same — main brain trivia                                      | Main response only                          | <!-- i18n-allow: quoted German voice example -->
 | `"Wann ist Montag?"`                  | `""` (silent)                          | Trivial date question, main brain answers directly            | Main response only                          |
 | `"Hallo Jarvis"`                      | `""` (silent)                          | Pure smalltalk, main brain greets back                        | Main response only                          |
 | `"Wie geht's dir?"`                   | `""` (silent)                          | Pure smalltalk                                                | Main response only                          |
 | `"Sei still"`                         | `""` (silent)                          | Voice control                                                 | Voice-control bypass triggers audio stop    |
-| `"Was sollte ich essen?"`             | `""` (silent)                          | Reflection, no external lookup, main brain answers in < 2 s   | Main response only                          |
-| `"Ändere TTS-Stimme auf Lara"`        | Topic-specific sentence referencing "TTS-Stimme" or "Lara" | Action with config-mutation latency             | Ack → set_config_value → Echo confirm       |
+| `"Was sollte ich essen?"`             | `""` (silent)                          | Reflection, no external lookup, main brain answers in < 2 s   | Main response only                          | <!-- i18n-allow: quoted German voice example -->
+| `"Ändere TTS-Stimme auf Lara"`        | Topic-specific sentence referencing "TTS-Stimme" or "Lara" | Action with config-mutation latency             | Ack → set_config_value → Echo confirm       | <!-- i18n-allow: quoted German voice example -->
 | LLM emits `"Mache ich"` / `"On it"`   | scrubbed → empty (generic filler is in the forbidden list at runtime) | Counter-example: prompt forbids it, post-check enforces | Silent, `ack_scrubbed_empty_total` increments |
 | LLM emits a generic 40-word ramble    | Truncated at first `[.!?]`; if still generic → scrubbed empty | Truncation handles length, scrub handles content    | Either short topical ack or silent          |
-| LLM emits `"Sub-Agent läuft"`         | scrub strips → empty                   | Blacklist                                                     | Silent, `ack_scrubbed_empty_total` increments|
+| LLM emits `"Sub-Agent läuft"`         | scrub strips → empty                   | Blacklist                                                     | Silent, `ack_scrubbed_empty_total` increments| <!-- i18n-allow: quoted German voice example -->
 
 ---
 
@@ -502,9 +502,9 @@ Two columns matter: whether the Flash-Brain produces text at all (silent vs spea
 | F7 | TTS synthesis fails on the ack text            | Existing TTS error path; main response unaffected     | `ack_tts_failed_total`                     |
 | F8 | 3 consecutive F1/F2 from same provider         | Circuit breaker opens, 60 s cooldown, then half-open  | `ack_circuit_breaker_open_total{provider}` |
 | F9 | `[ack_brain].enabled = false`                  | AckGenerator never instantiated, no bus events        | (static off, no counter)                   |
-| F10| LLM emits a substantive answer instead of a pre-sentence (e.g. `"Rom."`, `"Albert Einstein wurde am 14. März 1879 geboren."`, `"Der nächste Montag ist am 9. September 2024."`) | Heuristic post-filter in `AckGenerator.run()` detects answer-shaped outputs and suppresses; return None | `ack_self_answer_suppressed_total{pattern}` |
+| F10| LLM emits a substantive answer instead of a pre-sentence (e.g. `"Rom."`, `"Albert Einstein wurde am 14. März 1879 geboren."`, `"Der nächste Montag ist am 9. September 2024."`) | Heuristic post-filter in `AckGenerator.run()` detects answer-shaped outputs and suppresses; return None | `ack_self_answer_suppressed_total{pattern}` | <!-- i18n-allow: quoted German voice example -->
 
-**Design principle: Silent or Strong.** No failure mode falls back to a generic template. The previous template-based implementation's defining failure was "Verstanden, ich kümmere mich darum." emitted indiscriminately; reintroducing that on errors would defeat the spec.
+**Design principle: Silent or Strong.** No failure mode falls back to a generic template. The previous template-based implementation's defining failure was "Verstanden, ich kümmere mich darum." emitted indiscriminately; reintroducing that on errors would defeat the spec. <!-- i18n-allow: quoted German voice-output example -->
 
 **F10 detection heuristic (binding for E3 AckGenerator):**
 
@@ -512,13 +512,13 @@ Empirical validation on 2026-05-13 with Grok-4-Fast-Non-Reasoning + v2.1 prompts
 
 The post-filter SHOULD treat the following patterns as answer-shaped and suppress:
 
-- **Date answer**: the output contains a date / time / day-of-week token (`\b\d{1,2}\.\s?\d{1,2}\.\s?\d{2,4}\b`, `\b\d{1,2}:\d{2}\b`, month names, `Montag`/`Dienstag`/…/`Monday`/…) AND is NOT preceded by an action verb (`suche`, `prüfe`, `hole`, `look up`, `check`, …).
+- **Date answer**: the output contains a date / time / day-of-week token (`\b\d{1,2}\.\s?\d{1,2}\.\s?\d{2,4}\b`, `\b\d{1,2}:\d{2}\b`, month names, `Montag`/`Dienstag`/…/`Monday`/…) AND is NOT preceded by an action verb (`suche`, `prüfe`, `hole`, `look up`, `check`, …). <!-- i18n-allow: German input vocabulary -->
 - **Single-word fact**: the output is one or two words ending in `.`, with the words being noun-shaped and not a topic-reference (e.g. `"Rom."`, `"Berlin."`, `"42."`).
-- **"X is Y" definition**: the output matches `(.*)\s(ist|sind|war|waren|is|are|was|were)\s(.*)\.` AND lacks any action verb of the SPEAK-branch (recherchiere / suche / hole / schaue / starte / öffne / wechsle / look up / search / fetch / launch / change).
+- **"X is Y" definition**: the output matches `(.*)\s(ist|sind|war|waren|is|are|was|were)\s(.*)\.` AND lacks any action verb of the SPEAK-branch (recherchiere / suche / hole / schaue / starte / öffne / wechsle / look up / search / fetch / launch / change). <!-- i18n-allow: German input vocabulary -->
 
 The post-filter MUST NOT touch:
 
-- Topic-aware action descriptions like `"Suche Flüge nach München für morgen."` — matches the "X is Y" pattern superficially but starts with an action verb.
+- Topic-aware action descriptions like `"Suche Flüge nach München für morgen."` — matches the "X is Y" pattern superficially but starts with an action verb. <!-- i18n-allow: quoted German example -->
 - Empty output (already silent).
 - Output already scrubbed by `scrub_for_voice`.
 
@@ -654,7 +654,7 @@ authoritative record so the file-vs-spec invariant in `persona_prompt.py`'s
 module docstring still holds.
 
 1. **Name-neutral.** The opener "Du bist JARVIS" / "You are JARVIS" is replaced
-   by "Du bist der persönliche Assistent des Nutzers" / "You are the user's
+   by "Du bist der persönliche Assistent des Nutzers" / "You are the user's <!-- i18n-allow: quoted German persona-prompt example -->
    personal assistant". The assistant's own name is runtime-derived from the wake
    word (`assistant_name.py`) and owned by the deep brain; the Flash-Brain
    preamble no longer bakes in a product name. The `ALLOWED` list's literal

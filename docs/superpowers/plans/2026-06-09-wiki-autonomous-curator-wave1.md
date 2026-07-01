@@ -292,7 +292,7 @@ Expose the dedicated Wiki-curator model picker as a backend endpoint. It reads/w
 
 No `server.py` change is needed: `settings_router` is already mounted (`jarvis/ui/web/server.py:263`), and the new routes share its `prefix="/api/settings"`.
 
-> Why not `config-soll.json` / 3-layer persist (unlike `set_sub_jarvis_provider`): `[memory.wiki.curator]` is NOT a drift-guarded field (`scripts/config-soll.json` only pins `memory.legacy_curator`, brain/tts/stt providers). A plain BOM-safe nested TOML write is the correct persistence tier here.
+> Why not `config-soll.json` / 3-layer persist (unlike `set_sub_jarvis_provider`): `[memory.wiki.curator]` is NOT a drift-guarded field (`scripts/config-soll.json` only pins `memory.legacy_curator`, brain/tts/stt providers). A plain BOM-safe nested TOML write is the correct persistence tier here. <!-- i18n-allow -->
 
 ---
 
@@ -731,7 +731,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 #### Gotchas
 - **Parallel-session dirty tree.** `jarvis/ui/web/settings_routes.py`, `jarvis/core/config_writer.py`, and `jarvis/ui/web/server.py` are already `M` in `git status`. All edits in this task are **append-only** (new routes/helpers at the bottom of each file, a new test file) precisely so they do not collide with a parallel session's edits. `server.py` needs **no** change — `settings_router` is already mounted at `server.py:263` and the new routes inherit its `prefix="/api/settings"`. If `git commit` reports a merge conflict marker in either file, the parallel session also appended at EOF — move your block below theirs; the routes/helpers are position-independent.
-- **No `config-soll.json` pin.** Unlike `set_sub_jarvis_provider` (which needs the 3-layer config-soll pin to survive the drift-guard), `[memory.wiki.curator]` is NOT a drift-guarded field (`scripts/config-soll.json` only guards `memory.legacy_curator` + brain/tts/stt providers). A plain BOM-safe nested TOML write is correct here — do NOT add a config-soll layer.
+- **No `config-soll.json` pin.** Unlike `set_sub_jarvis_provider` (which needs the 3-layer config-soll pin to survive the drift-guard), `[memory.wiki.curator]` is NOT a drift-guarded field (`scripts/config-soll.json` only guards `memory.legacy_curator` + brain/tts/stt providers). A plain BOM-safe nested TOML write is correct here — do NOT add a config-soll layer. <!-- i18n-allow -->
 - **Empty string is load-bearing, not "unset".** `provider=""` / `model=""` are the documented fallback sentinels read by `jarvis/memory/wiki/curator_llm.py:73-81`. Persist and echo them verbatim — never coerce an empty string to `brain.primary` at write time, or the picker silently freezes the curator onto whatever the main brain happened to be at save time (defeats `follow_brain` tracking).
 - **Live-apply touches private LLM internals deliberately.** The running curator exposes no public setter, so the route mutates `curator._llm._cfg` and clears `._brain`/`._resolved_*` (the lazy cache in `_ensure_brain`, `curator_llm.py:362-396`). This is best-effort and wrapped in try/except — a headless host (no running curator) just returns `applied_live=false, restart_required=true`. If a future refactor adds a public `WikiCuratorLLM.reconfigure(provider, model)`, switch the route to call it.
 - **`resolve_config_path()` honours `JARVIS_CONFIG`.** Pass `path=resolve_config_path()` to the setter (as the `ui-language` route does) so the write lands in the same file `load_config` reads — no desktop/VPS split-brain.
@@ -1196,7 +1196,7 @@ git commit -m "feat(ui): Wiki provider/model card in API Keys & Providers" -m "A
 - **Parallel-session dirty tree:** `git status` already shows `ApiKeysView.tsx` is NOT in the dirty set, but `src/i18n/locales/{en,de,es}.json`, `src/i18n/index.ts`, and `src/views/settings/LanguagesGroup.tsx`/`.test.tsx` ARE modified by a parallel session. When you edit the three locale JSONs, insert the `"wiki_provider"` block strictly *after* the existing `"provider_switcher"` block (a stable, unmodified anchor) so you don't collide with the parallel i18n edits. Stage only the 7 listed files in Step 9 — do NOT `git add -A`, or you will sweep in the parallel session's unrelated changes.
 - **Backend dependency:** this card calls `GET/PUT /api/settings/wiki-provider`. That endpoint is authored by the sibling backend Wave-1 task (`jarvis/ui/web/settings_routes.py` + `provider_routes.py`). Until it merges, the hook's `error` branch renders `wiki_provider.load_error` (graceful — no crash). The test stubs `fetch`, so it is independent of the backend landing first.
 - **i18n key parity:** all three locales must carry the identical `"wiki_provider"` key set. The app's i18n is a flat per-locale JSON merge (`src/i18n/index.ts` lines 42-46) with English as the implicit fallback, so a missing de/es key would silently render the raw key string — add all three in Steps 4-6, don't skip es.
-- **English-only source rule:** the i18n *key names* and the `en.json` *values* are the English source of record (CLAUDE.md Output Language Policy); de/es are translations. The component/hook code, comments, and test names are all English. The German `de.json` strings use real umlauts (ä/ö/ü/ß), never ASCII substitutes.
+- **English-only source rule:** the i18n *key names* and the `en.json` *values* are the English source of record (CLAUDE.md Output Language Policy); de/es are translations. The component/hook code, comments, and test names are all English. The German `de.json` strings use real umlauts (ä/ö/ü/ß), never ASCII substitutes. <!-- i18n-allow -->
 - **No new dependency:** `BookOpen`/`Loader2` already ship with the existing `lucide-react`; `@/components/ui/button`, `@/store/events`, `@/i18n` are all already imported elsewhere — base install unchanged, doctrine intact.
 
 ---
@@ -3277,7 +3277,7 @@ path only as a last resort. Add regression tests."
               await self._init_wiki_integration()
           except Exception as exc:  # noqa: BLE001
               logger.opt(exception=exc).warning(
-                  "WikiIntegration-Init fehlgeschlagen — wiki write-wiring inaktiv"
+                  "WikiIntegration-Init fehlgeschlagen — wiki write-wiring inaktiv"  <!-- i18n-allow -->
               )
 
           # Phase B3 wiki live-reload — start the WikiWatcher so file
@@ -3291,7 +3291,7 @@ path only as a last resort. Add regression tests."
               await self._init_wiki_integration()
           except Exception as exc:  # noqa: BLE001
               logger.opt(exception=exc).warning(
-                  "WikiIntegration-Init fehlgeschlagen — wiki write-wiring inaktiv"
+                  "WikiIntegration-Init fehlgeschlagen — wiki write-wiring inaktiv"  <!-- i18n-allow -->
               )
 
           # Build the FTS5 search index once if it is empty so a pre-existing
@@ -3465,7 +3465,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
   ```
 
 #### Gotchas
-- **Parallel-session dirty tree:** `jarvis/ui/web/server.py` and `jarvis/core/config.py` are already `M` (modified) in the working tree from a parallel session. This task **edits `server.py`** — coordinate so your boot-block insertion (lines ~1404–1422) and your new method (~1746) do not collide with their uncommitted hunks. Re-read those exact line ranges immediately before editing; if the anchors have shifted, match on the unique comment strings (`"WikiIntegration-Init fehlgeschlagen"` and `logger.info("wiki_integration: bootstrap_wiki_integration succeeded")`) rather than line numbers. This task does **not** edit `config.py` (it only reads `WikiIntegrationConfig.vault_root` / `memory.data_dir`), so there is no conflict there.
+- **Parallel-session dirty tree:** `jarvis/ui/web/server.py` and `jarvis/core/config.py` are already `M` (modified) in the working tree from a parallel session. This task **edits `server.py`** — coordinate so your boot-block insertion (lines ~1404–1422) and your new method (~1746) do not collide with their uncommitted hunks. Re-read those exact line ranges immediately before editing; if the anchors have shifted, match on the unique comment strings (`"WikiIntegration-Init fehlgeschlagen"` and `logger.info("wiki_integration: bootstrap_wiki_integration succeeded")`) rather than line numbers. This task does **not** edit `config.py` (it only reads `WikiIntegrationConfig.vault_root` / `memory.data_dir`), so there is no conflict there. <!-- i18n-allow -->
 - **Stage only the three files** in Step 8 (`git add` is explicit) so the parallel session's uncommitted `server.py`/`config.py` changes are not swept into this commit. If `server.py` carries unrelated uncommitted hunks you must not commit, stage with `git add -p jarvis/ui/web/server.py` and pick only your two hunks.
 - **`WebServer.__new__` in the test** deliberately bypasses `__init__` (which builds the full app/bus stack) and sets only `server.cfg`, because `_init_wiki_boot_index` reads only `self.cfg.{wiki_integration,memory}` and `logger`. If a future refactor makes the method read more `self.*` attributes, extend the `SimpleNamespace`.
 - **`data/jarvis.db` is the single shared DB.** `_init_wiki_boot_index` resolves it from `cfg.memory.data_dir`; `VaultSearch._default_db_path()` walks to the same `data/jarvis.db`. Keep them aligned — if you ever route the boot index to a different DB file, live search will still see an empty table.

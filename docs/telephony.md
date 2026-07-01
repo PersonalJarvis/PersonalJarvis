@@ -112,7 +112,7 @@ restart, so re-run `set-webhook` each time. The VPS path avoids this.
   through STT → Brain → TTS with no real call, and shows the transcript +
   response so you can confirm there is no text truncation).
 - Call your Twilio number. Jarvis greets you, you talk, it answers in the Charon
-  voice. Say **"auflegen"** (or "tschüss", "goodbye", "hang up") to end the
+  voice. Say **"auflegen"** (or "tschüss", "goodbye", "hang up") to end the <!-- i18n-allow: voice hangup trigger words -->
   call; barge-in is supported (start talking while Jarvis is speaking and it
   stops to listen). <!-- i18n-allow -->
 

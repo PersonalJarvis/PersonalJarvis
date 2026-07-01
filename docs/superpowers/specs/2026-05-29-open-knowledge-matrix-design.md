@@ -24,7 +24,7 @@ these conceal nothing).
 ### Changes
 
 1. **`FieldRow` (`ProfileView.tsx`)** — empty fields render quiet, readable
-   muted-italic text (`profile_view.field_unknown`, e.g. "noch nicht bekannt")
+   muted-italic text (`profile_view.field_unknown`, e.g. "noch nicht bekannt") <!-- i18n-allow: quoted German i18n-locale example value -->
    instead of the `.dossier-redact` hatch bar. Drop the now-unused `seed` prop
    and `REDACT_WIDTHS` table.
 2. **`HeroBand` (`ProfileView.tsx`)** — swap the `Lock` icon in the

@@ -68,9 +68,9 @@ with the filter extension). Both runs against the same provider stack
 # Klassisch
 "grossartige frage", "tolle frage", "als ki", "als sprachmodell", "ich hoffe, das hilft",
 # Echo-Paraphrase (Phase 2)
-"du möchtest also", "ich verstehe, dass", "if i understand correctly", "you'd like me to",
+"du möchtest also", "ich verstehe, dass", "if i understand correctly", "you'd like me to",  # i18n-allow
 # Hedging (Phase 2)
-"ich glaube", "vermutlich", "möglicherweise", "i think", "perhaps", "i believe",
+"ich glaube", "vermutlich", "möglicherweise", "i think", "perhaps", "i believe",  # i18n-allow
 # Filler-Selbstreferenz (Phase 2)
 "lass mich kurz", "let me think",
 # Polster (Phase 2)
@@ -166,7 +166,7 @@ A strict interpretation as a hard disjoint set vs. a pragmatic interpretation as
 
 ### F-14: Mandate DE verb list vs. force-spawn RE discrepancy
 
-The mandate explicitly names "lies, schreibe, baue, installiere, öffne." The current `_FORCE_SPAWN_RE` covered only repair verbs (`umsetz`, `reparier`, `fix`, `implementier`, `refactor`, `debug`). Plus: `mach` was missing entirely.
+The mandate explicitly names "lies, schreibe, baue, installiere, öffne." <!-- i18n-allow --> The current `_FORCE_SPAWN_RE` covered only repair verbs (`umsetz`, `reparier`, `fix`, `implementier`, `refactor`, `debug`). Plus: `mach` was missing entirely.
 
 **Resolution:** Phase-3 commit `c71fbad7` extracted the verb list into `BrainRoutingConfig.spawn_verbs` and added 16 additional verbs + EN equivalents.
 
@@ -192,7 +192,7 @@ Source: mandate § "Definition of Done."
 |---|---|---|---|
 | 1 | `pytest -v` passes, no regressions vs. the pre-refactor baseline | ☑ | 89 Phase-1–5 tests green; 8 pre-existing failures forensically verified on `e94a17aa` (BOM/Conductor/Skill/Router-Policy/Vision-Config). The stop condition "> 5" does not apply. |
 | 2 | `python -m jarvis` starts without error | ☐ | Branch bug F-10 (`jarvis.clis.risk_integration` missing). Not caused by the refactor. Precondition: stash pop or a targeted module fix. |
-| 3 | `voice_e2e_probe`: 0 anti-pattern hits | ☑ | Probe v2 shows 0 hits (1 before with `möglicherweise`). |
+| 3 | `voice_e2e_probe`: 0 anti-pattern hits | ☑ | Probe v2 shows 0 hits (1 before with `möglicherweise`). |  <!-- i18n-allow -->
 | 4 | `voice_e2e_probe`: name ratio ≤ 33 % | ☑ | 15 % in probe v2. |
 | 5 | `voice_e2e_probe`: hangup contract green | ☐ | Branch bug F-9 (persona_loader missing). JARVIS_PERSONA.md does not reach the prompt. |
 | 6 | All 13 scenarios show the expected pattern | ◐ | 11/13 fulfilled. Edge cases: 07 filter-empty-output (acceptable), 12 `<function_calls>` leak (F-11, deferred). |
@@ -308,7 +308,7 @@ None of this is within the mandate Phase-1–6 scope. It should be approached as
 
 | # | Drift | Wave | Pattern | Test |
 |---|---|---|---|---|
-| 1 | A1 "Sir" address | 1 | `SIR_OPENER_RE`, `SIR_TAIL_RE` + `QUOTE_PROTECT_RE` | `test_sir_anrede_is_removed` × 2 + `test_legitimate_sir_in_quote_is_kept` |
+| 1 | A1 "Sir" address | 1 | `SIR_OPENER_RE`, `SIR_TAIL_RE` + `QUOTE_PROTECT_RE` | `test_sir_anrede_is_removed` × 2 + `test_legitimate_sir_in_quote_is_kept` |  <!-- i18n-allow -->
 | 2 | Sub-agent/supervisor-agent compounds | 1 | `JARGON_COMPOUNDS` + `JARGON_COMPOUND_RE` | `test_sub_agent_jargon_is_removed`, `test_supervisor_agent_jargon_is_removed` |
 | 3 | Tool-args YAML body leak | 1 | `TOOL_ARGS_YAML_RE` with tool-arg keys | `test_tool_args_yaml_block_is_removed` |
 | 4 | Post-scrub garbage fallback | 1 | `MIN_MEANINGFUL_CHARS = 3` + `replaced_with_fallback_residue` | `test_post_scrub_residue_triggers_fallback`, `test_post_scrub_meaningful_text_no_fallback` |
@@ -404,7 +404,7 @@ The persona refactor is thus at the state that the user can accept or mark as "b
 
 ### 11.2 Caveat: pywinauto missing on production hardware
 
-Stderr output during the probe: `pywinauto nicht installiert — UIA-Tree leer` ("pywinauto not installed — UIA tree empty"). The UIATreeSource falls back to no-op in fallback mode (nodes=0, window_title empty). The measured latency therefore reflects the engine overhead, not the real UIA-tree-pruning path.
+Stderr output during the probe: `pywinauto nicht installiert — UIA-Tree leer` ("pywinauto not installed — UIA tree empty"). <!-- i18n-allow --> The UIATreeSource falls back to no-op in fallback mode (nodes=0, window_title empty). The measured latency therefore reflects the engine overhead, not the real UIA-tree-pruning path.
 
 Implications:
 - **Production path without pywinauto:** `get_active_window_hint()` returns `None` (because neither window_title nor active_pid is available, see `test_no_window_no_pid_returns_none`). Spawn runs without a hint — functionally correct, since Phase 5 is explicitly opt-in (default OFF).
@@ -440,21 +440,21 @@ Three data points: **step-0 probe (2026-04-28 ~16:00)** before today's work, **r
 
 | ID | Tag | Step 0 (before) | Final (after) | Success? |
 |---|---|---|---|---|
-| 01 | routine-status | "Ich kann den Dateistatus nicht direkt einsehen — welche Datei und in welchem Programm?" | "Das Bild zeigt mir, was auf deinem Bildschirm zu sehen ist — ich benötige einen Screenshot, um den Speicherstatus der aktiven Datei zu prüfen." | ◐ answer substantial, no "Sir", no tool-JSON leak |
-| 02 | formal-greeting | "Guten Morgen, Alex. Es ist kurz nach 16 Uhr — eher ein guter Nachmittag." | "Guten Morgen — was liegt an?" | ☑ formal, terse |
-| 03 | open-question | **"Sir, ich starte einen Sub-Agent, der die Beschleunigung … analysiert.**\nutterance:…\ncontext_hints:…\naction:…\ntarget:…" | "Was möchtest du beschleunigen?" | ☑ **A1 + tool-args leak completely fixed** |
-| 04 | risky-command | "I need to know where to look. Welche Logs meinst du …" (mixed-language) | "Welche Logs meinst du — Windows Event Logs, eine bestimmte App, oder Logdateien in einem Ordner?" | ☑ single-language, clear clarifying question |
-| 05 | reckless-action | "Verstanden. Nur zur Sicherheit: kein Rollback-Plan, keine Tests …" | "Tapfer." | ☑ dry anchor (P5) |
-| 06 | proactive-context | "I don't have access to live weather data right now …" (mixed-language) | "Ich habe keinen Zugriff auf deinen Standort oder Wetterdaten in Echtzeit — sag mir wo du bist, dann such ich's kurz nach." | ☑ single-language, but formal-"Sie" drift (1) |
-| 07 | long-task-start | **"Sir, ich starte einen Sub-Agent, der das gesamte Projektverzeichnis analysiert."** | (brain empty content → filter fallback) "Es trat ein Fehler auf." | ◐ filter fallback instead of an initiative announcement; A1 fixed |
+| 01 | routine-status | "Ich kann den Dateistatus nicht direkt einsehen — welche Datei und in welchem Programm?" | "Das Bild zeigt mir, was auf deinem Bildschirm zu sehen ist — ich benötige einen Screenshot, um den Speicherstatus der aktiven Datei zu prüfen." | ◐ answer substantial, no "Sir", no tool-JSON leak |  <!-- i18n-allow -->
+| 02 | formal-greeting | "Guten Morgen, Alex. Es ist kurz nach 16 Uhr — eher ein guter Nachmittag." | "Guten Morgen — was liegt an?" | ☑ formal, terse |  <!-- i18n-allow -->
+| 03 | open-question | **"Sir, ich starte einen Sub-Agent, der die Beschleunigung … analysiert.**\nutterance:…\ncontext_hints:…\naction:…\ntarget:…" | "Was möchtest du beschleunigen?" | ☑ **A1 + tool-  <!-- i18n-allow -->args leak completely fixed** |
+| 04 | risky-command | "I need to know where to look. Welche Logs meinst du …" (mixed-language) | "Welche Logs meinst du — Windows Event Logs, eine bestimmte App, oder Logdateien in einem Ordner?" | ☑  <!-- i18n-allow --> single-language, clear clarifying question |
+| 05 | reckless-action | "Verstanden. Nur zur Sicherheit: kein Rollback-Plan, keine Tests …" | "Tapfer." | ☑ dry anchor (P5) |  <!-- i18n-allow -->
+| 06 | proactive-context | "I don't have access to live weather data right now …" (mixed-language) | "Ich habe keinen Zugriff auf deinen Standort oder Wetterdaten in Echtzeit — sag mir wo du bist, dan  <!-- i18n-allow -->n such ich's kurz nach." | ☑ single-language, but formal-"Sie" drift (1) |
+| 07 | long-task-start | **"Sir, ich starte einen Sub-Agent, der das gesamte Projektverzeichnis analysiert."** | (brain empty content → filter fallback) "Es trat ein Fehler auf." | ◐ filter fallback i  <!-- i18n-allow -->nstead of an initiative announcement; A1 fixed |
 | 08 | bad-news | "I need more context to answer that …" (mixed-language) | "screen_snapshot" | ☐ tool name as a bare answer — new drift symptom |
-| 09 | high-pressure | "Womit kann ich dir jetzt sofort helfen — soll ich eine Datei öffnen, den Bildschirm vorbereiten oder etwas anderes?" | "Was soll ich tun — aufmachen, aufräumen, auf Vollbild schalten?" | ☑ terser, register holds |
+| 09 | high-pressure | "Womit kann ich dir jetzt sofort helfen — soll ich eine Datei öffnen, den Bildschirm vorbereiten oder etwas anderes?" | "Was soll ich tun — aufmachen, aufräumen, auf Vollbild sc  <!-- i18n-allow -->halten?" | ☑ terser, register holds |
 | 10 | hangup | "Auf Wiedersehen, Alex." | "Bis dann." (in the 18:54 run), **"Auf Wiedersehen, Alex."** in the 19:17 run | ☑ **hangup contract fixed via persona_loader reactivation** |
 | 11 | echo-trap (DE) | "Es ist 16 Uhr 01." | "Es ist 19:47 Uhr (MEZ)." | ☑ direct, no echo opener |
 | 11 | echo-trap (EN) | "It's 4:01 PM." | "It's whatever time your system clock shows; I don't have direct access …" | ◐ no echo opener, but hedging |
 | 12 | tool-spawn-output-leak (DE) | post-filter `}` (filter garbage) | `read_file {"path": "jarvis.toml"}` tool call leaked through | ◐ no YAML body leak anymore, but the tool name `read_file` is not in `TOOL_NAMES` |
-| 12 | tool-spawn-output-leak (EN) | post-filter `}` | "jarvis.toml ist auf dem System nicht auffindbar … Hast du den genauen Pfad?" | ☑ direct answer without tool args |
-| 13 | self-reference-trap (DE) | "Dein persönlicher **Supervisor-Agent** — ich erledige Aufgaben …" | "Jarvis. Dein Meta-Orchestrator auf diesem Rechner — ich route, delegiere, und halte dir den Kram vom Hals." | ☑ **engineering compound scrubbed** (filter action: removed_engineering_jargon) |
+| 12 | tool-spawn-output-leak (EN) | post-filter `}` | "jarvis.toml ist auf dem System nicht auffindbar … Hast du den genauen Pfad?" | ☑ direct answer without tool args |  <!-- i18n-allow -->
+| 13 | self-reference-trap (DE) | "Dein persönlicher **Supervisor-Agent** — ich erledige Aufgaben …" | "Jarvis. Dein Meta-Orchestrator auf diesem Rechner — ich route, delegiere, und halte dir den Kram  <!-- i18n-allow --> vom Hals." | ☑ **engineering compound scrubbed** (filter action: removed_engineering_jargon) |
 | 13 | self-reference-trap (EN) | "A voice-driven personal assistant running on your Windows 11 machine. Think Alfred, but with a terminal." | "I'm JARVIS, your meta-orchestrator, Alex — voice interface, screen awareness, and a roster of tools and sub-agents at your disposal." | ☑ persona identity, no language-model reveal |
 
 **Outputs summary:** A1 fixed (Sir → none), tool-args body leak gone, engineering compounds scrubbed, hangup green. The remaining ☐/◐ are no longer mandate drifts, but brain volatility (mixed-language mitigated; the tool name `read_file` as a new edge case not in the blacklist).
@@ -464,7 +464,7 @@ Three data points: **step-0 probe (2026-04-28 ~16:00)** before today's work, **r
 | State | 5-smalltalk spawn count | Evidence |
 |---|---|---|
 | **Before** (before 2026-04-25) | presumed 5/5 (spawn reflex on every Hello) | indirectly from 6 empty probe outputs in `docs/persona-research.md` section 1.3 of 2026-04-28 |
-| **After** (post-Phase-3) | **0/5 deterministically** | `tests/unit/brain/test_routing.py::test_smalltalk_dispatches_zero_spawn_calls` × 5 + `test_smalltalk_does_not_force_spawn` × 5 — each green without a mock LLM. The heuristic does not trigger for `Hallo`/`Wie geht's?`/`Was ist die Hauptstadt von Frankreich?`/`Danke`/`Auf Wiedersehen` |
+| **After** (post-Phase-3) | **0/5 deterministically** | `tests/unit/brain/test_routing.py::test_smalltalk_dispatches_zero_spawn_calls` × 5 + `test_smalltalk_does_not_force_spawn` × 5 — each green wit  <!-- i18n-allow -->hout a mock LLM. The heuristic does not trigger for `Hallo`/`Wie geht's?`/`Was ist die Hauptstadt von Frankreich?`/`Danke`/`Auf Wiedersehen` |
 
 ### 12.3 Anti-pattern hit statistics
 

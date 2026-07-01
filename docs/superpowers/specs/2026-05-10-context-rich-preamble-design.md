@@ -20,14 +20,14 @@ The user must hear, within ~1 second of finishing their utterance, that Jarvis (
 
 ```
 Today (template):
-  User:   "Hey Jarvis, ich möchte morgen eine Reise nach San Francisco buchen,
+  User:   "Hey Jarvis, ich möchte morgen eine Reise nach San Francisco buchen,  <!-- i18n-allow: quoted German voice-input example -->
            kannst du Flugdaten raussuchen?"
-  Jarvis: "Verstanden, ich kümmere mich darum."        ← generic, swappable
+  Jarvis: "Verstanden, ich kümmere mich darum."        ← generic, swappable  <!-- i18n-allow: quoted German voice-output example -->
 
 Goal (context-rich):
   User:   [same input]
-  Jarvis: "Ja Chef, ich gebe das an OpenClaw weiter,
-           melde mich gleich mit den Flugdaten."        ← topic + handoff +
+  Jarvis: "Ja Chef, ich gebe das an OpenClaw weiter,  <!-- i18n-allow: quoted German voice-output example -->
+           melde mich gleich mit den Flugdaten."        ← topic + handoff +  <!-- i18n-allow: quoted German voice-output example -->
                                                           time-horizon
 ```
 
@@ -52,7 +52,7 @@ Goal (context-rich):
 > As Alex, when I just say "Hallo" or tell Jarvis to be quiet, I do **not** want any preamble — those interactions are too lightweight to deserve a multi-stage response.
 
 **US-4 (failure is silence):**
-> As Alex, when the smart preamble can't be generated cleanly (hallucination, timeout, content-filter strip), I prefer Jarvis to stay silent and go straight to the real answer over hearing a generic filler. "Verstanden, ich kümmere mich darum." ("Understood, I'll take care of it.") across every request was exactly the failure mode of the previous attempt.
+> As Alex, when the smart preamble can't be generated cleanly (hallucination, timeout, content-filter strip), I prefer Jarvis to stay silent and go straight to the real answer over hearing a generic filler. "Verstanden, ich kümmere mich darum." ("Understood, I'll take care of it.") across every request was exactly the failure mode of the previous attempt. <!-- i18n-allow: quoted German voice-output example -->
 
 ---
 
@@ -120,12 +120,12 @@ Rejected alternatives:
                            │                   │
                            │                   v
                            │        "Ja Chef, ich gebe das
-                           │         an OpenClaw weiter ..."
+                           │         an OpenClaw weiter ..."  <!-- i18n-allow: quoted German voice-output example -->
                            │           (spoken via TTS)
                            │
                            v
               Final response after tool done:
-              "Hier sind drei Flüge ..." (spoken via TTS,
+              "Hier sind drei Flüge ..." (spoken via TTS,  <!-- i18n-allow: quoted German voice-output example -->
                                          + new chat bubble)
 ```
 
@@ -230,11 +230,11 @@ scripts/smoke-test-preamble.ps1                [NEW, manual]
 |----------------------------------|--------------------------------|-----------------|------------------------------------------------------------------|
 | `"Hallo Jarvis"` ("Hello Jarvis")                 | smalltalk (no tool)            | **No**          | Direct brain answer; no tool args, so no preamble field exists.  |
 | `"Sei still"` ("Be quiet")                    | n/a (voice-control)            | **No**          | `is_voice_control_utterance` → True. Audio stops.                |
-| `"Mach Spotify auf"` ("Open Spotify")             | `open_app(name=Spotify)`       | **Yes**         | "Mach ich, Spotify öffnet sich." ("On it, Spotify is opening.")  |
-| `"Wie ist das Wetter?"` ("What's the weather?")          | `search_web(query=...)`        | **Yes**         | "Schau ich nach, einen Moment." ("Checking now, one moment.")    |
-| `"Find SF flights tomorrow"`     | `spawn_openclaw(task=...)`     | **Yes**         | "Ja Chef, ich gebe das an OpenClaw weiter, melde mich gleich." ("Yes, handing that off to OpenClaw, I'll be right back.") |
-| `"Klick auf Speichern"` ("Click Save")          | `click(target=...)`            | **No**          | `click` in ACK_SKIP_TOOLS — chattering on UI events forbidden.   |
-| `"Was läuft gerade?"` ("What's running right now?")            | `awareness_snapshot()`         | **No**          | Passive read in skip-list.                                       |
+| `"Mach Spotify auf"` ("Open Spotify")             | `open_app(name=Spotify)`       | **Yes**         | "Mach ich, Spotify öffnet sich." ("On it, Spotify is opening.")  | <!-- i18n-allow: quoted German voice example -->
+| `"Wie ist das Wetter?"` ("What's the weather?")          | `search_web(query=...)`        | **Yes**         | "Schau ich nach, einen Moment." ("Checking now, one moment.")    | <!-- i18n-allow: quoted German voice example -->
+| `"Find SF flights tomorrow"`     | `spawn_openclaw(task=...)`     | **Yes**         | "Ja Chef, ich gebe das an OpenClaw weiter, melde mich gleich." ("Yes, handing that off to OpenClaw, I'll be right back.") | <!-- i18n-allow: quoted German voice example -->
+| `"Klick auf Speichern"` ("Click Save")          | `click(target=...)`            | **No**          | `click` in ACK_SKIP_TOOLS — chattering on UI events forbidden.   | <!-- i18n-allow: quoted German voice example -->
+| `"Was läuft gerade?"` ("What's running right now?")            | `awareness_snapshot()`         | **No**          | Passive read in skip-list.                                       | <!-- i18n-allow: quoted German voice example -->
 | LLM omits `preamble_de`          | spawn_openclaw                 | **No**          | Silent fallback. `preamble_skipped_no_field_total` ++.           |
 | LLM emits 50-word preamble       | spawn_openclaw                 | **Yes, cut**    | First sentence kept, rest dropped. `preamble_truncated_total` ++.|
 | LLM emits `"Ich starte den Subagenten"` ("I am starting the subagent") | spawn_openclaw | **No** | scrub_for_voice strips "Subagent" → empty after scrub → silent.  |

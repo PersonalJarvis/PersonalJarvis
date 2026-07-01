@@ -17,7 +17,7 @@
 - **Base runtime:** Linux / macOS / Windows with Python 3.11+ and a network connection. Headless VPS + browser UI is a first-class deployment target.
 - **Maintainer's reference machine** (the project is developed on, but **does not require**, this hardware): RTX 5070 Ti, 32 GB RAM, CUDA 12.8, Windows 11 Pro — unlocks the optional `[desktop]` extras.
 - **Repo root** (maintainer's workstation; not relevant to consumers): `<USER_HOME>\Desktop\Personal Jarvis`
-- **Binding plan:** `~/.claude/plans/also-er-muss-auch-lexical-pond.md` (plan wins on plan-vs-code conflict).
+- **Binding plan:** `~/.claude/plans/also-er-muss-auch-lexical-pond.md` (plan wins on plan-vs-code conflict).  <!-- i18n-allow -->
 - **Binding doctrine:** [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md) (cloud-first; wins over the binding plan when the two disagree on hardware assumptions).
 
 ---
@@ -339,7 +339,7 @@ Voice/chat must never accept secrets (AP-2: STT log leak vector).
 
 - **ENV overrides** at user scope (e.g. `JARVIS__TTS__PROVIDER=grok-voice`)
 - `jarvis.toml` set OS read-only after edits
-- `scripts/drift-guard-daemon.ps1` — Userland daemon, 5-min cron via `shell:startup` shortcut (UAC-free; Task Scheduler + ScheduledJob both elevated-only). Checks `jarvis.toml` + ENV against `scripts/config-soll.json`, fixes drift, re-locks TOML. Lock file: `logs/drift-guard-daemon.lock`. BOM-safe writes via `UTF8Encoding($false)` (BUG-018 fix).
+- `scripts/drift-guard-daemon.ps1` — Userland daemon, 5-min cron via `shell:startup` shortcut (UAC-free; Task Scheduler + ScheduledJob both elevated-only). Checks `jarvis.toml` + ENV against `scripts/config-soll.json`, fixes drift, re-locks TOML. Lock file: `logs/drift-guard-daemon.lock`. BOM-safe writes via `UTF8Encoding($false)` (BUG-018 fix).  <!-- i18n-allow -->
 
 ---
 
@@ -625,7 +625,7 @@ Self-mod writeup: [`docs/self_mod.md`](docs/self_mod.md) — 8 mutable settings 
 ## 23. Repo hygiene & contribution
 
 - **Output Language Policy (highest priority):** every artifact in the repo is **English** — code, comments, docstrings, Markdown, commit messages, PR titles/bodies, tests, CLI help, REST descriptions, error responses, audit logs, telemetry, UI i18n source. German stays only for the assistant's user-facing chat reply, TTS at runtime, and already-committed German content.
-- **Plan vs. code:** on conflict, plan wins. Master plan binds: `~/.claude/plans/also-er-muss-auch-lexical-pond.md`. Architecture contracts: [`docs/jarvis-agents-bridge.md`](docs/jarvis-agents-bridge.md), [`docs/anti-drift-three-layer.md`](docs/anti-drift-three-layer.md).
+- **Plan vs. code:** on conflict, plan wins. Master plan binds: `~/.claude/plans/also-er-muss-auch-lexical-pond.md`. Architecture contracts: [`docs/jarvis-agents-bridge.md`](docs/jarvis-agents-bridge.md), [`docs/anti-drift-three-layer.md`](docs/anti-drift-three-layer.md).  <!-- i18n-allow -->
 - **Worktree activation checklist:** **`pwsh scripts/preflight.ps1`** before code in any new worktree. If exit non-zero, fix before proceeding (BUG-006/014, AD-UF23).
 - **Before larger edits:** read [`docs/BUGS.md`](docs/BUGS.md) — every recurring bug class catalogued there.
 - **Plugin contract:** plugin modules MUST NOT import from `jarvis.*` — structural compatibility with Protocol only. After edit: `pip install -e . --no-deps`.
@@ -688,7 +688,7 @@ Neither blocks anything — but a fresh chat parroting CLAUDE.md verbatim will b
 - [`docs/anti-drift-three-layer.md`](docs/anti-drift-three-layer.md) — five-layer enum pattern (mandatory for any new wire-format string)
 - [`docs/self_mod.md`](docs/self_mod.md) — Phase 7 self-mod user guide
 - [`docs/obsidian-setup.md`](docs/obsidian-setup.md) — Wiki vault registration walkthrough
-- `~/.claude/plans/also-er-muss-auch-lexical-pond.md` — binding master plan
+- `~/.claude/plans/also-er-muss-auch-lexical-pond.md` — binding master plan  <!-- i18n-allow -->
 - `~/.claude/projects/<your-claude-project-dir>/memory/MEMORY.md` — auto-memory with stable user preferences (multi-provider brain, no-Anthropic-API, bilingual, anti-confirmation-fatigue, frontier-quality-before-cost)
 
 ---

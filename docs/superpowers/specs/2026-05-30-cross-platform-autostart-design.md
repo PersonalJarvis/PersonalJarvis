@@ -312,10 +312,10 @@ a real device, per CLAUDE.md verification-honesty rule):
   the toggle is the off-switch. Documented in the UI caption + spec.
 - **Launched process crashes on boot** (stale lock / init crash). Out of scope;
   flagged. Autostart guarantees the entry, not process health.
-- **Drift-guard / config-soll.** `[autostart].enabled` is a new key; if the
-  drift-guard's `config-soll.json` is authoritative it must learn the key, else a
+- **Drift-guard / config-soll.** `[autostart].enabled` is a new key; if the <!-- i18n-allow: literal filename identifier -->
+  drift-guard's `config-soll.json` is authoritative it must learn the key, else a <!-- i18n-allow: literal filename identifier -->
   toggle could be rolled back (the BUG-010 / provider-switch class). The plan
-  must add `[autostart]` to `config-soll.json` (or confirm the guard ignores
+  must add `[autostart]` to `config-soll.json` (or confirm the guard ignores <!-- i18n-allow: literal filename identifier -->
   unknown sections).
 - **macOS `launchctl` quirks across versions.** `install` is best-effort on the
   `launchctl load`; correctness rests on the plist + `RunAtLoad` at next login,
@@ -336,7 +336,7 @@ a real device, per CLAUDE.md verification-honesty rule):
 - `scripts/install_shortcuts.py` (delegate autostart branch to the port)
 - `jarvis/ui/web/frontend/src/views/SettingsView.tsx` (+panel)
 - `jarvis/ui/web/frontend/src/i18n/locales/{de,en,es}.json` (+keys)
-- `scripts/drift-guard*` / `config-soll.json` (learn `[autostart]`) — if applicable
+- `scripts/drift-guard*` / `config-soll.json` (learn `[autostart]`) — if applicable <!-- i18n-allow: literal filename identifier -->
 - `CLAUDE.md` cross-platform table (+row "Autostart" — optional polish)
 
 ## 12. Open questions for the plan
@@ -344,7 +344,7 @@ a real device, per CLAUDE.md verification-honesty rule):
 - Exact insertion point of `reconcile_autostart` in `launcher.py` (after config
   load, around `_build_app`); confirm headless launcher path also reaches it
   safely (null manager makes it harmless regardless).
-- Whether `config-soll.json` is authoritative on this machine and must learn
+- Whether `config-soll.json` is authoritative on this machine and must learn <!-- i18n-allow: literal filename identifier -->
   `[autostart]` (drift-guard interaction).
 
 ## 13. Amendment 2026-06-09 — Windows promptness via a logon scheduled task

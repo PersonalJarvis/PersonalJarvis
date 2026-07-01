@@ -281,19 +281,19 @@ Then at both call sites replace the `asyncio.wait({play_task, barge_task, hangup
             if not done:
                 pass  # already aborted + logged inside _await_playback
             elif hangup_task in done and not hangup_task.cancelled():
-                log.info("📵 Hangup während TTS — Turn abbrechen")
+                log.info("📵 Hangup during TTS — aborting turn")
                 barged = True
                 self._player.stop()
             elif barge_task in done and not barge_task.cancelled() and barge_task.result():
-                log.info("🛑 Barge-in — stoppe TTS-Playback")
+                log.info("🛑 Barge-in — stopping TTS playback")
                 barged = True
                 self._player.stop()
             elif play_task in done and not play_task.cancelled():
                 exc = play_task.exception()
                 if exc is not None:
-                    log.exception("Streaming-Playback-Fehler: %s", exc)
+                    log.exception("Streaming playback error: %s", exc)
         except Exception as exc:  # noqa: BLE001
-            log.exception("Streaming-TTS-Turn-Fehler: %s", exc)
+            log.exception("Streaming TTS turn error: %s", exc)
         finally:
             ...  # unchanged
 ```
@@ -364,7 +364,7 @@ def test_router_vision_disabled_by_default():
 
 - [ ] **Step 1: Read first** — `manager.py:3030-3110` to see how `vcfg` and `max_image_kb` are read, and find the existing intent helpers (`is_pointing_intent`, spatial/"what's on screen" detection) already imported in this module.
 
-- [ ] **Step 2: Write the failing test** — assert `_should_inject_router_vision("wie spät ist es")` is `False` and `_should_inject_router_vision("was siehst du auf dem bildschirm")` is `True`.
+- [ ] **Step 2: Write the failing test** — assert `_should_inject_router_vision("wie spät ist es")` is `False` and `_should_inject_router_vision("was siehst du auf dem bildschirm")` is `True`. <!-- i18n-allow -->
 
 - [ ] **Step 3:** Add `_should_inject_router_vision(text) -> bool` reusing the existing spatial/pointing detectors; short-circuit `_collect_vision_images` to return `()` when the turn is not vision-relevant (even if `enabled`). Keep the headless capability probe as an additional guard (no screen → never inject).
 
