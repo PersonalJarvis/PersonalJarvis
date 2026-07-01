@@ -56,7 +56,7 @@ export const WikiRecall: React.FC<{ scene: TimelineScene }> = ({ scene }) => {
             What&apos;s BridgeMind again?
           </ChatBubble>
           <ChatBubble from="assistant" delay={a} size={28}>
-            Your desktop app and Discord server.
+            The agentic coding IDE you work in.
           </ChatBubble>
           <SourceTag delay={a + 14} />
         </div>

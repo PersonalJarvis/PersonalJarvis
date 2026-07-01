@@ -55,7 +55,7 @@
       "lines": [
         { "id": "recall_1", "kind": "narration", "text": "So when you ask me something later, I don't guess." },
         { "id": "recall_q", "kind": "command", "text": "What's BridgeMind again?", "tts": "What's BridgeMind again?" },
-        { "id": "recall_a", "kind": "narration", "text": "It's your desktop app and Discord server. I read it straight from my notes." }
+        { "id": "recall_a", "kind": "narration", "text": "The agentic coding IDE you work in. I read it straight from my notes." }
       ]
     },
     {

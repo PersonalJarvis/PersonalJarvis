@@ -39,13 +39,17 @@ export const WikiPage: React.FC<{ scene: TimelineScene }> = ({ scene }) => {
               opacity: contentO,
             }}
           >
+            {/* Pan title → summary → facts, and STOP before the Relationships
+                section (its "Owned by" line would wrongly imply ownership of a
+                third-party tool). The wikilink/backlink story is carried by the
+                backlinks panel below. */}
             <ShotCrop
               src="shot-wiki-page.png"
               srcW={SRC_W}
               crop={{ x: 2240, y: 636, w: 2470, h: 1440 }}
               displayW={940}
-              panBy={880}
-              panWindow={[26, 190]}
+              panBy={360}
+              panWindow={[26, 185]}
             />
           </div>
           {/* backlinks panel */}

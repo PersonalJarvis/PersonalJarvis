@@ -1,7 +1,7 @@
 {
   "fps": 30,
   "overlap": 16,
-  "totalFrames": 2198,
+  "totalFrames": 2200,
   "scenes": [
     {
       "id": "intro",
@@ -147,7 +147,7 @@
     },
     {
       "id": "recall",
-      "dur": 292,
+      "dur": 294,
       "lines": [
         {
           "id": "recall_1",
@@ -168,10 +168,10 @@
         {
           "id": "recall_a",
           "kind": "narration",
-          "text": "It's your desktop app and Discord server. I read it straight from my notes.",
+          "text": "The agentic coding IDE you work in. I read it straight from my notes.",
           "file": "vo-wiki/recall_a.mp3",
           "localStart": 148,
-          "dur": 124
+          "dur": 126
         }
       ]
     },
@@ -282,16 +282,16 @@
     {
       "file": "vo-wiki/recall_a.mp3",
       "from": 1874,
-      "dur": 124
+      "dur": 126
     },
     {
       "file": "vo-wiki/outro_1.mp3",
-      "from": 2012,
+      "from": 2014,
       "dur": 73
     },
     {
       "file": "vo-wiki/outro_2.mp3",
-      "from": 2092,
+      "from": 2094,
       "dur": 86
     }
   ]
