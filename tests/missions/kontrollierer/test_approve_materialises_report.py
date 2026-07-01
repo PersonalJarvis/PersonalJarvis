@@ -157,11 +157,11 @@ async def test_approve_builds_english_summary_en_for_file_deliverable(
     approved = _approved_event(orch._manager.store)  # type: ignore[attr-defined]
     assert "landing.html" in approved.summary_en
     assert "saved" in approved.summary_en
-    assert "Fertig" not in approved.summary_en and "gespeichert" not in approved.summary_en, (
+    assert "Fertig" not in approved.summary_en and "gespeichert" not in approved.summary_en, (  # i18n-allow (asserts no German leaked into the English summary)
         f"summary_en must be English, got {approved.summary_en!r}"
     )
     # The German field still speaks German — the two diverge as designed.
-    assert "Fertig" in approved.summary_de and "Datei" in approved.summary_de
+    assert "Fertig" in approved.summary_de and "Datei" in approved.summary_de  # i18n-allow (German value under summary_de field)
 
 
 async def test_approve_mirrors_materialised_report_to_user_folder(

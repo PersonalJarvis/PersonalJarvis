@@ -1,4 +1,4 @@
-"""Tests fuer ReflectionMemory (append + last_n + render + path-resolution)."""
+"""Tests for ReflectionMemory (append + last_n + render + path-resolution)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -75,7 +75,7 @@ def test_last_n_returns_last_n_when_more_present(tmp_path: Path) -> None:
         mem.append(i, f"summary {i}", [f"e{i}"])
     last = mem.last_n(3)
     assert len(last) == 3
-    # juengste ZULETZT in der Liste (chronologisch aufsteigend)
+    # most recent LAST in the list (chronologically ascending)
     assert [r.iteration for r in last] == [2, 3, 4]
 
 
@@ -151,7 +151,7 @@ def test_evidence_omitted_when_empty(tmp_path: Path) -> None:
     mem = ReflectionMemory(tmp_path)
     mem.append(0, "no evidence here", [])
     text = mem.path.read_text(encoding="utf-8")
-    # Evidence-Header NICHT vorhanden wenn Liste leer
+    # Evidence header NOT present when the list is empty
     assert "**Evidence:**" not in text
     assert "**Summary:** no evidence here" in text
 
@@ -160,7 +160,7 @@ def test_iso_timestamp_included(tmp_path: Path) -> None:
     mem = ReflectionMemory(tmp_path)
     mem.append(0, "x", [])
     text = mem.path.read_text(encoding="utf-8")
-    # ISO-Datum sollte 4-stellige Jahreszahl haben
+    # ISO date should have a 4-digit year
     assert "20" in text  # 20XX-Jahr
     assert "T" in text   # ISO-T-Trenner
 
