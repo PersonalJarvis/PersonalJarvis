@@ -1,0 +1,298 @@
+{
+  "fps": 30,
+  "overlap": 16,
+  "totalFrames": 2198,
+  "scenes": [
+    {
+      "id": "intro",
+      "dur": 222,
+      "lines": [
+        {
+          "id": "intro_1",
+          "kind": "narration",
+          "text": "People always ask me the same thing — how do I actually remember you?",
+          "file": "vo-wiki/intro_1.mp3",
+          "localStart": 10,
+          "dur": 120
+        },
+        {
+          "id": "intro_2",
+          "kind": "narration",
+          "text": "Not just for one chat. For good.",
+          "file": "vo-wiki/intro_2.mp3",
+          "localStart": 137,
+          "dur": 65
+        }
+      ]
+    },
+    {
+      "id": "idea",
+      "dur": 422,
+      "lines": [
+        {
+          "id": "idea_1",
+          "kind": "narration",
+          "text": "The trick is simple. I keep a wiki — and I'm the one who writes it.",
+          "file": "vo-wiki/idea_1.mp3",
+          "localStart": 10,
+          "dur": 111
+        },
+        {
+          "id": "idea_2",
+          "kind": "narration",
+          "text": "Every fact you tell me, I file away as plain Markdown — the same notes you could open yourself.",
+          "file": "vo-wiki/idea_2.mp3",
+          "localStart": 128,
+          "dur": 168
+        },
+        {
+          "id": "idea_3",
+          "kind": "narration",
+          "text": "I don't rediscover you on every question. I look it up.",
+          "file": "vo-wiki/idea_3.mp3",
+          "localStart": 303,
+          "dur": 99
+        }
+      ]
+    },
+    {
+      "id": "map",
+      "dur": 400,
+      "lines": [
+        {
+          "id": "map_1",
+          "kind": "narration",
+          "text": "This is my actual memory.",
+          "file": "vo-wiki/map_1.mp3",
+          "localStart": 10,
+          "dur": 48
+        },
+        {
+          "id": "map_2",
+          "kind": "narration",
+          "text": "Fifty-nine pages, all cross-linked into one map.",
+          "file": "vo-wiki/map_2.mp3",
+          "localStart": 65,
+          "dur": 108
+        },
+        {
+          "id": "map_3",
+          "kind": "narration",
+          "text": "People, projects, ideas — every link is something you told me, connected to everything related.",
+          "file": "vo-wiki/map_3.mp3",
+          "localStart": 180,
+          "dur": 180
+        }
+      ]
+    },
+    {
+      "id": "page",
+      "dur": 344,
+      "lines": [
+        {
+          "id": "page_1",
+          "kind": "narration",
+          "text": "Open any page, and it's all there.",
+          "file": "vo-wiki/page_1.mp3",
+          "localStart": 10,
+          "dur": 65
+        },
+        {
+          "id": "page_2",
+          "kind": "narration",
+          "text": "The facts, where they came from, and links to everything connected.",
+          "file": "vo-wiki/page_2.mp3",
+          "localStart": 82,
+          "dur": 111
+        },
+        {
+          "id": "page_3",
+          "kind": "narration",
+          "text": "Backlinks even show me every other note that points back here.",
+          "file": "vo-wiki/page_3.mp3",
+          "localStart": 200,
+          "dur": 104
+        }
+      ]
+    },
+    {
+      "id": "forms",
+      "dur": 418,
+      "lines": [
+        {
+          "id": "forms_1",
+          "kind": "narration",
+          "text": "And new memories form while you're not even talking to me.",
+          "file": "vo-wiki/forms_1.mp3",
+          "localStart": 10,
+          "dur": 86
+        },
+        {
+          "id": "forms_2",
+          "kind": "narration",
+          "text": "One quick pass grabs the facts. A slower one decides what to keep, update, or throw away.",
+          "file": "vo-wiki/forms_2.mp3",
+          "localStart": 103,
+          "dur": 170
+        },
+        {
+          "id": "forms_3",
+          "kind": "narration",
+          "text": "So I capture everything that matters, and never bury it in junk.",
+          "file": "vo-wiki/forms_3.mp3",
+          "localStart": 280,
+          "dur": 118
+        }
+      ]
+    },
+    {
+      "id": "recall",
+      "dur": 292,
+      "lines": [
+        {
+          "id": "recall_1",
+          "kind": "narration",
+          "text": "So when you ask me something later, I don't guess.",
+          "file": "vo-wiki/recall_1.mp3",
+          "localStart": 10,
+          "dur": 82
+        },
+        {
+          "id": "recall_q",
+          "kind": "command",
+          "text": "What's BridgeMind again?",
+          "file": "vo-wiki/recall_q.mp3",
+          "localStart": 99,
+          "dur": 42
+        },
+        {
+          "id": "recall_a",
+          "kind": "narration",
+          "text": "It's your desktop app and Discord server. I read it straight from my notes.",
+          "file": "vo-wiki/recall_a.mp3",
+          "localStart": 148,
+          "dur": 124
+        }
+      ]
+    },
+    {
+      "id": "outro",
+      "dur": 196,
+      "lines": [
+        {
+          "id": "outro_1",
+          "kind": "narration",
+          "text": "Local, private, and mine to keep.",
+          "file": "vo-wiki/outro_1.mp3",
+          "localStart": 10,
+          "dur": 73
+        },
+        {
+          "id": "outro_2",
+          "kind": "narration",
+          "text": "That's how I remember. This is Personal Jarvis.",
+          "file": "vo-wiki/outro_2.mp3",
+          "localStart": 90,
+          "dur": 86
+        }
+      ]
+    }
+  ],
+  "audio": [
+    {
+      "file": "vo-wiki/intro_1.mp3",
+      "from": 10,
+      "dur": 120
+    },
+    {
+      "file": "vo-wiki/intro_2.mp3",
+      "from": 137,
+      "dur": 65
+    },
+    {
+      "file": "vo-wiki/idea_1.mp3",
+      "from": 216,
+      "dur": 111
+    },
+    {
+      "file": "vo-wiki/idea_2.mp3",
+      "from": 334,
+      "dur": 168
+    },
+    {
+      "file": "vo-wiki/idea_3.mp3",
+      "from": 509,
+      "dur": 99
+    },
+    {
+      "file": "vo-wiki/map_1.mp3",
+      "from": 622,
+      "dur": 48
+    },
+    {
+      "file": "vo-wiki/map_2.mp3",
+      "from": 677,
+      "dur": 108
+    },
+    {
+      "file": "vo-wiki/map_3.mp3",
+      "from": 792,
+      "dur": 180
+    },
+    {
+      "file": "vo-wiki/page_1.mp3",
+      "from": 1006,
+      "dur": 65
+    },
+    {
+      "file": "vo-wiki/page_2.mp3",
+      "from": 1078,
+      "dur": 111
+    },
+    {
+      "file": "vo-wiki/page_3.mp3",
+      "from": 1196,
+      "dur": 104
+    },
+    {
+      "file": "vo-wiki/forms_1.mp3",
+      "from": 1334,
+      "dur": 86
+    },
+    {
+      "file": "vo-wiki/forms_2.mp3",
+      "from": 1427,
+      "dur": 170
+    },
+    {
+      "file": "vo-wiki/forms_3.mp3",
+      "from": 1604,
+      "dur": 118
+    },
+    {
+      "file": "vo-wiki/recall_1.mp3",
+      "from": 1736,
+      "dur": 82
+    },
+    {
+      "file": "vo-wiki/recall_q.mp3",
+      "from": 1825,
+      "dur": 42
+    },
+    {
+      "file": "vo-wiki/recall_a.mp3",
+      "from": 1874,
+      "dur": 124
+    },
+    {
+      "file": "vo-wiki/outro_1.mp3",
+      "from": 2012,
+      "dur": 73
+    },
+    {
+      "file": "vo-wiki/outro_2.mp3",
+      "from": 2092,
+      "dur": 86
+    }
+  ]
+}

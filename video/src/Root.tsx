@@ -2,10 +2,12 @@ import "./index.css";
 import { AbsoluteFill, Composition } from "remotion";
 import { IntroVideo } from "./intro/IntroVideo";
 import { OnboardingVideo } from "./intro/OnboardingVideo";
+import { WikiTutorialVideo } from "./intro/WikiTutorialVideo";
 import { Background } from "./intro/components/Background";
 import { MorningOverview } from "./intro/scenes/MorningOverview";
 import { COLORS, TOTAL_FRAMES, VIDEO } from "./intro/theme";
 import { TL } from "./intro/onboarding/timeline";
+import { TL_WIKI } from "./intro/wiki/timeline";
 
 /**
  * Standalone preview of a single tutorial scene, wrapped with the same backdrop
