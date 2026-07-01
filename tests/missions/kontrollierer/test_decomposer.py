@@ -50,7 +50,7 @@ def test_mission_plan_max_steps_enforced() -> None:
         MissionPlan(steps=too_many, n_workers=MAX_STEPS + 1)
 
 
-# --- Heuristik: short prompt ---
+# --- Heuristic: short prompt ---
 
 
 @pytest.mark.asyncio
@@ -77,7 +77,7 @@ async def test_short_prompt_skips_brain_even_if_provided() -> None:
     assert called == []
 
 
-# --- Heuristik: external markers ---
+# --- Heuristic: external markers ---
 
 
 @pytest.mark.asyncio
@@ -105,7 +105,7 @@ async def test_whitespace_prompt_raises() -> None:
         await d.decompose("   \n\t  ")
 
 
-# --- LLM-Pfad ---
+# --- LLM path ---
 
 
 def _valid_plan_json() -> str:
