@@ -132,38 +132,36 @@ async function main() {
     await sleep(2600); // let the graph / vault load
     await shoot(call, MAP_OUT);
 
-    // Open a real vault page: click a tree file (candidates that live ONLY in the
-    // vault tree, never in the sidebar nav), then ensure the "Page" tab is active.
-    const clickTreeFile = (name) =>
+    // Real mouse-event click on the leaf element whose exact text == target
+    // (React tab/tree handlers often need pointer/mouse events, not .click()).
+    const realClick = (target) =>
       evalJs(
         call,
         `(() => {
-          const want = ${JSON.stringify("")} || 0;
-          const target = ${JSON.stringify(name)};
+          const t = ${JSON.stringify(target)};
           const norm = (e) => (e.textContent || '').replace(/\\s+/g,' ').trim();
-          // leaf elements only (no big containers) whose exact text is the filename
-          const all = [...document.querySelectorAll('div,span,p,button,a,li,[role=treeitem]')];
-          const leaf = all.filter(e => norm(e) === target && e.children.length <= 1);
-          const el = leaf[0];
-          if (el) { (el.closest('button,a,[role=button],[role=treeitem],li') || el).click(); return 'clicked'; }
-          return 'notfound';
+          const all = [...document.querySelectorAll('*')];
+          const el = all.filter(e => norm(e) === t && e.children.length <= 2).pop();
+          if (!el) return 'notfound';
+          const r = el.getBoundingClientRect();
+          const opt = { bubbles: true, cancelable: true, clientX: r.x + r.width/2, clientY: r.y + r.height/2, view: window };
+          for (const type of ['pointerdown','mousedown','pointerup','mouseup','click'])
+            el.dispatchEvent(new MouseEvent(type, opt));
+          return 'clicked@' + Math.round(r.x) + ',' + Math.round(r.y);
         })()`,
       );
 
-    const candidates = ["bridgemind.md", "obsidian.md", "claude-opus.md", "ruben.md", "lena.md"];
-    let opened = "";
-    for (const name of candidates) {
-      const r = await clickTreeFile(name);
+    // diagnostics: what tabs / tree rows exist?
+    console.log("tabs:", await visibleText(call, "[role=tab], button"));
+    // Select a real vault page (tree-only names), then open the Page tab.
+    for (const name of ["bridgemind.md", "obsidian.md", "claude-opus.md", "lena.md"]) {
+      const r = await realClick(name);
       console.log("tree file", name, "->", r);
-      if (r === "clicked") {
-        opened = name;
-        await sleep(1400);
-        break;
-      }
+      if (r.startsWith("clicked")) break;
     }
-    console.log("Page tab:", await clickByText(call, "Page"));
-    await sleep(1600);
-    if (!opened) console.warn("no vault tree file matched; page shot may show the map");
+    await sleep(1400);
+    console.log("Page tab:", await realClick("Page"));
+    await sleep(1800);
     await shoot(call, PAGE_OUT);
     ws.close();
   } finally {

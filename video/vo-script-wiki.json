@@ -1,0 +1,69 @@
+{
+  "voice": "en-US-AndrewNeural",
+  "rate": "+6%",
+  "timing": {
+    "fps": 30,
+    "leadIn": 10,
+    "gap": 7,
+    "tail": 20,
+    "overlap": 16
+  },
+  "scenes": [
+    {
+      "id": "intro",
+      "lines": [
+        { "id": "intro_1", "kind": "narration", "text": "People always ask me the same thing — how do I actually remember you?" },
+        { "id": "intro_2", "kind": "narration", "text": "Not just for one chat. For good." }
+      ]
+    },
+    {
+      "id": "idea",
+      "lines": [
+        { "id": "idea_1", "kind": "narration", "text": "The trick is simple. I keep a wiki — and I'm the one who writes it." },
+        { "id": "idea_2", "kind": "narration", "text": "Every fact you tell me, I file away as plain Markdown — the same notes you could open yourself." },
+        { "id": "idea_3", "kind": "narration", "text": "I don't rediscover you on every question. I look it up." }
+      ]
+    },
+    {
+      "id": "map",
+      "extra": 20,
+      "lines": [
+        { "id": "map_1", "kind": "narration", "text": "This is my actual memory." },
+        { "id": "map_2", "kind": "narration", "text": "Fifty-nine pages, all cross-linked into one map." },
+        { "id": "map_3", "kind": "narration", "text": "People, projects, ideas — every link is something you told me, connected to everything related." }
+      ]
+    },
+    {
+      "id": "page",
+      "extra": 20,
+      "lines": [
+        { "id": "page_1", "kind": "narration", "text": "Open any page, and it's all there." },
+        { "id": "page_2", "kind": "narration", "text": "The facts, where they came from, and links to everything connected." },
+        { "id": "page_3", "kind": "narration", "text": "Backlinks even show me every other note that points back here." }
+      ]
+    },
+    {
+      "id": "forms",
+      "lines": [
+        { "id": "forms_1", "kind": "narration", "text": "And new memories form while you're not even talking to me." },
+        { "id": "forms_2", "kind": "narration", "text": "One quick pass grabs the facts. A slower one decides what to keep, update, or throw away." },
+        { "id": "forms_3", "kind": "narration", "text": "So I capture everything that matters, and never bury it in junk." }
+      ]
+    },
+    {
+      "id": "recall",
+      "lines": [
+        { "id": "recall_1", "kind": "narration", "text": "So when you ask me something later, I don't guess." },
+        { "id": "recall_q", "kind": "command", "text": "What's BridgeMind again?", "tts": "What's BridgeMind again?" },
+        { "id": "recall_a", "kind": "narration", "text": "It's your desktop app and Discord server. I read it straight from my notes." }
+      ]
+    },
+    {
+      "id": "outro",
+      "lines": [
+        { "id": "outro_1", "kind": "narration", "text": "Local, private, and mine to keep." },
+        { "id": "outro_2", "kind": "narration", "text": "That's how I remember. This is Personal Jarvis." }
+      ]
+    }
+  ]
+}
