@@ -57,25 +57,41 @@ if str(REPO) not in sys.path:
 
 @dataclass(frozen=True)
 class Scenario:
-    """One conversational probe. ``needs_clarification`` allows a trailing '?'."""
+    """One conversational probe. ``needs_clarification`` allows a trailing '?'.
+
+    ``lang`` is the language the input is written in — the same rules (full
+    sentences, no reflex counter-question, spelled-out numbers) must hold in
+    EVERY supported language, not just German, so the harness probes de/en/es.
+    """
 
     id: str
     tag: str
     user: str
+    lang: str = "de"
     needs_clarification: bool = False
 
 
 # Realistic, conversational turns that SHOULD get a full-sentence spoken answer
 # and do NOT depend on a tool (so the style, not a tool round-trip, is measured).
+# The style contract is language-agnostic, so the set spans German, English, and
+# Spanish — the project's supported locales.
 SCENARIOS: tuple[Scenario, ...] = (
-    Scenario("01", "greeting", "Guten Morgen, wie geht es dir?"),
-    Scenario("02", "smalltalk", "Ich bin heute echt ein bisschen gestresst."),
-    Scenario("03", "opinion-80s", "Was hältst du eigentlich von Musik aus den Achtzigern?"),
-    Scenario("04", "explain", "Erklär mir mal, warum der Himmel blau ist."),
-    Scenario("05", "advice", "Hast du einen Tipp, wie ich morgens besser in die Gänge komme?"),
-    Scenario("06", "knowledge", "Erzähl mir was Interessantes über den Mond."),
-    Scenario("07", "compare", "Was ist der Unterschied zwischen Nebel und Wolken?"),
-    Scenario("08", "chitchat", "Puh, war ein langer Tag. Womit kennst du dich eigentlich gut aus?"),
+    Scenario("01", "greeting", "Guten Morgen, wie geht es dir?", "de"),
+    Scenario("02", "smalltalk", "Ich bin heute echt ein bisschen gestresst.", "de"),
+    Scenario("03", "opinion-80s", "Was hältst du eigentlich von Musik aus den Achtzigern?", "de"),
+    Scenario("04", "explain", "Erklär mir mal, warum der Himmel blau ist.", "de"),
+    Scenario("05", "advice", "Hast du einen Tipp, wie ich morgens besser in die Gänge komme?", "de"),
+    Scenario("06", "knowledge", "Erzähl mir was Interessantes über den Mond.", "de"),
+    Scenario("07", "compare", "Was ist der Unterschied zwischen Nebel und Wolken?", "de"),
+    Scenario("08", "chitchat", "Puh, war ein langer Tag. Womit kennst du dich eigentlich gut aus?", "de"),
+    Scenario("09", "greeting", "Good morning, how are you doing today?", "en"),
+    Scenario("10", "explain", "Explain to me why the sky is blue.", "en"),
+    Scenario("11", "knowledge", "Tell me something interesting about the moon.", "en"),
+    Scenario("12", "smalltalk", "Honestly, I'm a little stressed today.", "en"),
+    Scenario("13", "greeting", "Buenos días, ¿qué tal estás?", "es"),
+    Scenario("14", "explain", "Explícame por qué el cielo es azul.", "es"),
+    Scenario("15", "knowledge", "Cuéntame algo interesante sobre la luna.", "es"),
+    Scenario("16", "smalltalk", "La verdad es que hoy estoy un poco estresado.", "es"),
 )
 
 
@@ -144,7 +160,14 @@ async def run() -> int:
         default=None,
         help="override the persona with this file's text (for before/after baselines)",
     )
+    ap.add_argument(
+        "--langs",
+        default="de,en,es",
+        help="comma-separated languages to probe (default all: de,en,es)",
+    )
     args = ap.parse_args()
+    langs = {x.strip() for x in args.langs.split(",") if x.strip()}
+    scenarios = tuple(s for s in SCENARIOS if s.lang in langs)
 
     from jarvis.brain import manager as _manager
     from jarvis.brain.factory import build_default_brain
@@ -184,14 +207,14 @@ async def run() -> int:
     fail_counts = dict.fromkeys(check_names, 0)
     raw_drift = dict.fromkeys(check_names, 0)  # secondary: model-level drift
 
-    for s in SCENARIOS:
+    for s in scenarios:
         try:
             if hasattr(bm, "_history"):
                 bm._history.clear()  # fresh session each scenario
             raw = await asyncio.wait_for(bm(s.user), timeout=90)
         except Exception as exc:  # noqa: BLE001
             raw = f"<ERROR: {type(exc).__name__}: {exc}>"
-        scrubbed = scrub_for_voice(raw, language="de").cleaned
+        scrubbed = scrub_for_voice(raw, language=s.lang).cleaned
 
         r_deliver = check(scrubbed, s)   # gate
         r_raw = check(raw, s)            # model drift signal
@@ -202,7 +225,7 @@ async def run() -> int:
                 raw_drift[name] += 1
 
         verdict = "GREEN" if r_deliver.all_ok else "RED"
-        print(f"--- {s.id} [{s.tag}] {verdict} ---")
+        print(f"--- {s.id} [{s.lang}/{s.tag}] {verdict} ---")
         print(f"User:   {s.user}")
         print(f"Jarvis: {scrubbed if not args.raw else raw}")
         if not r_deliver.all_ok:

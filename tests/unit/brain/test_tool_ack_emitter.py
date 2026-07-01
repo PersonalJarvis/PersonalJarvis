@@ -11,6 +11,7 @@ The emitter is exercised through a light stub carrying only the attributes it
 reads, so we avoid the heavy ``BrainManager`` constructor (mirrors the approach
 in tests/integration/test_ack_flow.py).
 """
+
 from __future__ import annotations
 
 import types
@@ -46,18 +47,12 @@ def _make_stub(
         _reply_language=reply_language,
         _conversation_language=conversation_language,
     )
-    stub._build_tool_ack_emitter = types.MethodType(
-        BrainManager._build_tool_ack_emitter, stub
-    )
+    stub._build_tool_ack_emitter = types.MethodType(BrainManager._build_tool_ack_emitter, stub)
     return stub
 
 
 def _preambles(bus: _RecordingBus) -> list[AnnouncementRequested]:
-    return [
-        e
-        for e in bus.events
-        if isinstance(e, AnnouncementRequested) and e.kind == "preamble"
-    ]
+    return [e for e in bus.events if isinstance(e, AnnouncementRequested) and e.kind == "preamble"]
 
 
 @pytest.mark.asyncio
@@ -96,7 +91,7 @@ async def test_no_bus_returns_none() -> None:
 
 @pytest.mark.asyncio
 async def test_voice_control_utterance_returns_none() -> None:
-    """"sei still" is a voice-control command — the action is the confirmation,
+    """ "sei still" is a voice-control command — the action is the confirmation,
     so no ack emitter is built."""
     bus = _RecordingBus()
     stub = _make_stub(bus=bus)

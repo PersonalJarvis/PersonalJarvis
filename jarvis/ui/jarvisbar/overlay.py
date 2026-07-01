@@ -68,44 +68,6 @@ WATCHDOG_INTERVAL_MS = 1000
 FRAME_STALL_THRESHOLD_NS = 2_000_000_000  # 2 s of silence ⇒ the loop is dead
 
 
-def _display_scale(root: Any) -> float:
-    """Effective display scale (1.0 = 100%) for the monitor the bar boots on.
-
-    Read from Tk's own reported DPI so the bar renders at a CONSTANT PHYSICAL
-    size regardless of the process-wide DPI awareness the rest of the app
-    happens to set first (pywebview pins the process to SYSTEM_AWARE before the
-    bar's own per-monitor request can win — first-writer-wins). Two paths, one
-    physical result:
-
-    - DPI-aware process on a 150% monitor → Tk reports ~144 dpi → 1.5, and we
-      draw the bar 1.5x larger at true pixels.
-    - DPI-unaware process → Tk reports 96 dpi → 1.0, and Windows then bitmap-
-      upscales the whole window by the monitor scale → the same physical size.
-
-    Without this the bar drew a fixed 107x48 window the DPI-aware process no
-    longer upscaled, shrinking the idle pill to a ~48x8 sliver that could not be
-    seen or grabbed (4K @ 150%). Clamped to a sane range; never below 1.0 — a
-    smaller bar is never the goal. Any query failure falls back to 1.0.
-
-    Cross-platform: macOS renders Tk windows Retina-scaled by the OS ITSELF (the
-    window's backing scale factor), so applying our own pixel-scale on top would
-    DOUBLE the bar. There we return 1.0 and let the OS handle HiDPI. Windows
-    (DPI-aware) and Linux draw at true pixels, so a fixed-pixel window is
-    physically small on a scaled display — that is exactly where this scale is
-    both needed and correct. Off Windows the sibling ``_claim_system_dpi_``
-    ``awareness`` is a no-op, so this is the only OS-aware branch that matters.
-    """
-    if sys.platform == "darwin":
-        return 1.0
-    try:
-        scale = float(root.winfo_fpixels("1i")) / 96.0
-    except Exception:  # noqa: BLE001 — never block the bar on a DPI query
-        return 1.0
-    if scale < 1.0:
-        return 1.0
-    return min(scale, 4.0)
-
-
 def _primary_work_area() -> tuple[int, int, int, int] | None:
     """Primary-monitor work area (left, top, right, bottom) EXCLUDING the
     taskbar, via Win32 ``SPI_GETWORKAREA``. None off Windows / on failure so
@@ -158,10 +120,6 @@ class JarvisBarOverlay:
         self._last_frame_ns = 0
         self._root: Any = None
         self._canvas: Any = None
-        # HiDPI scale for this bar's monitor (1.0 = 100%), resolved in start()
-        # from the live Tk root. Drives the renderer size + all geometry/hit-test
-        # math so the bar stays a constant physical size on scaled displays.
-        self._scale: float = 1.0
         self._renderer: renderer.JarvisBarRenderer | None = None
         self._photo: Any = None
         self._image_id: Any = None
@@ -295,6 +253,7 @@ class JarvisBarOverlay:
             log.debug("jarvisbar DPI-awareness setup skipped", exc_info=True)
 
         self._tk_thread_id = threading.get_ident()
+        self._renderer = renderer.JarvisBarRenderer(accent=self._accent)
 
         root = tk.Tk()
         self._root = root
@@ -314,24 +273,13 @@ class JarvisBarOverlay:
         except tk.TclError:
             log.debug("window -alpha unsupported", exc_info=True)
 
-        # HiDPI: size the renderer (window + pill) to the monitor's scale so the
-        # bar keeps a constant PHYSICAL size instead of shrinking to a sliver on
-        # a DPI-aware, high-scale display. Must be read from the live root, so the
-        # renderer is built here (after tk.Tk()) rather than before it.
-        self._scale = _display_scale(root)
-        self._renderer = renderer.JarvisBarRenderer(
-            accent=self._accent, scale=self._scale
-        )
-
         self._resolve_position(root)
-        root.geometry(
-            f"{self._renderer.win_w}x{self._renderer.win_h}+{self._x}+{self._y}"
-        )
+        root.geometry(f"{renderer.WIN_W}x{renderer.WIN_H}+{self._x}+{self._y}")
 
         self._canvas = tk.Canvas(
             root,
-            width=self._renderer.win_w,
-            height=self._renderer.win_h,
+            width=renderer.WIN_W,
+            height=renderer.WIN_H,
             bg=COLOR_KEY_HEX,
             highlightthickness=0,
             borderwidth=0,
@@ -399,25 +347,6 @@ class JarvisBarOverlay:
     # ------------------------------------------------------------------ #
     # Tk-thread internals                                                #
     # ------------------------------------------------------------------ #
-    # Live (DPI-scaled) window dimensions. Geometry, position-clamp and
-    # hit-testing all read these so they stay in ONE coordinate space with the
-    # rendered image — the renderer owns the scaled numbers; these mirror them
-    # (with a base×scale fallback for any call before the renderer exists).
-    @property
-    def _win_w(self) -> int:
-        r = self._renderer
-        return r.win_w if r is not None else round(renderer.WIN_W * self._scale)
-
-    @property
-    def _win_h(self) -> int:
-        r = self._renderer
-        return r.win_h if r is not None else round(renderer.WIN_H * self._scale)
-
-    @property
-    def _active_w(self) -> int:
-        r = self._renderer
-        return r.active_w if r is not None else round(renderer.ACTIVE_W * self._scale)
-
     def _resolve_position(self, root: Any) -> None:
         try:
             sw = int(root.winfo_screenwidth())
@@ -434,7 +363,7 @@ class JarvisBarOverlay:
         if pos is not None:
             self._x, self._y = interaction.clamp_to_screen(
                 pos[0], pos[1], screen_w=sw, screen_h=sh,
-                bar_w=self._win_w, bar_h=self._win_h, margin=MARGIN_PX,
+                bar_w=renderer.WIN_W, bar_h=renderer.WIN_H, margin=MARGIN_PX,
             )
         else:
             # Anchor just ABOVE the taskbar (work area), exactly centered —
@@ -443,12 +372,12 @@ class JarvisBarOverlay:
             wa = _primary_work_area()
             if wa is not None:
                 wl, wt, wr, wb = wa
-                self._x = wl + (wr - wl - self._win_w) // 2
-                self._y = wb - self._win_h - TASKBAR_GAP_PX
+                self._x = wl + (wr - wl - renderer.WIN_W) // 2
+                self._y = wb - renderer.WIN_H - TASKBAR_GAP_PX
             else:
                 self._x, self._y = interaction.default_bottom_center(
                     screen_w=sw, screen_h=sh,
-                    bar_w=self._win_w, bar_h=self._win_h, margin=MARGIN_PX,
+                    bar_w=renderer.WIN_W, bar_h=renderer.WIN_H, margin=MARGIN_PX,
                 )
 
     def _do_show(self) -> None:
@@ -648,7 +577,7 @@ class JarvisBarOverlay:
         self._x = event.x_root - d["ox"]
         self._y = event.y_root - d["oy"]
         try:
-            self._root.geometry(f"{self._win_w}x{self._win_h}+{self._x}+{self._y}")
+            self._root.geometry(f"{renderer.WIN_W}x{renderer.WIN_H}+{self._x}+{self._y}")
         except Exception:  # noqa: BLE001
             log.debug("jarvisbar geometry update failed", exc_info=True)
 
@@ -672,16 +601,16 @@ class JarvisBarOverlay:
             # Use the PRESS-time hover (consistent with the press-time cx): a
             # deliberate click that started on the bar registers even if a stray
             # <Leave> flickered _hovered before release.
-            self._on_click(d.get("cx", self._win_w / 2), hovered=bool(d.get("hovered")))
+            self._on_click(d.get("cx", renderer.WIN_W / 2), hovered=bool(d.get("hovered")))
             return
         try:
             sw = int(self._root.winfo_screenwidth())
             sh = int(self._root.winfo_screenheight())
             self._x, self._y = interaction.clamp_to_screen(
                 self._x, self._y, screen_w=sw, screen_h=sh,
-                bar_w=self._win_w, bar_h=self._win_h, margin=MARGIN_PX,
+                bar_w=renderer.WIN_W, bar_h=renderer.WIN_H, margin=MARGIN_PX,
             )
-            self._root.geometry(f"{self._win_w}x{self._win_h}+{self._x}+{self._y}")
+            self._root.geometry(f"{renderer.WIN_W}x{renderer.WIN_H}+{self._x}+{self._y}")
             from jarvis.core.config_writer import DEFAULT_CONFIG_FILE
 
             interaction.save_jarvisbar_position(DEFAULT_CONFIG_FILE, self._x, self._y)
@@ -740,7 +669,7 @@ class JarvisBarOverlay:
         # mute (mic muted FOR JARVIS only), MIDDLE (idle) → start a normal
         # session. All entries are thread-safe from the Tk thread.
         if click_x is None:
-            click_x = self._win_w / 2
+            click_x = renderer.WIN_W / 2
         try:
             from jarvis.core.runtime_refs import get_speech_pipeline
 
@@ -752,9 +681,9 @@ class JarvisBarOverlay:
             # — see interaction.resolve_click + the silent-hangup forensic. The
             # active pill is ACTIVE_W, so the X glyph sits at WIN_W/2-0.42*pw.
             active = self._mode in ("listen", "think", "speak")
-            pill_w = self._active_w if active else None
+            pill_w = renderer.ACTIVE_W if active else None
             action = interaction.resolve_click(
-                click_x, self._win_w, self._mode,
+                click_x, renderer.WIN_W, self._mode,
                 hovered=hovered, pill_w=pill_w,
             )
             if action == "mute":
@@ -806,9 +735,9 @@ class JarvisBarOverlay:
             sh = int(self._root.winfo_screenheight())
             self._x, self._y = interaction.default_bottom_center(
                 screen_w=sw, screen_h=sh,
-                bar_w=self._win_w, bar_h=self._win_h, margin=MARGIN_PX,
+                bar_w=renderer.WIN_W, bar_h=renderer.WIN_H, margin=MARGIN_PX,
             )
-            self._root.geometry(f"{self._win_w}x{self._win_h}+{self._x}+{self._y}")
+            self._root.geometry(f"{renderer.WIN_W}x{renderer.WIN_H}+{self._x}+{self._y}")
             from jarvis.core.config_writer import DEFAULT_CONFIG_FILE
 
             interaction.save_jarvisbar_position(DEFAULT_CONFIG_FILE, self._x, self._y)

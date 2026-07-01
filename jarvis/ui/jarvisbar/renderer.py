@@ -395,26 +395,9 @@ class _RenderState:
 
 
 class JarvisBarRenderer:
-    def __init__(self, accent: str = "#e7c46e", scale: float = 1.0) -> None:
+    def __init__(self, accent: str = "#e7c46e") -> None:
         self._accent = _hex_to_rgb(accent)
-        # HiDPI scale. The module constants (WIN_W/WIN_H, the pill sizes) are the
-        # BASE design at 100%. On a scaled display the bar must keep a constant
-        # PHYSICAL size, else a DPI-aware process draws it at raw pixels and it
-        # shrinks to an unusable sliver (4K @ 150% → 48x8 idle pill). ``scale``
-        # (the monitor's DPI factor, e.g. 1.5 for 150%) enlarges the whole
-        # surface + pill proportionally. Never below 1.0 — a smaller bar is
-        # never the goal.
-        self._scale = max(1.0, float(scale))
-        self.win_w = round(WIN_W * self._scale)
-        self.win_h = round(WIN_H * self._scale)
-        self.active_w = round(ACTIVE_W * self._scale)
-        # Bottom pad scales too, so the pill keeps the same relative resting
-        # spot inside the (now larger) window.
-        self._bottom_pad = _BOTTOM_PAD * self._scale
-        self._st = _RenderState(
-            pw=float(round(COLLAPSED_W * self._scale)),
-            ph=float(round(COLLAPSED_H * self._scale)),
-        )
+        self._st = _RenderState()
 
     def render(
         self,
@@ -429,10 +412,6 @@ class JarvisBarRenderer:
         # live, OPEN on hover (controls) OR while muted (keep the mute cue +
         # unmute target visible), COLLAPSED at rest.
         tw, th = target_pill_size(mode, hovered, muted)
-        # Enlarge the target for a scaled display so the eased pill grows toward
-        # the physically-constant size, not the raw base pixels.
-        tw *= self._scale
-        th *= self._scale
         # Snappy grow/shrink: 0.5 reaches the target in ~4 frames (~70 ms) so the
         # bar pops to full size almost immediately on "Hey Jarvis" instead of
         # crawling there over a third of a second.
@@ -443,15 +422,13 @@ class JarvisBarRenderer:
         )
         pw, ph = self._st.pw, self._st.ph
 
-        frame = np.empty((self.win_h, self.win_w, 3), dtype=np.uint8)
+        frame = np.empty((WIN_H, WIN_W, 3), dtype=np.uint8)
         frame[:, :] = COLOR_KEY_RGB
         img = Image.fromarray(frame)  # uint8 (H,W,3) → mode "RGB"
         d = ImageDraw.Draw(img)
 
-        cx = self.win_w / 2.0
-        # Bottom-anchored (scaled): grows upward, idle stays put. Mirrors the
-        # free ``pill_center_y`` but on the instance's scaled window height.
-        cy = self.win_h - self._bottom_pad - ph / 2.0
+        cx = WIN_W / 2.0
+        cy = pill_center_y(ph)  # bottom-anchored: grows upward, idle stays put
         # The rim turns red whenever the mic is muted FOR JARVIS — drawn on
         # EVERY frame (even idle/standby, no hover) so the muted cue is visible
         # at a glance without having to reveal the controls.
