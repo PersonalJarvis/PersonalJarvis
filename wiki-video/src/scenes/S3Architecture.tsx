@@ -119,7 +119,7 @@ export const S3Architecture: React.FC = () => {
   const frame = useCurrentFrame();
   const noteO = lerp(frame, [30, 50], [0, 1], EASE.outExpo);
   return (
-    <AbsoluteFill style={{ justifyContent: "flex-start" }}>
+    <AbsoluteFill style={{ justifyContent: "center" }}>
       <Eyebrow delay={2}>Architecture — the sleep-time curator</Eyebrow>
       <div style={{ height: 22 }} />
       <Headline size={58} delay={8}>

@@ -12,6 +12,7 @@ client is never reused across loops — each ``pytest-asyncio`` test runs in its
 own loop, and a tool instance reused across loops would otherwise raise
 ``RuntimeError: Event loop is closed``.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -24,9 +25,7 @@ class HttpClientPool:
     ``httpx.MockTransport`` exactly as they did with the per-request clients.
     """
 
-    def __init__(
-        self, *, timeout_s: float = 20.0, transport: Any | None = None
-    ) -> None:
+    def __init__(self, *, timeout_s: float = 20.0, transport: Any | None = None) -> None:
         self._timeout_s = timeout_s
         self._transport = transport
         self._client: Any | None = None
@@ -41,9 +40,7 @@ class HttpClientPool:
         loop = asyncio.get_running_loop()
         client = self._client
         if client is None or self._loop is not loop or client.is_closed:
-            client = httpx.AsyncClient(
-                timeout=self._timeout_s, transport=self._transport
-            )
+            client = httpx.AsyncClient(timeout=self._timeout_s, transport=self._transport)
             self._client = client
             self._loop = loop
         return client

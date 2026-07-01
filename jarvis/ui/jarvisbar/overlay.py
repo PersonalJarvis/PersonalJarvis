@@ -91,6 +91,48 @@ def _primary_work_area() -> tuple[int, int, int, int] | None:
         return None
 
 
+def _pin_bar_window_unaware() -> None:
+    """Pin the bar's Tk window to per-window DPI-UNAWARE (Windows only).
+
+    The bar must keep the exact size + look it has always had: a small pill that
+    Windows bitmap-UPSCALES to a comfortable physical size on a scaled display.
+    That upscaling only happens for a DPI-UNAWARE window. The recurring bug: the
+    process is made DPI-AWARE — by ``ensure_dpi_awareness`` above and, at runtime,
+    by pywebview's ``SetProcessDPIAware`` inside ``webview.start()`` — and an
+    awareness change strips the upscaling off any window that merely INHERITS the
+    process default. The already-visible bar then snaps to raw pixels (~2/3 size)
+    and jumps position mid-session; only a restart cures it.
+
+    Giving THIS thread an EXPLICIT ``DPI_AWARENESS_CONTEXT_UNAWARE`` before
+    ``tk.Tk()`` bakes that context into the bar window for its lifetime. Because
+    the process is already aware (``ensure_dpi_awareness`` ran first), the
+    window's context genuinely DIFFERS from the process, so the upscaling is
+    pinned: a later process-wide flip can no longer strip it. Verified live — a
+    107x48 window pinned this way sits at 161x72 physical and STAYS 161x72 across
+    ``SetProcessDPIAware``. Geometry and pointer events both stay in the one
+    virtualized space, so dragging stays glued to the cursor. The renderer is not
+    touched: the bar looks identical, it just stops shrinking.
+
+    No-op off Windows, under pytest (never mutate the test runner's thread), and
+    on any Windows without the per-thread API; never blocks the bar on failure.
+    """
+    if sys.platform != "win32":
+        return
+    if "pytest" in sys.modules:  # don't mutate the test runner thread's DPI context
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        user32.SetThreadDpiAwarenessContext.restype = wintypes.HANDLE
+        user32.SetThreadDpiAwarenessContext.argtypes = [wintypes.HANDLE]
+        # DPI_AWARENESS_CONTEXT_UNAWARE is the sentinel handle value ((HANDLE)-1).
+        user32.SetThreadDpiAwarenessContext(wintypes.HANDLE(-1))
+    except Exception:  # noqa: BLE001 — never block the bar on a DPI hiccup
+        log.debug("jarvisbar DPI unaware-pin skipped", exc_info=True)
+
+
 class JarvisBarOverlay:
     def __init__(
         self,

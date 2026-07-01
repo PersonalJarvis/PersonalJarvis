@@ -78,7 +78,7 @@ export const S4Page: React.FC = () => {
   const tagO = lerp(frame, [150, 172], [0, 1], EASE.outExpo);
 
   return (
-    <AbsoluteFill style={{ justifyContent: "flex-start" }}>
+    <AbsoluteFill style={{ justifyContent: "center" }}>
       <Eyebrow delay={2}>The data model</Eyebrow>
       <div style={{ height: 20 }} />
       <Headline size={54} delay={8}>

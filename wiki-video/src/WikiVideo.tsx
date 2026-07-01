@@ -13,14 +13,20 @@ import { SCENES, TOTAL_FRAMES } from "./theme";
 // the next, and SceneWrap fades out over that window while the next fades in.
 const OVERLAP = 20;
 
-const order = [
+type SceneEntry = {
+  key: keyof typeof SCENES;
+  comp: React.ReactNode;
+  pad?: boolean;
+};
+
+const order: SceneEntry[] = [
   { key: "intro", comp: <S1Intro />, pad: false },
   { key: "idea", comp: <S2Idea /> },
   { key: "arch", comp: <S3Architecture /> },
   { key: "page", comp: <S4Page /> },
   { key: "read", comp: <S5ReadBack /> },
   { key: "outro", comp: <S6Outro />, pad: false },
-] as const;
+];
 
 export const WikiVideo: React.FC = () => {
   return (

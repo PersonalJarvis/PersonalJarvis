@@ -70,7 +70,7 @@ export const S5ReadBack: React.FC = () => {
   const panelY = lerp(frame, [78, 98], [18, 0], EASE.outExpo);
 
   return (
-    <AbsoluteFill style={{ justifyContent: "flex-start" }}>
+    <AbsoluteFill style={{ justifyContent: "center" }}>
       <Eyebrow delay={2}>Recall — read back in milliseconds</Eyebrow>
       <div style={{ height: 20 }} />
       <Headline size={54} delay={8}>
