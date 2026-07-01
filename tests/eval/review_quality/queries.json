@@ -1,5 +1,5 @@
 {
-  "_doc": "Golden-Query-Set für die Review-Pipeline. APPEND-ONLY: bestehende Einträge dürfen nicht editiert werden — sie sind der Regressions-Anker. Neue Queries mit höherer ID anhängen.",
+  "_doc": "Golden query set for the review pipeline. APPEND-ONLY: existing entries must not be edited — they are the regression anchor. Append new queries with a higher ID.",
   "version": 1,
   "queries": [
     {
