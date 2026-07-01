@@ -27,15 +27,15 @@ repos:
 
   - repo: local
     hooks:
-      # Plan §6.6 — Quick-Subset (max 5 Queries) der Review-Pipeline-Eval.
-      # Default: Mock-Modus (kein claude-Spawn, keine Kosten, < 5s).
-      # Threshold 60% — laxer als die Voll-Suite (80%), weil Quick-Subset
-      # schmal ist und kleiner Sampling-Bias erlaubt sein muss.
+      # Plan §6.6 — quick subset (max 5 queries) of the review-pipeline eval.
+      # Default: mock mode (no claude spawn, no cost, < 5s).
+      # Threshold 60% — laxer than the full suite (80%) because the quick
+      # subset is narrow and needs to tolerate a small sampling bias.
       - id: review-eval-quick
         name: review-pipeline eval (quick subset, mock)
         entry: jarvis-review-eval --quick --mock --threshold 0.6
         language: system
         pass_filenames: false
         always_run: false
-        # Nur triggern wenn review-relevante Files berührt werden.
+        # Only triggers when review-relevant files are touched.
         files: ^(jarvis/core/review/|jarvis/plugins/tool/dispatch_with_review\.py|tests/eval/review_quality/queries\.json)

@@ -1,21 +1,21 @@
 /* edge-glow.css — Plan §7 Visual Design System
  *
  * Hard rules:
- *   - Palette §7.1 strict: nur Yellow + Black + Error-Red.
- *   - Glow AKTIV nur in data-state="typing" oder "clicking". (Plan §6.1)
- *   - Animations strict gemaess §7.3:
- *       Conic-Sweep rotation: linear (alles andere stottert)
- *       Halo-Breathing: cubic-bezier(0.25, 0.46, 0.45, 0.94) iOS Default
- *       State-Change: 250ms cubic-bezier(0.4, 0, 0.2, 1) Material Standard
- *   - Hue-Drift bleibt innerhalb der Palette (+/- 15 deg).
- *   - prefers-reduced-motion: static low-intensity Glow opacity 0.4.
- *   - contain: strict am Overlay-Root.
- *   - will-change: transform, filter NUR auf .edge-glow Layern.
+ *   - Palette §7.1 strict: only yellow + black + error-red.
+ *   - Glow ACTIVE only in data-state="typing" or "clicking". (Plan §6.1)
+ *   - Animations strict per §7.3:
+ *       Conic-sweep rotation: linear (anything else stutters)
+ *       Halo-breathing: cubic-bezier(0.25, 0.46, 0.45, 0.94) iOS default
+ *       State-change: 250ms cubic-bezier(0.4, 0, 0.2, 1) Material standard
+ *   - Hue-drift stays within the palette (+/- 15 deg).
+ *   - prefers-reduced-motion: static low-intensity glow opacity 0.4.
+ *   - contain: strict on the overlay root.
+ *   - will-change: transform, filter ONLY on .edge-glow layers.
  */
 
-/* @property --angle erlaubt CSS-Animationen auf Custom-Properties.
- * Ohne diese Deklaration kann conic-gradient(from var(--angle)) NICHT
- * vom Compositor animiert werden. */
+/* @property --angle allows CSS animations on custom properties.
+ * Without this declaration, conic-gradient(from var(--angle)) CANNOT
+ * be animated by the compositor. */
 @property --angle {
   syntax: "<angle>";
   inherits: false;
@@ -41,15 +41,15 @@
 }
 
 :root {
-  /* Plan §7.1 Palette — STRIKT, keine anderen Farben. */
+  /* Plan §7.1 palette — STRICT, no other colors. */
   --jarvis-yellow-primary: #ffc700;
   --jarvis-yellow-soft: #ffe066;
   --jarvis-yellow-amber: #ffb300;
   --jarvis-black: #0a0a0a;
   --jarvis-error-red: #ff4d4d;
 
-  /* Live-modulierte Properties — werden von noise.ts 12x/s gesetzt.
-   * Initial-Values via @property oben. */
+  /* Live-modulated properties — set by noise.ts 12x/s.
+   * Initial values via @property above. */
   --intensity: 1;
 }
 
@@ -63,39 +63,39 @@ body {
   color: var(--jarvis-yellow-primary);
   font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
   overflow: hidden;
-  /* Plan §7 + §17: contain: strict sperrt Layout/Paint/Style ein und
-   * gibt dem Compositor maximale Optimierungs-Freiheit. */
+  /* Plan §7 + §17: contain: strict scopes layout/paint/style and
+   * gives the compositor maximum optimization freedom. */
   contain: strict;
 }
 
-/* Edge-Glow Container — Plan §7.4 Multi-Layer-Composition.
- * Default: nicht sichtbar. Aktiv nur via data-state typing/clicking. */
+/* Edge-Glow container — Plan §7.4 multi-layer composition.
+ * Default: not visible. Active only via data-state typing/clicking. */
 .edge-glow {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  /* Plan §7.6 SVG Bloom-Filter wird inline im HTML geladen. */
+  /* Plan §7.6 SVG bloom filter is loaded inline in the HTML. */
   filter: url(#jarvis-glow);
   opacity: 0;
-  /* Plan §7.3: 250ms Material Standard fuer State-Change. */
+  /* Plan §7.3: 250ms Material standard for state-change. */
   transition: opacity 250ms cubic-bezier(0.4, 0, 0.2, 1);
-  /* Schreibt der Compositor sich, nicht der Renderer-Thread. */
+  /* The compositor writes this itself, not the renderer thread. */
   will-change: opacity, filter;
-  /* a11y: Glow ist kein interaktives Element, Screen-Reader skip. */
+  /* a11y: the glow is not an interactive element, screen readers skip it. */
   z-index: 0;
 }
 
-/* 5 Layer mit Phase-Offset — Plan §7.4 Punkt 1 + 2.
- * Jeder Layer hat eigene Periode-Variante via animation-delay; alle
- * teilen sich das @keyframes rotate aber starten verschoben. */
+/* 5 layers with phase offset — Plan §7.4 items 1 + 2.
+ * Each layer has its own period variant via animation-delay; they all
+ * share the @keyframes rotate but start staggered. */
 .edge-glow .layer {
   position: absolute;
   inset: 0;
-  /* Plan §7.2: 14px Edge-Band-Width @ 1x DPI. */
+  /* Plan §7.2: 14px edge-band width @ 1x DPI. */
   padding: 14px;
   box-sizing: border-box;
-  /* Conic-Gradient als rotating yellow stroke. Plan §7.5 Reference-
-   * Algo nimmt 4 stops aus der Palette. */
+  /* Conic gradient as a rotating yellow stroke. Plan §7.5 reference
+   * algo takes 4 stops from the palette. */
   background: conic-gradient(
     from var(--angle),
     transparent 0deg,
@@ -105,8 +105,8 @@ body {
     var(--jarvis-yellow-primary) 340deg,
     transparent 360deg
   );
-  /* Mask-Composite "exclude" punched die innere Flaeche raus, sodass
-   * nur der 14px Rand-Stroke uebrig bleibt. Plan §7.2. */
+  /* Mask-composite "exclude" punches out the inner area, so only
+   * the 14px edge stroke remains. Plan §7.2. */
   -webkit-mask:
     linear-gradient(#000, #000) content-box,
     linear-gradient(#000, #000);
@@ -115,28 +115,27 @@ body {
     linear-gradient(#000, #000) content-box,
     linear-gradient(#000, #000);
   mask-composite: exclude;
-  /* Plan §7.2: plus-lighter sammelt mehrere Layer zu luminoser
-   * Akkumulation (Chrome 105+). */
+  /* Plan §7.2: plus-lighter accumulates multiple layers into a luminous
+   * blend (Chrome 105+). */
   mix-blend-mode: plus-lighter;
-  /* Hue-Drift: noise.ts modulated. Plan §7.4 Punkt 3 — bleibt innerhalb
-   * der Palette weil der Wert auf +/- 15deg geclamped wird (in JS). */
+  /* Hue-drift: modulated by noise.ts. Plan §7.4 item 3 — stays within
+   * the palette because the value is clamped to +/- 15deg (in JS). */
   filter: hue-rotate(var(--hue-drift));
-  /* Phase 9.4: will-change strict NUR hier, NICHT global. */
+  /* Phase 9.4: will-change strict ONLY here, NOT global. */
   will-change: transform, filter, opacity;
 }
 
-/* @keyframes drei separate Perioden um den Phase-Offset visuell zu
- * differenzieren ohne dass alle Layer exact-step laufen. */
+/* @keyframes uses three separate periods to visually differentiate the
+ * phase offset without all layers running in exact lockstep. */
 @keyframes rotate-edge {
   to {
     --angle: 360deg;
   }
 }
 
-/* Halo-Breathing per §7.3: 4.2s mit iOS easing.
- * Bewegt zwischen --halo-a und --halo-b — beide werden 12 Hz von
- * noise.ts moduliert, sodass die Atmung niemals exakt periodisch
- * wirkt. */
+/* Halo-breathing per §7.3: 4.2s with iOS easing.
+ * Moves between --halo-a and --halo-b — both are modulated at 12 Hz by
+ * noise.ts, so the breathing never feels exactly periodic. */
 @keyframes halo-breathe {
   0%,
   100% {
@@ -147,7 +146,7 @@ body {
   }
 }
 
-/* Layer-Defaults — Phase-Offset per Plan §7.4: ca. 200ms je Ecke. */
+/* Layer defaults — phase offset per Plan §7.4: approx. 200ms per corner. */
 .edge-glow .layer.l1 {
   animation:
     rotate-edge var(--rot-period, 1.6s) linear infinite,
@@ -180,7 +179,7 @@ body {
 }
 
 /* ----------------------------------------------------------------------
- * State-driven Activation — Plan §6.1: Glow nur typing/clicking/error.
+ * State-driven activation — Plan §6.1: glow only typing/clicking/error.
  * ---------------------------------------------------------------------- */
 
 :root[data-state="typing"] .edge-glow {
@@ -193,7 +192,7 @@ body {
   --rot-period: 0.9s;
 }
 
-/* Error-Flash: kurz rot, schneller. Plan §6.1 + §7.1 (error-red). */
+/* Error flash: briefly red, faster. Plan §6.1 + §7.1 (error-red). */
 :root[data-state="error"] .edge-glow {
   opacity: 1;
   --rot-period: 0.6s;
@@ -206,18 +205,19 @@ body {
     var(--jarvis-error-red) 240deg,
     transparent 360deg
   );
-  /* Hue-Drift greift im Error-Pfad nicht — konsistent rotes Tint. */
+  /* Hue-drift doesn't apply on the error path — consistent red tint. */
   filter: none;
 }
 
 /* idle / listening / thinking / speaking / hidden: opacity 0 default.
- * Reicht damit der Glow off ist. Layers laufen weiter im Compositor —
- * wirken null-cost weil opacity:0 + will-change:opacity vom Compositor
- * trivial gehandled wird. Phase 9.7 throttled FPS via setSuspended. */
+ * That's enough to keep the glow off. Layers keep running in the
+ * compositor — effectively zero cost because opacity:0 + will-change:opacity
+ * is handled trivially by the compositor. Phase 9.7 throttles FPS via
+ * setSuspended. */
 
 /* ----------------------------------------------------------------------
- * Reduced-Motion — Plan §19.1 + §19.2
- * Static low-intensity Glow opacity 0.4, keine Animationen.
+ * Reduced motion — Plan §19.1 + §19.2
+ * Static low-intensity glow opacity 0.4, no animations.
  * ---------------------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {
@@ -232,7 +232,7 @@ body {
 }
 
 /* ----------------------------------------------------------------------
- * High-Contrast — Plan §19.4
+ * High contrast — Plan §19.4
  * forced-colors: drop bloom, simple 4px CanvasText border.
  * ---------------------------------------------------------------------- */
 
@@ -248,24 +248,25 @@ body {
 }
 
 /* ----------------------------------------------------------------------
- * Phase 9.5 — Action Effects: Click-Ripple, Cursor-Trail, Typing-Sweep
+ * Phase 9.5 — Action effects: click ripple, cursor trail, typing sweep
  * ---------------------------------------------------------------------- */
 
-/* Ripple-Layer — fullscreen pointer-events:none Container fuer den
- * 8er-Pool von Ripple-Divs. Plan §14.2. */
+/* Ripple layer — fullscreen pointer-events:none container for the
+ * pool of 8 ripple divs. Plan §14.2. */
 .ripple-layer {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  z-index: 2; /* ueber dem .edge-glow Layer */
+  z-index: 2; /* above the .edge-glow layer */
   overflow: hidden;
 }
 
-/* Single Ripple-Slot im Pool. Outer-Div positioniert sich via inline
- * ``transform: translate(x, y)`` am Click-Coord (8x8 Bounding-Box).
- * Inner pseudo-::before macht die ``scale(40) + opacity 1->0``
- * Animation — so ueberschreibt scale nicht den Position-translate.
- * Plan §14.1: 8x8 px Kreis, expandiert zu scale(40), opacity 1 -> 0,
+/* Single ripple slot in the pool. The outer div positions itself via
+ * inline ``transform: translate(x, y)`` at the click coordinate (8x8
+ * bounding box). The inner pseudo-::before does the
+ * ``scale(40) + opacity 1->0`` animation — that way scale doesn't
+ * override the position translate.
+ * Plan §14.1: 8x8 px circle, expands to scale(40), opacity 1 -> 0,
  * 600 ms cubic-bezier(0.2, 0.7, 0.3, 1). */
 .ripple {
   position: absolute;
@@ -273,7 +274,7 @@ body {
   left: 0;
   width: 8px;
   height: 8px;
-  margin-left: -4px; /* visual-center auf translate-coord */
+  margin-left: -4px; /* visual center on the translate coord */
   margin-top: -4px;
   pointer-events: none;
   will-change: transform;
@@ -311,8 +312,8 @@ body {
   }
 }
 
-/* Cursor-Trail-Canvas — Worker rendert OffscreenCanvas, Plan §15.2.
- * Fullscreen, click-through, ueber dem Edge-Glow aber unter Ripple. */
+/* Cursor-trail canvas — the worker renders the OffscreenCanvas, Plan §15.2.
+ * Fullscreen, click-through, above the edge glow but below the ripple. */
 .cursor-trail-canvas {
   position: fixed;
   inset: 0;
@@ -322,7 +323,7 @@ body {
   z-index: 1;
 }
 
-/* Typing-Sweep — Bottom-Edge 4px line. Plan §16.1.
+/* Typing sweep — bottom-edge 4px line. Plan §16.1.
  * -100% -> +100% via translateX, 200ms linear. */
 .typing-sweep {
   position: fixed;
@@ -332,8 +333,8 @@ body {
   height: 4px;
   pointer-events: none;
   z-index: 2;
-  /* Yellow gradient mit zentral-fokussiertem Highlight — Sweep-Effekt
-   * entsteht durch translateX einer Mid-Highlight-Surface. */
+  /* Yellow gradient with a centrally-focused highlight — the sweep
+   * effect comes from translateX-ing a mid-highlight surface. */
   background: linear-gradient(
     90deg,
     transparent 0%,
@@ -368,7 +369,7 @@ body {
   }
 }
 
-/* Reduced-Motion: Effekte ebenfalls dimmen. Plan §19.1. */
+/* Reduced motion: dim the effects too. Plan §19.1. */
 @media (prefers-reduced-motion: reduce) {
   .ripple,
   .typing-sweep {
@@ -381,8 +382,8 @@ body {
 }
 
 /* ----------------------------------------------------------------------
- * Debug State-Display — nur via ?debug=1 sichtbar.
- * main.ts setzt :root[data-debug="1"] beim Boot.
+ * Debug state display — only visible via ?debug=1.
+ * main.ts sets :root[data-debug="1"] at boot.
  * ---------------------------------------------------------------------- */
 
 #state-display {

@@ -1,7 +1,7 @@
-"""Unit-Tests fuer die 3 Built-in-Skills.
+"""Unit tests for the 3 built-in skills.
 
-Prueft dass die SKILL.md-Dateien alle parsbar sind, valide Frontmatter haben,
-alle Trigger-Payloads semantisch OK sind und Voice-Regex kompilieren.
+Checks that all SKILL.md files parse, have valid frontmatter,
+all trigger payloads are semantically OK, and voice regexes compile.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-# Falls parallele B1-Arbeit noch nicht fertig ist: graceful skip.
+# If parallel B1 work isn't finished yet: graceful skip.
 pytest.importorskip("jarvis.skills.schema")
 pytest.importorskip("jarvis.skills.loader")
 
@@ -33,7 +33,7 @@ def test_skill_parses_successfully(name: str) -> None:
         f"parse_skill returned no frontmatter for {name}: error={skill.error}"
     )
     assert skill.state != SkillLifecycleState.DRAFT or skill.error is None
-    # Explizit: Frontmatter-Modell validieren
+    # Explicitly validate the frontmatter model
     SkillFrontmatter.model_validate(skill.frontmatter.model_dump())
 
 
@@ -51,9 +51,9 @@ def test_skill_has_valid_triggers(name: str) -> None:
             f"disabled skill {name} must not declare triggers"
         )
         return
-    # Meta-Skills (category="meta") duerfen ohne Auto-Trigger leben — sie
-    # werden vom Supervisor per Intent-Dispatch gezogen, nicht vom
-    # TriggerMatcher. Alle anderen Kategorien brauchen mindestens einen.
+    # Meta skills (category="meta") may live without an auto trigger — they
+    # are pulled by the supervisor via intent dispatch, not by the
+    # TriggerMatcher. All other categories need at least one.
     if skill.frontmatter.category != "meta":
         assert len(skill.frontmatter.triggers) >= 1, (
             f"{name} needs at least one trigger (category={skill.frontmatter.category})"
@@ -78,7 +78,7 @@ def test_voice_patterns_compile(name: str) -> None:
     for t in skill.frontmatter.triggers:
         if t.type == "voice":
             assert t.pattern is not None
-            # Muss als Regex kompilieren
+            # Must compile as a regex
             compiled = re.compile(t.pattern, re.IGNORECASE)
             assert compiled is not None
 

@@ -1,7 +1,7 @@
 # === F-FRIENDS [F4] · feature/friends-section · ruben-2026-05-01 ===
-"""Unit-Tests fuer :class:`jarvis.friends.status_publisher.StatusPublisher`.
+"""Unit tests for :class:`jarvis.friends.status_publisher.StatusPublisher`.
 
-Strategie: echte FriendRegistry (in-memory SQLite) + Fake-ChannelManager + Fake-Bus.
+Strategy: real FriendRegistry (in-memory SQLite) + fake ChannelManager + fake bus.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from jarvis.friends.status_publisher import StatusPublisher
 
 
 # ----------------------------------------------------------------------
-# Fake-Events (Class-Names matchen echte Bus-Events)
+# Fake events (class names match real bus events)
 # ----------------------------------------------------------------------
 
 
@@ -54,7 +54,7 @@ class UtteranceCaptured:
 
 
 class FakeTelegramChannel:
-    """Captured all send_status_card calls fuer Assertion."""
+    """Captures all send_status_card calls for assertion."""
 
     def __init__(self) -> None:
         self.sent: list[tuple[int, StatusUpdate]] = []
@@ -104,7 +104,7 @@ def bus() -> EventBus:
 async def test_subscribes_unsubscribes(
     bus: EventBus, registry: FriendRegistry
 ) -> None:
-    """start() registriert Wildcard-Handler, stop() entfernt ihn."""
+    """start() registers a wildcard handler, stop() removes it."""
     pub = StatusPublisher(bus, registry, channel_manager=None)
     assert len(bus._wildcard_subscribers) == 0
     await pub.start()
@@ -128,7 +128,7 @@ async def test_double_start_idempotent(
 async def test_filtered_event_dispatched_to_telegram(
     bus: EventBus, registry: FriendRegistry
 ) -> None:
-    """Friend mit telegram + standard, MissionCompleted -> dispatched."""
+    """Friend with telegram + standard, MissionCompleted -> dispatched."""
     friend = Friend(display_name="Daniel")
     await registry.add_friend(friend)
     await registry.link_channel(
@@ -162,7 +162,7 @@ async def test_filtered_event_dispatched_to_telegram(
 async def test_blacklisted_event_not_dispatched(
     bus: EventBus, registry: FriendRegistry
 ) -> None:
-    """UtteranceCaptured wird NIE dispatched, egal welches Profile."""
+    """UtteranceCaptured is NEVER dispatched, regardless of profile."""
     friend = Friend(display_name="Daniel")
     await registry.add_friend(friend)
     await registry.link_channel(
@@ -191,7 +191,7 @@ async def test_blacklisted_event_not_dispatched(
 async def test_blacklisted_event_with_custom_whitelist_blocked(
     bus: EventBus, registry: FriendRegistry
 ) -> None:
-    """Custom-Whitelist kann Hard-Blacklist NICHT umgehen."""
+    """A custom whitelist can NOT bypass the hard blacklist."""
     friend = Friend(display_name="Daniel")
     await registry.add_friend(friend)
     await registry.link_channel(
@@ -222,8 +222,8 @@ async def test_blacklisted_event_with_custom_whitelist_blocked(
 async def test_per_friend_filtering(
     bus: EventBus, registry: FriendRegistry
 ) -> None:
-    """Zwei Friends mit unterschiedlichen Profilen — nur der mit
-    passendem Profile bekommt das Event."""
+    """Two friends with different profiles — only the one with a
+    matching profile receives the event."""
     minimal_friend = Friend(display_name="Minimal-Mike")
     detailed_friend = Friend(display_name="Detail-Dora")
     await registry.add_friend(minimal_friend)
@@ -253,21 +253,21 @@ async def test_per_friend_filtering(
     pub = StatusPublisher(bus, registry, channel_manager=cm)
     await pub.start()
     try:
-        # MissionStarted ist 'standard'+ — minimal blockiert, detailed durch
+        # MissionStarted is 'standard'+ — minimal blocks, detailed passes through
         await bus.publish(MissionStarted())
     finally:
         await pub.stop()
 
     assert len(fake_tg.sent) == 1
     chat_id, _update = fake_tg.sent[0]
-    assert chat_id == 222  # nur detailed-Friend
+    assert chat_id == 222  # only the detailed friend
 
 
 @pytest.mark.asyncio
 async def test_friend_without_channel_skipped(
     bus: EventBus, registry: FriendRegistry
 ) -> None:
-    """Friend ohne verknuepften Channel -> kein Crash, kein Send."""
+    """Friend without a linked channel -> no crash, no send."""
     friend = Friend(display_name="Channelless")
     await registry.add_friend(friend)
     await registry.set_status_permission(friend.id, "detailed")
@@ -288,7 +288,7 @@ async def test_friend_without_channel_skipped(
 async def test_invalid_telegram_handle_does_not_crash(
     bus: EventBus, registry: FriendRegistry
 ) -> None:
-    """Wenn telegram-handle nicht zu int parsen geht -> skip, kein Crash."""
+    """If the telegram handle can't be parsed as an int -> skip, no crash."""
     friend = Friend(display_name="BadHandle")
     await registry.add_friend(friend)
     await registry.link_channel(
@@ -317,7 +317,7 @@ async def test_invalid_telegram_handle_does_not_crash(
 async def test_telegram_channel_unavailable_does_not_crash(
     bus: EventBus, registry: FriendRegistry
 ) -> None:
-    """ChannelManager liefert KeyError fuer 'telegram' -> skip, kein Crash."""
+    """ChannelManager raises KeyError for 'telegram' -> skip, no crash."""
     friend = Friend(display_name="Foo")
     await registry.add_friend(friend)
     await registry.link_channel(
@@ -330,21 +330,21 @@ async def test_telegram_channel_unavailable_does_not_crash(
     )
     await registry.set_status_permission(friend.id, "minimal")
 
-    cm = FakeChannelManager(telegram=None)  # telegram NICHT registriert
+    cm = FakeChannelManager(telegram=None)  # telegram NOT registered
     pub = StatusPublisher(bus, registry, channel_manager=cm)
     await pub.start()
     try:
         await bus.publish(VoiceSessionStarted())
     finally:
         await pub.stop()
-    # Erfolgreich ohne Exception
+    # Succeeds without an exception
 
 
 @pytest.mark.asyncio
 async def test_channel_manager_none_does_not_crash(
     bus: EventBus, registry: FriendRegistry
 ) -> None:
-    """Ohne ChannelManager wird trotzdem nicht gecrasht."""
+    """Even without a ChannelManager, nothing crashes."""
     friend = Friend(display_name="Foo")
     await registry.add_friend(friend)
     await registry.link_channel(
@@ -369,7 +369,7 @@ async def test_channel_manager_none_does_not_crash(
 async def test_jarvis_pubkey_channel_stub_only(
     bus: EventBus, registry: FriendRegistry
 ) -> None:
-    """jarvis_pubkey ist in F4 Stub — kein Send, kein Crash."""
+    """jarvis_pubkey is a stub in F4 — no send, no crash."""
     friend = Friend(display_name="Federation-Friend")
     await registry.add_friend(friend)
     await registry.link_channel(
@@ -391,7 +391,7 @@ async def test_jarvis_pubkey_channel_stub_only(
     finally:
         await pub.stop()
 
-    # Telegram darf NICHT gerufen werden (Friend hat nur jarvis_pubkey)
+    # Telegram must NOT be called (friend only has jarvis_pubkey)
     assert fake_tg.sent == []
 
 
@@ -399,10 +399,10 @@ async def test_jarvis_pubkey_channel_stub_only(
 async def test_primary_channel_chosen_when_multiple(
     bus: EventBus, registry: FriendRegistry
 ) -> None:
-    """Wenn mehrere Channels verknuepft, gewinnt is_primary=True."""
+    """When multiple channels are linked, is_primary=True wins."""
     friend = Friend(display_name="MultiChannel")
     await registry.add_friend(friend)
-    # Nicht-primary zuerst
+    # Non-primary first
     await registry.link_channel(
         FriendChannel(
             friend_id=friend.id,
@@ -411,7 +411,7 @@ async def test_primary_channel_chosen_when_multiple(
             is_primary=False,
         )
     )
-    # Primary danach
+    # Primary afterwards
     await registry.link_channel(
         FriendChannel(
             friend_id=friend.id,
@@ -433,4 +433,4 @@ async def test_primary_channel_chosen_when_multiple(
 
     assert len(fake_tg.sent) == 1
     chat_id, _ = fake_tg.sent[0]
-    assert chat_id == 999  # primary, nicht 111
+    assert chat_id == 999  # primary, not 111

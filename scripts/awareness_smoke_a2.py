@@ -1,22 +1,22 @@
-"""Live-Smoke fuer Phase A2 — L2 Story Tracker (Bus-Replay).
+"""Live smoke test for Phase A2 — L2 Story Tracker (bus replay).
 
-Plan §6 Smoke-Test ist eigentlich "30min manuell arbeiten" — unrealistisch
-fuer einen Smoke. Stattdessen replayt dieses Skript eine realistische
-Bus-Sequenz (FrameUpdated + IdleEntered) gegen einen vollverdrahteten
-StoryTracker mit echtem Verdichter (Haiku-Brain-Call, falls API-Key da)
-oder FakeVerdichter (kein Key gefunden).
+The Plan §6 smoke test is really "work manually for 30min" — unrealistic
+for a smoke test. Instead, this script replays a realistic
+bus sequence (FrameUpdated + IdleEntered) against a fully wired
+StoryTracker with a real Verdichter (Haiku brain call, if an API key is present)
+or a FakeVerdichter (no key found).
 
-Was das Skript verifiziert:
-- StoryTracker akkumuliert salient Frames im Builder
-- App-Switch + Min-Duration triggert Verdichter-Call
-- Episode landet in tmp-SQLite + FTS-Index ist befuellt
-- state.last_episode_summary wird gesetzt
-- EpisodeRecorded-Event wird publiziert
+What the script verifies:
+- StoryTracker accumulates salient frames in the builder
+- app switch + min-duration triggers a Verdichter call
+- episode lands in tmp SQLite + the FTS index is populated
+- state.last_episode_summary is set
+- EpisodeRecorded event is published
 
 Usage::
 
     python scripts/awareness_smoke_a2.py
-    python scripts/awareness_smoke_a2.py --use-real-haiku    # Brain-Call statt Fake
+    python scripts/awareness_smoke_a2.py --use-real-haiku    # brain call instead of fake
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ from jarvis.memory.recall import RecallStore
 
 @dataclass
 class FakeVerdichter:
-    summary: str = (
+    summary: str = (  # i18n-allow: simulated Verdichter output — the real Verdichter's summary is German by design (VERDICHTER_SYSTEM_PROMPT)
         "Der Nutzer war 8min in Code.exe mit pipeline.py aktiv, "
         "wechselte kurz zu Chrome.exe (GitHub-PR-Tab) und kehrte zurueck. "
         "Aktueller Fokus: pipeline.py."
@@ -125,7 +125,7 @@ async def run_smoke(use_real_haiku: bool) -> int:
         verdichter=verdichter, config=cfg,
     )
 
-    # Bus-Subscriber fuer Stats
+    # Bus subscriber for stats
     received: list[EpisodeRecorded] = []
 
     async def collect(ev: EpisodeRecorded) -> None:
@@ -134,7 +134,7 @@ async def run_smoke(use_real_haiku: bool) -> int:
 
     await tracker.start()
 
-    log.info("=== Replay: 6 Frames ueber ~2.5s, dann IdleEntered ===")
+    log.info("=== Replay: 6 frames over ~2.5s, then IdleEntered ===")
     base_ts = time.time_ns() - 2_500_000_000
 
     sequence: list[tuple[str, str, bool]] = [

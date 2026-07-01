@@ -1,15 +1,15 @@
-"""Live-Smoke fuer Phase A1 — Awareness L1 Live Frame.
+"""Live smoke test for Phase A1 — Awareness L1 live frame.
 
-Initialisiert ``AwarenessManager`` + Watchers (WindowFocusWatcher +
-IdleDetector), laeuft N Sekunden (Default 30s), loggt jedes
-``FrameUpdated``- und ``IdleEntered/Exited``-Event auf stdout.
+Initializes ``AwarenessManager`` + watchers (WindowFocusWatcher +
+IdleDetector), runs for N seconds (default 30s), logs every
+``FrameUpdated`` and ``IdleEntered/Exited`` event to stdout.
 
-Saubereres Shutdown via Ctrl+C: ``signal.signal(SIGINT, ...)`` setzt ein
-asyncio.Event, das die main-Coroutine zum Aufwachen bringt; danach
-``await manager.stop()`` mit 2s-Timeout (siehe Plan §5 Hard-Negative).
+Cleaner shutdown via Ctrl+C: ``signal.signal(SIGINT, ...)`` sets an
+asyncio.Event that wakes the main coroutine; afterwards
+``await manager.stop()`` with a 2s timeout (see Plan §5 hard negative).
 
-Manuell: 5x das Foreground-Window wechseln (Alt+Tab oder Klick auf
-andere App), die Window-Titles/Processes erscheinen in der Ausgabe.
+Manual: switch the foreground window 5x (Alt+Tab or click on
+another app); the window titles/processes appear in the output.
 
 Usage:
     python scripts/awareness_smoke_a1.py [--seconds 30]
@@ -35,9 +35,9 @@ from jarvis.core.events import (
 
 
 async def _auto_trigger_window_switches(log: logging.Logger, count: int = 5) -> None:
-    """Oeffnet/schliesst N-mal notepad.exe — triggert reproduzierbar
-    EVENT_SYSTEM_FOREGROUND. Genutzt fuer CI-tauglichen Selbsttest ohne
-    User-Interaction.
+    """Opens/closes notepad.exe N times — reproducibly triggers
+    EVENT_SYSTEM_FOREGROUND. Used for a CI-suitable self-test without
+    user interaction.
     """
     for i in range(count):
         await asyncio.sleep(1.0)
@@ -109,9 +109,9 @@ async def run_smoke(seconds: int, auto_trigger: bool, debug: bool) -> int:
     )
     await manager.start()
     log.info(
-        "OK — Watchers aktiv (count=%d). %ds Lauf-Zeit. "
-        "Bitte Foreground-Window 5x wechseln (Alt+Tab oder Klick). "
-        "Ctrl+C beendet sofort.",
+        "OK — watchers active (count=%d). %ds run time. "
+        "Please switch the foreground window 5x (Alt+Tab or click). "
+        "Ctrl+C stops immediately.",
         len(manager._watchers), seconds,
     )
 
@@ -145,10 +145,10 @@ async def run_smoke(seconds: int, auto_trigger: bool, debug: bool) -> int:
         try:
             await trigger_task
         except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
-            # Smoke-Cleanup — kein logging noetig, das Skript endet ohnehin.
+            # Smoke cleanup — no logging needed, the script is ending anyway.
             pass
 
-    # Watcher-Stats VOR stop() sammeln — danach ist die Liste leer.
+    # Collect watcher stats BEFORE stop() — the list is empty afterwards.
     watcher_stats = [
         (type(w).__name__, getattr(w, "_drops", None), getattr(w, "_last_hwnd", None))
         for w in (getattr(manager, "_watchers", []) or [])
@@ -177,7 +177,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--debug", action="store_true",
-        help="DEBUG-Level Logging fuer jarvis.awareness.*",
+        help="DEBUG-level logging for jarvis.awareness.*",
     )
     args = parser.parse_args()
 

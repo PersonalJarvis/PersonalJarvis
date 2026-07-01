@@ -1,8 +1,8 @@
-"""SQLAlchemy-Engine + Session-Factory.
+"""SQLAlchemy engine + session factory.
 
-Synchron, weil das Backend mit ein paar Hundert Pushes pro Tag laeuft —
-async-SQLAlchemy waere Overkill, und die Hot-Path-Queries sind alle
-indexed. WAL-Modus fuer concurrent Reader.
+Synchronous, because the backend runs with a few hundred pushes per
+day — async SQLAlchemy would be overkill, and the hot-path queries are
+all indexed. WAL mode for concurrent readers.
 """
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ from .config import Settings
 
 
 def make_engine(settings: Settings):
-    """Baut die SQLAlchemy-Engine. Eigene Funktion, damit Tests sie ohne
-    File-Side-Effect ueberschreiben koennen (in-memory ``sqlite:///:memory:``).
+    """Builds the SQLAlchemy engine. A dedicated function so tests can
+    override it without a file side effect (in-memory ``sqlite:///:memory:``).
     """
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
     url = f"sqlite:///{settings.db_path}"
@@ -45,7 +45,7 @@ def make_session_factory(engine) -> sessionmaker[Session]:  # noqa: ANN001
 
 
 def session_dep(session_factory: sessionmaker[Session]):
-    """FastAPI-Dependency-Factory. Liefert eine kurzlebige Session pro Request."""
+    """FastAPI dependency factory. Provides a short-lived session per request."""
     def _dep() -> Iterator[Session]:
         with session_factory() as session:
             yield session
@@ -53,6 +53,6 @@ def session_dep(session_factory: sessionmaker[Session]):
 
 
 def init_schema(engine) -> None:  # noqa: ANN001
-    """Schema additiv aufbauen. Kein Alembic — additive ``create_all`` reicht."""
+    """Build the schema additively. No Alembic — an additive ``create_all`` is enough."""
     from . import models  # noqa: F401  (registers tables on Base)
     models.Base.metadata.create_all(bind=engine)

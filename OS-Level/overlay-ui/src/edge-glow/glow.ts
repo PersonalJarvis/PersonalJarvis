@@ -1,13 +1,13 @@
-// glow.ts — State-driven Edge-Glow Setup. Plan §6.1 + §7.4.
+// glow.ts — State-driven Edge-Glow setup. Plan §6.1 + §7.4.
 //
-// Aufgaben:
-//   - Inline-SVG-Filter beim Boot in document.body injecten.
-//   - data-state-Attribut auf <html> setzen (StateMachine -> CSS-Selectors).
-//   - data-debug-Attribut wenn ?debug=1 in der URL.
-//   - State-Display-Text fuer Diagnose, gegated via debug-Flag.
+// Responsibilities:
+//   - Inject the inline SVG filter into document.body at boot.
+//   - Set the data-state attribute on <html> (state machine -> CSS selectors).
+//   - Set the data-debug attribute when ?debug=1 is in the URL.
+//   - State-display text for diagnostics, gated by the debug flag.
 //
-// Keine Animations-Steuerung hier — die laeuft komplett im CSS
-// (@property-Compositor-Animation). noise.ts macht die 12 Hz Modulation.
+// No animation control here — that all runs in CSS
+// (@property compositor animation). noise.ts does the 12 Hz modulation.
 
 import glowSvgRaw from "./glow.svg?raw";
 
@@ -16,15 +16,16 @@ import type { StateName } from "../schema";
 const ROOT = document.documentElement;
 
 /**
- * Inline-SVG-Filter ins DOM injecten. Plan §7.6 — der Filter muss vor
- * dem ersten Frame da sein, sonst hat `filter: url(#jarvis-glow)` einen
- * Frame lang nichts zum Auflösen.
+ * Injects the inline SVG filter into the DOM. Plan §7.6 — the filter
+ * must be there before the first frame, otherwise `filter:
+ * url(#jarvis-glow)` has nothing to resolve for one frame.
  */
 export function injectGlowFilter(): void {
   if (document.getElementById("jarvis-glow")) return;
-  // DOMParser statt innerHTML — Defense-in-Depth gegen Supply-Chain-XSS
-  // (auch wenn glowSvgRaw via ?raw aus dem Build kommt). DOMParser markiert
-  // nicht-SVG-Inhalt mit einem <parsererror>-Element, das wir abfangen.
+  // DOMParser instead of innerHTML — defense in depth against
+  // supply-chain XSS (even though glowSvgRaw comes from the build via
+  // ?raw). DOMParser marks non-SVG content with a <parsererror>
+  // element, which we catch.
   const doc = new DOMParser().parseFromString(glowSvgRaw, "image/svg+xml");
   const svg = doc.documentElement;
   if (svg.getElementsByTagName("parsererror").length > 0) return;
@@ -34,9 +35,9 @@ export function injectGlowFilter(): void {
 }
 
 /**
- * 5 Layer-Divs in den `.edge-glow` Container haengen. Plan §7.4 —
- * Multi-Layer-Composition mit Phase-Offset (5 Layers, je 200 ms
- * versetzt via animation-delay im CSS).
+ * Appends 5 layer divs into the `.edge-glow` container. Plan §7.4 —
+ * multi-layer composition with a phase offset (5 layers, each staggered
+ * by 200 ms via animation-delay in the CSS).
  */
 export function buildLayers(container: HTMLElement): void {
   if (container.children.length > 0) return;
@@ -48,7 +49,7 @@ export function buildLayers(container: HTMLElement): void {
 }
 
 /**
- * Setzt das ``data-state``-Attribut auf `<html>` — CSS reagiert darauf
+ * Sets the ``data-state`` attribute on `<html>` — CSS reacts to it
  * via `:root[data-state="typing"] .edge-glow { ... }`.
  */
 export function applyState(state: StateName): void {
@@ -56,8 +57,8 @@ export function applyState(state: StateName): void {
 }
 
 /**
- * Optional: explicit intensity-Modulation. Default 1.0 — Phase 9.5
- * koennte das fuer Activity-Bursts auf 1.2 hochziehen.
+ * Optional: explicit intensity modulation. Default 1.0 — Phase 9.5
+ * might bump this to 1.2 for activity bursts.
  */
 export function setIntensity(value: number): void {
   const clamped = Math.max(0, Math.min(2, value));
@@ -65,8 +66,9 @@ export function setIntensity(value: number): void {
 }
 
 /**
- * ?debug=1 im URL-Query → State-Display-Marker oben rechts sichtbar.
- * Sonst bleibt #state-display via CSS display:none.
+ * ?debug=1 in the URL query → the state-display marker in the top
+ * right becomes visible. Otherwise #state-display stays hidden via
+ * CSS display:none.
  */
 export function applyDebugFlag(): boolean {
   const params = new URLSearchParams(window.location.search);
@@ -80,9 +82,9 @@ export function applyDebugFlag(): boolean {
 }
 
 /**
- * Schreibt den aktuellen State + reason in #state-display. Im
- * Production-Pfad (kein ?debug=1) ist das Element via CSS hidden — der
- * Update kostet trotzdem nichts ausser einem dataset-write.
+ * Writes the current state + reason into #state-display. On the
+ * production path (no ?debug=1) the element is hidden via CSS — the
+ * update still costs nothing besides a dataset write.
  */
 export function setStateDisplay(state: StateName, reason: string): void {
   const el = document.getElementById("state-display");

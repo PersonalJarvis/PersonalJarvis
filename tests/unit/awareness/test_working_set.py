@@ -1,15 +1,15 @@
-"""Unit-Tests fuer Phase A4 ``WorkingSet`` (jarvis/awareness/working_set.py).
+"""Unit tests for Phase A4 ``WorkingSet`` (jarvis/awareness/working_set.py).
 
 Spec: JARVIS_AWARENESS_PLAN.md §8.
 
-Testet:
-- LRU-Eviction bei voller Kapazitaet (>5 Slots).
-- Re-Promotion bei Re-Activation (A → B → A).
-- ``set_episode`` Verknuepfung mit dem aktiven Slot.
-- Eviction loescht KEINE Episoden (nur RAM-Pointer).
-- Render-Format fuer System-Prompt (multi-context vs. single-context).
+Tests:
+- LRU eviction at full capacity (>5 slots).
+- Re-promotion on re-activation (A → B → A).
+- ``set_episode`` linkage with the active slot.
+- Eviction deletes NO episodes (only the RAM pointer).
+- Render format for the system prompt (multi-context vs. single-context).
 
-Konvention: Fakes statt Mocks, pure unit-tests ohne async/IO.
+Convention: fakes instead of mocks, pure unit tests without async/IO.
 """
 from __future__ import annotations
 
@@ -105,11 +105,11 @@ def test_observe_evicts_oldest_when_full() -> None:
 
 
 def test_observe_seven_contexts_with_max_five_evicts_oldest_two() -> None:
-    """7 Context-Wechsel mit max=5: aeltester Slot fliegt raus, 5 bleiben.
+    """7 context switches with max=5: the oldest slot flies out, 5 remain.
 
-    Acceptance Criterion: "Test mit 7 Context-Wechseln: ältester
-    Context-Eintrag fliegt aus dem Working-Set, alle 7 Episoden in DB
-    unverändert."
+    Acceptance criterion: "Test with 7 context switches: the oldest
+    context entry flies out of the working set, all 7 episodes in the
+    DB unchanged."
     """
     ws = WorkingSet(max_slots=5)
     inserted = ["c1", "c2", "c3", "c4", "c5", "c6", "c7"]
@@ -118,7 +118,7 @@ def test_observe_seven_contexts_with_max_five_evicts_oldest_two() -> None:
         evicted = ws.observe(_ctx(r))
         if evicted is not None:
             evicted_roots.append(evicted.project_root)
-    # c1 wird durch c6 evictet, c2 durch c7.
+    # c1 is evicted by c6, c2 by c7.
     assert evicted_roots == ["c1", "c2"]
     assert ws.size == 5
     assert [ctx.project_root for ctx in ws.contexts()] == ["c7", "c6", "c5", "c4", "c3"]
@@ -135,7 +135,7 @@ def test_promote_a_then_b_then_a() -> None:
 
     ws.observe(_ctx("a", label="a-work-resumed"))
     assert ws.current.project_root == "a"
-    # task_label aus dem letzten observe ueberschreibt
+    # task_label from the last observe overwrites
     assert ws.current.task_label == "a-work-resumed"
 
 
@@ -150,25 +150,25 @@ def test_set_episode_updates_existing_slot() -> None:
 
 
 def test_set_episode_returns_false_for_unknown_root() -> None:
-    """Wenn der Slot evictet ist, schluckt set_episode silent."""
+    """If the slot has been evicted, set_episode swallows it silently."""
     ws = WorkingSet(max_slots=2)
     ws.observe(_ctx("a"))
     ws.observe(_ctx("b"))
-    ws.observe(_ctx("c"))    # evictet "a"
+    ws.observe(_ctx("c"))    # evicts "a"
     assert ws.set_episode("a", 99) is False
-    # b und c sind unverändert
+    # b and c are unchanged
     assert ws.get("b").last_episode_id is None
 
 
 def test_set_episode_does_not_promote() -> None:
-    """set_episode updated nur die Episode-ID, NICHT die LRU-Order."""
+    """set_episode only updates the episode ID, NOT the LRU order."""
     ws = WorkingSet(max_slots=3)
     ws.observe(_ctx("a"))
     ws.observe(_ctx("b"))
     ws.observe(_ctx("c"))
-    # c ist current, a ist aeltester.
+    # c is current, a is the oldest.
     ws.set_episode("a", 11)
-    # Order unverändert: c bleibt MRU, a bleibt LRU.
+    # Order unchanged: c stays MRU, a stays LRU.
     assert [ctx.project_root for ctx in ws.contexts()] == ["c", "b", "a"]
 
 
@@ -214,7 +214,7 @@ def test_render_for_prompt_multi_slot_includes_all_contexts() -> None:
     assert "Active contexts" in text
     assert "repo-jarvis" in text
     assert "slack.com" in text
-    # Episode-IDs werden mit angezeigt
+    # Episode IDs are displayed too
     assert "Episode #42" in text
     assert "Episode #43" in text
 
@@ -235,19 +235,19 @@ def test_render_for_prompt_truncates_to_max_chars() -> None:
 
 
 def test_eviction_does_not_affect_episode_id_field() -> None:
-    """Plan §8 Hard Negative: Eviction = nur RAM-Pointer weg, Episode bleibt
-    in DB. Hier: beim Evicten geht nur der WorkingSet-Slot weg, der
-    last_episode_id-Wert ist im evicted-Object noch sichtbar (verifiziert
-    dass wir keinen Daten-Wipe machen).
+    """Plan §8 hard negative: eviction = only the RAM pointer goes away, the
+    episode stays in the DB. Here: on eviction only the WorkingSet slot
+    goes away, the last_episode_id value is still visible on the evicted
+    object (verifies that we do not wipe data).
     """
     ws = WorkingSet(max_slots=2)
     ws.observe(_ctx("a"))
     ws.set_episode("a", 100)
     ws.observe(_ctx("b"))
-    evicted = ws.observe(_ctx("c"))    # evictet "a"
+    evicted = ws.observe(_ctx("c"))    # evicts "a"
     assert evicted is not None
     assert evicted.project_root == "a"
-    # Die Episode-ID des evicted slots ist noch da — Caller koennte
-    # darauf reagieren (z.B. Audit). Wir verifizieren NUR dass keine
-    # Loesch-Aufrufe geschehen — der Test selbst hat keine DB.
+    # The episode ID of the evicted slot is still there — a caller could
+    # react to it (e.g. audit). We ONLY verify that no delete calls
+    # happen — the test itself has no DB.
     assert evicted.last_episode_id == 100

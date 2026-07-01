@@ -10,7 +10,7 @@ e.g. a TTS switch to ``cartesia`` reverts to ``gemini-flash-tts`` on every boot.
 ``refresh_persisted_env_from_user_registry`` is called once at app boot, BEFORE
 ``load_config``, and overwrites ``os.environ`` for the persistent provider keys
 with the authoritative HKCU\\Environment value (which the drift-guard keeps in
-sync with jarvis.toml + config-soll.json). A stale inherited value can then
+sync with jarvis.toml + config-soll.json). A stale inherited value can then  # i18n-allow: "config-soll" is the real config_writer identifier/filename, not prose
 never win. The registry reader is injectable so these tests need no real winreg.
 """
 from __future__ import annotations

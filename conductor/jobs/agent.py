@@ -1,17 +1,17 @@
-﻿"""AgentHandler — Single-Turn LLM-Call fuer drei Provider.
+﻿"""AgentHandler — single-turn LLM call for three providers.
 
-v0.1 ist Single-Turn: kein Tool-Use, kein Multi-Step. Das deckt 80% der
-Agent-Jobs ab ("Fasse Log zusammen", "Schreibe Standup", "Analysiere
-Metrik"). Tool-Use kommt v0.2 als eigener RunStep-Loop.
+v0.1 is single-turn: no tool use, no multi-step. That covers 80% of
+agent jobs ("summarize this log", "write a standup", "analyze this
+metric"). Tool use arrives in v0.2 as its own RunStep loop.
 
-Provider-Env-Vars:
+Provider env vars:
 - ``anthropic`` → ``ANTHROPIC_API_KEY``
 - ``openai``    → ``OPENAI_API_KEY``
 - ``ollama``    → ``OLLAMA_HOST`` (default http://localhost:11434)
 
-Kosten-Tracking: ``input_tokens`` + ``output_tokens`` werden aus der
-Provider-Response extrahiert. Fuer USD-Cost brauchen wir Pricing-Tables
-pro Modell — v0.2. Aktuell nur Token-Counts in Metrics.
+Cost tracking: ``input_tokens`` + ``output_tokens`` are extracted from
+the provider response. For USD cost we'd need per-model pricing
+tables — v0.2. Currently only token counts in metrics.
 """
 from __future__ import annotations
 
@@ -61,10 +61,10 @@ class AgentHandler:
         self, model: str, system: str, user: str,
         max_tokens: int, temperature: float,
     ) -> HandlerResult:
-        """Single-turn Google-AI-Studio-Call via google-genai SDK.
+        """Single-turn Google AI Studio call via the google-genai SDK.
 
-        Key wird in Reihenfolge probiert: GEMINI_API_KEY, GOOGLE_AIStudio_
-        API_KEY, GOOGLE_API_KEY. Default-Model wenn leer: ``gemini-3.1-pro``.
+        Key is tried in order: GEMINI_API_KEY, GOOGLE_AIStudio_
+        API_KEY, GOOGLE_API_KEY. Default model when empty: ``gemini-3.1-pro``.
         """
         api_key: str | None = None
         for env_var in ("GEMINI_API_KEY", "GOOGLE_AIStudio_API_KEY",
@@ -77,9 +77,9 @@ class AgentHandler:
             return HandlerResult(
                 success=False, output="", exit_code=-1,
                 error=(
-                    "Kein Gemini-API-Key gesetzt — "
-                    "setx GEMINI_API_KEY <key> und Terminal neu starten. "
-                    "Key holen: https://aistudio.google.com/apikey"
+                    "No Gemini API key set — "
+                    "run setx GEMINI_API_KEY <key> and restart your terminal. "
+                    "Get a key at: https://aistudio.google.com/apikey"
                 ),
             )
 
@@ -88,7 +88,7 @@ class AgentHandler:
         except ImportError:
             return HandlerResult(
                 success=False, output="", exit_code=-1,
-                error="google-genai-Package fehlt: pip install google-genai",
+                error="google-genai package missing: pip install google-genai",
             )
 
         effective_model = model or "gemini-3.1-pro"
@@ -117,8 +117,8 @@ class AgentHandler:
 
         duration_ms = int((time.perf_counter() - start) * 1000)
         text = ""
-        # google-genai: resp.text ist der konsolidierte Text, oder manuell
-        # aus candidates[0].content.parts extrahieren.
+        # google-genai: resp.text is the consolidated text, or extract
+        # manually from candidates[0].content.parts.
         text = getattr(resp, "text", None) or ""
         if not text:
             for cand in getattr(resp, "candidates", None) or []:
@@ -162,14 +162,14 @@ class AgentHandler:
         if not api_key:
             return HandlerResult(
                 success=False, output="", exit_code=-1,
-                error="ANTHROPIC_API_KEY nicht gesetzt — setx ANTHROPIC_API_KEY <key>",
+                error="ANTHROPIC_API_KEY not set — run setx ANTHROPIC_API_KEY <key>",
             )
         try:
             import anthropic
         except ImportError:
             return HandlerResult(
                 success=False, output="", exit_code=-1,
-                error="anthropic-Package fehlt: pip install anthropic",
+                error="anthropic package missing: pip install anthropic",
             )
 
         start = time.perf_counter()
@@ -220,14 +220,14 @@ class AgentHandler:
         if not api_key:
             return HandlerResult(
                 success=False, output="", exit_code=-1,
-                error="OPENAI_API_KEY nicht gesetzt",
+                error="OPENAI_API_KEY not set",
             )
         try:
             import openai
         except ImportError:
             return HandlerResult(
                 success=False, output="", exit_code=-1,
-                error="openai-Package fehlt: pip install openai",
+                error="openai package missing: pip install openai",
             )
 
         start = time.perf_counter()
@@ -330,7 +330,7 @@ _TEMPLATE_RE = re.compile(r"\{\{\s*([^}]+?)\s*\}\}")
 
 
 def _expand_template(s: str, input_data: dict[str, Any]) -> str:
-    """``{{input.X}}`` → Wert aus dem Input-Dict."""
+    """``{{input.X}}`` → value from the input dict."""
     def repl(m: re.Match[str]) -> str:
         token = m.group(1).strip()
         if token.startswith("input."):

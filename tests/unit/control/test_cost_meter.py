@@ -1,4 +1,4 @@
-"""Unit-Tests fuer CostMeter (ADR-0006)."""
+"""Unit tests for CostMeter (ADR-0006)."""
 from __future__ import annotations
 
 import asyncio
@@ -32,7 +32,7 @@ def _make_config(**overrides) -> BudgetConfig:
         "per_day_eur": 30.0,
         "cooldown_minutes": 60,
         "warn_at_fraction": 0.8,
-        "eur_per_usd": 1.0,                 # 1:1 fuer einfachere Arithmetik
+        "eur_per_usd": 1.0,                 # 1:1 for simpler arithmetic
         "prices": {
             "test-model": ModelPrice(
                 usd_per_1m_input=1.0,
@@ -84,7 +84,7 @@ def test_disabled_config_never_trips(tmp_path):
     meter = _make_meter(tmp_path, _make_config(enabled=False))
     tid = uuid4()
     meter.start(tid, "claude-api", "test-model")
-    meter.add(_record(tid, 100.0))                     # massiv ueber jedem Limit
+    meter.add(_record(tid, 100.0))                     # massively over every limit
     assert meter.over_task_budget(tid) is False
     assert meter.over_daily_budget() is False
 
@@ -117,8 +117,8 @@ async def test_task_budget_trip_fires_exceeded_and_cancels_token(tmp_path):
     async with CancelScope(ks, holder="brain_stream") as token:
         tid = uuid4()
         meter.start(tid, "claude-api", "test-model")
-        meter.add(_record(tid, 2.5))                   # direkt ueber per_task_eur=2.0
-        # Events sind async dispatched
+        meter.add(_record(tid, 2.5))                   # directly over per_task_eur=2.0
+        # Events are dispatched async
         for _ in range(5):
             await asyncio.sleep(0)
 
@@ -141,7 +141,7 @@ async def test_warning_at_80_percent(tmp_path):
 
     tid = uuid4()
     meter.start(tid, "claude-api", "test-model")
-    meter.add(_record(tid, 1.7))                       # 85% von 2.0
+    meter.add(_record(tid, 1.7))                       # 85% of 2.0
     for _ in range(5):
         await asyncio.sleep(0)
 
@@ -154,13 +154,13 @@ def test_warning_not_repeated_same_trace(tmp_path):
     meter = _make_meter(tmp_path, _make_config())
     tid = uuid4()
     meter.start(tid, "claude-api", "test-model")
-    # Fuegen wir 1.7 EUR, dann 0.1 EUR hinzu — Warning darf NUR einmal feuern.
+    # Add 1.7 EUR, then 0.1 EUR — the warning must fire ONLY once.
     meter.add(_record(tid, 1.7))
     first_warned = tid in meter._task_warned  # type: ignore[attr-defined]
     meter.add(_record(tid, 0.1))
     assert first_warned
     assert meter.total_for(tid) == pytest.approx(1.8)
-    # Kein trip, weil unter 2.0
+    # No trip, since it's under 2.0
     assert not meter.over_task_budget(tid)
 
 
@@ -183,7 +183,7 @@ async def test_daily_budget_trip_starts_cooldown(tmp_path):
 
     tid = uuid4()
     meter.start(tid, "claude-api", "test-model")
-    meter.add(_record(tid, 1.5))                       # direkt ueber daily
+    meter.add(_record(tid, 1.5))                       # directly over the daily limit
     for _ in range(5):
         await asyncio.sleep(0)
 
@@ -249,7 +249,7 @@ def test_ledger_persists_on_close(tmp_path):
 
 def test_ledger_loads_today_total_on_init(tmp_path):
     import sqlite3
-    # Erst einen Eintrag von heute in die DB setzen
+    # First put an entry from today into the DB
     (tmp_path / "").mkdir(exist_ok=True)
     db_path = tmp_path / "jarvis.db"
     from datetime import datetime

@@ -114,7 +114,7 @@ text("hero_title", 60, 50,
      "PERSONAL JARVIS — OpenClaw Mission-Engine & ChatGPT-Migration",
      size=58, color=C["ink"], bold_family=True)
 text("hero_sub", 62, 135,
-     "Was wurde gebaut: Voice → Force-Spawn → Mission-Manager → Worker/Critic-Loop → APPROVED → Voice-Readback   ·   plus die ChatGPT/Codex-Umstellung (Welle 6) und 18+ Live-Bugs",
+     "What was built: Voice → Force-Spawn → Mission-Manager → Worker/Critic-Loop → APPROVED → Voice-Readback   ·   plus the ChatGPT/Codex migration (Welle 6) and 18+ live bugs",
      size=20, color=C["sub"])
 # info badges in hero
 def badge(eid, x, y, label, fill, stroke):
@@ -129,7 +129,7 @@ badge("hb6", 2820, 190, "No Anthropic API · No login needed", C["orange"], C["o
 
 # Summary flow (the 10-second overview) — y ~ 300
 sy = 320
-text("sum_h", 60, sy - 36, "① SUMMARY FLOW — der ganze Weg in einem Blick", size=22, color=C["ink"], bold_family=True)
+text("sum_h", 60, sy - 36, "① SUMMARY FLOW — the whole path at a glance", size=22, color=C["ink"], bold_family=True)
 sum_nodes = [
     ("sf_voice", "Voice /\nText", C["blue"], C["blue_s"], 60),
     ("sf_brain", "Brain-Router\n(force-spawn?)", C["purple"], C["purple_s"], 320),
@@ -310,7 +310,7 @@ for eid, title, fill, st, x, rows in cols:
 # SECTION 4 — THE 3-CHAINED ChatGPT-MIGRATION BUGS (Welle 6)
 # ===========================================================================
 cy = 960
-text("chain_h", tx, cy - 38, "④ WELLE 6 — die 3 verketteten Live-Bugs der ChatGPT-Umstellung",
+text("chain_h", tx, cy - 38, "④ WELLE 6 — the 3 chained live bugs of the ChatGPT migration",
      size=24, color=C["ink"], bold_family=True)
 chain = [
     ("ch1", "C1 · CODEX_HOME leak", "per-mission CODEX_HOME ohne auth.json",
@@ -334,7 +334,7 @@ for eid, title, rc, sym, fix, x in chain:
 arrow("ch_a1", tx + 500, cy + 100, 40, 0, stroke=C["red_s"], sw=3)
 arrow("ch_a2", tx + 1040, cy + 100, 40, 0, stroke=C["red_s"], sw=3)
 text("ch_proof", tx, cy + 220,
-     "Live-Beweis: mission_019e3c51 + 019e3c52 stream.jsonl → HTTP 400 'sonnet not supported'  ·  nach Fix: /goal E2E grün in 48s",
+     "Live proof: mission_019e3c51 + 019e3c52 stream.jsonl → HTTP 400 'sonnet not supported'  ·  after fix: /goal E2E green in 48s",
      size=13, color=C["sub"])
 
 # ===========================================================================
@@ -456,19 +456,19 @@ for i, t in enumerate(inv):
 dgx = 1320
 dgy = 2680
 rect("dg_panel", dgx, dgy, 1080, 360, stroke=C["blue_s"], bg="#f1f8ff", sw=2)
-text("dg_h", dgx + 20, dgy + 16, "⑨ DEEPGRAM-RECHERCHE (2026-05-20) — nur Research, kein Code",
+text("dg_h", dgx + 20, dgy + 16, "⑨ DEEPGRAM RESEARCH (2026-05-20) — research only, no code",
      size=22, color=C["ink"], bold_family=True)
-text("dg_q1", dgx + 20, dgy + 62, "Frage 1 — Auth anders als Groq?", size=15, color=C["blue_s"], bold_family=True)
+text("dg_q1", dgx + 20, dgy + 62, "Question 1 — Auth different from Groq?", size=15, color=C["blue_s"], bold_family=True)
 text("dg_a1", dgx + 20, dgy + 88,
-     "JA: 'Token <key>' statt 'Bearer'  +  optionale Kurzzeit-JWTs (POST /v1/auth/grant, 30s–1h).\nServer-seitig aber 1-Zeilen-Unterschied. Ephemerer JWT-Flow nur für Browser-Clients nötig.",
+     "YES: 'Token <key>' instead of 'Bearer'  +  optional short-lived JWTs (POST /v1/auth/grant, 30s-1h).\nServer-side it's a 1-line difference, though. Ephemeral JWT flow is only needed for browser clients.",
      size=13, color=C["sub"])
-text("dg_q2", dgx + 20, dgy + 150, "Frage 2 — Tokens während du sprichst?", size=15, color=C["blue_s"], bold_family=True)
+text("dg_q2", dgx + 20, dgy + 150, "Question 2 — tokens while you're speaking?", size=15, color=C["blue_s"], bold_family=True)
 text("dg_a2", dgx + 20, dgy + 176,
-     "JA: interim_results=true → erste Tokens ~150ms WÄHREND des Sprechens. is_final/speech_final-Flags.\nFlux-Modell: EagerEndOfTurn → LLM startet bevor du fertig bist. Nova-3 DE+EN, Flux EN-only.",
+     "YES: interim_results=true → first tokens ~150ms WHILE speaking. is_final/speech_final flags.\nFlux model: EagerEndOfTurn → the LLM starts before you're done. Nova-3 DE+EN, Flux EN-only.",
      size=13, color=C["sub"])
-text("dg_q3", dgx + 20, dgy + 238, "Überraschung — Repo-Realität:", size=15, color=C["red_s"], bold_family=True)
+text("dg_q3", dgx + 20, dgy + 238, "Surprise — repo reality:", size=15, color=C["red_s"], bold_family=True)
 text("dg_a3", dgx + 20, dgy + 264,
-     "Deepgram existiert NICHT — 3 entry-points in pyproject.toml zeigen auf nicht-vorhandene Dateien\n('ghost registrations'). Pipeline ist batch-only: _handle_utterance → transcribe_pcm(ganzer Satz).\nEchtes Live-Mithören braucht Plugin-Bau UND Pipeline-Umbau.",
+     "Deepgram does NOT exist — 3 entry points in pyproject.toml point to non-existent files\n('ghost registrations'). The pipeline is batch-only: _handle_utterance → transcribe_pcm(whole sentence).\nReal live listen-along needs a plugin build AND a pipeline rework.",
      size=13, color=C["sub"])
 badge("dg_st", dgx + 20, dgy + 320 - 4, "Decision: from-scratch build, not finish-the-stub", C["yellow"], C["yellow_s"])
 
@@ -478,17 +478,17 @@ badge("dg_st", dgx + 20, dgy + 320 - 4, "Decision: from-scratch build, not finis
 gx = 60
 gy = 3700
 rect("goal_panel", gx, gy, 1160, 300, stroke=C["green_s"], bg="#ebfbee", sw=2)
-text("goal_h", gx + 20, gy + 16, "⑩ /goal LIVE-E2E-BEWEIS — der ganze Stack grün",
+text("goal_h", gx + 20, gy + 16, "⑩ /goal LIVE E2E PROOF — the whole stack green",
      size=22, color=C["ink"], bold_family=True)
 text("goal_f", gx + 20, gy + 56, "tests/integration/test_voice_mission_e2e_chatgpt.py", size=14, color=C["sub"], font=3)
 gchecks = [
-    "bootstrap_missions → echter Stack hochgefahren",
+    "bootstrap_missions → real stack spun up",
     "manager.dispatch + kontrollierer.run_mission",
-    "CodexDirectWorker spawnt echtes codex exec (kein Mock)",
+    "CodexDirectWorker spawns a real codex exec (no mock)",
     "Critic via _invoke_via_codex_direct (read-only)",
     "Mission-DB state == APPROVED",
-    "Beweis-Datei mit exaktem Inhalt (aus diff.patch)",
-    "CriticVerdictReady(verdict='approve') Bus-Event",
+    "Proof file with exact content (from diff.patch)",
+    "CriticVerdictReady(verdict='approve') bus event",
 ]
 for i, t in enumerate(gchecks):
     y = gy + 92 + i * 28

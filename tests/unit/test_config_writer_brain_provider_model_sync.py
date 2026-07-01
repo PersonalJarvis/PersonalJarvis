@@ -1,13 +1,13 @@
 """Tests for the two-layer ``[brain.providers.<p>]`` model persistence sync.
 
 Per-provider model pins (``model`` / ``deep_model``) are pinned in
-config-soll.json under the flat dotted key ``"brain.providers.<p>"``, so a
+config-soll.json under the flat dotted key ``"brain.providers.<p>"``, so a  # i18n-allow
 model picked in the per-provider model selector that wrote only the TOML would
 be rolled back by the drift-guard within 5 minutes — the same BUG-010 class
 that hit ``brain.primary``. ``set_brain_provider_model`` must therefore write:
 
   1. ``jarvis.toml`` ``[brain.providers.<p>] model/deep_model``      (TOML)
-  2. ``scripts/config-soll.json`` ``brain.providers.<p>``            (drift-soll)
+  2. ``scripts/config-soll.json`` ``brain.providers.<p>``            (drift-soll)  # i18n-allow
 
 There is intentionally NO ENV layer: per-provider model keys have no effective
 ``JARVIS__*`` boot override (the override parser only nests on ``__``, and the
@@ -48,8 +48,8 @@ deep_model = "gemini-2.5-pro"
 
 
 @pytest.fixture
-def sample_soll(tmp_path: Path) -> Path:
-    p = tmp_path / "config-soll.json"
+def sample_soll(tmp_path: Path) -> Path:  # i18n-allow
+    p = tmp_path / "config-soll.json"  # i18n-allow
     p.write_text(
         json.dumps(
             {
@@ -69,10 +69,10 @@ def sample_soll(tmp_path: Path) -> Path:
     return p
 
 
-def test_writes_toml_and_soll_no_env(
-    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch
+def test_writes_toml_and_soll_no_env(  # i18n-allow
+    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch  # i18n-allow
 ) -> None:
-    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)  # i18n-allow
     env_calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
         config_writer, "_set_user_env_var",
@@ -89,68 +89,68 @@ def test_writes_toml_and_soll_no_env(
     assert 'model = "gemini-3.5-flash"' in toml_raw
     assert 'deep_model = "gemini-3.1-pro-preview"' in toml_raw
 
-    # Layer 2: config-soll.json flat "brain.providers.gemini" key.
-    soll = json.loads(sample_soll.read_text(encoding="utf-8"))
-    assert soll["brain.providers.gemini"]["model"] == "gemini-3.5-flash"
-    assert soll["brain.providers.gemini"]["deep_model"] == "gemini-3.1-pro-preview"
+    # Layer 2: config-soll.json flat "brain.providers.gemini" key.  # i18n-allow
+    soll = json.loads(sample_soll.read_text(encoding="utf-8"))  # i18n-allow
+    assert soll["brain.providers.gemini"]["model"] == "gemini-3.5-flash"  # i18n-allow
+    assert soll["brain.providers.gemini"]["deep_model"] == "gemini-3.1-pro-preview"  # i18n-allow
 
     # NO ENV layer for per-provider model keys.
     assert env_calls == []
 
 
 def test_only_written_keys_are_synced(
-    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch
+    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch  # i18n-allow
 ) -> None:
-    """Writing only ``model`` leaves the soll ``deep_model`` untouched."""
-    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)
+    """Writing only ``model`` leaves the soll ``deep_model`` untouched."""  # i18n-allow
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)  # i18n-allow
     monkeypatch.setattr(config_writer, "_set_user_env_var", lambda name, value: None)
 
     config_writer.set_brain_provider_model(
         "gemini", model="gemini-3.5-flash", path=sample_toml,
     )
 
-    soll = json.loads(sample_soll.read_text(encoding="utf-8"))
-    assert soll["brain.providers.gemini"]["model"] == "gemini-3.5-flash"
-    # deep_model in the soll block is NOT changed (only model was written).
-    assert soll["brain.providers.gemini"]["deep_model"] == "gemini-2.5-pro"
+    soll = json.loads(sample_soll.read_text(encoding="utf-8"))  # i18n-allow
+    assert soll["brain.providers.gemini"]["model"] == "gemini-3.5-flash"  # i18n-allow
+    # deep_model in the soll block is NOT changed (only model was written).  # i18n-allow
+    assert soll["brain.providers.gemini"]["deep_model"] == "gemini-2.5-pro"  # i18n-allow
 
 
-def test_config_soll_preserves_other_keys(
-    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch
+def test_config_soll_preserves_other_keys(  # i18n-allow
+    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch  # i18n-allow
 ) -> None:
-    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)  # i18n-allow
     monkeypatch.setattr(config_writer, "_set_user_env_var", lambda name, value: None)
 
     config_writer.set_brain_provider_model(
         "gemini", model="gemini-3.5-flash", path=sample_toml,
     )
 
-    soll = json.loads(sample_soll.read_text(encoding="utf-8"))
-    assert soll["_comment"] == "do not lose me"
-    assert soll["brain"]["primary"] == "gemini"
-    assert soll["tts"]["provider"] == "cartesia"
+    soll = json.loads(sample_soll.read_text(encoding="utf-8"))  # i18n-allow
+    assert soll["_comment"] == "do not lose me"  # i18n-allow
+    assert soll["brain"]["primary"] == "gemini"  # i18n-allow
+    assert soll["tts"]["provider"] == "cartesia"  # i18n-allow
 
 
-def test_creates_soll_block_if_missing(
-    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch
+def test_creates_soll_block_if_missing(  # i18n-allow
+    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch  # i18n-allow
 ) -> None:
-    """A provider with no soll block yet gets one created (not an error)."""
-    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)
+    """A provider with no soll block yet gets one created (not an error)."""  # i18n-allow
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)  # i18n-allow
     monkeypatch.setattr(config_writer, "_set_user_env_var", lambda name, value: None)
 
     config_writer.set_brain_provider_model(
         "claude-api", deep_model="claude-opus-4-8", path=sample_toml,
     )
 
-    soll = json.loads(sample_soll.read_text(encoding="utf-8"))
-    assert soll["brain.providers.claude-api"]["deep_model"] == "claude-opus-4-8"
+    soll = json.loads(sample_soll.read_text(encoding="utf-8"))  # i18n-allow
+    assert soll["brain.providers.claude-api"]["deep_model"] == "claude-opus-4-8"  # i18n-allow
 
 
-def test_missing_config_soll_does_not_break_toml(
+def test_missing_config_soll_does_not_break_toml(  # i18n-allow
     sample_toml: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    nonexistent = tmp_path / "no-such-config-soll.json"
-    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: nonexistent)
+    nonexistent = tmp_path / "no-such-config-soll.json"  # i18n-allow
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: nonexistent)  # i18n-allow
     monkeypatch.setattr(config_writer, "_set_user_env_var", lambda name, value: None)
 
     config_writer.set_brain_provider_model(
@@ -162,25 +162,25 @@ def test_missing_config_soll_does_not_break_toml(
 
 
 def test_noop_when_both_none(
-    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch
+    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch  # i18n-allow
 ) -> None:
     """Both ``None`` → nothing written anywhere (idempotent early return)."""
-    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)  # i18n-allow
     monkeypatch.setattr(config_writer, "_set_user_env_var", lambda name, value: None)
     before_toml = sample_toml.read_text(encoding="utf-8")
-    before_soll = sample_soll.read_text(encoding="utf-8")
+    before_soll = sample_soll.read_text(encoding="utf-8")  # i18n-allow
 
     config_writer.set_brain_provider_model("gemini", path=sample_toml)
 
     assert sample_toml.read_text(encoding="utf-8") == before_toml
-    assert sample_soll.read_text(encoding="utf-8") == before_soll
+    assert sample_soll.read_text(encoding="utf-8") == before_soll  # i18n-allow
 
 
-def test_writes_cu_model_to_toml_and_soll(
-    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch
+def test_writes_cu_model_to_toml_and_soll(  # i18n-allow
+    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch  # i18n-allow
 ) -> None:
     """Phase 3: the per-provider Computer-Use model persists like model/deep_model."""
-    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)  # i18n-allow
     monkeypatch.setattr(config_writer, "_set_user_env_var", lambda name, value: None)
 
     config_writer.set_brain_provider_model(
@@ -192,19 +192,19 @@ def test_writes_cu_model_to_toml_and_soll(
     # Untouched sibling keys remain.
     assert 'model = "gemini-2.5-flash"' in toml_raw
 
-    soll = json.loads(sample_soll.read_text(encoding="utf-8"))
-    assert soll["brain.providers.gemini"]["cu_model"] == "gemini-3.1-pro-preview"
-    # Only cu_model synced — model/deep_model in the soll block stay as they were.
-    assert soll["brain.providers.gemini"]["model"] == "gemini-2.5-flash"
-    assert soll["brain.providers.gemini"]["deep_model"] == "gemini-2.5-pro"
+    soll = json.loads(sample_soll.read_text(encoding="utf-8"))  # i18n-allow
+    assert soll["brain.providers.gemini"]["cu_model"] == "gemini-3.1-pro-preview"  # i18n-allow
+    # Only cu_model synced — model/deep_model in the soll block stay as they were.  # i18n-allow
+    assert soll["brain.providers.gemini"]["model"] == "gemini-2.5-flash"  # i18n-allow
+    assert soll["brain.providers.gemini"]["deep_model"] == "gemini-2.5-pro"  # i18n-allow
 
 
 def test_cu_model_cleared_with_empty_string(
-    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch
+    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch  # i18n-allow
 ) -> None:
     """An empty cu_model writes "" (UI 'use my main model') — distinct from None
     which means 'leave unchanged'."""
-    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)  # i18n-allow
     monkeypatch.setattr(config_writer, "_set_user_env_var", lambda name, value: None)
 
     config_writer.set_brain_provider_model("gemini", cu_model="", path=sample_toml)

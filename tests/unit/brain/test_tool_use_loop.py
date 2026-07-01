@@ -41,7 +41,7 @@ class _Brain:
                     "name": "dispatch_to_harness",
                     "input": {
                         "harness": "computer-use",
-                        "prompt": "Wie kann ich bei Windows reinzoomen?",
+                        "prompt": "Wie kann ich bei Windows reinzoomen?",  # i18n-allow: simulated German user utterance under test
                     },
                 }
             )
@@ -64,7 +64,7 @@ async def test_how_to_question_blocks_side_effect_tool() -> None:
 
     result = await loop.run(
         [],
-        user_utterance="Wie kann ich bei Windows reinzoomen?",
+        user_utterance="Wie kann ich bei Windows reinzoomen?",  # i18n-allow: simulated German user utterance under test
     )
 
     assert executor.calls == []

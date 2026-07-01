@@ -177,7 +177,7 @@ async def test_empty_output_falls_back_to_canned() -> None:
 @pytest.mark.asyncio
 async def test_wrong_language_falls_back_to_canned() -> None:
     # German output requested for an English turn -> rejected -> canned.
-    provider = _FakeProvider("Das hat auf dem Bildschirm geklappt und ist fertig.")
+    provider = _FakeProvider("Das hat auf dem Bildschirm geklappt und ist fertig.")  # i18n-allow
     composer = _composer(provider)
     out = await composer.compose(
         instruction="The on-screen task succeeded.",

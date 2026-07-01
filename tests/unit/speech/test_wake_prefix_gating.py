@@ -82,7 +82,7 @@ async def test_gate_passes_when_no_utterance_stt_configured() -> None:
 
 
 async def test_gate_passes_on_hey_jarvis_transcript() -> None:
-    stt = _FakeSTT("Hey Jarvis, was läuft heute")
+    stt = _FakeSTT("Hey Jarvis, was läuft heute")  # i18n-allow
     pipe = _bare_pipeline(require_hey_prefix=True, utterance_stt=stt)
 
     assert await pipe._verify_oww_hit(PCM_2S_16K) is True
@@ -127,7 +127,7 @@ async def test_gate_still_rejects_genuine_other_speech() -> None:
     """The hallucination degrade-open must NOT accept arbitrary non-wake speech:
     genuine other words (no "hey + jarv", not a known hallucination) are still
     suppressed, so the bare-"Jarvis" false-positive guard (BUG-009) stays."""
-    stt = _FakeSTT("wie spät ist es")
+    stt = _FakeSTT("wie spät ist es")  # i18n-allow
     pipe = _bare_pipeline(require_hey_prefix=True, utterance_stt=stt)
 
     assert await pipe._verify_oww_hit(PCM_2S_16K) is False

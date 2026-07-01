@@ -1,8 +1,8 @@
 # === F-FRIENDS [F1] · feature/friends-section · ruben-2026-04-30 ===
-"""Unit-Tests fuer :class:`jarvis.channels.telegram.TelegramChannel`.
+"""Unit tests for :class:`jarvis.channels.telegram.TelegramChannel`.
 
-Strategie: keine echte ``python-telegram-bot``-Lib noetig im Test-Pfad —
-wir testen mit Mock-Update- und Bot-Objekten und manueller Instanziierung.
+Strategy: no real ``python-telegram-bot`` lib needed in the test path —
+we test with mock update/bot objects and manual instantiation.
 """
 from __future__ import annotations
 
@@ -372,7 +372,7 @@ async def test_on_bus_event_ignores_unknown_trace() -> None:
 async def test_on_bus_event_routes_known_trace() -> None:
     cfg = TelegramConfig(enabled=True, allowed_user_ids=[100])
     ch = _make_channel(cfg)
-    evt = ResponseGenerated(text="Antwort fuer dich", language="de")
+    evt = ResponseGenerated(text="Antwort fuer dich", language="de")  # i18n-allow: simulated German assistant output under a "de" language key
     ch._inflight.set(evt.trace_id, 42)  # noqa: SLF001
     await ch._on_bus_event(evt)  # noqa: SLF001
     ch._app.bot.send_message.assert_awaited_once()  # noqa: SLF001

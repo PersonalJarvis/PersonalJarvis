@@ -156,12 +156,12 @@ def main() -> int:
     report: dict = {"started": None, "cases": []}
 
     # --- Computer-use (Calculator: clean process delta) ---
-    report["cases"].append(cu_case("calculator", "Öffne den Rechner."))
+    report["cases"].append(cu_case("calculator", "Öffne den Rechner."))  # i18n-allow: simulated German user command driving a live computer-use probe
 
     # --- Sub-agent missions ---
     report["cases"].append(mission_case(
         "mission_file",
-        "Schreib eine 120-Wörter-Geschichte über einen Roboter namens Beacon "
+        "Schreib eine 120-Wörter-Geschichte über einen Roboter namens Beacon "  # i18n-allow: simulated German user command driving a live mission-spawn probe
         "und speichere sie in eine Datei."))
     report["cases"].append(mission_case(
         "mission_answer", "Which city would you recommend for a trip to Australia?"))
@@ -171,7 +171,7 @@ def main() -> int:
     # --- Provider switch ---
     sw1 = run_probe("Wechsel zu Grok.", secs=40, idle=15)
     chk = run_probe("Sag bitte kurz hallo.", secs=40, idle=15)
-    sw2 = run_probe("Wechsel zurück zu Gemini.", secs=40, idle=15)
+    sw2 = run_probe("Wechsel zurück zu Gemini.", secs=40, idle=15)  # i18n-allow: simulated German user command driving a live provider-switch probe
     report["cases"].append({"label": "provider_switch", "switch_to_grok": sw1,
                             "after_switch_provider": chk.get("provider"),
                             "after_switch_verdict": chk, "switch_back": sw2})

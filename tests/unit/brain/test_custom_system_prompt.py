@@ -63,7 +63,7 @@ def test_whitespace_only_custom_is_treated_as_no_custom() -> None:
 
 
 def test_save_roundtrips_unicode_exactly() -> None:
-    text = "Du bist BÄRBEL — höflich, präzise, mit Glück 🍀 und Größe."
+    text = "Du bist BÄRBEL — höflich, präzise, mit Glück 🍀 und Größe."  # i18n-allow
     persona_loader.save_custom_prompt(text)
     assert persona_loader.read_custom_prompt() == text
     # No BOM corruption (AP-7 lesson): the raw bytes start with the real text.

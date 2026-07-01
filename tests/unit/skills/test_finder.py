@@ -1,10 +1,10 @@
-"""Unit-Tests fuer den SkillFinder.
+"""Unit tests for the SkillFinder.
 
-Decken:
-- Filter-Semantik (Trust, Stars, Category, Language, Risk).
-- Heuristisches Ranking ohne Brain.
-- Brain-Ranking-Integration (mit Fake-Brain).
-- Brain-Failure-Fallback auf Heuristik.
+Cover:
+- Filter semantics (trust, stars, category, language, risk).
+- Heuristic ranking without a brain.
+- Brain-ranking integration (with a fake brain).
+- Brain-failure fallback to heuristics.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def sample_entries() -> list[dict]:
         {
             "name": "email-triage",
             "title": "Email Triage",
-            "description": "Priorisiert Inbox, fasst zusammen, schlaegt Antworten vor.",
+            "description": "Prioritizes inbox, summarizes, suggests replies.",
             "source": "skills-sh",
             "source_url": "https://skills.sh/",
             "raw_url": None,
@@ -47,7 +47,7 @@ def sample_entries() -> list[dict]:
         {
             "name": "skill-creator",
             "title": "Skill Creator",
-            "description": "Erstellt neue Skills und verbessert bestehende.",
+            "description": "Creates new skills and improves existing ones.",
             "source": "anthropic",
             "source_url": "https://github.com/anthropics/skills/tree/main/skills/skill-creator",
             "raw_url": "https://raw.githubusercontent.com/anthropics/skills/main/skills/skill-creator/SKILL.md",
@@ -61,7 +61,7 @@ def sample_entries() -> list[dict]:
         {
             "name": "voice-journal",
             "title": "Voice Journal",
-            "description": "Voice-Driven-Tagebuch mit STT und Zusammenfassung.",
+            "description": "Voice-driven diary with STT and summarization.",
             "source": "experimental",
             "source_url": "https://example.com/",
             "raw_url": None,
@@ -75,7 +75,7 @@ def sample_entries() -> list[dict]:
         {
             "name": "docker-helper",
             "title": "Docker Helper",
-            "description": "Erstellt Dockerfiles mit Best-Practices.",
+            "description": "Creates Dockerfiles following best practices.",
             "source": "community",
             "source_url": "https://example.com/",
             "raw_url": None,
@@ -109,7 +109,7 @@ def test_filter_trust_blockt_niedrigeren_level(sample_entries):
     f = SearchFilters(trust="verified")
     passing = [e for e in sample_entries if _passes_filter(e, f)]
     names = {e["name"] for e in passing}
-    # official + verified erlaubt, community + experimental raus
+    # official + verified allowed, community + experimental excluded
     assert "skill-creator" in names
     assert "email-triage" not in names
     assert "voice-journal" not in names
@@ -122,11 +122,11 @@ def test_filter_trust_any_laesst_alles_durch(sample_entries):
 
 
 def test_filter_min_stars_laesst_official_durch(sample_entries):
-    """Official-Skills haben stars=None, sollen aber durchkommen."""
+    """Official skills have stars=None but should still pass through."""
     f = SearchFilters(min_stars=2000)
     passing = [e for e in sample_entries if _passes_filter(e, f)]
     names = {e["name"] for e in passing}
-    assert "skill-creator" in names  # official, null stars → bleibt
+    assert "skill-creator" in names  # official, null stars → stays
     assert "docker-helper" in names  # 2600 stars
     assert "email-triage" not in names  # 1800 < 2000
     assert "voice-journal" not in names  # 80 < 2000
@@ -141,20 +141,20 @@ def test_filter_category(sample_entries):
 def test_filter_max_risk(sample_entries):
     f = SearchFilters(max_risk="safe")
     passing = [e for e in sample_entries if _passes_filter(e, f)]
-    # Nur voice-journal (risk=safe)
+    # Only voice-journal (risk=safe)
     assert [e["name"] for e in passing] == ["voice-journal"]
 
 
 def test_filter_language_en_als_fallback(sample_entries):
-    """Wenn der User 'de' anfragt, muessen EN-only-Skills rausfliegen,
-    aber bilingual (en+de) bleibt."""
+    """When the user requests 'de', EN-only skills must drop out,
+    but bilingual (en+de) skills stay."""
     f = SearchFilters(language="de")
     passing = [e for e in sample_entries if _passes_filter(e, f)]
     names = {e["name"] for e in passing}
-    # email-triage, voice-journal haben "de" -> rein
-    # skill-creator, docker-helper haben nur "en" -> raus (keine "de")
-    # Aber der Code erlaubt EN als Fallback? Check...
-    # Wenn 'de' nicht in langs, aber 'en' in langs → passiert durch (Bilingual-Fallback)
+    # email-triage, voice-journal have "de" -> included
+    # skill-creator, docker-helper have only "en" -> excluded (no "de")
+    # But the code allows EN as a fallback? Check...
+    # If 'de' is not in langs but 'en' is in langs → passes through (bilingual fallback)
     assert names == {"email-triage", "voice-journal", "skill-creator", "docker-helper"}
 
 
@@ -193,7 +193,7 @@ async def test_search_ohne_brain_rankt_heuristisch(monkeypatch, sample_entries):
     finder = SkillFinder(brain=None)
     result = await finder.search(SearchFilters(query="docker", limit=5))
 
-    # docker-helper sollte Top-Treffer sein
+    # docker-helper should be the top hit
     assert result[0].name == "docker-helper"
     assert result[0].score > 0
 
@@ -217,7 +217,7 @@ async def test_search_mit_trust_filter(monkeypatch, sample_entries):
 # ----------------------------------------------------------------------
 
 class _FakeBrain:
-    """Minimaler Fake-Brain fuer Finder-Tests. Liefert vorgespeicherte Responses."""
+    """Minimal fake brain for finder tests. Returns pre-stored responses."""
 
     def __init__(self, response: str) -> None:
         self._response = response
@@ -235,8 +235,8 @@ async def test_search_nutzt_brain_ranking(monkeypatch, sample_entries):
     monkeypatch.setattr(catalog, "load_catalog", lambda: sample_entries)
 
     brain_response = json.dumps([
-        {"name": "voice-journal", "score": 0.95, "reason": "Perfekter Match"},
-        {"name": "email-triage", "score": 0.3, "reason": "weniger passend"},
+        {"name": "voice-journal", "score": 0.95, "reason": "Perfect match"},
+        {"name": "email-triage", "score": 0.3, "reason": "less fitting"},
     ])
     fake = _FakeBrain(brain_response)
 
@@ -244,27 +244,27 @@ async def test_search_nutzt_brain_ranking(monkeypatch, sample_entries):
     result = await finder.search(SearchFilters(query="voice tagebuch", limit=5))
 
     assert fake.call_count == 1
-    # voice-journal muss Top-Treffer sein, weil Brain-Score 0.95 dominiert
+    # voice-journal must be the top hit because brain score 0.95 dominates
     assert result[0].name == "voice-journal"
-    assert "Perfekter Match" in result[0].reason
+    assert "Perfect match" in result[0].reason
 
 
 @pytest.mark.asyncio
 async def test_search_faellt_auf_heuristik_bei_brain_fehler(
     monkeypatch, sample_entries
 ):
-    """Wenn das Brain invalides JSON returnt, muss der Finder trotzdem Ergebnisse
-    liefern — Graceful Degradation statt Crash."""
+    """If the brain returns invalid JSON, the finder must still return
+    results — graceful degradation instead of a crash."""
     from jarvis.skills import catalog
 
     monkeypatch.setattr(catalog, "load_catalog", lambda: sample_entries)
 
-    fake = _FakeBrain("das ist kein JSON, nur Prosa")
+    fake = _FakeBrain("this is not JSON, just prose")
 
     finder = SkillFinder(brain=fake)
     result = await finder.search(SearchFilters(query="docker", limit=5))
 
-    # Muss trotzdem funktionieren
+    # Must still work
     assert len(result) > 0
     assert result[0].name == "docker-helper"
 
@@ -279,7 +279,7 @@ async def test_search_brain_exception_faellt_auf_heuristik(
 
     class _BrokenBrain:
         async def generate(self, *a, **kw):
-            raise RuntimeError("Kaputt")
+            raise RuntimeError("broken")
 
     finder = SkillFinder(brain=_BrokenBrain())
     result = await finder.search(SearchFilters(query="docker", limit=5))
@@ -307,7 +307,7 @@ def test_candidate_from_entry_to_dict(sample_entries):
 
 @pytest.mark.asyncio
 async def test_install_ohne_raw_url_raised(tmp_path, monkeypatch):
-    """Kandidat ohne raw_url muss einen klaren Fehler liefern."""
+    """A candidate without raw_url must produce a clear error."""
     monkeypatch.setattr(
         "jarvis.skills.finder.user_skills_dir", lambda: tmp_path
     )
@@ -326,5 +326,5 @@ async def test_install_ohne_raw_url_raised(tmp_path, monkeypatch):
         tags=(),
     )
     finder = SkillFinder()
-    with pytest.raises(RuntimeError, match="Kein Direkt-Download"):
+    with pytest.raises(RuntimeError, match="No direct download available"):
         await finder.install(cand)

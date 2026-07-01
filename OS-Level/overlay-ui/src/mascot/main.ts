@@ -1,20 +1,20 @@
 // Mascot Renderer Entry. Plan §13 + AD-16.
 //
-// Phase 9.6 ENTSCHEIDUNG (im Commit dokumentiert): PNG-Fallback only.
-// Begruendung: Rive-Files (.riv) sind ein proprietaeres Binary-Format
-// das nur im Rive-Editor erstellt werden kann; ich kann das nicht
-// generativ produzieren. Plan AD-16 erlaubt explizit den Fallback.
-// Ein echtes Rive-Asset kann spaeter via 'overlay-ui/src/mascot/
-// mascot.riv' nachgereicht werden — der Code-Pfad unten lade-versucht
-// es zuerst und faellt auf das PNG zurueck wenn nicht da.
+// Phase 9.6 DECISION (documented in the commit): PNG fallback only.
+// Rationale: Rive files (.riv) are a proprietary binary format that
+// can only be created in the Rive editor; it can't be produced
+// generatively. Plan AD-16 explicitly allows the fallback.
+// A real Rive asset can be supplied later via 'overlay-ui/src/mascot/
+// mascot.riv' — the code path below tries to load it first and falls
+// back to the PNG if it's not there.
 //
 // Boot:
-//   1. CSS importieren.
-//   2. PNG via fallback.png import (Vite hashed das URL).
-//   3. Versuche mascot.riv zu laden mit @rive-app/canvas-lite. Wenn
-//      das Asset nicht da ist (404 oder Decode-Fail), zeige PNG.
-//   4. QWebChannel connecten -> data-state Attribut auf <html> setzen.
-//      Bei Rive: zusaetzlich State-Machine-Inputs triggern.
+//   1. Import the CSS.
+//   2. PNG via fallback.png import (Vite hashes the URL).
+//   3. Try to load mascot.riv with @rive-app/canvas-lite. If the
+//      asset isn't there (404 or decode failure), show the PNG.
+//   4. Connect QWebChannel -> set the data-state attribute on <html>.
+//      With Rive: additionally trigger state-machine inputs.
 
 import "./mascot.css";
 
@@ -24,9 +24,9 @@ import { connectBridge } from "../bridge";
 import type { StateName } from "../schema";
 
 const ROOT = document.documentElement;
-// Vite ignoriert das URL — wir wollen explizit Optional-File-Lookup
-// zur Laufzeit. Ohne @vite-ignore wuerde Vite eine Build-Warning
-// emittieren weil das Asset noch nicht existiert.
+// Vite ignores the URL — we explicitly want an optional file lookup at
+// runtime. Without @vite-ignore, Vite would emit a build warning
+// because the asset doesn't exist yet.
 const RIVE_ASSET_URL = new URL(
   /* @vite-ignore */ "./mascot.riv",
   import.meta.url,
@@ -59,8 +59,8 @@ function showFallback(): void {
 }
 
 async function attemptRiveLoad(): Promise<boolean> {
-  // Lazy-import damit @rive-app/canvas-lite nicht in den Main-Bundle
-  // muss wenn das Asset fehlt.
+  // Lazy import so @rive-app/canvas-lite doesn't have to end up in the
+  // main bundle when the asset is missing.
   let RiveModule: { Rive: new (cfg: Record<string, unknown>) => RiveLikeRuntime; Layout?: unknown };
   try {
     RiveModule = (await import("@rive-app/canvas-lite")) as unknown as typeof RiveModule;
@@ -69,10 +69,10 @@ async function attemptRiveLoad(): Promise<boolean> {
     return false;
   }
 
-  // Kein HEAD-Preflight: vermeidet Console-Network-Errors bei file://-URLs
-  // (QtWebEngine-Production) und potenzielle Network-Leaks bei remote URLs.
-  // Rive's onLoadError Callback (unten) ist der canonical Path fuer 404 ->
-  // PNG-Fallback.
+  // No HEAD preflight: avoids console network errors on file:// URLs
+  // (QtWebEngine production) and potential network leaks on remote URLs.
+  // Rive's onLoadError callback (below) is the canonical path for
+  // 404 -> PNG fallback.
   const canvas = document.getElementById("mascot-canvas") as HTMLCanvasElement | null;
   if (canvas === null) {
     console.warn("[mascot] canvas#mascot-canvas missing");
@@ -107,7 +107,7 @@ function applyStateToRive(state: StateName): void {
   if (rive === null) return;
   const inputs = rive.stateMachineInputs("State Machine 1");
   if (inputs === null) return;
-  // Plan §13.2: trigger-named-Input je State.
+  // Plan §13.2: trigger-named input per state.
   const triggerName = state === "typing" || state === "clicking" ? "acting" : state;
   for (const inp of inputs) {
     if (inp.name === triggerName && typeof inp.fire === "function") {

@@ -83,8 +83,10 @@ values:
 ---
 
 # Ueber den User
+<!-- i18n-allow: matches the real (currently German) header rendered by UserProfile -->
 
 ## Observations ueber Zeit
+<!-- i18n-allow: matches the real (currently German) header rendered by UserProfile -->
 
 <!-- curator:observations:start -->
 <!-- curator:observations:end -->
@@ -186,7 +188,7 @@ async def test_do_not_record_category_is_declined(tmp_path):
     bus, events = _capturing_bus()
     res = await _tool(profile, bus).execute(
         {"cluster": "values", "field": "top_values",
-         "value": "meine politische Partei", "evidence": "Ich waehle Partei X."},
+         "value": "meine politische Partei", "evidence": "Ich waehle Partei X."},  # i18n-allow: German do-not-record keyword ("Partei"/party) matched by the tool's reject logic
         ctx=None,
     )
     # Declined, but NOT an error (so the brain does not retry/claim failure).

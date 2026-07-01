@@ -3,7 +3,7 @@
 Voice-Session 2026-05-11 starting at 17:22 went silent: Jarvis listened,
 moved to THINKING, but never spoke. Log evidence:
 
-    Brain gemini(gemini-3-flash-preview) fehlgeschlagen:
+    Brain gemini(gemini-3-flash-preview) fehlgeschlagen:  # i18n-allow
     403 Forbidden. {"error": {"code": 403,
         "message": "CachedContent not found (or permission denied)",
         "status": "PERMISSION_DENIED"}}
@@ -275,8 +275,8 @@ async def test_automatic_function_calling_is_disabled() -> None:
     forensic 2026-06-27: a voice "switch the worker from antigravity to codex"
     triggered AFC ("AFC is enabled with max remote calls: 10"), the call leaked,
     the recovery path ran the WRONG tool (list_mutable_settings), and the turn
-    stalled 108 s into the brain-timeout fallback ("ich habe die Antwort nicht
-    rechtzeitig fertigbekommen"). disable=True makes Gemini return a clean
+    stalled 108 s into the brain-timeout fallback ("ich habe die Antwort nicht  # i18n-allow
+    rechtzeitig fertigbekommen"). disable=True makes Gemini return a clean  # i18n-allow
     structured function_call the stream loop consumes directly — fast and exact.
     """
     provider = GeminiBrain(model="gemini-3-flash-preview")

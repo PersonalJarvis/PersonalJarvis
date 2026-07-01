@@ -1,7 +1,7 @@
-"""WS-Server (jarvis.overlay.server + bridge) und WS-Client (overlay.ipc_ws).
+"""WS server (jarvis.overlay.server + bridge) and WS client (overlay.ipc_ws).
 
-End-to-End-Roundtrip ueber 127.0.0.1, plus Backpressure-/Drop-Policy-
-Tests gegen die Bridge-Outbox direkt.
+End-to-end round-trip over 127.0.0.1, plus backpressure/drop-policy
+tests directly against the bridge outbox.
 """
 
 from __future__ import annotations
@@ -29,8 +29,8 @@ from overlay.schema import (
 from jarvis.overlay.bridge import OverlayBridge, _BoundedOutbox
 from jarvis.overlay.server import IPCServerHandle, start_ipc_server
 
-# pytest-asyncio ``asyncio_mode = "auto"`` (in pyproject.toml) markiert
-# async-Funktionen automatisch — kein Modul-pytestmark noetig.
+# pytest-asyncio ``asyncio_mode = "auto"`` (in pyproject.toml) marks
+# async functions automatically — no module pytestmark needed.
 
 
 # -----------------------------------------------------------------------------
@@ -42,7 +42,7 @@ def test_backoff_slot_progression() -> None:
     rng = random.Random(0)
     delays = [_backoff_with_jitter(i, rng=rng) for i in range(10)]
     assert len(delays) == 10
-    # Slot 0..5 traegt linear an, ab 6 cap auf 30.
+    # Slot 0..5 ramps up linearly, from 6 on capped at 30.
     assert all(d > 0 for d in delays)
     cap_band = (30 * (1 - JITTER_FRACTION), 30 * (1 + JITTER_FRACTION))
     assert cap_band[0] <= delays[-1] <= cap_band[1]
@@ -74,7 +74,7 @@ async def test_outbox_drops_oldest_non_state_first() -> None:
     box.put("state", b"S0")  # state
     box.put("cursor", b"C1")  # non-state, oldest non-state
     box.put("heartbeat", b"H2")  # non-state
-    # Voll. Ein neuer Eintrag (egal welcher Typ) muss zuerst C1 droppen.
+    # Full. A new entry (regardless of type) must drop C1 first.
     assert box.put("click", b"X3") is True
     out = []
     while len(box):
@@ -90,7 +90,7 @@ async def test_outbox_drops_state_only_if_no_non_state() -> None:
     box = _BoundedOutbox(maxsize=2)
     box.put("state", b"S0")
     box.put("state", b"S1")
-    # Voll, alles state. Neuer state -> aeltesten state droppen.
+    # Full, all state. New state -> drop the oldest state.
     assert box.put("state", b"S2") is True
     out = [await box.get(), await box.get()]
     assert b"S0" not in out
@@ -101,7 +101,7 @@ async def test_outbox_rejects_new_non_state_when_only_state_in_buf() -> None:
     box = _BoundedOutbox(maxsize=2)
     box.put("state", b"S0")
     box.put("state", b"S1")
-    # Voll, alles state. Neuer non-state -> wird selbst gedroppt.
+    # Full, all state. New non-state -> gets dropped itself.
     assert box.put("cursor", b"C2") is False
     assert box.dropped == 1
     out = [await box.get(), await box.get()]
@@ -130,12 +130,12 @@ async def test_bridge_send_nowait_returns_bool() -> None:
     bridge = OverlayBridge(outbound_queue_max=2)
     await bridge.start()
     try:
-        # Zwei State-Frames passen rein.
+        # Two state frames fit in.
         e1 = StateEnvelope(payload=StatePayload(state="idle"))
         e2 = StateEnvelope(payload=StatePayload(state="typing"))
         assert bridge.send_nowait(e1) is True
         assert bridge.send_nowait(e2) is True
-        # Drittes State -> evictet aelteste state, akzeptiert.
+        # Third state -> evicts the oldest state, accepted.
         assert bridge.send_nowait(e1) is True
     finally:
         await bridge.stop()
@@ -163,13 +163,13 @@ async def test_server_picks_free_port() -> None:
 
 
 async def test_server_raises_when_no_port_free() -> None:
-    """Wenn port_range_max < port -> sofortiger ValueError."""
+    """When port_range_max < port -> immediate ValueError."""
     with pytest.raises(ValueError):
         await start_ipc_server(host="127.0.0.1", port=18100, port_range_max=18099)
 
 
 async def test_client_connects_and_receives_state_resync() -> None:
-    """Plan §10.5: erstes Frame nach Connect ist der zuletzt bekannte State."""
+    """Plan §10.5: first frame after connect is the last known state."""
     handle = await _start_test_server()
     handle.bridge.emit_state("clicking", intensity=1.0, reason="tool")
     try:
@@ -207,7 +207,7 @@ async def test_client_connects_and_receives_state_resync() -> None:
 
 
 async def test_client_reconnects_after_server_restart() -> None:
-    """Server stirbt -> Client reconnected mit Backoff (§10.5)."""
+    """Server dies -> client reconnects with backoff (§10.5)."""
     handle1 = await _start_test_server()
     port = handle1.port
 
@@ -226,15 +226,15 @@ async def test_client_reconnects_after_server_restart() -> None:
     try:
         assert await client.wait_connected(timeout=3.0)
         first_count = client.connection_count
-        # Server stoppen.
+        # Stop the server.
         await handle1.stop()
-        # Mit demselben Port wieder hochziehen.
+        # Bring it back up with the same port.
         await asyncio.sleep(0.3)
         handle2 = await start_ipc_server(
             host="127.0.0.1", port=port, port_range_max=port
         )
         try:
-            # Geben dem Client Zeit zum reconnecten (Backoff <= 1.2s + Jitter).
+            # Give the client time to reconnect (backoff <= 1.2s + jitter).
             for _ in range(40):
                 await asyncio.sleep(0.1)
                 if client.connection_count > first_count:
@@ -251,11 +251,11 @@ async def test_client_reconnects_after_server_restart() -> None:
 
 
 async def test_invalid_json_dropped_and_logged(caplog) -> None:
-    """Server muss invalides JSON loggen + droppen, nicht crashen.
+    """Server must log + drop invalid JSON, not crash.
 
-    Wir senden Schrott und erwarten danach trotzdem mind. ein gueltiges
-    StateEnvelope (gepushed nach dem Schrott). Andere Frames (Heartbeat,
-    Resync) duerfen dazwischen liegen.
+    We send garbage and still expect at least one valid
+    StateEnvelope afterward (pushed after the garbage). Other frames
+    (heartbeat, resync) may occur in between.
     """
     import websockets
 
@@ -264,7 +264,7 @@ async def test_invalid_json_dropped_and_logged(caplog) -> None:
         async with websockets.connect(f"ws://127.0.0.1:{handle.port}/overlay") as ws:
             await ws.send("definitely-not-json")
             handle.bridge.emit_state("idle")
-            # Drain bis zum naechsten StateEnvelope (max ~3s Heartbeats).
+            # Drain until the next StateEnvelope (max ~3s of heartbeats).
             seen_state = False
             for _ in range(30):
                 try:
@@ -275,13 +275,13 @@ async def test_invalid_json_dropped_and_logged(caplog) -> None:
                 if isinstance(msg, StateEnvelope) and msg.payload.state == "idle":
                     seen_state = True
                     break
-            assert seen_state, "kein StateEnvelope nach Schrott-Frame empfangen"
+            assert seen_state, "no StateEnvelope received after the garbage frame"
     finally:
         await handle.stop()
 
 
 async def test_client_sends_heartbeats() -> None:
-    """Client schickt Heartbeats, die der Server validiert."""
+    """Client sends heartbeats that the server validates."""
     received_types: list[str] = []
     handle = await _start_test_server()
 
@@ -299,7 +299,7 @@ async def test_client_sends_heartbeats() -> None:
     run_task = asyncio.create_task(client.run())
     try:
         assert await client.wait_connected(timeout=3.0)
-        # Warten bis mindestens ein Heartbeat empfangen wurde.
+        # Wait until at least one heartbeat has been received.
         for _ in range(40):
             await asyncio.sleep(0.05)
             if "heartbeat" in received_types:

@@ -1,12 +1,12 @@
-"""Latenz-Messung Phase 5 Stop-Bedingung — VisionEngine.observe(mode='ui_tree') x5.
+"""Latency measurement, Phase 5 stop condition — VisionEngine.observe(mode='ui_tree') x5.
 
-Mandat-Phase-5-Stop-Bedingung:
-  Wenn p95 > 250 ms auf Ziel-Hardware -> deferred-Vermerk + skip Phase 5.
-  Wenn p95 <= 250 ms -> Implementierung commit.
+Mandated Phase-5 stop condition:
+  If p95 > 250 ms on target hardware -> deferred note + skip Phase 5.
+  If p95 <= 250 ms -> commit the implementation.
 
 Run: python .tmp_research/vision_latency_probe.py
 
-Output: 5 Einzel-Messungen + p95 + Verdict (go/deferred).
+Output: 5 individual measurements + p95 + verdict (go/deferred).
 """
 from __future__ import annotations
 
@@ -43,23 +43,23 @@ async def main() -> int:
 
     print("=" * 60)
     if not samples_ms:
-        print("Keine Messungen — VisionEngine schlug komplett fehl.")
+        print("No measurements — VisionEngine failed completely.")
         return 1
 
     mn = min(samples_ms)
     mx = max(samples_ms)
     avg = sum(samples_ms) / len(samples_ms)
-    # p95 bei 5 samples = der höchste Wert (4. + 5. von 5 Samples ist faktisch max)
+    # p95 at 5 samples = the highest value (the 4th + 5th of 5 samples is effectively the max)
     sorted_ms = sorted(samples_ms)
-    # statistics.quantiles braucht n>=2; für 5 Samples nehmen wir den höchsten
-    # als p95 (konservativ)
+    # statistics.quantiles needs n>=2; for 5 samples we take the highest
+    # as p95 (conservative)
     p95 = sorted_ms[-1]
     median = statistics.median(samples_ms)
 
     print(f"Min:    {mn:7.2f} ms")
     print(f"Median: {median:7.2f} ms")
     print(f"Avg:    {avg:7.2f} ms")
-    print(f"p95:    {p95:7.2f} ms (hoechster der 5 Samples)")
+    print(f"p95:    {p95:7.2f} ms (highest of the 5 samples)")
     print(f"Max:    {mx:7.2f} ms")
     print()
     threshold_ms = 250.0

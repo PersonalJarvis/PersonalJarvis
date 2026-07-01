@@ -92,9 +92,9 @@ def test_back_to_ac_restores_full_fps(machine: StateMachine) -> None:
 
 
 def test_idle_timeout_drops_to_idle_fps(machine: StateMachine) -> None:
-    """Plan §17.3 — 30 s no events -> fps_idle. Wir nutzen 50 ms zum Testen."""
+    """Plan §17.3 — 30 s no events -> fps_idle. We use 50 ms for testing."""
     t = Throttler(machine, idle_timeout_s=0.05)
-    # IDLE start, sofort: noch active.
+    # IDLE start, immediately: still active.
     assert t.get_target_fps() == DEFAULT_FPS_ACTIVE
     time.sleep(0.07)
     assert t.get_target_fps() == DEFAULT_FPS_IDLE
@@ -105,7 +105,7 @@ def test_state_change_resets_idle_timer(machine: StateMachine) -> None:
     time.sleep(0.07)
     assert t.get_target_fps() == DEFAULT_FPS_IDLE  # idle bucket
     machine.transition_to(OverlayState.LISTENING)
-    # Nach State-Change ist der Timer reset -> nicht mehr idle bucket.
+    # After a state change, the timer resets -> no longer in the idle bucket.
     assert t.get_target_fps() == DEFAULT_FPS_ACTIVE
 
 
@@ -157,7 +157,7 @@ def test_fullscreen_release_returns_to_state_fps(machine: StateMachine) -> None:
 
 
 # -------------------------------------------------------------------------
-# Subscriber feuert nur bei echtem Wechsel
+# Subscriber only fires on a real change
 # -------------------------------------------------------------------------
 
 
@@ -171,13 +171,13 @@ def test_subscriber_fires_on_initial(machine: StateMachine) -> None:
 def test_subscriber_does_not_fire_on_idle_seconds_drift(
     machine: StateMachine,
 ) -> None:
-    """idle_seconds aendert sich kontinuierlich — ohne Wechsel der
-    target_fps oder should_hide_view kein Subscriber-Spam."""
+    """idle_seconds changes continuously — without a change in
+    target_fps or should_hide_view, no subscriber spam."""
     fired = []
     t = Throttler(machine)
     t.subscribe(lambda s: fired.append(s))
     initial_count = len(fired)
-    # 5x recompute in kurzer Folge — keine echten Wechsel.
+    # 5x recompute in quick succession — no real changes.
     for _ in range(5):
         t.recompute()
     assert len(fired) == initial_count
@@ -198,5 +198,5 @@ def test_subscriber_fires_on_state_change(machine: StateMachine) -> None:
     t.subscribe(lambda s: fired.append(s))
     initial = len(fired)
     machine.transition_to(OverlayState.TYPING)
-    # Muss mind. einmal mehr feuern.
+    # Must fire at least once more.
     assert len(fired) > initial

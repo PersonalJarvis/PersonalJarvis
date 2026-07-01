@@ -1,18 +1,18 @@
-// Typed-Wrapper um qwebchannel.js. Qt liefert qwebchannel.js out of the
-// box ueber QWebEngineScript / qrc:///qtwebchannel/qwebchannel.js — wir
-// laden es im HTML-Head als <script src=...>. Hier nur der Promise-
-// Wrapper + die Subscribe-Helper damit der Renderer keine Globals direkt
-// anfasst.
+// Typed wrapper around qwebchannel.js. Qt provides qwebchannel.js out of
+// the box via QWebEngineScript / qrc:///qtwebchannel/qwebchannel.js — we
+// load it in the HTML head as <script src=...>. This is just the promise
+// wrapper + the subscribe helpers so the renderer never touches globals
+// directly.
 
 import { StateChangeSchema, StateNameSchema, type StateName } from "./schema";
 
 const QWEBCHANNEL_URL = "qrc:///qtwebchannel/qwebchannel.js";
 
 /**
- * qwebchannel.js wird vom Qt-Runtime aus dem qrc-Resource-Path
- * geliefert. Wir laden es lazy via DOM-Script-Insertion damit Vite
- * das HTML nicht analysieren muss (sonst Build-Warning "qrc:/// can't
- * be bundled").
+ * qwebchannel.js is delivered by the Qt runtime from the qrc resource
+ * path. We load it lazily via DOM script insertion so Vite doesn't
+ * need to resolve the HTML (otherwise it triggers a build warning
+ * "qrc:/// can't be bundled").
  */
 function loadQWebChannelScript(): Promise<void> {
   if (typeof globalThis.QWebChannel === "function") {
@@ -44,7 +44,7 @@ function loadQWebChannelScript(): Promise<void> {
   });
 }
 
-// Minimal-Type fuer das, was QWebChannel exposed.
+// Minimal type for what QWebChannel exposes.
 interface StateBridgeQObject {
   // Qt-Signal -> {connect(callback): void}
   stateChanged: {
@@ -100,7 +100,7 @@ export interface ClickEventData {
 export interface OverlayBridge {
   currentState(): Promise<StateName>;
   onStateChange(handler: (change: { old: StateName; next: StateName; reason: string }) => void): void;
-  /** Phase 9.5 — wird non-null wenn die effectsBridge registriert ist. */
+  /** Phase 9.5 — becomes non-null once the effectsBridge is registered. */
   onClickEvent(handler: (ev: ClickEventData) => void): void;
   onCursorMoved(handler: (x: number, y: number) => void): void;
   onActionStarted(handler: (kind: string, durationHintMs: number) => void): void;
@@ -110,8 +110,8 @@ export interface OverlayBridge {
 /**
  * Connect to QWebChannel and resolve with a typed bridge.
  *
- * Wird aus main.ts gerufen. Falls qwebchannel.js noch nicht geladen ist
- * (Race bei pre-build dev-mode), pollt der Wrapper kurz auf
+ * Called from main.ts. If qwebchannel.js hasn't loaded yet (a race in
+ * pre-build dev mode), the wrapper briefly polls for
  * `window.qt.webChannelTransport`.
  *
  * @remarks
@@ -125,7 +125,7 @@ export interface OverlayBridge {
  * registered handlers.
  */
 export async function connectBridge(timeoutMs = 5000): Promise<OverlayBridge> {
-  // Lazy load qwebchannel.js — Vite ignoriert das qrc:/// URL dadurch.
+  // Lazy load qwebchannel.js — this way Vite ignores the qrc:/// URL.
   await loadQWebChannelScript();
   return new Promise((resolve, reject) => {
     const start = performance.now();

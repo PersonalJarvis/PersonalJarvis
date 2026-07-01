@@ -1,19 +1,19 @@
-// cursor-trail.ts — Main-Thread-Coordinator. Plan §15.
+// cursor-trail.ts — Main-thread coordinator. Plan §15.
 //
-// Erzeugt OffscreenCanvas, transferControlToOffscreen() in Worker,
-// forwarded Cursor-Updates per postMessage. Worker macht das eigentliche
-// Drawing (siehe cursor-trail-worker.ts).
+// Creates the OffscreenCanvas, transferControlToOffscreen() to the worker,
+// forwards cursor updates via postMessage. The worker does the actual
+// drawing (see cursor-trail-worker.ts).
 //
-// Quelle der Cursor-Updates: cursorBridge.cursorMoved-Signal aus dem
-// Python-SHM-Reader-Thread (siehe OS-Level/src/overlay/window_glow.py).
-// Wir bekommen physical px (Plan §11.2 / §15.3) und reichen sie
-// unveraendert an den Worker — der konvertiert dpr-aware.
+// Source of the cursor updates: the cursorBridge.cursorMoved signal from
+// the Python SHM reader thread (see OS-Level/src/overlay/window_glow.py).
+// We receive physical px (Plan §11.2 / §15.3) and pass them through
+// unchanged to the worker — which converts them dpr-aware.
 
 let worker: Worker | null = null;
 let canvas: HTMLCanvasElement | null = null;
 
-// Modul-level Resize-Handler — als named function, damit teardown ihn
-// per ``removeEventListener`` wieder abmelden kann (Hot-Reload-Leak-Fix).
+// Module-level resize handler — as a named function so teardown can
+// unregister it via ``removeEventListener`` (hot-reload leak fix).
 function _onWindowResize(): void {
   if (canvas === null || worker === null) return;
   resizeCanvasToViewport(canvas);
@@ -26,15 +26,15 @@ function _onWindowResize(): void {
 }
 
 interface InitOptions {
-  /** Container fuer das Canvas. Default: ``document.body``. */
+  /** Container for the canvas. Default: ``document.body``. */
   container?: HTMLElement;
 }
 
 /**
- * Initialisiert Canvas + Worker. Idempotent.
+ * Initializes the canvas + worker. Idempotent.
  *
- * Muss VOR ``pushCursorPoint`` aufgerufen werden — sonst sind die
- * Pushes silent dropped.
+ * Must be called BEFORE ``pushCursorPoint`` — otherwise pushes are
+ * silently dropped.
  */
 export function initCursorTrail(options: InitOptions = {}): void {
   if (worker !== null) return;
@@ -43,11 +43,11 @@ export function initCursorTrail(options: InitOptions = {}): void {
 
   canvas = document.createElement("canvas");
   canvas.className = "cursor-trail-canvas";
-  // Fullscreen-Surface, click-through.
+  // Fullscreen surface, click-through.
   resizeCanvasToViewport(canvas);
   container.appendChild(canvas);
 
-  // OffscreenCanvas + Worker — Plan §15.2.
+  // OffscreenCanvas + worker — Plan §15.2.
   const offscreen = canvas.transferControlToOffscreen();
 
   worker = new Worker(
@@ -61,8 +61,8 @@ export function initCursorTrail(options: InitOptions = {}): void {
     [offscreen],
   );
 
-  // Resize-Listener — Edge-Glow-Window kann durch Monitor-Hotplug
-  // umgeresizt werden. Named handler, damit teardown ihn entfernen kann.
+  // Resize listener — the Edge-Glow window can get resized by monitor
+  // hotplug. Named handler so teardown can remove it.
   window.addEventListener("resize", _onWindowResize);
 }
 
@@ -77,8 +77,8 @@ function resizeCanvasToViewport(c: HTMLCanvasElement): void {
 }
 
 /**
- * Pushed einen Cursor-Punkt. Coords sind PHYSICAL px (Plan §11.2);
- * der Worker konvertiert per dpr.
+ * Pushes a cursor point. Coords are PHYSICAL px (Plan §11.2);
+ * the worker converts via dpr.
  */
 export function pushCursorPoint(physicalX: number, physicalY: number): void {
   if (worker === null) return;
@@ -86,7 +86,7 @@ export function pushCursorPoint(physicalX: number, physicalY: number): void {
 }
 
 /**
- * Cleart den Trail (z.B. bei action_ended).
+ * Clears the trail (e.g. on action_ended).
  */
 export function clearCursorTrail(): void {
   if (worker === null) return;
@@ -94,12 +94,12 @@ export function clearCursorTrail(): void {
 }
 
 /**
- * Test-Helper: tear-down zwischen Tests.
+ * Test helper: tear-down between tests.
  */
 export function teardownCursorTrail(): void {
-  // Resize-Listener zuerst abmelden — sonst feuert er noch waehrend
-  // worker/canvas null-en und triggert keine Aktion, leakt aber den
-  // Listener-Slot (Hot-Reload-Akkumulation).
+  // Unregister the resize listener first — otherwise it can still fire
+  // while worker/canvas are being nulled out; it won't trigger any
+  // action, but it leaks the listener slot (hot-reload accumulation).
   window.removeEventListener("resize", _onWindowResize);
   if (worker !== null) {
     worker.terminate();

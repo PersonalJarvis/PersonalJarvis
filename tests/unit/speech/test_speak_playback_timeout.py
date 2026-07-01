@@ -264,7 +264,7 @@ async def test_no_first_frame_ceiling_abort_marks_beheaded_turn() -> None:
 async def test_no_first_frame_ceiling_deferred_while_desktop_tool_steps() -> None:
     """An actively-stepping computer_use turn must not be beheaded pre-first-frame.
 
-    Live bug 2026-06-09 (data/jarvis_desktop.log 19:46, "öffne CapCut"): the
+    Live bug 2026-06-09 (data/jarvis_desktop.log 19:46, "öffne CapCut"): the  # i18n-allow
     router brain ran an inline ``computer_use`` loop. The loop was working on
     step 4 (heartbeats flowing via ObservationCaptured/ActionPlanned →
     ``_on_agent_progress``) when the no-first-frame ceiling fired at 20 s,
@@ -746,7 +746,7 @@ async def test_thinking_heartbeat_survives_tool_round_until_first_spoken_token()
     round) for as long as NO speakable sentence has reached TTS — only a real
     spoken token (``_spoke_this_turn``) may freeze it.
 
-    Live bug 2026-06-30 ("München nach Bora Bora"): the brain ran a tool round
+    Live bug 2026-06-30 ("München nach Bora Bora"): the brain ran a tool round  # i18n-allow
     ~10 s in, then worked a second model roundtrip ~20 s with no further
     progress ping and no token. The heartbeat froze at the FIRST progress, so
     the 20 s no-first-frame TTS ceiling beheaded the still-working turn 10 s

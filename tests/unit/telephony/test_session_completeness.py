@@ -95,7 +95,7 @@ def _make_session(
         call_sid="CA-test",
         stream_sid="MZ-test",
         send=sink.send,
-        stt=FakeSTT(stt_texts or ["Wie spät ist es?"]),
+        stt=FakeSTT(stt_texts or ["Wie spät ist es?"]),  # i18n-allow
         brain=brain,
         tts=tts_instance,
         language_code=language_code,
@@ -140,9 +140,9 @@ async def test_complete_utterance_dispatches_to_brain():
     cfg = _FakeConfig()
     session, brain, tts, _sink = _make_session(config=cfg)
 
-    await _run_turn_direct(session, "Öffne Chrome")
+    await _run_turn_direct(session, "Öffne Chrome")  # i18n-allow
 
-    assert brain.prompts == ["Öffne Chrome"]
+    assert brain.prompts == ["Öffne Chrome"]  # i18n-allow
 
 
 async def test_complete_utterance_with_nonempty_pending_dispatches_combined():
@@ -243,14 +243,14 @@ async def test_two_turn_completion_brain_receives_combined_text():
     session, brain, tts, _sink = _make_session(config=cfg)
 
     # Turn 1: trailing subordinator → INCOMPLETE
-    await _run_turn_direct(session, "Öffne mal eine")
+    await _run_turn_direct(session, "Öffne mal eine")  # i18n-allow
     assert brain.prompts == []
 
     # Turn 2: completing content (no dangling token, no abort phrase)
     await _run_turn_direct(session, "Datei im Explorer")
     assert len(brain.prompts) == 1
     combined = brain.prompts[0]
-    assert "Öffne mal eine" in combined
+    assert "Öffne mal eine" in combined  # i18n-allow
     assert "Datei im Explorer" in combined
 
 
@@ -368,10 +368,10 @@ async def test_classifier_exception_fails_open_to_brain():
         "jarvis.telephony.session.classify_completeness",
         side_effect=RuntimeError("boom"),
     ):
-        await _run_turn_direct(session, "Öffne Chrome")
+        await _run_turn_direct(session, "Öffne Chrome")  # i18n-allow
 
     # Fail-open: brain must have been called
-    assert brain.prompts == ["Öffne Chrome"]
+    assert brain.prompts == ["Öffne Chrome"]  # i18n-allow
 
 
 # ---------------------------------------------------------------------------
@@ -476,8 +476,8 @@ async def test_no_config_attribute_uses_defaults():
         del session._config
 
     # COMPLETE utterance should still dispatch
-    await _run_turn_direct(session, "Öffne Chrome")
-    assert brain.prompts == ["Öffne Chrome"]
+    await _run_turn_direct(session, "Öffne Chrome")  # i18n-allow
+    assert brain.prompts == ["Öffne Chrome"]  # i18n-allow
 
 
 async def test_no_config_attribute_incomplete_still_gates():

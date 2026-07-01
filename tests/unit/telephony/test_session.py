@@ -52,7 +52,7 @@ def _make_session(sink, *, stt=None, brain=None, tts=None, **kw) -> TelephonyCal
         "call_sid": "CA1",
         "stream_sid": "MZ1",
         "send": sink.send,
-        "stt": stt or FakeSTT(["Wie spät ist es?"]),
+        "stt": stt or FakeSTT(["Wie spät ist es?"]),  # i18n-allow
         "brain": brain or FakeBrain("Es ist vierzehn Uhr."),
         "tts": tts or FakeTTS(ms_per_char=2),
         "language_code": "de-DE",
@@ -99,7 +99,7 @@ async def test_full_turn_produces_outbound_media_frames():
 
 async def test_greeting_is_spoken():
     sink = _Sink()
-    session = _make_session(sink, greeting="Willkommen bei Jarvis.")
+    session = _make_session(sink, greeting="Willkommen bei Jarvis.")  # i18n-allow
     n = await session.speak_greeting()
     assert n > 0
     assert len(sink.media_frames) == n
@@ -108,9 +108,9 @@ async def test_greeting_is_spoken():
 async def test_brain_receives_transcript():
     sink = _Sink()
     brain = FakeBrain("Antwort.")
-    session = _make_session(sink, stt=FakeSTT(["Was ist die Uhrzeit?"]), brain=brain)
+    session = _make_session(sink, stt=FakeSTT(["Was ist die Uhrzeit?"]), brain=brain)  # i18n-allow
     await _drive_one_utterance(session)
-    assert brain.prompts == ["Was ist die Uhrzeit?"]
+    assert brain.prompts == ["Was ist die Uhrzeit?"]  # i18n-allow
 
 
 async def test_hangup_phrase_ends_call_before_brain():
@@ -126,13 +126,13 @@ async def test_hangup_phrase_ends_call_before_brain():
 
 @pytest.mark.parametrize(
     "phrase",
-    ["auflegen", "leg auf", "tschüss", "hang up", "goodbye", "beenden"],
+    ["auflegen", "leg auf", "tschüss", "hang up", "goodbye", "beenden"],  # i18n-allow
 )
 def test_hangup_regex_matches_closing_phrases(phrase):
     assert HANGUP_RE.search(phrase)
 
 
-@pytest.mark.parametrize("phrase", ["wie geht es dir", "erzähl mir was", "danke schön"])
+@pytest.mark.parametrize("phrase", ["wie geht es dir", "erzähl mir was", "danke schön"])  # i18n-allow
 def test_hangup_regex_ignores_normal_speech(phrase):
     assert HANGUP_RE.search(phrase) is None
 

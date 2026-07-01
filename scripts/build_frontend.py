@@ -1,4 +1,4 @@
-"""Baut React-Frontend. Wird vor PyInstaller und optional in CI aufgerufen."""
+"""Builds the React frontend. Runs before PyInstaller and optionally in CI."""
 import subprocess
 import sys
 from pathlib import Path

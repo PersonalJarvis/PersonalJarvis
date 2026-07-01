@@ -39,7 +39,7 @@ add_to_function("views/SkillsView.tsx", "SkillEditor")
 add_to_function("views/SkillsView.tsx", "TopHits")
 
 # SessionList - need it on hangupLabel too -- wait, hangupLabel is not a React component; it's a regular function.
-# Pass t in or use a different approach: revert "läuft" to a global string-translator helper.
+# Pass t in or use a different approach: revert "läuft" to a global string-translator helper.  # i18n-allow: quotes the literal source string being referenced
 # For simplicity let me check the SessionList line 117:
 
 fp = os.path.join(BASE, "components/sessions/SessionList.tsx").replace("\\", "/")

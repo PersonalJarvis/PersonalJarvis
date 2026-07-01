@@ -1,24 +1,24 @@
-"""Board-Demo-Bootstrap (v1.0).
+"""Board demo bootstrap (v1.0).
 
-Spawnt zwei in-Process ASGI-Backends (Alice + Bob), erzeugt fünf
-synthetische Identitäten, paired sie kreuzweise und befüllt jedes
-Backend mit ca. 30 Tagen Random-Activity (Achievements + Stories +
-Reactions).
+Spawns two in-process ASGI backends (Alice + Bob), creates five
+synthetic identities, pairs them crosswise, and seeds each
+backend with ~30 days of random activity (achievements + stories +
+reactions).
 
-Zweck:
-- **Demo**: Screenshots fürs README ohne echte Friends.
-- **Performance-Audit**: liefert die Datenbasis für ``board_perf.py``.
-- **Tests**: ein einziger Befehl bringt einen vollständig befüllten
-  Federation-Stand auf — manuelle Pair-Roundtrips entfallen.
+Purpose:
+- **Demo**: README screenshots without real friends.
+- **Performance audit**: supplies the data basis for ``board_perf.py``.
+- **Tests**: a single command brings up a fully seeded
+  federation state — manual pair round-trips are no longer needed.
 
-Aufruf::
+Usage::
 
     python tools/board_demo.py --out /tmp/board_demo
-    # spawn 2 Backends als Subprozesse, schreibt URLs in stdout
+    # spawn 2 backends as subprocesses, writes URLs to stdout
     python tools/board_demo.py --backend1 :18001 --backend2 :18002
 
-Sicherheits-Hinweis: das Skript ist *Dev-Only*. Es erzeugt Keypairs
-ohne sie ausser-Process zu speichern — keine Produktiv-Identities.
+Security note: this script is *dev-only*. It generates keypairs
+without persisting them out-of-process — no production identities.
 """
 from __future__ import annotations
 
@@ -52,14 +52,14 @@ ACHIEVEMENT_IDS = [
 ]
 
 STORY_TEXTS = [
-    "Heute den Tool-Master geknackt — 30 verschiedene CLIs in 14 Tagen genutzt.",
-    "Sub-Jarvis hat einen Refactor durchgezogen, während ich Mittag gegessen habe.",
-    "Voice-First-Try-Rate über 95 % seit drei Tagen. Kein Zufall.",
-    "Erste eigene MCP-Bridge integriert. Lief auf Anhieb.",
-    "Triple-Combo: bash → grep → write_file. In einer Session, ein Take.",
-    "Die Aggregator-Pipeline lief 30 Tage durch ohne einen einzigen Crash.",
-    "Habe den Privkey aus dem Credential Manager exportiert. Backup im Tresor.",
-    "Mein Board zeigt jetzt eine echte Streak. Wieder mal mit Jarvis durchgezogen.",
+    "Cracked Tool Master today — used 30 different CLIs in 14 days.",
+    "Sub-Jarvis pushed through a refactor while I was having lunch.",
+    "Voice first-try rate above 95% for three days straight. No coincidence.",
+    "Integrated my first own MCP bridge. Worked first try.",
+    "Triple combo: bash → grep → write_file. One session, one take.",
+    "The aggregator pipeline ran for 30 days straight without a single crash.",
+    "Exported the private key from the credential manager. Backed up in the vault.",
+    "My board now shows a real streak. Pulled it off again with Jarvis.",
 ]
 
 DISPLAY_NAMES = ["Ada", "Bjorn", "Camille", "Diego", "Eli"]
@@ -93,7 +93,7 @@ async def _start_backend(name: str, db_path: Path, admin_token: str) -> DemoBack
         replay_window_seconds=300,
     )
     app = create_app(settings=settings)
-    app.state.disable_background = True       # kein FederationPuller-noise
+    app.state.disable_background = True       # no FederationPuller noise
     transport = httpx.ASGITransport(app=app)
     client = httpx.AsyncClient(transport=transport, base_url=f"http://{name}", timeout=10)
     return DemoBackend(name=name, settings=settings, app=app, client=client)
@@ -151,11 +151,11 @@ def _now_ms() -> int:
 async def _seed_activity(
     b: DemoBackend, owner: DemoIdentity, *, days: int, rng: random.Random,
 ) -> None:
-    """Erzeugt ~3 Items pro Tag, gemischt aus Achievements + Stories.
+    """Creates ~3 items per day, mixed from achievements + stories.
 
-    Backdating via direktem DB-Write — wir gehen *durch* die ORM-Schicht,
-    aber überschreiben ``created_at`` und ``expires_at``, damit der Feed
-    eine glaubhafte Zeitachse hat.
+    Backdating via a direct DB write — we go *through* the ORM layer,
+    but override ``created_at`` and ``expires_at`` so the feed
+    has a believable timeline.
     """
     from board_backend.models import ActivityItem
     factory = b.app.state.session_factory
@@ -175,8 +175,8 @@ async def _seed_activity(
                     expires_at = None
                 else:
                     payload = {"text": rng.choice(STORY_TEXTS)}
-                    # Stories die schon "live" waren bekommen expires_at, alte
-                    # Stories sind faktisch gelöscht (skip).
+                    # Stories that were already "live" get expires_at; old
+                    # stories are effectively deleted (skip).
                     if day < 1:
                         expires_at = ts + timedelta(hours=24)
                     else:
@@ -201,7 +201,7 @@ async def _seed_reactions(
     backend: DemoBackend, author: DemoIdentity, reactors: list[DemoIdentity],
     rng: random.Random,
 ) -> None:
-    """Verteilt zufällige Reactions auf die Items des author."""
+    """Distributes random reactions across the author's items."""
     from board_backend.models import ActivityItem, Reaction
     factory = backend.app.state.session_factory
     REACTIONS = ("rocket", "brain", "fire")
@@ -231,9 +231,8 @@ async def _seed_reactions(
 async def bootstrap(
     out_dir: Path, *, days: int = 30, seed: int | None = None,
 ) -> dict[str, Any]:
-    """Spawnt zwei Backends, paired, befüllt — und gibt einen Status-
-    Report zurück, den der Caller (board_perf, README-Recipe) konsumieren
-    kann.
+    """Spawns two backends, pairs them, seeds them — and returns a status
+    report that the caller (board_perf, README recipe) can consume.
     """
     rng = random.Random(seed if seed is not None else 42)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -241,7 +240,7 @@ async def bootstrap(
     alice = await _start_backend("alice", out_dir / "alice.db", admin_token="alice-admin")
     bob = await _start_backend("bob", out_dir / "bob.db", admin_token="bob-admin")
 
-    # Owner-Identitäten (sind die einzigen registrierten Identities pro Backend).
+    # Owner identities (the only registered identities per backend).
     a_priv, a_pub = generate_keypair()
     b_priv, b_pub = generate_keypair()
     alice_id = DemoIdentity("Alice", a_priv, a_pub, "alice")
@@ -250,18 +249,18 @@ async def bootstrap(
     await _register(alice, alice_id)
     await _register(bob, bob_id)
 
-    # Drei zusätzliche pseudo-Friends pro Backend (kein eigenes Backend,
-    # nur Sig-fähige Identitäten für Reactions).
+    # Three extra pseudo-friends per backend (no backend of their own,
+    # just signature-capable identities for reactions).
     extras: list[DemoIdentity] = []
     for name in DISPLAY_NAMES:
         priv, pub = generate_keypair()
         extras.append(DemoIdentity(name, priv, pub, "ext"))
 
-    # Bidirektionale Pair-Beziehungen Alice ↔ Bob (Standard-Demo).
+    # Bidirectional pair relationship Alice ↔ Bob (standard demo).
     await _pair(alice, alice_id, bob_id, friend_url="http://bob")
     await _pair(bob,   bob_id,   alice_id, friend_url="http://alice")
 
-    # Pseudo-Friends als Friend-Rows direkt in beide DBs schreiben.
+    # Write pseudo-friends as friend rows directly into both DBs.
     from board_backend.models import Friend
     for backend, owner in ((alice, alice_id), (bob, bob_id)):
         with backend.app.state.session_factory() as session:
@@ -276,13 +275,13 @@ async def bootstrap(
                     ))
             session.commit()
 
-    # Activity + Reactions pro Backend.
+    # Activity + reactions per backend.
     await _seed_activity(alice, alice_id, days=days, rng=rng)
     await _seed_activity(bob, bob_id, days=days, rng=rng)
     await _seed_reactions(alice, alice_id, [bob_id, *extras], rng)
     await _seed_reactions(bob, bob_id, [alice_id, *extras], rng)
 
-    # Live-Probe für Status-Report.
+    # Live probe for the status report.
     me_payload = {"ts_ms": _now_ms()}
     r = await _signed("GET", alice, "/api/v1/me", ident=alice_id, payload=me_payload)
     alice_me = r.json()
@@ -308,11 +307,11 @@ async def bootstrap(
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Bootstrap a Jarvis-Board demo state.")
     p.add_argument("--out", type=Path, default=Path("data/board_demo"),
-                   help="Verzeichnis für DB-Dateien (Default: data/board_demo).")
+                   help="Directory for DB files (default: data/board_demo).")
     p.add_argument("--days", type=int, default=30,
-                   help="Anzahl der Tage Random-Activity (Default: 30).")
+                   help="Number of days of random activity (default: 30).")
     p.add_argument("--seed", type=int, default=None,
-                   help="RNG-Seed für deterministische Demo (Default: 42).")
+                   help="RNG seed for a deterministic demo (default: 42).")
     return p.parse_args()
 
 

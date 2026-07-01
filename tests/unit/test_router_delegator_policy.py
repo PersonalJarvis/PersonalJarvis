@@ -20,7 +20,7 @@ from jarvis.brain.router import SYSTEM_PROMPT
 class TestDelegatorPolicyInPrompt:
     def test_delegator_principle_present(self) -> None:
         assert "Delegator" in SYSTEM_PROMPT or "Dispatcher" in SYSTEM_PROMPT
-        assert "Millisekunden" in SYSTEM_PROMPT or "reasonst nicht lange" in SYSTEM_PROMPT.lower()
+        assert "Millisekunden" in SYSTEM_PROMPT or "reasonst nicht lange" in SYSTEM_PROMPT.lower()  # i18n-allow
 
     def test_three_categories_named(self) -> None:
         assert "TRIVIAL" in SYSTEM_PROMPT
@@ -29,7 +29,7 @@ class TestDelegatorPolicyInPrompt:
 
     def test_spawn_is_reserved_for_heavy_tasks(self) -> None:
         """The heavy-only doctrine must be pinned verbatim (2026-06-10)."""
-        assert "NUR fuer wirklich schwere" in SYSTEM_PROMPT, (
+        assert "NUR fuer wirklich schwere" in SYSTEM_PROMPT, (  # i18n-allow
             "spawn_worker must be explicitly reserved for genuinely heavy "
             "tasks — the over-spawning complaint of 2026-06-10."
         )

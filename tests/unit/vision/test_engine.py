@@ -1,7 +1,7 @@
-"""Unit-Tests fuer die VisionEngine-Mode-Selection und Cache-Integration.
+"""Unit tests for VisionEngine mode selection and cache integration.
 
-Arbeiten gegen Fake-Sources — wir wollen die Heuristik testen, nicht
-echte Screenshots/UIA-Trees aufnehmen.
+Works against fake sources — we want to test the heuristic, not
+capture real screenshots/UIA trees.
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ class _FakeScreenshotSource:
         return Observation(
             trace_id=uuid4(),
             timestamp_ns=time.time_ns(),
-            screenshot_path=f"blobs/{self.hash}.png",  # noqa: S108 — Fake-Path fuer Tests
+            screenshot_path=f"blobs/{self.hash}.png",  # noqa: S108 — fake path for tests
             screenshot_hash=self.hash,
             nodes=(),
             window_title="",
@@ -215,7 +215,7 @@ async def test_cache_hit_reuses_last_observation():
     )
     obs_1 = await engine.observe(mode="composite")
     obs_2 = await engine.observe(mode="composite")
-    # Zweite Observation wurde aus Cache gezogen — trace_id identisch.
+    # Second observation was pulled from the cache — trace_id is identical.
     assert obs_1.trace_id == obs_2.trace_id
 
 
@@ -238,7 +238,7 @@ async def test_cache_invalidates_on_window_change():
 # ---------------------------------------------------------------------------
 
 class _Cancelled:
-    """Minimaler CancelToken-Stub fuer Tests."""
+    """Minimal CancelToken stub for tests."""
 
     def __init__(self) -> None:
         self._cancelled = False
@@ -316,14 +316,14 @@ async def test_engine_close_closes_sources():
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Screenshot-Modus: window_title aus dem Foreground-Hint (BUG-CU-EMPTYTITLE)
+# Screenshot mode: window_title from the foreground hint (BUG-CU-EMPTYTITLE)
 #
-# Text-heavy Apps (Chrome, VS Code, Slack, …) laufen im Screenshot-Modus, wo
-# die ScreenshotSource window_title="" liefert. Der CU-Loop-Regression-
-# Detektor las den leeren Titel als "Fenster weg / Desktop vorne" und wies
-# das Modell an, die gerade geoeffnete App neu zu oeffnen. Die Engine kennt
-# den Foreground-Titel bereits (Mode-Heuristik) — sie muss ihn in die
-# Observation uebernehmen.
+# Text-heavy apps (Chrome, VS Code, Slack, …) run in screenshot mode, where
+# ScreenshotSource returns window_title="". The CU-loop regression
+# detector read the empty title as "window gone / desktop in front" and
+# instructed the model to reopen the app that was already open. The engine
+# already knows the foreground title (mode heuristic) — it must carry it
+# over into the observation.
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -353,8 +353,8 @@ async def test_explicit_screenshot_mode_fills_window_title_from_probe():
 
 @pytest.mark.asyncio
 async def test_auto_mode_without_filter_falls_back_to_composite():
-    """Wenn kein filter und kein Windows-Fenster erkennbar ist, sollte
-    'composite' der Default sein.
+    """When no filter and no Windows window is detectable,
+    'composite' should be the default.
     """
     engine = VisionEngine(
         screenshot_source=_FakeScreenshotSource(),

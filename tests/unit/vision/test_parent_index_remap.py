@@ -1,8 +1,8 @@
-"""Regression-Test H1: parent_index wird nach Pruning korrekt remapped.
+"""Regression test H1: parent_index is remapped correctly after pruning.
 
-Vor dem Fix war jeder ``parent_index`` in der gepruenten Liste hart auf
-``-1``, egal was der urspruengliche Tree sagte. Dieser Test baut einen
-synthetischen Tree, prunt ihn und prueft die Remap-Logik.
+Before the fix, every ``parent_index`` in the pruned list was hardcoded to
+``-1``, regardless of what the original tree said. This test builds a
+synthetic tree, prunes it, and checks the remap logic.
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ def _make_tree() -> list[RawNode]:
     """Baut einen kleinen Tree:
 
         Root (depth=0)
-        ├── Panel (depth=1, wird gepruent — nicht interesting)
+        ├── Panel (depth=1, gets pruned — not interesting)
         │   ├── Button-A (depth=2, bleibt)
         │   └── Button-B (depth=2, bleibt)
         └── Button-C (depth=1, bleibt)
@@ -41,8 +41,8 @@ def test_remap_direct_parent_survives():
 
 
 def test_remap_skips_pruned_intermediate_parent():
-    """Button-A und Button-B haben Panel als Parent — Panel ist weg —
-    die neuen Parents muessen direkt auf Root zeigen.
+    """Button-A and Button-B have Panel as their parent — Panel is gone —
+    the new parents must point directly at Root.
     """
     original = _make_tree()
     kept = [original[0], original[2], original[3]]    # Root, Button-A, Button-B
@@ -53,7 +53,7 @@ def test_remap_skips_pruned_intermediate_parent():
 
 
 def test_remap_isolated_node_gets_minus_one():
-    """Nur Button-A allein — keine Vorfahrenkette mehr — parent_index=-1."""
+    """Only Button-A alone — no ancestor chain left — parent_index=-1."""
     original = _make_tree()
     kept = [original[2]]
     _remap_parent_indices(kept, original)
@@ -68,10 +68,10 @@ def test_prune_tree_yields_remapped_indices():
     # Alle parent_indices zeigen auf gueltige Indizes innerhalb pruned
     for i, n in enumerate(pruned):
         assert n.parent_index == -1 or 0 <= n.parent_index < i, (
-            f"pruned[{i}] hat parent_index={n.parent_index} — ungueltig "
+            f"pruned[{i}] has parent_index={n.parent_index} — invalid "
             f"(Subset-Groesse {len(pruned)})"
         )
-    # Konkret: Root ist [0], die Buttons haben parent=0
+    # Concretely: Root is [0], the buttons have parent=0
     assert pruned[0].name == "Root"
     for node in pruned[1:]:
         assert node.parent_index == 0

@@ -115,7 +115,7 @@ def test_extract_strips_trailing_lone_spinner_glyph():
 
 # ---- repair_agy_path ------------------------------------------------------
 # agy spawns cmd.exe + npm internally (MCP servers); in a degraded environment
-# (PATH stripped of System32 / Node) that fails with "chcp nicht erkannt". The
+# (PATH stripped of System32 / Node) that fails with "chcp nicht erkannt". The  # i18n-allow
 # child PATH must carry the standard Windows system dirs.
 
 

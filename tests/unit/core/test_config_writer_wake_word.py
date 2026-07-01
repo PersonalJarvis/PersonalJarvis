@@ -1,7 +1,7 @@
 """config_writer.set_wake_word persists the custom wake word to jarvis.toml.
 
 Toml-only by design (see the set_wake_word docstring): wake_word is NOT tracked
-by the drift-guard, so a plain atomic toml write survives — and a stale soll/ENV
+by the drift-guard, so a plain atomic toml write survives — and a stale soll/ENV  # i18n-allow: "soll" is the real config_writer identifier, not prose
 layer would fight the documented hand-edit path. The write must preserve
 comments, sibling keys, and a BOM.
 """

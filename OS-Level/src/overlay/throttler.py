@@ -1,29 +1,29 @@
-"""Throttler — Single Source of Truth fuer FPS-Targets + Visibility.
+"""Throttler — single source of truth for FPS targets + visibility.
 
 Plan §17.2 + §17.3. Inputs:
-  - aktueller OverlayState (idle/listening/.../typing/clicking/...)
+  - current OverlayState (idle/listening/.../typing/clicking/...)
   - on_battery (PowerMonitor)
-  - last_state_change_ts (von StateMachine subscriber)
+  - last_state_change_ts (from the StateMachine subscriber)
   - fullscreen_should_hide (FullscreenDetector)
 
 Outputs:
-  - get_target_fps() -> int     (passt FPS-Cap)
-  - should_hide_view() -> bool  (5-min-Idle-Pfad: View komplett hidden)
-  - subscribe(callback)         (callback feuert wenn target_fps oder
-                                  should_hide_view sich aendert)
+  - get_target_fps() -> int     (the FPS cap)
+  - should_hide_view() -> bool  (5-min idle path: view fully hidden)
+  - subscribe(callback)         (callback fires when target_fps or
+                                  should_hide_view changes)
 
-Plan §17.2 FPS-Targets pro State:
+Plan §17.2 FPS targets per state:
     hidden       -> 0
     idle (30s+)  -> fps_idle (default 1)
     listening / thinking / speaking / error -> fps_active (30)
     typing / clicking -> fps_burst (60)
-    error-flash  -> fps_burst fuer 600 ms, dann zurueck
+    error-flash  -> fps_burst for 600 ms, then back
 
-Plan §17.3 Throttling-Strategy:
-    AC vs Battery: on_battery -> alle FPS halbieren.
-    Idle Detection: 30 s no events -> fps_idle.
-    Hide on Idle: 5 min no events -> should_hide_view=True.
-    Wake on Event: jeder State-Change resettet Idle-Timer.
+Plan §17.3 throttling strategy:
+    AC vs battery: on_battery -> halve all FPS.
+    Idle detection: 30 s no events -> fps_idle.
+    Hide on idle: 5 min no events -> should_hide_view=True.
+    Wake on event: every state change resets the idle timer.
 """
 
 from __future__ import annotations
@@ -39,15 +39,15 @@ from .state import OverlayState, StateMachine
 logger = logging.getLogger(__name__)
 
 
-# Plan §17.2 + §21.1 default Werte.
+# Plan §17.2 + §21.1 default values.
 DEFAULT_FPS_IDLE: int = 1
 DEFAULT_FPS_ACTIVE: int = 30
 DEFAULT_FPS_BURST: int = 60
 DEFAULT_IDLE_TIMEOUT_S: float = 30.0
-DEFAULT_HIDE_TIMEOUT_S: float = 300.0  # 5 Minuten
+DEFAULT_HIDE_TIMEOUT_S: float = 300.0  # 5 minutes
 
 
-# State -> FPS-Bucket Mapping. Plan §17.2.
+# State -> FPS bucket mapping. Plan §17.2.
 _BURST_STATES: frozenset[OverlayState] = frozenset(
     {OverlayState.TYPING, OverlayState.CLICKING}
 )
@@ -59,12 +59,12 @@ _ACTIVE_STATES: frozenset[OverlayState] = frozenset(
         OverlayState.ERROR,
     }
 )
-# IDLE selbst zaehlt als active solange < idle_timeout; danach idle-bucket.
+# IDLE itself counts as active as long as < idle_timeout; after that, idle bucket.
 
 
 @dataclass(frozen=True)
 class ThrottleSnapshot:
-    """Aktueller Output. Subscriber bekommen das."""
+    """Current output. Subscribers receive this."""
 
     target_fps: int
     should_hide_view: bool
@@ -78,10 +78,10 @@ ThrottleCallback = Callable[[ThrottleSnapshot], None]
 
 
 class Throttler:
-    """Berechnet Target-FPS + Hide-Decision aus State + Power + Idle.
+    """Computes the target FPS + hide decision from state + power + idle.
 
-    Idempotent + Thread-safe (RLock). ``recompute()`` ist der einzige
-    Entry-Point der Subscriber feuert.
+    Idempotent + thread-safe (RLock). ``recompute()`` is the only
+    entry point that fires subscribers.
     """
 
     def __init__(
@@ -127,14 +127,14 @@ class Throttler:
         self.recompute()
 
     def subscribe(self, callback: ThrottleCallback) -> Callable[[], None]:
-        """Registriert Callback. Sofort einmal mit aktuellem Snapshot
-        aufgerufen damit der Subscriber initial den Zustand kennt.
+        """Registers the callback. Immediately called once with the
+        current snapshot so the subscriber knows the initial state.
 
-        Reihenfolge wichtig: erst recompute() (ohne den neuen
-        Subscriber in der Liste), dann initial-callback einmal feuern,
-        DANN in die Subscriber-Liste aufnehmen. Sonst doppelter
-        Initial-Fire (recompute ruft alle Subscriber inkl. dem neuen,
-        plus expliziter initial-call hier).
+        Order matters: first recompute() (without the new subscriber
+        in the list), then fire the initial callback once, THEN add
+        it to the subscriber list. Otherwise it would fire twice
+        initially (recompute calls all subscribers including the new
+        one, plus the explicit initial call here).
         """
         snap = self.recompute()
         try:
@@ -169,8 +169,8 @@ class Throttler:
         return self.recompute().should_hide_view
 
     def recompute(self) -> ThrottleSnapshot:
-        """Berechnet den aktuellen Snapshot. Feuert Subscriber wenn
-        sich was geaendert hat. Idempotent."""
+        """Computes the current snapshot. Fires subscribers if
+        something changed. Idempotent."""
         with self._lock:
             state = self._machine.state
             idle_s = self.idle_seconds
@@ -203,7 +203,7 @@ class Throttler:
                 state is OverlayState.IDLE and idle_s >= self._hide_timeout
             )
             if should_hide_view:
-                # Hidden-View braucht keinen Compositor-Tick.
+                # A hidden view doesn't need a compositor tick.
                 target = 0
 
         snapshot = ThrottleSnapshot(
@@ -234,16 +234,16 @@ class Throttler:
     def _on_state_change(
         self, _old: OverlayState, _new: OverlayState, _reason: Optional[str]
     ) -> None:
-        # Plan §17.3: Wake on Event -> Idle-Timer reset.
+        # Plan §17.3: wake on event -> idle timer reset.
         with self._lock:
             self._last_change_ns = time.monotonic_ns()
         self.recompute()
 
 
 def _snapshot_changed(a: ThrottleSnapshot, b: ThrottleSnapshot) -> bool:
-    """Subscriber feuern nur wenn FPS oder Visibility sich aendern.
-    idle_seconds aendert sich kontinuierlich — das wuerde sonst
-    Subscriber-Spam ausloesen."""
+    """Subscribers only fire if FPS or visibility change.
+    idle_seconds changes continuously — firing on that would
+    otherwise trigger subscriber spam."""
     return (
         a.target_fps != b.target_fps
         or a.should_hide_view is not b.should_hide_view
@@ -253,7 +253,7 @@ def _snapshot_changed(a: ThrottleSnapshot, b: ThrottleSnapshot) -> bool:
     )
 
 
-# Re-export fuer Subscriber-Tests die ohne expliziten replace() arbeiten.
+# Re-export for subscriber tests that work without an explicit replace().
 __all__ = [
     "DEFAULT_FPS_ACTIVE",
     "DEFAULT_FPS_BURST",

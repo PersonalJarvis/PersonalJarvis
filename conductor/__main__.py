@@ -1,7 +1,7 @@
-"""``python -m conductor`` — CLI-Entry.
+"""``python -m conductor`` — CLI entry point.
 
-Delegiert an ``conductor.cli.main``. Pattern ist bewusst schlank: die
-eigentliche Logik liegt in ``cli.py``, hier nur der Dispatch.
+Delegates to ``conductor.cli.main``. The pattern is deliberately thin:
+the actual logic lives in ``cli.py``, here it's only the dispatch.
 """
 from __future__ import annotations
 

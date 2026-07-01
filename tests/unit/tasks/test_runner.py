@@ -1,4 +1,4 @@
-"""Unit-Tests fuer TaskRunner — SpeakAction, ToolCallAction, HarnessDispatch."""
+"""Unit tests for TaskRunner — SpeakAction, ToolCallAction, HarnessDispatch."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -266,7 +266,7 @@ async def test_runner_respects_cancel_token(store: TaskStore, bus: EventBus) -> 
 
     await runner.run(tid, cancel_token=token)
 
-    # TTS wurde nicht aufgerufen
+    # TTS was not called
     assert tts.calls == []
     task = await store.get(tid)
     assert task is not None

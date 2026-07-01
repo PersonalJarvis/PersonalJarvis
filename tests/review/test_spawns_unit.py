@@ -1,8 +1,8 @@
-"""Unit-Tests fuer WorkerSpawner / ReviewerSpawner mit gemocktem
+"""Unit tests for WorkerSpawner / ReviewerSpawner with a mocked
 HarnessManager (Phase 8.3).
 
-Plan-Referenz: §6.3 Akzeptanzkriterien — CLI-Argumente, Prompt-Inhalt,
-RunDirectory-Layout, Verdict-Parse + Schema-Reject.
+Plan reference: §6.3 acceptance criteria — CLI arguments, prompt content,
+RunDirectory layout, verdict parsing + schema rejection.
 """
 from __future__ import annotations
 
@@ -39,11 +39,11 @@ from jarvis.core.review.verdict import ReviewStatus
 
 
 class FakeHarnessManager:
-    """Drop-in-Ersatz für HarnessManager — kein Subprocess, gibt scripted Result.
+    """Drop-in replacement for HarnessManager — no subprocess, returns a scripted result.
 
-    Pro Aufruf wird eine vorbereitete `script`-Sequenz konsumiert; dadurch
-    kann ein Test mehrere aufeinanderfolgende dispatch()-Aufrufe (Worker
-    + Reviewer) mit unterschiedlichen Outputs scriptien.
+    Each call consumes one prepared `script` sequence entry; this lets
+    a test script several consecutive dispatch() calls (worker
+    + reviewer) with different outputs.
     """
 
     def __init__(self, scripts: list[dict[str, Any]] | None = None) -> None:
@@ -110,14 +110,14 @@ def test_worker_spawner_calls_openclaw_harness(tmp_path: Path) -> None:
     assert isinstance(task, HarnessTask)
     assert "Original task" in task.prompt
     assert state.task in task.prompt
-    # Worker-Prompt enthält Pfad-Hinweis (AD-9)
+    # worker prompt contains a path hint (AD-9)
     assert "iter-1" in task.prompt and "worker.out" in task.prompt
 
     assert isinstance(result, str) and result.strip()
 
 
 def test_worker_spawner_writes_iter_n_worker_out(tmp_path: Path) -> None:
-    """Wenn der Worker selbst nicht schreibt, persistiert der Spawner stdout."""
+    """If the worker itself doesn't write, the spawner persists stdout."""
     fake = FakeHarnessManager([
         {"stdout": "summary line\n", "exit_code": 0}
     ])
@@ -133,13 +133,13 @@ def test_worker_spawner_writes_iter_n_worker_out(tmp_path: Path) -> None:
 
 
 def test_worker_spawner_keeps_self_written_artifact(tmp_path: Path) -> None:
-    """Wenn der Worker SELBST in worker.out schreibt, persistiert Spawner
-    NICHT den stdout drüber.
+    """If the worker itself writes to worker.out, the spawner does NOT
+    overwrite it with stdout.
     """
     runs_root = tmp_path / "runs"
     state = _make_state(run_id="abc")
 
-    # Pre-create worker.out (simuliert Worker-Tool-Use)
+    # Pre-create worker.out (simulates worker tool use)
     pre_dir = RunDirectory(runs_root, "abc").ensure()
     pre_dir.write_worker_output(1, "self-written artifact body")
 
@@ -164,7 +164,7 @@ def test_worker_spawner_raises_on_nonzero_exit(tmp_path: Path) -> None:
 
 
 def test_worker_spawner_includes_feedback_block_on_iter2(tmp_path: Path) -> None:
-    """Iter-2-Spawn muss den Feedback-Block aus Iter-1 enthalten."""
+    """Iter-2 spawn must include the feedback block from iter 1."""
     from jarvis.core.review.verdict import ReviewIssue, ReviewVerdict
     fake = FakeHarnessManager([
         {"stdout": "summary\n", "exit_code": 0}
@@ -208,8 +208,8 @@ def test_reviewer_spawner_passes_schema_and_low_effort(tmp_path: Path) -> None:
         {"stdout": json.dumps(_valid_verdict_dict()), "exit_code": 0}
     ])
     runs_root = tmp_path / "runs"
-    # worker.out muss für den Reviewer-Prompt-Pfad existieren — wird vom
-    # WorkerSpawner geschrieben; in unit-tests mocken wir das.
+    # worker.out must exist for the reviewer prompt path — it's written by
+    # WorkerSpawner; in unit tests we mock this.
     RunDirectory(runs_root, "abc").ensure().write_worker_output(1, "x")
 
     spawner = ReviewerSpawner(harness_manager=fake, runs_root=runs_root)
@@ -286,7 +286,7 @@ def test_reviewer_spawner_raises_parse_error_on_invalid_json(
 def test_reviewer_spawner_raises_parse_error_on_schema_violation(
     tmp_path: Path,
 ) -> None:
-    """JSON valide, aber score=2.0 verletzt das Schema."""
+    """JSON is valid, but score=2.0 violates the schema."""
     bad = {
         "status": "pass",
         "summary": "ok",
@@ -306,7 +306,7 @@ def test_reviewer_spawner_raises_parse_error_on_schema_violation(
 
 
 def test_reviewer_spawner_handles_prose_prefix(tmp_path: Path) -> None:
-    """Reviewer ignoriert Prosa vor dem JSON (robustness gegen --output-format-Drift)."""
+    """Reviewer ignores prose before the JSON (robustness against --output-format drift)."""
     payload = _valid_verdict_dict()
     fake = FakeHarnessManager([
         {"stdout": "Here is my verdict:\n" + json.dumps(payload), "exit_code": 0}
@@ -346,5 +346,5 @@ def test_extract_non_json_returns_none() -> None:
 
 
 def test_extract_array_at_top_returns_none() -> None:
-    """Top-level ist ein Array, kein Object — Reviewer-Verdict muss Object sein."""
+    """Top level is an array, not an object — reviewer verdict must be an object."""
     assert _extract_verdict_json("[1, 2, 3]") is None

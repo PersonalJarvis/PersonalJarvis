@@ -58,7 +58,7 @@ def _system_with_empty_standing_instructions() -> str:
 
 def test_cli_prompt_includes_standing_instructions_without_heavy_router_prompt():
     req = BrainRequest(
-        messages=(BrainMessage(role="user", content="Was ist das wertvollste Unternehmen?"),),
+        messages=(BrainMessage(role="user", content="Was ist das wertvollste Unternehmen?"),),  # i18n-allow: simulated German user utterance, content under test
         system=_system_with_standing_instructions(),
     )
 
@@ -99,8 +99,8 @@ def test_cli_prompt_puts_current_empty_state_after_stale_history():
     req = BrainRequest(
         messages=(
             BrainMessage(role="user", content="Wasketup"),
-            BrainMessage(role="assistant", content="schef, alles laeuft."),
-            BrainMessage(role="user", content="Du musst das nicht mehr sagen."),
+            BrainMessage(role="assistant", content="schef, alles laeuft."),  # i18n-allow: simulated German assistant reply, content under test
+            BrainMessage(role="user", content="Du musst das nicht mehr sagen."),  # i18n-allow: simulated German user utterance, content under test
         ),
         system=_system_with_empty_standing_instructions(),
     )

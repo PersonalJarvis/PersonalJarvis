@@ -72,7 +72,7 @@ class _TextOnlyBrain:
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
         self.requests.append(req)
-        yield BrainDelta(content="Hallo, was kann ich tun?")
+        yield BrainDelta(content="Hallo, was kann ich tun?")  # i18n-allow: simulated German assistant output under test
         yield BrainDelta(finish_reason="stop")
 
 

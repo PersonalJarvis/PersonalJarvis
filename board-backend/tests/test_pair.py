@@ -1,4 +1,4 @@
-"""Pair-Tests fuer Phase D, Commit 1."""
+"""Pair tests for Phase D, Commit 1."""
 from __future__ import annotations
 
 import time
@@ -15,7 +15,7 @@ from board_backend.models import Friend, PairToken
 
 
 # ----------------------------------------------------------------------
-# Helpers + Fixtures fuer einen "owner"-registrierten Backend
+# Helpers + fixtures for an "owner"-registered backend
 # ----------------------------------------------------------------------
 
 def _register_owner(client: TestClient, pubkey: str, name: str = "Owner") -> None:
@@ -54,7 +54,7 @@ def owner_client(client: TestClient, owner_keys) -> TestClient:
 
 
 # ----------------------------------------------------------------------
-# Pair-Tests
+# Pair tests
 # ----------------------------------------------------------------------
 
 def test_pair_initiate_returns_token_and_url(owner_client: TestClient) -> None:
@@ -80,9 +80,10 @@ def test_pair_initiate_requires_admin(owner_client: TestClient) -> None:
 def test_pair_creates_bidirectional_friendship(
     owner_client: TestClient, friend_keys: tuple[str, str]
 ) -> None:
-    """Plan-Smoke #1: nach erfolgreichem accept ist der Owner-Backend-friendly
-    mit dem Friend. (Bidirektional auf Owner-Seite — die Friend-Seite haengt
-    von dessen Backend ab; das testen wir in test_two_backends_pair.)"""
+    """Plan smoke #1: after a successful accept, the owner's backend is
+    friends with the friend. (Bidirectional on the owner's side — the
+    friend's side depends on their backend; we test that in
+    test_two_backends_pair.)"""
     init = owner_client.post(
         "/api/v1/pair/initiate", json={},
         headers={"X-Admin-Token": "test-admin"},
@@ -113,13 +114,13 @@ def test_pair_creates_bidirectional_friendship(
 def test_pair_token_expires_after_10min(
     owner_client: TestClient, friend_keys: tuple[str, str], settings: Settings,
 ) -> None:
-    """Plan-Smoke #2: Token > 10 min alt → 401."""
+    """Plan smoke #2: token > 10 min old → 401."""
     init = owner_client.post(
         "/api/v1/pair/initiate", json={},
         headers={"X-Admin-Token": "test-admin"},
     ).json()
 
-    # In der DB die expires_at-Zeile auf 11 min in der Vergangenheit ziehen.
+    # Move the expires_at row in the DB to 11 min in the past.
     factory = owner_client.app.state.session_factory
     with factory() as session:
         tok = session.get(PairToken, init["token"])
@@ -191,7 +192,7 @@ def test_pair_self_pubkey_rejected(
 def test_friends_list_endpoint(
     owner_client: TestClient, owner_keys: tuple[str, str], friend_keys: tuple[str, str]
 ) -> None:
-    """GET /api/v1/friends mit signed owner-request listet die Friend(s)."""
+    """GET /api/v1/friends with a signed owner request lists the friend(s)."""
     owner_priv, owner_pub = owner_keys
     init = owner_client.post(
         "/api/v1/pair/initiate", json={},

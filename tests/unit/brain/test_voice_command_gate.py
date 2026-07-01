@@ -4,7 +4,7 @@ detector (wired via BrainManager._detect_switch_intent -> match_voice_command).
 Regression guard added 2026-06-08: a voice "switch the brain provider to X" was
 NOT caught by the strict pattern (the "brain provider" filler between the verb
 and "to" broke it), fell through to the router LLM, and the LLM — told in its
-system prompt it had "no authority" to switch — refused with "keine Berechtigung".
+system prompt it had "no authority" to switch — refused with "keine Berechtigung".  # i18n-allow: verbatim quote of the hallucinated runtime output
 The gate must tolerate the natural "den/the [brain] provider/anbieter" filler.
 """
 from __future__ import annotations
@@ -25,8 +25,8 @@ from jarvis.brain.voice_command_gate import match_voice_command
         ("use openrouter", "openrouter"),
         # NEW: natural phrasings with a provider-noun filler
         ("switch the brain provider to gemini", "gemini"),
-        ("wechsel den Brain-Provider auf gemini", "gemini"),
-        ("wechsel den Provider auf openrouter", "openrouter"),
+        ("wechsel den Brain-Provider auf gemini", "gemini"),  # i18n-allow: German speech-input test vocabulary
+        ("wechsel den Provider auf openrouter", "openrouter"),  # i18n-allow: German speech-input test vocabulary
         ("wechsle den Anbieter zu openrouter", "openrouter"),
         ("switch provider to claude", "claude"),
         ("switch the provider to openai", "openai"),
@@ -43,8 +43,8 @@ def test_provider_switch_matches(text: str, target: str) -> None:
     "text",
     [
         "ich gehe auf meinem Weg",
-        "wie spät ist es",
-        "erzähl mir was über gemini",  # a mention, not a switch command
+        "wie spät ist es",  # i18n-allow: German speech-input test vocabulary
+        "erzähl mir was über gemini",  # a mention, not a switch command (i18n-allow)
         # Grok was removed as a brain provider (only grok-voice TTS + the
         # grok_api_key credential remain), so it is no longer a recognized
         # brain/provider switch target — "switch to grok" must NOT match.
@@ -85,17 +85,17 @@ def test_explicit_reply_language_switch_still_matches(text: str, target: str) ->
 
 def test_cancel_and_depth_still_work() -> None:
     assert match_voice_command("jarvis stopp").kind == "cancel"
-    assert match_voice_command("denk gründlich").kind == "depth_deep"
+    assert match_voice_command("denk gründlich").kind == "depth_deep"  # i18n-allow: German speech-input test vocabulary
     assert match_voice_command("nimm haiku").kind == "depth_fast"
 
 
 def test_subagent_switch_picks_target_after_preposition_not_source() -> None:
-    """ "von Antigravity auf Codex" must resolve to the TARGET (codex), not the
+    """ "von Antigravity auf Codex" must resolve to the TARGET (codex), not the  # i18n-allow: quotes the German test utterance under test
     mentioned SOURCE (antigravity). Forensic 2026-06-27: the alias-list-ORDER
     scan returned antigravity (it sits earlier in the list) so the worker was
     switched to the source the user was switching AWAY from."""
     m = match_voice_command(
-        "stell den subagent provider von antigravity auf codex um"
+        "stell den subagent provider von antigravity auf codex um"  # i18n-allow: German speech-input test vocabulary
     )
     assert m is not None and m.kind == "subagent_switch"
     assert m.target == "codex"
@@ -103,20 +103,20 @@ def test_subagent_switch_picks_target_after_preposition_not_source() -> None:
 
 def test_subagent_switch_longest_alias_after_preposition() -> None:
     # "openai-codex" must win over its "openai"/"codex" substrings after the prep.
-    m = match_voice_command("wechsel den subagent von gemini auf openai-codex")
+    m = match_voice_command("wechsel den subagent von gemini auf openai-codex")  # i18n-allow: German speech-input test vocabulary
     assert m is not None and m.kind == "subagent_switch"
     assert m.target == "openai-codex"
 
 
 def test_subagent_switch_plain_target() -> None:
-    m = match_voice_command("stell den subagent provider auf gemini")
+    m = match_voice_command("stell den subagent provider auf gemini")  # i18n-allow: German speech-input test vocabulary
     assert m is not None and m.kind == "subagent_switch"
     assert m.target == "gemini"
 
 
 def test_main_provider_switch_from_x_to_y_targets_y() -> None:
-    # "von Gemini auf OpenAI" must target OpenAI (the destination), not fall through.
-    m = match_voice_command("wechsel von gemini auf openai")
+    # "von Gemini auf OpenAI" must target OpenAI (the destination), not fall through. (i18n-allow)
+    m = match_voice_command("wechsel von gemini auf openai")  # i18n-allow: German speech-input test vocabulary
     assert m is not None and m.kind == "provider_switch"
     assert m.target == "openai"
 
@@ -167,8 +167,8 @@ def test_cancel_recognizes_halt() -> None:
 
 
 def test_halt_midsentence_is_not_cancel() -> None:
-    # "das ist halt so" must NOT cancel — halt only at sentence start / after jarvis
-    m = match_voice_command("das ist halt so")
+    # "das ist halt so" must NOT cancel — halt only at sentence start / after jarvis (i18n-allow)
+    m = match_voice_command("das ist halt so")  # i18n-allow: German speech-input test vocabulary
     assert m is None or m.kind != "cancel"
 
 
@@ -176,7 +176,7 @@ def test_language_switch_picks_first_language_in_text_not_dict_order() -> None:
     # "deutsch" appears before "englisch" in the sentence, so the reply language
     # must be German — not English just because "englisch" sits earlier in the
     # alias dict (forensic 2026-06-27).
-    m = match_voice_command("antworte auf deutsch und englisch")
+    m = match_voice_command("antworte auf deutsch und englisch")  # i18n-allow: German speech-input test vocabulary
     assert m is not None and m.kind == "language_switch"
     assert m.target == "de"
 

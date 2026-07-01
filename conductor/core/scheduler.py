@@ -1,10 +1,10 @@
-"""Scheduler — poll-basierte Cron+Interval-Ausfuehrung.
+"""Scheduler — poll-based cron+interval execution.
 
-Simpelstes funktionales Design: ein asyncio-Loop, der pro Tick alle
-aktiven Jobs inspiziert und schaut, welches ``next_run_at_ns`` faellig
-ist. Keine eigene Heap-Struktur — die Job-Anzahl pro Conductor-Instanz
-liegt realistisch bei <100, und SQLite-Query ist bei der Groesse nicht
-der Flaschenhals.
+The simplest possible functional design: an asyncio loop that, on each
+tick, inspects all active jobs and checks which ``next_run_at_ns`` is
+due. No dedicated heap structure — the job count per Conductor instance
+realistically stays below 100, and at that size the SQLite query is
+not the bottleneck.
 """
 from __future__ import annotations
 
@@ -89,8 +89,8 @@ class Scheduler:
 
             if stored_next <= now_ns:
                 due_ids.append(row["id"])
-                # neuen next_run_at_ns setzen, bevor wir triggern,
-                # damit keine Doppel-Triggering bei langsamer Ausfuehrung.
+                # Set a new next_run_at_ns before we trigger, so slow
+                # execution doesn't cause a double trigger.
                 next_after = _compute_next(
                     sched_type, expr,
                     max(now_ns + 60_000_000_000, stored_next),
@@ -107,7 +107,7 @@ class Scheduler:
             try:
                 await self._runner.trigger(jid, trigger=trigger)
             except Exception as exc:  # noqa: BLE001
-                log.warning("Scheduler-Trigger fuer %s failed: %s", jid, exc)
+                log.warning("Scheduler trigger for %s failed: %s", jid, exc)
 
         if upcoming_min is None:
             return 30.0
@@ -123,7 +123,7 @@ class Scheduler:
 
 
 # ----------------------------------------------------------------------
-# Next-Run-Berechnung
+# Next-run computation
 # ----------------------------------------------------------------------
 
 def _compute_next(sched_type: str, expr: str, base_ns: int) -> int | None:

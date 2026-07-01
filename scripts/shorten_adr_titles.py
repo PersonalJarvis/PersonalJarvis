@@ -1,11 +1,11 @@
-"""ADR-Titel kuerzen — Frontmatter-``title`` auf prägnante Form bringen.
+"""Shorten ADR titles — bring the frontmatter ``title`` into a concise form.
 
-User-Mandat 2026-04-29: Display-Titel in der DocsView-Sidebar muss
-vollstaendig lesbar sein (max 60 Zeichen, empfohlen 50). Body-H1 bleibt
-unveraendert — der lange Erklaerungs-Titel im Body ist eigenstaendig.
+User mandate 2026-04-29: the display title in the DocsView sidebar must
+be fully readable (max 60 characters, 50 recommended). The body H1 stays
+unchanged — the long explanatory title in the body is independent.
 
-Idempotent: wenn ein ADR schon einen kurzen Titel hat, wird er
-uebersprungen. Pflegt nur das ``title``-Field, alles andere bleibt.
+Idempotent: if an ADR already has a short title, it is
+skipped. Only maintains the ``title`` field; everything else is left alone.
 """
 from __future__ import annotations
 
@@ -15,10 +15,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 ADR_DIR = REPO / "docs" / "adr"
 
-# Hand-kuratierte Kurz-Titel pro ADR-Nummer.
-# Format: ``ADR-NNNN: <prägnant>`` — Diataxis-Pill liefert das ADR-Label
-# zusaetzlich, aber wir lassen die Nummer im Titel weil sie der
-# Identifier ist.
+# Hand-curated short titles per ADR number.
+# Format: ``ADR-NNNN: <concise>`` — the Diataxis pill supplies the ADR label
+# additionally, but we keep the number in the title because it is the
+# identifier.
 SHORT_TITLES: dict[str, str] = {
     "0001": "ADR-0001: IPC via Named Pipe + HMAC",
     "0002": "ADR-0002: UIA-Tree-Pruning",
@@ -40,8 +40,8 @@ def adr_number(filename: str) -> str:
 
 
 def replace_title_in_frontmatter(text: str, new_title: str) -> str:
-    """Ersetzt ``title: "..."`` in der Frontmatter-Section. Idempotent —
-    wenn das title-Field schon den new_title traegt, return unveraendert."""
+    """Replaces ``title: "..."`` in the frontmatter section. Idempotent —
+    if the title field already carries the new_title, returns unchanged."""
     if not text.startswith("---"):
         return text
     parts = text.split("---", 2)
@@ -49,34 +49,34 @@ def replace_title_in_frontmatter(text: str, new_title: str) -> str:
         return text
     fm = parts[1]
     body = parts[2]
-    # Match `title: "..."` Zeile
+    # Match the `title: "..."` line
     title_re = re.compile(r'(?m)^title\s*:\s*"[^"]*"\s*$')
     quoted = f'title: "{new_title}"'
     if title_re.search(fm):
         new_fm = title_re.sub(quoted, fm)
     else:
-        # Falls kein title vorhanden: anhaengen
+        # If no title is present: append it
         new_fm = fm.rstrip() + f"\n{quoted}\n"
     return f"---{new_fm}---{body}"
 
 
 def main() -> None:
     if not ADR_DIR.is_dir():
-        raise SystemExit(f"ADR-Dir nicht gefunden: {ADR_DIR}")
+        raise SystemExit(f"ADR dir not found: {ADR_DIR}")
 
     updated = 0
     skipped = 0
     for path in sorted(ADR_DIR.glob("*.md")):
         num = adr_number(path.name)
         if num not in SHORT_TITLES:
-            print(f"  skip   {path.name} (kein Kurz-Titel hinterlegt)")
+            print(f"  skip   {path.name} (no short title on file)")
             skipped += 1
             continue
         new_title = SHORT_TITLES[num]
         text = path.read_text(encoding="utf-8")
-        # Pruefen, ob schon der Kurz-Titel drin ist
+        # Check whether the short title is already present
         if f'title: "{new_title}"' in text:
-            print(f"  skip   {path.name} (schon kurz)")
+            print(f"  skip   {path.name} (already short)")
             skipped += 1
             continue
         new_text = replace_title_in_frontmatter(text, new_title)

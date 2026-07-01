@@ -1,17 +1,17 @@
-"""GetSystemPowerStatus Polling. Plan §17.3 Throttling-Strategy.
+"""GetSystemPowerStatus polling. Plan §17.3 throttling strategy.
 
-AC vs Battery -> FPS halbieren. Polling alle 30 s auf Daemon-Thread.
+AC vs battery -> halve the FPS. Polling every 30 s on a daemon thread.
 
 SYSTEM_POWER_STATUS struct (winbase.h):
 
     BYTE  ACLineStatus            // 0=offline, 1=online, 255=unknown
     BYTE  BatteryFlag             // 0..8 bit-mask
-    BYTE  BatteryLifePercent      // 0..100 oder 255 (unknown)
-    BYTE  SystemStatusFlag        // 1 = Battery-Saver an
-    DWORD BatteryLifeTime         // Sekunden bis empty oder 0xFFFFFFFF
-    DWORD BatteryFullLifeTime     // dito
+    BYTE  BatteryLifePercent      // 0..100 or 255 (unknown)
+    BYTE  SystemStatusFlag        // 1 = battery saver on
+    DWORD BatteryLifeTime         // seconds until empty or 0xFFFFFFFF
+    DWORD BatteryFullLifeTime     // ditto
 
-Wir lesen primaer ACLineStatus + SystemStatusFlag.
+We primarily read ACLineStatus + SystemStatusFlag.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 class PowerStatus:
     on_battery: bool
     battery_saver: bool
-    battery_percent: Optional[int]  # None wenn unknown
+    battery_percent: Optional[int]  # None if unknown
 
 
 PowerCallback = Callable[[PowerStatus], None]
@@ -38,7 +38,7 @@ PowerCallback = Callable[[PowerStatus], None]
 def query_status() -> Optional[PowerStatus]:
     """Plan §17.3 — GetSystemPowerStatus via ctypes.
 
-    Returnt None auf Nicht-Windows oder bei API-Fehler.
+    Returns None on non-Windows or on an API error.
     """
     if sys.platform != "win32":
         return None
@@ -82,7 +82,7 @@ def query_status() -> Optional[PowerStatus]:
 
 
 class PowerMonitor:
-    """30-Sekunden-Polling-Thread fuer SYSTEM_POWER_STATUS.
+    """30-second polling thread for SYSTEM_POWER_STATUS.
 
     Lifecycle::
 
@@ -139,8 +139,8 @@ class PowerMonitor:
         if self.is_running:
             return
         self._stop.clear()
-        # Initial sofort poll'en damit der Caller den Status nicht erst
-        # nach 30 s bekommt.
+        # Poll immediately on start so the caller doesn't have to wait
+        # 30 s for the first status.
         self.poll_once()
         self._thread = threading.Thread(
             target=self._run, name="overlay-power-monitor", daemon=True

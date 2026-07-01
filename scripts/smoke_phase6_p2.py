@@ -1,24 +1,24 @@
-"""Smoke-Test Phase 6 / Prompt 2: Worker-Layer End-to-End gegen echte claude-Binary.
+"""Smoke test Phase 6 / Prompt 2: worker layer end-to-end against the real claude binary.
 
-Verifiziert die T1+T2-API-Surface in einem realistischen Mini-Lauf:
+Verifies the T1+T2 API surface in a realistic mini run:
 
-1. `claude` muss im PATH sein. Wenn nicht: `[SKIP]` + exit 0 (KEIN Failure).
-2. `git rev-parse --show-toplevel` als Basis fuer den Worktree.
-3. `WorktreeManager.create(mission_slug='smoke', task_id='p2')` legt einen
-   frischen Branch + Workspace-Verzeichnis an.
-4. `WindowsJobObject('smoke-p2')` als async-Context-Manager — auf Nicht-Windows
-   No-Op, der Smoke laeuft trotzdem (Worker spawnt regulaer, kein Reaping).
-5. `ClaudeDirectWorker.spawn(prompt, ..., max_turns=3)` mit Cost-Cap (--max-turns
-   ist Cost-Guardrail #1 laut Research-Doc §B). Stream wird gedrained bis
-   `result`-Event. (OpenClawWorker wurde im OpenClaw/UFO3-Removal entfernt —
-   `f9fa1c2f`; ClaudeDirectWorker ist der produktive claude-CLI-Worker.)
-6. Verifiziere `(workspace / 'hello.txt').exists()` UND content == 'world'
-   (mit/ohne Trailing-Newline).
-7. Verifiziere via `psutil.pid_exists(pid)`, dass der Worker-Subprocess sauber
-   beendet wurde.
+1. `claude` must be on PATH. If not: `[SKIP]` + exit 0 (NOT a failure).
+2. `git rev-parse --show-toplevel` as the basis for the worktree.
+3. `WorktreeManager.create(mission_slug='smoke', task_id='p2')` creates a
+   fresh branch + workspace directory.
+4. `WindowsJobObject('smoke-p2')` as an async context manager — on non-Windows
+   it's a no-op, the smoke still runs (worker spawns normally, no reaping).
+5. `ClaudeDirectWorker.spawn(prompt, ..., max_turns=3)` with a cost cap (--max-turns
+   is cost guardrail #1 per the research doc §B). The stream is drained until the
+   `result` event. (OpenClawWorker was removed in the OpenClaw/UFO3 removal —
+   `f9fa1c2f`; ClaudeDirectWorker is the production claude-CLI worker.)
+6. Verify `(workspace / 'hello.txt').exists()` AND content == 'world'
+   (with/without a trailing newline).
+7. Verify via `psutil.pid_exists(pid)` that the worker subprocess terminated
+   cleanly.
 8. Cleanup: `WorktreeManager.remove(workspace, force=True)`.
 
-Exit 0 bei Erfolg ODER bei `[SKIP]`. Exit 1 nur bei echten Failures.
+Exit 0 on success OR on `[SKIP]`. Exit 1 only on real failures.
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from pathlib import Path
 if sys.stdout.encoding != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
 
-# Repo-Root in sys.path damit `from jarvis.missions...` funktioniert
+# Repo root in sys.path so `from jarvis.missions...` works
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 OK = "[OK]"
@@ -40,7 +40,7 @@ SKIP = "[SKIP]"
 
 
 def _repo_root() -> Path:
-    """Liefert das Repo-Root via `git rev-parse --show-toplevel`."""
+    """Returns the repo root via `git rev-parse --show-toplevel`."""
     out = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
         check=True,
@@ -51,7 +51,7 @@ def _repo_root() -> Path:
 
 
 def _read_hello(workspace: Path) -> str | None:
-    """Liest workspace/hello.txt — None falls nicht vorhanden."""
+    """Reads workspace/hello.txt — None if not present."""
     target = workspace / "hello.txt"
     if not target.exists():
         return None
@@ -64,19 +64,19 @@ async def smoke() -> int:
     # --- Section 1: claude im PATH? ---
     claude_path = shutil.which("claude")
     if claude_path is None:
-        print(f"{SKIP} claude not in PATH — Phase-6-Worker-Smoke uebersprungen")
+        print(f"{SKIP} claude not in PATH — Phase 6 worker smoke skipped")
         return 0
     print(f"{OK} claude found at {claude_path}")
 
-    # --- Section 2: psutil verfuegbar? ---
+    # --- Section 2: psutil available? ---
     try:
         import psutil  # noqa: PLC0415
     except ImportError:
-        print(f"{SKIP} psutil nicht installiert — `pip install psutil` empfohlen")
+        print(f"{SKIP} psutil not installed — `pip install psutil` recommended")
         return 0
-    print(f"{OK} psutil {psutil.__version__} importiert")
+    print(f"{OK} psutil {psutil.__version__} imported")
 
-    # --- Section 3: Repo-Root + Worktree anlegen ---
+    # --- Section 3: create repo root + worktree ---
     from jarvis.missions.isolation import (  # noqa: PLC0415
         WindowsJobObject,
         WorktreeManager,

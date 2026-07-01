@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "overlay"
 version = "0.1.0"
-description = "OS-Level Edge-Glow Overlay für Personal Jarvis (Phase 9)"
+description = "OS-Level Edge-Glow Overlay for Personal Jarvis (Phase 9)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }

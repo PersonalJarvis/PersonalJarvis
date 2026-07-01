@@ -1,9 +1,9 @@
 """Jarvis Board Federation Backend (Phase C).
 
-Standalone FastAPI-Service. Speichert pro registrierter Identity (Ed25519-
-Pubkey) eingehende, signierte Stats-Pushes vom lokalen Jarvis. Kein Kontakt
-mit Voice-Transcripts oder Tool-Inhalten — der Server erzwingt einen PII-
-Filter beim Sync-Endpoint.
+Standalone FastAPI service. Stores, per registered identity (Ed25519
+pubkey), incoming signed stats pushes from the local Jarvis. No contact
+with voice transcripts or tool content — the server enforces a PII
+filter at the sync endpoint.
 """
 
 __version__ = "0.1.0"

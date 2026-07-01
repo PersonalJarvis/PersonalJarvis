@@ -1,6 +1,6 @@
 """StateMachine — Plan §6 + AD-8 + AD-17.
 
-Tests fuer Coalescing, Subscriber-Dispatch, Re-entrancy.
+Tests for coalescing, subscriber dispatch, re-entrancy.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from overlay.state import (
 
 
 # -------------------------------------------------------------------------
-# Konstruktion + Initial-State
+# Construction + initial state
 # -------------------------------------------------------------------------
 
 
@@ -110,7 +110,7 @@ def test_subscriber_runs_in_caller_thread() -> None:
 
 
 def test_reentrant_transition_is_safe() -> None:
-    """Subscriber darf state lesen UND wieder transition_to rufen."""
+    """Subscriber may read state AND call transition_to again."""
 
     sm = StateMachine()
     chain: list[OverlayState] = []
@@ -118,7 +118,7 @@ def test_reentrant_transition_is_safe() -> None:
     def chained(_old: OverlayState, new: OverlayState, _r: str | None) -> None:
         chain.append(new)
         if new is OverlayState.LISTENING:
-            # Re-entrant Call — RLock muss das tragen.
+            # Re-entrant call — the RLock must support this.
             sm.transition_to(OverlayState.THINKING, reason="chained")
 
     sm.subscribe(chained)
@@ -136,35 +136,35 @@ def test_reentrant_transition_is_safe() -> None:
 def test_same_state_within_coalesce_window_returns_false() -> None:
     sm = StateMachine()
     sm.transition_to(OverlayState.LISTENING)
-    # Sofort nochmal LISTENING -> coalesced.
+    # Immediately LISTENING again -> coalesced.
     assert sm.transition_to(OverlayState.LISTENING) is False
 
 
 def test_different_state_within_coalesce_window_transitions() -> None:
     sm = StateMachine()
     sm.transition_to(OverlayState.LISTENING)
-    # Andere Ziel-State innerhalb 16 ms -> immer durchlassen.
+    # Different target state within 16 ms -> always let through.
     assert sm.transition_to(OverlayState.THINKING) is True
     assert sm.state is OverlayState.THINKING
 
 
 def test_coalesce_window_is_16_ms() -> None:
-    # Sanity: Konstante = 16 ms.
+    # Sanity: constant = 16 ms.
     assert COALESCE_WINDOW_NS == 16_000_000
 
 
 def test_same_state_after_coalesce_window_still_returns_false() -> None:
-    """Plan §6.2: kein State-Change bleibt no-op auch nach 16 ms."""
+    """Plan §6.2: no state change stays a no-op even after 16 ms."""
 
     sm = StateMachine()
     sm.transition_to(OverlayState.LISTENING)
-    # 25 ms warten — ueber dem Coalescing-Window — aber gleicher Target.
+    # Wait 25 ms — beyond the coalescing window — but same target.
     time.sleep(0.025)
     assert sm.transition_to(OverlayState.LISTENING) is False
 
 
 # -------------------------------------------------------------------------
-# Glow-State-Set
+# Glow state set
 # -------------------------------------------------------------------------
 
 

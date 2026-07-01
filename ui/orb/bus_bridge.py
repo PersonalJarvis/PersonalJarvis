@@ -1,29 +1,29 @@
-"""Bus-Bridge: verbindet den Jarvis-EventBus mit dem Orb-Overlay.
+"""Bus bridge: connects the Jarvis EventBus to the orb overlay.
 
-Der Orb selbst kennt weder Jarvis-Core, EventBus noch Supervisor-States.
-Diese Bridge abonniert `SystemStateChanged` und uebersetzt die high-level
-States (IDLE/LISTENING/THINKING/SPEAKING) in Orb-API-Calls.
+The orb itself knows neither Jarvis core, EventBus, nor supervisor states.
+This bridge subscribes to `SystemStateChanged` and translates the high-level
+states (IDLE/LISTENING/THINKING/SPEAKING) into orb API calls.
 
-Zusaetzlich verwaltet die Bridge den Mic-Listener-Lifecycle:
-    - LISTENING  → Mic-Stream starten, live Level an den Orb pumpen
-    - THINKING / SPEAKING / IDLE → Mic-Stream stoppen (Privacy + CPU)
+The bridge additionally manages the mic-listener lifecycle:
+    - LISTENING  → start the mic stream, pump live level to the orb
+    - THINKING / SPEAKING / IDLE → stop the mic stream (privacy + CPU)
 
-Animations-Mapping (Phase 1c-Add 2026-04-24):
-    LISTENING                → 'wave' (Greet bei Wake-Word)
-    THINKING                 → 'think' (Loop-Bubble), gestoppt beim Wechsel
-    SPEAKING                 → leichtes 'nod' (subtle Bestaetigung)
-    SPEAKING → IDLE          → 'salute' (Hangup-Geste, dann hide)
-    Idle-Scheduler           → alle 30-90s Random-Animation aus Pool
+Animation mapping (phase 1c-add 2026-04-24):
+    LISTENING                → 'wave' (greet on wake word)
+    THINKING                 → 'think' (loop bubble), stopped on transition
+    SPEAKING                 → a light 'nod' (subtle acknowledgement)
+    SPEAKING → IDLE          → 'salute' (hangup gesture, then hide)
+    Idle scheduler           → every 30-90s a random animation from the pool
 
-Architektur-Regel: UI-Layer (L7) subscribed, Business-Layer (L2 Speech,
-L6 Supervisor) publishen. Die Bridge lebt im UI-Layer.
+Architecture rule: the UI layer (L7) subscribes, the business layer (L2
+speech, L6 supervisor) publishes. The bridge lives in the UI layer.
 
 Threading:
-    subscribe()-Handler werden aus dem asyncio-Event-Loop aufgerufen;
-    sie rufen die Orb-API (show/hide/set_mode), die intern via
-    `root.after(0, ...)` die UI-Mutation in den Tk-Main-Thread queued.
-    Der Idle-Scheduler laeuft als asyncio.Task im selben Loop und
-    benutzt nur die thread-safe Orb-API.
+    subscribe() handlers are called from the asyncio event loop; they call
+    the orb API (show/hide/set_mode), which internally queues the UI
+    mutation onto the Tk main thread via `root.after(0, ...)`.
+    The idle scheduler runs as an asyncio.Task on the same loop and
+    only uses the thread-safe orb API.
 """
 
 from __future__ import annotations
@@ -65,16 +65,16 @@ if TYPE_CHECKING:
 log = logging.getLogger("jarvis.orb.bridge")
 
 
-# Idle-Scheduler-Konfiguration: zufaellige Wartezeit zwischen Animationen.
-# Range bewusst breit, damit der Ghost nicht "vorhersehbar" wirkt.
+# Idle scheduler configuration: random wait time between animations.
+# Range deliberately wide so the ghost doesn't feel "predictable".
 IDLE_MIN_INTERVAL_S = 30.0
 IDLE_MAX_INTERVAL_S = 90.0
 
-# Hangup-Animation laeuft, dann verzoegerter hide()-Call.
+# The hangup animation plays, then a delayed hide() call.
 SALUTE_DURATION_S = 1.1
-# Grace-Period beim Wechsel von einem Voice-State (LISTENING/THINKING) zu
-# IDLE, ohne dass ein SPEAKING dazwischen war (z.B. STT-Silence-Timeout):
-# der User soll den Mascot noch kurz sehen, statt dass er instant verschwindet.
+# Grace period when transitioning from a voice state (LISTENING/THINKING) to
+# IDLE, without a SPEAKING state in between (e.g. an STT silence timeout):
+# the user should still see the mascot briefly instead of it vanishing instantly.
 GRACE_HIDE_DURATION_S = 1.5
 
 # Long enough to cover an entire THINKING/SPEAKING phase. The transcript
@@ -97,7 +97,7 @@ VOICE_BUBBLE_DURATION_MS = 30_000
 # the German live transcript and the German reply, and CLAUDE.md keeps
 # user-facing conversational content German. Single source of truth so it is
 # trivially translatable later.
-THINKING_BUBBLE_TEXT = "Denke nach …"
+THINKING_BUBBLE_TEXT = "Denke nach …"  # i18n-allow
 
 # States during which the user is still composing their utterance and the
 # bubble must KEEP showing the live transcript (and accept further
@@ -118,21 +118,26 @@ _USER_SIDE_BUBBLE_STATES = frozenset(
 # the guard at the top of ``_on_state``.
 _ACTIVE_VOICE_STATES = frozenset({"LISTENING", "THINKING", "SPEAKING"})
 
+# German public-broadcaster subtitle-credit boilerplate that German-language
+# STT sometimes hallucinates onto silence/noise (e.g. "Untertitelung des ZDF
+# fuer funk, 2020" / "Vielen Dank"). Must stay the literal German tokens the
+# STT engine actually emits — this is speech-recognition input vocabulary,
+# not translatable prose.
 _TRANSCRIPT_BOILERPLATE_RE = re.compile(
     r"\b("
-    r"untertitelung\s+des\s+(zdf|wdr|ndr|swr|br|ard|arte)"
-    r"(\s+(fuer|für|fur)\s+funk)?(\s*,?\s*\d{4})?|"
-    r"untertitel\s+(von|der|im\s+auftrag)|"
-    r"(eine\s+)?(sendung|produktion|redaktion|programm)\s+"
-    r"(des|der|von)\s+(zdf|wdr|ndr|swr|br|ard|arte)"
+    r"untertitelung\s+des\s+(zdf|wdr|ndr|swr|br|ard|arte)"  # i18n-allow
+    r"(\s+(fuer|für|fur)\s+funk)?(\s*,?\s*\d{4})?|"  # i18n-allow
+    r"untertitel\s+(von|der|im\s+auftrag)|"  # i18n-allow
+    r"(eine\s+)?(sendung|produktion|redaktion|programm)\s+"  # i18n-allow
+    r"(des|der|von)\s+(zdf|wdr|ndr|swr|br|ard|arte)"  # i18n-allow
     r"(\s*,?\s*\d{4})?|"
     r"(zdf|wdr|ndr|swr|br|ard|arte)\s+"
-    r"(fernsehen|mediagroup|rundfunk)(\s*,?\s*\d{4})?|"
-    r"(norddeutscher|westdeutscher|bayerischer)\s+rundfunk|"
-    r"im\s+auftrag\s+des|"
+    r"(fernsehen|mediagroup|rundfunk)(\s*,?\s*\d{4})?|"  # i18n-allow
+    r"(norddeutscher|westdeutscher|bayerischer)\s+rundfunk|"  # i18n-allow
+    r"im\s+auftrag\s+des|"  # i18n-allow
     r"mediagroup|"
     r"thanks\s+for\s+watching|"
-    r"vielen\s+dank"
+    r"vielen\s+dank"  # i18n-allow
     r")\b",
     re.IGNORECASE,
 )
@@ -155,7 +160,7 @@ def _is_transcript_boilerplate(text: str) -> bool:
 
 
 class OrbBusBridge:
-    """Koppelt den Orb an den Event-Bus + managed den Mic-Listener-Lifecycle."""
+    """Couples the orb to the event bus + manages the mic-listener lifecycle."""
 
     def __init__(
         self,
@@ -264,7 +269,7 @@ class OrbBusBridge:
             log.warning("%s publish dropped (no backend loop): %s", label, exc)
 
     def attach(self) -> None:
-        """Subscribt die Bridge auf SystemStateChanged. Idempotent."""
+        """Subscribes the bridge to SystemStateChanged. Idempotent."""
         # If attach() runs on the backend loop (the live async-startup path),
         # capture it now so the very first gesture already marshals correctly.
         self._remember_loop()
@@ -348,14 +353,14 @@ class OrbBusBridge:
             except Exception as exc:  # noqa: BLE001
                 log.warning("OrbBridge level_tap recency subscribe failed: %s", exc)
             log.info(
-                "OrbBridge subscribed auf SystemStateChanged + VoiceSessionStarted "
+                "OrbBridge subscribed to SystemStateChanged + VoiceSessionStarted "
                 "+ VoiceSessionEnded + ListeningStarted + TranscriptionUpdate "
                 "+ ResponseGenerated + AudioOutFirst + OrbResetRequested "
                 "+ mute-toggle gesture + show-window gesture "
                 "+ visible-feedback contract."
             )
         except Exception as exc:  # noqa: BLE001
-            log.exception("OrbBridge.attach() fehlgeschlagen: %s", exc)
+            log.exception("OrbBridge.attach() failed: %s", exc)
 
     async def _on_reset_requested(self, event: OrbResetRequested) -> None:
         """Voice-triggered reset: bring the orb back to the default
@@ -615,17 +620,17 @@ class OrbBusBridge:
                 state,
             )
             return
-        # No-op wenn es kein echter Wechsel ist (sollte Supervisor schon filtern,
-        # aber defensiv programmieren)
+        # No-op if this isn't a real transition (the supervisor should already
+        # filter this, but defensive programming)
         if state == self._last_state:
             return
         prev_state = self._last_state
         self._last_state = state
 
-        # Bei jedem State-Wechsel: laufende 'think'-Bubble killen — sie passt
-        # in keinem anderen State zur Realitaet und wuerde sonst kleben bleiben.
+        # On every state transition: kill any running 'think' bubble — it
+        # doesn't match reality in any other state and would otherwise linger.
         self._orb.stop_animation("think")
-        # Hangup-Task killen wenn neuer Zustand reinkommt waehrend Salut laeuft
+        # Kill the hangup task if a new state comes in while the salute is playing
         if self._hangup_task and not self._hangup_task.done():
             self._hangup_task.cancel()
             self._hangup_task = None
@@ -726,9 +731,9 @@ class OrbBusBridge:
                         self._orb.play_animation("salute")
                     self._start_idle_scheduler()
                 return
-            # Drei Faelle, drei verzoegerte Hides — niemals instant-hide aus
-            # einem aktiven Voice-State, sonst sieht der User den Mascot bei
-            # kurzen Sessions (z.B. STT-Silence-Timeout) gar nicht.
+            # Three cases, three delayed hides — never an instant hide out of
+            # an active voice state, or the user won't see the mascot at all
+            # during short sessions (e.g. an STT silence timeout).
             if prev_state == "SPEAKING" and state == "IDLE":
                 self._orb.play_animation("salute")
                 self._hangup_task = asyncio.create_task(
@@ -873,8 +878,8 @@ class OrbBusBridge:
                 self._orb.hide()
             else:
                 self._orb.show(mode="idle")
-            # Idle-Scheduler nur wenn wir noch im IDLE-Zustand sind (keine
-            # neue Wake-Sequenz reingekommen waehrend des Salut).
+            # Only (re-)start the idle scheduler if we're still in the IDLE
+            # state (no new wake sequence came in during the salute).
             if self._last_state == "IDLE":
                 self._start_idle_scheduler()
         except asyncio.CancelledError:
@@ -900,14 +905,14 @@ class OrbBusBridge:
     # --- Idle-Animation-Scheduler --------------------------------------
 
     def _start_idle_scheduler(self) -> None:
-        """Startet einen Hintergrund-Task der zufaellig Idle-Animationen spielt.
+        """Starts a background task that randomly plays idle animations.
 
-        Bewusst NICHT im show()-Mode — der Orb ist hier hidden und das Window
-        nicht sichtbar. Idle-Animationen sind nur sichtbar wenn der User den
-        Orb sticky angezeigt hat (z.B. waehrend Vision-Live-Mode) oder wenn
-        eine kommende Phase einen Always-On-Mode einfuehrt. Wir schedulen
-        sie trotzdem schon — kostet nichts und ist beim Wechsel zu always-on
-        sofort sichtbar.
+        Deliberately NOT in show() mode — the orb is hidden here and the
+        window is not visible. Idle animations are only visible when the
+        user has the orb stickily displayed (e.g. during vision live mode)
+        or when an upcoming phase introduces an always-on mode. We schedule
+        them anyway — it costs nothing and is immediately visible once
+        switched to always-on.
         """
         if not self._idle_enabled:
             return
@@ -923,7 +928,7 @@ class OrbBusBridge:
         self._idle_task = None
 
     async def _idle_loop(self) -> None:
-        """Spielt alle 30-90s eine Random-Animation aus dem Idle-Pool."""
+        """Plays a random animation from the idle pool every 30-90s."""
         try:
             while True:
                 wait = self._rng.uniform(IDLE_MIN_INTERVAL_S, IDLE_MAX_INTERVAL_S)
@@ -931,7 +936,7 @@ class OrbBusBridge:
                 if self._last_state != "IDLE":
                     return
                 name = self._rng.choice(IDLE_ANIMATION_POOL)
-                log.debug("Idle-Scheduler: %s", name)
+                log.debug("Idle scheduler: %s", name)
                 self._orb.play_animation(name)
         except asyncio.CancelledError:
             pass

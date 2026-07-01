@@ -1,21 +1,21 @@
-"""Phase 9.4 — Visual-Regression mit Playwright.
+"""Phase 9.4 — visual regression with Playwright.
 
-Skipt komplett wenn:
-  - Playwright nicht installiert (``pytest.importorskip``)
-  - overlay-ui/dist/edge-glow.html fehlt (kein npm run build gelaufen)
-  - PLAYWRIGHT_BROWSERS_PATH zeigt auf nichts (Browser nicht
-    installiert)
+Skips entirely when:
+  - Playwright is not installed (``pytest.importorskip``)
+  - overlay-ui/dist/edge-glow.html is missing (no npm run build was run)
+  - PLAYWRIGHT_BROWSERS_PATH points at nothing (browser not
+    installed)
 
-Tests pruefen:
-  - typing/clicking States haben sichtbaren Edge-Glow (opacity > 0.3)
-  - idle/listening/thinking/speaking/hidden haben KEINEN Glow
+Tests verify:
+  - typing/clicking states have a visible edge glow (opacity > 0.3)
+  - idle/listening/thinking/speaking/hidden have NO glow
     (opacity ~0)
-  - prefers-reduced-motion ersetzt Animation durch static opacity 0.4
-  - State-Display ist hidden ohne ?debug=1, sichtbar mit ?debug=1
+  - prefers-reduced-motion replaces the animation with static opacity 0.4
+  - the state display is hidden without ?debug=1, visible with ?debug=1
 
-Snapshots landen unter ``tests/overlay/__visual__/``. Per Default werden
-keine Snapshots gespeichert — Tests messen Computed-Style, nicht Pixel.
-Pixel-Vergleich kommt mit Phase 9.6+ wenn das Mascot dazu kommt.
+Snapshots land under ``tests/overlay/__visual__/``. By default no
+snapshots are stored — tests measure computed style, not pixels.
+Pixel comparison arrives with Phase 9.6+ once the mascot is added.
 """
 
 from __future__ import annotations
@@ -39,18 +39,18 @@ EDGE_GLOW_HTML = DIST_DIR / "edge-glow.html"
 
 def _skip_if_no_build() -> None:
     if not EDGE_GLOW_HTML.is_file():
-        pytest.skip(f"edge-glow.html nicht gefunden unter {EDGE_GLOW_HTML} — `npm run build`?")
+        pytest.skip(f"edge-glow.html not found under {EDGE_GLOW_HTML} — `npm run build`?")
 
 
 def _skip_if_no_browser() -> None:
-    # Playwright wirft Executable-not-found wenn der Browser fehlt.
-    # Wir koennen vorab nicht zuverlaessig pruefen — fangen den Fehler
-    # beim launch() ab und skippen dann.
+    # Playwright throws executable-not-found when the browser is missing.
+    # We can't reliably check upfront — we catch the error
+    # at launch() and skip then.
     pass
 
 
 class _SilentHandler(http.server.SimpleHTTPRequestHandler):
-    """SimpleHTTPRequestHandler ohne stderr-Spam."""
+    """SimpleHTTPRequestHandler without stderr spam."""
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
         return
@@ -58,8 +58,8 @@ class _SilentHandler(http.server.SimpleHTTPRequestHandler):
 
 @pytest.fixture(scope="module")
 def http_server():
-    """Lokaler HTTP-Server fuer ``dist/``. Chromium blockt ES-Modules
-    ueber ``file://`` per CORS — daher serven."""
+    """Local HTTP server for ``dist/``. Chromium blocks ES modules
+    over ``file://`` via CORS — so we serve them."""
     _skip_if_no_build()
 
     cwd = str(DIST_DIR)
@@ -94,7 +94,7 @@ def browser_ctx():
             yield browser
             browser.close()
     except Exception as exc:  # noqa: BLE001
-        pytest.skip(f"Playwright-Browser nicht verfuegbar: {exc!r}")
+        pytest.skip(f"Playwright browser not available: {exc!r}")
 
 
 def _opacity_of(page, selector: str) -> float:
@@ -106,13 +106,13 @@ def _opacity_of(page, selector: str) -> float:
 
 @pytest.mark.skipif(
     os.environ.get("CI") == "true" and os.environ.get("PLAYWRIGHT_HAS_BROWSER") != "1",
-    reason="CI ohne Playwright-Browser-Install",
+    reason="CI without Playwright browser install",
 )
 def test_idle_has_no_glow(browser_ctx, page_url: str) -> None:
     page = browser_ctx.new_page()
     try:
         page.goto(page_url)
-        # Init-State (kein Bridge -> applyState('idle')).
+        # Initial state (no bridge -> applyState('idle')).
         page.wait_for_function(
             "document.documentElement.dataset.state === 'idle'", timeout=2000
         )
@@ -123,7 +123,7 @@ def test_idle_has_no_glow(browser_ctx, page_url: str) -> None:
 
 @pytest.mark.skipif(
     os.environ.get("CI") == "true" and os.environ.get("PLAYWRIGHT_HAS_BROWSER") != "1",
-    reason="CI ohne Playwright-Browser-Install",
+    reason="CI without Playwright browser install",
 )
 @pytest.mark.parametrize("state", ["typing", "clicking"])
 def test_glow_active_in_action_states(browser_ctx, page_url: str, state: str) -> None:
@@ -131,7 +131,7 @@ def test_glow_active_in_action_states(browser_ctx, page_url: str, state: str) ->
     try:
         page.goto(page_url)
         page.evaluate(f"document.documentElement.dataset.state = '{state}'")
-        # Kurz auf transition warten.
+        # Briefly wait for the transition.
         page.wait_for_timeout(300)
         assert _opacity_of(page, ".edge-glow") > 0.5
     finally:
@@ -140,7 +140,7 @@ def test_glow_active_in_action_states(browser_ctx, page_url: str, state: str) ->
 
 @pytest.mark.skipif(
     os.environ.get("CI") == "true" and os.environ.get("PLAYWRIGHT_HAS_BROWSER") != "1",
-    reason="CI ohne Playwright-Browser-Install",
+    reason="CI without Playwright browser install",
 )
 @pytest.mark.parametrize(
     "state", ["listening", "thinking", "speaking", "hidden"]
@@ -160,7 +160,7 @@ def test_no_glow_in_non_action_states(
 
 @pytest.mark.skipif(
     os.environ.get("CI") == "true" and os.environ.get("PLAYWRIGHT_HAS_BROWSER") != "1",
-    reason="CI ohne Playwright-Browser-Install",
+    reason="CI without Playwright browser install",
 )
 def test_state_display_hidden_without_debug_flag(
     browser_ctx, page_url: str
@@ -181,7 +181,7 @@ def test_state_display_hidden_without_debug_flag(
 
 @pytest.mark.skipif(
     os.environ.get("CI") == "true" and os.environ.get("PLAYWRIGHT_HAS_BROWSER") != "1",
-    reason="CI ohne Playwright-Browser-Install",
+    reason="CI without Playwright browser install",
 )
 def test_state_display_visible_with_debug_flag(
     browser_ctx, page_url: str
@@ -202,10 +202,10 @@ def test_state_display_visible_with_debug_flag(
 
 @pytest.mark.skipif(
     os.environ.get("CI") == "true" and os.environ.get("PLAYWRIGHT_HAS_BROWSER") != "1",
-    reason="CI ohne Playwright-Browser-Install",
+    reason="CI without Playwright browser install",
 )
 def test_reduced_motion_uses_static_glow(browser_ctx, page_url: str) -> None:
-    """Plan §19.1: prefers-reduced-motion -> opacity 0.4 statt animation."""
+    """Plan §19.1: prefers-reduced-motion -> opacity 0.4 instead of animation."""
     page = browser_ctx.new_page()
     page.emulate_media(reduced_motion="reduce")
     try:

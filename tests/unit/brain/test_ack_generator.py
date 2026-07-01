@@ -77,7 +77,7 @@ class TestVoiceControlDetection:
             "wechsel auf gemini",
             "denk gruendlich",
             "what is the capital of france",
-            "still im gespraech",  # 'still' inside other context — no leading match
+            "still im gespraech",  # 'still' inside other context — no leading match  # i18n-allow
             "lauter applaus war zu hoeren",  # noun, not command
         ],
     )
@@ -269,14 +269,14 @@ class TestShouldPrependMarker:
         assert should_prepend_marker(None) is True
 
     def test_substantive_text_wants_marker(self) -> None:
-        assert should_prepend_marker("Die App laeuft auf Port 8000.") is True
+        assert should_prepend_marker("Die App laeuft auf Port 8000.") is True  # i18n-allow
         assert should_prepend_marker("Ich habe drei Dateien gefunden.") is True
 
     @pytest.mark.parametrize(
         "opener",
         [
-            "Erledigt — die App laeuft.",
-            "Fertig.",
+            "Erledigt — die App laeuft.",  # i18n-allow
+            "Fertig.",  # i18n-allow
             "Okay, das hab ich gemacht.",
             "OK, sieht gut aus.",
             "Done. The server is up.",

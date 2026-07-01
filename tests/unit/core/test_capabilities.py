@@ -43,23 +43,23 @@ class TestNormalize:
         assert _normalize("Hello") == "hello"
 
     def test_umlaut_ae(self) -> None:
-        assert _normalize("ä") == "ae"
-        assert _normalize("Ä") == "ae"
+        assert _normalize("ä") == "ae"  # i18n-allow: German umlaut input matched in logic
+        assert _normalize("Ä") == "ae"  # i18n-allow: German umlaut input matched in logic
 
     def test_umlaut_oe(self) -> None:
-        assert _normalize("ö") == "oe"
-        assert _normalize("Ö") == "oe"
+        assert _normalize("ö") == "oe"  # i18n-allow: German umlaut input matched in logic
+        assert _normalize("Ö") == "oe"  # i18n-allow: German umlaut input matched in logic
 
     def test_umlaut_ue(self) -> None:
-        assert _normalize("ü") == "ue"
-        assert _normalize("Ü") == "ue"
+        assert _normalize("ü") == "ue"  # i18n-allow: German umlaut input matched in logic
+        assert _normalize("Ü") == "ue"  # i18n-allow: German umlaut input matched in logic
 
     def test_sharp_s(self) -> None:
-        assert _normalize("ß") == "ss"
+        assert _normalize("ß") == "ss"  # i18n-allow: German umlaut input matched in logic
 
     def test_mixed(self) -> None:
-        assert _normalize("Öffne") == "oeffne"
-        assert _normalize("GrüßGott") == "gruessgott"
+        assert _normalize("Öffne") == "oeffne"  # i18n-allow: German speech-input test vocabulary
+        assert _normalize("GrüßGott") == "gruessgott"  # i18n-allow: German speech-input test vocabulary
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ class TestRegistryResolveIntent:
         self.reg.register(self.wiki_cap)
 
     def test_verb_match_returns_cap(self) -> None:
-        result = self.reg.resolve_intent("fuehre ein Kommando aus")
+        result = self.reg.resolve_intent("fuehre ein Kommando aus")  # i18n-allow: German speech-input test vocabulary
         assert result is not None
         assert result.id == "tool.run-shell"
 
@@ -150,11 +150,11 @@ class TestRegistryResolveIntent:
         assert result.id == "tool.wiki-recall"
 
     def test_no_match_returns_none(self) -> None:
-        result = self.reg.resolve_intent("wie ist das Wetter?")
+        result = self.reg.resolve_intent("wie ist das Wetter?")  # i18n-allow: German speech-input test vocabulary
         assert result is None
 
     def test_umlaut_normalisation_in_utterance(self) -> None:
-        # "öffne" normalises to "oeffne" but the cap has "fuehre" — won't
+        # "öffne" normalises to "oeffne" but the cap has "fuehre" — won't  # i18n-allow: German speech-input test vocabulary
         # match shell; register an open_app cap to prove normalisation works.
         open_cap = _make_cap(
             "local.open_app",
@@ -162,7 +162,7 @@ class TestRegistryResolveIntent:
             objects=("app", "browser"),
         )
         self.reg.register(open_cap)
-        result = self.reg.resolve_intent("Öffne den Browser")
+        result = self.reg.resolve_intent("Öffne den Browser")  # i18n-allow: German speech-input test vocabulary
         assert result is not None
         assert result.id == "local.open_app"
 
@@ -199,7 +199,7 @@ class TestRegistryHasActionIntent:
         assert self.reg.has_action_intent("run a shell command") is True
 
     def test_non_action_returns_false(self) -> None:
-        assert self.reg.has_action_intent("wie spät ist es?") is False
+        assert self.reg.has_action_intent("wie spät ist es?") is False  # i18n-allow: German speech-input test vocabulary
 
     def test_empty_string(self) -> None:
         assert self.reg.has_action_intent("") is False
@@ -211,8 +211,8 @@ class TestRegistryHasActionIntent:
             objects=("app",),
         )
         self.reg.register(cap2)
-        # "Öffne" normalises to "oeffne" → match
-        assert self.reg.has_action_intent("Öffne Chrome") is True
+        # "Öffne" normalises to "oeffne" → match  # i18n-allow: German speech-input test vocabulary
+        assert self.reg.has_action_intent("Öffne Chrome") is True  # i18n-allow: German speech-input test vocabulary
 
     def test_filler_particle_halt_is_not_an_action(self) -> None:
         # The German discourse particle "halt" (a filler word, roughly
@@ -411,7 +411,7 @@ class TestSeedRegistry:
         assert len(self.reg.all()) == before
 
     def test_open_app_matches_oeffne_chrome(self) -> None:
-        result = self.reg.resolve_intent("Öffne Chrome")
+        result = self.reg.resolve_intent("Öffne Chrome")  # i18n-allow: German speech-input test vocabulary
         assert result is not None
         assert result.id == "local.open_app"
 
@@ -422,14 +422,14 @@ class TestSeedRegistry:
         assert result.requires_evidence is False
 
     def test_run_shell_matches(self) -> None:
-        result = self.reg.resolve_intent("führe ein Shell-Kommando aus")
+        result = self.reg.resolve_intent("führe ein Shell-Kommando aus")  # i18n-allow: German speech-input test vocabulary
         assert result is not None
         assert result.id == "tool.run-shell"
 
     def test_smalltalk_no_match(self) -> None:
-        result = self.reg.resolve_intent("wie spät ist es?")
+        result = self.reg.resolve_intent("wie spät ist es?")  # i18n-allow: German speech-input test vocabulary
         assert result is None
 
     def test_has_action_intent_with_seed(self) -> None:
-        assert self.reg.has_action_intent("Öffne den Browser") is True
-        assert self.reg.has_action_intent("wie ist das Wetter?") is False
+        assert self.reg.has_action_intent("Öffne den Browser") is True  # i18n-allow: German speech-input test vocabulary
+        assert self.reg.has_action_intent("wie ist das Wetter?") is False  # i18n-allow: German speech-input test vocabulary

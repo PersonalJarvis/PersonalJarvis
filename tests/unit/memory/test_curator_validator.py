@@ -1,13 +1,13 @@
-"""Unit-Tests fuer `jarvis.memory.curator.validator.Validator`.
+"""Unit tests for `jarvis.memory.curator.validator.Validator`.
 
-Fokus — der Validator ist die **letzte Verteidigung** gegen Subject-Confusion:
+Focus — the validator is the **last line of defense** against subject confusion:
 
-- Confidence-Thresholds: <0.5 → reject, 0.5-0.7 → review, >=0.7 → accept.
-- Laura-Szenario: `subject="user", field="name", value="Laura"` bei
-  existierendem `people/laura.md` → REJECT wegen Kollision.
-- Pronoun-False-Positives (`person:er`, `person:sie`) → REJECT.
-- Do-Not-Record-Keywords (Politik, Mental Health, MBTI) → REJECT.
-- Overwrite-Schutz: bestehender Name + neuer Name bei conf<0.85 → REVIEW.
+- Confidence thresholds: <0.5 → reject, 0.5-0.7 → review, >=0.7 → accept.
+- Laura scenario: `subject="user", field="name", value="Laura"` when
+  `people/laura.md` already exists → REJECT due to collision.
+- Pronoun false positives (`person:er`, `person:sie`) → REJECT.
+- Do-not-record keywords (politics, mental health, MBTI) → REJECT.
+- Overwrite protection: existing name + new name at conf<0.85 → REVIEW.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from jarvis.memory.curator.validator import (
 
 
 # ----------------------------------------------------------------------
-# Helper-Factory fuer Test-Candidates
+# Helper factory for test candidates
 # ----------------------------------------------------------------------
 
 def _user_cand(
@@ -85,7 +85,7 @@ class TestConfidenceThresholds:
 
     def test_confidence_in_review_band_goes_to_review(self, validator: Validator) -> None:
         """0.5 <= conf < 0.7 → review."""
-        # Feld ohne Overwrite-Konflikt (pref wirkt nur bei name/preferred_address)
+        # Field without an overwrite conflict (pref only applies to name/preferred_address)
         cand = _user_cand(
             cluster="communication", field="verbosity", value="tldr", confidence=0.6
         )
@@ -97,7 +97,7 @@ class TestConfidenceThresholds:
     def test_confidence_at_accept_threshold_is_accepted(
         self, validator: Validator
     ) -> None:
-        """conf >= 0.7 und kein Konflikt → accept."""
+        """conf >= 0.7 and no conflict → accept."""
         cand = _user_cand(
             cluster="communication",
             field="verbosity",
@@ -118,7 +118,7 @@ class TestConfidenceThresholds:
 # ======================================================================
 
 class TestLauraScenario:
-    """Wenn `people/laura.md` existiert, darf 'Laura' NICHT als user.name durchgehen."""
+    """If `people/laura.md` exists, 'Laura' must NOT pass as user.name."""
 
     def test_rejects_laura_as_user_name_when_laura_exists_as_person(
         self, validator: Validator, person_store
@@ -130,14 +130,14 @@ class TestLauraScenario:
         cand = _user_cand(field="name", value="Laura", confidence=0.9)
         result = validator.validate([cand])
 
-        assert len(result.rejected) == 1, f"Laura muss rejected werden: {result}"
+        assert len(result.rejected) == 1, f"Laura must be rejected: {result}"
         _, reason = result.rejected[0]
         assert "kollision" in reason.lower() or "name-koll" in reason.lower()
 
     def test_ruben_as_user_name_is_accepted_even_with_laura_person_present(
         self, validator: Validator, person_store
     ) -> None:
-        """Gegenprobe: fremde Person-Namen blocken nicht den echten User-Namen."""
+        """Counter-check: unrelated person names don't block the real user name."""
         person_store.get_or_create("Laura", relationship="partner")
 
         cand = _user_cand(field="name", value="Ruben", confidence=0.95)
@@ -166,7 +166,7 @@ class TestPronounRejection:
         for p in ("he", "she", "they", "them"):
             cand = _person_cand(p, confidence=0.9)
             result = validator.validate([cand])
-            assert len(result.rejected) == 1, f"Pronoun '{p}' muss rejected werden"
+            assert len(result.rejected) == 1, f"Pronoun '{p}' must be rejected"
 
 
 # ======================================================================
@@ -187,7 +187,7 @@ class TestSubjectSanity:
         assert len(result.rejected) == 1
 
     def test_rejects_person_equal_to_user_name(self, validator: Validator, profile) -> None:
-        """Wenn User "Ruben" heisst, darf subject=person:Ruben nicht akzeptiert werden."""
+        """If the user's name is "Ruben", subject=person:Ruben must not be accepted."""
         profile.set("identity", "name", "Ruben")
         cand = _person_cand("Ruben", confidence=0.9)
         result = validator.validate([cand])
@@ -203,7 +203,7 @@ class TestDoNotRecord:
         cand = _user_cand(
             cluster="values",
             field="observation",
-            value="Sympathie fuer die Linkspartei",
+            value="Sympathie fuer die Linkspartei",  # i18n-allow: German do-not-record keyword ("Partei"/party) matched by the validator's reject logic
             evidence="User: 'ich mag die Linkspartei'",
             confidence=0.9,
         )
@@ -247,7 +247,7 @@ class TestDoNotRecord:
 
 
 # ======================================================================
-# Overwrite-Schutz fuer identity.name / preferred_address
+# Overwrite protection for identity.name / preferred_address
 # ======================================================================
 
 class TestOverwriteProtection:
@@ -282,7 +282,7 @@ class TestOverwriteProtection:
     def test_same_name_value_passes_without_flagging(
         self, validator: Validator, profile
     ) -> None:
-        """Neuer Name == existierender Name → kein Konflikt."""
+        """New name == existing name → no conflict."""
         profile.set("identity", "name", "Ruben")
         cand = _user_cand(field="name", value="Ruben", confidence=0.9)
         result = validator.validate([cand])
@@ -291,7 +291,7 @@ class TestOverwriteProtection:
     def test_overwrite_protection_for_scalar_field_contradiction(
         self, validator: Validator, profile
     ) -> None:
-        """Nicht-name-Skalare: bestehender Wert + neuer abweichender Wert bei conf<0.85 → review."""
+        """Non-name scalars: existing value + new differing value at conf<0.85 → review."""
         profile.set("communication", "verbosity", "tldr")
 
         cand = _user_cand(
@@ -312,7 +312,7 @@ class TestBatchValidation:
     def test_mixed_batch_sorts_correctly(
         self, validator: Validator, person_store
     ) -> None:
-        """Ein Mix aus accept/review/reject landet in den richtigen Buckets."""
+        """A mix of accept/review/reject lands in the right buckets."""
         person_store.get_or_create("Laura", relationship="partner")
 
         accepted_cand = _user_cand(

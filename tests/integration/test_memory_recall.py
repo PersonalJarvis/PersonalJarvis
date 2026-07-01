@@ -23,7 +23,7 @@ async def test_recorder_auto_logs_on_bus(recall):
     MessageRecorder(recall).attach(bus)
 
     await bus.publish(MessageSent(text="hallo", role="user"))
-    await bus.publish(ResponseGenerated(text="Hi! Wie kann ich helfen?"))
+    await bus.publish(ResponseGenerated(text="Hi! How can I help?"))
     await bus.publish(MessageSent(text="python programmieren"))
 
     # Beide geschrieben

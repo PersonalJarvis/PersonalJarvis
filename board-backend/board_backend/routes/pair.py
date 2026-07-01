@@ -1,16 +1,16 @@
-"""Pair-Routes (Phase D).
+"""Pair routes (Phase D).
 
-Plan §D-Decision-1: URL-Token-basiertes Pairing mit 10 min Gueltigkeit.
+Plan §D-Decision-1: URL-token-based pairing with 10 min validity.
 
 Flow:
-1. Owner ruft ``POST /api/v1/pair/initiate`` (admin-token) → bekommt
-   ``{token, url, expires_at}``. Owner schickt URL via Privatkanal an
-   Friend.
-2. Friend besucht URL → Friend's Backend ruft Owner's
-   ``POST /api/v1/pair/accept`` mit ``{token, friend_pubkey, friend_url,
-   friend_display_name}``. Owner registriert Friendship und antwortet
-   mit eigenem ``{owner_pubkey, owner_url, owner_display_name}``. Friend's
-   Backend registriert seinerseits (in seiner ``friends``-Tabelle).
+1. The owner calls ``POST /api/v1/pair/initiate`` (admin token) → gets
+   ``{token, url, expires_at}``. The owner sends the URL to the friend
+   via a private channel.
+2. The friend visits the URL → the friend's backend calls the owner's
+   ``POST /api/v1/pair/accept`` with ``{token, friend_pubkey, friend_url,
+   friend_display_name}``. The owner registers the friendship and
+   responds with its own ``{owner_pubkey, owner_url, owner_display_name}``.
+   The friend's backend in turn registers it (in its ``friends`` table).
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/pair", tags=["pair"])
 
 PAIR_TTL = timedelta(minutes=10)
-PAIR_TOKEN_BYTES = 24       # 24 Bytes -> 48 hex chars (>= 16 Min-Length)
+PAIR_TOKEN_BYTES = 24       # 24 bytes -> 48 hex chars (>= 16 min length)
 
 
 @router.post(
@@ -75,10 +75,10 @@ def initiate(request: Request, payload: PairInitiateRequest) -> PairInitiateResp
 
 @router.post("/accept", response_model=PairAcceptResponse)
 def accept(request: Request, payload: PairAcceptRequest) -> PairAcceptResponse:
-    """Friend's Backend ruft das hier mit dem Token an.
+    """The friend's backend calls this with the token.
 
-    NICHT signature-authenticated — der Friend ist hier noch unbekannt.
-    Der Token IST die Auth (single-use, 10 min).
+    NOT signature-authenticated — the friend is still unknown here.
+    The token IS the auth (single-use, 10 min).
     """
     now = datetime.now(timezone.utc)
     with get_db(request) as session:
@@ -93,13 +93,13 @@ def accept(request: Request, payload: PairAcceptRequest) -> PairAcceptResponse:
 
         owner = get_owner_identity(session)
         if tok.owner_pubkey != owner.pubkey:
-            # Defensiv: Owner hat sich zwischen initiate und accept geaendert
+            # Defensive: the owner changed between initiate and accept
             raise HTTPException(status_code=503, detail="owner mismatch")
 
         if payload.friend_pubkey == owner.pubkey:
             raise HTTPException(status_code=400, detail="cannot pair with self")
 
-        # Token verbrauchen
+        # Consume the token
         tok.used_at = now
 
         existing = session.get(Friend, (owner.pubkey, payload.friend_pubkey))
@@ -137,7 +137,7 @@ friends_router = APIRouter(prefix="/api/v1", tags=["friends"])
 
 @friends_router.get("/friends", response_model=FriendsListResponse)
 def list_friends(request: Request, _=Depends(require_signed_request)) -> FriendsListResponse:
-    """Owner listet seine Friends. Signed durch Owner-Pubkey."""
+    """The owner lists their friends. Signed by the owner's pubkey."""
     with get_db(request) as session:
         owner = get_owner_identity(session)
         rows = session.query(Friend).filter(Friend.owner_pubkey == owner.pubkey).all()
@@ -160,11 +160,11 @@ def update_friend(
     friend_pubkey: str,
     auth=Depends(require_signed_request),
 ) -> FriendItem:
-    """Per-Friend-Sync-Interval aktualisieren (Plan §D-Spec).
+    """Updates the per-friend sync interval (Plan §D spec).
 
-    Body: ``{ts_ms, pull_interval_s}`` signed by owner. Andere Friend-Felder
-    (URL, paired_at) sind nicht ueber diese Route aenderbar — die kommen
-    durch ein neues Pair-Roundtrip.
+    Body: ``{ts_ms, pull_interval_s}`` signed by owner. Other friend
+    fields (URL, paired_at) are not changeable via this route — those
+    come through a new pair roundtrip.
     """
     try:
         body = FriendUpdateRequest.model_validate(auth.payload)
@@ -195,18 +195,18 @@ def update_friend(
 # ----------------------------------------------------------------------
 
 def _aware(dt: datetime) -> datetime:
-    """SQLite gibt Datetimes ohne tz zurueck — wir ergaenzen UTC."""
+    """SQLite returns datetimes without a tz — we add UTC."""
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt
 
 
 def _public_url_for_owner(request: Request) -> str:
-    """Best-Effort: nimm den ``Host``-Header und Scheme.
+    """Best effort: use the ``Host`` header and scheme.
 
-    In Production sitzt typischerweise Caddy davor, der setzt ``Forwarded``-
-    Header. Phase D nimmt das aber nicht zwingend an; lokaler Localhost-
-    Test funktioniert mit ``http://<host>``.
+    In production, Caddy typically sits in front and sets the
+    ``Forwarded`` header. Phase D doesn't strictly assume that though;
+    a local localhost test works with ``http://<host>``.
     """
     forwarded_proto = request.headers.get("x-forwarded-proto")
     forwarded_host = request.headers.get("x-forwarded-host")

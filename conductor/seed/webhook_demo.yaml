@@ -1,12 +1,12 @@
-# Demo-Job 4 — Webhook-triggered Shell. URL ist im Dashboard sichtbar:
+# Demo job 4 — webhook-triggered shell. URL is visible in the dashboard:
 # POST http://127.0.0.1:47821/api/conductor/hooks/<token>
 id: 7b4d7e01-5c11-4c57-9c1d-10cc00000004
 name: Webhook-Ping
 description: >
-  Beispiel fuer extern-getriggerte Jobs. Ruf die Webhook-URL von
-  wo auch immer (GitHub-Action, Zapier, Shortcuts.app, curl) — dieser
-  Job fired dann einmalig. Der Token wird beim Seeding auf den
-  hier hinterlegten gesetzt; fuer Production neu generieren lassen.
+  Example of an externally-triggered job. Call the webhook URL from
+  wherever (GitHub Action, Zapier, Shortcuts.app, curl) — this
+  job fires once. The token is set to the one stored here during
+  seeding; regenerate it for production.
 enabled: true
 tags: [demo, webhook]
 spec:

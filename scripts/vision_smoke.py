@@ -1,19 +1,19 @@
-"""Smoke-Skript fuer router-permanent-vision (Wave-3 Phase B + D).
+"""Smoke script for router-permanent-vision (Wave 3 phase B + D).
 
-Bootstrapped einen Mock-Stack (FakeVisionEngine + RouterBrain +
-FakeBrain) und fuehrt zwei Messungen:
+Bootstraps a mock stack (FakeVisionEngine + RouterBrain +
+FakeBrain) and runs two measurements:
 
-1. Happy-Path-Smoke: 1 Brain-Call mit User-Text "was siehst du auf
-   meinem screen" — assertet dass ImageBlock ankommt und Hash != leer.
+1. Happy-path smoke: 1 Brain call with user text "was siehst du auf
+   meinem screen" — asserts that an ImageBlock arrives and the hash is non-empty.  # i18n-allow
 
-2. Latency-Benchmark: 20 Brain-Calls mit Vision + 20 ohne. Miss
-   mean/p95 Inject-Overhead + mean Image-Bytes pro Call.
+2. Latency benchmark: 20 Brain calls with vision + 20 without. Measures
+   mean/p95 inject overhead + mean image bytes per call.
 
-Startet in <5s auf normalem Dev-Setup. Keine echten API-Keys, keine
-Audio-Aufnahme.
+Starts in <5s on a normal dev setup. No real API keys, no
+audio recording.
 
-Ausgabe: JSON auf stdout + Human-readable Summary. Bei Fehler:
-Exit-Code != 0.
+Output: JSON on stdout + a human-readable summary. On error:
+exit code != 0.
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-# Repo-Root in sys.path, falls Skript aus scripts/ aufgerufen wird
+# Add repo root to sys.path in case the script is invoked from scripts/
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
@@ -129,7 +129,7 @@ async def _build_router(vision_provider: Any | None = None):
 
 
 async def phase_smoke(png_path: str) -> dict[str, Any]:
-    """Happy-Path-Smoke: 1 Brain-Call mit Vision aktiv."""
+    """Happy-path smoke: 1 Brain call with vision active."""
     from jarvis.vision.context_provider import VisionContextProvider
 
     engine = FakeVisionEngine(png_path, png_hash="smoke-hash-abc")
@@ -140,17 +140,17 @@ async def phase_smoke(png_path: str) -> dict[str, Any]:
     router, recorder = await _build_router(vision_provider=provider)
 
     t0 = time.perf_counter()
-    [_ async for _ in router.handle("was siehst du auf meinem screen")]
+    [_ async for _ in router.handle("was siehst du auf meinem screen")]  # i18n-allow
     dt_ms = (time.perf_counter() - t0) * 1000
 
     await provider.stop()
 
-    assert len(recorder.calls) == 1, "Recorder hat keinen Dispatch-Call gesehen"
+    assert len(recorder.calls) == 1, "Recorder did not see a dispatch call"
     images = recorder.calls[0]["images"]
-    assert len(images) == 1, f"Erwarte genau 1 Image, bekam {len(images)}"
+    assert len(images) == 1, f"Expected exactly 1 image, got {len(images)}"
     img = images[0]
     assert img.source_hash == "smoke-hash-abc", f"Hash mismatch: {img.source_hash}"
-    assert img.data_b64, "ImageBlock hat keine Daten"
+    assert img.data_b64, "ImageBlock has no data"
 
     return {
         "status": "PASS",
@@ -161,10 +161,10 @@ async def phase_smoke(png_path: str) -> dict[str, Any]:
 
 
 async def phase_benchmark(png_path: str, n: int = 20) -> dict[str, Any]:
-    """N Calls mit Vision, N ohne. Messung: mean + p95 Inject-Overhead."""
+    """N calls with vision, N without. Measurement: mean + p95 inject overhead."""
     from jarvis.vision.context_provider import VisionContextProvider
 
-    # Mit Vision
+    # With vision
     engine = FakeVisionEngine(png_path)
     provider = VisionContextProvider(engine, refresh_interval_s=0.05)
     await provider.start()
@@ -177,13 +177,13 @@ async def phase_benchmark(png_path: str, n: int = 20) -> dict[str, Any]:
         t0 = time.perf_counter()
         [_ async for _ in router_with.handle("ping")]
         times_with.append((time.perf_counter() - t0) * 1000)
-    # Bytes vom letzten Call
+    # Bytes from the last call
     for c in rec_with.calls:
         if c["images"]:
             bytes_list.append(len(base64.b64decode(c["images"][0].data_b64)))
     await provider.stop()
 
-    # Ohne Vision
+    # Without vision
     router_without, _ = await _build_router(vision_provider=None)
     times_without: list[float] = []
     for _ in range(n):
@@ -218,7 +218,7 @@ async def phase_benchmark(png_path: str, n: int = 20) -> dict[str, Any]:
 async def main() -> int:
     start = time.perf_counter()
 
-    # 50-KB PNG als realistischer Mock-Screenshot
+    # 50 KB PNG as a realistic mock screenshot
     png_path, png_data = _make_png_file(size_kb=50)
 
     try:
@@ -240,20 +240,20 @@ async def main() -> int:
         print(f"Image Hash: {smoke['image_hash']}")
         print(f"Image Bytes (raw): {smoke['image_raw_bytes']}")
         print()
-        print(f"Benchmark ({bench['n']} Calls je Branch):")
+        print(f"Benchmark ({bench['n']} calls per branch):")
         print(f"  With-Vision:    mean {bench['with_vision']['mean_ms']} ms, p95 {bench['with_vision']['p95_ms']} ms")
         print(f"  Without-Vision: mean {bench['without_vision']['mean_ms']} ms, p95 {bench['without_vision']['p95_ms']} ms")
-        print(f"  Inject-Overhead: mean {bench['inject_overhead']['mean_ms']} ms, p95 {bench['inject_overhead']['p95_ms']} ms")
+        print(f"  Inject overhead: mean {bench['inject_overhead']['mean_ms']} ms, p95 {bench['inject_overhead']['p95_ms']} ms")
         print(f"  Bytes/Call: mean {bench['bytes_per_call']['mean']} bytes")
-        print(f"Total-Duration: {total_s:.2f} s")
+        print(f"Total duration: {total_s:.2f} s")
         print("=" * 60)
 
         if smoke["status"] != "PASS":
             return 1
         if bench["inject_overhead"]["mean_ms"] > 50.0:
-            print("WARN: Inject-Overhead > 50 ms — ueber Plan-Budget!", file=sys.stderr)
+            print("WARN: inject overhead > 50 ms — over the plan budget!", file=sys.stderr)
         if total_s > 5.0:
-            print(f"WARN: Total-Duration {total_s:.1f}s > 5s — Plan-Limit ueberschritten.", file=sys.stderr)
+            print(f"WARN: total duration {total_s:.1f}s > 5s — plan limit exceeded.", file=sys.stderr)
         return 0
     finally:
         try:

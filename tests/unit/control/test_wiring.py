@@ -1,4 +1,4 @@
-"""Unit-Tests fuer die Kill-Switch-Wiring (Voice + Tray + Hotkey)."""
+"""Unit tests for the kill-switch wiring (voice + tray + hotkey)."""
 from __future__ import annotations
 
 import asyncio
@@ -40,14 +40,14 @@ def test_voice_matches_kill_intent_positives(phrase):
     "Hallo Jarvis",
     "Ich schreibe eine Email",
     "Lies mir das vor",
-    "stopp als Wort in einem normalen Satz klingt harmloser als es ist",
+    "stopp als Wort in einem normalen Satz klingt harmloser als es ist",  # i18n-allow: German speech-input test vocabulary
     "",
 ])
 def test_voice_matches_kill_intent_negatives(phrase):
-    # WICHTIG: der 3. Satz enthaelt "stopp" — unser Regex matched nur
-    # auf `jarvis stopp` oder `stopp jarvis`, nicht auf jedes "stopp".
+    # IMPORTANT: the 3rd sentence contains "stopp" — our regex only matches
+    # `jarvis stopp` or `stopp jarvis`, not every "stopp".
     if "jarvis" in phrase.lower() and "stopp" in phrase.lower():
-        return  # Sonderfall, overlapt bewusst
+        return  # special case, intentionally overlaps
     assert not voice_matches_kill_intent(phrase), phrase
 
 
@@ -147,7 +147,7 @@ async def test_tray_wiring_ignores_non_kill_actions():
 
 @pytest.mark.asyncio
 async def test_voice_trigger_cancels_registered_tokens():
-    """Das ist der DoD-Ersatz-Test: Voice-Intent → CancelToken aktiv."""
+    """This is the DoD replacement test: voice intent → CancelToken active."""
     bus = EventBus()
     ks = KillSwitch()
     ks.bind(bus)
@@ -158,7 +158,7 @@ async def test_voice_trigger_cancels_registered_tokens():
             transcript=Transcript(text="Notfall-Stopp!",
                                   language="de", confidence=0.9),
         ))
-        # Zweifach await, damit der Event-Dispatch durchlaeuft:
+        # Double await, so the event dispatch runs through:
         # TranscriptFinal → voice_handler → KillRequested → KillSwitch._on_kill → token.cancel
         await asyncio.sleep(0)
         await asyncio.sleep(0)

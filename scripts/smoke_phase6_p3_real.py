@@ -1,23 +1,23 @@
-"""Smoke-Test Phase 3 — REAL Critic-Call (kostet ~$0.20).
+"""Smoke test phase 3 — REAL critic call (costs ~$0.20).
 
-End-to-End mit echtem `openclaw agent --json-schema ...`-Subprocess. Skipt
-sauber wenn die claude-CLI nicht installiert/authentifiziert ist
-(gleicher Pattern wie smoke_phase6_p2.py). Exit 0 bei Erfolg ODER SKIP,
-Exit 1 nur bei echtem Fehler.
+End-to-end test with a real `openclaw agent --json-schema ...` subprocess.
+Skips cleanly when the claude CLI is not installed/authenticated
+(same pattern as smoke_phase6_p2.py). Exit 0 on success OR SKIP,
+exit 1 only on a real failure.
 
-Was wird verifiziert:
-1. claude-CLI ist installiert und authentifiziert (sonst SKIP).
-2. CriticRunner.run() spawnt einen echten claude-Subprocess mit:
+What gets verified:
+1. The claude CLI is installed and authenticated (otherwise SKIP).
+2. CriticRunner.run() spawns a real claude subprocess with:
    - --output-format json
    - --json-schema <CRITIC_JSON_SCHEMA>
    - --model sonnet
    - --max-turns 1
    - --permission-mode plan
-   - [--bare] wenn ANTHROPIC_API_KEY in env
-3. Der Critic liefert ein schema-valides CriticVerdict.
-4. Der Verdict-Text enthaelt den anchor-token (mission_prompt verbatim).
+   - [--bare] when ANTHROPIC_API_KEY is in env
+3. The critic returns a schema-valid CriticVerdict.
+4. The verdict text contains the anchor token (mission_prompt verbatim).
 
-Ausfuehrung:
+Run:
   cd <repo-root>
   python scripts/smoke_phase6_p3_real.py
 """
@@ -43,11 +43,11 @@ FAIL = "[FAIL]"
 SKIP = "[SKIP]"
 
 
-# --- Mini-Mission ---
+# --- Mini mission ---
 
 MISSION_PROMPT = (
-    "Schreibe eine Python-Funktion `is_palindrome(s: str) -> bool`, "
-    "die Whitespace und Case ignoriert. Inkludiere doctests."
+    "Write a Python function `is_palindrome(s: str) -> bool` "
+    "that ignores whitespace and case. Include doctests."
 )
 
 WORKER_DIFF = """\
@@ -56,7 +56,7 @@ new file mode 100644
 +++ b/palindrome.py
 @@ -0,0 +1,5 @@
 +def is_palindrome(s: str) -> bool:
-+    \"\"\"Returns True wenn s ein palindrom ist.\"\"\"
++    \"\"\"Returns True if s is a palindrome.\"\"\"
 +    cleaned = ''.join(c.lower() for c in s if not c.isspace())
 +    return cleaned == cleaned[::-1]
 """
@@ -69,33 +69,33 @@ WORKER_LOG = """\
 
 
 def claude_available() -> bool:
-    """Schneller existence-check fuer die claude-CLI."""
+    """Quick existence check for the claude CLI."""
     return shutil.which("claude") is not None
 
 
 async def smoke_real() -> int:
     if not claude_available():
-        print(f"{SKIP} claude-CLI nicht im PATH — Real-Smoke uebersprungen.")
+        print(f"{SKIP} claude CLI not in PATH — real smoke test skipped.")
         print(f"      Install: https://docs.claude.com/en/docs/openclaw")
         return 0
 
     has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
     if not has_api_key:
         print(
-            f"{SKIP} kein ANTHROPIC_API_KEY — Real-Smoke benoetigt entweder "
-            "den Key (fuer --bare-Pfad) oder eine bestehende OAuth-Session via "
-            "`claude /login`. Bei OAuth: Test laeuft ohne --bare. Continuing..."
+            f"{SKIP} no ANTHROPIC_API_KEY — real smoke test needs either "
+            "the key (for the --bare path) or an existing OAuth session via "
+            "`claude /login`. With OAuth: test runs without --bare. Continuing..."
         )
 
     with tempfile.TemporaryDirectory() as tmp:
         worktree = Path(tmp) / "wt"
         worktree.mkdir()
 
-        env = dict(os.environ)  # erbt nutzbare Auth (OAuth-Tokens, Keychain-Refs)
+        env = dict(os.environ)  # inherits usable auth (OAuth tokens, keychain refs)
 
         runner = CriticRunner(timeout_seconds=120.0)
 
-        print(f"{OK} spawning real critic ({'--bare' if has_api_key else 'OAuth-Pfad'}) ...")
+        print(f"{OK} spawning real critic ({'--bare' if has_api_key else 'OAuth path'}) ...")
         try:
             verdict: CriticVerdict = await runner.run(
                 mission_prompt=MISSION_PROMPT,
@@ -110,7 +110,7 @@ async def smoke_real() -> int:
             print(f"{FAIL} critic-run raised: {type(exc).__name__}: {exc}")
             return 1
 
-        # Validierungen
+        # Validations
         print(f"{OK} verdict received: {verdict.verdict}, confidence={verdict.confidence:.2f}")
         if verdict.verdict not in ("approve", "revise", "reject"):
             print(f"{FAIL} unknown verdict {verdict.verdict!r}")
@@ -119,7 +119,7 @@ async def smoke_real() -> int:
             print(f"{FAIL} verdict has empty summary")
             return 1
         if not verdict.summary_de:
-            print(f"{FAIL} verdict has empty summary_de — TTS-Pfad waere broken")
+            print(f"{FAIL} verdict has empty summary_de — TTS path would be broken")
             return 1
         print(f"{OK} verdict has summary + summary_de")
         print(f"      summary: {verdict.summary[:120]}")
@@ -127,7 +127,7 @@ async def smoke_real() -> int:
         print(f"      issues: {len(verdict.issues)}, suggested_action: {verdict.suggested_next_action}")
 
     print()
-    print(f"{OK} REAL-SMOKE GREEN — Critic-Loop ist production-ready.")
+    print(f"{OK} REAL SMOKE GREEN — critic loop is production-ready.")
     return 0
 
 

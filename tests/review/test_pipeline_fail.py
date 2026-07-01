@@ -1,7 +1,7 @@
-"""Tests fuer ReviewPipeline-Fast-Stop bei status=fail (Phase 8.2).
+"""Tests for ReviewPipeline fast-stop on status=fail (Phase 8.2).
 
-Plan-Referenz: §AD-3 — `fail` heißt Architektur-Defekt, kein Retry
-sinnvoll. Pipeline stoppt sofort, KEIN Iter-2.
+Plan reference: §AD-3 — `fail` means an architectural defect, no retry
+makes sense. Pipeline stops immediately, NO iter-2.
 """
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ def test_fail_status_stops_immediately(tmp_path: Path) -> None:
         max_iterations=3,
     )
 
-    result = asyncio.run(pipeline.run("ein hinreichend langer Task"))
+    result = asyncio.run(pipeline.run("a sufficiently long task"))
 
     assert result.outcome is PipelineOutcome.FAIL
     assert result.success is False
@@ -60,7 +60,7 @@ def test_fail_status_stops_immediately(tmp_path: Path) -> None:
     assert reviewer_calls == [1]
     assert result.final_verdict is not None
     assert result.final_verdict.status is ReviewStatus.FAIL
-    # Final-Artifact ist der einzige produzierte Output
+    # final_artifact is the only produced output
     assert result.final_artifact == "output 1"
 
 
@@ -88,10 +88,10 @@ def test_fail_audit_contains_one_reviewer_entry_with_fail(tmp_path: Path) -> Non
         max_iterations=3,
     )
 
-    asyncio.run(pipeline.run("ein hinreichend langer Task"))
+    asyncio.run(pipeline.run("a sufficiently long task"))
 
     entries = audit.tail()
-    # 2 Eintraege: worker_spawn + reviewer_spawn (Iter 1)
+    # 2 entries: worker_spawn + reviewer_spawn (iter 1)
     assert len(entries) == 2
     assert entries[1]["phase"] == "reviewer_spawn"
     assert entries[1]["status"] == "fail"

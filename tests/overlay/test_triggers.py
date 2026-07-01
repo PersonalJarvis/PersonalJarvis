@@ -19,8 +19,8 @@ from jarvis.overlay import (
 
 @pytest.fixture()
 def fake_bridge() -> mock.MagicMock:
-    """Mock-Bridge mit allen emit_* Methods. Wird in jarvis.overlay
-    set_overlay() injected, danach reset auf None."""
+    """Mock bridge with all emit_* methods. Injected into jarvis.overlay via
+    set_overlay(), then reset to None afterward."""
     b = mock.MagicMock()
     b.emit_action_started = mock.MagicMock(return_value="action-id-001")
     b.emit_action_ended = mock.MagicMock(return_value=True)
@@ -80,14 +80,14 @@ def test_sync_decorator_emits_error_on_exception(
     with pytest.raises(RuntimeError, match="boom"):
         doit()
     fake_bridge.emit_error.assert_called_once()
-    # Action-ended muss TROTZDEM gerufen werden (finally).
+    # action_ended must STILL be called (finally).
     fake_bridge.emit_action_ended.assert_called_once()
     args, kwargs = fake_bridge.emit_error.call_args
     assert "boom" in args[0]
 
 
 def test_sync_decorator_no_bridge_is_no_op() -> None:
-    """Wenn set_overlay(None), laeuft die Function ohne Crash."""
+    """When set_overlay(None), the function runs without crashing."""
     set_overlay(None)
     called = []
 
@@ -178,7 +178,7 @@ async def test_scope_emits_error_on_exception(fake_bridge: mock.MagicMock) -> No
 def test_mouse_click_emits_click_event_before_pyautogui_call(
     fake_bridge: mock.MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Plan §14.3 + §8.8 — emit_click muss VOR pyautogui.click feuern."""
+    """Plan §14.3 + §8.8 — emit_click must fire BEFORE pyautogui.click."""
     import sys
     import types
 
@@ -198,10 +198,10 @@ def test_mouse_click_emits_click_event_before_pyautogui_call(
 
     from jarvis.control import mouse
 
-    mouse.set_cursor_streamer(None)  # kein Streamer noetig
+    mouse.set_cursor_streamer(None)  # no streamer needed
     mouse.click(x=100, y=200)
-    # Decorator emits started; mouse.click emits emit_click; dann pyautogui.click.
-    # emit_click muss VOR pyautogui.click sein.
+    # Decorator emits started; mouse.click emits emit_click; then pyautogui.click.
+    # emit_click must come BEFORE pyautogui.click.
     emit_idx = call_order.index("emit_click")
     pyautogui_idx = call_order.index("pyautogui.click")
     assert emit_idx < pyautogui_idx

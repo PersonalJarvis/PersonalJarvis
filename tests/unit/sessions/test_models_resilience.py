@@ -1,11 +1,11 @@
-"""BUG-008-Drift-Detector: Pydantic-Models muessen jeden String als
-``hangup_reason``/``tier`` akzeptieren, sonst kollabiert ``GET
-/api/sessions`` sobald die Speech-Pipeline einen neuen Wert einfuehrt.
+"""BUG-008 drift detector: Pydantic models must accept any string as
+``hangup_reason``/``tier``, otherwise ``GET /api/sessions`` collapses
+as soon as the speech pipeline introduces a new value.
 
-Drei Episoden hat dieser Bug schon gehabt (2026-05-03 / -05 / -10). Der
-permanente Fix steht im Modul-Docstring von ``jarvis/sessions/models.py``.
-Diese Tests sichern den Fix gegen Regressions ab — wer ``HangupReason``
-oder ``VoiceTier`` zurueck auf ``Literal`` migriert, faellt hier durch.
+This bug has already had three episodes (2026-05-03 / -05 / -10). The
+permanent fix lives in the module docstring of ``jarvis/sessions/models.py``.
+These tests guard the fix against regressions — anyone who migrates
+``HangupReason`` or ``VoiceTier`` back to ``Literal`` fails here.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from jarvis.sessions.models import (
 )
 
 
-# --- Schicht 1: jeder bekannte Wert validiert -------------------------
+# --- Layer 1: every known value validates -------------------------
 
 
 @pytest.mark.parametrize("reason", sorted(KNOWN_HANGUP_REASONS))
@@ -48,12 +48,12 @@ def test_turn_validates_every_known_tier(tier: str) -> None:
     assert turn.tier == tier
 
 
-# --- Schicht 2: unbekannte Werte krashen NICHT (Drift-Resilienz) ------
+# --- Layer 2: unknown values do NOT crash (drift resilience) ------
 
 
 def test_unknown_hangup_reason_does_not_break_validation() -> None:
-    """Wenn die Pipeline morgen ``vad_silence_long`` einfuehrt, darf die
-    Sessions-API nicht 500 werden. Das war exakt die BUG-008-Falle."""
+    """If the pipeline introduces ``vad_silence_long`` tomorrow, the
+    sessions API must not 500. That was exactly the BUG-008 trap."""
     item = SessionListItem(
         id="s1",
         started_ms=0,
@@ -74,7 +74,7 @@ def test_unknown_tier_does_not_break_validation() -> None:
     assert turn.tier == "phase8_future_tier"
 
 
-# --- Schicht 3: Live-DB-Drift-Detector --------------------------------
+# --- Layer 3: live-DB drift detector --------------------------------
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -83,16 +83,16 @@ _LIVE_DB = _REPO_ROOT / "data" / "sessions.db"
 
 @pytest.mark.skipif(
     not _LIVE_DB.exists(),
-    reason="data/sessions.db nicht vorhanden (CI / frische Checkouts)",
+    reason="data/sessions.db not present (CI / fresh checkouts)",
 )
 def test_live_db_distinct_hangup_reasons_all_validate() -> None:
-    """Crawlt die echte ``data/sessions.db`` und stellt sicher, dass jeder
-    in der Praxis vorkommende ``hangup_reason``-Wert von Pydantic
-    akzeptiert wird. Das ist der scharfe Drift-Detector — wenn dieser
-    Test rot wird, wurde ein neuer Wert in der Pipeline eingefuehrt
-    ohne dass jemand ``KNOWN_HANGUP_REASONS`` aktualisiert hat. Dann:
-    Wert in die Konstante eintragen + ``hangupLabel`` im Frontend
-    erweitern (jarvis/ui/web/frontend/src/components/sessions/SessionList.tsx).
+    """Crawls the real ``data/sessions.db`` and makes sure every
+    ``hangup_reason`` value that occurs in practice is accepted by
+    Pydantic. This is the sharp drift detector — if this test goes
+    red, a new value was introduced in the pipeline without anyone
+    updating ``KNOWN_HANGUP_REASONS``. Then: add the value to the
+    constant + extend ``hangupLabel`` in the frontend
+    (jarvis/ui/web/frontend/src/components/sessions/SessionList.tsx).
     """
     con = sqlite3.connect(str(_LIVE_DB))
     try:
@@ -105,13 +105,13 @@ def test_live_db_distinct_hangup_reasons_all_validate() -> None:
     seen: set[str] = {(row[0] or "") for row in rows}
     unknown = seen - KNOWN_HANGUP_REASONS
     assert not unknown, (
-        f"Neue hangup_reason-Werte in data/sessions.db: {sorted(unknown)}. "
-        f"Bitte in jarvis/sessions/models.py KNOWN_HANGUP_REASONS und im "
-        f"Frontend (types.ts + SessionList.hangupLabel) ergaenzen."
+        f"New hangup_reason values in data/sessions.db: {sorted(unknown)}. "
+        f"Please add them to KNOWN_HANGUP_REASONS in jarvis/sessions/models.py "
+        f"and to the frontend (types.ts + SessionList.hangupLabel)."
     )
 
-    # Plus: jeder Wert MUSS Pydantic-validierbar sein. Das schuetzt
-    # gegen Refactor-Regressions zurueck zu ``Literal``.
+    # Plus: every value MUST be Pydantic-validatable. This protects
+    # against refactor regressions back to ``Literal``.
     for reason in seen:
         VoiceSessionRow(
             id="probe",

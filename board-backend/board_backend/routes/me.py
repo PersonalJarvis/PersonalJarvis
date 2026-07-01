@@ -1,4 +1,4 @@
-"""``GET /api/v1/me`` — Eigene Identitaet + Sync-Statistiken."""
+"""``GET /api/v1/me`` — own identity + sync statistics."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/v1", tags=["me"])
 def me(request: Request, auth: SignedAuth = Depends(require_signed_request)) -> MeResponse:
     with get_db(request) as session:
         ident = session.get(Identity, auth.identity.pubkey)
-        assert ident is not None  # auth-dep hat das schon geprueft
+        assert ident is not None  # the auth dep already checked this
         push_count = session.scalar(
             select(func.count(PushLog.id)).where(PushLog.pubkey == ident.pubkey),
         ) or 0

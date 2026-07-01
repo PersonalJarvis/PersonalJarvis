@@ -149,7 +149,7 @@ async def test_clarify_question_is_german_for_whisper_language_name() -> None:
 @pytest.mark.asyncio
 async def test_action_done_ack_is_german_for_whisper_language_name() -> None:
     pipe = _make_pipe(executed_action=True)
-    await pipe._handle_silent_brain_turn("german", "öffne chrome")
+    await pipe._handle_silent_brain_turn("german", "öffne chrome")  # i18n-allow
     assert pipe._spoken == [(_ACTION_DONE_PHRASE["de"], "de")], pipe._spoken
 
 

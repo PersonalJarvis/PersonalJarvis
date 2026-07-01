@@ -52,7 +52,7 @@ async def test_ack_prompt_includes_user_preferences_when_set() -> None:
         breaker=CircuitBreaker(threshold=3, cooldown_s=60),
         preferences_provider=lambda: "PREFS-MARKER-XYZZY",
     )
-    await gen.run("öffne mein Gmail und räum auf", language="de")
+    await gen.run("öffne mein Gmail und räum auf", language="de")  # i18n-allow
     assert provider.persona_prompts, "the provider should have been called"
     prompt = provider.persona_prompts[0]
     assert "PREFS-MARKER-XYZZY" in prompt
@@ -67,7 +67,7 @@ async def test_ack_prompt_is_base_persona_when_no_preferences() -> None:
         breaker=CircuitBreaker(threshold=3, cooldown_s=60),
         preferences_provider=lambda: "",
     )
-    await gen.run("such Flüge nach Berlin", language="de")
+    await gen.run("such Flüge nach Berlin", language="de")  # i18n-allow
     assert provider.persona_prompts[0] == get_persona_prompt("de")
 
 
@@ -83,7 +83,7 @@ async def test_ack_prompt_unaffected_when_provider_raises() -> None:
         breaker=CircuitBreaker(threshold=3, cooldown_s=60),
         preferences_provider=_boom,
     )
-    await gen.run("such Flüge nach Berlin", language="de")
+    await gen.run("such Flüge nach Berlin", language="de")  # i18n-allow
     assert provider.persona_prompts[0] == get_persona_prompt("de")
 
 
@@ -93,14 +93,14 @@ async def test_ack_prompt_unaffected_when_provider_raises() -> None:
 
 
 async def test_spawn_llm_prompt_includes_user_preferences_when_set() -> None:
-    provider = _RecordingProvider(reply="Chef, ich schaue gründlich in dein Gmail.")
+    provider = _RecordingProvider(reply="Chef, ich schaue gründlich in dein Gmail.")  # i18n-allow
     composer = SpawnAnnouncementComposer(
         provider=provider,
         config=_ack_config(),
         breaker=None,
         preferences_provider=lambda: "SPAWN-PREFS-MARKER",
     )
-    await composer.compose(utterance="öffne mein Gmail und räum auf", language="de")
+    await composer.compose(utterance="öffne mein Gmail und räum auf", language="de")  # i18n-allow
     assert provider.persona_prompts, "the LLM path should have been taken"
     prompt = provider.persona_prompts[0]
     assert "SPAWN-PREFS-MARKER" in prompt
@@ -108,12 +108,12 @@ async def test_spawn_llm_prompt_includes_user_preferences_when_set() -> None:
 
 
 async def test_spawn_llm_prompt_is_base_persona_when_no_preferences() -> None:
-    provider = _RecordingProvider(reply="Ich schaue gründlich in dein Gmail.")
+    provider = _RecordingProvider(reply="Ich schaue gründlich in dein Gmail.")  # i18n-allow
     composer = SpawnAnnouncementComposer(
         provider=provider,
         config=_ack_config(),
         breaker=None,
         preferences_provider=lambda: "",
     )
-    await composer.compose(utterance="öffne mein Gmail und räum auf", language="de")
+    await composer.compose(utterance="öffne mein Gmail und räum auf", language="de")  # i18n-allow
     assert provider.persona_prompts[0] == get_spawn_persona("de")

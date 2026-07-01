@@ -1,17 +1,17 @@
-"""Auth-Dependencies fuer das Backend.
+"""Auth dependencies for the backend.
 
-Drei Gates:
+Three gates:
 
-1. ``require_admin_token`` — fuer ``/identity/register``. Constant-time-Vergleich
-   gegen ``settings.admin_token``. Plus Rate-Limit (10/min/IP).
-2. ``require_signed_request`` — fuer ``/sync``, ``/me``: prueft Pubkey ist
-   registriert, verifiziert Signatur, prueft Replay-Window.
-3. PII-Filter: implizit via Pydantic-Schema ``extra='forbid'`` (Plan §C-Sec).
+1. ``require_admin_token`` — for ``/identity/register``. Constant-time
+   comparison against ``settings.admin_token``. Plus a rate limit (10/min/IP).
+2. ``require_signed_request`` — for ``/sync``, ``/me``: checks that the
+   pubkey is registered, verifies the signature, checks the replay window.
+3. PII filter: implicit via the Pydantic schema ``extra='forbid'`` (Plan §C-Sec).
 
-Die Sig-Verify-Reihenfolge ist:
+The signature-verify order is:
 ``schema-validate → pubkey-registered? → signature-valid? → ts within window?``
 
-Schema und Pubkey-Lookup sind billig; die Crypto erst danach.
+Schema and pubkey lookup are cheap; the crypto only runs after that.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 
 
 # ----------------------------------------------------------------------
-# Settings + RateLimit aus app.state ziehen
+# Pull settings + rate limit from app.state
 # ----------------------------------------------------------------------
 
 def get_settings(request: Request) -> Settings:
@@ -47,7 +47,7 @@ def get_session(request: Request):
 
 
 def get_register_rate_limiter(request: Request) -> RateLimiter:
-    """Lazy-init pro App-Instance."""
+    """Lazy init per app instance."""
     rl = getattr(request.app.state, "register_rl", None)
     if rl is None:
         s: Settings = request.app.state.settings
@@ -57,7 +57,7 @@ def get_register_rate_limiter(request: Request) -> RateLimiter:
 
 
 # ----------------------------------------------------------------------
-# Admin-Token-Gate
+# Admin token gate
 # ----------------------------------------------------------------------
 
 def require_admin_token(
@@ -66,7 +66,7 @@ def require_admin_token(
     settings: Settings = Depends(get_settings),
     rl: RateLimiter = Depends(get_register_rate_limiter),
 ) -> None:
-    """Constant-time-Vergleich + Rate-Limit pro Client-IP."""
+    """Constant-time comparison + rate limit per client IP."""
     client_ip = (request.client.host if request.client else "unknown")
     if not rl.allow(client_ip):
         raise HTTPException(
@@ -75,19 +75,19 @@ def require_admin_token(
         )
     expected = settings.admin_token
     if not expected or not hmac.compare_digest(x_admin_token, expected):
-        # Konsistent 401 — keine Side-Channel-Information ueber Token-Laenge.
+        # Consistent 401 — no side-channel information about token length.
         raise HTTPException(status_code=401, detail="invalid admin token")
 
 
 # ----------------------------------------------------------------------
-# Signed-Request-Gate
+# Signed-request gate
 # ----------------------------------------------------------------------
 
 class SignedAuth:
-    """Container, den signed Routes per ``Depends`` bekommen.
+    """Container that signed routes receive via ``Depends``.
 
-    Liefert die geparsten Daten + die ``Identity`` aus der DB. Routes
-    arbeiten dann auf ``auth.identity`` und ``auth.payload``.
+    Provides the parsed data + the ``Identity`` from the DB. Routes
+    then work on ``auth.identity`` and ``auth.payload``.
     """
 
     def __init__(self, *, identity: Identity, payload: dict, body_bytes: bytes) -> None:
@@ -102,10 +102,11 @@ async def require_signed_request(
     x_jarvis_sig: str = Header(..., alias="X-Jarvis-Sig"),
     settings: Settings = Depends(get_settings),
 ) -> SignedAuth:
-    """Signaturpruefung + Replay-Schutz.
+    """Signature check + replay protection.
 
-    Liest den raw-body, parsed JSON, prueft Pubkey ist registriert,
-    verifiziert Sig, und vergleicht ``payload.ts_ms`` mit Server-Now.
+    Reads the raw body, parses JSON, checks that the pubkey is
+    registered, verifies the signature, and compares ``payload.ts_ms``
+    to the server's current time.
     """
     body_bytes = await request.body()
     try:
@@ -115,7 +116,7 @@ async def require_signed_request(
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="payload must be a JSON object")
 
-    # 1. Pubkey muss registriert sein
+    # 1. Pubkey must be registered
     factory = request.app.state.session_factory
     with factory() as session:
         ident = session.get(Identity, x_pubkey)
@@ -125,7 +126,7 @@ async def require_signed_request(
         # Detach so the dep-result can be used outside the session block
         session.expunge(ident)
 
-    # 2. Signatur-Verify
+    # 2. Signature verify
     if not verify_with_recanonicalize(
         pubkey_hex=x_pubkey,
         signature_hex=x_jarvis_sig,
@@ -133,7 +134,7 @@ async def require_signed_request(
     ):
         raise HTTPException(status_code=401, detail="invalid signature")
 
-    # 3. Replay-Schutz
+    # 3. Replay protection
     ts_ms = payload.get("ts_ms")
     if not isinstance(ts_ms, int):
         raise HTTPException(status_code=400, detail="payload.ts_ms missing")
@@ -148,7 +149,7 @@ async def require_signed_request(
     return SignedAuth(identity=ident, payload=payload, body_bytes=body_bytes)
 
 
-# Re-export fuer routes-Module
+# Re-export for the routes module
 __all__ = [
     "SignedAuth",
     "get_settings",
@@ -159,20 +160,20 @@ __all__ = [
 
 
 def get_db(request: Request) -> Session:
-    """Convenience: session-per-call (nicht via FastAPI-yield-Dep, weil wir
-    sie in den Routes oft nur fuer eine kurze Transaktion brauchen).
+    """Convenience: session-per-call (not via a FastAPI yield-dep, since
+    routes often only need it for a short transaction).
     """
     factory = request.app.state.session_factory
     return factory()
 
 
 def get_owner_identity(session: Session) -> Identity:
-    """Liefert die einzige ``Identity``-Row dieses Backends.
+    """Returns this backend's single ``Identity`` row.
 
-    Phase-C-Decision-2: Single-Tenant. Wenn keine oder mehrere Rows
-    existieren, raisen wir 503 — der Container ist dann fehl-konfiguriert.
+    Phase-C-Decision-2: single-tenant. If there are zero or multiple
+    rows, we raise 503 — the container is then misconfigured.
     """
-    from sqlalchemy import select  # local import — vermeidet Zyklus
+    from sqlalchemy import select  # local import — avoids a cycle
     rows = session.execute(select(Identity)).scalars().all()
     if not rows:
         raise HTTPException(status_code=503, detail="no identity registered yet")
@@ -182,18 +183,18 @@ def get_owner_identity(session: Session) -> Identity:
 
 
 # ----------------------------------------------------------------------
-# Federation-Variant: signed but pubkey is NOT in identity-Table
+# Federation variant: signed but pubkey is NOT in the identity table
 # (a friend's backend talking to us, NOT our own client)
 # ----------------------------------------------------------------------
 
 class FederationAuth:
-    """Container fuer signed inbound Federation-Requests.
+    """Container for signed inbound federation requests.
 
-    Anders als ``SignedAuth`` lookuped diese Variant den Pubkey NICHT in
-    der Identity-Tabelle — der Caller ist ein Friend-Backend, das einen
-    eigenen Pubkey hat. Wir verifizieren nur Sig + Replay-Window. Wer
-    der Caller wirklich ist, bestimmt der Endpoint anhand der ``friends``-
-    Tabelle (z.B. „nur friends duerfen dem feed pullen").
+    Unlike ``SignedAuth``, this variant does NOT look up the pubkey in
+    the identity table — the caller is a friend's backend that has its
+    own pubkey. We only verify the signature + replay window. Who the
+    caller really is is decided by the endpoint based on the ``friends``
+    table (e.g. "only friends may pull the feed").
     """
 
     def __init__(self, *, viewer_pubkey: str, payload: dict, body_bytes: bytes) -> None:
@@ -208,11 +209,11 @@ async def require_federation_signed(
     x_jarvis_sig: str = Header(..., alias="X-Jarvis-Sig"),
     settings: Settings = Depends(get_settings),
 ) -> FederationAuth:
-    """Wie ``require_signed_request``, aber **ohne** Identity-Pflicht.
+    """Like ``require_signed_request``, but **without** an identity requirement.
 
-    Eingesetzt fuer ``/federation/feed``, ``/federation/reactions/inbound``,
-    ``/federation/identity/{pubkey}`` DELETE — alles Calls von Friend-
-    Backends, deren Pubkey wir gar nicht selbst registriert haben.
+    Used for ``/federation/feed``, ``/federation/reactions/inbound``,
+    ``/federation/identity/{pubkey}`` DELETE — all calls from friend
+    backends whose pubkey we never registered ourselves.
     """
     body_bytes = await request.body()
     try:
@@ -222,7 +223,7 @@ async def require_federation_signed(
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="payload must be a JSON object")
 
-    # Pubkey-Format pruefen (Sig-Verify wuerde sonst mit ValueError sterben).
+    # Check the pubkey format (otherwise sig-verify would die with a ValueError).
     if len(x_pubkey) != 64 or not all(c in "0123456789abcdef" for c in x_pubkey.lower()):
         raise HTTPException(status_code=401, detail="invalid pubkey format")
 

@@ -1,7 +1,7 @@
-"""Tests fuer jarvis.awareness.quotas.StorageQuota.
+"""Tests for jarvis.awareness.quotas.StorageQuota.
 
-A0-Scope: reine Datenklasse mit would_exceed-Verdict. A2 verwendet das
-beim Episode-Persistieren als Pre-Insert-Check.
+A0 scope: a pure dataclass with a would_exceed verdict. A2 uses it
+during episode persistence as a pre-insert check.
 """
 from __future__ import annotations
 
@@ -9,14 +9,14 @@ from jarvis.awareness.quotas import StorageQuota
 
 
 def test_default_thresholds() -> None:
-    """Defaults: 50 MiB Bytes, 1000 Episoden."""
+    """Defaults: 50 MiB bytes, 1000 episodes."""
     q = StorageQuota()
     assert q.max_bytes == 50 * 1024 * 1024
     assert q.max_episodes == 1000
 
 
 def test_would_exceed_below_caps() -> None:
-    """Beide Werte unter Cap → (False, '')."""
+    """Both values under the cap → (False, '')."""
     q = StorageQuota()
     exceeded, reason = q.would_exceed(current_bytes=1024, current_episode_count=10)
     assert exceeded is False
@@ -24,7 +24,7 @@ def test_would_exceed_below_caps() -> None:
 
 
 def test_would_exceed_at_byte_cap() -> None:
-    """current_bytes erreicht max_bytes → blockt."""
+    """current_bytes reaches max_bytes → blocks."""
     q = StorageQuota(max_bytes=1000, max_episodes=100)
     exceeded, reason = q.would_exceed(current_bytes=1000, current_episode_count=0)
     assert exceeded is True
@@ -32,7 +32,7 @@ def test_would_exceed_at_byte_cap() -> None:
 
 
 def test_would_exceed_at_episode_cap() -> None:
-    """current_episode_count erreicht max_episodes → blockt."""
+    """current_episode_count reaches max_episodes → blocks."""
     q = StorageQuota(max_bytes=10**9, max_episodes=5)
     exceeded, reason = q.would_exceed(current_bytes=0, current_episode_count=5)
     assert exceeded is True
@@ -40,7 +40,7 @@ def test_would_exceed_at_episode_cap() -> None:
 
 
 def test_would_exceed_byte_takes_priority_when_both_full() -> None:
-    """Wenn beide Caps voll: Bytes-Reason gewinnt (Disk-Risk > Count-Risk)."""
+    """When both caps are full: the bytes reason wins (disk risk > count risk)."""
     q = StorageQuota(max_bytes=100, max_episodes=10)
     exceeded, reason = q.would_exceed(current_bytes=100, current_episode_count=10)
     assert exceeded is True
@@ -48,7 +48,7 @@ def test_would_exceed_byte_takes_priority_when_both_full() -> None:
 
 
 def test_would_exceed_above_caps_still_blocks() -> None:
-    """Auch Werte ueber Cap (Race-Condition) → blockt."""
+    """Values above the cap too (race condition) → blocks."""
     q = StorageQuota(max_bytes=100, max_episodes=10)
     exceeded, reason = q.would_exceed(current_bytes=200, current_episode_count=20)
     assert exceeded is True
@@ -56,7 +56,7 @@ def test_would_exceed_above_caps_still_blocks() -> None:
 
 
 def test_storagequota_is_frozen() -> None:
-    """Quotas sind Konfig-Snapshots — frozen verhindert Mutation."""
+    """Quotas are config snapshots — frozen prevents mutation."""
     import dataclasses
 
     import pytest

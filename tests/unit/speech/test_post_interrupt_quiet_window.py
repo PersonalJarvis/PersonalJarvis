@@ -7,7 +7,7 @@ on 2026-05-26:
 
     "Die Mission ist fehlgeschlagen, drei Versuche haben nicht gereicht.
      Dann schauen wir einfach mal in die letzte Transkription, was ich
-     gesagt habe."
+     gesagt habe."  # i18n-allow
 
 The first sentence is the deterministic ``MissionFailed`` voice readback
 emitted by ``MissionAnnouncer`` with ``priority="interrupt"`` (see
@@ -122,7 +122,7 @@ async def test_preamble_within_quiet_window_after_interrupt_is_suppressed(
 
     await bus.publish(
         AnnouncementRequested(
-            text="Die Mission ist fehlgeschlagen. Drei Versuche haben nicht gereicht.",
+            text="Die Mission ist fehlgeschlagen. Drei Versuche haben nicht gereicht.",  # i18n-allow
             language="de",
             priority="interrupt",
         )
@@ -141,7 +141,7 @@ async def test_preamble_within_quiet_window_after_interrupt_is_suppressed(
     # Only the interrupt announcement spoke.  The preamble was suppressed.
     assert tts.calls == [
         (
-            "Die Mission ist fehlgeschlagen. Drei Versuche haben nicht gereicht.",
+            "Die Mission ist fehlgeschlagen. Drei Versuche haben nicht gereicht.",  # i18n-allow
             "de-DE",
         )
     ]
@@ -189,7 +189,7 @@ async def test_completion_within_quiet_window_is_not_suppressed(
 ) -> None:
     """Only ``kind == "preamble"`` is gated — completion readbacks pass through.
 
-    A completion (e.g. ``OpenClawBackgroundCompleted`` → "Fertig.") that
+    A completion (e.g. ``OpenClawBackgroundCompleted`` → "Fertig.") that  # i18n-allow
     lands inside the quiet window after a mission failure on another
     track must still be voiced.  Suppressing it would lose information
     the user actually needs.
@@ -209,7 +209,7 @@ async def test_completion_within_quiet_window_is_not_suppressed(
     fake_clock.advance(0.2)
     await bus.publish(
         AnnouncementRequested(
-            text="Fertig. Anderes Ergebnis liegt bereit.",
+            text="Fertig. Anderes Ergebnis liegt bereit.",  # i18n-allow
             language="de",
             priority="normal",
             kind="completion",
@@ -218,7 +218,7 @@ async def test_completion_within_quiet_window_is_not_suppressed(
 
     assert tts.calls == [
         ("Mission abgebrochen.", "de-DE"),
-        ("Fertig. Anderes Ergebnis liegt bereit.", "de-DE"),
+        ("Fertig. Anderes Ergebnis liegt bereit.", "de-DE"),  # i18n-allow
     ]
     assert player.plays == 2
 
@@ -240,14 +240,14 @@ async def test_interrupt_itself_is_always_spoken(
 
     await bus.publish(
         AnnouncementRequested(
-            text="Die Mission ist fehlgeschlagen. Grund: kritisch.",
+            text="Die Mission ist fehlgeschlagen. Grund: kritisch.",  # i18n-allow
             language="de",
             priority="interrupt",
         )
     )
 
     assert tts.calls == [
-        ("Die Mission ist fehlgeschlagen. Grund: kritisch.", "de-DE"),
+        ("Die Mission ist fehlgeschlagen. Grund: kritisch.", "de-DE"),  # i18n-allow
     ]
     assert player.plays == 1
 

@@ -1,7 +1,7 @@
-"""Tests für `python -m jarvis.skills.cli --list-drafts/--promote` (Phase 7.5).
+"""Tests for `python -m jarvis.skills.cli --list-drafts/--promote` (Phase 7.5).
 
-CLI-Tests laufen ohne echte Sub-Jarvis-Calls — wir legen vorab einen
-Draft via `write_draft` an und triggern dann die CLI-Subcommands.
+CLI tests run without real Sub-Jarvis calls — we write a draft upfront
+via `write_draft` and then trigger the CLI subcommands.
 """
 from __future__ import annotations
 
@@ -16,10 +16,10 @@ def _draft(**overrides) -> SkillDraft:
     defaults: dict = dict(
         slug="cli-test",
         name="CLI Test Skill",
-        description="Skill für CLI-promote-Test",
+        description="Skill for CLI promote test",
         intent="test cli",
         triggers_yaml="[]",
-        body_markdown="## CLI Test\n\nNur ein Body.",
+        body_markdown="## CLI Test\n\nJust a body.",
         state="draft",
     )
     defaults.update(overrides)
@@ -30,7 +30,7 @@ def _draft(**overrides) -> SkillDraft:
 def skills_root_patched(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
-    """Patcht user_skills_dir() auf tmp_path/user_skills für CLI-Tests."""
+    """Patches user_skills_dir() to tmp_path/user_skills for CLI tests."""
     root = tmp_path / "user_skills"
     root.mkdir()
 
@@ -73,7 +73,7 @@ class TestListDraftsCli:
         exit_code = main(["--list-drafts"])
         assert exit_code == 0
         captured = capsys.readouterr()
-        assert "Keine Draft-Skills" in captured.out
+        assert "No draft skills present" in captured.out
 
 
 # ----------------------------------------------------------------------
@@ -93,7 +93,7 @@ class TestPromoteCli:
         exit_code = main(["--promote", "cli-test"])
         assert exit_code == 0
         captured = capsys.readouterr()
-        assert "ist jetzt aktiv" in captured.out
+        assert "is now active" in captured.out
 
     def test_promote_unknown_slug_exits_1(
         self,

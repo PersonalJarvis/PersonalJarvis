@@ -1,4 +1,4 @@
-"""Pure-Unit-Tests für den Argparse-Parser des Standalone-Launchers."""
+"""Pure unit tests for the standalone launcher's argparse parser."""
 
 from __future__ import annotations
 

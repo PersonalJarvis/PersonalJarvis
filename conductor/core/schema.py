@@ -1,18 +1,18 @@
-"""Pydantic-Schema — Jobs, Runs, Schedules.
+"""Pydantic schema — jobs, runs, schedules.
 
-Drei zentrale Design-Entscheidungen:
+Three central design decisions:
 
-1. **Jobs als Discriminated-Union von JobSpecs.** Neue Job-Types sind
-   eine 3-Datei-Aenderung (Spec-Model, Handler, YAML-Beispiel). Kein
-   Plugin-System noetig fuer MVP.
+1. **Jobs as a discriminated union of JobSpecs.** A new job type is
+   a 3-file change (spec model, handler, YAML example). No plugin
+   system needed for the MVP.
 
-2. **Schedule ebenfalls als Discriminated-Union.** Cron, Interval,
-   Manual, Webhook — das deckt alles vom User-Klick bis zum externen
-   Push-Trigger ab.
+2. **Schedule is also a discriminated union.** Cron, interval,
+   manual, webhook — that covers everything from a user click to an
+   external push trigger.
 
-3. **Runs haben Steps**, auch wenn aktuell jeder Job nur einen Step hat.
-   Das macht uns v0.2-ready fuer Multi-Step-Agenten (LLM-Tool-Use-Loop,
-   bei dem jeder Tool-Call eigener Step ist).
+3. **Runs have steps**, even though currently every job has only one
+   step. That makes us v0.2-ready for multi-step agents (an LLM
+   tool-use loop where every tool call is its own step).
 """
 from __future__ import annotations
 
@@ -27,40 +27,40 @@ from pydantic import BaseModel, ConfigDict, Field
 # ---------------------------------------------------------------------
 
 class CronSchedule(BaseModel):
-    """Cron-Expression mit 5 Feldern (Standard-Syntax, via croniter)."""
+    """Cron expression with 5 fields (standard syntax, via croniter)."""
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: Literal["cron"] = "cron"
     expression: str = Field(min_length=9, max_length=128,
-                             description="z.B. '0 9 * * *' fuer 9:00 taeglich")
+                             description="e.g. '0 9 * * *' for 9:00 daily")
     timezone: str = Field(default="local")
 
 
 class IntervalSchedule(BaseModel):
-    """Wiederholung alle N Sekunden — simpler als Cron."""
+    """Repeats every N seconds — simpler than cron."""
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: Literal["interval"] = "interval"
     seconds: int = Field(ge=10, le=30 * 24 * 3600,
-                          description="Minimum 10s (Rate-Limit-Schutz), "
-                          "Max 30 Tage.")
+                          description="Minimum 10s (rate-limit protection), "
+                          "max 30 days.")
 
 
 class ManualSchedule(BaseModel):
-    """Nur auf Knopfdruck / CLI-Run."""
+    """Only on button press / CLI run."""
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: Literal["manual"] = "manual"
 
 
 class WebhookSchedule(BaseModel):
-    """Trigger via HTTP-POST auf ``/api/conductor/hooks/<token>``.
+    """Trigger via HTTP POST to ``/api/conductor/hooks/<token>``.
 
-    Der ``token`` wird beim Anlegen generiert, damit die Webhook-URL
-    unguessable ist. Runs bekommen den POST-Body als ``input``.
+    The ``token`` is generated on creation so the webhook URL is
+    unguessable. Runs get the POST body as ``input``.
     """
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: Literal["webhook"] = "webhook"
     token: str = Field(min_length=16, max_length=64,
-                        description="URL-safe Hex-Token, wird beim Anlegen "
-                        "generiert.")
+                        description="URL-safe hex token, generated on "
+                        "creation.")
 
 
 Schedule = Annotated[
@@ -70,11 +70,11 @@ Schedule = Annotated[
 
 
 # ---------------------------------------------------------------------
-# Job-Specs — was beim Trigger ausgefuehrt wird
+# Job specs — what runs when triggered
 # ---------------------------------------------------------------------
 
 class ShellJobSpec(BaseModel):
-    """Shell-Command mit Args, Timeout, Working-Directory."""
+    """Shell command with args, timeout, working directory."""
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: Literal["shell"] = "shell"
     command: str = Field(min_length=1, max_length=4096)
@@ -84,10 +84,10 @@ class ShellJobSpec(BaseModel):
 
 
 class HttpJobSpec(BaseModel):
-    """HTTP-Request — GET/POST/PUT/DELETE.
+    """HTTP request — GET/POST/PUT/DELETE.
 
-    Response-Body (string, max 64 KB) wird als Run-Output persistiert.
-    ``expect_status`` definiert Success-Kriterium; default ``2xx``.
+    The response body (string, max 64 KB) is persisted as the run output.
+    ``expect_status`` defines the success criterion; default ``2xx``.
     """
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: Literal["http"] = "http"
@@ -97,25 +97,25 @@ class HttpJobSpec(BaseModel):
     body: str | None = None
     timeout_s: float = Field(default=30.0, ge=1.0, le=300.0)
     expect_status: str = Field(default="2xx",
-                                description="'2xx', '200', '3xx' oder exakter Code.")
+                                description="'2xx', '200', '3xx', or an exact code.")
 
 
 class AgentJobSpec(BaseModel):
-    """LLM-Agent-Call — single-turn in v0.1, tool-use in v0.2.
+    """LLM agent call — single-turn in v0.1, tool-use in v0.2.
 
     Providers:
 
-    - ``gemini``    — **Google-AI-Studio-Default.** Nutzt ``google-genai``-
-      SDK, Key aus ``GEMINI_API_KEY`` oder ``GOOGLE_AIStudio_API_KEY``.
-      Default-Model ``gemini-3.1-pro`` (Frontier).
-    - ``anthropic`` — fuer User mit OpenClaw-Subscription. Shellt das
-      lokale ``claude``-CLI (OAuth-Session des Max-Plan-Login), braucht
-      keinen API-Key. Modelle: ``sonnet``, ``opus``, ``haiku``, oder
-      voller Name (``claude-sonnet-4-6``).
-    - ``anthropic`` — direkter API-Call via ``ANTHROPIC_API_KEY`` ENV.
-      Fuer User ohne Subscription.
+    - ``gemini``    — **Google AI Studio default.** Uses the ``google-genai``
+      SDK, key from ``GEMINI_API_KEY`` or ``GOOGLE_AIStudio_API_KEY``.
+      Default model ``gemini-3.1-pro`` (frontier).
+    - ``anthropic`` — for users with an OpenClaw subscription. Shells out
+      to the local ``claude`` CLI (OAuth session from the Max-plan login),
+      needs no API key. Models: ``sonnet``, ``opus``, ``haiku``, or the
+      full name (``claude-sonnet-4-6``).
+    - ``anthropic`` — direct API call via the ``ANTHROPIC_API_KEY`` env var.
+      For users without a subscription.
     - ``openai``    — ``OPENAI_API_KEY``.
-    - ``ollama``    — lokal, kein Key. Default-Host ``http://localhost:11434``.
+    - ``ollama``    — local, no key. Default host ``http://localhost:11434``.
     """
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: Literal["agent"] = "agent"
@@ -124,9 +124,9 @@ class AgentJobSpec(BaseModel):
     ] = "gemini"
     model: str = Field(
         default="gemini-3.1-pro", min_length=1, max_length=128,
-        description="Alias ('sonnet', 'opus') oder full name "
+        description="Alias ('sonnet', 'opus') or full name "
         "('gemini-3.1-pro', 'claude-sonnet-4-6', 'gpt-4o', 'llama3.1'). "
-        "Default: gemini-3.1-pro (passend zum Default-Provider 'gemini').",
+        "Default: gemini-3.1-pro (matching the default provider 'gemini').",
     )
     system_prompt: str = Field(default="", max_length=8192)
     user_prompt: str = Field(min_length=1, max_length=32_768)
@@ -148,10 +148,10 @@ RunState = Literal["pending", "running", "completed", "failed", "cancelled"]
 
 
 class Job(BaseModel):
-    """Blueprint eines wiederholbaren Jobs — persistiert in ``jobs``-Tabelle.
+    """Blueprint of a repeatable job — persisted in the ``jobs`` table.
 
-    Die ``spec`` ist der komplette Job-Payload (Typ + Args) und wird als
-    JSON serialisiert. Der ``schedule`` ebenfalls.
+    The ``spec`` is the complete job payload (type + args) and is
+    serialized as JSON. So is ``schedule``.
     """
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -166,7 +166,7 @@ class Job(BaseModel):
 
 
 class Run(BaseModel):
-    """Ein konkreter Lauf eines Jobs."""
+    """One concrete run of a job."""
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: UUID = Field(default_factory=uuid4)
@@ -183,7 +183,7 @@ class Run(BaseModel):
 
 
 class RunStep(BaseModel):
-    """Sub-Step eines Runs — fuer v0.2 Multi-Step-Agents."""
+    """Sub-step of a run — for v0.2 multi-step agents."""
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     run_id: UUID

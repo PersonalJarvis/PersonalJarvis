@@ -1,10 +1,10 @@
-"""Tests fuer ``jarvis.brain.mission_command_gate.match_mission_command``.
+"""Tests for ``jarvis.brain.mission_command_gate.match_mission_command``.
 
-AD-12 + AP-OC5 (siehe ``docs/openclaw-bridge.md``):
-- Status-Phrasen muessen erkannt werden, Spawn unterdrueckt.
-- Cancel-Phrasen muessen erkannt werden, Mission-Cancel statt Spawn.
-- Smalltalk-/Kontextfreie-Phrasen DUERFEN NICHT matchen (False-Positive
-  waere eine Regression auf das ehemalige Spawn-Reflex-Problem).
+AD-12 + AP-OC5 (see ``docs/openclaw-bridge.md``):
+- Status phrases must be recognized, spawn suppressed.
+- Cancel phrases must be recognized, mission-cancel instead of spawn.
+- Smalltalk / context-free phrases must NOT match (a false positive
+  would be a regression of the former spawn-reflex problem).
 """
 from __future__ import annotations
 
@@ -17,33 +17,33 @@ from jarvis.brain.mission_command_gate import (
 
 
 # ---------------------------------------------------------------------------
-# Status-Erkennung (positive cases)
+# Status detection (positive cases)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize(
     "phrase",
     [
-        "läuft das noch?",
-        "Läuft das noch?",
-        "laeuft das noch",
-        "Läuft die Mission noch?",
+        "läuft das noch?",  # i18n-allow
+        "Läuft das noch?",  # i18n-allow
+        "laeuft das noch",  # i18n-allow
+        "Läuft die Mission noch?",  # i18n-allow
         "Status?",
         "status",
         "Jarvis, status",
-        "Status der Mission",
-        "Status vom Sub",
-        "Wie weit?",
-        "Wie weit bist du?",
-        "Wie weit sind wir?",
-        "Wo stehen wir?",
-        "Wo steht die Mission?",
-        "Noch am Laufen?",
-        "Immer noch dran?",
+        "Status der Mission",  # i18n-allow
+        "Status vom Sub",  # i18n-allow
+        "Wie weit?",  # i18n-allow
+        "Wie weit bist du?",  # i18n-allow
+        "Wie weit sind wir?",  # i18n-allow
+        "Wo stehen wir?",  # i18n-allow
+        "Wo steht die Mission?",  # i18n-allow
+        "Noch am Laufen?",  # i18n-allow
+        "Immer noch dran?",  # i18n-allow
     ],
 )
 def test_status_de_positive(phrase: str) -> None:
     m = match_mission_command(phrase)
-    assert m is not None, f"erwartet Match fuer: {phrase!r}"
+    assert m is not None, f"expected match for: {phrase!r}"
     assert m.intent == "status"
     assert m.language == "de"
 
@@ -65,37 +65,37 @@ def test_status_de_positive(phrase: str) -> None:
 )
 def test_status_en_positive(phrase: str) -> None:
     m = match_mission_command(phrase)
-    assert m is not None, f"erwartet Match fuer: {phrase!r}"
+    assert m is not None, f"expected match for: {phrase!r}"
     assert m.intent == "status"
     assert m.language == "en"
 
 
 # ---------------------------------------------------------------------------
-# Cancel-Erkennung (positive cases)
+# Cancel detection (positive cases)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize(
     "phrase",
     [
-        "brich ab",
-        "Brich ab",
-        "Jarvis, brich ab",
-        "Brich die Mission ab",
-        "Brich den Auftrag ab",
-        "Brich alles ab",
-        "Stoppe die Mission",
-        "Stop die Mission",
-        "Stoppe OpenClaw",
-        "Mission abbrechen",
-        "Mission bitte abbrechen",
-        "Auftrag abbrechen",
-        "Abbruch der Mission",
-        "Abbruch OpenClaw",
+        "brich ab",  # i18n-allow
+        "Brich ab",  # i18n-allow
+        "Jarvis, brich ab",  # i18n-allow
+        "Brich die Mission ab",  # i18n-allow
+        "Brich den Auftrag ab",  # i18n-allow
+        "Brich alles ab",  # i18n-allow
+        "Stoppe die Mission",  # i18n-allow
+        "Stop die Mission",  # i18n-allow
+        "Stoppe OpenClaw",  # i18n-allow
+        "Mission abbrechen",  # i18n-allow
+        "Mission bitte abbrechen",  # i18n-allow
+        "Auftrag abbrechen",  # i18n-allow
+        "Abbruch der Mission",  # i18n-allow
+        "Abbruch OpenClaw",  # i18n-allow
     ],
 )
 def test_cancel_de_positive(phrase: str) -> None:
     m = match_mission_command(phrase)
-    assert m is not None, f"erwartet Match fuer: {phrase!r}"
+    assert m is not None, f"expected match for: {phrase!r}"
     assert m.intent == "cancel"
     assert m.language == "de"
 
@@ -120,13 +120,13 @@ def test_cancel_de_positive(phrase: str) -> None:
 )
 def test_cancel_en_positive(phrase: str) -> None:
     m = match_mission_command(phrase)
-    assert m is not None, f"erwartet Match fuer: {phrase!r}"
+    assert m is not None, f"expected match for: {phrase!r}"
     assert m.intent == "cancel"
     assert m.language == "en"
 
 
 # ---------------------------------------------------------------------------
-# Negative cases — DUERFEN NICHT matchen
+# Negative cases — must NOT match
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize(
@@ -134,48 +134,48 @@ def test_cancel_en_positive(phrase: str) -> None:
     [
         "",
         "   ",
-        "Hallo Jarvis",
-        "Wie geht es dir?",
-        "Was ist die Hauptstadt von Deutschland?",
-        "Erzähl mir einen Witz",
-        "Wie weit ist Berlin von Muenchen?",         # 'wie weit' aber ohne Mission-Kontext-Wort
-        "Status der Wirtschaft",                       # Status, aber kein Mission-Bezug
-        "Stoppe die Musik",                            # 'stop' aber Musik, nicht Mission
-        "Lass das stoppen, das Lied",                  # generic stop
-        "Hör auf damit",                               # generic
-        "Spiele weiter",                               # weiter, aber kein Status-Pattern
-        "Cancel my dinner reservation",                # 'cancel' aber kein Mission/Task
-        "Kill the music",                              # 'kill' aber Musik
-        "Run the script",                              # 'run' aber kein Status
+        "Hallo Jarvis",  # i18n-allow
+        "Wie geht es dir?",  # i18n-allow
+        "Was ist die Hauptstadt von Deutschland?",  # i18n-allow
+        "Erzähl mir einen Witz",  # i18n-allow
+        "Wie weit ist Berlin von Muenchen?",         # 'wie weit' but no mission-context word  # i18n-allow
+        "Status der Wirtschaft",                       # status, but no mission reference  # i18n-allow
+        "Stoppe die Musik",                            # 'stop' but music, not mission  # i18n-allow
+        "Lass das stoppen, das Lied",                  # generic stop  # i18n-allow
+        "Hör auf damit",                               # generic  # i18n-allow
+        "Spiele weiter",                               # 'continue', but no status pattern  # i18n-allow
+        "Cancel my dinner reservation",                # 'cancel' but no mission/task
+        "Kill the music",                              # 'kill' but music
+        "Run the script",                              # 'run' but no status
         "Open my browser",                             # generic action
-        "Schreib eine E-Mail an Anna",                 # action verb, kein Status
-        "What's the weather?",                         # status-like, aber nicht 'the status'
+        "Schreib eine E-Mail an Anna",                 # action verb, no status  # i18n-allow
+        "What's the weather?",                         # status-like, but not 'the status'
     ],
 )
 def test_negative_no_match(phrase: str) -> None:
     m = match_mission_command(phrase)
-    assert m is None, f"unerwarteter Match fuer: {phrase!r} -> {m!r}"
+    assert m is None, f"unexpected match for: {phrase!r} -> {m!r}"
 
 
 # ---------------------------------------------------------------------------
-# Cancel hat Prioritaet vor Status bei Doppel-Match
+# Cancel takes priority over status on a double match
 # ---------------------------------------------------------------------------
 
 def test_cancel_wins_over_status() -> None:
-    """Wenn beide Patterns matchen wuerden, gewinnt Cancel — explizite
-    Stop-Anweisung darf nicht zu einem Status-Read degradiert werden."""
-    m = match_mission_command("Stop OpenClaw, wie weit bist du eigentlich?")
+    """When both patterns would match, cancel wins — an explicit stop
+    instruction must not be degraded to a status read."""
+    m = match_mission_command("Stop OpenClaw, wie weit bist du eigentlich?")  # i18n-allow
     assert m is not None
     assert m.intent == "cancel"
 
 
 # ---------------------------------------------------------------------------
-# Mission-ID-Extraktion
+# Mission-ID extraction
 # ---------------------------------------------------------------------------
 
 def test_extract_uuid_v7() -> None:
     m = match_mission_command(
-        "Status der Mission 0190f7a3-1234-7abc-9def-0123456789ab"
+        "Status der Mission 0190f7a3-1234-7abc-9def-0123456789ab"  # i18n-allow
     )
     assert m is not None
     assert m.intent == "status"
@@ -183,7 +183,7 @@ def test_extract_uuid_v7() -> None:
 
 
 def test_extract_uuid_normalized() -> None:
-    """UUID ohne Bindestriche wird auf das Standardformat gemapped."""
+    """A UUID without hyphens is mapped to the standard format."""
     m = match_mission_command(
         "stop mission 0190f7a312347abc9def0123456789ab"
     )
@@ -193,21 +193,21 @@ def test_extract_uuid_normalized() -> None:
 
 
 def test_extract_short_alias() -> None:
-    """Kurze Aliase ('mission build-foo') werden roh weitergereicht."""
-    m = match_mission_command("Status der Mission build-foo")
+    """Short aliases ('mission build-foo') are passed through raw."""
+    m = match_mission_command("Status der Mission build-foo")  # i18n-allow
     assert m is not None
     assert m.mission_id == "build-foo"
 
 
 def test_no_mission_id_means_all_active() -> None:
-    """Ohne Mission-Hinweis ist mission_id None — Caller filtert auf alle aktiven."""
-    m = match_mission_command("Läuft das noch?")
+    """Without a mission hint, mission_id is None — the caller filters over all active missions."""
+    m = match_mission_command("Läuft das noch?")  # i18n-allow
     assert m is not None
     assert m.mission_id is None
 
 
 # ---------------------------------------------------------------------------
-# Frozen-Dataclass-Vertrag
+# Frozen dataclass contract
 # ---------------------------------------------------------------------------
 
 def test_match_is_frozen() -> None:

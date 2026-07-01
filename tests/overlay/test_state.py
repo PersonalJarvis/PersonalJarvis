@@ -25,13 +25,13 @@ def test_stable_string_values() -> None:
 
 
 def test_str_enum_inherits_string() -> None:
-    # Wichtig fuer JSON-Serialisierung in Phase 9.2.
+    # Important for JSON serialization in Phase 9.2.
     assert isinstance(OverlayState.IDLE.value, str)
     assert OverlayState.IDLE == "idle"
 
 
 def test_glow_active_only_in_typing_clicking() -> None:
-    # Plan §6.1 — Glow ist NUR in TYPING und CLICKING aktiv.
+    # Plan §6.1 — glow is ONLY active in TYPING and CLICKING.
     assert GLOW_ACTIVE_STATES == frozenset(
         {OverlayState.TYPING, OverlayState.CLICKING}
     )

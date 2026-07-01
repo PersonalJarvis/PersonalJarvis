@@ -34,7 +34,7 @@ if str(REPO) not in sys.path:
 
 from jarvis.core.config import load_config  # noqa: E402
 
-PROBE_SENTENCE = "Es ist gerade kurz nach sieben Uhr abends, Chef."
+PROBE_SENTENCE = "Es ist gerade kurz nach sieben Uhr abends, Chef."  # i18n-allow: sample TTS voice output text used to benchmark the voice pipeline stages
 PROBE_QUESTION_PCM_RATE = 24_000  # Gemini TTS output rate
 
 

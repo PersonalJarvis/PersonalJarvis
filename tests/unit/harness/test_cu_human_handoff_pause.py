@@ -134,7 +134,7 @@ async def test_announces_handoff_request_in_german(monkeypatch):
     ctx = SimpleNamespace(bus=bus)
 
     await loop._await_human_handoff_clearance(
-        ctx, "Kannst du bitte meine Mails oeffnen?", 1, None,
+        ctx, "Kannst du bitte meine Mails oeffnen?", 1, None,  # i18n-allow: simulated German user utterance, content under test
         reason="login / password entry",
     )
     await asyncio.sleep(0.01)  # let the detached announcement task run

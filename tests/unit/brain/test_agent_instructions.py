@@ -58,7 +58,7 @@ def test_filename_falls_back_to_assistant_when_unset():
 
 
 def test_filename_transliterates_umlauts():
-    assert agent_instructions.instructions_filename(make_config(name="Jürgen")) == "Juergen.md"
+    assert agent_instructions.instructions_filename(make_config(name="Jürgen")) == "Juergen.md"  # i18n-allow
 
 
 def test_filename_strips_path_separators_and_unsafe_chars():
@@ -119,7 +119,7 @@ def test_whitespace_only_reads_as_none():
 
 def test_save_is_utf8_without_bom_and_roundtrips_unicode(_isolate_data_dir):
     cfg = make_config(name="Ruben")
-    text = "Grüße — café ✓ 日本語"
+    text = "Grüße — café ✓ 日本語"  # i18n-allow
     agent_instructions.save_agent_instructions(cfg, text)
     raw = (_isolate_data_dir / "agent_instructions" / "Ruben.md").read_bytes()
     assert raw.startswith(b"\xef\xbb\xbf") is False  # no BOM (AP-7)

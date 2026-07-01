@@ -1,7 +1,7 @@
-"""FastAPI-App-Factory.
+"""FastAPI app factory.
 
-Wird vom Uvicorn-CLI als ``board_backend.main:app`` referenziert. Tests
-benutzen stattdessen ``create_app(settings=...)`` mit injizierten Settings.
+Referenced by the Uvicorn CLI as ``board_backend.main:app``. Tests use
+``create_app(settings=...)`` with injected settings instead.
 """
 from __future__ import annotations
 
@@ -19,17 +19,16 @@ log = logging.getLogger(__name__)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
-    """Baut eine FastAPI-Instanz.
+    """Builds a FastAPI instance.
 
-    ``settings`` kann fuer Tests ueberschrieben werden. Wenn None: aus
-    der Environment laden. Routes werden lazy importiert, damit Test-
-    Setups die Settings erstmal anzeigen koennen, ohne dass Module-
-    Level-Code DB anlegt.
+    ``settings`` can be overridden for tests. If None: loaded from the
+    environment. Routes are imported lazily so test setups can inspect
+    the settings first, without module-level code creating the DB.
     """
     if settings is None:
         settings = Settings()
 
-    settings.require_admin_token()  # frueher Tod statt later quirk
+    settings.require_admin_token()  # fail fast instead of a later quirk
 
     engine = make_engine(settings)
     init_schema(engine)
@@ -52,10 +51,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 def _attach_background(app: FastAPI) -> None:
-    """Stories-Cleanup + FederationPuller als asyncio-Tasks via Lifespan.
+    """StoriesCleanup + FederationPuller as asyncio tasks via the lifespan.
 
-    Tests koennen das ueberspringen indem sie ``app.state.disable_background = True``
-    setzen — der Hook checkt das ein.
+    Tests can skip this by setting ``app.state.disable_background = True``
+    — the hook checks for that.
     """
     from .background import FederationPuller, StoriesCleanup
 
@@ -82,7 +81,7 @@ def _attach_background(app: FastAPI) -> None:
 
 
 def _attach_routes(app: FastAPI) -> None:
-    """Lazy-Import-Pfad — vermeidet Zyklen + erlaubt Skeleton-only-Tests."""
+    """Lazy import path — avoids cycles + allows skeleton-only tests."""
     from .routes import (
         activity as activity_route,
         forget_me as forget_me_route,
@@ -108,7 +107,7 @@ def _attach_routes(app: FastAPI) -> None:
 
 
 def _attach_error_handlers(app: FastAPI) -> None:
-    """Default-Handler fuer alle Exceptions — niemals Stacktrace zum Client."""
+    """Default handler for all exceptions — never a stacktrace to the client."""
     @app.exception_handler(Exception)
     async def _unhandled(request, exc: Exception):  # noqa: ANN001
         log.exception("unhandled error", exc_info=exc)
@@ -118,12 +117,12 @@ def _attach_error_handlers(app: FastAPI) -> None:
         )
 
 
-# Modul-Level-App fuer ``uvicorn board_backend.main:app``.
+# Module-level app for ``uvicorn board_backend.main:app``.
 #
-# ASGI-Lazy: wenn ADMIN_TOKEN beim Import noch nicht gesetzt ist (z.B. in
-# Tests, die ``create_app(settings=...)`` direkt aufrufen), bauen wir die
-# App nicht. Im produktiven Container setzt docker-compose den Token via
-# Environment, dann laeuft der Import mit App durch.
+# ASGI-lazy: if ADMIN_TOKEN isn't set yet at import time (e.g. in tests
+# that call ``create_app(settings=...)`` directly), we don't build the
+# app. In the production container, docker-compose sets the token via
+# the environment, and the import then succeeds with an app.
 app: FastAPI | None
 try:
     app = create_app()

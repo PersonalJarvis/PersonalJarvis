@@ -1,12 +1,12 @@
-"""Tests für die Skill-Authoring-Pipeline (Phase 7.5).
+"""Tests for the skill-authoring pipeline (Phase 7.5).
 
-Plan-Akzeptanzkriterien §7.5:
-- Spawn erzeugt valides SKILL.md im Draft-State
-- state=draft wird auch dann forciert, wenn Sub-Jarvis fälschlich `active` schreibt
-- Validation-Retry funktioniert mit konkretem Pydantic-Feedback
-- Name-Clash erzeugt Suffix, kein Overwrite
-- Draft-Skill triggert nicht (Negative-Test mit TriggerMatcher)
-- Audit-Eintrag enthält iterations-Counter
+Plan acceptance criteria §7.5:
+- Spawn produces a valid SKILL.md in draft state
+- state=draft is forced even when Sub-Jarvis wrongly writes `active`
+- Validation retry works with concrete Pydantic feedback
+- Name clash produces a suffix, no overwrite
+- Draft skill doesn't trigger (negative test with TriggerMatcher)
+- Audit entry contains an iterations counter
 """
 from __future__ import annotations
 
@@ -49,11 +49,11 @@ def _draft(**overrides) -> SkillDraft:
     defaults: dict = dict(
         slug="spotify-auto-pause",
         name="Spotify Auto-Pause",
-        description="Pausiert Spotify wenn User redet.",
+        description="Pauses Spotify when the user talks.",
         intent="user wants spotify auto-pause",
         triggers_yaml="[{type: voice, pattern: '^pause spotify'}]",
         requires_tools=["run-shell"],
-        body_markdown="## Spotify Auto-Pause\n\nDieser Skill ...",
+        body_markdown="## Spotify Auto-Pause\n\nThis skill ...",
         state="draft",
     )
     defaults.update(overrides)
@@ -123,7 +123,7 @@ class TestWriteDraft:
         result = write_draft(draft, user_skills_root=user_skills_root)
         assert result.draft_path.exists()
         text = result.draft_path.read_text(encoding="utf-8")
-        # Frontmatter parsen
+        # Parse frontmatter
         fm_text = text.split("---", 2)[1]
         fm = yaml.safe_load(fm_text)
         assert fm["state"] == "draft"
@@ -132,8 +132,8 @@ class TestWriteDraft:
     def test_state_active_in_draft_is_forced_to_draft(
         self, user_skills_root: Path
     ) -> None:
-        """Plan-§AD-8: Sub-Jarvis-Output state="active" wird beim
-        Schreiben unconditional auf "draft" überschrieben.
+        """Plan-§AD-8: Sub-Jarvis output state="active" is unconditionally
+        overwritten to "draft" when writing.
         """
         draft = _draft(state="active")
         result = write_draft(draft, user_skills_root=user_skills_root)
@@ -148,10 +148,10 @@ class TestWriteDraft:
         second = write_draft(draft, user_skills_root=user_skills_root)
         assert first.slug == "spotify-auto-pause"
         assert second.slug == "spotify-auto-pause_2"
-        # Beide existieren
+        # Both exist
         assert first.draft_path.exists()
         assert second.draft_path.exists()
-        # Erste wurde NICHT überschrieben
+        # The first one was NOT overwritten
         assert (user_skills_root / "spotify-auto-pause" / "SKILL.md").exists()
 
 
@@ -215,7 +215,7 @@ class TestSafeLint:
         assert any("forbidden_import" in f for f in findings)
 
     def test_no_python_block_no_findings(self) -> None:
-        body = "## Pure Markdown\n\nKein Code hier."
+        body = "## Pure Markdown\n\nNo code here."
         assert safe_lint_skill_body(body) == []
 
     # Sub-Agent-Review-MAJOR-Hardening (Phase 7.5)
@@ -267,8 +267,8 @@ class TestSafeLint:
         assert any("os.execvp" in f for f in findings)
 
     def test_plain_text_codefence_ignored(self) -> None:
-        """Codefence mit Sprach-Tag das KEIN Python ist (z.B. `bash`,
-        `json`) wird NICHT AST-geparst."""
+        """A codefence with a language tag that is NOT Python (e.g. `bash`,
+        `json`) is NOT AST-parsed."""
         body = "```bash\necho 'eval is just a word here'\n```"
         assert safe_lint_skill_body(body) == []
 
@@ -323,7 +323,7 @@ class TestRunnerForcedStateOverride:
     def test_subjarvis_active_yields_forced_override_audit(
         self, user_skills_root: Path, audit: SelfModAudit
     ) -> None:
-        """Plan-AC §7.5: state=draft forciert auch wenn Sub-Jarvis 'active' liefert."""
+        """Plan-AC §7.5: state=draft is forced even when Sub-Jarvis returns 'active'."""
         async def fake_spawn(prompt: str) -> str:
             return _good_response_json(state="active")
 
@@ -335,11 +335,11 @@ class TestRunnerForcedStateOverride:
         result = asyncio.run(runner.author("intent text"))
         assert isinstance(result, AuthoringSuccess)
         assert result.forced_state_override is True
-        # Geschriebene Datei hat state: draft
+        # The written file has state: draft
         text = result.draft_path.read_text(encoding="utf-8")
         fm = yaml.safe_load(text.split("---", 2)[1])
         assert fm["state"] == "draft"
-        # Audit-Eintrag dokumentiert den Override
+        # Audit entry documents the override
         entries = [
             json.loads(line)
             for line in audit.path.read_text(encoding="utf-8").splitlines()
@@ -364,7 +364,7 @@ class TestRunnerParseFailure:
         result = asyncio.run(runner.author("intent text"))
         assert isinstance(result, AuthoringFailure)
         assert result.error_kind == "parse_failed"
-        # Kein Draft im skills-root
+        # No draft in the skills root
         drafts = list(user_skills_root.rglob("SKILL.md"))
         assert drafts == []
         # Audit "author_failed_parse"
@@ -382,7 +382,7 @@ class TestRunnerParseFailure:
 
         async def fake_spawn(prompt: str) -> str:
             attempts.append(prompt)
-            # Erste 2 Versuche: invalid; 3. Versuch: valid
+            # First 2 attempts: invalid; 3rd attempt: valid
             if len(attempts) < 3:
                 return "garbage"
             return _good_response_json()
@@ -420,7 +420,7 @@ class TestRunnerUnsafeBody:
         result = asyncio.run(runner.author("intent text"))
         assert isinstance(result, AuthoringFailure)
         assert result.error_kind == "unsafe"
-        # Kein Draft geschrieben
+        # No draft written
         assert list(user_skills_root.rglob("SKILL.md")) == []
 
 
@@ -436,7 +436,7 @@ class TestSpawnSkillAuthorTool:
         schema = SpawnSkillAuthorTool.schema
         assert schema["strict"] is True
         assert schema["additionalProperties"] is False
-        # Plan-§AD-9: alle Properties in `required`
+        # Plan-§AD-9: all properties in `required`
         properties = set(schema["properties"].keys())
         required = set(schema["required"])
         assert properties == required

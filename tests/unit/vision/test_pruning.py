@@ -1,7 +1,7 @@
-"""Unit-Tests fuer die Pruning-Helpers (ADR-0002).
+"""Unit tests for the pruning helpers (ADR-0002).
 
-Arbeitet auf synthetischen RawNode-Baeumen, damit die Tests auch auf
-non-Windows-Systemen laufen.
+Works on synthetic RawNode trees so the tests also run on
+non-Windows systems.
 """
 from __future__ import annotations
 
@@ -150,7 +150,7 @@ def test_prune_tree_applies_all_three_filters_in_order():
     ]
     kept = prune_tree(nodes, max_depth=6, monitor_bounds=MONITOR)
     names = [n.name or n.automation_id for n in kept]
-    # Root bleibt immer erhalten, plus die zwei guten Children.
+    # Root is always kept, plus the two good children.
     assert "root" in names
     assert "OK" in names
     assert "closeBtn" in names
@@ -170,14 +170,14 @@ def test_prune_tree_empty_input():
 
 
 # ---------------------------------------------------------------------------
-# Performance-Budget fuer 5000-Node-Tree (Mandat §Pattern-Warnung)
+# Performance budget for a 5000-node tree (mandate §Pattern-Warnung)
 # ---------------------------------------------------------------------------
 
 def test_prune_tree_budget_under_300ms_for_5000_nodes():
-    """Synthetischer 5000-Node-Tree — Pruning muss unter 300ms bleiben.
+    """Synthetic 5000-node tree — pruning must stay under 300ms.
 
-    Der Mandat-Text warnt explizit: Chrome/VSCode/Slack haben 5000+ Nodes.
-    Ohne dieses Budget wuerde der CU-Loop unpraktikabel werden.
+    The mandate text explicitly warns: Chrome/VSCode/Slack have 5000+ nodes.
+    Without this budget the CU loop would become impractical.
     """
     roles = list(DEFAULT_INTERESTING_ROLES) + ["Pane", "Group", "Separator"]
     nodes: list[RawNode] = [
@@ -205,6 +205,6 @@ def test_prune_tree_budget_under_300ms_for_5000_nodes():
     kept = prune_tree(nodes, max_depth=6, monitor_bounds=MONITOR)
     elapsed_ms = (time.perf_counter() - start) * 1000
     assert elapsed_ms < 300, f"Pruning took {elapsed_ms:.1f}ms, budget 300ms"
-    # Wir wollen nicht zwangsweise <=150; prune_tree selbst macht keinen Retry.
-    # Das ist die Aufgabe vom UIATreeSource. Hier reicht: funktioniert in time.
+    # We don't strictly require <=150; prune_tree itself doesn't retry.
+    # That's the job of UIATreeSource. Here it's enough that it works in time.
     assert len(kept) >= 1

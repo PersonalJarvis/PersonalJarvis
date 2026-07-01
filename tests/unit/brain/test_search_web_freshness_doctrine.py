@@ -46,7 +46,7 @@ def test_search_web_description_reserved_for_fresh_facts() -> None:
     )
     # The old over-eager evergreen triggers must be gone — these turned a plain
     # "explain X" / "what is X" question into a web search (Melbourne forensic).
-    assert "erklär mir x" not in desc and "erklaer mir x" not in desc, (
+    assert "erklär mir x" not in desc and "erklaer mir x" not in desc, (  # i18n-allow
         "search_web description still advertises evergreen 'explain X' as a "
         "primary trigger — that is the over-eager research bug"
     )

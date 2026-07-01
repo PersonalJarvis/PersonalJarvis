@@ -37,7 +37,7 @@ def test_curated_entries_have_read_only_whitelist():
 
 
 def test_gcloud_vocabulary_resolves_cost_and_overview_phrasings():
-    """Live transcript 2026-06-10 19:05: 'guck mit der Google CLI ... Kosten'
+    """Live transcript 2026-06-10 19:05: 'guck mit der Google CLI ... Kosten'  # i18n-allow: verbatim quote of the live German user utterance
     force-spawned a sub-agent mission because the gcloud capability vocabulary
     missed 'gucken', 'Kosten', and 'Google CLI'. These phrasings must resolve
     inline now."""
@@ -49,8 +49,8 @@ def test_gcloud_vocabulary_resolves_cost_and_overview_phrasings():
     reg = CapabilityRegistry()
     reg.register(cap)
     for utterance in [
-        "Guck mit der Google CLI, was meine Kosten machen",
-        "Schau mal in die Google Cloud, was gerade los ist",
+        "Guck mit der Google CLI, was meine Kosten machen",  # i18n-allow: German speech-input test vocabulary
+        "Schau mal in die Google Cloud, was gerade los ist",  # i18n-allow: German speech-input test vocabulary
         "Zeig mir meine Google-Kosten",
         "Check mal mein Billing",
         "Zeig mir meine Google-Projekte",

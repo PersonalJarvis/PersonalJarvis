@@ -19,12 +19,12 @@ from jarvis.brain.vision_gate import has_visual_marker, should_attach_screenshot
 _VISUAL = [
     "was siehst du hier",
     "schau mal das hier",
-    "klick auf den Button",
-    "warum ist das rot?",
+    "klick auf den Button",  # i18n-allow: German speech-input test vocabulary
+    "warum ist das rot?",  # i18n-allow: German speech-input test vocabulary
     "lies mir die Fehlermeldung vor",
-    "was steht da auf dem Bildschirm",
+    "was steht da auf dem Bildschirm",  # i18n-allow: German speech-input test vocabulary
     "mach das Fenster zu",
-    "was ist das da",
+    "was ist das da",  # i18n-allow: German speech-input test vocabulary
     "klick das weg",
     "look at this window",
     # live 2026-05-31 failures: spatial + read-out references the old list missed
@@ -38,15 +38,15 @@ _VISUAL = [
 # even though they are not "smalltalk". This is the user's reported case.
 _NON_VISUAL = [
     "was haben wir gerade besprochen?",
-    "erklär mir nochmal das Thema",
-    "erklär mir was ein vektor ist",
-    "wie spät ist es",
-    "was ist die Hauptstadt von Frankreich",
-    "warum ist das so wichtig?",  # "warum ist das" is NOT a marker without a colour
+    "erklär mir nochmal das Thema",  # i18n-allow: German speech-input test vocabulary
+    "erklär mir was ein vektor ist",  # i18n-allow: German speech-input test vocabulary
+    "wie spät ist es",  # i18n-allow: German speech-input test vocabulary
+    "was ist die Hauptstadt von Frankreich",  # i18n-allow: German speech-input test vocabulary
+    "warum ist das so wichtig?",  # "warum ist das" is NOT a marker without a colour (i18n-allow)
     "fass das bitte zusammen",
     "hallo jarvis",
     "danke dir",
-    "wir hatten einen langen Dialog darüber",  # "dialog" alone must NOT fire (DE = conversation)
+    "wir hatten einen langen Dialog darüber",  # "dialog" alone must NOT fire (DE = conversation) (i18n-allow)
     "was steht heute an?",  # "steht an" = scheduled, NOT a screen read-out
 ]
 
@@ -66,9 +66,9 @@ def test_non_visual_skips(text: str) -> None:
 
 
 def test_visual_marker_detection_is_case_insensitive() -> None:
-    assert has_visual_marker("Was ist DAS HIER") is True
+    assert has_visual_marker("Was ist DAS HIER") is True  # i18n-allow: German speech-input test vocabulary
     assert has_visual_marker("look at this") is True
-    assert has_visual_marker("auf dem Bildschirm") is True
+    assert has_visual_marker("auf dem Bildschirm") is True  # i18n-allow: German speech-input test vocabulary
 
 
 def test_plain_text_has_no_marker() -> None:
@@ -79,4 +79,4 @@ def test_plain_text_has_no_marker() -> None:
 
 def test_has_visual_marker_examples() -> None:
     assert has_visual_marker("klick drauf") is True
-    assert has_visual_marker("erklär mir das Thema") is False
+    assert has_visual_marker("erklär mir das Thema") is False  # i18n-allow: German speech-input test vocabulary

@@ -1,4 +1,4 @@
-"""Handler-Protocol: jeder Job-Type implementiert ``async def execute(spec, input)``."""
+"""Handler protocol: every job type implements ``async def execute(spec, input)``."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -7,11 +7,11 @@ from typing import Any, Protocol, runtime_checkable
 
 @dataclass
 class HandlerResult:
-    """Was ein Handler zurueckgibt.
+    """What a handler returns.
 
-    Der Runner persistiert das zu einer Run-Zeile. ``output`` ist der
-    Primaer-Payload (stdout / response-body / LLM-text). ``metrics`` ist
-    strukturierte Side-Info (http-status, tokens, cost, duration).
+    The runner persists this to a run row. ``output`` is the primary
+    payload (stdout / response body / LLM text). ``metrics`` is
+    structured side info (http status, tokens, cost, duration).
     """
     success: bool
     output: str
@@ -22,14 +22,14 @@ class HandlerResult:
 
 @runtime_checkable
 class JobHandler(Protocol):
-    """Strukturelles Protocol — jeder Handler ist runtime-checkable."""
+    """Structural protocol — every handler is runtime-checkable."""
 
     async def execute(
         self,
         spec: Any,
         input_data: dict[str, Any],
     ) -> HandlerResult:
-        """Fuehrt einen Job aus. ``spec`` ist das jeweilige JobSpec-Modell,
-        ``input_data`` kommt aus manual-trigger / webhook-body / cron-default.
+        """Runs a job. ``spec`` is the respective JobSpec model,
+        ``input_data`` comes from a manual trigger / webhook body / cron default.
         """
         ...

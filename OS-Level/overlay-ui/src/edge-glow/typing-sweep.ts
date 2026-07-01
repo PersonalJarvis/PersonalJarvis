@@ -1,12 +1,12 @@
-// typing-sweep.ts — Bottom-Edge Sweep pro Tastendruck. Plan §16.
+// typing-sweep.ts — Bottom-edge sweep per keystroke. Plan §16.
 //
-// Single Sweep-Div am Bottom (4 px tall). triggerSweep() macht eine
-// 200-ms-Animation (-100% -> +100% via translateX) und bumpt
-// --intensity von 0.85 auf 1.2 fuer 200 ms.
+// Single sweep div at the bottom (4 px tall). triggerSweep() runs a
+// 200-ms animation (-100% -> +100% via translateX) and bumps
+// --intensity from 0.85 to 1.2 for 200 ms.
 //
-// scheduleSweepBurst(durationHintMs, n) verteilt n Sweeps gleichmaessig
-// ueber die Action-Duration (Plan: "pulse N/100 Sweeps spread evenly").
-// Das ist die Ambient-Variante fuer eine ganze Tipp-Phase.
+// scheduleSweepBurst(durationHintMs, n) distributes n sweeps evenly
+// over the action duration (Plan: "pulse N/100 sweeps spread evenly").
+// This is the ambient variant for an entire typing phase.
 
 const SWEEP_DURATION_MS = 200; // Plan §16.1
 const INTENSITY_BOOST = 1.2;
@@ -20,7 +20,7 @@ const burstHandles: number[] = [];
 let burstIntervalId: number | null = null;
 
 /**
- * Erzeugt das Sweep-Div. Idempotent. Container default: ``document.body``.
+ * Creates the sweep div. Idempotent. Container default: ``document.body``.
  */
 export function buildTypingSweep(container?: HTMLElement): void {
   if (sweepEl !== null) return;
@@ -31,20 +31,20 @@ export function buildTypingSweep(container?: HTMLElement): void {
 }
 
 /**
- * Triggert ein einzelnes Sweep + Intensity-Bump. Re-trigger-fest:
- * cancelt einen laufenden Sweep und startet neu.
+ * Triggers a single sweep + intensity bump. Re-trigger safe:
+ * cancels a running sweep and starts a new one.
  */
 export function triggerSweep(): void {
   if (sweepEl === null) buildTypingSweep();
   const el = sweepEl as HTMLElement;
   const root = document.documentElement;
 
-  // Sweep neu starten — class entfernen, reflow, class wieder setzen.
+  // Restart the sweep — remove class, reflow, re-add class.
   el.classList.remove("active");
   void el.offsetWidth;
   el.classList.add("active");
 
-  // Intensity-Bump.
+  // Intensity bump.
   root.style.setProperty("--intensity", String(INTENSITY_BOOST));
   if (intensityResetTimer !== null) {
     window.clearTimeout(intensityResetTimer);
@@ -64,11 +64,11 @@ export function triggerSweep(): void {
 }
 
 /**
- * Ambient-Burst: pulst ``ceil(durationHintMs / 100)`` Sweeps verteilt
- * ueber die action-Duration. Plan: "pulse N/100 Sweeps spread evenly".
+ * Ambient burst: pulses ``ceil(durationHintMs / 100)`` sweeps spread
+ * over the action duration. Plan: "pulse N/100 sweeps spread evenly".
  *
- * Cancelt eine laufende Burst (z.B. wenn ein neuer typing-Action den
- * laufenden ueberlappt).
+ * Cancels a running burst (e.g. when a new typing action overlaps
+ * the running one).
  */
 export function scheduleSweepBurst(durationHintMs: number): void {
   cancelSweepBurst();
@@ -76,11 +76,11 @@ export function scheduleSweepBurst(durationHintMs: number): void {
     triggerSweep();
     return;
   }
-  // 1 Sweep pro 100 ms, mindestens 1.
+  // 1 sweep per 100 ms, at least 1.
   const total = Math.max(1, Math.ceil(durationHintMs / 100));
   const interval = durationHintMs / total;
 
-  // Ersten Sweep sofort, danach intervall-based.
+  // First sweep immediately, then interval-based.
   triggerSweep();
   let fired = 1;
   burstIntervalId = window.setInterval(() => {
@@ -94,8 +94,8 @@ export function scheduleSweepBurst(durationHintMs: number): void {
 }
 
 /**
- * Bricht einen laufenden Burst ab. Sweep-Animation laeuft aus, aber
- * keine weiteren werden gespawnt.
+ * Aborts a running burst. The sweep animation runs out, but no
+ * further sweeps get spawned.
  */
 export function cancelSweepBurst(): void {
   if (burstIntervalId !== null) {
@@ -109,10 +109,10 @@ export function cancelSweepBurst(): void {
 }
 
 /**
- * Lower-Bound der Intensity zwischen Sweep-Bursts (action_started bis
- * action_ended bleibt --intensity bei INTENSITY_LOWER damit der Glow
- * dimmer wirkt zwischen Tastenanschlaegen). Optional — main.ts ruft
- * das auf typing-action_started auf.
+ * Lower bound of intensity between sweep bursts (from action_started
+ * to action_ended, --intensity stays at INTENSITY_LOWER so the glow
+ * looks dimmer between keystrokes). Optional — main.ts calls this on
+ * typing-action_started.
  */
 export function applySweepBaseline(active: boolean): void {
   document.documentElement.style.setProperty(
@@ -122,7 +122,7 @@ export function applySweepBaseline(active: boolean): void {
 }
 
 /**
- * Test-Helper: tear-down.
+ * Test helper: tear-down.
  */
 export function teardownTypingSweep(): void {
   cancelSweepBurst();

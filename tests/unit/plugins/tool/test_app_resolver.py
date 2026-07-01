@@ -154,7 +154,7 @@ def test_start_menu_shortcut_resolves_when_not_in_app_paths_or_path(
 ) -> None:
     """Discord-class apps register ONLY a Start Menu .lnk (per-user Squirrel
     installs are absent from App Paths AND PATH). Live 2026-06-09:
-    open_app('discord') failed with 'Anwendung discord nicht gefunden', which
+    open_app('discord') failed with 'Anwendung discord nicht gefunden', which  # i18n-allow: verbatim forensic quote of the actual error text returned by the live bug
     forced the computer-use loop into unreliable taskbar pixel-clicking (it
     clicked Spotify, Discord's neighbour). The resolver must find the shortcut.
     """
@@ -185,7 +185,7 @@ async def test_open_app_launches_discord_via_start_menu_shortcut(
 ) -> None:
     """End-to-end regression for the live failure: open_app('discord') now
     resolves the Start Menu shortcut and launches it via os.startfile instead
-    of returning 'nicht gefunden'."""
+    of returning 'nicht gefunden'."""  # i18n-allow: verbatim forensic quote of the actual error text from the live bug
     programs = _seed_start_menu(monkeypatch, tmp_path, r"Discord Inc/Discord.lnk")
     expected = str(programs / "Discord Inc" / "Discord.lnk")
     started: list[str] = []

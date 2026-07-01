@@ -1,14 +1,14 @@
-"""Tests fuer jarvis.awareness.watchers.idle.IdleDetector.
+"""Tests for jarvis.awareness.watchers.idle.IdleDetector.
 
-Strategie: Mock von ``_get_idle_seconds`` plus direkter Aufruf von
-``_tick_once()``. Damit laufen Tests <100ms ohne echten 5min-Wait und
-ohne Win32 — pytest funktioniert auf jeder Plattform.
+Strategy: mock ``_get_idle_seconds`` plus a direct call to
+``_tick_once()``. This lets tests run <100ms without a real 5min wait and
+without Win32 — pytest works on any platform.
 
-Architektur-Annahmen die der Implementation in Welle 2 vorgeben:
-- ``_tick_once()`` ist eine isolierbare Method (1 Tick = 1 GetLastInputInfo
-  + Transition-Check + Event-Publish). ``_run()`` ruft sie in Schleife
-  mit ``asyncio.sleep(1)`` zwischen Ticks.
-- ``_get_idle_seconds()`` ist staticmethod — patchbar via
+Architecture assumptions that the wave-2 implementation is bound to:
+- ``_tick_once()`` is an isolable method (1 tick = 1 GetLastInputInfo
+  + transition check + event publish). ``_run()`` calls it in a loop
+  with ``asyncio.sleep(1)`` between ticks.
+- ``_get_idle_seconds()`` is a staticmethod — patchable via
   ``patch.object(IdleDetector, "_get_idle_seconds", ...)``.
 """
 from __future__ import annotations
@@ -31,7 +31,7 @@ def _make_manager() -> AwarenessManager:
 
 
 def _async_collect(target: list):
-    """Test-Helper: gibt einen async Handler zurueck der Events an die Liste anhaengt."""
+    """Test helper: returns an async handler that appends events to the list."""
     async def _handler(ev):
         target.append(ev)
     return _handler
@@ -39,7 +39,7 @@ def _async_collect(target: list):
 
 @pytest.mark.asyncio
 async def test_active_to_idle_transition_emits_event() -> None:
-    """Wenn _get_idle_seconds >= threshold: IdleEntered + state.is_idle=True."""
+    """When _get_idle_seconds >= threshold: IdleEntered + state.is_idle=True."""
     bus = EventBus()
     received: list[IdleEntered] = []
     bus.subscribe(IdleEntered, _async_collect(received))
@@ -57,7 +57,7 @@ async def test_active_to_idle_transition_emits_event() -> None:
 
 @pytest.mark.asyncio
 async def test_idle_to_active_transition_emits_exited() -> None:
-    """Sobald _get_idle_seconds < threshold und vorher idle: IdleExited."""
+    """As soon as _get_idle_seconds < threshold and it was idle before: IdleExited."""
     bus = EventBus()
     exited: list[IdleExited] = []
     bus.subscribe(IdleExited, _async_collect(exited))
@@ -65,12 +65,12 @@ async def test_idle_to_active_transition_emits_exited() -> None:
     manager = _make_manager()
     detector = IdleDetector(manager=manager, bus=bus, threshold_s=5)
 
-    # Erst idle machen
+    # First make it idle
     with patch.object(IdleDetector, "_get_idle_seconds", staticmethod(lambda: 6.0)):
         await detector._tick_once()
     assert manager.state.is_idle is True
 
-    # Dann wieder aktiv
+    # Then active again
     with patch.object(IdleDetector, "_get_idle_seconds", staticmethod(lambda: 1.0)):
         await detector._tick_once()
 
@@ -81,7 +81,7 @@ async def test_idle_to_active_transition_emits_exited() -> None:
 
 @pytest.mark.asyncio
 async def test_idle_since_ns_propagates_into_current_frame() -> None:
-    """Wenn current_frame existiert: idle_since_ns wird via dataclasses.replace gesetzt."""
+    """If current_frame exists: idle_since_ns is set via dataclasses.replace."""
     bus = EventBus()
     manager = _make_manager()
     manager.state.current_frame = FrameSnapshot(
@@ -99,14 +99,14 @@ async def test_idle_since_ns_propagates_into_current_frame() -> None:
     cur = manager.state.current_frame
     assert cur is not None
     assert cur.idle_since_ns is not None
-    # Original-Felder bleiben — replace, nicht overwrite
+    # Original fields remain — replace, not overwrite
     assert cur.active_window_title == "VS Code"
     assert cur.active_process_name == "code.exe"
 
 
 @pytest.mark.asyncio
 async def test_no_event_when_below_threshold() -> None:
-    """Mehrere Ticks unter threshold → keine Events."""
+    """Multiple ticks below threshold → no events."""
     bus = EventBus()
     received: list[IdleEntered] = []
     bus.subscribe(IdleEntered, _async_collect(received))
@@ -123,7 +123,7 @@ async def test_no_event_when_below_threshold() -> None:
 
 @pytest.mark.asyncio
 async def test_no_double_idle_event_within_same_idle_phase() -> None:
-    """Bleibt idle ueber mehrere Ticks → genau 1 IdleEntered."""
+    """Stays idle over multiple ticks → exactly 1 IdleEntered."""
     bus = EventBus()
     received: list[IdleEntered] = []
     bus.subscribe(IdleEntered, _async_collect(received))
@@ -139,7 +139,7 @@ async def test_no_double_idle_event_within_same_idle_phase() -> None:
 
 @pytest.mark.asyncio
 async def test_start_idempotent() -> None:
-    """Doppelter start() ist no-op."""
+    """A double start() is a no-op."""
     bus = EventBus()
     detector = IdleDetector(manager=_make_manager(), bus=bus, threshold_s=300)
     with patch.object(IdleDetector, "_get_idle_seconds", staticmethod(lambda: 0.0)):
@@ -150,7 +150,7 @@ async def test_start_idempotent() -> None:
 
 @pytest.mark.asyncio
 async def test_stop_idempotent_and_fast() -> None:
-    """stop() bricht in <1s ab. Doppelter stop() ist no-op."""
+    """stop() completes in <1s. A double stop() is a no-op."""
     bus = EventBus()
     detector = IdleDetector(manager=_make_manager(), bus=bus, threshold_s=300)
     with patch.object(IdleDetector, "_get_idle_seconds", staticmethod(lambda: 0.0)):

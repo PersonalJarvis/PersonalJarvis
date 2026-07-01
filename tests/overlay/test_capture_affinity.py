@@ -1,4 +1,4 @@
-"""Capture-Affinity-Reapply auf show + screenChanged. Plan §18.1."""
+"""Capture-affinity reapply on show + screenChanged. Plan §18.1."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ pytest.importorskip("PySide6.QtWidgets")
 def test_reapply_capture_affinity_calls_set_window_display_affinity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Plan §18.1: reapply_capture_affinity() muss
-    SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) feuern."""
+    """Plan §18.1: reapply_capture_affinity() must fire
+    SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)."""
     from overlay import transparency
 
     fake_user32 = mock.MagicMock()
@@ -26,7 +26,7 @@ def test_reapply_capture_affinity_calls_set_window_display_affinity(
     assert result is True
     fake_user32.SetWindowDisplayAffinity.assert_called_once()
     args, _ = fake_user32.SetWindowDisplayAffinity.call_args
-    # Erstes arg ist HWND wrapper, zweites WDA_EXCLUDEFROMCAPTURE wrapper.
+    # First arg is the HWND wrapper, second the WDA_EXCLUDEFROMCAPTURE wrapper.
     assert int(args[1].value) == transparency.WDA_EXCLUDEFROMCAPTURE
 
 
@@ -47,7 +47,7 @@ def test_reapply_capture_affinity_noop_on_non_windows(
 def test_edge_glow_window_calls_exclude_from_capture_on_show(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Plan §18.1: showEvent muss exclude_from_capture rufen."""
+    """Plan §18.1: showEvent must call exclude_from_capture."""
     from PySide6.QtGui import QGuiApplication
 
     from overlay import window_glow
@@ -94,7 +94,7 @@ def test_edge_glow_window_skips_affinity_when_disabled(
 def test_edge_glow_screen_change_reapplies_affinity(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Plan §18.1: screenChanged muss reapply_capture_affinity rufen."""
+    """Plan §18.1: screenChanged must call reapply_capture_affinity."""
     from PySide6.QtGui import QGuiApplication
 
     from overlay import window_glow
@@ -111,8 +111,8 @@ def test_edge_glow_screen_change_reapplies_affinity(
     try:
         win.show()
         qapp.processEvents()
-        # Direkter Aufruf des Handlers — wir koennen den Qt-screenChanged-
-        # Signal nicht zuverlaessig im offscreen-Plattform-Test triggern.
+        # Direct call to the handler — we can't reliably trigger the Qt
+        # screenChanged signal in the offscreen-platform test.
         win._on_screen_changed(primary)
         assert len(reapplied) == 1
     finally:
@@ -149,8 +149,8 @@ def test_mascot_screen_change_reapplies_affinity(
 
 
 def test_set_view_visible_toggles_webview(qapp) -> None:
-    """Plan §17.3 — Hide-on-Idle 5min muss set_view_visible(False) auf
-    den WebView durchreichen."""
+    """Plan §17.3 — Hide-on-Idle 5min must pass set_view_visible(False)
+    through to the WebView."""
     from PySide6.QtGui import QGuiApplication
 
     from overlay import window_glow

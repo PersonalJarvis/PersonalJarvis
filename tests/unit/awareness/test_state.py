@@ -1,7 +1,7 @@
-"""Tests fuer jarvis.awareness.state — FrameSnapshot + AwarenessState.
+"""Tests for jarvis.awareness.state — FrameSnapshot + AwarenessState.
 
-A0-Scope: Datenklassen + Default-Verhalten. snapshot_for_prompt() ist
-A0-Placeholder (leerer String); echte Rendering-Logik kommt in A1.
+A0 scope: data classes + default behavior. snapshot_for_prompt() is an
+A0 placeholder (empty string); real rendering logic arrives in A1.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def test_framesnapshot_is_frozen() -> None:
 
 
 def test_framesnapshot_has_slots() -> None:
-    """slots=True → kein __dict__, nur die deklarierten Felder."""
+    """slots=True → no __dict__, only the declared fields."""
     snap = FrameSnapshot(
         timestamp_ns=1,
         active_window_title="x",
@@ -41,7 +41,7 @@ def test_framesnapshot_has_slots() -> None:
 
 
 def test_framesnapshot_optional_fields_default_none() -> None:
-    """git_branch / open_file_hint / idle_since_ns sind in A0 immer None."""
+    """git_branch / open_file_hint / idle_since_ns are always None in A0."""
     snap = FrameSnapshot(
         timestamp_ns=1,
         active_window_title="x",
@@ -57,11 +57,11 @@ def test_framesnapshot_optional_fields_default_none() -> None:
 # --- AwarenessState --------------------------------------------------------
 
 def test_awarenessstate_default_init() -> None:
-    """AwarenessState() ohne Args ist valid und hat sinnvolle Defaults.
+    """AwarenessState() with no args is valid and has sensible defaults.
 
-    A4-Refactor: ``working_set`` ist nicht mehr ``list``, sondern ein
-    optionaler ``WorkingSet | None``. Default = None — wird vom
-    AwarenessManager-Constructor gesetzt.
+    A4 refactor: ``working_set`` is no longer a ``list`` but an
+    optional ``WorkingSet | None``. Default = None — set by the
+    AwarenessManager constructor.
     """
     state = AwarenessState()
     assert state.current_frame is None
@@ -72,7 +72,7 @@ def test_awarenessstate_default_init() -> None:
 
 
 def test_awarenessstate_is_mutable() -> None:
-    """AwarenessState ist NICHT frozen — Watchers schreiben rein."""
+    """AwarenessState is NOT frozen — watchers write into it."""
     state = AwarenessState()
     state.is_idle = True
     state.last_episode_summary = "hello"
@@ -81,9 +81,9 @@ def test_awarenessstate_is_mutable() -> None:
 
 
 def test_awarenessstate_working_set_is_per_instance() -> None:
-    """A4: ``working_set`` ist eine WorkingSet-Reference vom Manager (nicht
-    shared default). Wir verifizieren dass zwei AwarenessState-Instanzen
-    voneinander unabhaengig sind, wenn jede ihren eigenen WorkingSet bekommt.
+    """A4: ``working_set`` is a WorkingSet reference from the manager (not a
+    shared default). We verify that two AwarenessState instances are
+    independent of each other when each gets its own WorkingSet.
     """
     from jarvis.awareness.working_set import WorkingSet
 
@@ -91,7 +91,7 @@ def test_awarenessstate_working_set_is_per_instance() -> None:
     b = AwarenessState()
     a.working_set = WorkingSet()
     b.working_set = WorkingSet()
-    # Mutation von a.working_set darf b nicht beeinflussen.
+    # Mutating a.working_set must not affect b.
     from jarvis.awareness.context import Context
     a.working_set.observe(Context(project_root="x", task_label=""))
     assert a.working_set.size == 1
@@ -99,7 +99,7 @@ def test_awarenessstate_working_set_is_per_instance() -> None:
 
 
 def test_snapshot_for_prompt_a0_placeholder() -> None:
-    """A0: snapshot_for_prompt liefert leeren String. A1 ersetzt das."""
+    """A0: snapshot_for_prompt returns an empty string. A1 replaces this."""
     state = AwarenessState()
     assert state.snapshot_for_prompt() == ""
     assert state.snapshot_for_prompt(max_chars=100) == ""

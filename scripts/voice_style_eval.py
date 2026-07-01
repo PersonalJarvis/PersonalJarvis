@@ -68,14 +68,14 @@ class Scenario:
 # Realistic, conversational turns that SHOULD get a full-sentence spoken answer
 # and do NOT depend on a tool (so the style, not a tool round-trip, is measured).
 SCENARIOS: tuple[Scenario, ...] = (
-    Scenario("01", "greeting", "Guten Morgen, wie geht es dir?"),
-    Scenario("02", "smalltalk", "Ich bin heute echt ein bisschen gestresst."),
-    Scenario("03", "opinion-80s", "Was hältst du eigentlich von Musik aus den Achtzigern?"),
-    Scenario("04", "explain", "Erklär mir mal, warum der Himmel blau ist."),
-    Scenario("05", "advice", "Hast du einen Tipp, wie ich morgens besser in die Gänge komme?"),
-    Scenario("06", "knowledge", "Erzähl mir was Interessantes über den Mond."),
-    Scenario("07", "compare", "Was ist der Unterschied zwischen Nebel und Wolken?"),
-    Scenario("08", "chitchat", "Puh, war ein langer Tag. Womit kennst du dich eigentlich gut aus?"),
+    Scenario("01", "greeting", "Guten Morgen, wie geht es dir?"),  # i18n-allow
+    Scenario("02", "smalltalk", "Ich bin heute echt ein bisschen gestresst."),  # i18n-allow
+    Scenario("03", "opinion-80s", "Was hältst du eigentlich von Musik aus den Achtzigern?"),  # i18n-allow
+    Scenario("04", "explain", "Erklär mir mal, warum der Himmel blau ist."),  # i18n-allow
+    Scenario("05", "advice", "Hast du einen Tipp, wie ich morgens besser in die Gänge komme?"),  # i18n-allow
+    Scenario("06", "knowledge", "Erzähl mir was Interessantes über den Mond."),  # i18n-allow
+    Scenario("07", "compare", "Was ist der Unterschied zwischen Nebel und Wolken?"),  # i18n-allow
+    Scenario("08", "chitchat", "Puh, war ein langer Tag. Womit kennst du dich eigentlich gut aus?"),  # i18n-allow
 )
 
 

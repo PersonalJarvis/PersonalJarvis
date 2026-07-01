@@ -36,7 +36,7 @@ async def test_background_readback_speaks_english_for_english_conversation() -> 
     assert tts.calls, "expected a background readback to be synthesized"
     text, lang_code = tts.calls[-1]
     assert lang_code == "en-US"
-    assert "Fertig" not in text
+    assert "Fertig" not in text  # i18n-allow: verifies the German phrase is NOT the actual German voice output
 
 
 @pytest.mark.asyncio
@@ -53,4 +53,4 @@ async def test_background_readback_stays_german_for_german_conversation() -> Non
     assert tts.calls, "expected a background readback to be synthesized"
     text, lang_code = tts.calls[-1]
     assert lang_code == "de-DE"
-    assert "Fertig" in text
+    assert "Fertig" in text  # i18n-allow: matches the actual German voice output
