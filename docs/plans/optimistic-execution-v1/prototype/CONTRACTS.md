@@ -118,9 +118,9 @@ def ack_for(command: str, route: RouteKind) -> str: ...
   4. any `ACTION_VERBS` substring present → `RouteKind.SMART_TOOL` (unknown action ⇒ delegate)
   5. default → `RouteKind.SMALLTALK`
 - `ack_for` returns the spoken text:
-  - `SMART_TOOL` → an optimistic ACK, German, butler tone, e.g. `"Geht klar, ich kümmere mich drum."`
-  - `DUMB_TOOL` → a short confirmation, e.g. `"Mach ich."`
-  - `SMALLTALK` → a brief friendly direct reply, e.g. `"Mir geht's gut, danke der Nachfrage!"`
+  - `SMART_TOOL` → an optimistic ACK, German, butler tone, e.g. `"Geht klar, ich kümmere mich drum."` <!-- i18n-allow: product voice output DE -->
+  - `DUMB_TOOL` → a short confirmation, e.g. `"Mach ich."` <!-- i18n-allow: product voice output DE -->
+  - `SMALLTALK` → a brief friendly direct reply, e.g. `"Mir geht's gut, danke der Nachfrage!"` <!-- i18n-allow: product voice output DE -->
   - Never empty.
 
 ### Your unit tests: `tests/test_bus.py`, `tests/test_router.py`
@@ -227,7 +227,7 @@ Behaviour:
   (+ optionally `ev.command`) and runs it through a local `_scrub` regex.
   - For `MISSING_INFO` naming a recipient (e.g. detail "... for Max"), produce
     something like: `"Kurzer Nachtrag zur Mail an Max: mir fehlt noch seine
-    E-Mail-Adresse. Hast du die kurz für mich?"` — it MUST contain the recipient
+    E-Mail-Adresse. Hast du die kurz für mich?"` <!-- i18n-allow: product voice output example DE --> — it MUST contain the recipient
     name (extract a capitalised name from `ev.detail` or `ev.command`).
   - For `AUTH_REQUIRED` / `NETWORK_ERROR` / `FATAL`: a short, polite organic
     sentence appropriate to the reason.

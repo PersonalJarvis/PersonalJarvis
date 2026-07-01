@@ -40,19 +40,19 @@
 
   ```
   jarvis/brain/JARVIS_PERSONA.md:139-143
-    Default-Anrede ist "Alex" (wie oben). Ausnahme: bei bestimmten
-    Zeremonien nutze "Sir" — das macht die Delegations-Momente besonders:
-    - Sub-Agent-Spawn: "Sir, ich starte einen Sub-Agent, der ..."
-    - Sub-Agent-Completion: "Sir, fertig. {summary}"
-    - Sub-Agent-Fehler: "Sir, der Sub-Agent ist gescheitert: {error}"
+    Default-Anrede ist "Alex" (wie oben). Ausnahme: bei bestimmten  <!-- i18n-allow -->
+    Zeremonien nutze "Sir" — das macht die Delegations-Momente besonders:  <!-- i18n-allow -->
+    - Sub-Agent-Spawn: "Sir, ich starte einen Sub-Agent, der ..."  <!-- i18n-allow -->
+    - Sub-Agent-Completion: "Sir, fertig. {summary}"  <!-- i18n-allow -->
+    - Sub-Agent-Fehler: "Sir, der Sub-Agent ist gescheitert: {error}"  <!-- i18n-allow -->
   ```
 
   Plus `router.py:200-202` contains the literal sentence as an example in the LLM system prompt:
 
   ```
   jarvis/brain/router.py:200-202
-    Die Sprachansage wird daraus automatisch:
-        "Sir, ich starte einen Sub-Agent, der <action> <target>."
+    Die Sprachansage wird daraus automatisch:  <!-- i18n-allow -->
+        "Sir, ich starte einen Sub-Agent, der <action> <target>."  <!-- i18n-allow -->
   ```
 
   Plus `gemini_test_brain.py` is entirely "Sir"-centric (line 38: "Address the user as 'Sir'", line 53: `HANGUP_SIGNAL = "Goodbye, Sir."`).

@@ -21,7 +21,7 @@ Brain output lands on two TTS paths:
 1. `pipeline._handle_utterance` → `_speak()` → `tts.synthesize()` (main path).
 2. `pipeline._on_announcement` (`AnnouncementRequested` bus handler) → `tts.synthesize()` (bus bypass for skill / Jarvis-Agent announcements).
 
-On both paths, tool-call JSON, stack traces, Markdown remnants, engineering jargon (`Harness`/`MCP`/`Subprocess`/`Provider`), self-reference (`Als KI`/`As an AI`), echo paraphrase (`Du möchtest also …`/`If I understand correctly …`) and filler openers (`Großartige Frage`) reach the TTS synthesis unfiltered — the user hears engineering garbage read aloud. Pre-existing pre-filters (`_strip_paraphrase_prefix`, `_is_non_substantive_response`) cover only a part of it.
+On both paths, tool-call JSON, stack traces, Markdown remnants, engineering jargon (`Harness`/`MCP`/`Subprocess`/`Provider`), self-reference (self-identification as AI), echo paraphrase (reformulation opening) and filler openers (generic affirmations) reach the TTS synthesis unfiltered — the user hears engineering garbage read aloud. Pre-existing pre-filters (`_strip_paraphrase_prefix`, `_is_non_substantive_response`) cover only a part of it.  # i18n-allow
 
 Three filter strategies were up for debate:
 
@@ -34,19 +34,20 @@ Three filter strategies were up for debate:
 **Pattern-based filter in `jarvis/brain/output_filter.py`.** Regex-only, no LLM call, with the following order of operations:
 
 ```
-1. Stack trace -> standard phrase ("Es trat ein Fehler auf."), fallback_used=True
+1. Stack trace -> standard phrase ("Error occurred"), fallback_used=True  # i18n-allow
 2. Markdown strip (**, ##, ```, leading -/*)
 3. Tool-call JSON / tool-call KW args / XML tool tags (tool-name whitelist)
-4. Self-reference (Als KI / Als Sprachmodell / Ich bin nur / As an AI / I'm just a language model)
+4. Self-reference (AI self-identification / language model claims)
 5. Echo paraphrase ONLY in opener position (<= 60 characters)
-6. Filler opener (Großartige Frage / Tolle Frage / Great question)
+6. Filler opener (generic affirmations)
 7. Engineering jargon (Harness / MCP / Subprocess / Provider) with hyphen protection
 8. Whitespace normalization
 ```
 
-**Whitelist** (sacred, NEVER scrubbed): `Datei`, `Email`, `Browser`, `Terminal`, `Notiz`, `Termin`, `Kalender`. Hyphen compounds (`Browser-Provider`, `Brain-Provider`) are preserved by lookbehind.
+**Whitelist** (sacred, NEVER scrubbed): `Datei`, `Email`, `Browser`, `Terminal`, `Notiz`, `Termin`, `Kalender`.  # i18n-allow
+Hyphen compounds (`Browser-Provider`, `Brain-Provider`) are preserved by lookbehind.
 
-**Failure-mode-6 protection:** the echo-paraphrase filter acts ONLY on the first 60 characters. Mid-sentence echoes ("Soll ich den Termin verschieben? Du möchtest also …") are preserved — otherwise the filter would swallow legitimate confirmations.
+**Failure-mode-6 protection:** the echo-paraphrase filter acts ONLY on the first 60 characters. Mid-sentence echoes are preserved — otherwise the filter would swallow legitimate confirmations.  # i18n-allow
 
 ### Rationale
 

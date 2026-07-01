@@ -69,14 +69,14 @@ python -m jarvis
 # Sidebar -> "Missions"
 ```
 
-1. Speak (or hotkey): "Schreib mir eine Python-Funktion die Primzahlen bis 100 generiert und einen Pytest-Test dazu." (DE: "Write me a Python function that generates the primes up to 100 plus a pytest test for it.")
+1. Speak (or hotkey): "Schreib mir eine Python-Funktion die Primzahlen bis 100 generiert und einen Pytest-Test dazu." (DE: "Write me a Python function that generates the primes up to 100 plus a pytest test for it.")  <!-- i18n-allow -->
 2. The UI mission tree shows the new mission under the "Mission Control" sidebar view.
 3. Expectation:
    - Mission state PENDING → RUNNING → CRITIQUING → APPROVED (1-2 iterations typical)
    - Decomposer builds 1-2 parallel tasks (`primes.py`, `test_primes.py`)
    - PTY tab live with claude output
    - VerdictPanel shows the CriticVerdict with 4 axes
-   - **Voice (DE):** "Sir, fertig. Die Primzahl-Funktion und der Test sind angelegt." (via grok-voice TTS)
+   - **Voice (DE):** "Sir, fertig. Die Primzahl-Funktion und der Test sind angelegt." (via grok-voice TTS)  <!-- i18n-allow -->
 
 **Acceptance cap:** Wall-clock < 90s, cost < $0.40, MissionApproved.
 
@@ -99,7 +99,7 @@ Expectation:
 - Console: `Phase-6 stack online (db=..., recovered=1, sweep=N/M/0 scanned/removed/errors)`
 - UI Mission-View: the previous mission as FAILED with reason="crash_recovery"
 - `tasklist /FI "IMAGENAME eq claude.exe"` → empty (Job Object reaps all workers)
-- Voice (if voice-source): "Sir, eine vorherige Mission wurde wegen Crash abgebrochen."
+- Voice (if voice-source): "Sir, eine vorherige Mission wurde wegen Crash abgebrochen."  <!-- i18n-allow -->
 
 ### S4 — Budget-Stop
 
@@ -116,7 +116,7 @@ Expectation:
 - Mission starts, worker spawn, first cost accumulates
 - At 50% (0.025): Voice "Alex, halbes Budget verbraucht."
 - At 80% (0.04): Voice "Alex, achtzig Prozent vom Budget weg."
-- At 100% (0.05): WorkerKilled with reason="budget" + MissionFailed("budget_exceeded") + Voice "Sir, Budget aufgebraucht. Mission abgebrochen."
+- At 100% (0.05): WorkerKilled with reason="budget" + MissionFailed("budget_exceeded") + Voice "Sir, Budget aufgebraucht. Mission abgebrochen."  <!-- i18n-allow -->
 
 ### S5 — Injection (already covered by unit tests)
 
@@ -133,7 +133,7 @@ The unit test simulates diff output with `+++ b/.env` — Path-Guard blocks, Wor
 ### Action/Observation invariant (ADR-0009 §1)
 - Voice-Readback **NEVER** reads raw LLM narratives
 - `MissionApproved.summary_de` is Kontrollierer-signed (source_actor="kontrollierer")
-- `WorkerCorrectionRequired.correction_instruction` (LLM output) is **NEVER** read aloud — only "Iteration N läuft" as an ack
+- `WorkerCorrectionRequired.correction_instruction` (LLM output) is **NEVER** read aloud — only "Iteration N läuft" as an ack  <!-- i18n-allow -->
 - Verified via `test_voice_listener.py::test_correction_instruction_never_in_voice_output`
 
 ### Sycophancy defense (Critic-Loop, 3-fold staggered)

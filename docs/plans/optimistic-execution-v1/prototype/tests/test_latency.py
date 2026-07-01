@@ -18,26 +18,26 @@ from optimistic.worker import HeavyDutyWorker
 from proto_testkit import FlightLog, percentile
 
 ROUTER_SAMPLES = [
-    "Hallo, wie geht's?",
-    "Danke dir!",
-    "spiel etwas Musik ab",
-    "mach mal lauter",
-    "mach die Adjusties",
-    "Schreib Max eine E-Mail",
-    "Maile dem Team den Status",
-    "Trag morgen einen Termin ein",
-    "Lad das Dokument auf Drive hoch",
-    "Erzähl mir einen Witz",
-    "Buche mir einen Flug nach Berlin",
-    "öffne die Projektseite",
-    "Wie spät ist es?",
-    "spiel Spotify ab",
-    "leiser bitte",
-    "schreib eine Notiz",
-    "such mir das Quartalsergebnis",
-    "installier das Update",
-    "zeig mir den Kalender",
-    "Guten Morgen!",
+    "Hallo, wie geht's?",  # i18n-allow: test content — user voice utterance DE
+    "Danke dir!",  # i18n-allow: test content — user voice utterance DE
+    "spiel etwas Musik ab",  # i18n-allow: test content — user voice utterance DE
+    "mach mal lauter",  # i18n-allow: test content — user voice utterance DE
+    "mach die Adjusties",  # i18n-allow: test content — user voice utterance DE
+    "Schreib Max eine E-Mail",  # i18n-allow: test content — user voice utterance DE
+    "Maile dem Team den Status",  # i18n-allow: test content — user voice utterance DE
+    "Trag morgen einen Termin ein",  # i18n-allow: test content — user voice utterance DE
+    "Lad das Dokument auf Drive hoch",  # i18n-allow: test content — user voice utterance DE
+    "Erzähl mir einen Witz",  # i18n-allow: test content — user voice utterance DE
+    "Buche mir einen Flug nach Berlin",  # i18n-allow: test content — user voice utterance DE
+    "öffne die Projektseite",  # i18n-allow: test content — user voice utterance DE
+    "Wie spät ist es?",  # i18n-allow: test content — user voice utterance DE
+    "spiel Spotify ab",  # i18n-allow: test content — user voice utterance DE
+    "leiser bitte",  # i18n-allow: test content — user voice utterance DE
+    "schreib eine Notiz",  # i18n-allow: test content — user voice utterance DE
+    "such mir das Quartalsergebnis",  # i18n-allow: test content — user voice utterance DE
+    "installier das Update",  # i18n-allow: test content — user voice utterance DE
+    "zeig mir den Kalender",  # i18n-allow: test content — user voice utterance DE
+    "Guten Morgen!",  # i18n-allow: test content — user voice utterance DE
 ]
 
 

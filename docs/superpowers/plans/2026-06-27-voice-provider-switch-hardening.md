@@ -126,12 +126,12 @@ In `jarvis/brain/manager.py`, immediately AFTER the `_SUBAGENT_SWITCH_CONFIRM` d
 # a false "done"; always names what failed. de/en/es (Runtime Output Language).
 _SUBAGENT_SWITCH_FAIL: dict[str, dict[str, str]] = {
     "missing_credential": {
-        "de": "{p} ist nicht verbunden — richte es zuerst ein, dann stelle ich um.",
+        "de": "{p} ist nicht verbunden — richte es zuerst ein, dann stelle ich um.",  # i18n-allow
         "en": "{p} isn't connected — set it up first, then I'll switch.",
         "es": "{p} no está conectado — configúralo primero y luego cambio.",
     },
     "other": {
-        "de": "Das konnte ich nicht auf {p} umstellen.",
+        "de": "Das konnte ich nicht auf {p} umstellen.",  # i18n-allow
         "en": "I couldn't switch the sub-agent to {p}.",
         "es": "No pude cambiar el sub-agente a {p}.",
     },
@@ -219,7 +219,7 @@ git commit -m "fix(voice): subagent voice switch validates via apply_provider_sw
 
 ## Task 2: Main-brain provider switch recognises "from X to Y"
 
-**Why:** `_PROVIDER_PATTERN` has no "von/from" branch, so "wechsel von Gemini auf OpenAI" matches nothing and falls through to the brain LLM (which may refuse or force-spawn). The Jarvis-Agent matcher was already fixed for this; the main-brain regex wasn't.
+**Why:** `_PROVIDER_PATTERN` has no "von/from" branch, so "wechsel von Gemini auf OpenAI" matches nothing and falls through to the brain LLM (which may refuse or force-spawn). The Jarvis-Agent matcher was already fixed for this; the main-brain regex wasn't. <!-- i18n-allow -->
 
 **Files:**
 - Modify: `jarvis/brain/voice_command_gate.py` (`_PROVIDER_PATTERN` ~42-49)
@@ -231,8 +231,8 @@ Append to `tests/unit/brain/test_voice_command_gate.py`:
 
 ```python
 def test_main_provider_switch_from_x_to_y_targets_y() -> None:
-    # "von Gemini auf OpenAI" must target OpenAI (the destination), not fall through.
-    m = match_voice_command("wechsel von gemini auf openai")
+    # "von Gemini auf OpenAI" must target OpenAI (the destination), not fall through.  # i18n-allow
+    m = match_voice_command("wechsel von gemini auf openai")  # i18n-allow: fixture
     assert m is not None and m.kind == "provider_switch"
     assert m.target == "openai"
 
@@ -377,7 +377,7 @@ git commit -m "fix(voice): main-brain switch accepts 'chatgpt'/'anthropic' (mana
 
 ## Task 4: Reply-language switch picks the earliest language in the TEXT
 
-**Why:** `_match_language_switch` loops `_LANG_ALIASES` in DICT-INSERTION order and returns the first that appears anywhere, so "antworte auf Deutsch und Englisch" returns "en" (english is earlier in the dict) instead of "de".
+**Why:** `_match_language_switch` loops `_LANG_ALIASES` in DICT-INSERTION order and returns the first that appears anywhere, so "antworte auf Deutsch und Englisch" returns "en" (english is earlier in the dict) instead of "de". <!-- i18n-allow -->
 
 **Files:**
 - Modify: `jarvis/brain/voice_command_gate.py` (`_match_language_switch` ~111-125)
@@ -391,13 +391,13 @@ Append to `tests/unit/brain/test_voice_command_gate.py`:
 def test_language_switch_picks_earliest_in_text() -> None:
     # Two languages in one sentence → the one mentioned FIRST wins, not the first
     # in dict-insertion order (forensic 2026-06-27).
-    m = match_voice_command("antworte auf deutsch und englisch")
+    m = match_voice_command("antworte auf deutsch und englisch")  # i18n-allow: fixture
     assert m is not None and m.kind == "language_switch"
     assert m.target == "de"
 
 
 def test_language_switch_single_still_works() -> None:
-    m = match_voice_command("antworte auf englisch")
+    m = match_voice_command("antworte auf englisch")  # i18n-allow: fixture
     assert m is not None and m.kind == "language_switch"
     assert m.target == "en"
 ```
@@ -413,7 +413,7 @@ In `jarvis/brain/voice_command_gate.py`, replace the language-word scan at the t
 
 ```python
     # Pick the language word at the EARLIEST position in the text, not the first
-    # in dict-insertion order — "auf Deutsch und Englisch" must resolve to "de"
+    # in dict-insertion order — "auf Deutsch und Englisch" must resolve to "de"  # i18n-allow
     # (forensic 2026-06-27).
     best: tuple[int, str] | None = None  # (start_position, code)
     for word, c in _LANG_ALIASES.items():
@@ -456,7 +456,7 @@ Expected: no errors. (`manager.py` has pre-existing E501s unrelated to these edi
 
 - [ ] **Step 3: Manual live check (after restart)**
 
-Restart via `POST /api/settings/restart-app`. By voice, try: "wechsel von Gemini auf OpenAI" (→ switches to OpenAI), "stell den Subagent auf einen nicht-verbundenen Anbieter" (→ honest "not connected", NOT "Erledigt"), "nutze ChatGPT", "antworte auf Deutsch und Englisch" (→ German).
+Restart via `POST /api/settings/restart-app`. By voice, try: "wechsel von Gemini auf OpenAI" (→ switches to OpenAI), "stell den Subagent auf einen nicht-verbundenen Anbieter" (→ honest "not connected", NOT "Erledigt"), "nutze ChatGPT", "antworte auf Deutsch und Englisch" (→ German). <!-- i18n-allow -->
 
 ---
 

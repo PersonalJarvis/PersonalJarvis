@@ -107,7 +107,7 @@ class TestDelegationIsInstant:
         async def scenario():
             bus = FakeBus()
             worker = HeavyDutyWorker(bus, _mock_settings())
-            spawn = make_spawn("Termin buche für morgen", tool_name="calendar")
+            spawn = make_spawn("Termin buche für morgen", tool_name="calendar")  # i18n-allow
             await bus.publish(spawn)
             in_flight_before = worker.in_flight
             await worker.drain()
@@ -126,7 +126,7 @@ class TestDelegationIsInstant:
             bus = FakeBus()
             worker = HeavyDutyWorker(bus, _mock_settings())
             for i in range(3):
-                await bus.publish(make_spawn(f"Termin {i}", tool_name="calendar"))
+                await bus.publish(make_spawn(f"Termin {i}", tool_name="calendar"))  # i18n-allow
             await worker.drain()
             return worker.in_flight
 
@@ -145,7 +145,7 @@ class TestWorkerSuccessPath:
         async def scenario():
             bus = FakeBus()
             worker = HeavyDutyWorker(bus, _mock_settings())
-            spawn = make_spawn("Termin anlegen", tool_name="calendar")
+            spawn = make_spawn("Termin anlegen", tool_name="calendar")  # i18n-allow
             await bus.publish(spawn)
             await worker.drain()
             return bus.published
@@ -196,7 +196,7 @@ class TestWorkerSuccessPath:
         async def scenario():
             bus = FakeBus()
             worker = HeavyDutyWorker(bus, _mock_settings())
-            spawn = make_spawn("Termin anlegen", tool_name="calendar")
+            spawn = make_spawn("Termin anlegen", tool_name="calendar")  # i18n-allow
             await bus.publish(spawn)
             await worker.drain()
             started = next(e for e in bus.published if isinstance(e, WorkerStarted))
@@ -283,7 +283,7 @@ class TestWorkerMissingInfoPath:
             bus = FakeBus()
             worker = HeavyDutyWorker(bus, _mock_settings())
             spawn = make_spawn(
-                "Schreib Max eine Mail",
+                "Schreib Max eine Mail",  # i18n-allow
                 tool_name="gmail",
                 context={},
             )
@@ -305,7 +305,7 @@ class TestWorkerMissingInfoPath:
         async def scenario():
             bus = FakeBus()
             worker = HeavyDutyWorker(bus, _mock_settings())
-            spawn = make_spawn("Schreib Max eine Mail", tool_name="gmail", context={})
+            spawn = make_spawn("Schreib Max eine Mail", tool_name="gmail", context={})  # i18n-allow
             await bus.publish(spawn)
             await worker.drain()
             return bus.published
@@ -320,7 +320,7 @@ class TestWorkerMissingInfoPath:
         async def scenario():
             bus = FakeBus()
             worker = HeavyDutyWorker(bus, _mock_settings())
-            spawn = make_spawn("Schreib Max eine Mail", tool_name="gmail", context={})
+            spawn = make_spawn("Schreib Max eine Mail", tool_name="gmail", context={})  # i18n-allow
             await bus.publish(spawn)
             await worker.drain()
             corr = next(e for e in bus.published if isinstance(e, WorkerCorrectionNeeded))
@@ -479,7 +479,7 @@ class TestWorkerConcurrency:
             commands = [
                 ("Termin anlegen", "calendar"),
                 ("drive upload", "drive"),
-                ("Schreib Anna eine Mail", "gmail"),
+                ("Schreib Anna eine Mail", "gmail"),  # i18n-allow
             ]
             for cmd, tool in commands:
                 await bus.publish(make_spawn(

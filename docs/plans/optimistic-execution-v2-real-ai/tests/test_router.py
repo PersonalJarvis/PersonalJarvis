@@ -20,23 +20,23 @@ class TestClassifyDumbTool:
     """Commands that should resolve to DUMB_TOOL (local script, never wakes worker)."""
 
     def test_spiel_musik_is_dumb(self):
-        assert classify("spiel Musik") == RouteKind.DUMB_TOOL
+        assert classify("spiel Musik") == RouteKind.DUMB_TOOL  # i18n-allow
 
     def test_spiel_melodie_is_dumb(self):
         """'spiel die mail-melodie ab' must be DUMB, not SMART (dumb-before-smart rule)."""
-        assert classify("spiel die mail-melodie ab") == RouteKind.DUMB_TOOL
+        assert classify("spiel die mail-melodie ab") == RouteKind.DUMB_TOOL  # i18n-allow
 
     def test_spotify_is_dumb(self):
-        assert classify("Spotify abspielen") == RouteKind.DUMB_TOOL
+        assert classify("Spotify abspielen") == RouteKind.DUMB_TOOL  # i18n-allow
 
     def test_lauter_is_dumb(self):
-        assert classify("mach es lauter") == RouteKind.DUMB_TOOL
+        assert classify("mach es lauter") == RouteKind.DUMB_TOOL  # i18n-allow
 
     def test_leiser_is_dumb(self):
-        assert classify("leiser bitte") == RouteKind.DUMB_TOOL
+        assert classify("leiser bitte") == RouteKind.DUMB_TOOL  # i18n-allow
 
     def test_lautstaerke_is_dumb(self):
-        assert classify("Lautstärke erhöhen") == RouteKind.DUMB_TOOL
+        assert classify("Lautstärke erhöhen") == RouteKind.DUMB_TOOL  # i18n-allow
 
     def test_adjust_is_dumb(self):
         assert classify("adjustier das Fenster") == RouteKind.DUMB_TOOL
@@ -53,22 +53,22 @@ class TestClassifySmartTool:
     """Commands that should resolve to SMART_TOOL (heavy worker needed)."""
 
     def test_mail_is_smart(self):
-        assert classify("Schreib Max eine Mail") == RouteKind.SMART_TOOL
+        assert classify("Schreib Max eine Mail") == RouteKind.SMART_TOOL  # i18n-allow
 
     def test_email_is_smart(self):
-        assert classify("Schick eine Email an Lisa") == RouteKind.SMART_TOOL
+        assert classify("Schick eine Email an Lisa") == RouteKind.SMART_TOOL  # i18n-allow
 
     def test_termin_is_smart(self):
-        assert classify("Erstell einen Termin für morgen") == RouteKind.SMART_TOOL
+        assert classify("Erstell einen Termin für morgen") == RouteKind.SMART_TOOL  # i18n-allow
 
     def test_kalender_is_smart(self):
-        assert classify("Trag das in den Kalender ein") == RouteKind.SMART_TOOL
+        assert classify("Trag das in den Kalender ein") == RouteKind.SMART_TOOL  # i18n-allow
 
     def test_drive_is_smart(self):
-        assert classify("Lade das Dokument in Drive hoch") == RouteKind.SMART_TOOL
+        assert classify("Lade das Dokument in Drive hoch") == RouteKind.SMART_TOOL  # i18n-allow
 
     def test_schreib_triggers_gmail(self):
-        assert classify("schreib eine Nachricht") == RouteKind.SMART_TOOL
+        assert classify("schreib eine Nachricht") == RouteKind.SMART_TOOL  # i18n-allow
 
 
 # ---------------------------------------------------------------------------
@@ -80,19 +80,19 @@ class TestClassifyActionVerbEscalation:
 
     def test_installier_unknown_is_smart(self):
         """'installier das Update' — unknown tool but action verb → SMART."""
-        assert classify("installier das Update") == RouteKind.SMART_TOOL
+        assert classify("installier das Update") == RouteKind.SMART_TOOL  # i18n-allow
 
     def test_oeffne_is_smart(self):
-        assert classify("öffne den Browser") == RouteKind.SMART_TOOL
+        assert classify("öffne den Browser") == RouteKind.SMART_TOOL  # i18n-allow
 
     def test_baue_is_smart(self):
-        assert classify("baue die App") == RouteKind.SMART_TOOL
+        assert classify("baue die App") == RouteKind.SMART_TOOL  # i18n-allow
 
     def test_erstell_unknown_is_smart(self):
-        assert classify("erstell eine Präsentation") == RouteKind.SMART_TOOL
+        assert classify("erstell eine Präsentation") == RouteKind.SMART_TOOL  # i18n-allow
 
     def test_such_is_smart(self):
-        assert classify("such nach dem Ordner") == RouteKind.SMART_TOOL
+        assert classify("such nach dem Ordner") == RouteKind.SMART_TOOL  # i18n-allow
 
 
 # ---------------------------------------------------------------------------
@@ -103,29 +103,29 @@ class TestClassifySmallTalk:
     """Greetings and smalltalk must never wake the worker."""
 
     def test_hallo_is_smalltalk(self):
-        assert classify("Hallo") == RouteKind.SMALLTALK
+        assert classify("Hallo") == RouteKind.SMALLTALK  # i18n-allow
 
     def test_hi_is_smalltalk(self):
-        assert classify("hi Jarvis") == RouteKind.SMALLTALK
+        assert classify("hi Jarvis") == RouteKind.SMALLTALK  # i18n-allow
 
     def test_wie_geht_is_smalltalk(self):
-        assert classify("wie geht es dir heute") == RouteKind.SMALLTALK
+        assert classify("wie geht es dir heute") == RouteKind.SMALLTALK  # i18n-allow
 
     def test_danke_is_smalltalk(self):
-        assert classify("danke schön") == RouteKind.SMALLTALK
+        assert classify("danke schön") == RouteKind.SMALLTALK  # i18n-allow
 
     def test_witz_is_smalltalk(self):
-        assert classify("erzähl mir einen Witz") == RouteKind.SMALLTALK
+        assert classify("erzähl mir einen Witz") == RouteKind.SMALLTALK  # i18n-allow
 
     def test_hey_is_smalltalk(self):
-        assert classify("hey") == RouteKind.SMALLTALK
+        assert classify("hey") == RouteKind.SMALLTALK  # i18n-allow
 
     def test_guten_morgen_is_smalltalk(self):
-        assert classify("guten morgen") == RouteKind.SMALLTALK
+        assert classify("guten morgen") == RouteKind.SMALLTALK  # i18n-allow
 
     def test_unrecognized_no_verb_is_smalltalk(self):
         """A completely unknown command with no action verb defaults to SMALLTALK."""
-        assert classify("blah blah keine Ahnung") == RouteKind.SMALLTALK
+        assert classify("blah blah keine Ahnung") == RouteKind.SMALLTALK  # i18n-allow
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +156,7 @@ class TestClassifyEdgeCases:
     def test_action_verb_mach_without_dumb_trigger(self):
         """'mach das Fenster auf' — 'mach' action verb but no dumb tool trigger."""
         # No dumb trigger, no smart trigger, but 'mach' is an action verb
-        result = classify("mach das Fenster auf")
+        result = classify("mach das Fenster auf")  # i18n-allow
         assert result == RouteKind.SMART_TOOL
 
     def test_smalltalk_trigger_plus_action_verb_prefers_smart(self):
@@ -176,26 +176,26 @@ class TestClassifyLatency:
     """Performance guard: classify() must be pure and fast (< 150 ms cold)."""
 
     COMMANDS = [
-        "Hallo",
-        "spiel Musik",
-        "spiel die mail-melodie ab",
-        "Schreib Max eine Mail",
-        "Trag einen Termin ein",
-        "installier das Update",
-        "öffne den Browser",
-        "hi Jarvis",
-        "wie geht es dir",
-        "danke",
-        "Lautstärke erhöhen",
-        "Lade das Dokument in Drive hoch",
-        "baue die App",
-        "erstell eine Präsentation",
-        "such nach dem Ordner",
-        "lauter bitte",
-        "leiser",
-        "Kalender Termin morgen",
-        "erzähl mir einen Witz",
-        "blah blah keine Ahnung",
+        "Hallo",  # i18n-allow
+        "spiel Musik",  # i18n-allow
+        "spiel die mail-melodie ab",  # i18n-allow
+        "Schreib Max eine Mail",  # i18n-allow
+        "Trag einen Termin ein",  # i18n-allow
+        "installier das Update",  # i18n-allow
+        "öffne den Browser",  # i18n-allow
+        "hi Jarvis",  # i18n-allow
+        "wie geht es dir",  # i18n-allow
+        "danke",  # i18n-allow
+        "Lautstärke erhöhen",  # i18n-allow
+        "Lade das Dokument in Drive hoch",  # i18n-allow
+        "baue die App",  # i18n-allow
+        "erstell eine Präsentation",  # i18n-allow
+        "such nach dem Ordner",  # i18n-allow
+        "lauter bitte",  # i18n-allow
+        "leiser",  # i18n-allow
+        "Kalender Termin morgen",  # i18n-allow
+        "erzähl mir einen Witz",  # i18n-allow
+        "blah blah keine Ahnung",  # i18n-allow
     ]
 
     def test_classify_worst_case_latency(self):
@@ -227,31 +227,31 @@ class TestAckFor:
     """ack_for() must return a non-empty German string for every RouteKind."""
 
     def test_ack_smart_tool_non_empty(self):
-        text = ack_for("Schreib Max eine Mail", RouteKind.SMART_TOOL)
+        text = ack_for("Schreib Max eine Mail", RouteKind.SMART_TOOL)  # i18n-allow
         assert isinstance(text, str)
         assert len(text.strip()) > 0
 
     def test_ack_dumb_tool_non_empty(self):
-        text = ack_for("spiel Musik", RouteKind.DUMB_TOOL)
+        text = ack_for("spiel Musik", RouteKind.DUMB_TOOL)  # i18n-allow
         assert isinstance(text, str)
         assert len(text.strip()) > 0
 
     def test_ack_smalltalk_non_empty(self):
-        text = ack_for("Hallo", RouteKind.SMALLTALK)
+        text = ack_for("Hallo", RouteKind.SMALLTALK)  # i18n-allow
         assert isinstance(text, str)
         assert len(text.strip()) > 0
 
     def test_ack_smart_tool_contains_german(self):
         """Smart-tool ACK must feel like an optimistic butler reply."""
-        text = ack_for("Termin eintragen", RouteKind.SMART_TOOL)
+        text = ack_for("Termin eintragen", RouteKind.SMART_TOOL)  # i18n-allow
         # At minimum: non-empty and contains at least one German character or word
         assert len(text) > 5
 
     def test_ack_all_route_kinds_unique(self):
         """Each RouteKind should produce a distinct ACK text (they serve different purposes)."""
-        smart = ack_for("Mail schreiben", RouteKind.SMART_TOOL)
-        dumb = ack_for("spiel Musik", RouteKind.DUMB_TOOL)
-        small = ack_for("Hallo", RouteKind.SMALLTALK)
+        smart = ack_for("Mail schreiben", RouteKind.SMART_TOOL)  # i18n-allow
+        dumb = ack_for("spiel Musik", RouteKind.DUMB_TOOL)  # i18n-allow
+        small = ack_for("Hallo", RouteKind.SMALLTALK)  # i18n-allow
         # All must be non-empty; we don't require they differ but they usually do
         assert all(len(t.strip()) > 0 for t in [smart, dumb, small])
 

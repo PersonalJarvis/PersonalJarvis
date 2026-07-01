@@ -86,9 +86,9 @@
 
 ### Task 1.1: Vision relevance gate (skip-when-safe)
 **Files:** `jarvis/brain/manager.py` (`_collect_vision_images`, pass `user_text`); new `jarvis/brain/vision_gate.py`; Test `tests/unit/brain/test_vision_gate.py`.
-- [ ] `should_attach_screenshot(text, *, smalltalk_allowlist, visual_markers) -> bool`: returns `False` only if text matches smalltalk/knowledge allowlist AND contains no visual marker; else `True`. Markers: `das hier/da, schau, siehst du, auf dem bildschirm, hier, this, look, on screen, what's this, klick, fenster, …` (configurable).
+- [ ] `should_attach_screenshot(text, *, smalltalk_allowlist, visual_markers) -> bool`: returns `False` only if text matches smalltalk/knowledge allowlist AND contains no visual marker; else `True`. Markers: `das hier/da, schau, siehst du, auf dem bildschirm, hier, this, look, on screen, what's this, klick, fenster, …` (configurable). <!-- i18n-allow: speech input vocabulary DE -->
 - [ ] Wire into `_collect_vision_images`: after the `vision is None or paused` check, if `cfg.performance.conditional_vision` and `not should_attach_screenshot(...)` → return `()` and publish `VisionSkipped`.
-- [ ] Tests: "wie spät ist es" → skip; "was siehst du hier" → keep; "repariere den bug" (action) → keep; marker beats allowlist.
+- [ ] Tests: "wie spät ist es" <!-- i18n-allow: test content — user voice utterance DE --> → skip; "was siehst du hier" <!-- i18n-allow: test content — user voice utterance DE --> → keep; "repariere den bug" (action) → keep; marker beats allowlist.
 
 ### Task 1.2: Enforce `max_image_kb`
 **Files:** `jarvis/brain/manager.py` (`_collect_vision_images`); reuse `_resize_for_budget` from `jarvis/plugins/tool/screen_snapshot.py:49`.
@@ -97,7 +97,7 @@
 
 ### Task 1.3: Fix the system-prompt vision lie
 **Files:** `jarvis/brain/router.py` (`SYSTEM_PROMPT` line ~62).
-- [ ] Make the "Du siehst Alexs Bildschirm permanent als Bild" instruction conditional/softened so the model does not hallucinate a screen when no image was attached (e.g. move to a per-turn note appended only when an image is present, or reword to "wenn ein Screenshot anhängt").
+- [ ] Make the "Du siehst Alexs Bildschirm permanent als Bild" instruction <!-- i18n-allow: product system prompt DE --> conditional/softened so the model does not hallucinate a screen when no image was attached (e.g. move to a per-turn note appended only when an image is present, or reword to "wenn ein Screenshot anhängt" <!-- i18n-allow: product system prompt DE -->).
 
 **Wave 1 verification:** `pytest tests/unit/brain/test_vision_gate.py tests/unit/brain/test_routing.py -v`; bench shows lower TTFT on smalltalk turns, unchanged on screen-ref turns. Commit. Flag `[performance].conditional_vision = true`.
 

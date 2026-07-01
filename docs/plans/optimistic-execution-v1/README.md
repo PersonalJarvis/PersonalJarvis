@@ -94,7 +94,7 @@ turn-boundary with zero silent drops.
 ## 3. END STATE
 
 - The user speaks naturally; the Talker replies in < 3 s for every turn, including turns
-  that trigger heavy work ("Geht klar, kümmere mich drum"), because the ACK is emitted
+  that trigger heavy work ("Geht klar, kümmere mich drum" <!-- i18n-allow: product voice output DE -->), because the ACK is emitted
   **before** the worker dispatch completes.
 - Smart Tools (Gmail, Calendar, Drive) are formulated and called by the background worker
   off the chat context; the user has already moved to the next topic.

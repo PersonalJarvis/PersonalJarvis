@@ -1,8 +1,8 @@
 # Jarvis-Agents Spawn-Failure Analysis — 2026-05-18
 
 **Status:** Diagnose-only document. No code changes performed.
-**Trigger:** User reported multiple Jarvis-Agent spawns failing after the Welle-6 ChatGPT-OAuth switch.
-**User's hypothesis:** "Liegt an der ChatGPT-Authentifizierung." (It's down to the ChatGPT authentication.)
+**Trigger:** User reported multiple Jarvis-Agent spawns failing after the Wave-6 ChatGPT-OAuth switch.
+**User's hypothesis:** "It's down to the ChatGPT authentication."
 
 ---
 
@@ -44,9 +44,9 @@ Read-first, then hypothesis. Source per finding:
 
 | User statement | Verdict | Evidence |
 |---|---|---|
-| "Liegt an ChatGPT" (It's down to ChatGPT) | ✅ **Partly true** | The failure is ChatGPT-specific (the `sonnet` model is disabled on ChatGPT accounts). |
-| "Liegt an Authentifizierung" (It's down to authentication) | ❌ **False** | `codex login status` → `Logged in using ChatGPT`. OAuth token valid. The HTTP 400 from the server confirms: the request went THROUGH (otherwise HTTP 401, not 400). |
-| "Ich muss mich nicht einloggen" (I don't need to log in) | ✅ **Correct** | Confirmed by today's successful worker smoke run (Welle 6 E2E, [`welle6_pass.md`](file:///C:/tmp/welle6-run4/welle6_pass.md) was written). |
+| "It's down to ChatGPT" | ✅ **Partly true** | The failure is ChatGPT-specific (the `sonnet` model is disabled on ChatGPT accounts). |
+| "It's down to authentication" | ❌ **False** | `codex login status` → `Logged in using ChatGPT`. OAuth token valid. The HTTP 400 from the server confirms: the request went THROUGH (otherwise HTTP 401, not 400). |
+| "I don't need to log in" | ✅ **Correct** | Confirmed by today's successful worker smoke run (Wave 6 E2E, [`welle6_pass.md`](file:///C:/tmp/welle6-run4/welle6_pass.md) was written). |
 
 ---
 
@@ -149,7 +149,7 @@ Categorized by evidence level. File + line + evidence snippet.
    ↓ stream.jsonl: {"type":"error","status":400,...}
 9. ClaudeResult(is_error=True, result="...")
 10. Kontrollierer sees worker_error → Mission → FAILED
-11. Voice: "Mission ist fehlgeschlagen. Der Worker ist abgebrochen." ("Mission failed. The worker was aborted.")
+11. Voice: "Mission ist fehlgeschlagen. Der Worker ist abgebrochen." ("Mission failed. The worker was aborted.")  <!-- i18n-allow -->
 ```
 
 **Break points 5 + 7** are the two places where the model slug passes through unfiltered.
@@ -164,7 +164,7 @@ A plain listing for a later wave, **no code in this document**:
 2. **Make the Decomposer provider-aware** — the Decomposer should read the provider from `[brain.sub_jarvis]` and emit matching model slugs. Currently a hardcoded Claude assumption.
 3. **Extend the provider-slug mapping** — if `chatgpt` is a first-class provider slug, it should also appear in `provider_map.MAPPINGS` (as `chatgpt → openai` or a dedicated slug), not just a special case in `_worker_factory`.
 4. **`L5` stream-parser robustness** — `terminal_message` should reliably extract the readable error text from the error frame, so that `_voice_phrase` says more than "Worker ist abgebrochen" ("The worker was aborted").
-5. **Voice-announcement improvement** — be more honest on an HTTP 400 model reject: "Das Modell `sonnet` passt nicht zu deinem ChatGPT-Account" ("The model `sonnet` is not compatible with your ChatGPT account") instead of a generic "abgebrochen" ("aborted").
+5. **Voice-announcement improvement** — be more honest on an HTTP 400 model reject: "Das Modell `sonnet` passt nicht zu deinem ChatGPT-Account" ("The model `sonnet` is not compatible with your ChatGPT account")  <!-- i18n-allow --> instead of a generic "abgebrochen" ("aborted").
 
 ---
 

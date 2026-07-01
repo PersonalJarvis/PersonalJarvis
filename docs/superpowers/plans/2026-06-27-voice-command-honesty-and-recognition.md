@@ -156,23 +156,23 @@ In `jarvis/brain/manager.py`, after the `_subagent_switch_failure_phrase` functi
 # so the spoken readback is HONEST (audit 2026-06-27: the old path returned ""
 # silently, even when the switch was refused). de/en/es (Runtime Output Language).
 _PROVIDER_SWITCH_CONFIRM: dict[str, str] = {
-    "de": "Erledigt — dein Haupt-Brain läuft jetzt auf {p}.",
+    "de": "Erledigt — dein Haupt-Brain läuft jetzt auf {p}.",  # i18n-allow
     "en": "Done — your main brain now runs on {p}.",
     "es": "Listo — tu cerebro principal ahora usa {p}.",
 }
 _PROVIDER_SWITCH_FAIL: dict[str, dict[str, str]] = {
     "missing_credential": {
-        "de": "{p} ist nicht eingerichtet — hinterlege zuerst den Schlüssel, dann stelle ich um.",
+        "de": "{p} ist nicht eingerichtet — hinterlege zuerst den Schlüssel, dann stelle ich um.",  # i18n-allow
         "en": "{p} isn't set up — add its key first, then I'll switch.",
         "es": "{p} no está configurado — añade su clave primero y luego cambio.",
     },
     "subagent_only": {
-        "de": "{p} geht nur als Sub-Agent, nicht als Haupt-Brain.",
+        "de": "{p} geht nur als Sub-Agent, nicht als Haupt-Brain.",  # i18n-allow
         "en": "{p} only works as a sub-agent, not as the main brain.",
         "es": "{p} solo funciona como sub-agente, no como cerebro principal.",
     },
     "other": {
-        "de": "Den Haupt-Brain konnte ich nicht auf {p} umstellen.",
+        "de": "Den Haupt-Brain konnte ich nicht auf {p} umstellen.",  # i18n-allow
         "en": "I couldn't switch the main brain to {p}.",
         "es": "No pude cambiar el cerebro principal a {p}.",
     },
@@ -321,7 +321,7 @@ _CANCEL_CONFIRM: dict[str, str] = {
     "es": "Listo — detuve {n} tarea(s) en curso.",
 }
 _CANCEL_NONE: dict[str, str] = {
-    "de": "Es lief gerade nichts, das ich stoppen könnte.",
+    "de": "Es lief gerade nichts, das ich stoppen könnte.",  # i18n-allow
     "en": "Nothing was running to stop.",
     "es": "No había nada en curso que detener.",
 }
@@ -415,7 +415,7 @@ In `jarvis/brain/manager.py`, after the `_CANCEL_NONE` block (Task 2), add:
 # path. Confirms the new depth instead of staying silent (audit 2026-06-27).
 _DEPTH_CONFIRM: dict[str, dict[str, str]] = {
     "deep": {
-        "de": "Alles klar — ich denke ab jetzt gründlicher.",
+        "de": "Alles klar — ich denke ab jetzt gründlicher.",  # i18n-allow
         "en": "Got it — I'll think more deeply from now on.",
         "es": "Entendido — pensaré más a fondo a partir de ahora.",
     },
@@ -529,7 +529,7 @@ In `jarvis/brain/manager.py`, immediately AFTER `_LANG_SWITCH_CONFIRM` (ends ~li
 # / locked jarvis.toml). Honest: scoped to this session, not "from now on", because
 # it reverts on restart (audit 2026-06-27). de/en/es.
 _LANG_SWITCH_CONFIRM_SESSION: dict[str, str] = {
-    "de": "Für diese Sitzung antworte ich auf Deutsch — dauerhaft speichern hat nicht geklappt.",
+    "de": "Für diese Sitzung antworte ich auf Deutsch — dauerhaft speichern hat nicht geklappt.",  # i18n-allow
     "en": "For this session I'll reply in English — saving it permanently didn't work.",
     "es": "Por esta sesión responderé en español — no pude guardarlo de forma permanente.",
 }
@@ -590,7 +590,7 @@ Paths: `jarvis/brain/manager.py tests/unit/brain/test_voice_command_honesty.py`.
 
 ## Task 5: Close the recognition gaps (provider verbs + cancel "halt")
 
-The audit found natural phrasings that don't match: "ändere/setze/stell den Anbieter auf X" (provider_switch) and "halt" (cancel). Add them — staying strict (provider still requires a trailing provider alias; cancel still requires sentence-start or "jarvis").
+The audit found natural phrasings that don't match: "ändere/setze/stell den Anbieter auf X" (provider_switch) and "halt" (cancel). Add them — staying strict (provider still requires a trailing provider alias; cancel still requires sentence-start or "jarvis"). <!-- i18n-allow -->
 
 **Files:**
 - Modify: `jarvis/brain/voice_command_gate.py` (`_PROVIDER_PATTERN` ~42; `_CANCEL_PATTERN` ~57)
@@ -598,7 +598,7 @@ The audit found natural phrasings that don't match: "ändere/setze/stell den Anb
 
 **Interfaces:**
 - Consumes: nothing new.
-- Produces: `_PROVIDER_PATTERN` also matches the `ändere/änder/setze/setz/stell` verbs; `_CANCEL_PATTERN` also matches `halt`.
+- Produces: `_PROVIDER_PATTERN` also matches the `ändere/änder/setze/setz/stell` verbs; `_CANCEL_PATTERN` also matches `halt`. <!-- i18n-allow -->
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -625,8 +625,8 @@ def test_cancel_recognizes_halt() -> None:
 
 
 def test_halt_midsentence_is_not_cancel() -> None:
-    # "das ist halt so" must NOT cancel — halt only at sentence start / after jarvis
-    m = match_voice_command("das ist halt so")
+    # "das ist halt so" must NOT cancel — halt only at sentence start / after jarvis  # i18n-allow
+    m = match_voice_command("das ist halt so")  # i18n-allow
     assert m is None or m.kind != "cancel"
 ```
 
@@ -650,7 +650,7 @@ to:
     r"|switch(?:\s+to)?|benutze?|nutze|use|nimm)"
 ```
 
-(The pattern still requires a trailing known provider alias with a word boundary, so "stell die Heizung an" — no provider word — does not match.)
+(The pattern still requires a trailing known provider alias with a word boundary, so "stell die Heizung an" — no provider word — does not match.) <!-- i18n-allow -->
 
 - [ ] **Step 4: Add the cancel "halt" verb**
 
@@ -672,7 +672,7 @@ _CANCEL_PATTERN = re.compile(
 )
 ```
 
-(`halt` matches only at sentence start or after "jarvis" — the existing `^` anchor — so "das ist halt so" still falls through. `\b` keeps it from matching "halten"/"Haltung".)
+(`halt` matches only at sentence start or after "jarvis" — the existing `^` anchor — so "das ist halt so" still falls through. `\b` keeps it from matching "halten"/"Haltung".) <!-- i18n-allow -->
 
 - [ ] **Step 5: Run to verify pass + no regressions**
 
@@ -682,7 +682,7 @@ Expected: PASS (all — new + existing, ~38 passed).
 - [ ] **Step 6: Commit (hunk-isolated)**
 
 The `_LANG_OUTPUT_VERB` block in this file may carry a parallel-session hunk — keep it neutralised at HEAD for the commit, then restore it (the established dance for this file).
-Message subject: `fix(voice): recognize "ändere/setze/stell <provider>" and "halt" to cancel`
+Message subject: `fix(voice): recognize "ändere/setze/stell <provider>" and "halt" to cancel` <!-- i18n-allow -->
 Paths: `jarvis/brain/voice_command_gate.py tests/unit/brain/test_voice_command_gate.py`.
 
 ---
@@ -716,14 +716,14 @@ RECOGNITION_CASES: list[tuple[str, str, str]] = [
     # provider_switch
     ("wechsel auf gemini", "provider_switch", "gemini"),
     ("switch to openai", "provider_switch", "openai"),
-    ("wechsel von gemini auf openai", "provider_switch", "openai"),
+    ("wechsel von gemini auf openai", "provider_switch", "openai"),  # i18n-allow: fixture
     ("switch from claude to gemini", "provider_switch", "gemini"),
     ("nutze chatgpt", "provider_switch", "chatgpt"),
     ("switch to anthropic", "provider_switch", "anthropic"),
     ("ändere den Provider auf gemini", "provider_switch", "gemini"),  # i18n-allow: fixture
     ("stell den Provider auf claude", "provider_switch", "claude"),   # i18n-allow: fixture
     # subagent_switch
-    ("stell den subagent provider auf gemini", "subagent_switch", "gemini"),
+    ("stell den subagent provider auf gemini", "subagent_switch", "gemini"),  # i18n-allow: fixture
     ("stell den subagent provider von antigravity auf codex um", "subagent_switch", "codex"),  # i18n-allow: fixture
     # language_switch
     ("stell auf Englisch um", "language_switch", "en"),               # i18n-allow: fixture

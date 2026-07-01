@@ -303,7 +303,7 @@ Four levels: `RiskTier = Literal["safe", "monitor", "ask", "block"]` (`protocols
 
 Force-spawn heuristic in `BrainManager._should_force_openclaw`:
 - Smalltalk allowlist wins → never spawn.
-- Action verb (`lies/baue/installiere/öffne/mach/zeig` + repair words) → spawn.
+- Action verb (`lies/baue/installiere/öffne/mach/zeig` + repair words) → spawn.  # i18n-allow
 - External-system marker (PR/Repo/GitHub/Issue) → spawn.
 
 **The Jarvis-Agent tier was deleted in Welle 4** — only `"router"` remains (`factory.py:119-123` raises on unknown tiers). Resurrecting `SUB_TOOLS` or adding `spawn-openclaw`/`dispatch-with-review`/`run-skill` to any worker set breaks the D9 recursion guard (AP-14).

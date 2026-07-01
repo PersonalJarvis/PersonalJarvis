@@ -87,13 +87,12 @@ class UserVisibleFeedback(Event):
   always *sees* the orb on boot regardless of pin location. Skipped
   in single-monitor / primary-pin / default-anchor boots — no visual
   noise in the 99% case.
-- **L2 — Discovery-independent recovery.** Voice phrases "Orb
-  zurück", "wo bist du", "reset orb" are matched by
+- **L2 — Discovery-independent recovery.** Voice phrases "Orb zurück", "wo bist du", "reset orb" are matched by  # i18n-allow
   `jarvis.brain.local_action_gate` and dispatched to the new
   `reset_orb_position` tool, which publishes `OrbResetRequested`.
   The orb bridge subscribes and resets via the Tk-thread marshal.
   The previous recovery path (right-click → "Reset position") only
-  worked when the orb was already visible — a henne/ei-loop.
+  worked when the orb was already visible — a chicken-and-egg loop.
 - **L3 — Post-condition assertion.** `resolve_placement` validates
   its own contract at the end of each branch via the
   `_assert_visibility_contract` helper. When `require_primary=True`

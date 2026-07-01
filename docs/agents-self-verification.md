@@ -40,10 +40,10 @@
 | AP-V1 | Brain output goes directly to TTS without `scrub_for_voice` | CLAUDE.md §Output-Filter Discipline | Mandatory hook before every `_speak`/`tts.synthesize` (paths #1 + #2) |
 | AP-V2 | Tool-call JSON / `<function_calls>` / YAML args remains in the voice output | output_filter.py:blacklist | Pattern in `scrub_for_voice` |
 | AP-V3 | Engineering jargon ("Harness", "MCP", "Subprocess", "Provider") in TTS | output_filter.py | Scrub standalone matches, keep compounds (Browser-Provider) |
-| AP-V4 | Stacktrace in the voice output | output_filter.py | Standard phrase "Es trat ein Fehler auf." |
+| AP-V4 | Stacktrace in the voice output | output_filter.py | Standard phrase "Error occurred"  # i18n-allow |
 | AP-V5 | "Sir" address without quote protection | output_filter.py | `SIR_OPENER_RE` + `QUOTE_PROTECT_RE` |
-| AP-V6 | Filler opener ("Großartige Frage", "Lass mich kurz") | output_filter.py | Pattern match, scrub away |
-| AP-V7 | Self-reference ("Als KI", "As an AI") | output_filter.py | Pattern match, replace |
+| AP-V6 | Filler opener (generic affirmations) | output_filter.py | Pattern match, scrub away  # i18n-allow |
+| AP-V7 | Self-reference (AI self-identification) | output_filter.py | Pattern match, replace  # i18n-allow |
 | AP-V8 | LLM output used directly as voice readback instead of Kontrollierer-signed | ADR-0009 + bridge doc AD-17 | Only `summary_de` from the Kontrollierer source may go into `_on_announcement` |
 
 ---

@@ -42,7 +42,7 @@ DUMB_TOOLS: tuple[ToolDef, ...] = (
     ToolDef(
         name="volume",
         kind=RouteKind.DUMB_TOOL,
-        triggers=("lauter", "leiser", "lautstaerke", "lautstärke", "volume"),
+        triggers=("lauter", "leiser", "lautstaerke", "lautstärke", "volume"),  # i18n-allow: speech input vocabulary DE
         description="local volume control",
     ),
 )
@@ -72,7 +72,7 @@ SMART_TOOLS: tuple[ToolDef, ...] = (
 ALL_TOOLS: tuple[ToolDef, ...] = DUMB_TOOLS + SMART_TOOLS
 
 # Smalltalk allowlist — these never trigger a tool and never wake the worker.
-SMALLTALK_TRIGGERS: tuple[str, ...] = (
+SMALLTALK_TRIGGERS: tuple[str, ...] = (  # i18n-allow: speech input vocabulary DE
     "hallo",
     "hi",
     "hey",
@@ -89,7 +89,7 @@ SMALLTALK_TRIGGERS: tuple[str, ...] = (
 # Action-verb markers — an unknown command containing one of these is treated as
 # a SMART task (worker spawn) rather than smalltalk. Mirrors the production
 # force-spawn heuristic in BrainManager._should_force_openclaw.
-ACTION_VERBS: tuple[str, ...] = (
+ACTION_VERBS: tuple[str, ...] = (  # i18n-allow: speech input vocabulary DE
     "lies",
     "baue",
     "installier",

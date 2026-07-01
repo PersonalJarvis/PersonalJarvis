@@ -40,8 +40,8 @@ correction.
 ## What the Definition of Done looks like
 
 ```
-[you]    Trag mir morgen 15 Uhr einen Termin mit dem Steuerberater ein
-[jarvis] (instant, 0.05 ms)  Geht klar, ich kümmere mich drum.
+[you]    Trag mir morgen 15 Uhr einen Termin mit dem Steuerberater ein <!-- i18n-allow: test content — user voice utterance DE -->
+[jarvis] (instant, 0.05 ms)  Geht klar, ich kümmere mich drum. <!-- i18n-allow: product voice output DE -->
         |bg| optimistic.worker: Heavy-Duty-Worker processing task 025a99eb: Trag mir ...
 [result] background mission done -> [calendar] '...' gesendet
 ```

@@ -19,16 +19,16 @@ read or edit them by hand.
 
 2. Open the Jarvis Desktop App and switch to the **Wiki** tab. In
    the top-right corner you will see an orange pill labelled
-   **"Obsidian: nicht registriert"** (Obsidian: not registered). Click
-   it, then click **"Jetzt registrieren"** (Register now) in the dialog
+   **"Obsidian: nicht registriert"** (Obsidian: not registered).  <!-- i18n-allow --> Click
+   it, then click **"Jetzt registrieren"** (Register now) in the dialog  <!-- i18n-allow -->
    that opens. Jarvis writes the vault into Obsidian's index file and
    creates a timestamped backup of the previous version next to it.
 
    ![Step 2 — Register vault](./images/obsidian-setup-step2.png)
 
-3. Click **"In Obsidian oeffnen"** (Open in Obsidian) in the same
+3. Click **"In Obsidian oeffnen"** (Open in Obsidian)  <!-- i18n-allow --> in the same
    dialog. Obsidian opens directly into your Jarvis vault. Confirm the
-   live test succeeded by clicking **"Hat geklappt"** (It worked) — the
+   live test succeeded by clicking **"Hat geklappt"** (It worked) — the  <!-- i18n-allow -->
    wizard then closes for good and never auto-opens again on this
    machine.
 

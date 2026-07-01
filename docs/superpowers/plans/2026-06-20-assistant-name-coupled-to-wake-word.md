@@ -148,7 +148,7 @@ def test_wake_phrase_is_the_only_name_source() -> None:
     prompt = _manager_with_name(wake_phrase="Hey Computer")._build_system_prompt()
     assert "Du bist Computer" in prompt
     assert "DEIN NAME IST COMPUTER" in prompt
-    assert "nicht Jarvis" in prompt
+    assert "nicht Jarvis" in prompt  # i18n-allow
 ```
 
 The other two tests (`test_default_name_keeps_jarvis_and_no_identity_directive`,
@@ -475,7 +475,7 @@ const WAKE_PREFIXES = new Set([
 ]);
 
 export function deriveAssistantName(phrase: string): string {
-  // normalize_phrase: lower-case, punctuation→space, split (keeps umlauts/ß).
+  // Normalize phrase: lowercase, punctuation → space, split (preserves umlauts/ß).
   const tokens = (phrase || "")
     .toLowerCase()
     .replace(/[^0-9a-zäöüß]+/g, " ")

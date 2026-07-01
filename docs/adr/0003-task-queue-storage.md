@@ -16,7 +16,7 @@ audience: developer
 
 ## Context
 
-The mandate requires persistent, crash-safe tasks (`"in zwei Stunden …"`, `"wenn Outlook eine Mail von Tom bekommt"`) with retry logic, UI visibility, and cancel capability. The question is where the persistent state lives.
+The mandate requires persistent, crash-safe tasks (`"in zwei Stunden …"`, `"wenn Outlook eine Mail von Tom bekommt"`) with retry logic, UI visibility, and cancel capability. The question is where the persistent state lives.  # i18n-allow
 
 ## Decision
 
@@ -32,8 +32,8 @@ CREATE TABLE IF NOT EXISTS tasks (
                         'failed','cancelled','interrupted')),
     trigger_type    TEXT NOT NULL CHECK(trigger_type IN (
                         'after_delay','at_time','on_event')),
-    due_at_ns       INTEGER,                   -- NULL für on_event
-    event_selector  TEXT,                      -- nur für on_event
+    due_at_ns       INTEGER,                   -- NULL for on_event
+    event_selector  TEXT,                      -- only for on_event
     created_at_ns   INTEGER NOT NULL,
     started_at_ns   INTEGER,
     finished_at_ns  INTEGER,

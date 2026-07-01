@@ -30,9 +30,9 @@ from optimistic.registry import (
 # Acknowledgement templates — butler-tone, correct German umlauts (ä ö ü ß)
 # ---------------------------------------------------------------------------
 
-_ACK_SMART: str = "Geht klar, ich kümmere mich drum."
-_ACK_DUMB: str = "Mach ich."
-_ACK_SMALLTALK: str = "Mir geht's gut, danke der Nachfrage!"
+_ACK_SMART: str = "Geht klar, ich kümmere mich drum."  # i18n-allow: product voice output DE
+_ACK_DUMB: str = "Mach ich."  # i18n-allow: product voice output DE
+_ACK_SMALLTALK: str = "Mir geht's gut, danke der Nachfrage!"  # i18n-allow: product voice output DE
 
 
 def classify(command: str) -> RouteKind:

@@ -1,6 +1,6 @@
 # Skills-Brain-Integration — Phase Plan
 
-**Master-plan source:** `<USER_HOME>\.claude\plans\okay-ich-w-re-bereit-jolly-gem.md`
+**Master-plan source:** `<USER_HOME>\.claude\plans\okay-ich-w-re-bereit-jolly-gem.md` <!-- i18n-allow -->
 
 ## Phase Skills-1 — Pre-Brain-Hook MVP (2.0 days)
 
@@ -24,7 +24,7 @@
 - `tests/unit/speech/test_pipeline_skill_hook.py` (NEW)
 - `tests/integration/test_skill_direct_trigger_e2e.py` (NEW)
 
-**Demo:** "guten morgen" (good morning) → `morning-routine` runs → trace shows 0 brain tokens.
+**Demo:** "guten morgen" (good morning) → `morning-routine` runs → trace shows 0 brain tokens. <!-- i18n-allow -->
 
 ---
 
@@ -36,7 +36,7 @@
 - **B — Skill-list injection:** `BrainManager._skill_list_block()` in `manager.py`, invoked from `_build_system_prompt()`. Format: Markdown list `name: description [TIER]`. Stable sort.
 - **C — Risk-tier annotation:** Per skill, `risk_policy.default_tier` as a tag.
 
-**Demo:** "welche Skills hast du" (which skills do you have) → brain answers with the live list.
+**Demo:** "welche Skills hast du" (which skills do you have) → brain answers with the live list. <!-- i18n-allow -->
 
 ---
 
@@ -49,7 +49,7 @@
 - **I — Skill-body injection (progressive disclosure):** On invocation, the body is injected into the brain as an **ephemeral** additional system message for that turn. No cache mix with the router prefix!
 - **H final — Idempotency:** `run_skill` checks the `SkillDirectTriggered` event of the last 5s for the same skill → skip.
 
-**Demo:** "Mach mal Deep-Work für 90 Minuten" (do deep work for 90 minutes) → brain calls `run_skill('deep-work-mode', {duration_min:90})`.
+**Demo:** "Mach mal Deep-Work für 90 Minuten" (do deep work for 90 minutes) → brain calls `run_skill('deep-work-mode', {duration_min:90})`. <!-- i18n-allow -->
 
 ---
 
@@ -72,4 +72,4 @@
 - UI tile in `SkillsView`
 - User docs `docs/skills-brain-integration.md`
 
-**Demo:** ASK-tier skill → voice echo "X starten. Bestätigen?" (start X. Confirm?) → "ja" (yes) → run.
+**Demo:** ASK-tier skill → voice echo "X starten. Bestätigen?" (start X. Confirm?) → "ja" (yes) → run. <!-- i18n-allow -->

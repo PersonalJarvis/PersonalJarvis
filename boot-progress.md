@@ -539,9 +539,9 @@ gain over the verified in-`_run_backend` change.
 ## Why Parts 1–4 did not fix the complaint
 
 Every prior pass optimized **"the window appears"** (`/api/health` 200 / `GET /`
-returns HTML). The user's words this loop are explicit: *"Die Desktop-App fährt
-schnell hoch. Was war eigentlich mit Wake-Up-Word? Wenn man Wake-Up-Word sagt
-und mit dir spricht, dauert das Hochfahren extrem lang."* i.e. the **window is
+returns HTML). The user's words this loop are explicit: *"The desktop app boots
+fast. What was actually going on with the wake word? When you say the wake word
+and talk to me, the boot takes forever."* i.e. the **window is
 already fast** (Parts 2–4 worked) — what is slow is **wake/voice becoming ready**
 (being able to say the wake word and talk). That path was **never** optimized.
 
@@ -669,10 +669,10 @@ because the real baseline (server.start + full data + voice) is much heavier.
 Wake words stay **custom** — every user picks their own at onboarding, no
 standard default, permanent until changed. Do NOT switch to "Hey Jarvis"/
 openWakeWord. Make the custom (stt_match / rolling-whisper) path itself fast.
-"Nicht faul — erst fertig wenn es klappt."
+"Not lazy — only done when it works."
 
 ### The measurement that re-frames everything
-"Wake-Loop gestartet" (the 9.285 s number from Pass 5.1) is NOT when Jarvis can
+"Wake-Loop started" (the 9.285 s number from Pass 5.1) is NOT when Jarvis can
 hear. For a custom phrase the wake loop transcribes with the wake Whisper model
 (`self._stt` = large-v3-turbo/cuda via build_wake_whisper), which loads LAZILY.
 Real log (18:31 boot): `Warm-up deferred loaders (ms): stt-load=11828,
@@ -850,7 +850,7 @@ behind the wake gate. Wake-model load 82 s cold / 8-11 s warm → **3.4 s** (at
 the ~3.2 s isolated floor). Custom wake phrase preserved, accuracy preserved via
 background turbo hot-swap, no extended features changed. Remaining warm-restart
 time is the import floor (~6-9 s) the user already accepted for the window.
-NEXT after recovery: confirm the clean boot (Wake-Loop gestartet + base ~3.4 s +
+NEXT after recovery: confirm the clean boot (Wake-Loop started + base ~3.4 s +
 /api/missions real), optionally re-measure warm restart→wake with the shutdown
 fix; do NOT retry step 6 (marginal + caused this incident).
 

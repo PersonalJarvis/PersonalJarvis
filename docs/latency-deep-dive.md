@@ -13,7 +13,7 @@
 | **TTS "Speaking"** | 14.21 s | Transcript | Gemini Flash TTS for ~30 words including audio playback |
 | **Other (vision capture, routing, filter)** | ~5.8 s | Difference | Vision-frame collection, output filter, state transitions |
 
-### 1.1 Token forensics: 20501 input tokens for "Was geht ab? Ich möchte wissen, was…"
+### 1.1 Token forensics: 20501 input tokens for "Was geht ab? Ich möchte wissen, was…"  <!-- i18n-allow -->
 
 The token footprint presumably breaks down roughly into:
 
@@ -107,7 +107,7 @@ Weighted below by **latency effect × quality risk × effort**. Quality risk = 0
 | # | Lever | Latency effect | Quality risk |
 |---|-------|---------------|--------------|
 | **E1** | **Frontier registry with auto-update** — `models.toml` with "frontier" as a tag, an automatic check (e.g. weekly) for whether new frontier models exist | 0 (latency-neutral, but automatically future-proof) | 0 |
-| **E2** | **"Speculative tier" instead of reasoning** for trivial requests — the router already decides: do I need Pro or Flash? The current logic is a pure dispatcher → spawn a Jarvis-Agent on every action verb. Not every "öffne …" needs Opus. | −5 to −8 s on trivial Jarvis-Agent spawns | low (some spawns then run on Flash instead of Pro) |
+| **E2** | **"Speculative tier" instead of reasoning** for trivial requests — the router already decides: do I need Pro or Flash? The current logic is a pure dispatcher → spawn a Jarvis-Agent on every action verb. Not every "öffne …" needs Opus. | −5 to −8 s on trivial Jarvis-Agent spawns | low (some spawns then run on Flash instead of Pro) |  <!-- i18n-allow -->
 | **E3** | **Model aliasing** — `claude-opus-latest` / `gemini-pro-latest` instead of hard-wired `claude-opus-4-7` / `gemini-3.1-pro-preview`. Provider-side or as a config layer. | 0 | 0 |
 
 ---
@@ -149,8 +149,8 @@ Weighted below by **latency effect × quality risk × effort**. Quality risk = 0
    - Expected effect: an automatic switch on every new frontier release without a code edit. **Exactly what you requested.**
 
 6. **E2: "Quick-path" for trivial Jarvis-Agent spawns**
-   - The force-spawn heuristic (`_should_force_sub_jarvis`) gets a second stage: trivial actions ("öffne Notepad", "type X", "click Y") land on the Flash tier instead of Pro.
-   - Complex visions ("baue mir eine App", "deploy auf Vercel") stay on Opus/Pro.
+   - The force-spawn heuristic (`_should_force_sub_jarvis`) gets a second stage: trivial actions ("öffne Notepad", "type X", "click Y") land on the Flash tier instead of Pro.  <!-- i18n-allow -->
+   - Complex visions ("baue mir eine App", "deploy auf Vercel") stay on Opus/Pro.  <!-- i18n-allow -->
    - Expected effect: ~50 % of Jarvis-Agent spawns become 5–8 s faster.
 
 7. **A3 + A4: Pipeline optimizations**
@@ -167,7 +167,7 @@ Weighted below by **latency effect × quality risk × effort**. Quality risk = 0
 ## 4. Frontier auto-update — detailed design
 
 ### Requirement (user mandate)
-> "Ich möchte aber dass man recherchiert, wie man das regeln kann […]. Frontiermodelle behalten will. […] und wenn es sich updated, also wieder neue Frontiermodels rauskommen, natürlich auch wieder updated."
+> "Ich möchte aber dass man recherchiert, wie man das regeln kann […]. Frontiermodelle behalten will. […] und wenn es sich updated, also wieder neue Frontiermodels rauskommen, natürlich auch wieder updated."  <!-- i18n-allow -->
 
 ### Solution architecture
 
@@ -219,7 +219,7 @@ Weighted below by **latency effect × quality risk × effort**. Quality risk = 0
 
 ## 5. Quality protection — What must NOT happen?
 
-User mandate: "die Qualität der Antworten unter Mitleidenschaft" must not suffer. Delineation:
+User mandate: "die Qualität der Antworten unter Mitleidenschaft" must not suffer. Delineation:  <!-- i18n-allow -->
 
 | Measure | Quality impact |
 |----------|-----------------|

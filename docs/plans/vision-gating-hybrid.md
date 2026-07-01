@@ -51,12 +51,12 @@ skip → router hallucinates a blank desktop).
   visual reference does.
 - Expand `_VISUAL_MARKERS` to cover the common real screen references that the
   current short list misses, so Wave 2 (the fallback) is rarely needed:
-  - deictic: "hier", "da", "das da", "oben/unten links/rechts"
-  - screen nouns: "bildschirm", "fenster", "seite", "fehlermeldung", "button",
-    "knopf", "menü", "dialog", "tab", "zeile"
-  - verbs/actions: "schau", "sieh", "guck", "zeig", "lies vor", "lies das",
-    "klick", "scroll", "markier", "öffne das", "mach … zu"
-  - diagnosis: "warum ist das", "was steht da", "was bedeutet das", "was ist das"
+  - deictic: "hier", "da", "das da", "oben/unten links/rechts" <!-- i18n-allow -->
+  - screen nouns: "bildschirm", "fenster", "seite", "fehlermeldung", "button", <!-- i18n-allow -->
+    "knopf", "menü", "dialog", "tab", "zeile" <!-- i18n-allow -->
+  - verbs/actions: "schau", "sieh", "guck", "zeig", "lies vor", "lies das", <!-- i18n-allow -->
+    "klick", "scroll", "markier", "öffne das", "mach … zu" <!-- i18n-allow -->
+  - diagnosis: "warum ist das", "was steht da", "was bedeutet das", "was ist das" <!-- i18n-allow -->
   - English equivalents.
 - Keep the function signature (`text`, `is_smalltalk`) for backward
   compatibility with the existing call site; `is_smalltalk` becomes an optional
@@ -66,12 +66,12 @@ skip → router hallucinates a blank desktop).
 
 **Tests** (`tests/integration/test_conditional_vision.py` + new unit tests for
 `vision_gate`):
-- KEEP green: "was siehst du hier" → image; "schau mal das hier" → image.
-- NEW: "was haben wir besprochen?" → NO image (the user's exact case).
-- NEW: "erklär mir nochmal X" → NO image.
-- NEW: "wie spät ist es" → NO image.
-- NEW: "warum ist das rot?" → image (diagnosis marker).
-- NEW: "klick auf den Button" → image.
+- KEEP green: "was siehst du hier" → image; "schau mal das hier" → image. <!-- i18n-allow -->
+- NEW: "was haben wir besprochen?" → NO image (the user's exact case). <!-- i18n-allow -->
+- NEW: "erklär mir nochmal X" → NO image. <!-- i18n-allow -->
+- NEW: "wie spät ist es" → NO image. <!-- i18n-allow -->
+- NEW: "warum ist das rot?" → image (diagnosis marker). <!-- i18n-allow -->
+- NEW: "klick auf den Button" → image. <!-- i18n-allow -->
 
 ### Wave 2 — Image-as-a-tool (the safety net)
 
@@ -116,6 +116,6 @@ pull the image itself — no per-turn image tax, no blank-desktop hallucination.
 ## Verification
 
 - `pytest tests/integration/test_conditional_vision.py tests/unit/brain/test_vision_gate.py tests/unit/brain/test_tool_use_loop_image_feedback.py -v`
-- Manual: voice session — "merk dir die Zahl 12" → "und 5 dazu" → "welche Zahl?"
-  answers from conversation, no screen fixation; "was siehst du auf dem
+- Manual: voice session — "merk dir die Zahl 12" → "und 5 dazu" → "welche Zahl?" <!-- i18n-allow -->
+  answers from conversation, no screen fixation; "was siehst du auf dem <!-- i18n-allow -->
   Bildschirm?" still works.

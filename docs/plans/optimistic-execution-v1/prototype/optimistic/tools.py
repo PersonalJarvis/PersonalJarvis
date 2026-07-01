@@ -82,7 +82,7 @@ def _extract_recipient(command: str) -> str | None:
     # Walk the words starting from index 1 (skip the leading word).
     for word in words[1:]:
         # Strip punctuation for the check, but return the clean word.
-        clean = re.sub(r"[^A-Za-zÄÖÜäöüß]", "", word)
+        clean = re.sub(r"[^A-Za-zÄÖÜäöüß]", "", word)  # i18n-allow: speech input vocabulary pattern DE
         if clean and clean[0].isupper():
             return clean
     return None

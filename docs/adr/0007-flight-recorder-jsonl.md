@@ -45,7 +45,7 @@ Mandate requirement: "Every Computer-Use step (screenshot hash, proposed action,
 `python -m jarvis.telemetry.replay <trace_id>` reads all JSONLs in the `data/flight_recorder/` folder (today's + earlier ones, as needed), filters by `trace_id`, and renders a chronological timeline:
 
 ```
-[0.000s] HarnessDispatched  computer-use  prompt="Öffne Notepad..."
+[0.000s] HarnessDispatched  computer-use  prompt="Open Notepad..."
 [0.012s] ObservationCaptured  window="Desktop"  nodes=47  screenshot=018f-step1.png
 [0.340s] ActionProposed      action="click"  target="{role:Button,name:Start}"
 [0.510s] ActionExecuted      success=True  duration_ms=120

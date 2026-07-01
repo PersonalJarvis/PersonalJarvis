@@ -43,7 +43,7 @@ This skill updates `docs/openclaw-bridge.md` when the spike falsifies assumption
    - **ADR-0013 OpenClaw-Bridge: User surface** — formalizes AD-10 through AD-21.
    - Style reference from `docs/adr/0009-self-healing-worker-critic.md`.
 
-7. **Audit entry:** at the end of `docs/openclaw-bridge.md`, a `## Änderungs-Historie` block (create it if it does not exist) with the line `<Datum> — <Kürzel> — <Was geändert>`.
+7. **Audit entry:** at the end of `docs/openclaw-bridge.md`, a `## Change History` block (create it if it does not exist) with the line `<Date> — <Initials> — <What changed>`.  # i18n-allow
 
 ## Strictly forbidden
 

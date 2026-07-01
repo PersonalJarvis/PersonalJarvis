@@ -24,7 +24,7 @@ The voice command "Spawn sub-agents." (or variations) led to a cascade:
    in the JARVIS_DEPTH recursion guard ("recursion denied").
 4. The last provider attempts `multi_spawn` → 3 parallel harness dispatches
    all crash in <10ms because of a shared-state race.
-5. User hears "Die parallele Ausführung der Sub-Agenten ist fehlgeschlagen." (The parallel execution of the sub-agents has failed.)
+5. User hears "Die parallele Ausführung der Sub-Agenten ist fehlgeschlagen." (The parallel execution of the sub-agents has failed.)  # i18n-allow
 
 Token cost per failed spawn: ~40k tokens × 4 providers ≈ $0.13.
 
@@ -34,7 +34,7 @@ Token cost per failed spawn: ~40k tokens × 4 providers ≈ $0.13.
 
 - **File**: `jarvis/core/config.py:156-168` (BrainRoutingConfig.spawn_verbs)
 - **Symptom**: User says "Spawn sub-agents.", Router-Brain responds
-  "Hallo Alex, was kann ich für dich tun?" ("Hello Alex, what can I do for you?") — no action.
+  "Hallo Alex, was kann ich für dich tun?" ("Hello Alex, what can I do for you?") — no action.  # i18n-allow
 - **Root cause**: The `_should_force_sub_jarvis` heuristic matches against the
   `spawn_verbs` list (DE+EN). The list contained `umsetz`, `bau`, `oeffne`,
   `deploy`, `read`, `write`, `build`, `open`, `install` — but not
@@ -57,7 +57,7 @@ Token cost per failed spawn: ~40k tokens × 4 providers ≈ $0.13.
 
 - **File**: `jarvis/harness/base.py::SubprocessHarness` (old version)
 - **Symptom**: `multi_spawn(harness="openclaw", prompts=[3])` returns
-  `success=False, duration_ms=5, error="ein oder mehr Sections mit non-zero exit"` (one or more sections with non-zero exit). Production logs show 3× HarnessDispatched, NO
+  `success=False, duration_ms=5, error="one or more sections with non-zero exit"`. Production logs show 3× HarnessDispatched, NO
   HarnessProgress, NO HarnessCompleted.
 - **Root cause**: `HarnessManager.get(name)` cached ONE
   `OpenClawHarness` instance. `SubprocessHarness.invoke()` wrote
@@ -174,7 +174,7 @@ Token cost per failed spawn: ~40k tokens × 4 providers ≈ $0.13.
 
 - **File**: none specific — `jarvis/plugins/tool/type_text.py` or similar
 - **Symptom**: `type_text` returns with
-  `error="pyautogui nicht verfuegbar: No module named 'pyautogui'. Native Windows-Eingabe fehlgeschlagen: [WinError 0] Falscher Parameter."` (pyautogui not available: No module named 'pyautogui'. Native Windows input failed: [WinError 0] Incorrect parameter.)
+  `error="pyautogui not available: No module named 'pyautogui'. Native Windows input failed: [WinError 0] Incorrect parameter."`
 - **Root cause**: `pyautogui` is an optional dependency, not installed,
   and the native Win32 fallback has a separate bug.
 - **Fix**: `pip install pyautogui` or add it to `requirements.txt`.
@@ -205,7 +205,7 @@ Token cost per failed spawn: ~40k tokens × 4 providers ≈ $0.13.
   random content such as: "I'd recommend saving the current version to GitHub
   first, Alex."
 - **Repro from production log** (`data/jarvis_desktop.log`, 2026-04-29):
-  1. Wake is correctly detected: `WAKE erkannt ueber whisper:Hey JARVIS` (WAKE detected via whisper:Hey JARVIS).
+  1. Wake is correctly detected: `WAKE detected via whisper:Hey JARVIS`.
   2. User says "Auflegen"; but the final STT text becomes:
      `transcript final: text="Let's get up." language=de confidence=0.625`.
   3. `Let's get up.` does not match the old hangup regex.
@@ -327,10 +327,10 @@ In the backend log (04-29 17:31, 19:47), three cascading defects
 at the same time:
 
 ```
-Brain claude-api(claude-haiku-4-5-20251001) fehlgeschlagen: 400
+Brain claude-api(claude-haiku-4-5-20251001) failed: 400
   'Your credit balance is too low to access the Anthropic API. Please
    go to Plans & Billing.'
-Brain grok(grok-4.1-fast) fehlgeschlagen: 404
+Brain grok(grok-4.1-fast) failed: 404
   'The model grok-4.1-fast does not exist or your team does not have
    access to it.'
 Brain gemini(gemini-3-flash) fehlgeschlagen: 11 validation errors for
@@ -401,7 +401,7 @@ provider-chain failure with no actionable user message**.
   the network instead of topping up credit.
 - **Fix** (`manager.py:1620-1672`):
   1. New list bucket `account_blocked` analogous to `missing_keys`.
-  2. User-actionable message: "Account-Problem bei {providers}: Credit aufladen, Plan upgraden oder Modell-Tier freischalten. Bei Anthropic: console.anthropic.com/settings/billing. Bei xAI: console.x.ai/team/billing." (Account problem with {providers}: Top up credit, upgrade plan or unlock model tier. For Anthropic: console.anthropic.com/settings/billing. For xAI: console.x.ai/team/billing.)
+  2. User-actionable message: "Account problem with {providers}: top up credit, upgrade plan, or unlock model tier. For Anthropic: console.anthropic.com/settings/billing. For xAI: console.x.ai/team/billing."  # i18n-allow
 - **Test**: `tests/unit/test_api_key_error_handling.py::TestChainErrorFormat`
 
 ---
@@ -451,11 +451,11 @@ $ python scripts/smoke_brain_e2e.py
   fallback chain (fast): claude-api → claude-api → gemini → grok
 
 --- Step 3: Live-Brain-Call ---
-  Frage: 'Antworte mit genau einem Wort: ja oder nein.'
-  Response: 'Ja.'
+  Question: 'Answer with exactly one word: yes or no.'
+  Response: 'Yes.'
 
 --- Step 4: Verdict ---
-  [OK] Brain-Call lieferte echte Response
+  [OK] Brain-Call delivered real response
 ```
 
 **What now happens** when the user has no valid keys:
@@ -483,7 +483,7 @@ The sidebar entry **Transkription** is visible and gets marked active,
 but the **chat** view appears in the main area:
 
 - Header: `Chat`
-- Empty state: `Bereit fuer Befehle`
+- Empty state: `Ready for commands`  # i18n-allow
 - ChatInput at the bottom of the window
 
 The actual transcription view (`SessionsView`) already exists and
@@ -750,8 +750,8 @@ Expected: speech unit suite green; a normal response ends with
 ## BUG-007: Tasks view permanently on HTTP 503 (Phase-5 wiring missing)
 
 - **Date:** 2026-05-02 · **Scope:** Phase-5 task-queue integration in DesktopApp
-- **Symptom**: User clicks "Aufgaben" (Tasks) in the sidebar. The page shows a
-  red banner: *"Konnte Aufgaben nicht laden: HTTP 503"* (Could not load tasks: HTTP 503). Regardless of the
+- **Symptom**: User clicks "Tasks" in the sidebar. The page shows a
+  red banner: *"Could not load tasks: HTTP 503"*. Regardless of the  # i18n-allow
   state filter (All/Active/Done/Problems), regardless of refresh — it stays 503,
   because the polling gets the same answer every 3s. The UI is otherwise
   functional (chats, skills, missions, etc. work normally).
@@ -760,7 +760,7 @@ Expected: speech unit suite green; a normal response ends with
      runner}.py` + 25 unit tests green, ADR-0003/0005 documented.
   2. **REST layer correct**: `jarvis/ui/web/tasks_routes.py:28` expects
      `app.state.task_store`/`app.state.task_scheduler`. When not set,
-     `_require_store` deliberately throws HTTP 503 (`detail="TaskStore nicht verfuegbar"` — TaskStore not available) — defensive, this is not a crash.
+     `_require_store` deliberately throws HTTP 503 (`detail="TaskStore not available"`) — defensive, this is not a crash.
   3. **DesktopApp boot never sets it**: `WebServer.start()` called
      `_init_mission_stack()`, `_init_session_stack()`, `_init_channel_stack()`
      — but **no** `_init_task_stack()`. → `app.state.task_store` stayed
@@ -787,9 +787,9 @@ Expected: speech unit suite green; a normal response ends with
     `STATUS=200 BODY={tasks:[],total:0}`.
   - Demo task via `POST /api/tasks {trigger:after_delay 30s, action:tool_call
     noop}` → appears immediately in the UI with the correct trigger icon (clock),
-    "Verzögerung" (Delay) label, ID short form, and live countdown.
+    "Delay" label, ID short form, and live countdown.  # i18n-allow
   - After 30s: the card switches to state `failed` with the expected step
-    *"RuntimeError: ToolExecutor oder Tool-Registry nicht konfiguriert"* (ToolExecutor or Tool-Registry not configured) —
+    *"RuntimeError: ToolExecutor or Tool-Registry not configured"* —  # i18n-allow
     confirms that the runner logs cleanly through the failure path (no
     crash, no stuck state).
 - **Regression guard**:
@@ -1390,7 +1390,7 @@ See also: `docs/anti-drift-three-layer.md` for the general pattern.
   - `grep "Supervisor: spawned" data/jarvis_desktop.log` after the
     fix-time cutoff → 0 lines. Pre-fix every cold start logged 6
     spawns followed by a cap-fire.
-  - User confirmation: "Läuft sauber, UI sichtbar." (Runs cleanly, UI visible.)
+  - User confirmation: "Runs cleanly, UI visible."
 - **Regression guards / process for next time**:
   1. **One helper, one rule.** Any new `subprocess.run`,
      `subprocess.Popen`, or `asyncio.create_subprocess_exec` in this
@@ -1493,7 +1493,7 @@ See also: `docs/anti-drift-three-layer.md` for the general pattern.
 ## BUG-008 Episode 3: Transcription view empty due to `Literal` drift (HIGH, 2026-05-10)
 
 - **Date:** 2026-05-10 · **Scope:** voice-session models / sessions API
-- **Symptom:** The sidebar tab "Transkription" (Transcription) shows **"Noch keine Voice-Sessions"** (No voice sessions yet),
+- **Symptom:** The sidebar tab "Transcription" shows **"No voice sessions yet"**,  # i18n-allow
   even though `data/sessions.db` contains 267 sessions. `GET /api/sessions?limit>=6`
   throws 500 Internal Server Error with a Pydantic `ValidationError`:
   `Input should be 'voice_pattern', 'hotkey', 'idle_timeout', 'shutdown',
@@ -1526,7 +1526,7 @@ See also: `docs/anti-drift-three-layer.md` for the general pattern.
     and `VoiceTier` switched from union types to `string`; `KNOWN_*` exported as
     `as const` arrays.
     `jarvis/ui/web/frontend/src/components/sessions/SessionList.tsx` —
-    `hangupLabel("turn_complete")` → "Antwort fertig" (Response complete); the default case
+    `hangupLabel("turn_complete")` → "Response complete"; the default case  # i18n-allow
     falls back to the raw string, not to "—".
   - **Layer 3 (drift-detector test):**
     `tests/unit/sessions/test_models_resilience.py` (18 cases) checks three
@@ -1582,10 +1582,10 @@ See also: `docs/anti-drift-three-layer.md` for the general pattern.
   (`turn-state: USER_SPEAKING`), the brain replies
   (`🤖 Jarvis [de] (streamed): ...`), Gemini-TTS returns HTTP 200
   (`POST .../gemini-3.1-flash-tts-preview:generateContent "HTTP/1.1 200 OK"`),
-  `TTS-Echo-Sperre aktiv` (TTS echo lock active) is set — but **no sound comes out of the
+  TTS echo lock is set — but **no sound comes out of the
   headset**. The wake-acknowledge chime is also missing. Clear in the log:
   ```
-  WARNING | ACK-Playback fehlgeschlagen: Error opening OutputStream:
+  WARNING | ACK-Playback failed: Error opening OutputStream:
     Unanticipated host error [PaErrorCode -9999]:
     'Blocking API not supported yet' [Windows WDM-KS error -9999]
   ```
@@ -1731,7 +1731,7 @@ See also: `docs/anti-drift-three-layer.md` for the general pattern.
   pointing at an HTTP server that no longer responded — the user saw a
   black window and Chrome saw timeouts.
 - **Diagnostic chain that misled us first:**
-  - Logs showed `OSError: [WinError 64] Der angegebene Netzwerkname ist nicht mehr verfügbar` (The specified network name is no longer available) in
+  - Logs showed `OSError: [WinError 64] The specified network name is no longer available` in
     `asyncio/proactor_events.py:843` together with `Asyncio event
     context: Task was destroyed but it is pending!`. That was a
     secondary symptom from the broken accept-coro / GC of pending
@@ -1883,10 +1883,10 @@ helped, and tightening the parity tests around the Literal would never
 have caught it.
 
 - **Symptom (the user actually sees):** Every Voice-Session card in
-  the Transcription view shows the preview text ``Auflegen.`` (or
-  ``(kein User-Text aufgezeichnet)`` (no user text recorded) for sessions where the brain
+  the Transcription view shows the preview text ``Hangup`` (or
+  ``(no user text recorded)`` for sessions where the brain  # i18n-allow
   emitted ``suppress_response`` early). Opening any session shows a
-  single Turn whose User-block reads ``Auflegen.`` even when the user
+  single Turn whose User-block reads ``Hangup`` even when the user  # i18n-allow
   spoke a full conversation. Jarvis-block is empty. Tools list shows
   ``spawn_openclaw`` × N. The actual transcription is gone.
 - **Root cause A — multi-utterance turn collapse:**
@@ -1944,11 +1944,11 @@ have caught it.
 
 - **Date**: 2026-05-11
 - **Severity**: HIGH — user-facing voice quality regression. User cannot
-  finish complex sentences. Symptom (user words): "der Jarvis denkt immer, man hat schon zu Ende gesprochen … das hat auch damals schon ganz gut funktioniert, dann ist ein Bug aufgetreten." (Jarvis always thinks you've already finished speaking … that used to work quite well, then a bug appeared.) Concrete production case
+  finish complex sentences. Symptom (user words): "Jarvis always thinks you've already finished speaking … that used to work quite well, then a bug appeared." Concrete production case
   (session ``bf44825d-c3cb-41d8-aac5-fc61482e52d4`` at 17:22): user said
-  "Kannst du bitte einen Subagenten spawnen, welcher..." ("Can you please spawn a sub-agent that...") — VAD endpointed
+  "Can you please spawn a sub-agent that..." — VAD endpointed
   after 160 ms of silence (budget was 1200 ms) and the brain was called
-  on a half-question; the rest of the sentence ("...mir fünf Recherchenthemen rausholt" — "...pulls out five research topics for me") became Turn 2 and arrived as a fragment.
+  on a half-question; the rest of the sentence ("...pulls out five research topics for me") became Turn 2 and arrived as a fragment.
 - **Files**:
   - `jarvis/speech/pipeline.py` (`SpeechPipeline._stt_probe_async`,
     Signal 1 / "empty tail" classification)
@@ -2065,7 +2065,7 @@ Four new tests in ``tests/unit/speech/test_turn_taking.py``:
 
 - **Date**: 2026-05-18
 - **Severity**: HIGH — user-facing voice-feedback regression. User words:
-  "der Jarvis, das Maskottchen spawnt nicht, wenn man sagt Hey Jarvis, spawnt ja nicht mehr" (Jarvis, the mascot doesn't spawn anymore when you say Hey Jarvis, it just doesn't spawn anymore). The wake-word still triggers, the speech pipeline
+  "Jarvis, the mascot doesn't spawn anymore when you say Hey Jarvis, it just doesn't spawn anymore." The wake-word still triggers, the speech pipeline
   still transitions IDLE → LISTENING, and OrbBusBridge still calls
   ``orb.show(mode="listen")`` — but the orb pops up at the persisted pin
   on a secondary monitor where the user is not looking. From the user's
@@ -2142,8 +2142,7 @@ Four new tests in ``tests/unit/speech/test_turn_taking.py``:
     secondary monitor, the orb deiconifies on the primary anchor for
     800 ms before migrating to the pin (so the user always *sees* it
     on boot). Skipped in the 99% single-monitor / primary-pin case.
-  - **L2** Discovery-independent recovery — voice phrases "Orb zurück" (Orb back),
-    "wo bist du" (where are you), "reset orb" are matched by
+  - **L2** Discovery-independent recovery — voice phrases "Orb zurück", "wo bist du", "reset orb" are matched by  # i18n-allow
     `jarvis.brain.local_action_gate` and dispatched to the new
     `reset_orb_position` tool (publishes `OrbResetRequested`). Removes
     the chicken-and-egg problem (henne/ei) that the old right-click recovery only worked
@@ -2167,10 +2166,10 @@ Four new tests in ``tests/unit/speech/test_turn_taking.py``:
 
 Jarvis confirms sending emails, creating calendar entries, posting to social
 media, and other actions it has no registered capability for. The Ack-Brain
-says "wird erledigt" ("will be done"), the brain returns a phantom success response, and the TTS
-reads a confirmation to the user. The action never happens. The user is deceived.
+says "wird erledigt", the brain returns a phantom success response, and the TTS
+reads a confirmation to the user. The action never happens. The user is deceived.  # i18n-allow
 
-Classic trigger example: "Schick eine Email an Sam" ("Send an email to Sam") → TTS plays "Die Email wurde gesendet." ("The email has been sent.") → No email was sent. No error was raised. No log entry indicates a failure.
+Classic trigger example: "Send an email to Sam" → TTS plays "Die Email wurde gesendet." → No email was sent. No error was raised. No log entry indicates a failure.  # i18n-allow
 
 This is not a single-site regression — it is a structural coupling gap: the
 brain layer and the critic layer are both decoupled from the actual executable
@@ -2189,7 +2188,7 @@ Three decoupled layers each contribute independently:
    or claims actions it cannot perform.
 
 2. **Ack-Brain layer:** The Ack-Brain persona prompt does not forbid
-   action-promise phrases ("mache ich" — "I'll do it", "wird erledigt" — "will be done", "ist gesendet" — "has been sent").
+   action-promise phrases ("mache ich", "wird erledigt", "ist gesendet").  # i18n-allow
    The Ack-Brain therefore confirms phantom actions sub-second, before the
    deep brain even runs.
 

@@ -3,7 +3,7 @@
 **Branch:** `skills-brain-integration` (from `main`)
 **Plan owner:** Claude Opus 4.7
 **Status:** 2026-04-30
-**Master plan (private):** `<USER_HOME>\.claude\plans\okay-ich-w-re-bereit-jolly-gem.md`
+**Master plan (private):** `<USER_HOME>\.claude\plans\okay-ich-w-re-bereit-jolly-gem.md` <!-- i18n-allow -->
 
 ## Problem
 
@@ -15,7 +15,7 @@ The skill system (Phase 1c) is fully built (`SkillRegistry`, `TriggerMatcher`, `
 ## Solution (hybrid Anthropic pattern)
 
 1. **TriggerMatcher production wiring** as a pre-brain hook in `jarvis/speech/pipeline.py` — deterministic voice/hotkey/cron direct paths without a brain round-trip (Skills-1).
-2. **Skill list in the system prompt** as a `## VERFÜGBARE SKILLS` (available skills) section with name + description + risk-tier tag (Skills-2).
+2. **Skill list in the system prompt** as a `## VERFÜGBARE SKILLS` (available skills) section with name + description + risk-tier tag (Skills-2). <!-- i18n-allow -->
 3. **`run_skill` meta-tool** in `ROUTER_TOOLS` — the brain decides semantically via the description (Skills-3).
 4. **Skill-body injection (progressive disclosure)** — on a `run_skill` call, the body is injected into the brain as an ephemeral system message for **that turn** (no cache mix).
 5. **Voice confirmation for ASK-tier skills** via the end-focus echo pattern (Skills-5).

@@ -257,8 +257,8 @@ Grep over `requirements.txt` and `pyproject.toml`: no hit for `apscheduler|APSch
 
 ```python
 # jarvis/tasks/scheduler.py, Docstring
-Keine Cron-Semantik, kein APScheduler, kein zweiter Thread.
-Alles laeuft im Main-Async-Loop — das ist mit Absicht (ADR-0005).
+No cron semantics, no APScheduler, no second thread.
+Everything runs in the main async loop — this is intentional (ADR-0005).
 ```
 
 ### 4.1 What exists in the project instead

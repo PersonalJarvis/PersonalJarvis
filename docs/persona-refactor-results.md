@@ -20,19 +20,19 @@ with the filter extension). Both runs against the same provider stack
 
 | ID | Tag | Before (verbatim) | After (verbatim) | Success? |
 |---|---|---|---|---|
-| 01 | routine-status | *(empty output — spawn reflex)* | "Ich sehe keinen Bildschirmkontext, um das zu prüfen. Welche Datei meinst du, und in welcher Anwendung?" | ◐ clarifying question instead of silence |
-| 02 | formal-greeting | *(empty output)* | "Morgen, Alex. Bildschirm zeigt noch Schlafmodus — oder ist das absichtlich?" | ☑ short, with name, pattern 2 |
-| 03 | open-question | "Was genau möchten Sie beschleunigen?" *(uses formal "Sie"!)* | "Was möchtest du beschleunigen, Alex?" | ☑ **A1 violation fixed** (informal "du" instead of "Sie") + tool leak gone |
-| 04 | risky-command | *(empty output)* | "Welche Logs meinst du — Windows-Eventlog, eine spezifische Anwendung, oder Dateien in einem bestimmten Ordner?" | ◐ clarifying question instead of silence |
-| 05 | reckless-action | "Ein Deploy auf Produktion ohne vorherige Tests birgt erhebliche Risiken." | "Das ist eine schlechte Idee. Ohne Tests gehst du blind ins Prod, und wenn es crasht, brennt die Bude. Willst du wirklich, oder brauchst du nur schnell einen Quick-Check?" | ☑ dry anchor, no hedging |
-| 06 | proactive-context | "Es liegen keine Informationen zur Außentemperatur vor." | "Das kann ich dir nicht sagen — ich habe keinen Zugriff auf Echtzeit-Wetterdaten und keine aktuelle Standortermittlung. Schau auf weather.com…" | ◐ honest answer, slightly too long |
+| 01 | routine-status | *(empty output — spawn reflex)* | "Ich sehe keinen Bildschirmkontext, um das zu prüfen. Welche Datei meinst du, und in welcher Anwendung?" | ◐ clarifying question instead of silence |  <!-- i18n-allow -->
+| 02 | formal-greeting | *(empty output)* | "Morgen, Alex. Bildschirm zeigt noch Schlafmodus — oder ist das absichtlich?" | ☑ short, with name, pattern 2 |  <!-- i18n-allow -->
+| 03 | open-question | "Was genau möchten Sie beschleunigen?" *(uses formal "Sie"!)* | "Was möchtest du beschleunigen, Alex?" | ☑ **A1 violation fixed** (informal "du" instead of "Sie") + tool leak gone |  <!-- i18n-allow -->
+| 04 | risky-command | *(empty output)* | "Welche Logs meinst du — Windows-Eventlog, eine spezifische Anwendung, oder Dateien in einem bestimmten Ordner?" | ◐ clarifying question instead of silence |  <!-- i18n-allow -->
+| 05 | reckless-action | "Ein Deploy auf Produktion ohne vorherige Tests birgt erhebliche Risiken." | "Das ist eine schlechte Idee. Ohne Tests gehst du blind ins Prod, und wenn es crasht, brennt die Bude. Willst du wirklich, oder brauchst du nur schnell einen Quick-Check?" | ☑ dry anchor, no hedging |  <!-- i18n-allow -->
+| 06 | proactive-context | "Es liegen keine Informationen zur Außentemperatur vor." | "Das kann ich dir nicht sagen — ich habe keinen Zugriff auf Echtzeit-Wetterdaten und keine aktuelle Standortermittlung. Schau auf weather.com…" | ◐ honest answer, slightly too long |  <!-- i18n-allow -->
 | 07 | long-task-start | *(empty output)* | `Filter: ['removed_tool_json']` → *(empty)* | ◐ filter scrubs the tool-call leak; the pipeline stays silent correctly |
-| 08 | bad-news | *(empty output)* | "Screenshot machen, dann sehen wir." | ☑ short, direct |
-| 09 | high-pressure | *(empty output)* | "Screenshot machen, was brauchst du — die aktuelle Folie, Noten, Timing-Check?" | ☑ short |
-| 10 | hangup | "Gern geschehen." | "Verstanden. Bin bereit für die nächste Aufgabe." | ☐ hangup contract still missed — see branch-state limit below |
-| **11** | **echo-trap** *(new)* | n/a | **"15:42 Uhr."** | ☑ **direct, NO echo opener** |
+| 08 | bad-news | *(empty output)* | "Screenshot machen, dann sehen wir." | ☑ short, direct |  <!-- i18n-allow -->
+| 09 | high-pressure | *(empty output)* | "Screenshot machen, was brauchst du — die aktuelle Folie, Noten, Timing-Check?" | ☑ short |  <!-- i18n-allow -->
+| 10 | hangup | "Gern geschehen." | "Verstanden. Bin bereit für die nächste Aufgabe." | ☐ hangup contract still missed — see branch-state limit below |  <!-- i18n-allow -->
+| **11** | **echo-trap** *(new)* | n/a | **"15:42 Uhr."** | ☑ **direct, NO echo opener** |  <!-- i18n-allow -->
 | 12 | tool-spawn-output-leak *(new)* | n/a | `<function_calls>[}]</function_calls>` (Anthropic-format leak partial) | ◐ XML/KW filter works; the new `<function_calls>` format slips through |
-| **13** | **self-reference-trap** *(new)* | n/a | **"Ich bin Jarvis — dein persönlicher Router…"** | ☑ **NO "language model"** |
+| **13** | **self-reference-trap** *(new)* | n/a | **"Ich bin Jarvis — dein persönlicher Router…"** | ☑ **NO "language model"** |  <!-- i18n-allow -->
 
 **Summary:**
 
@@ -46,7 +46,7 @@ with the filter extension). Both runs against the same provider stack
 
 | State | Spawn count |
 |---|---|
-| **Before** (pre-Phase-3) | **presumed 5/5** ("Hallo", "Wie geht's", "Was ist die Hauptstadt von Frankreich", "Danke", "Auf Wiedersehen" → 6 of 10 probe outputs empty, presumably from a reflexive LLM tool-choice spawn) |
+| **Before** (pre-Phase-3) | **presumed 5/5** ("Hallo", "Wie geht's", "Was ist die Hauptstadt von Frankreich", "Danke", "Auf Wiedersehen" → 6 of 10 probe outputs empty, presumably from a reflexive LLM tool-choice spawn) |  <!-- i18n-allow -->
 | **After** (post-Phase-3) | **0/5** — deterministically verified by `tests/unit/brain/test_routing.py::test_smalltalk_dispatches_zero_spawn_calls` |
 
 **Caveat on "before":** The pre-Phase-3 spawn count could not be measured directly via `psutil`, because the full voice path on the `router-permanent-vision` branch is not startable due to the `jarvis.clis.risk_integration` branch bug (see failure modes below). The evidence is therefore indirect: the 6 empty probe outputs on smalltalk inputs correlate with the ROUTER prompt instruction "when in doubt, SPAWN," which reflexively produced `spawn_sub_jarvis` as a tool call.
@@ -59,7 +59,7 @@ with the filter extension). Both runs against the same provider stack
 
 | State | Anti-pattern hits | Name ratio | Formal "Sie" | Hangup MISS | Filler opener |
 |---|---|---|---|---|---|
-| Pre-Phase-1+2 | **1** (`möglicherweise` in scenario 05) | 0/13 (0 %) | 1 (scenario 03 uses "Sie") | MISS | 0 |
+| Pre-Phase-1+2 | **1** (`möglicherweise` in scenario 05) | 0/13 (0 %) | 1 (scenario 03 uses "Sie") | MISS | 0 |  <!-- i18n-allow -->
 | Post-Phase-1+2 | **0** | 2/13 (15 %) | 0 | MISS *(branch limit)* | 0 |
 
 **Anti-pattern list** (pre/post identical in the script, post contains the 14 new mandate strings — echo paraphrase, hedging, filler self-reference, padding):

@@ -57,8 +57,8 @@ Instead of evolving these loops ourselves, **we replace the Jarvis-Agent tier en
 | AD-8 | **All registered MCPs** are passed through to OpenClaw | Convenience mode. Consequence: at registration, the MCP wizard must display "this MCP is also passed on to Jarvis-Agents". User awareness instead of an engineering filter. |
 | AD-9 | **Full trust for tool calls** inside OpenClaw, no bridge intercept | The safety valves are: (a) worktree isolation, (b) Job-Object hard kill, (c) the Critic-Loop in front of it, (d) MCP selection (placed upstream). Tool latency stays low; the risk-tier policy does not apply to OpenClaw-internal calls. |
 | AD-10 | OpenClaw runs **async / fire-and-forget** | "Auflegen" (hanging up) ends the voice session; OpenClaw keeps running in the background. Personal Jarvis says immediately "okay, mache ich" (okay, will do) and releases the voice mic. |
-| AD-11 | **Stop is explicitly separated** from hang-up — voice + UI + auto-stop on time-cap | Voice patterns "brich ab", "stop OpenClaw", "abbrechen" (cancel/abort) + UI button + automatic abort when the 30-min limit is exceeded. |
-| AD-12 | **Status read** via voice ("läuft das noch?", "Status?" — is it still running? / status?) plus a UI live view | The Router-Brain recognizes status phrases via pattern match and calls a Mission-Manager read instead of a spawn. The UI Mission-Control view shows everything in parallel. |
+| AD-11 | **Stop is explicitly separated** from hang-up — voice + UI + auto-stop on time-cap | Voice patterns "brich ab", "stop OpenClaw", "abbrechen" (cancel/abort)  <!-- i18n-allow --> + UI button + automatic abort when the 30-min limit is exceeded. |
+| AD-12 | **Status read** via voice ("läuft das noch?", "Status?" — is it still running? / status?)  <!-- i18n-allow --> plus a UI live view | The Router-Brain recognizes status phrases via pattern match and calls a Mission-Manager read instead of a spawn. The UI Mission-Control view shows everything in parallel. |
 | AD-13 | **Concurrency cap 3** — up to 3 Jarvis-Agent missions in parallel | Configurable via `[harness.openclaw].concurrency`. A fourth request goes into the Mission-Manager queue. |
 | AD-14 | **Crash persistence via SQLite**, reattach on restart | Phase 6 already has this. On a Jarvis restart, live OpenClaw subprocesses are reattached via PID + worktree state. Orphans (mission deleted, subprocess alive) are killed. |
 | AD-15 | **Stateless per spawn** — no conversation memory between spawns | Multi-step tasks via Mission-Manager composition. OpenClaw always gets atomic assignments. |
@@ -128,7 +128,7 @@ Three findings were outside the scope of the original ADs and are appended here 
 │ Spawn path: spawn_openclaw(task, mode="async")             │
 │ (renamed from spawn_sub_jarvis in Wave 4)                   │
 │ → Mission-Manager (Phase 6, SQLite-persisted)              │
-│ → Brain says immediately: "Okay, sage Bescheid wenn fertig"│
+│ → Brain says immediately: "Okay, sage Bescheid wenn fertig"  <!-- i18n-allow --> │
 │ → voice session freed                                       │
 └─────────────────┬───────────────────────────────────────────┘
                   │  (async, max 3 in parallel)
@@ -221,17 +221,17 @@ Implements the `jarvis.harness` protocol (see `jarvis/core/protocols.py`). Expec
 ```toml
 [harness.openclaw]
 enabled = true
-version = "1.4.2"                              # Pin auf gestestete Upstream-Version
-binary_path = "openclaw"                       # auf PATH oder absoluter Pfad
+version = "1.4.2"                              # Pin to tested upstream version
+binary_path = "openclaw"                       # on PATH or absolute path
 model = "anthropic/claude-opus-4-7"            # Hot-reloadable
 time_cap_min = 30                              # fix per AD-19
 concurrency = 3                                # parallele Missions max
 # cost_cap_eur =                               # AD-20 reserved, v1 leer
 
 [harness.openclaw.notification]
-via = "announcement_bus"                       # nutzt _on_announcement
-toast = true                                   # immer Desktop-Toast
-voice_when_active = true                       # Voice-Announcement nur wenn Voice lauscht
+via = "announcement_bus"                       # uses _on_announcement
+toast = true                                   # always desktop toast
+voice_when_active = true                       # voice announcement only when listening
 ```
 
 **Pydantic model:** `OpenClawConfig` in `jarvis/core/config.py` alongside the existing sections. Hot-reload via the config watchdog (Phase 0, present).

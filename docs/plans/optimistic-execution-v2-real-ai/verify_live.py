@@ -17,7 +17,7 @@ async def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     session = "verify-" + uuid.uuid4().hex[:6]
-    prompt = "Erstelle eine kurze, gut verstaendliche Erklaerung von Optimistic Execution."
+    prompt = "Erstelle eine kurze, gut verstaendliche Erklaerung von Optimistic Execution."  # i18n-allow
 
     async with httpx.AsyncClient(base_url=BASE, timeout=60.0) as client:
         h = (await client.get("/api/health")).json()

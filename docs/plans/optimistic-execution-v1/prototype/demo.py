@@ -70,22 +70,22 @@ def _build():
 SCENARIOS = [
     (
         "Smart Tool — delegated to the background worker",
-        "Trag mir morgen 15 Uhr einen Termin mit dem Steuerberater ein",
+        "Trag mir morgen 15 Uhr einen Termin mit dem Steuerberater ein",  # i18n-allow: test content — user voice utterance DE
         False,
     ),
     (
         "Dumb Tool — local script, fires in-process",
-        "spiel mir etwas 80er Synthwave",
+        "spiel mir etwas 80er Synthwave",  # i18n-allow: test content — user voice utterance DE
         False,
     ),
     (
         "Smalltalk — answered directly, worker never wakes",
-        "Hey, wie geht's dir?",
+        "Hey, wie geht's dir?",  # i18n-allow: test content — user voice utterance DE
         False,
     ),
     (
         "Oops — background failure self-corrects at the turn-boundary",
-        "Schreib Max eine Mail, dass sich das Projekt verschiebt",
+        "Schreib Max eine Mail, dass sich das Projekt verschiebt",  # i18n-allow: test content — user voice utterance DE
         True,
     ),
 ]

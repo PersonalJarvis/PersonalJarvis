@@ -37,54 +37,43 @@
 </head>
 <body>
 
-<h1>BUG-019 — OpenClaw-Spawn schlägt immer fehl</h1>
+<h1>BUG-019 — OpenClaw-Spawn always fails</h1>
 
 <div class="tldr">
-  <strong>TL;DR — zwei Schichten.</strong>
-  <strong>Schicht 1 (Code, FIXED)</strong>: Der Critic-Subprocess startete
-  gar nicht — <code>WinError 2</code>, weil <code>argv[0]</code> als nackter
-  String <code>"gemini"</code> übergeben wurde und Windows
-  <code>CreateProcess</code> kein <code>PATHEXT</code> auswertet.
-  <strong>Schicht 2 (Konto, USER-AKTION)</strong>: Auch mit funktionierendem
-  Subprocess gibt Gemini HTTP 429 <em>„capacity exhausted"</em> zurück — die
-  Google-AI-Studio-Quota auf deinem Konto reicht nicht für den
-  3-Iteration-Critic-Loop (≈ 3–6 Calls pro Mission innerhalb 30 s).
+  <strong>TL;DR — two layers.</strong>
+  <strong>Layer 1 (Code, FIXED)</strong>: The Critic subprocess did not start at all — <code>WinError 2</code>, because <code>argv[0]</code> was passed as a bare string <code>"gemini"</code> and Windows <code>CreateProcess</code> does not evaluate <code>PATHEXT</code>.
+  <strong>Layer 2 (Account, USER-ACTION)</strong>: Even with a working subprocess, Gemini returns HTTP 429 <em>"capacity exhausted"</em> — the Google-AI-Studio quota on your account is insufficient for the 3-iteration Critic loop (≈ 3–6 calls per mission within 30 s).
 </div>
 
-<h2>Schicht 1: Code-Bug (gefixt)</h2>
+<h2>Layer 1: Code Bug (fixed)</h2>
 
 <h3>Symptom</h3>
 <ul>
   <li><code>CriticRunner: subprocess returncode=1, stderr=''</code></li>
-  <li><code>critic failed: Critic lieferte zweimal keinen schema-validen JSON-Output</code></li>
-  <li>Nach 3 Iterationen <code>MissionFailed reason='critic_loop_exhausted'</code> → Voice sagt <em>„Die OpenClaw-Mission ist fehlgeschlagen."</em></li>
+  <li><code>critic failed: Critic did not return schema-valid JSON output twice</code></li>
+  <li>After 3 iterations <code>MissionFailed reason='critic_loop_exhausted'</code> → Voice says "The OpenClaw mission has failed"  <!-- i18n-allow --></li>
 </ul>
 
-<h3>Wurzelursache</h3>
-<p><code>build_critic_cmd()</code> baute argv mit <code>"gemini"</code>
-als argv[0]:</p>
+<h3>Root Cause</h3>
+<p><code>build_critic_cmd()</code> built argv with <code>"gemini"</code>
+as argv[0]:</p>
 <pre>cmd = [
-    "gemini",                # &lt;-- nur Name, keine Extension, kein Pfad
+    "gemini",                # &lt;-- name only, no extension, no path
     "--prompt", ...,
     "--model",  "gemini-3-flash-preview",
     ...
 ]
 proc = await asyncio.create_subprocess_exec(*cmd, ...)</pre>
 
-<p>Auf Windows liegt das Binary als
-<code>%APPDATA%\Roaming\npm\gemini.cmd</code>. PowerShell findet's via
-<code>PATHEXT</code>, <code>CreateProcess</code> (Python's
-<code>create_subprocess_exec</code>) macht das <strong>nicht</strong> und
-wirft:</p>
-<pre>FileNotFoundError: [WinError 2] Das System kann die
-                   angegebene Datei nicht finden</pre>
+<p>On Windows, the binary lives as
+<code>%APPDATA%\Roaming\npm\gemini.cmd</code>. PowerShell finds it via
+<code>PATHEXT</code>, but <code>CreateProcess</code> (Python's
+<code>create_subprocess_exec</code>) does <strong>not</strong> and
+throws:</p>
+<pre>FileNotFoundError: [WinError 2] The system cannot find the specified file</pre>
 
-<p>Diese Exception ging durch <code>_invoke_once()</code> hoch und wurde
-als generisches Subprocess-Fehler-Pattern geloggt — die echte Ursache war
-unsichtbar. Der Worker-Side hatte den Bug schon erkannt
-(<code>_resolve_gemini_binary()</code> im <code>GeminiWorker</code>), das
-Pendant beim Critic-Switch in Commit <code>3f7985a2</code> war
-übersehen.</p>
+<p>This exception propagated through <code>_invoke_once()</code> and was logged as a generic subprocess-error pattern — the root cause was invisible. The Worker-side had already detected the bug
+(<code>_resolve_gemini_binary()</code> in <code>GeminiWorker</code>), but the counterpart for the Critic-switch in commit <code>3f7985a2</code> was overlooked.</p>
 
 <h3>Fix</h3>
 <p>Neuer Helper <code>_resolve_cli_binary(name, fallback_exts)</code> in
@@ -111,14 +100,14 @@ Manueller Subprocess-Repro mit aufgelöstem Pfad:
 <code>response="{\"v\":\"ok\"}"</code>.<br>
 Resolved argv[0]:
 <code><USER_HOME>\AppData\Roaming\npm\gemini.CMD</code>.<br>
-Tests: <strong>166 / 166 grün</strong> (Critic + Injection + Agents).
+Tests: <strong>166 / 166 passing</strong> (Critic + Injection + Agents).
 </div>
 
-<h2>Schicht 2: Quota auf deinem Gemini-Konto</h2>
+<h2>Layer 2: Quota on your Gemini account</h2>
 
-<h3>Was die Logs zeigen</h3>
-<p>Nach Schicht-1-Fix hat der Critic-Subprocess wirklich gestartet — und
-nach 281 s mit folgendem Stderr abgebrochen:</p>
+<h3>What the logs show</h3>
+<p>After Layer-1 fix, the Critic subprocess actually started — and
+after 281 s it terminated with the following stderr:</p>
 <pre>cause: {
   code: 429,
   message: 'You have exhausted your capacity on this model.',
@@ -126,41 +115,41 @@ nach 281 s mit folgendem Stderr abgebrochen:</p>
 },
 retryDelayMs: 10000</pre>
 
-<p>Gemini-CLI macht intern Exponential-Backoff (10 s → 20 s → 35 s → 35 s),
-nach 4 Retries gibt sie auf. Wirft den Job zurück an unsere
-<code>CriticRunner</code> — die kommt erstmals in den Timeout-Fall, dann
-Iter-1 neu spawnen → noch eine Critic-Call → wieder 429.</p>
+<p>Gemini-CLI internally does exponential backoff (10 s → 20 s → 35 s → 35 s),
+and after 4 retries it gives up. It returns the job to our
+<code>CriticRunner</code> — which hits the timeout case for the first time, then
+spawns iteration 1 again → another Critic call → 429 again.</p>
 
-<h3>Warum das passiert</h3>
-<p>Google-AI-Studio Free-Tier hat strikte Per-Minute-Limits auf
-<code>gemini-3-flash-preview</code> (üblich: ~5–10 req/min). Phase-6 Critic-Loop
-ist designed für High-Quota-Anbieter:</p>
+<h3>Why this happens</h3>
+<p>Google-AI-Studio Free-Tier has strict per-minute limits on
+<code>gemini-3-flash-preview</code> (typical: ~5–10 req/min). The Phase-6 Critic-Loop
+is designed for high-quota providers:</p>
 <table>
 <tr><th>Iter</th><th>Worker-Call</th><th>Critic-Call 1</th><th>Critic-Call 2 (reframe)</th></tr>
-<tr><td>0</td><td>Gemini</td><td>Gemini</td><td>(nur bei JSON-Error)</td></tr>
-<tr><td>1</td><td>Gemini</td><td>Gemini</td><td>(nur bei JSON-Error)</td></tr>
-<tr><td>2</td><td>Gemini</td><td>Gemini</td><td>(nur bei JSON-Error)</td></tr>
+<tr><td>0</td><td>Gemini</td><td>Gemini</td><td>(only on JSON-Error)</td></tr>
+<tr><td>1</td><td>Gemini</td><td>Gemini</td><td>(only on JSON-Error)</td></tr>
+<tr><td>2</td><td>Gemini</td><td>Gemini</td><td>(only on JSON-Error)</td></tr>
 </table>
-<p>Worst-Case <strong>9 Gemini-Calls in &lt; 60 s</strong> aus einem einzigen
-Mission-Spawn. Free-Tier killt das nach Call 5–6.</p>
+<p>Worst-case: <strong>9 Gemini-Calls in &lt; 60 s</strong> from a single
+mission spawn. Free-Tier kills that after call 5–6.</p>
 
-<h3>Was du tun kannst (User-Aktion)</h3>
+<h3>What you can do (User action)</h3>
 <ul>
-  <li><strong>Empfehlung</strong>: Billing auf
-      <a href="https://aistudio.google.com/app/apikey">aistudio.google.com</a>
-      aktivieren. Pay-as-you-go Flash kostet ~$0.075 / 1M Input-Tokens —
-      eine Hello-World-Mission liegt bei ~$0.001. Damit verschwindet die
-      Per-Minute-Quota komplett.</li>
-  <li><strong>Alternative ohne Geld</strong>: ich kann den Critic-Loop
-      auf der Gemini-Side aggressiver beschränken (z. B. nur 1 Call pro
-      Iteration, kein adversarial-reframe-Retry). Halbiert die
-      Quota-Last, könnte mit Free-Tier knapp reichen — kostet aber etwas
-      Anti-Sycophancy-Schutz.</li>
+  <li><strong>Recommendation</strong>: Enable billing on
+      <a href="https://aistudio.google.com/app/apikey">aistudio.google.com</a>.
+      Pay-as-you-go Flash costs ~$0.075 / 1M input tokens —
+      a hello-world mission costs around ~$0.001. This eliminates the
+      per-minute quota entirely.</li>
+  <li><strong>Alternative without money</strong>: I can restrict the Critic-Loop
+      more aggressively on the Gemini side (e.g., only 1 call per
+      iteration, no adversarial-reframe-retry). This halves the
+      quota load and might barely work with free-tier — but costs some
+      anti-sycophancy protection.</li>
 </ul>
 
-<h2>Was sich an Files geändert hat</h2>
+<h2>What changed in files</h2>
 <table>
-<tr><th>Datei</th><th>Was</th><th>Lines</th></tr>
+<tr><th>File</th><th>What</th><th>Lines</th></tr>
 <tr><td><code>jarvis/missions/critic/runner.py</code></td>
     <td><span class="badge badge-fix">FIX</span> <code>_resolve_cli_binary()</code> + 240s Timeout</td>
     <td>+45 / −3</td></tr>
@@ -169,21 +158,21 @@ Mission-Spawn. Free-Tier killt das nach Call 5–6.</p>
     <td>+46 / −0</td></tr>
 </table>
 
-<h2>Was NICHT kaputt gegangen ist</h2>
+<h2>What did NOT break</h2>
 <ul>
-  <li>Claude-Pfad (<code>_brain_primary() == "claude-api"</code>): voller
-      Backward-Compat, alle alten Tests grün.</li>
-  <li>Worker (GeminiWorker / OpenClawWorker): unverändert.</li>
-  <li>Voice / STT / TTS / Wake-Word: keine Audio-Layer-Änderung.</li>
-  <li>Frontend / Outputs-View / Agents-Board: keine UI-Änderung.</li>
-  <li>Injection-Scanner, Safety-Path, Worktree-Cleanup: alles unverändert.</li>
+  <li>Claude path (<code>_brain_primary() == "claude-api"</code>): full
+      backward compat, all old tests passing.</li>
+  <li>Worker (GeminiWorker / OpenClawWorker): unchanged.</li>
+  <li>Voice / STT / TTS / Wake-Word: no audio-layer changes.</li>
+  <li>Frontend / Outputs-View / Agents-Board: no UI changes.</li>
+  <li>Injection-Scanner, Safety-Path, Worktree-Cleanup: all unchanged.</li>
 </ul>
 
 <div class="note">
-<strong>Empfehlung.</strong> Schicht 1 ist als Commit <code>4c5215f2</code>
-auf <code>main</code> gemerged. Für Schicht 2 entscheidest du: Gemini-Billing
-aktivieren (clean, deckt alle Phase-6-Anforderungen ab) oder ich strippe den
-adversarial-reframe-Retry auf der Gemini-Side (cheaper, weniger Schutz).
+<strong>Recommendation.</strong> Layer 1 is merged as commit <code>4c5215f2</code>
+to <code>main</code>. For Layer 2, you decide: enable Gemini-Billing
+(clean, covers all Phase-6 requirements) or I strip the
+adversarial-reframe-retry on the Gemini side (cheaper, less protection).
 </div>
 
 <footer>

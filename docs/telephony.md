@@ -114,7 +114,7 @@ restart, so re-run `set-webhook` each time. The VPS path avoids this.
 - Call your Twilio number. Jarvis greets you, you talk, it answers in the Charon
   voice. Say **"auflegen"** (or "tschüss", "goodbye", "hang up") to end the
   call; barge-in is supported (start talking while Jarvis is speaking and it
-  stops to listen).
+  stops to listen). <!-- i18n-allow -->
 
 Recent calls appear in the **Recent calls** table.
 

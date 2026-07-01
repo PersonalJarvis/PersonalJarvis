@@ -204,7 +204,7 @@ Replace `_ensure_client` in `jarvis/plugins/brain/openrouter.py`:
         if self._client is None:
             ep = cfg.resolve_provider_endpoint("openrouter", vendor_default_base_url=BASE_URL)
             if not ep.credential:
-                raise RuntimeError("Kein OpenRouter-API-Key gefunden (openrouter_api_key).")
+                raise RuntimeError("No OpenRouter API key found (openrouter_api_key).")
             from openai import AsyncOpenAI
             self._client = AsyncOpenAI(
                 api_key=ep.credential,
@@ -279,7 +279,7 @@ Replace `_ensure_client` in `jarvis/plugins/brain/grok.py`:
             ep = cfg.resolve_provider_endpoint("grok", vendor_default_base_url=BASE_URL)
             if not ep.credential:
                 raise RuntimeError(
-                    "Kein Grok-API-Key gefunden "
+                    "No Grok API key found "
                     "(grok_api_key / xai_api_key / GROK_API_KEY / XAI_API_KEY)."
                 )
             from openai import AsyncOpenAI
@@ -350,7 +350,7 @@ Replace `_ensure_client` in `jarvis/plugins/brain/openai.py`:
         if self._client is None:
             ep = cfg.resolve_provider_endpoint("openai")
             if not ep.credential:
-                raise RuntimeError("Kein OpenAI-API-Key gefunden (openai_api_key / OPENAI_API_KEY).")
+                raise RuntimeError("No OpenAI API key found (openai_api_key / OPENAI_API_KEY).")
             from openai import AsyncOpenAI
             kwargs: dict[str, Any] = {"api_key": ep.credential, "timeout": CLIENT_TIMEOUT}
             if ep.base_url:
@@ -428,11 +428,11 @@ Replace `_ensure_client` in `jarvis/plugins/brain/claude_api.py`:
             ep = cfg.resolve_provider_endpoint("claude-api")
             if not ep.credential:
                 raise RuntimeError(
-                    "Kein Anthropic-API-Key gefunden. Bitte via Wizard setzen oder "
+                    "No Anthropic API key found. Please set via Wizard or "
                     "ANTHROPIC_API_KEY in ENV."
                 )
             from anthropic import AsyncAnthropic
-            # max_retries=0 → BrainManager-Fallback greift schneller bei 429
+            # max_retries=0 → BrainManager fallback engages faster on 429
             kwargs: dict[str, Any] = {"api_key": ep.credential, "max_retries": 0, "timeout": 15.0}
             if ep.base_url:
                 kwargs["base_url"] = ep.base_url

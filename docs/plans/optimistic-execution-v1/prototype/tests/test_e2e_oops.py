@@ -29,7 +29,7 @@ def test_missing_email_triggers_organic_correction_at_turn_boundary() -> None:
         oops.set_user_speaking(True)
 
         reply = await talker.handle_utterance(
-            "Schreib Max eine Mail, dass sich das Projekt verschiebt"
+            "Schreib Max eine Mail, dass sich das Projekt verschiebt"  # i18n-allow: test content — user voice utterance DE
         )
         assert reply.strip(), "optimistic ACK must still fire even though it will later fail"
 

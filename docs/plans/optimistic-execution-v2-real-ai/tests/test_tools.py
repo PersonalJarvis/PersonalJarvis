@@ -28,7 +28,7 @@ class TestDumbTool:
         """DumbTool.fire must return a non-empty string."""
         from optimistic.tools import DumbTool
         tool = DumbTool("play_music")
-        result = run(tool.fire("spiel Spotify"))
+        result = run(tool.fire("spiel Spotify"))  # i18n-allow
         assert isinstance(result, str)
         assert len(result) > 0
 
@@ -39,7 +39,7 @@ class TestDumbTool:
         from optimistic.tools import DumbTool
         tool = DumbTool("volume")
         start = time.monotonic()
-        run(tool.fire("lauter"))
+        run(tool.fire("lauter"))  # i18n-allow
         elapsed = time.monotonic() - start
         assert elapsed < 0.1, f"DumbTool.fire took {elapsed:.3f}s — must be instant"
 
@@ -47,14 +47,14 @@ class TestDumbTool:
         """The result should reference the tool name for clarity."""
         from optimistic.tools import DumbTool
         tool = DumbTool("adjusties")
-        result = run(tool.fire("adjusties machen"))
+        result = run(tool.fire("adjusties machen"))  # i18n-allow
         assert "adjusties" in result.lower()
 
     def test_fire_different_commands(self):
         """DumbTool.fire works for arbitrary command strings."""
         from optimistic.tools import DumbTool
         tool = DumbTool("play_music")
-        for cmd in ["spiel was", "play rock", "musik an"]:
+        for cmd in ["spiel was", "play rock", "musik an"]:  # i18n-allow
             result = run(tool.fire(cmd))
             assert isinstance(result, str)
             assert result  # non-empty
@@ -68,7 +68,7 @@ class TestCheckMissingInfo:
     def test_missing_info_for_max_with_empty_contacts(self):
         """'Schreib Max eine Mail' + empty contacts → MISSING_INFO tuple."""
         from optimistic.tools import check_missing_info
-        result = check_missing_info("Schreib Max eine Mail", {})
+        result = check_missing_info("Schreib Max eine Mail", {})  # i18n-allow
         assert result is not None
         reason, detail = result
         assert reason == CorrectionReason.MISSING_INFO
@@ -77,7 +77,7 @@ class TestCheckMissingInfo:
     def test_missing_info_for_anna_with_empty_contacts(self):
         """'Schreib Anna eine Mail' + empty contacts → MISSING_INFO."""
         from optimistic.tools import check_missing_info
-        result = check_missing_info("Schreib Anna eine kurze Nachricht", {})
+        result = check_missing_info("Schreib Anna eine kurze Nachricht", {})  # i18n-allow
         assert result is not None
         reason, detail = result
         assert reason == CorrectionReason.MISSING_INFO
@@ -87,7 +87,7 @@ class TestCheckMissingInfo:
         """Returns None when the recipient IS in contacts (case-insensitive)."""
         from optimistic.tools import check_missing_info
         result = check_missing_info(
-            "Schreib Max eine Mail",
+            "Schreib Max eine Mail",  # i18n-allow
             {"contacts": {"Max": "max@example.com"}},
         )
         assert result is None
@@ -96,7 +96,7 @@ class TestCheckMissingInfo:
         """Contacts lookup is case-insensitive: 'max' matches 'Max'."""
         from optimistic.tools import check_missing_info
         result = check_missing_info(
-            "Schreib Max eine Mail",
+            "Schreib Max eine Mail",  # i18n-allow
             {"contacts": {"max": "max@example.com"}},
         )
         assert result is None
@@ -116,7 +116,7 @@ class TestCheckMissingInfo:
     def test_detail_message_format(self):
         """Detail contains 'no email address on file for {name}'."""
         from optimistic.tools import check_missing_info
-        result = check_missing_info("Schreib Max eine Mail", {})
+        result = check_missing_info("Schreib Max eine Mail", {})  # i18n-allow
         assert result is not None
         _, detail = result
         assert "no email address on file for" in detail
@@ -125,7 +125,7 @@ class TestCheckMissingInfo:
     def test_returns_tuple_with_two_elements(self):
         """Return value is a 2-tuple (CorrectionReason, str)."""
         from optimistic.tools import check_missing_info
-        result = check_missing_info("Schreib Max eine Mail", {})
+        result = check_missing_info("Schreib Max eine Mail", {})  # i18n-allow
         assert result is not None
         assert len(result) == 2
         assert isinstance(result[0], CorrectionReason)
@@ -135,14 +135,14 @@ class TestCheckMissingInfo:
         """context without 'contacts' key is the same as empty contacts."""
         from optimistic.tools import check_missing_info
         # context has no 'contacts' key at all
-        result = check_missing_info("Schreib Max eine Mail", {"other": "value"})
+        result = check_missing_info("Schreib Max eine Mail", {"other": "value"})  # i18n-allow
         assert result is not None
 
     def test_contacts_as_dict_with_irrelevant_names(self):
         """Max not in contacts even when other names are present."""
         from optimistic.tools import check_missing_info
         result = check_missing_info(
-            "Schreib Max eine Mail",
+            "Schreib Max eine Mail",  # i18n-allow
             {"contacts": {"Anna": "anna@x.de", "Bob": "bob@x.de"}},
         )
         assert result is not None

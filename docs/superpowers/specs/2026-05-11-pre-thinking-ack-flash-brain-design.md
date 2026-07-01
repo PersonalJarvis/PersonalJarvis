@@ -354,7 +354,7 @@ ERLAUBT in deinem Satz:
 
 Output: Genau ein Satz mit konkretem Themenbezug, ODER leerer String.
 Kein Markdown, kein Kommentar, kein Begleitsatz.
-```
+``` <!-- i18n-allow: PERSONA_PROMPT_DE -->
 
 #### PERSONA_PROMPT_EN (verbatim)
 

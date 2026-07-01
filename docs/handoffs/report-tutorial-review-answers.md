@@ -173,7 +173,7 @@ and that screenshot is not used in the film.)
 - `video/pythonw_xpdq2qZtJg.png` — shows the **private email** twice. **Not in the
   film**; stray ShareX capture, `.gitignore`d.
 - `video/public/shot-outputs.png` — shows an internal **German mission prompt**
-  ("…Das war einfach starr. Kannst mal einen Deep Dive machen…") + first name.
+  ("…That was just rigid. Could you do a deep dive?…") + first name.
   **Not referenced by any scene → not in the film.**
 - `video/public/shot-apikeys.png` — first name in the sidebar; key **masked**, no
   token. In the film (SetupKeys).

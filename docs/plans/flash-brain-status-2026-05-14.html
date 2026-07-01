@@ -138,7 +138,7 @@
       <div class="bid">BUG-019 · BUG-017 cascade</div>
       <h3>Force-spawn-openclaw hangs when <code>brain.primary</code> is non-Claude/non-Gemini</h3>
       <ul>
-        <li><b>Symptom.</b> User says <code>"such mir Flüge nach München"</code>. Flash-Brain ack plays correctly, then Jarvis stays silent — no main answer. User words: <em>"er hört nur noch zu, denkt nicht mehr"</em>. Repeats on every action-verb utterance.</li>
+        <li><b>Symptom.</b> User says <code>"such mir Flüge nach München"</code> <!-- i18n-allow: test content — user voice utterance DE -->. Flash-Brain ack plays correctly, then Jarvis stays silent — no main answer. User words: <em>"er hört nur noch zu, denkt nicht mehr"</em> <!-- i18n-allow: test content — user observation DE -->. Repeats on every action-verb utterance.</li>
         <li><b>Fix.</b> <code>jarvis/brain/manager.py::_should_force_openclaw</code> now returns <code>False</code> when <code>brain.primary</code> is not <code>"claude-api"</code> or <code>"gemini"</code>. Router-Brain handles the request inline via the normal tool-use loop instead of fire-and-forgetting into a dead <code>GeminiWorker</code> that hits the BUG-017 403. Ships in commit <code>4fd8932b</code>.</li>
         <li><b>Cross-ref.</b> Root cause BUG-017 (Gemini account 403). Complementary TTS-pipe fix in commit <code>8b0d7427</code> keeps the Flash-Brain ack audible on the inline path. Both gates documented in ADR-0014 and full lessons in <code>docs/BUGS.md#BUG-019</code>.</li>
       </ul>

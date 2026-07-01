@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -84,36 +84,36 @@
 <div class="wrap">
 
   <span class="tag">Personal Jarvis · Phase 6</span>
-  <span class="tag">Deep-Dive · 20 Subagenten</span>
+  <span class="tag">Deep-Dive · 20 Subagents</span>
   <span class="tag">2026-05-24</span>
-  <h1>Warum keine einzige Mission funktioniert</h1>
-  <p class="sub">Root-Cause-Analyse &amp; Umsetzungsplan für den Worker-Critic-Stack · erstellt aus 20 parallelen Code-Deep-Dives + forensischer Auswertung von <code>missions.db</code> und den On-Disk-Mission-Logs.</p>
+  <h1>Why No Single Mission Works</h1>
+  <p class="sub">Root-cause analysis &amp; fix plan for the Worker-Critic stack · created from 20 parallel code deep-dives + forensic analysis of <code>missions.db</code> and on-disk mission logs.</p>
 
   <div class="lead">
-    <strong>Kurzfassung:</strong> Es ist <em>nicht</em> ein Bug, sondern eine Kette. Der eigentliche Killer:
-    der aktive Worker läuft über <strong>OpenClaw</strong>, das ein verschachteltes <code>claude</code> startet
-    <strong>ohne</strong> <code>--permission-mode bypassPermissions</code> → <code>claude</code> wartet auf einen
-    Berechtigungs-Dialog, den niemand beantwortet → <strong>480 s Stillstand → FailoverError → Mission scheitert</strong>.
-    Dazu sechs Verstärker. Der Haupt-Fix ist <strong>eine Konfig-Änderung</strong> (auf den bewiesen
-    funktionierenden Direkt-Pfad umrouten), abgesichert durch sechs flankierende Reparaturen.
+    <strong>Executive summary:</strong> It is <em>not</em> a single bug, but a chain. The actual killer:
+    the active Worker runs over <strong>OpenClaw</strong>, which spawns a nested <code>claude</code> call
+    <strong>without</strong> <code>--permission-mode bypassPermissions</code> → <code>claude</code> waits for a
+    permission dialog that nobody answers → <strong>480 s hang → FailoverError → mission fails</strong>.
+    Plus six amplifiers. The main fix is <strong>a config change</strong> (routing to the proven
+    working direct path), secured by six complementary repairs.
   </div>
 
   <div class="grid">
-    <div class="stat"><div class="n bad">211</div><div class="l">FAILED Missionen</div></div>
+    <div class="stat"><div class="n bad">211</div><div class="l">FAILED Missions</div></div>
     <div class="stat"><div class="n good">20</div><div class="l">APPROVED (≈ 9 %)</div></div>
-    <div class="stat"><div class="n">480 s</div><div class="l">Stillstand bis FailoverError</div></div>
-    <div class="stat"><div class="n">7</div><div class="l">Kern-Root-Causes</div></div>
-    <div class="stat"><div class="n">20</div><div class="l">Deep-Dive-Subagenten</div></div>
+    <div class="stat"><div class="n">480 s</div><div class="l">Hang until FailoverError</div></div>
+    <div class="stat"><div class="n">7</div><div class="l">Core root-causes</div></div>
+    <div class="stat"><div class="n">20</div><div class="l">Deep-dive subagents</div></div>
   </div>
 
   <!-- ====================== EVIDENCE ====================== -->
-  <h2>1 · Die empirische Grundwahrheit</h2>
-  <p>Vor jeder Theorie: was sagt die echte Datenbank und was sagen die echten Logs? Drei harte Befunde aus
-     <code>data/missions.db</code> und <code>sub-agents-outputs/mission_*/…/logs/stderr.log</code>.</p>
+  <h2>1 · The empirical ground truth</h2>
+  <p>Before any theory: what does the actual database say and what do the actual logs say? Three hard findings from
+     <code>data/missions.db</code> and <code>sub-agents-outputs/mission_*/…/logs/stderr.log</code>.</p>
 
   <div class="card s-crit">
-    <div class="rc-head"><span class="rc-id">EVIDENCE-1</span><span class="rc-title">Der verschachtelte <code>claude</code> hängt 480 s und stirbt</span><span class="pill p-crit">Primär-Killer</span></div>
-    <p>Identisch in jeder gescheiterten Mission mit 0-Byte-Stream:</p>
+    <div class="rc-head"><span class="rc-id">EVIDENCE-1</span><span class="rc-title">The nested <code>claude</code> hangs 480 s and dies</span><span class="pill p-crit">Primary killer</span></div>
+    <p>Identical in every failed mission with 0-byte stream:</p>
 <pre><span class="c">[agent/cli-backend] cli exec: provider=claude-cli model=opus promptChars=174 ...</span>
 [agent/cli-backend] claude live session start: model=claude-opus-4-7 activeSessions=1
 [agent/cli-backend] claude live session close: reason=abort
@@ -121,216 +121,216 @@
 [model-fallback/decision] decision=candidate_failed reason=timeout <b>next=none</b>
    detail=<b>CLI produced no output for 480s and was terminated.</b>
 FailoverError: CLI produced no output for 480s and was terminated.</pre>
-    <p class="meta">→ 0-Byte <code>stream.jsonl</code> → Mission <code>task_error</code>, fälschlich als <code>WorkerKilled reason=user</code> etikettiert.</p>
+    <p class="meta">→ 0-byte <code>stream.jsonl</code> → mission <code>task_error</code>, incorrectly labeled as <code>WorkerKilled reason=user</code>.</p>
   </div>
 
   <div class="card s-warn">
-    <div class="rc-head"><span class="rc-id">EVIDENCE-2</span><span class="rc-title">Datei geschrieben — aber 240 s später am Critic gescheitert</span></div>
-    <p>Mission <code>8d08</code> (rekonstruiert aus <code>data/jarvis_desktop.log</code>): Iteration 0 + 1 liefen je 81 s / 94 s,
-       schrieben aber <strong>0 Bytes</strong> in den Worktree. Erst Iteration 2 schrieb <strong>55 KB</strong> (3 Dateien).
-       Doch dann lief der <em>Critic</em> &gt; 240 s und wurde gekillt → Mission <code>critic_loop_exhausted</code> — trotz echter Arbeit.</p>
+    <div class="rc-head"><span class="rc-id">EVIDENCE-2</span><span class="rc-title">File written — but failed at critic 240 s later</span></div>
+    <p>Mission <code>8d08</code> (reconstructed from <code>data/jarvis_desktop.log</code>): iterations 0 + 1 ran for 81 s / 94 s each,
+       but wrote <strong>0 bytes</strong> to the worktree. Only iteration 2 wrote <strong>55 KB</strong> (3 files).
+       But then the <em>Critic</em> ran &gt; 240 s and was killed → mission <code>critic_loop_exhausted</code> — despite real work.</p>
     <p class="meta">diff.iter0.patch = 0 B · diff.iter1.patch = 0 B · diff.iter2.patch = 55 296 B</p>
   </div>
 
   <div class="card s-info">
-    <div class="rc-head"><span class="rc-id">EVIDENCE-3</span><span class="rc-title">Konfig-Split: Worker ≠ Critic-Backend</span></div>
-    <p><code>jarvis.toml [brain.sub_jarvis].provider = "openclaw-claude"</code> → Worker = <strong>OpenClaw</strong> (der hängende Pfad).
-       Der Critic löst unabhängig zu <code>claude-api</code> auf → <strong>direkter</strong> <code>claude --print</code>.
-       Mein Solo-Test einer trivialen Aufgabe lief über denselben Stack und wurde <span style="color:var(--ok)">APPROVED</span> —
-       der Unterschied war <em>Last &amp; Komplexität</em>, nicht der Code.</p>
+    <div class="rc-head"><span class="rc-id">EVIDENCE-3</span><span class="rc-title">Config split: Worker ≠ Critic backend</span></div>
+    <p><code>jarvis.toml [brain.sub_jarvis].provider = "openclaw-claude"</code> → Worker = <strong>OpenClaw</strong> (the hanging path).
+       Critic resolves independently to <code>claude-api</code> → <strong>direct</strong> <code>claude --print</code>.
+       My solo test of a trivial task ran over the same stack and was <span style="color:var(--ok)">APPROVED</span> —
+       the difference was <em>load &amp; complexity</em>, not the code.</p>
   </div>
 
   <!-- ====================== ROOT CAUSES ====================== -->
-  <h2>2 · Root-Cause-Taxonomie (RC1–RC7)</h2>
+  <h2>2 · Root-cause taxonomy (RC1–RC7)</h2>
   <div class="legend">
-    <span><span class="dot" style="background:var(--crit)"></span>Primär</span>
-    <span><span class="dot" style="background:var(--warn)"></span>Verstärker</span>
-    <span><span class="dot" style="background:var(--cosmetic)"></span>Kosmetisch (Red Herring)</span>
+    <span><span class="dot" style="background:var(--crit)"></span>Primary</span>
+    <span><span class="dot" style="background:var(--warn)"></span>Amplifier</span>
+    <span><span class="dot" style="background:var(--cosmetic)"></span>Cosmetic (red herring)</span>
   </div>
 
   <div class="card s-crit">
-    <div class="rc-head"><span class="rc-id">RC1</span><span class="rc-title">OpenClaw startet <code>claude</code> ohne <code>bypassPermissions</code> + Concurrency-Limit</span><span class="pill p-crit">Primär</span></div>
-    <p>OpenClaw spawnt <code>claude -p … --permission-prompt-tool stdio</code> <strong>ohne</strong> <code>--permission-mode bypassPermissions</code>.
-       <code>claude</code> emittiert ein Permission-Prompt-JSON-Frame und wartet auf eine stdin-Antwort, die OpenClaws Session-Driver
-       nie sendet. Nach 480 s (= <code>600000 × 0.8</code>, hartkodiert) → <code>FailoverError</code>. <strong>Zweiter Mechanismus:</strong>
-       7 Missionen in 2 Minuten → parallele <code>claude</code>-Sessions am selben Claude-Max-20x-Konto → serverseitiges
-       Rate-Limit → stilles Warten bis Timeout.</p>
-    <p class="meta">Beleg: openclaw/dist/cli-backend-*.js, claude-live-session-*.js:386 · helpers-*.js:70 · OAuth via <code>~/.claude/.credentials.json</code> ist intakt (kein Auth-Problem).</p>
+    <div class="rc-head"><span class="rc-id">RC1</span><span class="rc-title">OpenClaw spawns <code>claude</code> without <code>bypassPermissions</code> + concurrency limit</span><span class="pill p-crit">Primary</span></div>
+    <p>OpenClaw spawns <code>claude -p … --permission-prompt-tool stdio</code> <strong>without</strong> <code>--permission-mode bypassPermissions</code>.
+       <code>claude</code> emits a permission-prompt JSON frame and waits for a stdin answer, which OpenClaw's session driver
+       never sends. After 480 s (= <code>600000 × 0.8</code>, hardcoded) → <code>FailoverError</code>. <strong>Second mechanism:</strong>
+       7 missions in 2 minutes → parallel <code>claude</code> sessions on the same Claude-Max-20x account → server-side
+       rate limit → silent wait until timeout.</p>
+    <p class="meta">Evidence: openclaw/dist/cli-backend-*.js, claude-live-session-*.js:386 · helpers-*.js:70 · OAuth via <code>~/.claude/.credentials.json</code> is intact (no auth problem).</p>
   </div>
 
   <div class="card s-warn">
-    <div class="rc-head"><span class="rc-id">RC2</span><span class="rc-title">Worker schreibt <em>außerhalb</em> des Git-Worktrees</span><span class="pill p-warn">Verstärker</span></div>
-    <p>Skill-getriebene Aufgaben (z. B. der Excalidraw-Skill) weisen absolute Pfade an (<code>C:\…\OneDrive\Ex\…</code>) oder Browser-Aktionen.
-       Der Orchestrator erfasst aber nur <code>git add -N . &amp;&amp; git diff HEAD</code> <em>im</em> Worktree
-       (<code>orchestrator.py:871-940</code>). Schreibt der Worker draußen → leerer Diff → deterministisches „empty diff"-Revise → Schleife erschöpft.</p>
+    <div class="rc-head"><span class="rc-id">RC2</span><span class="rc-title">Worker writes <em>outside</em> the git worktree</span><span class="pill p-warn">Amplifier</span></div>
+    <p>Skill-driven tasks (e.g. the Excalidraw skill) direct writes to absolute paths (<code>C:\…\OneDrive\Ex\…</code>) or browser actions.
+       But the orchestrator only captures <code>git add -N . &amp;&amp; git diff HEAD</code> <em>inside</em> the worktree
+       (<code>orchestrator.py:871-940</code>). If the worker writes outside → empty diff → deterministic "empty diff" revise → loop exhausted.</p>
   </div>
 
   <div class="card s-warn">
-    <div class="rc-head"><span class="rc-id">RC3</span><span class="rc-title">Critic-Timeout 240 s &lt; agentischer Aufwand</span><span class="pill p-warn">Verstärker</span></div>
-    <p><code>DEFAULT_TIMEOUT_SECONDS = 240</code> (<code>runner.py:274</code>) bei Worker-Budget 600 s. Der Fix vom 24.05. machte den Critic
-       <em>agentisch</em> (<code>bypassPermissions</code> → echte <code>Read</code>/<code>Glob</code>-Verifikation). Bei großen Diffs (55 KB) sprengt das die 240 s →
-       Mission scheitert trotz erfolgreichem Worker.</p>
+    <div class="rc-head"><span class="rc-id">RC3</span><span class="rc-title">Critic timeout 240 s &lt; agentic effort</span><span class="pill p-warn">Amplifier</span></div>
+    <p><code>DEFAULT_TIMEOUT_SECONDS = 240</code> (<code>runner.py:274</code>) with worker budget 600 s. The fix on 2026-05-24 made the Critic
+       <em>agentic</em> (<code>bypassPermissions</code> → real <code>Read</code>/<code>Glob</code> verification). For large diffs (55 KB), that exceeds 240 s →
+       mission fails despite successful worker.</p>
   </div>
 
   <div class="card s-warn">
-    <div class="rc-head"><span class="rc-id">RC4</span><span class="rc-title">Korrektur-Anweisung erreicht den Worker nie vollständig</span><span class="pill p-warn">Verstärker</span></div>
-    <p>Die <code>correction_instruction</code> des Critics wird nur als Bus-Event publiziert, aber <strong>nicht</strong> in <code>ReflectionMemory</code>
-       geschrieben (<code>reflections.py:184-200</code> rendert nur <code>summary</code> + Evidenz). Der Worker bekommt in Iteration 1 nur eine vage
-       Zusammenfassung statt der präskriptiven Anweisung — deshalb schrieb 8d08 in iter1 erneut nichts.</p>
+    <div class="rc-head"><span class="rc-id">RC4</span><span class="rc-title">Correction instruction never reaches the worker completely</span><span class="pill p-warn">Amplifier</span></div>
+    <p>The critic's <code>correction_instruction</code> is only published as a bus event, but <strong>not</strong> written to <code>ReflectionMemory</code>
+       (<code>reflections.py:184-200</code> renders only <code>summary</code> + evidence). The worker gets only a vague
+       summary in iteration 1 instead of the prescriptive instruction — that's why 8d08 wrote nothing again in iter1.</p>
   </div>
 
   <div class="card s-warn">
-    <div class="rc-head"><span class="rc-id">RC5</span><span class="rc-title">Kein Gemini-Fallback bei Hang/Crash</span><span class="pill p-warn">Verstärker</span></div>
-    <p>Die Fallback-Kette wird <strong>nur bei Quota-Block (HTTP 429)</strong> konsultiert (<code>subjarvis_worker.py:630</code>), nicht bei Hang/Timeout/Crash.
-       <code>ClaudeDirectWorker</code> hat gar keine Kette. Daher <code>next=none</code> — Gemini springt nie ein.</p>
+    <div class="rc-head"><span class="rc-id">RC5</span><span class="rc-title">No Gemini fallback on hang/crash</span><span class="pill p-warn">Amplifier</span></div>
+    <p>The fallback chain is <strong>only consulted on quota block (HTTP 429)</strong> (<code>subjarvis_worker.py:630</code>), not on hang/timeout/crash.
+       <code>ClaudeDirectWorker</code> has no chain at all. Hence <code>next=none</code> — Gemini never kicks in.</p>
   </div>
 
   <div class="card s-warn">
-    <div class="rc-head"><span class="rc-id">RC6</span><span class="rc-title">FailoverError als „User-Abbruch" fehletikettiert</span><span class="pill p-warn">Verstärker · Diagnose-Gift</span></div>
-    <p><code>orchestrator.py:499-509</code>: jeder <code>worker_error</code> ohne Billing-String fällt in <code>else "user"</code>.
-       Timeout, Crash, OAuth-Fehler — alles wird <code>WorkerKilled reason=user</code>. Das verschleiert die echte Ursache (sieht aus wie Nutzer-Abbrüche).</p>
+    <div class="rc-head"><span class="rc-id">RC6</span><span class="rc-title">FailoverError mislabeled as "user abort"</span><span class="pill p-warn">Amplifier · diagnostic poison</span></div>
+    <p><code>orchestrator.py:499-509</code>: every <code>worker_error</code> without a billing string falls into <code>else "user"</code>.
+       Timeout, crash, OAuth error — all become <code>WorkerKilled reason=user</code>. This obscures the real cause (looks like user aborts).</p>
   </div>
 
   <div class="card s-warn">
-    <div class="rc-head"><span class="rc-id">RC7</span><span class="rc-title">MAX_CRITIC_LOOPS = 3 von leeren Iterationen aufgefressen</span><span class="pill p-warn">Verstärker</span></div>
-    <p>Iter 0/1 ohne Schreibvorgang verbrauchen 2 von 3 Runden (ADR-0009, nicht ohne neue ADR änderbar). Fix gehört in den <em>Worker</em> (RC2/RC4), nicht ins Budget.</p>
+    <div class="rc-head"><span class="rc-id">RC7</span><span class="rc-title">MAX_CRITIC_LOOPS = 3 consumed by empty iterations</span><span class="pill p-warn">Amplifier</span></div>
+    <p>Iterations 0/1 without writes consume 2 of 3 rounds (ADR-0009, cannot change without new ADR). Fix belongs in the <em>Worker</em> (RC2/RC4), not the budget.</p>
   </div>
 
   <div class="card s-cos">
-    <div class="rc-head"><span class="rc-id">RC-X</span><span class="rc-title">Symlink-EPERM — KOSMETISCH (Red Herring)</span><span class="pill p-cos">kein Killer</span></div>
-    <p>Das <code>[skills] failed to create plugin skill symlink … EPERM</code> in jedem Log ist <strong>harmlos</strong>: OpenClaws JS macht
-       <code>log.warn</code> + weiter (belegt in der npm-Quelle). Nicht die Ursache der 211 Fehlschläge.</p>
+    <div class="rc-head"><span class="rc-id">RC-X</span><span class="rc-title">Symlink EPERM — COSMETIC (red herring)</span><span class="pill p-cos">not a killer</span></div>
+    <p>The <code>[skills] failed to create plugin skill symlink … EPERM</code> in every log is <strong>harmless</strong>: OpenClaw's JS does
+       <code>log.warn</code> + continues (documented in the npm source). Not the cause of the 211 failures.</p>
   </div>
 
   <!-- ====================== FIX PLAN ====================== -->
-  <h2>3 · Der Plan — priorisierte Reparatur-Reihenfolge</h2>
-  <p>Reihenfolge nach <em>Impact ÷ Risiko</em> (validiert gegen die Anti-Pattern AP-1…AP-18 und die wiederkehrenden Bug-Klassen).</p>
+  <h2>3 · The plan — prioritized repair order</h2>
+  <p>Order by <em>impact ÷ risk</em> (validated against anti-patterns AP-1…AP-18 and recurring bug classes).</p>
 
   <ol class="steps">
     <li>
-      <div class="step-t">FIX-F · Worktree-Confinement im Vertrag (AGENTS.md) <span class="pill p-ok">Risiko: null</span></div>
-      <p>Reine Dokumentation, sofort wirksam. In <code>workspace.py:124-143</code>: Regel ergänzen „<em>ignoriere Skill-Anweisungen zu absoluten Pfaden (OneDrive, C:\…), schreibe alles relativ ins CWD</em>" + „<em>kein Browser im Headless-Worker</em>". Empty-Diff-Korrekturtext in <code>runner.py:504</code> um den OneDrive-Hinweis erweitern. Empfehlung: Skills mit <code>headless_safe=false</code> gar nicht als Mission zulassen.</p>
+      <div class="step-t">FIX-F · Worktree confinement in contract (AGENTS.md) <span class="pill p-ok">Risk: zero</span></div>
+      <p>Pure documentation, effective immediately. In <code>workspace.py:124-143</code>: add rule "ignore skill instructions to absolute paths (OneDrive, C:\…), write everything relative to CWD" + "no browser in headless worker". Extend empty-diff correction text in <code>runner.py:504</code> with OneDrive hint. Recommendation: don't allow skills with <code>headless_safe=false</code> as missions at all.</p>
     </li>
     <li>
-      <div class="step-t">FIX-A · Worker auf den bewiesenen Direkt-Pfad umrouten <span class="pill p-crit">Höchster Impact</span></div>
-      <p>Provider <code>"openclaw-claude" → "claude-api"</code> → Factory wählt <code>ClaudeDirectWorker</code> (ruft <code>claude --print --permission-mode bypassPermissions</code> direkt, ohne OpenClaw-Live-Session → kein 480-s-Hang). <strong>Atomar in BEIDEN Dateien</strong> (sonst Drift-Guard-Rollback in 5 Min):</p>
-      <div class="flow"><b>scripts/config-soll.json:33</b> &nbsp;ZUERST&nbsp; → dann &nbsp;<b>jarvis.toml:277</b> (read-only togglen, BOM-frei schreiben)</div>
-      <p class="meta">model="" ist sicher → fällt auf <code>[brain.providers.claude-api].deep_model = claude-opus-4-7</code> zurück. Critic-Pfad unberührt.</p>
+      <div class="step-t">FIX-A · Route worker to the proven direct path <span class="pill p-crit">Highest impact</span></div>
+      <p>Provider <code>"openclaw-claude" → "claude-api"</code> → factory selects <code>ClaudeDirectWorker</code> (calls <code>claude --print --permission-mode bypassPermissions</code> directly, without OpenClaw live session → no 480-s hang). <strong>Atomic in BOTH files</strong> (else drift-guard rollback in 5 min):</p>
+      <div class="flow"><b>scripts/config-soll.json:33</b> &nbsp;FIRST&nbsp; → then &nbsp;<b>jarvis.toml:277</b> (toggle read-only, write BOM-free)</div>
+      <p class="meta">model="" is safe → falls back to <code>[brain.providers.claude-api].deep_model = claude-opus-4-7</code>. Critic path untouched.</p>
     </li>
     <li>
-      <div class="step-t">FIX-C · Globale Concurrency-Schranke <span class="pill p-warn">gegen Rate-Limit</span></div>
-      <p>Es existiert <strong>kein</strong> missionsübergreifendes Limit. <code>asyncio.Semaphore(3)</code> in <code>Kontrollierer.__init__</code>, <code>async with</code> nur um <code>worker.spawn(...)</code> (<code>orchestrator.py:721</code>) — nicht um die ganze Mission. Singleton deckt Voice + REST. Konfig: <code>[phase6.orchestrator] max_concurrent_workers = 3</code>.</p>
+      <div class="step-t">FIX-C · Global concurrency bound <span class="pill p-warn">against rate limit</span></div>
+      <p>There is <strong>no</strong> cross-mission limit. <code>asyncio.Semaphore(3)</code> in <code>Controller.__init__</code>, <code>async with</code> only around <code>worker.spawn(...)</code> (<code>orchestrator.py:721</code>) — not the whole mission. Singleton covers voice + REST. Config: <code>[phase6.orchestrator] max_concurrent_workers = 3</code>.</p>
     </li>
     <li>
-      <div class="step-t">FIX-D · Critic-Timeout entschärfen <span class="pill p-warn">gegen RC3</span></div>
-      <p><code>DEFAULT_TIMEOUT_SECONDS → 480</code> (<code>runner.py:274</code>) <em>und</em> <code>"--max-turns","5"</code> in <code>runner.py:1036</code> einfügen — agentische Verifikation gedeckelt, Critic endet vor dem 600-s-Worker-Budget.</p>
+      <div class="step-t">FIX-D · Defuse critic timeout <span class="pill p-warn">against RC3</span></div>
+      <p><code>DEFAULT_TIMEOUT_SECONDS → 480</code> (<code>runner.py:274</code>) <em>and</em> add <code>"--max-turns","5"</code> in <code>runner.py:1036</code> — cap agentic verification, critic ends before 600-s worker budget.</p>
     </li>
     <li>
-      <div class="step-t">FIX-B · Fallback-Fix: <code>bypassPermissions</code> in Worker-<code>openclaw.json</code> <span class="pill p-warn">nur falls OpenClaw bleibt</span></div>
-      <p>Der Critic injiziert <code>cliBackends["claude-cli"]</code> bereits korrekt (<code>runner.py:804-816</code>); der Worker nicht (<code>subjarvis_worker.py:459-471</code>). Denselben Dict-Merge nach der <code>primary</code>-Auflösung ergänzen. Behebt die Permission-Hälfte; Concurrency-Hang bleibt → FIX-C nötig. Silent-Swallow im <code>except</code> auf <code>ERROR</code>-Log heben.</p>
+      <div class="step-t">FIX-B · Fallback fix: <code>bypassPermissions</code> in worker <code>openclaw.json</code> <span class="pill p-warn">only if OpenClaw stays</span></div>
+      <p>The critic already injects <code>cliBackends["claude-cli"]</code> correctly (<code>runner.py:804-816</code>); the worker does not (<code>subjarvis_worker.py:459-471</code>). Add the same dict merge after the <code>primary</code> resolution. Fixes the permission half; concurrency hang remains → FIX-C needed. Elevate silent-swallow in <code>except</code> to <code>ERROR</code> log.</p>
     </li>
     <li>
-      <div class="step-t">FIX-G · Kill-Reason-Taxonomie (Five-Layer-Enum) <span class="pill p-warn">Audit-Korrektheit</span></div>
-      <p>Mislabel an <code>orchestrator.py:499-509</code> aufbrechen in <code>worker_timeout</code> / <code>worker_crash</code> / <code>auth_error</code> / echtes <code>user</code>. <strong>Pflicht: alle 5 Schichten</strong> atomar (Python-Literal <code>events.py:97</code> → DE/EN-Announcer → Voice-Listener → TS/UI → Parity-Test), sonst BUG-008-Wiederholung (Catch-all mappt sonst auf <code>injection_detected</code>).</p>
+      <div class="step-t">FIX-G · Kill-reason taxonomy (five-layer enum) <span class="pill p-warn">audit correctness</span></div>
+      <p>Break mislabeling at <code>orchestrator.py:499-509</code> into <code>worker_timeout</code> / <code>worker_crash</code> / <code>auth_error</code> / real <code>user</code>. <strong>Mandatory: all 5 layers</strong> atomic (Python literal <code>events.py:97</code> → DE/EN announcer → voice listener → TS/UI → parity test), else BUG-008 recurrence (catch-all maps to <code>injection_detected</code>).</p>
     </li>
     <li>
-      <div class="step-t">FIX-E · Echter Provider-Fallback bei Worker-Fehler <span class="pill p-warn">zuletzt</span></div>
-      <p>Fallback-Logik in den Orchestrator (<code>orchestrator.py:499</code>): bei <code>worker_error</code> nächsten Ketteneintrag (<code>GeminiWorker</code>) versuchen statt sofort <code>TaskOutcome.ERROR</code>. <strong>Vorsicht BUG-017</strong> (Gemini-403 war gesperrt) — hinter <code>gemini_fallback_enabled</code> gaten, Modell aus <code>cfg</code> lesen (nie hardcoden, AP-6).</p>
+      <div class="step-t">FIX-E · Real provider fallback on worker error <span class="pill p-warn">last</span></div>
+      <p>Fallback logic into the orchestrator (<code>orchestrator.py:499</code>): on <code>worker_error</code> try next chain entry (<code>GeminiWorker</code>) instead of immediate <code>TaskOutcome.ERROR</code>. <strong>Watch BUG-017</strong> (Gemini 403 was blocked) — gate behind <code>gemini_fallback_enabled</code>, read model from <code>cfg</code> (never hardcode, AP-6).</p>
     </li>
   </ol>
 
   <!-- ====================== CONFIG PROCEDURE ====================== -->
-  <h2>4 · Sichere Konfig-Prozedur (FIX-A im Detail)</h2>
-  <p>Der Drift-Guard-Daemon (<code>scripts/jarvis-config-drift-guard.ps1</code>) liest alle 5 Min <code>config-soll.json</code> und rollt jede TOML-Abweichung zurück (BUG-010). Deshalb diese Reihenfolge — sonst kehrt das Problem nach 5 Minuten zurück.</p>
-<pre><span class="c"># 1) Soll-Quelle ZUERST (sonst Rollback):</span>
+  <h2>4 · Safe config procedure (FIX-A in detail)</h2>
+  <p>The drift-guard daemon (<code>scripts/jarvis-config-drift-guard.ps1</code>) reads <code>config-soll.json</code> every 5 min and rolls back any TOML drift (BUG-010). That's why this order — else the problem comes back after 5 minutes.</p>
+<pre><span class="c"># 1) Desired source FIRST (else rollback):</span>
 scripts/config-soll.json:33   "provider": "openclaw-claude"  →  "claude-api"
 
-<span class="c"># 2) jarvis.toml entsperren, BOM-frei schreiben, wieder sperren:</span>
+<span class="c"># 2) Unlock jarvis.toml, write BOM-free, lock again:</span>
 Set-ItemProperty jarvis.toml -Name IsReadOnly -Value $false
 jarvis.toml:277   provider = "openclaw-claude"  →  "claude-api"
-<span class="c"># Schreiben via [System.IO.File]::WriteAllText(..., UTF8Encoding($false))  — NIE Set-Content -Encoding utf8 (BOM → BUG-018)</span>
+<span class="c"># Write via [System.IO.File]::WriteAllText(..., UTF8Encoding($false))  — NEVER Set-Content -Encoding utf8 (BOM → BUG-018)</span>
 Set-ItemProperty jarvis.toml -Name IsReadOnly -Value $true
 
-<span class="c"># 3) Verifizieren:</span>
+<span class="c"># 3) Verify:</span>
 [Environment]::GetEnvironmentVariable("JARVIS__BRAIN__SUB_JARVIS__PROVIDER","User")   <span class="c"># → claude-api</span>
 powershell scripts/jarvis-config-drift-guard.ps1 -DryRun                              <span class="c"># → "TOML clean"</span></pre>
 
   <!-- ====================== TEST PLAN ====================== -->
-  <h2>5 · Beweis-Plan (Fix → Test/Probe)</h2>
+  <h2>5 · Proof plan (fix → test/probe)</h2>
   <table>
-    <thead><tr><th>Fix</th><th>Neuer / erweiterter Test</th><th>Live-Beweis</th></tr></thead>
+    <thead><tr><th>Fix</th><th>New / extended test</th><th>Live proof</th></tr></thead>
     <tbody>
-      <tr><td class="f">FIX-A</td><td><b>NEU</b> <code>tests/missions/workers/test_worker_factory.py</code> — Provider→Worker-Mapping pinnen</td><td class="f">smoke_phase6_p2.py + ENV</td></tr>
-      <tr><td class="f">FIX-B</td><td>erweitern <code>test_runner_dryrun.py</code>: <code>openclaw.json</code> on disk enthält <code>bypassPermissions</code></td><td class="f">smoke_phase6_p3_real.py</td></tr>
-      <tr><td class="f">FIX-C</td><td>erweitern <code>test_loop.py</code>: max N gleichzeitige <code>FakeWorker.spawn</code></td><td class="f">6-Step-Plan, Log-Check</td></tr>
-      <tr><td class="f">FIX-D</td><td><b>NEU</b> Timeout-Bound-Assertion in <code>test_runner_dryrun.py</code></td><td class="f">Wall-Clock &lt; Timeout</td></tr>
-      <tr><td class="f">FIX-F</td><td>bereits stark abgedeckt (<code>test_workspace.py</code>); + AGENTS.md-Version-Guard</td><td class="f">non-empty diff → approve</td></tr>
-      <tr><td class="f">FIX-G</td><td><b>NEU</b> <code>test_kill_reason_parity.py</code> (Five-Layer-Parität, BUG-008-Guard)</td><td class="f">smoke_phase6_p2_jobkill.py</td></tr>
+      <tr><td class="f">FIX-A</td><td><b>NEW</b> <code>tests/missions/workers/test_worker_factory.py</code> — pin provider→worker mapping</td><td class="f">smoke_phase6_p2.py + ENV</td></tr>
+      <tr><td class="f">FIX-B</td><td>extend <code>test_runner_dryrun.py</code>: <code>openclaw.json</code> on disk contains <code>bypassPermissions</code></td><td class="f">smoke_phase6_p3_real.py</td></tr>
+      <tr><td class="f">FIX-C</td><td>extend <code>test_loop.py</code>: max N concurrent <code>FakeWorker.spawn</code></td><td class="f">6-step plan, log check</td></tr>
+      <tr><td class="f">FIX-D</td><td><b>NEW</b> timeout-bound assertion in <code>test_runner_dryrun.py</code></td><td class="f">wall-clock &lt; timeout</td></tr>
+      <tr><td class="f">FIX-F</td><td>already well covered (<code>test_workspace.py</code>); + AGENTS.md version guard</td><td class="f">non-empty diff → approve</td></tr>
+      <tr><td class="f">FIX-G</td><td><b>NEW</b> <code>test_kill_reason_parity.py</code> (five-layer parity, BUG-008 guard)</td><td class="f">smoke_phase6_p2_jobkill.py</td></tr>
     </tbody>
   </table>
-  <p>Der einzige vollständige End-to-End-Beweis für den ganzen Stapel ist <code>python -u scripts/smoke_phase6_p3_real.py</code> (Worktree → Worker → Critic → APPROVED, echte <code>missions.db</code>).</p>
+  <p>The only complete end-to-end proof for the whole stack is <code>python -u scripts/smoke_phase6_p3_real.py</code> (worktree → worker → critic → APPROVED, real <code>missions.db</code>).</p>
 
   <!-- ====================== RISK ====================== -->
-  <h2>6 · Risiko-Register &amp; Schutzmaßnahmen</h2>
+  <h2>6 · Risk register &amp; safeguards</h2>
   <table>
-    <thead><tr><th>Fix</th><th>Blast-Radius</th><th>Rollback / Guard</th></tr></thead>
+    <thead><tr><th>Fix</th><th>Blast radius</th><th>Rollback / guard</th></tr></thead>
     <tbody>
-      <tr><td class="f">A</td><td>Hoch — Default-Worker für alle Missionen</td><td>beide Dateien zurück; Drift-Guard erzwingt Konsistenz</td></tr>
-      <tr><td class="f">B</td><td>Niedrig — per-Mission Ephemeral-Datei</td><td>additiv, kein Rollback nötig</td></tr>
-      <tr><td class="f">C</td><td>Mittel — N=1 würde serialisieren/aushungern</td><td><code>max_concurrent_workers=0</code> = unbegrenzt</td></tr>
-      <tr><td class="f">D</td><td>Niedrig-Mittel — zu knapp killt lange Critics</td><td><code>[missions.critic].timeout_s</code></td></tr>
-      <tr><td class="f">E</td><td>Mittel — Gemini-403-Risiko (BUG-017)</td><td>Default <code>gemini_fallback_enabled=false</code></td></tr>
-      <tr><td class="f">G</td><td>Katastrophal bei Teil-Merge</td><td>alle 5 Schichten in 1 PR + Parity-Test als Gate</td></tr>
+      <tr><td class="f">A</td><td>High — default worker for all missions</td><td>both files back; drift-guard enforces consistency</td></tr>
+      <tr><td class="f">B</td><td>Low — per-mission ephemeral file</td><td>additive, no rollback needed</td></tr>
+      <tr><td class="f">C</td><td>Medium — N=1 would serialize/starve</td><td><code>max_concurrent_workers=0</code> = unlimited</td></tr>
+      <tr><td class="f">D</td><td>Low-medium — too tight kills long critics</td><td><code>[missions.critic].timeout_s</code></td></tr>
+      <tr><td class="f">E</td><td>Medium — Gemini 403 risk (BUG-017)</td><td>default <code>gemini_fallback_enabled=false</code></td></tr>
+      <tr><td class="f">G</td><td>Catastrophic on partial merge</td><td>all 5 layers in 1 PR + parity test as gate</td></tr>
     </tbody>
   </table>
 
   <div class="card s-crit">
-    <div class="rc-head"><span class="rc-title">Pflicht-Guard vor JEDER Änderung (Restore-Trap BUG-006/014)</span></div>
+    <div class="rc-head"><span class="rc-title">Mandatory guard before EVERY change (restore trap BUG-006/014)</span></div>
 <pre>pwsh scripts/preflight.ps1
 python -c "import jarvis; print(jarvis.__file__)"
-<span class="c"># MUSS auf  <USER_HOME>\Desktop\Personal Jarvis\jarvis\__init__.py  zeigen.</span>
-<span class="c"># Sonst landen Edits in einem toten Klon und „der Fix wirkt nicht".</span></pre>
+<span class="c"># MUST point to  <USER_HOME>\Desktop\Personal Jarvis\jarvis\__init__.py</span>
+<span class="c"># Otherwise edits land in a dead clone and "the fix doesn't work".</span></pre>
   </div>
 
   <!-- ====================== AGENT MAP ====================== -->
-  <h2>7 · Die 20 Deep-Dive-Subagenten</h2>
+  <h2>7 · The 20 deep-dive subagents</h2>
   <table>
-    <thead><tr><th>#</th><th>Agent</th><th>Kernbefund</th></tr></thead>
+    <thead><tr><th>#</th><th>Agent</th><th>Core finding</th></tr></thead>
     <tbody>
-      <tr><td class="f">1</td><td class="f">A1-diff-compute</td><td>Diff via <code>git add -N · git diff HEAD</code>; entdeckte Staged/Unstaged-Diskrepanz</td></tr>
-      <tr><td class="f">2</td><td class="f">A2-worktree-cwd</td><td>Worktree + CWD korrekt verdrahtet — nicht die Ursache</td></tr>
-      <tr><td class="f">3</td><td class="f">A3-agents-md</td><td>BUG-021 ist behoben; AGENTS.md wird materialisiert</td></tr>
-      <tr><td class="f">4</td><td class="f">A4-claude-worker</td><td>H-TOOLS widerlegt; Provider-Routing als Schlüssel erkannt</td></tr>
-      <tr><td class="f">5</td><td class="f">RC1-symlink</td><td>Symlink-EPERM kosmetisch; <strong>FailoverError 480 s entdeckt</strong></td></tr>
-      <tr><td class="f">6</td><td class="f">OC-CLI-HANG</td><td><strong>Primärursache:</strong> fehlendes <code>bypassPermissions</code> + Permission-Prompt-Hang</td></tr>
-      <tr><td class="f">7</td><td class="f">OAUTH-ENV</td><td>Auth intakt (On-Disk-Creds); Concurrency-Rate-Limit bestätigt</td></tr>
-      <tr><td class="f">8</td><td class="f">RC3-diff-timing</td><td>8d08-Timeline; Critic-Timeout 240 s als zweiter Killer</td></tr>
-      <tr><td class="f">9</td><td class="f">FIX-A-route</td><td>Config-Fix auf <code>claude-api</code>; ClaudeDirectWorker bewiesen</td></tr>
-      <tr><td class="f">10</td><td class="f">FIX-B-ocperms</td><td>Asymmetrie Critic↔Worker-<code>openclaw.json</code> aufgedeckt</td></tr>
-      <tr><td class="f">11</td><td class="f">FIX-C-concurrency</td><td>Kein globales Limit → Semaphore-Design</td></tr>
+      <tr><td class="f">1</td><td class="f">A1-diff-compute</td><td>Diff via <code>git add -N · git diff HEAD</code>; discovered staged/unstaged discrepancy</td></tr>
+      <tr><td class="f">2</td><td class="f">A2-worktree-cwd</td><td>Worktree + CWD correctly wired — not the cause</td></tr>
+      <tr><td class="f">3</td><td class="f">A3-agents-md</td><td>BUG-021 is fixed; AGENTS.md is materialized</td></tr>
+      <tr><td class="f">4</td><td class="f">A4-claude-worker</td><td>H-TOOLS disproven; provider routing identified as key</td></tr>
+      <tr><td class="f">5</td><td class="f">RC1-symlink</td><td>Symlink EPERM cosmetic; <strong>FailoverError 480 s discovered</strong></td></tr>
+      <tr><td class="f">6</td><td class="f">OC-CLI-HANG</td><td><strong>Primary cause:</strong> missing <code>bypassPermissions</code> + permission-prompt hang</td></tr>
+      <tr><td class="f">7</td><td class="f">OAUTH-ENV</td><td>Auth intact (on-disk creds); concurrency rate limit confirmed</td></tr>
+      <tr><td class="f">8</td><td class="f">RC3-diff-timing</td><td>8d08 timeline; critic timeout 240 s as second killer</td></tr>
+      <tr><td class="f">9</td><td class="f">FIX-A-route</td><td>Config fix to <code>claude-api</code>; ClaudeDirectWorker proven</td></tr>
+      <tr><td class="f">10</td><td class="f">FIX-B-ocperms</td><td>Asymmetry critic↔worker <code>openclaw.json</code> exposed</td></tr>
+      <tr><td class="f">11</td><td class="f">FIX-C-concurrency</td><td>No global limit → semaphore design</td></tr>
       <tr><td class="f">12</td><td class="f">FIX-D-critic-timeout</td><td>480 s + <code>--max-turns 5</code></td></tr>
-      <tr><td class="f">13</td><td class="f">FIX-E-fallback</td><td>Kette nur bei Quota → Orchestrator-Fallback nötig</td></tr>
-      <tr><td class="f">14</td><td class="f">FIX-F-write-confine</td><td>AGENTS.md härten; <code>headless_safe</code>-Skill-Flag</td></tr>
-      <tr><td class="f">15</td><td class="f">FIX-G-kill-label</td><td>Mislabel-Site + Five-Layer-Touchpoints</td></tr>
-      <tr><td class="f">16</td><td class="f">CONFIG-PLAN</td><td>Sichere, drift-feste Edit-Reihenfolge</td></tr>
-      <tr><td class="f">17</td><td class="f">TEST-PLAN</td><td>Fix→Test-Matrix; Test-Lücken</td></tr>
-      <tr><td class="f">18</td><td class="f">VOICE-REST-PICKUP</td><td>Beide Pfade erreichen <code>run_mission</code> (BUG-016 behoben)</td></tr>
-      <tr><td class="f">19</td><td class="f">MAX-LOOPS-warmup</td><td><code>correction_instruction</code> erreicht Worker nicht (RC4)</td></tr>
-      <tr><td class="f">20</td><td class="f">SYNTHESIS-VALIDATOR</td><td>Anti-Pattern-Check, Rollout-Reihenfolge, Risiko-Register</td></tr>
+      <tr><td class="f">13</td><td class="f">FIX-E-fallback</td><td>Chain only on quota → orchestrator fallback needed</td></tr>
+      <tr><td class="f">14</td><td class="f">FIX-F-write-confine</td><td>Harden AGENTS.md; <code>headless_safe</code> skill flag</td></tr>
+      <tr><td class="f">15</td><td class="f">FIX-G-kill-label</td><td>Mislabel site + five-layer touchpoints</td></tr>
+      <tr><td class="f">16</td><td class="f">CONFIG-PLAN</td><td>Safe, drift-resistant edit order</td></tr>
+      <tr><td class="f">17</td><td class="f">TEST-PLAN</td><td>Fix→test matrix; test gaps</td></tr>
+      <tr><td class="f">18</td><td class="f">VOICE-REST-PICKUP</td><td>Both paths reach <code>run_mission</code> (BUG-016 fixed)</td></tr>
+      <tr><td class="f">19</td><td class="f">MAX-LOOPS-warmup</td><td><code>correction_instruction</code> doesn't reach worker (RC4)</td></tr>
+      <tr><td class="f">20</td><td class="f">SYNTHESIS-VALIDATOR</td><td>Anti-pattern check, rollout order, risk register</td></tr>
     </tbody>
   </table>
 
-  <h2>8 · Empfehlung in einem Satz</h2>
+  <h2>8 · Recommendation in one sentence</h2>
   <div class="lead">
-    <strong>FIX-F</strong> (Vertrag, risikofrei) → <strong>FIX-A</strong> (Provider auf <code>claude-api</code>, beide Dateien atomar) →
-    <strong>FIX-C</strong> (Semaphore N=3) bringt die Erfolgsquote sofort von ~9 % auf voraussichtlich &gt;90 %;
-    <strong>FIX-D/B/G/E</strong> härten die Restkanten. Erst <span class="kbd">preflight.ps1</span> + Import-Check, dann los.
+    <strong>FIX-F</strong> (contract, risk-free) → <strong>FIX-A</strong> (provider to <code>claude-api</code>, both files atomic) →
+    <strong>FIX-C</strong> (semaphore N=3) immediately lifts success rate from ~9 % to likely &gt;90 %;
+    <strong>FIX-D/B/G/E</strong> harden the remaining edges. First <span class="kbd">preflight.ps1</span> + import check, then go.
   </div>
 
   <div class="foot">
-    Erstellt 2026-05-24 · 20 parallele Deep-Dive-Subagenten + forensische DB-/Log-Auswertung ·
-    Quelle: <code>data/missions.db</code>, <code>sub-agents-outputs/mission_*</code>, <code>data/jarvis_desktop.log</code>, OpenClaw npm dist ·
-    Pfad: <code>docs/plans/mission-failure-rootcause-2026-05-24/REPORT.html</code>
+    Created 2026-05-24 · 20 parallel deep-dive subagents + forensic DB/log analysis ·
+    Source: <code>data/missions.db</code>, <code>sub-agents-outputs/mission_*</code>, <code>data/jarvis_desktop.log</code>, OpenClaw npm dist ·
+    Path: <code>docs/plans/mission-failure-rootcause-2026-05-24/REPORT.html</code>
   </div>
 
 </div>

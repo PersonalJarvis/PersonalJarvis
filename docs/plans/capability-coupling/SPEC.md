@@ -121,17 +121,17 @@ Adding a new capability later (e.g. an MCP server for Gmail):
 ## Hard negatives (acceptance criteria for Agent E)
 
 Each of these utterances must trigger the UNSUPPORTED path AND no fake confirmation reaches TTS:
-1. "Schick eine Email an sam@example.com mit dem Betreff Hallo" ("Send an email to sam@example.com with subject Hello") → "Das kann ich noch nicht. (...)" ("I can't do that yet.") <!-- i18n-allow: example user voice query with English inline -->
-2. "Trag einen Termin morgen 10 Uhr ein" ("Add an appointment tomorrow at 10 AM") → unsupported
-3. "Sende eine WhatsApp an Mama" ("Send a WhatsApp to Mum") → unsupported
-4. "Bestelle eine Pizza" ("Order a pizza") → unsupported
-5. "Poste auf X dass ich heute frei habe" ("Post on X that I'm off today") → unsupported (until Buffer-MCP registered)
+1. "Schick eine Email an sam@example.com mit dem Betreff Hallo" ("Send an email to sam@example.com with subject Hello") → "Das kann ich noch nicht. (...)" ("I can't do that yet.") <!-- i18n-allow: test content — user voice utterances DE -->
+2. "Trag einen Termin morgen 10 Uhr ein" ("Add an appointment tomorrow at 10 AM") → unsupported <!-- i18n-allow: test content — user voice utterance DE -->
+3. "Sende eine WhatsApp an Mama" ("Send a WhatsApp to Mum") → unsupported <!-- i18n-allow: test content — user voice utterance DE -->
+4. "Bestelle eine Pizza" ("Order a pizza") → unsupported <!-- i18n-allow: test content — user voice utterance DE -->
+5. "Poste auf X dass ich heute frei habe" ("Post on X that I'm off today") → unsupported (until Buffer-MCP registered) <!-- i18n-allow: test content — user voice utterance DE -->
 
 Each of these utterances must STILL work (no false negatives):
-6. "Öffne Chrome" ("Open Chrome") → local-action open_app
-7. "Lies die Datei foo.txt" ("Read the file foo.txt") → Jarvis-Agents spawn (file ops registered)
-8. "Wie spät ist es?" ("What time is it?") → smalltalk, brain answers directly
-9. "Such im Web nach Python 3.13" ("Search the web for Python 3.13") → only works if a web-search capability is actually registered; otherwise unsupported (this catches the search_web prompt-claim drift)
+6. "Öffne Chrome" ("Open Chrome") → local-action open_app <!-- i18n-allow: test content — user voice utterance DE -->
+7. "Lies die Datei foo.txt" ("Read the file foo.txt") → Jarvis-Agents spawn (file ops registered) <!-- i18n-allow: test content — user voice utterance DE -->
+8. "Wie spät ist es?" ("What time is it?") → smalltalk, brain answers directly <!-- i18n-allow: test content — user voice utterance DE -->
+9. "Such im Web nach Python 3.13" ("Search the web for Python 3.13") → only works if a web-search capability is actually registered; otherwise unsupported (this catches the search_web prompt-claim drift) <!-- i18n-allow: test content — user voice utterance DE -->
 
 ---
 
@@ -139,4 +139,4 @@ Each of these utterances must STILL work (no false negatives):
 
 - Auto-learning verb/object lists (LLM-based capability description parsing) — manual seed map first.
 - Live Jarvis-Agents subprocess tool-call telemetry (Wave 3) — Critic will conservative-fail until that lands.
-- Replacing every phantom-confirmation site in `pipeline.py:1278/1283/1384/2048` — Agent C only fixes the source of the lies (Ack-Brain + system prompt). The pipeline-level "Fertig./Das hat nicht geklappt." ("Done." / "That didn't work.") remains as it reflects the Critic's verdict, which is now honest.
+- Replacing every phantom-confirmation site in `pipeline.py:1278/1283/1384/2048` — Agent C only fixes the source of the lies (Ack-Brain + system prompt). The pipeline-level "Fertig./Das hat nicht geklappt." ("Done." / "That didn't work.") remains as it reflects the Critic's verdict, which is now honest. <!-- i18n-allow: product voice output names -->

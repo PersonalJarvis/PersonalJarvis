@@ -5,8 +5,8 @@
 ## Context
 
 Personal Jarvis can — and routinely does — confirm actions it is not capable of
-performing. Classic example from production: a user says "Schick eine Email an
-Sam" and the Ack-Brain replies "wird erledigt" while no email capability
+performing. Classic example from production: a user says "Send an email to
+Sam" and the Ack-Brain replies "wird erledigt" while no email capability  # i18n-allow
 exists anywhere in the running process. The TTS happily reads the phantom
 success; the mail is never sent; the user is deceived.
 

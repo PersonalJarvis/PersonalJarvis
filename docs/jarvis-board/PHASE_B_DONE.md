@@ -55,7 +55,7 @@ with a scripted response → `_post_process` → `BioStore.insert`). The
 
 All three bios are verified by the anti-cliché gate from `test_profile.py`
 (none contains any of the 12 forbidden words such as
-"leidenschaftlich" ("passionate"), "großartig" ("great"), "power-user", "beeindruckend" ("impressive")).
+"leidenschaftlich" ("passionate"), "großartig" ("great"), "power-user", "beeindruckend" ("impressive")).  <!-- i18n-allow -->
 
 ### A — power user (14 days of data, code-heavy)
 

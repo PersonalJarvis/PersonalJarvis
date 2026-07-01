@@ -637,46 +637,46 @@ EOF
 Du implementierst Etappe 1 ("Foundation: Config + Events") des Pre-Thinking-Ack
 Flash-Brain Features.
 
-Pflichtlektüre vor dem Start (in dieser Reihenfolge):
+Required reading before start (in this order):
 1. docs/superpowers/specs/2026-05-11-pre-thinking-ack-flash-brain-design.md
-   — komplette Spec, besonders §1 Goal, §4 Components, §6 Failure Handling
+   — complete spec, especially §1 Goal, §4 Components, §6 Failure Handling
 2. docs/superpowers/plans/2026-05-11-pre-thinking-ack-flash-brain-impl-plan.md
-   — Section "Etappe 1 — Foundation: Config + Events"
-3. CLAUDE.md — besonders "Output Language Policy" und "Testing-Konventionen"
+   — Section "Stage 1 — Foundation: Config + Events"
+3. CLAUDE.md — especially "Output Language Policy" and "Testing Conventions"
 
-Scope dieser Etappe (NICHT mehr und nicht weniger):
-- Neues Package jarvis/brain/ack_brain/ mit leerem __init__.py
-- config.py mit AckBrainConfig + 4 Provider-Sub-Models (Pydantic v2)
-- AckBrainConfig in JarvisConfig einhängen (jarvis/core/config.py)
-- AnnouncementRequested um optionales kind-Feld erweitern (jarvis/core/events.py)
-- [ack_brain]-Sektion in jarvis.toml mit enabled=false
+Scope of this stage (NOT more and not less):
+- New package jarvis/brain/ack_brain/ with empty __init__.py
+- config.py with AckBrainConfig + 4 Provider Sub-Models (Pydantic v2)
+- Wire AckBrainConfig into JarvisConfig (jarvis/core/config.py)
+- Extend AnnouncementRequested with optional kind field (jarvis/core/events.py)
+- [ack_brain] section in jarvis.toml with enabled=false
 
-Was du NICHT in dieser Etappe machst:
-- KEIN Persona-Prompt (das ist E2)
-- KEIN Provider-Code (das ist E4)
-- KEINE AckGenerator-Klasse (das ist E5)
-- KEINE UI-Änderungen (das ist E6)
+What you do NOT do in this stage:
+- NO Persona Prompt (that is E2)
+- NO Provider Code (that is E4)
+- NO AckGenerator class (that is E5)
+- NO UI changes (that is E6)
 
-Konventionen (aus CLAUDE.md):
+Conventions (from CLAUDE.md):
 - Code, comments, docstrings, commits: English
-- Tests: Fakes statt unittest.mock
+- Tests: Fakes instead of unittest.mock
 - TDD: failing test → impl → green → commit
 - Commits: "feat(ack_brain): ..." / "feat(config): ..." / "feat(events): ..."
-- Co-Author-Footer in jedem Commit
+- Co-Author footer in every commit
 
-Akzeptanzkriterien — du bist fertig wenn ALLE checken:
+Acceptance criteria — you are done when ALL check:
 1. pytest tests/unit/brain/test_ack_brain/test_config.py -v → 7 pass
 2. pytest tests/unit/test_config_ack_brain.py -v → 2 pass
 3. pytest tests/unit/core/test_events_announcement_kind.py -v → 4 pass
 4. python -c "from jarvis.core.config import load_config; print(load_config().ack_brain.provider)" → "gemini"
-5. Fünf neue Commits, jeweils ein Task aus der Plan-Datei
-6. Kein bestehender Test bricht: pytest tests/unit/core/ tests/unit/missions/ tests/unit/test_config_tier_optional.py -v
-   muss mit gleichem Pass-Count laufen wie vor deinen Änderungen
+5. Five new commits, one task each from the plan file
+6. No existing test breaks: pytest tests/unit/core/ tests/unit/missions/ tests/unit/test_config_tier_optional.py -v
+   must run with same pass count as before your changes
 
-Liefere dem User am Ende:
-- Commit-Hashes der 5 Commits
-- Pytest-Output der 3 neuen Test-Files (kopierter Trail)
-- Bestätigung, dass der Baseline-Run grün bleibt
+Deliver to the user at the end:
+- Commit hashes of the 5 commits
+- Pytest output of the 3 new test files (copied trail)
+- Confirmation that the baseline run stays green
 ```
 
 ---
@@ -741,7 +741,7 @@ def test_de_prompt_contains_question_example_phrase():
 
 
 def test_de_prompt_contains_reflection_example_phrase():
-    assert "überlegen" in PERSONA_PROMPT_DE
+    assert "überlegen" in PERSONA_PROMPT_DE  # i18n-allow
 
 
 def test_de_prompt_forbids_subagent():
@@ -842,7 +842,7 @@ from __future__ import annotations
 __all__ = ["PERSONA_PROMPT_DE", "PERSONA_PROMPT_EN", "get_persona_prompt"]
 
 
-PERSONA_PROMPT_DE = """Du bist JARVIS, der persönliche Assistent von Alex. Sprich kurz, natürlich
+PERSONA_PROMPT_DE = """Du bist JARVIS, der persönliche Assistent von Alex. Sprich kurz, natürlich  # i18n-allow
 und kontextspezifisch — wie ein cleverer Kollege, der weiß, was er tut.
 
 Deine einzige Aufgabe: ein kurzer Bestätigungssatz, BEVOR die eigentliche

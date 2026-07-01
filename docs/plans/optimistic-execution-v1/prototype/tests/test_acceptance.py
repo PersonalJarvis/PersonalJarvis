@@ -42,7 +42,7 @@ def test_definition_of_done_instant_ack_then_async_worker() -> None:
 
         t0 = time.perf_counter()
         reply = await talker.handle_utterance(
-            "Trag mir morgen 15 Uhr einen Termin mit dem Steuerberater ein"
+            "Trag mir morgen 15 Uhr einen Termin mit dem Steuerberater ein"  # i18n-allow: test content — user voice utterance DE
         )
         ack_latency = time.perf_counter() - t0
 
@@ -70,7 +70,7 @@ def test_definition_of_done_instant_ack_then_async_worker() -> None:
 def test_smalltalk_never_spawns_worker() -> None:
     async def scenario() -> None:
         _bus, flight, worker, _oops, talker = _build()
-        reply = await talker.handle_utterance("Hallo, wie geht es dir heute?")
+        reply = await talker.handle_utterance("Hallo, wie geht es dir heute?")  # i18n-allow: test content — user voice utterance DE
         await asyncio.sleep(0)  # let any stray scheduled task run
         assert reply.strip()
         assert not flight.has(MissionSpawn), "smalltalk must never wake the worker"
@@ -82,7 +82,7 @@ def test_smalltalk_never_spawns_worker() -> None:
 def test_dumb_tool_fires_in_process_without_worker() -> None:
     async def scenario() -> None:
         _bus, flight, worker, _oops, talker = _build()
-        reply = await talker.handle_utterance("spiel mal etwas Musik ab")
+        reply = await talker.handle_utterance("spiel mal etwas Musik ab")  # i18n-allow: test content — user voice utterance DE
         await asyncio.sleep(0)
         assert reply.strip()
         assert not flight.has(
