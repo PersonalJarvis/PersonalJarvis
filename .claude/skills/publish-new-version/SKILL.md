@@ -3,9 +3,9 @@ name: publish-new-version
 description: >-
   Use when the maintainer wants to publish / ship a new PUBLIC version of
   Personal Jarvis to GitHub — the periodic (~biweekly) release of the current
-  folder state to the one public repo. Triggers: "veröffentliche eine neue  # i18n-allow
-  Version", "neue Jarvis-Version raus", "mach ein Release", "push nach GitHub",  # i18n-allow
-  "publish the new version", "cut a release", "neue Public-Version". NOT for  # i18n-allow
+  folder state to the one public repo. Triggers: "veröffentliche eine neue
+  Version", "neue Jarvis-Version raus", "mach ein Release", "push nach GitHub",
+  "publish the new version", "cut a release", "neue Public-Version". NOT for
   untangling git chaos (use git-rescue) and NOT a quick local-only commit.
 ---
 
