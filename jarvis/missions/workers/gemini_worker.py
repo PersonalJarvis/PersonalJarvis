@@ -85,8 +85,9 @@ def _resolve_gemini_argv_prefix(*, bundle_finder: Any = None) -> list[str]:
     `>`, `&`, `|`, `^`, `%` as metacharacters. Embedding a JSON
     schema (which contains `<`) in `--prompt` then causes
     CreateProcess to fail with `Das System kann die angegebene Datei
-    nicht finden` long before the model is ever invoked — verified
-    live 2026-05-13.
+    nicht finden` (the literal Win32 error text on a German-locale
+    machine — English: "The system cannot find the file specified")  # i18n-allow (quotes the literal OS error string)
+    long before the model is ever invoked — verified live 2026-05-13.
 
     Skipping the .cmd wrapper entirely by invoking `node ...gemini.js`
     directly avoids the second-stage parser and lets any payload
