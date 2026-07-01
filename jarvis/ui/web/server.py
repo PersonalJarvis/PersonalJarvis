@@ -968,13 +968,12 @@ class WebServer:
 
         @app.get("/api/memory/facts")
         async def get_memory_facts() -> dict[str, Any]:
-            """Liefert das Core-Memory (Persona, User-Facts, Preferences).
+            """Returns the core memory (persona, user facts, preferences).
 
-            Frontend zeigt das in der Notizen-View, damit Ruben sieht,
-            was Jarvis sich gemerkt hat. core_memory.json wird beim
-            naechsten Brain-Call automatisch in den System-Prompt
-            injiziert — die View ist also Read-Only-Spiegel auf den
-            persistenten Memory-State.
+            The frontend shows this in the notes view, so the user can see
+            what Jarvis has remembered. core_memory.json is automatically
+            injected into the system prompt on the next brain call — so this
+            view is a read-only mirror of the persistent memory state.
             """
             from jarvis.core.config import DATA_DIR
             from jarvis.memory import CORE_MEMORY_FILENAME, CoreMemory
@@ -983,51 +982,51 @@ class WebServer:
                 mem = CoreMemory.load(DATA_DIR / CORE_MEMORY_FILENAME)
                 return {"ok": True, "data": mem.all()}
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning("Memory-Lesefehler")
+                logger.opt(exception=exc).warning("Memory read error")
                 return {"ok": False, "error": str(exc), "data": {}}
 
         @app.post("/api/memory/facts")
         async def add_memory_fact(payload: dict[str, Any]) -> dict[str, Any]:
-            """User-driven Add aus der UI."""
+            """User-driven add from the UI."""
             from jarvis.core.config import DATA_DIR
             from jarvis.memory import CORE_MEMORY_FILENAME, CoreMemory
 
             fact = (payload.get("fact") or "").strip()
             category = (payload.get("category") or "general").strip()
             if not fact:
-                return {"ok": False, "error": "fact fehlt"}
+                return {"ok": False, "error": "fact is missing"}
             try:
                 mem = CoreMemory.load(DATA_DIR / CORE_MEMORY_FILENAME)
                 mem.add_fact(fact, category=category)
                 return {"ok": True, "data": mem.all()}
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning("Memory-Schreibfehler")
+                logger.opt(exception=exc).warning("Memory write error")
                 return {"ok": False, "error": str(exc)}
 
         @app.delete("/api/memory/facts")
         async def delete_memory_fact(payload: dict[str, Any]) -> dict[str, Any]:
-            """User-driven Remove aus der UI."""
+            """User-driven remove from the UI."""
             from jarvis.core.config import DATA_DIR
             from jarvis.memory import CORE_MEMORY_FILENAME, CoreMemory
 
             fact = (payload.get("fact") or "").strip()
             category = (payload.get("category") or "general").strip()
             if not fact:
-                return {"ok": False, "error": "fact fehlt"}
+                return {"ok": False, "error": "fact is missing"}
             try:
                 mem = CoreMemory.load(DATA_DIR / CORE_MEMORY_FILENAME)
                 ok = mem.remove_fact(fact, category=category)
                 return {"ok": ok, "data": mem.all()}
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning("Memory-Loeschfehler")
+                logger.opt(exception=exc).warning("Memory delete error")
                 return {"ok": False, "error": str(exc)}
 
         @app.get("/api/terminal/shells")
         async def terminal_shells() -> dict[str, Any]:
-            """Liefert alle auf diesem System installierten Shells.
+            """Returns all shells installed on this system.
 
-            Frontend nutzt das, um das Shell-Dropdown nur mit verfuegbaren
-            Optionen zu fuellen — kein "Command not found" beim Spawn.
+            The frontend uses this to populate the shell dropdown with only
+            available options — no "command not found" on spawn.
             """
             return {
                 "shells": [
