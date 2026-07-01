@@ -203,7 +203,7 @@ class WebServer:
         # Plugin-Tool-Registry — wired marketplace plugins as live brain tools.
         self._setup_plugin_registry(app)
 
-        # Sub-Agent-Registry (Dashboard-Feature) — abonniert sofort den Bus.
+        # Sub-agent registry (dashboard feature) — subscribes to the bus immediately.
         try:
             from jarvis.agents import JarvisAgentRegistry
 
@@ -214,8 +214,8 @@ class WebServer:
             logger.opt(exception=exc).warning("JarvisAgentRegistry setup failed")
             app.state.sub_agent_registry = None
 
-        # MCP-, Tool-, Provider-, Profile-, Task-, Skills-, CLI- und Sub-Agents-
-        # Routes einhaengen — lazy Import vermeidet Zyklen.
+        # Wire in the MCP, tool, provider, profile, task, skills, CLI, and
+        # sub-agents routes — lazy import avoids cycles.
         from jarvis.runs.routes import router as runs_router
         from jarvis.runs.runs_ws import router as runs_ws_router
 
@@ -269,13 +269,13 @@ class WebServer:
         from .wiki_ws import router as wiki_ws_router
         from .workflows_routes import router as workflows_router
         from .workspace_routes import router as workspace_router
-        # Conductor ist ein externes Package im selben Monorepo. Import
-        # defensiv — wer das Repo ohne conductor checkt aus, kriegt sonst
-        # hier einen ImportError beim Server-Boot.
+        # Conductor is an external package in the same monorepo. Import
+        # defensively — anyone who checks out the repo without conductor would
+        # otherwise get an ImportError here at server boot.
         try:
             from conductor.api import router as conductor_router
         except ImportError as exc:
-            logger.warning("Conductor-Modul nicht verfuegbar: {} — Conductor-View bleibt leer", exc)
+            logger.warning("Conductor module not available: {} — Conductor view stays empty", exc)
             conductor_router = None
         app.include_router(mcp_router)
         app.include_router(tools_router)
