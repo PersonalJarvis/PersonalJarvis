@@ -12,15 +12,15 @@ interface HeatmapGridProps {
 const ROWS = 7;
 
 /**
- * Aktivitaets-Heatmap im Snake-Layout (Boustrophedon).
- * Startet OBEN LINKS bei der ersten aktiven Zelle und laeuft abwechselnd
- * nach rechts und links durch die Zeilen nach unten:
- *   Reihe 1 (oben): links -> rechts
- *   Reihe 2:        rechts -> links
- *   Reihe 3:        links -> rechts
+ * Activity heatmap in a snake layout (boustrophedon).
+ * Starts TOP LEFT at the first active cell and alternates
+ * right and left through the rows going down:
+ *   row 1 (top):    left -> right
+ *   row 2:           right -> left
+ *   row 3:           left -> right
  *   ...
- * Fuehrende Null-Tage (heute/gestern ohne Aktivitaet) werden uebersprungen,
- * damit aktive Zellen am Anfang der Snake erscheinen.
+ * Leading zero-activity days (today/yesterday with no activity) are skipped,
+ * so active cells appear at the start of the snake.
  */
 export function HeatmapGrid({ cells, weeks = 53, showLegend = true }: HeatmapGridProps) {
   const t = useT();
@@ -37,7 +37,7 @@ export function HeatmapGrid({ cells, weeks = 53, showLegend = true }: HeatmapGri
     const newest = new Date(cells[cells.length - 1].date + "T00:00:00");
     const total = ROWS * cols;
 
-    // Chronologisch absteigend: i=0 ist heute, i=total-1 ist aeltester Slot.
+    // Chronologically descending: i=0 is today, i=total-1 is the oldest slot.
     const sequence: HeatmapCell[] = new Array(total);
     for (let i = 0; i < total; i += 1) {
       const day = new Date(newest);
@@ -54,8 +54,8 @@ export function HeatmapGrid({ cells, weeks = 53, showLegend = true }: HeatmapGri
       };
     }
 
-    // Fuehrende Null-Tage ueberspringen, damit die Snake bei der ersten
-    // aktiven Zelle anfaengt statt beim heutigen leeren Tag.
+    // Skip leading zero-activity days so the snake starts at the first
+    // active cell instead of at today's empty day.
     let startOffset = 0;
     while (
       startOffset < sequence.length &&
@@ -65,8 +65,8 @@ export function HeatmapGrid({ cells, weeks = 53, showLegend = true }: HeatmapGri
     }
     if (startOffset >= total) startOffset = 0;
 
-    // Boustrophedon von OBEN: k = Reihe von oben (k=0 oberste Zeile),
-    // k=0 oben links->rechts, k=1 rechts->links, k=2 links->rechts, usw.
+    // Boustrophedon from the TOP: k = row from the top (k=0 topmost row),
+    // k=0 top left->right, k=1 right->left, k=2 left->right, etc.
     const layout: HeatmapCell[][] = Array.from(
       { length: ROWS },
       () => new Array<HeatmapCell>(cols),

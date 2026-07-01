@@ -10,12 +10,12 @@ import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
 /**
- * "Wer ist dieser User?" — AI-generierte Selbstbeobachtung von Jarvis im
- * "Ich-Erzaehler"-Stil, beissend mit Augenzwinkern (Brainstorm 2026-05-02).
+ * "Who is this user?" — an AI-generated self-observation by Jarvis in
+ * first-person narrator style, biting with a wink (brainstorm 2026-05-02).
  *
- * Drei Reagier-Buttons unter dem Text kalibrieren die naechste Bio-Generation
- * (Trifft / Trifft nicht / Haerter). Klicks werden NICHT sofort regeneriert —
- * sie fliessen als Tone-Vector in den Sonntags-Run.
+ * Three reaction buttons under the text calibrate the next bio generation
+ * (Correct / Incorrect / Harder). Clicks do NOT regenerate immediately —
+ * they flow as a tone vector into the Sunday run.
  */
 export function AIProfileCard() {
   const t = useT();
@@ -26,7 +26,7 @@ export function AIProfileCard() {
   const data = bio.data;
   const [lastFeedback, setLastFeedback] = useState<BioFeedbackKind | null>(null);
 
-  // "Notiert."-Toast nach 2.5s wieder ausblenden, damit es nicht stehen bleibt.
+  // Hide the "Noted." toast again after 2.5s so it doesn't linger.
   useEffect(() => {
     if (!lastFeedback) return;
     const t = setTimeout(() => setLastFeedback(null), 2500);
@@ -116,13 +116,13 @@ export function AIProfileCard() {
               onClick={() => handleFeedback("trifft")}
             />
             <FeedbackButton
-              kind="trifft_nicht"
+              kind="trifft_nicht" // i18n-allow: API contract value matched in logic
               icon={<X className="h-3 w-3" />}
               label={t("board_view.feedback_incorrect")}
               colorClass="border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
-              active={lastFeedback === "trifft_nicht"}
+              active={lastFeedback === "trifft_nicht"} // i18n-allow: API contract value matched in logic
               disabled={feedback.isPending}
-              onClick={() => handleFeedback("trifft_nicht")}
+              onClick={() => handleFeedback("trifft_nicht")} // i18n-allow: API contract value matched in logic
             />
             <FeedbackButton
               kind="haerter"

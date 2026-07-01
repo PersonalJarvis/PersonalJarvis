@@ -16,10 +16,10 @@ interface ToolBarChartProps {
 }
 
 /**
- * Horizontales Bar-Chart der meistgenutzten Tools. Nimmt die Top-N und
- * sortiert absteigend. "Days used" = Anzahl verschiedener Tage in denen
- * das Tool mindestens ein Mal erfolgreich aufgerufen wurde (NICHT pro
- * Invocation — das wuerde Power-Tools wie ``bash`` verzerren).
+ * Horizontal bar chart of the most-used tools. Takes the top N and
+ * sorts descending. "Days used" = number of distinct days on which
+ * the tool was invoked successfully at least once (NOT per
+ * invocation — that would skew power tools like ``bash``).
  */
 export function ToolBarChart({ histogram, limit = 15 }: ToolBarChartProps) {
   const t = useT();
