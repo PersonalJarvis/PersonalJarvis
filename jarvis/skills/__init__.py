@@ -1,11 +1,12 @@
-"""Skill-System: Markdown-basierte User-Erweiterungen für Jarvis.
+"""Skill system: Markdown-based user extensions for Jarvis.
 
-Skills sind SKILL.md-Dateien mit YAML-Frontmatter + Body. Sie werden aus dem
-Skill-Root-Verzeichnis (`user_skills_dir()`, i.d.R. `%LOCALAPPDATA%\Jarvis\skills`)
-geladen, validiert, im `SkillRegistry` gehalten und vom `SkillRunner` ausgeführt.
+Skills are SKILL.md files with a YAML frontmatter + body. They are
+loaded from the skill root directory (`user_skills_dir()`, typically
+`%LOCALAPPDATA%\Jarvis\skills`), validated, held in the `SkillRegistry`,
+and executed by the `SkillRunner`.
 
-Im Gegensatz zu Plugins (entry_points) sind Skills **Files** — kein
-`pip install` nötig, Hot-Reload via watchdog, Voice-/Hotkey-/Cron-Trigger.
+Unlike plugins (entry_points), skills are **files** — no
+`pip install` needed, hot-reload via watchdog, voice/hotkey/cron triggers.
 """
 from __future__ import annotations
 
