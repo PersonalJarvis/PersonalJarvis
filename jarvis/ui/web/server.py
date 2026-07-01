@@ -332,10 +332,10 @@ class WebServer:
         app.include_router(board_router)
         app.include_router(board_meta_router)
         app.include_router(federation_proxy_router)
-        # Phase 8.5 — Review-Pipeline read-only UI (Plan §6.5).
+        # Phase 8.5 — review-pipeline read-only UI (Plan §6.5).
         app.include_router(review_router)
-        # Voice-Session-Transkriptions-View (Sidebar -> "Transkription").
-        # Liefert 503 solange app.state.session_store nicht gesetzt ist.
+        # Voice-session transcription view (sidebar -> "Transcription").
+        # Returns 503 as long as app.state.session_store isn't set.
         app.include_router(sessions_router)
         # Run Inspector — forensic lens over the same voice sessions. Read-only;
         # 503 until app.state.session_store is set, like sessions_router.
@@ -346,11 +346,11 @@ class WebServer:
         # brain + speech_pipeline from app.state (graceful 503s when absent).
         app.include_router(chats_router)
         app.include_router(drop_router)
-        # Default: kein Recorder verdrahtet — _init_session_stack() in start()
-        # setzt das beim Erfolg um.
+        # Default: no recorder wired up — _init_session_stack() in start()
+        # sets this once it succeeds.
         app.state.session_store = None
-        # Phase-6 Mission-Stack — Auth-Token vor allen anderen, damit der
-        # Browser ihn ueberhaupt holen kann; danach REST + WS + PTY.
+        # Phase-6 mission stack — the auth token before all others, so the
+        # browser can even fetch it; then REST + WS + PTY.
         app.include_router(missions_auth_router)
         # Seed the desktop session token (injected as window.__JARVIS_TOKEN by
         # the fast-boot path) into the token store. The fast-boot token is a RAW
@@ -374,21 +374,21 @@ class WebServer:
         # Forwards WikiPageChanged events from the shared EventBus to
         # subscribed UI clients. WikiWatcher is started in start().
         app.include_router(wiki_ws_router)
-        # ConnectionManager-Singleton fuer den globalen Event-Stream. Wird
-        # in start() an MissionBus.subscribe_all() angehaengt.
+        # ConnectionManager singleton for the global event stream. Attached
+        # to MissionBus.subscribe_all() in start().
         app.state.missions_ws_manager = _MissionsConnMgr()
-        # MissionManager + Kontrollierer werden in start() lazy verdrahtet
-        # (brauchen running event-loop fuer aiosqlite). Default ist None,
-        # damit die REST-Routes 503 zurueckgeben statt zu crashen.
+        # MissionManager + Kontrollierer are wired lazily in start()
+        # (they need a running event loop for aiosqlite). Default is None,
+        # so the REST routes return 503 instead of crashing.
         app.state.mission_manager = None
         app.state.kontrollierer = None
 
-        # Board-Aggregator (Personal-Mastery-Dashboard) — der Aggregator wird
-        # in start() als Background-Task gelaufen lassen, der Store ist
-        # read-only und sofort verfuegbar.
+        # Board aggregator (personal-mastery dashboard) — the aggregator is
+        # run as a background task in start(); the store is read-only and
+        # available immediately.
         self._setup_board(app)
 
-        # Preview-Registry — subscribed auf PreviewServerStarted/Closed Events.
+        # Preview registry — subscribed to PreviewServerStarted/Closed events.
         try:
             from jarvis.preview.registry import PreviewRegistry
 
@@ -396,11 +396,11 @@ class WebServer:
             preview_registry.attach()
             app.state.preview_registry = preview_registry
         except Exception as exc:  # noqa: BLE001
-            logger.opt(exception=exc).warning("PreviewRegistry-Setup fehlgeschlagen")
+            logger.opt(exception=exc).warning("PreviewRegistry setup failed")
             app.state.preview_registry = None
 
-        # Cfg fuer die Routes verfuegbar machen (z.B. Admin-Pass-Check in
-        # skills_routes). Andere Routes nutzen es ebenfalls kuenftig.
+        # Make the config available to the routes (e.g. admin-pass check in
+        # skills_routes). Other routes will use it too going forward.
         app.state.config = self.cfg
         app.state.bus = self.bus
 
@@ -434,12 +434,12 @@ class WebServer:
         return app
 
     def _setup_board(self, app: FastAPI) -> None:
-        """Board-Store + Aggregator + Evaluator + BioGenerator initialisieren.
+        """Initialize the board store + aggregator + evaluator + BioGenerator.
 
-        Der Store ist read-only und steht sofort bereit (erzeugt leere DB
-        beim ersten Query, damit der UI-Mount nicht in 500 laeuft). Der
-        Aggregator laeuft in ``start()`` als Background-Task, der Evaluator
-        und der BioScheduler subscriben dort auf den Bus.
+        The store is read-only and ready immediately (creates an empty DB
+        on the first query, so the UI mount doesn't hit a 500). The
+        aggregator runs in ``start()`` as a background task; the evaluator
+        and the BioScheduler subscribe to the bus there.
         """
         try:
             from jarvis.board.aggregator import BoardAggregator
