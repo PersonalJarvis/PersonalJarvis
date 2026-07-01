@@ -2257,11 +2257,11 @@ class WebServer:
         logger.info("wiki_watcher: started for vault {}", vault_root)
 
     async def _init_task_stack(self) -> None:
-        """Phase-5 Task-Queue-Wiring (BUG-007).
+        """Phase-5 task-queue wiring (BUG-007).
 
-        Baut TaskStore + TaskRunner + TaskScheduler auf, fuehrt den
-        Startup-Cleanup fuer ``running``-Tasks (App-Exit) aus und startet
-        den Scheduler-Loop als Background-Task.
+        Builds the TaskStore + TaskRunner + TaskScheduler, runs the
+        startup cleanup for ``running`` tasks (app exit), and starts
+        the scheduler loop as a background task.
 
         The runner is wired with the brain so agentic (``agent``) tasks run a
         tool-restricted turn unattended (read-only/monitor-tier plugins pass;
@@ -2278,16 +2278,16 @@ class WebServer:
 
         data_dir = Path(self.cfg.memory.data_dir)
         data_dir.mkdir(parents=True, exist_ok=True)
-        # Tasks teilen sich die DB mit Memory (ADR-0003) — additives Schema.
+        # Tasks share the DB with memory (ADR-0003) — an additive schema.
         db_path = data_dir / "jarvis.db"
 
         store = TaskStore(db_path)
         await store.init()
 
-        # Crash-Recovery: alle running -> interrupted plus Error-Log.
+        # Crash recovery: all running -> interrupted, plus an error log entry.
         recovered = await store.cleanup_interrupted()
         if recovered:
-            logger.info("TaskStack: {} interrupted Tasks vom Vorlauf bereinigt", recovered)
+            logger.info("TaskStack: cleaned up {} interrupted tasks from the previous run", recovered)
 
         # Wire the brain so agentic (`agent`) tasks can run a tool-restricted
         # turn unattended. app.state.brain is set before server.start() (see
@@ -2320,7 +2320,7 @@ class WebServer:
         self._task_cancel_token = cancel_token
         self._task_scheduler_task = scheduler_task
 
-        # Routes lesen aus app.state — siehe tasks_routes.py:28
+        # Routes read from app.state — see tasks_routes.py:28
         self.app.state.task_store = store
         self.app.state.task_scheduler = scheduler
         self.app.state.task_runner = runner
@@ -2331,18 +2331,18 @@ class WebServer:
         )
 
     def _init_session_stack(self) -> None:
-        """Voice-Session-Recorder + Store fuer die Transkriptions-View.
+        """Voice-session recorder + store for the transcription view.
 
-        Bootstrap analog zu ``_init_mission_stack``, aber sync — der Store
-        nutzt sqlite3 + threading.Lock (siehe ``jarvis/sessions/store.py``).
-        Liest Defaults aus der ``[sessions]``-Sektion in jarvis.toml; die
-        Sektion ist NICHT im Pydantic-Tree (siehe Annahme A-2 im Phase-7-
-        Bootstrap), daher tomllib direkt.
+        Bootstrap analogous to ``_init_mission_stack``, but sync — the store
+        uses sqlite3 + threading.Lock (see ``jarvis/sessions/store.py``).
+        Reads defaults from the ``[sessions]`` section in jarvis.toml; that
+        section is NOT in the Pydantic tree (see assumption A-2 in the
+        Phase-7 bootstrap), hence tomllib directly.
         """
         from jarvis.sessions.init import bootstrap_sessions
 
-        # Defaults entsprechen jarvis.toml [sessions] (enabled=true,
-        # data/sessions.db, retention 30d). User kann via TOML overriden.
+        # Defaults match jarvis.toml [sessions] (enabled=true,
+        # data/sessions.db, retention 30d). User can override via TOML.
         enabled = True
         rel_db_path = "data/sessions.db"
         retention_days = 30
@@ -2359,15 +2359,15 @@ class WebServer:
                 retention_days = int(section.get("retention_days", retention_days))
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "Konnte [sessions]-Sektion aus jarvis.toml nicht lesen — Defaults"
+                    "Could not read the [sessions] section from jarvis.toml — using defaults"
                 )
 
         if not enabled:
-            logger.info("Voice-Session-Recorder via [sessions].enabled=false deaktiviert")
+            logger.info("Voice-session recorder disabled via [sessions].enabled=false")
             return
 
-        # rel_db_path ist relativ zum Repo-Root (= cwd beim Start). Falls absolut,
-        # bleibt es absolut. Path() macht beides korrekt.
+        # rel_db_path is relative to the repo root (= cwd at start). If
+        # absolute, it stays absolute. Path() handles both correctly.
         db_path = Path(rel_db_path)
         if not db_path.is_absolute():
             db_path = Path(self.cfg.memory.data_dir).parent / db_path
@@ -2381,20 +2381,20 @@ class WebServer:
         )
         self.app.state.session_store = result["store"]
         self._session_recorder = result["recorder"]
-        logger.info("Session-Recorder online (db={}, retention={}d)", db_path, retention_days)
+        logger.info("Session recorder online (db={}, retention={}d)", db_path, retention_days)
 
     async def _init_channel_stack(self) -> None:
-        """Bootstrappt FriendRegistry + ChannelManager + startet alle Channels.
+        """Bootstraps FriendRegistry + ChannelManager + starts all channels.
 
-        Friends-UI funktioniert auch ohne Telegram (FriendRegistry ist immer
-        da). TelegramChannel landet bei fehlendem Token in ``start_errors``,
-        blockiert die anderen Channels nicht.
+        The Friends UI works even without Telegram (FriendRegistry is always
+        there). TelegramChannel lands in ``start_errors`` when the token is
+        missing, without blocking the other channels.
         """
         from jarvis.channels.bootstrap import bootstrap_channels
         from jarvis.channels.chat_bridge import ChannelChatBridge
 
-        # data_dir existiert moeglicherweise nicht auf jedem Branch unter
-        # cfg.memory; Fallback auf ./data damit der Code branch-portabel ist.
+        # data_dir might not exist on every branch under cfg.memory;
+        # fall back to ./data so the code stays branch-portable.
         data_dir = Path("data")
         try:
             mem_dir = getattr(self.cfg, "memory", None)
