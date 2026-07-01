@@ -1737,59 +1737,59 @@ class WebServer:
                     "DocRegistry watcher start failed — no hot-reload"
                 )
 
-        # CLI-Registry asynchron bootstrappen — probet alle Katalog-CLIs und
-        # baut Tool-Instanzen. ``asyncio.create_task`` haengt den Call als
-        # Background-Task an, damit ``start()`` selbst nicht blockt.
+        # Bootstrap the CLI registry asynchronously — probes all catalog CLIs
+        # and builds tool instances. ``asyncio.create_task`` runs the call as
+        # a background task so ``start()`` itself doesn't block.
         if self._cli_registry is not None:
             async def _bootstrap_clis() -> None:
                 try:
                     await self._cli_registry.bootstrap()
                 except Exception as exc:  # noqa: BLE001
                     logger.opt(exception=exc).warning(
-                        "CliToolRegistry-Bootstrap fehlgeschlagen — CLIs-View leer"
+                        "CliToolRegistry bootstrap failed — CLIs view empty"
                     )
             asyncio.create_task(_bootstrap_clis(), name="cli-registry-bootstrap")
 
-        # Plugin-Registry asynchron bootstrappen — oeffnet pro verbundenem
-        # Plugin einen In-Process-MCPClient und bridged dessen Tools in den
-        # Live-Brain (BrainToolsChanged re-expandiert). Mirror der CLI-Registry.
+        # Bootstrap the plugin registry asynchronously — opens an in-process
+        # MCPClient per connected plugin and bridges its tools into the
+        # live brain (BrainToolsChanged re-expands). Mirrors the CLI registry.
         if self._plugin_registry is not None:
             async def _bootstrap_plugins() -> None:
                 try:
                     await self._plugin_registry.bootstrap()
                 except Exception as exc:  # noqa: BLE001
                     logger.opt(exception=exc).warning(
-                        "PluginToolRegistry-Bootstrap fehlgeschlagen — Plugins worker-only"
+                        "PluginToolRegistry bootstrap failed — plugins worker-only"
                     )
             asyncio.create_task(_bootstrap_plugins(), name="plugin-registry-bootstrap")
 
-        # Board-Aggregator als Endlos-Task. run_forever() macht erst einen
-        # on-startup-Run und schlaeft dann 6 h (Plan §5-A Decision #2).
+        # Board aggregator as a never-ending task. run_forever() does an
+        # on-startup run first and then sleeps 6h (Plan §5-A Decision #2).
         if self._board_aggregator is not None:
             self._board_aggregator_task = asyncio.create_task(
                 self._board_aggregator.run_forever(interval_s=6 * 3600),
                 name="board-aggregator",
             )
 
-        # Achievement-Evaluator am Bus. Phase B.
+        # Achievement evaluator on the bus. Phase B.
         if self._board_evaluator is not None:
             try:
                 self._board_evaluator.attach()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "AchievementEvaluator.attach() fehlgeschlagen"
+                    "AchievementEvaluator.attach() failed"
                 )
 
-        # Bio-Scheduler — wochentl. + master-Achievement-Trigger.
-        # Der Brain wird hier noch nicht finalisiert (app.state.brain kommt
-        # meist erst spaeter). BioGenerator.brain bleibt auf None, bis der
-        # Caller ihn setzt — der Scheduler faengt das Brain-None sauber ab.
+        # Bio scheduler — weekly + master achievement trigger.
+        # The brain isn't finalized here yet (app.state.brain usually
+        # arrives later). BioGenerator.brain stays None until the caller
+        # sets it — the scheduler handles a None brain gracefully.
         if self._bio_scheduler is not None:
             try:
                 self._bio_scheduler.start()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "BioScheduler.start() fehlgeschlagen"
+                    "BioScheduler.start() failed"
                 )
 
         # Friends-Stack: FriendRegistry + ChannelManager. Started as a BACKGROUND
@@ -1804,7 +1804,7 @@ class WebServer:
                 await self._init_channel_stack()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "ChannelStack-Init fehlgeschlagen — /api/friends liefert 503"
+                    "ChannelStack init failed — /api/friends returns 503"
                 )
 
         self._channel_stack_task = asyncio.create_task(
