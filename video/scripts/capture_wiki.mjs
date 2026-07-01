@@ -82,7 +82,7 @@ async function main() {
     "--headless=new",
     `--remote-debugging-port=${PORT}`,
     "--window-size=1728,1080",
-    "--force-device-scale-factor=2",
+    "--force-device-scale-factor=4",
     "--hide-scrollbars",
     "--no-first-run",
     "--no-default-browser-check",
