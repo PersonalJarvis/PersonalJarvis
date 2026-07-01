@@ -1,12 +1,12 @@
-"""Pydantic-Models als Single-Source-of-Truth für WebSocket-Messages.
+"""Pydantic models as the single source of truth for WebSocket messages.
 
-Ausgehende Events werden via `event_to_ws_envelope()` auf die Wire geformt.
-Eingehende Frames werden gegen `WSMessageIn` oder `WSCommand` validiert
-(Discriminator: `type`-Feld).
+Outgoing events are shaped onto the wire via `event_to_ws_envelope()`.
+Incoming frames are validated against `WSMessageIn` or `WSCommand`
+(discriminator: `type` field).
 
-Diese Models werden in Phase 1a zu JSON-Schema exportiert (via
-`scripts/export_ws_schema.py`) und im Frontend zu Zod-Validators generiert,
-damit Front- und Backend strukturell synchron bleiben.
+These models are exported to JSON schema in Phase 1a (via
+`scripts/export_ws_schema.py`) and generated into Zod validators on the
+frontend, so front- and backend stay structurally in sync.
 """
 from __future__ import annotations
 
@@ -23,11 +23,11 @@ from jarvis.core.events import Event
 # ----------------------------------------------------------------------
 
 class WSEventEnvelope(BaseModel):
-    """Hüllt ein beliebiges Bus-Event für den Transport zur UI ein.
+    """Wraps an arbitrary bus event for transport to the UI.
 
-    Der Payload bleibt absichtlich `dict[str, Any]` — die UI rendert
-    generisch über den `event_name`, typspezifische Views casten
-    anhand bekannter Payload-Shapes.
+    The payload deliberately stays `dict[str, Any]` — the UI renders
+    generically based on `event_name`, and type-specific views cast
+    against known payload shapes.
     """
 
     type: Literal["event"] = "event"
@@ -39,7 +39,7 @@ class WSEventEnvelope(BaseModel):
 
 
 class WSWelcome(BaseModel):
-    """Erstes Frame das nach `accept()` gesendet wird."""
+    """First frame sent after `accept()`."""
 
     type: Literal["welcome"] = "welcome"
     session_id: str
@@ -52,7 +52,7 @@ class WSWelcome(BaseModel):
 # ----------------------------------------------------------------------
 
 class WSMessageIn(BaseModel):
-    """Nutzer-Message aus der UI — Text-Chat, Voice-Transcript oder Action."""
+    """User message from the UI — text chat, voice transcript, or action."""
 
     type: Literal["message"] = "message"
     kind: Literal["text", "voice", "system", "action"] = "text"
@@ -61,11 +61,11 @@ class WSMessageIn(BaseModel):
 
 
 class WSCommand(BaseModel):
-    """Steuer-Befehl aus der UI — Ping + Terminal-Control.
+    """Control command from the UI — ping + terminal control.
 
-    Provider-Switch und Secret-Updates laufen jetzt über REST
-    (POST /api/brain/switch, POST /api/secrets/{key}) — der WS-Channel
-    ist reine Event-Read-Lane für den UI-State.
+    Provider switching and secret updates now run over REST
+    (POST /api/brain/switch, POST /api/secrets/{key}) — the WS channel
+    is a pure event-read lane for UI state.
     """
 
     type: Literal["command"] = "command"
@@ -88,14 +88,14 @@ class WSCommand(BaseModel):
 
 
 # ----------------------------------------------------------------------
-# Event-Sanitizer
+# Event sanitizer
 # ----------------------------------------------------------------------
 
 _ENVELOPE_FIELDS = {"trace_id", "timestamp_ns", "source_layer"}
 
 
 def _jsonable(value: Any) -> Any:
-    """Rekursiv non-JSON-Serializables auf primitive Typen projizieren."""
+    """Recursively project non-JSON-serializable values onto primitive types."""
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, UUID):
@@ -111,7 +111,7 @@ def _jsonable(value: Any) -> Any:
             return value.decode("utf-8")
         except UnicodeDecodeError:
             return value.hex()
-    # Pydantic-BaseModel hat model_dump; Fallback: str()
+    # A Pydantic BaseModel has model_dump; fallback: str()
     dump = getattr(value, "model_dump", None)
     if callable(dump):
         return _jsonable(dump())
@@ -119,16 +119,16 @@ def _jsonable(value: Any) -> Any:
 
 
 def event_to_ws_envelope(event: Event) -> dict[str, Any]:
-    """Serialisiert einen Bus-Event in ein JSON-fähiges `WSEventEnvelope`-Dict.
+    """Serializes a bus event into a JSON-able `WSEventEnvelope` dict.
 
-    - `trace_id`, `timestamp_ns`, `source_layer` werden auf die Envelope-Ebene
-      gehoben.
-    - Alle anderen Felder landen im `payload`.
+    - `trace_id`, `timestamp_ns`, `source_layer` are lifted onto the envelope
+      level.
+    - All other fields end up in `payload`.
     - UUIDs → str, nested dataclasses → dict (asdict), bytes → utf8/hex.
     """
     if not is_dataclass(event):
-        # Darf nicht passieren — Events sind immer dataclasses.
-        raise TypeError(f"Event {type(event).__name__} ist kein dataclass")
+        # Should never happen — events are always dataclasses.
+        raise TypeError(f"Event {type(event).__name__} is not a dataclass")
 
     raw = asdict(event)
     payload: dict[str, Any] = {}
