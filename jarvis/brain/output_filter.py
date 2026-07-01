@@ -2,7 +2,7 @@
 
 Persona mandate phase 1: brain output → TTS path scrubs tool JSON,
 stack traces, engineering jargon, self-reference, echo paraphrase, and
-filler openers. Regex-only, NO LLM calls (latency-fatal, mandate § "NICHT tun").
+filler openers. Regex-only, NO LLM calls (latency-fatal, mandate § "DO NOT").
 
 API:
     from jarvis.brain.output_filter import scrub_for_voice
@@ -18,7 +18,7 @@ Order of operations (stack trace is an early return):
     3. Remove tool-call JSON (three forms: fn-call, inline, pure JSON)
     4. Remove self-reference ("Als KI", "Als Sprachmodell", "Ich bin nur")
     5. Echo paraphrase ONLY at opener position (``<= OPENER_BUDGET = 60`` chars)
-    6. Remove filler openers ("Großartige Frage", "Tolle Frage", ...)
+    6. Remove filler openers ("Great question", "Wonderful question", ...)
     7. Remove engineering jargon (with whitelist protection via hyphen
        lookbehind/lookahead — compounds like "Browser-Provider" are preserved)
     8. Normalise whitespace
@@ -71,7 +71,7 @@ assert not (set(WHITELIST_WORDS) & set(JARGON_WORDS)), (
 OPENER_BUDGET = 60
 
 FALLBACK_PHRASES: dict[str, str] = {
-    "de": "Es trat ein Fehler auf.",
+    "de": "Es trat ein Fehler auf.",  # i18n-allow: spoken German fallback phrase (runtime voice output)
     "en": "An error occurred.",
     # Runtime-output-language doctrine: every spoken phrase table carries all
     # supported locales (de/en/es) so a Spanish-pinned user never falls back to
@@ -111,7 +111,7 @@ REPR_SIGNATURE_RE = re.compile(
 
 # Raw shell / PowerShell / .NET command guard (live bug 2026-06-28). The fast
 # tier, on a garbled "navigate Discord" turn, emitted a SendKeys PowerShell
-# command as its REPLY TEXT and TTS read it aloud "mit Sonderzeichen und allem"
+# command as its REPLY TEXT and TTS read it aloud "with special characters and everything"
 # (Add-Type … [System.Windows.Forms.SendKeys]::SendWait('^(g)')). The tool-leak
 # rules above only catch tool NAMES / JSON / XML — a bare command string has
 # none of those, so it slipped through to TTS. Each alternative below is a
@@ -163,12 +163,12 @@ TOOL_JSON_RE = re.compile(
     r"\s*:\s*[^}]*\}",
     re.IGNORECASE,
 )
-# Tool-Name als Python-style keyword-call: ``spawn_openclaw(utterance='x', ...)``
+# Tool name as a Python-style keyword call: ``spawn_openclaw(utterance='x', ...)``
 TOOL_CALL_KW_RE = re.compile(
     r"\b(?:" + "|".join(TOOL_NAMES) + r")\s*\([^)]{0,2000}\)",
     re.DOTALL,
 )
-# XML-Tool-Tags inkl. Inner-Content: ``<spawn_openclaw>...</spawn_openclaw>``
+# XML tool tags incl. inner content: ``<spawn_openclaw>...</spawn_openclaw>``
 TOOL_XML_RE = re.compile(
     r"<(?:" + "|".join(TOOL_NAMES) + r")\b[^>]*>"
     r".*?"
@@ -176,11 +176,11 @@ TOOL_XML_RE = re.compile(
     re.DOTALL,
 )
 
-# Phase-1-Erweiterung 2 (2026-04-28 spaeter):
-# Anthropic-internes ``<function_calls><invoke name="...">...</invoke></function_calls>``-
-# Format. Brain leakt das gelegentlich wortlich in den Output. Pattern matcht
-# den ganzen Block + greedy bis schliessendem Tag. Ausserdem ein Standalone-
-# ``<invoke>`` falls der ``</function_calls>``-Wrapper fehlt.
+# Phase-1 extension 2 (later on 2026-04-28):
+# Anthropic-internal ``<function_calls><invoke name="...">...</invoke></function_calls>``
+# format. The brain occasionally leaks this verbatim into the output. The
+# pattern matches the whole block, greedy up to the closing tag. Also a
+# standalone ``<invoke>`` in case the ``</function_calls>`` wrapper is missing.
 ANTHROPIC_FUNCTION_CALLS_RE = re.compile(
     r"<function_calls>.*?</function_calls>",
     re.DOTALL | re.IGNORECASE,
@@ -190,10 +190,10 @@ ANTHROPIC_INVOKE_RE = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 
-# Generische Tool-Wrapper-Tags wie ``<tool_call>...</tool_call>`` und
-# ``<tool_response>...</tool_response>``. Konservativ auf bekannte
-# Wrapper-Namen beschraenkt, damit harmlose XML/HTML im User-Content
-# ("<tag>x</tag>" als Beispiel-Doku) nicht zerschossen wird.
+# Generic tool-wrapper tags such as ``<tool_call>...</tool_call>`` and
+# ``<tool_response>...</tool_response>``. Conservatively limited to known
+# wrapper names, so harmless XML/HTML in user content
+# ("<tag>x</tag>" as example documentation) is not destroyed.
 GENERIC_TOOL_WRAPPER_RE = re.compile(
     r"<(?:tool_call|tool_response|tool_use|function_results)\b[^>]*>"
     r".*?"
@@ -201,32 +201,31 @@ GENERIC_TOOL_WRAPPER_RE = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 
-# Base64-Image-Drift: ``data:image/...;base64,<long-string>`` + lange
-# Standalone-Base64-Sequenzen (>=200 Chars zusammenhaengende Base64-Chars).
-# Re-Probe-Drift Szenario 08 vom 2026-04-28: Brain leakte einen kompletten
-# WebP-Image als Body-String.
+# Base64 image drift: ``data:image/...;base64,<long-string>`` + long
+# standalone base64 sequences (>=200 contiguous base64 chars).
+# Re-probe-drift scenario 08 from 2026-04-28: the brain leaked an entire
+# WebP image as the body string.
 BASE64_DATA_URI_RE = re.compile(
     r"data:[a-zA-Z]+/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+",
 )
 
-# Audit F-AUDIT-4 (2026-04-29): Brain leakt Tool-Calls als prosaische
-# Aufzaehlung ("spawn_openclaw with utterance is X context_hints is Y
-# action is Z target is W"). Probe vom 2026-04-29 Szenario 07 zeigte
-# das im Voice-Output. Das ist kein JSON, kein YAML, kein XML — der
-# Filter musste vorher um dieses natuerlichsprachige Format erweitert
-# werden.
+# Audit F-AUDIT-4 (2026-04-29): the brain leaks tool calls as a prose
+# enumeration ("spawn_openclaw with utterance is X context_hints is Y
+# action is Z target is W"). A probe from 2026-04-29 scenario 07 showed
+# this in the voice output. This is neither JSON, YAML, nor XML — the
+# filter had to be extended for this natural-language format.
 #
-# Pattern: tool-name + " with " + ein oder mehrere "<key> is <value>"-
-# Phrasen, getrennt durch Leerzeichen oder ".". Greedy bis Doppel-Newline
-# oder Satzgrenze (max 600 Chars als Sicherheits-Cap).
+# Pattern: tool name + " with " + one or more "<key> is <value>"
+# phrases, separated by spaces or ".". Greedy up to a double newline
+# or sentence boundary (max 600 chars as a safety cap).
 TOOL_CALL_PROSE_RE = re.compile(
     r"\b(?:" + "|".join(TOOL_NAMES) + r")\s+with\s+"
     r"[\w\-]+\s+is\s+.*?"
-    r"(?=\n\s*\n|\Z|(?<=\.)(?=\s+[A-ZÄÖÜ]))",
+    r"(?=\n\s*\n|\Z|(?<=\.)(?=\s+[A-ZÄÖÜ]))",  # i18n-allow: umlaut character class, sentence-boundary matching data
     re.DOTALL | re.IGNORECASE,
 )
-# Fallback: einzelne "<key> is <value>"-Phrasen mit Tool-Arg-Schluesseln
-# auch ohne Tool-Name-Prefix (Brain koennte Tool-Name weggelassen haben).
+# Fallback: individual "<key> is <value>" phrases with tool-arg keys,
+# even without a tool-name prefix (the brain may have omitted the tool name).
 TOOL_ARGS_PROSE_KEYS: tuple[str, ...] = (
     "utterance", "context_hints", "context hints",
     "action", "target", "tool_hint", "tool hint",
