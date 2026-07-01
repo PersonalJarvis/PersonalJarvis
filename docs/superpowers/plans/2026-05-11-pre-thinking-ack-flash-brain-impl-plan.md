@@ -1029,7 +1029,7 @@ What you do NOT do:
 IMPORTANT:
 - The prompts are data, not code. No f-strings, no
   interpolation. Triple-quoted strings, verbatim from spec §4.
-- Preserve umlauts correctly: ä ö ü ß, never ae oe ue ss
+- Preserve umlauts correctly: ä ö ü ß, never ae oe ue ss <!-- i18n-allow -->
 
 Acceptance criteria:
 1. pytest tests/unit/brain/test_ack_brain/test_persona_prompt.py -v → 18 pass

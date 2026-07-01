@@ -322,7 +322,7 @@ After all four agents commit and report, the review agent:
    - Lands on the graph view, sees 3 nodes (sam, alex, pixel-art-editor).
    - Clicks the `sam` node → page loads, frontmatter pills visible, body rendered.
    - Clicks the `[[alex]]` wikilink in the body → navigates to alex.md.
-   - Clicks "In Obsidian öffnen" — either Obsidian launches the file (if installed) or a toast says "Obsidian nicht verfügbar — Datei: entities/alex.md".
+   - Clicks "In Obsidian öffnen" — either Obsidian launches the file (if installed) or a toast says "Obsidian nicht verfügbar — Datei: entities/alex.md". <!-- i18n-allow -->
    - Triggers a live test: manually adds a file `entities/test-live.md` via the terminal. Within ~1 s the tree updates, the new file appears, the graph re-fetches.
    - Voice command: "Hey Jarvis, schreib in dein Wiki: meine Lieblingsfarbe ist Blau" — wait ~10 s — the Wiki tab auto-refreshes, alex.md shows the new fact.
 

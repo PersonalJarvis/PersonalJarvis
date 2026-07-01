@@ -170,7 +170,7 @@ Detail in [`docs/BUGS.md`](docs/BUGS.md). Recognize the signal, apply the defens
 - **App restart is `POST /api/settings/restart-app`**, not `Stop-Process` (Access Denied under the tray `pythonw.exe`). Editable-install fixes still need this restart to take effect.
 - **New worktree:** run `pwsh scripts/preflight.ps1` before writing code; exit non-zero → fix first (BUG-006/014).
 - **Memory:** check `MEMORY.md` (`~/.claude/projects/.../memory/`) before larger decisions — stable user preferences live there.
-- **Plan vs. code:** on conflict, the plan wins (`~/.claude/plans/also-er-muss-auch-lexical-pond.md`); code deviations get documented back in the plan.
+- **Plan vs. code:** on conflict, the plan wins (`~/.claude/plans/also-er-muss-auch-lexical-pond.md`); code deviations get documented back in the plan. <!-- i18n-allow -->
 
 ### Git workflow
 

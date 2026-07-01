@@ -4,7 +4,7 @@
 
 **Goal:** Add Cartesia.ai as a selectable TTS provider in Personal Jarvis, surfaced in the desktop app under API Keys → TTS, alongside Gemini Flash TTS and Grok Voice.
 
-**Architecture:** Structural copy of `jarvis/plugins/tts/grok_voice_tts.py` — Bearer-auth unary endpoint (`POST https://api.cartesia.ai/tts/bytes`), sentence-chunking pseudo-streaming, cross-provider fallback to Gemini Flash TTS with optional SAPI5 last resort. The plugin is discovered structurally via `pyproject.toml` entry-point (`jarvis.tts` group), surfaced in the UI via a `ProviderSpec` row, and configured via a three-layer pin (`jarvis.toml` + `scripts/config-soll.json` + ENV doc) to survive BUG-010 drift-guard rewrites.
+**Architecture:** Structural copy of `jarvis/plugins/tts/grok_voice_tts.py` — Bearer-auth unary endpoint (`POST https://api.cartesia.ai/tts/bytes`), sentence-chunking pseudo-streaming, cross-provider fallback to Gemini Flash TTS with optional SAPI5 last resort. The plugin is discovered structurally via `pyproject.toml` entry-point (`jarvis.tts` group), surfaced in the UI via a `ProviderSpec` row, and configured via a three-layer pin (`jarvis.toml` + `scripts/config-soll.json` + ENV doc) to survive BUG-010 drift-guard rewrites. <!-- i18n-allow -->
 
 **Tech Stack:** Python 3.11, `httpx` async client, `pytest` + `pytest-asyncio`, React/TypeScript frontend (Vite + shadcn UI, builds via `npm run build`).
 

@@ -127,7 +127,7 @@ A wake word is a **user-switchable** setting, so per the project mandate it is w
 three layers at once (mirroring `config_writer.set_brain_primary`):
 
 1. `jarvis.toml` `[trigger.wake_word]` (via `config_writer`, lock + tempfile + BOM-safe).
-2. `scripts/config-soll.json` `trigger.wake_word.*` (so the drift-guard *protects* the user's
+2. `scripts/config-soll.json` `trigger.wake_word.*` (so the drift-guard *protects* the user's <!-- i18n-allow -->
    choice against rogue parallel sessions instead of reverting it).  <!-- i18n-allow -->
 3. `JARVIS__TRIGGER__WAKE_WORD__*` User-scope ENV (boot-override consistency).
 
