@@ -133,7 +133,7 @@ class AdminExecutor:
         # in lpCommandLine).
         for segment in argv:
             if not isinstance(segment, str):
-                raise TypeError(f"argv-Segment muss str sein, nicht {type(segment)}")
+                raise TypeError(f"argv segment must be str, not {type(segment)}")
 
         proc = await asyncio.create_subprocess_exec(
             *argv,
@@ -505,7 +505,7 @@ class AdminExecutor:
                         return {
                             "success": False,
                             "error_code": "invalid_binary_hex",
-                            "error_message": "value_data konnte nicht als Hex dekodiert werden.",
+                            "error_message": "value_data could not be decoded as hex.",
                         }
                 with winreg.CreateKey(hive, op.key_path) as key:
                     winreg.SetValueEx(key, op.value_name, 0, type_const, data)
@@ -599,7 +599,7 @@ class AdminExecutor:
             return {
                 "success": False,
                 "error_code": "path_exists",
-                "error_message": f"{target} existiert und overwrite=False",
+                "error_message": f"{target} exists and overwrite=False",
             }
 
         try:

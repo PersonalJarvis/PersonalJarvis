@@ -1,26 +1,26 @@
 # === F-FRIENDS [F3] · feature/friends-section · ruben-2026-05-01 ===
 # === F-FRIENDS [F2] · feature/friends-section · ruben-2026-04-30 ===
-"""REST-API fuer die Friends-Sektion (Phase F2).
+"""REST API for the Friends section (Phase F2).
 
-Pattern wie ``missions_routes.py``:
-- Resources (``FriendRegistry``, ``ChannelManager``) liegen in
+Pattern like ``missions_routes.py``:
+- Resources (``FriendRegistry``, ``ChannelManager``) live in
   ``app.state.friend_registry`` / ``app.state.channel_manager``.
-- Nicht gesetzt → ``HTTPException(503)``.
-- Pydantic-Body-Models inline.
+- Not set → ``HTTPException(503)``.
+- Pydantic body models inline.
 
 Endpoints (Phase F2):
 
-- ``GET    /api/friends``                          → Liste mit Channels.
-- ``POST   /api/friends``                          → Neuen Friend anlegen.
-- ``GET    /api/friends/{friend_id}``              → Detail + Channels + Permission.
-- ``PATCH  /api/friends/{friend_id}``              → display_name, note aktualisieren.
-- ``DELETE /api/friends/{friend_id}``              → Friend + Channels + Permission loeschen.
-- ``POST   /api/friends/{friend_id}/channels``     → Channel-Link hinzufuegen.
-- ``DELETE /api/friends/{friend_id}/channels/{channel}/{handle}`` → Unlink.
-- ``GET    /api/friends/{friend_id}/permission``   → Status-Permission lesen.
-- ``PATCH  /api/friends/{friend_id}/permission``   → Profile setzen.
-- ``GET    /api/friends/{friend_id}/messages``     → Chat-Thread (F2: Stub).
-- ``POST   /api/friends/{friend_id}/messages``     → Outbound via primary Channel.
+- ``GET    /api/friends``                          → list with channels.
+- ``POST   /api/friends``                          → create a new friend.
+- ``GET    /api/friends/{friend_id}``              → detail + channels + permission.
+- ``PATCH  /api/friends/{friend_id}``              → update display_name, note.
+- ``DELETE /api/friends/{friend_id}``              → delete friend + channels + permission.
+- ``POST   /api/friends/{friend_id}/channels``     → add a channel link.
+- ``DELETE /api/friends/{friend_id}/channels/{channel}/{handle}`` → unlink.
+- ``GET    /api/friends/{friend_id}/permission``   → read status permission.
+- ``PATCH  /api/friends/{friend_id}/permission``   → set profile.
+- ``GET    /api/friends/{friend_id}/messages``     → chat thread (F2: stub).
+- ``POST   /api/friends/{friend_id}/messages``     → outbound via primary channel.
 """
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ def _require_registry(request: Request) -> FriendRegistry:
     reg = getattr(request.app.state, "friend_registry", None)
     if reg is None:
         raise HTTPException(
-            status_code=503, detail="FriendRegistry nicht verfuegbar"
+            status_code=503, detail="FriendRegistry not available"
         )
     return reg
 
@@ -327,10 +327,10 @@ async def update_permission(
 
 @router.get("/{friend_id}/messages", response_model=list[MessageDTO])
 async def list_messages(friend_id: str, request: Request) -> list[MessageDTO]:
-    """F3: liest persistierte Direct-Messages aus ``direct_messages``.
+    """F3: reads persisted direct messages from ``direct_messages``.
 
-    Telegram-Inbound aus dem Live-Bus landet in F4 hier; aktuell sind nur
-    Outbound-Echoes (von ``send_message``) sichtbar.
+    Telegram inbound from the live bus lands here in F4; currently only
+    outbound echoes (from ``send_message``) are visible.
     """
     reg = _require_registry(request)
     fid = _parse_friend_id(friend_id)
@@ -350,12 +350,12 @@ async def list_messages(friend_id: str, request: Request) -> list[MessageDTO]:
 async def send_message(
     friend_id: str, body: SendMessageBody, request: Request
 ) -> MessageDTO:
-    """Outbound via primary Channel.
+    """Outbound via the primary channel.
 
-    F3: persistiert jeden Outbound-Versand in ``direct_messages``, damit
-    der History-View ihn anzeigt — sowohl fuer Telegram (zusaetzlich zum
-    Telegram-API-Send) als auch fuer ``jarvis_pubkey`` (echte
-    Federation-Auslieferung kommt in F5; bis dahin echo-store).
+    F3: persists every outbound send to ``direct_messages`` so the
+    history view shows it — both for Telegram (in addition to the
+    Telegram API send) and for ``jarvis_pubkey`` (real federation
+    delivery lands in F5; echo-store until then).
     """
     reg = _require_registry(request)
     fid = _parse_friend_id(friend_id)
@@ -369,7 +369,7 @@ async def send_message(
     if primary is None:
         raise HTTPException(
             status_code=400,
-            detail="Friend hat keinen verknuepften Channel — Outbound nicht moeglich.",
+            detail="Friend has no linked channel — outbound not possible.",
         )
 
     if primary.channel == "telegram":
@@ -377,7 +377,7 @@ async def send_message(
         if manager is None or "telegram" not in manager.started():
             raise HTTPException(
                 status_code=503,
-                detail="TelegramChannel nicht verfuegbar (nicht gestartet).",
+                detail="TelegramChannel not available (not started).",
             )
         telegram = manager.get("telegram")
         from uuid import uuid4
@@ -389,7 +389,7 @@ async def send_message(
             metadata={"telegram_chat_id": int(primary.handle)},
         )
         await telegram.send_message(msg)
-        # Outbound-Echo persistieren, damit History-View die Message zeigt.
+        # Persist the outbound echo so the history view shows the message.
         stored = await reg.messages.add(
             DirectMessage(
                 friend_id=fid,
@@ -407,8 +407,8 @@ async def send_message(
         )
 
     if primary.channel == "jarvis_pubkey":
-        # F3: lokal-only Persistenz. Federation-Auslieferung kommt mit F5
-        # als separater Adapter, der denselben DirectMessageStore nutzt.
+        # F3: local-only persistence. Federation delivery lands with F5
+        # as a separate adapter that uses the same DirectMessageStore.
         stored = await reg.messages.add(
             DirectMessage(
                 friend_id=fid,
@@ -426,5 +426,5 @@ async def send_message(
         )
 
     raise HTTPException(
-        status_code=400, detail=f"Channel '{primary.channel}' nicht unterstuetzt"
+        status_code=400, detail=f"Channel '{primary.channel}' not supported"
     )

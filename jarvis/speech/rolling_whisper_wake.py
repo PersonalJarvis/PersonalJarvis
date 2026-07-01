@@ -1,24 +1,23 @@
-"""Rolling-Window Whisper Wake-Detection — robuster Wake ohne VAD-Abhängigkeit.
+"""Rolling-window Whisper wake detection — robust wake without a VAD dependency.
 
-Im Gegensatz zu `whisper_wake.py` (wartet auf VAD-Endpoint, scheitert bei
-leisen Mics): hier wird ein Ring-Buffer von 2.5 Sekunden Audio gehalten
-und alle 500 ms durch Whisper transkribiert. Wenn "jarvis" im Transkript
-auftaucht — Trigger.
+Unlike `whisper_wake.py` (which waits for a VAD endpoint and fails on quiet
+mics), this keeps a 2.5-second rolling audio buffer and transcribes it via
+Whisper every 500 ms. If "jarvis" shows up in the transcript — trigger.
 
-Vorteile:
-- Kein VAD-Dependency → funktioniert auch bei niedrigem Mic-Pegel
-- Triggert sofort (500 ms Polling-Intervall), nicht erst nach Sprachende
-- Nutzt Whisper (nativ deutsch-fähig) → keine Englisch-Trainings-Bias
+Advantages:
+- No VAD dependency → also works at a low mic level
+- Triggers immediately (500 ms polling interval), not only after speech ends
+- Uses Whisper (natively German-capable) → no English-training bias
 
-Nachteile:
-- Höhere GPU-Last (Whisper läuft permanent statt nur bei Utterance-Ende)
-- Auf RTX 5070 Ti mit distil-large-v3: ~80-150 ms pro 2.5-Sek-Transkription
-  = ~20 % GPU-Nutzung bei 500 ms Poll-Intervall
+Disadvantages:
+- Higher GPU load (Whisper runs continuously instead of only at utterance end)
+- On an RTX 5070 Ti with distil-large-v3: ~80-150 ms per 2.5-second transcription
+  = ~20% GPU usage at a 500 ms poll interval
 
-Parameter:
-- `window_s`: Buffer-Länge (Default 2.5 s — lang genug für "Hey Jarvis")
-- `poll_interval_s`: wie oft wir transkribieren (Default 0.5 s)
-- `cooldown_s`: nach Trigger nicht sofort wieder (Default 2 s)
+Parameters:
+- `window_s`: buffer length (default 2.5 s — long enough for "Hey Jarvis")
+- `poll_interval_s`: how often we transcribe (default 0.5 s)
+- `cooldown_s`: not immediately re-triggering (default 2 s)
 """
 from __future__ import annotations
 
@@ -50,7 +49,7 @@ from jarvis.speech.wake_constants import JARVIS_WAKE_PATTERN as DEFAULT_PATTERN
 log = logging.getLogger("jarvis.wake.rolling")
 
 
-# Watchdog-Verzeichnis für Debug-WAVs
+# Watchdog directory for debug WAVs
 DEBUG_DIR = Path(os.environ.get("JARVIS_DEBUG_DIR", "./data/wake_debug"))
 
 # Production default is OFF. The watchdog WAV dump writes ONE WAV file per
@@ -77,7 +76,7 @@ _WEDGE_RECOVER_AFTER_FAILS = 5
 
 
 def _save_wav(pcm_bytes: bytes, sample_rate: int, path: Path) -> None:
-    """Schreibt int16-PCM als gültiges WAV-File."""
+    """Writes int16 PCM as a valid WAV file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with wave.open(str(path), "wb") as wf:
         wf.setnchannels(1)
@@ -127,18 +126,18 @@ class RollingWhisperWake:
         # Either a compiled regex or a WakeMatcher — both expose
         # ``.search(text)`` returning an object with ``.group(0)``.
         pattern: Any = DEFAULT_PATTERN,
-        window_s: float = 1.8,        # kürzer = weniger Stille-Anteil = höhere avg-RMS
-        poll_interval_s: float = 0.3,  # schnellere Wake-Reaktion
-        cooldown_s: float = 5.0,      # längerer Cooldown → weniger Over-Triggering
+        window_s: float = 1.8,        # shorter = less silence share = higher avg RMS
+        poll_interval_s: float = 0.3,  # faster wake reaction
+        cooldown_s: float = 5.0,      # longer cooldown → less over-triggering
         sample_rate: int = 16_000,
-        # 2026-04-22 (3. Iteration): RMS/Peak-Gates zurueck auf niedrig. Die
-        # Headset-Aussteuerung des Users ist sehr leise (typisch rms 0.01-0.02
-        # bei normalem Sprechen). Hoehere Gates blockten echtes "Hey Jarvis".
-        # Schutz gegen Halluzinationen liefert jetzt das Pattern alleine:
-        # Whisper halluziniert "JARVIS.", "Vielen Dank.", "Thank you" — das
-        # matched unser Pattern (nur "hey/hi/hallo + jarv-Stamm") nicht.
-        # Whisper wird dabei etwas oefter aufgerufen (mehr GPU-Last), aber das
-        # Trigger-Verhalten ist korrekt — genau was der User will.
+        # 2026-04-22 (3rd iteration): RMS/peak gates set back to low. The
+        # user's headset input level is very quiet (typically rms 0.01-0.02
+        # for normal speech). Higher gates blocked genuine "Hey Jarvis".
+        # Protection against hallucinations now comes from the pattern alone:
+        # Whisper hallucinates "JARVIS.", "Vielen Dank.", "Thank you" — none
+        # of that matches our pattern (only "hey/hi/hallo + jarv-stem").
+        # Whisper does get called a bit more often (more GPU load), but the
+        # trigger behavior is correct — exactly what the user wants.
         min_rms: float = 0.003,
         # 2026-06-29 (mission "wake only triggers when shouting"): the raw peak
         # gate runs BEFORE transcription on a quiet mic, so a normal-volume
@@ -151,10 +150,10 @@ class RollingWhisperWake:
         min_peak: float = 0.012,
         save_debug_wavs: bool = False,  # Watchdog-Modus — OFF in prod (env opt-in)
         heartbeat_interval_s: float = 3.0,
-        # Peak-Normalization statt fester Gain: misst Audio-Peak, wendet
-        # dynamisch den Gain an, der nötig ist um auf -3 dBFS zu kommen.
-        # Ersetzt fehlenden Windows/Hardware-Mic-Boost OHNE Clipping.
-        # Bei Stille/leisem Rauschen wird der Gain gecappt (max_gain_db).
+        # Peak normalization instead of a fixed gain: measures the audio peak
+        # and dynamically applies the gain needed to reach -3 dBFS.
+        # Replaces a missing Windows/hardware mic boost WITHOUT clipping.
+        # On silence/quiet noise the gain is capped (max_gain_db).
         target_peak_dbfs: float = -3.0,
         max_gain_db: float = 40.0,
         language: str = "de",
@@ -206,14 +205,14 @@ class RollingWhisperWake:
         self._target_peak = float(10.0 ** (target_peak_dbfs / 20.0))  # -3 dBFS ≈ 0.707
         self._max_gain_factor = float(10.0 ** (max_gain_db / 20.0))    # 40 dB = 100x
         self._min_peak = min_peak
-        # Wake-Transkription auf eine feste Sprache pinnen — auto-detect auf
-        # 1.8s-Chunks kippt oft fälschlich auf EN (User spricht DE, Whisper
-        # halluziniert "Thank you"). None = auto (nicht empfohlen).
+        # Pin the wake transcription to a fixed language — auto-detect on
+        # 1.8s chunks often falsely flips to EN (user speaks DE, Whisper
+        # hallucinates "Thank you"). None = auto (not recommended).
         self._language: str | None = language
         self._min_wake_confidence = min_wake_confidence
         self._max_no_speech_prob = max_no_speech_prob
         self._transcribe_timeout_s = float(transcribe_timeout_s)
-        # Statistik für Heartbeat
+        # Stats for the heartbeat
         self._chunks_seen = 0
         self._total_bytes = 0
         self._max_rms = 0.0
@@ -297,7 +296,7 @@ class RollingWhisperWake:
                     if chunk_rms > self._max_rms:
                         self._max_rms = chunk_rms
 
-                    # Heartbeat regelmäßig ausgeben — auch wenn Whisper nichts matched
+                    # Emit the heartbeat regularly — even when Whisper doesn't match anything
                     now_hb = time.time()
                     if now_hb - self._last_heartbeat_t >= self._heartbeat_interval_s:
                         dbfs = 20.0 * np.log10(max(self._max_rms, 1e-12))
@@ -327,7 +326,7 @@ class RollingWhisperWake:
                         self._max_rms = 0.0
                         self._last_heartbeat_t = now_hb
 
-                    # Ältere Samples rauswerfen wenn Buffer zu lang
+                    # Discard older samples when the buffer gets too long
                     while buf_len[0] > self._window_samples:
                         oldest = buffer[0]
                         overflow = buf_len[0] - self._window_samples
@@ -377,7 +376,7 @@ class RollingWhisperWake:
                 if now - last_trigger_t < self._cooldown_s:
                     self._stat_suppressed_cooldown += 1
                     continue
-                # Noch nicht genug Audio im Buffer
+                # Not enough audio in the buffer yet
                 if buf_len[0] < self._sample_rate:  # mind. 1 Sek
                     continue
 
@@ -393,16 +392,16 @@ class RollingWhisperWake:
                 # evaluation attempt (the denominator for the gate counters).
                 self._stat_windows_polled += 1
 
-                # Lautstärke-Check (RMS) — kein Whisper-Call bei Stille
+                # Volume check (RMS) — no Whisper call on silence
                 rms = float(np.sqrt(np.mean(audio_np * audio_np) + 1e-12))
                 if rms < self._min_rms:
                     self._stat_gated_rms += 1
                     continue
 
-                # Peak-Gate: bei reinem Rauschen gar nicht erst Whisper bemühen
+                # Peak gate: don't even bother calling Whisper on pure noise
                 peak = float(np.max(np.abs(audio_np)))
                 if peak < self._min_peak:
-                    # Kein Whisper-Call — zu leise für Sprache. Log the measured
+                    # No Whisper call — too quiet for speech. Log the measured
                     # peak so "wake stopped working" on a quiet mic is visible as
                     # "your audio peaks below the gate", not silent nothing.
                     self._stat_gated_peak += 1
@@ -415,7 +414,7 @@ class RollingWhisperWake:
                 # Whisper-Call mit Peak-Normalization (dynamischer Gain)
                 try:
                     if peak > 1e-6:
-                        # Gain berechnen um Ziel-Peak zu erreichen, aber cappen
+                        # Compute the gain needed to reach the target peak, but cap it
                         gain = min(self._target_peak / peak, self._max_gain_factor)
                     else:
                         gain = 1.0
@@ -449,15 +448,15 @@ class RollingWhisperWake:
                     consecutive_fail = 0  # a success clears the wedge streak
                 except TimeoutError:
                     log.warning(
-                        "Rolling-Whisper Transkription nach %.1fs abgebrochen "
-                        "(hung STT, %d in Folge) — re-poll, Wake bleibt lebendig",
+                        "Rolling-Whisper transcription aborted after %.1fs "
+                        "(hung STT, %d in a row) — re-polling, wake stays alive",
                         self._transcribe_timeout_s,
                         _note_transcribe_fail(),
                     )
                     continue
                 except Exception as exc:  # noqa: BLE001
                     log.warning(
-                        "Rolling-Whisper Transkription fehlgeschlagen (%d in Folge): %s",
+                        "Rolling-Whisper transcription failed (%d in a row): %s",
                         _note_transcribe_fail(), exc,
                     )
                     continue
@@ -465,7 +464,7 @@ class RollingWhisperWake:
                 text = transcript.text.strip()
                 self._last_transcript = text
 
-                # Watchdog: WAV speichern damit User/ich die Aufnahme nachprüfen können
+                # Watchdog: save the WAV so the user/I can review the recording afterward
                 if self._save_debug_wavs:
                     try:
                         pcm_bytes_for_wav = (
@@ -476,7 +475,7 @@ class RollingWhisperWake:
                         wav_path = DEBUG_DIR / f"wake_{ts}_rms{rms:.3f}_{safe_text}.wav"
                         _save_wav(pcm_bytes_for_wav, self._sample_rate, wav_path)
                     except Exception as exc:  # noqa: BLE001
-                        log.warning("WAV-Save fehlgeschlagen: %s", exc)
+                        log.warning("WAV save failed: %s", exc)
 
                 if not text:
                     self._stat_empty += 1

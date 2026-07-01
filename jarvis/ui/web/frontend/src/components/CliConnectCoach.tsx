@@ -1,11 +1,11 @@
 /**
- * CliConnectCoach — Begleit-Panel fuer OAuth-CLI-Logins.
+ * CliConnectCoach — companion panel for OAuth CLI logins.
  *
- * Diese Datei ist ein Minimal-Stub nach dem Frontend-Filesystem-Reset
- * vom 2026-04-25. Die ausgereifte Variante (mit Phase-State-Machine,
- * /check-Polling und auth_check-Display) wird in einer Folge-Iteration
- * neu aufgebaut. Bis dahin: einfaches Status-Panel mit dem Login-Command
- * und einer manuellen "Status pruefen"-Action.
+ * This file is a minimal stub after the frontend filesystem reset
+ * on 2026-04-25. The full-featured variant (with a phase state machine,
+ * /check polling, and an auth_check display) will be rebuilt in a
+ * follow-up iteration. Until then: a simple status panel with the
+ * login command and a manual "check status" action.
  *
  * Polling: handled centrally by `CliConnectPoller` (mounted in App.tsx).
  * On success the poller calls `setCoach(null)`, which unmounts this view.

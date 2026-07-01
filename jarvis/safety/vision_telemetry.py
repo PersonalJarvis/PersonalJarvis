@@ -1,19 +1,19 @@
-"""VisionTelemetryCollector — akkumuliert VisionInjected-Events.
+"""VisionTelemetryCollector — accumulates VisionInjected events.
 
-Bus-Subscriber fuer die Permanent-Vision-Pipeline. Haelt drei Buckets:
+Bus subscriber for the permanent-vision pipeline. Holds three buckets:
 
-- ``bytes_total``: Summe der Bytes aller injizierten Screen-Observations.
-- ``injects_total``: Zahl der Injects (pro trace_id maximal einmal gezaehlt).
-- ``avg_capture_age_ms``: Running-Average des Alters zum Inject-Zeitpunkt.
+- ``bytes_total``: sum of the bytes of all injected screen observations.
+- ``injects_total``: number of injects (counted at most once per trace_id).
+- ``avg_capture_age_ms``: running average of the age at inject time.
 
-De-Duplication ueber ``trace_id`` verhindert Doppelzaehlung bei Retries.
-Reine Telemetrie — keine Rate-Limits, keine Budgets. Rate-/Budget-Logik
-lebt separat in ``jarvis.control`` (Protocol ``CostMeter``) und ist nicht
-Teil dieses Moduls.
+De-duplication via ``trace_id`` prevents double-counting on retries.
+Pure telemetry — no rate limits, no budgets. Rate/budget logic
+lives separately in ``jarvis.control`` (protocol ``CostMeter``) and is not
+part of this module.
 
-Bekannte Einschraenkung: ``_seen_trace_ids`` waechst unbegrenzt. In
-MVP-Laufzeiten (Sessions bis ~Stunden) kein Problem; ein spaeterer Fix
-koennte ein LRU-Set sein.
+Known limitation: ``_seen_trace_ids`` grows unbounded. Not a problem for
+MVP-scale runtimes (sessions up to ~hours); a later fix could
+switch to an LRU set.
 """
 from __future__ import annotations
 

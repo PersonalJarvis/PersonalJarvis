@@ -80,7 +80,7 @@ describe("ObsidianSetupDialog", () => {
     expect(screen.getByTestId("obsidian-setup-download-link")).toBeDefined();
   });
 
-  it("clicking 'Ich habs installiert' calls onStatusRefresh and advances on installed=true", async () => {
+  it("clicking 'I installed it' calls onStatusRefresh and advances on installed=true", async () => {
     const refresh = vi.fn(async () => STATUS_NOT_REGISTERED);
     render(
       <ObsidianSetupDialog
@@ -102,7 +102,7 @@ describe("ObsidianSetupDialog", () => {
     expect(marker2.getAttribute("data-state")).toBe("active");
   });
 
-  it("clicking 'Ich habs installiert' shows retry hint on installed=false", async () => {
+  it("clicking 'I installed it' shows retry hint on installed=false", async () => {
     const refresh = vi.fn(async () => STATUS_NOT_INSTALLED);
     render(
       <ObsidianSetupDialog
@@ -121,7 +121,7 @@ describe("ObsidianSetupDialog", () => {
     expect(screen.queryByTestId("obsidian-setup-step-2")).toBeNull();
   });
 
-  it("clicking 'Jetzt registrieren' with 200 added advances to step 3", async () => {
+  it("clicking 'Register now' with 200 added advances to step 3", async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse({ status: "added", vault_uuid: "abc", backup_path: null }),
     ) as unknown as typeof fetch;
@@ -147,7 +147,7 @@ describe("ObsidianSetupDialog", () => {
     expect(screen.queryByTestId("obsidian-setup-step-2")).toBeNull();
   });
 
-  it("clicking 'Jetzt registrieren' with 409 shows config_missing hint", async () => {
+  it("clicking 'Register now' with 409 shows config_missing hint", async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse(
         {
@@ -176,7 +176,7 @@ describe("ObsidianSetupDialog", () => {
     expect(screen.queryByTestId("obsidian-setup-step-3")).toBeNull();
   });
 
-  it("clicking 'Jetzt registrieren' with 500 shows error + help link", async () => {
+  it("clicking 'Register now' with 500 shows error + help link", async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse(
         {
@@ -205,7 +205,7 @@ describe("ObsidianSetupDialog", () => {
     expect(screen.getByTestId("obsidian-setup-help-link")).toBeDefined();
   });
 
-  it("clicking 'In Obsidian oeffnen' sets window.location.href to obsidian://...", () => {
+  it("clicking 'Open in Obsidian' sets window.location.href to obsidian://...", () => {
     // jsdom's `window.location` is normally read-only-ish; replace the
     // ``href`` setter with a tracker for the duration of the test.
     let lastHref: string | null = null;
@@ -245,7 +245,7 @@ describe("ObsidianSetupDialog", () => {
     }
   });
 
-  it("clicking 'Hat geklappt — Fertig' calls onComplete then onClose", () => {
+  it("clicking 'It worked — Done' calls onComplete then onClose", () => {
     const calls: string[] = [];
     const onComplete = vi.fn(() => calls.push("complete"));
     const onClose = vi.fn(() => calls.push("close"));

@@ -52,15 +52,15 @@
     --ring: 50 100% 52%;
     --radius: 0.75rem;
 
-    /* Jarvis-spezifische Custom-Tokens */
-    --jarvis-yellow: 255 214 10;         /* #FFD60A für rgba() */
-    --jarvis-yellow-dim: 230 190 40;     /* gedimmtes gelb */
+    /* Jarvis-specific custom tokens */
+    --jarvis-yellow: 255 214 10;         /* #FFD60A for rgba() */
+    --jarvis-yellow-dim: 230 190 40;     /* dimmed yellow */
     --jarvis-grid: 0 0% 12%;
   }
 
   .dark {
-    /* Dark is default — diese Klasse ist nur für explizite dark-switches.
-       Wir halten das gleiche Schema, dark = default = Jarvis. */
+    /* Dark is default — this class is only for explicit dark switches.
+       We keep the same scheme, dark = default = Jarvis. */
     --background: 0 0% 4%;
     --foreground: 0 0% 96%;
   }
@@ -95,7 +95,7 @@
 }
 
 @layer components {
-  /* Subtiles Grid-Pattern im Hintergrund — gibt Dashboard-Gefühl ohne abzulenken */
+  /* Subtle grid pattern in the background — gives a dashboard feel without distracting */
   .jarvis-grid {
     background-image:
       linear-gradient(rgba(255, 214, 10, 0.04) 1px, transparent 1px),
@@ -104,7 +104,7 @@
     mask-image: radial-gradient(ellipse at center, black 30%, transparent 70%);
   }
 
-  /* Gelber Spot-Glow — wird als absolute-positioned Element verwendet */
+  /* Yellow spot glow — used as an absolute-positioned element */
   .jarvis-glow {
     background: radial-gradient(
       circle at center,
@@ -115,7 +115,7 @@
     filter: blur(60px);
   }
 
-  /* Button-Base — für CTAs */
+  /* Button base — for CTAs */
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2 rounded-full px-6 py-3 font-medium
            bg-primary text-primary-foreground
@@ -171,7 +171,7 @@
     }
   }
 
-  /* Pulse-Animation für State-Badges */
+  /* Pulse animation for state badges */
   @keyframes jarvis-pulse {
     0%, 100% {
       opacity: 1;
@@ -239,7 +239,7 @@
     }
   }
 
-  /* Weiche Float-Animation fürs Hero-Orb */
+  /* Soft float animation for the hero orb */
   @keyframes jarvis-float {
     0%, 100% { transform: translateY(0px); }
     50% { transform: translateY(-14px); }
@@ -248,7 +248,7 @@
     animation: jarvis-float 6s ease-in-out infinite;
   }
 
-  /* Langsamer Spin für subtile Rotationen */
+  /* Slow spin for subtle rotations */
   @keyframes jarvis-spin-slow {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
@@ -257,7 +257,7 @@
     animation: jarvis-spin-slow 40s linear infinite;
   }
 
-  /* Text-Gradient für Hero */
+  /* Text gradient for the hero */
   .text-gradient-yellow {
     background: linear-gradient(135deg, #FFE552 0%, #FFD60A 50%, #B8960A 100%);
     -webkit-background-clip: text;
@@ -265,7 +265,7 @@
     color: transparent;
   }
 
-  /* Custom Scrollbar — passend zum Theme */
+  /* Custom scrollbar — matching the theme */
   .scrollbar-jarvis::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -282,16 +282,16 @@
   }
 
   /* ===========================================================
-     Gigi-Maskottchen-Animationen
-     Idle = kontinuierliches Floating + Mikro-Atmung auf SVG-Root.
-     Aktionen werden durch .gigi-<action>-Klassen getriggert —
-     die jeweilige Klasse lebt nur für die Dauer der Animation.
+     Gigi mascot animations
+     Idle = continuous floating + micro-breathing on the SVG root.
+     Actions are triggered via .gigi-<action> classes —
+     each class only lives for the duration of the animation.
      =========================================================== */
 
   .gigi-container {
     position: relative;
     display: inline-block;
-    font-size: 0; /* kein baseline-gap unter dem SVG */
+    font-size: 0; /* no baseline gap under the SVG */
   }
   .gigi-root {
     display: block;
@@ -310,7 +310,7 @@
     transform-origin: 50% 50%;
   }
 
-  /* Auto-Blink (alle ~7s ein natuerliches Blinzeln — parallel zu Random-Actions) */
+  /* Auto-blink (a natural blink every ~7s — parallel to random actions) */
   .gigi-root .gigi-eyes {
     transform-box: fill-box;
     transform-origin: 50% 50%;
@@ -321,7 +321,7 @@
     93.5%              { transform: scaleY(0.08); }
   }
 
-  /* Pupillen-Drift: subtile Augenbewegung während Idle */
+  /* Pupil drift: subtle eye movement during idle */
   .gigi-root .gigi-pupils {
     animation: gigi-pupil-drift 11s ease-in-out infinite;
     transform-origin: 50% 50%;
@@ -334,7 +334,7 @@
     85%      { transform: translate(-0.6px, 0.2px); }
   }
 
-  /* Mund: subtile "Atmung" */
+  /* Mouth: subtle "breathing" */
   .gigi-root .gigi-mouth {
     transform-box: fill-box;
     transform-origin: 50% 50%;
@@ -354,7 +354,7 @@
     50%      { transform: scale(1.025); }
   }
 
-  /* --- Action: Blink (Augen schließen kurz) --- */
+  /* --- Action: Blink (eyes close briefly) --- */
   .gigi-blink .gigi-eyes,
   .gigi-blink .gigi-pupils,
   .gigi-blink .gigi-sparkle {
@@ -366,11 +366,11 @@
     45%, 60% { transform: scaleY(0.08); }
   }
 
-  /* --- Action: Wave (linker Arm winkt) ---
-     Transform-origin wird auf die Schulter gelegt (fill-box Top-Right,
-     weil die Arm-Path-Bbox rechts-oben die Anbindung zur Body-Seite ist).
-     Wichtig: origin/box unconditional auf den Arm setzen — nicht nur bei
-     .gigi-wave — sonst laeuft Animation mit Default-Origin (0,0). */
+  /* --- Action: Wave (left arm waves) ---
+     Transform-origin is placed on the shoulder (fill-box top-right,
+     because the arm path bbox's top-right is where it connects to the body).
+     Important: set origin/box on the arm unconditionally — not only on
+     .gigi-wave — otherwise the animation runs with the default origin (0,0). */
   .gigi-root .gigi-arm-left {
     transform-box: fill-box;
     transform-origin: 100% 0%;
@@ -384,18 +384,18 @@
   }
   @keyframes gigi-wave {
     0%   { transform: rotate(0deg); }
-    12%  { transform: rotate(-95deg); }    /* Arm hoch */
-    22%  { transform: rotate(-75deg); }    /* Wink 1 */
+    12%  { transform: rotate(-95deg); }    /* arm up */
+    22%  { transform: rotate(-75deg); }    /* wave 1 */
     32%  { transform: rotate(-110deg); }
-    42%  { transform: rotate(-75deg); }    /* Wink 2 */
+    42%  { transform: rotate(-75deg); }    /* wave 2 */
     52%  { transform: rotate(-110deg); }
-    62%  { transform: rotate(-75deg); }    /* Wink 3 */
+    62%  { transform: rotate(-75deg); }    /* wave 3 */
     72%  { transform: rotate(-110deg); }
-    82%  { transform: rotate(-90deg); }    /* Winken aus */
-    100% { transform: rotate(0deg); }      /* zurück nach unten */
+    82%  { transform: rotate(-90deg); }    /* wave ends */
+    100% { transform: rotate(0deg); }      /* back down */
   }
 
-  /* --- Action: Spin (ganze Figur dreht sich) --- */
+  /* --- Action: Spin (whole figure spins) --- */
   .gigi-spin .gigi-svg {
     animation: gigi-spin 0.85s cubic-bezier(0.65, 0, 0.35, 1);
   }
@@ -404,7 +404,7 @@
     100% { transform: rotate(360deg); }
   }
 
-  /* --- Action: Jump (hochhüpfen) --- */
+  /* --- Action: Jump (hop up) --- */
   .gigi-jump .gigi-svg {
     animation: gigi-jump 0.65s cubic-bezier(0.4, 0, 0.2, 1);
   }
@@ -415,7 +415,7 @@
     80%      { transform: translateY(1px) scale(1.05, 0.95); }
   }
 
-  /* --- Action: Shake (Kopf-Schütteln) --- */
+  /* --- Action: Shake (head shaking) --- */
   .gigi-shake .gigi-svg {
     animation: gigi-shake 0.55s ease-in-out;
   }
@@ -427,7 +427,7 @@
     75%      { transform: translateX(3px) rotate(2deg); }
   }
 
-  /* --- Action: Look-Left / Look-Right (Pupillen schauen) --- */
+  /* --- Action: Look-Left / Look-Right (pupils look) --- */
   .gigi-look-left .gigi-pupils {
     animation: gigi-look-left 0.85s ease-in-out;
   }
@@ -443,7 +443,7 @@
     30%, 70% { transform: translateX(4px); }
   }
 
-  /* --- Action: Glitch (kurzer digitaler Störer) --- */
+  /* --- Action: Glitch (brief digital disruption) --- */
   .gigi-glitch .gigi-svg {
     animation: gigi-glitch 0.42s steps(2, end);
   }
@@ -465,7 +465,7 @@
     75%      { opacity: 0.8; transform: translateX(4px); }
   }
 
-  /* --- Voice-State-Reaktionen --- */
+  /* --- Voice-state reactions --- */
   .gigi-voice-listening .gigi-eyes {
     animation: gigi-ear-prick 1.2s ease-in-out infinite;
   }
@@ -496,7 +496,7 @@
     filter: hue-rotate(-40deg) saturate(1.4);
   }
 
-  /* --- Kommentar-Bubble --- */
+  /* --- Comment bubble --- */
   .gigi-bubble {
     position: absolute;
     top: 50%;
@@ -586,7 +586,7 @@
     100% { opacity: 1; transform: translateY(-50%) scale(1); }
   }
 
-  /* Reduced-Motion-Friendly: alle Animationen aus */
+  /* Reduced-motion friendly: all animations off */
   @media (prefers-reduced-motion: reduce) {
     .gigi-container,
     .gigi-container *,

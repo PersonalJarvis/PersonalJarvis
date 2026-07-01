@@ -18,19 +18,19 @@ from jarvis.platform import detect_platform
 
 @dataclass(frozen=True, slots=True)
 class ShellInfo:
-    """Beschreibt eine gefundene Shell-Installation."""
+    """Describes one discovered shell installation."""
 
-    id: str            # stabiler Key ("pwsh", "powershell", "cmd", "bash")
-    label: str         # User-facing Label fuer das Dropdown
-    argv: tuple[str, ...]  # vollstaendige argv-Liste fuer spawn
+    id: str            # stable key ("pwsh", "powershell", "cmd", "bash")
+    label: str         # user-facing label for the dropdown
+    argv: tuple[str, ...]  # full argv list for spawn
 
 
 def _powershell_7() -> ShellInfo | None:
-    # pwsh.exe auf PATH (Standard-Install von PowerShell 7+)
+    # pwsh.exe on PATH (default install of PowerShell 7+)
     found = shutil.which("pwsh")
     if found:
         return ShellInfo(id="pwsh", label="PowerShell 7", argv=(found, "-NoLogo"))
-    # Fallback: bekannter Install-Pfad
+    # Fallback: known install path
     candidate = os.path.expandvars(r"%ProgramFiles%\PowerShell\7\pwsh.exe")
     if os.path.isfile(candidate):
         return ShellInfo(id="pwsh", label="PowerShell 7", argv=(candidate, "-NoLogo"))
@@ -65,7 +65,7 @@ def _git_bash() -> ShellInfo | None:
     ]
     for cand in candidates:
         if os.path.isfile(cand):
-            # -i = interactive, -l = login (laedt .bashrc/.profile)
+            # -i = interactive, -l = login (loads .bashrc/.profile)
             return ShellInfo(id="bash", label="Git Bash", argv=(cand, "-i", "-l"))
     found = shutil.which("bash")
     if found and "git" in found.lower():
@@ -141,7 +141,7 @@ def discover_shells() -> list[ShellInfo]:
 
 
 def get_shell(shell_id: str) -> ShellInfo | None:
-    """Sucht eine Shell per ID — None wenn nicht installiert."""
+    """Looks up a shell by ID — None if not installed."""
     for shell in discover_shells():
         if shell.id == shell_id:
             return shell

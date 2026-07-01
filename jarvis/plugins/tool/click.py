@@ -1,13 +1,12 @@
-"""click-Tool: simuliert Mausklicks an einer Bildschirm-Koordinate.
+"""click tool: simulates mouse clicks at a screen coordinate.
 
-Win32-nativ via ``SetCursorPos`` + ``SendInput`` (Mouse-Event). Faellt
-auf ``pyautogui.click`` zurueck, falls Win32 nicht verfuegbar — damit
-laufen die Tests auf Linux/Mac, auch wenn echte Klicks nur auf Windows
-funktional sind.
+Win32-native via ``SetCursorPos`` + ``SendInput`` (mouse event). Falls back
+to ``pyautogui.click`` if Win32 isn't available — so tests run on Linux/Mac
+even though real clicks only work on Windows.
 
-Risk-Tier: ``monitor`` — Maus-Klicks sind oft nicht reversibel
-(Buttons, Form-Submits, Datei-Operationen). Toast-Notification sichtbar,
-kein Approval-Dialog.
+Risk tier: ``monitor`` — mouse clicks are often not reversible (buttons,
+form submits, file operations). A toast notification is shown, no approval
+dialog.
 """
 from __future__ import annotations
 
@@ -19,7 +18,7 @@ from jarvis.control.cursor_motion import glide_os_cursor
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.overlay.virtual_cursor import get_virtual_cursor
 
-# Mouse-Button-Mapping fuer Win32 (siehe MOUSEEVENTF_*-Flags).
+# Mouse-button mapping for Win32 (see MOUSEEVENTF_* flags).
 _MOUSE_FLAGS_DOWN: dict[str, int] = {
     "left": 0x0002,    # MOUSEEVENTF_LEFTDOWN
     "right": 0x0008,   # MOUSEEVENTF_RIGHTDOWN
@@ -78,7 +77,7 @@ def _send_click(button: str, double: bool, abs_xy: tuple[int, int] | None = None
     """
     button_l = button.lower()
     if button_l not in _MOUSE_FLAGS_DOWN:
-        raise ValueError(f"Unbekannter Mausbutton: {button!r}. Erlaubt: left/right/middle")
+        raise ValueError(f"Unknown mouse button: {button!r}. Allowed: left/right/middle")
 
     import ctypes
     from ctypes import wintypes
@@ -149,11 +148,11 @@ def _click_windows(x: int, y: int, button: str, double: bool) -> None:
     the click never misses — even across a multi-monitor virtual desktop.
     """
     if os.name != "nt":
-        raise RuntimeError("Native Mausklick ist nur auf Windows verfuegbar")
+        raise RuntimeError("Native mouse click is only available on Windows")
 
     button_l = button.lower()
     if button_l not in _MOUSE_FLAGS_DOWN:
-        raise ValueError(f"Unbekannter Mausbutton: {button!r}. Erlaubt: left/right/middle")
+        raise ValueError(f"Unknown mouse button: {button!r}. Allowed: left/right/middle")
 
     glide_os_cursor(int(x), int(y))
     try:
@@ -170,15 +169,15 @@ class ClickTool:
     name: str = "click"
     risk_tier: str = "monitor"
     description: str = (
-        "Klickt mit der Maus an eine Bildschirm-Koordinate. Optional "
-        "rechte/mittlere Maustaste, Doppelklick. Koordinaten sind absolut "
-        "(0,0 = obere linke Ecke des primaeren Monitors)."
+        "Clicks the mouse at a screen coordinate. Optional right/middle "
+        "mouse button, double-click. Coordinates are absolute "
+        "(0,0 = top-left corner of the primary monitor)."
     )
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
-            "x": {"type": "integer", "description": "X-Koordinate (Pixel)"},
-            "y": {"type": "integer", "description": "Y-Koordinate (Pixel)"},
+            "x": {"type": "integer", "description": "X coordinate (pixels)"},
+            "y": {"type": "integer", "description": "Y coordinate (pixels)"},
             "button": {
                 "type": "string",
                 "enum": ["left", "right", "middle"],
@@ -187,7 +186,7 @@ class ClickTool:
             "double": {
                 "type": "boolean",
                 "default": False,
-                "description": "Doppelklick statt Einfachklick",
+                "description": "Double-click instead of a single click",
             },
         },
         "required": ["x", "y"],
@@ -201,7 +200,7 @@ class ClickTool:
             return ToolResult(
                 success=False,
                 output=None,
-                error="x und y muessen Integer-Koordinaten sein",
+                error="x and y must be integer coordinates",
             )
         button = str(args.get("button", "left")).lower()
         double = bool(args.get("double", False))
@@ -210,22 +209,22 @@ class ClickTool:
             return ToolResult(
                 success=False,
                 output=None,
-                error=f"Unbekannter button={button!r}. Erlaubt: left/right/middle",
+                error=f"Unknown button={button!r}. Allowed: left/right/middle",
             )
 
         if os.name == "nt":
             try:
                 await asyncio.to_thread(_click_windows, x, y, button, double)
-                kind = "Doppelklick" if double else "Klick"
+                kind = "double-click" if double else "click"
                 return ToolResult(
                     success=True,
-                    output=f"{kind} ({button}) an ({x}, {y})",
+                    output=f"{kind} ({button}) at ({x}, {y})",
                 )
             except (ValueError, OSError) as exc:
                 return ToolResult(
                     success=False,
                     output=None,
-                    error=f"Klick an ({x},{y}) fehlgeschlagen: {exc}",
+                    error=f"Click at ({x},{y}) failed: {exc}",
                 )
 
         try:
@@ -235,7 +234,7 @@ class ClickTool:
                 success=False,
                 output=None,
                 error=(
-                    f"Plattform nicht Windows ({os.name}) und pyautogui fehlt: {exc}. "
+                    f"Platform is not Windows ({os.name}) and pyautogui is missing: {exc}. "
                     "pip install pyautogui"
                 ),
             )
@@ -244,7 +243,7 @@ class ClickTool:
             pyautogui.click(x=x, y=y, clicks=clicks, button=button)
             return ToolResult(
                 success=True,
-                output=f"{'Doppel' if double else ''}Klick (pyautogui) an ({x},{y})",
+                output=f"{'Double-' if double else ''}click (pyautogui) at ({x},{y})",
             )
         except Exception as exc:  # noqa: BLE001
             return ToolResult(success=False, output=None, error=str(exc))

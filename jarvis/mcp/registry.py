@@ -130,7 +130,7 @@ class MCPRegistry:
                     headers=dict(entry.get("headers", {})),
                 )
             except (TypeError, ValueError) as exc:
-                log.warning("mcp.json[%s] ungültig: %s", name, exc)
+                log.warning("mcp.json[%s] invalid: %s", name, exc)
                 continue
             self._specs[name] = spec
 
@@ -179,7 +179,7 @@ class MCPRegistry:
                 await asyncio.wait_for(client.start(), timeout=_START_TIMEOUT_S)
                 self._clients[spec.name] = client
                 self._errors.pop(spec.name, None)
-                log.info("MCP-Server %s gestartet", spec.name)
+                log.info("MCP server %s started", spec.name)
             except TimeoutError:
                 error_msg = f"start timeout ({_START_TIMEOUT_S:.0f}s)"
                 self._errors[spec.name] = error_msg
@@ -236,7 +236,7 @@ def _env_from_mcp_json(name: str) -> dict[str, str] | None:
             if looked_up:
                 resolved[key] = looked_up
                 continue
-            log.warning("env[%s]=%s für MCP %s konnte nicht aufgelöst werden",
+            log.warning("env[%s]=%s could not be resolved for MCP %s",
                         key, value, name)
             continue
         resolved[key] = value

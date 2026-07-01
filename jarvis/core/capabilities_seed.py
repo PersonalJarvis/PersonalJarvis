@@ -31,7 +31,7 @@ _ACTION_VERBS: tuple[str, ...] = (
     "implementier", "entwickel", "refactor", "debug",
     # DE — file / system actions
     "lies", "lese", "liest", "schreib", "schreibe", "schreibt",
-    "bau", "baue", "baut", "oeffne", "öffne", "oeffnet", "öffnet",
+    "bau", "baue", "baut", "oeffne", "öffne", "oeffnet", "öffnet",  # i18n-allow
     "installier", "deinstallier", "deploy",
     "zeig", "zeige", "zeigt",
     "mach", "mache", "macht", "machen",
@@ -62,12 +62,12 @@ _SCREEN_OBJECTS: tuple[str, ...] = (
 
 _WIKI_OBJECTS: tuple[str, ...] = (
     "wiki", "notiz", "note", "wissen", "knowledge", "seite", "page",
-    "eintrag", "entry", "fact", "fakt",
+    "eintrag", "entry", "fact", "fakt",  # i18n-allow
 )
 
 _AWARENESS_OBJECTS: tuple[str, ...] = (
     "awareness", "status", "zustand", "zustaende", "state", "context",
-    "kontext", "erinnerung", "memory", "verlauf", "history", "episode",
+    "kontext", "erinnerung", "memory", "verlauf", "history", "episode",  # i18n-allow
 )
 
 
@@ -128,10 +128,10 @@ _SEED_CAPABILITIES: list[Capability] = [
     Capability(
         id="tool.dispatch-with-review",
         source="router_tool",
-        verbs=_ACTION_VERBS + ("review", "check", "pruefe", "prüfe"),
+        verbs=_ACTION_VERBS + ("review", "check", "pruefe", "prüfe"),  # i18n-allow
         objects=(
-            "review", "quality", "qualitaet", "qualität", "critic",
-            "kritik", "check", "pruefung", "prüfung",
+            "review", "quality", "qualitaet", "qualität", "critic",  # i18n-allow
+            "kritik", "check", "pruefung", "prüfung",  # i18n-allow
         ),
         description="Dispatch a task through the Quality-Gate (Worker + Critic) pipeline.",
         risk_tier="ask",
@@ -158,8 +158,8 @@ _SEED_CAPABILITIES: list[Capability] = [
     Capability(
         id="tool.run-skill",
         source="router_tool",
-        verbs=_ACTION_VERBS + ("skill", "faehigkeit", "fähigkeit"),
-        objects=("skill", "skills", "faehigkeit", "fähigkeit", "macro", "makro"),
+        verbs=_ACTION_VERBS + ("skill", "faehigkeit", "fähigkeit"),  # i18n-allow
+        objects=("skill", "skills", "faehigkeit", "fähigkeit", "macro", "makro"),  # i18n-allow
         description="Execute an installed user skill / macro.",
         risk_tier="monitor",
         requires_evidence=True,
@@ -176,7 +176,7 @@ _SEED_CAPABILITIES: list[Capability] = [
     Capability(
         id="tool.wiki-page-read",
         source="router_tool",
-        verbs=_READ_VERBS + ("oeffne", "öffne", "open"),
+        verbs=_READ_VERBS + ("oeffne", "öffne", "open"),  # i18n-allow
         objects=_WIKI_OBJECTS,
         description="Read a full wiki page by vault path (read-only).",
         risk_tier="safe",
@@ -201,7 +201,7 @@ _SEED_CAPABILITIES: list[Capability] = [
         id="local.open_app",
         source="local_action",
         verbs=(
-            "oeffne", "öffne", "oeffnet", "öffnet", "starte", "start",
+            "oeffne", "öffne", "oeffnet", "öffnet", "starte", "start",  # i18n-allow
             "open", "launch", "mach", "mache", "macht",
         ),
         objects=(
@@ -221,7 +221,7 @@ _SEED_CAPABILITIES: list[Capability] = [
             "eingabe", "write",
         ),
         objects=(
-            "text", "nachricht", "message", "eingabe", "input",
+            "text", "nachricht", "message", "eingabe", "input",  # i18n-allow
             "feld", "field", "zeile", "line",
         ),
         description="Type text into the currently focused input field.",
@@ -232,7 +232,7 @@ _SEED_CAPABILITIES: list[Capability] = [
         id="local.hotkey",
         source="local_action",
         verbs=(
-            "drueck", "drücke", "druecke", "press", "shortcut",
+            "drueck", "drücke", "druecke", "press", "shortcut",  # i18n-allow
             "tastenkombination", "hotkey", "strg", "ctrl",
         ),
         objects=(
@@ -247,12 +247,12 @@ _SEED_CAPABILITIES: list[Capability] = [
         id="local.reset_orb_position",
         source="local_action",
         verbs=(
-            "reset", "zurueck", "zurück", "bring", "bringe",
+            "reset", "zurueck", "zurück", "bring", "bringe",  # i18n-allow
             "orb", "overlay", "move", "verschiebbe",
         ),
         objects=(
             "orb", "overlay", "position", "fenster", "window",
-            "zurueck", "zurück",
+            "zurueck", "zurück",  # i18n-allow
         ),
         description="Reset the Orb overlay to its default screen position.",
         risk_tier="safe",
@@ -262,7 +262,7 @@ _SEED_CAPABILITIES: list[Capability] = [
         id="local.terminal_count",
         source="local_action",
         verbs=(
-            "oeffne", "öffne", "starte", "start", "spawne", "spawn",
+            "oeffne", "öffne", "starte", "start", "spawne", "spawn",  # i18n-allow
             "open", "launch", "neue", "new",
         ),
         objects=(
@@ -312,7 +312,7 @@ _SEED_CAPABILITIES: list[Capability] = [
         source="harness",
         verbs=_ACTION_VERBS + (
             "fuehre", "fuehr", "fuehren",
-            "run", "execute", "ausfuehren",
+            "run", "execute", "ausfuehren",  # i18n-allow
         ),
         objects=(
             "python", "script", "skript", "py", "datei", "file",

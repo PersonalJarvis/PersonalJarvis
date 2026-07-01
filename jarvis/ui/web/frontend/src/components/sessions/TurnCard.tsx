@@ -1,8 +1,8 @@
 /**
- * Einzelner Voice-Turn — User-Block + Brain-Meta + Tools + Jarvis-Block.
+ * A single voice turn — user block + brain meta + tools + Jarvis block.
  *
- * Per Click-to-Copy-Button kann der User den Turn-Text alleine kopieren
- * (ohne Session-Frame).
+ * The click-to-copy button lets the user copy just the turn text
+ * (without the session frame).
  */
 import {
   Brain,
@@ -289,7 +289,7 @@ export function TurnCard({ turn, spoken = [] }: Props) {
           </div>
         )}
 
-        {/* Latenz-Aufschluesselung — wie lang Jarvis nachgedacht / gesprochen hat */}
+        {/* Latency breakdown — how long Jarvis thought / spoke */}
         {(turn.think_ms > 0 || turn.speak_ms > 0) && (
           <div className="grid grid-cols-2 gap-2 border-t border-border/50 pt-2 text-[11px]">
             <div className="flex items-center gap-1.5">

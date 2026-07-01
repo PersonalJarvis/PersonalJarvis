@@ -1,9 +1,9 @@
-"""Web-Backend für die Desktop-UI (Phase 1a).
+"""Web backend for the desktop UI (Phase 1a).
 
-Exponiert FastAPI + WebSocket auf 127.0.0.1 für die pywebview-Shell und
-optional für Mobile-Companion-Clients (Phase 8+). Das Token-Auth schließt
-den Endpunkt gegen neugierige Nachbarn auf localhost (Browser-Extensions,
-andere Dev-Server) ab — Bind-Adresse allein reicht nicht.
+Exposes FastAPI + WebSocket on 127.0.0.1 for the pywebview shell, and
+optionally for mobile companion clients (Phase 8+). Token auth locks the
+endpoint down against nosy neighbors on localhost (browser extensions,
+other dev servers) — the bind address alone is not enough.
 
 Lazy package surface (PEP 562). Importing ``jarvis.ui.web`` (which
 ``python -m jarvis.ui.web.launcher`` forces) must NOT eagerly import

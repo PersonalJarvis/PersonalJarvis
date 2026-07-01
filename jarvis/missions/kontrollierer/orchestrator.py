@@ -454,10 +454,10 @@ def _decode_git_quoted_path(raw: str) -> str:
     """Decode git's C-style quoted path back to the real on-disk name.
 
     With ``core.quotepath=true`` (git's default) non-ASCII bytes in a path
-    are octal-escaped (``ä`` → ``\\303\\244``) and a handful of control
+    are octal-escaped (``ä`` → ``\\303\\244``) and a handful of control  # i18n-allow
     characters are backslash-escaped (``\\t``, ``\\n``, ``\\\\``, ``\\"``).
     A bilingual/German assistant routinely produces umlaut deliverable
-    names (``Werbungä.html``, ``Lebenslauf-Müller.pdf``); without decoding,
+    names (``Werbungä.html``, ``Lebenslauf-Müller.pdf``); without decoding,  # i18n-allow
     the archive copy loop builds ``worktree / 'Werbung\\303\\244.html'``,
     ``is_file()`` is False, and the deliverable is silently dropped from
     ``artifacts/files/`` (HIGH finding 2026-05-27 hardening audit).
@@ -600,8 +600,8 @@ class TaskOutcome:
     # used to return the generic ERROR, which aggregated to the `task_error`
     # readback — indistinguishable from a real worker subprocess crash. This
     # distinct outcome lets the failure-reason mapper surface
-    # `worktree_setup_failed` ("Konnte keinen Arbeitsbereich anlegen.") so the
-    # user hears an actionable cause instead of "Der Worker ist abgebrochen."
+    # `worktree_setup_failed` ("Could not create a workspace.") so the
+    # user hears an actionable cause instead of "The worker was aborted."
     SETUP_FAILED = "setup_failed"
     # Live deep-dive 2026-06-07 (mission 019ea1da): a Computer-Use mission whose
     # final iteration hit the 630s wall-clock cap returned the generic ERROR,
@@ -795,7 +795,7 @@ class Kontrollierer:
         """Mission body — the tracking wrapper lives in :meth:`run_mission`."""
         view = await self._manager.mission(mission_id)
         if view is None:
-            raise KeyError(f"Mission nicht gefunden: {mission_id}")
+            raise KeyError(f"Mission not found: {mission_id}")
 
         # Idempotency guard: a SUCCESSFULLY-completed (APPROVED) or explicitly
         # CANCELLED mission must never be re-run. Both the REST path
@@ -1720,12 +1720,12 @@ class Kontrollierer:
         diff_text: str,
         log_text: str,
     ) -> str | None:
-        """Scant Worker-Output gegen Injection + Path-Guard.
+        """Scans worker output against injection + path-guard.
 
         Returns:
-            None wenn alles clean. Sonst: kill-reason (z.B. "injection_detected"
-            oder "path_guard:.env"). In dem Fall publiziert die Methode auch
-            ein WorkerKilled-Event.
+            None if everything is clean. Otherwise: kill-reason (e.g.
+            "injection_detected" or "path_guard:.env"). In that case the
+            method also publishes a WorkerKilled event.
         """
         # 1) Injection-Scanner — high/critical blocks, med/low logged.
         # The stream log is reduced to worker-AUTHORED text first: the raw
@@ -1809,10 +1809,10 @@ class Kontrollierer:
         worker_id: str,
         reason: str,
     ) -> None:
-        """Emittiert WorkerKilled-Event auf Bus + Store."""
-        # Reason wird auf das Literal-Set in events.WorkerKilled gemappt.
-        # path_guard:* wird auf "path_guard" reduziert (Voice-Listener-Routing
-        # unterscheidet path_guard vs injection_detected fuer praezisere TTS).
+        """Emits a WorkerKilled event on the bus + store."""
+        # Reason is mapped onto the literal set in events.WorkerKilled.
+        # path_guard:* is reduced to "path_guard" (voice-listener routing
+        # distinguishes path_guard vs injection_detected for more precise TTS).
         if reason.startswith("path_guard"):
             mapped: str = "path_guard"
         elif reason in (
@@ -2330,7 +2330,7 @@ class Kontrollierer:
             return None
 
     def _read_stream_log(self, log_dir: Path) -> str:
-        """Liest stream.jsonl als Text fuer den Critic-Log-Summarizer."""
+        """Reads stream.jsonl as text for the critic log summarizer."""
         stream_path = log_dir / "stream.jsonl"
         if not stream_path.exists():
             return ""
@@ -2343,7 +2343,7 @@ class Kontrollierer:
     async def _safe_transition(
         self, mission_id: str, to_state: MissionState, reason: str
     ) -> None:
-        """State-Machine-Transition mit Lock + Idempotenz-Tolerance."""
+        """State-machine transition with lock + idempotency tolerance."""
         lock = self._state_locks.setdefault(mission_id, asyncio.Lock())
         async with lock:
             try:
@@ -2351,7 +2351,7 @@ class Kontrollierer:
                     mission_id, to_state, reason=reason, source_actor="kontrollierer"
                 )
             except IllegalStateTransition:
-                # bereits im Zielzustand oder weiter — kein Crash
+                # already at the target state or further — not a crash
                 logger.debug(
                     "Mission %s: skip transition -> %s (already past)",
                     mission_id,
@@ -2471,7 +2471,7 @@ class Kontrollierer:
         partial_artifacts: list[str] | None = None,
     ) -> None:
         self._task_answers.pop(mission_id, None)  # hygiene: drop captured answers
-        # Nur transitionieren wenn noch nicht terminal
+        # Only transition when not already terminal
         view = await self._manager.mission(mission_id)
         if view is None or view.state in (
             MissionState.APPROVED,
@@ -2672,7 +2672,7 @@ class Kontrollierer:
 
 
 def _short_slug(text: str, *, max_len: int = 30) -> str:
-    """Kurzer kebab-slug fuer Mission-Naming."""
+    """Short kebab-slug for mission naming."""
     import re
 
     out = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
@@ -2688,9 +2688,9 @@ _SECURITY_KEYWORDS = (
 
 
 def _detect_security_tag(prompt: str) -> bool:
-    """True wenn der Step-Prompt sicherheitsrelevante Keywords enthaelt.
+    """True when the step prompt contains security-relevant keywords.
 
-    Triggert Critic-Tier-Eskalation Sonnet -> Opus auch in iter 0.
+    Triggers critic-tier escalation Sonnet -> Opus even in iter 0.
     """
     lower = prompt.lower()
     return any(kw in lower for kw in _SECURITY_KEYWORDS)

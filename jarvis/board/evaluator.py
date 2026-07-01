@@ -337,7 +337,7 @@ class AchievementEvaluator:
         except Exception:  # noqa: BLE001
             log.exception("Publish AchievementUnlocked failed")
 
-    # --------------- Read-only Queries (fuer die API) ---------------
+    # --------------- Read-only queries (for the API) ---------------
 
     def list_all(self) -> list[dict[str, Any]]:
         """All specs (locked and unlocked) with metadata for the API.

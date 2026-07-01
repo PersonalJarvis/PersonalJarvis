@@ -1,20 +1,20 @@
-"""TurnBuffer — Rolling-Window der letzten User-Transkripte.
+"""TurnBuffer — rolling window of the most recent user transcripts.
 
-Dient dem Voice-Korrektur-Command ("nein, ich meinte X") als Quelle fuer das
-vorletzte Transkript. Echte Phase-6-Logik (Multi-Turn-Context-Replay) folgt
-spaeter; diese Implementierung persistiert minimal das was die Pipeline
-aktuell uebergibt, damit `last()` / `pop_last()` funktionieren sobald der
-BrainManager-Korrektur-Command aktiv wird.
+Serves the voice correction command ("no, I meant X") as the source for the
+second-to-last transcript. Real Phase-6 logic (multi-turn context replay)
+follows later; this implementation persists, minimally, whatever the pipeline
+currently passes in, so `last()` / `pop_last()` work as soon as the
+BrainManager correction command goes live.
 
-API-Contract (wie in `SpeechPipeline._handle_utterance` aufgerufen):
+API contract (as called from `SpeechPipeline._handle_utterance`):
 
     turn_buffer.append(text=..., language=..., confidence=...)
 
-Der frueheren Stub-Version fehlten die Kwargs — die Pipeline crashte mit
+The earlier stub version was missing the kwargs — the pipeline crashed with
 ``TypeError: TurnBuffer.append() got an unexpected keyword argument 'text'``
-sofort nach jedem User-Utterance und kam nie zum Brain-Call. Ergebnis:
-Wake triggerte, "Sir?" wurde gesprochen, dann brach die Session lautlos ab.
-Siehe AGENTS.md (BUG-001 — korrigierte Root-Cause) fuer die Geschichte.
+immediately after every user utterance and never reached the brain call.
+Result: wake triggered, "Sir?" was spoken, then the session died silently.
+See AGENTS.md (BUG-001 — corrected root cause) for the full story.
 """
 from __future__ import annotations
 
@@ -24,14 +24,14 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Turn:
-    """Ein User-Turn im Rolling-Buffer."""
+    """A single user turn in the rolling buffer."""
     text: str
     language: str = ""
     confidence: float | None = None
 
 
 class TurnBuffer:
-    """Rolling-Window der letzten N User-Turns."""
+    """Rolling window of the last N user turns."""
 
     def __init__(self, maxlen: int = 10) -> None:
         self._maxlen = maxlen
@@ -44,19 +44,19 @@ class TurnBuffer:
         language: str = "",
         confidence: float | None = None,
     ) -> None:
-        """Fuegt einen neuen Turn ein (aeltester wird verdraengt bei maxlen)."""
+        """Adds a new turn (the oldest is evicted once maxlen is reached)."""
         self._items.append(
             Turn(text=text, language=language, confidence=confidence)
         )
 
     def last(self) -> Turn | None:
-        """Letzter gespeicherter Turn oder ``None`` wenn leer."""
+        """The most recently stored turn, or ``None`` if empty."""
         if not self._items:
             return None
         return self._items[-1]
 
     def pop_last(self) -> Turn | None:
-        """Entfernt und liefert den letzten Turn (fuer Korrektur-Command)."""
+        """Removes and returns the last turn (for the correction command)."""
         if not self._items:
             return None
         return self._items.pop()

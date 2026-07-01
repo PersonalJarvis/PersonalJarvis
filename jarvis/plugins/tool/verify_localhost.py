@@ -1,4 +1,4 @@
-"""VerifyLocalhostTool — HTTP-Check gegen localhost mit optionalem Screenshot."""
+"""VerifyLocalhostTool — HTTP check against localhost with an optional screenshot."""
 from __future__ import annotations
 
 from typing import Any
@@ -9,27 +9,27 @@ from jarvis.core.protocols import ExecutionContext, ToolResult
 class VerifyLocalhostTool:
     name = "verify_localhost"
     description = (
-        "Prueft einen laufenden localhost-Server per HTTP. "
-        "Optionaler Screenshot via mss fuer visuelle Verifikation."
+        "Checks a running localhost server via HTTP. "
+        "Optional screenshot via mss for visual verification."
     )
     risk_tier = "safe"
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
-            "port": {"type": "integer", "description": "Localhost-Port."},
+            "port": {"type": "integer", "description": "Localhost port."},
             "path": {
                 "type": "string",
-                "description": "URL-Pfad (Default: '/').",
+                "description": "URL path (default: '/').",
                 "default": "/",
             },
             "expected_substring": {
                 "type": "string",
-                "description": "Optionaler Substring im Body.",
+                "description": "Optional substring expected in the body.",
                 "default": "",
             },
             "take_screenshot": {
                 "type": "boolean",
-                "description": "Screenshot des Browsers machen (via mss, nur sichtbarer Screen).",
+                "description": "Take a screenshot of the browser (via mss, visible screen only).",
                 "default": False,
             },
         },
@@ -39,7 +39,7 @@ class VerifyLocalhostTool:
     async def execute(self, args: dict[str, Any], ctx: ExecutionContext) -> ToolResult:
         port = int(args.get("port") or 0)
         if not port:
-            return ToolResult(success=False, error="port ist 0 oder leer")
+            return ToolResult(success=False, error="port is 0 or empty")
         path = (args.get("path") or "/").strip()
         if not path.startswith("/"):
             path = "/" + path
@@ -56,13 +56,13 @@ class VerifyLocalhostTool:
             ok = r.status_code == 200
             if ok and substring and substring not in r.text:
                 ok = False
-                msg = f"HTTP 200 aber Substring '{substring}' fehlt ({url})"
+                msg = f"HTTP 200 but substring '{substring}' missing ({url})"
             elif not ok:
                 msg = f"HTTP {r.status_code} ({url})"
             else:
                 msg = f"HTTP 200 OK ({url})"
         except Exception as exc:  # noqa: BLE001
-            return ToolResult(success=False, error=f"Verbindung zu {url} fehlgeschlagen: {exc}")
+            return ToolResult(success=False, error=f"Connection to {url} failed: {exc}")
 
         if take_screenshot:
             try:

@@ -105,7 +105,7 @@ class Curator:
                     )
                 return report
         except Exception as exc:  # noqa: BLE001
-            log.warning("Curator-Pipeline fehlgeschlagen: %s", exc, exc_info=log.isEnabledFor(logging.DEBUG))
+            log.warning("Curator pipeline failed: %s", exc, exc_info=log.isEnabledFor(logging.DEBUG))
             return MergeReport(failed=1)
 
     # ------------------------------------------------------------------

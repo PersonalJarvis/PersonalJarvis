@@ -189,7 +189,7 @@ def _resolve_capability_requires_evidence(user_request: str) -> tuple[bool, str 
     # root stem since the prefix often appears elsewhere in the sentence.
     _ACTION_VERBS = re.compile(
         r'\b(send|schick|sende|create|erstell|add|anlegen|anlege|post|poste|'
-        r'delete|l\xf6sch|loesc|buy|bestell|schedule|trag|eintrag|book|reservier|'
+        r'delete|l\xf6sch|loesc|buy|bestell|schedule|trag|eintrag|book|reservier|'  # i18n-allow
         r'write|schreib|install|installier|run|starte|execute|f\xfchr|fuehr)\b',
         re.I,
     )
@@ -220,7 +220,7 @@ def _resolve_capability_requires_evidence(user_request: str) -> tuple[bool, str 
 # this", "reply to the message" are.
 _SEND_VERB_RE = re.compile(
     r"\b(send|sende|sendest|schick|schicke|verschick|verschicke|post|poste|"
-    r"tweet|reply|antworte|antworten|message|nachricht|dm)\b",
+    r"tweet|reply|antworte|antworten|message|nachricht|dm)\b",  # i18n-allow
     re.I,
 )
 _MESSAGING_NOUN_RE = re.compile(
@@ -245,9 +245,9 @@ def _request_is_messaging_action(user_request: str) -> bool:
 
 # --- Main gate function ---
 
-_CAPABILITY_NOT_EXECUTED_SUMMARY_DE: Final[str] = (
+_CAPABILITY_NOT_EXECUTED_SUMMARY_DE: Final[str] = (  # i18n-allow
     "Konnte ich nicht ausführen — mir fehlt für diese Aufgabe das passende "
-    "Werkzeug. Worker hat keinen Tool-Aufruf gemacht."
+    "Werkzeug. Worker hat keinen Tool-Aufruf gemacht."  # i18n-allow
 )
 _CAPABILITY_NOT_EXECUTED_REASON: Final[str] = "capability_not_executed"
 
@@ -425,7 +425,7 @@ def build_critic_cmd(
 #
 # The codex CLI (ChatGPT subscription) is an *agent*, not a print tool. Given
 # a "return JSON" prompt it sometimes answers with conversational prose
-# ("Ich rufe ExitPlanMode bewusst nicht auf: ...") instead of the verdict,
+# ("I'm deliberately not calling ExitPlanMode: ...") instead of the verdict,
 # which made the codex-critic fail with CriticSchemaInvalid and the whole
 # mission show as `error` in the Outputs view even though the worker had
 # written the file correctly (live repro 2026-05-24, mission_019e5952).
@@ -568,8 +568,8 @@ class CriticRunner:
         # success without actually writing a file" attack from 2026-05-14
         # (BUG-LIVE-02). For Read-Only tasks it's a false-positive that
         # forces three deterministic revise iterations followed by
-        # `critic_loop_exhausted` and a confusing "Drei Versuche haben
-        # nicht gereicht" announcement — even though Sonnet answered
+        # `critic_loop_exhausted` and a confusing "three tries weren't
+        # enough" announcement — even though Sonnet answered
         # perfectly on iter0.
         #
         # The distinguishing signal: genuine tool-call evidence in the worker
@@ -731,7 +731,7 @@ class CriticRunner:
                     "Worker ran but the diff is empty; log claims are not "
                     "ground truth. Deterministic revise."
                 )
-                summary_de = (
+                summary_de = (  # i18n-allow
                     "Worker lief, aber keine sichtbaren Datei-Aenderungen. "
                     "Automatische Wiederholung."
                 )
@@ -742,7 +742,7 @@ class CriticRunner:
                     "into the workspace."
                 )
                 summary_en = "No worker output detected; deterministic revise."
-                summary_de = (
+                summary_de = (  # i18n-allow
                     "Worker hat keine sichtbaren Aenderungen erzeugt; "
                     "automatische Wiederholung."
                 )
@@ -801,14 +801,14 @@ class CriticRunner:
             and aggregate_axes_status(verdict) != "pass"
         ):
             logger.warning(
-                "CriticRunner: verdict=approve mit fail-axis -> deterministischer downgrade auf revise"
+                "CriticRunner: verdict=approve with fail-axis -> deterministic downgrade to revise"
             )
             return verdict.model_copy(
                 update={
                     "verdict": "revise",
                     "summary": (
-                        "Aggregations-Override: verdict=approve war inkonsistent mit "
-                        "axis-fail. Downgraded auf revise. Original: "
+                        "Aggregation override: verdict=approve was inconsistent with "
+                        "axis-fail. Downgraded to revise. Original: "
                         + (verdict.summary or "")
                     )[:280],
                 }
@@ -849,7 +849,7 @@ class CriticRunner:
                     update={
                         "verdict": "revise",
                         "summary": (
-                            "Aggregations-Override (post-retry): "
+                            "Aggregation override (post-retry): "
                             + (verdict.summary or "")
                         )[:280],
                     }
@@ -857,13 +857,13 @@ class CriticRunner:
 
         if verdict is None:
             raise CriticSchemaInvalid(
-                "Critic lieferte zweimal keinen schema-validen JSON-Output."
+                "Critic returned no schema-valid JSON output twice."
             )
 
         # Empty-evidence approval even after retry -> raise (no silent pass).
         if verdict.verdict == "approve" and not is_approval_valid(verdict):
             raise CriticVerdictInconsistent(
-                "Critic-Approve mit leerer Evidence auch nach adversarial reframe."
+                "Critic approved with empty evidence even after adversarial reframe."
             )
 
         # --- Capability-Honesty Gate (Layer 3c, Capability Coupling spec) ---
@@ -1314,8 +1314,8 @@ class CriticRunner:
             "--print",
             # 2026-05-24 fix: was "--permission-mode plan". Plan mode makes
             # claude --print treat the request as a *planning* task and emit
-            # meta-commentary about ExitPlanMode ("Ich rufe ExitPlanMode
-            # bewusst nicht auf: ...") instead of the requested JSON verdict
+            # meta-commentary about ExitPlanMode ("I'm deliberately not
+            # calling ExitPlanMode: ...") instead of the requested JSON verdict
             # — which failed every critic with CriticSchemaInvalid and made
             # missions show "error" in the Outputs view even when the worker
             # had written the file correctly (live repro mission_019e5960).
@@ -1380,7 +1380,7 @@ class CriticRunner:
             with _suppress(Exception):
                 await asyncio.wait_for(proc.wait(), timeout=5.0)
             raise CriticTimeout(
-                f"Critic (claude-direct) ueber {self._timeout}s — gekillt."
+                f"Critic (claude-direct) exceeded {self._timeout}s — killed."
             ) from exc
 
         wall_ms = int((time.perf_counter() - t0) * 1000)
@@ -1613,7 +1613,7 @@ class CriticRunner:
             with _suppress(OSError):
                 __import__("os").unlink(schema_path)
             raise CriticTimeout(
-                f"Critic (codex-direct) ueber {self._timeout}s -- gekillt."
+                f"Critic (codex-direct) exceeded {self._timeout}s -- killed."
             ) from exc
         finally:
             with _suppress(OSError):

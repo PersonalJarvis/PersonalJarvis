@@ -42,23 +42,23 @@ _BLOCKED_INPUT_SUBSTRINGS = (
     "Output",
     "Speaker",
     "Speakers",
-    "Lautsprecher",
+    "Lautsprecher",  # i18n-allow: matched against a localized (German) Windows device name
     "Headphones",
-    "Kopfhoerer",
-    "Kopfhörer",
+    "Kopfhoerer",  # i18n-allow: matched against a localized (German) Windows device name
+    "Kopfhörer",  # i18n-allow: matched against a localized (German) Windows device name
     "HDMI",
     "Display",
     "NVIDIA High Definition",
     "AMD HD Audio",
     "Microsoft Soundmapper",
-    "Primaerer Soundtreiber",
-    "Primärer Soundtreiber",
+    "Primaerer Soundtreiber",  # i18n-allow: matched against a localized (German) Windows device name
+    "Primärer Soundtreiber",  # i18n-allow: matched against a localized (German) Windows device name
 )
 
 _INPUT_PRIORITY = (
     "Logitech PRO X", "PRO X", "Logitech",
     "Jabra", "Sennheiser", "SteelSeries", "Corsair", "HyperX", "Razer",
-    "USB Audio", "Headset", "Microphone", "Mikrofon",
+    "USB Audio", "Headset", "Microphone", "Mikrofon",  # i18n-allow: matched against a localized (German) Windows device name
     "Realtek HD Audio", "Realtek",
 )
 
@@ -168,17 +168,17 @@ def _resolve_input_device(device: int | str | None) -> int | str | None:
         if device is not None:
             _log.info("Mic-Resolve: explizites Device {} verwendet.", device)
         else:
-            _log.info("Mic-Resolve: System-Default-Input (device=None).")
+            _log.info("Mic-Resolve: system default input (device=None).")
         return device
     if not isinstance(device, str) or device != "auto-headset":
-        _log.info("Mic-Resolve: benanntes Device '{}'.", device)
+        _log.info("Mic-Resolve: named device '{}'.", device)
         return device
 
     try:
         devices = sd.query_devices()
         hostapis = sd.query_hostapis()
     except Exception as exc:
-        _log.warning("Mic-Resolve: sd.query_devices() fehlgeschlagen ({}). Fallback auf System-Default.", exc)
+        _log.warning("Mic-Resolve: sd.query_devices() failed ({}). Falling back to system default.", exc)
         return None
 
     candidates: list[tuple[int, dict]] = []
@@ -233,7 +233,7 @@ def _resolve_input_device(device: int | str | None) -> int | str | None:
             else "?"
         )
         _log.info(
-            "Mic-Resolve 'auto-headset': '{}' (idx={}, hostapi={}) — {} Kandidat(en).",
+            "Mic-Resolve 'auto-headset': '{}' (idx={}, hostapi={}) — {} candidate(s).",
             chosen_dev.get("name", "?"),
             chosen_idx,
             chosen_hostapi,
@@ -241,13 +241,13 @@ def _resolve_input_device(device: int | str | None) -> int | str | None:
         )
         return chosen_idx
     _log.warning(
-        "Mic-Resolve 'auto-headset': keine Kandidaten gefunden — Fallback auf System-Default."
+        "Mic-Resolve 'auto-headset': no candidates found — falling back to system default."
     )
     return None
 
 
 class MicrophoneCapture:
-    """Async-Wrapper um sounddevice.InputStream.
+    """Async wrapper around sounddevice.InputStream.
 
     Usage:
         mic = MicrophoneCapture()
@@ -352,7 +352,7 @@ class MicrophoneCapture:
                 self._stream = stream
                 self._device = attempt
                 _log.info(
-                    "Mic geoeffnet (device={}, sr={}, blocksize={}, dtype={}).",
+                    "Mic opened (device={}, sr={}, blocksize={}, dtype={}).",
                     attempt,
                     self._sample_rate,
                     self._blocksize,
@@ -362,18 +362,18 @@ class MicrophoneCapture:
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
                 _log.warning(
-                    "Mic-Open auf device={} fehlgeschlagen ({}); probiere naechsten Fallback.",
+                    "Mic-Open on device={} failed ({}); trying next fallback.",
                     attempt,
                     exc,
                 )
         _log.error(
-            "Mic-Open komplett fehlgeschlagen ({} Versuch[e]) — letzter Fehler: {}",
+            "Mic-Open failed completely ({} attempt(s)) — last error: {}",
             len(attempts),
             last_error,
         )
         if last_error is not None:
             raise last_error
-        raise RuntimeError("Kein Mikrofon-Device verfuegbar.")
+        raise RuntimeError("No microphone device available.")
 
     async def _stream_watchdog(self) -> None:
         """Detect silent stream death and restart the InputStream.
@@ -401,7 +401,7 @@ class MicrophoneCapture:
                 continue
             self._restart_count += 1
             _log.warning(
-                "Mic-Stall erkannt ({:.1f}s ohne Frame) — Restart #{} (device={}).",
+                "Mic stall detected ({:.1f}s without a frame) — restart #{} (device={}).",
                 elapsed,
                 self._restart_count,
                 self._device,
@@ -412,17 +412,17 @@ class MicrophoneCapture:
                 try:
                     old_stream.stop()
                 except Exception as exc:  # noqa: BLE001
-                    _log.debug("Mic-Restart: stop() ignoriert ({}).", exc)
+                    _log.debug("Mic-Restart: stop() ignored ({}).", exc)
                 try:
                     old_stream.close()
                 except Exception as exc:  # noqa: BLE001
-                    _log.debug("Mic-Restart: close() ignoriert ({}).", exc)
+                    _log.debug("Mic-Restart: close() ignored ({}).", exc)
             try:
                 await self._try_open_stream()
-                _log.info("Mic-Restart #{} erfolgreich.", self._restart_count)
+                _log.info("Mic-Restart #{} succeeded.", self._restart_count)
             except Exception as exc:  # noqa: BLE001
                 _log.error(
-                    "Mic-Restart #{} fehlgeschlagen: {} — naechster Versuch in 5s.",
+                    "Mic-Restart #{} failed: {} — next attempt in 5s.",
                     self._restart_count,
                     exc,
                 )
@@ -464,7 +464,7 @@ class MicrophoneCapture:
             finally:
                 self._stream = None
                 _log.info(
-                    "Mic geschlossen (drops={}, restarts={}).",
+                    "Mic closed (drops={}, restarts={}).",
                     self._drops,
                     self._restart_count,
                 )

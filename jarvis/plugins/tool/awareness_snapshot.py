@@ -1,12 +1,12 @@
-"""``awareness-snapshot``-Tool — synchroner State-Read fuer den Router.
+"""``awareness-snapshot`` tool — synchronous state read for the router.
 
-Plan §5 verbindlich: dieses Tool ist Router-Tier-only (NICHT in
-SUB_TOOLS). Es macht KEINEN Brain-Call und KEIN IO — nur einen
-synchronen Read auf ``AwarenessState.snapshot_for_prompt()``.
+Binding per Plan §5: this tool is router-tier-only (NOT in SUB_TOOLS). It
+makes NO brain call and NO IO — just a synchronous read on
+``AwarenessState.snapshot_for_prompt()``.
 
-Wann nutzt es der Hauptjarvis: bei Utterances wie "Was mache ich
-gerade?" oder "In welcher Datei bin ich?" — die Antwort steht im
-Awareness-State und braucht keinen LLM-Roundtrip oder OpenClaw-Spawn.
+When the main Jarvis uses it: for utterances like "what am I doing right
+now?" or "which file am I in?" — the answer is already in the awareness
+state and doesn't need an LLM roundtrip or an OpenClaw spawn.
 """
 from __future__ import annotations
 
@@ -18,12 +18,11 @@ from jarvis.awareness.manager import AwarenessManager
 
 @dataclass
 class ToolResult:
-    """Minimal-Wrapper fuer Tool-Output. Vollstaendiger Contract liegt
-    in jarvis.core.protocols; hier nur was wir tatsaechlich ruecksenden.
+    """Minimal wrapper for tool output. The full contract lives in
+    jarvis.core.protocols; here just what we actually send back.
 
-    Wenn das echte Tool-Result-Protocol erweitert wird, muss diese Klasse
-    strukturell kompatibel bleiben (oder direkt durch das Protocol ersetzt
-    werden).
+    If the real tool-result protocol is extended, this class must stay
+    structurally compatible (or be replaced directly by the protocol).
     """
     success: bool
     output: str
@@ -31,13 +30,13 @@ class ToolResult:
 
 
 class AwarenessSnapshotTool:
-    """Synchroner State-Read auf ``manager.state.snapshot_for_prompt()``."""
+    """Synchronous state read on ``manager.state.snapshot_for_prompt()``."""
 
     name: str = "awareness-snapshot"
     description: str = (
-        "Liefert den aktuellen Awareness-State (aktives Fenster, Idle-Status, "
-        "letzter Episode-Summary wenn vorhanden). NUTZE das BEVOR du den User "
-        "nach Kontext fragst — die Antwort ist oft schon hier drin."
+        "Returns the current awareness state (active window, idle status, "
+        "last episode summary if any). USE this BEFORE asking the user for "
+        "context — the answer is often already in here."
     )
     risk_tier: str = "safe"
     schema: dict[str, Any] = {
@@ -50,9 +49,9 @@ class AwarenessSnapshotTool:
         self._manager = manager
 
     async def execute(self, args: dict[str, Any], ctx: Any) -> ToolResult:
-        """Synchroner State-Read — KEIN Brain-Call, KEIN IO.
+        """Synchronous state read — NO brain call, NO IO.
 
-        ``args`` und ``ctx`` werden ignoriert (Schema hat keine Required).
+        ``args`` and ``ctx`` are ignored (schema has no required fields).
         """
         snap = self._manager.state.snapshot_for_prompt()
         return ToolResult(success=True, output=snap)

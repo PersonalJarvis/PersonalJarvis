@@ -20,7 +20,7 @@ describe("MascotGigi", () => {
   test("shows the current transcription in a listening bubble", () => {
     useEventStore.setState({
       voiceState: "listening",
-      transcription: "Hallo, ich bin gross und teste die neue Sprechblase.",
+      transcription: "Hallo, ich bin gross und teste die neue Sprechblase.",  // i18n-allow: simulated German STT transcription is the content under test
       transcriptionFinal: false,
     });
 
@@ -28,7 +28,7 @@ describe("MascotGigi", () => {
 
     const bubble = screen.getByRole("status");
     expect(bubble.textContent).toContain(
-      "Hallo, ich bin gross und teste die neue Sprechblase.",
+      "Hallo, ich bin gross und teste die neue Sprechblase.",  // i18n-allow: simulated German STT transcription is the content under test
     );
     expect(bubble.className).toContain("gigi-bubble-listening");
   });

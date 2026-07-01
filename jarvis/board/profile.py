@@ -145,10 +145,10 @@ class BioStore:
         so the API layer receives a clean ValueError instead of a
         sqlite3.IntegrityError.
         """
-        if kind not in {"trifft", "trifft_nicht", "haerter"}:
+        if kind not in {"trifft", "trifft_nicht", "haerter"}:  # i18n-allow: API/DB contract values (see frontend useBoard.ts), matched in logic
             raise ValueError(
-                f"Ungueltiges Feedback-Kind: {kind!r} "
-                "(erlaubt: trifft, trifft_nicht, haerter)"
+                f"Invalid feedback kind: {kind!r} "
+                "(allowed: trifft, trifft_nicht, haerter)"  # i18n-allow: same API/DB contract values
             )
         now_iso = datetime.now(timezone.utc).astimezone().isoformat()
         conn = self._connect()
@@ -179,7 +179,7 @@ class BioStore:
             ).fetchall()
         finally:
             conn.close()
-        result = {"trifft": 0, "trifft_nicht": 0, "haerter": 0}
+        result = {"trifft": 0, "trifft_nicht": 0, "haerter": 0}  # i18n-allow: API/DB contract values, matched in logic
         for row in rows:
             kind = row["kind"]
             if kind in result:
@@ -255,7 +255,7 @@ class BioGenerator:
             should stay visible (brain gone, timeout, empty output).
         """
         if self._resolver is None:
-            log.info("BioGenerator: kein brain_resolver konfiguriert — skip")
+            log.info("BioGenerator: no brain_resolver configured — skip")
             return None
 
         # Call the resolver here — provider switches at runtime take effect this way.
@@ -263,7 +263,7 @@ class BioGenerator:
             brain = self._resolver()
         except Exception:  # noqa: BLE001
             log.exception(
-                "BioGenerator: brain_resolver fehlgeschlagen — alte Bio bleibt"
+                "BioGenerator: brain_resolver failed — keeping old bio"
             )
             return None
 
@@ -288,15 +288,15 @@ class BioGenerator:
             )
         except TimeoutError:
             duration_ms = (time.time_ns() - start_ns) // 1_000_000
-            log.warning("BioGenerator: timeout nach %dms — alte Bio bleibt", duration_ms)
+            log.warning("BioGenerator: timeout after %dms — keeping old bio", duration_ms)
             return None
         except Exception:  # noqa: BLE001
-            log.exception("BioGenerator: Brain-Call fehlgeschlagen — alte Bio bleibt")
+            log.exception("BioGenerator: brain call failed — keeping old bio")
             return None
 
         text = _post_process(agg.text, max_words=120)  # 5 sentences ≈ < 120 words
         if not text:
-            log.warning("BioGenerator: leerer Output — alte Bio bleibt")
+            log.warning("BioGenerator: empty output — keeping old bio")
             return None
 
         # Resolver-provider hint for the frontend. We know the class name
@@ -590,7 +590,7 @@ def make_resolver_from_brain(brain: Any) -> BrainResolverFn:
     use ``resolve_frontier_brain`` so that provider switches take effect.
     """
     if brain is None:
-        raise ValueError("make_resolver_from_brain: brain darf nicht None sein")
+        raise ValueError("make_resolver_from_brain: brain must not be None")
 
     def _resolver() -> Any:
         return brain

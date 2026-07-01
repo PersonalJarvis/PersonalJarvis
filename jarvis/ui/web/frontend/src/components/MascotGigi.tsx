@@ -287,26 +287,28 @@ const IDLE_COMMENTS = [
   "ich hab gute Ohren. falls du was brauchst.",
 ];
 
+// The comment pools below are mascot chat-bubble text spoken to the user —
+// runtime product-surface output, not developer-facing strings.
 const SECTION_COMMENTS: Partial<Record<SectionId, string[]>> = {
-  chats: ["bereit wenn du bist.", "ich höre.", "sag mal was.", "schreib oder rede — egal."],
-  agents: ["die Agents sind meine Kollegen.", "wer ist dein Liebling?"],
-  skills: ["Skills sind mein Lieblings-Feature.", "was sollen wir lernen?"],
-  mcps: ["mehr MCPs = mehr Power.", "was sollen wir dazuholen?"],
-  languages: ["ich spreche DE und EN.", "Sprachwechsel? Einfach sagen."],
-  apikeys: ["pass auf die Keys auf.", "nicht in Git committen!"],
-  settings: ["was stört dich?", "tweaken wir was?"],
+  chats: ["bereit wenn du bist.", "ich höre.", "sag mal was.", "schreib oder rede — egal."],  // i18n-allow: mascot chat-bubble output shown to the user
+  agents: ["die Agents sind meine Kollegen.", "wer ist dein Liebling?"],  // i18n-allow: mascot chat-bubble output shown to the user
+  skills: ["Skills sind mein Lieblings-Feature.", "was sollen wir lernen?"],  // i18n-allow: mascot chat-bubble output shown to the user
+  mcps: ["mehr MCPs = mehr Power.", "was sollen wir dazuholen?"],  // i18n-allow: mascot chat-bubble output shown to the user
+  languages: ["ich spreche DE und EN.", "Sprachwechsel? Einfach sagen."],  // i18n-allow: mascot chat-bubble output shown to the user
+  apikeys: ["pass auf die Keys auf.", "nicht in Git committen!"],  // i18n-allow: mascot chat-bubble output shown to the user
+  settings: ["was stört dich?", "tweaken wir was?"],  // i18n-allow: mascot chat-bubble output shown to the user
 };
 
 const VOICE_COMMENTS: Partial<Record<VoiceState, string[]>> = {
-  listening: ["ich höre!", "raus damit.", "ja?"],
+  listening: ["ich höre!", "raus damit.", "ja?"],  // i18n-allow: mascot chat-bubble output shown to the user
   thinking: ["mal schauen …", "Moment.", "hmm …"],
-  speaking: ["jetzt rede ich.", "kurz mal zuhören."],
-  error: ["oha.", "ups.", "das war nicht ich!"],
+  speaking: ["jetzt rede ich.", "kurz mal zuhören."],  // i18n-allow: mascot chat-bubble output shown to the user
+  error: ["oha.", "ups.", "das war nicht ich!"],  // i18n-allow: mascot chat-bubble output shown to the user
 };
 
 const TIME_COMMENTS = {
-  morning: ["guten Morgen!", "auf, auf."],
-  night: ["noch wach?", "es ist spät.", "schlaf genug gekriegt?"],
+  morning: ["guten Morgen!", "auf, auf."],  // i18n-allow: mascot chat-bubble output shown to the user
+  night: ["noch wach?", "es ist spät.", "schlaf genug gekriegt?"],  // i18n-allow: mascot chat-bubble output shown to the user
 };
 
 function pickRandom<T>(arr: readonly T[]): T {

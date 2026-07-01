@@ -1,13 +1,13 @@
-"""hotkey-Tool: simuliert Tastenkombinationen wie Strg+T, Alt+Tab, Win+R.
+"""hotkey tool: simulates key combos like Ctrl+T, Alt+Tab, Win+R.
 
-Nutzt Win32 ``SendInput`` mit Virtual-Key-Codes als primaeren Pfad. Faellt
-bei fehlendem Win32-Subsystem auf ``pyautogui.hotkey`` zurueck — damit
-laufen Tests auf Linux/Mac und Headless-CI weiter, auch wenn die echten
-Tastenanschlaege nur auf Windows produktiv sind.
+Uses Win32 ``SendInput`` with virtual-key codes as the primary path. Falls
+back to ``pyautogui.hotkey`` when the Win32 subsystem is missing — so tests
+keep running on Linux/Mac and headless CI, even though real keystrokes only
+work on Windows.
 
-Risk-Tier: ``monitor`` — eine Tastenkombi kann nicht-reversible Aktionen
-ausloesen (Strg+W schliesst Tab, Strg+S oeffnet Dialog). Toast-Notification,
-aber kein Approval-Required.
+Risk tier: ``monitor`` — a key combo can trigger non-reversible actions
+(Ctrl+W closes a tab, Ctrl+S opens a dialog). Toast notification, but no
+approval required.
 """
 from __future__ import annotations
 
@@ -18,10 +18,10 @@ from typing import Any
 from jarvis.core.protocols import ExecutionContext, ToolResult
 
 
-# Virtual-Key-Codes — Auszug aus Microsoft "Virtual Key Codes" Doku.
-# Siehe https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
-# Wir mappen sowohl Lowercase-Aliase ("ctrl") als auch die offiziellen Namen
-# ("control"); fuer Buchstaben/Ziffern berechnen wir den VK on-the-fly.
+# Virtual-key codes — excerpt from Microsoft's "Virtual Key Codes" docs.
+# See https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
+# We map both lowercase aliases ("ctrl") and the official names
+# ("control"); for letters/digits we compute the VK on the fly.
 _VK_TABLE: dict[str, int] = {
     # Modifier
     "ctrl": 0x11, "control": 0x11,
@@ -29,7 +29,7 @@ _VK_TABLE: dict[str, int] = {
     "alt": 0x12, "menu": 0x12,
     "win": 0x5B, "windows": 0x5B, "lwin": 0x5B,
     "rwin": 0x5C,
-    # Funktions- + Steuertasten
+    # Function + control keys
     "esc": 0x1B, "escape": 0x1B,
     "enter": 0x0D, "return": 0x0D,
     "tab": 0x09,
@@ -42,7 +42,7 @@ _VK_TABLE: dict[str, int] = {
     "pagedown": 0x22, "pgdn": 0x22,
     "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28,
     "capslock": 0x14,
-    # F-Tasten
+    # F-keys
     **{f"f{i}": 0x6F + i for i in range(1, 13)},  # F1 = 0x70 ... F12 = 0x7B
     # Numpad
     "numpad0": 0x60, "numpad1": 0x61, "numpad2": 0x62, "numpad3": 0x63,
@@ -54,14 +54,14 @@ _VK_TABLE: dict[str, int] = {
 
 
 def _resolve_vk(key: str) -> int | None:
-    """Liefert den Virtual-Key-Code fuer einen Tasten-Namen, oder None."""
+    """Returns the virtual-key code for a key name, or None."""
     k = key.strip().lower()
     if not k:
         return None
     if k in _VK_TABLE:
         return _VK_TABLE[k]
     if len(k) == 1:
-        # A-Z (0x41-0x5A) und 0-9 (0x30-0x39) — VK == ASCII-Wert.
+        # A-Z (0x41-0x5A) and 0-9 (0x30-0x39) — VK == ASCII value.
         if "a" <= k <= "z":
             return ord(k.upper())
         if "0" <= k <= "9":

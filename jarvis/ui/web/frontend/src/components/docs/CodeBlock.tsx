@@ -4,14 +4,14 @@ import { Check, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
- * Shiki-basierter Code-Block mit Copy-Button und Sprach-Tag.
+ * Shiki-based code block with copy button and language tag.
  *
- * Shiki ist ESM-only und groesse (~150 KB). Wir laden den Highlighter lazy
- * pro CodeBlock-Mount; Shiki cached die Sprache intern, also ist der zweite
- * Mount schnell. Bei Render-Performance-Problem koennen wir auf einen
- * geteilten Singleton umstellen — Tier-1 ist pragmatisch.
+ * Shiki is ESM-only and large (~150 KB). We lazy-load the highlighter
+ * per CodeBlock mount; Shiki caches the language internally, so the second
+ * mount is fast. If render-performance becomes a problem, we could switch
+ * to a shared singleton — Tier-1 is pragmatic.
  *
- * Falls die Sprache nicht erkannt wird, fallback auf ``txt`` ohne Highlight.
+ * If the language isn't recognized, fall back to ``txt`` without highlighting.
  */
 type ShikiHighlighterApi = {
   codeToHtml: (code: string, opts: { lang: string; theme: string }) => string;
@@ -103,7 +103,7 @@ export function CodeBlock({ language, code }: CodeBlockProps) {
             "hover:bg-muted hover:text-foreground hover:opacity-100",
             "group-hover:opacity-100",
           )}
-          title="Code kopieren"
+          title="Copy code"
         >
           {copied ? (
             <Check className="h-3 w-3 text-emerald-400" />
@@ -112,11 +112,11 @@ export function CodeBlock({ language, code }: CodeBlockProps) {
           )}
         </button>
       </div>
-      {/* Body — entweder Shiki-HTML oder Plain-Text */}
+      {/* Body — either Shiki HTML or plain text */}
       {html ? (
         <div
           className="overflow-x-auto px-3 py-2 text-xs leading-relaxed [&_pre]:m-0 [&_pre]:!bg-transparent"
-          // sanitized bei Shiki — unser Code wird nur lokal gerendert
+          // sanitized by Shiki — our code is only rendered locally
           dangerouslySetInnerHTML={{ __html: html }}
         />
       ) : (

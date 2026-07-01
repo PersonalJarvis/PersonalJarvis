@@ -1,8 +1,8 @@
 /**
- * Detail-Pane einer einzelnen Voice-Session: Header (Aggregate) +
- * Turn-Timeline + globaler Click-to-Copy fuer die ganze Session.
+ * Detail pane for a single voice session: header (aggregates) +
+ * turn timeline + a global click-to-copy for the whole session.
  *
- * Lade-/Empty-/Error-States werden inline gerendert — kein Modal.
+ * Loading/empty/error states are rendered inline — no modal.
  */
 import {
   Code2,
@@ -131,7 +131,7 @@ export function SessionDetail({ detail, loading, error }: Props) {
       if (!detail) return;
       try {
         const text = await fetchSessionExport(detail.session.id, format);
-        // Erste User-Utterance als Filename-Slug — fallback auf session_id.
+        // First user utterance as the filename slug — falls back to session_id.
         const preview =
           detail.turns.find((t) => t.user_text)?.user_text ?? "";
         const filename = buildSessionFilename(detail.session, preview, format);
@@ -279,7 +279,7 @@ export function SessionDetail({ detail, loading, error }: Props) {
             </div>
           </div>
 
-          {/* Export-Actions: pro Format eine Reihe mit Kopieren + Herunterladen */}
+          {/* Export actions: one row per format with copy + download */}
           <div className="flex shrink-0 flex-col gap-1.5">
             <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
               Export
@@ -357,8 +357,8 @@ interface ExportRowProps {
 }
 
 /**
- * Eine Zeile pro Export-Format: links das Format-Label (mit Icon),
- * rechts drei kompakte Action-Buttons (Kopieren / Herunterladen / In Editor).
+ * One row per export format: the format label (with icon) on the left,
+ * three compact action buttons (copy / download / open in editor) on the right.
  */
 function ExportRow({
   icon,

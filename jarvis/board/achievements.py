@@ -182,77 +182,77 @@ def _eval_one_year(event: Event, ctx: AchievementContext) -> UnlockDecision | No
 
 
 # ----------------------------------------------------------------------
-# Katalog
+# Catalog
 # ----------------------------------------------------------------------
 
 ACHIEVEMENTS: list[AchievementSpec] = [
     AchievementSpec(
         id="first_mcp",
-        title="Erste MCP-Verbindung",
-        description="Ein MCP-Tool lief erfolgreich.",
+        title="First MCP Connection",
+        description="An MCP tool ran successfully.",
         tier="mastery",
         evaluator=_eval_first_mcp,
     ),
     AchievementSpec(
         id="openclaw_summoner",
         title="Jarvis-Agent Summoner",
-        description="Erster erfolgreicher Jarvis-Agent-Spawn.",
+        description="First successful Jarvis-Agent spawn.",
         tier="mastery",
         evaluator=_eval_openclaw_summoner,
     ),
     AchievementSpec(
         id="tool_dabbler",
-        title="Tool-Dabbler",
-        description="5 verschiedene Tools erfolgreich benutzt.",
+        title="Tool Dabbler",
+        description="Used 5 different tools successfully.",
         tier="mastery",
         evaluator=_make_tool_count_eval(5),
     ),
     AchievementSpec(
         id="tool_journeyman",
-        title="Tool-Journeyman",
-        description="15 verschiedene Tools erfolgreich benutzt.",
+        title="Tool Journeyman",
+        description="Used 15 different tools successfully.",
         tier="mastery",
         evaluator=_make_tool_count_eval(15),
     ),
     AchievementSpec(
         id="tool_master",
-        title="Tool-Master",
-        description="30 verschiedene Tools erfolgreich benutzt.",
+        title="Tool Master",
+        description="Used 30 different tools successfully.",
         tier="mastery",
         evaluator=_make_tool_count_eval(30),
     ),
     AchievementSpec(
         id="triple_combo",
         title="Triple Combo",
-        description="Drei verschiedene Tools in derselben Session chained.",
+        description="Three different tools chained in the same session.",
         tier="mastery",
         evaluator=_eval_triple_combo,
     ),
     AchievementSpec(
         id="ten_x_engineer",
         title="10x Engineer",
-        description="Ueber 10 Jarvis-Agent-Stunden in den letzten 7 Tagen.",
+        description="Over 10 Jarvis-Agent hours in the last 7 days.",
         tier="mastery",
         evaluator=_eval_ten_x_engineer,
     ),
     AchievementSpec(
         id="centennial",
         title="Centennial",
-        description="100 erfolgreiche Tasks.",
+        description="100 successful tasks.",
         tier="reflection",
         evaluator=_make_task_count_eval(100),
     ),
     AchievementSpec(
         id="kilo_club",
         title="Kilo Club",
-        description="1000 erfolgreiche Tasks.",
+        description="1000 successful tasks.",
         tier="reflection",
         evaluator=_make_task_count_eval(1000),
     ),
     AchievementSpec(
         id="one_year_with_jarvis",
-        title="Ein Jahr mit Jarvis",
-        description="365 Tage seit der ersten Aktivitaet.",
+        title="One Year with Jarvis",
+        description="365 days since first activity.",
         tier="reflection",
         evaluator=_eval_one_year,
     ),

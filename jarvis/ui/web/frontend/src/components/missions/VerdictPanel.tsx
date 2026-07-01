@@ -1,10 +1,10 @@
 /**
- * Critic-Verdicts pro selektierter Mission.
+ * Critic verdicts per selected mission.
  *
- * Pro Verdict eine Card mit:
- *  - Header: verdict-Badge (approve/revise/reject) + iteration + confidence-Bar
- *  - 4-Axes-Grid: correctness/completeness/side_effects/security mit pass/fail
- *  - Pro Achse collabsable Evidence-List
+ * One card per verdict, with:
+ *  - Header: verdict badge (approve/revise/reject) + iteration + confidence bar
+ *  - 4-axes grid: correctness/completeness/side_effects/security with pass/fail
+ *  - A collapsible evidence list per axis
  */
 import { useState } from "react";
 import {

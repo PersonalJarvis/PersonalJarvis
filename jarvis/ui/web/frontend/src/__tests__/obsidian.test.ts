@@ -25,7 +25,7 @@ describe("buildObsidianUrl", () => {
   });
 
   it("encodes German umlauts in the file path", () => {
-    const url = buildObsidianUrl("entities/küche.md");
+    const url = buildObsidianUrl("entities/küche.md");  // i18n-allow: German umlaut is the content under test
     // U+00FC -> %C3%BC under encodeURIComponent
     expect(url).toContain("k%C3%BCche.md");
   });

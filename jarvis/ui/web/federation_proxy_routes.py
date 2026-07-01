@@ -1,13 +1,13 @@
-"""Lokaler Proxy zum Board-Federation-Backend (Phase D).
+"""Local proxy to the board federation backend (Phase D).
 
-Hintergrund: Frontend laeuft im Browser, hat keinen Zugriff auf den
-Privkey im Credential Manager. Stattdessen rufen Frontend-Komponenten
-diese Routen, der lokale Jarvis-Server signiert die Calls und leitet
-sie an das konfigurierte Backend weiter.
+Background: the frontend runs in the browser and has no access to the
+privkey in the credential manager. Instead, frontend components call
+these routes; the local Jarvis server signs the calls and forwards
+them to the configured backend.
 
-Sicherheits-Constraint: nur eine Whitelist von Backend-Pfaden ist
-erreichbar. Beliebige Pfade durchschleusen wuerde das Federation-
-Auth-Modell aushebeln.
+Security constraint: only a whitelist of backend paths is reachable.
+Passing arbitrary paths through would undermine the federation
+auth model.
 """
 from __future__ import annotations
 
@@ -47,8 +47,8 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/board/federation", tags=["board-federation"])
 
 
-# Whitelist der erlaubten Backend-Endpunkte. Frontend ruft den entsprechenden
-# Proxy-Endpunkt, dieser sendet an das Backend.
+# Whitelist of allowed backend endpoints. The frontend calls the matching
+# proxy endpoint, which sends the request on to the backend.
 ALLOWED_GET_PATHS = frozenset({
     "/api/v1/me",
     "/api/v1/friends",
@@ -61,7 +61,7 @@ ALLOWED_POST_PATHS = frozenset({
     "/api/v1/stories",
 })
 
-# PATCH-Pfade haben einen Pfadparameter — wir matchen via Prefix.
+# PATCH paths have a path parameter — we match via prefix.
 ALLOWED_PATCH_PREFIXES = ("/api/v1/friends/",)
 
 
@@ -83,7 +83,7 @@ def _signed_headers(privkey_hex: str, pubkey_hex: str, payload: dict) -> dict[st
 
 
 # ----------------------------------------------------------------------
-# Status — was wissen wir ueber unseren Federation-State?
+# Status — what do we know about our federation state?
 # ----------------------------------------------------------------------
 
 class FederationStatusResponse(BaseModel):
@@ -111,7 +111,7 @@ def status(request: Request) -> FederationStatusResponse:
 
 
 # ----------------------------------------------------------------------
-# Pair — admin-token-fluss
+# Pair — admin-token flow
 # ----------------------------------------------------------------------
 
 class PairInitiateProxyResponse(BaseModel):
@@ -143,17 +143,17 @@ async def pair_initiate(request: Request) -> PairInitiateProxyResponse:
 
 
 class PairAcceptProxyRequest(BaseModel):
-    pair_url: str             # Der vom Friend erhaltene URL inkl. ?token=...
+    pair_url: str             # the URL received from the friend, incl. ?token=...
 
 
 @router.post("/pair/accept-from-friend")
 async def pair_accept_from_friend(
     request: Request, payload: PairAcceptProxyRequest,
 ) -> dict[str, Any]:
-    """Wir sind der Friend — wir senden unseren Pubkey + Display-Name zum
-    Owner-Backend des Senders.
+    """We are the friend — we send our pubkey + display name to the
+    sender's owner backend.
 
-    Aus ``pair_url`` extrahieren wir die Owner-Base-URL und den Token.
+    We extract the owner base URL and the token from ``pair_url``.
     """
     from urllib.parse import urlparse, parse_qs
 
@@ -185,26 +185,26 @@ async def pair_accept_from_friend(
             raise HTTPException(status_code=resp.status_code, detail=resp.text)
         accept_resp = resp.json()
 
-        # Bidirektional: wir registrieren A jetzt als unseren Friend.
-        # Das passiert via UNSEREM Backend's pair/initiate → A schickt accept
-        # zurueck — too komplex. Pragma: wir tragen A direkt in unseren
-        # eigenen Backend ein via einer admin-only "manual add"-Route, die
-        # wir hier hinzufuegen. (Zukunft: A koennte automatisch zurueck
-        # accepten in einem zwei-phasen-handshake.)
+        # Bidirectional: we now register A as our friend too.
+        # That would happen via OUR backend's pair/initiate → A sends an
+        # accept back — too complex. Pragma: we add A directly into our
+        # own backend via an admin-only "manual add" route that we add
+        # here. (Future: A could automatically accept back in a
+        # two-phase handshake.)
         admin = _resolve_admin_token(kr)
         if admin:
             await c.post(
                 f"{own_backend}/api/v1/pair/initiate",
                 json={}, headers={"X-Admin-Token": admin},
             )
-            # Initiate-Token wird verbraucht beim Friend, der diese Aktion
-            # spiegelt. Fuer MVP: wir return die accept-resp und der User
-            # initiiert ggf. selbst den zweiten Pair-Schritt.
+            # The initiate token is consumed by the friend, who mirrors this
+            # action. For MVP: we return the accept response and the user
+            # initiates the second pair step themselves if needed.
         return accept_resp
 
 
 # ----------------------------------------------------------------------
-# Generic GET-Proxy
+# Generic GET proxy
 # ----------------------------------------------------------------------
 
 @router.get("/get")
@@ -277,17 +277,16 @@ async def proxy_patch(request: Request, payload: ProxyPatchRequest) -> Any:
 
 
 # ----------------------------------------------------------------------
-# Disconnect — Local-Only-Mode
+# Disconnect — local-only mode
 # ----------------------------------------------------------------------
 
 @router.post("/disconnect")
 def disconnect(request: Request) -> dict[str, str]:
-    """Setzt board.federation.enabled=false zur Laufzeit (in-memory).
+    """Sets board.federation.enabled=false at runtime (in-memory).
 
-    Fuer eine permanente Aenderung muss der User die jarvis.toml editieren —
-    diese Route ist eine ``Local-Only-Mode``-Schaltflaeche fuer schnelle
-    Diagnose-Sessions. Plan §0: User muss disconnecten koennen ohne dass
-    Layer A/B kaputtgehen.
+    For a permanent change, the user has to edit jarvis.toml — this route
+    is a ``local-only-mode`` button for quick diagnostic sessions. Plan §0:
+    the user must be able to disconnect without breaking layers A/B.
     """
     cfg = request.app.state.config
     cfg.board.federation.enabled = False

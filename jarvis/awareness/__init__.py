@@ -1,13 +1,13 @@
-"""Awareness Layer (Phase A0+) — Continuous Context fuer Hauptjarvis.
+"""Awareness Layer (Phase A0+) — continuous context for the main Jarvis.
 
-Vier-Schichten-Architektur (Plan §1):
-    L1 Live Frame   — RAM, Sekunden                    (Phase A1)
-    L2 Story        — RAM-Ringbuffer + SQLite          (Phase A2)
-    L3 Session      — FTS5-Search ueber Episoden       (Phase A3)
+Four-layer architecture (Plan §1):
+    L1 Live Frame   — RAM, seconds                      (Phase A1)
+    L2 Story        — RAM ring buffer + SQLite          (Phase A2)
+    L3 Session      — FTS5 search over episodes         (Phase A3)
     L4 Long-Term    — Curator -> MEMORY.md (existing)
 
-A0-Scope: Datenmodelle + Privacy-Filter + Config-Schema. Keine Watchers,
-keine Captures, keine Bus-Subscriptions — die kommen in A1.
+A0 scope: data models + privacy filter + config schema. No watchers,
+no captures, no bus subscriptions — those come in A1.
 """
 from __future__ import annotations
 

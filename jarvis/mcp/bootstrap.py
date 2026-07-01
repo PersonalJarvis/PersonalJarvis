@@ -73,7 +73,7 @@ async def install_server(spec: MCPServerSpec) -> InstallResult:
     if shutil.which(argv[0]) is None:
         return InstallResult(
             spec.name, False,
-            error=f"Launcher {argv[0]!r} nicht im PATH",
+            error=f"Launcher {argv[0]!r} not on PATH",
         )
 
     # Probe: get the package argument, then append --help.

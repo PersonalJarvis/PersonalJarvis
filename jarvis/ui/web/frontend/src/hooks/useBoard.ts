@@ -140,9 +140,9 @@ async function triggerRefresh(): Promise<{ ok: boolean; triggered: boolean }> {
 // ----------------------------------------------------------------------
 
 /**
- * Dashboard-Summary. Polling alle 30s ist Plan-Decision §5-A #1. KEIN
- * Pull-to-Refresh, KEIN Slot-Machine-UX — nur deterministisches Polling
- * plus ein manueller Refresh-Button, der das gleiche Query invalidiert.
+ * Dashboard summary. Polling every 30s is Plan-Decision §5-A #1. NO
+ * pull-to-refresh, NO slot-machine UX — just deterministic polling
+ * plus a manual refresh button that invalidates the same query.
  */
 export function useBoardSummary() {
   return useQuery({
@@ -238,7 +238,7 @@ export interface BioRegenerateResult {
   reason?: string | null;
 }
 
-export type BioFeedbackKind = "trifft" | "trifft_nicht" | "haerter";
+export type BioFeedbackKind = "trifft" | "trifft_nicht" | "haerter"; // i18n-allow: API contract values matched by backend logic
 
 export interface BioFeedbackResult {
   ok: boolean;
@@ -319,9 +319,9 @@ export function useBioRegenerate() {
 }
 
 /**
- * Reagier-Klick unter dem AI-Profil. Drei Kinds: "trifft" / "trifft_nicht"
- * / "haerter". Das Signal kalibriert die NAECHSTE Bio-Generation; kein
- * Sofort-Regenerate (Brainstorm-Decision 2026-05-02).
+ * Reaction click under the AI profile. Three kinds: "trifft" / "trifft_nicht"
+ * / "haerter" (i18n-allow: API contract values). The signal calibrates the
+ * NEXT bio generation; no immediate regenerate (Brainstorm-Decision 2026-05-02).
  */
 export function useBioFeedback() {
   return useMutation({

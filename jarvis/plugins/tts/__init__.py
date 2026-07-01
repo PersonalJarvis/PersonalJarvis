@@ -1,13 +1,13 @@
-"""TTS-Provider-Plugins (Google Gemini, ElevenLabs, xAI Grok, ...).
+"""TTS provider plugins (Google Gemini, ElevenLabs, xAI Grok, ...).
 
-`build_tts_from_config` ist die zentrale Factory fuer alle Call-Sites
-(Desktop-App, Speech-Pipeline-CLI). Nur so bleibt der TTS-Wechsel per
-`jarvis.toml` ein Config-Edit und kein Code-Edit.
+`build_tts_from_config` is the central factory for all call sites
+(desktop app, speech-pipeline CLI). Only this way does switching TTS via
+`jarvis.toml` stay a config edit rather than a code edit.
 
-SAPI5 (Windows-natives, roboterhaftes TTS) ist seit 2026-04-25 nur noch
-ein **opt-in**-Notausgang: per Default schweigt der Provider lieber als
-auf die Windows-Stimme umzuschalten. Auf `tts.allow_sapi5_fallback = true`
-setzen, wenn man jedwedes Audio-Output haben will.
+SAPI5 (Windows-native, robotic-sounding TTS) has been an **opt-in**
+emergency exit only since 2026-04-25: by default the provider would
+rather stay silent than switch to the Windows voice. Set
+`tts.allow_sapi5_fallback = true` if you want audio output no matter what.
 """
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ from typing import Any
 
 log = logging.getLogger("jarvis.tts.factory")
 
-# Voices, die zum jeweiligen Provider gehoeren — verhindert dass z.B. ein
-# Gemini-Voice ("Charon") im Grok-Plugin landet und HTTP 400 ausloest.
+# Voices belonging to each respective provider — prevents e.g. a
+# Gemini voice ("Charon") from landing in the Grok plugin and triggering HTTP 400.
 _GEMINI_VOICES = frozenset({
     "Charon", "Orus", "Iapetus", "Rasalgethi", "Algenib",
     "Algieba", "Kore", "Fenrir", "Aoede",

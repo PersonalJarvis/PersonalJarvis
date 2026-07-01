@@ -37,16 +37,16 @@ CONFIDENCE_OVERWRITE = 0.85
 # Keywords that signal "Do Not Record" categories.
 # Redundant with the prompt — belt-and-suspenders defence against LLM slips.
 DO_NOT_RECORD_KEYWORDS = {
-    # Politik / Religion
-    "partei", "wähle", "waehle", "abtreibung", "migration", "christ", "muslim",
-    "jude", "islam", "katholisch", "evangelisch", "atheist", "gott ",
-    # Gesundheit / Mental Health (kurze Trigger, context-sensitive)
-    "depression", "burnout", "angststörung", "angststoerung", "therapie",
-    "adhs", "autismus", "diagnose", "diagnostiziert", "medikament",
-    "antidepress", "psychiater", "krebs", "chronisch",
-    # Finanz-Details (konkrete Zahlen)
-    "euro verdien", "gehalt von", "mein einkommen",
-    # MBTI & Pseudo-Psych
+    # Politics / religion
+    "partei", "wähle", "waehle", "abtreibung", "migration", "christ", "muslim",  # i18n-allow
+    "jude", "islam", "katholisch", "evangelisch", "atheist", "gott ",  # i18n-allow
+    # Health / mental health (short triggers, context-sensitive)
+    "depression", "burnout", "angststörung", "angststoerung", "therapie",  # i18n-allow
+    "adhs", "autismus", "diagnose", "diagnostiziert", "medikament",  # i18n-allow
+    "antidepress", "psychiater", "krebs", "chronisch",  # i18n-allow
+    # Financial details (concrete numbers)
+    "euro verdien", "gehalt von", "mein einkommen",  # i18n-allow
+    # MBTI & pseudo-psych
     "intp", "intj", "infp", "enfp", "entj", "entp", "estj", "estp",
     "istp", "istj", "isfj", "isfp", "esfj", "esfp", "infj",
 }
@@ -108,11 +108,11 @@ class Validator:
         if cand.is_person:
             pname = (cand.person_name or "").strip()
             if not pname:
-                return "reject", "leerer Personen-Name"
+                return "reject", "empty person name"
             if pname.lower() in PRONOUN_FALSE_POSITIVES:
-                return "reject", f"'{pname}' ist ein Pronomen, kein Name"
+                return "reject", f"'{pname}' is a pronoun, not a name"
             if len(pname) < 2:
-                return "reject", f"Name zu kurz: '{pname}'"
+                return "reject", f"name too short: '{pname}'"
             # The user themselves must not appear as a person entry
             if user_name and pname.lower() == user_name.lower():
                 return "reject", f"subject=person:{pname} == user.name"

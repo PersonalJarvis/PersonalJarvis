@@ -1,6 +1,6 @@
-"""Skill-Deduplicator: findet ähnliche Skills via Jaccard-Koeffizient.
+"""Skill deduplicator: finds similar skills via the Jaccard coefficient.
 
-Feature-Set pro Skill: Trigger-Patterns ∪ requires_tools.
+Feature set per skill: trigger patterns ∪ requires_tools.
 """
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from .schema import Skill
 
 
 def jaccard(a: set[str], b: set[str]) -> float:
-    """Jaccard-Koeffizient |A∩B| / |A∪B|. Beide leer → 1.0 (definitorisch)."""
+    """Jaccard coefficient |A∩B| / |A∪B|. Both empty → 1.0 (by definition)."""
     if not a and not b:
         return 1.0
     union = a | b
@@ -34,9 +34,9 @@ def find_duplicates(
     skills: list[Skill],
     threshold: float = 0.75,
 ) -> list[tuple[Skill, Skill, float]]:
-    """Gibt Paare (a, b, similarity) zurück, die ≥ threshold sind.
+    """Returns pairs (a, b, similarity) that are ≥ threshold.
 
-    Deterministisch sortiert (nach absteigender Similarity).
+    Deterministically sorted (by descending similarity).
     """
     results: list[tuple[Skill, Skill, float]] = []
     feats = [(s, _features(s)) for s in skills]

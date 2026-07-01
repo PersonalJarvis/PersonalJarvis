@@ -61,7 +61,7 @@ _STT_PROVIDER_ENV = "JARVIS__STT__PROVIDER"
 # so a stale User-scope ENV var (e.g. one the wizard once wrote) OVERRIDES the
 # TOML at boot and silently masks any later UI/TOML edit — the "model is
 # hardcoded, I can't change it" trap (forensic 2026-06-28). The model/language
-# setters therefore clear/sync this layer too, not just TOML + config-soll.
+# setters therefore clear/sync this layer too, not just TOML + config-soll.  # i18n-allow
 _STT_MODEL_ENV = "JARVIS__STT__MODEL"
 _STT_LANGUAGE_ENV = "JARVIS__STT__LANGUAGE"
 
@@ -74,19 +74,19 @@ def set_brain_primary(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     them did not survive a restart:
 
       1. ``jarvis.toml`` ``[brain] primary``            (universal, always runs)
-      2. ``scripts/config-soll.json`` ``brain.primary``  (drift-guard soll value)
+      2. ``scripts/config-soll.json`` ``brain.primary``  (drift-guard soll value)  # i18n-allow
       3. ``JARVIS__BRAIN__PRIMARY`` User-scope ENV var   (boot override)
 
     Raises ``FileNotFoundError`` if the TOML config file does not exist (a
     broken setup we do not silently mask). Layers 2 and 3 are best-effort
     cloud-first enhancements: they degrade to a graceful no-op on a headless
-    Linux VPS (no config-soll.json, no Windows registry) and never raise out
+    Linux VPS (no config-soll.json, no Windows registry) and never raise out  # i18n-allow
     of this function nor break the TOML write.
     """
     # Layer 1 — universal, runs on every platform. May raise FileNotFoundError.
     _patch_table(path, "brain", "primary", name)
     # Layers 2 + 3 — best-effort, never raise.
-    _sync_brain_primary_drift_soll(name)
+    _sync_brain_primary_drift_soll(name)  # i18n-allow
 
 
 def set_worker_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -97,12 +97,12 @@ def set_worker_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     and the write-side counterpart to the read-side resolution in
     ``jarvis.missions.worker_runtime.provider_map.canonical_worker_provider`` /
     ``jarvis.missions.init._worker_factory``. The worker provider is pinned
-    in ``config-soll.json`` (``brain.worker.provider``), so a switch that
+    in ``config-soll.json`` (``brain.worker.provider``), so a switch that  # i18n-allow
     wrote only the TOML would be reverted by the drift-guard within minutes —
     the same failure mode that hit ``brain.primary`` before it went 3-layer.
 
       1. ``jarvis.toml`` ``[brain.worker] provider``               (TOML)
-      2. ``scripts/config-soll.json`` ``brain.worker.provider``    (drift-soll)
+      2. ``scripts/config-soll.json`` ``brain.worker.provider``    (drift-soll)  # i18n-allow
       3. ``JARVIS__BRAIN__WORKER__PROVIDER`` User-scope ENV var     (boot override)
 
     Raises ``FileNotFoundError`` if the TOML config file does not exist. Layers
@@ -119,7 +119,7 @@ def set_worker_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     # Layer 1 — universal, runs on every platform. May raise FileNotFoundError.
     _patch_worker_provider_toml(path, name)
     # Layers 2 + 3 — best-effort, never raise.
-    _sync_worker_provider_drift_soll(name)
+    _sync_worker_provider_drift_soll(name)  # i18n-allow
 
 
 # Back-compat alias — callers that imported set_sub_jarvis_provider still work.
@@ -136,13 +136,13 @@ def set_worker_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     display. Empty string is the documented sentinel: the active worker
     provider's ``deep_model`` (frontier) wins.
 
-    ``brain.worker.model`` is pinned in ``config-soll.json`` like the
+    ``brain.worker.model`` is pinned in ``config-soll.json`` like the  # i18n-allow
     provider, so a TOML-only write would be reverted by the drift-guard within
     minutes (BUG-010 class). Three layers, same shape as
     :func:`set_worker_provider`:
 
       1. ``jarvis.toml`` ``[brain.worker] model``                (TOML)
-      2. ``scripts/config-soll.json`` ``brain.worker.model``     (drift-soll)
+      2. ``scripts/config-soll.json`` ``brain.worker.model``     (drift-soll)  # i18n-allow
       3. ``JARVIS__BRAIN__WORKER__MODEL`` User-scope ENV var     (boot override)
 
     Layers 2 + 3 are best-effort cloud-first enhancements: graceful no-op on a
@@ -156,7 +156,7 @@ def set_worker_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     # Layer 1 — universal, runs on every platform. May raise FileNotFoundError.
     _patch_worker_key_toml(path, "model", model)
     # Layers 2 + 3 — best-effort, never raise.
-    _sync_worker_model_drift_soll(model)
+    _sync_worker_model_drift_soll(model)  # i18n-allow
 
 
 # Back-compat alias — callers that imported set_sub_jarvis_model still work.
@@ -174,10 +174,10 @@ def set_tts_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     user overrides win.
 
     Three-layer persist (like ``set_brain_primary``): ``tts.provider`` (and the
-    voice keys) are pinned in ``config-soll.json``, so a TOML-only write would be
+    voice keys) are pinned in ``config-soll.json``, so a TOML-only write would be  # i18n-allow
     reverted by the drift-guard within 5 minutes — the same bug class that hit
-    ``brain.primary``. We therefore sync config-soll.json + ENV too. Crucially,
-    config-soll receives EXACTLY the keys the TOML write touched (provider + the
+    ``brain.primary``. We therefore sync config-soll.json + ENV too. Crucially,  # i18n-allow
+    config-soll receives EXACTLY the keys the TOML write touched (provider + the  # i18n-allow
     voice/language/model it set or preserved) so the guard sees zero drift across
     the whole block.
 
@@ -188,7 +188,7 @@ def set_tts_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     defaults = _TTS_DEFAULTS.get(name.lower(), {})
     applied = _patch_tts_block(path, name, defaults)
     # Layers 2 + 3 — best-effort, never raise.
-    _sync_tts_provider_drift_soll(applied)
+    _sync_tts_provider_drift_soll(applied)  # i18n-allow
 
 
 def set_stt_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -197,15 +197,15 @@ def set_stt_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     Takes effect on the next SpeechPipeline bootstrap (a voice restart): the STT
     provider is instantiated once at pipeline start.
 
-    ``stt.provider`` is pinned in ``config-soll.json``, so — like Brain/TTS — the
-    switch needs the 3-layer persist (TOML + config-soll + ENV), otherwise the
+    ``stt.provider`` is pinned in ``config-soll.json``, so — like Brain/TTS — the  # i18n-allow
+    switch needs the 3-layer persist (TOML + config-soll + ENV), otherwise the  # i18n-allow
     drift-guard reverts it within 5 minutes. Layers 2 + 3 are best-effort
     (cloud-first) and never break the TOML write.
     """
     # Layer 1 — universal, runs on every platform. May raise FileNotFoundError.
     _patch_table(path, "stt", "provider", name)
     # Layers 2 + 3 — best-effort, never raise.
-    _sync_stt_provider_drift_soll(name)
+    _sync_stt_provider_drift_soll(name)  # i18n-allow
 
 
 def set_tts_voice(voice: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -214,27 +214,27 @@ def set_tts_voice(voice: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     The TTS config is a single ``[tts]`` block, so this is the voice of the
     ACTIVE TTS provider. Most generative voices are multilingual (Gemini Charon,
     Grok leo …), so both language slots get the same value. ``voice_de`` /
-    ``voice_en`` are pinned in ``config-soll.json`` (like ``tts.provider``), so a
-    TOML-only write would be reverted by the drift-guard — we sync config-soll too.
+    ``voice_en`` are pinned in ``config-soll.json`` (like ``tts.provider``), so a  # i18n-allow
+    TOML-only write would be reverted by the drift-guard — we sync config-soll too.  # i18n-allow
     """
     _patch_table(path, "tts", "voice_de", voice)
     _patch_table(path, "tts", "voice_en", voice)
     try:
-        _update_config_soll_section("tts", {"voice_de": voice, "voice_en": voice})
+        _update_config_soll_section("tts", {"voice_de": voice, "voice_en": voice})  # i18n-allow
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
-        log.warning("Could not sync tts voice to config-soll.json: %s", exc)
+        log.warning("Could not sync tts voice to config-soll.json: %s", exc)  # i18n-allow
 
 
 def set_tts_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Set the global TTS model (``[tts] model``) — e.g. Cartesia ``sonic-3.5``.
 
-    Synced to config-soll (drift-guard pinned, same class as the voice keys).
+    Synced to config-soll (drift-guard pinned, same class as the voice keys).  # i18n-allow
     """
     _patch_table(path, "tts", "model", model)
     try:
-        _update_config_soll_section("tts", {"model": model})
+        _update_config_soll_section("tts", {"model": model})  # i18n-allow
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
-        log.warning("Could not sync tts.model to config-soll.json: %s", exc)
+        log.warning("Could not sync tts.model to config-soll.json: %s", exc)  # i18n-allow
 
 
 def set_stt_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -243,18 +243,18 @@ def set_stt_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     Takes effect on the next SpeechPipeline bootstrap (a voice restart): the STT
     provider is instantiated once at pipeline start.
 
-    ``stt.model`` is pinned in ``config-soll.json`` AND the single-word
+    ``stt.model`` is pinned in ``config-soll.json`` AND the single-word  # i18n-allow
     ``JARVIS__STT__MODEL`` ENV var overrides the TOML at boot, so — exactly like
-    ``stt.provider`` — the switch needs the 3-layer persist (TOML + config-soll +
+    ``stt.provider`` — the switch needs the 3-layer persist (TOML + config-soll +  # i18n-allow
     ENV); otherwise a stale ENV var (the "model is hardcoded" trap, forensic
     2026-06-28) or the drift-guard silently reverts it. Layers 2 + 3 are
     best-effort (cloud-first) and never break the TOML write.
     """
     _patch_table(path, "stt", "model", model)
     try:
-        _update_config_soll_section("stt", {"model": model})
+        _update_config_soll_section("stt", {"model": model})  # i18n-allow
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
-        log.warning("Could not sync stt.model to config-soll.json: %s", exc)
+        log.warning("Could not sync stt.model to config-soll.json: %s", exc)  # i18n-allow
     try:
         _set_user_env_var(_STT_MODEL_ENV, model)
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
@@ -268,16 +268,16 @@ def set_stt_language(language: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None
     lets Whisper detect the spoken language per utterance (the bilingual default);
     a concrete code forces that language. Takes effect on the next SpeechPipeline
     bootstrap (a voice restart): the STT provider is instantiated once at pipeline
-    start. Persisted across all THREE layers (TOML + config-soll + ENV): the stt
+    start. Persisted across all THREE layers (TOML + config-soll + ENV): the stt  # i18n-allow
     block is drift-guard pinned, and the single-word ``JARVIS__STT__LANGUAGE`` ENV
     var would otherwise override the TOML at boot, so a 2-layer write could be
     silently masked (same trap as stt.model — forensic 2026-06-28).
     """
     _patch_table(path, "stt", "language", language)
     try:
-        _update_config_soll_section("stt", {"language": language})
+        _update_config_soll_section("stt", {"language": language})  # i18n-allow
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
-        log.warning("Could not sync stt.language to config-soll.json: %s", exc)
+        log.warning("Could not sync stt.language to config-soll.json: %s", exc)  # i18n-allow
     try:
         _set_user_env_var(_STT_LANGUAGE_ENV, language)
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
@@ -289,7 +289,7 @@ def set_tts_cartesia_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> N
 
     Cartesia reads its model from this sub-table (default ``sonic-3.5``), NOT the
     global ``[tts] model`` that Gemini/OpenAI use. ``[tts.cartesia]`` is not pinned
-    in config-soll, so a plain atomic TOML write suffices (no drift-guard revert).
+    in config-soll, so a plain atomic TOML write suffices (no drift-guard revert).  # i18n-allow
     """
     path = _ensure_writable_config_path(path)
     with _WRITE_LOCK:
@@ -399,17 +399,17 @@ def set_wake_word(
     Toml-only by design — and that is a deliberate decision, NOT an oversight of
     the "user-switchable settings are written to all three layers" rule:
 
-      * The drift-guard only reverts keys it tracks in ``config-soll.json``, and
+      * The drift-guard only reverts keys it tracks in ``config-soll.json``, and  # i18n-allow
         ``trigger.wake_word`` is intentionally NOT tracked there — so a plain
         atomic toml write is never reverted. The three-layer rule exists to stop
-        the guard from rolling a UI switch back (BUG-010); with no soll entry
+        the guard from rolling a UI switch back (BUG-010); with no soll entry  # i18n-allow
         there is nothing to roll back.
-      * Adding a nested ``wake_word`` object to ``config-soll.json`` would make
+      * Adding a nested ``wake_word`` object to ``config-soll.json`` would make  # i18n-allow
         the guard's scalar-only loops synthesise a garbage
         ``JARVIS__TRIGGER__WAKE_WORD`` user env var from a stringified dict
         (BUG-018 class). And a stale ``JARVIS__*`` override would silently win
         over a hand-edit of jarvis.toml — directly contradicting the
-        "edit `phrase` here" guidance in the file. So neither the soll nor the
+        "edit `phrase` here" guidance in the file. So neither the soll nor the  # i18n-allow
         ENV layer is written for the wake word.
 
     Takes effect on the next voice-pipeline bootstrap (a Jarvis restart): the
@@ -435,7 +435,7 @@ def set_autostart(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the login-autostart toggle to ``[autostart] enabled`` in jarvis.toml.
 
     Toml-only by design: ``autostart.enabled`` is NOT tracked in
-    ``config-soll.json`` (verified absent), so the drift-guard never reverts it —
+    ``config-soll.json`` (verified absent), so the drift-guard never reverts it —  # i18n-allow
     a plain atomic write suffices and the 3-layer rule (which exists only to stop
     the guard from rolling a UI switch back, BUG-010) does not apply.
 
@@ -577,7 +577,7 @@ def set_telegram_enabled(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> 
     ``[integrations.telegram]`` is a NESTED table, so ``_patch_table`` (single
     level) does not fit — we walk/create the two levels here. Toml-only by
     design: ``integrations.telegram.enabled`` is not tracked in
-    ``config-soll.json``, so the drift-guard never reverts it.
+    ``config-soll.json``, so the drift-guard never reverts it.  # i18n-allow
     """
     path = _ensure_writable_config_path(path)
 
@@ -686,7 +686,7 @@ def _set_integration_value(
     Walks/creates the two-level nested table (``_patch_table`` only handles a
     single level). Comment- and BOM-preserving, lock-guarded, atomic — same
     contract as :func:`set_telegram_enabled`. Toml-only by design: these
-    operational integration flags are not tracked in ``config-soll.json``, so
+    operational integration flags are not tracked in ``config-soll.json``, so  # i18n-allow
     the drift-guard never reverts them.
     """
     path = _ensure_writable_config_path(path)
@@ -837,7 +837,7 @@ _TTS_DEFAULTS: dict[str, dict[str, str]] = {
         # NOT from [tts].voice_de/voice_en (jarvis/plugins/tts/__init__.py lines
         # 103-116: ct = tts_cfg.model_extra["cartesia"]). The scalar [tts].voice_de
         # and voice_en keys are never consumed by the Cartesia factory path; setting
-        # them to "Charon" keeps them consistent with config-soll.json's tts block
+        # them to "Charon" keeps them consistent with config-soll.json's tts block  # i18n-allow
         # (which holds "Charon" as a carry-over from the Gemini era) so the
         # drift-guard sees zero drift.
         # model="" because [tts].model is not read by CartesiaTTS at all
@@ -893,7 +893,7 @@ _VOICES_FOR_PROVIDER: dict[str, frozenset[str]] = {
         }
     ),
     "grok-voice": frozenset({"leo", "rex", "sal", "ara", "eve"}),
-    # ElevenLabs nutzt Voice-IDs (kryptische Hashes) — keine Whitelist.
+    # ElevenLabs uses voice IDs (cryptic hashes) — no whitelist.
 }
 
 
@@ -908,7 +908,7 @@ def _patch_tts_block(path: Path, provider: str, defaults: dict[str, str]) -> dic
 
     Returns the dict of keys it ACTUALLY wrote to ``[tts]`` (always
     ``provider``; plus whichever of voice/language/model it set). The
-    config-soll drift-sync mirrors exactly these keys so the guard sees zero
+    config-soll drift-sync mirrors exactly these keys so the guard sees zero  # i18n-allow
     drift across the whole block.
     """
     path = _ensure_writable_config_path(path)
@@ -936,7 +936,7 @@ def _patch_tts_block(path: Path, provider: str, defaults: dict[str, str]) -> dic
                         applied[key] = default_value
                 elif current is not None:
                     # Voice is already valid for this provider — keep the user's
-                    # value, but still record it so the config-soll drift-sync
+                    # value, but still record it so the config-soll drift-sync  # i18n-allow
                     # agrees with the TOML (else the guard reverts it).
                     applied[key] = str(current)
                 continue
@@ -986,9 +986,9 @@ def set_brain_provider_model(
 
     Three-layer persist (like ``set_brain_primary`` / ``set_sub_jarvis_provider``):
     ``brain.providers.<p>.model`` / ``deep_model`` are pinned in
-    ``config-soll.json``, so a TOML-only write would be reverted by the
+    ``config-soll.json``, so a TOML-only write would be reverted by the  # i18n-allow
     drift-guard within 5 minutes (BUG-010 class) — exactly the "I picked a model
-    and it flipped back" symptom. We therefore sync config-soll.json too. No ENV
+    and it flipped back" symptom. We therefore sync config-soll.json too. No ENV  # i18n-allow
     layer is written: per-provider model keys have no effective ``JARVIS__*``
     override (the boot override only nests on ``__`` and the drift-guard's dotted
     ``JARVIS__BRAIN.PROVIDERS.*`` vars are inert), so adding one would only create
@@ -1038,10 +1038,10 @@ def set_brain_provider_model(
             out = _BOM + out
         _atomic_write(path, out)
 
-    # Layer 2 — best-effort drift-soll sync (never raises, never blocks the
+    # Layer 2 — best-effort drift-soll sync (never raises, never blocks the  # i18n-allow
     # TOML write). Only the keys actually written are synced so the guard sees
     # zero drift across the block.
-    _sync_brain_provider_model_drift_soll(
+    _sync_brain_provider_model_drift_soll(  # i18n-allow
         provider, model=model, deep_model=deep_model, cu_model=cu_model
     )
 
@@ -1279,28 +1279,28 @@ def _atomic_write(path: Path, content: str) -> None:
 
 
 # ----------------------------------------------------------------------
-# Layer 2 + 3 — config-soll.json + ENV sync (best-effort, cloud-first safe)
+# Layer 2 + 3 — config-soll.json + ENV sync (best-effort, cloud-first safe)  # i18n-allow
 # ----------------------------------------------------------------------
 
 
-def _config_soll_path() -> Path:
-    """Locate ``scripts/config-soll.json`` relative to the repo root.
+def _config_soll_path() -> Path:  # i18n-allow
+    """Locate ``scripts/config-soll.json`` relative to the repo root.  # i18n-allow
 
     Derived from the same ``PROJECT_ROOT`` resolution that anchors
     ``DEFAULT_CONFIG_FILE`` so the two paths stay consistent. On a headless
     Linux VPS this file usually does not exist — callers must treat a missing
     file as a graceful no-op.
     """
-    return PROJECT_ROOT / "scripts" / "config-soll.json"
+    return PROJECT_ROOT / "scripts" / "config-soll.json"  # i18n-allow
 
 
-def _sync_brain_primary_drift_soll(name: str) -> None:
-    """Best-effort sync of ``brain.primary`` into the drift-soll + ENV layers.
+def _sync_brain_primary_drift_soll(name: str) -> None:  # i18n-allow
+    """Best-effort sync of ``brain.primary`` into the drift-soll + ENV layers.  # i18n-allow
 
     NEVER raises and NEVER breaks the (already-completed) TOML write. Two
     independent best-effort steps:
 
-      (a) Update ``scripts/config-soll.json`` ``brain.primary`` so the
+      (a) Update ``scripts/config-soll.json`` ``brain.primary`` so the  # i18n-allow
           drift-guard daemon (5-min cron) does not revert the switch. Graceful
           no-op when the file is absent (cloud-first / headless VPS).
       (b) Set the User-scope ``JARVIS__BRAIN__PRIMARY`` ENV var (Windows
@@ -1309,11 +1309,11 @@ def _sync_brain_primary_drift_soll(name: str) -> None:
           live process and any child it spawns are immediately consistent.
           The registry write is gated behind ``sys.platform == "win32"``.
     """
-    # (a) config-soll.json — graceful no-op if the file does not exist.
+    # (a) config-soll.json — graceful no-op if the file does not exist.  # i18n-allow
     try:
-        _update_config_soll_brain_primary(name)
+        _update_config_soll_brain_primary(name)  # i18n-allow
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
-        log.warning("Could not sync brain.primary to config-soll.json: %s", exc)
+        log.warning("Could not sync brain.primary to config-soll.json: %s", exc)  # i18n-allow
 
     # (b) ENV var — winreg gated to win32, os.environ updated cross-platform.
     try:
@@ -1322,19 +1322,19 @@ def _sync_brain_primary_drift_soll(name: str) -> None:
         log.warning("Could not sync %s to the User environment: %s", _BRAIN_PRIMARY_ENV, exc)
 
 
-def _sync_worker_provider_drift_soll(name: str) -> None:
-    """Best-effort sync of ``brain.worker.provider`` into config-soll + ENV.
+def _sync_worker_provider_drift_soll(name: str) -> None:  # i18n-allow
+    """Best-effort sync of ``brain.worker.provider`` into config-soll + ENV.  # i18n-allow
 
     NEVER raises and NEVER breaks the (already-completed) TOML write. Same
-    two-step shape as :func:`_sync_brain_primary_drift_soll`.
+    two-step shape as :func:`_sync_brain_primary_drift_soll`.  # i18n-allow
 
-    Renamed from ``_sync_sub_jarvis_provider_drift_soll`` in the 2026-06-29
+    Renamed from ``_sync_sub_jarvis_provider_drift_soll`` in the 2026-06-29  # i18n-allow
     Jarvis-Agents rename.
     """
     try:
-        _update_config_soll_worker_provider(name)
+        _update_config_soll_worker_provider(name)  # i18n-allow
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
-        log.warning("Could not sync worker provider to config-soll.json: %s", exc)
+        log.warning("Could not sync worker provider to config-soll.json: %s", exc)  # i18n-allow
 
     try:
         _set_user_env_var(_WORKER_PROVIDER_ENV, name)
@@ -1346,19 +1346,19 @@ def _sync_worker_provider_drift_soll(name: str) -> None:
         )
 
 
-def _sync_worker_model_drift_soll(model: str) -> None:
-    """Best-effort sync of ``brain.worker.model`` into config-soll + ENV.
+def _sync_worker_model_drift_soll(model: str) -> None:  # i18n-allow
+    """Best-effort sync of ``brain.worker.model`` into config-soll + ENV.  # i18n-allow
 
     NEVER raises and NEVER breaks the (already-completed) TOML write. Same
-    two-step shape as :func:`_sync_worker_provider_drift_soll`.
+    two-step shape as :func:`_sync_worker_provider_drift_soll`.  # i18n-allow
 
-    Renamed from ``_sync_sub_jarvis_model_drift_soll`` in the 2026-06-29
+    Renamed from ``_sync_sub_jarvis_model_drift_soll`` in the 2026-06-29  # i18n-allow
     Jarvis-Agents rename.
     """
     try:
-        _update_config_soll_worker_key("model", model)
+        _update_config_soll_worker_key("model", model)  # i18n-allow
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
-        log.warning("Could not sync worker model to config-soll.json: %s", exc)
+        log.warning("Could not sync worker model to config-soll.json: %s", exc)  # i18n-allow
 
     try:
         _set_user_env_var(_WORKER_MODEL_ENV, model)
@@ -1370,19 +1370,19 @@ def _sync_worker_model_drift_soll(model: str) -> None:
         )
 
 
-def _sync_tts_provider_drift_soll(applied: dict[str, str]) -> None:
-    """Best-effort sync of the TTS block into the drift-soll + ENV layers.
+def _sync_tts_provider_drift_soll(applied: dict[str, str]) -> None:  # i18n-allow
+    """Best-effort sync of the TTS block into the drift-soll + ENV layers.  # i18n-allow
 
     NEVER raises and NEVER breaks the (already-completed) TOML write. ``applied``
     is the exact set of ``[tts]`` keys the TOML write touched (provider + any
-    provider-dependent voice/language/model), so config-soll ends up byte-for-byte
+    provider-dependent voice/language/model), so config-soll ends up byte-for-byte  # i18n-allow
     in agreement and the drift-guard reverts nothing. The ENV layer only pins the
     provider (the single value a stale boot override could revert).
     """
     try:
-        _update_config_soll_section("tts", applied)
+        _update_config_soll_section("tts", applied)  # i18n-allow
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
-        log.warning("Could not sync tts.* to config-soll.json: %s", exc)
+        log.warning("Could not sync tts.* to config-soll.json: %s", exc)  # i18n-allow
 
     provider_name = applied["provider"]  # always present — set in _patch_tts_block
     try:
@@ -1391,16 +1391,16 @@ def _sync_tts_provider_drift_soll(applied: dict[str, str]) -> None:
         log.warning("Could not sync %s to the User environment: %s", _TTS_PROVIDER_ENV, exc)
 
 
-def _sync_stt_provider_drift_soll(name: str) -> None:
-    """Best-effort sync of ``stt.provider`` into the drift-soll + ENV layers.
+def _sync_stt_provider_drift_soll(name: str) -> None:  # i18n-allow
+    """Best-effort sync of ``stt.provider`` into the drift-soll + ENV layers.  # i18n-allow
 
     NEVER raises and NEVER breaks the (already-completed) TOML write. Same
-    two-step shape as :func:`_sync_brain_primary_drift_soll`.
+    two-step shape as :func:`_sync_brain_primary_drift_soll`.  # i18n-allow
     """
     try:
-        _update_config_soll_section("stt", {"provider": name})
+        _update_config_soll_section("stt", {"provider": name})  # i18n-allow
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
-        log.warning("Could not sync stt.provider to config-soll.json: %s", exc)
+        log.warning("Could not sync stt.provider to config-soll.json: %s", exc)  # i18n-allow
 
     try:
         _set_user_env_var(_STT_PROVIDER_ENV, name)
@@ -1408,17 +1408,17 @@ def _sync_stt_provider_drift_soll(name: str) -> None:
         log.warning("Could not sync %s to the User environment: %s", _STT_PROVIDER_ENV, exc)
 
 
-def _sync_brain_provider_model_drift_soll(
+def _sync_brain_provider_model_drift_soll(  # i18n-allow
     provider: str, *, model: str | None, deep_model: str | None, cu_model: str | None = None
 ) -> None:
-    """Best-effort sync of ``brain.providers.<p>`` model keys into the drift-soll.
+    """Best-effort sync of ``brain.providers.<p>`` model keys into the drift-soll.  # i18n-allow
 
     NEVER raises and NEVER breaks the (already-completed) TOML write. Only the
-    keys actually written (non-``None``) are synced, so config-soll ends up in
+    keys actually written (non-``None``) are synced, so config-soll ends up in  # i18n-allow
     agreement with the TOML and the drift-guard reverts nothing. No ENV layer:
     per-provider model keys have no effective ``JARVIS__*`` boot override (see
     the docstring of :func:`set_brain_provider_model`). The flat dotted top-level
-    key ``brain.providers.<p>`` is exactly how the soll file stores it.
+    key ``brain.providers.<p>`` is exactly how the soll file stores it.  # i18n-allow
     """
     values: dict[str, object] = {}
     if model is not None:
@@ -1430,17 +1430,17 @@ def _sync_brain_provider_model_drift_soll(
     if not values:
         return
     try:
-        _update_config_soll_section(f"brain.providers.{provider}", values)
+        _update_config_soll_section(f"brain.providers.{provider}", values)  # i18n-allow
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
         log.warning(
-            "Could not sync brain.providers.%s model to config-soll.json: %s",
+            "Could not sync brain.providers.%s model to config-soll.json: %s",  # i18n-allow
             provider,
             exc,
         )
 
 
-def _update_config_soll_section(top: str, values: dict[str, object]) -> None:
-    """Atomically merge ``values`` into ``data[top]`` in config-soll.json.
+def _update_config_soll_section(top: str, values: dict[str, object]) -> None:  # i18n-allow
+    """Atomically merge ``values`` into ``data[top]`` in config-soll.json.  # i18n-allow
 
     Preserves every other key (``_comment``, ``_updated``, other keys in the
     same section, other top-level tables). Atomic tempfile + ``os.replace``,
@@ -1451,13 +1451,13 @@ def _update_config_soll_section(top: str, values: dict[str, object]) -> None:
     itself and ``_WRITE_LOCK`` is a non-reentrant ``threading.Lock`` (it would
     deadlock). Today's callers acquire it only sequentially, never nested.
     """
-    soll_path = _config_soll_path()
-    if not soll_path.exists():
-        log.debug("config-soll.json absent (%s) — skipping drift-soll sync", soll_path)
+    soll_path = _config_soll_path()  # i18n-allow
+    if not soll_path.exists():  # i18n-allow
+        log.debug("config-soll.json absent (%s) — skipping drift-soll sync", soll_path)  # i18n-allow
         return
 
     with _WRITE_LOCK:
-        raw = soll_path.read_text(encoding="utf-8")
+        raw = soll_path.read_text(encoding="utf-8")  # i18n-allow
         data = json.loads(raw)
         section = data.get(top)
         if not isinstance(section, dict):
@@ -1468,23 +1468,23 @@ def _update_config_soll_section(top: str, values: dict[str, object]) -> None:
         section.update(values)
 
         out = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-        _atomic_write_text(soll_path, out)
+        _atomic_write_text(soll_path, out)  # i18n-allow
 
 
-def _update_config_soll_brain_primary(name: str) -> None:
-    """Atomically set ``data["brain"]["primary"] = name`` in config-soll.json.
+def _update_config_soll_brain_primary(name: str) -> None:  # i18n-allow
+    """Atomically set ``data["brain"]["primary"] = name`` in config-soll.json.  # i18n-allow
 
     Preserves all other keys (``_comment``, ``_updated``, other ``brain.*``
     keys, other top-level tables). Atomic tempfile + ``os.replace``, UTF-8,
     ``indent=2``. Graceful no-op when the file is absent.
     """
-    soll_path = _config_soll_path()
-    if not soll_path.exists():
-        log.debug("config-soll.json absent (%s) — skipping drift-soll sync", soll_path)
+    soll_path = _config_soll_path()  # i18n-allow
+    if not soll_path.exists():  # i18n-allow
+        log.debug("config-soll.json absent (%s) — skipping drift-soll sync", soll_path)  # i18n-allow
         return
 
     with _WRITE_LOCK:
-        raw = soll_path.read_text(encoding="utf-8")
+        raw = soll_path.read_text(encoding="utf-8")  # i18n-allow
         data = json.loads(raw)
         brain = data.get("brain")
         if not isinstance(brain, dict):
@@ -1495,28 +1495,28 @@ def _update_config_soll_brain_primary(name: str) -> None:
         brain["primary"] = name
 
         out = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-        _atomic_write_text(soll_path, out)
+        _atomic_write_text(soll_path, out)  # i18n-allow
 
 
-def _update_config_soll_worker_provider(name: str) -> None:
+def _update_config_soll_worker_provider(name: str) -> None:  # i18n-allow
     """Atomically set ``data["brain.worker"]["provider"] = name`` in
-    config-soll.json.
+    config-soll.json.  # i18n-allow
 
     Note the FLAT dotted key ``"brain.worker"`` — that is how the drift-guard
-    soll file stores the sub-table (see scripts/config-soll.json), NOT a nested
+    soll file stores the sub-table (see scripts/config-soll.json), NOT a nested  # i18n-allow
     ``data["brain"]["worker"]``. Preserves all other keys (``_comment``, the
     fallback chain, other tables). Graceful no-op when the file is absent.
 
-    Renamed from ``_update_config_soll_sub_jarvis_provider`` in the 2026-06-29
+    Renamed from ``_update_config_soll_sub_jarvis_provider`` in the 2026-06-29  # i18n-allow
     Jarvis-Agents rename; now writes to the ``"brain.worker"`` flat key.
     """
-    soll_path = _config_soll_path()
-    if not soll_path.exists():
-        log.debug("config-soll.json absent (%s) — skipping drift-soll sync", soll_path)
+    soll_path = _config_soll_path()  # i18n-allow
+    if not soll_path.exists():  # i18n-allow
+        log.debug("config-soll.json absent (%s) — skipping drift-soll sync", soll_path)  # i18n-allow
         return
 
     with _WRITE_LOCK:
-        raw = soll_path.read_text(encoding="utf-8")
+        raw = soll_path.read_text(encoding="utf-8")  # i18n-allow
         data = json.loads(raw)
         block = data.get("brain.worker")
         if not isinstance(block, dict):
@@ -1527,26 +1527,26 @@ def _update_config_soll_worker_provider(name: str) -> None:
         block["provider"] = name
 
         out = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-        _atomic_write_text(soll_path, out)
+        _atomic_write_text(soll_path, out)  # i18n-allow
 
 
-def _update_config_soll_worker_key(key: str, value: str) -> None:
-    """Atomically set ``data["brain.worker"][key] = value`` in config-soll.json.
+def _update_config_soll_worker_key(key: str, value: str) -> None:  # i18n-allow
+    """Atomically set ``data["brain.worker"][key] = value`` in config-soll.json.  # i18n-allow
 
-    Generalised sibling of :func:`_update_config_soll_worker_provider`
+    Generalised sibling of :func:`_update_config_soll_worker_provider`  # i18n-allow
     (same FLAT dotted-key layout, same preservation guarantees, same graceful
     no-op when the file is absent).
 
-    Renamed from ``_update_config_soll_sub_jarvis_key`` in the 2026-06-29
+    Renamed from ``_update_config_soll_sub_jarvis_key`` in the 2026-06-29  # i18n-allow
     Jarvis-Agents rename.
     """
-    soll_path = _config_soll_path()
-    if not soll_path.exists():
-        log.debug("config-soll.json absent (%s) — skipping drift-soll sync", soll_path)
+    soll_path = _config_soll_path()  # i18n-allow
+    if not soll_path.exists():  # i18n-allow
+        log.debug("config-soll.json absent (%s) — skipping drift-soll sync", soll_path)  # i18n-allow
         return
 
     with _WRITE_LOCK:
-        raw = soll_path.read_text(encoding="utf-8")
+        raw = soll_path.read_text(encoding="utf-8")  # i18n-allow
         data = json.loads(raw)
         block = data.get("brain.worker")
         if not isinstance(block, dict):
@@ -1557,13 +1557,13 @@ def _update_config_soll_worker_key(key: str, value: str) -> None:
         block[key] = value
 
         out = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-        _atomic_write_text(soll_path, out)
+        _atomic_write_text(soll_path, out)  # i18n-allow
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
     """Atomic tempfile + replace for a plain UTF-8 text file (no read-only flag).
 
-    Used for config-soll.json, which — unlike jarvis.toml — does not carry the
+    Used for config-soll.json, which — unlike jarvis.toml — does not carry the  # i18n-allow
     BUG-010 read-only defense flag.
     """
     tmp = path.with_suffix(path.suffix + ".tmp")

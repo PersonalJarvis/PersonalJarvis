@@ -1,14 +1,14 @@
-"""Flight-Recorder — JSONL-Event-Log fuer Replay und Debug (ADR-0007).
+"""Flight recorder — JSONL event log for replay and debugging (ADR-0007).
 
-Wird als Wildcard-Subscriber (`bus.subscribe_all`) aktiviert und schreibt
-jedes Event als eine Zeile in `data/flight_recorder/YYYY-MM-DD.jsonl`.
+Activated as a wildcard subscriber (`bus.subscribe_all`) and writes every
+event as one line into `data/flight_recorder/YYYY-MM-DD.jsonl`.
 
-Binaerdaten > 64 KB (z.B. Screenshots) werden nicht inline ge-dumpt,
-sondern in `blobs/<hash>.<ext>` ausgelagert und per `{"__file__": "..."}`
-referenziert — damit bleibt die JSONL jq-faehig.
+Binary data > 64 KB (e.g. screenshots) is not dumped inline; instead it is
+externalized into `blobs/<hash>.<ext>` and referenced via `{"__file__": "..."}`
+— this keeps the JSONL jq-friendly.
 
-Rotation bei Tageswechsel und bei File-Size > 500 MB (`-2`, `-3`, ...).
-Ein `contextlib`-Flag fuer async-safe Write-Failures.
+Rotates on a day change and when the file size exceeds 500 MB (`-2`, `-3`, ...).
+A `contextlib` flag guards async-safe write failures.
 """
 from __future__ import annotations
 
@@ -31,13 +31,13 @@ if TYPE_CHECKING:
     from jarvis.core.bus import EventBus
 
 
-# Top-Level-Keys, die nicht als "payload" serialisiert werden — sie
-# landen auf Top-Level des JSON-Records (damit jq einfacher geht).
+# Top-level keys that are not serialized as "payload" — they land at the
+# top level of the JSON record (so jq queries stay simple).
 _TOP_LEVEL_FIELDS = frozenset({"trace_id", "timestamp_ns", "source_layer"})
 
 
 def _json_default(value: Any) -> Any:
-    """JSON-Encoder fuer die Typen, die stdlib nicht direkt beherrscht."""
+    """JSON encoder for the types the stdlib doesn't handle directly."""
     if isinstance(value, UUID):
         return value.hex
     if isinstance(value, bytes):
@@ -50,7 +50,7 @@ def _json_default(value: Any) -> Any:
 
 
 class FlightRecorder:
-    """Wildcard-Subscriber am EventBus.
+    """Wildcard subscriber on the EventBus.
 
     Lifecycle:
         rec = FlightRecorder(data_dir=Path("data/flight_recorder"))
@@ -60,15 +60,15 @@ class FlightRecorder:
         await rec.close()
     """
 
-    # JSONL-Zeilen werden gepuffert und alle `flush_interval_s` Sekunden
-    # per `fsync` in die Datei geschrieben — verhindert Disk-Kummer bei
-    # vielen kleinen Writes, ohne Crash-Safety zu verlieren.
+    # JSONL lines are buffered and written to the file via `fsync` every
+    # `flush_interval_s` seconds — avoids disk-I/O pain from many small
+    # writes, without losing crash safety.
     flush_interval_s: float = 1.0
 
-    # Binaerdaten-Inline-Limit. Alles groesser wird in `blobs/` ausgelagert.
+    # Binary-data inline limit. Anything larger is externalized into `blobs/`.
     blob_inline_limit_bytes: int = 64 * 1024
 
-    # File-Rotation — JSONL ueber dieser Groesse bekommt Suffix `-2`, `-3`, ...
+    # File rotation — a JSONL over this size gets suffix `-2`, `-3`, ...
     rotation_size_bytes: int = 500 * 1024 * 1024
 
     def __init__(
@@ -98,7 +98,7 @@ class FlightRecorder:
     # ---------------- Bus binding ----------------
 
     def attach(self, bus: EventBus) -> None:
-        """Registriert sich als Wildcard-Subscriber. Idempotent."""
+        """Registers as a wildcard subscriber. Idempotent."""
         if self._subscribed_bus is bus:
             return
         self._subscribed_bus = bus
@@ -125,7 +125,7 @@ class FlightRecorder:
             "layer": data.pop("source_layer", ""),
         }
         data.pop("trace_id", None)
-        # Blob-Externalisierung fuer Felder, die als bytes ankommen.
+        # Externalize into blobs any field that arrives as bytes.
         for key, value in list(data.items()):
             if isinstance(value, bytes) and len(value) > self.blob_inline_limit_bytes:
                 data[key] = self._store_blob(value, hint=key)
@@ -147,7 +147,7 @@ class FlightRecorder:
         if day != self._current_day:
             self._current_day = day
         base = self._data_dir / f"{self._current_day}.jsonl"
-        # Rotation bei Groesse
+        # Rotate on size
         if base.exists() and base.stat().st_size >= self.rotation_size_bytes:
             for suffix in range(2, 1000):
                 cand = self._data_dir / f"{self._current_day}-{suffix}.jsonl"
@@ -156,7 +156,7 @@ class FlightRecorder:
         return base
 
     async def flush(self) -> None:
-        """Schreibt gepufferte Zeilen in die aktuelle JSONL-Datei."""
+        """Writes buffered lines to the current JSONL file."""
         with self._lock:
             if not self._buffer:
                 return
@@ -172,18 +172,17 @@ class FlightRecorder:
         await self.flush()
         self._subscribed_bus = None
 
-    # ---------------- Replay-Helpers ----------------
+    # ---------------- Replay helpers ----------------
 
     def iter_events_for_trace(self, trace_id: UUID) -> list[dict[str, Any]]:
-        """Liest alle Tages-JSONLs und filtert nach `trace_id`.
+        """Reads all daily JSONLs and filters by `trace_id`.
 
-        Nutzung nur durch Replay-CLI / Tests — fuer Produktionsqueries
-        sollte man `grep` oder `jq` nehmen.
+        Only used by the replay CLI / tests — for production queries you
+        should use `grep` or `jq`.
 
-        H3-Fix: `suppress(OSError)` umschliesst jetzt den **gesamten**
-        Read-Loop (nicht nur den ``open()``-Call). Sonst wuerde ein I/O-
-        Fehler mitten in ``readline()`` durchschlagen — besonders lustig
-        auf Netzlaufwerken.
+        H3 fix: `suppress(OSError)` now wraps the **entire** read loop (not
+        just the ``open()`` call). Otherwise an I/O error mid-``readline()``
+        would propagate — especially fun on network drives.
         """
         target = trace_id.hex
         out: list[dict[str, Any]] = []

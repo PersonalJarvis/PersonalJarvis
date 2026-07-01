@@ -1,22 +1,23 @@
-"""First-Run-Bootstrap fuer den User-Skill-Ordner.
+"""First-run bootstrap for the user skill folder.
 
-Kopiert die mitgelieferten Builtin-Skills aus ``jarvis/skills/builtin/`` nach
-``user_skills_dir()``, wenn sie dort noch nicht liegen. Idempotent — bei jedem
-Start aufrufbar; vorhandene User-Edits werden nie ueberschrieben.
+Copies the bundled builtin skills from ``jarvis/skills/builtin/`` into
+``user_skills_dir()`` if they aren't already there. Idempotent — safe to call
+on every start; existing user edits are never overwritten.
 
-Warum ueberhaupt kopieren (statt nur aus ``builtin/`` laden)?
+Why copy at all (instead of just loading from ``builtin/``)?
 
-- Der ``SkillRegistry``-Watcher (``jarvis/skills/registry.py``) beobachtet *eine*
-  Root. Wenn alle Skills an einem Ort liegen, funktioniert Hot-Reload out-of-the-box.
-- Der User soll Builtins *sehen* und inspizieren koennen. Versteckte Read-only-
-  Kopien im site-packages-Verzeichnis sind fuer Skills-Autoren intransparent.
-- Admin-Edit-Protection (siehe ``skills_routes.py``) kann per Pfad-Check erkennen
-  was ein Builtin ist (Name in ``BUILTIN_SKILL_NAMES``) — der Rest ist User-Space.
+- The ``SkillRegistry`` watcher (``jarvis/skills/registry.py``) watches *one*
+  root. When all skills live in one place, hot reload works out of the box.
+- The user should be able to *see* and inspect builtins. Hidden read-only
+  copies in the site-packages directory are opaque to skill authors.
+- Admin edit protection (see ``skills_routes.py``) can tell what's a builtin
+  via a path check (name in ``BUILTIN_SKILL_NAMES``) — the rest is user space.
 
-Bootstrap-Versionierung: eine ``.bootstrap-version`` im User-Skills-Dir speichert
-die zuletzt gebootstrappte Package-Version. Bei Mismatch werden fehlende Skills
-neu kopiert (bestehende bleiben). So kommt z.B. ein neuer Builtin-Skill in einer
-spaeteren Version automatisch rueber, ohne User-Anpassungen zu zerstoeren.
+Bootstrap versioning: a ``.bootstrap-version`` file in the user skills dir
+stores the last bootstrapped package version. On a mismatch, missing skills
+are copied in again (existing ones are left alone). That's how, e.g., a new
+builtin skill added in a later version automatically arrives without
+destroying user customizations.
 """
 from __future__ import annotations
 
@@ -64,21 +65,22 @@ _V2_SHIPPED_HASHES: dict[str, str] = {
 
 
 def ensure_user_skills_dir() -> Path:
-    """Legt ``user_skills_dir()`` an und kopiert fehlende Builtin-Skills hinein.
+    """Creates ``user_skills_dir()`` and copies in any missing builtin skills.
 
-    Zwei Faelle pro Builtin:
+    Two cases per builtin:
 
-    1. **Komplett neu:** User hat den Skill-Ordner noch nicht -> kompletter
-       ``copytree`` von Builtin-Root nach User-Root.
-    2. **Upgrade:** User hat schon eine ``SKILL.md`` (darf editiert sein, nicht
-       ueberschreiben), aber dem Builtin wurden Bundle-Sibling-Ordner
-       hinzugefuegt -> nur die fehlenden Kind-Ordner nachziehen.
+    1. **Brand new:** the user doesn't have the skill folder yet -> a full
+       ``copytree`` from the builtin root to the user root.
+    2. **Upgrade:** the user already has a ``SKILL.md`` (may be edited, must
+       not be overwritten), but the builtin gained bundle sibling folders
+       -> pull in only the missing child folders.
 
-    So behalten wir die "Never touch user-edited SKILL.md"-Garantie, rollen aber
-    neue Bundle-Resources (``references/``, ``scripts/``, …) automatisch nach.
+    This keeps the "never touch a user-edited SKILL.md" guarantee while still
+    rolling out new bundle resources (``references/``, ``scripts/``, …)
+    automatically.
 
-    Returns den User-Skills-Pfad, damit Aufrufer ihn direkt als Registry-Root
-    verwenden koennen.
+    Returns the user skills path so callers can use it directly as the
+    registry root.
     """
     ensure_user_dirs()
     dst_root = user_skills_dir()
@@ -179,11 +181,11 @@ def _write_shipped_hashes(dst_root: Path, manifest: dict[str, str]) -> None:
 
 
 def _sync_missing_resources(src: Path, dst: Path) -> list[str]:
-    """Kopiert Sibling-Ordner (references/scripts/assets/agents), die im
-    Builtin existieren aber im User-Dir fehlen. Vorhandene User-Ordner werden
-    **nicht** angefasst — auch wenn der Builtin dort neue Files hat. Das ist
-    die konservative Default-Policy; ein expliziter "force-sync"-Modus waere
-    eine spaetere Erweiterung.
+    """Copies sibling folders (references/scripts/assets/agents) that exist
+    in the builtin but are missing from the user dir. Existing user folders
+    are **not** touched — even if the builtin has new files in them. This is
+    the conservative default policy; an explicit "force-sync" mode would be
+    a later extension.
     """
     added: list[str] = []
     for kind in RESOURCE_KINDS:
@@ -192,18 +194,18 @@ def _sync_missing_resources(src: Path, dst: Path) -> list[str]:
         if not src_kind.is_dir():
             continue
         if dst_kind.exists():
-            continue  # User hat den Ordner schon — hands off
+            continue  # user already has the folder — hands off
         try:
             shutil.copytree(src_kind, dst_kind)
             added.append(kind)
         except Exception as exc:  # noqa: BLE001
-            log.warning("sync resource '%s/%s' fehlgeschlagen: %s", dst.name, kind, exc)
+            log.warning("sync resource '%s/%s' failed: %s", dst.name, kind, exc)
     return added
 
 
 def _write_version_marker(dst_root: Path) -> None:
-    """Schreibt den Bootstrap-Version-Marker. Fehler werden geschluckt —
-    der Marker ist reine Info, kein Blocker."""
+    """Writes the bootstrap version marker. Failures are swallowed —
+    the marker is pure info, not a blocker."""
     try:
         (dst_root / BOOTSTRAP_VERSION_FILE).write_text(
             BOOTSTRAP_VERSION, encoding="utf-8"

@@ -97,13 +97,13 @@ class WikiIngestTool:
     input_examples: list[dict[str, Any]] = [
         {
             "text": (
-                "Joy hat am 14. August Geburtstag. Sie ist die juengere "
-                "Schwester von Harald."
+                "Joy's birthday is August 14th. She is Harald's younger "
+                "sister."
             ),
             "source": "voice:user-direct",
         },
         {
-            "text": "Wir haben heute Phase B5 abgeschlossen — Brain liest jetzt aus dem Wiki.",
+            "text": "We finished Phase B5 today — the brain now reads from the wiki.",
             "source": "chat:milestone",
         },
     ]

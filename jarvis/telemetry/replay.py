@@ -1,13 +1,13 @@
-"""Replay-CLI — rendert einen Computer-Use-/Task-Trace als Timeline.
+"""Replay CLI — renders a Computer-Use/task trace as a timeline.
 
 Usage:
     python -m jarvis.telemetry.replay <trace_id>
     python -m jarvis.telemetry.replay <trace_id> --json
     python -m jarvis.telemetry.replay <trace_id> --data-dir data/flight_recorder
 
-Zeigt pro Event eine Zeile mit relativer Zeit, Event-Typ und den
-interessanten Payload-Feldern. Bei `--json` wird die rohe JSONL-Zeile
-durchgereicht (gut fuer jq-Pipelines).
+Shows one line per event with the relative time, event type, and the
+interesting payload fields. With `--json`, the raw JSONL line is passed
+through unchanged (handy for jq pipelines).
 """
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ from uuid import UUID
 
 from .recorder import FlightRecorder
 
-# Welche Payload-Felder bei welchem Event besonders interessant sind.
-# Nur fuer die human-readable Ausgabe — alles andere landet als "..."
+# Which payload fields are especially interesting for which event.
+# Only for the human-readable output — everything else ends up as "..."
 _FEATURED_FIELDS: dict[str, tuple[str, ...]] = {
     "HarnessDispatched": ("harness",),
     "HarnessProgress": ("harness", "exit_code"),
@@ -49,7 +49,7 @@ _FEATURED_FIELDS: dict[str, tuple[str, ...]] = {
 def _fmt_payload(event: str, payload: dict[str, Any]) -> str:
     fields = _FEATURED_FIELDS.get(event)
     if not fields:
-        # Fallback: kurz die ersten 3 Non-Null-Felder zeigen
+        # Fallback: briefly show the first 3 non-null fields
         items = [(k, v) for k, v in payload.items() if v not in (None, "", 0, False)]
         items = items[:3]
     else:
@@ -65,10 +65,10 @@ def _fmt_payload(event: str, payload: dict[str, Any]) -> str:
 
 
 def render_timeline(records: list[dict[str, Any]], *, out=None) -> None:
-    # Default late-bound, damit pytest's capsys-Redirect wirkt.
+    # Default late-bound, so pytest's capsys redirect takes effect.
     out = out if out is not None else sys.stdout
     if not records:
-        print("Keine Events fuer diese trace_id gefunden.", file=out)
+        print("No events found for this trace_id.", file=out)
         return
     t0 = records[0].get("ts_ns", 0)
     for rec in records:
@@ -88,20 +88,20 @@ def render_json(records: list[dict[str, Any]], *, out=None) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="jarvis.telemetry.replay",
-        description="Rendert den Flight-Recorder-Trace einer trace_id als Timeline.",
+        description="Renders the flight-recorder trace of a trace_id as a timeline.",
     )
-    parser.add_argument("trace_id", help="UUID (Hex oder String-Format)")
+    parser.add_argument("trace_id", help="UUID (hex or string format)")
     parser.add_argument("--data-dir",
                         default="data/flight_recorder",
-                        help="Verzeichnis mit den JSONL-Files")
+                        help="Directory containing the JSONL files")
     parser.add_argument("--json", action="store_true",
-                        help="Gibt die rohen JSONL-Eintraege aus statt der Timeline")
+                        help="Print the raw JSONL entries instead of the timeline")
     args = parser.parse_args(argv)
 
     try:
         trace_id = UUID(args.trace_id)
     except ValueError:
-        print(f"Ungueltige trace_id: {args.trace_id}", file=sys.stderr)
+        print(f"Invalid trace_id: {args.trace_id}", file=sys.stderr)
         return 2
 
     recorder = FlightRecorder(data_dir=Path(args.data_dir))

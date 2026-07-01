@@ -42,7 +42,7 @@ Regeln:
 """
 
 
-_HEADER = "# Frames + Events der letzten Minuten:"
+_HEADER = "# Frames + Events der letzten Minuten:"  # i18n-allow: header of the German-language Verdichter LLM input block (VERDICHTER_SYSTEM_PROMPT expects German)
 _TRUNC_MARKER = "[...]"
 
 
@@ -163,11 +163,11 @@ def build_verdichter_prompt(
     lines.sort(key=lambda x: x[0])
     body_lines = [line for _, line in lines]
 
-    footer = f"Dominante App: {primary_app}"
+    footer = f"Dominante App: {primary_app}"  # i18n-allow: label of the German-language Verdichter LLM input block (VERDICHTER_SYSTEM_PROMPT expects German)
 
     # Build full block, then truncate from front (keep newest tail)
     body = "\n".join(body_lines)
-    block = f"{_HEADER}\n{body}\n\n{footer}" if body else f"{_HEADER}\n(keine Daten)\n\n{footer}"
+    block = f"{_HEADER}\n{body}\n\n{footer}" if body else f"{_HEADER}\n(keine Daten)\n\n{footer}"  # i18n-allow: same German-language Verdichter input block
 
     if len(block) <= max_chars:
         return block

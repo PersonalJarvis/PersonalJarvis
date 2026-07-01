@@ -27,7 +27,7 @@ class DestructiveDetection(BaseModel):
 
     pattern_id: str
     matched_text: str
-    target_hint: str  # vom Pattern extrahierter "was wird zerstoert"-Hint
+    target_hint: str  # "what gets destroyed" hint extracted from the pattern
 
 
 # (pattern_id, regex, target_extraction_group)
@@ -98,20 +98,20 @@ DESTRUCTIVE_PATTERNS: Final[list[tuple[str, re.Pattern[str], str]]] = [
     ),
     (
         "delete_all_files",
-        # "alle Files loeschen" / "delete all files" — Worte-basiert (DE+EN)
+        # "alle Files loeschen" / "delete all files" — word-based (DE+EN)  # i18n-allow
         re.compile(
-            r"\b(?:delete|remove|loesche|loeschen|loesch)\s+(?:all|alle|gesamten?)\s+"
-            r"(?P<target>(?:files?|dateien?|ordner|directories?|verzeichnisse?))",
+            r"\b(?:delete|remove|loesche|loeschen|loesch)\s+(?:all|alle|gesamten?)\s+"  # i18n-allow
+            r"(?P<target>(?:files?|dateien?|ordner|directories?|verzeichnisse?))",  # i18n-allow
             re.IGNORECASE,
         ),
         "target",
     ),
     (
         "drop_database_de",
-        # deutsche Variante: "datenbank loeschen", "tabelle dropp(en)"
+        # German variant: "datenbank loeschen", "tabelle dropp(en)"
         re.compile(
-            r"\b(?:datenbank|tabelle|schema)\s+(?P<target>\w+)\s+"
-            r"(?:loeschen|droppen|loesche)",
+            r"\b(?:datenbank|tabelle|schema)\s+(?P<target>\w+)\s+"  # i18n-allow
+            r"(?:loeschen|droppen|loesche)",  # i18n-allow
             re.IGNORECASE,
         ),
         "target",

@@ -1,23 +1,24 @@
 /**
- * CliConnectPoller — unsichtbare Hintergrund-Komponente die ueberprueft
- * ob ein laufender CLI-Login (z.B. ``firebase login`` in einem externen
- * Windows-Terminal) erfolgreich war.
+ * CliConnectPoller — invisible background component that checks whether
+ * a running CLI login (e.g. ``firebase login`` in an external Windows
+ * terminal) succeeded.
  *
  * Workflow:
- * 1. ConnectOAuthButton ruft ``spawn-external`` UND setzt ``cliConnectCoach``.
- * 2. Externes Terminal poppt auf, User loggt sich im Browser ein.
- * 3. Dieser Poller (gemounted in App.tsx, also IMMER aktiv) sieht den
- *    ``cliConnectCoach``-State und pollt alle 3s ``POST /api/clis/{name}/check``.
- * 4. Sobald ``connected: true`` zurueckkommt → Success-Toast, Cache-Invalidate,
- *    Coach-State zuruecksetzen.
- * 5. Timeout nach ``MAX_ATTEMPTS * INTERVAL = 5min`` ohne Erfolg → Warning.
+ * 1. ConnectOAuthButton calls ``spawn-external`` AND sets ``cliConnectCoach``.
+ * 2. An external terminal pops up, the user logs in via the browser.
+ * 3. This poller (mounted in App.tsx, so ALWAYS active) sees the
+ *    ``cliConnectCoach`` state and polls ``POST /api/clis/{name}/check`` every 3s.
+ * 4. As soon as ``connected: true`` comes back → success toast, cache
+ *    invalidation, reset the coach state.
+ * 5. Timeout after ``MAX_ATTEMPTS * INTERVAL = 5min`` without success → warning.
  *
- * Wichtig: Der Poller laeuft ohne UI — er ist ueberall aktiv, egal ob der
- * User in der CLIs-View, Terminal-View oder anderswo ist. Vorher hing der
- * Polling-Loop im CliConnectCoach-Component (TerminalView), was nur lief
- * wenn der User die Terminal-Section angeklickt hatte. Nach dem Switch auf
- * externes Terminal ging der User aber gar nicht mehr in die Terminal-View
- * → Polling lief nie → Status sprang nie auf "verbunden".
+ * Important: the poller runs without any UI — it is active everywhere,
+ * regardless of whether the user is in the CLIs view, the terminal view,
+ * or elsewhere. Previously the polling loop lived in the CliConnectCoach
+ * component (TerminalView), which only ran while the user had the
+ * terminal section open. After the switch to an external terminal, the
+ * user no longer went into the terminal view at all → polling never ran
+ * → status never flipped to "connected".
  */
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -25,7 +26,7 @@ import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 
 const POLL_INTERVAL_MS = 3_000;
-const MAX_ATTEMPTS = 100; // 100 * 3s = 5 Minuten
+const MAX_ATTEMPTS = 100; // 100 * 3s = 5 minutes
 
 export function CliConnectPoller() {
   const coach = useEventStore((s) => s.cliConnectCoach);
@@ -68,7 +69,7 @@ export function CliConnectPoller() {
           setCoach(null);
         }
       } catch {
-        // Netzwerk-Fehler / Backend kurz weg — naechster Tick versucht's wieder.
+        // Network error / backend briefly down — the next tick will retry.
       }
     };
 
