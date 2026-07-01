@@ -1,8 +1,8 @@
-"""Tests fuer WindowsJobObject — Win32-only mit psutil-Verifikation.
+"""Tests for WindowsJobObject — Win32-only with psutil verification.
 
-Skip-Marker auf Nicht-Windows. Auf Windows spawnen wir einen langlebigen
-Python-Subprocess, assignen ihn dem Job, schliessen das Handle und
-verifizieren via psutil dass der Prozess weg ist.
+Skip marker on non-Windows. On Windows we spawn a long-lived
+Python subprocess, assign it to the job, close the handle, and
+verify via psutil that the process is gone.
 """
 from __future__ import annotations
 
@@ -20,24 +20,24 @@ from jarvis.missions.isolation.job_object import (
 
 _IS_WIN = sys.platform == "win32"
 
-# CREATE_BREAKAWAY_FROM_JOB — der Test-Runner selbst koennte schon in einem
-# Job sein (z.B. unter VS Code / Windows Terminal), daher MUSS der Worker mit
-# Breakaway gespawnt werden, sonst schlaegt AssignProcessToJobObject fehl mit
-# ERROR_ACCESS_DENIED. Die Konstante kommt erst ab Python 3.7 in subprocess
-# vor — wir nehmen sie aus subprocess wenn vorhanden, sonst Hex-Literal.
+# CREATE_BREAKAWAY_FROM_JOB — the test runner itself might already be in a
+# job (e.g. under VS Code / Windows Terminal), so the worker MUST be spawned
+# with breakaway, otherwise AssignProcessToJobObject fails with
+# ERROR_ACCESS_DENIED. The constant only ships in subprocess from Python 3.7
+# onward — we take it from subprocess when present, otherwise the hex literal.
 _CREATE_BREAKAWAY_FROM_JOB = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 _CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
 
 
-# --- No-Op-Branch (alle Plattformen) -----------------------------------------
+# --- No-op branch (all platforms) --------------------------------------------
 
 
 def test_no_op_implementation_is_safe_to_use() -> None:
-    """AlwaysOpenJobObject (No-Op) hat dieselbe API und tut nichts."""
+    """AlwaysOpenJobObject (no-op) has the same API and does nothing."""
     job = AlwaysOpenJobObject("test")
     assert not job.closed
-    job.assign(12345)  # darf nicht raisen, auch mit fake-PID
+    job.assign(12345)  # must not raise, even with a fake PID
     assert job.handle is None
 
 
@@ -48,12 +48,12 @@ async def test_no_op_async_context_manager_works() -> None:
     assert job.closed
 
 
-# --- Echte Win32-Tests --------------------------------------------------------
+# --- Real Win32 tests ---------------------------------------------------------
 
 
-@pytest.mark.skipif(not _IS_WIN, reason="Job Objects sind Windows-only")
+@pytest.mark.skipif(not _IS_WIN, reason="Job objects are Windows-only")
 async def test_factory_returns_real_impl_on_windows() -> None:
-    """WindowsJobObject() liefert auf Win32 den Win32-Impl, nicht den No-Op."""
+    """WindowsJobObject() returns the Win32 impl on Win32, not the no-op."""
     job = WindowsJobObject("factory-test")
     try:
         assert type(job).__name__ == "_Win32JobObjectImpl"
@@ -62,29 +62,29 @@ async def test_factory_returns_real_impl_on_windows() -> None:
         await job.close()
 
 
-@pytest.mark.skipif(not _IS_WIN, reason="Job Objects sind Windows-only")
+@pytest.mark.skipif(not _IS_WIN, reason="Job objects are Windows-only")
 async def test_close_kills_assigned_process() -> None:
-    """Spawn → assign → close → process ist weg (per psutil)."""
+    """Spawn → assign → close → process is gone (per psutil)."""
     psutil = pytest.importorskip("psutil")
 
-    # Langlebiger Sleeper — laeuft 60s wenn nicht gekillt.
-    proc = subprocess.Popen(  # noqa: S603 — kontrollierte args
+    # Long-lived sleeper — runs 60s if not killed.
+    proc = subprocess.Popen(  # noqa: S603 — controlled args
         [sys.executable, "-c", "import time; time.sleep(60)"],
         creationflags=(
             _CREATE_BREAKAWAY_FROM_JOB | _CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP
         ),
     )
     try:
-        # Warten bis der Subprocess wirklich existiert
+        # Wait until the subprocess actually exists
         await asyncio.sleep(0.1)
-        assert psutil.pid_exists(proc.pid), "Subprocess sollte gestartet sein"
+        assert psutil.pid_exists(proc.pid), "Subprocess should have started"
 
         job = WindowsJobObject("kill-on-close-test")
         job.assign(proc.pid)
-        # Schliessen sollte den Prozess atomar killen
+        # Closing should atomically kill the process
         await job.close()
 
-        # Bis zu 2s warten bis OS reaped — normalerweise <100ms
+        # Wait up to 2s for the OS to reap — usually <100ms
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline:
             if proc.poll() is not None:
@@ -92,33 +92,33 @@ async def test_close_kills_assigned_process() -> None:
             await asyncio.sleep(0.05)
 
         assert proc.poll() is not None, (
-            "Process haette von Job-Close gekillt werden muessen"
+            "Process should have been killed by job close"
         )
     finally:
-        # Sicherheitsnetz falls Test-Logik fehlschlug
+        # Safety net in case the test logic failed
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=2)
 
 
-@pytest.mark.skipif(not _IS_WIN, reason="Job Objects sind Windows-only")
+@pytest.mark.skipif(not _IS_WIN, reason="Job objects are Windows-only")
 async def test_assign_after_close_raises() -> None:
-    """assign() nach close() wirft RuntimeError statt silent zu schlucken."""
+    """assign() after close() raises RuntimeError instead of swallowing it silently."""
     job = WindowsJobObject("closed-test")
     await job.close()
-    with pytest.raises(RuntimeError, match="schon geschlossen"):
+    with pytest.raises(RuntimeError, match="already closed"):
         job.assign(1234)
 
 
-@pytest.mark.skipif(not _IS_WIN, reason="Job Objects sind Windows-only")
+@pytest.mark.skipif(not _IS_WIN, reason="Job objects are Windows-only")
 async def test_close_is_idempotent() -> None:
     job = WindowsJobObject("idempotent-test")
     await job.close()
-    await job.close()  # darf nicht raisen
+    await job.close()  # must not raise
     assert job.closed
 
 
-@pytest.mark.skipif(not _IS_WIN, reason="Job Objects sind Windows-only")
+@pytest.mark.skipif(not _IS_WIN, reason="Job objects are Windows-only")
 async def test_async_context_manager_closes_on_exit() -> None:
     psutil = pytest.importorskip("psutil")
     proc = subprocess.Popen(  # noqa: S603
@@ -133,7 +133,7 @@ async def test_async_context_manager_closes_on_exit() -> None:
             job.assign(proc.pid)
             assert not job.closed
 
-        # Nach dem with-Block: Prozess muss tot sein
+        # After the with block: process must be dead
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline:
             if proc.poll() is not None:
