@@ -197,6 +197,11 @@ if [ "$status" -ne 0 ]; then
         echo "  See the diff above. Fix requirements.in, then regenerate the lockfile:"
         echo "    uv pip compile --universal --generate-hashes --python-version 3.11 --output-file=requirements.txt requirements.in"
     fi
+    if [ "${lockfile_hit:-0}" -ne 0 ]; then
+        echo "pre-push BLOCKED: LOCKFILE gate (requirements.txt not universal or has GPU/CUDA/torch wheels)."
+        echo "  See the findings above. Regenerate the platform-universal lockfile with:"
+        echo "    uv pip compile --universal --generate-hashes --python-version 3.11 --output-file=requirements.txt requirements.in"
+    fi
     echo "Bypass once with:  git push --no-verify   (layer-3 CI is the backstop)."
 fi
 exit "$status"
