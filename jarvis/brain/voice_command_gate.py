@@ -38,7 +38,7 @@ _PROVIDER_ALIASES = (
 # between the verb and the target (added 2026-06-08). Without that filler,
 # "switch the brain provider to gemini" / "wechsel den Brain-Provider auf X"  # i18n-allow: quoted German input example
 # fell through to the router LLM, which (told it had "no authority" to switch)
-# refused with "keine Berechtigung" ("no permission"). A still-strict gate: it ends in a known
+# refused with "keine Berechtigung" ("no permission"). A still-strict gate: it ends in a known  # i18n-allow: quoted German runtime phrase
 # provider alias with a word boundary, so harmless sentences never match.
 # The German imperative paradigm needs two stems: "wechsel" and "wechsle".
 _PROVIDER_PATTERN = re.compile(
@@ -54,7 +54,7 @@ _PROVIDER_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Cancel: "stopp", "abbruch", "abbrechen", "cancel", "jarvis stopp" — only at
+# Cancel: "stopp", "abbruch", "abbrechen", "cancel", "jarvis stopp" — only at  # i18n-allow: quoted German cancel-command examples
 # sentence start OR preceded by "jarvis", to avoid catching harmless phrases
 # like "stopp doch mal kurz".
 _CANCEL_PATTERN = re.compile(
@@ -84,7 +84,7 @@ _FAST_PATTERNS = (
 #   (c) an OUTPUT verb (antwort/respond/reply/answer/rede/set/stell/mach) plus a
 #       directional preposition (auf/in/zu/to <lang>).
 # So "wie heißt das auf Englisch?", "ich spreche Englisch", "auf Deutsch klingt  # i18n-allow: quoted German input examples that must NOT match
-# das besser", "erzähl mir was auf Englisch" still fall through to the brain.
+# das besser", "erzähl mir was auf Englisch" still fall through to the brain.  # i18n-allow: quoted German input example
 _LANG_ALIASES: dict[str, str] = {
     "englisch": "en", "english": "en",
     "deutsch": "de", "german": "de",
@@ -92,10 +92,10 @@ _LANG_ALIASES: dict[str, str] = {
     "automatisch": "auto", "automatik": "auto", "automatic": "auto", "auto": "auto",
 }
 # (a) Unambiguous change verbs — incl. German separable forms ("umändern",  # i18n-allow: quoted German verb-form examples
-# "umstellen") whose "um" prefix breaks a plain "\bänder" boundary.
+# "umstellen") whose "um" prefix breaks a plain "\bänder" boundary.  # i18n-allow: quoted German verb-form example
 _LANG_CHANGE_VERB = re.compile(
     r"\b(?:um(?:stell|schalt|änder|aender|stellung)\w*|wechsel\w*|wechsle"  # i18n-allow: German change-verb input-matching data
-    r"|änder\w*|aender\w*|switch\w*|change\w*)\b",
+    r"|änder\w*|aender\w*|switch\w*|change\w*)\b",  # i18n-allow: German change-verb input-matching data
     re.IGNORECASE,
 )
 # (b) Imperative speak verbs — match directly (no preposition needed):
