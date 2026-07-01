@@ -52,13 +52,11 @@ _TIME_JOIN_OCLOCK: dict[str, str] = {"de": " Uhr", "en": " o'clock", "es": " en 
 _TIME_RE = re.compile(r"\b(\d{1,2}):(\d{2})\b(\s*Uhr\b)?")
 # A number token: a digit, or a run of digits possibly carrying group/decimal
 # separators, always ending on a digit so a trailing "." / "," stays as
-# punctuation. Letter-adjacent digits are skipped (a lookbehind/lookahead for a
-# Unicode letter) so an identifier like "abc123def456", "cp1252", or "utf8" is
-# left intact — only a free-standing number is spoken.
-_LETTER = r"[^\W\d_]"
-_NUMBER_RE = re.compile(
-    rf"(?<!{_LETTER})(?:\d[\d.,]*\d|\d)(?!{_LETTER})"
-)
+# punctuation. The token must not touch another word character (``\w`` = letter,
+# digit, or underscore) on either side, so a digit embedded in an identifier
+# ("abc123def456", "cp1252", "utf8") is left fully intact — only a free-standing
+# number is spoken.
+_NUMBER_RE = re.compile(r"(?<!\w)(?:\d[\d.,]*\d|\d)(?!\w)")
 
 
 def _norm_lang(language: str | None) -> str:

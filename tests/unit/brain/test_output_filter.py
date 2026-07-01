@@ -96,8 +96,10 @@ def test_tool_kw_pattern_does_not_break_harmless_python() -> None:
     """
     text = "Use print(x=1) to debug."
     result = scrub_for_voice(text)
-    # 'print' ist nicht in TOOL_NAMES — bleibt erhalten
-    assert "print(x=1)" in result.cleaned
+    # 'print' ist nicht in TOOL_NAMES — der Aufruf bleibt erhalten (die Ziffer
+    # wird nur fuer die Sprachausgabe ausgeschrieben: "print(x=eins)").
+    assert "print(x=" in result.cleaned
+    assert "debug" in result.cleaned
 
 
 def test_stacktrace_is_replaced_with_fallback_phrase() -> None:
