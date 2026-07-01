@@ -1355,7 +1355,7 @@ class WebServer:
                 ErrorOccurred(
                     layer="ui.web.terminal",
                     error_type="ShellNotFound",
-                    message=f"Shell {shell_id!r} nicht installiert",
+                    message=f"Shell {shell_id!r} not installed",
                     recoverable=True,
                     source_layer="ui.web.terminal",
                 )
@@ -1417,8 +1417,8 @@ class WebServer:
                 source_layer="ui.web.terminal",
             )
         )
-        # Direkte Antwort-Frame mit terminal_id, damit das Frontend mehrere
-        # parallele Spawn-Requests eindeutig zuordnen kann.
+        # Direct response frame with terminal_id, so the frontend can
+        # unambiguously match up multiple parallel spawn requests.
         ws = self._clients.get(session_id)
         if ws is not None:
             async with send_lock:
@@ -1456,12 +1456,12 @@ class WebServer:
                     )
                 buf = ""
             elif ch in ("\x7f", "\b"):
-                # Backspace — letztes Zeichen aus Buffer entfernen
+                # Backspace — remove the last character from the buffer
                 buf = buf[:-1]
             elif ch >= " ":
                 buf += ch
-            # Andere Control-Chars (Ctrl-C etc.) ignorieren wir im Buffer.
-        # Memory-Cap fuer extrem lange Pasted-Lines.
+            # We ignore other control chars (Ctrl-C etc.) in the buffer.
+        # Memory cap for extremely long pasted lines.
         if len(buf) > 4096:
             buf = buf[-4096:]
         self._pty_input_buffers[terminal_id] = buf
@@ -1537,9 +1537,9 @@ class WebServer:
             "h1{font-weight:500;font-size:18px;margin:0 0 12px}"
             "p{margin:0;color:#9aa3ad;font-size:14px;line-height:1.5}</style>"
             "</head><body><main>"
-            "<h1>Jarvis startet…</h1>"
-            "<p>Frontend wird gerade gebaut oder neu geladen. "
-            "Diese Seite aktualisiert sich automatisch.</p>"
+            "<h1>Jarvis is starting…</h1>"
+            "<p>The frontend is currently being built or reloaded. "
+            "This page refreshes automatically.</p>"
             "</main></body></html>"
         )
         return HTMLResponse(
