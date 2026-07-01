@@ -1612,13 +1612,13 @@ class WebServer:
             while not server.started:
                 if asyncio.get_running_loop().time() > deadline:
                     raise TimeoutError(
-                        f"uvicorn server auf {host}:{resolved_port} nicht in 5s ready"
+                        f"uvicorn server on {host}:{resolved_port} not ready within 5s"
                     )
                 if self._serve_task.done():
                     exc = self._serve_task.exception()
                     if exc is not None:
                         raise exc
-                    raise RuntimeError("uvicorn.Server.serve() beendet vor 'started'")
+                    raise RuntimeError("uvicorn.Server.serve() exited before 'started'")
                 await asyncio.sleep(0.05)
         else:
             # Bootstrap fast-boot path: a separate server already serves on the
@@ -1628,14 +1628,14 @@ class WebServer:
 
         _boot_mark("uvicorn_serve")
 
-        # Phase-6 Mission-Stack — MissionManager mit DB-Path aus dem
-        # Memory-data_dir der Config (selber Ordner wie data/jarvis.db,
-        # eigene Datei data/missions.db). Recovery laeuft im start().
+        # Phase-6 mission stack — MissionManager with a DB path derived from
+        # the config's memory data_dir (same folder as data/jarvis.db, its
+        # own file data/missions.db). Recovery runs in start().
         try:
             await self._init_mission_stack()
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "MissionManager-Init fehlgeschlagen — /api/missions liefert 503"
+                "MissionManager init failed — /api/missions returns 503"
             )
         _boot_mark("mission_stack")
 
@@ -1669,7 +1669,7 @@ class WebServer:
             await self._init_wiki_integration()
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "WikiIntegration-Init fehlgeschlagen — wiki write-wiring inaktiv"
+                "WikiIntegration init failed — wiki write-wiring inactive"
             )
         _boot_mark("wiki_integration")
 
@@ -1692,49 +1692,49 @@ class WebServer:
             self._init_wiki_watcher()
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "WikiWatcher-Init fehlgeschlagen — desktop wiki live-reload inaktiv"
+                "WikiWatcher init failed — desktop wiki live-reload inactive"
             )
         _boot_mark("wiki_watcher")
 
-        # Voice-Session-Recorder + Store fuer die Transkriptions-View.
-        # Sub-Setup: laeuft sync (SQLite-WAL, kein async-Loop noetig), wird
-        # aber im start() ausgefuehrt damit der EventBus garantiert lebt.
+        # Voice-session recorder + store for the transcription view.
+        # Sub-setup: runs sync (SQLite-WAL, no async loop needed), but is
+        # run in start() so the EventBus is guaranteed to be alive.
         try:
             self._init_session_stack()
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "SessionRecorder-Init fehlgeschlagen — /api/sessions liefert 503"
+                "SessionRecorder init failed — /api/sessions returns 503"
             )
         _boot_mark("session_stack")
 
-        # Phase-5 Task-Stack (Aufgaben-View). TaskStore liegt additiv in
-        # data/jarvis.db (ADR-0003), Scheduler laeuft als asyncio-Loop, der
-        # vom CancelToken im stop() beendet wird.
+        # Phase-5 task stack (tasks view). TaskStore lives additively in
+        # data/jarvis.db (ADR-0003); the scheduler runs as an asyncio loop
+        # terminated by the CancelToken in stop().
         try:
             await self._init_task_stack()
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
-                "TaskStack-Init fehlgeschlagen — /api/tasks liefert 503"
+                "TaskStack init failed — /api/tasks returns 503"
             )
         _boot_mark("task_stack")
 
-        # Skill-Hot-Reload-Watcher starten, sobald die Loop stabil laeuft.
+        # Start the skill hot-reload watcher once the loop is stable.
         if self._skill_registry is not None:
             try:
                 self._skill_registry.start_watcher(asyncio.get_running_loop())
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "SkillRegistry-Watcher-Start fehlgeschlagen — kein Hot-Reload"
+                    "SkillRegistry watcher start failed — no hot-reload"
                 )
 
-        # Doc-Hot-Reload-Watcher analog. watchdog observiert pro Root einen
-        # eigenen Observer-Thread.
+        # Doc hot-reload watcher, likewise. watchdog observes its own
+        # observer thread per root.
         if self._doc_registry is not None:
             try:
                 self._doc_registry.start_watcher(asyncio.get_running_loop())
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "DocRegistry-Watcher-Start fehlgeschlagen — kein Hot-Reload"
+                    "DocRegistry watcher start failed — no hot-reload"
                 )
 
         # CLI-Registry asynchron bootstrappen — probet alle Katalog-CLIs und
