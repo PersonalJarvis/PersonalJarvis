@@ -5,8 +5,8 @@ import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
 
 /**
- * Kompakter Brain-Provider-Switcher für die Debug-View. Zieht die Liste
- * dynamisch aus /api/providers — keine hartcodierten Namen mehr.
+ * Compact brain-provider switcher for the debug view. Pulls the list
+ * dynamically from /api/providers — no more hardcoded names.
  */
 export function ProviderSwitcher() {
   const t = useT();
