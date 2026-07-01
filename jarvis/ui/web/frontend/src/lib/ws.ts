@@ -82,7 +82,7 @@ export class WSClient {
           try {
             sub(parsed);
           } catch {
-            // subscriber-Errors duerfen den Client nicht killen
+            // subscriber errors must not kill the client
           }
         }
       } catch {
@@ -106,8 +106,8 @@ export class WSClient {
     this.stopPing();
     this.pingTimer = setInterval(() => {
       if (this.ws?.readyState === WebSocket.OPEN) {
-        // Backend uses receive_json + WSCommand discriminator — ein nackter
-        // "ping"-String würde JSONDecodeError auslösen und die Session kippen.
+        // Backend uses receive_json + WSCommand discriminator — a bare
+        // "ping" string would trigger a JSONDecodeError and tip over the session.
         this.ws.send(JSON.stringify({ type: "command", action: "ping", payload: {} }));
       }
     }, PING_INTERVAL);

@@ -27,13 +27,13 @@ describe("useEventStore.pushMessage idempotency", () => {
   });
 
   it("renders a re-delivered message (same id) only once", () => {
-    const m = msg("1700000000000-abcd1234", "Hallo, wie kann ich dir helfen?");
+    const m = msg("1700000000000-abcd1234", "Hallo, wie kann ich dir helfen?"); // i18n-allow: simulated German assistant chat message is the content under test
     useEventStore.getState().pushMessage(m);
     useEventStore.getState().pushMessage(m); // duplicate WS frame / reconnect replay
 
     expect(useEventStore.getState().messages).toHaveLength(1);
     expect(useEventStore.getState().messages[0]?.content).toBe(
-      "Hallo, wie kann ich dir helfen?",
+      "Hallo, wie kann ich dir helfen?", // i18n-allow: simulated German assistant chat message is the content under test
     );
   });
 
