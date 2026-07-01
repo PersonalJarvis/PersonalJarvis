@@ -93,6 +93,7 @@ export function TurnCard({ turn, spoken = [] }: Props) {
       savedPath
         ? `${t("turn_card.saved_to_downloads")} ${savedPath}`
         : `${t("turn_card.downloaded_as")} ${filename}`,
+      savedPath ? { filePath: savedPath, filename } : undefined,
     );
   }, [turn, spoken, pushToast, t, native]);
 

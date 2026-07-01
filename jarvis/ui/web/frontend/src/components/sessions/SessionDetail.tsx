@@ -146,6 +146,7 @@ export function SessionDetail({ detail, loading, error }: Props) {
           savedPath
             ? `${t("session_detail.saved_to_downloads")} ${savedPath}`
             : `${t("session_detail.downloaded_as")} ${filename}`,
+          savedPath ? { filePath: savedPath, filename } : undefined,
         );
       } catch (e) {
         pushToast(
