@@ -15,10 +15,12 @@ export const SceneWrap: React.FC<{
   children: React.ReactNode;
 }> = ({ durationInFrames, fadeIn = 18, fadeOut = 20, pad = true, children }) => {
   const frame = useCurrentFrame();
-  const opacity = Math.min(
-    lerp(frame, [0, fadeIn], [0, 1], EASE.outExpo),
-    lerp(frame, [durationInFrames - fadeOut, durationInFrames], [1, 0], EASE.inCubic),
-  );
+  const inO = lerp(frame, [0, fadeIn], [0, 1], EASE.outExpo);
+  const outO =
+    fadeOut > 0
+      ? lerp(frame, [durationInFrames - fadeOut, durationInFrames], [1, 0], EASE.inCubic)
+      : 1;
+  const opacity = Math.min(inO, outO);
   const y = lerp(frame, [0, fadeIn], [16, 0], EASE.outExpo);
 
   return (

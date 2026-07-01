@@ -1,6 +1,6 @@
-import { AbsoluteFill, Img, spring, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, spring, useCurrentFrame, useVideoConfig } from "remotion";
 import { Ghost, GoldRule } from "../components/Ghost";
-import { COLORS, EASE, lerp, MONO } from "../theme";
+import { COLORS, DISPLAY, EASE, lerp, MONO } from "../theme";
 
 export const S6Outro: React.FC = () => {
   const frame = useCurrentFrame();
@@ -23,23 +23,27 @@ export const S6Outro: React.FC = () => {
         <Ghost size={168} glow={34} />
       </div>
 
-      {/* real gold wordmark — screen blend drops its black bg onto the charcoal stage */}
-      <Img
-        src={staticFile("wordmark.png")}
+      {/* gold wordmark in the brand display font (Space Grotesk) — crisp, no
+          raster seam, blends cleanly onto the charcoal stage. */}
+      <div
         style={{
-          width: 760,
-          height: "auto",
+          fontFamily: DISPLAY,
+          fontWeight: 700,
+          fontSize: 92,
+          letterSpacing: 6,
+          textTransform: "uppercase",
           opacity: markO,
           transform: `translateY(${markY}px)`,
-          // screen drops the banner's black field onto the charcoal stage; the
-          // radial mask feathers the outer glow box so there is no visible seam.
-          mixBlendMode: "screen",
-          maskImage:
-            "radial-gradient(72% 82% at 50% 50%, #000 52%, transparent 100%)",
-          WebkitMaskImage:
-            "radial-gradient(72% 82% at 50% 50%, #000 52%, transparent 100%)",
+          backgroundImage: `linear-gradient(180deg, #ffe9b0 0%, ${COLORS.gold} 52%, #b98a2e 100%)`,
+          WebkitBackgroundClip: "text",
+          backgroundClip: "text",
+          color: "transparent",
+          textShadow: "0 0 34px rgba(231,196,110,0.28)",
+          filter: "drop-shadow(0 2px 10px rgba(0,0,0,0.5))",
         }}
-      />
+      >
+        Personal Jarvis
+      </div>
 
       <div style={{ marginTop: 18, marginBottom: 22 }}>
         <GoldRule width={ruleW} />

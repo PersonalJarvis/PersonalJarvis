@@ -38,7 +38,11 @@ export const WikiVideo: React.FC = () => {
         const dur = slot.dur + (isLast ? 0 : OVERLAP);
         return (
           <Sequence key={s.key} from={slot.from} durationInFrames={dur}>
-            <SceneWrap durationInFrames={dur} pad={s.pad ?? true}>
+            <SceneWrap
+              durationInFrames={dur}
+              pad={s.pad ?? true}
+              fadeOut={isLast ? 0 : undefined}
+            >
               {s.comp}
             </SceneWrap>
           </Sequence>

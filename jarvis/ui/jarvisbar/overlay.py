@@ -91,48 +91,6 @@ def _primary_work_area() -> tuple[int, int, int, int] | None:
         return None
 
 
-def _pin_bar_window_unaware() -> None:
-    """Pin the bar's Tk window to per-window DPI-UNAWARE (Windows only).
-
-    The bar must keep the exact size + look it has always had: a small pill that
-    Windows bitmap-UPSCALES to a comfortable physical size on a scaled display.
-    That upscaling only happens for a DPI-UNAWARE window. The recurring bug: the
-    process is made DPI-AWARE — by ``ensure_dpi_awareness`` above and, at runtime,
-    by pywebview's ``SetProcessDPIAware`` inside ``webview.start()`` — and an
-    awareness change strips the upscaling off any window that merely INHERITS the
-    process default. The already-visible bar then snaps to raw pixels (~2/3 size)
-    and jumps position mid-session; only a restart cures it.
-
-    Giving THIS thread an EXPLICIT ``DPI_AWARENESS_CONTEXT_UNAWARE`` before
-    ``tk.Tk()`` bakes that context into the bar window for its lifetime. Because
-    the process is already aware (``ensure_dpi_awareness`` ran first), the
-    window's context genuinely DIFFERS from the process, so the upscaling is
-    pinned: a later process-wide flip can no longer strip it. Verified live — a
-    107x48 window pinned this way sits at 161x72 physical and STAYS 161x72 across
-    ``SetProcessDPIAware``. Geometry and pointer events both stay in the one
-    virtualized space, so dragging stays glued to the cursor. The renderer is not
-    touched: the bar looks identical, it just stops shrinking.
-
-    No-op off Windows, under pytest (never mutate the test runner's thread), and
-    on any Windows without the per-thread API; never blocks the bar on failure.
-    """
-    if sys.platform != "win32":
-        return
-    if "pytest" in sys.modules:  # don't mutate the test runner thread's DPI context
-        return
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        user32 = ctypes.windll.user32
-        user32.SetThreadDpiAwarenessContext.restype = wintypes.HANDLE
-        user32.SetThreadDpiAwarenessContext.argtypes = [wintypes.HANDLE]
-        # DPI_AWARENESS_CONTEXT_UNAWARE is the sentinel handle value ((HANDLE)-1).
-        user32.SetThreadDpiAwarenessContext(wintypes.HANDLE(-1))
-    except Exception:  # noqa: BLE001 — never block the bar on a DPI hiccup
-        log.debug("jarvisbar DPI unaware-pin skipped", exc_info=True)
-
-
 class JarvisBarOverlay:
     def __init__(
         self,
@@ -277,30 +235,22 @@ class JarvisBarOverlay:
 
         from PIL import ImageTk  # noqa: F401 — fail fast here if Pillow missing
 
-        # DPI handling — two steps that TOGETHER keep the bar at its normal size
-        # and stop it shrinking/jumping mid-session, WITHOUT changing how it looks:
-        #
-        # 1. Make the PROCESS DPI-aware. The bar boots in its own thread, often
-        #    before anything else claims awareness; doing it here means pywebview's
-        #    later ``SetProcessDPIAware`` (inside ``webview.start()``) is a no-op
-        #    rather than a RUNTIME awareness flip. Idempotent, no-op off Windows.
-        # 2. Pin THIS thread's window to per-window UNAWARE (``_pin_bar_window_``
-        #    ``unaware``). With the process aware but the WINDOW explicitly
-        #    unaware, Windows bitmap-upscales the small pill to its normal physical
-        #    size — the exact look it has always had, renderer untouched — and,
-        #    because the window's context differs from the aware process, that
-        #    upscaling is PINNED: a later process-wide flip can no longer strip it.
-        #    This is the fix for the recurring "bar shrank to ~2/3 and jumped, only
-        #    a restart helps" bug. Geometry and pointer events stay in one
-        #    virtualized space, so only the user drags it (and it follows the
-        #    cursor); it never repositions itself.
+        # Per-monitor DPI awareness MUST be set before THIS surface's Tk root is
+        # created — exactly like the orb (ui/orb/overlay.py). Without it, on a
+        # scaled display (e.g. 150%) the window's geometry coordinate space and
+        # the pointer-event space (``event.x_root``) drift apart, so dragging the
+        # bar makes it run AWAY from the cursor toward the bottom-right and become
+        # uncontrollable (the HiDPI "drag-teleport"). The bar boots in its own
+        # thread, often before any other code has set process DPI awareness, so
+        # it must assert it here itself. ``ensure_dpi_awareness`` is idempotent
+        # and a no-op off Windows, so this is safe even when the process is
+        # already aware.
         try:
             from jarvis.core.win32_dpi import ensure_dpi_awareness
 
             ensure_dpi_awareness()
         except Exception:  # noqa: BLE001 — never block the bar on a DPI hiccup
             log.debug("jarvisbar DPI-awareness setup skipped", exc_info=True)
-        _pin_bar_window_unaware()
 
         self._tk_thread_id = threading.get_ident()
         self._renderer = renderer.JarvisBarRenderer(accent=self._accent)
