@@ -1,14 +1,14 @@
-﻿"""FastAPI + WebSocket-Server für die Desktop-UI (Phase 1a).
+﻿"""FastAPI + WebSocket server for the desktop UI (Phase 1a).
 
-Verantwortung:
-- REST-Endpoints für Health, Config-Read-Only, Plugin-Discovery, Debug.
-- WebSocket `/ws` mit Welcome-Frame, Bus-Forwarding, Input-Validation.
-- Optional Static-Mount für den React-Build unter `dist/` (Production-Mode).
+Responsibilities:
+- REST endpoints for health, config read-only, plugin discovery, debug.
+- WebSocket `/ws` with welcome frame, bus forwarding, input validation.
+- Optional static mount for the React build under `dist/` (production mode).
 
-Explizit NICHT hier:
-- Channel-Adapter-Logik (in `jarvis/channels/web.py`).
-- React-Build selbst (Agent 5).
-- Single-Instance-Focus-Logik (nur Placeholder-Endpoint).
+Explicitly NOT here:
+- Channel-adapter logic (in `jarvis/channels/web.py`).
+- The React build itself (Agent 5).
+- Single-instance focus logic (only a placeholder endpoint).
 """
 from __future__ import annotations
 
