@@ -89,6 +89,56 @@ async def test_very_quiet_wake_below_legacy_peak_gate_reaches_whisper() -> None:
             pass
 
 
+# The custom-word path is transcription + fuzzy match, so it is WORD-AGNOSTIC:
+# whatever the user types is transcribed and compared, never a fixed vocabulary.
+# This proves it across a deliberately diverse spread — a 3-char name (short-token
+# tolerance), long names, a German noun with an umlaut (diacritics folding), an
+# English noun, and a two-word "Hey X" phrase (prefix stripped) — including the
+# realistic case where the small model mishears one character.
+@pytest.mark.parametrize(
+    ("phrase", "transcript"),
+    [
+        ("Leo", "leo"),                 # 3-char name — short-token relaxed ratio
+        ("Ruben", "ruben"),             # name
+        ("Herz", "herz"),               # German common noun
+        ("Björn", "björn"),             # umlaut name — diacritics folded for match
+        ("Athena", "athena"),           # longer name
+        ("Computer", "computer"),       # English noun
+        ("Hey Zeus", "hey zeus"),       # two-word phrase, prefix stripped
+        ("Ruben", "ruhben"),            # small-model one-char mishearing still matches
+    ],
+)
+async def test_arbitrary_custom_wakes_are_word_agnostic(
+    phrase: str, transcript: str
+) -> None:
+    """ANY user-chosen wake word triggers at quiet volume — the level fix is
+    pegel-based (word-independent) and the matcher transcribes + fuzzy-compares
+    rather than using a fixed vocabulary. No word is special-cased."""
+    stt = _PhraseSTT(transcript)
+    wake = RollingWhisperWake(
+        stt,
+        pattern=compile_wake_matcher(phrase),
+        poll_interval_s=0.01,
+        cooldown_s=0.0,
+        save_debug_wavs=False,
+    )
+    src: asyncio.Queue = asyncio.Queue()
+    stop = asyncio.Event()
+    feeder = asyncio.create_task(_feed_until(src, stop, _const_chunk(295)))  # peak ~0.009
+    try:
+        kw = await asyncio.wait_for(_first_keyword(wake, src), timeout=3.0)
+        assert kw, f"{phrase!r} did not wake at quiet volume"
+        assert stt.calls >= 1, f"{phrase!r} window never reached Whisper"
+    finally:
+        stop.set()
+        await src.put(None)
+        feeder.cancel()
+        try:
+            await feeder
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+            pass
+
+
 @pytest.mark.parametrize(
     ("phrase", "transcript"),
     [

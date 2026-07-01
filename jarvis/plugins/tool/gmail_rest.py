@@ -172,9 +172,16 @@ class GmailRestTool:
         transport: Any | None = None,
         token_refresher: Callable[[], Awaitable[bool]] | None = None,
     ) -> None:
+        from ._http_pool import HttpClientPool
+
         self._token_provider = access_token_provider or _default_token_provider
         self._transport = transport
         self._refresher = token_refresher or _default_refresher
+        # Keep-alive pool: reuse one client (one warm TLS connection to Gmail)
+        # across list/get/send instead of a fresh handshake per request. The
+        # tool is built once per BrainManager, so the connection stays warm for
+        # the whole session (a read is list_messages + get_message = 2 hops).
+        self._pool = HttpClientPool(transport=transport)
 
     # -- internal helpers ---------------------------------------------------
 
@@ -216,18 +223,14 @@ class GmailRestTool:
         return await do_call(headers)
 
     async def _get(self, path: str, params: dict[str, Any], headers: dict[str, str]):
-        import httpx
-
-        async with httpx.AsyncClient(timeout=20.0, transport=self._transport) as client:
-            resp = await client.get(f"{_GMAIL_BASE}{path}", params=params, headers=headers)
+        client = self._pool.client()
+        resp = await client.get(f"{_GMAIL_BASE}{path}", params=params, headers=headers)
         resp.raise_for_status()
         return resp.json()
 
     async def _post(self, path: str, json_body: dict[str, Any], headers: dict[str, str]):
-        import httpx
-
-        async with httpx.AsyncClient(timeout=20.0, transport=self._transport) as client:
-            resp = await client.post(f"{_GMAIL_BASE}{path}", json=json_body, headers=headers)
+        client = self._pool.client()
+        resp = await client.post(f"{_GMAIL_BASE}{path}", json=json_body, headers=headers)
         resp.raise_for_status()
         return resp.json()
 
