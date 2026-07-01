@@ -40,7 +40,7 @@ BrainCallback = Callable[[str], Awaitable[str]]
 # registered harness (Welle-4 removal, ~92% hang; pyproject.toml registers only
 # open-interpreter / mcp-remote / python-script / screenshot). A "start a
 # subagent" turn then dispatched to a phantom harness and surfaced the raw
-# "Harness 'openclaw' nicht verfügbar" KeyError to voice. Heavy sub-agent work
+# "Harness 'openclaw' nicht verfügbar" KeyError to voice. Heavy sub-agent work  # i18n-allow: forensic quote of the actual historical German KeyError text
 # is ``spawn-worker`` (Mission-Manager → ClaudeDirectWorker); live desktop work
 # is ``computer-use``. The tool class itself still exists for the INTERNAL,
 # non-LLM local-action fast path (see ``_load_local_action_tools``, called
@@ -149,8 +149,9 @@ ROUTER_TOOLS = frozenset({
     # any GUI). The router previously had no honest desktop path — spawn-worker
     # runs in an isolated worktree (cannot touch the desktop) and the
     # dispatch-to-harness indirection was never described as desktop control, so
-    # the model refused or hallucinated a tool for "öffne ein Terminal". This
-    # tool delegates to the in-process computer-use harness; it is a direct
+    # the model refused or hallucinated a tool for the German "öffne ein Terminal"  # i18n-allow: quoted German input example
+    # ("open a terminal"). This tool delegates to the in-process
+    # computer-use harness; it is a direct
     # safe-gated action (per-action risk gating inside the loop, ADR-0008),
     # NOT a spawn — so it never enters a worker tool-set (AP-5/AP-14). See
     # ADR-0011 amendment "Computer-Use Router Tool".
@@ -334,8 +335,8 @@ def _load_tools_for_tier(
 
     if tier != "router":
         raise ValueError(
-            f"Unbekannter Tier {tier!r}. Sub-Jarvis-Tier wurde in Welle 4 "
-            f"durch die OpenClaw-Bridge ersetzt — nur 'router' bleibt."
+            f"Unknown tier {tier!r}. The Sub-Jarvis tier was replaced by the "
+            f"OpenClaw bridge in Welle 4 — only 'router' remains."
         )
 
     allow = ROUTER_TOOLS
@@ -464,7 +465,7 @@ def _load_tools_for_tier(
             else:
                 tools[inst.name] = inst
         except Exception as exc:  # noqa: BLE001
-            log.debug("Tool %s nicht ladbar: %s", ep.name, exc)
+            log.debug("Tool %s not loadable: %s", ep.name, exc)
 
     # Phase 7.3 — self-mod tools are not discoverable via entry_points
     # (they require a shared state writer + PendingMutationStore). Plan-§AD-2:
