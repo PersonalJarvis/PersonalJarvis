@@ -223,12 +223,17 @@ class WakeWordPlan:
     needs_local_whisper: bool    # True only for the stt_match path
     degraded: bool               # True if we could not honour the request
     message: str                 # English status string for logs + UI
-    # Whether an OpenWakeWord hit needs the second-stage STT prefix check. This
-    # is ONLY for the jarvis family (the hey_jarvis model also fires on bare
-    # "Jarvis" — BUG-009). For a specific pretrained model (alexa/mycroft/
-    # rhasspy) or a custom model, the model IS the discriminator and the German-
-    # pinned STT would otherwise mis-transcribe the wake word and reject valid
-    # hits. So verify_prefix is True only when the matcher is the jarvis default.
+    # Whether an OpenWakeWord hit needs the second-stage STT prefix check.
+    # True for the jarvis family (the hey_jarvis model also fires on bare
+    # "Jarvis" — BUG-009) AND for user-trained custom_onnx models (live
+    # forensic 2026-07-01: a few-shot/synthetic-data model scored breath,
+    # ambient noise and arbitrary speech up to 1.000 — several false
+    # activations per minute; the verify transcript, matched against the
+    # phrase's own sound-folded fuzzy matcher, is the real discriminator).
+    # False only for a specific PRETRAINED model (alexa/mycroft/rhasspy):
+    # those are trained on large curated datasets, ARE their own
+    # discriminator, and the STT would mis-transcribe the foreign brand word
+    # and wrongly reject valid hits.
     verify_prefix: bool
 
 
@@ -276,7 +281,14 @@ def resolve_wake_plan(cfg: Any, *, local_whisper_available: bool) -> WakeWordPla
                 needs_local_whisper=False,
                 degraded=False,
                 message=f"Custom ONNX wake model: {custom_path}",
-                verify_prefix=matcher.is_jarvis_default,
+                # ALWAYS verify custom-model hits with the STT prefix gate.
+                # Live forensic 2026-07-01: trusting the trained model alone
+                # ("it IS its own discriminator") caused a false-positive storm
+                # — scores up to 1.000 on breath/ambient/other speech. The
+                # verifier matches against this phrase's sound-folded fuzzy
+                # matcher, so it works for ANY configured wake word and
+                # tolerates ASR spelling drift ("Niko" for "Nico").
+                verify_prefix=True,
             )
         log.warning("Custom wake ONNX not found: %s", custom_path)
         # fall through — try STT match, else degrade.

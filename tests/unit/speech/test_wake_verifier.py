@@ -131,9 +131,13 @@ async def test_verify_returns_false_when_transcript_is_bare_jarvis() -> None:
 async def test_verify_returns_false_when_transcript_is_empty() -> None:
     stt = _FakeSTT("")
 
-    matched, _ = await verify_wake_with_stt(stt, PCM_2S_16K)
+    matched, transcript = await verify_wake_with_stt(stt, PCM_2S_16K)
 
     assert matched is False
+    # A SUCCESSFUL transcription that heard nothing is "", never None — the
+    # caller must be able to tell "no speech in the audio" (suppress a
+    # breath-triggered custom-model hit) from "the STT is down" (degrade open).
+    assert transcript == ""
 
 
 async def test_verify_returns_false_when_pcm_is_empty() -> None:
@@ -153,9 +157,13 @@ async def test_verify_returns_false_on_persistent_stt_exception() -> None:
     OWW hit so the loop re-arms."""
     stt = _FakeSTT("ignored", raises=RuntimeError("groq 503"))
 
-    matched, _ = await verify_wake_with_stt(stt, PCM_2S_16K)
+    matched, transcript = await verify_wake_with_stt(stt, PCM_2S_16K)
 
     assert matched is False
+    # An STT OUTAGE reports transcript=None (not "") so the caller can degrade
+    # open on a dead provider (AP-22) while still suppressing a real
+    # empty-transcription on a breath-triggered custom-model hit.
+    assert transcript is None
     # The retry means a persistent error is attempted more than once.
     assert len(stt.calls) >= 2
 

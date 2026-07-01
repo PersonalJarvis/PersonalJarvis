@@ -79,20 +79,26 @@ async def verify_wake_with_stt(
     sample_rate: int = 16_000,
     language: str | None = "de",
     matcher: Any | None = None,
-) -> tuple[bool, str]:
+) -> tuple[bool, str | None]:
     """Transcribe ``pcm_bytes`` and check the strict wake prefix.
 
     Returns ``(matched, transcript_text)``. ``matched`` is True only when the
     transcript contains the full "hey/hi/hallo + jarv" pattern.
 
+    The transcript distinguishes two non-matching cases the caller must treat
+    differently: ``""`` means the STT WORKED and heard no speech (evidence of a
+    breath/noise-triggered false fire on a weak custom model → suppress), while
+    ``None`` means the STT itself failed after retries (a provider outage →
+    the caller may degrade open so a dead provider never bricks the wake,
+    AP-22).
+
     Robustness contract (AD-OE6): never raise. A transient STT failure (Groq
     429 / 5xx / timeout) is retried once with a short backoff so a real
     "Hey Jarvis" is not silently dropped when the cloud STT is momentarily
-    rate-limited mid-session. Empty PCM, a persistently failing STT, or a clear
-    non-matching transcript collapse to ``(False, "")`` so the wake loop simply
-    re-arms — it is always better to ignore one borderline wake than to crash
-    the listener with a 503, and a Groq outage must not turn every ambient OWW
-    false-positive into an activation.
+    rate-limited mid-session. Empty PCM and a clear non-matching transcript
+    collapse to ``(False, "")``; a persistently failing STT to ``(False,
+    None)`` — the wake loop simply re-arms in every case, it is always better
+    to ignore one borderline wake than to crash the listener with a 503.
     """
     if not pcm_bytes:
         return False, ""
@@ -122,7 +128,9 @@ async def verify_wake_with_stt(
             "wake-verify STT failed after %d attempts (%s) — suppressing this OWW hit",
             _WAKE_VERIFY_RETRIES + 1, last_exc,
         )
-        return False, ""
+        # None (not "") = STT OUTAGE: lets the caller degrade open on a dead
+        # provider (AP-22) while a genuine empty transcription stays "".
+        return False, None
     text = (getattr(transcript, "text", "") or "").strip()
     matched = transcript_has_hey_prefix(text, matcher)
     log.info(

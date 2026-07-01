@@ -55,13 +55,19 @@ def _bare_pipeline(
     *,
     require_hey_prefix: bool,
     utterance_stt: object | None,
+    wake_plan: object | None = None,
+    wake_matcher: object | None = None,
 ) -> SpeechPipeline:
     """Build a SpeechPipeline shell without running __init__ — the gate logic
-    only needs three attributes set, so we avoid the heavy provider wiring.
+    only needs a few attributes set, so we avoid the heavy provider wiring.
     """
     pipe = SpeechPipeline.__new__(SpeechPipeline)
     pipe._require_hey_prefix = require_hey_prefix
     pipe._utterance_stt = utterance_stt
+    if wake_plan is not None:
+        pipe._wake_plan = wake_plan
+    if wake_matcher is not None:
+        pipe._wake_matcher = wake_matcher
     return pipe
 
 
@@ -174,6 +180,95 @@ async def test_gate_degrades_open_when_stt_persistently_fails(monkeypatch) -> No
     monkeypatch.setattr(wv, "_WAKE_VERIFY_BACKOFF_S", 0.0, raising=False)
     stt = _RaisingSTT(RuntimeError("groq 503"))
     pipe = _bare_pipeline(require_hey_prefix=True, utterance_stt=stt)
+
+    assert await pipe._verify_oww_hit(PCM_2S_16K) is True
+    assert stt.calls >= 1
+
+
+# ---------------------------------------------------------------------------
+# custom_onnx hits: the verify transcript is the REAL discriminator.
+#
+# Live forensic 2026-07-01 (false-positive storm): a user-trained custom model
+# scored breath/ambient/other speech up to 1.000 and activated several times a
+# minute even at threshold 0.50, with NO second-stage check (verify_prefix was
+# False for custom models). The fix: custom_onnx hits run the STT verify against
+# the phrase's own fuzzy matcher, and — unlike the precise pretrained hey_jarvis
+# model — "the STT worked but heard no wake phrase" (empty transcript or a known
+# silence-hallucination) SUPPRESSES instead of degrading open, because this
+# model demonstrably fires on breath/noise. A genuine STT outage still degrades
+# open (AP-22: a dead provider must never brick the wake path).
+# ---------------------------------------------------------------------------
+
+
+def _custom_pipeline(stt: object | None) -> SpeechPipeline:
+    from jarvis.speech.wake_phrase import compile_wake_matcher
+
+    return _bare_pipeline(
+        require_hey_prefix=True,
+        utterance_stt=stt,
+        wake_plan=SimpleNamespace(engine="custom_onnx", verify_prefix=True),
+        wake_matcher=compile_wake_matcher("Hey Nico"),
+    )
+
+
+async def test_gate_custom_model_accepts_matching_phrase() -> None:
+    stt = _FakeSTT("hey nico wie spät ist es")  # i18n-allow
+    pipe = _custom_pipeline(stt)
+
+    assert await pipe._verify_oww_hit(PCM_2S_16K) is True
+    assert stt.calls == 1
+
+
+async def test_gate_custom_model_accepts_sound_folded_spelling() -> None:
+    """ASR spelling drift ("Niko" for "Nico") must still confirm the wake —
+    the matcher sound-folds, so verify-on-custom cannot re-break recall."""
+    stt = _FakeSTT("Hey Niko")
+    pipe = _custom_pipeline(stt)
+
+    assert await pipe._verify_oww_hit(PCM_2S_16K) is True
+
+
+async def test_gate_custom_model_rejects_other_speech() -> None:
+    """The exact reported bug: the model fires while the user is just talking.
+    A clear non-matching transcript must suppress the activation."""
+    stt = _FakeSTT("und dann habe ich ihm gesagt dass das morgen fertig wird")  # i18n-allow
+    pipe = _custom_pipeline(stt)
+
+    assert await pipe._verify_oww_hit(PCM_2S_16K) is False
+    assert stt.calls == 1
+
+
+async def test_gate_custom_model_rejects_empty_transcript(monkeypatch) -> None:
+    """The "fires out of nowhere" half of the bug: the model fires on breath /
+    noise, the verify STT works fine and hears NO speech. For a custom model an
+    empty transcript is evidence of a false fire — suppress, do not degrade open."""
+    import jarvis.speech.wake_verifier as wv
+
+    monkeypatch.setattr(wv, "_WAKE_VERIFY_BACKOFF_S", 0.0, raising=False)
+    stt = _FakeSTT("")
+    pipe = _custom_pipeline(stt)
+
+    assert await pipe._verify_oww_hit(PCM_2S_16K) is False
+    assert stt.calls == 1
+
+
+async def test_gate_custom_model_rejects_hallucination_boilerplate() -> None:
+    """Silence-hallucination boilerplate ("Vielen Dank.") on a custom-model hit
+    means the buffer held silence/noise, not the wake phrase — suppress."""
+    stt = _FakeSTT("Vielen Dank.")  # i18n-allow
+    pipe = _custom_pipeline(stt)
+
+    assert await pipe._verify_oww_hit(PCM_2S_16K) is False
+
+
+async def test_gate_custom_model_degrades_open_on_stt_outage(monkeypatch) -> None:
+    """A genuine STT outage (every attempt raises) still degrades open for
+    custom models — one dead provider must never brick the wake (AP-22)."""
+    import jarvis.speech.wake_verifier as wv
+
+    monkeypatch.setattr(wv, "_WAKE_VERIFY_BACKOFF_S", 0.0, raising=False)
+    stt = _RaisingSTT(RuntimeError("groq 503"))
+    pipe = _custom_pipeline(stt)
 
     assert await pipe._verify_oww_hit(PCM_2S_16K) is True
     assert stt.calls >= 1

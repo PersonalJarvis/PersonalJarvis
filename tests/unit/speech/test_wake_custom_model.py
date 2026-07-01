@@ -51,12 +51,16 @@ def test_custom_onnx_threshold_scales_strict_to_sensitive(tmp_path) -> None:
     assert 0.25 <= sensitive <= 0.35
 
 
-def test_custom_onnx_no_prefix_verify(tmp_path) -> None:
-    # A custom model IS its own discriminator — it must NOT run the German STT
-    # prefix re-verify (that path is only for the jarvis-family OWW model).
+def test_custom_onnx_requires_prefix_verify(tmp_path) -> None:
+    # Live forensic 2026-07-01 (false-positive storm): a user-trained custom
+    # model is a WEAK discriminator — it scored breath/ambient/other speech up
+    # to 1.000 and fired several times a minute even at threshold 0.50. Trusting
+    # the model alone ("it IS its own discriminator") was the root cause, so a
+    # custom_onnx hit MUST run the second-stage STT verify against the phrase's
+    # own sound-folded fuzzy matcher (works for ANY configured wake word).
     from jarvis.speech.wake_phrase import resolve_wake_plan
 
     model = tmp_path / "m.onnx"
     model.write_bytes(b"onnx")
     plan = resolve_wake_plan(_cfg(str(model)), local_whisper_available=False)
-    assert plan.verify_prefix is False
+    assert plan.verify_prefix is True
