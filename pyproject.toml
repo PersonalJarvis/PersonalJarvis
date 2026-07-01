@@ -35,8 +35,9 @@ dependencies = [
     # chromadb removed 2026-06-28: it had ZERO importers in jarvis/ (vestige of the
     # soft-disabled legacy curator), pulled a large transitive tree, and carried a
     # critical advisory with no fixed release. The Wiki is the live memory tier.
-    # sentence-transformers (a torch puller, no direct importer in jarvis/) lives
-    # in [local-voice].
+    # sentence-transformers was removed 2026-07-01 for the same reason (ZERO
+    # importers in jarvis/) — it only dragged in torch + a large transformers/HF
+    # tree. It is gone from [local-voice] too, not relocated.
     # Desktop-only packages (global-hotkeys, pywinauto, pywin32, pystray,
     # pywebview, pywinpty, win10toast-click, pyautogui, mss) live in the [desktop]
     # extras group per the cloud-first doctrine (CLAUDE.md). The base install must
