@@ -1,10 +1,10 @@
-"""Tests fuer ``MissionAnnouncer`` — Mission-Bus -> Speech-Bus-Bridge.
+"""Tests for ``MissionAnnouncer`` — mission-bus -> speech-bus bridge.
 
-AD-17: Mission-Notifications laufen ueber den existierenden
-``AnnouncementRequested``-Event-Pfad. Der Announcer ist eine ergaenzende,
-additive Komponente neben ``MissionVoiceListener``; beide haengen am
-selben MissionBus, aber dieser hier publisht auf den globalen
-``EventBus`` statt direkt eine TTS-Funktion zu rufen.
+AD-17: mission notifications run through the existing
+``AnnouncementRequested`` event path. The announcer is a complementary,
+additive component alongside ``MissionVoiceListener``; both hang off the
+same MissionBus, but this one publishes to the global
+``EventBus`` instead of calling a TTS function directly.
 """
 from __future__ import annotations
 
@@ -246,7 +246,7 @@ async def test_approved_uses_summary_en_when_lang_en(store_and_bus) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Failure / Cancel / Timeout: priority + Sprache
+# Failure / Cancel / Timeout: priority + language
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -279,14 +279,14 @@ async def test_failed_uses_normal_priority(store_and_bus) -> None:
 
     assert len(captured) == 1
     assert captured[0].priority == "normal"
-    assert "fehlgeschlagen" in captured[0].text
+    assert "fehlgeschlagen" in captured[0].text  # i18n-allow: asserts the German TTS readback text
 
 
 @pytest.mark.asyncio
 async def test_failed_critic_unavailable_german_phrasing(store_and_bus) -> None:
     """Live forensic 2026-05-16 — the `critic_unavailable` reason must map to
     the German phrase that tells the user the worker succeeded and the
-    work survives in the worktree (not the generic "fehlgeschlagen" cue
+    work survives in the worktree (not the generic "fehlgeschlagen" cue  # i18n-allow: quotes the actual German TTS readback phrase
     that would suggest the worker itself failed)."""
     store, bus = store_and_bus
     speech_bus = EventBus()
@@ -311,8 +311,8 @@ async def test_failed_critic_unavailable_german_phrasing(store_and_bus) -> None:
 
     assert len(captured) == 1
     assert captured[0].priority == "normal"
-    assert "Prüfer" in captured[0].text
-    assert "abgestürzt" in captured[0].text
+    assert "Prüfer" in captured[0].text  # i18n-allow: asserts the German TTS readback text
+    assert "abgestürzt" in captured[0].text  # i18n-allow: asserts the German TTS readback text
 
 
 @pytest.mark.asyncio
@@ -322,7 +322,7 @@ async def test_crash_recovery_is_not_announced(store_and_bus) -> None:
     reason ``crash_recovery`` and emits a MissionFailed. Those missions
     were dispatched by voice in a PRIOR session, so ``is_voice`` is True and
     the announcer would otherwise barge in with "Die Mission ist
-    fehlgeschlagen." at interrupt priority — the user's "random Mission
+    fehlgeschlagen." at interrupt priority — the user's "random Mission  # i18n-allow: quotes the actual German TTS readback phrase
     fehlgeschlagen, although I never started one" complaint (deep-dive
     2026-05-29). crash_recovery is not actionable to the user; suppress it.
     """
@@ -476,7 +476,7 @@ async def test_timeout_uses_normal_priority(store_and_bus) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Filter: ui-source darf nicht piepsen
+# Filter: ui-source must not beep
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
