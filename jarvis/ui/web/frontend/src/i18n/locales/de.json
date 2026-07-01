@@ -1,4 +1,10 @@
 {
+  "file_toast": {
+    "show_in_folder": "Im Ordner zeigen",
+    "open": "Öffnen",
+    "reveal_failed": "Ordner konnte nicht geöffnet werden",
+    "open_failed": "Datei konnte nicht geöffnet werden"
+  },
   "jarvis_dock": {
     "aria": "{name} — zieh eine Mission hierher, um darüber zu sprechen",
     "hint": "Zieh ein Jarvis-Agent-Ergebnis hierher, um es ins Gespräch zu holen",

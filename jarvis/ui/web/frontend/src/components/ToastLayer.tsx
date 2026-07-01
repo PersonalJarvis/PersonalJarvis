@@ -1,6 +1,16 @@
-import { X, Info, CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
+import {
+  X,
+  Info,
+  CheckCircle2,
+  AlertTriangle,
+  XCircle,
+  FolderOpen,
+  ExternalLink,
+} from "lucide-react";
 import { useEventStore, type Toast } from "@/store/events";
 import { cn } from "@/lib/utils";
+import { openDownloadedFile, revealInFolder } from "@/lib/fileActions";
+import { useT } from "@/i18n";
 
 const ICON_FOR_KIND = {
   info: Info,
@@ -42,7 +52,10 @@ export function ToastLayer() {
             )}
           >
             <Icon className={cn("mt-0.5 h-4 w-4 shrink-0", ACCENT_FOR_KIND[t.kind])} />
-            <div className="min-w-0 flex-1 text-xs leading-relaxed">{t.message}</div>
+            <div className="min-w-0 flex-1 text-xs leading-relaxed">
+              <div className="break-words">{t.message}</div>
+              {t.filePath && <FileToastActions path={t.filePath} />}
+            </div>
             <button
               type="button"
               onClick={() => dismiss(t.id)}
@@ -54,6 +67,48 @@ export function ToastLayer() {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * "Show in folder" / "Open" actions for a toast that carries a saved file path.
+ *
+ * Dragging a file straight out of the embedded WebView is not reliably possible
+ * on any OS, so we bring the user to the real file in their file manager (from
+ * which a native drag to anywhere works) — or open it directly.
+ */
+function FileToastActions({ path }: { path: string }) {
+  const t = useT();
+  const pushToast = useEventStore((s) => s.pushToast);
+
+  const onReveal = async () => {
+    const ok = await revealInFolder(path);
+    if (!ok) pushToast("error", t("file_toast.reveal_failed"));
+  };
+  const onOpen = async () => {
+    const ok = await openDownloadedFile(path);
+    if (!ok) pushToast("error", t("file_toast.open_failed"));
+  };
+
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      <button
+        type="button"
+        onClick={onReveal}
+        className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20"
+      >
+        <FolderOpen className="h-3 w-3" />
+        {t("file_toast.show_in_folder")}
+      </button>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="inline-flex items-center gap-1 rounded-md border border-border bg-background/40 px-2 py-1 text-[11px] font-medium text-foreground/90 transition-colors hover:bg-background/70"
+      >
+        <ExternalLink className="h-3 w-3" />
+        {t("file_toast.open")}
+      </button>
     </div>
   );
 }

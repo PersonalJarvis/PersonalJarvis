@@ -242,7 +242,11 @@ interface EventStore {
   clearEvents: () => void;
   setActiveSection: (s: SectionId) => void;
   setTranscription: (text: string, isFinal: boolean) => void;
-  pushToast: (kind: Toast["kind"], message: string) => void;
+  pushToast: (
+    kind: Toast["kind"],
+    message: string,
+    opts?: { filePath?: string; filename?: string },
+  ) => void;
   dismissToast: (id: string) => void;
   pushMessage: (m: ChatMessage) => void;
   setMessages: (m: ChatMessage[]) => void;
@@ -270,6 +274,9 @@ interface EventStore {
 const MAX_EVENTS = 500;
 const MAX_MESSAGES = 200;
 const TOAST_TTL_MS = 3500;
+// A file toast carries "Show in folder" / "Open" actions the user must have time
+// to aim at and click — keep it up noticeably longer than a plain notification.
+const TOAST_FILE_TTL_MS = 12000;
 // Finished reasoning traces are per-message UI sugar, not history — cap the
 // map so a long session cannot grow it unbounded (insertion order = age).
 const MAX_TRACES = 24;
@@ -320,12 +327,19 @@ export const useEventStore = create<EventStore>((set, get) => ({
   setTranscription: (text, isFinal) =>
     set({ transcription: text, transcriptionFinal: isFinal }),
 
-  pushToast: (kind, message) => {
+  pushToast: (kind, message, opts) => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const filePath = opts?.filePath;
     set((state) => ({
-      toasts: [...state.toasts, { id, kind, message, ts: Date.now() }],
+      toasts: [
+        ...state.toasts,
+        { id, kind, message, ts: Date.now(), filePath, filename: opts?.filename },
+      ],
     }));
-    setTimeout(() => get().dismissToast(id), TOAST_TTL_MS);
+    setTimeout(
+      () => get().dismissToast(id),
+      filePath ? TOAST_FILE_TTL_MS : TOAST_TTL_MS,
+    );
   },
 
   dismissToast: (id) =>
