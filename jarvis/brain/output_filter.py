@@ -282,7 +282,7 @@ SELF_REF_RE = re.compile(
 # Background-action narration (DE+EN+ES). The maintainer finds it annoying when
 # Jarvis ANNOUNCES internal bookkeeping it does silently in the background —
 # "I'm noting that", "let me look at the last transcription", "ich notiere mir
-# das", "ich schaue mir die letzte Transkription an", "tomo nota". The action
+# das", "ich schaue mir die letzte Transkription an", "tomo nota". The action  # i18n-allow: quoted German/Spanish input examples matching BACKGROUND_ACTION_RE below
 # still happens; it is just never spoken. Cuts the whole narration clause incl.
 # its sentence punctuation (same shape as SELF_REF_RE). Applies in BOTH normal
 # and ack mode. The "look at the previous transcript/answer" alternatives are
@@ -317,11 +317,11 @@ BACKGROUND_ACTION_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Echo-Paraphrase — nur am Opener (durch Position-Slicing in der Funktion,
-# nicht im Regex selbst).
+# Echo paraphrase — only at the opener (via position slicing in the
+# function, not in the regex itself).
 ECHO_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(p, re.IGNORECASE) for p in [
-        r"^\s*Du möchtest also\b[^.!?]*[.!?]\s*",
+        r"^\s*Du möchtest also\b[^.!?]*[.!?]\s*",  # i18n-allow: German echo-paraphrase matching data, checked against generated brain text
         r"^\s*Ich verstehe(?:,|\s+)?\s*dass\b[^.!?]*[.!?]\s*",
         r"^\s*If I understand correctly\b[^.!?]*[.!?]\s*",
         r"^\s*You'?d like me to\b[^.!?]*[.!?]\s*",
@@ -329,39 +329,39 @@ ECHO_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     ]
 )
 
-# Filler-Opener — Phase-2-Anti-Pattern-Liste aus voice_e2e_probe.py
-# erweitert um Filler-Selbstreferenz ('Lass mich kurz', 'Let me think').
-# Pattern matcht NUR am Opener; mid-sentence Vorkommen bleibt erhalten
-# (Failure-Mode-6-analog).
+# Filler opener — Phase-2 anti-pattern list from voice_e2e_probe.py,
+# extended with filler self-reference ('Lass mich kurz', 'Let me think').
+# The pattern matches ONLY at the opener; mid-sentence occurrences are
+# preserved (failure-mode-6 analog).
 FILLER_OPENER_RE = re.compile(
     r"^\s*("
-    # Klassisch-Phase-0
-    r"Großartige Frage|Grossartige Frage|Tolle Frage|Geniale Frage|"
+    # Classic Phase-0
+    r"Großartige Frage|Grossartige Frage|Tolle Frage|Geniale Frage|"  # i18n-allow: German filler-opener matching data, checked against generated brain text
     r"Great question|Excellent question|Good question|"
-    # Phase-2-Filler-Selbstreferenz (ANTI_PATTERNS-Liste in voice_e2e_probe.py)
+    # Phase-2 filler self-reference (ANTI_PATTERNS list in voice_e2e_probe.py)
     r"Lass mich kurz[^.!?]*?(?=[.!?,]|$)|"
     r"Let me think"
     r")[!.?,]*\s*",
     re.IGNORECASE,
 )
 
-# Engineering-Jargon — Standalone-Worte, kein Hyphen-Compound.
-# WICHTIG: ``(?<!\w-)`` muss VOR der Alternative stehen, nicht dahinter —
-# Lookbehind am Regex-Ende prueft die 2 Chars vor Match-END, nicht
-# Match-START. Das hat in einem frueheren Entwurf "Brain-Provider" zerschossen.
-# Siehe Test ``test_clean_text_passes_through_unchanged[file-summary]``.
+# Engineering jargon — standalone words, not a hyphen compound.
+# IMPORTANT: ``(?<!\w-)`` must come BEFORE the alternation, not after —
+# a lookbehind at the regex end checks the 2 chars before match-END, not
+# match-START. In an earlier draft this destroyed "Brain-Provider".
+# See test ``test_clean_text_passes_through_unchanged[file-summary]``.
 JARGON_RE = re.compile(
-    r"(?<!\w-)"     # kein "Browser-" / "Brain-"-Praefix vorne
+    r"(?<!\w-)"     # no "Browser-" / "Brain-" prefix in front
     r"\b(?:" + "|".join(JARGON_WORDS) + r")\b"
-    r"(?!-\w)",     # kein "-Server" / "-Provider"-Suffix folgen lassen
+    r"(?!-\w)",     # no "-Server" / "-Provider" suffix allowed to follow
     re.IGNORECASE,
 )
 
-# Engineering-Jargon-Compounds (mit Bindestrich) — komplett raus, weil sie
-# kein User-Konzept anhaengen ("Sub-Agent" hat keinen Whitelist-Anker wie
-# "Browser" oder "Datei"). Pattern matcht Compound + folgender Artikel-/
-# Nebenwort-Phrase wenn der Satz mit dem Compound startet, sonst nur der
-# Compound selbst.
+# Engineering jargon compounds (with hyphen) — stripped entirely, because
+# they have no user-concept anchor ("Sub-Agent" has no whitelist anchor
+# like "Browser" or "Datei"). The pattern matches the compound plus a
+# following article/adverb phrase when the sentence starts with the
+# compound, otherwise just the compound itself.
 #
 # 2026-05-24: the 2026-05-13 "OpenClaw is a brand name, let it through"
 # exception is REVERSED. The OpenClaw subprocess was retired (the worker now
@@ -379,14 +379,14 @@ JARGON_COMPOUND_RE = re.compile(
 # standalone "OpenClaw"/"OpenClore" (common STT mis-spelling of the brand).
 OPENCLAW_RE = re.compile(r"\bOpenCl(?:aw|ore)-?", re.IGNORECASE)
 
-# A1-Drift (Mandat A1): "Sir"-Anrede aus dem Output entfernen.
-# Pattern matcht ``Sir`` als Anrede in drei Formen:
-#   1) Opener mit Komma:    "Sir, ich starte..." -> "ich starte..."
-#   2) Tail nach Komma:     "Erledigt, Sir."    -> "Erledigt."
-#   3) Standalone-Wort:     "Sir." (selten, aber moeglich nach Anrede-Drift)
-# Innerhalb von Quotes (``"Yes, Sir, ..."``) wird NICHT gescrubbt — Zitat-
-# Schutz fuer Songtexte, Zitate, Filme. Heuristik: wenn ``Sir`` zwischen zwei
-# Anfuehrungszeichen liegt, kein Match.
+# A1 drift (Mandate A1): remove the "Sir" honorific from the output.
+# The pattern matches ``Sir`` as an honorific in three forms:
+#   1) Opener with comma:   "Sir, ich starte..." -> "ich starte..."
+#   2) Tail after comma:    "Erledigt, Sir."    -> "Erledigt."
+#   3) Standalone word:     "Sir." (rare, but possible after honorific drift)
+# Inside quotes (``"Yes, Sir, ..."``) it is NOT scrubbed — quote
+# protection for song lyrics, quotations, films. Heuristic: if ``Sir``
+# sits between two quotation marks, no match.
 SIR_OPENER_RE = re.compile(r"^\s*Sir\s*,\s*", re.IGNORECASE)
 SIR_TAIL_RE = re.compile(r",\s*Sir\b", re.IGNORECASE)
 QUOTE_PROTECT_RE = re.compile(r'"[^"]*\bSir\b[^"]*"', re.IGNORECASE)
