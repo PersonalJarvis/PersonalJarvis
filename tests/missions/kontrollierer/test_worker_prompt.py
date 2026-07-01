@@ -96,7 +96,7 @@ def test_compose_includes_output_shape_directive() -> None:
 
 
 def test_compose_orders_both_directives_before_the_step() -> None:
-    step = "Mach mir eine einzige, in sich geschlossene HTML-Datei."
+    step = "Make me a single, self-contained HTML file."
     out = compose_worker_prompt("", step)
     assert OUTPUT_SHAPE_DIRECTIVE in out
     assert ARTIFACT_LANGUAGE_DIRECTIVE in out
