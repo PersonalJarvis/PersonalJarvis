@@ -159,7 +159,7 @@ async def run() -> int:
     if args.persona_file:
         from jarvis.brain.persona_loader import _extract_fence_after_marker
 
-        file_text = Path(args.persona_file).read_text(encoding="utf-8")
+        file_text = Path(args.persona_file).read_text(encoding="utf-8")  # noqa: ASYNC240 — one-shot script setup read
         # A full JARVIS_PERSONA.md carries the prompt inside the fence after the
         # "## System-Prompt" marker; a bare prompt file is used verbatim.
         override_text = _extract_fence_after_marker(file_text) or file_text

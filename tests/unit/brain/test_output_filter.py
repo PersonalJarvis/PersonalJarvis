@@ -159,7 +159,7 @@ def test_self_reference_is_removed() -> None:
         ("Got it. I am noting that down. The capital is Rome.", "en",
          "noting", "rome"),
         ("Sure. Let me look at the last transcription. It is 25 degrees.", "en",
-         "transcription", "25 degrees"),
+         "transcription", "twenty-five degrees"),
         ("Entendido, tomo nota. La capital es Roma.", "es", "tomo nota", "roma"),
     ],
 )
@@ -367,10 +367,11 @@ def test_ascii_double_hyphen_dash_aside_becomes_comma() -> None:
 
 def test_ascii_hyphen_compound_and_range_survive_double_hyphen_filter() -> None:
     """No false positive: a compound ('T-Shirt') or numeric range ('20-30') has
-    no surrounding spaces and must survive the double-hyphen scrub."""
+    no surrounding spaces and must survive the double-hyphen scrub. The range
+    endpoints are spelled out for speech, but the joining hyphen is preserved."""
     result = scrub_for_voice("Dein T-Shirt kostet 20-30 Euro.")
     assert "T-Shirt" in result.cleaned
-    assert "20-30" in result.cleaned
+    assert "zwanzig-dreißig" in result.cleaned
 
 
 def test_fallback_used_true_only_for_stacktrace() -> None:
@@ -562,8 +563,8 @@ def test_generic_tool_call_tags_are_removed() -> None:
     assert "<tool_response>" not in result.cleaned
     assert "</tool_response>" not in result.cleaned
     assert "removed_tool_json" in result.actions
-    # Kerninhalt bleibt
-    assert "09:17" in result.cleaned
+    # Kerninhalt bleibt (die Uhrzeit wird fuer die Sprachausgabe ausgeschrieben)
+    assert "neun Uhr siebzehn" in result.cleaned
 
 
 def test_base64_image_block_is_removed() -> None:
@@ -771,7 +772,7 @@ def test_http_url_is_stripped_from_voice() -> None:
     result = scrub_for_voice(text)
     assert "http" not in result.cleaned.lower()
     assert "km.bayern.de" not in result.cleaned.lower()
-    assert "190 minuten" in result.cleaned.lower()
+    assert "einhundertneunzig minuten" in result.cleaned.lower()
     assert "removed_source_artifacts" in result.actions
 
 
@@ -782,7 +783,7 @@ def test_serp_more_results_footer_is_stripped() -> None:
     low = result.cleaned.lower()
     assert "gutefrage" not in low
     assert "weitere ergebnisse" not in low
-    assert "note 2" in low
+    assert "note zwei" in low
     assert "removed_source_artifacts" in result.actions
 
 
@@ -792,7 +793,7 @@ def test_bare_www_domain_is_stripped_from_voice() -> None:
     result = scrub_for_voice(text)
     assert "www." not in result.cleaned.lower()
     assert "realschule.bayern.de" not in result.cleaned.lower()
-    assert "190 minuten" in result.cleaned.lower()
+    assert "einhundertneunzig minuten" in result.cleaned.lower()
     assert "viel erfolg" in result.cleaned.lower()
 
 
