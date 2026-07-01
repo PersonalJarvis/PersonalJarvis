@@ -2441,28 +2441,28 @@ class WebServer:
                 )
 
     async def stop(self) -> None:
-        # Skill-Watcher stoppen, sonst bleibt der watchdog-Thread als Zombie
-        # haengen und verhindert Prozess-Ende.
+        # Stop the skill watcher, otherwise the watchdog thread stays behind
+        # as a zombie and prevents the process from exiting.
         if self._skill_registry is not None:
             try:
                 self._skill_registry.stop_watcher()
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning("SkillRegistry-Watcher-Stop fehlgeschlagen")
+                logger.opt(exception=exc).warning("SkillRegistry watcher stop failed")
 
-        # Doc-Watcher + FTS5-Connection schliessen.
+        # Close the doc watcher + FTS5 connection.
         if self._doc_registry is not None:
             try:
                 self._doc_registry.close()
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning("DocRegistry-Close fehlgeschlagen")
+                logger.opt(exception=exc).warning("DocRegistry close failed")
 
-        # Shared-CLI-Registry unset'en — sonst haelt der Module-Singleton eine
-        # Referenz auf eine "tote" Registry, wenn der Server neu startet.
+        # Unset the shared CLI registry — otherwise the module singleton keeps
+        # a reference to a "dead" registry when the server restarts.
         try:
             from jarvis.clis.shared import set_active_registry
             set_active_registry(None)
         except Exception as exc:  # noqa: BLE001
-            logger.opt(exception=exc).debug("CLI-Shared-Registry Cleanup fehlgeschlagen: {}", exc)
+            logger.opt(exception=exc).debug("CLI shared-registry cleanup failed: {}", exc)
 
         # Symmetric teardown for the plugin registry: unset the module singleton
         # AND stop the registry so each connected plugin's MCPClient (with its
@@ -2476,13 +2476,13 @@ class WebServer:
                 await self._plugin_registry.stop()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).debug(
-                    "PluginToolRegistry-Cleanup fehlgeschlagen: {}", exc
+                    "PluginToolRegistry cleanup failed: {}", exc
                 )
             self._plugin_registry = None
             self.app.state.plugin_registry = None
 
-        # Board-Aggregator-Task geordnet beenden, bevor uvicorn faellt. Der
-        # run_forever()-Loop faengt CancelledError selbst und propagiert es.
+        # Cleanly stop the board-aggregator task before uvicorn goes down. The
+        # run_forever() loop catches CancelledError itself and re-raises it.
         if self._board_aggregator_task is not None:
             self._board_aggregator_task.cancel()
             try:
@@ -2490,7 +2490,7 @@ class WebServer:
             except (TimeoutError, asyncio.CancelledError):
                 pass
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning("Board-Aggregator Shutdown-Fehler")
+                logger.opt(exception=exc).warning("Board-aggregator shutdown error")
             self._board_aggregator_task = None
         if self._bio_scheduler is not None:
             try:
@@ -2514,7 +2514,7 @@ class WebServer:
             try:
                 await wiki_handle.shutdown()
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).debug("WikiIntegration.shutdown() fehlgeschlagen")
+                logger.opt(exception=exc).debug("WikiIntegration.shutdown() failed")
             self._wiki_integration_handle = None
 
         # Phase B3 wiki live-reload: stop the watchdog observer cleanly
@@ -2526,21 +2526,21 @@ class WebServer:
                 await wiki_watcher.shutdown()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).debug(
-                    "WikiWatcher.shutdown() fehlgeschlagen"
+                    "WikiWatcher.shutdown() failed"
                 )
             self._wiki_watcher = None
 
-        # PTY-Sessions terminieren bevor uvicorn faellt — verhindert dass
-        # Reader-Threads in einen geschlossenen Loop schreiben wollen.
+        # Terminate PTY sessions before uvicorn goes down — prevents reader
+        # threads from trying to write into a closed loop.
         try:
             self._pty.close_all()
         except Exception as exc:  # noqa: BLE001
-            logger.opt(exception=exc).warning("PTY-Cleanup fehlgeschlagen")
+            logger.opt(exception=exc).warning("PTY cleanup failed")
 
-        # Phase-6 Mission-Stack ordentlich runterfahren — Connection schliesst
-        # die SQLite-DB. Periodic recovery re-sweep + Cleanup-Task cancellen
-        # BEVOR der Store schliesst (sonst tickt das Re-Sweep gegen eine
-        # geschlossene Connection).
+        # Cleanly shut down the Phase-6 mission stack — closing the
+        # connection closes the SQLite DB. Cancel the periodic recovery
+        # re-sweep + cleanup task BEFORE the store closes (otherwise the
+        # re-sweep ticks against a closed connection).
         resweep_task = getattr(self, "_missions_resweep_task", None)
         if resweep_task is not None:
             resweep_task.cancel()
