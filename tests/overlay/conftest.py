@@ -1,7 +1,7 @@
-"""Pytest-Setup fuer ``tests/overlay/``.
+"""Pytest setup for ``tests/overlay/``.
 
-- Pfad-Erweiterung: ``OS-Level/src`` in ``sys.path``, damit ``import overlay`` greift.
-- Headless-Qt: ``QT_QPA_PLATFORM=offscreen`` falls noch nicht gesetzt.
+- Path extension: put ``OS-Level/src`` on ``sys.path`` so ``import overlay`` works.
+- Headless Qt: ``QT_QPA_PLATFORM=offscreen`` unless already set.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ _HAS_PYSIDE = _ilu.find_spec("PySide6") is not None
 if _HAS_PYSIDE and str(OS_LEVEL_SRC) not in sys.path:
     sys.path.insert(0, str(OS_LEVEL_SRC))
 
-# Qt headless — schadet nicht wenn ein Test es nicht braucht.
+# Qt headless — doesn't hurt if a test doesn't need it.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
@@ -64,8 +64,8 @@ def pytest_ignore_collect(collection_path, config):  # noqa: ARG001
 
 @pytest.fixture(scope="session")
 def qapp():
-    """Single QApplication pro Session. PySide6 erlaubt nur eine Instanz."""
+    """Single QApplication per session. PySide6 only allows one instance."""
     pyside = pytest.importorskip("PySide6.QtWidgets")
     app = pyside.QApplication.instance() or pyside.QApplication([])
     yield app
-    # KEIN app.quit() — das wuerde nachfolgende Tests killen.
+    # NO app.quit() — that would kill subsequent tests.
