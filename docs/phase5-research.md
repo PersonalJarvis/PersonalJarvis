@@ -80,7 +80,7 @@ Vision (1)            Admin-Helper (3)       Task-Queue (4)
         ▼      │                                       │
  Computer-Use (2) ◄───────── whitelisted Helper-Ops    │
         │                                              │
-        └──────────────(Task-Spec „führe CU aus")──────┘
+        └──────────────(Task-Spec "Execute CU")──────┘
 ```
 
 **Ordering constraint:**

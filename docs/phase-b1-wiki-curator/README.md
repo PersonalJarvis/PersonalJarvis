@@ -167,7 +167,7 @@ hardcode a specific model name. Read it from config:
 ```toml
 # new config section, B1 introduces this
 [memory.wiki.curator]
-# Falls leer/auskommentiert: nimmt brain.primary aus dem allgemeinen Config.
+# If empty/commented out: takes brain.primary from the general config.
 provider = ""               # leer = fall back to brain.primary
 model = ""                  # leer = provider-default model
 max_input_tokens = 8000

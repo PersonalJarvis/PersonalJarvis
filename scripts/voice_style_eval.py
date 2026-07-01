@@ -41,6 +41,15 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Windows defaults stdout to cp1252; a redirect then mangles umlauts and dashes
+# into unreadable bytes (BUG-class "UTF-8 stdout"). Force UTF-8 so the printed
+# output — and any dash/umlaut in it — is faithful.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+    except (AttributeError, ValueError):
+        pass
+
 REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
@@ -130,8 +139,14 @@ def check(text: str, scenario: Scenario) -> CheckResult:
 async def run() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--raw", action="store_true", help="print full raw responses")
+    ap.add_argument(
+        "--persona-file",
+        default=None,
+        help="override the persona with this file's text (for before/after baselines)",
+    )
     args = ap.parse_args()
 
+    from jarvis.brain import manager as _manager
     from jarvis.brain.factory import build_default_brain
     from jarvis.brain.output_filter import scrub_for_voice
     from jarvis.brain.persona_loader import invalidate_cache, load_effective_persona_prompt
@@ -140,8 +155,20 @@ async def run() -> int:
 
     cfg = load_config(REPO / "jarvis.toml")
     invalidate_cache()
-    persona = load_effective_persona_prompt()
-    print(f"persona block: {len(persona)} chars")
+
+    if args.persona_file:
+        from jarvis.brain.persona_loader import _extract_fence_after_marker
+
+        file_text = Path(args.persona_file).read_text(encoding="utf-8")
+        # A full JARVIS_PERSONA.md carries the prompt inside the fence after the
+        # "## System-Prompt" marker; a bare prompt file is used verbatim.
+        override_text = _extract_fence_after_marker(file_text) or file_text
+        _manager.load_effective_persona_prompt = lambda: override_text  # type: ignore[assignment]
+        persona = override_text
+        print(f"persona OVERRIDE from {args.persona_file}: {len(persona)} chars")
+    else:
+        persona = load_effective_persona_prompt()
+        print(f"persona block: {len(persona)} chars")
     print(f"primary brain: {cfg.brain.primary} | routing: "
           f"{getattr(cfg.brain, 'routing_provider', '?')}/"
           f"{getattr(cfg.brain, 'routing_model', '?')}")
@@ -152,8 +179,10 @@ async def run() -> int:
     print("=" * 70)
 
     check_names = ("dash", "markdown", "digits", "fragments", "counter_question")
+    # Gate = the DELIVERED (scrubbed) text — what TTS actually speaks and the
+    # user actually hears; scrub_for_voice is part of the real app path.
     fail_counts = dict.fromkeys(check_names, 0)
-    examples: list[tuple[str, str, str]] = []  # (id, user, scrubbed)
+    raw_drift = dict.fromkeys(check_names, 0)  # secondary: model-level drift
 
     for s in SCENARIOS:
         try:
@@ -164,32 +193,34 @@ async def run() -> int:
             raw = f"<ERROR: {type(exc).__name__}: {exc}>"
         scrubbed = scrub_for_voice(raw, language="de").cleaned
 
-        # RAW is the honest style signal; scrubbed is what TTS speaks.
-        r_raw = check(raw, s)
-        r_scrub = check(scrubbed, s)
+        r_deliver = check(scrubbed, s)   # gate
+        r_raw = check(raw, s)            # model drift signal
         for name in check_names:
-            if not getattr(r_raw, name):
+            if not getattr(r_deliver, name):
                 fail_counts[name] += 1
+            if not getattr(r_raw, name):
+                raw_drift[name] += 1
 
-        verdict = "GREEN" if r_raw.all_ok else "RED"
+        verdict = "GREEN" if r_deliver.all_ok else "RED"
         print(f"--- {s.id} [{s.tag}] {verdict} ---")
         print(f"User:   {s.user}")
         print(f"Jarvis: {scrubbed if not args.raw else raw}")
-        if not r_raw.all_ok:
-            print(f"  RAW issues:     {r_raw.notes}")
-        if not r_scrub.all_ok:
-            print(f"  SCRUBBED issues: {r_scrub.notes}")
+        if not r_deliver.all_ok:
+            print(f"  DELIVERED issues: {r_deliver.notes}")
+        raw_only = [n for n in r_raw.notes if n not in r_deliver.notes]
+        if raw_only:
+            print(f"  (raw-only drift, scrubbed away): {raw_only}")
         print()
-        examples.append((s.id, s.user, scrubbed))
 
     print("=" * 70)
-    print("STYLE-CHECK SUMMARY (failures per criterion, over RAW output)")
+    print("STYLE-CHECK SUMMARY (failures per criterion, over DELIVERED output)")
     total_fail = 0
     for name in check_names:
         n = fail_counts[name]
         total_fail += n
         status = "OK" if n == 0 else "FAIL"
-        print(f"  {name:16s}: {n} failing scenario(s)  [{status}]")
+        drift = f"  (raw model drift: {raw_drift[name]})" if raw_drift[name] else ""
+        print(f"  {name:16s}: {n} failing scenario(s)  [{status}]{drift}")
     green = total_fail == 0
     print(f"\nDONE-GATE: {'GREEN — all checks pass' if green else f'RED — {total_fail} failures'}")
     return total_fail
