@@ -352,9 +352,9 @@ export function SkillsView() {
       )}
 
       <div className="flex min-h-0 flex-1">
-        {/* Linke Spalte: Liste */}
+        {/* Left column: list */}
         <div className="flex w-[340px] flex-col border-r border-border">
-          {/* Suchleiste + Filter-Chips */}
+          {/* Search bar + filter chips */}
           <div className="space-y-2 border-b border-border bg-muted/20 px-3 py-2.5">
             <div className="relative">
               <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -370,7 +370,7 @@ export function SkillsView() {
                   type="button"
                   onClick={() => setQueryInput("")}
                   className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  aria-label="Suche leeren"
+                  aria-label={t("skills_view.clear_search")}
                 >
                   <XIcon className="h-3 w-3" />
                 </button>
@@ -378,12 +378,12 @@ export function SkillsView() {
             </div>
             <div className="flex flex-wrap gap-1">
               <FilterChip
-                label="Alle"
+                label={t("skills_view.filter_all")}
                 active={ownerFilter === "all"}
                 onClick={() => setOwnerFilter("all")}
               />
               <FilterChip
-                label="Meine"
+                label={t("skills_view.filter_mine")}
                 active={ownerFilter === "user"}
                 onClick={() => setOwnerFilter("user")}
               />

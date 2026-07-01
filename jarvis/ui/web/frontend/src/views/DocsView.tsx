@@ -49,7 +49,7 @@ export function DocsView() {
     contentRef.current?.scrollTo({ top: 0 });
   }, []);
 
-  // Strg+K / Cmd+K oeffnet das Search-Modal.
+  // Ctrl+K / Cmd+K opens the search modal.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {

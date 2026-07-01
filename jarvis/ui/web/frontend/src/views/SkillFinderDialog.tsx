@@ -120,13 +120,12 @@ export function SkillFinderDialog({ open, onClose }: SkillFinderDialogProps) {
               <Sparkles className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold">Skill-Finder</h2>
+              <h2 className="text-lg font-semibold">{t("skill_finder_dialog.title")}</h2>
               <p className="text-xs text-muted-foreground">
-                Beschreibe, was du brauchst — der Mini-Agent sucht im Katalog
-                und rankt per KI.
+                {t("skill_finder_dialog.subtitle")}
                 {brainUsed && (
                   <span className="ml-2 text-primary">
-                    • Brain-Ranking aktiv
+                    • {t("skill_finder_dialog.brain_ranking_active")}
                   </span>
                 )}
               </p>

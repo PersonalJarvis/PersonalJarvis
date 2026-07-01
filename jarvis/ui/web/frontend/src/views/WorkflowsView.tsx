@@ -674,7 +674,7 @@ function EmptyState() {
 }
 
 // ---------------------------------------------------------------------
-// Time helpers (alle Timestamps in ns)
+// Time helpers (all timestamps in ns)
 // ---------------------------------------------------------------------
 
 function formatFutureDelta(ns: number): string {
@@ -717,5 +717,5 @@ function formatAbsolute(ns: number): string {
   }
 }
 
-// Silence unused-lint for PowerOff — behalten weil spaeter Bulk-Disable.
+// Silence unused-lint for PowerOff — kept because of a later bulk-disable feature.
 void PowerOff;

@@ -562,11 +562,11 @@ function ArtifactsSection({ slug }: { slug: string }) {
       <div className="mb-3 flex items-center gap-2">
         <FileText className="h-4 w-4 text-primary" />
         <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Ergebnisse
+          {t("outputs_view.results")}
         </span>
         {!q.isLoading && (
           <span className="text-[11px] text-muted-foreground">
-            {files.length} {files.length === 1 ? "Datei" : "Dateien"}
+            {files.length} {files.length === 1 ? t("outputs_view.file") : t("outputs_view.files")}
           </span>
         )}
       </div>

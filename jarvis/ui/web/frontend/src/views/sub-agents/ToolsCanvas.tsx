@@ -103,7 +103,7 @@ export function ToolsCanvas({
   const t = useT();
   const toolCalls = agent.tool_calls;
 
-  // Layout: Tools in einem Grid, bis zu 4 pro Zeile.
+  // Layout: tools in a grid, up to 4 per row.
   const initialNodes = useMemo<ToolNode[]>(() => {
     const nodes: ToolNode[] = [];
     const perRow = 4;
@@ -241,7 +241,7 @@ export function ToolsCanvas({
           </ReactFlow>
         )}
 
-        {/* Detail-Sheet unten wenn Tool angeklickt */}
+        {/* Detail sheet at the bottom when a tool is clicked */}
         <AnimatePresence>
           {selectedTool && selectedAppearance && (
             <ToolDetailSheet

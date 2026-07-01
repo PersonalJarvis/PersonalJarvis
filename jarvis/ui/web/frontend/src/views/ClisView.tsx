@@ -621,7 +621,7 @@ function DetailPanel({
 }
 
 // ---------------------------------------------------------------------------
-// OAuth-Connect Button (inline — startet und zeigt Toast)
+// OAuth connect button (inline — starts the flow and shows a toast)
 // ---------------------------------------------------------------------------
 
 function ConnectOAuthButton({

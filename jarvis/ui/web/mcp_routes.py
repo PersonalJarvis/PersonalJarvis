@@ -59,7 +59,7 @@ def _spec_to_dict(
         if not client.is_healthy and not error:
             error = "circuit-breaker open"
 
-    # Credential-Status: welche required_auth-Keys sind im keyring gesetzt?
+    # Credential status: which required_auth keys are set in the keyring?
     credentials_status: dict[str, bool] = {}
     for auth_key in spec.required_auth:
         credentials_status[auth_key] = bool(get_secret(auth_key, env_fallback=auth_key))
