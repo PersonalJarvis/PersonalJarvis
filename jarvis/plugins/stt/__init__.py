@@ -384,12 +384,16 @@ def build_wake_whisper(
         # on base/cpu — far less likely to blow the wedge timeout under app CPU
         # load, and snappier. The phrase bias + sound-folding matcher keep recall.
         beam_size=1,
-        # Bound ctranslate2's thread pool so it cannot deadlock against PyTorch's
-        # OpenMP pool in the shared process — the root of the intermittent 8 s
-        # ``model.transcribe`` HANG that wedged the wake on BOTH cpu and cuda
-        # (live-log evidence 2026-06-30). Only the always-on wake model, which
-        # coexists with torch, sets this.
-        cpu_threads=4,
+        # Run ctranslate2 fully SINGLE-THREADED for the wake model so it cannot
+        # deadlock against PyTorch's OpenMP pool in the shared process — the root
+        # of the intermittent 8 s ``model.transcribe`` HANG that wedged the wake on
+        # BOTH cpu and cuda (live-log 2026-06-30). cpu_threads=4 only REDUCED the
+        # hang (11 wedges / 16 min); 1 removes ctranslate2's internal thread pool
+        # entirely. Slightly slower per window (base+beam1 stays well under the 8 s
+        # timeout) but no thread contention. Only the always-on wake model, which
+        # coexists with torch, sets this. NOTE: transcription wake still cannot
+        # reach 100% here — the definitive fix is a neural KWS model (AP-25).
+        cpu_threads=1,
     )
 
 
