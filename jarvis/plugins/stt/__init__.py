@@ -342,20 +342,30 @@ def build_wake_whisper(
         and model == "base"
         and device == "cpu"
         and cuda_available
+        and bool(getattr(stt_cfg, "wake_high_accuracy", True))
     ):
-        # CUSTOM WAKE PHRASE: keep the validated base/cpu + phrase-bias config;
-        # do NOT upgrade to the turbo model. The strong turbo runs WITHOUT the
-        # initial_prompt bias (the bias hallucinates on silence on the strong
-        # model), but without that bias it MANGLES a short custom phrase — live
-        # forensic 2026-06-29: "Hey Nico" -> "cuf ich" -> the wake never fired.
-        # base/cpu+bias is the validated custom-phrase config (83% recall / ~0%
-        # false on real WAVs), so a user-set custom wake word stays on it.
-        # (Default "Hey Jarvis" / OWW paths carry no bias and still get the fast
-        # turbo upgrade above.) This makes the background hot-swap a no-op for a
-        # custom phrase: the rebuilt model stays "base", so the caller keeps it.
+        # CUSTOM WAKE PHRASE on a CUDA box: upgrade to the strong turbo model on
+        # the GPU BUT KEEP the phrase bias. Mission 2026-06-30, live-log evidence
+        # (data/jarvis_desktop.log): the base/cpu model WEDGED repeatedly ("5
+        # consecutive transcribe failures -> rebuilding the wedged wake model" —
+        # up to 40 s of total deafness) and mis-transcribed the wake name under
+        # app CPU/GIL contention, so the wake needed 2-3 tries. The turbo model on
+        # the GPU transcribes a ~1.8 s window in ~150 ms, so it NEVER blows the
+        # transcribe timeout (this is what eliminates the wedge) and hears the
+        # proper noun accurately. The bias is KEPT (turbo WITHOUT bias mangles a
+        # short custom phrase — "Hey Nico" -> "cuf ich"); the earlier "bias
+        # hallucinates the phrase onto SILENCE on the strong model" concern does
+        # NOT apply here because the rolling wake path only transcribes windows
+        # that already passed its rms/peak gates — it never feeds a silent window
+        # to the model, and the no_speech_prob + confidence + strict-adjacency
+        # matcher gates remain the false-wake guards. The utterance STT is a
+        # separate provider (often cloud), so the wake owning the GPU does not
+        # contend with it. Reversible: wake_high_accuracy=False forces base/cpu.
+        model, device, compute = "large-v3-turbo", "cuda", "int8_float16"
         logger.info(
-            "Wake-Whisper: custom phrase -> staying on base/cpu (bias ON); turbo "
-            "upgrade skipped (turbo-without-bias mangles short custom phrases)."
+            "Wake-Whisper: custom phrase on CUDA -> GPU turbo (large-v3-turbo/cuda) "
+            "WITH bias — fast (~150 ms, no wedge) + accurate. Set "
+            "[stt].wake_high_accuracy=false to force base/cpu."
         )
     elif fast_first and model == "base" and device == "cpu" and cuda_available:
         logger.info(

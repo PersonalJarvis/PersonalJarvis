@@ -71,9 +71,14 @@ _DEBUG_WAVS_ENV = os.environ.get("JARVIS_WAKE_DEBUG_WAVS", "").strip().lower() i
 # timed out at 8 s, abandoned, retried, hung again, forever; an app restart did
 # not even clear it. The timeout only BOUNDS a hang; it never RECOVERS. A run of
 # failures with zero successes is the wedge signature (a legitimate VAD-probe
-# overlap clears in 1-2 polls and resets the counter on the next success), so a
-# small threshold self-heals fast without firing on a transient overlap.
-_WEDGE_RECOVER_AFTER_FAILS = 5
+# overlap clears in 1-2 polls and resets the counter on the next success).
+# 2026-06-30 (live logs showed the base/cpu model wedging dozens of times a day,
+# each dead window swallowing spoken wakes -> "say it 2-3 times"): lowered 5 -> 2
+# so the deaf window is as short as possible. Two consecutive failures with zero
+# successes in between is already an unambiguous wedge; a lone transient overlap
+# clears on the very next successful poll and resets the counter, so 2 does not
+# fire spuriously.
+_WEDGE_RECOVER_AFTER_FAILS = 2
 
 
 def _save_wav(pcm_bytes: bytes, sample_rate: int, path: Path) -> None:

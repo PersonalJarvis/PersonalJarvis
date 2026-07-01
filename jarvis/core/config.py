@@ -257,6 +257,17 @@ class STTConfig(BaseModel):
     wake_model: str = "base"
     wake_device: str = "cpu"
     wake_compute_type: str = "int8"
+    # When True (default) AND a CUDA GPU is present AND the post-wake utterance
+    # STT is NOT itself using the GPU, a CUSTOM wake phrase (the transcription-
+    # based ``stt_match`` path) runs on the strong ``large-v3-turbo`` model on the
+    # GPU instead of the small ``base`` model on the CPU. Live-log evidence
+    # (2026-06-30): the base/cpu wake model WEDGED repeatedly under app CPU/GIL
+    # contention (tens of seconds of total deafness -> "say it 2-3 times") and
+    # mis-transcribed the wake name. The GPU model transcribes a window in ~150 ms
+    # so it never blows the wedge timeout, and hears the proper noun accurately.
+    # Set False to force the validated base/cpu + phrase-bias config back — the
+    # escape hatch if the strong model ever over-triggers on a particular voice.
+    wake_high_accuracy: bool = True
     language: str = "auto"
     # Vocabulary biasing passed to Whisper's ``prompt`` field — the same
     # mechanism dictation tools like Wispr Flow use to keep proper nouns and
