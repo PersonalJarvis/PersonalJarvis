@@ -47,6 +47,49 @@ if TYPE_CHECKING:
     from jarvis.ui.web.server import WebServer
 
 
+def _claim_system_dpi_awareness() -> None:
+    """Claim SYSTEM DPI awareness for the process BEFORE any window exists.
+
+    Root cause of the recurring "JarvisBar shrank and jumped, only a restart
+    fixes it" bug: the always-on bar's Tk window is built (in the backend
+    thread) while the process is still DPI-UNAWARE, so Windows bitmap-upscales
+    it to a normal physical size and everything looks fine. Then pywebview's
+    ``webview.start()`` calls ``user32.SetProcessDPIAware()`` deep inside its
+    winforms backend — flipping the process to SYSTEM-aware AT RUNTIME instantly
+    strips the DPI virtualization off every EXISTING window, so the bar snaps
+    from its upscaled size to raw pixels (~2/3 size on a 150% display) and jumps
+    position. Verified live: an unaware-created 107x48 window sits at 161x72
+    physical; the moment ``SetProcessDPIAware()`` runs it becomes 107x48.
+
+    Claiming awareness HERE — at desktop_app import, before the backend thread
+    builds the bar and before the webview starts — makes pywebview's later call
+    a no-op, so no window is ever created in the soon-to-flip unaware state and
+    nothing shrinks mid-session. We deliberately use the SAME level pywebview
+    uses (SYSTEM via the legacy ``SetProcessDPIAware``, NOT per-monitor), so the
+    main window's own sizing math is unchanged — this only fixes the boot-order
+    race, it does not alter the steady-state awareness the app has always run
+    at. Idempotent (first-writer-wins at the Win32 level); guarded so a failure
+    never blocks boot; a plain no-op off Windows.
+
+    The bar then renders at the correct physical size via
+    ``jarvisbar.overlay._display_scale`` (Tk reports the true 144 dpi once the
+    process is aware before ``tk.Tk()``).
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:  # noqa: BLE001,S110 — never block boot on a DPI hiccup
+        pass
+
+
+# Claim DPI awareness at import time — runs before ``DesktopApp`` is ever
+# instantiated, so before the overlay bar and the pywebview window both exist.
+_claim_system_dpi_awareness()
+
+
 # ---------------------------------------------------------------------------
 # Konstanten
 # ---------------------------------------------------------------------------
