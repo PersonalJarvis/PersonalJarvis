@@ -560,12 +560,12 @@ function ProviderCard({
     }
   }
 
-  // Single-Click UND Doppelklick auf die Karte aktivieren den Provider.
-  // Wir filtern Klicks auf interaktive Sub-Elemente (Inputs, Buttons,
-  // Links) explizit, damit ein Klick ins Passwort-Feld oder auf
-  // "Ersetzen"/Trash NICHT versehentlich einen Switch ausloest. Das Radio
-  // hat zusaetzlich ein eigenes stopPropagation aus historischen Gruenden
-  // (Doppelschutz).
+  // A single click AND a double click on the card both activate the provider.
+  // We explicitly filter clicks on interactive sub-elements (inputs, buttons,
+  // links) so that a click into the password field or on the
+  // "Replace"/trash icon does NOT accidentally trigger a switch. The radio
+  // also has its own stopPropagation for historical reasons
+  // (belt and suspenders).
   function handleCardActivate(e: React.MouseEvent<HTMLDivElement>) {
     // Codex is connection-only — a card click must never trigger a brain switch.
     if (isCodex) return;
@@ -583,10 +583,10 @@ function ProviderCard({
     void activate();
   }
 
-  // Wird vom ApiKeyForm aufgerufen, sobald ein Key fuer einen bisher offenen
-  // Provider gespeichert wurde. Wenn niemand sonst in dieser Tier aktiv ist,
-  // uebernimmt der frisch konfigurierte Provider automatisch — sonst muss der
-  // User den nun sichtbaren "Aktivieren"-Button klicken.
+  // Called by ApiKeyForm as soon as a key has been saved for a previously
+  // unconfigured provider. If no one else is active in this tier, the
+  // freshly configured provider takes over automatically — otherwise the
+  // user has to click the now-visible "Activate" button.
   async function handleSavedActivate() {
     if (!autoActivateOnSave) return;
     if (descriptor.active) return;
@@ -850,15 +850,15 @@ function ProviderTestControl({ providerId }: { providerId: string }) {
 }
 
 /**
- * Radio-Button-basierter Aktiv-Toggle. Source-of-Truth bleibt
- * `descriptor.active` aus `/api/providers` — das Radio spiegelt den Server-
- * Zustand, der State wird nicht lokal vorgehalten. `name="active-{tier}"`
- * sorgt fuer Browser-native Exklusivitaet pro Tier (Brain/TTS/STT).
+ * Radio-button-based active toggle. The source of truth stays
+ * `descriptor.active` from `/api/providers` — the radio mirrors server
+ * state, it is not held locally. `name="active-{tier}"` gives us browser-
+ * native exclusivity per tier (Brain/TTS/STT).
  *
- * `disabled` wuerde onChange unterdruecken; deshalb ist das Radio bei
- * fehlendem Key NICHT disabled, sondern leitet via `activate()` einen
- * Warning-Toast aus. So bekommt der User auf jeden Klick eine Reaktion,
- * statt sich an einem stummen Element zu reiben.
+ * `disabled` would suppress onChange; that's why the radio is NOT disabled
+ * when a key is missing — instead it routes through `activate()` to raise a
+ * warning toast. This way the user gets a reaction to every click, instead
+ * of bumping into a silent element.
  */
 function ActiveControl({
   descriptor,
@@ -891,9 +891,9 @@ function ActiveControl({
     <label
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => {
-        // Doppelklick auf das Radio-Label soll NICHT zusaetzlich den
-        // onDoubleClick der Card triggern — sonst wuerde activate() zweimal
-        // feuern (idempotent, aber sendet zwei API-Calls).
+        // A double click on the radio label must NOT also trigger the
+        // card's onDoubleClick — otherwise activate() would fire twice
+        // (idempotent, but sends two API calls).
         e.stopPropagation();
       }}
       className={cn(

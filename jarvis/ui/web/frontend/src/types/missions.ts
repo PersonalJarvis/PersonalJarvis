@@ -1,9 +1,9 @@
 /**
- * TypeScript-Mirror der Phase-6-Mission-Events aus jarvis/missions/events.py.
+ * TypeScript mirror of the Phase-6 mission events from jarvis/missions/events.py.
  *
- * Discriminated Union ueber `event_type`. Bei Pydantic-Drift (neuer Event-Type
- * hinzugefuegt, Feldsignatur geaendert) muss diese Datei nachgezogen werden,
- * sonst rejected die Frontend-Parser-Layer das Envelope.
+ * Discriminated union over `event_type`. On Pydantic drift (a new event type
+ * added, a field signature changed) this file must be updated to match,
+ * otherwise the frontend parser layer rejects the envelope.
  */
 
 export type MissionState =
