@@ -1,10 +1,10 @@
-"""IPC-Loopback-Test: AdminPipeServer + AdminPipeClient im gleichen Prozess.
+"""IPC loopback test: AdminPipeServer + AdminPipeClient in the same process.
 
-Kein echter UAC-Prompt — wir starten den Server im pytest-Event-Loop und
-schicken eine harmlose ``read_registry``-Op gegen ``HKCU\\Environment``.
+No real UAC prompt — we start the server in the pytest event loop and
+send a harmless ``read_registry`` op against ``HKCU\\Environment``.
 
-Der Test ist ``@pytest.mark.phase5 + @pytest.mark.skip_ci``, weil er
-Windows-Named-Pipes braucht (pywin32). Lokal auf dem Dev-Rechner laeuft er.
+The test is ``@pytest.mark.phase5 + @pytest.mark.skip_ci`` because it
+needs Windows named pipes (pywin32). Runs locally on the dev machine.
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ async def test_read_registry_roundtrip():
     try:
         import win32pipe  # type: ignore[import-not-found,unused-import]  # noqa: F401
     except ImportError:
-        pytest.skip("pywin32 nicht verfuegbar")
+        pytest.skip("pywin32 not available")
 
     secret = b"X" * 32
     pipe_name = rf"\\.\pipe\jarvis-admin-test-{uuid.uuid4().hex}"
@@ -35,17 +35,17 @@ async def test_read_registry_roundtrip():
 
     serve_task = asyncio.create_task(server.serve_forever(), name="serve")
     try:
-        # Kleiner sleep, damit der Accept-Loop seine erste CreateNamedPipe
-        # absetzen kann.
+        # Small sleep so the accept loop can issue its first
+        # CreateNamedPipe.
         await asyncio.sleep(0.3)
         op = ReadRegistryOp(
             hive="HKCU", key_path="Environment", value_name="PATH"
         )
         resp = await client.send(op)
-        # Bei success=True muss der Result-Dict "value" und "type" enthalten;
-        # bei False ist entweder "registry_key_not_found" oder
-        # "registry_read_failed". Beides ist valide — wir pruefen nur, dass
-        # die Round-Trip-Infrastruktur sauber laeuft.
+        # On success=True the result dict must contain "value" and "type";
+        # on False it's either "registry_key_not_found" or
+        # "registry_read_failed". Both are valid — we only check that
+        # the round-trip infrastructure runs cleanly.
         assert resp.op_id == op.op_id
         if resp.success:
             assert "value" in resp.result

@@ -319,7 +319,7 @@ async def test_voice_fact_becomes_context_on_next_turn(stack) -> None:
     with patch.object(s["curator"]._llm, "propose_updates", return_value=[update]):
         await _drive_voice_turn(
             s["bus"],
-            user_text="Mein Lieblingsfilm ist Inception und Nolan ist der beste Regisseur.",
+            user_text="Mein Lieblingsfilm ist Inception und Nolan ist der beste Regisseur.",  # i18n-allow
             brain_text="Cool, Nolan ist wirklich stark.",  # no ack -> aggressive path
         )
 
@@ -424,7 +424,7 @@ async def test_ack_path_alone_creates_page(stack) -> None:
     harald_update = PageUpdate(
         target_path=vault_root / "entities" / "harald.md",
         operation="create",
-        new_body=_entity_body("harald", "Harald wurde 1976 geboren."),
+        new_body=_entity_body("harald", "Harald wurde 1976 geboren."),  # i18n-allow
         reason="ack-path fact",
     )
 
@@ -433,7 +433,7 @@ async def test_ack_path_alone_creates_page(stack) -> None:
     ):
         await _drive_voice_turn(
             s["bus"],
-            user_text="Harald wurde 1976 geboren.",   # 26 chars -- below aggressive min
+            user_text="Harald wurde 1976 geboren.",   # 26 chars -- below aggressive min  # i18n-allow
             brain_text="Notiert.",                     # explicit ack keyword
         )
 
@@ -509,7 +509,7 @@ async def test_voice_path_handlers_do_not_block_voice(stack) -> None:
         t0 = time.monotonic_ns()
         await s["bus"].publish(TranscriptFinal(
             transcript=Transcript(
-                text="Mein Lieblings-Test ist dieser hier mit ausreichend Zeichen.",
+                text="Mein Lieblings-Test ist dieser hier mit ausreichend Zeichen.",  # i18n-allow
                 language="de",
                 confidence=0.95,
             ),
@@ -553,7 +553,7 @@ async def test_curator_failure_does_not_break_voice_path(stack) -> None:
         # The voice turn must complete without raising.
         await _drive_voice_turn(
             s["bus"],
-            user_text="Mein Lieblingsfilm ist Inception und das ist ein langer Satz.",
+            user_text="Mein Lieblingsfilm ist Inception und das ist ein langer Satz.",  # i18n-allow
             brain_text="Klingt cool, mag ich auch.",
         )
 
@@ -572,8 +572,8 @@ async def test_curator_failure_does_not_break_voice_path(stack) -> None:
     ):
         await _drive_voice_turn(
             s["bus"],
-            user_text="Test ob das System nach dem Crash noch funktioniert.",
-            brain_text="Klar, alles laeuft.",
+            user_text="Test ob das System nach dem Crash noch funktioniert.",  # i18n-allow
+            brain_text="Klar, alles laeuft.",  # i18n-allow
         )
     assert (vault_root / "entities" / "ruben.md").is_file()
 
@@ -621,7 +621,7 @@ async def test_rollup_failure_does_not_break_voice_path(stack) -> None:
     ):
         await _drive_voice_turn(
             s["bus"],
-            user_text="Test ob die Voice-Pipeline trotz Rollup-Crash noch laeuft.",
+            user_text="Test ob die Voice-Pipeline trotz Rollup-Crash noch laeuft.",  # i18n-allow
             brain_text="Klar, antworte ich.",
         )
     assert (vault_root / "entities" / "ruben.md").is_file()
@@ -708,7 +708,7 @@ async def test_fresh_triggers_recover_existing_vault_state(stack) -> None:
     with patch.object(s["curator"]._llm, "propose_updates", return_value=[update]):
         await _drive_voice_turn(
             s["bus"],
-            user_text="Mein Lieblingsgetraenk ist Cafe Latte mit Hafermilch.",
+            user_text="Mein Lieblingsgetraenk ist Cafe Latte mit Hafermilch.",  # i18n-allow
             brain_text="Schoen zu wissen.",
         )
     assert (vault_root / "entities" / "ruben.md").is_file()

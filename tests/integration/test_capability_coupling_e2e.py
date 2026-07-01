@@ -6,15 +6,15 @@ Verifies the goal stated in `docs/plans/capability-coupling/SPEC.md`:
 
 Hard-negatives (must produce UNSUPPORTED + zero phantom TTS):
     1. "Schick eine Email an harald@gmx.de ..."
-    2. "Trag einen Termin morgen 10 Uhr ein"
+    2. "Trag einen Termin morgen 10 Uhr ein"  # i18n-allow
     3. "Sende eine WhatsApp an Mama"
     4. "Bestelle eine Pizza"
-    5. "Poste auf X dass ich heute frei habe"
+    5. "Poste auf X dass ich heute frei habe"  # i18n-allow
 
 Hard-positives (must NOT trigger UNSUPPORTED — false-negative guard):
-    6. "Öffne Chrome" → local_action.open_app
+    6. "Öffne Chrome" → local_action.open_app  # i18n-allow
     7. "Lies die Datei foo.txt" → harness.openclaw
-    8. "Wie spät ist es?" → smalltalk, gate inactive
+    8. "Wie spät ist es?" → smalltalk, gate inactive  # i18n-allow
     9. "Such im Web nach Python 3.13" → UNSUPPORTED when no web-search tool
        is registered (catches the manager.py:774 prompt-claim drift).
 
@@ -45,15 +45,15 @@ def seeded_registry() -> CapabilityRegistry:
 
 HARD_NEGATIVE_UTTERANCES = [
     "Schick eine Email an harald@gmx.de mit dem Betreff Hallo",
-    "Trag einen Termin morgen 10 Uhr ein",
+    "Trag einen Termin morgen 10 Uhr ein",  # i18n-allow
     "Sende eine WhatsApp an Mama",
     "Bestelle eine Pizza",
-    "Poste auf X dass ich heute frei habe",
+    "Poste auf X dass ich heute frei habe",  # i18n-allow
 ]
 
 HARD_POSITIVE_LOCAL = [
-    ("Öffne Chrome", LocalActionMode.DIRECT),
-    ("Klick auf den roten Button links", LocalActionMode.COMPUTER_USE),
+    ("Öffne Chrome", LocalActionMode.DIRECT),  # i18n-allow
+    ("Klick auf den roten Button links", LocalActionMode.COMPUTER_USE),  # i18n-allow
 ]
 
 
@@ -97,7 +97,7 @@ def test_hard_negative_response_contains_no_phantom_confirmation(
     assert plan is not None
     response = (plan.response_text or "").lower()
     forbidden = [
-        "gesendet", "eingetragen", "wird erledigt", "bestellt", "gepostet",
+        "gesendet", "eingetragen", "wird erledigt", "bestellt", "gepostet",  # i18n-allow
         "sent", "scheduled", "ordered", "done.", "consider it done",
     ]
     leaked = [phrase for phrase in forbidden if phrase in response]
@@ -110,11 +110,11 @@ def test_hard_negative_response_contains_no_phantom_confirmation(
 def test_hard_negative_response_starts_with_unsupported_marker(
     seeded_registry: CapabilityRegistry,
 ) -> None:
-    """The DE response must start with the canonical 'Das kann ich noch nicht'
+    """The DE response must start with the canonical 'Das kann ich noch nicht'  # i18n-allow
     marker so the user clearly hears the refusal."""
     plan = match_local_action(HARD_NEGATIVE_UTTERANCES[0], lang="de")
     assert plan is not None and plan.response_text is not None
-    assert plan.response_text.lower().startswith("das kann ich noch nicht"), (
+    assert plan.response_text.lower().startswith("das kann ich noch nicht"), (  # i18n-allow
         f"Expected canonical refusal opener, got {plan.response_text!r}"
     )
 
@@ -162,10 +162,10 @@ def test_hard_positive_smalltalk_not_action_intent(
     seeded_registry: CapabilityRegistry,
 ) -> None:
     """Smalltalk must not trigger the action-intent gate."""
-    assert not seeded_registry.has_action_intent("Wie spät ist es"), (
-        "Smalltalk 'Wie spät ist es' must not be classified as action intent"
+    assert not seeded_registry.has_action_intent("Wie spät ist es"), (  # i18n-allow
+        "Smalltalk 'Wie spät ist es' must not be classified as action intent"  # i18n-allow
     )
-    plan = match_local_action("Wie spät ist es", lang="de")
+    plan = match_local_action("Wie spät ist es", lang="de")  # i18n-allow
     # Plan may be None (no match anywhere) — but if any plan is returned, it
     # must not be UNSUPPORTED.
     if plan is not None:

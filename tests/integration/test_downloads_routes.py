@@ -53,16 +53,16 @@ def test_save_writes_to_downloads(home: Path) -> None:
     client = _client(native=True, home=home)
     res = client.post(
         "/api/downloads/save",
-        json={"filename": "note.txt", "content_b64": _b64("hällo".encode())},
+        json={"filename": "note.txt", "content_b64": _b64("hällo".encode())},  # i18n-allow
     )
     assert res.status_code == 200, res.text
     data = res.json()
     target = home / "Downloads" / "note.txt"
     assert target.exists()
-    assert target.read_text(encoding="utf-8") == "hällo"
+    assert target.read_text(encoding="utf-8") == "hällo"  # i18n-allow
     assert data["saved_path"] == str(target)
     assert data["filename"] == "note.txt"
-    assert data["bytes_written"] == len("hällo".encode())
+    assert data["bytes_written"] == len("hällo".encode())  # i18n-allow
 
 
 def test_save_disabled_returns_404(home: Path) -> None:

@@ -1,4 +1,4 @@
-"""Fake-Harness: scripted Ergebnisse ohne echten Subprocess."""
+"""Fake-Harness: scripted results without a real subprocess."""
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
@@ -7,7 +7,7 @@ from jarvis.core.protocols import HarnessResult, HarnessTask
 
 
 class FakeHarness:
-    """Fake-Harness für Tests. Liefert scripted Results."""
+    """Fake-Harness for tests. Returns scripted results."""
 
     name: str = "fake-harness"
     version: str = "0.0.1"
