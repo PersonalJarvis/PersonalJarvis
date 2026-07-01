@@ -135,8 +135,8 @@ class ActionRegistry:
         handlers never drift.
         """
         lines: list[str] = [
-            "Verfuegbare Actions im Computer-Use-Loop "
-            "(nutze EXAKT die gelisteten args-Namen):",
+            "Available actions in the computer-use loop "
+            "(use EXACTLY the listed args names):",
         ]
         for spec in self.all():
             schema = getattr(spec, "arg_schema", None) or {}
@@ -149,7 +149,7 @@ class ActionRegistry:
 
 
 # ----------------------------------------------------------------------
-# Argument-Transformer (Aliased Actions)
+# Argument transformers (aliased actions)
 # ----------------------------------------------------------------------
 
 
@@ -160,7 +160,7 @@ def _transform_press_key(args: dict[str, Any]) -> dict[str, Any]:
         return {"keys": [key]}
     if isinstance(key, list):
         return {"keys": [str(k) for k in key]}
-    raise ValueError("press_key braucht 'key' (string) oder 'keys' (list)")
+    raise ValueError("press_key needs 'key' (string) or 'keys' (list)")
 
 
 def _transform_press_shortcut(args: dict[str, Any]) -> dict[str, Any]:
@@ -173,11 +173,11 @@ def _transform_press_shortcut(args: dict[str, Any]) -> dict[str, Any]:
     combo = args.get("combo") or args.get("shortcut")
     if not isinstance(combo, str):
         raise ValueError(
-            "press_shortcut braucht 'combo' (z.B. 'ctrl+t') oder 'keys' (Liste)"
+            "press_shortcut needs 'combo' (e.g. 'ctrl+t') or 'keys' (list)"
         )
     parts = [p.strip().lower() for p in combo.split("+") if p.strip()]
     if not parts:
-        raise ValueError(f"Leere combo: {combo!r}")
+        raise ValueError(f"Empty combo: {combo!r}")
     return {"keys": parts}
 
 
