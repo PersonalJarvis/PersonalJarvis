@@ -72,6 +72,15 @@ FORBIDDEN_SUFFIXES = (".pem", ".key", ".sqlite", ".sqlite3", ".db")
 # How many bytes to sniff for a NUL byte when deciding text vs binary.
 _SNIFF = 8192
 
+# Text types the English-only artifact gate inspects (mirrors
+# scripts/ci/check_no_new_german.py SCAN_EXT). Data blobs / binaries are skipped.
+_GERMAN_EXT = frozenset(
+    {
+        ".py", ".md", ".txt", ".rst", ".ts", ".tsx", ".js", ".jsx",
+        ".json", ".toml", ".yaml", ".yml", ".html", ".css", ".cfg", ".ini",
+    }
+)
+
 
 # ----------------------------------------------------------------------------
 # Small helpers
@@ -309,7 +318,46 @@ def cmd_build(args: argparse.Namespace) -> int:
 
 
 # ----------------------------------------------------------------------------
-# scan  (fail-closed)
+# English-only artifact gate (loaded from the SHIPPED tree, so detector +
+# allowlist can never drift from what actually ships)
+# ----------------------------------------------------------------------------
+def _load_german_gate(tree: Path):
+    """Return (looks_german_fn | None, allowlist_patterns).
+
+    Loads the shipped detector + allowlist from the tree itself. Fail-OPEN
+    (None) if the detector is absent, so a privacy scan never crashes on a tree
+    that predates the gate — an actual German finding still blocks below.
+    """
+    import importlib.util
+
+    detect = tree / "scripts" / "ci" / "_german_detect.py"
+    allow = tree / "scripts" / "ci" / "german-allowlist.txt"
+    if not detect.exists():
+        return None, []
+    try:
+        spec = importlib.util.spec_from_file_location("_german_detect_ship", detect)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        fn = mod.looks_german
+    except Exception:
+        return None, []
+    return fn, (_read_lines(allow) if allow.exists() else [])
+
+
+def _german_allowlisted(relpath: str, patterns: list[str]) -> bool:
+    import fnmatch
+
+    norm = relpath.replace("\\", "/")
+    for pat in patterns:
+        if fnmatch.fnmatch(norm, pat):
+            return True
+        if pat.endswith("/*") and (norm == pat[:-2] or norm.startswith(pat[:-1])):
+            return True
+    return False
+
+
+# ----------------------------------------------------------------------------
+# scan  (fail-closed) — secrets + PII + English-only artifacts
 # ----------------------------------------------------------------------------
 def cmd_scan(args: argparse.Namespace) -> int:
     tree = Path(args.tree).resolve()
@@ -319,6 +367,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     scrub_rows = _load_scrub(skill_dir)
     scrub_exempt = _load_scrub_exempt(skill_dir)
     secret_rx = {name: re.compile(p) for name, p in SECRET_PATTERNS.items()}
+    german_check, german_patterns = _load_german_gate(tree)
 
     blocking: list[dict] = []
     warnings: list[dict] = []
@@ -396,6 +445,23 @@ def cmd_scan(args: argparse.Namespace) -> int:
                     warnings.append(
                         {"kind": "pii_warn", "path": rel,
                          "note": row["note"], "value": m.group(0)}
+                    )
+
+        # English-only artifact gate (CLAUDE.md rule 1): no German outside the
+        # allowlist may ship. `i18n-allow` inline marks and the path allowlist are
+        # the only escapes — same contract as the CI/pre-commit language gate.
+        if (
+            german_check is not None
+            and Path(rel).suffix.lower() in _GERMAN_EXT
+            and not _german_allowlisted(rel, german_patterns)
+        ):
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if "i18n-allow" in line:
+                    continue
+                if german_check(line):
+                    blocking.append(
+                        {"kind": "german", "path": rel, "line": lineno,
+                         "value": line.strip()[:120]}
                     )
 
     report = {
