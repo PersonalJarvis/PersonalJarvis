@@ -72,13 +72,13 @@ class ChannelChatBridge:
         try:
             channel = self._manager.get(name)
         except Exception as exc:  # noqa: BLE001
-            log.warning("ChannelChatBridge.refresh konnte '%s' nicht holen: %s", name, exc)
+            log.warning("ChannelChatBridge.refresh could not get '%s': %s", name, exc)
             return
         self._tasks[name] = asyncio.create_task(
             self._consume(name, channel),
             name=f"channel-chat-bridge:{name}",
         )
-        log.info("ChannelChatBridge consumer fuer '%s' neu gebunden", name)
+        log.info("ChannelChatBridge consumer rebound for '%s'", name)
 
     async def _consume(self, name: str, channel: ChannelAdapter) -> None:
         try:
