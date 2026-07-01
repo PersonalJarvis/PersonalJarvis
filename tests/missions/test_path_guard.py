@@ -1,4 +1,4 @@
-"""Tests fuer path_guard — Block-Liste fuer geschuetzte Pfade."""
+"""Tests for path_guard — blocklist for protected paths."""
 from __future__ import annotations
 
 import pytest
@@ -57,7 +57,7 @@ def test_dotenv_production_blocked() -> None:
 
 
 def test_env_substring_in_filename_not_blocked() -> None:
-    """`environments.py` darf nicht matchen — wir wollen nur `.env*` files."""
+    """`environments.py` must not match — we only want `.env*` files."""
     assert is_blocked("/project/environments.py") is False
 
 
@@ -88,7 +88,7 @@ def test_readme_not_blocked() -> None:
 
 
 def test_envvar_in_path_not_blocked() -> None:
-    """`environment-config.yaml` darf NICHT matchen — nur exact `.env*` files."""
+    """`environment-config.yaml` must NOT match — only exact `.env*` files."""
     assert is_blocked("config/environment-config.yaml") is False
 
 
@@ -193,21 +193,21 @@ def test_prompt_with_explicit_ssh_path() -> None:
 
 def test_prompt_with_dotenv_path() -> None:
     found = check_prompt_for_blocked_paths("Lies das .env file im /project/ Ordner")
-    # `.env` allein matcht NICHT (kein Slash/Dot-Prefix als Token-Start) —
-    # wir wollen False-Positives bei "die env-Variable" vermeiden.
-    # Falls jemand explizit "/project/.env" schreibt, soll das matchen.
+    # `.env` alone does NOT match (no slash/dot prefix as token start) —
+    # we want to avoid false positives on phrases like "the env variable".
+    # If someone explicitly writes "/project/.env", that should match.
     found2 = check_prompt_for_blocked_paths("zeig /project/.env")
     assert any(".env" in p for p in found2)
 
 
 def test_prompt_without_paths_no_match() -> None:
-    """Harmloser Prompt darf KEINE Treffer liefern."""
+    """A harmless prompt must produce NO matches."""
     found = check_prompt_for_blocked_paths("Schreibe eine Funktion is_palindrome")
     assert found == []
 
 
 def test_prompt_mentioning_env_word_not_match() -> None:
-    """`die env Variable` darf NICHT als Pfad matchen — nur echte Pfade."""
+    """`die env Variable` must NOT match as a path — only real paths."""
     found = check_prompt_for_blocked_paths("Setze die env Variable auf foo")
     assert found == []
 
@@ -220,7 +220,7 @@ def test_empty_prompt_returns_empty() -> None:
 
 
 def test_default_globs_include_critical_paths() -> None:
-    """Verifiziert dass die Top-Risiken in DEFAULT_BLOCKED_GLOBS sind."""
+    """Verifies that the top risks are in DEFAULT_BLOCKED_GLOBS."""
     blob = " ".join(DEFAULT_BLOCKED_GLOBS)
     assert ".ssh" in blob
     assert ".aws" in blob

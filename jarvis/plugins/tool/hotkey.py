@@ -96,14 +96,14 @@ def _expand_combo_keys(keys: list[str]) -> list[str]:
 
 
 def _send_hotkey_windows(keys: list[str]) -> None:
-    """Sendet eine Tastenkombination als Win32-SendInput-Sequenz.
+    """Sends a key combination as a Win32 SendInput sequence.
 
-    Reihenfolge: alle Keys nacheinander DOWN, dann in umgekehrter Reihenfolge UP.
-    Das ist die kanonische Hotkey-Choreographie — moderne Apps interpretieren
-    das als gleichzeitiges Druecken.
+    Order: all keys DOWN one after another, then UP in reverse order.
+    This is the canonical hotkey choreography — modern apps interpret
+    it as being pressed simultaneously.
     """
     if os.name != "nt":
-        raise RuntimeError("Native Hotkey-Eingabe ist nur auf Windows verfuegbar")
+        raise RuntimeError("Native hotkey input is only available on Windows")
 
     import ctypes
     from ctypes import wintypes
@@ -148,7 +148,8 @@ def _send_hotkey_windows(keys: list[str]) -> None:
     # ``ctypes.sizeof(INPUT)`` equals the real Win32 ``INPUT`` size (40 bytes on
     # x64). The previous version declared only ``ki``, giving sizeof(INPUT)=32;
     # ``SendInput`` then received cbSize=32, rejected every event (returned 0),
-    # and surfaced as a misleading "WinError 0 / Falscher Parameter". This made
+    # and surfaced as a misleading "WinError 0 / Falscher Parameter" (the  # i18n-allow (quotes the literal Win32 error text on a German-locale machine)
+    # German-locale Windows text for "incorrect parameter"). This made
     # the native hotkey path fail for EVERY key (enter, win, ctrl+...) on x64.
     class INPUT_UNION(ctypes.Union):
         _fields_ = (("mi", MOUSEINPUT), ("ki", KEYBDINPUT))
@@ -167,7 +168,7 @@ def _send_hotkey_windows(keys: list[str]) -> None:
     for k in keys:
         vk = _resolve_vk(k)
         if vk is None:
-            raise ValueError(f"Unbekannte Taste: {k!r}")
+            raise ValueError(f"Unknown key: {k!r}")
         vk_codes.append(vk)
 
     def _flags(vk: int, *, keyup: bool) -> int:
@@ -176,7 +177,7 @@ def _send_hotkey_windows(keys: list[str]) -> None:
             flags |= KEYEVENTF_EXTENDEDKEY
         return flags
 
-    # DOWN-Events: in der angegebenen Reihenfolge
+    # DOWN events: in the given order
     down_events = [
         INPUT(
             type=INPUT_KEYBOARD,
@@ -184,7 +185,7 @@ def _send_hotkey_windows(keys: list[str]) -> None:
         )
         for vk in vk_codes
     ]
-    # UP-Events: in umgekehrter Reihenfolge
+    # UP events: in reverse order
     up_events = [
         INPUT(
             type=INPUT_KEYBOARD,
@@ -205,9 +206,9 @@ class HotkeyTool:
     name: str = "hotkey"
     risk_tier: str = "monitor"
     description: str = (
-        "Sendet eine Tastenkombination an das aktive Fenster (z.B. ['ctrl','t'] "
-        "fuer neuen Tab, ['alt','tab'] fuer Window-Switch, ['ctrl','shift','t'] "
-        "fuer geschlossenen Tab wiederherstellen)."
+        "Sends a key combination to the active window (e.g. ['ctrl','t'] "
+        "for a new tab, ['alt','tab'] for window switch, ['ctrl','shift','t'] "
+        "to restore a closed tab)."
     )
     schema: dict[str, Any] = {
         "type": "object",
@@ -216,9 +217,9 @@ class HotkeyTool:
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    "Liste der Tasten in Druck-Reihenfolge. Modifier (ctrl, shift, "
-                    "alt, win) zuerst, dann die Aktionstaste. Buchstaben einzeln, "
-                    "Sondertasten als Name (enter, tab, esc, f1-f12, left, right, "
+                    "List of keys in press order. Modifiers (ctrl, shift, "
+                    "alt, win) first, then the action key. Letters individually, "
+                    "special keys by name (enter, tab, esc, f1-f12, left, right, "
                     "up, down, home, end, pageup, pagedown, delete, backspace)."
                 ),
             },
@@ -232,44 +233,44 @@ class HotkeyTool:
             return ToolResult(
                 success=False,
                 output=None,
-                error="keys fehlt oder ist keine Liste (Beispiel: ['ctrl', 't'])",
+                error="keys is missing or not a list (example: ['ctrl', 't'])",
             )
         keys_str = [str(k) for k in keys]
         # Tolerate a combined shortcut string ("ctrl+v") in place of the
         # documented list form (["ctrl", "v"]) — LLM callers emit it constantly.
         keys_str = _expand_combo_keys(keys_str)
 
-        # Vorab-Validierung fuer bessere Fehlermeldung — sonst kommt
-        # nur "Unbekannte Taste 'X'" aus dem ctypes-Pfad.
+        # Pre-validation for a better error message — otherwise only
+        # "Unknown key 'X'" comes out of the ctypes path.
         for k in keys_str:
             if _resolve_vk(k) is None:
                 return ToolResult(
                     success=False,
                     output=None,
                     error=(
-                        f"Unbekannte Taste: {k!r}. Bekannte Modifier: ctrl, shift, "
-                        f"alt, win. Bekannte Tasten: a-z, 0-9, f1-f12, enter, tab, "
+                        f"Unknown key: {k!r}. Known modifiers: ctrl, shift, "
+                        f"alt, win. Known keys: a-z, 0-9, f1-f12, enter, tab, "
                         f"esc, space, backspace, delete, home, end, pageup, "
                         f"pagedown, left, right, up, down."
                     ),
                 )
 
-        # pyautogui-Pfad als plattform-unabhaengiger Fallback (Tests/CI auf
-        # Linux). Auf Windows bevorzugen wir den nativen Pfad — pyautogui
-        # ist langsamer und braucht zusaetzliche Setup-Arbeit beim Hotkey-
-        # Mapping (z.B. 'win' heisst dort 'winleft').
+        # pyautogui path as a platform-independent fallback (tests/CI on
+        # Linux). On Windows we prefer the native path — pyautogui
+        # is slower and needs extra setup work for hotkey
+        # mapping (e.g. 'win' is called 'winleft' there).
         if os.name == "nt":
             try:
                 await asyncio.to_thread(_send_hotkey_windows, keys_str)
                 return ToolResult(
                     success=True,
-                    output=f"Hotkey gesendet: {'+'.join(keys_str)}",
+                    output=f"Hotkey sent: {'+'.join(keys_str)}",
                 )
             except (ValueError, OSError) as exc:
                 return ToolResult(
                     success=False,
                     output=None,
-                    error=f"Hotkey '{'+'.join(keys_str)}' fehlgeschlagen: {exc}",
+                    error=f"Hotkey '{'+'.join(keys_str)}' failed: {exc}",
                 )
 
         try:
@@ -279,16 +280,16 @@ class HotkeyTool:
                 success=False,
                 output=None,
                 error=(
-                    f"Plattform nicht Windows ({os.name}) und pyautogui fehlt: {exc}. "
+                    f"Platform is not Windows ({os.name}) and pyautogui is missing: {exc}. "
                     "pip install pyautogui"
                 ),
             )
         try:
-            # pyautogui.hotkey nimmt einzelne string-Args, nicht eine Liste
+            # pyautogui.hotkey takes individual string args, not a list
             pyautogui.hotkey(*keys_str)
             return ToolResult(
                 success=True,
-                output=f"Hotkey gesendet (pyautogui): {'+'.join(keys_str)}",
+                output=f"Hotkey sent (pyautogui): {'+'.join(keys_str)}",
             )
         except Exception as exc:  # noqa: BLE001
             return ToolResult(success=False, output=None, error=str(exc))

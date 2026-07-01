@@ -1,7 +1,7 @@
-"""move_mouse-Tool: bewegt den Mauszeiger ohne zu klicken.
+"""move_mouse tool: moves the mouse cursor without clicking.
 
-Risk-Tier: ``safe`` — die Bewegung selbst loest keinen App-State-Change
-aus. Erst ein Klick wuerde das tun.
+Risk tier: ``safe`` — the movement itself does not trigger an
+app state change. Only a click would do that.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def _move_windows(x: int, y: int) -> None:
     user can see the mouse travel; the virtual-cursor overlay tracks it.
     """
     if os.name != "nt":
-        raise RuntimeError("Native Mausbewegung nur auf Windows verfuegbar")
+        raise RuntimeError("Native mouse movement is only available on Windows")
 
     glide_os_cursor(int(x), int(y))
     try:
@@ -33,12 +33,12 @@ def _move_windows(x: int, y: int) -> None:
 class MoveMouseTool:
     name: str = "move_mouse"
     risk_tier: str = "safe"
-    description: str = "Bewegt den Mauszeiger an absolute Bildschirm-Koordinaten ohne zu klicken."
+    description: str = "Moves the mouse cursor to absolute screen coordinates without clicking."
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
-            "x": {"type": "integer", "description": "X-Koordinate (Pixel)"},
-            "y": {"type": "integer", "description": "Y-Koordinate (Pixel)"},
+            "x": {"type": "integer", "description": "X coordinate (pixels)"},
+            "y": {"type": "integer", "description": "Y coordinate (pixels)"},
         },
         "required": ["x", "y"],
     }
@@ -50,24 +50,24 @@ class MoveMouseTool:
         except (KeyError, TypeError, ValueError):
             return ToolResult(
                 success=False, output=None,
-                error="x und y muessen Integer-Koordinaten sein",
+                error="x and y must be integer coordinates",
             )
 
         if os.name == "nt":
             try:
                 await asyncio.to_thread(_move_windows, x, y)
-                return ToolResult(success=True, output=f"Maus an ({x}, {y})")
+                return ToolResult(success=True, output=f"Mouse at ({x}, {y})")
             except OSError as exc:
                 return ToolResult(success=False, output=None, error=str(exc))
 
         try:
             import pyautogui
             pyautogui.moveTo(x, y)
-            return ToolResult(success=True, output=f"Maus (pyautogui) an ({x},{y})")
+            return ToolResult(success=True, output=f"Mouse (pyautogui) at ({x},{y})")
         except ImportError as exc:
             return ToolResult(
                 success=False, output=None,
-                error=f"Plattform nicht Windows und pyautogui fehlt: {exc}",
+                error=f"Platform is not Windows and pyautogui is missing: {exc}",
             )
         except Exception as exc:  # noqa: BLE001
             return ToolResult(success=False, output=None, error=str(exc))
