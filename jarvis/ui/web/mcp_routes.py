@@ -208,21 +208,21 @@ async def list_mcps(request: Request) -> dict[str, Any]:
 
 @router.post("/{name}/enable")
 async def enable_mcp(name: str, request: Request) -> dict[str, Any]:
-    """Aktiviert einen MCP-Server: Status-Check FIRST, nur bei Erfolg
-    persistentes ``enabled=true`` in mcp.json.
+    """Enables an MCP server: status check FIRST, only persists
+    ``enabled=true`` in mcp.json on success.
 
-    Rationale: User-Erwartung ist "Toggle an = verbunden". Wenn wir vorher
-    ``enabled=true`` schreiben und der Start scheitert, bleibt ein inkonsistenter
-    Zustand (enabled in Config, aber offline zur Laufzeit). Die Connection-Probe
-    vorab vermeidet das.
+    Rationale: the user expects "toggle on = connected". If we wrote
+    ``enabled=true`` upfront and the start then failed, we'd be left with an
+    inconsistent state (enabled in config, but offline at runtime). The
+    connection probe upfront avoids that.
     """
     registry = _get_registry(request)
     if registry is None:
-        raise HTTPException(503, "MCP-Registry nicht initialisiert.")
+        raise HTTPException(503, "MCP registry not initialized.")
 
     spec = registry.get_spec(name)
     if spec is None:
-        raise HTTPException(404, f"MCP-Server '{name}' unbekannt.")
+        raise HTTPException(404, f"MCP server '{name}' unknown.")
 
     # Already active? Just persist enabled=true, no restart needed.
     if name in registry.active_clients():
@@ -231,16 +231,16 @@ async def enable_mcp(name: str, request: Request) -> dict[str, Any]:
         await _publish_brain_tools_changed(request, f"mcp_enabled:{name}")
         return {"ok": True, "name": name, "enabled": True, "started": True}
 
-    # Probe-Start: gestartet bleibt, wenn erfolgreich. Bei Fehler wird
-    # nichts persistiert, der User sieht den Grund direkt.
+    # Probe start: stays started if it succeeds. On error, nothing is
+    # persisted — the user sees the reason directly.
     try:
         await registry.start_enabled([name])
     except Exception as exc:  # noqa: BLE001
-        log.warning("Enable-Start von %s fehlgeschlagen: %s", name, exc)
+        log.warning("Enable-start of %s failed: %s", name, exc)
 
-    # Erfolg prüfen: liegt Client in active_clients + kein Error?
+    # Check success: is the client in active_clients + no error?
     if name not in registry.active_clients():
-        error = registry.last_error(name) or "Connection fehlgeschlagen"
+        error = registry.last_error(name) or "Connection failed"
         return {
             "ok": False,
             "name": name,
@@ -261,7 +261,7 @@ async def enable_mcp(name: str, request: Request) -> dict[str, Any]:
 async def disable_mcp(name: str, request: Request) -> dict[str, Any]:
     registry = _get_registry(request)
     if registry is None:
-        raise HTTPException(503, "MCP-Registry nicht initialisiert.")
+        raise HTTPException(503, "MCP registry not initialized.")
 
     mcp_state.disable(name)
 
@@ -270,8 +270,8 @@ async def disable_mcp(name: str, request: Request) -> dict[str, Any]:
         try:
             await active[name].stop()
         except Exception as exc:  # noqa: BLE001
-            log.warning("Stop von %s fehlgeschlagen: %s", name, exc)
-        # Registry-Slot aufräumen
+            log.warning("Stop of %s failed: %s", name, exc)
+        # Clean up the registry slot
         registry._clients.pop(name, None)  # noqa: SLF001
 
     # Remove the stopped server's tools from the tool registry + notify brain
@@ -285,10 +285,10 @@ async def disable_mcp(name: str, request: Request) -> dict[str, Any]:
 async def start_mcp(name: str, request: Request) -> dict[str, Any]:
     registry = _get_registry(request)
     if registry is None:
-        raise HTTPException(503, "MCP-Registry nicht initialisiert.")
+        raise HTTPException(503, "MCP registry not initialized.")
 
     if registry.get_spec(name) is None:
-        raise HTTPException(404, f"MCP-Server '{name}' unbekannt.")
+        raise HTTPException(404, f"MCP server '{name}' unknown.")
 
     if name in registry.active_clients():
         return {"ok": True, "name": name, "status": "already-running"}
@@ -296,7 +296,7 @@ async def start_mcp(name: str, request: Request) -> dict[str, Any]:
     try:
         await registry.start_enabled([name])
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(500, f"Start fehlgeschlagen: {exc}") from exc
+        raise HTTPException(500, f"Start failed: {exc}") from exc
 
     await _sync_tools_for_server(request, registry, name, adding=True)
     await _publish_brain_tools_changed(request, f"mcp_started:{name}")
@@ -312,7 +312,7 @@ async def start_mcp(name: str, request: Request) -> dict[str, Any]:
 async def stop_mcp(name: str, request: Request) -> dict[str, Any]:
     registry = _get_registry(request)
     if registry is None:
-        raise HTTPException(503, "MCP-Registry nicht initialisiert.")
+        raise HTTPException(503, "MCP registry not initialized.")
 
     active = registry.active_clients()
     if name not in active:
@@ -321,7 +321,7 @@ async def stop_mcp(name: str, request: Request) -> dict[str, Any]:
     try:
         await active[name].stop()
     except Exception as exc:  # noqa: BLE001
-        log.warning("Stop von %s fehlgeschlagen: %s", name, exc)
+        log.warning("Stop of %s failed: %s", name, exc)
     registry._clients.pop(name, None)  # noqa: SLF001
 
     await _sync_tools_for_server(request, registry, name, adding=False)
@@ -344,7 +344,7 @@ async def import_claude_desktop(request: Request) -> dict[str, Any]:
             try:
                 registry.register_spec(MCPServerSpec(**spec_dict))
             except Exception as exc:  # noqa: BLE001
-                log.warning("Custom-Spec %s nicht registrierbar: %s", name, exc)
+                log.warning("Custom spec %s could not be registered: %s", name, exc)
 
     return {"ok": True, "count": count, "added": names, "note": note}
 
@@ -355,20 +355,20 @@ class CredentialsPayload(BaseModel):
 
 @router.post("/{name}/check")
 async def check_mcp(name: str, request: Request) -> dict[str, Any]:
-    """Probe-Start: startet den Server, verifiziert Handshake + Tool-Listing,
-    stoppt ihn wieder. Verändert `enabled` nicht — nur Connection-Test.
+    """Probe start: starts the server, verifies the handshake + tool listing,
+    then stops it again. Does not change `enabled` — connection test only.
 
     Response: ``{"ok": bool, "tools_count": int, "error": str | None}``.
     """
     registry = _get_registry(request)
     if registry is None:
-        raise HTTPException(503, "MCP-Registry nicht initialisiert.")
+        raise HTTPException(503, "MCP registry not initialized.")
 
     spec = registry.get_spec(name)
     if spec is None:
-        raise HTTPException(404, f"MCP-Server '{name}' unbekannt.")
+        raise HTTPException(404, f"MCP server '{name}' unknown.")
 
-    # Wenn bereits aktiv → nur Tool-Listing prüfen (günstig, keine Restart-Kosten)
+    # If already active → just check the tool listing (cheap, no restart cost)
     active = registry.active_clients()
     if name in active:
         client = active[name]
@@ -379,15 +379,15 @@ async def check_mcp(name: str, request: Request) -> dict[str, Any]:
                 "ok": True,
                 "tools_count": len(tools),
                 "error": None,
-                "note": "bereits verbunden",
+                "note": "already connected",
             }
         except Exception as exc:  # noqa: BLE001
             msg = f"{type(exc).__name__}: {exc}"
             registry._errors[name] = msg  # noqa: SLF001
             return {"ok": False, "tools_count": 0, "error": msg}
 
-    # Probe: Frischer Client, starten, tools listen, stoppen. Kein persistenter
-    # Zustand — ideal als Vor-Enable-Check.
+    # Probe: fresh client, start, list tools, stop. No persistent
+    # state — ideal as a pre-enable check.
     from jarvis.mcp.client import MCPClient
     from jarvis.mcp.registry import _env_from_mcp_json
 
@@ -413,18 +413,18 @@ async def check_mcp(name: str, request: Request) -> dict[str, Any]:
 async def set_credentials(
     name: str, payload: CredentialsPayload, request: Request
 ) -> dict[str, Any]:
-    """Schreibt einen oder mehrere Secrets in den Windows Credential Manager.
+    """Writes one or more secrets to the Windows Credential Manager.
 
     Body: ``{"credentials": {"gmail_oauth_token": "..."}}``.
-    Empty strings werden ignoriert (erlaubt Partial-Updates).
+    Empty strings are ignored (allows partial updates).
     """
     registry = _get_registry(request)
     spec = registry.get_spec(name) if registry else None
     if spec is None:
-        raise HTTPException(404, f"MCP-Server '{name}' unbekannt.")
+        raise HTTPException(404, f"MCP server '{name}' unknown.")
 
-    # Nur Keys akzeptieren, die der Server tatsächlich braucht — schützt
-    # gegen das versehentliche Schreiben beliebiger Secrets.
+    # Only accept keys the server actually needs — protects
+    # against accidentally writing arbitrary secrets.
     allowed = set(spec.required_auth)
     written: list[str] = []
     rejected: list[str] = []
@@ -452,7 +452,7 @@ async def set_credentials(
 
 @router.get("/config/info")
 async def config_info() -> dict[str, Any]:
-    """Pfad + Existenz + Roh-Inhalt der mcp.json (für UI-Editor)."""
+    """Path + existence + raw content of mcp.json (for the UI editor)."""
     from jarvis.mcp.state import MCP_JSON_PATH
 
     exists = MCP_JSON_PATH.exists()
@@ -471,16 +471,16 @@ async def config_info() -> dict[str, Any]:
 
 @router.put("/config/raw")
 async def update_raw_config(payload: dict[str, Any], request: Request) -> dict[str, Any]:
-    """Schreibt rohe mcp.json — erlaubt UI-seitiges Direkt-Editieren.
+    """Writes raw mcp.json — allows direct editing from the UI.
 
-    Body ist das komplette Root-Dict (``{"mcpServers": {...}}``). Validiert
-    nur grundlegend — Syntaxfehler würden den nächsten Boot blockieren.
+    The body is the complete root dict (``{"mcpServers": {...}}``). Only
+    validates the basics — a syntax error would block the next boot.
     """
     if not isinstance(payload, dict) or "mcpServers" not in payload:
-        raise HTTPException(400, "Payload braucht Schlüssel 'mcpServers'.")
+        raise HTTPException(400, "Payload needs the 'mcpServers' key.")
     servers = payload.get("mcpServers")
     if not isinstance(servers, dict):
-        raise HTTPException(400, "'mcpServers' muss ein Objekt sein.")
+        raise HTTPException(400, "'mcpServers' must be an object.")
 
     mcp_state.save_config(payload)
 
@@ -496,24 +496,24 @@ async def update_raw_config(payload: dict[str, Any], request: Request) -> dict[s
 
 @router.delete("/{name}")
 async def delete_mcp(name: str, request: Request) -> dict[str, Any]:
-    """Entfernt den mcp.json-Eintrag eines Servers.
+    """Removes a server's mcp.json entry.
 
-    Bootstrap-Specs bleiben im Code — wenn der Server dort existiert, fällt die
-    Registry nach dem Delete auf die Code-Default-Spec zurück (ohne Overrides
-    oder Custom-Env). Der User sieht ihn also weiterhin als verfügbar, aber
-    ohne Enable-Flag.
+    Bootstrap specs stay in the code — if the server exists there, the
+    registry falls back to the code default spec after the delete (without
+    overrides or a custom env). So the user still sees it as available, just
+    without the enable flag.
     """
     registry = _get_registry(request)
 
-    # Spec prüfen — mandatory (Bootstrap-only, kein mcp.json-Entry) blocken
+    # Check the spec — block a mandatory server (bootstrap-only, no mcp.json entry)
     entry = mcp_state.get_server_entry(name)
     spec = registry.get_spec(name) if registry else None
     if entry is None and spec is not None and spec.mandatory:
         raise HTTPException(
-            400, f"'{name}' ist ein essentieller Bootstrap-Server — nur deaktivierbar."
+            400, f"'{name}' is an essential bootstrap server — can only be disabled."
         )
 
-    # Aktiven Client stoppen
+    # Stop the active client
     if registry is not None:
         active = registry.active_clients()
         if name in active:
@@ -523,17 +523,17 @@ async def delete_mcp(name: str, request: Request) -> dict[str, Any]:
                 pass
             registry._clients.pop(name, None)  # noqa: SLF001
 
-    # mcp.json-Eintrag löschen
+    # Delete the mcp.json entry
     removed = mcp_state.remove_server(name)
 
-    # Wenn kein Bootstrap existiert, komplett aus Registry entfernen
+    # If no bootstrap exists, remove it entirely from the registry
     if registry is not None and spec is not None and not any(
         s.name == name for s in BOOTSTRAP_SERVERS
     ):
         registry._specs.pop(name, None)  # noqa: SLF001
 
-    # Nach dem Entfernen die Registry aus mcp.json neu laden — das stellt
-    # Bootstrap-Specs wieder her, falls das mcp.json-Entry eine override war.
+    # After removing, reload the registry from mcp.json — this restores
+    # bootstrap specs in case the mcp.json entry was an override.
     if registry is not None:
         registry.load_from_mcp_json()
 
