@@ -670,7 +670,7 @@ class WebServer:
 
         @app.get("/api/config")
         async def get_config() -> dict[str, Any]:
-            # Read-only Snapshot — Secrets sind per Design nicht in der Config.
+            # Read-only snapshot — secrets are, by design, never in the config.
             return cfg.model_dump()
 
         @app.get("/api/plugins")
@@ -678,7 +678,7 @@ class WebServer:
             try:
                 return list_all_plugins()
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning("Plugin-Discovery fehlgeschlagen")
+                logger.opt(exception=exc).warning("Plugin discovery failed")
                 return {}
 
         @app.post("/api/debug/emit-test-event")
@@ -693,22 +693,22 @@ class WebServer:
 
         @app.post("/api/window/focus")
         async def window_focus() -> dict[str, Any]:
-            # Placeholder — der eigentliche Fokus-Call landet in der Desktop-App
-            # (pywebview-Shell). Hier nur ACK, damit Single-Instance-Ping einen
-            # definierten Status bekommt.
+            # Placeholder — the actual focus call lands in the desktop app
+            # (pywebview shell). Just an ACK here, so single-instance ping
+            # gets a defined status.
             return {"ok": True, "focused": False, "note": "handled by desktop-shell"}
 
         @app.get("/api/brain/status")
         async def brain_status() -> dict[str, Any]:
-            """Liefert den aktuell aktiven Brain-Provider + Modell.
+            """Returns the currently active brain provider + model.
 
-            Frontend nutzt das beim Mount, um den Sidebar-Footer korrekt zu
-            initialisieren (statt vom hartcodierten "claude-api"-Default
-            auszugehen). Live-Switches kommen weiterhin via WS-Event
+            The frontend uses this on mount to initialize the sidebar footer
+            correctly (instead of assuming the hardcoded "claude-api"
+            default). Live switches still arrive via the WS event
             ``BrainProviderChanged``.
             """
             brain = getattr(app.state, "brain", None)
-            # BrainManager exposed `active_provider`. MockBrain hat nur `name`.
+            # BrainManager exposes `active_provider`. MockBrain only has `name`.
             # Fast-boot deferral: the heavy BrainManager build runs in a
             # background thread, so `app.state.brain` is None for the first
             # ~850 ms while uvicorn already serves. In that window fall back to
@@ -740,27 +740,27 @@ class WebServer:
 
         @app.get("/api/jarvis-agent/status")
         async def jarvis_agent_status() -> dict[str, Any]:
-            """OpenClaw-Bridge-Status fuer die SettingsView (Welle 3).
+            """OpenClaw-bridge status for the settings view (Welle 3).
 
-            Read-only Snapshot:
+            Read-only snapshot:
 
-            * ``configured``       — Block ``[harness.openclaw]`` in jarvis.toml?
-            * ``enabled``          — Bridge-Toggle aus dem Block
-            * ``binary_path``      — konfigurierter Pfad
-            * ``binary_detected``  — Resolver-Ergebnis (PATH + .cmd/.ps1/.exe)
-            * ``version_pin``      — AD-21 Pin (None bei fehlendem Block)
-            * ``brain_primary``    — aktiver SUBAGENT-Provider
-              (``[brain.sub_jarvis].provider``); Fallback auf ``brain.primary``
-              nur wenn kein Subagent-Provider gesetzt ist. NICHT der Router-
-              Brain — der Subagent fuehrt die Heavy-Tasks aus.
-            * ``provider_slug``    — OpenClaw-Slug des aktiven Subagent-
-              Providers nach AD-6 (claude-api->claude-cli)
-            * ``model_resolved``   — Override aus Config ODER Frontier-Deep-
-              Model des aktiven Subagent-Providers
-            * ``mapping``          — vollstaendige Slug-Mapping-Tabelle
+            * ``configured``       — is the ``[harness.openclaw]`` block present in jarvis.toml?
+            * ``enabled``          — bridge toggle from the block
+            * ``binary_path``      — configured path
+            * ``binary_detected``  — resolver result (PATH + .cmd/.ps1/.exe)
+            * ``version_pin``      — AD-21 pin (None when the block is missing)
+            * ``brain_primary``    — active SUBAGENT provider
+              (``[brain.sub_jarvis].provider``); falls back to ``brain.primary``
+              only when no subagent provider is set. NOT the router
+              brain — the subagent runs the heavy tasks.
+            * ``provider_slug``    — OpenClaw slug of the active subagent
+              provider per AD-6 (claude-api->claude-cli)
+            * ``model_resolved``   — override from config OR the frontier-deep
+              model of the active subagent provider
+            * ``mapping``          — the full slug-mapping table
 
-            Vertrag: docs/openclaw-bridge.md §4.3 Wizard-/Setup-Erweiterung.
-            Endpoint liefert KEINE Secrets — nur Boolean ob Key gesetzt ist.
+            Contract: docs/openclaw-bridge.md §4.3 wizard/setup extension.
+            The endpoint returns NO secrets — only a boolean for whether a key is set.
             """
             import shutil
 
