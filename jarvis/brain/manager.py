@@ -921,6 +921,39 @@ def _is_spawn_decline(user_text: str) -> bool:
     return bool(_SPAWN_DECLINE_RE.search(user_text or ""))
 
 
+# The user NAMING the auto-spawn *feature* — talking about it, complaining about
+# it, asking to fix it — as opposed to COMMANDING a spawn. "Auto-Spawn" /
+# "automatic spawn(ing)" is a feature NAME, never a vehicle imperative: nobody
+# dispatches a worker by saying "auto-spawn". The negation-blind vehicle hoist in
+# ``_should_force_spawn`` would otherwise substring-match the "spawn" inside
+# "auto-spawn" (the hyphen is a \b word boundary) and force-spawn the very thing
+# the user is complaining about. Anchored on the "auto"/"automatic" qualifier so
+# a bare imperative ("Spawne einen Subagenten …") is untouched — the 2026-06-15
+# mandate ("when I say subagent it MUST spawn") stays intact.
+_SPAWN_FEATURE_RE = re.compile(
+    r"\bauto[-\s]?spawn\w*"                  # auto-spawn / autospawn / auto spawn(ing)
+    r"|\bautomatic(?:ally)?[\s-]+spawn\w*"   # automatic spawn / automatically spawning
+    r"|\bautomatisch\w*[\s-]+spawn\w*",      # automatisches spawnen
+    re.IGNORECASE,
+)
+
+
+def _is_spawn_feature_reference(user_text: str) -> bool:
+    """True when the user names the auto-spawn *feature* (talks about / complains
+    about / asks to fix it) instead of commanding a worker spawn.
+
+    Must override the negation-blind explicit-trigger hoist in
+    ``_should_force_spawn`` — mirroring ``_is_spawn_decline`` — because that hoist
+    substring-matches the "spawn" inside "Auto-Spawn" and would force-spawn the
+    very feature the user is complaining about. Live bug 2026-07-01 (voice session
+    21:26:44): "Auto-Spawn, das müssen wir erstmal fixen" spawned a full Opus
+    mission whose "still on it" heartbeats then spoke out of nowhere for minutes.
+    Anchored on "auto"/"automatic" so a bare imperative that NAMES the vehicle
+    ("Spawne einen Subagenten …") is not matched and still force-spawns.
+    """
+    return bool(_SPAWN_FEATURE_RE.search(user_text or ""))
+
+
 # Conversational coaching: "help me [get better at a soft / cognitive /
 # conversational skill]" — asking, thinking, phrasing, deciding, understanding,
 # expressing, communicating. This is CONVERSATION (Jarvis answers inline and
@@ -4392,6 +4425,19 @@ class BrainManager:
         # user's intent. Live bug 2026-06-19 (voice session 18:41, Turn 2).
         if _is_spawn_decline(t):
             log.info("force-spawn skipped: explicit spawn decline — answer inline")
+            return False
+        # The user NAMING the auto-spawn feature (complaining about it, asking to
+        # fix it) is talk ABOUT the feature, not a command. "Auto-Spawn" carries
+        # the substring "spawn" that the negation-blind vehicle hoist below matches
+        # at the hyphen boundary; without this stand-down, complaining about
+        # auto-spawn force-spawns the very thing complained about. Checked BEFORE
+        # the hoist, exactly like the decline guard. Live bug 2026-07-01 (voice
+        # session 21:26:44): "Auto-Spawn, das müssen wir erstmal fixen" spawned a
+        # full Opus mission whose heartbeats then spoke out of nowhere.
+        if _is_spawn_feature_reference(t):
+            log.info(
+                "force-spawn skipped: auto-spawn feature named, not commanded — inline"
+            )
             return False
         # User mandate (2026-06-15, "when I say subagent it MUST spawn"): an
         # EXPLICIT heavy-work trigger that NAMES the execution vehicle
