@@ -381,7 +381,7 @@ async def post_bio_feedback(
     request: Request,
     payload: BioFeedbackRequest,
 ) -> BioFeedbackResponse:
-    """Records a reaction click (``Trifft`` / ``Trifft nicht`` / ``Haerter``).
+    """Records a reaction click (``Correct`` / ``Incorrect`` / ``Harder``).
 
     The click is aggregated as a tone vector and fed into the prompt of the
     next bio generation (see ``BioStore.recent_feedback`` +
