@@ -213,6 +213,35 @@ jobs:
       - name: pytest (jarvisctl unit suite)
         run: python -m pytest tests/unit/cli_ctl/ -v
 
+  # Dependency-manifest sync gate (BLOCKING). requirements.in (the source for the
+  # hash-pinned requirements.txt lockfile) must mirror pyproject.toml
+  # [project].dependencies exactly. When they drift, an extras-only, torch-pulling
+  # package (silero-vad, sentence-transformers, …) leaks into the base lockfile,
+  # baking the multi-GB, GPU-specific CUDA wheel stack into the installer and
+  # bricking `pip install --require-hashes -r requirements.txt` for every
+  # non-maintainer machine (nvidia-cufile is unresolvable on plain PyPI). This is
+  # the guard for that shipped-broken-installer "works on my machine" bug (AP-23).
+  # Runs once (not across the OS matrix); stdlib + `packaging` only.
+  deps-sync:
+    name: deps-sync (requirements.in mirrors pyproject)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Requirements-sync gate (BLOCKING)
+        run: |
+          python -m pip install --upgrade packaging
+          python scripts/ci/check_requirements_sync.py
+
   # Output Language Policy enforcement (CLAUDE.md, HIGHEST PRIORITY): block any
   # NEWLY ADDED German text from reaching GitHub. Diff-based, so the in-flight
   # DE->EN translation backlog (pre-existing German) does NOT turn this red - only

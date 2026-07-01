@@ -134,6 +134,24 @@ if [ -f "$docs_privacy_gate" ]; then
     fi
 fi
 
+# --- 6) REQUIREMENTS SYNC gate (FAIL-CLOSED) ----------------------------------
+# requirements.in (source for the hash-pinned requirements.txt lockfile) must
+# mirror pyproject.toml [project].dependencies exactly. When they drift, an
+# extras-only, torch-pulling package (silero-vad, sentence-transformers, …) can
+# leak into the base lockfile, baking the multi-GB GPU CUDA wheel stack into the
+# installer and bricking `pip install --require-hashes -r requirements.txt` for
+# every non-maintainer machine (nvidia-cufile unresolvable on plain PyPI). This
+# is the guard for that "works on my machine" class (AP-23). The script itself
+# fails OPEN when `packaging` is unavailable; CI is the backstop.
+reqsync_gate="scripts/ci/check_requirements_sync.py"
+if [ -f "$reqsync_gate" ]; then
+    "$PY" "$reqsync_gate" </dev/null
+    if [ "$?" -ne 0 ]; then
+        status=1
+        reqsync_hit=1
+    fi
+fi
+
 rm -f "$refs_file"
 
 if [ "$status" -ne 0 ]; then
@@ -158,6 +176,11 @@ if [ "$status" -ne 0 ]; then
         echo "  See the findings above. Fix with:"
         echo "    python scripts/ci/docs_privacy_scan.py --fix <file>"
         echo "  or run the docs-privacy-reviewer sub-agent for a semantic pass."
+    fi
+    if [ "${reqsync_hit:-0}" -ne 0 ]; then
+        echo "pre-push BLOCKED: REQUIREMENTS SYNC gate (requirements.in != pyproject deps)."
+        echo "  See the diff above. Fix requirements.in, then regenerate the lockfile:"
+        echo "    pip-compile --allow-unsafe --generate-hashes --output-file=requirements.txt requirements.in"
     fi
     echo "Bypass once with:  git push --no-verify   (layer-3 CI is the backstop)."
 fi
