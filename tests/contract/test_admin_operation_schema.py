@@ -1,7 +1,7 @@
-"""Contract-Tests fuer das AdminOperation-Pydantic-Schema.
+"""Contract tests for the AdminOperation Pydantic schema.
 
-Das Schema ist die einzige Eintrittstuer zum elevateten Helper —
-wenn hier ein Test bricht, ist die IPC-Pipeline kompromittiert.
+The schema is the only entry door into the elevated helper —
+if a test breaks here, the IPC pipeline is compromised.
 """
 from __future__ import annotations
 
@@ -94,8 +94,8 @@ def test_extra_fields_rejected():
 
 
 def test_destructive_subclasses_destructive_flag():
-    """Sanity: alle DESTRUCTIVE_OPS-Subklassen haben einen existierenden
-    Op-Type, damit kein Tippfehler die Prompt-Pflicht umgeht.
+    """Sanity: every DESTRUCTIVE_OPS subclass has an existing op type,
+    so a typo can't bypass the prompt requirement.
     """
     for op_type in DESTRUCTIVE_OPS:
         assert op_type in ADMIN_OPERATION_TYPES
@@ -120,7 +120,7 @@ def test_uninstall_winget_round_trip():
 
 
 def test_write_protected_path_size_limit():
-    # 10 MB Obergrenze fuer content_b64
+    # 10 MB upper bound for content_b64
     huge = "A" * (10_485_761)
     with pytest.raises(ValidationError):
         _ADAPTER.validate_python({
