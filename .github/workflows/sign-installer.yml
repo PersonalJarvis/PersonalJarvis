@@ -969,8 +969,9 @@ jobs:
                and inlined into the verifier scripts. Files:
                `<artifact>.mldsa.sig` (~3309 bytes each).
             5. **Wave 6 — PyPI transitive dependency hash pin + audit:**
-               `requirements.txt` is a `pip-compile --generate-hashes`
-               lockfile (one `--hash=sha256:` per wheel/sdist). The
+               `requirements.txt` is a `uv pip compile --universal
+               --generate-hashes` lockfile (one `--hash=sha256:` per
+               wheel/sdist, with per-OS markers). The
                signing workflow runs `pip-audit -r requirements.txt
                --strict` before any other step, so a CVE in any
                transitive dep blocks the release. The lockfile is

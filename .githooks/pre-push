@@ -180,7 +180,7 @@ if [ "$status" -ne 0 ]; then
     if [ "${reqsync_hit:-0}" -ne 0 ]; then
         echo "pre-push BLOCKED: REQUIREMENTS SYNC gate (requirements.in != pyproject deps)."
         echo "  See the diff above. Fix requirements.in, then regenerate the lockfile:"
-        echo "    pip-compile --allow-unsafe --generate-hashes --output-file=requirements.txt requirements.in"
+        echo "    uv pip compile --universal --generate-hashes --python-version 3.11 --output-file=requirements.txt requirements.in"
     fi
     echo "Bypass once with:  git push --no-verify   (layer-3 CI is the backstop)."
 fi
