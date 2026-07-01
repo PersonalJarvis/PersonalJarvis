@@ -303,7 +303,7 @@ _CU_REASON_PREFIX_RE = re.compile(
 #: anti-oscillation / toggle guards, or the latency "mission profile" summary —
 #: NOT the model's human ``fail`` reason. It must never be forwarded into a
 #: spoken/displayed readback. Live bug 2026-06-20 (Angela-Merkel x.com mission):
-#: the user heard "Das am Bildschirm hat nicht geklappt: 3 identical screenshots
+#: the user heard "Das am Bildschirm hat nicht geklappt: 3 identical screenshots  # i18n-allow
 #: in a row at step 9 -- the click ..." followed by the raw
 #: "[cu] mission profile: steps=9 ..." telemetry line. The exit-code phrases
 #: (``cu_exit_*``) exist precisely so these cases degrade to a plain sentence.
@@ -326,7 +326,7 @@ _CU_DIAGNOSTIC_RE = re.compile(
 #: verbatim. Live bug 2026-06-21 (Melbourne HTML turn): a "look at my screen and
 #: tell me which app is open" mission read out the full structural dump, INCLUDING
 #: the verbatim content of an unrelated parallel Claude-Code AskUserQuestion box
-#: ("Eine Detail-Erkenntnis ... Der Melbourne-Guide rendert ..."). A genuine
+#: ("Eine Detail-Erkenntnis ... Der Melbourne-Guide rendert ..."). A genuine  # i18n-allow
 #: content answer ("the browser is open showing tab 'Gmail'", "newest messages:
 #: Alice 'hi'") carries none of these structural markers and is still forwarded.
 _CU_VERIFIER_DUMP_RE = re.compile(
