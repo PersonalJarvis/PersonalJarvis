@@ -51,7 +51,7 @@ def _valid_verdict_json(verdict: str = "approve") -> str:
         "issues": [],
         "correction_instruction": "" if verdict == "approve" else "fix x",
         "summary": "ok" if verdict == "approve" else "needs fix",
-        "summary_de": "ok" if verdict == "approve" else "muss korrigiert werden",
+        "summary_de": "ok" if verdict == "approve" else "muss korrigiert werden",  # i18n-allow (German value under summary_de field)
         "confidence": 0.9,
         "suggested_next_action": "accept" if verdict == "approve" else "retry",
     })
@@ -552,7 +552,7 @@ async def test_claude_direct_accepts_verdict_with_over_long_summary(
                 "CSS instead of external sheet (acceptable for single-file "
                 "deliverable)."
             ),
-            summary_de=(
+            summary_de=(  # i18n-allow (German value under summary_de field)
                 "Die Datei synthwave.html enthaelt eine vollstaendige, "
                 "sachlich korrekte HTML-Seite ueber Synthwave mit acht klar "
                 "gegliederten Abschnitten zu Definition, Geschichte, "
