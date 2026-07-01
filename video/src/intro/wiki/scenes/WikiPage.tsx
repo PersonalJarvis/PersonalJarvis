@@ -1,38 +1,78 @@
+import { interpolate, useCurrentFrame } from "remotion";
 import { SceneWrap } from "../../components/SceneWrap";
 import { Kicker } from "../../components/Text";
-import { Ring, ShotFrame } from "../Shot";
+import { Pill, ShotCrop } from "../Shot";
 import { line, TimelineScene } from "../timeline";
 
-const SRC_W = 3412;
-const DW = 944;
-const SCALE = DW / SRC_W;
+// shot-wiki-page.png is 6824×3928. Two big crops: the content column (facts +
+// wikilinks), slowly panned down, then the backlinks panel.
+const SRC_W = 6824;
 
-/** Real screenshot: a single Wiki page — facts, wikilinks, sources, backlinks. */
+/** Real screenshot: one Wiki page — the readable content, shown large. */
 export const WikiPage: React.FC<{ scene: TimelineScene }> = ({ scene }) => {
-  const linksAt = line(scene, "page_2").localStart;
-  const backAt = line(scene, "page_3").localStart;
+  const frame = useCurrentFrame();
+  const backAt = line(scene, "page_3").localStart; // 200
+
+  // crossfade content column → backlinks panel around page_3
+  const contentO = interpolate(frame, [backAt - 12, backAt + 10], [1, 0], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const backO = interpolate(frame, [backAt - 4, backAt + 16], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
   return (
-    <SceneWrap padding={80}>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
-        <Kicker>One page, everything on it</Kicker>
-        <ShotFrame src="shot-wiki-page.png" width={DW}>
-          {/* relationships / wikilinks */}
-          <Ring
-            box={{ x: 1146, y: 1258, w: 540, h: 224 }}
-            scale={SCALE}
-            delay={linksAt}
-            label="links to related notes"
-            labelAt={{ x: 1700, y: 1330 }}
-          />
+    <SceneWrap padding={70}>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+        <Kicker>One page — every fact, big and legible</Kicker>
+        <div style={{ position: "relative", width: 960, height: 560 }}>
+          {/* content column: title → facts → relationships (wikilinks), panned down */}
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              opacity: contentO,
+            }}
+          >
+            <ShotCrop
+              src="shot-wiki-page.png"
+              srcW={SRC_W}
+              crop={{ x: 2240, y: 636, w: 2470, h: 1440 }}
+              displayW={940}
+              panBy={880}
+              panWindow={[26, 190]}
+            />
+          </div>
           {/* backlinks panel */}
-          <Ring
-            box={{ x: 2642, y: 280, w: 762, h: 286 }}
-            scale={SCALE}
-            delay={backAt}
-            label="backlinks — what points here"
-            labelAt={{ x: 2300, y: 250 }}
-          />
-        </ShotFrame>
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "center",
+              alignItems: "center",
+              gap: 14,
+              opacity: backO,
+            }}
+          >
+            <ShotCrop
+              src="shot-wiki-page.png"
+              srcW={SRC_W}
+              crop={{ x: 5280, y: 520, w: 1544, h: 820 }}
+              displayW={880}
+              delay={backAt - 8}
+            />
+            <Pill delay={backAt + 6} tone="gold" size={24}>
+              backlinks — every note that points here
+            </Pill>
+          </div>
+        </div>
       </div>
     </SceneWrap>
   );
