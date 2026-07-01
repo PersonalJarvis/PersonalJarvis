@@ -391,10 +391,10 @@ SIR_OPENER_RE = re.compile(r"^\s*Sir\s*,\s*", re.IGNORECASE)
 SIR_TAIL_RE = re.compile(r",\s*Sir\b", re.IGNORECASE)
 QUOTE_PROTECT_RE = re.compile(r'"[^"]*\bSir\b[^"]*"', re.IGNORECASE)
 
-# Tool-Args-YAML-Block — Probe-Drift 03 vom 2026-04-28. Erkennt YAML-aehnliche
-# Bloecke mit Tool-Arg-Schluesseln wie ``context_hints:``, ``action:``,
-# ``target:``, ``utterance:``. Greedy bis zum naechsten Doppel-Newline oder
-# Ende — zerschneidet den ganzen YAML-Block.
+# Tool-args YAML block — probe-drift 03 from 2026-04-28. Detects YAML-like
+# blocks with tool-arg keys such as ``context_hints:``, ``action:``,
+# ``target:``, ``utterance:``. Greedy up to the next double newline or
+# end — cuts out the whole YAML block.
 TOOL_ARGS_YAML_KEYS: tuple[str, ...] = (
     "context_hints", "action", "target", "utterance",
     "tool_hint", "step_id", "args", "parameters",
@@ -403,14 +403,14 @@ TOOL_ARGS_YAML_RE = re.compile(
     r"(?:^|\n)"
     r"(?:" + "|".join(TOOL_ARGS_YAML_KEYS) + r")\s*:\s*"
     r"(?:.*?)"
-    r"(?=\n\s*\n|\n[A-ZÄÖÜ][a-zäöüß]|\Z)",
+    r"(?=\n\s*\n|\n[A-ZÄÖÜ][a-zäöüß]|\Z)",  # i18n-allow: umlaut character class, sentence-boundary matching data
     re.DOTALL | re.IGNORECASE,
 )
 
-# Post-Scrub-Muell-Threshold: nach allen Filtern muss der Output mindestens
-# diese Anzahl alphanumerischer Zeichen enthalten, sonst wird er als
-# Filter-Artefakt erkannt und durch die Standard-Phrase ersetzt.
-# Probe-Drift 12 vom 2026-04-28: Output war einzelnes ``}``.
+# Post-scrub-residue threshold: after all filters run, the output must
+# contain at least this many alphanumeric characters, otherwise it is
+# recognized as a filter artifact and replaced by the standard phrase.
+# Probe-drift 12 from 2026-04-28: output was a single ``}``.
 MIN_MEANINGFUL_CHARS = 3
 
 
@@ -421,17 +421,17 @@ MIN_MEANINGFUL_CHARS = 3
 
 @dataclass
 class ScrubResult:
-    """Ergebnis von ``scrub_for_voice``.
+    """Result of ``scrub_for_voice``.
 
     Attributes:
-        cleaned: Der gescrubbte Text, ready fuer TTS.
-        actions: Liste der durchgefuehrten Operationen, fuer Telemetrie/Debug.
-            Beispiele: ``"replaced_stacktrace"``, ``"removed_tool_json"``,
+        cleaned: The scrubbed text, ready for TTS.
+        actions: List of operations performed, for telemetry/debug.
+            Examples: ``"replaced_stacktrace"``, ``"removed_tool_json"``,
             ``"stripped_markdown"``, ``"removed_self_reference"``,
             ``"rephrased_echo"``, ``"removed_filler_opener"``,
             ``"removed_engineering_jargon"``.
-        fallback_used: ``True`` wenn der gesamte Text durch eine Standard-
-            Phrase ersetzt wurde (aktuell nur bei Stacktrace-Treffer).
+        fallback_used: ``True`` when the entire text was replaced by a
+            standard phrase (currently only on a stacktrace hit).
     """
 
     cleaned: str
@@ -442,30 +442,30 @@ class ScrubResult:
 def scrub_for_voice(
     text: str, *, language: str = "de", ack_mode: bool = False
 ) -> ScrubResult:
-    """Bereinigt Brain-Output fuer die TTS-Synthese.
+    """Cleans up brain output for TTS synthesis.
 
     Args:
-        text: Der zu scrubbende Text (Brain-Response, OpenClaw-Summary,
-            Skill-Output, Announcement-Text, ...).
-        language: ``"de"`` oder ``"en"`` — bestimmt die Fallback-Phrase
-            bei Stacktrace-Treffer.
-        ack_mode: ``True`` markiert den Aufruf als Pre-Thinking-Ack
-            (Flash-Brain). Im ack_mode wird der ``FILLER_OPENER_RE``-Pass
-            uebersprungen, weil Flash-Brain-Acks per Persona-Spec genau
-            solche Opener verwenden duerfen ("Lass mich kurz nachschauen.",
-            "Let me check on that."). Alle anderen Filter (Schwarzliste,
-            Stacktrace, Markdown, Self-Reference) bleiben aktiv.
+        text: The text to scrub (brain response, OpenClaw summary,
+            skill output, announcement text, ...).
+        language: ``"de"`` or ``"en"`` — determines the fallback phrase
+            on a stacktrace hit.
+        ack_mode: ``True`` marks the call as a pre-thinking ack
+            (flash brain). In ack_mode the ``FILLER_OPENER_RE`` pass is
+            skipped, because flash-brain acks are explicitly allowed by
+            the persona spec to use such openers ("Let me take a quick
+            look.", "Let me check on that."). All other filters (blacklist,
+            stacktrace, markdown, self-reference) stay active.
 
     Returns:
-        ``ScrubResult`` mit cleaned/actions/fallback_used.
+        ``ScrubResult`` with cleaned/actions/fallback_used.
     """
     if not text or not text.strip():
         return ScrubResult(cleaned="", actions=[], fallback_used=False)
 
     actions: list[str] = []
 
-    # 1. Stacktrace: Early-Return mit Standard-Phrase. Mandat: "komplett raus,
-    #    durch 'Es trat ein Fehler auf.' ersetzt".
+    # 1. Stacktrace: early return with the standard phrase. Mandate: "cut
+    #    out entirely, replaced by the German fallback phrase".
     if STACKTRACE_RE.search(text):
         fallback = FALLBACK_PHRASES.get(language, FALLBACK_PHRASES["de"])
         return ScrubResult(
