@@ -1,6 +1,7 @@
-"""remember-Tool: User sagt "merk dir X" → Fact wird ins Core-Memory persistiert.
+"""remember tool: user says "merk dir X" (English: "remember X") → the fact  # i18n-allow (quotes a DE voice-trigger example a user might say)
+is persisted into core memory.
 
-Risk-Tier: safe — schreibt nur in die lokale JSON-Datei.
+Risk tier: safe — only writes to the local JSON file.
 """
 from __future__ import annotations
 
@@ -14,16 +15,16 @@ class RememberTool:
     name: str = "remember"
     risk_tier: str = "safe"
     description: str = (
-        "Speichert einen Fact im persistenten Core-Memory. Wird beim nächsten "
-        "Brain-Call automatisch in den System-Prompt injiziert."
+        "Stores a fact in persistent core memory. Automatically injected "
+        "into the system prompt on the next brain call."
     )
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
-            "fact": {"type": "string", "description": "Der zu merkende Fact (kurzer Satz)"},
+            "fact": {"type": "string", "description": "The fact to remember (short sentence)"},
             "category": {
                 "type": "string",
-                "description": "Kategorie (z.B. 'identity', 'preference', 'project')",
+                "description": "Category (e.g. 'identity', 'preference', 'project')",
                 "default": "general",
             },
         },
@@ -36,7 +37,7 @@ class RememberTool:
         fact = (args.get("fact") or "").strip()
         category = (args.get("category") or "general").strip()
         if not fact:
-            return ToolResult(success=False, output=None, error="fact fehlt")
+            return ToolResult(success=False, output=None, error="fact is missing")
 
         try:
             mem = CoreMemory.load(DATA_DIR / CORE_MEMORY_FILENAME)
@@ -46,5 +47,5 @@ class RememberTool:
 
         return ToolResult(
             success=True,
-            output=f"Gemerkt: [{category}] {fact}",
+            output=f"Remembered: [{category}] {fact}",
         )
