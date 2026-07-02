@@ -416,8 +416,9 @@ async def run_cu_loop(
     done_rejects = 0
     guard_hits = 0
     observe_failures = 0
-    recent_shas: list[str] = []
-    progressed_since_sha_repeat = True
+    prev_sha: str | None = None
+    fruitless_steps = 0  # steps with zero successful actions on an unchanged screen
+    last_step_had_success = False
 
     while step_idx < max_steps:
         step_idx += 1
@@ -470,16 +471,20 @@ async def run_cu_loop(
             )
             return
 
-        # No-progress guard: the same screen N times without any successful
-        # action in between means we are circling — judge once, then stop.
-        recent_shas.append(frame.sha256)
-        if len(recent_shas) > _STUCK_FRAMES:
-            recent_shas.pop(0)
+        # No-progress guard: several consecutive steps that produced no
+        # successful action while the screen never changed means we are
+        # circling — judge once (the goal may in fact be met), then stop.
         if (
-            len(recent_shas) == _STUCK_FRAMES
-            and len(set(recent_shas)) == 1
-            and not progressed_since_sha_repeat
+            prev_sha is not None
+            and frame.sha256 == prev_sha
+            and not last_step_had_success
         ):
+            fruitless_steps += 1
+        else:
+            fruitless_steps = 0
+        prev_sha = frame.sha256
+        last_step_had_success = False
+        if fruitless_steps >= _STUCK_FRAMES:
             done, proof = await _judge_done(
                 ctx, goal, monitor, image_cfg, output_language,
             )
@@ -496,7 +501,6 @@ async def run_cu_loop(
                     exit_code=_EXIT_FAIL,
                 )
             return
-        progressed_since_sha_repeat = False
 
         # ---- decide ---------------------------------------------------------
         t0 = time.monotonic()
@@ -837,7 +841,7 @@ async def run_cu_loop(
             summary = _summarize_action(action)
             if ok:
                 consecutive_failures = 0
-                progressed_since_sha_repeat = True
+                last_step_had_success = True
                 history.append(
                     f"step {step_idx}: {summary} -> OK"
                     + (f" ({detail[:120]})" if detail else ""),

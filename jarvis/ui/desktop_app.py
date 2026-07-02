@@ -2422,11 +2422,35 @@ class DesktopApp:
                 wake_plan.phrase or wake_plan.oww_keyword or "?",
             )
             if getattr(self, "_bp", False):
-                # Honest wake-armed anchor on the same clock as BOOT_READY_MS.
+                # Pipeline-task-started mark (kept as a SECONDARY anchor). This
+                # fires before the deferred loaders warm the wake model / VAD /
+                # TTS, so it is NOT "the user can talk now".
                 print(
                     f"VOICE_READY_MS={(time.perf_counter() - self._bp_t0) * 1000.0:.1f}",
                     flush=True,
                 )
+
+                # HONEST usable anchor: VoiceBootStatus(ready=True) is published
+                # exactly once the wake model is warmed AND VAD AND the TTS
+                # client are up (the end of _warmup_deferred_loaders — the
+                # "it says ready but I can't talk" contract, 2026-06-29). The
+                # TTU benchmark (measure_desktop_boot.py --voice) anchors on
+                # THIS print; anchoring on the pipeline start above measured a
+                # cosmetic ready state (TTU forensic 2026-07-02).
+                from jarvis.core.events import VoiceBootStatus as _VBS
+
+                _usable_printed = [False]
+
+                async def _print_voice_usable(evt: _VBS) -> None:
+                    if getattr(evt, "ready", False) and not _usable_printed[0]:
+                        _usable_printed[0] = True
+                        print(
+                            "VOICE_USABLE_MS="
+                            f"{(time.perf_counter() - self._bp_t0) * 1000.0:.1f}",
+                            flush=True,
+                        )
+
+                bus.subscribe(_VBS, _print_voice_usable)
 
             # Wake-model GIL-priority gate: signal the heavy backend (brain/mcp)
             # to resume as soon as the LIGHT base/cpu wake model has loaded — or
