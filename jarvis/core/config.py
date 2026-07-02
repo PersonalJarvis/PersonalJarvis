@@ -142,8 +142,11 @@ class WakeWordConfig(BaseModel):
     engine: str = "auto"
     # Path to a user-supplied/trained .onnx wake model (engine="custom_onnx").
     custom_model_path: str = ""
-    # 0..1 mapped onto the openWakeWord activation threshold; 0.5 == the
-    # data-driven PRODUCTION_WAKE_THRESHOLD default (BUG-009 floor preserved).
+    # 0..1 wake responsiveness. openWakeWord path: mapped onto the activation
+    # threshold (0.5 == the data-driven PRODUCTION_WAKE_THRESHOLD, BUG-009 floor
+    # preserved). stt_match (local-Whisper) path: drives the poll interval
+    # (higher => polls more often => a spoken wake is picked up sooner), since
+    # that path never scores against the threshold.
     sensitivity: float = 0.5
     # STT transcript-match tolerance for transcription drift (engine="stt_match").
     fuzzy_match_ratio: float = 0.8
