@@ -114,29 +114,32 @@ def test_arbitrary_phrase_tolerates_diacritic_transcription_drift() -> None:
     assert m.search("hey rubén") is not None
 
 
-def test_prefix_phrase_also_fires_on_bare_core() -> None:
-    # Mission 2026-06-29 ("trigger super easily" / "I say it ten times"): the
-    # leading wake prefix is OPTIONAL. The slow rolling-whisper poll routinely
-    # splits a short "Hey Nico" so one window holds only "Hey" and the next only
-    # "…nico"; requiring "hey"+"athena" ADJACENT drops both halves. Firing on the
-    # distinctive CORE ("athena"/"nico") alone catches the partial windows — the
-    # accepted easy-trigger trade. Still matches the full phrase too.
+def test_prefix_phrase_requires_the_prefix() -> None:
+    # User mandate 2026-07-02 (REVERSES the 2026-06-29 "prefix optional"
+    # trade-off): Jarvis kept activating on the bare core word inside ordinary
+    # speech (live: 'WAKE matched fable in "1 Fable Pro"'; bench: 71.7 % false
+    # accepts on real bare-core windows). A phrase configured WITH a prefix
+    # fires ONLY when a wake prefix immediately precedes the core.
     m = compile_wake_matcher("Hey Athena")
-    assert m.search("hey athena") is not None   # full phrase still fires
-    assert m.search("athena") is not None        # bare core now fires (easy trigger)
-    assert m.search("the weather is nice") is None  # unrelated still rejected
+    assert m.search("hey athena") is not None       # full phrase fires
+    assert m.search("hallo athena") is not None      # prefix family counts
+    assert m.search("athena") is None                # bare core stays silent
+    assert m.search("i met athena today") is None    # core mid-sentence: silent
+    assert m.search("the weather is nice") is None   # unrelated rejected
 
 
-def test_hey_nico_fires_on_partial_and_drifted_windows() -> None:
-    # The user's real phrase. The prefix-split windows + STT drift that made it
-    # "need ten tries" must now all wake: full phrase, bare name, name-only tail,
-    # and a one-char mishearing — while unrelated speech is still rejected.
+def test_hey_nico_fires_only_on_the_full_phrase() -> None:
+    # The user's real-world case. Full phrase + STT spelling drift must wake;
+    # the bare name in ordinary/dictated speech must NOT (that was the
+    # "Jarvis spawns although I did not call it" bug, live-logged 2026-07-02).
     m = compile_wake_matcher("Hey Nico")
-    assert m.search("hey nico") is not None       # full phrase
-    assert m.search("nico") is not None            # prefix split — name-only window
-    assert m.search("ja nico komm") is not None    # name mid-utterance
-    assert m.search("niko") is not None            # STT drift (one char)
-    assert m.search("wie spät ist es") is None     # unrelated -> no wake  # i18n-allow
+    assert m.search("hey nico") is not None        # full phrase
+    assert m.search("hey niko") is not None         # STT drift (one char)
+    assert m.search("hallo nico alles gut") is not None  # localised greeting
+    assert m.search("nico") is None                 # bare name: silent
+    assert m.search("ja nico komm") is None         # name mid-utterance: silent
+    assert m.search("nico mein barsch") is None     # the live false fire: silent
+    assert m.search("wie spät ist es") is None      # unrelated -> no wake  # i18n-allow
 
 
 def test_multi_word_core_phrase_matches_in_order() -> None:

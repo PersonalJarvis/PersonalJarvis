@@ -20,8 +20,9 @@ credential readback the legacy engine had.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from jarvis.core.protocols import BrainMessage, BrainRequest, ImageBlock
 

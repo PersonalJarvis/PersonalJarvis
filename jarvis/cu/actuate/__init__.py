@@ -14,10 +14,10 @@ tools remain the ToolExecutor-gated choke points (AP-3) and delegate their
 raw input to this package.
 """
 from jarvis.cu.actuate.base import (
+    LANDING_TOLERANCE,
     ActResult,
     ActuationUnavailable,
     Actuator,
-    LANDING_TOLERANCE,
     get_actuator,
     verified_move,
 )

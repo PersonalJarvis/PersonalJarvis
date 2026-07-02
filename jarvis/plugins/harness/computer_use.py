@@ -24,6 +24,7 @@ from jarvis.harness.computer_use_context import (
     register_active_cu_token,
     unregister_active_cu_token,
 )
+
 _log = logging.getLogger(__name__)
 
 _TIMEOUT_EXIT_CODE = 124
@@ -153,7 +154,7 @@ class ComputerUseHarness:
                 while True:
                     remaining_s = deadline - time.monotonic()
                     if remaining_s <= 0:
-                        raise asyncio.TimeoutError
+                        raise TimeoutError
                     try:
                         chunk = await asyncio.wait_for(
                             anext(stream),
@@ -164,7 +165,7 @@ class ComputerUseHarness:
                     yield chunk
                     if chunk.is_final:
                         return
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 token.cancel("computer_use_harness_timeout")
                 duration_ms = (time.time_ns() - t_start) // 1_000_000
                 yield HarnessResult(

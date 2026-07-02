@@ -17,12 +17,13 @@ from typing import Any
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
 
-
 # Key-name resolution + combined-token expansion ("ctrl+v" -> ["ctrl", "v"])
 # live in the shared CU v2 Windows backend; re-exported here so callers and
 # tests keep their import path. The vocabulary is unchanged.
 from jarvis.cu.actuate.windows import (  # noqa: E402
     expand_combo_keys as _expand_combo_keys,
+)
+from jarvis.cu.actuate.windows import (
     resolve_vk as _resolve_vk,
 )
 

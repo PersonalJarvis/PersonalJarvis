@@ -34,9 +34,10 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Iterator, Literal
+from typing import Literal
 
 logger = logging.getLogger(__name__)
 

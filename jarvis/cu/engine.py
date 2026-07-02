@@ -282,7 +282,7 @@ async def _dispatch_tool(
             ),
             timeout=_ACT_TIMEOUT_S,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return False, f"{tool_name} timed out after {_ACT_TIMEOUT_S:.0f}s"
     except Exception as exc:  # noqa: BLE001
         return False, f"{tool_name} crash: {type(exc).__name__}: {exc}"
@@ -506,31 +506,43 @@ async def run_cu_loop(
         t0 = time.monotonic()
         conventions_used: dict[str, CoordinateConvention] = {}
 
-        def _build_prompt(provider: str, brain: Any) -> tuple[str, str]:
+        def _build_prompt(
+            provider: str,
+            brain: Any,
+            *,
+            # Bind THIS step's perception explicitly (B023): the builder runs
+            # inside the same iteration, but explicit defaults make that a
+            # structural guarantee instead of a timing accident.
+            _frame: Frame = frame,
+            _title: str = window_title,
+            _labels: list[str] = labels,
+            _field_hint: str = field_hint,
+            _conv_used: dict[str, CoordinateConvention] = conventions_used,
+        ) -> tuple[str, str]:
             convention = conv_mod.resolve_convention(
                 provider, brain, config_override=coordinate_space,
             )
-            conventions_used[provider] = convention
+            _conv_used[provider] = convention
             system = (
                 _SYSTEM_BASE
                 + conv_mod.coordinate_prompt_block(
-                    convention, frame.image_width, frame.image_height,
+                    convention, _frame.image_width, _frame.image_height,
                 )
                 + "\n\n"
                 + conv_mod.action_grammar_block()
             )
             lines = [f"GOAL: {goal}"]
-            if window_title:
-                lines.append(f"FOREGROUND WINDOW: {window_title}")
-            if labels:
-                lines.append("CLICKABLE ELEMENTS: " + ", ".join(labels))
-            if field_hint:
-                lines.append(field_hint.strip())
+            if _title:
+                lines.append(f"FOREGROUND WINDOW: {_title}")
+            if _labels:
+                lines.append("CLICKABLE ELEMENTS: " + ", ".join(_labels))
+            if _field_hint:
+                lines.append(_field_hint.strip())
             tail = history[-_HISTORY_TAIL:]
             lines.append(
                 "PREVIOUS STEPS:\n" + ("\n".join(tail) if tail else "(none)"),
             )
-            if not frame.stable:
+            if not _frame.stable:
                 lines.append(
                     "NOTE: the screen was still changing when this screenshot "
                     "was captured — verify carefully before acting.",

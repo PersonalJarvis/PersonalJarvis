@@ -18,7 +18,6 @@ from typing import Any
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
 
-
 # One wheel notch in Windows units (WHEEL_DELTA).
 _WHEEL_DELTA: int = 120
 

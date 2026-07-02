@@ -27,9 +27,10 @@ import hashlib
 import io
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Protocol
 
 from jarvis.cu.geometry import CoordinateMapper, MonitorInfo, input_space
 

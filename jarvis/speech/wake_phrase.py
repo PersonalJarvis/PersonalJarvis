@@ -32,6 +32,7 @@ from jarvis.speech.wake_constants import (
     DEFAULT_WAKE_PHRASE,
     JARVIS_WAKE_PATTERN,
     WAKE_ENGINES,
+    WAKE_PREFIXES,
     match_known_oww_model,
     normalize_phrase_for_match,
     phrase_core,
@@ -86,9 +87,13 @@ class WakeMatcher:
 
     - jarvis-default: wraps the canonical :data:`JARVIS_WAKE_PATTERN`.
     - arbitrary phrase: fuzzy token-window match against a normalised
-      transcript using ``difflib.SequenceMatcher``. A phrase that explicitly
-      starts with a wake prefix ("Hey Athena") must match that prefix too, so a
-      bare core word does not re-trigger the listener.
+      transcript using ``difflib.SequenceMatcher``. When the configured phrase
+      starts with a known wake prefix ("Hey Fable"), the matched window must be
+      IMMEDIATELY preceded by a prefix token too (``require_known_prefix``) —
+      the bare core word inside ordinary speech must NOT activate (user mandate
+      2026-07-02; measured 71.7 % false accepts on real bare-core windows
+      before this). Any known prefix counts, not just the configured one, so an
+      STT that writes "Hallo Fable" for a spoken "Hey Fable" still matches.
     """
 
     def __init__(
@@ -98,6 +103,7 @@ class WakeMatcher:
         core_tokens: list[str] | None = None,
         fuzzy_ratio: float = 0.8,
         is_jarvis_default: bool = False,
+        require_known_prefix: bool = False,
     ) -> None:
         self._pattern = pattern
         # Sound-fold the core so a sound-equivalent ASR spelling of the wake word
@@ -105,6 +111,10 @@ class WakeMatcher:
         self._core = [sound_fold(c) for c in (core_tokens or [])]
         self._ratio = fuzzy_ratio
         self._is_jarvis = is_jarvis_default
+        self._require_prefix = require_known_prefix
+        # Folded prefix family: the window before the core must fuzzy-match ANY
+        # of these when the configured phrase itself carries a prefix.
+        self._folded_prefixes = tuple({sound_fold(p) for p in WAKE_PREFIXES})
 
     @property
     def is_jarvis_default(self) -> bool:
@@ -130,6 +140,14 @@ class WakeMatcher:
         one_sub_ratio = (n - 1) / n if n else 1.0
         return min(self._ratio, max(0.6, one_sub_ratio - 0.01))
 
+    def _is_prefix_token(self, folded_token: str) -> bool:
+        """True when ``folded_token`` fuzzy-matches ANY known wake prefix."""
+        return any(
+            SequenceMatcher(None, p, folded_token).ratio()
+            >= self._effective_ratio(p)
+            for p in self._folded_prefixes
+        )
+
     def search(self, text: str) -> Any | None:
         """Return a match object (``.group(0)``) or ``None``. Never raises."""
         if not text:
@@ -139,26 +157,37 @@ class WakeMatcher:
         # Compare on sound-FOLDED tokens so a sound-equivalent ASR spelling of the
         # wake word lines up with the (also folded) core, but return the ORIGINAL
         # heard text as the match so the yielded keyword / logs are unchanged.
-        # Prefix stripping already happened for the core, and the transcript is
-        # only window-scanned for the core token, so folding here has no prefix
-        # side effect.
         orig = normalize_phrase_for_match(text)
         folded = [sound_fold(t) for t in orig]
         n = len(self._core)
         if n == 0 or len(folded) < n:
             return None
-        # Length-aware threshold: average the per-core-token required ratios so a
-        # short name tolerates a little pronunciation drift while a longer one
-        # (or a multi-word phrase with long tokens) keeps the strict bar.
-        threshold = sum(self._effective_ratio(c) for c in self._core) / n
+        # EVERY core token must individually clear its own length-aware bar
+        # (short names tolerate ~one character of ASR drift, longer tokens keep
+        # the configured ratio). Averaging across tokens is deliberately NOT
+        # used: with the prefix in the window a perfect "hey" would subsidise a
+        # half-matching core word — exactly the loosening the 2026-07-02
+        # fire-only-on-the-phrase mandate forbids.
         for i in range(0, len(folded) - n + 1):
             window = folded[i : i + n]
-            score = sum(
-                SequenceMatcher(None, c, w).ratio()
+            ok = all(
+                SequenceMatcher(None, c, w).ratio() >= self._effective_ratio(c)
                 for c, w in zip(self._core, window, strict=False)
-            ) / n
-            if score >= threshold:
-                return _FuzzyMatch(" ".join(orig[i : i + n]))
+            )
+            if not ok:
+                continue
+            if self._require_prefix:
+                # The configured phrase has a wake prefix ("Hey Fable") -> the
+                # core must be IMMEDIATELY preceded by a prefix token. The bare
+                # core word inside ordinary speech ("1 Fable Pro", "Nico, mein
+                # Barsch.") stays silent — the 2026-07-02 user mandate that
+                # REVERSED the 2026-06-29 "prefix optional" trade-off. Any
+                # known prefix counts ("Hallo Fable" still wakes a "Hey Fable"
+                # config; ASR often localises the greeting).
+                if i == 0 or not self._is_prefix_token(folded[i - 1]):
+                    continue
+                return _FuzzyMatch(" ".join(orig[i - 1 : i + n]))
+            return _FuzzyMatch(" ".join(orig[i : i + n]))
         return None
 
 
@@ -166,28 +195,36 @@ def compile_wake_matcher(phrase: str, *, fuzzy_ratio: float = 0.8) -> WakeMatche
     """Build a :class:`WakeMatcher` for ``phrase``.
 
     The default "Hey Jarvis" (and any jarvis-only phrase) is matched by the
-    strict legacy pattern. Every other phrase fuzzy-matches on its CORE tokens —
-    the distinctive word(s) after any leading wake prefix ("Hey", "Hallo", "Ok",
-    ...). So "Hey Nico" fires on "nico", whether or not the "Hey" prefix made it
-    into the transcript.
+    strict legacy pattern. Every other phrase fuzzy-matches on its CORE tokens;
+    when the configured phrase itself starts with a known wake prefix ("Hey
+    Fable"), the prefix is REQUIRED immediately before the core (any known
+    prefix counts — "Hallo Fable" still wakes a "Hey Fable" config).
 
-    Why the prefix is OPTIONAL, not required (live forensic 2026-06-29, custom
-    wake "Hey Nico"): the rolling-whisper poll transcribes ~1.8 s windows, and on
-    a slow local model the effective cadence (~1.7 s) is close to the window
-    length, so a short spoken "Hey Nico" routinely lands SPLIT across snapshots —
-    one window catches only "Hey", the next only "…nico". Requiring "hey"+"nico"
-    ADJACENT then drops both halves and the user has to repeat the wake many
-    times ("I have to say it ten times"). Matching the distinctive core alone
-    catches the "…nico" / "nico" windows too, which is exactly the user's
-    "trigger super easily" mandate. The cost is that the bare name spoken in
-    ambient speech while IDLE can wake the listener — an accepted trade ("lieber
-    leichter triggern als schwer"); the no_speech / RMS / fuzzy guards still
-    reject silence and unrelated words, and the wake loop only listens when IDLE.
+    History: 2026-06-29 deliberately made the prefix OPTIONAL ("lieber leichter
+    triggern als schwer") because the slow poll cadence (~1.7 s vs a 1.8 s
+    window) split the phrase across snapshots. That trade-off is REVERSED by
+    explicit user instruction (2026-07-02): the bare core word in ordinary /
+    dictated speech kept activating Jarvis (live: 'WAKE matched fable in
+    "1 Fable Pro"', 'nico in "Nico, mein Barsch."'; bench: 71.7 % false accepts
+    on real bare-core windows). Fire ONLY on the configured phrase. The
+    split-window concern is addressed by the faster transcription cadence
+    (2026-07-02 wake-latency work) — consecutive windows overlap by more than a
+    spoken two-word phrase, so a genuine wake still lands whole in at least one
+    window. A single-word phrase ("Computer") has no prefix to require; the
+    word itself is the phrase, matched anywhere (inherent to one-word wakes).
     """
+    tokens = normalize_phrase_for_match(phrase)
     core = phrase_core_for_match(phrase)
     if core == ["jarvis"]:
         return WakeMatcher(pattern=JARVIS_WAKE_PATTERN, is_jarvis_default=True)
-    return WakeMatcher(core_tokens=core, fuzzy_ratio=fuzzy_ratio)
+    # A leading known prefix was stripped from the core -> the user's phrase
+    # carries one -> demand it in the transcript too.
+    has_prefix = len(core) < len(tokens)
+    return WakeMatcher(
+        core_tokens=core,
+        fuzzy_ratio=fuzzy_ratio,
+        require_known_prefix=has_prefix,
+    )
 
 
 def _canonical_keyword(phrase: str) -> str:

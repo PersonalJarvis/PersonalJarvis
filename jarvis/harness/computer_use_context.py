@@ -257,7 +257,7 @@ def _refresh_context_from_config() -> None:
         pass
 
 
-def subscribe_context_reload(bus: "EventBus | None") -> None:
+def subscribe_context_reload(bus: EventBus | None) -> None:
     """Subscribe the CU context to ``ConfigReloaded`` (idempotent per bus).
 
     Called once after the context is wired (jarvis/brain/factory.py). On every

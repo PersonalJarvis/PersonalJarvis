@@ -23,6 +23,8 @@ from jarvis.control.cursor_motion import glide_os_cursor
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.cu.actuate.windows import (
     _MOUSE_FLAGS_DOWN,
+)
+from jarvis.cu.actuate.windows import (
     normalize_virtualdesk as _normalize_virtualdesk,  # noqa: F401 — re-export (tests + callers)
 )
 from jarvis.overlay.virtual_cursor import get_virtual_cursor

@@ -17,8 +17,14 @@
 </p>
 
 <p align="center">
-  <img src="assets/video/personal-jarvis-demo.gif" alt="Demo: a spoken command delegates real work to an agent, which edits the code, runs the tests, and opens the pull request" width="860" />
+  <a href="assets/video/personal-jarvis-demo.mp4">
+    <img src="assets/video/personal-jarvis-demo.gif" alt="Demo: a spoken command delegates real work to an agent, which edits the code, runs the tests, and opens the pull request" width="860" />
+  </a>
 </p>
+<!-- Fallback: if the GIF ever fails to render inline (proxy/size limits), swap
+     the <img> above for the static poster frame — same click-through to the MP4:
+     <img src="assets/video/personal-jarvis-demo-poster.png" alt="Demo poster: the agent finished the job — pull request #129 is open" width="860" />
+-->
 
 <p align="center">
   <b><a href="assets/video/personal-jarvis-demo.mp4">▶ Watch the full 60-second demo with sound</a></b>
