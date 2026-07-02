@@ -1,21 +1,20 @@
-"""Closing the window (X) = minimise to tray; the OVERLAY follows the user's
-"show bar at all times" choice.
+"""Closing the window (X) = QUIT EVERYTHING; MINIMISE keeps Jarvis running.
 
-The X on the main window is wired to "minimise to tray", not "quit" (the app
-keeps running so voice stays live).
+User mandate (2026-07-01): the X on the main window must tear the WHOLE app
+down — tray icon, JarvisBar overlay, voice pipeline, backend server, child
+processes and the process itself — not merely hide to tray. To keep Jarvis
+alive in the background (so "Hey Jarvis" stays live) the user MINIMISES the
+window instead of closing it.
 
 Contract:
-- ``_on_window_closing`` vetoes the destroy (returns False) and hides the window.
-- ``_suppress_overlay_for_hidden_window`` takes a NON-persistent bar off the
-  screen on minimise, but NEVER touches a bar the user set to "show at all
-  times" (``bar_persistent``). Forcing an always-on bar into hide-at-idle here
-  was the "the bar vanishes after a while and only the wake word brings it back"
-  regression — the user's explicit always-on preference must win.
-- a genuine quit (``_user_requested_quit``) is allowed through untouched; the
-  real ``shutdown()`` tears the bar down there.
-- ``_restore_overlay_for_visible_window`` puts the bar back into the user's
-  configured persistence regime when the window is shown again.
-- both helpers no-op on a headless host (no overlay / no bridge).
+- ``_on_window_closing`` marks the quit and returns True → pywebview destroys
+  the window → ``run_window_only`` runs ``shutdown()`` (tears every surface
+  down) and then a hard-exit backstop that guarantees the process dies even if
+  teardown wedges.
+- ``_suppress_overlay_for_hidden_window`` / ``_restore_overlay_for_visible_window``
+  still govern the bar's persistence regime when the window is HIDDEN/SHOWN via
+  the tray "Open" or a focus request — ``bar_persistent`` (the "show bar at all
+  times" choice) is honoured, never overridden. Both no-op on a headless host.
 """
 from __future__ import annotations
 
@@ -140,11 +139,13 @@ def test_restore_keeps_mascot_hide_on_idle() -> None:
     assert bar.shown is None  # not force-shown
 
 
-# --- the X / closing callback ------------------------------------------------
+# --- the X / closing callback = FULL QUIT ------------------------------------
 
 
-def test_window_closing_minimises_but_keeps_persistent_bar() -> None:
-    """The X minimises to tray, but an always-on bar stays on screen."""
+def test_window_closing_quits_and_does_not_minimise() -> None:
+    """User mandate: the X fully quits — it no longer hides to tray. It marks
+    the quit and allows the destroy; ``shutdown()`` (run by ``run_window_only``)
+    tears every surface — tray, bar, voice, server — down afterwards."""
     bar = FakeBar()
     bridge = SimpleNamespace(_hide_on_idle=False)
     app = _app(persistent=True, orb=bar, bridge=bridge)
@@ -154,16 +155,15 @@ def test_window_closing_minimises_but_keeps_persistent_bar() -> None:
 
     result = app._on_window_closing()
 
-    assert result is False  # destroy vetoed → minimise to tray
-    assert app._window.hidden is True
-    assert app._window_visible is False
-    assert bar.hidden is False  # always-on bar is NOT cleared
-    assert bridge._hide_on_idle is False
-    assert app.cfg.ui.bar_persistent is True  # preference untouched
+    assert result is True  # destroy allowed → full shutdown, not minimise
+    assert app._user_requested_quit is True
+    assert app._window.hidden is False  # NOT hidden — the window is destroyed
+    # The bar is torn down in shutdown(), never on the closing callback itself.
+    assert bar.hidden is False
 
 
-def test_window_closing_clears_non_persistent_bar() -> None:
-    """A non-persistent bar is cleared on minimise (clean desktop)."""
+def test_window_closing_quits_regardless_of_bar_persistence() -> None:
+    """A non-persistent bar quits exactly the same way — closing always quits."""
     bar = FakeBar()
     bridge = SimpleNamespace(_hide_on_idle=False)
     app = _app(persistent=False, orb=bar, bridge=bridge)
@@ -173,13 +173,13 @@ def test_window_closing_clears_non_persistent_bar() -> None:
 
     result = app._on_window_closing()
 
-    assert result is False
-    assert app._window.hidden is True
-    assert bar.hidden is True
-    assert bridge._hide_on_idle is True
+    assert result is True
+    assert app._user_requested_quit is True
+    assert app._window.hidden is False
 
 
 def test_window_closing_allows_genuine_quit() -> None:
+    """An already-marked quit (tray 'Quit' / restart) still returns True."""
     bar = FakeBar()
     app = _app(persistent=True, orb=bar, bridge=SimpleNamespace(_hide_on_idle=False))
     app._window = FakeWindow()

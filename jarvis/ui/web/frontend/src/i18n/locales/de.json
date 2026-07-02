@@ -1055,8 +1055,11 @@
       "stop": "Stopp",
       "recording": "Drücke deine Tasten…",
       "recording_hint": "Halte die gewünschten Tasten (dann loslassen) — oder klick sie unten auf der Tastatur an. Esc bricht ab.",
+      "unbound": "Keine Taste zugewiesen",
       "save": "Speichern",
+      "clear": "Entfernen",
       "saved": "Tastenkürzel gespeichert",
+      "cleared": "Tastenkürzel entfernt",
       "reset": "Auf Standard zurücksetzen",
       "restart_required": "Neustart nötig, damit es wirkt.",
       "validation": {

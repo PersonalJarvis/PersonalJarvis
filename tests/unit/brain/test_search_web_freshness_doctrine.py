@@ -35,7 +35,7 @@ def test_search_web_description_reserved_for_fresh_facts() -> None:
     """
     desc = SearchWebTool.description.lower()
     # The fresh / volatile doctrine must be present.
-    assert "aktuell" in desc, (
+    assert "fresh" in desc, (
         "search_web description must restrict the tool to current/fresh facts"
     )
     # The evergreen carve-out must be present so the model answers general

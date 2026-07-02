@@ -209,10 +209,19 @@ class TriggerConfig(BaseModel):
         alongside ``hotkey_call`` and there is no PTT (the pre-2026-05-29 wiring).
         Hangup is a separate value read from ``hotkey_hangup`` at the
         SpeechPipeline call sites.
+
+        A blank string means the user explicitly cleared that action (Settings
+        Clear button) — filtered out here so an unbound key never reaches
+        ``HotkeyTrigger`` as a bogus single-element tuple containing ``""``.
         """
         if self.push_to_talk:
-            return (self.hotkey_call,), (self.hotkey,)
-        return (self.hotkey, self.hotkey_call), ()
+            call, ptt = (self.hotkey_call,), (self.hotkey,)
+        else:
+            call, ptt = (self.hotkey, self.hotkey_call), ()
+        return (
+            tuple(h for h in call if h.strip()),
+            tuple(h for h in ptt if h.strip()),
+        )
     # When False (default), the local wake path is lightweight: openWakeWord
     # only (~3.5 MB ONNX, CPU-only, bundled in jarvis/assets/wakeword/), no
     # faster-whisper anywhere — no GPU, no ~1 GB model download. When True, the
@@ -1436,14 +1445,22 @@ class ComputerUseConfig(BaseModel):
     model_config = {"extra": "allow"}
 
     enabled: bool = False
-    # Which Computer-Use engine runs (reversible switch). "current" (default) =
-    # the maintained engine; "june13" = the frozen 2026-06-10 / 352a784f snapshot
-    # (jarvis/harness/screenshot_only_loop_june13.py), kept as a known-good
-    # fallback after the maintained engine accumulated ~1700 lines of stacked
-    # click-correction + verifier layers and regressed. The harness reads this
-    # per mission and logs which engine is live, so a flip applies on the next
-    # mission / restart with no code change. Flip back any time with "current".
-    engine: Literal["current", "june13", "stable"] = "current"
+    # Which Computer-Use engine runs (reversible switch). "v2" (default) = the
+    # rebuilt perceive->act->verify engine (jarvis/cu/engine.py): per-frame
+    # coordinate mapping, provider coordinate conventions, UI-idle capture,
+    # effect-checked actions and the idempotency ledger. Legacy engines stay
+    # available as fallbacks: "current" = the last maintained legacy loop,
+    # "june13" / "stable" = frozen known-good snapshots. The harness reads
+    # this per mission and logs which engine is live, so a flip applies on
+    # the next mission with no restart. Roll back any time with "current".
+    engine: Literal["v2", "current", "june13", "stable"] = "v2"
+    # Coordinate space the vision model's click coordinates are parsed in
+    # (CU v2 only). "auto" (default) resolves per provider: an explicit
+    # ``coordinate_convention`` capability on the brain wins, else the
+    # provider family's documented convention (Gemini -> 0-1000 normalized;
+    # Claude/OpenAI -> pixels on the sent image; unknown -> normalized).
+    # Pin "normalized_1000" or "image_pixels" only to override a wrong guess.
+    coordinate_space: Literal["auto", "normalized_1000", "image_pixels"] = "auto"
     # How Computer-Use relates to multiple monitors. DEFAULT "primary": CU brings
     # the target window onto the MAIN monitor (the G8 move-to-primary hook) AND
     # the screenshot FOLLOWS that window — so the normal case lands on the main
@@ -1486,12 +1503,14 @@ class ComputerUseConfig(BaseModel):
     # 300_000 (no change); lowering it -- with the cu_bench harness as proof --
     # shrinks the vision payload for faster inference, at some grounding risk.
     image_max_bytes: int = Field(default=300_000, ge=20_000, le=2_000_000)
-    # L7 (CU speed): per-screenshot longest-side pixel cap sent to the model.
-    # Default keeps 2048 (no change). Vision models resample to ~1568 px
-    # internally, so lowering this -- with the cu_bench harness as proof -- ships
-    # fewer pixels for faster encode + upload + image-token ingest, at some
-    # grounding risk on tiny controls. 0 disables the dimension cap entirely.
-    image_max_dimension: int = Field(default=2048, ge=0, le=8192)
+    # L7 (CU speed + grounding): per-screenshot longest-side pixel cap sent to
+    # the model. Default 1366 — vision models ground small controls MORE
+    # reliably on frames near the XGA/WXGA band than on raw 2K/4K captures
+    # (provider guidance: downscale yourself, do not rely on API-side
+    # resizing), and the smaller payload cuts encode + upload + image-token
+    # latency. Raise it only with the cu_bench harness as proof. 0 disables
+    # the dimension cap entirely.
+    image_max_dimension: int = Field(default=1366, ge=0, le=8192)
     # L8 (CU speed): multiplier on the loop's fixed settle waits (pre-type and
     # post-click-verify pauses). Default keeps 1.0 (no change: every settle is
     # byte-for-byte the legacy duration); lower it -- with the cu_bench harness

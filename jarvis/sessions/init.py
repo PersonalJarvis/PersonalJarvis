@@ -51,14 +51,18 @@ def bootstrap_sessions(
     # Crash recovery: sessions without ended_ms stem from an unclean
     # shutdown of the previous process (hard kill, crash). Without
     # this cleanup they would show up permanently as "running" in the UI.
-    # Mark them as "shutdown" with ended_ms = startup time.
-    import time as _time
+    # Seal them at their LAST RECORDED ACTIVITY — never at boot time, which
+    # could be hours later and would inflate every duration-based stat
+    # (the board once showed a 14.8 h phantom session created this way).
     open_ids = store.list_open_sessions()
     for sid in open_ids:
         try:
+            row = store.get_session(sid)
+            started_ms = row.started_ms if row is not None else 0
+            ended_ms = max(store.last_activity_ms(sid) or 0, started_ms)
             store.finalize_session(
                 session_id=sid,
-                ended_ms=int(_time.time() * 1000),
+                ended_ms=ended_ms,
                 hangup_reason=HANGUP_SHUTDOWN,
                 turn_count=0,  # conservative: we don't know the aggregates
                 total_cost_usd=0.0,
@@ -70,6 +74,16 @@ def bootstrap_sessions(
             log.warning("SessionRecorder: failed to finalize stale session %s: %s", sid, exc)
     if open_ids:
         log.info("SessionRecorder: marked %d stale session(s) as shutdown", len(open_ids))
+
+    # One-time-per-row repair of seals created by the old boot-time stamping.
+    # Idempotent and cheap: only 'shutdown' rows are inspected, and honest
+    # seals sit inside the tolerance.
+    try:
+        repaired = store.repair_crash_seals()
+        if repaired:
+            log.info("SessionRecorder: repaired %d inflated crash seal(s)", repaired)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("SessionRecorder: crash-seal repair failed: %s", exc)
 
     recorder = SessionRecorder(store=store)
     recorder.attach(bus)

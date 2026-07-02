@@ -32,6 +32,7 @@ from jarvis.speech.wake_constants import (
     DEFAULT_WAKE_PHRASE,
     JARVIS_WAKE_PATTERN,
     WAKE_ENGINES,
+    WAKE_PREFIXES,
     match_known_oww_model,
     normalize_phrase_for_match,
     phrase_core,
@@ -199,6 +200,27 @@ def _canonical_keyword(phrase: str) -> str:
     return "_".join(core) if core else "wake"
 
 
+def custom_model_matches_phrase(model_path: str, phrase: str) -> bool:
+    """True when a trained wake-model FILE belongs to ``phrase``.
+
+    The trainer names models after their phrase (``hey_nico.onnx`` for
+    "Hey Nico"), so ownership is decided by comparing the sound-folded core
+    tokens of the phrase against the sound-folded tokens of the file stem.
+    Sound-folding keeps spelling variants of the same word together
+    ("Hey Niko" still owns ``hey_nico.onnx``). An empty phrase owns nothing.
+
+    Why this exists (live bug 2026-07-02): ``custom_model_path`` stays in the
+    config when the user changes the wake phrase in Settings, and the resolver
+    used to let ANY custom path win — the stale model then kept detecting the
+    OLD word and the new phrase was deaf ("only Hey Nico still works").
+    """
+    core = [sound_fold(t) for t in phrase_core_for_match(phrase)]
+    if not core:
+        return False
+    stem_tokens = {sound_fold(t) for t in normalize_phrase_for_match(Path(model_path).stem)}
+    return all(token in stem_tokens for token in core)
+
+
 # ---------------------------------------------------------------------------
 # Engine resolution
 # ---------------------------------------------------------------------------
@@ -223,12 +245,17 @@ class WakeWordPlan:
     needs_local_whisper: bool    # True only for the stt_match path
     degraded: bool               # True if we could not honour the request
     message: str                 # English status string for logs + UI
-    # Whether an OpenWakeWord hit needs the second-stage STT prefix check. This
-    # is ONLY for the jarvis family (the hey_jarvis model also fires on bare
-    # "Jarvis" — BUG-009). For a specific pretrained model (alexa/mycroft/
-    # rhasspy) or a custom model, the model IS the discriminator and the German-
-    # pinned STT would otherwise mis-transcribe the wake word and reject valid
-    # hits. So verify_prefix is True only when the matcher is the jarvis default.
+    # Whether an OpenWakeWord hit needs the second-stage STT prefix check.
+    # True for the jarvis family (the hey_jarvis model also fires on bare
+    # "Jarvis" — BUG-009) AND for user-trained custom_onnx models (live
+    # forensic 2026-07-01: a few-shot/synthetic-data model scored breath,
+    # ambient noise and arbitrary speech up to 1.000 — several false
+    # activations per minute; the verify transcript, matched against the
+    # phrase's own sound-folded fuzzy matcher, is the real discriminator).
+    # False only for a specific PRETRAINED model (alexa/mycroft/rhasspy):
+    # those are trained on large curated datasets, ARE their own
+    # discriminator, and the STT would mis-transcribe the foreign brand word
+    # and wrongly reject valid hits.
     verify_prefix: bool
 
 
@@ -263,9 +290,24 @@ def resolve_wake_plan(cfg: Any, *, local_whisper_available: bool) -> WakeWordPla
     matcher = compile_wake_matcher(phrase, fuzzy_ratio=fuzzy)
     canonical = _canonical_keyword(phrase)
 
-    # 1. Explicit custom ONNX (or any custom path on a non-stt engine).
+    # 1. Custom ONNX model. Auto-adopted ONLY when it belongs to the
+    # configured phrase; an explicit engine="custom_onnx" still forces it
+    # regardless of its filename (the user's own training, their own naming).
+    # Live bug 2026-07-02: the phrase was changed to "Hey Fable" in Settings,
+    # but the stale hey_nico.onnx path left in config used to win here
+    # unconditionally — the NICO model stayed the detector and the new phrase
+    # was deaf. A stale model falls through to the normal any-phrase path and
+    # is kept in config so switching the phrase back re-adopts it.
+    custom_missing = False
+    custom_stale = False
     if custom_path:
-        if Path(custom_path).is_file():
+        if not Path(custom_path).is_file():
+            custom_missing = True
+            log.warning("Custom wake ONNX not found: %s", custom_path)
+            # fall through — try STT match, else degrade.
+        elif engine_pref == "custom_onnx" or custom_model_matches_phrase(
+            custom_path, phrase
+        ):
             return WakeWordPlan(
                 phrase=phrase,
                 engine="custom_onnx",
@@ -276,14 +318,29 @@ def resolve_wake_plan(cfg: Any, *, local_whisper_available: bool) -> WakeWordPla
                 needs_local_whisper=False,
                 degraded=False,
                 message=f"Custom ONNX wake model: {custom_path}",
-                verify_prefix=matcher.is_jarvis_default,
+                # ALWAYS verify custom-model hits with the STT prefix gate.
+                # Live forensic 2026-07-01: trusting the trained model alone
+                # ("it IS its own discriminator") caused a false-positive storm
+                # — scores up to 1.000 on breath/ambient/other speech. The
+                # verifier matches against this phrase's sound-folded fuzzy
+                # matcher, so it works for ANY configured wake word and
+                # tolerates ASR spelling drift ("Niko" for "Nico").
+                verify_prefix=True,
             )
-        log.warning("Custom wake ONNX not found: %s", custom_path)
-        # fall through — try STT match, else degrade.
+        else:
+            custom_stale = True
+            log.info(
+                "Custom wake model '%s' belongs to a different phrase — "
+                "resolving '%s' through the normal engine chain.",
+                Path(custom_path).name,
+                phrase,
+            )
 
     # 2. Known pretrained openWakeWord model (CPU, instant, offline).
     known = match_known_oww_model(phrase)
-    if engine_pref in ("auto", "openwakeword") and known and not custom_path:
+    if engine_pref in ("auto", "openwakeword") and known and (
+        not custom_path or custom_stale
+    ):
         model_path = resolve_oww_model_path(known)
         if model_path is not None:
             return WakeWordPlan(
@@ -307,11 +364,20 @@ def resolve_wake_plan(cfg: Any, *, local_whisper_available: bool) -> WakeWordPla
         or (engine_pref == "openwakeword" and not known)
     )
     if want_stt and local_whisper_available:
-        degraded = bool(custom_path) or (engine_pref == "openwakeword" and not known)
-        if custom_path:
+        # A STALE custom model (belongs to another phrase) is NOT a degrade:
+        # the transcript match IS the regular path for the new phrase, and the
+        # model stays configured for when the user switches back.
+        degraded = custom_missing or (engine_pref == "openwakeword" and not known)
+        if custom_missing:
             message = (
                 f"Custom ONNX not found ({custom_path}); "
                 "using local-Whisper transcript match instead."
+            )
+        elif custom_stale:
+            message = (
+                f"Custom wake model '{Path(custom_path).name}' belongs to a "
+                f"different phrase; '{phrase}' uses the local-Whisper "
+                "transcript match."
             )
         else:
             message = f"Custom phrase '{phrase}' via local-Whisper transcript match."
@@ -358,6 +424,7 @@ __all__ = [
     "WakeMatcher",
     "WakeWordPlan",
     "compile_wake_matcher",
+    "custom_model_matches_phrase",
     "resolve_wake_plan",
     "sensitivity_to_threshold",
 ]

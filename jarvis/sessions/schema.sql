@@ -62,6 +62,17 @@ CREATE TABLE IF NOT EXISTS voice_turns (
 CREATE INDEX IF NOT EXISTS idx_turns_session ON voice_turns(session_id, idx);
 
 
+-- Store-level bookkeeping. Currently holds the retention-prune horizon
+-- (key ``prune_horizon_ms``): the highest cutoff ever used by
+-- ``prune_older_than``. Readers (the board aggregator) use it to tell
+-- "rows were deleted below this instant" from "rows never existed", so an
+-- already-recorded day is never recomputed from a half-pruned source.
+CREATE TABLE IF NOT EXISTS store_meta (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL
+);
+
+
 CREATE TABLE IF NOT EXISTS voice_events (
     seq                INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id         TEXT NOT NULL REFERENCES voice_sessions(id) ON DELETE CASCADE,

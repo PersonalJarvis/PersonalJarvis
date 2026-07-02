@@ -103,10 +103,16 @@ def test_selector_picks_june13_when_configured(monkeypatch):
     assert loop.__module__ == "jarvis.harness.screenshot_only_loop_june13"
 
 
-def test_selector_picks_current_by_default(monkeypatch):
+def test_selector_picks_current_when_configured(monkeypatch):
     _patch_engine(monkeypatch, "current")
     loop = harness._resolve_run_cu_loop()
     assert loop.__module__ == "jarvis.harness.screenshot_only_loop"
+
+
+def test_selector_picks_v2_when_configured(monkeypatch):
+    _patch_engine(monkeypatch, "v2")
+    loop = harness._resolve_run_cu_loop()
+    assert loop.__module__ == "jarvis.cu.engine"
 
 
 def test_selector_picks_stable_when_configured(monkeypatch):
@@ -116,10 +122,12 @@ def test_selector_picks_stable_when_configured(monkeypatch):
     assert loop.__module__ == "jarvis.harness.screenshot_only_loop_stable"
 
 
-def test_selector_falls_back_to_current_on_config_error(monkeypatch):
+def test_selector_falls_back_to_default_engine_on_config_error(monkeypatch):
+    # The default engine is v2 since the rebuild; a config-read failure must
+    # land on the same default, never on an older engine.
     def _boom() -> Any:
         raise RuntimeError("config unreadable")
 
     monkeypatch.setattr("jarvis.core.config.load_config", _boom)
     loop = harness._resolve_run_cu_loop()
-    assert loop.__module__ == "jarvis.harness.screenshot_only_loop"
+    assert loop.__module__ == "jarvis.cu.engine"

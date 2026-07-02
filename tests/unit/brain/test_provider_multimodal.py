@@ -105,6 +105,6 @@ def test_openai_vision_unsupported_drops_images(sample_block, caplog):
     user_msg = next(m for m in out if m["role"] == "user")
     # Content is now a plain-text string (images dropped)
     assert user_msg["content"] == "question"
-    assert any("Vision-Support" in rec.message for rec in caplog.records), (
+    assert any("vision support" in rec.message.lower() for rec in caplog.records), (
         f"expected a WARN log, got {[r.message for r in caplog.records]}"
     )

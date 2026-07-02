@@ -96,7 +96,7 @@ async def test_binary_guard_rejects_other_binary(tmp_path: Path) -> None:
     tool, _ = _make_tool(tmp_path)
     result = await tool.execute({"command": "rm -rf /"}, _ctx())
     assert result.success is False
-    assert "beginnen" in (result.error or "")
+    assert "must start with" in (result.error or "")
 
 
 @pytest.mark.asyncio

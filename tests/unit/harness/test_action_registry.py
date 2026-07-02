@@ -76,13 +76,13 @@ def test_actionspec_rejects_both_tool_and_composite() -> None:
         name="x", tool_name="t", description="",
         composite=lambda *a, **kw: None,
     )
-    with pytest.raises(ValueError, match="entweder tool_name ODER composite"):
+    with pytest.raises(ValueError, match="either tool_name OR composite"):
         spec.validate()
 
 
 def test_actionspec_rejects_neither_tool_nor_composite() -> None:
     spec = ActionSpec(name="x", tool_name=None, description="")
-    with pytest.raises(ValueError, match="entweder tool_name ODER composite"):
+    with pytest.raises(ValueError, match="either tool_name OR composite"):
         spec.validate()
 
 
@@ -113,7 +113,7 @@ def test_transform_press_key_list_passthrough() -> None:
 
 
 def test_transform_press_key_missing_arg_raises() -> None:
-    with pytest.raises(ValueError, match="braucht 'key'"):
+    with pytest.raises(ValueError, match="needs 'key'"):
         _transform_press_key({})
 
 

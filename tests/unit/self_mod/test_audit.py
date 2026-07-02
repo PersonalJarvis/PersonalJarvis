@@ -277,7 +277,7 @@ class TestRobustness:
             audit.record(sample_event)
 
         assert any(
-            "fehlgeschlagen" in rec.getMessage().lower()  # i18n-allow: matches actual German text logged by jarvis/core/self_mod/audit.py
+            "failed" in rec.getMessage().lower()
             for rec in caplog.records
         ), "expected warning log missing"
 

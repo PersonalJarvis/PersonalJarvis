@@ -117,7 +117,11 @@ from jarvis.speech.hangup import (
 from jarvis.speech.pending_buffer import PendingPromptBuffer
 from jarvis.speech.persona import PhrasePicker, iter_all_start_ack
 from jarvis.speech.rolling_whisper_wake import RollingWhisperWake
-from jarvis.speech.wake_verifier import verify_wake_with_stt
+from jarvis.speech.wake_verifier import (
+    CUSTOM_WAKE_MIN_RMS,
+    pcm_tail_rms,
+    verify_wake_with_stt,
+)
 from jarvis.telemetry.latency import LatencyPhase, LatencyTracker
 from jarvis.trigger.hotkey import HotkeyTrigger
 
@@ -1092,6 +1096,12 @@ class SpeechPipeline:
                 keywords=(wake_plan.oww_keyword,),
                 activation_threshold=wake_plan.threshold,
                 model_path=wake_plan.oww_model_path,
+                # A user-trained custom_onnx model fires on normal-volume speech
+                # (~0.9) and must NOT be fed the amplify-only AGC: it lifts quiet
+                # BREATH to full scale, which the model then fires on at ~1.0 (live
+                # 2026-07-01 "triggers on breathing"). Raw audio scores breath ~0.
+                # The pretrained OWW models DO need the AGC (they fire at 0.15-0.23).
+                gain_normalization=getattr(wake_plan, "engine", "") != "custom_onnx",
             )
         else:
             self._wake = OpenWakeWordProvider(
@@ -1636,6 +1646,9 @@ class SpeechPipeline:
                 keywords=(plan.oww_keyword,),
                 activation_threshold=plan.threshold,
                 model_path=plan.oww_model_path,
+                # No amplify-only AGC for a user-trained custom model — it lifts
+                # quiet breath to full scale and false-fires (see the ctor site).
+                gain_normalization=engine != "custom_onnx",
             )
             self._openwakeword_enabled = True
             # OWW stands alone for a live switch (lightweight default). The heavy
@@ -2524,20 +2537,24 @@ class SpeechPipeline:
                         quiet_ms, elapsed * 1000.0, event.text[:80],
                     )
                     return
-        # Symmetric turn-boundary guard (AD-OE5). Jarvis already has barge-in
-        # (the user interrupts Jarvis via priority="interrupt" below); this is
-        # the missing reverse — Jarvis must not start speaking while the USER
-        # holds the floor. Only non-interrupt announcements are gated; an
+        # Symmetric turn-boundary guard (AD-OE5) + idle guard (live bug 2026-07-01).
+        # A background "still on it" heartbeat (kind="progress") is only meaningful
+        # while the user is ACTIVELY in a session waiting for the mission — the mic
+        # is open and Jarvis is LISTENING. It is dropped in every other state:
+        # during a foreground turn (THINKING/JARVIS_SPEAKING/…) it would talk over
+        # that turn, and while IDLE there is NO active session at all, so speaking
+        # it is Jarvis "talking out of nowhere" into a machine the user walked away
+        # from (live bug 2026-07-01: a force-spawned mission's three bounded beats
+        # spoke into fresh, empty wake sessions after the user hung up). An
         # interrupt is a deliberate barge and still punches through.
         current_turn_state = getattr(self, "_turn_state", TurnTakingState.IDLE)
         if (
             event.priority != "interrupt"
             and is_progress
-            and current_turn_state
-            not in {TurnTakingState.IDLE, TurnTakingState.LISTENING}
+            and current_turn_state is not TurnTakingState.LISTENING
         ):
             log.info(
-                "Progress announcement dropped — foreground turn active (%s): %r",
+                "Progress announcement dropped — no active listening session (%s): %r",
                 getattr(current_turn_state, "value", current_turn_state),
                 event.text[:80],
             )
@@ -3947,40 +3964,87 @@ class SpeechPipeline:
                 log.exception("Wake-Loop Fehler: %s", exc)
                 await asyncio.sleep(0.5)
 
+    def _should_show_optimistic_candidate(self) -> bool:
+        """Whether an unverified OWW hit may pop the overlay bar immediately.
+
+        The optimistic reveal exists so a genuine "Hey Jarvis" feels instant on
+        the precise pretrained model, where false candidates are rare and a
+        reject costs one brief bar flash. A user-trained custom_onnx model
+        fires on breath/ambient speech many times a minute (user GIF
+        2026-07-02: the bar popped open/closed on auto-repeat), so for that
+        engine the bar appears only AFTER the STT verify confirms the wake —
+        a ~1 s later reveal instead of a constant flicker.
+        """
+        if self._state != PipelineState.IDLE:
+            return False
+        plan = getattr(self, "_wake_plan", None)
+        return not (plan is not None and getattr(plan, "engine", "") == "custom_onnx")
+
     async def _verify_oww_hit(self, pcm_snapshot: bytes) -> bool:
         """Second-stage gate: ask the utterance STT whether the few seconds
         leading up to an OpenWakeWord hit actually contained "hey/hi/hallo +
         jarv". Returns True if the strict prefix is in the transcript.
 
-        Failure modes degrade OPEN (return True with a log line) so a
-        misconfigured STT, a network blip, a rate-limit, or a known
-        silence/noise hallucination cannot brick the wake — we'd rather accept
-        the occasional bare-"Jarvis" false positive than have the user shout
-        into a dead listener. The ONLY no-transcript case that still suppresses
-        is an EMPTY capture buffer (nothing was recorded). A clear, non-matching
-        transcript (genuine other speech) also suppresses, preserving the
-        bare-"Jarvis" BUG-009 guard.
+        STT-outage failure modes degrade OPEN (return True with a log line) so
+        a misconfigured STT, a network blip, or a rate-limit cannot brick the
+        wake — we'd rather accept the occasional false positive than have the
+        user shout into a dead listener. A clear, non-matching transcript
+        (genuine other speech) suppresses, preserving the bare-"Jarvis"
+        BUG-009 guard. How a WORKING STT that heard no speech (empty
+        transcript / silence-hallucination boilerplate) is treated depends on
+        the engine: the pretrained hey_jarvis path degrades open (forensic
+        2026-06-28 — short real wakes often mis-transcribe to nothing), while
+        a user-trained custom_onnx hit SUPPRESSES (live forensic 2026-07-01 —
+        such models false-fire on breath/noise, so "no speech heard" is
+        evidence of a false fire, not an STT problem).
         """
         if not self._require_hey_prefix:
             return True
-        # The STT re-verification exists ONLY for the jarvis family (the
-        # hey_jarvis model also fires on bare "Jarvis" — BUG-009). A specific
-        # pretrained model (alexa/mycroft/rhasspy) or a custom model IS its own
-        # discriminator; re-transcribing with the German-pinned STT would
-        # mis-spell the wake word and wrongly reject valid hits ("only Hey
-        # Jarvis works"). Trust the model for those.
+        # The STT re-verification runs for the jarvis family (the hey_jarvis
+        # model also fires on bare "Jarvis" — BUG-009) AND for user-trained
+        # custom_onnx models (live forensic 2026-07-01: a few-shot model scored
+        # breath/ambient/other speech up to 1.000 — a false-positive storm;
+        # the transcript matched against the phrase's own sound-folded fuzzy
+        # matcher is the real discriminator). Only a specific PRETRAINED model
+        # (alexa/mycroft/rhasspy) is exempt via verify_prefix=False: those are
+        # their own discriminator, and the STT would mis-transcribe the foreign
+        # brand word and wrongly reject valid hits.
         plan = getattr(self, "_wake_plan", None)
         if plan is not None and not getattr(plan, "verify_prefix", True):
             return True
+        # A user-trained custom_onnx model is a WEAK discriminator (live
+        # forensic 2026-07-01/02: scores up to 1.000 on breath/ambient/other
+        # speech, 15 fires in 25 s at the worst). Its hits get the strict
+        # treatment throughout this gate.
+        custom_model_hit = (
+            plan is not None and getattr(plan, "engine", "") == "custom_onnx"
+        )
+        # Silence gate (custom only, BEFORE any STT round-trip): a hit whose
+        # trailing audio is essentially silent is a breath/noise false fire by
+        # definition — there is no speech an STT could confirm. Suppressing it
+        # here (a) kills the "fires out of nowhere" storm at zero cost and
+        # (b) stops the fire flood from hammering the verify STT into
+        # 429/timeouts (live 2026-07-02: that flood-induced outage is what
+        # opened the degrade-open hole and produced ghost activations).
+        if custom_model_hit and pcm_snapshot:
+            tail_rms = pcm_tail_rms(pcm_snapshot)
+            if tail_rms < CUSTOM_WAKE_MIN_RMS:
+                log.info(
+                    "wake-verify: suppressed — near-silent audio "
+                    "(rms %.4f < %.3f) on a custom-model hit; skipping STT",
+                    tail_rms,
+                    CUSTOM_WAKE_MIN_RMS,
+                )
+                return False
         if self._utterance_stt is None:
             log.warning(
                 "require_hey_prefix=True but no utterance STT — accepting OWW hit"
             )
             return True
         # Nothing captured yet (empty ring buffer) — there is genuinely no audio
-        # to confirm the wake, so reject without an STT round-trip. This is the
-        # ONLY no-transcript case that suppresses: a NON-empty buffer the STT
-        # could not turn into text is treated as an outage below (degrade open).
+        # to confirm the wake, so reject without an STT round-trip. (Whether a
+        # NON-empty buffer with no usable transcript suppresses or degrades
+        # open is engine-dependent — see below.)
         if not pcm_snapshot:
             return False
         matched, text = await verify_wake_with_stt(
@@ -3990,41 +4054,80 @@ class SpeechPipeline:
         )
         if matched:
             return True
-        text = (text or "").strip()
-        # Degrade OPEN on a KNOWN STT hallucination. A silence/noise boilerplate
-        # transcript ("Untertitelung des ZDF, 2020", "Vielen Dank.") means the
-        # STT failed to transcribe the real audio — NOT that the user didn't say
-        # the wake word. OWW already fired strongly, so this is the same case as
-        # the transient-STT-failure path (which degrades open above): accept
-        # rather than drop a real "Hey Jarvis". Forensic 2026-06-28: short
-        # "Hey Jarvis" buffers made the verify STT hallucinate these phrases for
-        # ~half of all valid wakes, so the wake "stopped working" intermittently.
+        # For a custom-model hit, a WORKING STT that heard no wake phrase —
+        # an empty transcript or a known silence-hallucination boilerplate —
+        # is evidence of a false fire and must SUPPRESS. The pretrained
+        # hey_jarvis path keeps its documented degrade-open behaviour (its
+        # false fires happen on real speech, so an empty transcript there
+        # really does mean the STT failed, forensic 2026-06-28).
+        #
+        # Persistent verify-STT failure (Groq 429/503/timeout after retries):
+        # - hey_jarvis: degrade OPEN. Candidates are rare, so an unreachable
+        #   STT is a provider problem, not evidence about what the user said;
+        #   accepting keeps the wake alive through an outage (AP-22).
+        # - custom_onnx: FAIL CLOSED (live 2026-07-02, 3 ghost activations
+        #   overnight). The fire flood of a weak model eventually hits an STT
+        #   timeout, and degrade-open then activates Jarvis although nobody
+        #   spoke. The session a wake opens needs that same STT to hear
+        #   anything (it would be a deaf session), and hotkey/orb-click remain
+        #   as in-app activation paths — honest degradation, not a bricked
+        #   wake.
+        if text is None:
+            if custom_model_hit:
+                log.info(
+                    "wake-verify: suppressed — verify STT unreachable on a "
+                    "custom-model hit (fail-closed: the session would be deaf "
+                    "without STT; hotkey/orb-click still activate)"
+                )
+                return False
+            log.info(
+                "wake-verify: verify STT unreachable on a strong OWW hit — "
+                "accepting (degrade-open; an STT outage must not brick the "
+                "wake, AP-22)"
+            )
+            return True
+        text = text.strip()
+        # KNOWN STT hallucination boilerplate ("Untertitelung des ZDF, 2020",
+        # "Vielen Dank."). Whisper emits these on silence/noise buffers.
+        # - custom_onnx: the buffer held silence/noise → the model false-fired
+        #   on breath/ambient → suppress (fail-closed).
+        # - hey_jarvis: forensic 2026-06-28 showed short REAL "Hey Jarvis"
+        #   buffers hallucinate these for ~half of all valid wakes → accept
+        #   (degrade-open), else the wake "stops working" intermittently.
         # An arbitrary non-matching transcript (genuine OTHER speech) still
-        # suppresses, so the bare-"Jarvis" false-positive guard (BUG-009) stays.
+        # suppresses for both, so the bare-"Jarvis" guard (BUG-009) stays.
         if text and _STT_HALLUCINATION_RE.search(text) is not None:
+            if custom_model_hit:
+                log.info(
+                    "wake-verify: suppressed — STT hallucination %r on a "
+                    "custom-model hit (silence/noise false fire, fail-closed)",
+                    text[:80],
+                )
+                return False
             log.info(
                 "wake-verify: STT hallucination %r on a strong OWW hit — "
                 "accepting (degrade-open, not a real rejection)",
                 text[:80],
             )
             return True
-        # Degrade OPEN when the verify STT yielded NO usable transcript for real
-        # captured audio. ``verify_wake_with_stt`` collapses a persistent STT
-        # failure (Groq 429/503/timeout) AND an empty transcription to "" — and
-        # since OWW already fired strongly on audio we DID capture, an absent
-        # transcript is an STT problem, not the user staying silent. Accepting
-        # here is what keeps the wake alive through a single-provider outage
-        # (AP-22 / open-source resilience: one dead provider must never brick a
-        # core path, and recovery must be reachable in-app, never via a restart).
-        # This is the runtime-failure twin of the hallucination degrade-open just
-        # above; the documented honesty cost is the occasional bare-"Jarvis"
-        # false positive while the STT is down. A CLEAR non-matching transcript
-        # still suppresses below, so the BUG-009 guard is unaffected.
+        # The verify STT WORKED and produced an empty transcript.
+        # - custom_onnx: no speech in the buffer → breath/noise false fire →
+        #   suppress. This is the "fires out of nowhere" half of the
+        #   2026-07-01 storm.
+        # - hey_jarvis: an empty transcription on a strong hit is far more
+        #   likely a silence-mis-transcription of a short real wake than a
+        #   spontaneous model fire → accept (degrade-open, forensic
+        #   2026-06-28 "Hey Jarvis sometimes stops working entirely").
         if not text:
+            if custom_model_hit:
+                log.info(
+                    "wake-verify: suppressed — empty transcript on a "
+                    "custom-model hit (no speech captured, fail-closed)"
+                )
+                return False
             log.info(
                 "wake-verify: verify STT returned no transcript on a strong OWW "
-                "hit — accepting (degrade-open; an STT outage must not brick the "
-                "wake, AP-22)"
+                "hit — accepting (degrade-open)"
             )
             return True
         log.info(
@@ -4174,7 +4277,9 @@ class SpeechPipeline:
                             # (WakeCandidateDetected never opens a session turn),
                             # so a rejected candidate costs a brief bar flash, not
                             # a phantom session — retracted just below on reject.
-                            show_candidate = self._state == PipelineState.IDLE
+                            # Custom-model candidates never reveal optimistically
+                            # (constant flicker, see the helper's docstring).
+                            show_candidate = self._should_show_optimistic_candidate()
                             if show_candidate:
                                 await self._publish_event(
                                     WakeCandidateDetected(
@@ -7771,7 +7876,11 @@ async def _main() -> None:
     pipeline = SpeechPipeline(
         call_hotkeys=_call_hk,
         ptt_hotkeys=_ptt_hk,
-        hangup_hotkeys=(config.trigger.hotkey_hangup,),
+        hangup_hotkeys=(
+            (config.trigger.hotkey_hangup,)
+            if config.trigger.hotkey_hangup.strip()
+            else ()
+        ),
         wake_keywords=("hey_jarvis",),
         wake_threshold=0.15,
         stt=stt,

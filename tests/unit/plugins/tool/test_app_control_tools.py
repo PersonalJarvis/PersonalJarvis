@@ -264,7 +264,7 @@ async def test_switch_unknown_tier(configured_keys):
 async def test_switch_stt_requires_restart(configured_keys):
     from jarvis.brain.app_control import apply_provider_switch
 
-    res = await apply_provider_switch("stt", "deepgram", cfg=make_cfg(), persist=False)
+    res = await apply_provider_switch("stt", "groq-api", cfg=make_cfg(), persist=False)
     assert res["ok"] is True
     assert res["applied_live"] is False
     assert res["requires_restart"] is True

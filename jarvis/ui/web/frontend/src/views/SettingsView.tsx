@@ -3,6 +3,7 @@ import {
   Settings,
   Mic,
   Keyboard,
+  X,
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { Switch } from "@/components/ui/switch";
@@ -631,6 +632,24 @@ function KeybindRow({
     }
   }
 
+  // Immediate, one-click unbind — no staging step, mirroring the "Reset to
+  // default" link's immediacy. Bypasses onSaveClick's trimmed-empty guard,
+  // which exists to stop an in-progress recording from saving nothing.
+  async function onClearClick() {
+    setSaving(true);
+    try {
+      const res = await onSave(action, "");
+      setCombo("");
+      setCapturing(false);
+      setSaved(res.restart_required);
+      pushToast("success", t("settings_view.keybinds.cleared"));
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const dirty = !!config && combo.trim().toLowerCase() !== current;
   const showReset = !!def && combo.trim().toLowerCase() !== def;
 
@@ -675,7 +694,11 @@ function KeybindRow({
             <ComboChips combo={combo} />
           ) : (
             <span className="text-muted-foreground">
-              {capturing ? t("settings_view.keybinds.recording") : "—"}
+              {capturing
+                ? t("settings_view.keybinds.recording")
+                : loading
+                  ? "—"
+                  : t("settings_view.keybinds.unbound")}
             </span>
           )}
         </button>
@@ -695,6 +718,18 @@ function KeybindRow({
           disabled={saving || loading || !dirty || invalid}
         >
           {saving ? t("settings_view.saving") : t("settings_view.keybinds.save")}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          data-testid={`clear-keybind-${action}`}
+          aria-label={t("settings_view.keybinds.clear")}
+          title={t("settings_view.keybinds.clear")}
+          onClick={onClearClick}
+          disabled={saving || loading || !current}
+        >
+          <X className="h-3.5 w-3.5" />
         </Button>
       </div>
       {/* ONE stable status line: the validation message when there is one,

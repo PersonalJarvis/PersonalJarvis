@@ -87,6 +87,6 @@ async def test_unknown_combo_part_still_reports_clean_error(monkeypatch):
     res = await HotkeyTool().execute({"keys": ["ctrl+nope"]}, _Ctx())
 
     # Not all parts resolve -> keep the token verbatim and surface the
-    # existing "Unbekannte Taste" error instead of a confusing split.
+    # existing "Unknown key" error instead of a confusing split.
     assert res.success is False
-    assert "Unbekannte Taste" in (res.error or "")
+    assert "Unknown key" in (res.error or "")

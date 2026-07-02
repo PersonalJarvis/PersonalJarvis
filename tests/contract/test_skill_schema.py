@@ -88,13 +88,13 @@ def test_extra_field_forbidden():
 
 def test_trigger_payload_validation():
     t = SkillTrigger(type="voice")
-    assert "voice-trigger braucht 'pattern'" in t.validate_payload()
+    assert "voice trigger needs 'pattern'" in t.validate_payload()
 
     t2 = SkillTrigger(type="hotkey", combo="ctrl+j")
     assert t2.validate_payload() == []
 
     t3 = SkillTrigger(type="schedule")
-    assert "schedule-trigger braucht 'cron'" in t3.validate_payload()
+    assert "schedule trigger needs 'cron'" in t3.validate_payload()
 
 
 def test_risk_policy_default():

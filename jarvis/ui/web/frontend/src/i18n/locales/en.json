@@ -1056,8 +1056,11 @@
       "stop": "Stop",
       "recording": "Press your keys…",
       "recording_hint": "Hold the keys you want (then let go), or click them on the keyboard below. Esc cancels.",
+      "unbound": "No key assigned",
       "save": "Save",
+      "clear": "Clear",
       "saved": "Keybind saved",
+      "cleared": "Keybind cleared",
       "reset": "Reset to default",
       "restart_required": "Restart required to take effect.",
       "validation": {

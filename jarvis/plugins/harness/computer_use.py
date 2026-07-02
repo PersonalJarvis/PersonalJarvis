@@ -24,6 +24,7 @@ from jarvis.harness.computer_use_context import (
     register_active_cu_token,
     unregister_active_cu_token,
 )
+
 _log = logging.getLogger(__name__)
 
 _TIMEOUT_EXIT_CODE = 124
@@ -32,27 +33,33 @@ _TIMEOUT_EXIT_CODE = 124
 def _resolve_run_cu_loop():
     """Select the Computer-Use engine per ``[computer_use].engine`` (reversible).
 
-    ``"current"`` (default) -> the maintained engine; ``"june13"`` -> the frozen
-    2026-06-10 / 352a784f snapshot kept as a known-good fallback. Read PER
-    MISSION so a config flip applies on the next mission (no restart needed).
-    Logs the live engine — INFO for ``june13`` (the unusual state) so it is never
-    ambiguous which version is running. Never raises: a config-read problem falls
-    back to the maintained engine.
+    ``"v2"`` (default) -> the rebuilt perceive->act->verify engine
+    (``jarvis/cu/engine.py``). Legacy fallbacks stay selectable: ``"current"``
+    = the last maintained legacy loop, ``"june13"`` / ``"stable"`` = frozen
+    known-good snapshots. Read PER MISSION so a config flip applies on the
+    next mission (no restart needed). Logs the live engine — INFO for every
+    non-default choice so it is never ambiguous which version is running.
+    Never raises: a config-read problem falls back to the default engine.
     """
     try:
         from jarvis.core.config import load_config  # noqa: PLC0415
 
         cu = getattr(load_config(), "computer_use", None)
-        engine = str(getattr(cu, "engine", "current") or "current")
+        engine = str(getattr(cu, "engine", "v2") or "v2")
     except Exception:  # noqa: BLE001 — a config read must never break a mission
-        engine = "current"
+        engine = "v2"
+    if engine == "v2":
+        from jarvis.cu.engine import run_cu_loop as _loop  # noqa: PLC0415
+
+        _log.debug("[cu] ENGINE = v2 (rebuilt perceive->act->verify engine)")
+        return _loop
     if engine == "june13":
         from jarvis.harness.screenshot_only_loop_june13 import (  # noqa: PLC0415
             run_cu_loop as _loop,
         )
         _log.info(
             "[cu] ENGINE = june13 (frozen 2026-06-10 / 352a784f). "
-            "Revert with [computer_use].engine = current.",
+            "Revert with [computer_use].engine = v2.",
         )
         return _loop
     if engine == "stable":
@@ -64,13 +71,16 @@ def _resolve_run_cu_loop():
         )
         _log.info(
             "[cu] ENGINE = stable (frozen pre-Wave-1 snapshot). "
-            "Revert with [computer_use].engine = current.",
+            "Revert with [computer_use].engine = v2.",
         )
         return _loop
     from jarvis.harness.screenshot_only_loop import (  # noqa: PLC0415
         run_cu_loop as _loop,
     )
-    _log.debug("[cu] ENGINE = current")
+    _log.info(
+        "[cu] ENGINE = current (legacy maintained loop). "
+        "The default engine is v2 ([computer_use].engine = v2).",
+    )
     return _loop
 
 
@@ -144,7 +154,7 @@ class ComputerUseHarness:
                 while True:
                     remaining_s = deadline - time.monotonic()
                     if remaining_s <= 0:
-                        raise asyncio.TimeoutError
+                        raise TimeoutError
                     try:
                         chunk = await asyncio.wait_for(
                             anext(stream),
@@ -155,7 +165,7 @@ class ComputerUseHarness:
                     yield chunk
                     if chunk.is_final:
                         return
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 token.cancel("computer_use_harness_timeout")
                 duration_ms = (time.time_ns() - t_start) // 1_000_000
                 yield HarnessResult(

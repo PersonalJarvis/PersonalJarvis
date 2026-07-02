@@ -2275,7 +2275,11 @@ class DesktopApp:
             pipeline = SpeechPipeline(
                 call_hotkeys=_call_hk,
                 ptt_hotkeys=_ptt_hk,
-                hangup_hotkeys=(self.cfg.trigger.hotkey_hangup,),
+                hangup_hotkeys=(
+                    (self.cfg.trigger.hotkey_hangup,)
+                    if self.cfg.trigger.hotkey_hangup.strip()
+                    else ()
+                ),
                 # User-tunable voice silence window ("think buffer"). Without this
                 # the constructor default (1500) always won and the Settings
                 # slider could not change the boot value.
@@ -2418,11 +2422,35 @@ class DesktopApp:
                 wake_plan.phrase or wake_plan.oww_keyword or "?",
             )
             if getattr(self, "_bp", False):
-                # Honest wake-armed anchor on the same clock as BOOT_READY_MS.
+                # Pipeline-task-started mark (kept as a SECONDARY anchor). This
+                # fires before the deferred loaders warm the wake model / VAD /
+                # TTS, so it is NOT "the user can talk now".
                 print(
                     f"VOICE_READY_MS={(time.perf_counter() - self._bp_t0) * 1000.0:.1f}",
                     flush=True,
                 )
+
+                # HONEST usable anchor: VoiceBootStatus(ready=True) is published
+                # exactly once the wake model is warmed AND VAD AND the TTS
+                # client are up (the end of _warmup_deferred_loaders — the
+                # "it says ready but I can't talk" contract, 2026-06-29). The
+                # TTU benchmark (measure_desktop_boot.py --voice) anchors on
+                # THIS print; anchoring on the pipeline start above measured a
+                # cosmetic ready state (TTU forensic 2026-07-02).
+                from jarvis.core.events import VoiceBootStatus as _VBS
+
+                _usable_printed = [False]
+
+                async def _print_voice_usable(evt: _VBS) -> None:
+                    if getattr(evt, "ready", False) and not _usable_printed[0]:
+                        _usable_printed[0] = True
+                        print(
+                            "VOICE_USABLE_MS="
+                            f"{(time.perf_counter() - self._bp_t0) * 1000.0:.1f}",
+                            flush=True,
+                        )
+
+                bus.subscribe(_VBS, _print_voice_usable)
 
             # Wake-model GIL-priority gate: signal the heavy backend (brain/mcp)
             # to resume as soon as the LIGHT base/cpu wake model has loaded — or
@@ -2431,10 +2459,16 @@ class DesktopApp:
             def _wake_model_is_loaded() -> bool:
                 ww = getattr(pipeline, "_whisper_wake", None)
                 base_stt = getattr(ww, "_stt", None) if ww is not None else stt
-                return (
-                    base_stt is not None
-                    and getattr(base_stt, "_model", None) is not None
-                )
+                if base_stt is None:
+                    return False
+                # Prefer the provider's warm signal (model constructed AND
+                # primed) so the heavy-backend CPU storm starts only after the
+                # priming inference, not in the middle of it. Fall back to the
+                # raw model handle for providers without the flag.
+                warm = getattr(base_stt, "is_warm", None)
+                if warm is not None:
+                    return bool(warm)
+                return getattr(base_stt, "_model", None) is not None
 
             from jarvis.core import runtime_refs as _rr_ready
             if stt is None:
@@ -2726,7 +2760,25 @@ class DesktopApp:
             gui=gui,
             debug=debug,
         )
-        return self.shutdown()
+        # webview.start returns once the window is destroyed. A real quit (the
+        # X, tray "Quit", or a restart) has set ``_user_requested_quit``; in that
+        # case tear every surface down AND guarantee the process dies, so nothing
+        # lingers — the user's "close = close EVERYTHING" mandate. The daemon
+        # timer is the backstop for a wedged teardown; the ``os._exit`` right
+        # after ``shutdown()`` is the fast path for the common case (forensic
+        # 2026-06-27: a hung shutdown kept the old process — and its tray icon —
+        # alive ~30 min). On a boot-failure exit ``_user_requested_quit`` is
+        # False → normal return, so callers still get an exit code.
+        if self._user_requested_quit:
+            self._arm_force_exit(after_s=20.0)
+        code = self.shutdown()
+        if self._user_requested_quit:
+            with suppress(Exception):
+                sys.stdout.flush()
+            with suppress(Exception):
+                sys.stderr.flush()
+            os._exit(code)
+        return code
 
     def _start_icon_setter_thread(self) -> None:
         """Polling thread: sets the taskbar/titlebar icon once the HWND exists.
@@ -2885,23 +2937,24 @@ class DesktopApp:
     # ---- Window close (X) = minimise to tray + clear overlay ---------------
 
     def _on_window_closing(self) -> bool:
-        """pywebview ``closing`` callback: the X minimises to tray, not quit.
+        """pywebview ``closing`` callback: the X (close) fully QUITS Jarvis.
 
-        Returns ``True`` to allow the destroy — a genuine tray "Quit", where the
-        real :meth:`shutdown` tears everything down — and ``False`` to veto it
-        and hide the window instead. On a minimise we ALSO take the overlay bar
-        off the screen so the desktop is actually clean; it returns on the next
-        window-show or voice session.
+        User mandate (2026-07-01): closing the desktop window must tear
+        EVERYTHING down — tray icon, JarvisBar overlay, voice pipeline, backend
+        server, child subprocesses and the process itself — not merely hide to
+        tray. To keep Jarvis running in the background (so "Hey Jarvis" stays
+        live) the user MINIMISES the window instead of closing it.
+
+        We mark the quit and return ``True`` so pywebview destroys the window;
+        ``webview.start()`` then returns and :meth:`run_window_only` runs
+        :meth:`shutdown` (stops every surface) followed by a hard-exit backstop
+        that guarantees the process actually dies even if a native thread
+        (WebView2/Tk teardown, a wedged ctranslate2 transcribe — AP-24) would
+        otherwise keep it — and its tray icon — alive (forensic 2026-06-27: a
+        hung shutdown kept the old process ~30 min).
         """
-        if self._user_requested_quit:
-            return True
-        try:
-            self._window.hide()
-            self._window_visible = False
-            self._suppress_overlay_for_hidden_window()
-        except Exception:  # noqa: BLE001
-            return True
-        return False
+        self._user_requested_quit = True
+        return True
 
     def _suppress_overlay_for_hidden_window(self) -> None:
         """Take a NON-persistent overlay bar off the screen on minimise — but
@@ -2973,6 +3026,28 @@ class DesktopApp:
             )
 
     # ---- Shutdown ----------------------------------------------------------
+
+    def _arm_force_exit(self, *, after_s: float = 20.0) -> None:
+        """Daemon backstop: hard-kill the process if the clean shutdown wedges.
+
+        The mandate is that closing the window closes EVERYTHING. ``shutdown()``
+        is bounded by per-step timeouts, but history shows a teardown can still
+        hang (BUG-031 window-destroy; a pending asyncio task; a wedged native
+        transcribe — AP-24) and leave a windowless process holding the tray icon
+        + admin port for minutes (forensic 2026-06-27). This timer guarantees
+        death regardless. The normal path never reaches it: ``run_window_only``
+        ``os._exit()``s the instant ``shutdown()`` returns, so this daemon dies
+        with the process first. ``after_s`` sits comfortably above ``shutdown()``'s
+        bounded worst case, so it only fires on a genuine infinite hang.
+        """
+
+        def _kill() -> None:
+            time.sleep(after_s)
+            os._exit(0)
+
+        threading.Thread(
+            target=_kill, name="jarvis-force-exit", daemon=True
+        ).start()
 
     def shutdown(self) -> int:
         """Idempotent. Stops the server + backend loop, cleans the meta file."""

@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import time
 from typing import Any
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
@@ -80,49 +79,18 @@ def _build_windows_input_types() -> Any:
 
 
 def _send_text_windows(text: str, delay_s: float) -> None:
-    """Sends Unicode text to the active Windows window via SendInput."""
+    """Sends Unicode text to the active Windows window via SendInput.
+
+    Delegates to the shared CU v2 Windows backend, which adds the thread DPI
+    pin and correct UTF-16 surrogate-pair handling for astral-plane
+    characters (emoji) on top of the proven KEYEVENTF_UNICODE path.
+    """
     if os.name != "nt":
         raise RuntimeError("Native text input without pyautogui is only available on Windows")
 
-    import ctypes
+    from jarvis.cu.actuate.windows import WindowsActuator  # noqa: PLC0415
 
-    t = _build_windows_input_types()
-    INPUT, KEYBDINPUT, INPUT_UNION = t.INPUT, t.KEYBDINPUT, t.INPUT_UNION
-
-    # use_last_error=True so ``ctypes.get_last_error()`` reflects SendInput's real
-    # Win32 error (ctypes.windll does NOT track it -> misleading error codes).
-    user32 = ctypes.WinDLL("user32", use_last_error=True)
-    send_input = user32.SendInput
-    send_input.argtypes = (ctypes.c_uint, ctypes.POINTER(INPUT), ctypes.c_int)
-    send_input.restype = ctypes.c_uint
-
-    for char in text:
-        code = ord(char)
-        events = (INPUT * 2)(
-            INPUT(
-                type=t.INPUT_KEYBOARD,
-                union=INPUT_UNION(
-                    ki=KEYBDINPUT(0, code, t.KEYEVENTF_UNICODE, 0, t.ULONG_PTR(0)),
-                ),
-            ),
-            INPUT(
-                type=t.INPUT_KEYBOARD,
-                union=INPUT_UNION(
-                    ki=KEYBDINPUT(
-                        0,
-                        code,
-                        t.KEYEVENTF_UNICODE | t.KEYEVENTF_KEYUP,
-                        0,
-                        t.ULONG_PTR(0),
-                    ),
-                ),
-            ),
-        )
-        sent = send_input(2, events, ctypes.sizeof(INPUT))
-        if sent != 2:
-            raise ctypes.WinError(ctypes.get_last_error())
-        if delay_s > 0:
-            time.sleep(delay_s)
+    WindowsActuator().type_text(text, delay_s=delay_s)
 
 
 class TypeTextTool:
@@ -167,16 +135,36 @@ class TypeTextTool:
                     "native Unicode SendInput failed, falling back to pyautogui: %r",
                     native_exc,
                 )
+            # A second SendInput attempt would fail identically, so the
+            # Windows fallback stays pyautogui (a DIFFERENT input mechanism).
+            try:
+                import pyautogui  # noqa: PLC0415
+            except Exception as exc:  # noqa: BLE001
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"text input unavailable: pyautogui import failed: {exc}",
+                )
+            try:
+                await asyncio.to_thread(pyautogui.typewrite, text, interval=delay_s)
+                return ToolResult(success=True, output=f"Typed {len(text)} chars")
+            except Exception as exc:  # noqa: BLE001
+                return ToolResult(success=False, output=None, error=str(exc))
+
+        from jarvis.cu.actuate import ActuationUnavailable, get_actuator
+
         try:
-            import pyautogui
-        except Exception as exc:  # noqa: BLE001
+            actuator = get_actuator()
+            await asyncio.to_thread(actuator.type_text, text, delay_s=delay_s)
+            return ToolResult(
+                success=True,
+                output=f"Typed {len(text)} chars ({actuator.name})",
+            )
+        except ActuationUnavailable as exc:
             return ToolResult(
                 success=False,
                 output=None,
-                error=f"text input unavailable: pyautogui import failed: {exc}",
+                error=f"text input unavailable: {exc}",
             )
-        try:
-            pyautogui.typewrite(text, interval=delay_s)
-            return ToolResult(success=True, output=f"Typed {len(text)} chars")
         except Exception as exc:  # noqa: BLE001
             return ToolResult(success=False, output=None, error=str(exc))
