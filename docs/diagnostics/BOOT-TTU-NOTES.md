@@ -271,6 +271,26 @@ scripts/wake_bench.py). Potential: usable ~8.9 -> ~6 s isolated.
   with an early poll — the is_warm contract covers it), import mountain,
   ctor slimming. Diminishing returns; floor analysis unchanged.
 
+## Iteration 11 — prime-in-prefetch (implemented; clean median pending)
+
+- Implemented (commit 64b4a9a3): the prefetch thread also runs the priming
+  inference; the hand-over cache carries a ``primed`` flag; ``warm_up``
+  adopts a READY engine and skips its own prime. Contracts tested (3 new
+  tests): failed prefetch-prime -> warm_up primes itself (readiness never
+  faked); recover() resets the shortcut and always loads+primes fresh
+  (AP-24). Suites green (13 stt tests).
+- **Measurement status (honest):** the only quiet run measured **6.74 s**
+  voice-usable (best value overall; consistent with removing the ~2 s prime
+  from the path after the 9.49 s iteration-10 median). Two repeat batches
+  were unusable — heavy foreign load on the box (window anchor 7-19 s,
+  ctor 4 s; 23 python processes, CPU ~50 %). A clean 5-run median should be
+  taken on an idle machine: `scripts/measure_desktop_boot.py --voice
+  --runs 5 --warmup 1`. The budget guard (30 s voice budget) protects
+  against real regressions meanwhile.
+- With 6.7-9.5 s isolated TTU the remaining blocks are the import mountain
+  (~2.6 s) and the WebServer ctor (~1.5 s) — the documented floor analysis
+  stands; further gains need deep import/ctor refactoring.
+
 ## How to add a feature WITHOUT slowing boot (doctrine)
 
 - Nothing new runs before VOICE_READY. New subsystems hook into
