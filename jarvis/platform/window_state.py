@@ -662,13 +662,23 @@ def window_rect(win: WindowInfo) -> tuple[int, int, int, int] | None:
 
 
 def foreground_window() -> WindowInfo | None:
-    """The current foreground window as a :class:`WindowInfo` (carrying the hwnd
-    on Windows), or ``None``. Best-effort; never raises. macOS/Linux return a
-    title-only WindowInfo (no handle), which the move path treats as "can't move"
-    rather than acting blind."""
+    """The current foreground window as a :class:`WindowInfo`, or ``None``.
+
+    Carries the platform window id in ``handle`` on ALL three platforms
+    (Win32 hwnd; macOS CGWindowID via Quartz; X11 window id via xdotool) —
+    the id the window-centric capture pipeline resolves rects and native
+    grabs through. Hosts without the native backend (no Quartz, no xdotool,
+    Wayland) degrade to a title-only WindowInfo or ``None``. Best-effort;
+    never raises.
+    """
     try:
-        if detect_platform() == "win32":
+        plat = detect_platform()
+        if plat == "win32":
             return _foreground_window_windows()
+        if plat == "darwin":
+            return _foreground_window_macos()
+        if plat == "linux":
+            return _foreground_window_linux()
         title = get_foreground_title()
         return WindowInfo(title=title) if title else None
     except Exception:  # noqa: BLE001
