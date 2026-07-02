@@ -291,6 +291,19 @@ scripts/wake_bench.py). Potential: usable ~8.9 -> ~6 s isolated.
   (~2.6 s) and the WebServer ctor (~1.5 s) — the documented floor analysis
   stands; further gains need deep import/ctor refactoring.
 
+## Iteration 12 — import-mountain decomposition (floor confirmed)
+
+`python -X importtime` over the post-shell heavy imports (~0.97 s warm,
+~2.6 s under boot load): fastapi ~0.29 s (openapi.models 81 ms self),
+`jarvis.core.config` tree ~0.35 s cumulative — dominated by Pydantic schema
+compilation incl. `jarvis.awareness.config` (138 ms self, pulled in as a
+JarvisConfig field type; the module itself is clean model definitions),
+brain/dispatcher/safety chain ~0.3 s. These are foundation costs: making the
+config tree lazy would fight Pydantic validation (AP-16) for ~0.1-0.3 s —
+not worth it. The import mountain is hereby part of the documented floor;
+the only remaining structural lever is decoupling the voice path from the
+WebServer import/ctor entirely (deep refactor, out of scope).
+
 ## How to add a feature WITHOUT slowing boot (doctrine)
 
 - Nothing new runs before VOICE_READY. New subsystems hook into
