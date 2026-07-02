@@ -52,11 +52,16 @@ class _LockedSTT:
     def __init__(self, first_call_s: float | None) -> None:
         self._first_call_s = first_call_s
         self._first_started = False
+        self._bg_task: asyncio.Task | None = None
         self.busy = False
         self.is_warm = True
         self.completed = 0
         self.recover_calls = 0
         self.warm_up_calls = 0
+
+    def cancel_background(self) -> None:
+        if self._bg_task is not None:
+            self._bg_task.cancel()
 
     async def transcribe_pcm(self, pcm, sample_rate=16000, language=None):  # noqa: ANN001
         if self.busy:
