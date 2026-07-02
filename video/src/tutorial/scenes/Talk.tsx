@@ -33,7 +33,7 @@ export const Talk: React.FC<{ scene: TimelineScene }> = ({ scene }) => {
         }}
       >
         <SpokenCommand
-          text="What's on my calendar this afternoon?"
+          text="what's on my calendar this afternoon?"
           speaker="user"
           wake="Hey Jarvis"
           delay={t2}

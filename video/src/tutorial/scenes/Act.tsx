@@ -36,7 +36,7 @@ export const Act: React.FC<{ scene: TimelineScene }> = ({ scene }) => {
         }}
       >
         <SpokenCommand
-          text="Open the browser and check my pull requests."
+          text="open the browser and check my pull requests."
           speaker="user"
           wake="Hey Jarvis"
           delay={a2}

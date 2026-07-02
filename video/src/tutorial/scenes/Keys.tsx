@@ -27,8 +27,10 @@ export const Keys: React.FC<{ scene: TimelineScene }> = ({ scene }) => {
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          gap: 24,
-          marginTop: 58,
+          gap: 22,
+          // Clears the chapter header vertically — the header occupies the
+          // top-left ~190px and the pill row is horizontally centered.
+          marginTop: 74,
         }}
       >
         <div style={{ display: "flex", gap: 14 }}>
@@ -85,7 +87,7 @@ export const Keys: React.FC<{ scene: TimelineScene }> = ({ scene }) => {
         <AppShot
           src="shot-apikeys.png"
           srcW={1578}
-          width={840}
+          width={620}
           highlight={{ x: 314, y: 289, w: 1100, h: 48 }}
           callout="Paste your API key"
           calloutAt={{ x: 980, y: 214 }}

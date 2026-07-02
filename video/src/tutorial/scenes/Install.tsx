@@ -36,6 +36,7 @@ export const Install: React.FC<{ scene: TimelineScene }> = ({ scene }) => {
           doneLine="installed — the setup wizard takes it from here"
           typeAt={i2 + 4}
           doneAt={i3 + 6}
+          width={1064}
         />
         <div style={{ display: "flex", gap: 16 }}>
           {PLATFORMS.map((label, i) => {

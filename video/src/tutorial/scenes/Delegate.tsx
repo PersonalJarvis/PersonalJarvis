@@ -35,7 +35,7 @@ export const Delegate: React.FC<{ scene: TimelineScene }> = ({ scene }) => {
         }}
       >
         <SpokenCommand
-          text="Research the EV market and build me a report."
+          text="research the EV market and build me a report."
           speaker="user"
           wake="Hey Jarvis"
           delay={d2}

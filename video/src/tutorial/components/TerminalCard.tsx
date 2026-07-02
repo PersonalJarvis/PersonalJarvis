@@ -66,8 +66,8 @@ export const TerminalCard: React.FC<{
           terminal
         </span>
       </div>
-      <div style={{ padding: "26px 30px 30px", fontFamily: MONO, fontSize: 23, lineHeight: 1.75 }}>
-        <div style={{ color: COLORS.text, wordBreak: "break-all" }}>
+      <div style={{ padding: "26px 30px 30px", fontFamily: MONO, fontSize: 20, lineHeight: 1.75 }}>
+        <div style={{ color: COLORS.text, whiteSpace: "nowrap" }}>
           <span style={{ color: COLORS.primary, fontWeight: 700 }}>$ </span>
           {shown}
           {!typingDone && caretOn && frame >= typeAt ? (

@@ -545,6 +545,21 @@ class LegacyVisionShim:
         )
 
 
+def _ensure_measurable(rig: RigWindow) -> None:
+    """Re-check the environment before EVERY mission: the rig must be the
+    foreground window (an elevated foreground app makes UIPI discard our
+    injected input mid-suite — observed live). Raises instead of measuring
+    garbage."""
+    if rig.is_foreground():
+        return
+    rig.activate()
+    if not rig.is_foreground():
+        raise RuntimeError(
+            "rig lost the foreground (elevated window / user interaction) — "
+            "measurement environment is not clean",
+        )
+
+
 async def _run_engine_mission(
     engine: str, brain: ScriptedBrain, goal: str,
 ) -> tuple[list[str], float]:
@@ -601,6 +616,7 @@ def run_engine_mode(rig: RigWindow, engine: str) -> list[dict[str, Any]]:
             json.dumps({"action": "click", "x": nx, "y": ny, "target": f"the {name} button"}),
         )
     brain = ScriptedBrain(actions)
+    _ensure_measurable(rig)
     t0 = time.monotonic()
     chunks, total_s = asyncio.run(_run_engine_mission(
         engine, brain, "click each rig target button once",
@@ -624,6 +640,7 @@ def run_engine_mode(rig: RigWindow, engine: str) -> list[dict[str, Any]]:
         json.dumps({"action": "click", "x": nx, "y": ny, "target": "the text field"}),
         json.dumps({"action": "type", "text": TYPE_TEXT}),
     ])
+    _ensure_measurable(rig)
     chunks, total_s = asyncio.run(_run_engine_mission(
         engine, brain, f"type {TYPE_TEXT} into the rig text field",
     ))
@@ -646,6 +663,7 @@ def run_engine_mode(rig: RigWindow, engine: str) -> list[dict[str, Any]]:
         json.dumps({"action": "type", "text": TYPE_TEXT}),
         json.dumps({"action": "type", "text": TYPE_TEXT}),
     ])
+    _ensure_measurable(rig)
     chunks, total_s = asyncio.run(_run_engine_mission(
         engine, brain, f"type {TYPE_TEXT} into the rig text field",
     ))
@@ -673,6 +691,7 @@ def run_engine_mode(rig: RigWindow, engine: str) -> list[dict[str, Any]]:
         json.dumps({"action": "click", "x": ndx, "y": ndy, "target": "the OK button"}),
         json.dumps({"action": "click", "x": ndx, "y": ndy, "target": "the OK button"}),
     ])
+    _ensure_measurable(rig)
     chunks, total_s = asyncio.run(_run_engine_mission(
         engine, brain, "click the OK button",
     ))
