@@ -471,13 +471,21 @@ export const ProofScene: React.FC<SP> = ({ scene }) => {
         <Eyebrow at={2}>Real, not a demo</Eyebrow>
         <div style={{ position: "relative", width: 900, height: 380 }}>
           {SHOTS.map((sh, i) => {
+            const isLast = i === SHOTS.length - 1;
             const local = frame - (start + i * each);
-            const visible = local > -8 && local < each + 8;
-            const slide = interpolate(local, [-8, 4], [70, 0], clamp) + interpolate(local, [each - 6, each + 8], [0, -70], clamp);
-            const blur = Math.abs(interpolate(local, [-8, 2, each - 6, each + 8], [8, 0, 0, 8], clamp));
+            const visible = isLast ? local > -8 : local > -8 && local < each + 8;
+            const enterSlide = interpolate(local, [-8, 4], [70, 0], clamp);
+            const exitSlide = isLast ? 0 : interpolate(local, [each - 6, each + 8], [0, -70], clamp);
+            const slide = enterSlide + exitSlide;
+            const blur = isLast
+              ? Math.abs(interpolate(local, [-8, 2], [8, 0], clamp))
+              : Math.abs(interpolate(local, [-8, 2, each - 6, each + 8], [8, 0, 0, 8], clamp));
+            const shotOpacity = isLast
+              ? interpolate(local, [-8, 2], [0, 1], clamp)
+              : interpolate(local, [-8, 2, each - 4, each + 8], [0, 1, 1, 0], clamp);
             if (!visible) return null;
             return (
-              <div key={sh.src} style={{ position: "absolute", inset: 0, transform: `translateX(${slide}px)`, filter: `blur(${blur}px)`, opacity: interpolate(local, [-8, 2, each - 4, each + 8], [0, 1, 1, 0], clamp) }}>
+              <div key={sh.src} style={{ position: "absolute", inset: 0, transform: `translateX(${slide}px)`, filter: `blur(${blur}px)`, opacity: shotOpacity }}>
                 <Shot src={sh.src} width={900} height={380} at={start + i * each} kenBurns />
                 <div style={{ position: "absolute", left: 16, bottom: 16 }}>
                   <div style={{ fontFamily: FONT_MONO, fontSize: 13, letterSpacing: 2, color: COLORS.bg, background: Y, padding: "5px 11px", borderRadius: 6, fontWeight: 700 }}>{sh.label}</div>
@@ -511,7 +519,13 @@ export const InstallScene: React.FC<SP> = ({ scene }) => {
     <SceneWrap>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 26, width: "100%" }}>
         <Eyebrow at={2}>Install</Eyebrow>
-        <TerminalBlock command="irm https://get.personaljarvis.dev/install.ps1 | iex" start={n.localStart} width={940} cps={30} />
+        <TerminalBlock
+          command="irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.ps1 | iex"
+          start={n.localStart}
+          width={1080}
+          fontSize={16}
+          cps={52}
+        />
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 4, opacity: interpolate(frame, [n.localStart + 30, n.localStart + 46], [0, 1], clamp) }}>
           {["Claude", "OpenAI", "Gemini", "OpenRouter"].map((p) => (
             <span key={p} style={{ fontFamily: FONT_MONO, fontSize: 15, color: COLORS.textMuted, border: `1px solid ${COLORS.border}`, borderRadius: 999, padding: "6px 14px" }}>{p}</span>

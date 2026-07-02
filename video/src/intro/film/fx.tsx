@@ -368,7 +368,8 @@ export const TerminalBlock: React.FC<{
   start?: number;
   cps?: number;
   width?: number;
-}> = ({ command, comment = "# Works everywhere. Bring your own keys.", start = 0, cps = 34, width = 900 }) => {
+  fontSize?: number;
+}> = ({ command, comment = "# Works everywhere. Bring your own keys.", start = 0, cps = 34, width = 900, fontSize = 22 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const typed = Math.max(0, Math.floor(((frame - start) / fps) * cps));
@@ -419,9 +420,9 @@ export const TerminalBlock: React.FC<{
           {copied ? "Copied!" : "Copy"}
         </div>
       </div>
-      <div style={{ padding: "22px 24px", fontSize: 22, lineHeight: 1.7 }}>
+      <div style={{ padding: "22px 24px", fontSize, lineHeight: 1.7 }}>
         <div style={{ color: COLORS.textFaint }}>{comment}</div>
-        <div style={{ color: COLORS.text }}>
+        <div style={{ color: COLORS.text, whiteSpace: "nowrap" }}>
           <span style={{ color: Y }}>$ </span>
           {shown}
           <span style={{ opacity: caretOn && !copied ? 1 : 0, color: Y }}>▋</span>
