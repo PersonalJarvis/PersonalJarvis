@@ -158,8 +158,25 @@ class RigWindow:
         entry.bind("<FocusIn>", on_entry_focus)
         root.attributes("-topmost", True)
         root.update()
+        self._tk_id = root.winfo_id()
         self.ready.set()
         root.mainloop()
+
+    def is_foreground(self) -> bool:
+        """Is the rig window the FOREGROUND window? (Windows: real check;
+        elsewhere: trust the activation click.) Guards the typing scenarios —
+        the rig must NEVER type into a foreign window."""
+        if sys.platform != "win32":
+            return True
+        try:
+            import ctypes  # noqa: PLC0415
+
+            user32 = ctypes.windll.user32
+            GA_ROOT = 2
+            ours = user32.GetAncestor(int(self._tk_id), GA_ROOT)
+            return bool(ours) and user32.GetForegroundWindow() == ours
+        except Exception:  # noqa: BLE001
+            return True
 
     def _target_at(self, cx: int, cy: int) -> str | None:
         for name, (x1, y1, x2, y2) in TARGETS.items():
@@ -308,33 +325,66 @@ def run_raw(rig: RigWindow) -> list[dict[str, Any]]:
     )
     intended: list[tuple[str, tuple[int, int]]] = []
     step_times: list[float] = []
+    interference_retries = 0
     for name in TARGETS:
         center = rig.target_center_screen(name)
         nx, ny = _norm_for(center, monitor)
         t0 = time.monotonic()
         sx, sy = mapper.normalized_to_screen(nx, ny)
-        move = verified_move(actuator, sx, sy)
-        if not move.ok:
-            print(f"  !! landed-verification failed for {name}: {move.detail}")
-        actuator.click(sx, sy)
+        for attempt in (1, 2):
+            move = verified_move(actuator, sx, sy)
+            if not move.ok:
+                print(f"  !! landed-verification for {name}: {move.detail}")
+            before = len(rig.log.clicks_on(name))
+            actuator.click(sx, sy)
+            deadline = time.monotonic() + 0.8
+            while time.monotonic() < deadline:
+                if len(rig.log.clicks_on(name)) > before:
+                    break
+                time.sleep(0.05)
+            if len(rig.log.clicks_on(name)) > before:
+                break
+            # Nothing arrived: external interference (a human hand on the
+            # mouse / a foreign foreground window). Re-activate and retry ONCE.
+            interference_retries += 1
+            print(f"  !! no click event arrived for {name} — retrying once")
+            _activate_rig_click_only(rig, actuator)
         step_times.append(time.monotonic() - t0)
         intended.append((name, center))
-        time.sleep(0.25)
+        time.sleep(0.2)
 
-    # Typing: click the entry, type, verify content.
+    # Typing: click the entry, type, verify content. HARD GUARD: never type
+    # while the rig is not the foreground window (keystrokes would land in a
+    # foreign app).
+    typed_expected: str | None = TYPE_TEXT
     ex, ey = rig.entry_center_screen()
     actuator.click(ex, ey)
     time.sleep(0.3)
-    actuator.type_text(TYPE_TEXT, delay_s=0.01)
-    time.sleep(0.4)
+    if not rig.is_foreground():
+        _activate_rig_click_only(rig, actuator)
+        actuator.click(ex, ey)
+        time.sleep(0.3)
+    if rig.is_foreground():
+        actuator.type_text(TYPE_TEXT, delay_s=0.01)
+        time.sleep(0.4)
+    else:
+        print("  !! rig lost foreground — typing scenario SKIPPED for safety")
+        typed_expected = None
 
     summary = _summarize(
         "raw-pipeline", intended, rig,
-        step_times=step_times, typed_expected=TYPE_TEXT,
+        step_times=step_times, typed_expected=typed_expected,
     )
     summary["actuator"] = actuator.name
     summary["monitor"] = f"{monitor.width}x{monitor.height}@{monitor.left},{monitor.top}"
+    summary["interference_retries"] = interference_retries
     return [summary]
+
+
+def _activate_rig_click_only(rig: RigWindow, actuator: Any) -> None:
+    ox, oy = rig.canvas_origin_on_screen()
+    actuator.click(ox + 410, oy + 480)
+    time.sleep(0.3)
 
 
 # ---------------------------------------------------------------------------
