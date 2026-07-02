@@ -583,7 +583,12 @@ class RollingWhisperWake:
                         )
                     self._stat_transcribed += 1
                     consecutive_fail = 0  # a success clears the wedge streak
+                    busy_since = None
                 except TimeoutError:
+                    # A call STARTED (the lock was free), overran the cap and
+                    # was abandoned — its worker thread keeps running. Any
+                    # previous busy streak ended when this call took the lock.
+                    busy_since = None
                     log.warning(
                         "Rolling-Whisper transcription aborted after %.1fs "
                         "(hung STT, %d in a row) — re-polling, wake stays alive",
@@ -591,7 +596,31 @@ class RollingWhisperWake:
                         _note_transcribe_fail(),
                     )
                     continue
+                except TranscribeBusy:
+                    # The SAME in-flight call (usually one an earlier timeout
+                    # abandoned) still holds the model — NOT a new failure.
+                    # Counting it toward the wedge threshold let ONE
+                    # slow-but-alive transcription (>8 s under CPU load) tear
+                    # down a healthy model; the lazy cold rebuild inside the
+                    # next poll's timeout then re-wedged — the deaf cascade in
+                    # the 2026-07-02 live log. Skip the poll. Only a busy
+                    # streak longer than ``busy_hang_recover_s`` is a TRUE
+                    # hang (BUG-036, un-cancellable native call) -> rebuild.
+                    now_busy = time.time()
+                    if busy_since is None:
+                        busy_since = now_busy
+                        log.info(
+                            "rolling-whisper: transcription still in flight — "
+                            "skipping this poll (not counted as a failure)."
+                        )
+                    elif now_busy - busy_since >= self._busy_hang_recover_s:
+                        _recover_wedged(
+                            "in-flight transcription stuck for "
+                            f">{self._busy_hang_recover_s:.0f} s (true hang)"
+                        )
+                    continue
                 except Exception as exc:  # noqa: BLE001
+                    busy_since = None
                     log.warning(
                         "Rolling-Whisper transcription failed (%d in a row): %s",
                         _note_transcribe_fail(), exc,

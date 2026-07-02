@@ -74,9 +74,25 @@ custom_onnx engine had hidden.
   the poll loop warms it once itself — exactly one loader either way.
   (c) `_wake_model_is_loaded` (heavy-backend gate) now prefers `is_warm`, so
   the backend CPU storm starts only after the priming inference.
-  Expected effect: wake-model pre-warm back to ~4 s isolated (from 114.7 s),
-  gate opens before its 12 s timeout, no self-heal rebuild during boot.
-  MEASUREMENT PENDING (next boot).
+  **MEASURED (boot 2026-07-02 08:59, Windows):** pre-warm 114,718 ms ->
+  **9,828 ms** (11.7x); zero transcribe timeouts / TranscribeBusy / self-heal
+  rebuilds during boot; poll starts cleanly after 10.1 s; overlay revealed via
+  "voice-ready" (was 60 s timeout-fallback). Rough wake-ready TTU ~50 s
+  (was ~200 s).
+
+## Next bottlenecks (iteration 3+)
+
+1. ~35-40 s elapse between process start and "Pipeline bereit" (08:58:5x ->
+   08:59:33) — profile the bootstrap chain BEFORE the speech pipeline
+   (imports, registries, TTS init, uvicorn bootstrap...). This is now the
+   dominant TTU block.
+2. Pre-warm 9.8 s vs ~4 s isolated — check what still contends (gate opens
+   correctly now, but something still races the load).
+3. Build the reproducible TTU benchmark (cold start, several runs, median) +
+   commit; then per-OS baselines (Linux via headless python:3.11-slim, macOS
+   via CI or documented method).
+4. Startup-budget regression guard test + "how to add a feature
+   boot-neutrally" doc note.
 
 ## Lessons (do not repeat)
 
