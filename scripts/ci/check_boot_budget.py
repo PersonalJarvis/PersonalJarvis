@@ -51,6 +51,10 @@ SKIP_EXIT = 78  # EX_CONFIG-ish: "could not measure" — neutral, not a failure
 
 DEFAULT_WINDOW_BUDGET_MS = 8_000.0
 DEFAULT_VOICE_BUDGET_MS = 20_000.0
+# APP_INTERACTIVE = set_app hands the UI's held data requests to the real app
+# (the user-facing "usable" moment; measured median 5.3 s isolated). Checked in
+# voice mode (the run must live past the window anchor to see it).
+DEFAULT_INTERACTIVE_BUDGET_MS = 20_000.0
 
 
 def _audio_capable() -> bool:
@@ -70,6 +74,11 @@ def main() -> int:
     )
     voice_budget = float(
         os.environ.get("JARVIS_BOOT_BUDGET_VOICE_MS", DEFAULT_VOICE_BUDGET_MS)
+    )
+    interactive_budget = float(
+        os.environ.get(
+            "JARVIS_BOOT_BUDGET_INTERACTIVE_MS", DEFAULT_INTERACTIVE_BUDGET_MS
+        )
     )
     if not HARNESS.exists():
         print(f"boot-budget: harness missing ({HARNESS}) — skipping", flush=True)
@@ -123,6 +132,20 @@ def main() -> int:
             print(
                 f"boot-budget: voice TTU {voice_ms:.0f} ms <= "
                 f"{voice_budget:.0f} ms OK",
+                flush=True,
+            )
+        interactive_ms = summary.get("median_app_interactive_wall_ms")
+        if interactive_ms is None:
+            failures.append("APP_INTERACTIVE anchor missing from harness output")
+        elif interactive_ms > interactive_budget:
+            failures.append(
+                f"app-interactive {interactive_ms:.0f} ms > budget "
+                f"{interactive_budget:.0f} ms"
+            )
+        else:
+            print(
+                f"boot-budget: app-interactive {interactive_ms:.0f} ms <= "
+                f"{interactive_budget:.0f} ms OK",
                 flush=True,
             )
     else:

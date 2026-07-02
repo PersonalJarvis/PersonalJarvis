@@ -167,6 +167,27 @@ if [ -f "$lockfile_gate" ]; then
     fi
 fi
 
+# --- 7) BOOT BUDGET gate (FAIL-CLOSED on a measured overrun) --------------------
+# A feature that sneaks heavy work onto the startup critical path must fail the
+# push, not the user's day (TTU forensic 2026-07-02: a wake-model change put a
+# 114.7 s load cascade on boot unnoticed). Runs ONE isolated cold boot via the
+# committed harness and enforces the budgets: window <= 8 s, voice-usable and
+# app-interactive <= 20 s each (~4x the measured medians, so machine variance
+# never flakes while every real regression class blows through). Exit 78 =
+# "could not measure" (no interpreter/harness) -> fail OPEN; a headless host
+# checks the window anchor only. Costs ~30-60 s per push — pushes are rare and
+# deliberate in this repo. Skip once with JARVIS_SKIP_BOOT_BUDGET=1.
+boot_budget_gate="scripts/ci/check_boot_budget.py"
+if [ -f "$boot_budget_gate" ] && [ "${JARVIS_SKIP_BOOT_BUDGET:-0}" != "1" ]; then
+    echo "pre-push: boot-budget gate — measuring one isolated cold boot (~30-60 s) ..."
+    "$PY" "$boot_budget_gate" </dev/null
+    rc=$?
+    if [ "$rc" -ne 0 ] && [ "$rc" -ne 78 ]; then
+        status=1
+        boot_budget_hit=1
+    fi
+fi
+
 rm -f "$refs_file"
 
 if [ "$status" -ne 0 ]; then
@@ -201,6 +222,14 @@ if [ "$status" -ne 0 ]; then
         echo "pre-push BLOCKED: LOCKFILE gate (requirements.txt not universal or has GPU/CUDA/torch wheels)."
         echo "  See the findings above. Regenerate the platform-universal lockfile with:"
         echo "    uv pip compile --universal --generate-hashes --python-version 3.11 --output-file=requirements.txt requirements.in"
+    fi
+    if [ "${boot_budget_hit:-0}" -ne 0 ]; then
+        echo "pre-push BLOCKED: BOOT BUDGET gate (cold-boot startup budget exceeded)."
+        echo "  A change put work on the critical startup path. Move it behind"
+        echo "  _heavy_backend_bg / a deferred scan (docs/diagnostics/BOOT-TTU-NOTES.md,"
+        echo "  section 'How to add a feature WITHOUT slowing boot')."
+        echo "  Verify locally:  python scripts/ci/check_boot_budget.py"
+        echo "  Skip once:       JARVIS_SKIP_BOOT_BUDGET=1 git push"
     fi
     echo "Bypass once with:  git push --no-verify   (layer-3 CI is the backstop)."
 fi
