@@ -229,6 +229,27 @@ custom_onnx engine had hidden.
 - Regression protection: `scripts/ci/check_boot_budget.py` (+ slow-marked
   pytest wrapper) fails any change that pushes window >8 s or voice TTU >30 s.
 
+## Iteration 9 — full cold-boot timeline (instrumented single run, Windows)
+
+| t | block |
+|---|---|
+| 0.75 s | window serves (BOOT_READY) |
+| 0.75-3.20 s | **import mountain 2.6 s** (heavy imports after shell paint) |
+| 3.20-4.74 s | **WebServer ctor 1.5 s** |
+| 4.74-5.57 s | voice setup ~0.8 s (tts=186ms wake_join=260ms pipeline_ctor=61ms) |
+| 5.57 s | VOICE_READY (pipeline live), poll loop waits for warm model |
+| 5.57-8.72 s | **wake model pre-warm 3.1 s** (clean, serial — no cascade) |
+| 8.88 s | VOICE_USABLE |
+
+Next lever (iteration 10): start the wake-MODEL load in a daemon thread right
+after shell paint (extend `warmup_prefetch.py` from import-prefetch to a
+model-prefetch cache that `FasterWhisperProvider._ensure_model` adopts when
+model/device/cpu_threads match). CAUTION: the 2026-06-22 forensic showed
+naive parallel native loads serialize on the GIL/init locks (11.8 s) — the
+change MUST be A/B-measured with `measure_desktop_boot.py --voice --runs 3`,
+and coordinate with the 2026-07-02 wake-latency session (cpu_threads 1->2,
+scripts/wake_bench.py). Potential: usable ~8.9 -> ~6 s isolated.
+
 ## How to add a feature WITHOUT slowing boot (doctrine)
 
 - Nothing new runs before VOICE_READY. New subsystems hook into
