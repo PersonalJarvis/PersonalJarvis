@@ -18,188 +18,29 @@ from typing import Any
 from jarvis.core.protocols import ExecutionContext, ToolResult
 
 
-# Virtual-key codes — excerpt from Microsoft's "Virtual Key Codes" docs.
-# See https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
-# We map both lowercase aliases ("ctrl") and the official names
-# ("control"); for letters/digits we compute the VK on the fly.
-_VK_TABLE: dict[str, int] = {
-    # Modifier
-    "ctrl": 0x11, "control": 0x11,
-    "shift": 0x10,
-    "alt": 0x12, "menu": 0x12,
-    "win": 0x5B, "windows": 0x5B, "lwin": 0x5B,
-    "rwin": 0x5C,
-    # Function + control keys
-    "esc": 0x1B, "escape": 0x1B,
-    "enter": 0x0D, "return": 0x0D,
-    "tab": 0x09,
-    "space": 0x20, "spacebar": 0x20,
-    "backspace": 0x08, "back": 0x08,
-    "delete": 0x2E, "del": 0x2E,
-    "insert": 0x2D, "ins": 0x2D,
-    "home": 0x24, "end": 0x23,
-    "pageup": 0x21, "pgup": 0x21,
-    "pagedown": 0x22, "pgdn": 0x22,
-    "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28,
-    "capslock": 0x14,
-    # F-keys
-    **{f"f{i}": 0x6F + i for i in range(1, 13)},  # F1 = 0x70 ... F12 = 0x7B
-    # Numpad
-    "numpad0": 0x60, "numpad1": 0x61, "numpad2": 0x62, "numpad3": 0x63,
-    "numpad4": 0x64, "numpad5": 0x65, "numpad6": 0x66, "numpad7": 0x67,
-    "numpad8": 0x68, "numpad9": 0x69,
-    "multiply": 0x6A, "add": 0x6B, "subtract": 0x6D,
-    "decimal": 0x6E, "divide": 0x6F,
-}
-
-
-def _resolve_vk(key: str) -> int | None:
-    """Returns the virtual-key code for a key name, or None."""
-    k = key.strip().lower()
-    if not k:
-        return None
-    if k in _VK_TABLE:
-        return _VK_TABLE[k]
-    if len(k) == 1:
-        # A-Z (0x41-0x5A) and 0-9 (0x30-0x39) — VK == ASCII value.
-        if "a" <= k <= "z":
-            return ord(k.upper())
-        if "0" <= k <= "9":
-            return ord(k)
-    return None
-
-
-def _expand_combo_keys(keys: list[str]) -> list[str]:
-    """Split combined hotkey strings like ``"ctrl+v"`` into ``["ctrl", "v"]``.
-
-    LLM callers (notably the screenshot-only Computer-Use loop) frequently emit
-    a whole shortcut as ONE token — ``"ctrl+v"``, ``"ctrl+shift+t"`` — instead
-    of the documented list form. Without this, ``_resolve_vk`` looks up a key
-    literally named "ctrl+v", fails, and the paste/shortcut never fires (live
-    failure 2026-06-16: three ``ctrl+v`` rejections sank a Discord-post mission).
-
-    '+' is the canonical separator. A token is only split when EVERY resulting
-    part resolves to a known key; otherwise it is kept verbatim so a literal
-    '+' key (or an unknown combo) still surfaces the normal "Unbekannte Taste"
-    error instead of silently vanishing.
-    """
-    out: list[str] = []
-    for token in keys:
-        t = token.strip()
-        if "+" in t and len(t) > 1:
-            parts = [p.strip() for p in t.split("+") if p.strip()]
-            if len(parts) >= 2 and all(_resolve_vk(p) is not None for p in parts):
-                out.extend(parts)
-                continue
-        out.append(token)
-    return out
+# Key-name resolution + combined-token expansion ("ctrl+v" -> ["ctrl", "v"])
+# live in the shared CU v2 Windows backend; re-exported here so callers and
+# tests keep their import path. The vocabulary is unchanged.
+from jarvis.cu.actuate.windows import (  # noqa: E402
+    expand_combo_keys as _expand_combo_keys,
+    resolve_vk as _resolve_vk,
+)
 
 
 def _send_hotkey_windows(keys: list[str]) -> None:
     """Sends a key combination as a Win32 SendInput sequence.
 
-    Order: all keys DOWN one after another, then UP in reverse order.
-    This is the canonical hotkey choreography — modern apps interpret
-    it as being pressed simultaneously.
+    Order: all keys DOWN one after another, then UP in reverse order — the
+    canonical hotkey choreography. Delegates to the shared CU v2 Windows
+    backend (correct 40-byte INPUT sizing, extended-key flags, thread DPI
+    pin); the key vocabulary is identical.
     """
     if os.name != "nt":
         raise RuntimeError("Native hotkey input is only available on Windows")
 
-    import ctypes
-    from ctypes import wintypes
+    from jarvis.cu.actuate.windows import WindowsActuator  # noqa: PLC0415
 
-    INPUT_KEYBOARD = 1
-    KEYEVENTF_KEYUP = 0x0002
-    KEYEVENTF_EXTENDEDKEY = 0x0001
-    ULONG_PTR = wintypes.WPARAM
-
-    # Extended keys (E0 prefix). Without KEYEVENTF_EXTENDEDKEY a standalone tap
-    # of these is rejected / misrouted by Windows. Main Enter (0x0D) is NOT
-    # extended; numpad Enter would be, but we map "enter" to the main key.
-    _EXTENDED_VKS = {
-        0x5B, 0x5C,                       # lwin, rwin
-        0x25, 0x26, 0x27, 0x28,           # left, up, right, down
-        0x2D, 0x2E,                       # insert, delete
-        0x24, 0x23,                       # home, end
-        0x21, 0x22,                       # pageup, pagedown
-        0x6F,                             # divide (numpad /)
-    }
-
-    class KEYBDINPUT(ctypes.Structure):
-        _fields_ = (
-            ("wVk", wintypes.WORD),
-            ("wScan", wintypes.WORD),
-            ("dwFlags", wintypes.DWORD),
-            ("time", wintypes.DWORD),
-            ("dwExtraInfo", ULONG_PTR),
-        )
-
-    class MOUSEINPUT(ctypes.Structure):
-        _fields_ = (
-            ("dx", wintypes.LONG),
-            ("dy", wintypes.LONG),
-            ("mouseData", wintypes.DWORD),
-            ("dwFlags", wintypes.DWORD),
-            ("time", wintypes.DWORD),
-            ("dwExtraInfo", ULONG_PTR),
-        )
-
-    # CRITICAL: the union MUST contain the largest member (MOUSEINPUT) so that
-    # ``ctypes.sizeof(INPUT)`` equals the real Win32 ``INPUT`` size (40 bytes on
-    # x64). The previous version declared only ``ki``, giving sizeof(INPUT)=32;
-    # ``SendInput`` then received cbSize=32, rejected every event (returned 0),
-    # and surfaced as a misleading "WinError 0 / Falscher Parameter" (the  # i18n-allow (quotes the literal Win32 error text on a German-locale machine)
-    # German-locale Windows text for "incorrect parameter"). This made
-    # the native hotkey path fail for EVERY key (enter, win, ctrl+...) on x64.
-    class INPUT_UNION(ctypes.Union):
-        _fields_ = (("mi", MOUSEINPUT), ("ki", KEYBDINPUT))
-
-    class INPUT(ctypes.Structure):
-        _fields_ = (("type", wintypes.DWORD), ("union", INPUT_UNION))
-
-    # use_last_error=True so ctypes.get_last_error() returns the real GetLastError
-    # from SendInput (the old ``ctypes.windll`` path left it at 0 -> bogus error).
-    user32 = ctypes.WinDLL("user32", use_last_error=True)
-    send_input = user32.SendInput
-    send_input.argtypes = (wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int)
-    send_input.restype = wintypes.UINT
-
-    vk_codes: list[int] = []
-    for k in keys:
-        vk = _resolve_vk(k)
-        if vk is None:
-            raise ValueError(f"Unknown key: {k!r}")
-        vk_codes.append(vk)
-
-    def _flags(vk: int, *, keyup: bool) -> int:
-        flags = KEYEVENTF_KEYUP if keyup else 0
-        if vk in _EXTENDED_VKS:
-            flags |= KEYEVENTF_EXTENDEDKEY
-        return flags
-
-    # DOWN events: in the given order
-    down_events = [
-        INPUT(
-            type=INPUT_KEYBOARD,
-            union=INPUT_UNION(ki=KEYBDINPUT(vk, 0, _flags(vk, keyup=False), 0, ULONG_PTR(0))),
-        )
-        for vk in vk_codes
-    ]
-    # UP events: in reverse order
-    up_events = [
-        INPUT(
-            type=INPUT_KEYBOARD,
-            union=INPUT_UNION(ki=KEYBDINPUT(vk, 0, _flags(vk, keyup=True), 0, ULONG_PTR(0))),
-        )
-        for vk in reversed(vk_codes)
-    ]
-
-    all_events = down_events + up_events
-    arr = (INPUT * len(all_events))(*all_events)
-    sent = send_input(len(all_events), arr, ctypes.sizeof(INPUT))
-    if sent != len(all_events):
-        err = ctypes.get_last_error()
-        raise ctypes.WinError(err if err else None)
+    WindowsActuator().key_combo(keys)
 
 
 class HotkeyTool:
@@ -273,23 +114,16 @@ class HotkeyTool:
                     error=f"Hotkey '{'+'.join(keys_str)}' failed: {exc}",
                 )
 
+        from jarvis.cu.actuate import ActuationUnavailable, get_actuator
+
         try:
-            import pyautogui
-        except ImportError as exc:
-            return ToolResult(
-                success=False,
-                output=None,
-                error=(
-                    f"Platform is not Windows ({os.name}) and pyautogui is missing: {exc}. "
-                    "pip install pyautogui"
-                ),
-            )
-        try:
-            # pyautogui.hotkey takes individual string args, not a list
-            pyautogui.hotkey(*keys_str)
+            actuator = get_actuator()
+            await asyncio.to_thread(actuator.key_combo, keys_str)
             return ToolResult(
                 success=True,
-                output=f"Hotkey sent (pyautogui): {'+'.join(keys_str)}",
+                output=f"Hotkey sent ({actuator.name}): {'+'.join(keys_str)}",
             )
+        except ActuationUnavailable as exc:
+            return ToolResult(success=False, output=None, error=str(exc))
         except Exception as exc:  # noqa: BLE001
             return ToolResult(success=False, output=None, error=str(exc))

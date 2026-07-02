@@ -15,8 +15,8 @@ reused in German-language posts.
 > **Talk to your computer — and watch it do the work: an open-source,
 > privacy-first voice agent with full command of your PC.**
 
-*German:* „Sprich mit deinem Computer — und sieh zu, wie er die Arbeit macht:
-ein quelloffener, privacy-first Sprachagent mit vollem Zugriff auf deinen PC."
+*German:* „Sprich mit deinem Computer — und sieh zu, wie er die Arbeit macht: <!-- i18n-allow: requested German translation of the hero line -->
+ein quelloffener, privacy-first Sprachagent mit vollem Zugriff auf deinen PC." <!-- i18n-allow: requested German translation of the hero line -->
 
 **Why recommended:** it tells a complete stranger in one breath what happens
 (you talk, the machine acts), what it is (open source, privacy-first), and the
@@ -29,16 +29,16 @@ on the film's slogan, which is cryptic without the video context.
 > **Your computer, on voice command: an open-source AI butler that answers,
 > acts, and ships real work — private by design.**
 
-*German:* „Dein Computer aufs Wort: ein quelloffener KI-Butler, der antwortet,
-handelt und echte Arbeit abliefert — privat by design."
+*German:* „Dein Computer aufs Wort: ein quelloffener KI-Butler, der antwortet, <!-- i18n-allow: requested German translation of the hero line -->
+handelt und echte Arbeit abliefert — privat by design." <!-- i18n-allow: requested German translation of the hero line -->
 
 ## Variant 3 — the slogan
 
 > **You talk. It ships. The privacy-first voice butler for your PC — open
 > source, provider-agnostic, built in Germany.**
 
-*German:* „Du sprichst. Es liefert. Der Privacy-first-Sprachbutler für deinen
-PC — Open Source, anbieterunabhängig, gebaut in Deutschland."
+*German:* „Du sprichst. Es liefert. Der Privacy-first-Sprachbutler für deinen <!-- i18n-allow: requested German translation of the hero line -->
+PC — Open Source, anbieterunabhängig, gebaut in Deutschland." <!-- i18n-allow: requested German translation of the hero line -->
 
 ---
 
