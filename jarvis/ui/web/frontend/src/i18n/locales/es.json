@@ -1055,8 +1055,11 @@
       "stop": "Detener",
       "recording": "Presiona tus teclas…",
       "recording_hint": "Mantén las teclas que quieras (y suéltalas) — o haz clic en ellas en el teclado de abajo. Esc cancela.",
+      "unbound": "Sin tecla asignada",
       "save": "Guardar",
+      "clear": "Quitar",
       "saved": "Atajo guardado",
+      "cleared": "Atajo eliminado",
       "reset": "Restablecer predeterminado",
       "restart_required": "Reinicio necesario para que surta efecto.",
       "validation": {

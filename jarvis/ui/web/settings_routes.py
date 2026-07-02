@@ -576,7 +576,7 @@ def _keybind_values(trig: object) -> dict[str, str]:
 
 class KeybindBody(BaseModel):
     action: str = Field(..., description="call | hangup | ptt")
-    hotkey: str = Field(..., min_length=1, max_length=64)
+    hotkey: str = Field(..., max_length=64)
     persist: bool = Field(default=True, description="Persist to jarvis.toml")
 
 
@@ -610,36 +610,49 @@ async def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
         raise HTTPException(status_code=400, detail=f"unknown action: {action}")
     hotkey = body.hotkey.strip().lower()
 
-    # The backend is the authority — a browser key-capture cannot be trusted to
-    # filter OS-critical / unusable combos (AltGr detection is unreliable there).
-    ok, reason = validate_hotkey(hotkey)
-    if not ok:
-        raise HTTPException(status_code=400, detail=reason)
-
     cfg = _config(request)
     trig = getattr(cfg, "trigger", None) if cfg is not None else None
 
-    # Collision check: one chord can't both answer and hang up. Exact equality
-    # is not enough — the polling hotkey backend matches a combo as soon as its
-    # keys are down, so a key-set SUBSET of another action's combo fires both
-    # (call=f1 + hangup=f1+f2 → F1+F2 triggers call AND hangup). Reject any
-    # subset/superset relation between the key sets, in both directions.
-    new_keys = {p.strip() for p in hotkey.split("+") if p.strip()}
-    for other_action, other_combo in _keybind_values(trig).items():
-        if other_action == action:
-            continue
-        other_keys = {
-            p.strip() for p in other_combo.strip().lower().split("+") if p.strip()
-        }
-        if new_keys <= other_keys or other_keys <= new_keys:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"'{hotkey}' overlaps with '{other_action}' "
-                    f"('{other_combo.strip().lower()}') — pressing one would "
-                    "trigger both. Pick keys that don't contain each other."
-                ),
-            )
+    if hotkey:
+        # The backend is the authority — a browser key-capture cannot be
+        # trusted to filter OS-critical / unusable combos (AltGr detection is
+        # unreliable there).
+        ok, reason = validate_hotkey(hotkey)
+        if not ok:
+            raise HTTPException(status_code=400, detail=reason)
+
+        # Collision check: one chord can't both answer and hang up. Exact
+        # equality is not enough — the polling hotkey backend matches a combo
+        # as soon as its keys are down, so a key-set SUBSET of another
+        # action's combo fires both (call=f1 + hangup=f1+f2 → F1+F2 triggers
+        # call AND hangup). Reject any subset/superset relation between the
+        # key sets, in both directions.
+        new_keys = {p.strip() for p in hotkey.split("+") if p.strip()}
+        for other_action, other_combo in _keybind_values(trig).items():
+            if other_action == action:
+                continue
+            other_keys = {
+                p.strip() for p in other_combo.strip().lower().split("+") if p.strip()
+            }
+            if not other_keys:
+                # The other action is itself unbound (Clear button) — an
+                # empty key-set is a subset of every combo, so without this
+                # guard EVERY save would be rejected as "overlapping" the
+                # moment any one action is cleared.
+                continue
+            if new_keys <= other_keys or other_keys <= new_keys:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"'{hotkey}' overlaps with '{other_action}' "
+                        f"('{other_combo.strip().lower()}') — pressing one would "
+                        "trigger both. Pick keys that don't contain each other."
+                    ),
+                )
+    # else: hotkey == "" is an explicit "unbind this action" request (Settings
+    # Clear button) — skip validate_hotkey (that rule exists for "still
+    # recording", not "cleared on purpose") and skip the collision check
+    # (an unbound action cannot collide with anything).
 
     field = KEYBIND_TOML_KEY[action]
     if trig is not None:
@@ -658,18 +671,17 @@ async def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
         except Exception as exc:  # noqa: BLE001
             log.warning("keybind persist failed: %s", exc)
 
-    # Live-apply to the running voice pipeline so the new combo fires
-    # immediately — no app restart. This is the fix for "I set a key but
-    # pressing it does nothing": the bindings were armed once at startup, so a
-    # UI save only took effect on the next boot. Best-effort — a headless/down
-    # pipeline just means it applies on next start.
+    # Live-apply to the running voice pipeline so the new combo (or the
+    # cleared state) takes effect immediately — no app restart. Best-effort —
+    # a headless/down pipeline just means it applies on next start.
     applied_live = False
     pipeline = getattr(request.app.state, "speech_pipeline", None)
     if pipeline is not None and hasattr(pipeline, "set_keybinds"):
         try:
-            # The action name ("call" / "hangup" / "ptt") is the set_keybinds
-            # keyword; only that action is re-armed, the others stay as-is.
-            pipeline.set_keybinds(**{action: [hotkey]})
+            # An empty hotkey re-arms with an EMPTY list, not a list
+            # containing "" — mirrors how the PTT action already represents
+            # "off" internally.
+            pipeline.set_keybinds(**{action: [hotkey] if hotkey else []})
             applied_live = True
         except Exception as exc:  # noqa: BLE001 — never fail the save on a live-apply hiccup
             log.warning("keybind live-apply failed (persisted; applies on restart): %s", exc)

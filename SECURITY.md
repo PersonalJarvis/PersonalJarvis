@@ -49,6 +49,22 @@ providers you configure:
 - **Least-privilege elevation.** Administrative actions are requested per-action and audited
   over a signed (HMAC) IPC channel — never globally elevated.
 
+## Privacy
+
+Privacy is part of the security model, in both directions:
+
+- **Your data stays yours.** Conversations, the Knowledge Wiki, contacts, and configuration
+  live in local files on your machine. There is no analytics or tracking built in — outbound
+  traffic goes only to the providers and integrations *you* explicitly configure (and speech
+  recognition can run fully locally if you prefer that no audio leaves the machine).
+- **The repository itself is guarded.** Because a public git history is permanent, nothing
+  reaches this repository raw: every release is rebuilt as a depersonalized snapshot and runs
+  a layered, fail-closed privacy pipeline — tracked-files-only export, a distribution
+  denylist, deterministic PII/secret scrubbing, an independent full-snapshot review, a final
+  credential-shape scan, and an explicit human sign-off. Any uncertainty at any step stops
+  the release instead of shipping it. If you still spot personal data or a credential in the
+  repo or its history, report it privately (see above) — it is treated as a security issue.
+
 ## Scope
 
 **In scope:** the `jarvis` package, the desktop app, the plugin system, the tool-use and

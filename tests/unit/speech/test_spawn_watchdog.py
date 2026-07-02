@@ -439,3 +439,56 @@ async def test_heartbeat_dropped_not_deferred_while_turn_is_processing() -> None
         "stale heartbeat was deferred; progress beats must be dropped during "
         "active foreground turns"
     )
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_not_spoken_into_idle_no_active_session() -> None:
+    """A 'still on it' heartbeat must NOT be spoken while the state is IDLE —
+    there is NO active voice session (the user hung up / walked away). Speaking a
+    background-mission reassurance into an idle machine is Jarvis 'talking out of
+    nowhere'.
+
+    Live bug 2026-07-01 (voice session 21:27–21:29): a force-spawn armed a
+    heartbeat watchdog; the user hung up (state -> IDLE); the three bounded beats
+    then spoke into fresh, empty wake sessions ("no user text recorded"), leaving
+    the user asking "Wieso? Was ist denn das?". A progress beat is only meaningful
+    while the user is actively LISTENING; in every other state — including IDLE —
+    it is dropped (kind="progress" is droppable when stale).
+    """
+    from jarvis.speech.pipeline import TurnTakingState
+
+    bus = EventBus()
+    pipe = _pipeline(bus, watchdog_delay_s=0.03)
+    pipe._turn_state = TurnTakingState.IDLE  # no active session
+
+    await bus.publish(JarvisAgentAnnouncement(action="bauen", target="x"))
+    await asyncio.sleep(0.2)  # heartbeat fires into _on_announcement
+
+    assert pipe._player.plays == [], (
+        "heartbeat spoken into an idle machine with no active session — "
+        "'talking out of nowhere'"
+    )
+    assert pipe._deferred_announcements == [], (
+        "an idle heartbeat must be dropped, never deferred/replayed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_still_spoken_while_listening_in_active_session() -> None:
+    """Regression boundary for the idle fix: while the user is ACTIVELY in a
+    session waiting (LISTENING), the reassurance is STILL spoken. The idle fix
+    must only silence 'out of nowhere' beats — never the legitimate in-session
+    'still on it' the heartbeat exists to provide (design 2026-06-19)."""
+    from jarvis.speech.pipeline import TurnTakingState
+
+    bus = EventBus()
+    pipe = _pipeline(bus, watchdog_delay_s=0.03)
+    pipe._turn_state = TurnTakingState.LISTENING  # user actively waiting
+
+    await bus.publish(JarvisAgentAnnouncement(action="bauen", target="x"))
+    await asyncio.sleep(0.2)  # heartbeat fires into _on_announcement
+
+    assert pipe._player.plays == ["play"], (
+        "in-session (LISTENING) heartbeat must still be spoken"
+    )
+    assert pipe._deferred_announcements == []

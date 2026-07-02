@@ -50,7 +50,7 @@ def test_schema_is_empty() -> None:
 def test_description_mentions_state_first_use() -> None:
     """Plan §5 description: 'USE this BEFORE asking the user for context'."""
     tool = AwarenessSnapshotTool(manager=AwarenessManager(AwarenessConfig.default()))
-    assert "BEVOR" in tool.description or "vor" in tool.description.lower()
+    assert "BEFORE" in tool.description
 
 
 # --- Verhalten --------------------------------------------------------------

@@ -411,6 +411,11 @@ class SessionStore:
 
         Cascade delete in schema.sql cleans up turns + events
         automatically along with it. Returns the number of deleted session rows.
+
+        The cutoff is recorded as the ``prune_horizon_ms`` high-water mark in
+        ``store_meta`` (monotonically increasing) so downstream aggregators can
+        distinguish "deleted below this instant" from "never existed" and stop
+        recomputing days from a half-pruned source.
         """
         if days <= 0:
             return 0
@@ -420,7 +425,82 @@ class SessionStore:
                 "DELETE FROM voice_sessions WHERE started_ms < ?",
                 (cutoff_ms,),
             )
+            self._c.execute(
+                """
+                INSERT INTO store_meta (key, value) VALUES ('prune_horizon_ms', ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    -- Cast BOTH sides: the column has TEXT affinity, and in
+                    -- SQLite's cross-type ordering TEXT always sorts above
+                    -- INTEGER, so MAX(text, int) would pick the text blindly.
+                    value = MAX(
+                        CAST(store_meta.value AS INTEGER),
+                        CAST(excluded.value AS INTEGER)
+                    )
+                """,
+                (cutoff_ms,),
+            )
             return cur.rowcount
+
+    def prune_horizon_ms(self) -> int | None:
+        """Highest retention cutoff ever applied, or ``None`` if never pruned."""
+        with self._lock:
+            row = self._c.execute(
+                "SELECT value FROM store_meta WHERE key = 'prune_horizon_ms'"
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            return int(row["value"])
+        except (TypeError, ValueError):
+            return None
+
+    def last_activity_ms(self, session_id: str) -> int | None:
+        """Latest recorded timestamp of a session: raw events plus turn
+        start/end. ``None`` when the session left no trace beyond its header.
+        Used to seal crashed sessions honestly instead of stamping boot time.
+        """
+        with self._lock:
+            row = self._c.execute(
+                """
+                SELECT MAX(ts) AS ts FROM (
+                    SELECT MAX(ts_ms) AS ts FROM voice_events WHERE session_id = ?
+                    UNION ALL
+                    SELECT MAX(MAX(started_ms), COALESCE(MAX(ended_ms), 0)) AS ts
+                    FROM voice_turns WHERE session_id = ?
+                )
+                """,
+                (session_id, session_id),
+            ).fetchone()
+        ts = row["ts"] if row is not None else None
+        return int(ts) if ts else None
+
+    def repair_crash_seals(self, *, tolerance_ms: int = 3_600_000) -> int:
+        """Re-seal ``shutdown`` sessions whose recorded end drifted more than
+        ``tolerance_ms`` past their last real activity.
+
+        Crash recovery used to stamp ``ended_ms = boot time``, so a session
+        that died in the evening and was recovered the next morning carried
+        14+ phantom hours into every duration-based stat. Idempotent: honest
+        seals are inside the tolerance and stay untouched. Returns the number
+        of repaired rows.
+        """
+        with self._lock:
+            rows = self._c.execute(
+                "SELECT id, started_ms, ended_ms FROM voice_sessions "
+                "WHERE hangup_reason = 'shutdown' AND ended_ms IS NOT NULL"
+            ).fetchall()
+        repaired = 0
+        for r in rows:
+            last = self.last_activity_ms(r["id"])
+            honest_end = max(last or 0, int(r["started_ms"]))
+            if int(r["ended_ms"]) > honest_end + tolerance_ms:
+                with self._lock:
+                    self._c.execute(
+                        "UPDATE voice_sessions SET ended_ms = ? WHERE id = ?",
+                        (honest_end, r["id"]),
+                    )
+                repaired += 1
+        return repaired
 
     def wal_checkpoint(self) -> None:
         with self._lock:

@@ -240,11 +240,17 @@ class TestLanguageHandling:
         ack = generate_ack("run_shell", {}, language=hint)
         assert ack == "One moment."
 
-    @pytest.mark.parametrize("hint", ["de", "DE", "de-DE", "german", "deutsch", "fr", "es", ""])
+    @pytest.mark.parametrize("hint", ["de", "DE", "de-DE", "german", "deutsch", "fr", ""])
     def test_non_english_hints_default_to_de(self, hint: str) -> None:
         # Project default is German; unrecognized hints fall to de.
         ack = generate_ack("run_shell", {}, language=hint)
         assert ack == "Moment."
+
+    def test_spanish_hint_resolves_to_es(self) -> None:
+        # es is a first-class supported output language (runtime output
+        # language doctrine) — it must not fall back to the German default.
+        ack = generate_ack("run_shell", {}, language="es")
+        assert ack == "Vale, un momento."
 
     def test_none_language_defaults_to_de(self) -> None:
         ack = generate_ack("run_shell", {}, language=None)  # type: ignore[arg-type]

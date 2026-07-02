@@ -1,0 +1,78 @@
+<!doctype html>
+<!-- Social preview card (GitHub repo settings), 1280x640.
+     Rasterize: pwsh assets/brand/render.ps1 -In social-preview.html -Out social-preview.png -W 1280 -H 640 -Scale 2
+     (then downscale the 2x shot to exactly 1280x640 — see marketing/launch/github-setup.md) -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=JetBrains+Mono:wght@500&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1280px; height: 640px; overflow: hidden; }
+  body {
+    background: #0A0A0A;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  /* one soft gold glow from above — the brand's single accent, never a fill */
+  .glow {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(ellipse 90% 55% at 50% -8%, rgba(255, 214, 10, 0.10), transparent 62%),
+      radial-gradient(ellipse 120% 40% at 50% 112%, rgba(255, 214, 10, 0.04), transparent 60%);
+  }
+  .card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 26px;
+  }
+  .mascot-wrap { position: relative; width: 128px; height: 128px; }
+  .mascot-wrap .ring {
+    position: absolute; border-radius: 50%;
+    border: 1px solid rgba(255, 214, 10, 0.32);
+  }
+  .ring.r1 { inset: -14px; }
+  .ring.r2 { inset: -30px; border-color: rgba(255, 214, 10, 0.16); }
+  .mascot {
+    width: 128px; height: 128px; object-fit: contain;
+    filter: drop-shadow(0 0 26px rgba(255, 214, 10, 0.30));
+  }
+  .wordmark {
+    width: 760px; display: block;
+    /* the banner raster carries its own near-black stage — feather its edges
+       so it melts into the matte-black card instead of reading as a box */
+    -webkit-mask-image: radial-gradient(ellipse 72% 74% at 50% 50%, #000 52%, transparent 88%);
+    mask-image: radial-gradient(ellipse 72% 74% at 50% 50%, #000 52%, transparent 88%);
+  }
+  .tagline {
+    font-family: 'Inter', sans-serif;
+    font-size: 27px; font-weight: 600;
+    color: #F4F4F5; letter-spacing: -0.01em;
+    text-align: center;
+  }
+  .tagline .gold { color: #FFD60A; }
+  .meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 16px; font-weight: 500;
+    letter-spacing: 0.22em;
+    color: #FFD60A;
+  }
+</style>
+</head>
+<body>
+  <div class="glow"></div>
+  <div class="card">
+    <div class="mascot-wrap">
+      <div class="ring r1"></div>
+      <div class="ring r2"></div>
+      <img class="mascot" src="../icons/jarvis-gigi-256.png" alt="" />
+    </div>
+    <img class="wordmark" src="banner.png" alt="Personal Jarvis" />
+    <div class="tagline">Talk to your computer — <span class="gold">and watch it do the work.</span></div>
+    <div class="meta">OPEN SOURCE · MIT · LINUX · MACOS · WINDOWS</div>
+  </div>
+</body>
+</html>

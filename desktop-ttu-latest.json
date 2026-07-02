@@ -1,0 +1,39 @@
+{
+  "path": "desktop (_run_backend, GUI-free driver)",
+  "runs": 3,
+  "python": "C:\\Program Files\\Python311\\python.exe",
+  "vault_pages": 84,
+  "median_wall_ms": 1346.8,
+  "median_boot_ready_ms": 112.8,
+  "median_bind_wall_ms": 1032.2,
+  "median_voice_ready_wall_ms": 6381.8,
+  "voice_ready_wall_ms_runs": [
+    6381.8,
+    6932.9,
+    6050.2
+  ],
+  "median_voice_usable_wall_ms": 12059.3,
+  "voice_usable_wall_ms_runs": [
+    12059.3,
+    12190.8,
+    10777.6
+  ],
+  "wall_ms_runs": [
+    1346.8,
+    1427.5,
+    1315.9
+  ],
+  "boot_ready_ms_runs": [
+    122.8,
+    112.8,
+    106.7
+  ],
+  "phase_medians_ms": {
+    "db_pre_webserver": 2884.6,
+    "db_webserver_ctor": 1654.7,
+    "uvicorn_serve": 0.0
+  },
+  "anchor": "spawn -> /api/health responds 200 (= DesktopApp._wait_for_backend success = window creation point)",
+  "secondary_anchor": "median_bind_wall_ms = spawn -> BOOT_READY print (bootstrap bind; may precede a responsive health endpoint)",
+  "ttu_anchor": "spawn -> VOICE_USABLE_MS print (VoiceBootStatus ready=True: wake model warmed + VAD + TTS client up \u2014 the honest time-to-usable anchor; VOICE_READY_MS = pipeline task started is secondary)"
+}

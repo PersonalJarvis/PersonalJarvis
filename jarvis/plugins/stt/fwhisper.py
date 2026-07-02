@@ -231,6 +231,20 @@ class FasterWhisperProvider:
         # 2026-06-29) or return garbage. This lock makes the model call mutually
         # exclusive per instance so the two callers serialize instead of racing.
         self._infer_lock = threading.Lock()
+        # True once ``warm_up`` completed (model constructed + one priming
+        # inference). Boot-time consumers (the rolling-whisper wake poll loop,
+        # the heavy-backend gate) wait on this instead of poking the model
+        # while it is still loading: a transcribe DURING the load used to time
+        # out at 8 s, the next poll hit TranscribeBusy, two fails triggered
+        # recover() which threw the half-loaded model away and reloaded from
+        # scratch — a load cascade that turned a ~4 s model load into 114.7 s
+        # on the boot path (TTU forensic 2026-07-02).
+        self._warm = False
+
+    @property
+    def is_warm(self) -> bool:
+        """True when the model is constructed AND primed (safe to poll)."""
+        return self._warm
 
     def _ensure_model(self) -> None:
         if self._model is not None:
@@ -278,6 +292,7 @@ class FasterWhisperProvider:
         )
         self._model = None
         self._infer_lock = threading.Lock()
+        self._warm = False
 
     def warm_up(self) -> None:
         """Prime the engine with one throwaway inference so the FIRST live
@@ -312,6 +327,10 @@ class FasterWhisperProvider:
             self._transcribe_sync(warm_audio, 16_000)
         except Exception as exc:  # noqa: BLE001 — priming is best-effort
             log.debug("Whisper warm-up inference skipped: %s", exc)
+        # Signal readiness even when the priming inference failed: the model
+        # object exists, so pollers can safely transcribe (lazy paths cover the
+        # rest). Leaving _warm False here would park the wake poll loop forever.
+        self._warm = True
 
     async def transcribe(self, audio: AsyncIterator[AudioChunk]) -> Transcript:
         """Collects all chunks, transcribes them in one go.

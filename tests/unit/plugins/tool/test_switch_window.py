@@ -174,7 +174,7 @@ async def test_execute_headless_linux_degrades(monkeypatch):
 
 
 async def test_execute_windows_path_unchanged(monkeypatch):
-    # AD-7: the Windows readback stays exactly as before (German).
+    # AD-7: the Windows readback keeps its established wording.
     monkeypatch.setattr("jarvis.plugins.tool.switch_window.detect_platform", lambda: "win32")
     monkeypatch.setattr(
         "jarvis.plugins.tool.switch_window._find_and_focus_windows",
@@ -182,4 +182,4 @@ async def test_execute_windows_path_unchanged(monkeypatch):
     )
     res = await SwitchWindowTool().execute({"title_contains": "Notepad"}, _ctx())
     assert res.success is True
-    assert res.output == "Fokus auf Fenster: Notepad"
+    assert res.output == "Focused window: Notepad"

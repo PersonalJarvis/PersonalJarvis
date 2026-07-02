@@ -148,6 +148,13 @@ class ComputerUseTool:
         # Strong refs so background missions are never garbage-collected
         # mid-flight (same pattern as BrainManager._cu_background_tasks).
         self._background_tasks: set[asyncio.Task[None]] = set()
+        # Double-dispatch gate (CU v2): the SAME voice request occasionally
+        # dispatches twice (documented in computer_use_context.py), so two
+        # overlapping missions typed the same URL twice. While a mission for
+        # a goal is still running, a second dispatch of the SAME goal is
+        # absorbed into the running one (the user still gets ONE ack and ONE
+        # completion announcement). A DIFFERENT goal still runs concurrently.
+        self._active_goals: dict[str, asyncio.Task[None]] = {}
 
     async def execute(self, args: dict[str, Any], ctx: ExecutionContext) -> ToolResult:
         goal = (args.get("goal") or "").strip()
@@ -172,11 +179,26 @@ class ComputerUseTool:
                 },
                 ctx,
             )
+        goal_key = " ".join(goal.split()).casefold()
+        running = self._active_goals.get(goal_key)
+        if running is not None and not running.done():
+            log.info(
+                "computer_use: duplicate dispatch of an already-running goal "
+                "absorbed (%.60s)", goal,
+            )
+            return ToolResult(
+                success=True,
+                output=action_phrase("cu_dispatch_ack", _ctx_output_language(ctx)),
+            )
         task = asyncio.create_task(
             self._run_background(goal, ctx), name="computer-use-tool-background",
         )
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
+        self._active_goals[goal_key] = task
+        task.add_done_callback(
+            lambda t, key=goal_key: self._active_goals.pop(key, None),
+        )
         # suppress_response=True (class attr) → tool_use_loop takes this output
         # VERBATIM and stops, so there is no second iteration to echo an
         # internal instruction. Speak the pre-existing, localized dispatch ACK

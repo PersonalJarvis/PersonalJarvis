@@ -19,11 +19,46 @@ import asyncio
 import logging
 from typing import Any, Protocol
 
+import numpy as np
+
 from jarvis.speech.rolling_whisper_wake import DEFAULT_PATTERN
 
 log = logging.getLogger("jarvis.wake.verifier")
 
 WAKE_PREFIX_PATTERN = DEFAULT_PATTERN
+
+# Silence gate for user-trained custom_onnx wake hits (live forensic
+# 2026-07-02): such models fire on breath/near-silence many times a minute,
+# and each fire used to cost a full STT verify round-trip — the flood drove
+# the verify STT into 429/timeouts, whose degrade-open then produced ghost
+# activations. A hit whose trailing audio is essentially silent is a false
+# fire by definition and is suppressed BEFORE any STT call. Same normalised-
+# RMS convention and threshold as ``RollingWhisperWake``'s ``min_rms`` gate
+# (real speech on the reference headset is rms 0.01-0.02).
+CUSTOM_WAKE_MIN_RMS = 0.003
+# Window measured from the END of the capture buffer: the wake word must sit
+# immediately before the model fired. Long enough for any natural two-word
+# phrase, short enough that earlier room speech cannot mask a silent fire.
+CUSTOM_WAKE_RMS_TAIL_S = 1.5
+
+
+def pcm_tail_rms(
+    pcm_bytes: bytes,
+    sample_rate: int = 16_000,
+    tail_s: float = CUSTOM_WAKE_RMS_TAIL_S,
+) -> float:
+    """Normalised RMS ([-1, 1] scale) of the last ``tail_s`` seconds of int16 PCM.
+
+    Pure helper — no I/O. Empty input reads as 0.0; a torn trailing byte is
+    dropped rather than raising.
+    """
+    usable = len(pcm_bytes) // 2 * 2
+    if usable == 0:
+        return 0.0
+    samples = np.frombuffer(pcm_bytes[:usable], dtype=np.int16)
+    tail_samples = max(1, int(tail_s * sample_rate))
+    tail = samples[-tail_samples:].astype(np.float32) / 32768.0
+    return float(np.sqrt(np.mean(tail * tail) + 1e-12))
 
 # A genuine "Hey Jarvis" must not be silently dropped just because the cloud
 # STT was momentarily rate-limited (Groq 429) mid-session — that is the exact
@@ -79,20 +114,26 @@ async def verify_wake_with_stt(
     sample_rate: int = 16_000,
     language: str | None = "de",
     matcher: Any | None = None,
-) -> tuple[bool, str]:
+) -> tuple[bool, str | None]:
     """Transcribe ``pcm_bytes`` and check the strict wake prefix.
 
     Returns ``(matched, transcript_text)``. ``matched`` is True only when the
     transcript contains the full "hey/hi/hallo + jarv" pattern.
 
+    The transcript distinguishes two non-matching cases the caller must treat
+    differently: ``""`` means the STT WORKED and heard no speech (evidence of a
+    breath/noise-triggered false fire on a weak custom model → suppress), while
+    ``None`` means the STT itself failed after retries (a provider outage →
+    the caller may degrade open so a dead provider never bricks the wake,
+    AP-22).
+
     Robustness contract (AD-OE6): never raise. A transient STT failure (Groq
     429 / 5xx / timeout) is retried once with a short backoff so a real
     "Hey Jarvis" is not silently dropped when the cloud STT is momentarily
-    rate-limited mid-session. Empty PCM, a persistently failing STT, or a clear
-    non-matching transcript collapse to ``(False, "")`` so the wake loop simply
-    re-arms — it is always better to ignore one borderline wake than to crash
-    the listener with a 503, and a Groq outage must not turn every ambient OWW
-    false-positive into an activation.
+    rate-limited mid-session. Empty PCM and a clear non-matching transcript
+    collapse to ``(False, "")``; a persistently failing STT to ``(False,
+    None)`` — the wake loop simply re-arms in every case, it is always better
+    to ignore one borderline wake than to crash the listener with a 503.
     """
     if not pcm_bytes:
         return False, ""
@@ -122,7 +163,9 @@ async def verify_wake_with_stt(
             "wake-verify STT failed after %d attempts (%s) — suppressing this OWW hit",
             _WAKE_VERIFY_RETRIES + 1, last_exc,
         )
-        return False, ""
+        # None (not "") = STT OUTAGE: lets the caller degrade open on a dead
+        # provider (AP-22) while a genuine empty transcription stays "".
+        return False, None
     text = (getattr(transcript, "text", "") or "").strip()
     matched = transcript_has_hey_prefix(text, matcher)
     log.info(

@@ -235,20 +235,36 @@ class JarvisBarOverlay:
 
         from PIL import ImageTk  # noqa: F401 — fail fast here if Pillow missing
 
-        # Per-monitor DPI awareness MUST be set before THIS surface's Tk root is
-        # created — exactly like the orb (ui/orb/overlay.py). Without it, on a
-        # scaled display (e.g. 150%) the window's geometry coordinate space and
-        # the pointer-event space (``event.x_root``) drift apart, so dragging the
-        # bar makes it run AWAY from the cursor toward the bottom-right and become
-        # uncontrollable (the HiDPI "drag-teleport"). The bar boots in its own
-        # thread, often before any other code has set process DPI awareness, so
-        # it must assert it here itself. ``ensure_dpi_awareness`` is idempotent
-        # and a no-op off Windows, so this is safe even when the process is
-        # already aware.
+        # DPI strategy (two steps, order matters — both no-ops off Windows):
+        #
+        # 1. ``ensure_dpi_awareness()`` — the PROCESS must be DPI-aware before
+        #    the per-window pin below can hold. Also fixes the HiDPI
+        #    "drag-teleport" (geometry vs pointer-event space drift) when the
+        #    bar wins the boot race.
+        # 2. ``pin_thread_dpi_per_monitor()`` — pin THIS thread (the bar's
+        #    dedicated Tk mainloop thread) so the Tk root created below
+        #    carries a PER-WINDOW per-monitor context: the bar renders its
+        #    RAW pixels (its original, maintainer-approved look) on every
+        #    monitor, DWM never bitmap-scales it, and pywebview's runtime
+        #    ``SetProcessDPIAware()`` flip can no longer re-interpret it.
+        #    Without the pin the window follows the PROCESS context: it
+        #    DWM-shrank to ~2/3 when moved onto the 100 % secondary monitor
+        #    (next to the 150 % primary) and jumped size/position on the
+        #    boot-race flip (GIF forensics 2026-07-02).
+        #
+        # NEVER pin UNAWARE here: Windows then upscales the bar into a blurry
+        # oversized "fat bar" — explicitly rejected by the maintainer twice
+        # (2026-07-01 session, commit 5c7a5d15). The original look is RAW
+        # pixels at a fixed size on every monitor.
         try:
-            from jarvis.core.win32_dpi import ensure_dpi_awareness
+            from jarvis.core.win32_dpi import (
+                ensure_dpi_awareness,
+                pin_thread_dpi_per_monitor,
+            )
 
             ensure_dpi_awareness()
+            if pin_thread_dpi_per_monitor():
+                log.debug("jarvisbar Tk thread pinned PER_MONITOR_AWARE (per-window)")
         except Exception:  # noqa: BLE001 — never block the bar on a DPI hiccup
             log.debug("jarvisbar DPI-awareness setup skipped", exc_info=True)
 

@@ -39,7 +39,7 @@ import time
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +58,40 @@ SCHEMA_FILE = Path(__file__).parent / "schema.sql"
 # ``VoiceAttemptResult`` event in Phase B (see RECON.md §6.4).
 VOICE_RETRY_WINDOW_S = 8.0
 CONVERSATION_TRACE_CAP_S = 30 * 60.0
+
+# Daily-stats upsert, two flavours sharing one column list. The full variant
+# overwrites the day with the recompute; the insert-only variant backs a
+# FROZEN day (below the retention-prune horizon): its already-recorded ledger
+# row wins and only a first-time insert (board DB rebuilt from scratch) lands.
+_UPSERT_COLUMNS_SQL = """
+    INSERT INTO daily_stats (
+        date, tasks_completed, tasks_failed, tools_used,
+        unique_tools_count, voice_commands_count,
+        voice_first_try_rate, hours_saved_estimate,
+        active_events_count, conversation_seconds_estimate,
+        user_words_count, jarvis_words_count, session_count,
+        category_counts
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+_UPSERT_INSERT_ONLY_SQL = _UPSERT_COLUMNS_SQL + "ON CONFLICT(date) DO NOTHING"
+
+_UPSERT_FULL_SQL = _UPSERT_COLUMNS_SQL + """
+    ON CONFLICT(date) DO UPDATE SET
+        tasks_completed      = excluded.tasks_completed,
+        tasks_failed         = excluded.tasks_failed,
+        tools_used           = excluded.tools_used,
+        unique_tools_count   = excluded.unique_tools_count,
+        voice_commands_count = excluded.voice_commands_count,
+        voice_first_try_rate = excluded.voice_first_try_rate,
+        hours_saved_estimate = excluded.hours_saved_estimate,
+        active_events_count  = excluded.active_events_count,
+        conversation_seconds_estimate = excluded.conversation_seconds_estimate,
+        user_words_count     = excluded.user_words_count,
+        jarvis_words_count   = excluded.jarvis_words_count,
+        session_count        = excluded.session_count,
+        category_counts      = excluded.category_counts
+"""
 
 ACTIVE_EVENT_NAMES = {
     "ActionExecuted",
@@ -144,6 +178,7 @@ class BoardAggregator:
         jsonl_dir: Path,
         db_path: Path | None = None,
         sessions_db_path: Path | None = None,
+        tz: tzinfo | None = None,
     ) -> None:
         self._jsonl_dir = Path(jsonl_dir)
         self._db_path = Path(db_path) if db_path is not None else (
@@ -155,6 +190,11 @@ class BoardAggregator:
         self._sessions_db_path = (
             Path(sessions_db_path) if sessions_db_path is not None else None
         )
+        # Day-bucketing timezone. ``None`` = the host's local timezone (the
+        # meaningful granularity for a personal dashboard). Tests inject
+        # explicit zones to prove the bucketing is deterministic and that
+        # all-time totals are timezone-invariant.
+        self._tz = tz
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db: sqlite3.Connection | None = None
         # Serialises every aggregation run. The connection is shared across
@@ -221,7 +261,9 @@ class BoardAggregator:
         try:
             daily = self._aggregate_events()
             self._aggregate_sessions(daily)
-            self._upsert_daily_stats(daily.values())
+            self._upsert_daily_stats(
+                daily.values(), freeze_before_ms=self._read_prune_horizon()
+            )
             self._refresh_personal_records()
             self._set_meta("last_run_ns", str(time.time_ns()))
         except Exception:  # noqa: BLE001
@@ -354,7 +396,7 @@ class BoardAggregator:
             ts_ns = int(record.get("ts_ns") or 0)
             if ts_ns <= 0:
                 continue
-            date = _iso_date_from_ns(ts_ns)
+            date = _iso_date_from_ns(ts_ns, self._tz)
             stats = daily.setdefault(date, DailyStats(date=date))
             event = record.get("event", "")
             payload = record.get("payload") or {}
@@ -442,7 +484,7 @@ class BoardAggregator:
                 ms = row["started_ms"]
                 if not ms:
                     continue
-                date = _iso_date_from_ms(int(ms))
+                date = _iso_date_from_ms(int(ms), self._tz)
                 stats = daily.setdefault(date, DailyStats(date=date))
                 user_words = _count_words(row["user_text"])
                 jarvis_words = _count_words(row["jarvis_text"])
@@ -463,7 +505,7 @@ class BoardAggregator:
                 ms = row["started_ms"]
                 if not ms:
                     continue
-                date = _iso_date_from_ms(int(ms))
+                date = _iso_date_from_ms(int(ms), self._tz)
                 stats = daily.setdefault(date, DailyStats(date=date))
                 stats.session_count += 1
                 ended = row["ended_ms"]
@@ -477,40 +519,68 @@ class BoardAggregator:
             with contextlib.suppress(sqlite3.Error):
                 conn.close()
 
+    def _read_prune_horizon(self) -> int | None:
+        """Retention-prune high-water mark recorded in ``sessions.db``.
+
+        Every day whose local day-start lies below this instant may have lost
+        source rows to the recorder's boot-time retention prune, so its
+        already-recorded ledger row must never be overwritten with a recompute
+        from the shrunken source. ``None`` (no sessions db, old schema, never
+        pruned) keeps the historical full-overwrite behaviour.
+        """
+        path = self._sessions_db_path
+        if path is None or not Path(path).exists():
+            return None
+        try:
+            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        except sqlite3.Error:
+            return None
+        try:
+            row = conn.execute(
+                "SELECT value FROM store_meta WHERE key = 'prune_horizon_ms'"
+            ).fetchone()
+            return int(row[0]) if row is not None else None
+        except (sqlite3.Error, TypeError, ValueError):
+            return None
+        finally:
+            with contextlib.suppress(sqlite3.Error):
+                conn.close()
+
     # ------------------------------------------------------------------
     # Upsert
     # ------------------------------------------------------------------
 
-    def _upsert_daily_stats(self, rows: Iterable[DailyStats]) -> None:
+    def _day_start_ms(self, date: str) -> int:
+        """Epoch ms of the day's midnight in the bucketing timezone."""
+        day = datetime.fromisoformat(date)
+        if self._tz is not None:
+            day = day.replace(tzinfo=self._tz)
+        else:
+            day = day.astimezone()  # naive -> host-local midnight
+        return int(day.timestamp() * 1000)
+
+    def _upsert_daily_stats(
+        self,
+        rows: Iterable[DailyStats],
+        *,
+        freeze_before_ms: int | None = None,
+    ) -> None:
+        """Write per-day rows. Days at or below the prune horizon are frozen:
+        their existing ledger row wins and only a first-time INSERT (board DB
+        rebuilt from scratch) is allowed — a recompute from a source that lost
+        rows to retention must never shrink an already-recorded day (this was
+        the bug that made ACTIVE TIME decay day by day).
+        """
         conn = self.db
         with conn:
             conn.execute("BEGIN")
             for stats in rows:
+                frozen = (
+                    freeze_before_ms is not None
+                    and self._day_start_ms(stats.date) < freeze_before_ms
+                )
                 conn.execute(
-                    """
-                    INSERT INTO daily_stats (
-                        date, tasks_completed, tasks_failed, tools_used,
-                        unique_tools_count, voice_commands_count,
-                        voice_first_try_rate, hours_saved_estimate,
-                        active_events_count, conversation_seconds_estimate,
-                        user_words_count, jarvis_words_count, session_count,
-                        category_counts
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(date) DO UPDATE SET
-                        tasks_completed      = excluded.tasks_completed,
-                        tasks_failed         = excluded.tasks_failed,
-                        tools_used           = excluded.tools_used,
-                        unique_tools_count   = excluded.unique_tools_count,
-                        voice_commands_count = excluded.voice_commands_count,
-                        voice_first_try_rate = excluded.voice_first_try_rate,
-                        hours_saved_estimate = excluded.hours_saved_estimate,
-                        active_events_count  = excluded.active_events_count,
-                        conversation_seconds_estimate = excluded.conversation_seconds_estimate,
-                        user_words_count     = excluded.user_words_count,
-                        jarvis_words_count   = excluded.jarvis_words_count,
-                        session_count        = excluded.session_count,
-                        category_counts      = excluded.category_counts
-                    """,
+                    _UPSERT_INSERT_ONLY_SQL if frozen else _UPSERT_FULL_SQL,
                     (
                         stats.date,
                         stats.tasks_completed,
@@ -659,13 +729,14 @@ class BoardAggregator:
         _ensure_daily_stats_columns(conn)
 
 
-def _iso_date_from_ns(ts_ns: int) -> str:
-    """Converts a nanosecond timestamp to an ISO date in the local timezone.
+def _iso_date_from_ns(ts_ns: int, tz: tzinfo | None = None) -> str:
+    """Converts a nanosecond timestamp to an ISO date in the given timezone.
 
-    Local time is the meaningful granularity for a personal dashboard — a
-    commit at 00:30 belongs to the user's "today", not "yesterday in UTC".
+    ``None`` means the host's local timezone — the meaningful granularity for
+    a personal dashboard: a commit at 00:30 belongs to the user's "today",
+    not "yesterday in UTC".
     """
-    dt = datetime.fromtimestamp(ts_ns / 1e9, tz=UTC).astimezone()
+    dt = datetime.fromtimestamp(ts_ns / 1e9, tz=UTC).astimezone(tz)
     return dt.strftime("%Y-%m-%d")
 
 
@@ -677,9 +748,9 @@ def _is_active_event(event: str, payload: dict[str, Any]) -> bool:
     return True
 
 
-def _iso_date_from_ms(ts_ms: int) -> str:
-    """ISO date (local timezone) from a millisecond epoch timestamp."""
-    dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=UTC).astimezone()
+def _iso_date_from_ms(ts_ms: int, tz: tzinfo | None = None) -> str:
+    """ISO date from a millisecond epoch timestamp (``None`` = host-local)."""
+    dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=UTC).astimezone(tz)
     return dt.strftime("%Y-%m-%d")
 
 

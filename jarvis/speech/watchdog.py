@@ -125,7 +125,11 @@ async def _main() -> None:
     pipeline = SpeechPipeline(
         call_hotkeys=_call_hk,
         ptt_hotkeys=_ptt_hk,
-        hangup_hotkeys=(config.trigger.hotkey_hangup,),
+        hangup_hotkeys=(
+            (config.trigger.hotkey_hangup,)
+            if config.trigger.hotkey_hangup.strip()
+            else ()
+        ),
         wake_keywords=("hey_jarvis",),
         # Single source of truth — see PRODUCTION_WAKE_THRESHOLD and the
         # data-driven reasoning in openwakeword_provider.py (BUG-009 episode 5,

@@ -32,3 +32,24 @@ def test_old_toml_without_new_keys_keeps_legacy_behaviour() -> None:
     assert call == ("f3+f4",)
     assert ptt == ("ctrl+right_alt+j",)
     assert t.hotkey_hangup == "f1+f2"
+
+
+def test_resolve_hotkeys_drops_blank_call_when_ptt_on() -> None:
+    t = TriggerConfig(push_to_talk=True, hotkey="ctrl+right_alt+j", hotkey_call="")
+    call, ptt = t.resolve_hotkeys()
+    assert call == ()
+    assert ptt == ("ctrl+right_alt+j",)
+
+
+def test_resolve_hotkeys_drops_blank_ptt_when_ptt_on() -> None:
+    t = TriggerConfig(push_to_talk=True, hotkey="", hotkey_call="f3+f4")
+    call, ptt = t.resolve_hotkeys()
+    assert call == ("f3+f4",)
+    assert ptt == ()
+
+
+def test_resolve_hotkeys_drops_blank_entries_when_ptt_off() -> None:
+    t = TriggerConfig(push_to_talk=False, hotkey="", hotkey_call="f3+f4")
+    call, ptt = t.resolve_hotkeys()
+    assert call == ("f3+f4",)
+    assert ptt == ()

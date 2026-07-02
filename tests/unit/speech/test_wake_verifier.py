@@ -21,6 +21,8 @@ from dataclasses import dataclass
 import pytest
 
 from jarvis.speech.wake_verifier import (
+    CUSTOM_WAKE_MIN_RMS,
+    pcm_tail_rms,
     transcript_has_hey_prefix,
     verify_wake_with_stt,
 )
@@ -131,9 +133,13 @@ async def test_verify_returns_false_when_transcript_is_bare_jarvis() -> None:
 async def test_verify_returns_false_when_transcript_is_empty() -> None:
     stt = _FakeSTT("")
 
-    matched, _ = await verify_wake_with_stt(stt, PCM_2S_16K)
+    matched, transcript = await verify_wake_with_stt(stt, PCM_2S_16K)
 
     assert matched is False
+    # A SUCCESSFUL transcription that heard nothing is "", never None — the
+    # caller must be able to tell "no speech in the audio" (suppress a
+    # breath-triggered custom-model hit) from "the STT is down" (degrade open).
+    assert transcript == ""
 
 
 async def test_verify_returns_false_when_pcm_is_empty() -> None:
@@ -153,9 +159,13 @@ async def test_verify_returns_false_on_persistent_stt_exception() -> None:
     OWW hit so the loop re-arms."""
     stt = _FakeSTT("ignored", raises=RuntimeError("groq 503"))
 
-    matched, _ = await verify_wake_with_stt(stt, PCM_2S_16K)
+    matched, transcript = await verify_wake_with_stt(stt, PCM_2S_16K)
 
     assert matched is False
+    # An STT OUTAGE reports transcript=None (not "") so the caller can degrade
+    # open on a dead provider (AP-22) while still suppressing a real
+    # empty-transcription on a breath-triggered custom-model hit.
+    assert transcript is None
     # The retry means a persistent error is attempted more than once.
     assert len(stt.calls) >= 2
 
@@ -199,6 +209,42 @@ async def test_verify_passes_through_language_override() -> None:
     await verify_wake_with_stt(stt, PCM_2S_16K, language="en")
 
     assert stt.calls == [(len(PCM_2S_16K), 16_000, "en")]
+
+
+# ---------------------------------------------------------------------------
+# pcm_tail_rms — the energy probe behind the custom-model silence gate. Same
+# normalised-RMS convention as RollingWhisperWake (silence << 0.003 << speech).
+# ---------------------------------------------------------------------------
+
+
+def _square_wave_pcm(seconds: float, amplitude: int, sample_rate: int = 16_000) -> bytes:
+    pair = amplitude.to_bytes(2, "little", signed=True) + (-amplitude).to_bytes(
+        2, "little", signed=True
+    )
+    return pair * int(seconds * sample_rate / 2)
+
+
+def test_pcm_tail_rms_silence_is_below_gate() -> None:
+    assert pcm_tail_rms(b"\x00\x00" * 16_000 * 2) < CUSTOM_WAKE_MIN_RMS
+
+
+def test_pcm_tail_rms_speechlike_audio_clears_gate() -> None:
+    # amplitude 500/32768 ~ 0.015 rms — the quiet end of real speech on the
+    # reference headset (rms 0.01-0.02), still comfortably above the gate.
+    assert pcm_tail_rms(_square_wave_pcm(2.0, 500)) > CUSTOM_WAKE_MIN_RMS
+
+
+def test_pcm_tail_rms_only_measures_the_tail_window() -> None:
+    """Speech followed by a silent tail must read as silence: the wake word has
+    to be IN the tail window right before the model fired, not minutes ago."""
+    loud_then_silent = _square_wave_pcm(1.5, 3000) + b"\x00\x00" * (16_000 * 2)
+    assert pcm_tail_rms(loud_then_silent, tail_s=1.5) < CUSTOM_WAKE_MIN_RMS
+
+
+def test_pcm_tail_rms_handles_empty_and_odd_input() -> None:
+    assert pcm_tail_rms(b"") == 0.0
+    # Odd byte count (torn int16) must not raise.
+    assert pcm_tail_rms(b"\x01") >= 0.0
 
 
 # ---------------------------------------------------------------------------

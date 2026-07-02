@@ -13,7 +13,15 @@
 </p>
 
 <p align="center">
-  <b>A voice-driven meta-orchestrator that turns one spoken request into a fleet of self-checking AI agents.</b>
+  <b>Talk to your computer — and watch it do the work: an open-source, privacy-first voice agent with full command of your PC.</b>
+</p>
+
+<p align="center">
+  <img src="assets/video/personal-jarvis-demo.gif" alt="Demo: a spoken command delegates real work to an agent, which edits the code, runs the tests, and opens the pull request" width="860" />
+</p>
+
+<p align="center">
+  <b><a href="assets/video/personal-jarvis-demo.mp4">▶ Watch the full 60-second demo with sound</a></b>
 </p>
 
 ---

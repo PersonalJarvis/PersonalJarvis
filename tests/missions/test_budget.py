@@ -174,7 +174,7 @@ async def test_record_raises_at_per_mission_limit() -> None:
 async def test_record_raises_at_daily_limit() -> None:
     bt = BudgetTracker(per_mission_usd=100.0, daily_usd=10.0)
     await bt.record("m1", 5.0)
-    with pytest.raises(BudgetExceeded, match="Daily Budget"):
+    with pytest.raises(BudgetExceeded, match="Daily budget"):
         await bt.record("m2", 6.0)
 
 
@@ -191,7 +191,7 @@ async def test_assert_under_limit_blocks_after_exceeded() -> None:
     bt = BudgetTracker(per_mission_usd=5.0)
     with pytest.raises(BudgetExceeded):
         await bt.record("m1", 5.0)
-    with pytest.raises(BudgetExceeded, match="Pre-Spawn-Check"):
+    with pytest.raises(BudgetExceeded, match="pre-spawn check"):
         bt.assert_under_limit("m1")
 
 

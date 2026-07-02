@@ -140,7 +140,7 @@ def test_discovery_failed_load_isolated(monkeypatch: pytest.MonkeyPatch) -> None
 def test_get_unknown_channel_raises_keyerror(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_entry_points(monkeypatch, [])
     mgr = ChannelManager(ChannelContext(bus=EventBus()))
-    with pytest.raises(KeyError, match="not.+verfuegbar|nicht verfuegbar"):  # i18n-allow: matches the real (German) exception message string
+    with pytest.raises(KeyError, match="not available"):
         mgr.get("nonexistent")
 
 

@@ -120,7 +120,7 @@ async def test_how_to_question_blocks_side_effect_tool() -> None:
     assert "Windows-Taste" in result.text
     assert len(brain.requests) == 2
     tool_message = brain.requests[1].messages[-1].content
-    assert "How-to" in str(tool_message)
+    assert "how-to" in str(tool_message).lower()
 
 
 class _GmailTool:
