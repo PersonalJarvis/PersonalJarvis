@@ -380,33 +380,53 @@ class RollingWhisperWake:
         consumer = asyncio.create_task(_consume(), name="rolling-whisper-consume")
         last_trigger_t = 0.0
         # Self-heal counter: consecutive transcribe failures with no success.
-        # Reset on any successful transcription; a run of these triggers a fresh
-        # model rebuild (see _WEDGE_RECOVER_AFTER_FAILS) so a wedged local Whisper
-        # can never leave the wake permanently dead.
+        # Reset on any successful transcription. Only failures of DISTINCT
+        # calls count — a TranscribeBusy right after an abandoned timeout is
+        # the SAME in-flight call still running, tracked separately via
+        # ``busy_since`` (see the busy handler below and _BUSY_HANG_RECOVER_S).
         consecutive_fail = 0
+        # Start of the current continuous TranscribeBusy streak (None = the
+        # last poll was not busy). A streak longer than
+        # ``self._busy_hang_recover_s`` is a TRUE hang -> rebuild.
+        busy_since: float | None = None
 
         # Boot serialisation state — see the warm gate inside the poll loop.
         warm_wait_t0 = time.time()
         warm_wait_logged = False
         fallback_warmed = False
+        # Set when recover() dropped the model MID-SESSION: the warm gate then
+        # re-warms immediately (this loop owns it — the boot deferred loader
+        # only runs once) instead of lazily rebuilding INSIDE the next poll's
+        # transcribe timeout, which under load re-wedged and cascaded (live
+        # log 2026-07-02 08:21-08:26).
+        rewarm_owed = False
+
+        def _recover_wedged(reason: str) -> None:
+            nonlocal busy_since, consecutive_fail, rewarm_owed
+            recover = getattr(self._stt, "recover", None)
+            if callable(recover):
+                log.error(
+                    "rolling-whisper: %s — rebuilding the wedged wake model "
+                    "(self-heal, no restart).",
+                    reason,
+                )
+                try:
+                    recover()
+                except Exception as exc:  # noqa: BLE001 — heal must never crash
+                    log.warning("rolling-whisper: model recover() failed: %s", exc)
+                rewarm_owed = True
+            busy_since = None
+            consecutive_fail = 0
 
         def _note_transcribe_fail() -> int:
             nonlocal consecutive_fail
             consecutive_fail += 1
+            failed = consecutive_fail
             if consecutive_fail >= _WEDGE_RECOVER_AFTER_FAILS:
-                recover = getattr(self._stt, "recover", None)
-                if callable(recover):
-                    log.error(
-                        "rolling-whisper: %d consecutive transcribe failures — "
-                        "rebuilding the wedged wake model (self-heal, no restart).",
-                        consecutive_fail,
-                    )
-                    try:
-                        recover()
-                    except Exception as exc:  # noqa: BLE001 — heal must never crash
-                        log.warning("rolling-whisper: model recover() failed: %s", exc)
-                consecutive_fail = 0
-            return consecutive_fail
+                _recover_wedged(
+                    f"{consecutive_fail} consecutive transcribe failures"
+                )
+            return failed
 
         try:
             while not stopped.is_set():
@@ -427,7 +447,33 @@ class RollingWhisperWake:
                 # without the flag (fakes, cloud STT) count as warm. The
                 # audio consumer keeps the rolling buffer live throughout.
                 if not getattr(self._stt, "is_warm", True):
-                    if (
+                    if rewarm_owed:
+                        # Mid-session self-heal: recover() just dropped the
+                        # model. Rebuild + prime it HERE, off the transcribe
+                        # timeout, so the next poll meets a hot model instead
+                        # of a cold load racing an 8 s deadline (the cascade).
+                        rewarm_owed = False
+                        warm = getattr(self._stt, "warm_up", None)
+                        if callable(warm):
+                            t_rewarm = time.time()
+                            log.info(
+                                "rolling-whisper: re-warming the rebuilt wake "
+                                "model off the poll path (mid-session self-heal)."
+                            )
+                            try:
+                                await asyncio.to_thread(warm)
+                                log.info(
+                                    "rolling-whisper: rebuilt wake model warm "
+                                    "in %.1f s — polling resumes.",
+                                    time.time() - t_rewarm,
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                log.warning(
+                                    "rolling-whisper: re-warm failed (%s) — "
+                                    "lazy load on the next poll.",
+                                    exc,
+                                )
+                    elif (
                         not fallback_warmed
                         and time.time() - warm_wait_t0 > self._warm_wait_fallback_s
                     ):

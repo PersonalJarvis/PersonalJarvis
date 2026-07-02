@@ -230,23 +230,35 @@ class CoordinateMapper:
         Input is clamped to the image so a slightly-out-of-range model
         estimate cannot escape the captured monitor. ``+0.5`` centers the
         mapping on the pixel so a 1:1 frame maps pixel N to pixel N.
+
+        The local offset is computed non-negative and floored BEFORE the
+        (possibly negative) capture origin is added — ``int()`` on a negative
+        float truncates toward zero and shifted every left-of-primary monitor
+        click by one unit toward the primary.
         """
         ix = min(max(float(ix), 0.0), float(self.image_width - 1))
         iy = min(max(float(iy), 0.0), float(self.image_height - 1))
-        sx = self.capture_left + (ix + 0.5) * self.capture_width / self.image_width
-        sy = self.capture_top + (iy + 0.5) * self.capture_height / self.image_height
-        return (int(sx), int(sy))
+        lx = int((ix + 0.5) * self.capture_width / self.image_width)
+        ly = int((iy + 0.5) * self.capture_height / self.image_height)
+        lx = min(lx, self.capture_width - 1)
+        ly = min(ly, self.capture_height - 1)
+        return (self.capture_left + lx, self.capture_top + ly)
 
     def normalized_to_screen(self, nx: float, ny: float) -> tuple[int, int]:
-        """Map a 0..1000 normalized coordinate (Gemini grid) to screen units."""
+        """Map a 0..1000 normalized coordinate (Gemini grid) to screen units.
+
+        Uses ``round`` on the local offset — the exact math the legacy engine
+        live-proved (norm 636 on the 3840px monitor at -3840 -> abs -1398) —
+        then adds the origin as an exact integer.
+        """
         nx = min(max(float(nx), 0.0), float(_NORM_MAX))
         ny = min(max(float(ny), 0.0), float(_NORM_MAX))
-        sx = self.capture_left + nx / _NORM_MAX * self.capture_width
-        sy = self.capture_top + ny / _NORM_MAX * self.capture_height
+        lx = round(nx / _NORM_MAX * self.capture_width)
+        ly = round(ny / _NORM_MAX * self.capture_height)
         # Clamp inside the capture rect (1000/1000 is the bottom-right EDGE).
-        sx = min(sx, self.capture_left + self.capture_width - 1)
-        sy = min(sy, self.capture_top + self.capture_height - 1)
-        return (int(sx), int(sy))
+        lx = min(lx, self.capture_width - 1)
+        ly = min(ly, self.capture_height - 1)
+        return (self.capture_left + lx, self.capture_top + ly)
 
     def model_to_screen(
         self, x: float, y: float, convention: CoordinateConvention,
