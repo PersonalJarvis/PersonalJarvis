@@ -2435,10 +2435,16 @@ class DesktopApp:
             def _wake_model_is_loaded() -> bool:
                 ww = getattr(pipeline, "_whisper_wake", None)
                 base_stt = getattr(ww, "_stt", None) if ww is not None else stt
-                return (
-                    base_stt is not None
-                    and getattr(base_stt, "_model", None) is not None
-                )
+                if base_stt is None:
+                    return False
+                # Prefer the provider's warm signal (model constructed AND
+                # primed) so the heavy-backend CPU storm starts only after the
+                # priming inference, not in the middle of it. Fall back to the
+                # raw model handle for providers without the flag.
+                warm = getattr(base_stt, "is_warm", None)
+                if warm is not None:
+                    return bool(warm)
+                return getattr(base_stt, "_model", None) is not None
 
             from jarvis.core import runtime_refs as _rr_ready
             if stt is None:

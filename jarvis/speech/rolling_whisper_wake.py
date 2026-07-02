@@ -201,9 +201,18 @@ class RollingWhisperWake:
         # the OWW prefix-verifier's _WAKE_VERIFY_TIMEOUT_S. Set high enough to
         # tolerate a slow/loaded CPU box (€5-VPS doctrine); <= 0 disables the cap.
         transcribe_timeout_s: float = 8.0,
+        # Boot serialisation (TTU forensic 2026-07-02): how long to wait for the
+        # provider's one-off warm-up (owned by the pipeline's deferred loader)
+        # before this loop warms the model itself as a fallback owner. Polling
+        # transcribe WHILE the model loads used to cascade: 8 s timeout ->
+        # TranscribeBusy -> self-heal recover() threw the half-loaded model away
+        # -> reload from scratch under the boot CPU storm (114.7 s for a ~4 s
+        # load). The poll phase therefore starts only on a warm model.
+        warm_wait_fallback_s: float = 20.0,
     ) -> None:
         self._stt = stt
         self._pattern = pattern
+        self._warm_wait_fallback_s = float(warm_wait_fallback_s)
         self._window_samples = int(window_s * sample_rate)
         self._poll_interval_s = poll_interval_s
         self._cooldown_s = cooldown_s
@@ -357,6 +366,45 @@ class RollingWhisperWake:
         # model rebuild (see _WEDGE_RECOVER_AFTER_FAILS) so a wedged local Whisper
         # can never leave the wake permanently dead.
         consecutive_fail = 0
+
+        # --- Boot serialisation: poll only a WARM model -------------------
+        # The pipeline's deferred loader owns the one-off model warm-up. Poking
+        # ``transcribe_pcm`` while that load is in flight used to cascade
+        # (timeout -> TranscribeBusy -> recover() threw the half-loaded model
+        # away -> reload under the boot storm; 114.7 s instead of ~4 s, TTU
+        # forensic 2026-07-02). Wait for ``is_warm``; if nobody warms the model
+        # within the fallback window (unusual wiring), own the warm-up HERE —
+        # exactly one loader either way. Providers without the flag (fakes,
+        # cloud STT) report warm immediately. The audio consumer keeps filling
+        # the rolling buffer during the wait, so no wake audio is lost.
+        warm_wait_t0 = time.time()
+        warm_wait_logged = False
+        while not stopped.is_set() and not getattr(self._stt, "is_warm", True):
+            if time.time() - warm_wait_t0 > self._warm_wait_fallback_s:
+                log.info(
+                    "rolling-whisper: wake model still cold after %.0f s — "
+                    "warming it from the poll loop (fallback owner).",
+                    self._warm_wait_fallback_s,
+                )
+                warm = getattr(self._stt, "warm_up", None)
+                if callable(warm):
+                    try:
+                        await asyncio.to_thread(warm)
+                    except Exception as exc:  # noqa: BLE001 — lazy load still works
+                        log.warning("rolling-whisper: fallback warm-up failed: %s", exc)
+                break
+            if not warm_wait_logged:
+                log.info(
+                    "rolling-whisper: waiting for the wake model warm-up before "
+                    "polling (buffer keeps filling)."
+                )
+                warm_wait_logged = True
+            await asyncio.sleep(0.25)
+        if warm_wait_logged:
+            log.info(
+                "rolling-whisper: wake model warm — polling starts (waited %.1f s).",
+                time.time() - warm_wait_t0,
+            )
 
         def _note_transcribe_fail() -> int:
             nonlocal consecutive_fail
