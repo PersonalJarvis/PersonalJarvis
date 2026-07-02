@@ -1612,12 +1612,33 @@ class DesktopApp:
                         "Heavy backend: wake-model gate timed out (12 s) — "
                         "starting the backend anyway."
                     )
+                # Hand the REAL app to the bootstrap BEFORE the heavy _init_*
+                # chain runs. Every route whose subsystem is still warming
+                # answers its documented 503/None placeholder (the WebServer
+                # ctor sets those up for exactly this contract), so the UI
+                # becomes INTERACTIVE — chat history (app.state.chat_store is
+                # set before this task), settings, WS — within seconds instead
+                # of every data request being HELD behind ~8-15 s of
+                # mission/wiki/session/channel init. TTI forensic 2026-07-02:
+                # the window served at 1.2 s but set_app happened at +16 s,
+                # which is the "Getting ready" wall the user actually sees.
+                bootstrap.set_app(server.app)
+                _db_mark("app_interactive")
+                if _bp:
+                    # Honest end-to-end anchor: the UI's data requests are now
+                    # answered — spawn -> app usable, same clock as BOOT_READY.
+                    print(
+                        "APP_INTERACTIVE_MS="
+                        f"{(time.perf_counter() - _bp_t0) * 1000.0:.1f}",
+                        flush=True,
+                    )
+                # The bootstrap owns the bound port for the process lifetime;
+                # the meta file only needs the API to answer, which set_app
+                # just made true.
+                _write_meta(self.cfg.ui.admin_api_port, os.getpid())
                 try:
                     await server.start(start_serving=False)
-                    bootstrap.set_app(server.app)
                     _db_mark("server_start")
-                    # The port is only really bound after start() succeeds.
-                    _write_meta(self.cfg.ui.admin_api_port, os.getpid())
                 except Exception as exc:  # noqa: BLE001 — never kill the backend loop
                     from loguru import logger as _slog
                     _slog.opt(exception=exc).error(
