@@ -155,6 +155,18 @@ def _ids(ids: list[str]) -> list[ModelInfo]:
 # single block (voice_de/voice_en/model), so the picker only renders on the
 # ACTIVE TTS card and sets the global value.
 TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
+    # ElevenLabs picks a VOICE ID (opaque hashes), so the curated list carries
+    # human names as labels while the value stays the id. The picker's
+    # "use custom" row lets a user paste their OWN voice id (e.g. a cloned
+    # voice) instead of a curated one — kept in sync with DEFAULT_VOICES in
+    # jarvis/plugins/tts/elevenlabs_tts.py.
+    "elevenlabs": ("voice", _curated([
+        ("onwK4e9ZLuTAKqWW03F9", "Daniel — British, authoritative (default)"),
+        ("JBFqnCBsd6RMkjVDRZzb", "George — British, deep narrator"),
+        ("IKne3meq5aSn9XLyUdCD", "Charlie — British, mature butler"),
+        ("nPczCjzI2devNBz1zQrb", "Brian — American, deep narrator"),
+        ("pNInz6obpgDQGcFmaJgB", "Adam — American, classic AI voice"),
+    ])),
     "gemini-flash-tts": ("voice", _ids([
         "Charon", "Kore", "Aoede", "Orus", "Iapetus",
         "Rasalgethi", "Algenib", "Algieba", "Fenrir",

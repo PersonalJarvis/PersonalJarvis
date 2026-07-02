@@ -45,6 +45,10 @@ from jarvis.plugins.stt.fwhisper import FasterWhisperProvider, TranscribeBusy
 # keep working. ``pattern=`` also accepts a ``WakeMatcher`` (duck-types
 # ``.search().group(0)``) so a custom wake phrase can drive this backstop.
 from jarvis.speech.wake_constants import JARVIS_WAKE_PATTERN as DEFAULT_PATTERN
+from jarvis.speech.wake_constants import (
+    STT_HALLUCINATION_RE,
+    normalize_phrase_for_match,
+)
 
 log = logging.getLogger("jarvis.wake.rolling")
 
@@ -271,6 +275,7 @@ class RollingWhisperWake:
         self._stat_rejected_no_match = 0
         self._stat_matched = 0
         self._stat_suppressed_cooldown = 0
+        self._stat_suppressed_echo = 0
 
     def stats(self) -> dict[str, int]:
         """Snapshot of this listen session's wake-evaluation counters.
@@ -293,7 +298,73 @@ class RollingWhisperWake:
             "rejected_no_match": self._stat_rejected_no_match,
             "matched": self._stat_matched,
             "suppressed_cooldown": self._stat_suppressed_cooldown,
+            "suppressed_echo": self._stat_suppressed_echo,
         }
+
+    async def _is_prompt_echo(
+        self, match: Any, window_text: str, pcm_bytes: bytes
+    ) -> bool:
+        """True when a matched candidate is the bias prompt ECHOING, not speech.
+
+        Ghost-activation forensic (live log 2026-07-02, five activations in
+        ~30 min with media audio in the room): the wake Whisper is primed with
+        ``initial_prompt="<phrase>"`` so the weak model resolves ambiguous
+        noise/breath windows to EXACTLY the primed text — transcript
+        ``'Hey Fable'`` at rms 0.0037, verbatim, no surrounding words. The
+        strict matcher cannot help: the text IS the full phrase. Removing the
+        bias is no fix either (recall collapses 100 % -> 62.5 %, measured).
+
+        The tell-tale is the ECHO SIGNATURE (the transcript consists of the
+        phrase and NOTHING else) — genuine speech usually carries context.
+        Such candidates get ONE unbiased second pass over the SAME window: an
+        unprimed ear hears *something* wherever real speech exists (even a
+        mis-hearing), but hears nothing — or a known hallucination
+        boilerplate — on the noise the primed model echoed over. Costs one
+        extra local transcribe only on exact-phrase candidates. Fail-open on
+        infrastructure errors: a broken confirm must never eat a real wake.
+        """
+        bias = getattr(self._stt, "bias_prompt", None)
+        if not bias:
+            return False  # unprimed model -> echoes are impossible
+        window_tokens = normalize_phrase_for_match(window_text)
+        matched_tokens = normalize_phrase_for_match(match.group(0))
+        if len(window_tokens) > len(matched_tokens):
+            return False  # real speech around the phrase -> not an echo
+        try:
+            timeout_s = self._transcribe_timeout_s
+            if timeout_s > 0:
+                async with asyncio.timeout(timeout_s):
+                    transcript = await self._stt.transcribe_pcm(
+                        pcm_bytes,
+                        language=self._language,
+                        ignore_initial_prompt=True,
+                    )
+            else:
+                transcript = await self._stt.transcribe_pcm(
+                    pcm_bytes,
+                    language=self._language,
+                    ignore_initial_prompt=True,
+                )
+        except TypeError:
+            return False  # provider has no unbiased pass -> legacy behaviour
+        except Exception as exc:  # noqa: BLE001 — fail-open, never eat a wake
+            log.warning(
+                "echo-confirm: unbiased pass failed (%s) — accepting the wake",
+                exc,
+            )
+            return False
+        unbiased = (transcript.text or "").strip()
+        if unbiased and STT_HALLUCINATION_RE.search(unbiased) is None:
+            log.info(
+                "echo-confirm: unprimed ear heard %r — genuine wake", unbiased[:60]
+            )
+            return False
+        log.info(
+            "echo-confirm: SUPPRESSED prompt echo — biased transcript was "
+            "exactly the phrase but the unprimed ear heard %r",
+            unbiased[:60],
+        )
+        return True
 
     async def detect(
         self, chunks: AsyncIterator[AudioChunk]
@@ -689,6 +760,13 @@ class RollingWhisperWake:
                 prev_tail_t = now
                 m = self._pattern.search(joined)
                 if m:
+                    # Bias-echo gate: a candidate whose transcript is EXACTLY
+                    # the primed phrase may be the initial_prompt echoing on
+                    # noise (ghost activations, live 2026-07-02). One unbiased
+                    # second pass over the same window separates the two.
+                    if await self._is_prompt_echo(m, text, pcm_bytes):
+                        self._stat_suppressed_echo += 1
+                        continue
                     self._stat_matched += 1
                     last_trigger_t = now
                     log.info(

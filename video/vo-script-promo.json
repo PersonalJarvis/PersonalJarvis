@@ -1,0 +1,72 @@
+{
+  "voice": "en-US-AndrewNeural",
+  "rate": "+6%",
+  "timing": {
+    "fps": 30,
+    "leadIn": 9,
+    "gap": 7,
+    "tail": 18,
+    "overlap": 14
+  },
+  "scenes": [
+    {
+      "id": "hook",
+      "lines": [
+        { "id": "hook_1", "kind": "narration", "text": "This is Personal Jarvis — a free, open-source AI assistant that lives on your own computer.", "tts": "This is Personal Jarvis. A free, open-source AI assistant that lives on your own computer." },
+        { "id": "hook_2", "kind": "narration", "text": "You talk to it. It talks back. And then it actually gets things done." }
+      ]
+    },
+    {
+      "id": "real_app",
+      "lines": [
+        { "id": "app_1", "kind": "narration", "text": "This is the real desktop app — chats, agents, skills, a knowledge wiki." },
+        { "id": "app_2", "kind": "narration", "text": "And every result lands in one Outputs folder, ready to use." }
+      ]
+    },
+    {
+      "id": "voice",
+      "lines": [
+        { "id": "voice_1", "kind": "narration", "text": "Everything starts with your voice. Say your wake word, and just ask." },
+        { "id": "voice_2", "kind": "narration", "text": "Jarvis answers in under a second — completely hands-free." }
+      ]
+    },
+    {
+      "id": "agents",
+      "lines": [
+        { "id": "agents_1", "kind": "narration", "text": "Ask for something big, and Jarvis sends real background agents — like Claude Code — to do the work." },
+        { "id": "agents_2", "kind": "narration", "text": "Each mission runs isolated, and a critic reviews every result before you ever hear it." }
+      ]
+    },
+    {
+      "id": "memory",
+      "lines": [
+        { "id": "memory_1", "kind": "narration", "text": "It remembers, too. People, projects, promises — everything is written into a local knowledge wiki." },
+        { "id": "memory_2", "kind": "narration", "text": "Plain markdown files on your disk — you can even open them in Obsidian." }
+      ]
+    },
+    {
+      "id": "private",
+      "lines": [
+        { "id": "private_1", "kind": "narration", "text": "And it's private by design." },
+        { "id": "private_2", "kind": "narration", "text": "The wake word and speech recognition can run fully local — your audio never has to leave the machine." },
+        { "id": "private_3", "kind": "narration", "text": "No account. No telemetry. Your files stay yours." }
+      ]
+    },
+    {
+      "id": "providers",
+      "lines": [
+        { "id": "prov_1", "kind": "narration", "text": "You bring your own keys — or a subscription you already pay for." },
+        { "id": "prov_2", "kind": "narration", "text": "Gemini, Claude, OpenAI, OpenRouter — pick any brain, switch anytime, never get locked in." }
+      ]
+    },
+    {
+      "id": "outro",
+      "extra": 24,
+      "lines": [
+        { "id": "outro_1", "kind": "narration", "text": "Personal Jarvis. Free and open source." },
+        { "id": "outro_2", "kind": "narration", "text": "It runs on Windows, macOS, and Linux — even on a five-euro server." },
+        { "id": "outro_3", "kind": "narration", "text": "The link is right below. Come say hey." }
+      ]
+    }
+  ]
+}

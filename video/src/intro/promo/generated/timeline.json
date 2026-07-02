@@ -1,0 +1,291 @@
+{
+  "fps": 30,
+  "overlap": 14,
+  "totalFrames": 2605,
+  "scenes": [
+    {
+      "id": "hook",
+      "dur": 314,
+      "lines": [
+        {
+          "id": "hook_1",
+          "kind": "narration",
+          "text": "This is Personal Jarvis — a free, open-source AI assistant that lives on your own computer.",
+          "file": "vo-promo/hook_1.mp3",
+          "localStart": 9,
+          "dur": 167
+        },
+        {
+          "id": "hook_2",
+          "kind": "narration",
+          "text": "You talk to it. It talks back. And then it actually gets things done.",
+          "file": "vo-promo/hook_2.mp3",
+          "localStart": 183,
+          "dur": 113
+        }
+      ]
+    },
+    {
+      "id": "real_app",
+      "dur": 309,
+      "lines": [
+        {
+          "id": "app_1",
+          "kind": "narration",
+          "text": "This is the real desktop app — chats, agents, skills, a knowledge wiki.",
+          "file": "vo-promo/app_1.mp3",
+          "localStart": 9,
+          "dur": 160
+        },
+        {
+          "id": "app_2",
+          "kind": "narration",
+          "text": "And every result lands in one Outputs folder, ready to use.",
+          "file": "vo-promo/app_2.mp3",
+          "localStart": 176,
+          "dur": 115
+        }
+      ]
+    },
+    {
+      "id": "voice",
+      "dur": 257,
+      "lines": [
+        {
+          "id": "voice_1",
+          "kind": "narration",
+          "text": "Everything starts with your voice. Say your wake word, and just ask.",
+          "file": "vo-promo/voice_1.mp3",
+          "localStart": 9,
+          "dur": 120
+        },
+        {
+          "id": "voice_2",
+          "kind": "narration",
+          "text": "Jarvis answers in under a second — completely hands-free.",
+          "file": "vo-promo/voice_2.mp3",
+          "localStart": 136,
+          "dur": 103
+        }
+      ]
+    },
+    {
+      "id": "agents",
+      "dur": 369,
+      "lines": [
+        {
+          "id": "agents_1",
+          "kind": "narration",
+          "text": "Ask for something big, and Jarvis sends real background agents — like Claude Code — to do the work.",
+          "file": "vo-promo/agents_1.mp3",
+          "localStart": 9,
+          "dur": 178
+        },
+        {
+          "id": "agents_2",
+          "kind": "narration",
+          "text": "Each mission runs isolated, and a critic reviews every result before you ever hear it.",
+          "file": "vo-promo/agents_2.mp3",
+          "localStart": 194,
+          "dur": 157
+        }
+      ]
+    },
+    {
+      "id": "memory",
+      "dur": 353,
+      "lines": [
+        {
+          "id": "memory_1",
+          "kind": "narration",
+          "text": "It remembers, too. People, projects, promises — everything is written into a local knowledge wiki.",
+          "file": "vo-promo/memory_1.mp3",
+          "localStart": 9,
+          "dur": 202
+        },
+        {
+          "id": "memory_2",
+          "kind": "narration",
+          "text": "Plain markdown files on your disk — you can even open them in Obsidian.",
+          "file": "vo-promo/memory_2.mp3",
+          "localStart": 218,
+          "dur": 117
+        }
+      ]
+    },
+    {
+      "id": "private",
+      "dur": 369,
+      "lines": [
+        {
+          "id": "private_1",
+          "kind": "narration",
+          "text": "And it's private by design.",
+          "file": "vo-promo/private_1.mp3",
+          "localStart": 9,
+          "dur": 49
+        },
+        {
+          "id": "private_2",
+          "kind": "narration",
+          "text": "The wake word and speech recognition can run fully local — your audio never has to leave the machine.",
+          "file": "vo-promo/private_2.mp3",
+          "localStart": 65,
+          "dur": 180
+        },
+        {
+          "id": "private_3",
+          "kind": "narration",
+          "text": "No account. No telemetry. Your files stay yours.",
+          "file": "vo-promo/private_3.mp3",
+          "localStart": 252,
+          "dur": 99
+        }
+      ]
+    },
+    {
+      "id": "providers",
+      "dur": 353,
+      "lines": [
+        {
+          "id": "prov_1",
+          "kind": "narration",
+          "text": "You bring your own keys — or a subscription you already pay for.",
+          "file": "vo-promo/prov_1.mp3",
+          "localStart": 9,
+          "dur": 109
+        },
+        {
+          "id": "prov_2",
+          "kind": "narration",
+          "text": "Gemini, Claude, OpenAI, OpenRouter — pick any brain, switch anytime, never get locked in.",
+          "file": "vo-promo/prov_2.mp3",
+          "localStart": 125,
+          "dur": 210
+        }
+      ]
+    },
+    {
+      "id": "outro",
+      "dur": 379,
+      "lines": [
+        {
+          "id": "outro_1",
+          "kind": "narration",
+          "text": "Personal Jarvis. Free and open source.",
+          "file": "vo-promo/outro_1.mp3",
+          "localStart": 9,
+          "dur": 89
+        },
+        {
+          "id": "outro_2",
+          "kind": "narration",
+          "text": "It runs on Windows, macOS, and Linux — even on a five-euro server.",
+          "file": "vo-promo/outro_2.mp3",
+          "localStart": 105,
+          "dur": 150
+        },
+        {
+          "id": "outro_3",
+          "kind": "narration",
+          "text": "The link is right below. Come say hey.",
+          "file": "vo-promo/outro_3.mp3",
+          "localStart": 262,
+          "dur": 75
+        }
+      ]
+    }
+  ],
+  "audio": [
+    {
+      "file": "vo-promo/hook_1.mp3",
+      "from": 9,
+      "dur": 167
+    },
+    {
+      "file": "vo-promo/hook_2.mp3",
+      "from": 183,
+      "dur": 113
+    },
+    {
+      "file": "vo-promo/app_1.mp3",
+      "from": 309,
+      "dur": 160
+    },
+    {
+      "file": "vo-promo/app_2.mp3",
+      "from": 476,
+      "dur": 115
+    },
+    {
+      "file": "vo-promo/voice_1.mp3",
+      "from": 604,
+      "dur": 120
+    },
+    {
+      "file": "vo-promo/voice_2.mp3",
+      "from": 731,
+      "dur": 103
+    },
+    {
+      "file": "vo-promo/agents_1.mp3",
+      "from": 847,
+      "dur": 178
+    },
+    {
+      "file": "vo-promo/agents_2.mp3",
+      "from": 1032,
+      "dur": 157
+    },
+    {
+      "file": "vo-promo/memory_1.mp3",
+      "from": 1202,
+      "dur": 202
+    },
+    {
+      "file": "vo-promo/memory_2.mp3",
+      "from": 1411,
+      "dur": 117
+    },
+    {
+      "file": "vo-promo/private_1.mp3",
+      "from": 1541,
+      "dur": 49
+    },
+    {
+      "file": "vo-promo/private_2.mp3",
+      "from": 1597,
+      "dur": 180
+    },
+    {
+      "file": "vo-promo/private_3.mp3",
+      "from": 1784,
+      "dur": 99
+    },
+    {
+      "file": "vo-promo/prov_1.mp3",
+      "from": 1896,
+      "dur": 109
+    },
+    {
+      "file": "vo-promo/prov_2.mp3",
+      "from": 2012,
+      "dur": 210
+    },
+    {
+      "file": "vo-promo/outro_1.mp3",
+      "from": 2235,
+      "dur": 89
+    },
+    {
+      "file": "vo-promo/outro_2.mp3",
+      "from": 2331,
+      "dur": 150
+    },
+    {
+      "file": "vo-promo/outro_3.mp3",
+      "from": 2488,
+      "dur": 75
+    }
+  ]
+}
