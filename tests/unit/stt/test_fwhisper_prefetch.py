@@ -143,6 +143,85 @@ def test_in_flight_prefetch_is_awaited_not_double_loaded(monkeypatch) -> None:
     assert len(loads) == 1, "consumer must wait for the in-flight load, not duplicate it"
 
 
+class _PrimableModel:
+    """Fake WhisperModel that counts priming transcribes."""
+
+    def __init__(self) -> None:
+        self.transcribes = 0
+
+    def transcribe(self, audio, **kwargs):  # noqa: ANN001, ANN003
+        self.transcribes += 1
+        return iter(()), None
+
+
+def test_prefetch_primes_and_warmup_skips_second_prime(monkeypatch) -> None:
+    """TTU iteration 11: the prefetch thread primes the engine too, so
+    ``warm_up`` adopts a READY model and must not re-pay the priming
+    inference on the usable path."""
+    fake = _PrimableModel()
+    monkeypatch.setattr(fw, "_new_whisper_model", lambda *a, **k: fake)
+    assert prefetch_model("base", "cpu", "int8", 2) is True
+    assert fake.transcribes == 1, "prefetch must prime once"
+
+    p = _provider()
+    provider_primes: list[int] = []
+    monkeypatch.setattr(
+        p, "_transcribe_sync", lambda *a, **k: provider_primes.append(1)
+    )
+    p.warm_up()
+    assert p._model is fake
+    assert p.is_warm is True
+    assert provider_primes == [], "warm_up must skip the second prime"
+    assert fake.transcribes == 1
+
+
+def test_unprimed_adoption_still_primes_in_warmup(monkeypatch) -> None:
+    """A prefetch whose priming failed hands over the loaded engine; warm_up
+    then primes it itself — readiness is never faked."""
+    unprimable = object()  # no .transcribe -> prefetch priming fails
+    monkeypatch.setattr(fw, "_new_whisper_model", lambda *a, **k: unprimable)
+    assert prefetch_model("base", "cpu", "int8", 2) is True
+
+    p = _provider()
+    provider_primes: list[int] = []
+    monkeypatch.setattr(
+        p, "_transcribe_sync", lambda *a, **k: provider_primes.append(1)
+    )
+    p.warm_up()
+    assert p._model is unprimable
+    assert provider_primes == [1], "warm_up must prime an unprimed adoption"
+    assert p.is_warm is True
+
+
+def test_recover_resets_the_primed_shortcut(monkeypatch) -> None:
+    """After recover() the next warm_up must load AND prime fresh — it may
+    never inherit the primed shortcut from a dropped (possibly wedged)
+    engine (AP-24)."""
+    fake = _PrimableModel()
+    fresh = object()
+    loads: list[int] = []
+
+    def _new(*a, **k):  # noqa: ANN002, ANN003
+        loads.append(1)
+        return fake if len(loads) == 1 else fresh
+
+    monkeypatch.setattr(fw, "_new_whisper_model", _new)
+    prefetch_model("base", "cpu", "int8", 2)
+
+    p = _provider()
+    p.warm_up()
+    assert p._adopted_primed is True
+    p.recover()
+    assert p._adopted_primed is False
+    provider_primes: list[int] = []
+    monkeypatch.setattr(
+        p, "_transcribe_sync", lambda *a, **k: provider_primes.append(1)
+    )
+    p.warm_up()
+    assert p._model is fresh
+    assert provider_primes == [1], "post-recover warm_up must prime fresh"
+
+
 def test_second_prefetch_call_is_noop(monkeypatch) -> None:
     loads: list[int] = []
     monkeypatch.setattr(

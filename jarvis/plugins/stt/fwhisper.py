@@ -313,6 +313,10 @@ class FasterWhisperProvider:
         # scratch — a load cascade that turned a ~4 s model load into 114.7 s
         # on the boot path (TTU forensic 2026-07-02).
         self._warm = False
+        # True when _ensure_model adopted a boot-prefetched engine that was
+        # ALREADY primed in the prefetch thread — warm_up then skips its own
+        # priming inference (TTU iteration 11). Reset by recover().
+        self._adopted_primed = False
 
     @property
     def is_warm(self) -> bool:
@@ -345,10 +349,12 @@ class FasterWhisperProvider:
             with _PREFETCH_LOCK:
                 prefetched = _PREFETCHED_MODELS.pop(key, None)
             if prefetched is not None:
-                self._model = prefetched
+                model, primed = prefetched
+                self._model = model
+                self._adopted_primed = bool(primed)
                 log.info(
-                    "Adopted boot-prefetched Whisper model (%s/%s/%s).",
-                    model_name, device, compute_type,
+                    "Adopted boot-prefetched Whisper model (%s/%s/%s, primed=%s).",
+                    model_name, device, compute_type, primed,
                 )
                 return
         try:
@@ -393,6 +399,9 @@ class FasterWhisperProvider:
         self._model = None
         self._infer_lock = threading.Lock()
         self._warm = False
+        self._adopted_primed = False
+        # (recover() drops a wedged engine; the next _ensure_model must load
+        # and prime FRESH — never inherit the primed shortcut, AP-24.)
 
     def warm_up(self) -> None:
         """Prime the engine with one throwaway inference so the FIRST live
@@ -416,6 +425,12 @@ class FasterWhisperProvider:
         on the first real transcribe), so priming never breaks boot.
         """
         self._ensure_model()
+        if self._adopted_primed:
+            # The boot prefetch already primed this exact engine off the
+            # critical path (TTU iteration 11) — a second priming inference
+            # here would just re-pay ~1-2 s on the usable path.
+            self._warm = True
+            return
         try:
             # ~1 s of very low-amplitude noise: enough signal to exercise the
             # full encoder + decoder/beam kernels (pure zeros can early-exit on
