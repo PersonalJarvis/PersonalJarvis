@@ -67,6 +67,26 @@ a browser UI to a full desktop with a tray app, an Orb overlay, and global-hotke
   browser's mic and speakers, or a full voice-and-overlay desktop. Local-hardware features
   are opt-in extras that degrade gracefully when they're absent.
 
+## Requirements
+
+You need exactly **two** things on your machine before you install. The installer checks for
+both up front and stops with a download link if either is missing — nothing else is mandatory.
+
+| Required | Version | Why it's needed |
+|---|---|---|
+| **Python** | 3.11 or newer | The application runs on Python. |
+| **Git** | any recent release | Fetches the project and runs background missions in isolated worktrees. |
+
+Everything below is **optional** — each item only unlocks a specific feature, and Personal
+Jarvis runs without it:
+
+| Optional | Unlocks |
+|---|---|
+| A provider **API key or subscription login** — Gemini, Claude, OpenAI, or OpenRouter | Actually talking to a brain. Bring your own; nothing is bundled. The first-run wizard sets it up and stores it in your OS credential manager. |
+| **Node.js** 18+ | The agent CLIs the worker delegates heavy tasks to (Claude Code, Codex) and a few Node-based marketplace integrations. |
+| **libportaudio** *(Linux only)* | Local microphone and speakers (`apt install libportaudio2`). Not needed for the headless / browser-audio path. |
+| A **GPU** + the `--with-voice-local` flag | Fully offline speech — local wake word, speech-to-text, and text-to-speech. Cloud speech needs none of this. |
+
 ## Install
 
 One command on **Windows, macOS, or Linux** — no Docker, no Python-version archaeology. It
