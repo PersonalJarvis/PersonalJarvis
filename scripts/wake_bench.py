@@ -232,7 +232,28 @@ async def run_window_case(
         min_confidence=MIN_WAKE_CONFIDENCE,
         max_no_speech_prob=MAX_NO_SPEECH_PROB,
     )
-    res.matched = res.reliable and matcher.search(res.text) is not None
+    m = matcher.search(res.text) if res.reliable else None
+    res.matched = m is not None
+    # Replicate the production bias-echo gate (2026-07-02): an exact-phrase
+    # candidate on a primed model gets one unbiased confirm pass.
+    if res.matched and getattr(stt, "bias_prompt", None):
+        from jarvis.speech.wake_constants import (
+            STT_HALLUCINATION_RE,
+            normalize_phrase_for_match,
+        )
+
+        if len(normalize_phrase_for_match(res.text)) <= len(
+            normalize_phrase_for_match(m.group(0))
+        ):
+            try:
+                t2 = await stt.transcribe_pcm(
+                    pcm, language=language, ignore_initial_prompt=True
+                )
+                unbiased = (t2.text or "").strip()
+                if not unbiased or STT_HALLUCINATION_RE.search(unbiased):
+                    res.matched = False  # suppressed as prompt echo
+            except TypeError:
+                pass  # provider without the unbiased pass — legacy behaviour
     return res
 
 
