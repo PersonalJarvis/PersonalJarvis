@@ -54,11 +54,11 @@ JARVIS_WAKE_PATTERN = re.compile(
 STT_HALLUCINATION_RE = re.compile(
     r"\b("
     r"im\s+auftrag\s+des|"
-    r"untertitel\s+(von|der|im\s+auftrag)|"
+    r"untertitel\s+(von|der|im\s+auftrag)|"  # i18n-allow: German Whisper-noise STT vocabulary
     r"untertitelung\s+des\s+(zdf|wdr|ndr|swr|br|ard|arte)"
-    r"(\s+(fuer|für|fur)\s+funk)?(\s*,?\s*\d{4})?|"
+    r"(\s+(fuer|für|fur)\s+funk)?(\s*,?\s*\d{4})?|"  # i18n-allow: German Whisper-noise STT vocabulary
     r"(eine\s+)?(sendung|produktion|redaktion|programm)\s+"
-    r"(des|der|von)\s+(zdf|wdr|ndr|swr|br|ard|arte)"
+    r"(des|der|von)\s+(zdf|wdr|ndr|swr|br|ard|arte)"  # i18n-allow: German Whisper-noise STT vocabulary
     r"(\s*,?\s*\d{4})?|"
     r"(zdf|wdr|ndr|swr|br|ard|arte)\s+"
     r"(fernsehen|mediagroup|rundfunk)(\s*,?\s*\d{4})?|"
