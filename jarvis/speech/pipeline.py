@@ -608,34 +608,11 @@ WAKE_ONLY_RE = re.compile(
     re.IGNORECASE,
 )
 
-# STT-Halluzinations-Marker: typische YouTube-Endcards, Werbe-Outros,
-# Copyright-Strings die Whisper bei leerem Mic oder Speaker-Leak
-# manchmal "halluziniert". Blockiert vor dem Brain-Call.
-_STT_HALLUCINATION_RE = re.compile(
-    r"\b("
-    r"im\s+auftrag\s+des|"
-    r"untertitel\s+(von|der|im\s+auftrag)|"
-    r"untertitelung\s+des\s+(zdf|wdr|ndr|swr|br|ard|arte)"
-    r"(\s+(fuer|für|fur)\s+funk)?(\s*,?\s*\d{4})?|"
-    r"(eine\s+)?(sendung|produktion|redaktion|programm)\s+"
-    r"(des|der|von)\s+(zdf|wdr|ndr|swr|br|ard|arte)"
-    r"(\s*,?\s*\d{4})?|"
-    r"(zdf|wdr|ndr|swr|br|ard|arte)\s+"
-    r"(fernsehen|mediagroup|rundfunk)(\s*,?\s*\d{4})?|"
-    r"(norddeutscher|westdeutscher|bayerischer)\s+rundfunk|"
-    r"mediagroup|"
-    r"abonnier(e|t|en)?\s+(den|meinen)\s+kanal|"
-    r"thanks\s+for\s+watching|"
-    r"thank\s+you|"
-    r"vielen\s+dank|"
-    r"mm-?hmm|"
-    r"please\s+subscribe|"
-    r"copyright\s+\d{4}|"
-    r"all\s+rights\s+reserved|"
-    r"www\.|https?://"
-    r")\b",
-    re.IGNORECASE,
-)
+# STT hallucination markers (YouTube end cards, ad outros, copyright strings
+# Whisper emits on an empty mic / speaker leak). Blocked before the brain
+# call. Single definition lives in wake_constants (the rolling wake's
+# bias-echo confirm consumes the same list — BUG-008 drift rule).
+_STT_HALLUCINATION_RE = wake_constants_module.STT_HALLUCINATION_RE
 
 # Paraphrase-Prefixes die Gemini/Claude bei Unsicherheit voranstellen.
 # Werden als Post-Processing vor dem TTS abgeschnitten.
