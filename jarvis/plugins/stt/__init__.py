@@ -27,6 +27,9 @@ ENTRY_POINT_GROUP = "jarvis.stt"
 # left untouched (unknown / third-party entry-points cannot be probed).
 _STT_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
     "groq-api": (("groq_api_key", "GROQ_API_KEY"),),
+    # OpenRouter STT reuses the SAME key slot as the OpenRouter brain, so a user
+    # who configured OpenRouter for chat gets cloud STT for free.
+    "openrouter": (("openrouter_api_key", "OPENROUTER_API_KEY"),),
     "openai-api": (("openai_api_key", "OPENAI_API_KEY"),),
     "deepgram": (("deepgram_api_key", "DEEPGRAM_API_KEY"),),
     "deepgram-flux": (("deepgram_api_key", "DEEPGRAM_API_KEY"),),
