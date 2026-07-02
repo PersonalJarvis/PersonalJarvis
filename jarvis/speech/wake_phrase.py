@@ -65,6 +65,27 @@ def sensitivity_to_threshold(sensitivity: float) -> float:
     return PRODUCTION_WAKE_THRESHOLD + span * ((s - 0.5) / 0.5)
 
 
+# stt_match responsiveness: the openWakeWord threshold above is meaningless for
+# the local-Whisper transcript path (it does not score against a threshold), so
+# a custom-phrase user moving the Sensitivity slider felt NOTHING. Map the same
+# 0..1 slider onto how OFTEN that path re-transcribes the rolling window: a
+# higher sensitivity polls more often, so a spoken wake is picked up sooner.
+_POLL_INTERVAL_SLOW = 0.20   # sensitivity 0.0 — calmest, least CPU
+_POLL_INTERVAL_FAST = 0.08   # sensitivity 1.0 — snappiest reaction
+
+
+def sensitivity_to_poll_interval(sensitivity: float) -> float:
+    """Map a 0..1 sensitivity onto the stt_match wake poll interval (seconds).
+
+    Linear: 0.0 -> 0.20 s (calm), 1.0 -> 0.08 s (snappy). Higher sensitivity =>
+    shorter interval => the wake word is noticed sooner. This is the slider's
+    *felt* effect on the transcript-match path; the heavy latency win (skipping
+    the second confirming transcription on a clearly-loud wake) is unconditional.
+    """
+    s = max(0.0, min(1.0, float(sensitivity)))
+    return _POLL_INTERVAL_SLOW + (_POLL_INTERVAL_FAST - _POLL_INTERVAL_SLOW) * s
+
+
 class _FuzzyMatch:
     """Minimal ``re.Match`` stand-in: only ``.group(0)`` is contracted."""
 
@@ -462,5 +483,6 @@ __all__ = [
     "compile_wake_matcher",
     "custom_model_matches_phrase",
     "resolve_wake_plan",
+    "sensitivity_to_poll_interval",
     "sensitivity_to_threshold",
 ]

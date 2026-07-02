@@ -1096,12 +1096,15 @@ class SpeechPipeline:
         # When a wake_plan is set, its matcher drives the phrase match so a
         # custom phrase ("Computer") is detected instead of "jarvis".
         if enable_whisper_wake and self._stt is not None:
+            _poll = self._wake_poll_interval()
             if self._wake_matcher is not None:
                 self._whisper_wake = RollingWhisperWake(
-                    self._stt, pattern=self._wake_matcher
+                    self._stt, pattern=self._wake_matcher, poll_interval_s=_poll
                 )
             else:
-                self._whisper_wake = RollingWhisperWake(self._stt)
+                self._whisper_wake = RollingWhisperWake(
+                    self._stt, poll_interval_s=_poll
+                )
         else:
             self._whisper_wake = None
         # require_hey_prefix may arrive either as an explicit kwarg or from
@@ -1570,6 +1573,22 @@ class SpeechPipeline:
         if callable(setter):
             setter(int(ms))
 
+    def _wake_poll_interval(self) -> float:
+        """The stt_match wake poll interval, derived from the user's Sensitivity
+        slider (``[trigger.wake_word].sensitivity``). Higher sensitivity polls
+        more often, so a spoken wake is picked up sooner. Defensive: any missing
+        field falls back to the balanced default. This is what makes the slider
+        actually DO something on the local-Whisper transcript path (it never
+        scored against the openWakeWord threshold the slider used to feed)."""
+        from jarvis.speech.wake_phrase import sensitivity_to_poll_interval
+
+        ww = getattr(getattr(self, "_config", None), "trigger", None)
+        ww = getattr(ww, "wake_word", None)
+        try:
+            return sensitivity_to_poll_interval(getattr(ww, "sensitivity", 0.5))
+        except (TypeError, ValueError):
+            return sensitivity_to_poll_interval(0.5)
+
     def set_wake_plan(self, plan: Any) -> None:
         """Live-apply a resolved WakeWordPlan — no app/pipeline restart.
 
@@ -1642,7 +1661,9 @@ class SpeechPipeline:
             if self._stt is not None:
                 self._openwakeword_enabled = False
                 self._whisper_wake = RollingWhisperWake(
-                    self._stt, pattern=self._wake_matcher
+                    self._stt,
+                    pattern=self._wake_matcher,
+                    poll_interval_s=self._wake_poll_interval(),
                 )
                 self._whisper_wake_enabled = True
             else:

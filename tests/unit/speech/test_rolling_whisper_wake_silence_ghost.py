@@ -185,6 +185,26 @@ async def test_confirm_error_does_not_drop_a_loud_wake() -> None:
     assert await _first_yield(stt, _chunk(12000), phrase="Hey Mythos") is not None
 
 
+async def test_loud_wake_skips_the_confirm_for_low_latency() -> None:
+    """LATENCY: a clearly-loud wake (real speaking volume) must fire WITHOUT the
+    ~0.5s second confirming transcription — the confirm is a borderline-band
+    tool and the energy gate already rules out silence. If the confirm ran here,
+    the empty unbiased transcript would SUPPRESS; it fires, and the unbiased
+    pass is never called. This is what takes a normal wake from ~2s to ~0.5s."""
+    stt = _BiasedSTT(biased="Hey Nico", unbiased="")
+    assert await _first_yield(stt, _chunk(12000)) is not None
+    assert stt.unbiased_calls == 0, "confirm ran on a clearly-loud wake (latency cost)"
+
+
+async def test_borderline_quiet_wake_still_runs_the_confirm() -> None:
+    """Below the loud-skip bar the confirm still guards silence: a borderline
+    exact-phrase candidate (rms ~0.012, above the energy gate, below the loud
+    bar) whose unprimed ear hears nothing is suppressed."""
+    stt = _BiasedSTT(biased="Hey Nico", unbiased="")
+    assert await _first_yield(stt, _chunk(400)) is None
+    assert stt.unbiased_calls >= 1, "confirm was skipped on a borderline window"
+
+
 async def test_genuine_quiet_wake_still_fires() -> None:
     """Regression guard: a genuine quiet wake (rms ~0.009, the quiet-mic
     contract level) whose unprimed ear also hears speech must still fire — the
