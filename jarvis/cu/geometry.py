@@ -273,12 +273,18 @@ class CoordinateMapper:
     # -- screen space -> image space ------------------------------------
 
     def screen_to_image(self, sx: float, sy: float) -> tuple[int, int]:
-        """Inverse mapping, clamped to the image (for verification crops)."""
-        ix = (float(sx) - self.capture_left) * self.image_width / self.capture_width
-        iy = (float(sy) - self.capture_top) * self.image_height / self.capture_height
-        ix = min(max(ix, 0.0), float(self.image_width - 1))
-        iy = min(max(iy, 0.0), float(self.image_height - 1))
-        return (int(ix), int(iy))
+        """Inverse mapping, clamped to the image (for verification crops).
+
+        The local offset is clamped non-negative before flooring, so negative
+        capture origins never truncate toward zero.
+        """
+        lx = max(0.0, float(sx) - self.capture_left)
+        ly = max(0.0, float(sy) - self.capture_top)
+        ix = int(lx * self.image_width / self.capture_width)
+        iy = int(ly * self.image_height / self.capture_height)
+        ix = min(ix, self.image_width - 1)
+        iy = min(iy, self.image_height - 1)
+        return (ix, iy)
 
     # -- helpers ----------------------------------------------------------
 
