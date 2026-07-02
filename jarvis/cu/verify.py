@@ -181,7 +181,9 @@ def clickable_labels(nodes: tuple, max_n: int = 28) -> list[str]:
     return names
 
 
-def clickable_rects(nodes: tuple, max_n: int = 200) -> list[tuple[str, str, tuple[int, int, int, int]]]:
+def clickable_rects(
+    nodes: tuple, max_n: int = 200,
+) -> list[tuple[str, str, tuple[int, int, int, int]]]:
     """Enabled clickable elements WITH their bounding rects, as
     ``(name, role, (x, y, w, h))`` in screen input units.
 

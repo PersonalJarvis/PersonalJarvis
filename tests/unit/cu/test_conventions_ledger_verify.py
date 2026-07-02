@@ -224,6 +224,44 @@ def test_clickable_labels_filters_roles_and_dedupes():
     assert clickable_labels(nodes) == ["OK", "File"]
 
 
+def test_snap_point_to_element_smallest_containing_rect_wins():
+    from jarvis.cu.verify import snap_point_to_element
+
+    clickables = [
+        ("Panel", "Button", (0, 0, 800, 600)),      # container-sized: capped
+        ("Row", "ListItem", (100, 100, 400, 40)),
+        ("Star", "Button", (480, 110, 24, 24)),     # smallest leaf
+    ]
+    # Point inside BOTH the row and the star -> the star's center wins.
+    hit = snap_point_to_element(490, 120, clickables, capture_area=1920 * 1080)
+    assert hit == (492, 122, "Star")
+    # Point only inside the row -> row center.
+    hit = snap_point_to_element(150, 120, clickables, capture_area=1920 * 1080)
+    assert hit == (300, 120, "Row")
+    # Point in dead space -> no snap.
+    assert snap_point_to_element(700, 500, clickables, capture_area=1920 * 1080) is None
+    # Container trap: the panel is > 15% of a small capture -> never snaps.
+    assert snap_point_to_element(700, 500, [("Panel", "Button", (0, 0, 800, 600))],
+                                 capture_area=800 * 600) is None
+
+
+def test_clickable_rects_keeps_nameless_elements_and_valid_bounds():
+    from jarvis.cu.verify import clickable_rects
+
+    nodes = (
+        _node(role="Button", name="", enabled=True, bounds=(10, 10, 30, 20)),
+        _node(role="Button", name="Zero", bounds=(0, 0, 0, 0)),      # degenerate
+        _node(role="Slider", name="Vol", bounds=(5, 5, 50, 10)),     # not clickable role
+        _node(role="MenuItem", name="File", bounds=(50, 0, 40, 18)),
+        _node(role="Button", name="Off", enabled=False, bounds=(1, 1, 5, 5)),
+    )
+    rects = clickable_rects(nodes)
+    assert ("", "Button", (10, 10, 30, 20)) in rects
+    assert ("File", "MenuItem", (50, 0, 40, 18)) in rects
+    assert all(name != "Zero" for name, _, _ in rects)
+    assert all(name != "Off" for name, _, _ in rects)
+
+
 def test_regions_equal_tristate():
     a = ((4, 4), b"\x01" * 48)
     b = ((4, 4), b"\x01" * 48)

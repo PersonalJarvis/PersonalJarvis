@@ -89,6 +89,7 @@ def patched(monkeypatch, tmp_path):
         typed_lands=True,
         region_changes_after_click=True,
         clicks_seen=0,
+        clickables=[],
     )
 
     def fake_select_capture_target(
@@ -114,7 +115,7 @@ def patched(monkeypatch, tmp_path):
         return _solid(state.screen_shade)
 
     async def fake_snapshot(*a, **kw):
-        return [], "", None
+        return [], "", None, state.clickables
 
     async def fake_verify_typed(text):
         return state.typed_lands
@@ -232,6 +233,7 @@ async def test_missed_click_no_visible_change_is_reported_as_failure(patched):
     patched.region_changes_after_click = False   # click voids: nothing changes
     brain = FakeBrain([
         '{"action": "click", "x": 500, "y": 500, "target": "button"}',
+        '{"found": false}',   # the zoom-refine probe finds nothing either
         '{"action": "fail", "reason": "the button does not react"}',
     ])
     executor = FakeExecutor()
@@ -288,9 +290,59 @@ async def test_tool_failures_exhaust_consecutive_budget(patched):
     assert final.exit_code in (5, 8)
 
 
+async def test_click_is_anchored_to_containing_element_center(patched):
+    # Model points a few px off inside a small button whose center is
+    # (145, 87): the dispatched click must hit the CENTER, not the estimate.
+    patched.clickables = [("Send", "Button", (130, 80, 30, 14))]
+    brain = FakeBrain([
+        # norm (740, 787) on the 192x108 monitor -> raw point (142, 85).
+        '{"action": "click", "x": 740, "y": 787, "target": "Send"}',
+        '{"action": "done", "reason": "sent"}',
+        '{"done": true, "proof": "the message shows as sent"}',
+    ])
+    executor = FakeExecutor()
+    chunks = await _run(_ctx(brain, executor))
+    assert _final(chunks).exit_code == 0
+    clicks = [args for (name, args) in executor.calls if name == "click"]
+    assert clicks and (clicks[0]["x"], clicks[0]["y"]) == (145, 87)
+
+
+async def test_container_sized_elements_never_snap(patched):
+    # A rect covering most of the capture is a container — the raw point
+    # must be kept.
+    patched.clickables = [("Body", "Text", (0, 0, 190, 100))]
+    brain = FakeBrain([
+        '{"action": "click", "x": 500, "y": 500, "target": "middle"}',
+        '{"action": "done", "reason": "ok"}',
+        '{"done": true, "proof": "clicked"}',
+    ])
+    executor = FakeExecutor()
+    chunks = await _run(_ctx(brain, executor))
+    assert _final(chunks).exit_code == 0
+    clicks = [args for (name, args) in executor.calls if name == "click"]
+    assert clicks and (clicks[0]["x"], clicks[0]["y"]) == (96, 54)
+
+
+async def test_verified_miss_triggers_one_zoom_refined_retry(patched):
+    patched.region_changes_after_click = False  # every click: no visible change
+    brain = FakeBrain([
+        '{"action": "click", "x": 500, "y": 500, "target": "tiny icon"}',
+        # The zoom-refine call answers with a corrected in-crop position.
+        '{"found": true, "x": 900, "y": 900}',
+        '{"action": "fail", "reason": "the icon does not react"}',
+    ])
+    executor = FakeExecutor()
+    chunks = await _run(_ctx(brain, executor))
+    final = _final(chunks)
+    assert final.exit_code == 5
+    clicks = [args for (name, args) in executor.calls if name == "click"]
+    assert len(clicks) == 2, "exactly one refined retry after the verified miss"
+    assert (clicks[1]["x"], clicks[1]["y"]) != (clicks[0]["x"], clicks[0]["y"])
+
+
 async def test_handoff_screen_fails_fast_with_speakable_reason(patched, monkeypatch):
     async def snapshot_with_captcha(*a, **kw):
-        return [], "", "captcha challenge"
+        return [], "", "captcha challenge", []
 
     monkeypatch.setattr(engine_mod, "foreground_ui_snapshot", snapshot_with_captcha)
     brain = FakeBrain([])
