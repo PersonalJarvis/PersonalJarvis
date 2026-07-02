@@ -388,16 +388,25 @@ def build_wake_whisper(
         # on base/cpu — far less likely to blow the wedge timeout under app CPU
         # load, and snappier. The phrase bias + sound-folding matcher keep recall.
         beam_size=1,
-        # Run ctranslate2 fully SINGLE-THREADED for the wake model so it cannot
-        # deadlock against PyTorch's OpenMP pool in the shared process — the root
-        # of the intermittent 8 s ``model.transcribe`` HANG that wedged the wake on
-        # BOTH cpu and cuda (live-log 2026-06-30). cpu_threads=4 only REDUCED the
-        # hang (11 wedges / 16 min); 1 removes ctranslate2's internal thread pool
-        # entirely. Slightly slower per window (base+beam1 stays well under the 8 s
-        # timeout) but no thread contention. Only the always-on wake model, which
-        # coexists with torch, sets this. NOTE: transcription wake still cannot
-        # reach 100% here — the definitive fix is a neural KWS model (AP-25).
-        cpu_threads=1,
+        # A FIXED, small ctranslate2 thread count for the wake model (never
+        # auto/all-cores — that deadlocks against PyTorch's OpenMP pool in the
+        # shared process, the 2026-06-30 8 s ``model.transcribe`` hang, AP-24/25).
+        # History: auto -> hang storm; 4 -> reduced (11 wedges / 16 min); 1 ->
+        # no deadlock but ~2x slower per window, and one merely SLOW call under
+        # load still blew the 8 s poll cap (p95 was measured at 7.5 s under
+        # contention on 2026-07-02 — the wedge-cascade trigger). 2026-07-02
+        # measurements: cpu_threads=2 transcribes a 1.8 s window 1.7-2.8x
+        # faster than 1 (median 706 ms vs 2003 ms same-load matrix; 1718 ms vs
+        # 2960 ms under a deliberate 3-thread torch-OpenMP burn) with ZERO
+        # hangs in the 80-round torch-coexistence probe, identical recall, and
+        # it halves the wake trigger latency. Should a rare hang still occur in
+        # the wild, the poll loop now self-heals it in bounded time without the
+        # old teardown cascade (busy-streak accounting + off-path re-warm,
+        # commit 9a4da695) — the failure economics that made 1 the only safe
+        # choice no longer apply. num_workers stays 1 (single inference
+        # stream). NOTE: transcription wake still cannot reach KWS-instant
+        # latency — the definitive fix remains a neural KWS model (AP-25).
+        cpu_threads=2,
     )
 
 
