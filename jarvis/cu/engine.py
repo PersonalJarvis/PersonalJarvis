@@ -318,7 +318,7 @@ async def _judge_done(
     ctx: Any,
     goal: str,
     monitor: MonitorInfo,
-    image_cfg: dict[str, Any],
+    image_cfg: "_ImageCfg",
     output_language: str | None,
 ) -> tuple[bool, str]:
     """Strict completion judge against a FRESH stable frame."""
@@ -327,8 +327,8 @@ async def _judge_done(
             asyncio.to_thread(
                 capture_stable_frame,
                 monitor,
-                max_dimension=image_cfg["max_dimension"],
-                blob_dir=image_cfg["blob_dir"],
+                max_dimension=image_cfg.max_dimension,
+                blob_dir=image_cfg.blob_dir,
             ),
             timeout=_OBSERVE_TIMEOUT_S,
         )
