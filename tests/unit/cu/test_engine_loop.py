@@ -91,6 +91,7 @@ def patched(monkeypatch, tmp_path):
         clicks_seen=0,
         clickables=[],
         focus_hit=None,            # verify_click_focus_point verdict
+        capture_calls=0,           # capture_stable_frame invocations
     )
 
     def fake_select_capture_target(
@@ -99,6 +100,7 @@ def patched(monkeypatch, tmp_path):
         return MONITOR
 
     def fake_capture(monitor, *, max_dimension, blob_dir=None, **kw):
+        state.capture_calls += 1
         return capture_stable_frame(
             monitor,
             grab=lambda bbox: _solid(state.screen_shade),
@@ -236,6 +238,40 @@ async def test_second_pointer_action_in_one_batch_is_skipped(patched):
     clicks = [c for c in executor.calls if c[0] == "click"]
     assert len(clicks) == 1, "a second stale-frame pointer action must not execute"
     assert any("only one pointer action" in user for (_, user) in brain.calls)
+
+
+async def test_done_judge_reuses_the_step_frame_when_no_action_ran(patched):
+    # "Say you are done FAST": when `done` arrives before any action of the
+    # batch executed, the screen is exactly the frame the model saw — the
+    # judge must verify against THAT frame instead of paying a second
+    # stability capture (live complaint 2026-07-02: the completion
+    # confirmation took too long).
+    brain = FakeBrain([
+        '{"action": "done", "reason": "goal visible"}',
+        '{"done": true, "proof": "the channel is open"}',
+    ])
+    executor = FakeExecutor()
+    chunks = await _run(_ctx(brain, executor))
+    assert _final(chunks).exit_code == 0
+    assert patched.capture_calls == 1, (
+        "the done-judge must reuse the perception frame, not recapture"
+    )
+
+
+async def test_done_judge_recaptures_after_batch_actions(patched):
+    # After any executed action the screen may differ from the perception
+    # frame — the judge must then verify against a FRESH capture.
+    brain = FakeBrain([
+        '[{"action":"key","keys":["enter"]},'
+        '{"action":"done","reason":"submitted"}]',
+        '{"done": true, "proof": "the form is submitted"}',
+    ])
+    executor = FakeExecutor()
+    chunks = await _run(_ctx(brain, executor))
+    assert _final(chunks).exit_code == 0
+    assert patched.capture_calls == 2, (
+        "a done after executed actions needs a fresh judge frame"
+    )
 
 
 async def test_click_on_already_focused_target_passes_and_type_proceeds(patched):

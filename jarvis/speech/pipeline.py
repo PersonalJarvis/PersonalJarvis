@@ -1802,8 +1802,19 @@ class SpeechPipeline:
         # bei ACTIVE-Familie (LISTENING/THINKING/SPEAKING) resumen.
         self._maybe_toggle_vision_on_state(new_state)
 
-    async def _set_turn_state(self, new_state: TurnTakingState) -> None:
+    async def _set_turn_state(
+        self,
+        new_state: TurnTakingState,
+        *,
+        only_from: TurnTakingState | None = None,
+    ) -> None:
         previous = getattr(self, "_turn_state", TurnTakingState.IDLE)
+        # Conditional transition (``only_from``): apply ONLY when the state is
+        # still the expected origin. Used by callbacks that may race a newer
+        # state (a late VAD false-start endpoint must never yank the machine
+        # out of JARVIS_SPEAKING).
+        if only_from is not None and previous != only_from:
+            return
         if previous != new_state:
             log.info("turn-state: %s -> %s", previous.value, new_state.value)
         # Jarvis just STOPPED speaking → the floor goes back to the user. Stamp it
@@ -1858,12 +1869,20 @@ class SpeechPipeline:
             return "SPEAKING"
         return "IDLE"
 
-    def _schedule_turn_state(self, state: TurnTakingState) -> None:
+    def _schedule_turn_state(
+        self,
+        state: TurnTakingState,
+        *,
+        only_from: TurnTakingState | None = None,
+    ) -> None:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        loop.create_task(self._set_turn_state(state), name=f"turn-state-{state.value}")
+        loop.create_task(
+            self._set_turn_state(state, only_from=only_from),
+            name=f"turn-state-{state.value}",
+        )
 
     def _on_vad_speech_start(self) -> None:
         log.info("voice activity start")
@@ -1905,6 +1924,17 @@ class SpeechPipeline:
         self._reset_probe_state()
         if reason != "false_start":
             self._schedule_turn_state(TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT)
+        else:
+            # A discarded false start must RELEASE the floor: the VAD start
+            # set USER_SPEAKING, no transcript will ever follow, and without
+            # this transition every completion announcement is deferred
+            # "user holds the floor" until some unrelated event (live
+            # 2026-07-02 19:06: the mission readback sat 31 s behind a 96 ms
+            # VAD blip). Guarded so a racing newer state is never regressed.
+            self._schedule_turn_state(
+                TurnTakingState.LISTENING,
+                only_from=TurnTakingState.USER_SPEAKING,
+            )
 
     def _reset_probe_state(self) -> None:
         self._probe_last_text = ""

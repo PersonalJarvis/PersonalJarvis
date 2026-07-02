@@ -106,7 +106,9 @@ _SYSTEM_BASE = (
     "* FIRST CHECK, before choosing ANY action: is the GOAL's proof already "
     "visible in this screenshot? Then reply with the done action IMMEDIATELY "
     "— every extra action after success is a failure (it wastes seconds and "
-    "can undo the result).\n"
+    "can undo the result). Scrolling around, waiting, or re-checking 'to be "
+    "sure' AFTER the proof is visible is exactly that failure — the user is "
+    "waiting for your confirmation.\n"
     "* The screenshot is the ONLY ground truth. Never assume an effect "
     "happened; check the fresh screenshot.\n"
     "* FIRST verify the effect of your previous action (see PREVIOUS STEPS). "
@@ -461,20 +463,33 @@ async def _judge_done(
     monitor: MonitorInfo,
     image_cfg: _ImageCfg,
     output_language: str | None,
+    *,
+    frame: Frame | None = None,
 ) -> tuple[bool, str]:
-    """Strict completion judge against a FRESH stable frame."""
-    try:
-        frame = await asyncio.wait_for(
-            asyncio.to_thread(
-                capture_stable_frame,
-                monitor,
-                max_dimension=image_cfg.max_dimension,
-                blob_dir=image_cfg.blob_dir,
-            ),
-            timeout=_OBSERVE_TIMEOUT_S,
-        )
-    except Exception:  # noqa: BLE001 — judge is best-effort; reject on no frame
-        return (False, "")
+    """Strict completion judge.
+
+    Verifies against ``frame`` when the caller passes one — the perception
+    frame of the CURRENT step, valid when no action executed since it was
+    captured (the model claims "the proof is visible in THIS screenshot",
+    so judging that exact evidence is both faster AND the more faithful
+    check). Without a frame (actions ran in this batch), a FRESH stable
+    capture is taken as before. The recapture cost the completion readback
+    ~0.5–1.5 s per done (live complaint 2026-07-02: "he was done but said
+    nothing for too long").
+    """
+    if frame is None:
+        try:
+            frame = await asyncio.wait_for(
+                asyncio.to_thread(
+                    capture_stable_frame,
+                    monitor,
+                    max_dimension=image_cfg.max_dimension,
+                    blob_dir=image_cfg.blob_dir,
+                ),
+                timeout=_OBSERVE_TIMEOUT_S,
+            )
+        except Exception:  # noqa: BLE001 — judge is best-effort; reject on no frame
+            return (False, "")
     system = _JUDGE_SYSTEM + _proof_language_directive(output_language)
     user = (
         f"GOAL: {goal}\n\nThe attached screenshot shows the CURRENT screen. "
@@ -491,6 +506,7 @@ async def _judge_done(
             build_prompt=lambda provider, brain: (system, user),
             images=[image],
             max_tokens=_JUDGE_MAX_TOKENS,
+            early_stop_json=True,
         )
     except Exception:  # noqa: BLE001 — an unreachable judge must not crash a
         # finished mission; the caller treats it as "not confirmed".
@@ -664,6 +680,7 @@ async def run_cu_loop(
         if fruitless_steps >= _STUCK_FRAMES:
             done, proof = await _judge_done(
                 ctx, goal, monitor, image_cfg, output_language,
+                frame=frame,  # captured this step; the screen is unchanged
             )
             if done:
                 yield _final(
@@ -788,6 +805,7 @@ async def run_cu_loop(
 
         # ---- act + verify ---------------------------------------------------
         pointer_used = False
+        batch_acted = False  # any executed action invalidates the step frame
         for action in actions:
             if _is_cancelled(cancel_token):
                 yield _final(stderr="[cu] cancelled\n", exit_code=_EXIT_CANCEL)
@@ -797,6 +815,10 @@ async def run_cu_loop(
             if kind == "done":
                 done, proof = await _judge_done(
                     ctx, goal, monitor, image_cfg, output_language,
+                    # No action ran since perception -> the screen IS the
+                    # frame the model called done on; judge that evidence
+                    # directly instead of paying a second stability capture.
+                    frame=None if batch_acted else frame,
                 )
                 if done:
                     yield _final(
@@ -1132,6 +1154,7 @@ async def run_cu_loop(
                 profiler.add("settle", t0, step_idx)
 
             # -- bookkeeping ---------------------------------------------------
+            batch_acted = True
             summary = _summarize_action(action)
             if ok:
                 consecutive_failures = 0

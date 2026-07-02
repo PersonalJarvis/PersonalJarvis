@@ -246,6 +246,63 @@ async def test_preamble_during_processing_carries_staleness_gate() -> None:
     assert pred() is False
 
 
+async def _await_turn_state_tasks() -> None:
+    tasks = [
+        t
+        for t in asyncio.all_tasks()
+        if t.get_name().startswith("turn-state-") and not t.done()
+    ]
+    if tasks:
+        await asyncio.gather(*tasks)
+
+
+@pytest.mark.asyncio
+async def test_discarded_false_start_releases_the_floor() -> None:
+    """Live 2026-07-02 19:06: a 96 ms VAD blip set USER_SPEAKING, the false
+    start was discarded WITHOUT a state transition, and the mission's
+    completion readback sat deferred for 31 s ("user holds the floor") until
+    the hangup forced a transition. A discarded false start must release the
+    floor so deferred announcements flush immediately."""
+    bus = EventBus()
+    tts = FakeTTS()
+    player = FakePlayer()
+    pipeline = _make_pipeline(tts, bus, player)
+    pipeline._turn_state = TurnTakingState.USER_SPEAKING  # type: ignore[attr-defined]
+
+    await bus.publish(
+        AnnouncementRequested(
+            text="Erledigt. Das Fenster ist offen.",
+            language="de",
+            priority="normal",
+            kind="completion",
+        )
+    )
+    assert player.plays == 0  # correctly deferred while the floor was held
+
+    pipeline._on_vad_endpoint("false_start")
+    await _await_turn_state_tasks()
+    await _flush_deferred()
+
+    assert pipeline._turn_state == TurnTakingState.LISTENING
+    assert player.plays == 1, (
+        "the completion stayed deferred behind a discarded VAD false start"
+    )
+
+
+@pytest.mark.asyncio
+async def test_false_start_release_never_regresses_a_newer_state() -> None:
+    """The release is guarded: if the state already moved on (e.g. the answer
+    started voicing), a late false-start endpoint must not yank it back."""
+    bus = EventBus()
+    pipeline = _make_pipeline(FakeTTS(), bus, FakePlayer())
+    pipeline._turn_state = TurnTakingState.JARVIS_SPEAKING  # type: ignore[attr-defined]
+
+    pipeline._on_vad_endpoint("false_start")
+    await _await_turn_state_tasks()
+
+    assert pipeline._turn_state == TurnTakingState.JARVIS_SPEAKING
+
+
 @pytest.mark.asyncio
 async def test_announcement_while_idle_is_unaffected() -> None:
     """Regression guard: the guard only arms while the user holds the floor."""

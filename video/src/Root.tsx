@@ -12,6 +12,8 @@ import { TutorialVideo } from "./tutorial/TutorialVideo";
 import { TL_TUT } from "./tutorial/timeline";
 import { PromoVideo } from "./intro/PromoVideo";
 import { TL_PROMO } from "./intro/promo/timeline";
+import { FilmVideo } from "./intro/FilmVideo";
+import { TL_FILM } from "./intro/film/timeline";
 
 /**
  * Standalone preview of a single tutorial scene, wrapped with the same backdrop
@@ -40,6 +42,14 @@ export const RemotionRoot: React.FC = () => {
         id="ReadmePromo"
         component={PromoVideo}
         durationInFrames={TL_PROMO.totalFrames}
+        fps={VIDEO.fps}
+        width={VIDEO.width}
+        height={VIDEO.height}
+      />
+      <Composition
+        id="ReadmeFilm"
+        component={FilmVideo}
+        durationInFrames={TL_FILM.totalFrames}
         fps={VIDEO.fps}
         width={VIDEO.width}
         height={VIDEO.height}
