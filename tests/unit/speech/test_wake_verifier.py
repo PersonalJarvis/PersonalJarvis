@@ -21,6 +21,8 @@ from dataclasses import dataclass
 import pytest
 
 from jarvis.speech.wake_verifier import (
+    CUSTOM_WAKE_MIN_RMS,
+    pcm_tail_rms,
     transcript_has_hey_prefix,
     verify_wake_with_stt,
 )
@@ -207,6 +209,42 @@ async def test_verify_passes_through_language_override() -> None:
     await verify_wake_with_stt(stt, PCM_2S_16K, language="en")
 
     assert stt.calls == [(len(PCM_2S_16K), 16_000, "en")]
+
+
+# ---------------------------------------------------------------------------
+# pcm_tail_rms — the energy probe behind the custom-model silence gate. Same
+# normalised-RMS convention as RollingWhisperWake (silence << 0.003 << speech).
+# ---------------------------------------------------------------------------
+
+
+def _square_wave_pcm(seconds: float, amplitude: int, sample_rate: int = 16_000) -> bytes:
+    pair = amplitude.to_bytes(2, "little", signed=True) + (-amplitude).to_bytes(
+        2, "little", signed=True
+    )
+    return pair * int(seconds * sample_rate / 2)
+
+
+def test_pcm_tail_rms_silence_is_below_gate() -> None:
+    assert pcm_tail_rms(b"\x00\x00" * 16_000 * 2) < CUSTOM_WAKE_MIN_RMS
+
+
+def test_pcm_tail_rms_speechlike_audio_clears_gate() -> None:
+    # amplitude 500/32768 ~ 0.015 rms — the quiet end of real speech on the
+    # reference headset (rms 0.01-0.02), still comfortably above the gate.
+    assert pcm_tail_rms(_square_wave_pcm(2.0, 500)) > CUSTOM_WAKE_MIN_RMS
+
+
+def test_pcm_tail_rms_only_measures_the_tail_window() -> None:
+    """Speech followed by a silent tail must read as silence: the wake word has
+    to be IN the tail window right before the model fired, not minutes ago."""
+    loud_then_silent = _square_wave_pcm(1.5, 3000) + b"\x00\x00" * (16_000 * 2)
+    assert pcm_tail_rms(loud_then_silent, tail_s=1.5) < CUSTOM_WAKE_MIN_RMS
+
+
+def test_pcm_tail_rms_handles_empty_and_odd_input() -> None:
+    assert pcm_tail_rms(b"") == 0.0
+    # Odd byte count (torn int16) must not raise.
+    assert pcm_tail_rms(b"\x01") >= 0.0
 
 
 # ---------------------------------------------------------------------------

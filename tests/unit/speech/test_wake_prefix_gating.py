@@ -50,6 +50,13 @@ class _FakeSTT:
 
 PCM_2S_16K = b"\x00\x00" * 16_000 * 2
 
+# 2 s of a full-scale-ish square wave (rms ~0.09 normalised) — clears the
+# custom-model silence gate so tests exercise the transcript logic behind it.
+_LOUD_SAMPLE = (3000).to_bytes(2, "little", signed=True) + (-3000).to_bytes(
+    2, "little", signed=True
+)
+LOUD_PCM_2S_16K = _LOUD_SAMPLE * 16_000
+
 
 def _bare_pipeline(
     *,
@@ -188,15 +195,19 @@ async def test_gate_degrades_open_when_stt_persistently_fails(monkeypatch) -> No
 # ---------------------------------------------------------------------------
 # custom_onnx hits: the verify transcript is the REAL discriminator.
 #
-# Live forensic 2026-07-01 (false-positive storm): a user-trained custom model
-# scored breath/ambient/other speech up to 1.000 and activated several times a
-# minute even at threshold 0.50, with NO second-stage check (verify_prefix was
-# False for custom models). The fix: custom_onnx hits run the STT verify against
-# the phrase's own fuzzy matcher, and — unlike the precise pretrained hey_jarvis
-# model — "the STT worked but heard no wake phrase" (empty transcript or a known
-# silence-hallucination) SUPPRESSES instead of degrading open, because this
-# model demonstrably fires on breath/noise. A genuine STT outage still degrades
-# open (AP-22: a dead provider must never brick the wake path).
+# Live forensic 2026-07-01/02 (false-positive storm + flicker GIF): a
+# user-trained custom model scored breath/ambient/other speech up to 1.000 and
+# fired many times a minute even at threshold 0.50 (15 fires in 25 s at 07:37).
+# The verify layer therefore treats a custom-model hit as guilty until proven:
+# - near-silent audio suppresses BEFORE any STT call (the fire flood was
+#   hammering the verify STT into 429/timeouts),
+# - "the STT worked but heard no wake phrase" (empty transcript or a known
+#   silence-hallucination) suppresses,
+# - and an STT OUTAGE also suppresses (fail-closed): the very session a wake
+#   would open needs that same STT to hear anything, so degrading open only
+#   produced deaf ghost activations (3 overnight on 2026-07-02) — hotkey and
+#   orb-click remain the in-app activation paths, so the wake is not bricked.
+# The precise pretrained hey_jarvis path keeps its documented degrade-open.
 # ---------------------------------------------------------------------------
 
 
@@ -215,7 +226,7 @@ async def test_gate_custom_model_accepts_matching_phrase() -> None:
     stt = _FakeSTT("hey nico wie spät ist es")  # i18n-allow
     pipe = _custom_pipeline(stt)
 
-    assert await pipe._verify_oww_hit(PCM_2S_16K) is True
+    assert await pipe._verify_oww_hit(LOUD_PCM_2S_16K) is True
     assert stt.calls == 1
 
 
@@ -225,7 +236,7 @@ async def test_gate_custom_model_accepts_sound_folded_spelling() -> None:
     stt = _FakeSTT("Hey Niko")
     pipe = _custom_pipeline(stt)
 
-    assert await pipe._verify_oww_hit(PCM_2S_16K) is True
+    assert await pipe._verify_oww_hit(LOUD_PCM_2S_16K) is True
 
 
 async def test_gate_custom_model_rejects_other_speech() -> None:
@@ -234,7 +245,31 @@ async def test_gate_custom_model_rejects_other_speech() -> None:
     stt = _FakeSTT("und dann habe ich ihm gesagt dass das morgen fertig wird")  # i18n-allow
     pipe = _custom_pipeline(stt)
 
+    assert await pipe._verify_oww_hit(LOUD_PCM_2S_16K) is False
+    assert stt.calls == 1
+
+
+async def test_gate_custom_model_suppresses_silence_before_stt() -> None:
+    """Flood-breaker (live 2026-07-02): most custom-model false fires happen on
+    breath/near-silence; each used to cost a full STT verify round-trip, and the
+    resulting request flood drove the STT into 429/timeouts (which then opened
+    the degrade-open hole). Near-silent audio is suppressed WITHOUT any STT
+    call — same rms convention/threshold as RollingWhisperWake's silence gate."""
+    stt = _FakeSTT("Hey Nico")  # would match if called — must NOT be called
+    pipe = _custom_pipeline(stt)
+
     assert await pipe._verify_oww_hit(PCM_2S_16K) is False
+    assert stt.calls == 0, "silence must be suppressed before the STT round-trip"
+
+
+async def test_gate_hey_jarvis_has_no_silence_gate() -> None:
+    """The silence gate is custom_onnx-only: the pretrained hey_jarvis path
+    keeps verifying silent-ish buffers via STT (its 2026-06-28 forensics rely
+    on the transcript, not on energy)."""
+    stt = _FakeSTT("Hey Jarvis")
+    pipe = _bare_pipeline(require_hey_prefix=True, utterance_stt=stt)
+
+    assert await pipe._verify_oww_hit(PCM_2S_16K) is True
     assert stt.calls == 1
 
 
@@ -248,7 +283,7 @@ async def test_gate_custom_model_rejects_empty_transcript(monkeypatch) -> None:
     stt = _FakeSTT("")
     pipe = _custom_pipeline(stt)
 
-    assert await pipe._verify_oww_hit(PCM_2S_16K) is False
+    assert await pipe._verify_oww_hit(LOUD_PCM_2S_16K) is False
     assert stt.calls == 1
 
 
@@ -258,20 +293,60 @@ async def test_gate_custom_model_rejects_hallucination_boilerplate() -> None:
     stt = _FakeSTT("Vielen Dank.")  # i18n-allow
     pipe = _custom_pipeline(stt)
 
-    assert await pipe._verify_oww_hit(PCM_2S_16K) is False
+    assert await pipe._verify_oww_hit(LOUD_PCM_2S_16K) is False
 
 
-async def test_gate_custom_model_degrades_open_on_stt_outage(monkeypatch) -> None:
-    """A genuine STT outage (every attempt raises) still degrades open for
-    custom models — one dead provider must never brick the wake (AP-22)."""
+async def test_gate_custom_model_fails_closed_on_stt_outage(monkeypatch) -> None:
+    """REGRESSION (live 2026-07-02, 3 ghost activations overnight): the fire
+    flood of a weak custom model eventually hits a verify-STT timeout/429, and
+    the old degrade-open then activated Jarvis although nobody spoke. For a
+    custom-model hit an STT outage now SUPPRESSES (fail-closed): the session a
+    wake opens needs that same STT anyway (it would be a deaf session), and
+    hotkey/orb-click remain as in-app activation paths — so this does not brick
+    the wake (AP-22 honoured by honest degradation, not by guessing)."""
     import jarvis.speech.wake_verifier as wv
 
     monkeypatch.setattr(wv, "_WAKE_VERIFY_BACKOFF_S", 0.0, raising=False)
     stt = _RaisingSTT(RuntimeError("groq 503"))
     pipe = _custom_pipeline(stt)
 
-    assert await pipe._verify_oww_hit(PCM_2S_16K) is True
+    assert await pipe._verify_oww_hit(LOUD_PCM_2S_16K) is False
     assert stt.calls >= 1
+
+
+# ---------------------------------------------------------------------------
+# Optimistic overlay reveal: suppressed for custom_onnx candidates.
+#
+# The optimistic bar exists so a genuine "Hey Jarvis" feels instant on the
+# precise pretrained model (false candidates are rare — a reject costs one
+# brief flash). A custom model fires many times a minute, so the same
+# optimism made the bar pop open/closed on auto-repeat (user GIF 2026-07-02).
+# For custom_onnx the bar appears only AFTER the verify confirms the wake.
+# ---------------------------------------------------------------------------
+
+
+def test_optimistic_candidate_shown_for_pretrained_when_idle() -> None:
+    from jarvis.speech.pipeline import PipelineState
+
+    pipe = _bare_pipeline(require_hey_prefix=True, utterance_stt=None)
+    pipe._state = PipelineState.IDLE
+    assert pipe._should_show_optimistic_candidate() is True
+
+
+def test_optimistic_candidate_hidden_for_custom_model() -> None:
+    from jarvis.speech.pipeline import PipelineState
+
+    pipe = _custom_pipeline(None)
+    pipe._state = PipelineState.IDLE
+    assert pipe._should_show_optimistic_candidate() is False
+
+
+def test_optimistic_candidate_hidden_when_not_idle() -> None:
+    from jarvis.speech.pipeline import PipelineState
+
+    pipe = _bare_pipeline(require_hey_prefix=True, utterance_stt=None)
+    pipe._state = PipelineState.ACTIVE
+    assert pipe._should_show_optimistic_candidate() is False
 
 
 # ---------------------------------------------------------------------------

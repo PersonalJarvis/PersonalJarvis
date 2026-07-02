@@ -19,11 +19,46 @@ import asyncio
 import logging
 from typing import Any, Protocol
 
+import numpy as np
+
 from jarvis.speech.rolling_whisper_wake import DEFAULT_PATTERN
 
 log = logging.getLogger("jarvis.wake.verifier")
 
 WAKE_PREFIX_PATTERN = DEFAULT_PATTERN
+
+# Silence gate for user-trained custom_onnx wake hits (live forensic
+# 2026-07-02): such models fire on breath/near-silence many times a minute,
+# and each fire used to cost a full STT verify round-trip — the flood drove
+# the verify STT into 429/timeouts, whose degrade-open then produced ghost
+# activations. A hit whose trailing audio is essentially silent is a false
+# fire by definition and is suppressed BEFORE any STT call. Same normalised-
+# RMS convention and threshold as ``RollingWhisperWake``'s ``min_rms`` gate
+# (real speech on the reference headset is rms 0.01-0.02).
+CUSTOM_WAKE_MIN_RMS = 0.003
+# Window measured from the END of the capture buffer: the wake word must sit
+# immediately before the model fired. Long enough for any natural two-word
+# phrase, short enough that earlier room speech cannot mask a silent fire.
+CUSTOM_WAKE_RMS_TAIL_S = 1.5
+
+
+def pcm_tail_rms(
+    pcm_bytes: bytes,
+    sample_rate: int = 16_000,
+    tail_s: float = CUSTOM_WAKE_RMS_TAIL_S,
+) -> float:
+    """Normalised RMS ([-1, 1] scale) of the last ``tail_s`` seconds of int16 PCM.
+
+    Pure helper — no I/O. Empty input reads as 0.0; a torn trailing byte is
+    dropped rather than raising.
+    """
+    usable = len(pcm_bytes) // 2 * 2
+    if usable == 0:
+        return 0.0
+    samples = np.frombuffer(pcm_bytes[:usable], dtype=np.int16)
+    tail_samples = max(1, int(tail_s * sample_rate))
+    tail = samples[-tail_samples:].astype(np.float32) / 32768.0
+    return float(np.sqrt(np.mean(tail * tail) + 1e-12))
 
 # A genuine "Hey Jarvis" must not be silently dropped just because the cloud
 # STT was momentarily rate-limited (Groq 429) mid-session — that is the exact
