@@ -1,0 +1,32 @@
+{
+  "path": "desktop (_run_backend, GUI-free driver)",
+  "runs": 3,
+  "python": "C:\\Program Files\\Python311\\python.exe",
+  "vault_pages": 84,
+  "median_wall_ms": 2164.5,
+  "median_boot_ready_ms": 191.5,
+  "median_bind_wall_ms": 1493.9,
+  "median_voice_ready_wall_ms": 8015.7,
+  "voice_ready_wall_ms_runs": [
+    8822.8,
+    7680.8,
+    8015.7
+  ],
+  "wall_ms_runs": [
+    2622.9,
+    2164.5,
+    2110.1
+  ],
+  "boot_ready_ms_runs": [
+    340.1,
+    191.5,
+    148.3
+  ],
+  "phase_medians_ms": {
+    "db_pre_webserver": 3578.2,
+    "db_webserver_ctor": 1925.2
+  },
+  "anchor": "spawn -> /api/health responds 200 (= DesktopApp._wait_for_backend success = window creation point)",
+  "secondary_anchor": "median_bind_wall_ms = spawn -> BOOT_READY print (bootstrap bind; may precede a responsive health endpoint)",
+  "ttu_anchor": "spawn -> VOICE_READY_MS print (wake loop armed + speech pipeline live; the honest time-to-usable voice anchor)"
+}

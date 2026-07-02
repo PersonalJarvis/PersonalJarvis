@@ -78,6 +78,10 @@ class _LockedSTT:
                 self.completed += 1
 
             task = asyncio.get_running_loop().create_task(_finish())
+            # The loop keeps only a WEAK reference to tasks — anchor the
+            # "worker thread" analogue on self, or it gets garbage-collected
+            # when the poll's timeout destroys this coroutine frame.
+            self._bg_task = task
             await asyncio.shield(task)  # timeout abandons the await, task lives on
             return _Transcript()
         self.completed += 1
@@ -187,6 +191,7 @@ async def test_slow_but_alive_call_never_tears_down_the_model() -> None:
         )
     finally:
         await shutdown()
+        stt.cancel_background()
 
 
 async def test_true_hang_recovers_after_the_busy_hard_cap_and_rewarms() -> None:
@@ -208,6 +213,7 @@ async def test_true_hang_recovers_after_the_busy_hard_cap_and_rewarms() -> None:
         assert stt.completed >= 1, "polling never resumed after the recovery"
     finally:
         await shutdown()
+        stt.cancel_background()
 
 
 async def test_two_distinct_timeouts_still_recover_and_rewarm() -> None:
