@@ -37,8 +37,25 @@ classes: bare core word mid-sentence, ambient speech, quiet noise, silence).
    or two DISTINCT timeouts still recover; after any mid-session `recover()`
    the poll loop re-warms the rebuilt model off the transcribe timeout.
    Guards: `tests/unit/speech/test_rolling_whisper_wake_steady_state.py`.
-2. (pending — measured config matrix result)
-3. (pending — strict full-phrase matcher)
+2. **Wake Whisper `cpu_threads` 1 → 2** (`build_wake_whisper`), matrix- and
+   probe-backed: 1.7–2.8× faster per window (median 706 ms vs 2003 ms in the
+   same-load matrix; 1718 ms vs 2960 ms under a deliberate 3-thread
+   torch-OpenMP burn) with ZERO hangs in the 80-round torch-coexistence probe
+   and identical recall. The AP-24/25 economics changed with fix 1: a rare
+   wild hang now self-heals in bounded time instead of cascading. The thread
+   count stays FIXED (never auto/all-cores), `num_workers=1`.
+   Rejected by measurement: `tiny` (same recall, but 13.3 % bias
+   hallucinations on real quiet-noise windows — fires "out of nowhere");
+   bias OFF (recall collapses 100 % → 62.5 %, quiet recall 87.5 % → 37-50 %);
+   `language=None` untested-by-default (de pin kept — live transcripts of
+   "Hey Fable" are correct, and auto-detect is the documented EN-flip
+   hallucination source on short windows).
+3. **Strict full-phrase matcher** (`wake_phrase.py`, in WIP commit 8705f911):
+   a phrase configured with a wake prefix ("Hey Fable") fires ONLY when a
+   prefix token immediately precedes the core; any known prefix counts
+   ("Hallo Fable" still wakes). Every core token must individually clear its
+   fuzzy bar. REVERSES the 2026-06-29 "prefix optional" trade-off on explicit
+   user instruction (2026-07-02). Single-word phrases are unchanged.
 
 ## Measurements
 
@@ -53,9 +70,25 @@ classes: bare core word mid-sentence, ambient speech, quiet noise, silence).
 | recall orig / −20 / −30 / −40 dBFS | 100 % / 92.3 % / 69.2 % / 0 % |
 | false accepts: bare core / ambient / quiet / silence | 71.7 % / 1.7 % / 0 % / 0 % |
 
-### Config matrix (window mode)
+### Config matrix (window mode; 8 positives ×2 volumes, 85 negatives; same
+machine load per batch — absolute times vary with the day's load, the
+relative comparison inside a batch is the signal)
 
-(pending)
+| config | cold | warm median | p95 | recall orig/−30 | FA bare* | FA quiet |
+|---|---|---|---|---|---|---|
+| base t1 de bias | 4463 | 2003 | 7454 | 100 % / 87.5 % | 70 % | 0 % |
+| tiny t1 de bias | 2073 | 613 | 2516 | 100 % / 87.5 % | 93 % | **13.3 %** |
+| tiny t1 de no-bias | 2315 | 1173 | 1987 | 62.5 % / 37.5 % | 20 % | 0 % |
+| base t1 de no-bias | 2765 | 1307 | 4024 | 62.5 % / 50 % | 30 % | 0 % |
+| **base t2 de bias** | **1701** | **706** | 2659 | **100 % / 87.5 %** | 70 % | **0 %** |
+| base t4 de bias | 1585 | 616 | 5772 | 100 % / 87.5 % | 70 % | 0 % |
+
+\* FA bare = false accepts on real bare-core-word windows, measured with the
+OLD loose matcher — the strict matcher (fix 3) addresses this class; see the
+after-run below.
+
+Torch-coexistence probe (3 torch-OpenMP burner threads in-process, 80 rounds
+t2 / 40 rounds t1): **0 hangs both**; t2 median 1718 ms vs t1 2960 ms.
 
 ### After fixes
 
