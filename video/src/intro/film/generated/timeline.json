@@ -1,0 +1,271 @@
+{
+  "fps": 30,
+  "overlap": 14,
+  "totalFrames": 1666,
+  "scenes": [
+    {
+      "id": "open",
+      "dur": 82,
+      "lines": [
+        {
+          "id": "open_1",
+          "kind": "narration",
+          "text": "This is Personal Jarvis.",
+          "file": "vo-film/open_1.mp3",
+          "localStart": 8,
+          "dur": 50
+        }
+      ]
+    },
+    {
+      "id": "command",
+      "dur": 139,
+      "lines": [
+        {
+          "id": "cmd_1",
+          "kind": "command",
+          "text": "Open Chrome and pull up the weather in Berlin.",
+          "file": "vo-film/cmd_1.mp3",
+          "localStart": 8,
+          "dur": 109
+        }
+      ]
+    },
+    {
+      "id": "ack",
+      "dur": 182,
+      "lines": [
+        {
+          "id": "ack_1",
+          "kind": "narration",
+          "text": "You never wait in silence.",
+          "file": "vo-film/ack_1.mp3",
+          "localStart": 8,
+          "dur": 51
+        },
+        {
+          "id": "ack_reply",
+          "kind": "reply",
+          "text": "On it — checking Berlin now.",
+          "file": "vo-film/ack_reply.mp3",
+          "localStart": 65,
+          "dur": 103
+        }
+      ]
+    },
+    {
+      "id": "action",
+      "dur": 403,
+      "lines": [
+        {
+          "id": "act_1",
+          "kind": "narration",
+          "text": "Ask for something bigger —",
+          "file": "vo-film/act_1.mp3",
+          "localStart": 8,
+          "dur": 44
+        },
+        {
+          "id": "cmd_2",
+          "kind": "command",
+          "text": "Research the best open-source vector databases. Put it in my Outputs.",
+          "file": "vo-film/cmd_2.mp3",
+          "localStart": 58,
+          "dur": 145
+        },
+        {
+          "id": "act_2",
+          "kind": "narration",
+          "text": "— and the crew takes over.",
+          "file": "vo-film/act_2.mp3",
+          "localStart": 209,
+          "dur": 45
+        },
+        {
+          "id": "act_3",
+          "kind": "narration",
+          "text": "The router delegates. Real agents do the real work.",
+          "file": "vo-film/act_3.mp3",
+          "localStart": 260,
+          "dur": 95
+        }
+      ]
+    },
+    {
+      "id": "critic",
+      "dur": 158,
+      "lines": [
+        {
+          "id": "crit_1",
+          "kind": "narration",
+          "text": "Every result is checked — up to three times — before you see it.",
+          "file": "vo-film/crit_1.mp3",
+          "localStart": 8,
+          "dur": 124
+        }
+      ]
+    },
+    {
+      "id": "result",
+      "dur": 278,
+      "lines": [
+        {
+          "id": "res_reply",
+          "kind": "reply",
+          "text": "Berlin's clear and 18 degrees. Your report is in Outputs.",
+          "file": "vo-film/res_reply.mp3",
+          "localStart": 8,
+          "dur": 168
+        },
+        {
+          "id": "res_1",
+          "kind": "narration",
+          "text": "Not just an answer — something you keep.",
+          "file": "vo-film/res_1.mp3",
+          "localStart": 182,
+          "dur": 68
+        }
+      ]
+    },
+    {
+      "id": "proof",
+      "dur": 172,
+      "lines": [
+        {
+          "id": "proof_1",
+          "kind": "narration",
+          "text": "It's a real desktop app.",
+          "file": "vo-film/proof_1.mp3",
+          "localStart": 8,
+          "dur": 48
+        },
+        {
+          "id": "proof_2",
+          "kind": "narration",
+          "text": "It answers in your language, and runs on your machine.",
+          "file": "vo-film/proof_2.mp3",
+          "localStart": 62,
+          "dur": 88
+        }
+      ]
+    },
+    {
+      "id": "install",
+      "dur": 136,
+      "lines": [
+        {
+          "id": "inst_1",
+          "kind": "narration",
+          "text": "Set it up in one command — and bring your own keys.",
+          "file": "vo-film/inst_1.mp3",
+          "localStart": 8,
+          "dur": 94
+        }
+      ]
+    },
+    {
+      "id": "outro",
+      "dur": 228,
+      "lines": [
+        {
+          "id": "out_1",
+          "kind": "narration",
+          "text": "Personal Jarvis. Free, and open source.",
+          "file": "vo-film/out_1.mp3",
+          "localStart": 8,
+          "dur": 92
+        },
+        {
+          "id": "out_2",
+          "kind": "narration",
+          "text": "Talk to your computer, and watch it do the work.",
+          "file": "vo-film/out_2.mp3",
+          "localStart": 106,
+          "dur": 78
+        }
+      ]
+    }
+  ],
+  "audio": [
+    {
+      "file": "vo-film/open_1.mp3",
+      "from": 8,
+      "dur": 50
+    },
+    {
+      "file": "vo-film/cmd_1.mp3",
+      "from": 76,
+      "dur": 109
+    },
+    {
+      "file": "vo-film/ack_1.mp3",
+      "from": 201,
+      "dur": 51
+    },
+    {
+      "file": "vo-film/ack_reply.mp3",
+      "from": 258,
+      "dur": 103
+    },
+    {
+      "file": "vo-film/act_1.mp3",
+      "from": 369,
+      "dur": 44
+    },
+    {
+      "file": "vo-film/cmd_2.mp3",
+      "from": 419,
+      "dur": 145
+    },
+    {
+      "file": "vo-film/act_2.mp3",
+      "from": 570,
+      "dur": 45
+    },
+    {
+      "file": "vo-film/act_3.mp3",
+      "from": 621,
+      "dur": 95
+    },
+    {
+      "file": "vo-film/crit_1.mp3",
+      "from": 758,
+      "dur": 124
+    },
+    {
+      "file": "vo-film/res_reply.mp3",
+      "from": 902,
+      "dur": 168
+    },
+    {
+      "file": "vo-film/res_1.mp3",
+      "from": 1076,
+      "dur": 68
+    },
+    {
+      "file": "vo-film/proof_1.mp3",
+      "from": 1166,
+      "dur": 48
+    },
+    {
+      "file": "vo-film/proof_2.mp3",
+      "from": 1220,
+      "dur": 88
+    },
+    {
+      "file": "vo-film/inst_1.mp3",
+      "from": 1324,
+      "dur": 94
+    },
+    {
+      "file": "vo-film/out_1.mp3",
+      "from": 1446,
+      "dur": 92
+    },
+    {
+      "file": "vo-film/out_2.mp3",
+      "from": 1544,
+      "dur": 78
+    }
+  ]
+}

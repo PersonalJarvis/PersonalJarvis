@@ -1,0 +1,84 @@
+{
+  "voice": "en-US-AndrewNeural",
+  "rate": "+6%",
+  "voices": { "reply": "en-GB-RyanNeural" },
+  "rates": { "reply": "+3%" },
+  "timing": {
+    "fps": 30,
+    "leadIn": 8,
+    "gap": 6,
+    "tail": 14,
+    "overlap": 14
+  },
+  "scenes": [
+    {
+      "id": "open",
+      "extra": 10,
+      "lines": [
+        { "id": "open_1", "kind": "narration", "text": "This is Personal Jarvis.", "tts": "This is Personal Jarvis." }
+      ]
+    },
+    {
+      "id": "command",
+      "extra": 8,
+      "lines": [
+        { "id": "cmd_1", "kind": "command", "text": "Open Chrome and pull up the weather in Berlin.", "tts": "Hey Jarvis. Open Chrome, and pull up the weather in Berlin." }
+      ]
+    },
+    {
+      "id": "ack",
+      "lines": [
+        { "id": "ack_1", "kind": "narration", "text": "You never wait in silence." },
+        { "id": "ack_reply", "kind": "reply", "text": "On it — checking Berlin now.", "tts": "On it. Checking Berlin now." }
+      ]
+    },
+    {
+      "id": "action",
+      "extra": 34,
+      "lines": [
+        { "id": "act_1", "kind": "narration", "text": "Ask for something bigger —" },
+        { "id": "cmd_2", "kind": "command", "text": "Research the best open-source vector databases. Put it in my Outputs.", "tts": "Also, research the best open-source vector databases, and put it in my Outputs." },
+        { "id": "act_2", "kind": "narration", "text": "— and the crew takes over." },
+        { "id": "act_3", "kind": "narration", "text": "The router delegates. Real agents do the real work." }
+      ]
+    },
+    {
+      "id": "critic",
+      "extra": 12,
+      "lines": [
+        { "id": "crit_1", "kind": "narration", "text": "Every result is checked — up to three times — before you see it." }
+      ]
+    },
+    {
+      "id": "result",
+      "extra": 14,
+      "lines": [
+        { "id": "res_reply", "kind": "reply", "text": "Berlin's clear and 18 degrees. Your report is in Outputs.", "tts": "Berlin is clear, and eighteen degrees. Your report is in Outputs." },
+        { "id": "res_1", "kind": "narration", "text": "Not just an answer — something you keep." }
+      ]
+    },
+    {
+      "id": "proof",
+      "extra": 8,
+      "lines": [
+        { "id": "proof_1", "kind": "narration", "text": "It's a real desktop app." },
+        { "id": "proof_2", "kind": "narration", "text": "It answers in your language, and runs on your machine." }
+      ]
+    },
+    {
+      "id": "install",
+      "extra": 20,
+      "lines": [
+        { "id": "inst_1", "kind": "narration", "text": "Set it up in one command — and bring your own keys." }
+      ]
+    },
+    {
+      "id": "outro",
+      "extra": 30,
+      "lines": [
+        { "id": "out_1", "kind": "narration", "text": "Personal Jarvis. Free, and open source." },
+        { "id": "out_2", "kind": "narration", "text": "Talk to your computer, and watch it do the work." }
+      ]
+    }
+  ]
+}
