@@ -35,6 +35,19 @@ if sys.platform == "win32":
     except (AttributeError, OSError):
         pass
 
+# DPI awareness — claim PER_MONITOR_AWARE for the whole process BEFORE anything
+# imports pywebview. Windows honours only the FIRST process-awareness claim, and
+# pywebview's webview.start() downgrades an unclaimed process to SYSTEM-aware at
+# runtime — on a multi-monitor desktop with mixed scale factors that virtualizes
+# every window rect, so Computer-Use captured and clicked hundreds of pixels off
+# on the secondary monitor (live forensic 2026-07-02: probe window reported at
+# x=-1989 while physically at x=-1326; clicks 1/4 hits vs 4/4 with the early
+# claim). Same root as the JarvisBar HiDPI shrink (commit 7a6e7d17). No-op off
+# Windows.
+from jarvis.core.win32_dpi import ensure_dpi_awareness as _ensure_dpi_awareness
+
+_ensure_dpi_awareness()
+
 # Taskbar-Icon-Fix (Windows): the unique AUMID must be set BEFORE pywebview
 # creates the window. Done in ``_run_desktop`` (the only path with a window) so
 # the module import — which the headless fast-boot path pays on the

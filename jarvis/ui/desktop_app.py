@@ -2730,6 +2730,15 @@ class DesktopApp:
     def run_window_only(self) -> int:
         """The main-thread pywebview window. Assumes the backend thread is
         already running (started by :meth:`run` or the fast-boot launcher)."""
+        # Claim PER_MONITOR_AWARE before pywebview can downgrade the process to
+        # SYSTEM-aware (webview.start does at runtime) — the downgrade
+        # virtualizes window rects on mixed-DPI monitors and made Computer-Use
+        # click hundreds of pixels off on the secondary screen (live forensic
+        # 2026-07-02). Windows honours only the FIRST claim; idempotent no-op
+        # when the launcher already claimed it (the normal path).
+        from jarvis.core.win32_dpi import ensure_dpi_awareness
+
+        ensure_dpi_awareness()
         import webview  # type: ignore[import-not-found]
 
         if not self._wait_for_backend():
@@ -3273,6 +3282,11 @@ class DesktopApp:
 
 def main() -> int:
     """CLI entry point for ``python -m jarvis.ui.desktop_app``."""
+    # First action of the process: claim per-monitor DPI awareness before any
+    # pywebview code can downgrade it (see run_window_only for the forensic).
+    from jarvis.core.win32_dpi import ensure_dpi_awareness
+
+    ensure_dpi_awareness()
     try:
         lock = acquire_single_instance_lock()
     except SingleInstanceError as exc:
