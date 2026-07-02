@@ -89,6 +89,6 @@
     "model": "gemini-3.5-flash"
   },
   "brain.providers.openrouter": {
-    "model": "deepseek/deepseek-v4-flash"
+    "model": "anthropic/claude-opus-4.8"
   }
 }
