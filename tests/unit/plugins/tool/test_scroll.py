@@ -30,7 +30,7 @@ def _ctx() -> ExecutionContext:
 def captured(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
     """Patch both native paths to record the call instead of moving the mouse.
 
-    The tool dispatches to ``_scroll_windows`` on Windows and ``_scroll_pyautogui``
+    The tool dispatches to ``_scroll_windows`` on Windows and ``_scroll_posix``
     elsewhere; patching both keeps the test platform-agnostic.
     """
     calls: list[dict[str, object]] = []
@@ -41,7 +41,7 @@ def captured(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
         return notch
 
     monkeypatch.setattr(scroll_mod, "_scroll_windows", _fake)
-    monkeypatch.setattr(scroll_mod, "_scroll_pyautogui", _fake)
+    monkeypatch.setattr(scroll_mod, "_scroll_posix", _fake)
     return calls
 
 
