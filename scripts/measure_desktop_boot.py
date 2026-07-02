@@ -60,9 +60,13 @@ from measure_boot import (  # noqa: E402
 DRIVER = REPO_ROOT / "scripts" / "_desktop_boot_driver.py"
 BASELINE_PATH = REPO_ROOT / "desktop-boot-baseline.json"
 LATEST_PATH = REPO_ROOT / "desktop-boot-latest.json"
+# --voice (TTU) mode writes its own pair so the window-anchor baseline above
+# stays comparable across runs that do not exercise the voice stack.
+TTU_BASELINE_PATH = REPO_ROOT / "desktop-ttu-baseline.json"
+TTU_LATEST_PATH = REPO_ROOT / "desktop-ttu-latest.json"
 
 
-def run_one(python: str, timeout: float, mode: str = "legacy") -> dict:
+def run_one(python: str, timeout: float, mode: str = "legacy", voice: bool = False) -> dict:
     """Spawn one isolated desktop-backend cold boot and measure the HONEST
     user-perceived anchor: ``spawn -> /api/health responds 200``.
 
@@ -89,16 +93,24 @@ def run_one(python: str, timeout: float, mode: str = "legacy") -> dict:
     # the desktop path); _bench_env already pins isolation + JARVIS_VOICE=0.
     env["JARVIS_DESKTOP_BENCH_PORT"] = str(port)
     env["JARVIS_DESKTOP_BENCH_MODE"] = mode
+    if voice:
+        # TTU mode: measure the REAL "usable" anchor — the voice stack boots
+        # and the app prints VOICE_READY_MS (wake loop armed, honest anchor on
+        # the same clock as BOOT_READY_MS). Overrides _bench_env's voice-off.
+        env["JARVIS_VOICE"] = "1"
 
     cmd = [python, str(DRIVER)]
     result: dict = {
         "wall_ms": None,           # spawn -> /api/health 200 (PRIMARY = window appears)
         "boot_ready_ms": None,     # in-process bootstrap-bind print (secondary)
         "boot_ready_wall_ms": None,
+        "voice_ready_ms": None,       # in-process VOICE_READY print (TTU anchor)
+        "voice_ready_wall_ms": None,  # spawn -> VOICE_READY print (wall clock)
         "phases": {},
         "port": port,
     }
     health_ok = threading.Event()
+    voice_ok = threading.Event()
 
     t_spawn = time.perf_counter()
     proc = subprocess.Popen(
@@ -128,6 +140,13 @@ def run_one(python: str, timeout: float, mode: str = "legacy") -> dict:
                     result["boot_ready_ms"] = float(line.split("=", 1)[1])
                 except ValueError:
                     result["boot_ready_ms"] = None
+            elif line.startswith("VOICE_READY_MS="):
+                result["voice_ready_wall_ms"] = (time.perf_counter() - t_spawn) * 1000.0
+                try:
+                    result["voice_ready_ms"] = float(line.split("=", 1)[1])
+                except ValueError:
+                    result["voice_ready_ms"] = None
+                voice_ok.set()
 
     def poller() -> None:
         # PRIMARY anchor = time until GET / returns the real UI shell (HTML).
@@ -156,14 +175,22 @@ def run_one(python: str, timeout: float, mode: str = "legacy") -> dict:
     pt.start()
 
     got = health_ok.wait(timeout)
+    if voice and got:
+        # TTU mode: the run ends at the VOICE anchor, not the window anchor.
+        got = voice_ok.wait(timeout)
     _terminate(proc)
     th.join(timeout=3)
     pt.join(timeout=3)
 
     if not got or result["wall_ms"] is None:
         raise RuntimeError(
-            f"desktop cold boot did not reach a 200 /api/health within {timeout:.0f}s "
-            f"(port {port}) — check the driver / instrumentation"
+            f"desktop cold boot did not reach its anchor within {timeout:.0f}s "
+            f"(port {port}, voice={voice}) — check the driver / instrumentation"
+        )
+    if voice and result["voice_ready_wall_ms"] is None:
+        raise RuntimeError(
+            f"voice stack never printed VOICE_READY_MS within {timeout:.0f}s "
+            f"(port {port}) — TTU anchor missing"
         )
     return result
 
@@ -172,6 +199,9 @@ def _summarize(runs: list[dict], *, python: str, pages: int) -> dict:
     walls = [r["wall_ms"] for r in runs]
     readies = [r["boot_ready_ms"] for r in runs if r["boot_ready_ms"] is not None]
     bind_walls = [r["boot_ready_wall_ms"] for r in runs if r["boot_ready_wall_ms"] is not None]
+    voice_walls = [
+        r["voice_ready_wall_ms"] for r in runs if r.get("voice_ready_wall_ms") is not None
+    ]
     phase_names = sorted({k for r in runs for k in r["phases"]})
     phase_medians = {
         name: statistics.median(
@@ -191,6 +221,10 @@ def _summarize(runs: list[dict], *, python: str, pages: int) -> dict:
         "median_bind_wall_ms": (
             round(statistics.median(bind_walls), 1) if bind_walls else None
         ),
+        "median_voice_ready_wall_ms": (
+            round(statistics.median(voice_walls), 1) if voice_walls else None
+        ),
+        "voice_ready_wall_ms_runs": [round(v, 1) for v in voice_walls],
         "wall_ms_runs": [round(w, 1) for w in walls],
         "boot_ready_ms_runs": [round(r, 1) for r in readies],
         "phase_medians_ms": {k: round(v, 1) for k, v in phase_medians.items()},
@@ -207,7 +241,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--timeout", type=float, default=120.0, help="per-boot ready timeout (s)")
     ap.add_argument("--pages", type=int, default=DEFAULT_PAGES, help="vault pages to seed")
     ap.add_argument("--mode", default="legacy", choices=["legacy", "fastboot"], help="desktop boot path to measure")
+    ap.add_argument(
+        "--voice",
+        action="store_true",
+        help=(
+            "TTU mode: boot WITH the voice stack and anchor the run on "
+            "VOICE_READY_MS (wake loop armed) instead of the window anchor. "
+            "Writes desktop-ttu-{baseline,latest}.json."
+        ),
+    )
     args = ap.parse_args(argv)
+    if args.voice and args.timeout < 240.0:
+        # The voice stack loads a local STT model on the stt_match path; give
+        # cold runs generous headroom so a slow box does not flake the bench.
+        args.timeout = 240.0
+    baseline_path = TTU_BASELINE_PATH if args.voice else BASELINE_PATH
+    latest_path = TTU_LATEST_PATH if args.voice else LATEST_PATH
 
     if not Path(args.python).exists():
         print(f"WARNING: interpreter not found at {args.python}; using as-is", flush=True)
@@ -217,27 +266,34 @@ def main(argv: list[str] | None = None) -> int:
 
     for i in range(args.warmup):
         print(f"[harness] warmup {i + 1}/{args.warmup} ...", flush=True)
-        r = run_one(args.python, args.timeout, args.mode)
+        r = run_one(args.python, args.timeout, args.mode, voice=args.voice)
         print(f"[harness]   warmup wall={r['wall_ms']:.0f}ms", flush=True)
 
     runs: list[dict] = []
     for i in range(args.runs):
-        r = run_one(args.python, args.timeout, args.mode)
+        r = run_one(args.python, args.timeout, args.mode, voice=args.voice)
         runs.append(r)
         _br = r["boot_ready_ms"]
         _br_s = f"{_br:.0f}ms" if _br is not None else "n/a"
+        _vr = r.get("voice_ready_wall_ms")
+        _vr_s = f" voice_ready={_vr:.0f}ms" if _vr is not None else ""
         print(
             f"[harness] run {i + 1}/{args.runs}: health200={r['wall_ms']:.0f}ms "
-            f"bind={_br_s}",
+            f"bind={_br_s}{_vr_s}",
             flush=True,
         )
 
     summary = _summarize(runs, python=args.python, pages=pages)
-    LATEST_PATH.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    if args.voice:
+        summary["ttu_anchor"] = (
+            "spawn -> VOICE_READY_MS print (wake loop armed + speech pipeline "
+            "live; the honest time-to-usable voice anchor)"
+        )
+    latest_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     froze_baseline = False
-    if not BASELINE_PATH.exists():
-        BASELINE_PATH.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    if not baseline_path.exists():
+        baseline_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
         froze_baseline = True
 
     def _ms(v: float | None) -> str:
@@ -246,24 +302,33 @@ def main(argv: list[str] | None = None) -> int:
     print("\n=== DESKTOP BOOT TIMING SUMMARY ===", flush=True)
     print(f"median spawn->/api/health 200    : {_ms(summary['median_wall_ms'])}  (PRIMARY: window appears)", flush=True)
     print(f"median bootstrap-bind print      : {_ms(summary['median_bind_wall_ms'])}  (secondary)", flush=True)
+    if args.voice:
+        _vr_med = _ms(summary["median_voice_ready_wall_ms"])
+        print(
+            f"median spawn->VOICE_READY (TTU)  : {_vr_med}  (voice usable)",
+            flush=True,
+        )
+        print(f"voice runs: {summary['voice_ready_wall_ms_runs']}", flush=True)
     print(f"runs: {summary['wall_ms_runs']}", flush=True)
     print("per-phase medians (ms):", flush=True)
     for name, val in sorted(summary["phase_medians_ms"].items(), key=lambda kv: -kv[1]):
         print(f"  {name:24s} {val:8.1f}", flush=True)
 
+    key = "median_voice_ready_wall_ms" if args.voice else "median_wall_ms"
     if froze_baseline:
-        print(f"\nfroze baseline -> {BASELINE_PATH.name}", flush=True)
-    elif BASELINE_PATH.exists():
-        base = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
-        base_wall = base.get("median_wall_ms")
-        if base_wall:
-            factor = base_wall / summary["median_wall_ms"]
+        print(f"\nfroze baseline -> {baseline_path.name}", flush=True)
+    elif baseline_path.exists():
+        base = json.loads(baseline_path.read_text(encoding="utf-8"))
+        base_wall = base.get(key)
+        now_wall = summary.get(key)
+        if base_wall and now_wall:
+            factor = base_wall / now_wall
             print(
                 f"\nbaseline median {base_wall:.0f} ms -> now "
-                f"{summary['median_wall_ms']:.0f} ms = {factor:.2f}x faster",
+                f"{now_wall:.0f} ms = {factor:.2f}x faster",
                 flush=True,
             )
-    print(f"wrote {LATEST_PATH.name}", flush=True)
+    print(f"wrote {latest_path.name}", flush=True)
     return 0
 
 
