@@ -118,6 +118,36 @@ custom_onnx engine had hidden.
 - Next iteration: run `measure_desktop_boot.py --runs 3` for a REAL baseline
   with db_ marks, then attack the largest measured block.
 
+## Iteration 4 — TTU benchmark mode + first honest baselines (Windows)
+
+- `measure_desktop_boot.py --voice` (commit ce8a2bd9): boots WITH the voice
+  stack, anchors on VOICE_READY_MS, writes desktop-ttu-{baseline,latest}.json.
+- **Isolated window anchor (voice off): 1.18 s median** (3 runs) — serve-first
+  works; "window appears" was never the problem.
+- **Isolated TTU (voice ready, 3 cold runs): 8.0 s median**
+  (runs 8.8/7.7/8.0 s; phases: pre_webserver 3.6 s = import lead,
+  webserver_ctor 1.9 s). Baseline frozen in desktop-ttu-baseline.json.
+- **Gap analysis:** live maintainer boot after the single-loader fix is ~50 s
+  wake-ready vs 8.0 s isolated. The isolated bench has fresh data dirs and no
+  integrations; the live delta (~42 s) therefore lives in DATA + INTEGRATIONS
+  (wiki 1005 rows, mission/board DBs, Telegram poller, MCPs, autostart
+  reconcile ~5 s, log sink history) — NOT in the voice code path anymore.
+- Honest factor bookkeeping: live-before-fixes ~200 s (log-timeline) ->
+  live-after ~50 s (4x live); isolated code path now 8.0 s. The 20x claim must
+  come from the SAME measurement method — next iterations must shrink the
+  live delta and re-measure live.
+
+## Next (iteration 5+)
+
+1. Regression guard: budget check against desktop-ttu-baseline.json (e.g.
+   scripts/ci/check_boot_budget.py or a slow-marked test running
+   `--voice --runs 1`), so features cannot silently regress TTU.
+2. Attack the live delta: profile a LIVE boot (env flag on the relauncher or
+   log-timeline) and defer the data/integration blocks (autostart reconcile,
+   board init, telegram/MCP starts) behind voice-ready.
+3. Cross-OS: headless python:3.11-slim (Docker/WSL) for Linux, document a
+   macOS method (CI matrix) — measure, not assume.
+
 ## Lessons (do not repeat)
 
 - The unit-test suite fast-forwards SMALL asyncio sleeps (a sleep accelerator;
