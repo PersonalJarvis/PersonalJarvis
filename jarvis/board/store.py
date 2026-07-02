@@ -358,18 +358,25 @@ def _calc_streak(conn: sqlite3.Connection) -> int:
 
     *Not* a streak in the Snapchat sense — no push notification, no UI nag,
     no "You lost your streak!" pop-up. Plan §0 forbids breakable streaks.
-    This number is rendered in the UI only as an info badge ("5-day series")
-    and stays at 0 when the user skips a day.
+    This number is rendered in the UI only as an info badge ("5-day series").
+
+    A quiet *today* gets grace: before the first interaction of the day the
+    run ending yesterday is shown instead of a demoralising (and wrong) 0.
+    The streak only reads 0 once yesterday was quiet too.
     """
-    cursor = _today()
-    streak = 0
-    while True:
+
+    def _active(day: _date) -> bool:
         row = conn.execute(
             "SELECT active_events_count FROM daily_stats WHERE date = ?",
-            (cursor.isoformat(),),
+            (day.isoformat(),),
         ).fetchone()
-        if row is None or int(row["active_events_count"]) <= 0:
-            break
+        return row is not None and int(row["active_events_count"]) > 0
+
+    cursor = _today()
+    if not _active(cursor):
+        cursor -= timedelta(days=1)
+    streak = 0
+    while _active(cursor):
         streak += 1
         cursor -= timedelta(days=1)
     return streak

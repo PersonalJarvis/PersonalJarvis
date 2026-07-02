@@ -456,9 +456,10 @@ class WebServer:
 
             # The board's rich source is the durable voice-session store
             # (sessions.db), not the flight-recorder JSONL (which is empty on
-            # most installs). Matches the [sessions] default db path used by
-            # bootstrap_sessions (cwd-relative ``data/sessions.db``).
-            sessions_db_path = Path("data/sessions.db")
+            # most installs). Resolved exactly like bootstrap_sessions does —
+            # a bare CWD-relative path would silently starve the board of its
+            # source whenever the app starts from a different directory.
+            sessions_db_path = self._resolve_sessions_db_path()
 
             aggregator = BoardAggregator(
                 jsonl_dir=jsonl_dir,
@@ -2330,47 +2331,61 @@ class WebServer:
             db_path, recovered, len(scheduler._heap),
         )
 
+    def _read_sessions_toml_section(self) -> dict:
+        """The raw ``[sessions]`` section from jarvis.toml (may be empty).
+
+        That section is NOT in the Pydantic tree (see assumption A-2 in the
+        Phase-7 bootstrap), hence tomllib directly.
+        """
+        toml_path = Path("jarvis.toml")
+        if not toml_path.exists():
+            return {}
+        try:
+            import tomllib
+            with toml_path.open("rb") as fh:
+                raw = tomllib.load(fh)
+            return raw.get("sessions", {}) or {}
+        except Exception as exc:  # noqa: BLE001
+            logger.opt(exception=exc).warning(
+                "Could not read the [sessions] section from jarvis.toml — using defaults"
+            )
+            return {}
+
+    def _resolve_sessions_db_path(self) -> Path:
+        """Absolute path to sessions.db, shared by recorder and board.
+
+        A relative ``[sessions].db_path`` is anchored at the data-dir parent
+        (the repo root), never at the process CWD, so every consumer sees the
+        SAME database regardless of where the app was launched from.
+        """
+        section = self._read_sessions_toml_section()
+        db_path = Path(str(section.get("db_path", "data/sessions.db")))
+        if not db_path.is_absolute():
+            db_path = Path(self.cfg.memory.data_dir).parent / db_path
+        return db_path
+
     def _init_session_stack(self) -> None:
         """Voice-session recorder + store for the transcription view.
 
         Bootstrap analogous to ``_init_mission_stack``, but sync — the store
         uses sqlite3 + threading.Lock (see ``jarvis/sessions/store.py``).
-        Reads defaults from the ``[sessions]`` section in jarvis.toml; that
-        section is NOT in the Pydantic tree (see assumption A-2 in the
-        Phase-7 bootstrap), hence tomllib directly.
         """
         from jarvis.sessions.init import bootstrap_sessions
 
         # Defaults match jarvis.toml [sessions] (enabled=true,
         # data/sessions.db, retention 30d). User can override via TOML.
-        enabled = True
-        rel_db_path = "data/sessions.db"
-        retention_days = 30
-
-        toml_path = Path("jarvis.toml")
-        if toml_path.exists():
-            try:
-                import tomllib
-                with toml_path.open("rb") as fh:
-                    raw = tomllib.load(fh)
-                section = raw.get("sessions", {}) or {}
-                enabled = bool(section.get("enabled", enabled))
-                rel_db_path = str(section.get("db_path", rel_db_path))
-                retention_days = int(section.get("retention_days", retention_days))
-            except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning(
-                    "Could not read the [sessions] section from jarvis.toml — using defaults"
-                )
+        section = self._read_sessions_toml_section()
+        enabled = bool(section.get("enabled", True))
+        try:
+            retention_days = int(section.get("retention_days", 30))
+        except (TypeError, ValueError):
+            retention_days = 30
 
         if not enabled:
             logger.info("Voice-session recorder disabled via [sessions].enabled=false")
             return
 
-        # rel_db_path is relative to the repo root (= cwd at start). If
-        # absolute, it stays absolute. Path() handles both correctly.
-        db_path = Path(rel_db_path)
-        if not db_path.is_absolute():
-            db_path = Path(self.cfg.memory.data_dir).parent / db_path
+        db_path = self._resolve_sessions_db_path()
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
         result = bootstrap_sessions(
