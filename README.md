@@ -16,56 +16,29 @@
   <b>Talk to your computer — and watch it do the work: an open-source, privacy-first voice agent with full command of your PC.</b>
 </p>
 
-<p align="center">
-  <a href="assets/video/personal-jarvis-demo.mp4">
-    <img src="assets/video/personal-jarvis-demo.gif" alt="Demo: a spoken command delegates real work to an agent, which edits the code, runs the tests, and opens the pull request" width="860" />
-  </a>
-</p>
-<!-- Fallback: if the GIF ever fails to render inline (proxy/size limits), swap
-     the <img> above for the static poster frame — same click-through to the MP4:
-     <img src="assets/video/personal-jarvis-demo-poster.png" alt="Demo poster: the agent finished the job — pull request #129 is open" width="860" />
--->
-
-<p align="center">
-  <b><a href="assets/video/personal-jarvis-demo.mp4">▶ Watch the full 60-second demo with sound</a></b>
-</p>
-
 ---
 
 Personal Jarvis is not a classical voice assistant. At its core is a fast **Router-Brain**
 that listens, decides, and *delegates* — dispatching heavy work to interchangeable agent
 harnesses (Claude Code, Codex CLI, MCP servers, raw computer-use loops) that run in
 isolation, review each other's output through a critic loop, and report back in your own
-language. It is **provider-agnostic by design** (swap Gemini, Claude, GPT, Grok, or
+language. It is **provider-agnostic by design** (swap Gemini, Claude, OpenAI, or
 OpenRouter with one setting), **self-modifying** (it can safely edit its own configuration
 through an audited, reversible pipeline), and runs everywhere — from a headless server with
 a browser UI to a full desktop with a tray app, an Orb overlay, and global-hotkey wake.
 
 ## Why it's different
 
-- **The conversation never blocks.** A sub-second *Ack-Brain* acknowledges you while the
-  deep brain is still thinking, so a spoken exchange stays one smooth, uninterrupted flow.
-- **A meta-orchestrator, not a monolith.** A lean Router-Brain *dispatches* to specialized
-  harnesses instead of trying to do everything in one prompt — the discipline that keeps it
-  fast and lets it scale to heavy, multi-step work.
-- **Self-healing Worker-Critic.** Background missions run in isolated `git worktree`
-  branches; a critic loop reviews their work before you ever hear an answer, and a signed
-  controller decides what gets spoken.
-- **Provider-agnostic.** Gemini, Claude, OpenAI, Grok, OpenRouter — switch the brain by
-  voice or config, with a smart, rate-limit-aware fallback chain. No single vendor lock-in.
-- **Subscription or API key — your call.** The heavy sub-agents run on a flat-rate plan
-  login *or* a pay-per-token API key, whichever you connect: Claude Max through the Claude
-  CLI, ChatGPT through the Codex CLI, Google through Antigravity — or classic Anthropic,
-  OpenAI, Gemini, and OpenRouter keys. Run the agents on a subscription you already pay for,
-  with no metered API bill required.
-- **Self-modifying, safely.** It can rewrite its own settings through a 10-step
-  validate → backup → atomic-swap → reload → rollback → audit pipeline. Nothing is changed
-  that can't be undone.
-- **Memory that lasts.** A Knowledge Wiki long-term memory, an awareness layer, and a
-  personal "knows-you" board build a deepening model of you across sessions.
-- **Runs anywhere.** Linux, macOS, and Windows; a headless server speaking through the
-  browser's mic and speakers, or a full voice-and-overlay desktop. Local-hardware features
-  are opt-in extras that degrade gracefully when they're absent.
+| | |
+|---|---|
+| **Never blocks** | A sub-second Ack-Brain replies while the deep brain still thinks. |
+| **Meta-orchestrator** | A lean Router dispatches to specialized harnesses, not one giant prompt. |
+| **Self-healing** | Missions run in isolated worktrees; a critic reviews before you hear it. |
+| **Provider-agnostic** | Gemini, Claude, OpenAI, OpenRouter — switch by voice, smart fallback. |
+| **Your plan or key** | Run agents on a subscription login or a pay-per-token key. |
+| **Self-modifying** | Rewrites its own settings through a reversible, audited pipeline. |
+| **Lasting memory** | A Knowledge Wiki + awareness build a model of you across sessions. |
+| **Runs anywhere** | Headless Linux server to full voice desktop; local parts degrade. |
 
 ## Requirements
 
