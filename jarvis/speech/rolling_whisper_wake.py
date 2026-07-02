@@ -389,6 +389,10 @@ class RollingWhisperWake:
         # last poll was not busy). A streak longer than
         # ``self._busy_hang_recover_s`` is a TRUE hang -> rebuild.
         busy_since: float | None = None
+        # Cross-snapshot join state: final token of the previous RELIABLE
+        # transcript + when it was seen (see the join at the match site).
+        prev_tail = ""
+        prev_tail_t = 0.0
 
         # Boot serialisation state — see the warm gate inside the poll loop.
         warm_wait_t0 = time.time()
@@ -666,11 +670,30 @@ class RollingWhisperWake:
                     continue
 
                 log.info("rolling-whisper: rms=%.4f text=%r", rms, text)
-                m = self._pattern.search(text)
+                # Cross-snapshot prefix join: a short spoken phrase can still
+                # straddle two windows (one snapshot ends with "Hey", the next
+                # starts with the name). The strict full-phrase matcher
+                # (2026-07-02, fire-only-on-the-phrase mandate) needs prefix +
+                # core ADJACENT, so prepend the FINAL token of the previous
+                # reliable transcript when it is fresh (within one window
+                # span). A stale tail must never join — an old "hey" plus a
+                # bare name minutes later is exactly the false fire the strict
+                # matcher exists to prevent.
+                joined = text
+                if (
+                    prev_tail
+                    and now - prev_tail_t <= self._window_samples / self._sample_rate
+                ):
+                    joined = f"{prev_tail} {text}"
+                prev_tail = text.rsplit(None, 1)[-1] if text else ""
+                prev_tail_t = now
+                m = self._pattern.search(joined)
                 if m:
                     self._stat_matched += 1
                     last_trigger_t = now
-                    log.info("rolling-whisper: WAKE matched %r in %r", m.group(0), text)
+                    log.info(
+                        "rolling-whisper: WAKE matched %r in %r", m.group(0), joined
+                    )
                     yield m.group(0)
                 else:
                     self._stat_rejected_no_match += 1

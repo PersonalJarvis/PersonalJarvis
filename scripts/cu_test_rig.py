@@ -203,10 +203,33 @@ def _distance(a: tuple[int, int], b: tuple[int, int]) -> float:
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
-def _capture_monitor():
-    from jarvis.cu.capture import select_monitor
+def _capture_monitor(rig: RigWindow):
+    """The monitor CONTAINING the rig window (by containment, not focus —
+    the console that launched the rig may hold focus on another screen)."""
+    from jarvis.cu.geometry import list_monitors
 
-    return select_monitor("foreground")
+    ox, oy = rig.canvas_origin_on_screen()
+    cx, cy = ox + WINDOW_W // 2, oy + WINDOW_H // 2
+    monitors = list_monitors()
+    for m in monitors:
+        if m.contains(cx, cy):
+            return m
+    if monitors:
+        return next((m for m in monitors if m.is_primary), monitors[0])
+    raise RuntimeError("no display detected")
+
+
+def _activate_rig(rig: RigWindow) -> None:
+    """Bring the rig window to the FOREGROUND with a real activation click
+    on dead canvas space — the engines' capture follows the foreground
+    window, and a merely-topmost window does not hold focus."""
+    from jarvis.cu.actuate import get_actuator
+
+    ox, oy = rig.canvas_origin_on_screen()
+    get_actuator().click(ox + 410, oy + 480)  # dead strip below the targets
+    time.sleep(0.4)
+    rig.log.clicks.clear()
+    rig.log.keys.clear()
 
 
 def _norm_for(point: tuple[int, int], monitor) -> tuple[int, int]:
@@ -272,7 +295,8 @@ def run_raw(rig: RigWindow) -> list[dict[str, Any]]:
     from jarvis.cu.geometry import CoordinateMapper
 
     actuator = get_actuator()
-    monitor = _capture_monitor()
+    _activate_rig(rig)
+    monitor = _capture_monitor(rig)
     # A mapper for a synthetic model image (downscaled 1366px longest side),
     # exactly like a v2 frame would carry.
     scale = 1366 / max(monitor.width, monitor.height)
@@ -464,7 +488,8 @@ async def _run_engine_mission(
 
 
 def run_engine_mode(rig: RigWindow, engine: str) -> list[dict[str, Any]]:
-    monitor = _capture_monitor()
+    _activate_rig(rig)
+    monitor = _capture_monitor(rig)
     results: list[dict[str, Any]] = []
 
     # -- scenario 1: click all four targets (accuracy + latency) ----------
