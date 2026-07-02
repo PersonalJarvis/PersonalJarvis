@@ -1,28 +1,43 @@
 {
   "path": "desktop (_run_backend, GUI-free driver)",
-  "runs": 1,
+  "runs": 3,
   "python": "C:\\Program Files\\Python311\\python.exe",
   "vault_pages": 84,
-  "median_wall_ms": 1182.0,
-  "median_boot_ready_ms": 86.0,
-  "median_bind_wall_ms": 666.2,
-  "median_voice_ready_wall_ms": 4799.5,
+  "median_wall_ms": 1228.5,
+  "median_boot_ready_ms": 73.2,
+  "median_bind_wall_ms": 664.1,
+  "median_voice_ready_wall_ms": 4813.1,
   "voice_ready_wall_ms_runs": [
-    4799.5
+    5143.9,
+    4813.1,
+    4275.6
   ],
-  "median_voice_usable_wall_ms": 5181.0,
+  "median_voice_usable_wall_ms": 5225.9,
   "voice_usable_wall_ms_runs": [
-    5181.0
+    5584.5,
+    5225.9,
+    4653.1
+  ],
+  "median_app_interactive_wall_ms": 5325.4,
+  "app_interactive_wall_ms_runs": [
+    5652.0,
+    5325.4,
+    4789.8
   ],
   "wall_ms_runs": [
-    1182.0
+    1257.8,
+    1228.5,
+    1190.5
   ],
   "boot_ready_ms_runs": [
-    86.0
+    73.0,
+    73.2,
+    78.3
   ],
   "phase_medians_ms": {
-    "db_pre_webserver": 2458.1,
-    "db_webserver_ctor": 1274.7
+    "db_app_interactive": 927.4,
+    "db_pre_webserver": 2527.9,
+    "db_webserver_ctor": 1340.0
   },
   "anchor": "spawn -> /api/health responds 200 (= DesktopApp._wait_for_backend success = window creation point)",
   "secondary_anchor": "median_bind_wall_ms = spawn -> BOOT_READY print (bootstrap bind; may precede a responsive health endpoint)",
