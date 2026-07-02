@@ -38,6 +38,7 @@ import logging
 import sys
 import time
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -189,6 +190,14 @@ def _is_cancelled(token: CancelToken | None) -> bool:
         return bool(token.is_cancelled())
     except Exception:  # noqa: BLE001
         return False
+
+
+@dataclass(frozen=True)
+class _ImageCfg:
+    """Frame-encoding knobs shared by perception and the done-judge."""
+
+    max_dimension: int
+    blob_dir: Path
 
 
 class _Profiler:
@@ -406,10 +415,10 @@ async def run_cu_loop(
     coordinate_space = str(getattr(ctx, "coordinate_space", "auto") or "auto")
     settle_scale = float(getattr(ctx, "settle_scale", 1.0) or 1.0)
     strict_verify = bool(getattr(ctx, "strict_verify", True))
-    image_cfg = {
-        "max_dimension": int(getattr(ctx, "image_max_dimension", 1366) or 1366),
-        "blob_dir": Path("data") / "flight_recorder" / "blobs",
-    }
+    image_cfg = _ImageCfg(
+        max_dimension=int(getattr(ctx, "image_max_dimension", 1366) or 1366),
+        blob_dir=Path("data") / "flight_recorder" / "blobs",
+    )
 
     consecutive_failures = 0
     llm_failures = 0
@@ -435,8 +444,8 @@ async def run_cu_loop(
             frame_coro = asyncio.to_thread(
                 capture_stable_frame,
                 monitor,
-                max_dimension=image_cfg["max_dimension"],
-                blob_dir=image_cfg["blob_dir"],
+                max_dimension=image_cfg.max_dimension,
+                blob_dir=image_cfg.blob_dir,
             )
             snapshot_coro = foreground_ui_snapshot()
             frame, (labels, field_hint, handoff) = await asyncio.wait_for(
