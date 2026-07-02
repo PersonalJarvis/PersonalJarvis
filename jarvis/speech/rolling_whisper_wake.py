@@ -46,8 +46,8 @@ from jarvis.plugins.stt.fwhisper import FasterWhisperProvider, TranscribeBusy
 # ``.search().group(0)``) so a custom wake phrase can drive this backstop.
 from jarvis.speech.wake_constants import JARVIS_WAKE_PATTERN as DEFAULT_PATTERN
 from jarvis.speech.wake_constants import (
-    STT_HALLUCINATION_RE,
     normalize_phrase_for_match,
+    phrase_core_for_match,
 )
 
 log = logging.getLogger("jarvis.wake.rolling")
@@ -283,6 +283,10 @@ class RollingWhisperWake:
         self._max_no_speech_prob = max_no_speech_prob
         self._transcribe_timeout_s = float(transcribe_timeout_s)
         self._match_min_rms = float(match_min_rms)
+        # Cache of prefix-relaxed core matchers, keyed by the phrase core, used
+        # by the bias-echo confirm to check whether the UNBIASED pass also heard
+        # the wake (built lazily so no import cost on the hot path).
+        self._core_matchers: dict[tuple[str, ...], Any] = {}
         # Statistics for the heartbeat
         self._chunks_seen = 0
         self._total_bytes = 0
@@ -347,12 +351,18 @@ class RollingWhisperWake:
 
         The tell-tale is the ECHO SIGNATURE (the transcript consists of the
         phrase and NOTHING else) — genuine speech usually carries context.
-        Such candidates get ONE unbiased second pass over the SAME window: an
-        unprimed ear hears *something* wherever real speech exists (even a
-        mis-hearing), but hears nothing — or a known hallucination
-        boilerplate — on the noise the primed model echoed over. Costs one
-        extra local transcribe only on exact-phrase candidates. Fail-open on
-        infrastructure errors: a broken confirm must never eat a real wake.
+        Such candidates get ONE unbiased second pass over the SAME window and
+        must be CORROBORATED: the unprimed ear has to independently hear the
+        wake's core word. Merely producing *some* text is NOT evidence — the
+        base model ALSO hallucinates unrelated words on the same boosted noise
+        ('Ja.', 'Das ist ein Problem.' — live ghost activations 2026-07-02 that
+        the old "heard anything non-boilerplate → genuine" rule let through).
+        The corroboration reuses the primary matcher's length-aware fuzzy +
+        sound-fold logic (prefix-relaxed), so a garbled genuine wake
+        ('Hey Fabel', 'Ist er niko da') still passes while an unrelated
+        hallucination does not. Costs one extra local transcribe only on
+        exact-phrase candidates. Fail-CLOSED on infrastructure errors (an
+        unconfirmable exact-phrase candidate is suppressed, not accepted).
         """
         bias = getattr(self._stt, "bias_prompt", None)
         if not bias:
@@ -395,17 +405,44 @@ class RollingWhisperWake:
             )
             return True
         unbiased = (transcript.text or "").strip()
-        if unbiased and STT_HALLUCINATION_RE.search(unbiased) is None:
+        if unbiased and self._unbiased_corroborates(match.group(0), unbiased):
             log.info(
-                "echo-confirm: unprimed ear heard %r — genuine wake", unbiased[:60]
+                "echo-confirm: unprimed ear corroborated the wake (heard %r) "
+                "— genuine",
+                unbiased[:60],
             )
             return False
         log.info(
             "echo-confirm: SUPPRESSED prompt echo — biased transcript was "
-            "exactly the phrase but the unprimed ear heard %r",
+            "exactly the phrase but the unprimed ear did not corroborate the "
+            "wake (heard %r)",
             unbiased[:60],
         )
         return True
+
+    def _unbiased_corroborates(self, matched_phrase: str, unbiased_text: str) -> bool:
+        """True if the unbiased transcript independently contains the wake core.
+
+        Builds (once, cached) a PREFIX-RELAXED matcher for the core of the
+        just-matched phrase and runs it over the unprimed transcript, reusing
+        the primary matcher's length-aware fuzzy + sound-fold logic. So a
+        garbled genuine wake ('Hey Fabel', 'niko') still corroborates, while an
+        unrelated silence/noise hallucination ('Ja.', 'Das ist ein Problem.')
+        does not. An empty core (nothing to check) does not suppress.
+        """
+        core = tuple(phrase_core_for_match(matched_phrase))
+        if not core:
+            return True  # nothing to corroborate against -> do not suppress
+        matcher = self._core_matchers.get(core)
+        if matcher is None:
+            from jarvis.speech.wake_phrase import compile_wake_matcher
+
+            # Match on the CORE alone -> compile_wake_matcher does not require a
+            # wake prefix, so the unprimed ear may drop the 'Hey' and still
+            # corroborate the name.
+            matcher = compile_wake_matcher(" ".join(core))
+            self._core_matchers[core] = matcher
+        return matcher.search(unbiased_text) is not None
 
     async def detect(
         self, chunks: AsyncIterator[AudioChunk]

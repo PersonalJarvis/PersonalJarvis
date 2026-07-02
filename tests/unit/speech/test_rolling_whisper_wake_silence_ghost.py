@@ -170,6 +170,26 @@ async def test_confirm_error_on_quiet_window_fails_closed() -> None:
     assert stt.unbiased_calls >= 1, "confirm never ran — test does not cover Hole B"
 
 
+async def test_unbiased_pass_hallucinating_unrelated_words_is_suppressed() -> None:
+    """The base model hallucinates on boosted noise too: the biased pass says
+    the exact phrase and the UNBIASED pass says an unrelated word ('Das ist ein
+    Problem.'). 'Heard something' is NOT corroboration — the unprimed ear must
+    hear the wake CORE. Live 2026-07-02 ghosts: 'Ja.', 'Das ist ein Problem.',
+    'Ich will nicht.' all wrongly accepted as genuine. Loud audio so the energy
+    gate passes and the corroboration check is what must reject it."""
+    stt = _BiasedSTT(biased="Hey Nico", unbiased="Das ist ein Problem.")
+    assert await _first_yield(stt, _chunk(12000)) is None
+    assert stt.unbiased_calls >= 1, "confirm never ran — corroboration untested"
+
+
+async def test_unbiased_pass_hearing_the_garbled_core_still_fires() -> None:
+    """Recall guard for the corroboration rule: a genuine wake the unprimed
+    model garbles to a sound-alike of the core ('niko' for 'Nico') must still
+    be accepted — corroboration is fuzzy + prefix-relaxed, not exact."""
+    stt = _BiasedSTT(biased="Hey Nico", unbiased="niko")
+    assert await _first_yield(stt, _chunk(12000)) is not None
+
+
 async def test_genuine_quiet_wake_still_fires() -> None:
     """Regression guard: a genuine quiet wake (rms ~0.009, the quiet-mic
     contract level) whose unprimed ear also hears speech must still fire — the
