@@ -14,10 +14,15 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 
-def _cfg(model_path: str, sensitivity: float = 0.5) -> SimpleNamespace:
+def _cfg(
+    model_path: str,
+    sensitivity: float = 0.5,
+    phrase: str = "Hey Nico",
+    engine: str = "custom_onnx",
+) -> SimpleNamespace:
     return SimpleNamespace(
-        phrase="Hey Nico",
-        engine="custom_onnx",
+        phrase=phrase,
+        engine=engine,
         custom_model_path=model_path,
         sensitivity=sensitivity,
         fuzzy_match_ratio=0.8,
@@ -49,6 +54,111 @@ def test_custom_onnx_threshold_scales_strict_to_sensitive(tmp_path) -> None:
     assert strict > sensitive, (strict, sensitive)   # 0.0 = least likely to fire
     assert 0.60 <= strict <= 0.75
     assert 0.25 <= sensitive <= 0.35
+
+
+# ---------------------------------------------------------------------------
+# A stale custom model must NOT hijack a NEW wake phrase.
+#
+# Live bug 2026-07-02: the user changed the wake phrase to "Hey Fable"
+# (engine Auto) in Settings, but jarvis.toml still carried
+# custom_model_path=hey_nico.onnx from the earlier trained phrase — and the
+# resolver's "any custom path wins" rule kept the NICO model as the detector,
+# so the new phrase was deaf ("only Hey Nico still works"). Rule now:
+# a custom model is auto-adopted only when it BELONGS to the configured
+# phrase (model filename tokens, sound-folded); an explicit
+# engine="custom_onnx" still forces it (user's own naming is their choice).
+# ---------------------------------------------------------------------------
+
+
+def test_stale_custom_model_does_not_hijack_new_phrase(tmp_path) -> None:
+    from jarvis.speech.wake_phrase import resolve_wake_plan
+
+    model = tmp_path / "hey_nico.onnx"
+    model.write_bytes(b"onnx")
+    plan = resolve_wake_plan(
+        _cfg(str(model), phrase="Hey Fable", engine="auto"),
+        local_whisper_available=True,
+    )
+    assert plan.engine == "stt_match", plan
+    # The regular any-phrase path, not a degraded fallback.
+    assert plan.degraded is False
+    assert plan.matcher.search("hey fable") is not None
+    assert "different phrase" in plan.message.lower()
+
+
+def test_matching_custom_model_still_adopted_on_auto(tmp_path) -> None:
+    from jarvis.speech.wake_phrase import resolve_wake_plan
+
+    model = tmp_path / "hey_nico.onnx"
+    model.write_bytes(b"onnx")
+    plan = resolve_wake_plan(
+        _cfg(str(model), phrase="Hey Nico", engine="auto"),
+        local_whisper_available=True,
+    )
+    assert plan.engine == "custom_onnx"
+    assert plan.oww_model_path == str(model)
+
+
+def test_sound_folded_spelling_still_owns_the_model(tmp_path) -> None:
+    # "Hey Niko" vs hey_nico.onnx: sound-folding makes the tokens compare
+    # equal, so a spelling variant of the SAME word keeps the trained model.
+    from jarvis.speech.wake_phrase import resolve_wake_plan
+
+    model = tmp_path / "hey_nico.onnx"
+    model.write_bytes(b"onnx")
+    plan = resolve_wake_plan(
+        _cfg(str(model), phrase="Hey Niko", engine="auto"),
+        local_whisper_available=True,
+    )
+    assert plan.engine == "custom_onnx"
+
+
+def test_explicit_custom_engine_keeps_arbitrarily_named_model(tmp_path) -> None:
+    # engine="custom_onnx" is the user's explicit choice — a model file named
+    # differently from the phrase (their own training, their own naming) must
+    # still be honoured.
+    from jarvis.speech.wake_phrase import resolve_wake_plan
+
+    model = tmp_path / "my_wake.onnx"
+    model.write_bytes(b"onnx")
+    plan = resolve_wake_plan(
+        _cfg(str(model), phrase="Friday", engine="custom_onnx"),
+        local_whisper_available=True,
+    )
+    assert plan.engine == "custom_onnx"
+    assert plan.oww_model_path == str(model)
+
+
+def test_stale_custom_model_lets_pretrained_phrase_through(tmp_path) -> None:
+    # A stale custom model must not block the pretrained path either: with the
+    # phrase set (back) to "Hey Jarvis", the bundled hey_jarvis model wins.
+    from jarvis.speech.wake_phrase import resolve_wake_plan
+
+    model = tmp_path / "hey_nico.onnx"
+    model.write_bytes(b"onnx")
+    plan = resolve_wake_plan(
+        _cfg(str(model), phrase="Hey Jarvis", engine="auto"),
+        local_whisper_available=True,
+    )
+    assert plan.engine == "openwakeword"
+    assert plan.oww_keyword == "hey_jarvis"
+    assert plan.degraded is False
+
+
+def test_stale_custom_model_without_whisper_degrades_honestly(tmp_path) -> None:
+    # Mismatching model + no local Whisper: fall through to the bundled
+    # offline fallback with a clear message — never a silent dead listener.
+    from jarvis.speech.wake_phrase import resolve_wake_plan
+
+    model = tmp_path / "hey_nico.onnx"
+    model.write_bytes(b"onnx")
+    plan = resolve_wake_plan(
+        _cfg(str(model), phrase="Hey Fable", engine="auto"),
+        local_whisper_available=False,
+    )
+    assert plan.engine == "openwakeword"
+    assert plan.oww_keyword == "hey_rhasspy"
+    assert plan.degraded is True
 
 
 def test_custom_onnx_requires_prefix_verify(tmp_path) -> None:
