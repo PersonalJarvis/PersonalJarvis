@@ -196,6 +196,39 @@ custom_onnx engine had hidden.
   (tiny-first + background hot-swap like the existing turbo swap), voice
   setup ~3.5 s. Realistic isolated target ~6-8 s.
 
+## Iteration 8 — real Linux measurement + final tally
+
+- **Headless Linux, MEASURED** (python:3.11-slim container, fast container FS,
+  correct two-step install `pip install -r requirements.txt` then
+  `pip install -e . --no-deps`; the combined single call fails on the hashed
+  lockfile — that was a harness usage error, not a doctrine bug):
+  **cold boot spawn->serving 196 ms median** (206/187 ms).
+  The committed headless baseline in-repo: 4053 ms -> **20.62x faster**.
+- Note for future container runs: NEVER measure through the Windows bind
+  mount (Python imports over the 9P mount blew the 240 s timeout); copy the
+  tree into the container FS first.
+- macOS: NOT measured (no Apple hardware on this box). The method is
+  committed and identical: run `scripts/measure_boot.py` (headless) /
+  `scripts/measure_desktop_boot.py --voice` (desktop) on a Mac or CI matrix.
+
+## FINAL TALLY (2026-07-02)
+
+| Path | Before | After | Factor |
+|---|---|---|---|
+| Linux headless cold boot (measured in-container) | 4053 ms (committed baseline) | **196 ms** | **20.6x** |
+| Windows desktop window anchor (same-method worktree A/B) | 19.3 s | **1.3 s** | **14.7x** |
+| Windows voice-usable TTU (same-method A/B) | 15.8 s | **12.1 s** | 1.3x isolated |
+| Windows LIVE first working wake (log-timeline, maintainer setup) | ~200 s (load cascade) | cascade eliminated; model pre-warm 114.7 s -> 9.8 s measured live | ~16x+ live |
+
+- 20x on the voice-usable anchor vs the reproducible 15.8 s baseline would be
+  0.79 s — provably below the physical floor (local CPU Whisper load+prime
+  >2 s, Python import mountain ~3 s). Documented per the task's honesty
+  clause. Remaining levers toward ~6-8 s: tiny-first wake arm + hot-swap
+  (touches wake precision — coordinate with the 2026-07-02 prefix-mandate
+  work), import mountain, ctor slimming.
+- Regression protection: `scripts/ci/check_boot_budget.py` (+ slow-marked
+  pytest wrapper) fails any change that pushes window >8 s or voice TTU >30 s.
+
 ## How to add a feature WITHOUT slowing boot (doctrine)
 
 - Nothing new runs before VOICE_READY. New subsystems hook into
