@@ -50,7 +50,7 @@ def _run_start_with_probes(monkeypatch) -> list[str]:
         lambda: order.append("dpi"),
     )
     monkeypatch.setattr(
-        "jarvis.core.win32_dpi.pin_thread_dpi_unaware",
+        "jarvis.core.win32_dpi.pin_thread_dpi_per_monitor",
         lambda: order.append("pin") or True,
     )
 
@@ -83,36 +83,38 @@ def test_start_sets_dpi_awareness_before_creating_tk_root(monkeypatch) -> None:
     )
 
 
-def test_start_pins_thread_unaware_after_awareness_before_tk_root(monkeypatch) -> None:
-    """Regression (bar shrinks to ~2/3 / jumps / drag-offset, recurring): the
-    bar window used to follow the PROCESS DPI context, so it lost its 150 %
-    upscaling whenever pywebview's ``webview.start()`` flipped the process
-    awareness at runtime — a boot race that shrank the bar to raw pixels and
-    desynced the drag coordinates. The fix pins the bar's Tk thread (and thus
-    its window, per-window) to the UNAWARE context so Windows scales it
-    permanently and later process flips cannot touch it. Order matters: the
-    pin only holds when the process is already aware (ensure first), and it
-    must happen BEFORE the Tk root exists."""
+def test_start_pins_thread_per_monitor_after_awareness_before_tk_root(monkeypatch) -> None:
+    """Regression (bar shrinks ~1/3 when it moves / jumps / drag-offset): the
+    bar window used to follow the PROCESS DPI context, so (a) pywebview's
+    runtime ``SetProcessDPIAware()`` flip could re-interpret it mid-session and
+    (b) as a system-aware window it was DWM-downscaled to 2/3 on the 100 %
+    monitor next to the 150 % primary — the "shrinks when it changes position"
+    bug. The fix pins the bar's Tk thread (and thus its window, per-window) to
+    PER_MONITOR_AWARE so the bar renders its raw pixels (the ORIGINAL look —
+    maintainer-confirmed 2026-07-02; an UNAWARE pin upscales it into the "fat
+    bar" and was explicitly rejected) on EVERY monitor, immune to process
+    flips and DWM bitmap scaling. Order matters: ensure first (the pin only
+    holds in an aware process), pin BEFORE the Tk root exists."""
     order = _run_start_with_probes(monkeypatch)
 
-    assert "pin" in order, "start() must pin the bar thread DPI-UNAWARE"
+    assert "pin" in order, "start() must pin the bar thread PER_MONITOR_AWARE"
     assert order.index("dpi") < order.index("pin") < order.index("tk"), (
-        "expected ensure_dpi_awareness -> pin_thread_dpi_unaware -> tk.Tk(); "
+        "expected ensure_dpi_awareness -> pin_thread_dpi_per_monitor -> tk.Tk(); "
         f"got {order}"
     )
 
 
-def test_pin_thread_dpi_unaware_is_safe_everywhere() -> None:
+def test_pin_thread_dpi_per_monitor_is_safe_everywhere() -> None:
     """The pin helper never raises: True (pinned) on Windows with the modern
     API, False on other platforms / old Windows. Run in a throwaway thread so
     the test runner's own thread context is never mutated."""
     import os
     import threading
 
-    from jarvis.core.win32_dpi import pin_thread_dpi_unaware
+    from jarvis.core.win32_dpi import pin_thread_dpi_per_monitor
 
     result: list[bool] = []
-    t = threading.Thread(target=lambda: result.append(pin_thread_dpi_unaware()))
+    t = threading.Thread(target=lambda: result.append(pin_thread_dpi_per_monitor()))
     t.start()
     t.join(timeout=5)
 
@@ -121,3 +123,12 @@ def test_pin_thread_dpi_unaware_is_safe_everywhere() -> None:
         assert result[0] is False  # graceful no-op off Windows
     else:
         assert isinstance(result[0], bool)
+
+
+def test_unaware_pin_is_gone() -> None:
+    """The UNAWARE pin produced the upscaled "fat bar" (maintainer-rejected
+    twice: 2026-07-01 session and commit 5c7a5d15). It must not exist as an
+    importable helper anyone could wire back in."""
+    import jarvis.core.win32_dpi as dpi
+
+    assert not hasattr(dpi, "pin_thread_dpi_unaware")

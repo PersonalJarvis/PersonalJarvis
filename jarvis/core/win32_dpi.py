@@ -58,23 +58,31 @@ def ensure_dpi_awareness() -> None:
         _DPI_AWARENESS_SET = True
 
 
-def pin_thread_dpi_unaware() -> bool:
-    """Pin the CALLING thread's DPI-awareness context to UNAWARE (Windows).
+def pin_thread_dpi_per_monitor() -> bool:
+    """Pin the CALLING thread's DPI context to PER_MONITOR_AWARE (Windows).
 
-    Every top-level window the thread creates afterwards carries the UNAWARE
-    context PER WINDOW: Windows bitmap-scales it to the monitor's scale factor
-    (the familiar upscaled look on a 150 % display) and virtualises its
-    coordinate space — and, critically, a later PROCESS-level awareness flip
-    (pywebview's ``webview.start()`` calls ``user32.SetProcessDPIAware()`` at
-    runtime, ``webview/platforms/winforms.py``) can no longer strip that
-    scaling off the window. That flip is what made the JarvisBar shrink to
-    ~2/3, jump position, and drag with a large cursor offset (recurring,
-    boot-race dependent).
+    Every top-level window the thread creates afterwards carries that context
+    PER WINDOW, which gives a fixed-pixel overlay (the JarvisBar) exactly the
+    stable behaviour the maintainer wants:
 
-    The pin only survives such a flip when the process is ALREADY DPI-aware,
-    so call :func:`ensure_dpi_awareness` first. The context is deliberately
-    NOT restored — call this only from a thread fully owned by the unaware
-    surface (e.g. the bar's dedicated Tk mainloop thread).
+    - it renders its RAW pixels on every monitor (the bar's original look) —
+      DWM never bitmap-scales it, so moving it onto a monitor with a different
+      scale factor (100 % secondary next to the 150 % primary) no longer
+      shrinks it to ~2/3 with a drag cursor offset;
+    - a later PROCESS-level awareness flip (pywebview's ``webview.start()``
+      calls ``user32.SetProcessDPIAware()`` at runtime,
+      ``webview/platforms/winforms.py``) cannot re-interpret the window —
+      no more mid-session size/position jumps.
+
+    Deliberately PER_MONITOR_AWARE and NOT unaware: an UNAWARE pin makes
+    Windows upscale the window (a blurry, oversized "fat bar" on a scaled
+    display) — the maintainer rejected that look twice (2026-07-01 session,
+    commit 5c7a5d15). Do not "fix" this by pinning UNAWARE again.
+
+    The pin only survives a later process flip when the process is ALREADY
+    DPI-aware, so call :func:`ensure_dpi_awareness` first. The context is
+    deliberately NOT restored — call this only from a thread fully owned by
+    the pinned surface (e.g. the bar's dedicated Tk mainloop thread).
 
     Returns True when the pin took effect; False (graceful no-op) off Windows
     or when the API is unavailable (pre-Windows-10-1607).
@@ -87,12 +95,16 @@ def pin_thread_dpi_unaware() -> bool:
         set_ctx = ctypes.windll.user32.SetThreadDpiAwarenessContext
         set_ctx.restype = ctypes.c_void_p
         set_ctx.argtypes = [ctypes.c_void_p]
-        # DPI_AWARENESS_CONTEXT_UNAWARE == (DPI_AWARENESS_CONTEXT)-1
-        prev = set_ctx(ctypes.c_void_p(-1))
-        if prev is None:
-            logger.debug("SetThreadDpiAwarenessContext(-1) returned NULL")
-            return False
-        return True
+        # Prefer PER_MONITOR_AWARE_V2 (-4, Win10 1703+); fall back to
+        # PER_MONITOR_AWARE (-3, Win10 1607). Both prevent DWM bitmap scaling
+        # and pin the context per-window; V2 additionally covers child windows
+        # and non-client areas.
+        for context in (-4, -3):
+            prev = set_ctx(ctypes.c_void_p(context))
+            if prev is not None:
+                return True
+        logger.debug("SetThreadDpiAwarenessContext(-4/-3) returned NULL")
+        return False
     except (OSError, AttributeError):
         logger.debug("SetThreadDpiAwarenessContext unavailable", exc_info=True)
         return False
