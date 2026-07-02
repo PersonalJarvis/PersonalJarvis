@@ -918,7 +918,7 @@
     },
     "volume": {
       "title": "Lautstärke",
-      "description": "Wie laut {name} seine Antworten ausgibt. 100% ist volle Lautstärke; niedriger stellen, um {name} leiser zu machen. Wenn es bei 100% noch zu leise ist, die System- oder Lautsprecher-Lautstärke erhöhen.",
+      "description": "Wie laut {name} seine Antworten ausgibt. 100% ist am lautesten — herunterregeln, wenn {name} zu laut ist. Die Sprache wird angehoben, damit sie so laut wie Musik trägt, ohne zu verzerren.",
       "reset": "Auf Standard zurücksetzen (100%)",
       "saved_toast": "Lautstärke auf {0} gesetzt.",
       "restart_caption": "Gespeichert — wird beim nächsten Start aktiv."

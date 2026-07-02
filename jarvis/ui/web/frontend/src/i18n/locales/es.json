@@ -918,7 +918,7 @@
     },
     "volume": {
       "title": "Volumen",
-      "description": "Qué tan alto habla {name} sus respuestas. 100% es el volumen máximo; bájalo para que {name} suene más bajo. Si sigue siendo demasiado bajo al 100%, sube el volumen del sistema o del altavoz.",
+      "description": "Qué tan alto habla {name} sus respuestas. 100% es el máximo — bájalo si {name} suena demasiado alto. La voz se amplifica para sonar tan fuerte como la música, sin distorsión.",
       "reset": "Restablecer al valor predeterminado (100%)",
       "saved_toast": "Volumen fijado en {0}.",
       "restart_caption": "Guardado — se aplica en el próximo inicio."

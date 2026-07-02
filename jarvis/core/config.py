@@ -309,12 +309,13 @@ class TTSConfig(BaseModel):
     style_prompt: str | None = None
     voice_auto_switch: bool = True
     speed: float = 1.0
-    # Master output volume 0.0–1.0 (1.0 = full, unattenuated — the historical
-    # behaviour). Applied as a pure amplitude multiplier on the final PCM in the
-    # shared AudioPlayer, so it is provider-independent and can never clip (a
-    # 0–1 factor only attenuates). Editable live from the Settings "Volume"
-    # slider; on a headless host with no audio device it is simply never
-    # exercised (playback never opens a stream) — no crash.
+    # Master output volume knob, 0.0–1.0 (1.0 = 100% = loudest). Consumed by the
+    # shared gain helper (jarvis.audio.gain), which scales it to a makeup boost +
+    # soft limiter so 100% is genuinely loud — raw TTS speech is far quieter than
+    # mastered music — while below the unity point it plainly attenuates. Applied
+    # to EVERY sink (local speaker, browser voice, telephony), so it works on
+    # every OS and transport, including a headless server with no audio device.
+    # Provider-independent; editable live from the Settings "Volume" slider.
     volume: float = Field(default=1.0, ge=0.0, le=1.0)
     streaming: bool = True
     # ElevenLabs-specific VoiceSettings (ignored by other providers).

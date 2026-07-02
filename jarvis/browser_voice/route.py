@@ -74,6 +74,7 @@ def _build_browser_session(
         tts=tts,
         language_code=_resolve_language(cfg),
         bus=bus,
+        config=cfg,
     )
 
 

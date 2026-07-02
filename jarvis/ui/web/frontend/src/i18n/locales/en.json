@@ -919,7 +919,7 @@
     },
     "volume": {
       "title": "Volume",
-      "description": "How loudly {name} speaks its answers. 100% is full volume; lower it to make {name} quieter. If it is still too quiet at 100%, raise your system or speaker volume.",
+      "description": "How loudly {name} speaks its answers. 100% is the loudest — turn it down if {name} is too loud. Speech is boosted so it carries as loud as music, without distortion.",
       "reset": "Reset to default (100%)",
       "saved_toast": "Volume set to {0}.",
       "restart_caption": "Saved — applies on next start."
