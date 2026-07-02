@@ -1,0 +1,20 @@
+[
+  {
+    "scenario": "raw-pipeline",
+    "intended_clicks": 4,
+    "received_first_hits": 0,
+    "hit_rate": 0.0,
+    "mean_distance_px": null,
+    "max_distance_px": null,
+    "duplicate_clicks": 0,
+    "step_latency_s_p50": 0.016,
+    "step_latency_s_max": 0.032,
+    "provoked_duplicates_executed": 0,
+    "typed_expected": "example.com",
+    "typed_received": "example.com",
+    "typed_exactly_once": true,
+    "typed_duplicated": false,
+    "actuator": "windows-sendinput",
+    "monitor": "3840x2160@0,0"
+  }
+]
