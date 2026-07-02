@@ -124,7 +124,7 @@ def discover_fixtures(
             ambient_pool.append(entry)
         elif 0.003 <= r < 0.01:
             quiet_pool.append(entry)
-    rng = random.Random(seed)
+    rng = random.Random(seed)  # noqa: S311 — deterministic fixture sampling, not crypto
     fx.neg_ambient = sorted(rng.sample(ambient_pool, min(neg_cap, len(ambient_pool))))
     fx.neg_quiet = sorted(rng.sample(quiet_pool, min(neg_cap // 2, len(quiet_pool))))
     fx.neg_bare = fx.neg_bare[: neg_cap]

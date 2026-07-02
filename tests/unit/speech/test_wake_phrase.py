@@ -18,12 +18,10 @@ import pytest
 from jarvis.speech import wake_constants as wc
 from jarvis.speech import wake_phrase as wp
 from jarvis.speech.wake_phrase import (
-    WakeMatcher,
     compile_wake_matcher,
     resolve_wake_plan,
     sensitivity_to_threshold,
 )
-
 
 # --------------------------------------------------------------------------
 # WAKE_ENGINES single source of truth

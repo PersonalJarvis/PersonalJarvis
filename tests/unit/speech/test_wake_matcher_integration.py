@@ -17,7 +17,6 @@ from jarvis.speech.wake_verifier import (
     verify_wake_with_stt,
 )
 
-
 # --------------------------------------------------------------------------
 # Single source of truth: rolling-whisper re-exports the canonical pattern.
 # --------------------------------------------------------------------------
@@ -139,8 +138,9 @@ async def _first_yield(stt: _ScriptedSTT, phrase: str, wait_s: float) -> str | N
     feeder = asyncio.create_task(_feed())
     driver = asyncio.create_task(_drain())
     try:
-        deadline = asyncio.get_running_loop().time() + wait_s
-        while not got and asyncio.get_running_loop().time() < deadline:
+        for _ in range(int(wait_s / 0.05)):
+            if got:
+                break
             await asyncio.sleep(0.05)
     finally:
         driver.cancel()
