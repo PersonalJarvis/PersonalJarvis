@@ -16,6 +16,20 @@
   <b>Talk to your computer — and watch it do the work: an open-source, privacy-first voice agent with full command of your PC.</b>
 </p>
 
+<!--
+  TODO(demo): swap the placeholder below for the real demo. Two README-safe options:
+    1) Drop a looping demo GIF at assets/demo/hero-demo.gif (keep it under ~10 MB so
+       GitHub renders it inline) and point the <img src> at that file.
+    2) For an MP4 with sound, upload the file to a GitHub Release or issue, then paste
+       the github user-images video URL GitHub gives you in place of this whole <a>…</a>.
+  Either way, keep width≈820 and the alt text so the layout stays put.
+-->
+<p align="center">
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis#readme">
+    <img src="assets/demo/demo-placeholder.svg" alt="Personal Jarvis — watch the demo" width="820" />
+  </a>
+</p>
+
 ---
 
 Personal Jarvis is not a classical voice assistant. At its core is a fast **Router-Brain**
@@ -26,6 +40,26 @@ language. It is **provider-agnostic by design** (swap Gemini, Claude, OpenAI, or
 OpenRouter with one setting), **self-modifying** (it can safely edit its own configuration
 through an audited, reversible pipeline), and runs everywhere — from a headless server with
 a browser UI to a full desktop with a tray app, an Orb overlay, and global-hotkey wake.
+
+## What do you actually say to it?
+
+You talk to it the way you'd hand a task to a capable assistant — then it goes and does
+it. A few things it can do today:
+
+- **"Research the best open-source vector databases and drop a comparison in my Outputs."**
+  → spawns a background mission: a worker does the digging, a critic checks the work, and
+  you get a downloadable write-up in **Outputs**.
+- **"Read the README in my current project and summarize it in three sentences."**
+  → a file-aware worker opens the files, reads them, and reports back.
+- **"Open my browser and pull up the weather in Berlin."**
+  → drives the screen directly through computer-use — real clicks and keystrokes, not a
+  canned integration.
+- **"Call the clinic on Main Street and ask for their next open appointment."**
+  → places a real outbound phone call through the optional Twilio integration.
+- **"Remember that Alex prefers Signal over email."**
+  → writes the fact to the Knowledge Wiki so it sticks across every future session.
+- **"When the download finishes, ping me on Telegram."**
+  → sets a when-this-then-that trigger and reaches you on your channel when it fires.
 
 ## Why it's different
 
@@ -234,7 +268,7 @@ straight into provider costs, infrastructure, and development time.
 
 <p align="center">
   <i>This wall is empty — for now.</i><br/>
-  Want to be the first? Reach out at <a href="mailto:aethroc@gmail.com">aethroc@gmail.com</a>.
+  Want to be the first? Reach out on <a href="https://discord.gg/UPu6pFWrJ">Discord</a> or <a href="https://x.com/PersonalJarvis">X</a>.
 </p>
 
 | Tier | You get |
@@ -244,8 +278,7 @@ straight into provider costs, infrastructure, and development time.
 | **Sponsor** | The above + your logo on the sponsor wall |
 | **Partner** | The above + a seat at the roadmap table |
 
-> Sponsorship is being set up. Want to talk before the page is live? Email
-> [aethroc@gmail.com](mailto:aethroc@gmail.com), or reach out on
+> Sponsorship is being set up. Want to talk before the page is live? Reach out on
 > [Discord](https://discord.gg/UPu6pFWrJ) or [X](https://x.com/PersonalJarvis).
 
 ## Contributing

@@ -193,6 +193,9 @@ desktop-macos = [
     "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'",
     "pyobjc-framework-ApplicationServices>=10; sys_platform == 'darwin'",
     "pyobjc-framework-Accessibility>=10; sys_platform == 'darwin'",
+    # Native per-window Computer-Use capture (SCScreenshotManager by
+    # CGWindowID); runtime-probed — an absent framework degrades to rect grabs.
+    "pyobjc-framework-ScreenCaptureKit>=10; sys_platform == 'darwin'",
 ]
 # Local (offline) voice engines. Entirely optional per the cloud-first doctrine
 # (CLAUDE.md §3): the default VAD/STT/wake paths are cloud-reachable, so the base

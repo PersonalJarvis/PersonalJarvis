@@ -18,11 +18,8 @@ import subprocess
 import sys
 import types
 
-import pytest
-
 from jarvis.platform import window_state as ws
 from jarvis.platform.window_state import WindowInfo
-
 
 # ---------------------------------------------------------------------------
 # macOS (fake Quartz)

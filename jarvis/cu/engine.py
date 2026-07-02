@@ -55,7 +55,11 @@ from jarvis.cu.capture import (
     select_capture_target,
     thumbs_similar,
 )
-from jarvis.cu.geometry import CoordinateConvention, MonitorInfo
+from jarvis.cu.geometry import (
+    CoordinateConvention,
+    CoordinateMapper,
+    MonitorInfo,
+)
 from jarvis.cu.ledger import ActionLedger
 from jarvis.cu.verify import (
     crop_raw,
@@ -186,8 +190,10 @@ def _wayland_refusal() -> str | None:
 
         if is_wayland():
             return (
-                "cannot run on a Wayland session: screen capture and "
-                "synthetic input are blocked there. Use an X11 session."
+                "cannot run on a Wayland session: Wayland blocks global "
+                "screen capture and synthetic input by design. Log into an "
+                "X11 session instead (running single apps under XWayland "
+                "is not enough — the desktop session itself must be X11)."
             )
     except Exception:  # noqa: BLE001
         return None
@@ -338,6 +344,28 @@ def _summarize_action(action: dict[str, Any]) -> str:
 #: preserve surroundings better than tight boxes (MEGA-GUI / UI-Zoomer).
 _REFINE_RADIUS = 220
 
+def _crop_norm_to_screen(
+    bbox: dict[str, int], image_size: tuple[int, int], nx: float, ny: float,
+) -> tuple[int, int]:
+    """Resolve a 0-1000 point WITHIN a zoom crop to absolute screen units.
+
+    Builds a :class:`CoordinateMapper` for the crop rect — the SAME central
+    translation every other coordinate resolves through — so the refine path
+    can never disagree with the main mapping. The image size is the crop's
+    native pixel size (2x the rect on Retina); the result is clamped inside
+    the crop rect like every other mapped coordinate.
+    """
+    mapper = CoordinateMapper(
+        capture_left=int(bbox["left"]),
+        capture_top=int(bbox["top"]),
+        capture_width=int(bbox["width"]),
+        capture_height=int(bbox["height"]),
+        image_width=int(image_size[0]),
+        image_height=int(image_size[1]),
+    )
+    return mapper.normalized_to_screen(nx, ny)
+
+
 _REFINE_SYSTEM = (
     "You are a precision click-refinement assistant. The attached image is a "
     "ZOOMED-IN crop of the live screen, centered on a click that produced NO "
@@ -423,9 +451,7 @@ async def _zoom_refine_point(
         ny = min(max(float(obj.get("y", 0)), 0.0), 1000.0)
     except (TypeError, ValueError):
         return None
-    rx = bbox["left"] + round(nx / 1000.0 * bbox["width"])
-    ry = bbox["top"] + round(ny / 1000.0 * bbox["height"])
-    return (rx, ry)
+    return _crop_norm_to_screen(bbox, raw[0], nx, ny)
 
 
 async def _judge_done(
@@ -513,6 +539,17 @@ async def run_cu_loop(
     if wl is not None:
         yield _final(stderr=f"[cu] {wl}\n", exit_code=_EXIT_OBSERVE)
         return
+
+    # Windows: declare the process PER_MONITOR_AWARE_V2 before any geometry
+    # is read (idempotent no-op elsewhere / on later calls). The thread pin
+    # in input_space() remains the per-call enforcement; the declaration
+    # keeps window rects and monitor metrics un-virtualized process-wide.
+    try:
+        from jarvis.core.win32_dpi import ensure_dpi_awareness  # noqa: PLC0415
+
+        ensure_dpi_awareness()
+    except Exception:  # noqa: BLE001 — declaration is best-effort
+        log.debug("[cu] DPI awareness declaration failed", exc_info=True)
 
     max_steps = max(25, int(getattr(ctx, "step_budget", 100)))
     monitor_policy = str(getattr(ctx, "monitor", "primary") or "primary")
@@ -820,6 +857,10 @@ async def run_cu_loop(
                 snapped = snap_point_to_element(
                     resolved_xy[0], resolved_xy[1], clickables,
                     capture_area=monitor.width * monitor.height,
+                    capture_rect=(
+                        monitor.left, monitor.top,
+                        monitor.width, monitor.height,
+                    ),
                 )
                 if snapped is not None:
                     sx2, sy2, snap_label = snapped

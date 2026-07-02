@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720" role="img" aria-label="Personal Jarvis — demo video placeholder">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#141210"/>
+      <stop offset="1" stop-color="#0e0d0c"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="46%" r="42%">
+      <stop offset="0" stop-color="#e7c46e" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#e7c46e" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <rect width="1280" height="720" fill="url(#glow)"/>
+  <rect x="6" y="6" width="1268" height="708" rx="18" fill="none" stroke="#e7c46e" stroke-opacity="0.28" stroke-width="2"/>
+
+  <!-- play button -->
+  <circle cx="640" cy="322" r="72" fill="none" stroke="#e7c46e" stroke-width="4" stroke-opacity="0.9"/>
+  <path d="M620 288 L682 322 L620 356 Z" fill="#e7c46e"/>
+
+  <text x="640" y="470" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="46" font-weight="700" fill="#f4efe4" letter-spacing="0.5">Personal Jarvis — live demo</text>
+  <text x="640" y="520" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="26" fill="#e7c46e">Talk to your computer, and watch it do the work</text>
+  <text x="640" y="628" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="20" fill="#8a847a">Placeholder — the final demo clip drops in right here</text>
+</svg>

@@ -225,6 +225,7 @@ def snap_point_to_element(
     clickables: list[tuple[str, str, tuple[int, int, int, int]]],
     *,
     capture_area: int,
+    capture_rect: tuple[int, int, int, int] | None = None,
 ) -> tuple[int, int, str] | None:
     """Snap a model-predicted point to the CENTER of the smallest clickable
     element whose rect contains it — or ``None`` (keep the raw point).
@@ -234,7 +235,11 @@ def snap_point_to_element(
     stops mattering, at zero added latency (the rects ride the snapshot that
     already runs in parallel with the capture). The SMALLEST containing rect
     wins (leaf over ancestor); rects above ``_SNAP_MAX_AREA_FRACTION`` of
-    the capture area never snap (container trap). Pure; never raises.
+    the capture area never snap (container trap). When ``capture_rect``
+    (left, top, width, height) is given, an element whose center lies
+    OUTSIDE it never snaps — a window-scoped capture must not let the
+    accessibility tree push a click out of the window the model saw.
+    Pure; never raises.
     """
     best: tuple[int, str, int, int] | None = None  # (area, label, cx, cy)
     max_area = max(1, int(capture_area * _SNAP_MAX_AREA_FRACTION))
@@ -244,8 +249,13 @@ def snap_point_to_element(
         area = rw * rh
         if area > max_area:
             continue
+        cx, cy = rx + rw // 2, ry + rh // 2
+        if capture_rect is not None:
+            cl, ct, cw, ch = capture_rect
+            if not (cl <= cx < cl + cw and ct <= cy < ct + ch):
+                continue
         if best is None or area < best[0]:
-            best = (area, name, rx + rw // 2, ry + rh // 2)
+            best = (area, name, cx, cy)
     if best is None:
         return None
     return (best[2], best[3], best[1])
@@ -322,20 +332,31 @@ def crop_raw(
     cy: int,
     radius: int,
 ) -> tuple[tuple[int, int], bytes] | None:
-    """Crop a square around screen point ``(cx, cy)`` out of a raw monitor
-    grab covering screen ``rect`` (left, top, width, height in input units).
+    """Crop a square around screen point ``(cx, cy)`` out of a raw grab
+    covering screen ``rect`` (left, top, width, height in input units).
     ``None`` when the point lies outside the grab. The grab's pixel size may
-    differ from the rect (Retina: point rect, pixel grab) — the point is
-    scaled into grab pixels first. Pure PIL, no re-grab — one monitor grab
-    yields both the local and the global effect signal."""
+    differ from the rect (Retina: point rect, pixel grab) — the screen point
+    resolves into grab pixels through the ONE central translation
+    (:class:`jarvis.cu.geometry.CoordinateMapper`), never hand-rolled math.
+    Pure PIL, no re-grab — one grab yields both the local and the global
+    effect signal."""
+    from jarvis.cu.geometry import CoordinateMapper  # noqa: PLC0415
+
     (w, h), rgb = raw
     rl, rt, rw, rh = rect
     if rw <= 0 or rh <= 0:
         return None
-    px = int((int(cx) - rl) * w / rw)
-    py = int((int(cy) - rt) * h / rh)
-    if not (0 <= px < w and 0 <= py < h):
+    try:
+        mapper = CoordinateMapper(
+            capture_left=rl, capture_top=rt,
+            capture_width=rw, capture_height=rh,
+            image_width=w, image_height=h,
+        )
+    except ValueError:  # aspect mismatch: this grab is not of this rect
         return None
+    if not mapper.contains_screen(int(cx), int(cy)):
+        return None
+    px, py = mapper.screen_to_image(int(cx), int(cy))
     from PIL import Image  # noqa: PLC0415
 
     # Radius in input units -> grab pixels (uniform capture scale).

@@ -106,9 +106,13 @@ def input_space() -> Iterator[None]:
 
 @dataclass(frozen=True)
 class MonitorInfo:
-    """One monitor's rect in input units on the virtual desktop.
+    """One capture rect in input units on the virtual desktop.
 
     ``left``/``top`` can be negative (a monitor left of / above the primary).
+    A WINDOW-scoped capture target is the same rect type with the platform
+    window id in ``window_handle`` (Win32 hwnd / macOS CGWindowID / X11
+    window id) — the id native per-window grabbers capture through. A plain
+    monitor rect carries ``None``.
     """
 
     left: int
@@ -117,6 +121,7 @@ class MonitorInfo:
     height: int
     is_primary: bool = False
     name: str = ""
+    window_handle: int | None = None
 
     @property
     def bbox(self) -> dict[str, int]:
