@@ -2824,3 +2824,30 @@ batched type run; re-checked type verdict), `tests/unit/cu/
 test_conventions_ledger_verify.py` (container trap, focused-editable
 evidence), `tests/unit/vision/test_screen_bounds_virtual_desktop.py`
 (secondary-monitor tree survives; per-OS bounds helpers).
+
+**Review hardening (same day, three-agent adversarial/macOS/Linux review):**
+(1) the rescue's container deny-list was extended with List/Table/Toolbar/
+MenuBar-class roles across all three vocabularies plus the AT-SPI
+document-canvas family, and an area cap (`_FOCUS_MAX_AREA_FRACTION`) rejects
+focus evidence from region-sized elements — a false rescue would also have
+skipped the zoom-refine retry; (2) the Linux rescue was structurally INERT:
+the AT-SPI point hit-test queried Application objects (which do not
+implement Component — it now descends into their frames) and the AT-SPI
+flatten never populated `focused`/`is_password` (now read from
+STATE_FOCUSED / ROLE_PASSWORD_TEXT and passed through to the nodes);
+(3) the macOS point resolver stringified the `AXWindow` ELEMENT into
+`window_title` (an `<AXUIElementRef …>` repr fed to the model) — it now
+resolves the window's `AXTitle`; (4) `virtual_desktop_bounds` no longer
+flips process DPI awareness from a read-only getter (thread-scoped pin,
+restored — AP-9 class); (5) `settle_scale=0` is honored instead of being
+`or`-coerced to 1.0. Done-latency fixes from the same complaint: the
+done-judge reuses the perception frame when no batch action executed (the
+model's claimed evidence IS the current screen — faster AND more faithful),
+judge replies stop at the first complete JSON, and a discarded VAD false
+start now releases the announcement floor (a 96 ms mic blip had deferred
+the spoken "done" by 31 s). Known accepted residuals (documented, all
+degrade safely): the Windows hit-test may be flaky across COM apartments
+(misses a rescue, never fakes one); a successful type into a value-less
+rich editor can still read as "did not land"; legacy Zaphod X11 multihead
+under-reports the virtual bounds; Linux foreground-follow costs ~6 xdotool
+spawns per perceive frame.

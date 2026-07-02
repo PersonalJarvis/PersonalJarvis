@@ -17,18 +17,18 @@
 </p>
 
 <!--
-  TODO(demo): swap the placeholder below for the real demo. Two README-safe options:
-    1) Drop a looping demo GIF at assets/demo/hero-demo.gif (keep it under ~10 MB so
-       GitHub renders it inline) and point the <img src> at that file.
-    2) For an MP4 with sound, upload the file to a GitHub Release or issue, then paste
-       the github user-images video URL GitHub gives you in place of this whole <a>…</a>.
-  Either way, keep width≈820 and the alt text so the layout stays put.
+  Demo video is hosted as a GitHub Release asset (tag: media), on purpose NOT committed
+  to the source tree — cloning the repo never downloads it; GitHub streams it inline.
+  Refresh it with:
+    gh release upload media <new.mp4> --repo PersonalJarvis/PersonalJarvis --clobber
 -->
-<p align="center">
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis#readme">
-    <img src="assets/demo/demo-placeholder.svg" alt="Personal Jarvis — watch the demo" width="820" />
-  </a>
-</p>
+<div align="center">
+  <video
+    src="https://github.com/PersonalJarvis/PersonalJarvis/releases/download/media/personal-jarvis-onboarding-4K.mp4"
+    controls muted playsinline width="820">
+    <a href="https://github.com/PersonalJarvis/PersonalJarvis/releases/download/media/personal-jarvis-onboarding-4K.mp4">Watch the Personal Jarvis demo</a>
+  </video>
+</div>
 
 ---
 

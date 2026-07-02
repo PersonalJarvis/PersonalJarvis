@@ -125,7 +125,7 @@ def patched(monkeypatch, tmp_path):
             return state.typed_lands.pop(0) if state.typed_lands else None
         return state.typed_lands
 
-    async def fake_verify_click_focus_point(x, y):
+    async def fake_verify_click_focus_point(x, y, **kwargs):
         return state.focus_hit
 
     monkeypatch.setattr(

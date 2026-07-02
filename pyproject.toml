@@ -240,6 +240,8 @@ openwakeword = "jarvis.plugins.wake.openwakeword_provider:OpenWakeWordProvider"
 
 [project.entry-points."jarvis.stt"]
 groq-api = "jarvis.plugins.stt.groq_api:GroqWhisperAPI"
+# OpenRouter cloud transcription — reuses the shared openrouter_api_key.
+openrouter-stt = "jarvis.plugins.stt.openrouter_stt:OpenRouterSTT"
 
 [project.entry-points."jarvis.tts"]
 elevenlabs = "jarvis.plugins.tts.elevenlabs_tts:ElevenLabsTTS"
@@ -247,6 +249,8 @@ gemini-flash-tts = "jarvis.plugins.tts.gemini_flash_tts:GeminiFlashTTS"
 grok-voice = "jarvis.plugins.tts.grok_voice_tts:GrokVoiceTTS"
 # Phase L.4 — Streaming-TTS mit niedriger TTFB.
 cartesia = "jarvis.plugins.tts.cartesia_tts:CartesiaTTS"
+# OpenRouter cloud speech synthesis — reuses the shared openrouter_api_key.
+openrouter-tts = "jarvis.plugins.tts.openrouter_tts:OpenRouterTTS"
 
 [project.entry-points."jarvis.brain"]
 claude-api = "jarvis.plugins.brain.claude_api:ClaudeAPIBrain"

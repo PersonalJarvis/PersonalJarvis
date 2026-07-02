@@ -66,6 +66,45 @@ async def test_flatten_and_role_normalization() -> None:
 
 
 @pytest.mark.asyncio
+async def test_focused_and_password_states_reach_the_nodes() -> None:
+    """Linux focus/secure-edit evidence (2026-07-02 review finding): the
+    flatten never populated ``focused``/``is_password``, silently disabling
+    the click-rescue, focus verification, and password handoff on Linux."""
+    tree = FakeAtspiAccessible(
+        role_token="ROLE_FRAME",
+        name="win",
+        extents=(0, 0, 1200, 800),
+        states={"STATE_ACTIVE", "STATE_ENABLED"},
+        children=[
+            FakeAtspiAccessible(
+                role_token="ROLE_ENTRY",
+                name="url",
+                extents=(10, 10, 600, 30),
+                states={"STATE_ENABLED", "STATE_FOCUSED"},
+                text="https://example.com",
+            ),
+            FakeAtspiAccessible(
+                role_token="ROLE_PASSWORD_TEXT",
+                name="pass",
+                extents=(10, 50, 600, 30),
+                states={"STATE_ENABLED"},
+            ),
+        ],
+    )
+    src = AtspiTreeSource(
+        traverser=build_fake_atspi_traverser(tree, window_title="win"),
+        bus_check=lambda: True,
+        monitor_bounds=(0, 0, 1920, 1080),
+    )
+    obs = await src.observe()
+    by_name = {n.name: n for n in obs.nodes}
+    assert by_name["url"].focused is True
+    assert by_name["url"].is_password is False
+    assert by_name["pass"].is_password is True
+    assert by_name["pass"].focused is False
+
+
+@pytest.mark.asyncio
 async def test_entry_bounds_and_enabled() -> None:
     traverser = build_fake_atspi_traverser(make_canned_atspi_tree())
     src = AtspiTreeSource(

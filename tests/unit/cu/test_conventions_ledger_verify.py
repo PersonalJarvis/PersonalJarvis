@@ -176,6 +176,15 @@ def _node(**kw):
     return SimpleNamespace(**defaults)
 
 
+def test_crop_raw_aspect_mismatch_returns_cannot_tell():
+    # A grab whose pixel size does not match the rect's aspect is not a grab
+    # OF that rect (window resized between select and grab) — crop_raw must
+    # answer None ("cannot tell"), never crop at a wrong scale.
+    raw = ((200, 100), bytes(200 * 100 * 3))   # 2:1 grab
+    rect = (0, 0, 100, 100)                    # 1:1 rect
+    assert crop_raw(raw, rect, 50, 50, 10) is None
+
+
 def test_typed_text_landed_tristate():
     # A value match is positive evidence regardless of focus.
     nodes = (_node(value="https://example.com"),)
