@@ -17,18 +17,18 @@
 </p>
 
 <!--
-  Demo video is hosted as a GitHub Release asset (tag: media), on purpose NOT committed
-  to the source tree — cloning the repo never downloads it; GitHub streams it inline.
-  Refresh it with:
-    gh release upload media <new.mp4> --repo PersonalJarvis/PersonalJarvis --clobber
+  Hero = click-to-play poster. The demo video is hosted as a GitHub Release asset
+  (release tag: media) and is DELIBERATELY NOT committed to the source tree, so a
+  `git clone` never pulls the ~60 MB video — only this ~100 KB poster ships. Clicking
+  the poster opens the video, which GitHub streams on demand.
+  Refresh the video:  gh release upload media <new.mp4> --repo PersonalJarvis/PersonalJarvis --clobber
+  Refresh the poster: replace assets/demo/demo-poster.jpg (keep width≈820)
 -->
-<div align="center">
-  <video
-    src="https://github.com/PersonalJarvis/PersonalJarvis/releases/download/media/personal-jarvis-onboarding-4K.mp4"
-    controls muted playsinline width="820">
-    <a href="https://github.com/PersonalJarvis/PersonalJarvis/releases/download/media/personal-jarvis-onboarding-4K.mp4">Watch the Personal Jarvis demo</a>
-  </video>
-</div>
+<p align="center">
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis/releases/download/media/personal-jarvis-onboarding-4K.mp4">
+    <img src="assets/demo/demo-poster.jpg" alt="Personal Jarvis — watch the demo (click to play)" width="820" />
+  </a>
+</p>
 
 ---
 
