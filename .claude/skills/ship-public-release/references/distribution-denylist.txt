@@ -203,3 +203,11 @@ voice-session-*
 reporttutorialpickupprompt*
 **/reporttutorialpickupprompt*
 *pickupprompt*.md
+
+# --- Launch-marketing drafts (2026-07-02) ------------------------------------
+# marketing/launch/* holds the maintainer's pre-launch drafts (Show-HN post,
+# Reddit/X threads, hero one-liners, a manual GitHub-setup checklist). Internal
+# process artifacts: publishing the launch plan before the launch IS the leak,
+# and none of it is product content a downstream user needs. A fork writes its
+# own marketing. Withhold the whole subtree.
+marketing/**
