@@ -7,7 +7,7 @@
     "mean_distance_px": 0.0,
     "max_distance_px": 0.0,
     "duplicate_clicks": 0,
-    "step_latency_s_p50": 0.024,
+    "step_latency_s_p50": 0.031,
     "step_latency_s_max": 0.031,
     "provoked_duplicates_executed": 0,
     "typed_expected": "example.com",
