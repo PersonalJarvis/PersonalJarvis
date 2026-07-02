@@ -65,13 +65,26 @@ async def test_diag_bootwarm(capsys) -> None:
 
     import time as _time
 
+    # Count warm-wait loop iterations by patching asyncio.sleep inside the
+    # rolling module for the 0.25 s cadence only.
+    import jarvis.speech.rolling_whisper_wake as rww
+    iter_counter = {"n": 0}
+    _orig_sleep = asyncio.sleep
+
+    async def _counting_sleep(delay, *a, **k):  # noqa: ANN001, ANN002, ANN003
+        if abs(delay - 0.25) < 1e-9:
+            iter_counter["n"] += 1
+        return await _orig_sleep(delay, *a, **k)
+
+    rww.asyncio.sleep = _counting_sleep
+
     f = asyncio.create_task(_feed())
     d = asyncio.create_task(_drain())
     _t0 = _time.perf_counter()
     await asyncio.sleep(0.4)
     _slept = _time.perf_counter() - _t0
     with capsys.disabled():
-        print(f"\nDIAG sleep(0.4) took {_slept:.3f}s real")
+        print(f"\nDIAG sleep(0.4) took {_slept:.3f}s real, warm-wait iters={iter_counter['n']}")
         print(f"DIAG cold: calls={stt.calls} feeder_done={f.done()} driver_done={d.done()}")
         if f.done():
             print("feeder exc:", repr(f.exception()))
@@ -82,8 +95,9 @@ async def test_diag_bootwarm(capsys) -> None:
         if stt.calls > 0:
             break
         await asyncio.sleep(0.01)
+    rww.asyncio.sleep = _orig_sleep
     with capsys.disabled():
-        print(f"DIAG warm: calls={stt.calls} feeder_done={f.done()} driver_done={d.done()}")
+        print(f"DIAG warm: calls={stt.calls} iters={iter_counter['n']} feeder_done={f.done()} driver_done={d.done()}")
         if f.done() and f.exception() is not None:
             print("feeder exc:", repr(f.exception()))
         if d.done() and d.exception() is not None:

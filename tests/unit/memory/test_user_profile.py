@@ -235,7 +235,7 @@ class TestRenderForPrompt:
         out = profile.render_for_prompt()
         assert "Ruben" in out
         # Header is still included
-        assert "Ueber den User" in out  # i18n-allow: matches the real (currently German) header rendered by UserProfile.render_for_prompt
+        assert "About the User" in out
 
     def test_render_stays_within_budget(self, profile: UserProfile) -> None:
         """Even with a lot of content, rendering must not exceed the budget cap."""
@@ -265,7 +265,7 @@ class TestRenderForPrompt:
         """Template has name=null — rendering must not crash regardless."""
         out = profile.render_for_prompt()
         assert isinstance(out, str)
-        assert "Ueber den User" in out  # i18n-allow: matches the real (currently German) header rendered by UserProfile.render_for_prompt
+        assert "About the User" in out
 
 
 # ======================================================================

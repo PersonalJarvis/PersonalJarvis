@@ -217,7 +217,10 @@ async def test_number_from_facts_allowed() -> None:
         facts={"observation": "the browser is open with 3 tabs"},
     )
     assert out != CANNED
-    assert "3" in out
+    # The voice pipeline spells digits out for TTS (number_speller), so the
+    # fact-backed number may surface verbatim or verbalized — both prove the
+    # anti-hallucination guard let it through.
+    assert "3" in out or "three" in out
 
 
 @pytest.mark.asyncio

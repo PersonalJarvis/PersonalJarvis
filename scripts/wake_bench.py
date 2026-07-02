@@ -329,6 +329,16 @@ async def run_stream_mode(args: argparse.Namespace) -> dict:
     stt = build_model(args, args.phrase)
     lang = args.language if args.language not in ("", "auto", "none") else None
 
+    # Warm the model up front so the measured latency is the steady-state
+    # number (the poll loop now waits for ``is_warm`` before polling — boot
+    # serialisation 2026-07-02). Cold-start cost is reported separately by
+    # window mode's ``cold_first_transcribe_ms``.
+    warm = getattr(stt, "warm_up", None)
+    if callable(warm):
+        t_w = time.perf_counter()
+        await asyncio.to_thread(warm)
+        print(f"model warmed in {time.perf_counter() - t_w:.1f} s")
+
     # Count recover() calls (wedge events) via a counting shim.
     recover_calls = {"n": 0}
     orig_recover = getattr(stt, "recover", None)

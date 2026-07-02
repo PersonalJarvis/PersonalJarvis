@@ -155,7 +155,7 @@ class TestPronounRejection:
         result = validator.validate([cand])
         assert len(result.rejected) == 1
         _, reason = result.rejected[0]
-        assert "pronom" in reason.lower()
+        assert "pronoun" in reason.lower()
 
     def test_rejects_sie_as_person_name(self, validator: Validator) -> None:
         cand = _person_cand("sie", confidence=0.9)
@@ -179,7 +179,7 @@ class TestSubjectSanity:
         result = validator.validate([cand])
         assert len(result.rejected) == 1
         _, reason = result.rejected[0]
-        assert "kurz" in reason.lower() or "zu kurz" in reason.lower()
+        assert "too short" in reason.lower()
 
     def test_rejects_empty_person_name(self, validator: Validator) -> None:
         cand = _person_cand("", confidence=0.9)

@@ -236,7 +236,7 @@ def test_send_message_without_channel_400(app_with_registry: FastAPI) -> None:
         fid = r.json()["id"]
         r2 = client.post(f"/api/friends/{fid}/messages", json={"text": "hi"})
     assert r2.status_code == 400
-    assert "Channel" in r2.json()["detail"]
+    assert "no linked channel" in r2.json()["detail"]
 
 
 def test_send_message_pubkey_persists_outbound(app_with_registry: FastAPI) -> None:
