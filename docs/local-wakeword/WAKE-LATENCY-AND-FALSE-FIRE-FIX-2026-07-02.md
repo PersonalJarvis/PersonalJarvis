@@ -112,6 +112,38 @@ hallucinates the prefix onto a bare-name window; eliminating the bias costs
 far more recall than it saves (matrix). (c) The KWS endgame (trained neural
 model per phrase) remains the path to sub-200 ms wakes.
 
+## Follow-up: bias-prompt echo ghost activations (user report, same day)
+
+After the 09:59 restart the user still saw activations WITHOUT speaking the
+phrase. Log forensics (5 activations in ~30 min, media audio in the room):
+every accepted transcript was EXACTLY "Hey Fable" — never embedded in
+context — some at noise rms (0.0037/0.0040). Mechanism: the wake Whisper's
+`initial_prompt="<phrase>"` makes the weak model ECHO the primed text
+verbatim on ambiguous noise/breath windows. The strict matcher cannot reject
+these (the text IS the full phrase); dropping the bias costs far more recall
+than it saves (100 % → 62.5 %, matrix above).
+
+**Fix — unbiased second-pass confirm** (`_is_prompt_echo`, rolling wake): a
+candidate whose transcript consists of the phrase and NOTHING else (echo
+signature) gets ONE unprimed transcription of the same window. An unprimed
+ear hears *something* wherever real speech exists, but nothing (or known
+hallucination boilerplate) on echoed noise. Probe on 346 real negative
+windows + all real positives:
+
+| set | result |
+|---|---|
+| quiet noise (196 windows) | 2 echoes (1.0 %) — **both suppressed** |
+| ambient speech (150) | 1 echo (a REAL "Hey Charlie" pulled to the phrase — kept, speech exists; the honest Alexa-says-Alexis residual) |
+| genuine exact-phrase wakes | **6/6 kept** (unprimed ear heard "Hey Google" / "Hey, Nicole!" mis-hearings) |
+| genuine wakes with context | confirm skipped entirely — zero latency cost |
+
+Infrastructure errors fail open (a broken confirm never eats a real wake).
+Providers without the bias surface (fakes, cloud STT) keep legacy behaviour.
+`STT_HALLUCINATION_RE` moved to `wake_constants` (single definition; the
+pipeline aliases it). Guards:
+`tests/unit/speech/test_rolling_whisper_wake_echo_confirm.py` (6 cases,
+green on Windows + Linux/WSL).
+
 ## Live smoke (restart 2026-07-02 09:59)
 
 - Fresh boot: the poll loop waited for the single-owner warm-up (10.5 s under
