@@ -137,6 +137,13 @@ def _win_query_element_at_point(x: int, y: int) -> PointerElement | None:
     name = str(getattr(info, "name", "") or "").strip()
     role = str(getattr(info, "control_type", "") or "").strip()
     bounds = _rect_to_bounds(getattr(info, "rectangle", None))
+    # Keyboard-focus state of the LEAF element actually hit (never an
+    # ancestor): the CU click verification uses it as already-in-desired-
+    # state evidence. Best-effort tri-state.
+    try:
+        focused: bool | None = bool(raw.CurrentHasKeyboardFocus)
+    except Exception:  # noqa: BLE001 — property read is best-effort
+        focused = None
 
     # Walk up to the nearest named ancestor (bounded) when the leaf is unnamed —
     # a deep custom-drawn leaf often has no Name, but its container does.
@@ -165,6 +172,7 @@ def _win_query_element_at_point(x: int, y: int) -> PointerElement | None:
         app_name=app_name,
         window_title=window_title,
         source="ax_tree",
+        focused=focused,
     )
 
 
@@ -231,6 +239,11 @@ def _ax_query_element_at_point(x: int, y: int) -> PointerElement | None:
     role = _attr("AXRole")
     name = _attr("AXTitle") or _attr("AXDescription")
     value = _attr("AXValue")
+    try:
+        err_f, val_f = AXUIElementCopyAttributeValue(elem, "AXFocused", None)
+        focused: bool | None = bool(val_f) if err_f == 0 else None
+    except Exception:  # noqa: BLE001 — attribute read is best-effort
+        focused = None
     return PointerElement(
         name=name,
         role=role,
@@ -239,6 +252,7 @@ def _ax_query_element_at_point(x: int, y: int) -> PointerElement | None:
         app_name="",
         window_title=_attr("AXWindow"),
         source="ax_tree",
+        focused=focused,
     )
 
 
@@ -301,6 +315,12 @@ def _atspi_query_element_at_point(x: int, y: int) -> PointerElement | None:
         role = str(node.getRoleName() or "").strip()
     except Exception:
         role = ""
+    try:
+        focused: bool | None = bool(
+            node.getState().contains(pyatspi.STATE_FOCUSED),
+        )
+    except Exception:  # noqa: BLE001 — state read is best-effort
+        focused = None
     return PointerElement(
         name=name,
         role=role,
@@ -309,6 +329,7 @@ def _atspi_query_element_at_point(x: int, y: int) -> PointerElement | None:
         app_name="",
         window_title="",
         source="ax_tree",
+        focused=focused,
     )
 
 

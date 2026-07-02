@@ -2765,3 +2765,62 @@ content; revert to the energy gate.
 
 **Endgame.** Truly instant + zero-ghost custom wake needs a trained neural KWS
 model (openWakeWord `custom_onnx`), which does not transcribe (AP-25).
+
+## BUG-038: Computer-Use stalls AT its goal — false-miss verification on secondary monitors (HIGH, 2026-07-02)
+
+**Symptom.** A mission opens Chrome (guest), clicks land pixel-perfect on the
+window — on whatever monitor it sits — then the agent "gets stuck": it clicks
+the address bar repeatedly, never types, and finally gives up with "I tried it
+on screen but could not do it". Live run 19:05–19:06: steps 2–4 OK (including
+negative-X clicks on the left monitor), steps 5+7 `click(address bar) ->
+FAILED: the click produced NO visible change`, mission aborted.
+
+**Root causes — THREE stacked verification defects, none of them pointing.**
+
+1. **Idempotent-click false miss.** The flight-recorder frames show the guest
+   new-tab's address bar was focused BEFORE the click (blue ring + caret). A
+   click on a control that is already in the desired state changes ZERO
+   pixels, so the pre/post effect-check judged it a miss; a failed action
+   truncates the batch, so the type behind it never ran; the retry hit the
+   same false miss; the mission died at a state that was already correct.
+2. **Primary-monitor clipping of the accessibility tree.** Every UI-tree
+   source clipped its on-screen overlap filter to the PRIMARY monitor
+   (Windows `GetSystemMetrics(0/1)`, macOS `CGMainDisplayID`, Linux a
+   hardcoded 1920x1080 — which even clipped a single 4K screen). A window on
+   a secondary monitor lost its ENTIRE walked tree: no clickable anchors, no
+   field-content hints, no focus evidence. (Verified live: a Chrome window at
+   x=-2324 produced a 1-node tree.)
+3. **Confident-but-wrong type read-back.** `typed_text_landed` returned a
+   hard `False` whenever readable editables lacked the text — even when the
+   REAL receiver (start-menu/UWP flyout) was outside the enumerated tree or
+   had not committed the value yet (18:00 run: `typed 'Spotify' but it did
+   NOT land in any editable field` while the text had landed).
+
+**Fix (all three platforms, one seam each).**
+- **Focus-evidence click rescue** (`jarvis/cu/verify.py::
+  verify_click_focus_point`, consumed by the engine's click-miss path only —
+  zero happy-path latency): before declaring a zero-pixel-change click a
+  miss, ask (a) the native point hit-test (UIA `ElementFromPoint` / AX
+  element-at-position / AT-SPI `getAccessibleAtPoint`; depth- and
+  pruning-independent, new `PointerElement.focused` field) and (b) the walked
+  tree, whether the click point sits inside the FOCUSED control. Container
+  focus (window/pane/document/web-area) NEVER counts — accepting it would
+  rescue genuine in-window misses (`_FOCUS_CONTAINER_ROLES`).
+- **Virtual-desktop on-screen filter**
+  (`jarvis/platform/monitors.py::virtual_desktop_bounds`, union of all
+  monitors per platform: `SM_*VIRTUALSCREEN` under the PMv2 declaration /
+  `CGGetActiveDisplayList` / X11 root geometry) used by all three tree
+  sources; injected bounds and legacy fallbacks preserved.
+- **Honest type verdict**: `typed_text_landed` says `False` only when a
+  FOCUSED editable was readable (we provably looked at the receiving
+  surface), else `None`; the engine re-verifies once after a short settle
+  before failing a type (async surfaces commit late).
+
+**Live proof (Windows, 2026-07-02):** fresh Chrome on the LEFT monitor —
+hit-test at the omnibox returns `Edit 'Adress- und Suchleiste' focused=True`,
+rescue verdict `True`; mid-page point returns `False` (real misses still
+fail). Guards: `tests/unit/cu/test_engine_loop.py` (rescued click lets the
+batched type run; re-checked type verdict), `tests/unit/cu/
+test_conventions_ledger_verify.py` (container trap, focused-editable
+evidence), `tests/unit/vision/test_screen_bounds_virtual_desktop.py`
+(secondary-monitor tree survives; per-OS bounds helpers).

@@ -47,6 +47,7 @@ _PASSWORD_FIELD_TOKENS = ("password", "passwort", "passcode")  # noqa: S105 — 
 # Cached UI tree source (constructing one per step pays setup cost for the
 # same foreground enumeration).
 _UI_TREE_SOURCE: Any = None
+_POINTER_RESOLVER: Any = None
 
 
 def _get_ui_tree_source() -> Any:
@@ -56,6 +57,18 @@ def _get_ui_tree_source() -> Any:
 
         _UI_TREE_SOURCE = make_ui_tree_source()
     return _UI_TREE_SOURCE
+
+
+def _get_pointer_resolver() -> Any:
+    """Cached per-OS accessibility point resolver (hit-test at a point)."""
+    global _POINTER_RESOLVER
+    if _POINTER_RESOLVER is None:
+        from jarvis.vision.element_at_point import (  # noqa: PLC0415
+            make_pointer_resolver,
+        )
+
+        _POINTER_RESOLVER = make_pointer_resolver()
+    return _POINTER_RESOLVER
 
 
 # ---------------------------------------------------------------------------
@@ -103,10 +116,27 @@ def typed_text_landed(nodes: tuple, typed: str) -> bool | None:
     return False if focused_editable_seen else None
 
 
+#: Roles that are CONTAINERS, not controls — focus reported on one of these
+#: (a browser window, a web view, a panel) is NOT evidence that a click hit
+#: its intended target: accepting it would rescue every in-window miss and
+#: neuter the effect-check. Covers all three role vocabularies (UIA / AX /
+#: AT-SPI), since the point resolver returns platform-native role names.
+_FOCUS_CONTAINER_ROLES = frozenset({
+    # UIA (also the mapped vocabulary of the walked tree nodes)
+    "Window", "Pane", "Document", "Group", "Custom", "TitleBar",
+    # macOS AX
+    "AXWindow", "AXSheet", "AXGroup", "AXScrollArea", "AXWebArea",
+    "AXApplication", "AXDrawer",
+    # AT-SPI role names
+    "frame", "window", "panel", "application", "document frame",
+    "document web", "filler",
+})
+
+
 def click_point_in_focused_element(
     nodes: tuple, x: int, y: int,
 ) -> bool | None:
-    """Did the click point land inside the element HOLDING keyboard focus?
+    """Did the click point land inside the CONTROL holding keyboard focus?
 
     The rescue evidence for the "click produced no visible change" false
     miss: clicking a control that is ALREADY in the desired state (e.g. an
@@ -118,14 +148,19 @@ def click_point_in_focused_element(
     nothing visibly changed. Works on all three platforms (UIA / AX /
     AT-SPI bounds are screen input units).
 
-    ``True``  — a focused element's bounds contain the point.
-    ``False`` — nodes are readable, no focused element contains the point.
+    Container roles never count (:data:`_FOCUS_CONTAINER_ROLES`): a focused
+    WINDOW containing the point says nothing about the click's target.
+
+    ``True``  — a focused non-container element's bounds contain the point.
+    ``False`` — nodes are readable, no qualifying element contains the point.
     ``None``  — no nodes readable (cannot tell).
     """
     if not nodes:
         return None
     for node in nodes:
         if not getattr(node, "focused", False):
+            continue
+        if str(getattr(node, "role", "") or "") in _FOCUS_CONTAINER_ROLES:
             continue
         bounds = getattr(node, "bounds", None)
         if not bounds:
@@ -354,11 +389,35 @@ async def verify_click_focus(name: str) -> bool | None:
 
 
 async def verify_click_focus_point(x: int, y: int) -> bool | None:
-    """Fresh tree → :func:`click_point_in_focused_element`. Error → ``None``.
+    """Is the element at ``(x, y)`` the focused control? Error → ``None``.
 
-    Runs ONLY on the click-miss path (no happy-path latency): the engine
+    Two evidence paths, positive-only, both cross-platform:
+
+    1. Native point hit-test (UIA ``ElementFromPoint`` / AX element-at-
+       position / AT-SPI ``getAccessibleAtPoint``) — depth- and pruning-
+       independent, so it works even where the walked tree cannot reach the
+       control (Chrome nests its omnibox below the walk depth).
+    2. Fallback: scan the walked foreground tree
+       (:func:`click_point_in_focused_element`).
+
+    Container focus never counts (:data:`_FOCUS_CONTAINER_ROLES`). Runs
+    ONLY on the click-miss path (no happy-path latency): the engine
     consults it before declaring a zero-pixel-change click a miss.
     """
+    try:
+        element = await asyncio.wait_for(
+            asyncio.to_thread(_get_pointer_resolver().at, int(x), int(y)),
+            timeout=UIA_TIMEOUT_S,
+        )
+    except Exception:  # noqa: BLE001 — hit-test is best-effort
+        element = None
+    if (
+        element is not None
+        and getattr(element, "focused", None) is True
+        and str(getattr(element, "role", "") or "")
+        not in _FOCUS_CONTAINER_ROLES
+    ):
+        return True
     try:
         obs = await asyncio.wait_for(
             _get_ui_tree_source().observe(), timeout=UIA_TIMEOUT_S,

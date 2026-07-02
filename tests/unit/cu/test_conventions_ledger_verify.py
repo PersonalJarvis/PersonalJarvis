@@ -214,6 +214,18 @@ def test_click_point_in_focused_element_tristate():
     assert click_point_in_focused_element(broken, 400, 58) is False
 
 
+def test_focused_container_is_never_click_evidence():
+    # Chrome reports keyboard focus on its top-level WINDOW node — accepting
+    # that would rescue EVERY in-window miss and neuter the effect-check.
+    window = _node(role="Window", name="Browser",
+                   focused=True, bounds=(0, 0, 2560, 1400))
+    assert click_point_in_focused_element((window,), 400, 58) is False
+    # A real focused control inside the focused window still qualifies.
+    bar = _node(role="Edit", name="Address",
+                focused=True, bounds=(100, 40, 800, 36))
+    assert click_point_in_focused_element((window, bar), 400, 58) is True
+
+
 def test_field_values_hint_lists_filled_fields_only():
     nodes = (
         _node(name="Address", value="https://example.com"),
