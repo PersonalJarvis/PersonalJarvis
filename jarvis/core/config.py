@@ -1503,12 +1503,14 @@ class ComputerUseConfig(BaseModel):
     # 300_000 (no change); lowering it -- with the cu_bench harness as proof --
     # shrinks the vision payload for faster inference, at some grounding risk.
     image_max_bytes: int = Field(default=300_000, ge=20_000, le=2_000_000)
-    # L7 (CU speed): per-screenshot longest-side pixel cap sent to the model.
-    # Default keeps 2048 (no change). Vision models resample to ~1568 px
-    # internally, so lowering this -- with the cu_bench harness as proof -- ships
-    # fewer pixels for faster encode + upload + image-token ingest, at some
-    # grounding risk on tiny controls. 0 disables the dimension cap entirely.
-    image_max_dimension: int = Field(default=2048, ge=0, le=8192)
+    # L7 (CU speed + grounding): per-screenshot longest-side pixel cap sent to
+    # the model. Default 1366 — vision models ground small controls MORE
+    # reliably on frames near the XGA/WXGA band than on raw 2K/4K captures
+    # (provider guidance: downscale yourself, do not rely on API-side
+    # resizing), and the smaller payload cuts encode + upload + image-token
+    # latency. Raise it only with the cu_bench harness as proof. 0 disables
+    # the dimension cap entirely.
+    image_max_dimension: int = Field(default=1366, ge=0, le=8192)
     # L8 (CU speed): multiplier on the loop's fixed settle waits (pre-type and
     # post-click-verify pauses). Default keeps 1.0 (no change: every settle is
     # byte-for-byte the legacy duration); lower it -- with the cu_bench harness

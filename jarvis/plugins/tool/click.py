@@ -1,8 +1,13 @@
 """click tool: simulates mouse clicks at a screen coordinate.
 
-Win32-native via ``SetCursorPos`` + ``SendInput`` (mouse event). Falls back
-to ``pyautogui.click`` if Win32 isn't available — so tests run on Linux/Mac
-even though real clicks only work on Windows.
+Windows-native input dispatch now delegates to the shared CU v2 actuation
+backend (``jarvis/cu/actuate/windows.py``): absolute virtual-desktop
+positioning via SendInput (negative-origin monitors included) inside the
+per-monitor thread DPI pin, so clicks stay on target on mixed-DPI desktops
+even after pywebview flips the process DPI awareness. On macOS/Linux the
+tool uses the platform backend from ``jarvis/cu/actuate`` (pynput preferred,
+pyautogui fallback) instead of raw pyautogui, which clamps multi-monitor
+coordinates.
 
 Risk tier: ``monitor`` — mouse clicks are often not reversible (buttons,
 form submits, file operations). A toast notification is shown, no approval
@@ -16,58 +21,15 @@ from typing import Any
 
 from jarvis.control.cursor_motion import glide_os_cursor
 from jarvis.core.protocols import ExecutionContext, ToolResult
+from jarvis.cu.actuate.windows import (
+    _MOUSE_FLAGS_DOWN,
+    normalize_virtualdesk as _normalize_virtualdesk,  # noqa: F401 — re-export (tests + callers)
+)
 from jarvis.overlay.virtual_cursor import get_virtual_cursor
-
-# Mouse-button mapping for Win32 (see MOUSEEVENTF_* flags).
-_MOUSE_FLAGS_DOWN: dict[str, int] = {
-    "left": 0x0002,    # MOUSEEVENTF_LEFTDOWN
-    "right": 0x0008,   # MOUSEEVENTF_RIGHTDOWN
-    "middle": 0x0020,  # MOUSEEVENTF_MIDDLEDOWN
-}
-_MOUSE_FLAGS_UP: dict[str, int] = {
-    "left": 0x0004,    # MOUSEEVENTF_LEFTUP
-    "right": 0x0010,   # MOUSEEVENTF_RIGHTUP
-    "middle": 0x0040,  # MOUSEEVENTF_MIDDLEUP
-}
-
-# Absolute virtual-desktop positioning flags. A click positioned this way lands
-# on its exact target on EVERY monitor — including one LEFT of primary (negative
-# virtual-desktop X) — decoupled from SetCursorPos, which returns 0 / lands wrong
-# when the cursor crosses the primary boundary (the "CU clicks void on the left
-# monitor" bug). The coordinates are 0..65535 normalized over the whole virtual
-# desktop, so the negative origin is folded into the normalization.
-_MOUSEEVENTF_MOVE = 0x0001
-_MOUSEEVENTF_ABSOLUTE = 0x8000
-_MOUSEEVENTF_VIRTUALDESK = 0x4000
-_ABS_MOVE_FLAGS = _MOUSEEVENTF_MOVE | _MOUSEEVENTF_ABSOLUTE | _MOUSEEVENTF_VIRTUALDESK
-
-
-def _normalize_virtualdesk(
-    x: int, y: int, vx: int, vy: int, vw: int, vh: int
-) -> tuple[int, int]:
-    """Map an absolute virtual-desktop pixel ``(x, y)`` to the 0..65535 space
-    ``MOUSEEVENTF_ABSOLUTE | VIRTUALDESK`` expects, given the virtual-screen
-    bounds (origin ``vx,vy``, size ``vw x vh`` — ``vx``/``vy`` may be negative).
-    Pure + clamped; the offset by the virtual origin is what makes a monitor left
-    of primary (x < 0) come out as a valid positive coordinate."""
-    dw = max(1, vw - 1)
-    dh = max(1, vh - 1)
-    nx = min(65535, max(0, round((int(x) - vx) * 65535 / dw)))
-    ny = min(65535, max(0, round((int(y) - vy) * 65535 / dh)))
-    return nx, ny
-
-
-def _virtualdesk_abs(x: int, y: int) -> tuple[int, int]:
-    """:func:`_normalize_virtualdesk` against the live virtual-screen metrics."""
-    import ctypes
-
-    gsm = ctypes.windll.user32.GetSystemMetrics
-    # SM_XVIRTUALSCREEN=76, SM_YVIRTUALSCREEN=77, SM_CXVIRTUALSCREEN=78, SM_CYVIRTUALSCREEN=79
-    return _normalize_virtualdesk(x, y, gsm(76), gsm(77), gsm(78), gsm(79))
 
 
 def _send_click(button: str, double: bool, abs_xy: tuple[int, int] | None = None) -> None:
-    """Press a mouse button via Win32 SendInput.
+    """Press a mouse button via the shared Windows SendInput backend.
 
     When ``abs_xy`` is given the input stream is prefixed with an ABSOLUTE
     virtual-desktop move to that pixel, so the click lands exactly there on any
@@ -75,67 +37,13 @@ def _send_click(button: str, double: bool, abs_xy: tuple[int, int] | None = None
     cursor. Without it, the click fires at the current cursor position (the legacy
     behaviour; positioning done beforehand by :func:`glide_os_cursor`).
     """
-    button_l = button.lower()
-    if button_l not in _MOUSE_FLAGS_DOWN:
-        raise ValueError(f"Unknown mouse button: {button!r}. Allowed: left/right/middle")
+    from jarvis.cu.actuate.windows import WindowsActuator  # noqa: PLC0415
 
-    import ctypes
-    from ctypes import wintypes
-
-    INPUT_MOUSE = 0
-    ULONG_PTR = wintypes.WPARAM
-
-    class MOUSEINPUT(ctypes.Structure):
-        _fields_ = (
-            ("dx", wintypes.LONG),
-            ("dy", wintypes.LONG),
-            ("mouseData", wintypes.DWORD),
-            ("dwFlags", wintypes.DWORD),
-            ("time", wintypes.DWORD),
-            ("dwExtraInfo", ULONG_PTR),
-        )
-
-    class INPUT_UNION(ctypes.Union):
-        _fields_ = (("mi", MOUSEINPUT),)
-
-    class INPUT(ctypes.Structure):
-        _fields_ = (("type", wintypes.DWORD), ("union", INPUT_UNION))
-
-    user32 = ctypes.windll.user32
-    send_input = user32.SendInput
-    send_input.argtypes = (wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int)
-    send_input.restype = wintypes.UINT
-
-    flag_down = _MOUSE_FLAGS_DOWN[button_l]
-    flag_up = _MOUSE_FLAGS_UP[button_l]
-    n_clicks = 2 if double else 1
-
-    events: list[INPUT] = []
+    actuator = WindowsActuator()
     if abs_xy is not None:
-        nx, ny = _virtualdesk_abs(abs_xy[0], abs_xy[1])
-        events.append(
-            INPUT(
-                type=INPUT_MOUSE,
-                union=INPUT_UNION(mi=MOUSEINPUT(nx, ny, 0, _ABS_MOVE_FLAGS, 0, ULONG_PTR(0))),
-            )
-        )
-    for _ in range(n_clicks):
-        events.append(
-            INPUT(
-                type=INPUT_MOUSE,
-                union=INPUT_UNION(mi=MOUSEINPUT(0, 0, 0, flag_down, 0, ULONG_PTR(0))),
-            )
-        )
-        events.append(
-            INPUT(
-                type=INPUT_MOUSE,
-                union=INPUT_UNION(mi=MOUSEINPUT(0, 0, 0, flag_up, 0, ULONG_PTR(0))),
-            )
-        )
-    arr = (INPUT * len(events))(*events)
-    sent = send_input(len(events), arr, ctypes.sizeof(INPUT))
-    if sent != len(events):
-        raise ctypes.WinError(ctypes.get_last_error())
+        actuator.click(int(abs_xy[0]), int(abs_xy[1]), button=button, double=double)
+    else:
+        actuator.click_at_cursor(button=button, double=double)
 
 
 def _click_windows(x: int, y: int, button: str, double: bool) -> None:
@@ -227,23 +135,21 @@ class ClickTool:
                     error=f"Click at ({x},{y}) failed: {exc}",
                 )
 
+        from jarvis.cu.actuate import ActuationUnavailable, get_actuator
+
         try:
-            import pyautogui
-        except ImportError as exc:
-            return ToolResult(
-                success=False,
-                output=None,
-                error=(
-                    f"Platform is not Windows ({os.name}) and pyautogui is missing: {exc}. "
-                    "pip install pyautogui"
-                ),
+            actuator = get_actuator()
+            await asyncio.to_thread(
+                actuator.click, x, y, button=button, double=double,
             )
-        try:
-            clicks = 2 if double else 1
-            pyautogui.click(x=x, y=y, clicks=clicks, button=button)
             return ToolResult(
                 success=True,
-                output=f"{'Double-' if double else ''}click (pyautogui) at ({x},{y})",
+                output=(
+                    f"{'Double-' if double else ''}click ({actuator.name}) "
+                    f"at ({x},{y})"
+                ),
             )
+        except ActuationUnavailable as exc:
+            return ToolResult(success=False, output=None, error=str(exc))
         except Exception as exc:  # noqa: BLE001
             return ToolResult(success=False, output=None, error=str(exc))

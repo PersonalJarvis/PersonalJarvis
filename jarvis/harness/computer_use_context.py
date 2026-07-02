@@ -76,6 +76,11 @@ class ComputerUseContext:
     # Which screen is "the main monitor" when monitor="primary"
     # ([computer_use].main_monitor): "primary" | "largest" | explicit id.
     main_monitor: str = "primary"
+    # CU v2: coordinate space the model's click coordinates are parsed in
+    # ([computer_use].coordinate_space): "auto" | "normalized_1000" |
+    # "image_pixels". "auto" resolves per provider (capability first, family
+    # metadata second) — see jarvis/cu/conventions.py.
+    coordinate_space: str = "auto"
 
 
 _CONTEXT: ComputerUseContext | None = None

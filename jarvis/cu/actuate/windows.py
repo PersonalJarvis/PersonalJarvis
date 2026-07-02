@@ -255,6 +255,24 @@ class WindowsActuator(Actuator):
                 events.append(self._mouse_input(0, 0, 0, _MOUSE_FLAGS_UP[b]))
             self._send(events)
 
+    def click_at_cursor(self, *, button: str = "left", double: bool = False) -> None:
+        """Press+release at the CURRENT cursor position (no positioning).
+
+        For callers that already positioned the cursor themselves (e.g. the
+        visible glide animation) and only need the button events.
+        """
+        b = button.lower()
+        if b not in _MOUSE_FLAGS_DOWN:
+            raise ValueError(
+                f"Unknown mouse button: {button!r}. Allowed: left/right/middle",
+            )
+        with input_space():
+            events = []
+            for _ in range(2 if double else 1):
+                events.append(self._mouse_input(0, 0, 0, _MOUSE_FLAGS_DOWN[b]))
+                events.append(self._mouse_input(0, 0, 0, _MOUSE_FLAGS_UP[b]))
+            self._send(events)
+
     def drag(
         self, x1: int, y1: int, x2: int, y2: int, *, duration_s: float = 0.4,
     ) -> None:
