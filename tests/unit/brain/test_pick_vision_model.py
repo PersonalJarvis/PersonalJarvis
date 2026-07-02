@@ -145,3 +145,45 @@ def test_chain_respects_an_explicit_cu_pin(monkeypatch, tmp_path):
     chain = [("openrouter", "anthropic/claude-opus-4.8")]
     # The user pinned this model for CU — never second-guess it.
     assert _speed_tune_chain(chain, pinned={"openrouter"}) == chain
+
+
+def test_chain_keeps_an_already_fast_model(monkeypatch, tmp_path):
+    monkeypatch.setattr(cfg, "DATA_DIR", tmp_path)
+    _write_cache(tmp_path, _FAST_CATALOG)
+    chain = [("openrouter", "google/gemini-3.5-flash")]
+    assert _speed_tune_chain(chain) == chain
+
+
+def test_direct_provider_flagship_falls_back_to_router_tier_default(
+    monkeypatch, tmp_path,
+):
+    # Direct endpoints (gemini/claude-api) expose no modality metadata, so the
+    # catalog pick is empty — the provider's curated router-tier default takes
+    # over for the mission steps.
+    monkeypatch.setattr(cfg, "DATA_DIR", tmp_path)  # no catalog cache at all
+    from jarvis.brain.manager import get_tier_default_model
+
+    expected = get_tier_default_model("router", "gemini")
+    assert expected, "router-tier default for gemini must exist"
+    chain = [("gemini", "gemini-3-pro")]
+    assert _speed_tune_chain(chain) == [("gemini", expected)]
+
+
+def test_explicit_pin_detection_reads_raw_config_field():
+    from types import SimpleNamespace
+
+    from jarvis.cu.brain_call import _explicit_cu_pin
+
+    class FakeManager:
+        def __init__(self, cu_model, model):
+            self._cfg = SimpleNamespace(cu_model=cu_model, model=model)
+
+        def _provider_cfg(self, name):
+            return self._cfg
+
+    # Only the RAW cu_model field counts as a pin — a configured main model
+    # must NOT (the resolver falls back to it, which previously made every
+    # provider look pinned and disabled the speed tune).
+    assert _explicit_cu_pin(FakeManager("x/pinned", "x/main"), "p") == "x/pinned"
+    assert _explicit_cu_pin(FakeManager(None, "x/main"), "p") is None
+    assert _explicit_cu_pin(FakeManager("", "x/main"), "p") is None

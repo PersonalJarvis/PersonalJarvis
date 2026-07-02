@@ -381,6 +381,37 @@ _FAST_CLASS_MARKERS: tuple[str, ...] = (
 )
 
 
+def provider_has_modality_data(provider: str) -> bool:
+    """True when the cached catalog carries ``input_modalities`` for at least
+    one of ``provider``'s models — i.e. a "no vision model found" verdict is
+    an informed NO, not missing data. Direct provider endpoints (gemini /
+    claude-api / openai) expose no modality metadata and return False."""
+    from jarvis.core import config as _cfg  # noqa: PLC0415
+
+    cache_path = _cfg.DATA_DIR / "model_catalog_cache.json"
+    try:
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        return any(
+            isinstance(m.get("input_modalities"), list)
+            for m in data.get(provider, {}).get("models", [])
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def is_fast_class_model(model_id: str | None) -> bool:
+    """True when the model id names a low-latency sibling (fast class).
+
+    Markers match WHOLE id tokens (split on non-alphanumerics), never raw
+    substrings — "mini" as a substring matches every "ge**mini**" model and
+    classified Gemini PRO as fast (live bug 2026-07-02).
+    """
+    if not model_id:
+        return False
+    tokens = set(re.split(r"[^a-z0-9]+", model_id.lower()))
+    return any(mark in tokens for mark in _FAST_CLASS_MARKERS)
+
+
 def pick_fast_vision_model(provider: str) -> str | None:
     """The best FAST vision-capable model of ``provider`` (or ``None``).
 
@@ -419,8 +450,7 @@ def pick_fast_vision_model(provider: str) -> str | None:
     # Fast class first — but only KNOWN families (family rank > 0), so an
     # obscure "-mini" of an unknown vendor never beats a Gemini Flash / Haiku.
     for m in usable:
-        low = m.id.lower()
-        if _family_rank(m.id) > 0 and any(mark in low for mark in _FAST_CLASS_MARKERS):
+        if _family_rank(m.id) > 0 and is_fast_class_model(m.id):
             return m.id
     return usable[0].id
 

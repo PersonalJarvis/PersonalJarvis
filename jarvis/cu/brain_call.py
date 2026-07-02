@@ -92,8 +92,10 @@ def _speed_tune_chain(
     """
     try:
         from jarvis.brain.model_catalog import (  # noqa: PLC0415
+            is_fast_class_model,
             model_capabilities,
             pick_fast_vision_model,
+            provider_has_modality_data,
         )
     except Exception:  # noqa: BLE001
         return chain
@@ -105,13 +107,20 @@ def _speed_tune_chain(
         try:
             caps = model_capabilities(provider, model) if model else {}
             blind = caps.get("vision") is False
+            if not blind and is_fast_class_model(model):
+                # The configured model is already the fast class (and not
+                # known-blind) — keep the user's choice untouched.
+                tuned.append((provider, model))
+                continue
             alt = pick_fast_vision_model(provider)
-            if alt is None:
+            if alt is None and not provider_has_modality_data(provider):
                 # Direct provider endpoints expose no modality metadata, so
-                # the catalog pick is empty — fall back to the provider's
-                # curated router-tier (fast) default, unless it is known
-                # blind. Keeps "steps run on the fast class" true for EVERY
-                # key, not only catalog-backed gateways.
+                # the empty catalog pick means "no data", not "no vision
+                # model" — fall back to the provider's curated router-tier
+                # (fast) default. Keeps "steps run on the fast class" true
+                # for EVERY key, not only catalog-backed gateways. When the
+                # catalog HAS data and found nothing, there is genuinely no
+                # vision model to offer — no blind guessing.
                 try:
                     from jarvis.brain.manager import (  # noqa: PLC0415
                         get_tier_default_model,
