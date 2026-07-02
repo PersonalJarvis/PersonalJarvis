@@ -250,6 +250,27 @@ change MUST be A/B-measured with `measure_desktop_boot.py --voice --runs 3`,
 and coordinate with the 2026-07-02 wake-latency session (cpu_threads 1->2,
 scripts/wake_bench.py). Potential: usable ~8.9 -> ~6 s isolated.
 
+## Iteration 10 — wake-model prefetch (implemented + A/B measured)
+
+- Implemented per the iteration-9 plan (commit 1b50ffe9): daemon-thread load
+  right after the UI shell serves, keyed hand-over cache in fwhisper
+  (`prefetch_model` / adoption in `_ensure_model`), parameters resolved
+  drift-free through the same `build_wake_whisper(fast_first=True)` call the
+  boot uses. Contracts tested (6 tests): single-use pop (recover() never
+  re-adopts, AP-24), mismatch/failure -> lazy load, in-flight await, no-op
+  gates.
+- **A/B (3 cold runs each): TTU 12,059 ms -> 9,492 ms median (-2.6 s,
+  1.27x); best run 8.87 s.** Import mountain + ctor UNCHANGED (2.8/1.9 s) —
+  no GIL contention from the parallel load. Adoption proven in the boot log
+  ("Adopted boot-prefetched Whisper model (base/cpu/int8)").
+  Full speech+stt suites green (939 tests).
+- Remaining voice-usable structure (~9.5 s): imports ~2.8 s, ctor ~1.9 s,
+  voice setup ~0.8 s, PRIME inference + TTS join ~2-3 s (the model LOAD is
+  now off the path; the priming transcription remains). Next levers: prime
+  during prefetch too (needs care: the priming inference must not collide
+  with an early poll — the is_warm contract covers it), import mountain,
+  ctor slimming. Diminishing returns; floor analysis unchanged.
+
 ## How to add a feature WITHOUT slowing boot (doctrine)
 
 - Nothing new runs before VOICE_READY. New subsystems hook into
