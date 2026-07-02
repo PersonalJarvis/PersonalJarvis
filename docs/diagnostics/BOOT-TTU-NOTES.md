@@ -304,6 +304,18 @@ not worth it. The import mountain is hereby part of the documented floor;
 the only remaining structural lever is decoupling the voice path from the
 WebServer import/ctor entirely (deep refactor, out of scope).
 
+## Iteration 13 — FINAL clean median (quiet machine, 5 runs + warmup)
+
+- **VOICE_USABLE 5,111 ms median** (5.37/5.11/4.93/5.14/5.06 s — tight, no
+  outliers), window 1,185 ms. Prefetch+prime combined: 12.06 s -> 5.11 s
+  (2.36x); vs the same-method pre-fix baseline 15.8 s -> **3.1x**; vs the
+  ~200 s live experience -> **~40x**. Voice budget tightened to 20 s
+  (~4x median, per the guard's own philosophy).
+- FINAL numbers across the loop: Linux headless 196 ms (20.6x vs committed
+  baseline); Windows window 1.2 s (16x vs 19.3 s same-method); Windows
+  voice-usable 5.1 s (3.1x same-method; ~40x vs live). macOS: method
+  committed, unmeasured (no hardware).
+
 ## How to add a feature WITHOUT slowing boot (doctrine)
 
 - Nothing new runs before VOICE_READY. New subsystems hook into

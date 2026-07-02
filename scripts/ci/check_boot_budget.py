@@ -13,11 +13,12 @@ Anchors and budgets (override via env for slower CI boxes):
 - window: spawn -> the UI shell serves (``median_wall_ms``).
   Budget ``JARVIS_BOOT_BUDGET_WINDOW_MS`` (default 8000; measured median on
   the reference box: ~1.2-2.2 s).
-- voice TTU: spawn -> ``VOICE_READY_MS`` (wake armed + speech pipeline live).
-  Budget ``JARVIS_BOOT_BUDGET_VOICE_MS`` (default 30000; measured median on
-  the reference box: ~8.0 s). Checked only when the host can run the voice
-  stack (audio device present) — a headless CI box checks the window anchor
-  and skips voice honestly instead of faking a pass.
+- voice TTU: spawn -> ``VOICE_USABLE_MS`` (wake model warmed + VAD + TTS up).
+  Budget ``JARVIS_BOOT_BUDGET_VOICE_MS`` (default 20000; clean 5-run median
+  on the reference box after the prefetch+prime work: 5.1 s). Checked only
+  when the host can run the voice stack (audio device present) — a headless
+  CI box checks the window anchor and skips voice honestly instead of faking
+  a pass.
 
 Budgets are deliberately ~4x the measured medians: loose enough that machine
 variance never flakes, tight enough that every regression class we have
@@ -49,7 +50,7 @@ LATEST = REPO_ROOT / "desktop-boot-latest.json"
 SKIP_EXIT = 78  # EX_CONFIG-ish: "could not measure" — neutral, not a failure
 
 DEFAULT_WINDOW_BUDGET_MS = 8_000.0
-DEFAULT_VOICE_BUDGET_MS = 30_000.0
+DEFAULT_VOICE_BUDGET_MS = 20_000.0
 
 
 def _audio_capable() -> bool:
