@@ -113,9 +113,21 @@ class AXTreeSource:
             logger.warning(_AX_PERMISSION_MSG)
             return self._empty_observation()
 
-        monitor_bounds = self._monitor_bounds or await asyncio.to_thread(
-            self._detect_primary_monitor_bounds
-        )
+        # On-screen filter scope: the union of ALL displays, never just the
+        # main one — a window on a secondary display must keep its AX tree
+        # (2026-07-02 incident class). Legacy main-display rect only as the
+        # last resort.
+        monitor_bounds = self._monitor_bounds
+        if monitor_bounds is None:
+            from jarvis.platform import monitors as _monitors  # noqa: PLC0415
+
+            monitor_bounds = await asyncio.to_thread(
+                _monitors.virtual_desktop_bounds,
+            )
+        if monitor_bounds is None:
+            monitor_bounds = await asyncio.to_thread(
+                self._detect_primary_monitor_bounds
+            )
 
         nodes_before = 0
         depth_used = _DEPTH_RETRY_LADDER[0]

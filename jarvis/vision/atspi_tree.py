@@ -120,7 +120,18 @@ class AtspiTreeSource:
             logger.warning(_ATSPI_BUS_MSG)
             return self._empty_observation()
 
-        monitor_bounds = self._monitor_bounds or (0, 0, 1920, 1080)
+        # On-screen filter scope: the X11 root geometry spans all monitors.
+        # The old hardcoded FullHD rect silently pruned every element right
+        # of x=1920 — even on a single 4K screen (2026-07-02 incident class).
+        monitor_bounds = self._monitor_bounds
+        if monitor_bounds is None:
+            from jarvis.platform import monitors as _monitors  # noqa: PLC0415
+
+            monitor_bounds = await asyncio.to_thread(
+                _monitors.virtual_desktop_bounds,
+            )
+        if monitor_bounds is None:
+            monitor_bounds = (0, 0, 1920, 1080)
 
         nodes_before = 0
         depth_used = _DEPTH_RETRY_LADDER[0]
