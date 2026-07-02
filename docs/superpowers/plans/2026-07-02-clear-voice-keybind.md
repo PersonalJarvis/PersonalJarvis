@@ -508,7 +508,12 @@ git commit -m "feat(voice): add i18n strings for the keybind Clear button"
 
 - [ ] **Step 1: Write the failing test**
 
-Create `jarvis/ui/web/frontend/src/views/SettingsView.keybinds.test.tsx`:
+Create `jarvis/ui/web/frontend/src/views/SettingsView.keybinds.test.tsx`.
+This codebase does NOT use jest-dom (no `toBeInTheDocument`/`toBeDisabled`
+anywhere in the frontend suite — see `WakeWordPanel.test.tsx`), so assertions
+below stick to plain `expect(...).not.toBeNull()` / direct DOM property reads,
+matching house style. `vi.hoisted` holds mutable mock state so one test can
+render with an already-unbound row:
 
 ```tsx
 /**
@@ -528,21 +533,23 @@ vi.mock("@/i18n", async (importOriginal) => {
   };
 });
 
-const FULL_CONFIG = {
-  keybinds: { call: "f3+f4", hangup: "f1+f2", ptt: "ctrl+right_alt+j" },
-  defaults: { call: "f3+f4", hangup: "f1+f2", ptt: "ctrl+right_alt+j" },
-  push_to_talk: true,
-  suggestions: [],
-  restart_required: false,
-};
-
-const saveKeybind = vi.fn().mockResolvedValue({
-  ok: true,
-  action: "hangup",
-  hotkey: "",
-  persisted: true,
-  applied_live: true,
-  restart_required: false,
+const { saveKeybind, state } = vi.hoisted(() => {
+  const defaultConfig = {
+    keybinds: { call: "f3+f4", hangup: "f1+f2", ptt: "ctrl+right_alt+j" },
+    defaults: { call: "f3+f4", hangup: "f1+f2", ptt: "ctrl+right_alt+j" },
+    push_to_talk: true,
+    suggestions: [] as string[],
+    restart_required: false,
+  };
+  const saveKeybind = vi.fn().mockResolvedValue({
+    ok: true,
+    action: "hangup",
+    hotkey: "",
+    persisted: true,
+    applied_live: true,
+    restart_required: false,
+  });
+  return { saveKeybind, state: { config: defaultConfig, defaultConfig } };
 });
 
 vi.mock("@/hooks/useHotkey", async (importOriginal) => {
@@ -550,7 +557,7 @@ vi.mock("@/hooks/useHotkey", async (importOriginal) => {
   return {
     ...actual,
     useKeybinds: () => ({
-      config: FULL_CONFIG,
+      config: state.config,
       loading: false,
       error: null,
       refetch: vi.fn(),
@@ -564,14 +571,15 @@ import { KeybindsPanel } from "@/views/SettingsView";
 afterEach(() => {
   cleanup();
   saveKeybind.mockClear();
+  state.config = state.defaultConfig;
 });
 
 describe("KeybindsPanel — Clear button", () => {
   it("renders a Clear button for every bound row", () => {
     render(<KeybindsPanel />);
-    expect(screen.getByTestId("clear-keybind-call")).toBeInTheDocument();
-    expect(screen.getByTestId("clear-keybind-hangup")).toBeInTheDocument();
-    expect(screen.getByTestId("clear-keybind-ptt")).toBeInTheDocument();
+    expect(screen.queryByTestId("clear-keybind-call")).not.toBeNull();
+    expect(screen.queryByTestId("clear-keybind-hangup")).not.toBeNull();
+    expect(screen.queryByTestId("clear-keybind-ptt")).not.toBeNull();
   });
 
   it("clicking Clear saves an empty hotkey for that action", async () => {
@@ -583,9 +591,19 @@ describe("KeybindsPanel — Clear button", () => {
   it("shows 'No key assigned' after a successful clear", async () => {
     render(<KeybindsPanel />);
     fireEvent.click(screen.getByTestId("clear-keybind-hangup"));
-    await waitFor(() =>
-      expect(screen.getAllByText("No key assigned").length).toBeGreaterThan(0),
-    );
+    await waitFor(() => {
+      expect(screen.queryAllByText("No key assigned").length).toBeGreaterThan(0);
+    });
+  });
+
+  it("disables Clear when the action is already unbound", () => {
+    state.config = {
+      ...state.defaultConfig,
+      keybinds: { ...state.defaultConfig.keybinds, hangup: "" },
+    };
+    render(<KeybindsPanel />);
+    const btn = screen.getByTestId("clear-keybind-hangup") as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
   });
 });
 ```
@@ -593,7 +611,7 @@ describe("KeybindsPanel — Clear button", () => {
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `cd jarvis/ui/web/frontend && npx vitest run src/views/SettingsView.keybinds.test.tsx`
-Expected: FAIL — `getByTestId("clear-keybind-call")` finds nothing (the
+Expected: FAIL — `getByTestId("clear-keybind-hangup")` finds nothing (the
 button does not exist yet).
 
 - [ ] **Step 3: Add the `X` icon import**
@@ -621,11 +639,60 @@ import {
 
 - [ ] **Step 4: Add the `onClearClick` handler**
 
-In `jarvis/ui/web/frontend/src/views/SettingsView.tsx`, right after the
-closing brace of `onSaveClick` (after line 632, before the `dirty`/`showReset`
-consts), insert:
+In `jarvis/ui/web/frontend/src/views/SettingsView.tsx`, change:
 
 ```tsx
+  async function onSaveClick() {
+    const trimmed = combo.trim().toLowerCase();
+    if (!trimmed) return;
+    setSaving(true);
+    setSaved(false);
+    try {
+      const res = await onSave(action, trimmed);
+      setSaved(res.restart_required);
+      // The save concludes the recording session. Leaving the recorder open
+      // kept a stale pre-recording snapshot around that a later Esc would
+      // "restore" — silently diverging the field from the saved value.
+      setCapturing(false);
+      pushToast("success", t("settings_view.keybinds.saved"));
+    } catch (e) {
+      // Backend rejected the combo (unsafe / collision) — show its reason.
+      pushToast("error", (e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const dirty = !!config && combo.trim().toLowerCase() !== current;
+```
+
+to:
+
+```tsx
+  async function onSaveClick() {
+    const trimmed = combo.trim().toLowerCase();
+    if (!trimmed) return;
+    setSaving(true);
+    setSaved(false);
+    try {
+      const res = await onSave(action, trimmed);
+      setSaved(res.restart_required);
+      // The save concludes the recording session. Leaving the recorder open
+      // kept a stale pre-recording snapshot around that a later Esc would
+      // "restore" — silently diverging the field from the saved value.
+      setCapturing(false);
+      pushToast("success", t("settings_view.keybinds.saved"));
+    } catch (e) {
+      // Backend rejected the combo (unsafe / collision) — show its reason.
+      pushToast("error", (e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Immediate, one-click unbind — no staging step, mirroring the "Reset to
+  // default" link's immediacy. Bypasses onSaveClick's trimmed-empty guard,
+  // which exists to stop an in-progress recording from saving nothing.
   async function onClearClick() {
     setSaving(true);
     try {
@@ -640,6 +707,8 @@ consts), insert:
       setSaving(false);
     }
   }
+
+  const dirty = !!config && combo.trim().toLowerCase() !== current;
 ```
 
 - [ ] **Step 5: Render the Clear button next to Save**
@@ -713,7 +782,7 @@ to:
 - [ ] **Step 7: Run the test to verify it passes**
 
 Run: `cd jarvis/ui/web/frontend && npx vitest run src/views/SettingsView.keybinds.test.tsx`
-Expected: all 3 tests PASS.
+Expected: all 4 tests PASS.
 
 - [ ] **Step 8: Run the full frontend test suite (no regressions)**
 
