@@ -111,9 +111,9 @@ def main() -> int:
         )
 
     if voice:
-        voice_ms = summary.get("median_voice_ready_wall_ms")
+        voice_ms = summary.get("median_voice_usable_wall_ms")
         if voice_ms is None:
-            failures.append("VOICE_READY anchor missing from harness output")
+            failures.append("VOICE_USABLE anchor missing from harness output")
         elif voice_ms > voice_budget:
             failures.append(
                 f"voice TTU {voice_ms:.0f} ms > budget {voice_budget:.0f} ms"

@@ -331,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
     for name, val in sorted(summary["phase_medians_ms"].items(), key=lambda kv: -kv[1]):
         print(f"  {name:24s} {val:8.1f}", flush=True)
 
-    key = "median_voice_ready_wall_ms" if args.voice else "median_wall_ms"
+    key = "median_voice_usable_wall_ms" if args.voice else "median_wall_ms"
     if froze_baseline:
         print(f"\nfroze baseline -> {baseline_path.name}", flush=True)
     elif baseline_path.exists():

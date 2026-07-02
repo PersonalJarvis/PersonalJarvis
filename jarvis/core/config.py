@@ -1445,14 +1445,22 @@ class ComputerUseConfig(BaseModel):
     model_config = {"extra": "allow"}
 
     enabled: bool = False
-    # Which Computer-Use engine runs (reversible switch). "current" (default) =
-    # the maintained engine; "june13" = the frozen 2026-06-10 / 352a784f snapshot
-    # (jarvis/harness/screenshot_only_loop_june13.py), kept as a known-good
-    # fallback after the maintained engine accumulated ~1700 lines of stacked
-    # click-correction + verifier layers and regressed. The harness reads this
-    # per mission and logs which engine is live, so a flip applies on the next
-    # mission / restart with no code change. Flip back any time with "current".
-    engine: Literal["current", "june13", "stable"] = "current"
+    # Which Computer-Use engine runs (reversible switch). "v2" (default) = the
+    # rebuilt perceive->act->verify engine (jarvis/cu/engine.py): per-frame
+    # coordinate mapping, provider coordinate conventions, UI-idle capture,
+    # effect-checked actions and the idempotency ledger. Legacy engines stay
+    # available as fallbacks: "current" = the last maintained legacy loop,
+    # "june13" / "stable" = frozen known-good snapshots. The harness reads
+    # this per mission and logs which engine is live, so a flip applies on
+    # the next mission with no restart. Roll back any time with "current".
+    engine: Literal["v2", "current", "june13", "stable"] = "v2"
+    # Coordinate space the vision model's click coordinates are parsed in
+    # (CU v2 only). "auto" (default) resolves per provider: an explicit
+    # ``coordinate_convention`` capability on the brain wins, else the
+    # provider family's documented convention (Gemini -> 0-1000 normalized;
+    # Claude/OpenAI -> pixels on the sent image; unknown -> normalized).
+    # Pin "normalized_1000" or "image_pixels" only to override a wrong guess.
+    coordinate_space: Literal["auto", "normalized_1000", "image_pixels"] = "auto"
     # How Computer-Use relates to multiple monitors. DEFAULT "primary": CU brings
     # the target window onto the MAIN monitor (the G8 move-to-primary hook) AND
     # the screenshot FOLLOWS that window — so the normal case lands on the main
