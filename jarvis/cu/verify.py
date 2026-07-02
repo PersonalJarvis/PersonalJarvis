@@ -181,28 +181,98 @@ def clickable_labels(nodes: tuple, max_n: int = 28) -> list[str]:
     return names
 
 
+def clickable_rects(nodes: tuple, max_n: int = 200) -> list[tuple[str, str, tuple[int, int, int, int]]]:
+    """Enabled clickable elements WITH their bounding rects, as
+    ``(name, role, (x, y, w, h))`` in screen input units.
+
+    The rects come from the accessibility tree the snapshot already walks
+    (UIA physical pixels / AX points / AT-SPI pixels — the same units the
+    actuator clicks in, now that the process is per-monitor DPI aware).
+    Unlike :func:`clickable_labels` this keeps NAMELESS elements too: an
+    icon-only button has no label but its rect still anchors a click.
+    """
+    out: list[tuple[str, str, tuple[int, int, int, int]]] = []
+    for node in nodes or ():
+        if not getattr(node, "enabled", True):
+            continue
+        role = getattr(node, "role", "")
+        if role not in CLICKABLE_UIA_ROLES:
+            continue
+        bounds = getattr(node, "bounds", None) or (0, 0, 0, 0)
+        try:
+            x, y, w, h = (int(v) for v in bounds)
+        except (TypeError, ValueError):
+            continue
+        if w <= 0 or h <= 0:
+            continue
+        out.append(((getattr(node, "name", "") or "").strip(), role, (x, y, w, h)))
+        if len(out) >= max_n:
+            break
+    return out
+
+
+#: An element larger than this fraction of the capture area is a CONTAINER
+#: (panel, document body) — snapping to its center would be a wrong-but-
+#: plausible click far from the model's intent.
+_SNAP_MAX_AREA_FRACTION = 0.15
+
+
+def snap_point_to_element(
+    x: int,
+    y: int,
+    clickables: list[tuple[str, str, tuple[int, int, int, int]]],
+    *,
+    capture_area: int,
+) -> tuple[int, int, str] | None:
+    """Snap a model-predicted point to the CENTER of the smallest clickable
+    element whose rect contains it — or ``None`` (keep the raw point).
+
+    Converts the vision model's job from "hit an exact pixel" to "point
+    anywhere inside the right element": the residual 1-3% pointing error
+    stops mattering, at zero added latency (the rects ride the snapshot that
+    already runs in parallel with the capture). The SMALLEST containing rect
+    wins (leaf over ancestor); rects above ``_SNAP_MAX_AREA_FRACTION`` of
+    the capture area never snap (container trap). Pure; never raises.
+    """
+    best: tuple[int, str, int, int] | None = None  # (area, label, cx, cy)
+    max_area = max(1, int(capture_area * _SNAP_MAX_AREA_FRACTION))
+    for name, _role, (rx, ry, rw, rh) in clickables or ():
+        if not (rx <= x < rx + rw and ry <= y < ry + rh):
+            continue
+        area = rw * rh
+        if area > max_area:
+            continue
+        if best is None or area < best[0]:
+            best = (area, name, rx + rw // 2, ry + rh // 2)
+    if best is None:
+        return None
+    return (best[2], best[3], best[1])
+
+
 # ---------------------------------------------------------------------------
 # Async tree snapshots (best-effort; failures degrade to "cannot tell")
 # ---------------------------------------------------------------------------
 
 async def foreground_ui_snapshot(
     timeout_s: float = UIA_TIMEOUT_S, max_labels: int = 28,
-) -> tuple[list[str], str, str | None]:
+) -> tuple[list[str], str, str | None, list[tuple[str, str, tuple[int, int, int, int]]]]:
     """One tree observation → (clickable labels, field-values hint, handoff
-    reason). ``([], "", None)`` on any failure or a label-less surface —
-    that empty path self-gates the loop back to pixel clicks."""
+    reason, clickable rects). ``([], "", None, [])`` on any failure or a
+    label-less surface — that empty path self-gates the loop back to raw
+    pixel clicks (canvas apps expose no useful tree)."""
     try:
         obs = await asyncio.wait_for(
             _get_ui_tree_source().observe(), timeout=timeout_s,
         )
     except Exception as exc:  # noqa: BLE001 — best-effort enumeration
         logger.debug("[cu] UI-tree snapshot failed (non-fatal): %s", exc)
-        return [], "", None
+        return [], "", None, []
     nodes = tuple(getattr(obs, "nodes", ()) or ())
     return (
         clickable_labels(nodes, max_n=max_labels),
         field_values_hint(nodes),
         human_handoff_reason(nodes),
+        clickable_rects(nodes),
     )
 
 

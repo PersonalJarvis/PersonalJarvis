@@ -61,6 +61,7 @@ from jarvis.cu.verify import (
     crop_raw,
     foreground_ui_snapshot,
     regions_equal,
+    snap_point_to_element,
     verify_typed_text,
 )
 
@@ -333,6 +334,100 @@ def _summarize_action(action: dict[str, Any]) -> str:
     return str(kind)
 
 
+#: Zoom-refine crop half-side in input units. Near-square context crops
+#: preserve surroundings better than tight boxes (MEGA-GUI / UI-Zoomer).
+_REFINE_RADIUS = 220
+
+_REFINE_SYSTEM = (
+    "You are a precision click-refinement assistant. The attached image is a "
+    "ZOOMED-IN crop of the live screen, centered on a click that produced NO "
+    "visible effect. Locate the TARGET element inside the crop. Output "
+    "exactly ONE JSON object, no prose, no fences:\n"
+    '  {"found": true, "x": <0-1000>, "y": <0-1000>}  — x/y on a 0-1000 grid '
+    "WITHIN THIS CROP (0,0 = crop top-left), aimed at the CENTER of the "
+    "target.\n"
+    '  {"found": false}  — the target is not visible anywhere in the crop.\n'
+    "Never guess a position for an element you cannot actually see."
+)
+
+
+async def _zoom_refine_point(
+    ctx: Any,
+    frame: Frame,
+    x: int,
+    y: int,
+    *,
+    goal: str,
+    target: str,
+) -> tuple[int, int] | None:
+    """One coarse-to-fine grounding round after a VERIFIED miss.
+
+    Grabs a native-resolution crop around the missed point (no downscale —
+    this is where zoom methods earn their ScreenSpot-Pro gains) and asks the
+    FAST vision chain to re-locate the target inside it. Returns the refined
+    absolute point, or ``None`` (keep/abandon). Runs ONLY on the miss path,
+    so the ordinary click costs zero extra model calls.
+    """
+    import io  # noqa: PLC0415
+    import json as _json  # noqa: PLC0415
+    import re as _re  # noqa: PLC0415
+
+    bbox = frame.mapper.region_around(int(x), int(y), _REFINE_RADIUS)
+    raw = await asyncio.to_thread(grab_region, bbox)
+    if raw is None:
+        return None
+    try:
+        from PIL import Image  # noqa: PLC0415
+
+        img = Image.frombytes("RGB", raw[0], raw[1])
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+        crop_jpeg = buf.getvalue()
+    except Exception:  # noqa: BLE001
+        return None
+    user = (
+        f"TARGET: {target or 'the element the GOAL needs clicked next'}\n"
+        f"GOAL: {goal}\n"
+        f"The crop is {bbox['width']}x{bbox['height']} screen units, centered "
+        "on the missed click. Reply with the JSON object only."
+    )
+    try:
+        reply = await call_vision_brain(
+            ctx.brain_manager,
+            build_prompt=lambda provider, brain: (_REFINE_SYSTEM, user),
+            images=[ImageBlock(
+                mime="image/jpeg",
+                data_b64=base64.b64encode(crop_jpeg).decode("ascii"),
+            )],
+            max_tokens=64,
+            early_stop_json=True,
+        )
+    except Exception:  # noqa: BLE001 — refine is strictly best-effort
+        log.debug("[cu] zoom refine call failed", exc_info=True)
+        return None
+    cleaned = (reply.text or "").strip()
+    fence = _re.search(r"```(?:json)?\s*(.+?)\s*```", cleaned, _re.DOTALL)
+    if fence is not None:
+        cleaned = fence.group(1).strip()
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        obj = _json.loads(cleaned[start:end + 1])
+    except _json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict) or obj.get("found") is not True:
+        return None
+    try:
+        nx = min(max(float(obj.get("x", 0)), 0.0), 1000.0)
+        ny = min(max(float(obj.get("y", 0)), 0.0), 1000.0)
+    except (TypeError, ValueError):
+        return None
+    rx = bbox["left"] + round(nx / 1000.0 * bbox["width"])
+    ry = bbox["top"] + round(ny / 1000.0 * bbox["height"])
+    return (rx, ry)
+
+
 async def _judge_done(
     ctx: Any,
     goal: str,
@@ -483,7 +578,7 @@ async def run_cu_loop(
                 blob_dir=image_cfg.blob_dir,
             )
             snapshot_coro = foreground_ui_snapshot()
-            frame, (labels, field_hint, handoff) = await asyncio.wait_for(
+            frame, (labels, field_hint, handoff, clickables) = await asyncio.wait_for(
                 asyncio.gather(frame_coro, snapshot_coro),
                 timeout=_OBSERVE_TIMEOUT_S,
             )
@@ -716,6 +811,26 @@ async def run_cu_loop(
                 resolved_xy = frame.mapper.model_to_screen(
                     action["x"], action["y"], convention,
                 )
+                # Element anchoring: a point INSIDE a clickable element snaps
+                # to that element's center (smallest containing rect, capped
+                # against container traps) — the model only has to point
+                # anywhere inside the right control, its residual 1-3%
+                # pointing error stops mattering. Zero added latency: the
+                # rects ride the snapshot already captured in parallel.
+                snapped = snap_point_to_element(
+                    resolved_xy[0], resolved_xy[1], clickables,
+                    capture_area=monitor.width * monitor.height,
+                )
+                if snapped is not None:
+                    sx2, sy2, snap_label = snapped
+                    if (sx2, sy2) != resolved_xy:
+                        log.info(
+                            "[cu] click (%d,%d) anchored to element center "
+                            "(%d,%d)%s", resolved_xy[0], resolved_xy[1],
+                            sx2, sy2,
+                            f" '{snap_label[:40]}'" if snap_label else "",
+                        )
+                    resolved_xy = (sx2, sy2)
             elif kind == "drag":
                 resolved_xy = frame.mapper.model_to_screen(
                     action["x"], action["y"], convention,
@@ -789,6 +904,60 @@ async def run_cu_loop(
                                 "element on the fresh screenshot (or use "
                                 "click_element with its exact label)."
                             )
+                            # Coarse-to-fine rescue (miss path only): re-ground
+                            # the target inside a native-resolution zoom crop
+                            # and retry ONCE at the refined point. This is the
+                            # step behind the ScreenSpot-Pro zoom gains; the
+                            # happy path never pays for it.
+                            refined = await _zoom_refine_point(
+                                ctx, frame, *resolved_xy,
+                                goal=goal, target=str(action.get("target", "")),
+                            )
+                            if refined is not None and (
+                                abs(refined[0] - resolved_xy[0]) > 12
+                                or abs(refined[1] - resolved_xy[1]) > 12
+                            ):
+                                log.info(
+                                    "[cu] zoom refine: retrying click at "
+                                    "(%d,%d) after miss at (%d,%d)",
+                                    refined[0], refined[1], *resolved_xy,
+                                )
+                                pre2 = await asyncio.to_thread(
+                                    grab_region, monitor.bbox,
+                                )
+                                ok2, detail2 = await _dispatch_tool(
+                                    ctx, "click",
+                                    {
+                                        "x": refined[0], "y": refined[1],
+                                        "button": action["button"],
+                                        "double": action["double"],
+                                    },
+                                    trace_id,
+                                )
+                                if ok2:
+                                    ledger.record(
+                                        action, frame.thumb, resolved_xy=refined,
+                                    )
+                                    await asyncio.sleep(
+                                        _EFFECT_SETTLE_S * settle_scale,
+                                    )
+                                    post2 = await asyncio.to_thread(
+                                        grab_region, monitor.bbox,
+                                    )
+                                    lp2 = crop_raw(
+                                        pre2, rect_t, *refined,
+                                        _EFFECT_CROP_RADIUS,
+                                    ) if pre2 else None
+                                    lq2 = crop_raw(
+                                        post2, rect_t, *refined,
+                                        _EFFECT_CROP_RADIUS,
+                                    ) if post2 else None
+                                    if regions_equal(lp2, lq2) is not True:
+                                        ok = True
+                                        detail = (
+                                            f"{detail2} (zoom-refined retry "
+                                            "after a verified miss)"
+                                        )
                 profiler.add("verify", t0, step_idx)
 
             elif kind == "type":
