@@ -1,0 +1,408 @@
+{
+  "fps": 30,
+  "overlap": 14,
+  "totalFrames": 3053,
+  "scenes": [
+    {
+      "id": "hook",
+      "dur": 373,
+      "lines": [
+        {
+          "id": "h1",
+          "kind": "narration",
+          "text": "Hi. I'm the assistant you're about to install.",
+          "file": "vo-tutorial/h1.mp3",
+          "localStart": 10,
+          "dur": 84
+        },
+        {
+          "id": "h2",
+          "kind": "narration",
+          "text": "I'm Personal Jarvis — open source, running on your own computer, and I work by voice.",
+          "file": "vo-tutorial/h2.mp3",
+          "localStart": 101,
+          "dur": 159
+        },
+        {
+          "id": "h3",
+          "kind": "narration",
+          "text": "Give me two minutes. I'll show you how to set me up.",
+          "file": "vo-tutorial/h3.mp3",
+          "localStart": 267,
+          "dur": 82
+        }
+      ]
+    },
+    {
+      "id": "install",
+      "dur": 364,
+      "lines": [
+        {
+          "id": "i1",
+          "kind": "narration",
+          "text": "Step one — install me.",
+          "file": "vo-tutorial/i1.mp3",
+          "localStart": 10,
+          "dur": 53
+        },
+        {
+          "id": "i2",
+          "kind": "narration",
+          "text": "One command in your terminal. Windows, Mac, or Linux — I run on all of them.",
+          "file": "vo-tutorial/i2.mp3",
+          "localStart": 70,
+          "dur": 151
+        },
+        {
+          "id": "i3",
+          "kind": "narration",
+          "text": "The first time I start, a setup wizard walks you through everything else.",
+          "file": "vo-tutorial/i3.mp3",
+          "localStart": 228,
+          "dur": 120
+        }
+      ]
+    },
+    {
+      "id": "keys",
+      "dur": 446,
+      "lines": [
+        {
+          "id": "k1",
+          "kind": "narration",
+          "text": "Step two — bring your own key.",
+          "file": "vo-tutorial/k1.mp3",
+          "localStart": 10,
+          "dur": 62
+        },
+        {
+          "id": "k2",
+          "kind": "narration",
+          "text": "I'm not locked to one AI company. Claude, OpenAI, Gemini, OpenRouter — any single key gets me thinking.",
+          "file": "vo-tutorial/k2.mp3",
+          "localStart": 79,
+          "dur": 215
+        },
+        {
+          "id": "k3",
+          "kind": "narration",
+          "text": "Paste it into the API-Keys view — and the dot turns green.",
+          "file": "vo-tutorial/k3.mp3",
+          "localStart": 301,
+          "dur": 129
+        }
+      ]
+    },
+    {
+      "id": "wake",
+      "dur": 345,
+      "lines": [
+        {
+          "id": "w1",
+          "kind": "narration",
+          "text": "Step three — pick my name.",
+          "file": "vo-tutorial/w1.mp3",
+          "localStart": 10,
+          "dur": 55
+        },
+        {
+          "id": "w2",
+          "kind": "narration",
+          "text": "Choose any wake word you like. That's the word I listen for, all day.",
+          "file": "vo-tutorial/w2.mp3",
+          "localStart": 72,
+          "dur": 124
+        },
+        {
+          "id": "w3",
+          "kind": "command",
+          "text": "Hey Jarvis.",
+          "file": "vo-tutorial/w3.mp3",
+          "localStart": 203,
+          "dur": 33
+        },
+        {
+          "id": "w4",
+          "kind": "narration",
+          "text": "Yes? I'm listening. That's all it takes.",
+          "file": "vo-tutorial/w4.mp3",
+          "localStart": 243,
+          "dur": 86
+        }
+      ]
+    },
+    {
+      "id": "talk",
+      "dur": 509,
+      "lines": [
+        {
+          "id": "t1",
+          "kind": "narration",
+          "text": "Step four — just talk to me.",
+          "file": "vo-tutorial/t1.mp3",
+          "localStart": 10,
+          "dur": 48
+        },
+        {
+          "id": "t2",
+          "kind": "command",
+          "text": "What's on my calendar this afternoon?",
+          "file": "vo-tutorial/t2.mp3",
+          "localStart": 65,
+          "dur": 88
+        },
+        {
+          "id": "t3",
+          "kind": "narration",
+          "text": "Two meetings. Design review at three, and a call at five.",
+          "file": "vo-tutorial/t3.mp3",
+          "localStart": 160,
+          "dur": 112
+        },
+        {
+          "id": "t4",
+          "kind": "narration",
+          "text": "Hands-free, spoken out loud — and I follow your language: English, German, Spanish, mid-conversation.",
+          "file": "vo-tutorial/t4.mp3",
+          "localStart": 279,
+          "dur": 214
+        }
+      ]
+    },
+    {
+      "id": "act",
+      "dur": 378,
+      "lines": [
+        {
+          "id": "a1",
+          "kind": "narration",
+          "text": "Step five — let me use the computer.",
+          "file": "vo-tutorial/a1.mp3",
+          "localStart": 10,
+          "dur": 73
+        },
+        {
+          "id": "a2",
+          "kind": "command",
+          "text": "Open the browser and check my pull requests.",
+          "file": "vo-tutorial/a2.mp3",
+          "localStart": 90,
+          "dur": 108
+        },
+        {
+          "id": "a3",
+          "kind": "narration",
+          "text": "I move the cursor, click, type, and read the screen — while you watch every step.",
+          "file": "vo-tutorial/a3.mp3",
+          "localStart": 205,
+          "dur": 157
+        }
+      ]
+    },
+    {
+      "id": "delegate",
+      "dur": 457,
+      "lines": [
+        {
+          "id": "d1",
+          "kind": "narration",
+          "text": "Step six — hand me the big jobs.",
+          "file": "vo-tutorial/d1.mp3",
+          "localStart": 10,
+          "dur": 72
+        },
+        {
+          "id": "d2",
+          "kind": "command",
+          "text": "Research the EV market and build me a report.",
+          "file": "vo-tutorial/d2.mp3",
+          "localStart": 89,
+          "dur": 116
+        },
+        {
+          "id": "d3",
+          "kind": "narration",
+          "text": "I spawn a background agent for it — and a critic reviews the work before you ever see it.",
+          "file": "vo-tutorial/d3.mp3",
+          "localStart": 212,
+          "dur": 141
+        },
+        {
+          "id": "d4",
+          "kind": "narration",
+          "text": "The finished report lands in your Outputs folder.",
+          "file": "vo-tutorial/d4.mp3",
+          "localStart": 360,
+          "dur": 81
+        }
+      ]
+    },
+    {
+      "id": "outro",
+      "dur": 279,
+      "lines": [
+        {
+          "id": "o1",
+          "kind": "narration",
+          "text": "That's the whole setup.",
+          "file": "vo-tutorial/o1.mp3",
+          "localStart": 10,
+          "dur": 38
+        },
+        {
+          "id": "o2",
+          "kind": "narration",
+          "text": "I'm free, I'm open source, and everything stays on your machine.",
+          "file": "vo-tutorial/o2.mp3",
+          "localStart": 55,
+          "dur": 113
+        },
+        {
+          "id": "o3",
+          "kind": "narration",
+          "text": "The link's in the description. Say the word.",
+          "file": "vo-tutorial/o3.mp3",
+          "localStart": 175,
+          "dur": 74
+        }
+      ]
+    }
+  ],
+  "audio": [
+    {
+      "file": "vo-tutorial/h1.mp3",
+      "from": 10,
+      "dur": 84
+    },
+    {
+      "file": "vo-tutorial/h2.mp3",
+      "from": 101,
+      "dur": 159
+    },
+    {
+      "file": "vo-tutorial/h3.mp3",
+      "from": 267,
+      "dur": 82
+    },
+    {
+      "file": "vo-tutorial/i1.mp3",
+      "from": 369,
+      "dur": 53
+    },
+    {
+      "file": "vo-tutorial/i2.mp3",
+      "from": 429,
+      "dur": 151
+    },
+    {
+      "file": "vo-tutorial/i3.mp3",
+      "from": 587,
+      "dur": 120
+    },
+    {
+      "file": "vo-tutorial/k1.mp3",
+      "from": 719,
+      "dur": 62
+    },
+    {
+      "file": "vo-tutorial/k2.mp3",
+      "from": 788,
+      "dur": 215
+    },
+    {
+      "file": "vo-tutorial/k3.mp3",
+      "from": 1010,
+      "dur": 129
+    },
+    {
+      "file": "vo-tutorial/w1.mp3",
+      "from": 1151,
+      "dur": 55
+    },
+    {
+      "file": "vo-tutorial/w2.mp3",
+      "from": 1213,
+      "dur": 124
+    },
+    {
+      "file": "vo-tutorial/w3.mp3",
+      "from": 1344,
+      "dur": 33
+    },
+    {
+      "file": "vo-tutorial/w4.mp3",
+      "from": 1384,
+      "dur": 86
+    },
+    {
+      "file": "vo-tutorial/t1.mp3",
+      "from": 1482,
+      "dur": 48
+    },
+    {
+      "file": "vo-tutorial/t2.mp3",
+      "from": 1537,
+      "dur": 88
+    },
+    {
+      "file": "vo-tutorial/t3.mp3",
+      "from": 1632,
+      "dur": 112
+    },
+    {
+      "file": "vo-tutorial/t4.mp3",
+      "from": 1751,
+      "dur": 214
+    },
+    {
+      "file": "vo-tutorial/a1.mp3",
+      "from": 1977,
+      "dur": 73
+    },
+    {
+      "file": "vo-tutorial/a2.mp3",
+      "from": 2057,
+      "dur": 108
+    },
+    {
+      "file": "vo-tutorial/a3.mp3",
+      "from": 2172,
+      "dur": 157
+    },
+    {
+      "file": "vo-tutorial/d1.mp3",
+      "from": 2341,
+      "dur": 72
+    },
+    {
+      "file": "vo-tutorial/d2.mp3",
+      "from": 2420,
+      "dur": 116
+    },
+    {
+      "file": "vo-tutorial/d3.mp3",
+      "from": 2543,
+      "dur": 141
+    },
+    {
+      "file": "vo-tutorial/d4.mp3",
+      "from": 2691,
+      "dur": 81
+    },
+    {
+      "file": "vo-tutorial/o1.mp3",
+      "from": 2784,
+      "dur": 38
+    },
+    {
+      "file": "vo-tutorial/o2.mp3",
+      "from": 2829,
+      "dur": 113
+    },
+    {
+      "file": "vo-tutorial/o3.mp3",
+      "from": 2949,
+      "dur": 74
+    }
+  ]
+}
