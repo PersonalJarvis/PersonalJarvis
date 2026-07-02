@@ -50,6 +50,118 @@ class BrainReply:
 PromptBuilder = Callable[[str, Any], tuple[str, str]]
 
 
+def _explicit_cu_pin(manager: Any, provider: str) -> str | None:
+    """The user's RAW ``cu_model`` config pin for ``provider``, or ``None``.
+
+    Deliberately NOT ``manager._cu_model`` — that resolver falls back to the
+    main model / tier default and therefore never returns ``None``, which
+    cannot distinguish "the user pinned this for CU" from "nothing pinned".
+    """
+    try:
+        provider_cfg = getattr(manager, "_provider_cfg", None)
+        cfg = provider_cfg(provider) if callable(provider_cfg) else None
+        pin = getattr(cfg, "cu_model", None)
+        return str(pin) if pin else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _speed_tune_chain(
+    chain: list[tuple[str, str | None]],
+    *,
+    pinned: set[str] = frozenset(),  # type: ignore[assignment]
+) -> list[tuple[str, str | None]]:
+    """Per candidate: keep an explicit CU pin verbatim; otherwise put the
+    provider's FAST vision-capable model on the mission steps.
+
+    Two problems, one move (both live-measured 2026-07-02):
+
+    * A KNOWN-blind configured model (OpenRouter DeepSeek pin) knocked the
+      whole provider out of the chain although the same key unlocks vision
+      models (AP-22) — it must be swapped regardless.
+    * A flagship configured model made every step THINK for seconds
+      (think=60.8s of a 75.8s mission on Opus over OpenRouter). Computer-Use
+      issues one small vision call per step — the fast class (flash/haiku/
+      mini) answers in a fraction of the time at no relevant quality loss
+      for "click/type/verify" decisions.
+
+    Providers whose catalog exposes no modality data (direct Gemini/Claude
+    endpoints) return no pick and stay untouched — their configured fast-tier
+    model already IS the fast class. Never raises; any lookup problem keeps
+    the original pair.
+    """
+    try:
+        from jarvis.brain.model_catalog import (  # noqa: PLC0415
+            is_fast_class_model,
+            model_capabilities,
+            pick_fast_vision_model,
+            provider_has_modality_data,
+        )
+    except Exception:  # noqa: BLE001
+        return chain
+    tuned: list[tuple[str, str | None]] = []
+    for provider, model in chain:
+        if provider in pinned:
+            tuned.append((provider, model))
+            continue
+        try:
+            caps = model_capabilities(provider, model) if model else {}
+            blind = caps.get("vision") is False
+            if not blind and is_fast_class_model(model):
+                # The configured model is already the fast class (and not
+                # known-blind) — keep the user's choice untouched.
+                tuned.append((provider, model))
+                continue
+            alt = pick_fast_vision_model(provider)
+            if alt is None and not provider_has_modality_data(provider):
+                # Direct provider endpoints expose no modality metadata, so
+                # the empty catalog pick means "no data", not "no vision
+                # model" — fall back to the provider's curated router-tier
+                # (fast) default. Keeps "steps run on the fast class" true
+                # for EVERY key, not only catalog-backed gateways. When the
+                # catalog HAS data and found nothing, there is genuinely no
+                # vision model to offer — no blind guessing.
+                try:
+                    from jarvis.brain.manager import (  # noqa: PLC0415
+                        get_tier_default_model,
+                    )
+
+                    candidate = get_tier_default_model("router", provider)
+                    if candidate and model_capabilities(
+                        provider, candidate,
+                    ).get("vision") is not False:
+                        alt = candidate
+                except Exception:  # noqa: BLE001
+                    alt = None
+            if alt and alt != model and (blind or model):
+                if blind:
+                    logger.info(
+                        "[cu] %s model %s cannot see the screen — using the "
+                        "vision-capable %s for this mission",
+                        provider, model, alt,
+                    )
+                else:
+                    logger.info(
+                        "[cu] %s: stepping with the fast vision model %s "
+                        "instead of %s (pin a Computer-Use model in Settings "
+                        "to override)",
+                        provider, alt, model,
+                    )
+                tuned.append((provider, alt))
+                continue
+            if blind:
+                # Known-blind and no vision sibling — the selector's
+                # blind-skip will drop it; nothing better to offer.
+                logger.info(
+                    "[cu] %s model %s cannot see the screen and no vision "
+                    "sibling is known", provider, model,
+                )
+        except Exception:  # noqa: BLE001 — tuning is best-effort
+            logger.debug("[cu] speed-tune failed for %s", provider, exc_info=True)
+        tuned.append((provider, model))
+    return tuned
+
+
 async def call_vision_brain(
     manager: Any,
     *,
@@ -93,10 +205,22 @@ async def call_vision_brain(
         raise CUBrainCallError("BrainManager fallback chain is empty")
 
     # Per-provider CU model override (Settings can pin a dedicated CU model).
+    # A PIN is the user's explicit word and is never second-guessed; every
+    # unpinned candidate is speed-tuned below. CRITICAL: pin detection reads
+    # the RAW config field — ``manager._cu_model`` resolves cu_model -> main
+    # model -> tier default and therefore ALWAYS returns something, which made
+    # every provider look pinned and silently disabled the speed tune (live
+    # forensic 2026-07-02 15:53: think=53.6s AFTER the tune shipped).
     cu_model = getattr(manager, "_cu_model", None)
+    pinned_providers: set[str] = set()
     if callable(cu_model):
         resolved_chain: list[tuple[str, str | None]] = []
         for provider, model in chain:
+            pin = _explicit_cu_pin(manager, provider)
+            if pin:
+                pinned_providers.add(provider)
+                resolved_chain.append((provider, pin))
+                continue
             try:
                 resolved_chain.append((provider, cu_model(provider) or model))
             except Exception:  # noqa: BLE001
@@ -104,6 +228,8 @@ async def call_vision_brain(
         chain = resolved_chain
 
     images_attached = bool(images)
+    if images_attached:
+        chain = _speed_tune_chain(chain, pinned=pinned_providers)
     selector = ComputerUsePlannerSelector(manager=manager, chain=chain)
     attempted = 0
 

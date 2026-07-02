@@ -23,9 +23,11 @@ describe("detectKeyFormat", () => {
     expect(detectKeyFormat("sk-proj-abc123")?.kind).toBe("openai");
   });
 
-  it("recognizes xAI, Cartesia and Groq keys", () => {
+  it("recognizes xAI, Cartesia, ElevenLabs and Groq keys", () => {
     expect(detectKeyFormat("xai-abc123")?.kind).toBe("xai");
     expect(detectKeyFormat("sk_car_abc123")?.kind).toBe("cartesia");
+    // Cartesia's more specific sk_car_ must win over the generic ElevenLabs sk_.
+    expect(detectKeyFormat("sk_elevenlabsvoicekey123")?.kind).toBe("elevenlabs");
     expect(detectKeyFormat("gsk_abc123")?.kind).toBe("groq");
   });
 
@@ -41,6 +43,8 @@ describe("expectedKindForSecret", () => {
     expect(expectedKindForSecret("openai_api_key")).toBe("openai");
     expect(expectedKindForSecret("codex_openai_api_key")).toBe("openai");
     expect(expectedKindForSecret("grok_api_key")).toBe("xai");
+    expect(expectedKindForSecret("cartesia_api_key")).toBe("cartesia");
+    expect(expectedKindForSecret("elevenlabs_api_key")).toBe("elevenlabs");
   });
 
   it("returns null for slots without a known key format", () => {

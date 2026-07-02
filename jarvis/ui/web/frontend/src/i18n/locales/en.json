@@ -905,7 +905,8 @@
     "use_main": "Use my main model",
     "using_main": "Using your main model",
     "effective": "Computer-Use runs",
-    "cleared": "Computer-Use model reset to your main model"
+    "cleared": "Computer-Use model reset to your main model",
+    "vision_note": "Only models that can see images are listed - Computer-Use reads the screen from screenshots, so a text-only model cannot run it."
   },
   "settings_view": {
     "silence_window": {

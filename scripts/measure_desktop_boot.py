@@ -108,11 +108,14 @@ def run_one(python: str, timeout: float, mode: str = "legacy", voice: bool = Fal
         "voice_ready_wall_ms": None,
         "voice_usable_ms": None,       # HONEST TTU anchor: wake model warmed
         "voice_usable_wall_ms": None,  # + VAD + TTS up (VoiceBootStatus ready)
+        "app_interactive_ms": None,       # set_app: UI data requests answered
+        "app_interactive_wall_ms": None,  # (spawn -> app usable, end to end)
         "phases": {},
         "port": port,
     }
     health_ok = threading.Event()
     voice_ok = threading.Event()
+    interactive_ok = threading.Event()
 
     t_spawn = time.perf_counter()
     proc = subprocess.Popen(
@@ -156,6 +159,18 @@ def run_one(python: str, timeout: float, mode: str = "legacy", voice: bool = Fal
                 except ValueError:
                     result["voice_usable_ms"] = None
                 voice_ok.set()
+            elif line.startswith("APP_INTERACTIVE_MS="):
+                # End-to-end usable anchor: set_app delegated the UI's held
+                # data requests — the app answers, the SPA leaves its
+                # "Getting ready" state.
+                result["app_interactive_wall_ms"] = (
+                    time.perf_counter() - t_spawn
+                ) * 1000.0
+                try:
+                    result["app_interactive_ms"] = float(line.split("=", 1)[1])
+                except ValueError:
+                    result["app_interactive_ms"] = None
+                interactive_ok.set()
 
     def poller() -> None:
         # PRIMARY anchor = time until GET / returns the real UI shell (HTML).
@@ -185,8 +200,9 @@ def run_one(python: str, timeout: float, mode: str = "legacy", voice: bool = Fal
 
     got = health_ok.wait(timeout)
     if voice and got:
-        # TTU mode: the run ends at the VOICE anchor, not the window anchor.
-        got = voice_ok.wait(timeout)
+        # TTU mode: the run needs the VOICE anchor and the end-to-end
+        # interactive anchor (set_app) — both, in either order.
+        got = voice_ok.wait(timeout) and interactive_ok.wait(timeout)
     _terminate(proc)
     th.join(timeout=3)
     pt.join(timeout=3)
@@ -213,6 +229,11 @@ def _summarize(runs: list[dict], *, python: str, pages: int) -> dict:
     ]
     usable_walls = [
         r["voice_usable_wall_ms"] for r in runs if r.get("voice_usable_wall_ms") is not None
+    ]
+    interactive_walls = [
+        r["app_interactive_wall_ms"]
+        for r in runs
+        if r.get("app_interactive_wall_ms") is not None
     ]
     phase_names = sorted({k for r in runs for k in r["phases"]})
     phase_medians = {
@@ -241,6 +262,12 @@ def _summarize(runs: list[dict], *, python: str, pages: int) -> dict:
             round(statistics.median(usable_walls), 1) if usable_walls else None
         ),
         "voice_usable_wall_ms_runs": [round(v, 1) for v in usable_walls],
+        "median_app_interactive_wall_ms": (
+            round(statistics.median(interactive_walls), 1)
+            if interactive_walls
+            else None
+        ),
+        "app_interactive_wall_ms_runs": [round(v, 1) for v in interactive_walls],
         "wall_ms_runs": [round(w, 1) for w in walls],
         "boot_ready_ms_runs": [round(r, 1) for r in readies],
         "phase_medians_ms": {k: round(v, 1) for k, v in phase_medians.items()},
@@ -326,6 +353,15 @@ def main(argv: list[str] | None = None) -> int:
             flush=True,
         )
         print(f"voice-usable runs: {summary['voice_usable_wall_ms_runs']}", flush=True)
+        _ai_med = _ms(summary["median_app_interactive_wall_ms"])
+        print(
+            f"median spawn->APP_INTERACTIVE    : {_ai_med}  (UI data answered)",
+            flush=True,
+        )
+        print(
+            f"app-interactive runs: {summary['app_interactive_wall_ms_runs']}",
+            flush=True,
+        )
     print(f"runs: {summary['wall_ms_runs']}", flush=True)
     print("per-phase medians (ms):", flush=True)
     for name, val in sorted(summary["phase_medians_ms"].items(), key=lambda kv: -kv[1]):

@@ -124,7 +124,7 @@ def discover_fixtures(
             ambient_pool.append(entry)
         elif 0.003 <= r < 0.01:
             quiet_pool.append(entry)
-    rng = random.Random(seed)
+    rng = random.Random(seed)  # noqa: S311 — deterministic fixture sampling, not crypto
     fx.neg_ambient = sorted(rng.sample(ambient_pool, min(neg_cap, len(ambient_pool))))
     fx.neg_quiet = sorted(rng.sample(quiet_pool, min(neg_cap // 2, len(quiet_pool))))
     fx.neg_bare = fx.neg_bare[: neg_cap]
@@ -232,7 +232,28 @@ async def run_window_case(
         min_confidence=MIN_WAKE_CONFIDENCE,
         max_no_speech_prob=MAX_NO_SPEECH_PROB,
     )
-    res.matched = res.reliable and matcher.search(res.text) is not None
+    m = matcher.search(res.text) if res.reliable else None
+    res.matched = m is not None
+    # Replicate the production bias-echo gate (2026-07-02): an exact-phrase
+    # candidate on a primed model gets one unbiased confirm pass.
+    if res.matched and getattr(stt, "bias_prompt", None):
+        from jarvis.speech.wake_constants import (
+            STT_HALLUCINATION_RE,
+            normalize_phrase_for_match,
+        )
+
+        if len(normalize_phrase_for_match(res.text)) <= len(
+            normalize_phrase_for_match(m.group(0))
+        ):
+            try:
+                t2 = await stt.transcribe_pcm(
+                    pcm, language=language, ignore_initial_prompt=True
+                )
+                unbiased = (t2.text or "").strip()
+                if not unbiased or STT_HALLUCINATION_RE.search(unbiased):
+                    res.matched = False  # suppressed as prompt echo
+            except TypeError:
+                pass  # provider without the unbiased pass — legacy behaviour
     return res
 
 
@@ -370,9 +391,9 @@ async def run_stream_mode(args: argparse.Namespace) -> dict:
     try:
         for p in fx.pos_full[:limit]:
             pos = load_wav(p)
-            lead = np.concatenate([random.Random(7).choice(quiet_pool)
+            lead = np.concatenate([random.Random(7).choice(quiet_pool)  # noqa: S311
                                    for _ in range(2)])
-            tail = np.concatenate([random.Random(9).choice(quiet_pool)
+            tail = np.concatenate([random.Random(9).choice(quiet_pool)  # noqa: S311
                                    for _ in range(4)])
             composite = np.concatenate([lead, pos, tail]).astype(np.float32)
             word_end_s = len(lead) / SAMPLE_RATE + speech_end_s(pos)

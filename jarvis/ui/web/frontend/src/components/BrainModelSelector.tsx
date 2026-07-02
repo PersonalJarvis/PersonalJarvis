@@ -108,6 +108,7 @@ export function BrainModelSelector({
   headingLabel,
   placeholder,
   controlled,
+  visionOnly,
 }: {
   providerId: string;
   currentModel?: string;
@@ -139,6 +140,14 @@ export function BrainModelSelector({
    * behaviour (auto-pin from the catalog) is unchanged.
    */
   controlled?: boolean;
+  /**
+   * Hide models that explicitly CANNOT see images (``vision === false``).
+   * Used by the Computer-Use picker: CU is screenshot-grounded, so a
+   * text-only model could never run it. Models with UNKNOWN capability stay
+   * visible (direct provider catalogs expose no modality data). Off by
+   * default — the main brain picker shows everything.
+   */
+  visionOnly?: boolean;
 }) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -198,7 +207,12 @@ export function BrainModelSelector({
   }, [open]);
 
   const matched = useMemo(() => {
-    const list = Array.isArray(models) ? models : [];
+    let list = Array.isArray(models) ? models : [];
+    if (visionOnly) {
+      // CU is screenshot-grounded: drop models that explicitly cannot see
+      // images; unknown capability stays (no modality data ≠ text-only).
+      list = list.filter((m) => m.vision !== false);
+    }
     const q = query.trim().toLowerCase();
     if (!q) return list;
     // Separator-insensitive match: model ids use hyphens/slashes/dots
@@ -217,7 +231,7 @@ export function BrainModelSelector({
         (sq.length > 0 && (squash(m.id).includes(sq) || squash(m.label).includes(sq)))
       );
     });
-  }, [models, query]);
+  }, [models, query, visionOnly]);
 
   const trimmed = query.trim();
   const exactMatch = matched.some((m) => m.id === trimmed);

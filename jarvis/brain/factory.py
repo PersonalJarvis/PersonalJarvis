@@ -1113,6 +1113,8 @@ def _phase2_full_brain(
                 monitor=getattr(cu_cfg, "monitor", "primary"),
                 main_monitor=getattr(cu_cfg, "main_monitor", "primary"),
                 coordinate_space=getattr(cu_cfg, "coordinate_space", "auto"),
+                capture_scope=getattr(cu_cfg, "capture_scope", "window"),
+                normalize_window=getattr(cu_cfg, "normalize_window", False),
             ))
             # Hot-reload: refresh the live context's step_budget / timeout /
             # replan knobs on ConfigReloaded so a voice-tunable change

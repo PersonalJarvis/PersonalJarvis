@@ -226,6 +226,20 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     # Ollama-Provider 2026-04-21 entfernt — reine API-Provider-Chain.
     # ── TTS ───────────────────────────────────────────────────────────────
     ProviderSpec(
+        id="elevenlabs",
+        label="ElevenLabs",
+        tier="tts",
+        auth_mode="api_key",
+        secret_keys=("elevenlabs_api_key",),
+        dashboard_url="https://elevenlabs.io/app/settings/api-keys",
+        credential_help=(
+            "ElevenLabs API key for premium multilingual voices (DE+EN via "
+            "eleven_flash_v2_5). Pick one of the curated Jarvis voices in the "
+            "voice picker, or paste your own ElevenLabs voice ID (e.g. a cloned "
+            "voice) into it. Billed per character on your ElevenLabs account."
+        ),
+    ),
+    ProviderSpec(
         id="gemini-flash-tts",
         label="Gemini Flash TTS",
         tier="tts",

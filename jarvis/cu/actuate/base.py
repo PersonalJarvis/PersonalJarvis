@@ -95,10 +95,18 @@ def verified_move(
     One retry: transient focus/animation can eat the first positioning. When
     the cursor position is unreadable the move is trusted (``landed=None``) —
     refusing to act on an unreadable-but-working host would brick CU there.
+
+    The tiny sleep between inject and read is load-bearing: injected input
+    passes through the OS input queue, so an immediate ``cursor_pos`` read
+    can still see the PRE-move position under desktop load (live rig run
+    2026-07-02) — a false "coordinate-space mismatch".
     """
+    import time  # noqa: PLC0415
+
     last: tuple[int, int] | None = None
     for attempt in (1, 2):
         actuator.move(int(x), int(y))
+        time.sleep(0.02)
         last = actuator.cursor_pos()
         if last is None:
             return ActResult(

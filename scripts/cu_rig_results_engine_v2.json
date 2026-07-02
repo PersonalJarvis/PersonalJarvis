@@ -1,0 +1,42 @@
+[
+  {
+    "scenario": "engine-click-targets",
+    "intended_clicks": 4,
+    "received_first_hits": 4,
+    "hit_rate": 1.0,
+    "mean_distance_px": 1.0,
+    "max_distance_px": 3.0,
+    "duplicate_clicks": 0,
+    "step_latency_s_p50": 1.824,
+    "step_latency_s_max": 1.824,
+    "provoked_duplicates_executed": 0,
+    "engine": "v2",
+    "mission_wall_s": 7.3,
+    "final_chunk": "[cu] done (verified: all rig targets were activated)\n[cu] mission profile: steps=5 total=7.3s act=1.4s observe=3.2s think=0.0s verify=2.1s"
+  },
+  {
+    "scenario": "engine-type-once",
+    "engine": "v2",
+    "typed_expected": "example.com",
+    "typed_received": "example.com",
+    "typed_exactly_once": true,
+    "mission_wall_s": 3.67
+  },
+  {
+    "scenario": "engine-duplicate-type-provocation",
+    "engine": "v2",
+    "typed_expected": "example.com",
+    "typed_received": "example.com",
+    "duplicates_executed": 0,
+    "typed_exactly_once": true,
+    "mission_wall_s": 5.03
+  },
+  {
+    "scenario": "engine-misaim-provocation",
+    "engine": "v2",
+    "dead_space_clicks_executed": 3,
+    "blind_repeats_after_first": 2,
+    "mission_wall_s": 5.95,
+    "final_chunk": "[cu] done (verified: all rig targets were activated)\n[cu] mission profile: steps=4 total=6.0s act=1.0s observe=2.5s think=0.0s verify=1.6s"
+  }
+]

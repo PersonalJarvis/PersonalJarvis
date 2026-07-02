@@ -1,10 +1,38 @@
 # Computer-Use And Local Desktop Routing
 
-Status: 2026-05-14. ADR: [0008](adr/0008-computer-use-harness-in-process.md).
+Status: 2026-07-02. ADR: [0008](adr/0008-computer-use-harness-in-process.md).
 
 This page documents the current routing model for desktop actions. The main
 goal is to keep simple local actions deterministic and fast, while preserving
 POAV Computer-Use and Jarvis-Agents for the work that actually needs them.
+
+## Engine v2 (default since 2026-07-02)
+
+The POAV Computer-Use engine was rebuilt from scratch as the modular package
+`jarvis/cu/` and is the default (`[computer_use].engine = "v2"`). The product
+mechanism is unchanged — a screenshot is the perception, mouse + keyboard are
+the actuation — but the structural defects of the legacy monolith are fixed:
+
+| Module | Responsibility |
+| --- | --- |
+| `jarvis/cu/geometry.py` | One `CoordinateMapper` per captured frame (model space -> image space -> screen input units, negative virtual-desktop origins and Retina points included) + the thread DPI pin that keeps capture, metrics and input in ONE coordinate space on mixed-DPI Windows. |
+| `jarvis/cu/capture.py` | UI-idle stable-frame capture (bounded re-grab until two thumbnails match — replaces fixed settle sleeps), downscale to `[computer_use].image_max_dimension` (default 1366; provider guidance), perceptual frame identity. |
+| `jarvis/cu/conventions.py` | Coordinate conventions as a per-provider capability: Gemini family emits a 0-1000 normalized grid, Claude/OpenAI emit pixels on the sent image. Prompt block AND parsing derive from one resolution (`[computer_use].coordinate_space` pins it). |
+| `jarvis/cu/actuate/` | Platform-native input: Windows SendInput with absolute virtual-desktop positioning, macOS/Linux-X11 via pynput (points/pixels, no primary-screen clamping), Wayland/headless refuse honestly. `verified_move` turns silent misses into diagnosable failures. |
+| `jarvis/cu/verify.py` | Pre/post effect checks (local crop + global diff from one monitor-grab pair), accessibility read-back after typing, focus confirmation, human-handoff detection. |
+| `jarvis/cu/ledger.py` | Idempotency ledger: an action that already executed against a visually identical screen is refused deterministically — the double-type/double-click killer. |
+| `jarvis/cu/engine.py` | The perceive->act->verify state machine; one pointer action per frame; a failed effect check truncates the batch and forces re-perception; verified-done judge with the proof spoken in the user's language. Exit codes and readback contract match the legacy engine. |
+
+Rollback is one config line: `[computer_use].engine = "current"` (last legacy
+loop) or `"stable"` / `"june13"` (frozen snapshots). The engine is resolved
+per mission — no restart needed.
+
+**Measurement rig:** `python scripts/cu_test_rig.py --mode raw` proves the
+coordinate pipeline on the current machine (known-geometry tkinter targets,
+runs on Windows/macOS/Linux); `--mode engine --engine v2|stable|current`
+compares the real engines with a scripted brain (accuracy, duplicate-action
+rate, per-step latency). `scripts/cu_bench.py` remains the end-to-end
+benchmark with live models.
 
 ## Routing Model
 
@@ -186,6 +214,7 @@ Manual validation checklist:
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
+| Clicks "succeed" but nothing on screen reacts | An ELEVATED (admin) window holds the foreground: Windows UIPI silently discards input injected by a non-elevated Jarvis | Close/unfocus the elevated app, or run Jarvis elevated; the v2 effect check reports the miss instead of typing on |
 | Direct command calls a provider | Local-action gate did not match or `[local_action].enabled` is false | Check local-action logs and gate patterns |
 | Direct command collects vision | Command was classified as visual/ambiguous | Confirm the utterance names a direct app or active-window action |
 | `claude` launch fails | Claude CLI is not on PATH | Install Claude CLI or add `claude.cmd` to PATH |

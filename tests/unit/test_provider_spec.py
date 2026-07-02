@@ -83,7 +83,14 @@ def test_all_secret_keys_collects_unique_set() -> None:
     assert "anthropic_api_key" in keys
     assert "gemini_api_key" in keys
     assert "openai_api_key" in keys
-    assert "elevenlabs_api_key" not in keys, "ElevenLabs is dead code and must not be referenced"
+    # ElevenLabs is a first-class, selectable TTS provider (see the elevenlabs
+    # ProviderSpec with tier="tts"). It has a mature plugin
+    # (jarvis/plugins/tts/elevenlabs_tts.py), a factory branch, cross-family
+    # fallback wiring, TOML defaults, and is named as a cloud-TTS default in
+    # docs/PHILOSOPHY.md — so its credential slot MUST be surfaced. (This
+    # reverses an earlier "dead code" snapshot from before it was wired into
+    # the API-Keys section.)
+    assert "elevenlabs_api_key" in keys
 
 
 def test_no_hardcoded_model_names_in_specs() -> None:

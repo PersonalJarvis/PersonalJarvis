@@ -7,13 +7,15 @@ surprising ways. CU v2 replaces them with a single rule:
     An action that already executed against a visually identical screen is
     refused deterministically.
 
-"Visually identical" is keyed by the frame's content hash — if the screen
-changed since the first execution, the same action is legitimate again
-(navigating a list clicks different rows on *different* frames; retyping a
-search on a *changed* page is fine). Clicking twice on the same unchanged
-frame, typing the same URL again into an unchanged address bar, or launching
-the same app while the screen never moved is exactly the double-action bug
-class and is blocked regardless of what the model asks for.
+"Visually identical" is keyed by the frame's PERCEPTUAL identity (the
+grayscale thumbnail compared via ``jarvis.cu.capture.thumbs_similar``, noise-
+tolerant) — if the screen genuinely changed since the first execution, the
+same action is legitimate again (navigating a list clicks different rows on
+*different* frames; retyping a search on a *changed* page is fine). Clicking
+twice on the same unchanged frame, typing the same URL again into an
+unchanged address bar, or launching the same app while the screen never
+moved is exactly the double-action bug class and is blocked regardless of
+what the model asks for.
 
 ``wait`` is exempt (waiting twice is harmless and sometimes right).
 """
@@ -22,6 +24,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Any
+
+from jarvis.cu.capture import thumbs_similar
 
 #: Two click points within this many screen units count as the same target
 #: (model re-aim jitter), mirroring the legacy refine tolerance.
@@ -64,15 +68,21 @@ def action_key(action: dict[str, Any]) -> str | None:
 
 @dataclass
 class ActionLedger:
-    """Mission-scoped record of executed actions, keyed by frame hash."""
+    """Mission-scoped record of executed actions, keyed by frame identity.
 
-    _entries: list[tuple[str, str]] = field(default_factory=list)
-    _clicks: list[tuple[str, int, int, str]] = field(default_factory=list)
+    ``frame_key`` is the frame's perceptual thumbnail (``Frame.thumb``);
+    identities are compared with :func:`thumbs_similar`, so a caret blink or
+    antialiasing noise between two captures does not re-legitimize a
+    duplicate. Opaque string keys (tests) compare by equality.
+    """
+
+    _entries: list[tuple[str, bytes | str]] = field(default_factory=list)
+    _clicks: list[tuple[str, int, int, bytes | str]] = field(default_factory=list)
 
     def is_duplicate(
         self,
         action: dict[str, Any],
-        frame_sha: str,
+        frame_key: bytes | str,
         *,
         resolved_xy: tuple[int, int] | None = None,
     ) -> bool:
@@ -84,17 +94,21 @@ class ActionLedger:
         if action.get("action") == "click" and resolved_xy is not None:
             x, y = resolved_xy
             return any(
-                k == key and sha == frame_sha
+                k == key
                 and abs(px - x) <= CLICK_SAME_TOLERANCE
                 and abs(py - y) <= CLICK_SAME_TOLERANCE
-                for (k, px, py, sha) in self._clicks
+                and thumbs_similar(stored, frame_key)
+                for (k, px, py, stored) in self._clicks
             )
-        return (key, frame_sha) in self._entries
+        return any(
+            k == key and thumbs_similar(stored, frame_key)
+            for (k, stored) in self._entries
+        )
 
     def record(
         self,
         action: dict[str, Any],
-        frame_sha: str,
+        frame_key: bytes | str,
         *,
         resolved_xy: tuple[int, int] | None = None,
     ) -> None:
@@ -103,6 +117,6 @@ class ActionLedger:
         if key is None:
             return
         if action.get("action") == "click" and resolved_xy is not None:
-            self._clicks.append((key, resolved_xy[0], resolved_xy[1], frame_sha))
+            self._clicks.append((key, resolved_xy[0], resolved_xy[1], frame_key))
             return
-        self._entries.append((key, frame_sha))
+        self._entries.append((key, frame_key))

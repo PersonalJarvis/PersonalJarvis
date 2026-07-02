@@ -154,6 +154,36 @@ def test_blob_written_when_dir_given(tmp_path):
     assert (tmp_path / f"{frame.sha256}.jpg").exists()
 
 
+def test_thumb_identity_ignores_caret_noise_but_sees_real_change():
+    from jarvis.cu.capture import screen_thumb, thumbs_similar
+
+    base = _solid((192, 108), (30, 30, 30))
+    # A caret-sized change: a small bright block on the dark frame.
+    pixels = bytearray(base[1])
+    for row in range(12):
+        for col in range(2):
+            idx = ((20 + row) * 192 + (50 + col)) * 3
+            pixels[idx:idx + 3] = b"\xff\xff\xff"
+    caret = ((192, 108), bytes(pixels))
+    changed = _solid((192, 108), (200, 200, 200))
+    assert thumbs_similar(screen_thumb(base), screen_thumb(base))
+    assert thumbs_similar(screen_thumb(base), screen_thumb(caret))
+    assert not thumbs_similar(screen_thumb(base), screen_thumb(changed))
+    # Opaque string keys (tests / foreign callers) compare by equality.
+    assert thumbs_similar("sha1", "sha1")
+    assert not thumbs_similar("sha1", "sha2")
+
+
+def test_frame_carries_exact_and_perceptual_identity():
+    frame = capture_stable_frame(
+        _monitor(),
+        grab=lambda bbox: _solid((192, 108), (1, 2, 3)),
+        sleep=lambda s: None,
+    )
+    assert len(frame.sha256) == 64
+    assert len(frame.thumb) == 96 * 54
+
+
 def test_grab_region_swallows_failures():
     def broken(bbox):
         raise OSError("BitBlt failed")
