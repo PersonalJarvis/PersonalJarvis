@@ -162,6 +162,26 @@ class RigWindow:
         self.ready.set()
         root.mainloop()
 
+    def activate(self) -> None:
+        """Bring the rig to the foreground from ITS OWN process (window API,
+        not injected input). Load-bearing on Windows: if an ELEVATED window
+        (e.g. an admin-run app) holds the foreground, UIPI silently discards
+        every input this non-elevated process injects — clicks "succeed" but
+        never arrive. Self-activation sidesteps that."""
+        def _do() -> None:
+            try:
+                self._root.attributes("-topmost", True)
+                self._root.lift()
+                self._root.focus_force()
+            except Exception:  # noqa: BLE001
+                pass
+
+        try:
+            self._root.after(0, _do)
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(0.5)
+
     def is_foreground(self) -> bool:
         """Is the rig window the FOREGROUND window? (Windows: real check;
         elsewhere: trust the activation click.) Guards the typing scenarios —
@@ -250,14 +270,31 @@ def _virtual_rect():
 
 
 def _activate_rig(rig: RigWindow) -> None:
-    """Bring the rig window to the FOREGROUND with a real activation click
-    on dead canvas space — the engines' capture follows the foreground
-    window, and a merely-topmost window does not hold focus."""
+    """Bring the rig window to the FOREGROUND: first via its own window API
+    (immune to UIPI — an elevated foreground window silently discards
+    injected input from a non-elevated process), then a confirmation click
+    on dead canvas space that also PROVES injected input arrives."""
     from jarvis.cu.actuate import get_actuator
 
+    rig.activate()
     ox, oy = rig.canvas_origin_on_screen()
+    before = len(rig.log.clicks)
     get_actuator().click(ox + 410, oy + 480)  # dead strip below the targets
     time.sleep(0.4)
+    if len(rig.log.clicks) == before:
+        print(
+            "  !! injected input did not arrive — an elevated window may hold "
+            "the foreground (UIPI). Retrying activation once.",
+        )
+        rig.activate()
+        get_actuator().click(ox + 410, oy + 480)
+        time.sleep(0.4)
+        if len(rig.log.clicks) == before:
+            raise RuntimeError(
+                "environment blocks injected input (UIPI/elevated foreground) "
+                "— run the rig from an elevated shell or close the elevated "
+                "foreground app",
+            )
     rig.log.clicks.clear()
     rig.log.keys.clear()
 
