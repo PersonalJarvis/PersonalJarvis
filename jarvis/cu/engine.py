@@ -370,7 +370,9 @@ async def run_cu_loop(
     output_language = (getattr(task, "env", None) or {}).get(
         _OUTPUT_LANGUAGE_ENV_KEY,
     ) or None
-    trace_id = None  # per-dispatch trace ids come from the ToolExecutor path
+    from uuid import uuid4  # noqa: PLC0415
+
+    trace_id = uuid4()  # correlates every tool dispatch of this mission
     bus = getattr(ctx, "bus", None)
     profiler = _Profiler(bus)
     ledger = ActionLedger()

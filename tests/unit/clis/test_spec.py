@@ -50,7 +50,7 @@ def test_install_requires_at_least_one_method() -> None:
     payload = _minimal_payload(install={})
     with pytest.raises(ValidationError) as exc:
         CliSpecModel.model_validate(payload)
-    assert "Install-Methode" in str(exc.value)
+    assert "at least one install method" in str(exc.value).lower()
 
 
 def test_install_manual_url_alone_is_valid() -> None:

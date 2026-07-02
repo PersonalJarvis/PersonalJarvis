@@ -131,9 +131,9 @@ def test_tool_description_contains_selective_activation_hint() -> None:
     (Plan §AD-6) — the smalltalk negative hint must be present."""
     tool = DispatchWithReviewTool()
     desc = tool.description.lower()
-    assert "user-irreversibel" in desc or "user_irreversibel" in desc  # i18n-allow: matches the German tool description under test
-    assert "smalltalk" in desc
-    assert "konversation" in desc  # i18n-allow: matches the German tool description under test
+    assert "user-irreversible" in desc
+    assert "small talk" in desc
+    assert "conversation" in desc
 
 
 # ----------------------------------------------------------------------
@@ -206,7 +206,7 @@ def test_execute_rejects_short_task(tmp_path: Path) -> None:
         tool.execute({"task": "short"}, _make_ctx())
     )
     assert result.success is False
-    assert result.error and "20 zeichen" in result.error.lower()  # i18n-allow: matches the German tool error message under test
+    assert result.error and "at least 20 characters" in result.error.lower()
 
 
 def test_execute_rejects_unknown_rubric_id(tmp_path: Path) -> None:

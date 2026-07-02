@@ -37,7 +37,7 @@ async def test_open_close_idempotent() -> None:
 @pytest.mark.asyncio
 async def test_require_conn_raises_before_open() -> None:
     reg = FriendRegistry(":memory:")
-    with pytest.raises(FriendRegistryError, match="nicht geoeffnet"):  # i18n-allow: matches the real (German) exception message string
+    with pytest.raises(FriendRegistryError, match="not opened"):
         await reg.list_friends()
 
 
