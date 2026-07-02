@@ -173,6 +173,29 @@ custom_onnx engine had hidden.
   factor, iteration 7 should re-measure the OLD commit (worktree checkout +
   harness backport) with the SAME usable anchor.
 
+## Iteration 7 — same-method before/after (worktree at pre-fix commit)
+
+- Method: git worktree at 039bbddc~1 (pre single-loader fix), SAME harness +
+  SAME honest VOICE_USABLE anchor backported, `PYTHONPATH` pinned to the
+  worktree (BUG-006 class: without the pin the editable install silently
+  measured the NEW code — first run showed exactly the new-code numbers;
+  the re-run verified `child imports: ...ttu-old-wt...` before measuring).
+- **Pre-fix isolated (2 cold runs): voice-usable median 15.8 s
+  (17.4/14.2), window 19.3 s.** Post-fix: voice-usable 12.1 s, window 1.3 s.
+  Same-method factors: window **14.7x**, voice-usable **1.3x**.
+- **Key insight:** the 114.7 s load cascade / ~200 s live TTU needed the LIVE
+  setup's contention (full data + integrations + brain/MCP storm) to
+  escalate; the isolated bench never reproduced it. So: (a) the live win of
+  the single-loader fix is much larger than the isolated 1.3x suggests,
+  (b) the reproducible isolated baseline for the 20x arithmetic is 15.8 s,
+  and 20x of that (0.8 s) is provably below the physical floor of a local
+  CPU Whisper load+prime (>2 s) plus the Python import mountain (~3 s) —
+  an architectural-floor case per the task's honesty clause unless the
+  wake model strategy changes (e.g. instant-arm on tiny + hot-swap).
+- Remaining levers toward the floor: import mountain ~3 s, warm-up ~4 s
+  (tiny-first + background hot-swap like the existing turbo swap), voice
+  setup ~3.5 s. Realistic isolated target ~6-8 s.
+
 ## How to add a feature WITHOUT slowing boot (doctrine)
 
 - Nothing new runs before VOICE_READY. New subsystems hook into
