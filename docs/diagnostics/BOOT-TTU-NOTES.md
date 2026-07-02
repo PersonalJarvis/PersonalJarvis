@@ -139,14 +139,30 @@ custom_onnx engine had hidden.
 
 ## Next (iteration 5+)
 
-1. Regression guard: budget check against desktop-ttu-baseline.json (e.g.
-   scripts/ci/check_boot_budget.py or a slow-marked test running
-   `--voice --runs 1`), so features cannot silently regress TTU.
+1. ~~Regression guard~~ DONE (iteration 5): `scripts/ci/check_boot_budget.py`
+   (one isolated cold boot; window budget 8 s, voice-TTU budget 30 s, env-
+   overridable; ~4x the measured medians so variance never flakes but every
+   seen regression class blows through) + pytest wrapper
+   `tests/integration/test_boot_budget.py` (slow-marked, self-skips when the
+   host cannot measure). Headless boxes check the window anchor and skip the
+   voice anchor honestly.
 2. Attack the live delta: profile a LIVE boot (env flag on the relauncher or
    log-timeline) and defer the data/integration blocks (autostart reconcile,
    board init, telegram/MCP starts) behind voice-ready.
 3. Cross-OS: headless python:3.11-slim (Docker/WSL) for Linux, document a
    macOS method (CI matrix) — measure, not assume.
+
+## How to add a feature WITHOUT slowing boot (doctrine)
+
+- Nothing new runs before VOICE_READY. New subsystems hook into
+  `_heavy_backend_bg` (desktop_app), a deferred registry scan, or a
+  fire-and-forget task created AFTER voice-ready — never into the module
+  import path, the WebServer ctor, or `_start_speech_and_orb`.
+- Heavy imports: lazy-import inside the function (the repo pattern), or add a
+  prefetch thread like `warmup_prefetch.py` if the import must be warm early.
+- Verify before merging: `scripts/measure_desktop_boot.py --voice --runs 3`
+  before/after; the budget guard (`scripts/ci/check_boot_budget.py`) is the
+  enforcement backstop.
 
 ## Lessons (do not repeat)
 
