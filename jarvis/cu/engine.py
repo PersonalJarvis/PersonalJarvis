@@ -327,7 +327,7 @@ async def _judge_done(
     ctx: Any,
     goal: str,
     monitor: MonitorInfo,
-    image_cfg: "_ImageCfg",
+    image_cfg: _ImageCfg,
     output_language: str | None,
 ) -> tuple[bool, str]:
     """Strict completion judge against a FRESH stable frame."""
