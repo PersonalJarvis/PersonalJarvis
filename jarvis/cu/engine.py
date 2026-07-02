@@ -97,6 +97,10 @@ _SYSTEM_BASE = (
     "You are the computer-use executor: you operate the user's REAL desktop "
     "by looking at a screenshot and issuing mouse/keyboard actions.\n"
     "Core discipline — perceive, act, verify:\n"
+    "* FIRST CHECK, before choosing ANY action: is the GOAL's proof already "
+    "visible in this screenshot? Then reply with the done action IMMEDIATELY "
+    "— every extra action after success is a failure (it wastes seconds and "
+    "can undo the result).\n"
     "* The screenshot is the ONLY ground truth. Never assume an effect "
     "happened; check the fresh screenshot.\n"
     "* FIRST verify the effect of your previous action (see PREVIOUS STEPS). "
@@ -419,7 +423,10 @@ async def run_cu_loop(
     monitor_policy = str(getattr(ctx, "monitor", "primary") or "primary")
     main_monitor = str(getattr(ctx, "main_monitor", "primary") or "primary")
     capture_scope = str(getattr(ctx, "capture_scope", "window") or "window")
-    normalize_window = bool(getattr(ctx, "normalize_window", True))
+    # DEFAULT OFF: the restore/maximize animation visibly "zooms" open windows
+    # and rearranges the user's layout uninvited (maintainer complaint
+    # 2026-07-02); window-scoped capture covers the grounding need untouched.
+    normalize_window = bool(getattr(ctx, "normalize_window", False))
     coordinate_space = str(getattr(ctx, "coordinate_space", "auto") or "auto")
     settle_scale = float(getattr(ctx, "settle_scale", 1.0) or 1.0)
     strict_verify = bool(getattr(ctx, "strict_verify", True))
@@ -899,12 +906,19 @@ async def run_cu_loop(
                     f"step {step_idx}: {summary} -> OK"
                     + (f" ({detail[:120]})" if detail else ""),
                 )
+                # Also INFO-log each step: the progress chunks live only in
+                # the harness stdout, which made live per-step forensics
+                # impossible (2026-07-02 x.com run: 15 opaque steps).
+                log.info("[cu] step %d: %s -> OK %s", step_idx, summary,
+                         detail[:120] if detail else "")
                 yield _progress(f"[cu] step {step_idx}: {summary} ok")
             else:
                 consecutive_failures += 1
                 history.append(
                     f"step {step_idx}: {summary} -> FAILED: {detail[:180]}",
                 )
+                log.info("[cu] step %d: %s -> FAILED: %s", step_idx, summary,
+                         detail[:180])
                 yield _progress(f"[cu] step {step_idx}: {summary} FAILED")
                 if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
                     reason = detail or "the last actions kept failing"

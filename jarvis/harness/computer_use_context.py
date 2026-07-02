@@ -86,9 +86,12 @@ class ComputerUseContext:
     # the whole-monitor framing. See jarvis/cu/capture.py::select_capture_target.
     capture_scope: str = "window"
     # CU v2: maximize the target window on its own monitor before acting
-    # ([computer_use].normalize_window). See
+    # ([computer_use].normalize_window). DEFAULT OFF — the restore/maximize
+    # animation visibly "zooms" open windows and rearranges the user's layout
+    # uninvited (maintainer complaint 2026-07-02); the window-scoped capture
+    # covers the grounding need without touching the window. See
     # jarvis/platform/window_state.py::normalize_foreground_window.
-    normalize_window: bool = True
+    normalize_window: bool = False
 
 
 _CONTEXT: ComputerUseContext | None = None

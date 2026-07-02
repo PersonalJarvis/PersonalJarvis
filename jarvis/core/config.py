@@ -1493,7 +1493,12 @@ class ComputerUseConfig(BaseModel):
     # grounding errors then click the wallpaper next to it (live incident
     # 2026-07-02). Never moves a window across monitors (mixed-DPI resize
     # trap); fixed-size dialogs and the desktop shell are left untouched.
-    normalize_window: bool = True
+    # DEFAULT OFF (maintainer mandate 2026-07-02): the restore/maximize
+    # animation visibly "zooms" already-open windows and rearranges the
+    # user's layout uninvited; the window-scoped capture above already gives
+    # the model a full-size view of the window WITHOUT touching it. Opt back
+    # in for setups where tiny floating windows keep mis-grounding.
+    normalize_window: bool = False
     # Master switch for the per-action read-back verification suite (claude-in-
     # chrome parity): after a type, confirm the text landed in the field; after a
     # click_element, confirm the intended state changed; don't blind-batch a
