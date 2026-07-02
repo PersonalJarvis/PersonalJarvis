@@ -120,10 +120,15 @@ class _AlwaysHangingSTT:
 
 
 def _wake(stt, *, timeout_s: float, busy_hang_s: float) -> RollingWhisperWake:
+    # Timings deliberately COARSE (>= 50 ms): on Windows, asyncio timers whose
+    # delay is below the ~15.6 ms monotonic-clock resolution fire immediately
+    # while the loop is busy, which spins the poll loop thousands of times per
+    # second and starves the fakes' timers — a flaky test, not a product bug
+    # (production polls at 0.2 s, far above the resolution).
     return RollingWhisperWake(
         stt,
         pattern=re.compile(r"nico", re.IGNORECASE),
-        poll_interval_s=0.01,
+        poll_interval_s=0.05,
         cooldown_s=0.0,
         save_debug_wavs=False,
         min_rms=0.0,
@@ -174,16 +179,16 @@ async def _drive_with_audio(wake: RollingWhisperWake):
 
 async def test_slow_but_alive_call_never_tears_down_the_model() -> None:
     """timeout -> busy is ONE slow call, not two failures: no recover()."""
-    stt = _LockedSTT(first_call_s=0.3)
-    wake = _wake(stt, timeout_s=0.06, busy_hang_s=10.0)
+    stt = _LockedSTT(first_call_s=0.6)
+    wake = _wake(stt, timeout_s=0.15, busy_hang_s=30.0)
     shutdown = await _drive_with_audio(wake)
     try:
         # Wait until the slow first call finished AND at least one later call
         # succeeded (polling resumed against the SAME model).
-        for _ in range(400):
+        for _ in range(300):
             if stt.completed >= 2:
                 break
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.03)
         assert stt.completed >= 2, "polling never resumed after the slow call"
         assert stt.recover_calls == 0, (
             "a slow-but-alive transcription tore down a healthy model "
@@ -198,13 +203,13 @@ async def test_true_hang_recovers_after_the_busy_hard_cap_and_rewarms() -> None:
     """A busy streak past ``busy_hang_recover_s`` is a real wedge: recover,
     then re-warm OFF the poll path, then polling resumes."""
     stt = _LockedSTT(first_call_s=None)  # first call never returns
-    wake = _wake(stt, timeout_s=0.05, busy_hang_s=0.2)
+    wake = _wake(stt, timeout_s=0.15, busy_hang_s=0.5)
     shutdown = await _drive_with_audio(wake)
     try:
-        for _ in range(500):
+        for _ in range(300):
             if stt.completed >= 1:
                 break
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.03)
         assert stt.recover_calls >= 1, "true hang never recovered"
         assert stt.warm_up_calls >= 1, (
             "rebuilt model was not re-warmed off the poll path (cold rebuild "
@@ -219,13 +224,13 @@ async def test_true_hang_recovers_after_the_busy_hard_cap_and_rewarms() -> None:
 async def test_two_distinct_timeouts_still_recover_and_rewarm() -> None:
     """Two timeouts of two DIFFERENT calls remain the wedge signature."""
     stt = _AlwaysHangingSTT()
-    wake = _wake(stt, timeout_s=0.03, busy_hang_s=10.0)
+    wake = _wake(stt, timeout_s=0.1, busy_hang_s=30.0)
     shutdown = await _drive_with_audio(wake)
     try:
-        for _ in range(400):
+        for _ in range(300):
             if stt.recover_calls >= 1 and stt.warm_up_calls >= 1:
                 break
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.03)
         assert stt.recover_calls >= 1, "distinct-timeout wedge never recovered"
         assert stt.warm_up_calls >= 1, "no re-warm after the wedge recovery"
     finally:
