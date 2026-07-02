@@ -152,6 +152,27 @@ custom_onnx engine had hidden.
 3. Cross-OS: headless python:3.11-slim (Docker/WSL) for Linux, document a
    macOS method (CI matrix) — measure, not assume.
 
+## Iteration 6 — the anchor itself was cosmetic; fixed + re-baselined
+
+- **Found while self-auditing:** `VOICE_READY_MS` printed at "pipeline task
+  started" — BEFORE the deferred loaders warm the wake model / VAD / TTS. A
+  benchmark anchored there measures exactly the cosmetic ready state the task
+  forbids. The app already publishes the honest signal
+  (`VoiceBootStatus(ready=True)`, end of `_warmup_deferred_loaders`, the
+  2026-06-29 "it says ready but I can't talk" contract).
+- **Fix:** desktop_app now prints `VOICE_USABLE_MS` when that event fires
+  (profile mode only); the harness + budget guard anchor on it.
+  `VOICE_READY_MS` stays as a secondary mark.
+- **Honest TTU baseline (Windows, isolated, 3 cold runs, median):**
+  **12.1 s** usable (runs 12.1/12.2/10.8), window 1.3 s. Structure: imports
+  ~2.9 s + WebServer ctor ~1.7 s + voice setup ~3.5 s + model warm-up ~4 s.
+- Autostart reconcile is ALREADY off the critical path (daemon thread,
+  launcher) — not a lever.
+- Factor bookkeeping so far: honest live before fixes ~200 s (first wake match
+  3.5 min, log-timeline) vs honest isolated now 12.1 s. For a same-method
+  factor, iteration 7 should re-measure the OLD commit (worktree checkout +
+  harness backport) with the SAME usable anchor.
+
 ## How to add a feature WITHOUT slowing boot (doctrine)
 
 - Nothing new runs before VOICE_READY. New subsystems hook into
