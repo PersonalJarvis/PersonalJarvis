@@ -291,8 +291,8 @@ def main(argv: list[str] | None = None) -> int:
         runs.append(r)
         _br = r["boot_ready_ms"]
         _br_s = f"{_br:.0f}ms" if _br is not None else "n/a"
-        _vr = r.get("voice_ready_wall_ms")
-        _vr_s = f" voice_ready={_vr:.0f}ms" if _vr is not None else ""
+        _vr = r.get("voice_usable_wall_ms")
+        _vr_s = f" voice_usable={_vr:.0f}ms" if _vr is not None else ""
         print(
             f"[harness] run {i + 1}/{args.runs}: health200={r['wall_ms']:.0f}ms "
             f"bind={_br_s}{_vr_s}",
@@ -302,8 +302,9 @@ def main(argv: list[str] | None = None) -> int:
     summary = _summarize(runs, python=args.python, pages=pages)
     if args.voice:
         summary["ttu_anchor"] = (
-            "spawn -> VOICE_READY_MS print (wake loop armed + speech pipeline "
-            "live; the honest time-to-usable voice anchor)"
+            "spawn -> VOICE_USABLE_MS print (VoiceBootStatus ready=True: wake "
+            "model warmed + VAD + TTS client up — the honest time-to-usable "
+            "anchor; VOICE_READY_MS = pipeline task started is secondary)"
         )
     latest_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
@@ -319,12 +320,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"median spawn->/api/health 200    : {_ms(summary['median_wall_ms'])}  (PRIMARY: window appears)", flush=True)
     print(f"median bootstrap-bind print      : {_ms(summary['median_bind_wall_ms'])}  (secondary)", flush=True)
     if args.voice:
-        _vr_med = _ms(summary["median_voice_ready_wall_ms"])
+        _vu_med = _ms(summary["median_voice_usable_wall_ms"])
         print(
-            f"median spawn->VOICE_READY (TTU)  : {_vr_med}  (voice usable)",
+            f"median spawn->VOICE_USABLE (TTU) : {_vu_med}  (wake+VAD+TTS up)",
             flush=True,
         )
-        print(f"voice runs: {summary['voice_ready_wall_ms_runs']}", flush=True)
+        print(f"voice-usable runs: {summary['voice_usable_wall_ms_runs']}", flush=True)
     print(f"runs: {summary['wall_ms_runs']}", flush=True)
     print("per-phase medians (ms):", flush=True)
     for name, val in sorted(summary["phase_medians_ms"].items(), key=lambda kv: -kv[1]):
