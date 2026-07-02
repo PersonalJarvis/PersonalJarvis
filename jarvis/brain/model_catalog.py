@@ -155,6 +155,18 @@ def _ids(ids: list[str]) -> list[ModelInfo]:
 # single block (voice_de/voice_en/model), so the picker only renders on the
 # ACTIVE TTS card and sets the global value.
 TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
+    # ElevenLabs picks a VOICE ID (opaque hashes), so the curated list carries
+    # human names as labels while the value stays the id. The picker's
+    # "use custom" row lets a user paste their OWN voice id (e.g. a cloned
+    # voice) instead of a curated one — kept in sync with DEFAULT_VOICES in
+    # jarvis/plugins/tts/elevenlabs_tts.py.
+    "elevenlabs": ("voice", _curated([
+        ("onwK4e9ZLuTAKqWW03F9", "Daniel — British, authoritative (default)"),
+        ("JBFqnCBsd6RMkjVDRZzb", "George — British, deep narrator"),
+        ("IKne3meq5aSn9XLyUdCD", "Charlie — British, mature butler"),
+        ("nPczCjzI2devNBz1zQrb", "Brian — American, deep narrator"),
+        ("pNInz6obpgDQGcFmaJgB", "Adam — American, classic AI voice"),
+    ])),
     "gemini-flash-tts": ("voice", _ids([
         "Charon", "Kore", "Aoede", "Orus", "Iapetus",
         "Rasalgethi", "Algenib", "Algieba", "Fenrir",
@@ -319,6 +331,128 @@ def model_capabilities(provider: str, model_id: str) -> dict[str, bool | None]:
     except Exception:  # noqa: BLE001 — missing/corrupt cache → unknown (capable)
         pass
     return {"vision": None, "tools": None}
+
+
+def pick_vision_model(provider: str) -> str | None:
+    """The best vision-capable brain model of ``provider``, from the cached
+    ``/v1/models`` catalog — or ``None`` when the catalog carries no modality
+    data for this provider (direct provider endpoints) or no candidate exists.
+
+    Computer-Use is screenshot-grounded: a provider whose CONFIGURED model
+    cannot see images must not drop out of the CU chain when the same key
+    unlocks vision-capable siblings (AP-22 — the key is fine, only the model
+    choice is blind). Candidates run through the SAME brain filter + relevance
+    sort as the picker, so the rescue pick equals the top row the user would
+    see in the vision-filtered dropdown.
+    """
+    from jarvis.core import config as _cfg  # noqa: PLC0415
+
+    cache_path = _cfg.DATA_DIR / "model_catalog_cache.json"
+    try:
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        entries = data.get(provider, {}).get("models", [])
+    except Exception:  # noqa: BLE001 — missing/corrupt cache → no rescue
+        return None
+    candidates: list[ModelInfo] = []
+    for m in entries:
+        mid = str(m.get("id") or "").strip()
+        inp = m.get("input_modalities")
+        if not mid or not (isinstance(inp, list) and "image" in inp):
+            continue
+        out_mods = m.get("output_modalities")
+        params = m.get("supported_parameters")
+        candidates.append(ModelInfo(
+            id=mid,
+            label=str(m.get("label") or mid),
+            output_modalities=tuple(out_mods) if isinstance(out_mods, list) else None,
+            input_modalities=tuple(str(x) for x in inp),
+            supported_parameters=tuple(params) if isinstance(params, list) else None,
+        ))
+    usable = sort_models(provider, filter_brain_models(candidates))
+    return usable[0].id if usable else None
+
+
+#: Name markers of the FAST model class (low-latency siblings). Computer-Use
+#: issues one vision call per step, so step latency — not peak intelligence —
+#: dominates mission wall-clock (live forensic 2026-07-02: think=60.8s of a
+#: 75.8s mission on a flagship model). Data, not logic; extend by adding a row.
+_FAST_CLASS_MARKERS: tuple[str, ...] = (
+    "flash", "haiku", "mini", "lite", "turbo", "air", "nano",
+)
+
+
+def provider_has_modality_data(provider: str) -> bool:
+    """True when the cached catalog carries ``input_modalities`` for at least
+    one of ``provider``'s models — i.e. a "no vision model found" verdict is
+    an informed NO, not missing data. Direct provider endpoints (gemini /
+    claude-api / openai) expose no modality metadata and return False."""
+    from jarvis.core import config as _cfg  # noqa: PLC0415
+
+    cache_path = _cfg.DATA_DIR / "model_catalog_cache.json"
+    try:
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        return any(
+            isinstance(m.get("input_modalities"), list)
+            for m in data.get(provider, {}).get("models", [])
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def is_fast_class_model(model_id: str | None) -> bool:
+    """True when the model id names a low-latency sibling (fast class).
+
+    Markers match WHOLE id tokens (split on non-alphanumerics), never raw
+    substrings — "mini" as a substring matches every "ge**mini**" model and
+    classified Gemini PRO as fast (live bug 2026-07-02).
+    """
+    if not model_id:
+        return False
+    tokens = set(re.split(r"[^a-z0-9]+", model_id.lower()))
+    return any(mark in tokens for mark in _FAST_CLASS_MARKERS)
+
+
+def pick_fast_vision_model(provider: str) -> str | None:
+    """The best FAST vision-capable model of ``provider`` (or ``None``).
+
+    Same candidate set as :func:`pick_vision_model` (vision input + the brain
+    filter), but the fast class leads: a "flash"/"haiku"/"mini"-style sibling
+    of a known family beats the flagship. Within each band the picker's
+    relevance sort decides. Falls back to the plain vision pick when the
+    provider has no fast vision sibling.
+    """
+    from jarvis.core import config as _cfg  # noqa: PLC0415
+
+    cache_path = _cfg.DATA_DIR / "model_catalog_cache.json"
+    try:
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        entries = data.get(provider, {}).get("models", [])
+    except Exception:  # noqa: BLE001 — missing/corrupt cache → no pick
+        return None
+    candidates: list[ModelInfo] = []
+    for m in entries:
+        mid = str(m.get("id") or "").strip()
+        inp = m.get("input_modalities")
+        if not mid or not (isinstance(inp, list) and "image" in inp):
+            continue
+        out_mods = m.get("output_modalities")
+        params = m.get("supported_parameters")
+        candidates.append(ModelInfo(
+            id=mid,
+            label=str(m.get("label") or mid),
+            output_modalities=tuple(out_mods) if isinstance(out_mods, list) else None,
+            input_modalities=tuple(str(x) for x in inp),
+            supported_parameters=tuple(params) if isinstance(params, list) else None,
+        ))
+    usable = sort_models(provider, filter_brain_models(candidates))
+    if not usable:
+        return None
+    # Fast class first — but only KNOWN families (family rank > 0), so an
+    # obscure "-mini" of an unknown vendor never beats a Gemini Flash / Haiku.
+    for m in usable:
+        if _family_rank(m.id) > 0 and is_fast_class_model(m.id):
+            return m.id
+    return usable[0].id
 
 
 def _output_modalities(entry: dict) -> tuple[str, ...] | None:

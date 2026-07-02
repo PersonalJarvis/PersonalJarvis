@@ -61,6 +61,19 @@ The rule targets **third-party agent code** (Jarvis-Agents, Codex, Open Interpre
 - **Dedicated thread pool (`ThreadPoolExecutor`):** Half-baked — the thread runs in the same GIL, but cancel semantics are treacherous. Rejected.
 - **Subprocess without HTTP callback, own brain stack in the child:** Duplicate API calls, duplicate token burn, no shared cost tracker. Rejected.
 
+## Amendment 2026-07-02 — engine rebuilt as `jarvis/cu` (decision unchanged)
+
+The loop implementation was rebuilt from scratch as the modular package
+`jarvis/cu/` (geometry / capture / conventions / actuate / verify / ledger /
+engine) and became the default via `[computer_use].engine = "v2"`. The
+architectural decision of THIS ADR — the Computer-Use harness runs
+in-process — is unchanged and applies to the new engine identically: it
+consumes `BrainManager`, `ToolExecutor`, `CancelToken` and the event bus
+directly, and every action still dispatches through the ToolExecutor risk
+tiers. The legacy engines remain selectable (`"current"`, `"stable"`,
+`"june13"`) as one-line rollbacks. Root causes fixed by the rebuild and the
+measurement rig are documented in `docs/computer-use.md`.
+
 ## Open
 
 - Timeout configuration in `jarvis.toml:[computer_use]`:

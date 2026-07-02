@@ -130,6 +130,12 @@ class BrainModelInfo(BaseModel):
     frontier: bool = False
     value: bool = False
     starred: bool = False
+    # Tri-state vision-input capability from the provider's model metadata
+    # (OpenRouter ``architecture.input_modalities``): True = understands
+    # images, False = text-only, None = the provider endpoint does not expose
+    # modality data (unknown — treated as capable, no regression). The
+    # Computer-Use model picker hides ONLY explicit ``False`` entries.
+    vision: bool | None = None
 
 
 class BrainModelsResponse(BaseModel):
@@ -888,6 +894,11 @@ def _brain_model_info(m: ModelInfo) -> BrainModelInfo:
         frontier=tags.frontier,
         value=tags.value,
         starred=tags.starred,
+        vision=(
+            ("image" in m.input_modalities)
+            if m.input_modalities is not None
+            else None
+        ),
     )
 
 

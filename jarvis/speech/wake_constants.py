@@ -46,6 +46,37 @@ JARVIS_WAKE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Known Whisper silence/noise hallucination boilerplate (YouTube end cards,
+# broadcaster subtitle credits, ad outros). Single definition here (leaf
+# module) so BOTH the pipeline's brain-call filter and the rolling wake's
+# bias-echo confirm consume one list (BUG-008 drift rule). Moved from
+# ``pipeline._STT_HALLUCINATION_RE`` 2026-07-02 — pipeline aliases this.
+STT_HALLUCINATION_RE = re.compile(
+    r"\b("
+    r"im\s+auftrag\s+des|"
+    r"untertitel\s+(von|der|im\s+auftrag)|"  # i18n-allow: German Whisper-noise STT vocabulary
+    r"untertitelung\s+des\s+(zdf|wdr|ndr|swr|br|ard|arte)"
+    r"(\s+(fuer|für|fur)\s+funk)?(\s*,?\s*\d{4})?|"  # i18n-allow: German Whisper-noise STT vocabulary
+    r"(eine\s+)?(sendung|produktion|redaktion|programm)\s+"
+    r"(des|der|von)\s+(zdf|wdr|ndr|swr|br|ard|arte)"  # i18n-allow: German Whisper-noise STT vocabulary
+    r"(\s*,?\s*\d{4})?|"
+    r"(zdf|wdr|ndr|swr|br|ard|arte)\s+"
+    r"(fernsehen|mediagroup|rundfunk)(\s*,?\s*\d{4})?|"
+    r"(norddeutscher|westdeutscher|bayerischer)\s+rundfunk|"
+    r"mediagroup|"
+    r"abonnier(e|t|en)?\s+(den|meinen)\s+kanal|"
+    r"thanks\s+for\s+watching|"
+    r"thank\s+you|"
+    r"vielen\s+dank|"
+    r"mm-?hmm|"
+    r"please\s+subscribe|"
+    r"copyright\s+\d{4}|"
+    r"all\s+rights\s+reserved|"
+    r"www\.|https?://"
+    r")\b",
+    re.IGNORECASE,
+)
+
 # Common wake prefixes stripped when deriving the phrase *core* for model
 # lookup and canonical keyword names. The matcher may still keep an explicit
 # prefix when the configured phrase includes one.

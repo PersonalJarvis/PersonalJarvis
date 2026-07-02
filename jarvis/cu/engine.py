@@ -38,6 +38,7 @@ import logging
 import sys
 import time
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +48,13 @@ from jarvis.cu.brain_call import (
     CUNoVisionProviderError,
     call_vision_brain,
 )
-from jarvis.cu.capture import Frame, capture_stable_frame, grab_region, select_monitor
+from jarvis.cu.capture import (
+    Frame,
+    capture_stable_frame,
+    grab_region,
+    select_capture_target,
+    thumbs_similar,
+)
 from jarvis.cu.geometry import CoordinateConvention, MonitorInfo
 from jarvis.cu.ledger import ActionLedger
 from jarvis.cu.verify import (
@@ -90,6 +97,10 @@ _SYSTEM_BASE = (
     "You are the computer-use executor: you operate the user's REAL desktop "
     "by looking at a screenshot and issuing mouse/keyboard actions.\n"
     "Core discipline — perceive, act, verify:\n"
+    "* FIRST CHECK, before choosing ANY action: is the GOAL's proof already "
+    "visible in this screenshot? Then reply with the done action IMMEDIATELY "
+    "— every extra action after success is a failure (it wastes seconds and "
+    "can undo the result).\n"
     "* The screenshot is the ONLY ground truth. Never assume an effect "
     "happened; check the fresh screenshot.\n"
     "* FIRST verify the effect of your previous action (see PREVIOUS STEPS). "
@@ -189,6 +200,14 @@ def _is_cancelled(token: CancelToken | None) -> bool:
         return bool(token.is_cancelled())
     except Exception:  # noqa: BLE001
         return False
+
+
+@dataclass(frozen=True)
+class _ImageCfg:
+    """Frame-encoding knobs shared by perception and the done-judge."""
+
+    max_dimension: int
+    blob_dir: Path
 
 
 class _Profiler:
@@ -318,7 +337,7 @@ async def _judge_done(
     ctx: Any,
     goal: str,
     monitor: MonitorInfo,
-    image_cfg: dict[str, Any],
+    image_cfg: _ImageCfg,
     output_language: str | None,
 ) -> tuple[bool, str]:
     """Strict completion judge against a FRESH stable frame."""
@@ -327,8 +346,8 @@ async def _judge_done(
             asyncio.to_thread(
                 capture_stable_frame,
                 monitor,
-                max_dimension=image_cfg["max_dimension"],
-                blob_dir=image_cfg["blob_dir"],
+                max_dimension=image_cfg.max_dimension,
+                blob_dir=image_cfg.blob_dir,
             ),
             timeout=_OBSERVE_TIMEOUT_S,
         )
@@ -403,22 +422,32 @@ async def run_cu_loop(
     max_steps = max(25, int(getattr(ctx, "step_budget", 100)))
     monitor_policy = str(getattr(ctx, "monitor", "primary") or "primary")
     main_monitor = str(getattr(ctx, "main_monitor", "primary") or "primary")
+    capture_scope = str(getattr(ctx, "capture_scope", "window") or "window")
+    # DEFAULT OFF: the restore/maximize animation visibly "zooms" open windows
+    # and rearranges the user's layout uninvited (maintainer complaint
+    # 2026-07-02); window-scoped capture covers the grounding need untouched.
+    normalize_window = bool(getattr(ctx, "normalize_window", False))
     coordinate_space = str(getattr(ctx, "coordinate_space", "auto") or "auto")
     settle_scale = float(getattr(ctx, "settle_scale", 1.0) or 1.0)
     strict_verify = bool(getattr(ctx, "strict_verify", True))
-    image_cfg = {
-        "max_dimension": int(getattr(ctx, "image_max_dimension", 1366) or 1366),
-        "blob_dir": Path("data") / "flight_recorder" / "blobs",
-    }
+    image_cfg = _ImageCfg(
+        max_dimension=int(getattr(ctx, "image_max_dimension", 1366) or 1366),
+        blob_dir=Path("data") / "flight_recorder" / "blobs",
+    )
 
     consecutive_failures = 0
     llm_failures = 0
     done_rejects = 0
     guard_hits = 0
     observe_failures = 0
-    prev_sha: str | None = None
+    prev_thumb: bytes | None = None
     fruitless_steps = 0  # steps with zero successful actions on an unchanged screen
     last_step_had_success = False
+    # Normalize the work surface before the first frame and again after every
+    # focus change (open_app / switch_window): professional computer-use
+    # harnesses never pixel-ground on a small window floating in a big desktop
+    # (see jarvis.platform.window_state.normalize_foreground_window).
+    need_normalize = normalize_window
 
     while step_idx < max_steps:
         step_idx += 1
@@ -428,15 +457,30 @@ async def run_cu_loop(
 
         # ---- perceive -----------------------------------------------------
         t0 = time.monotonic()
+        if need_normalize:
+            need_normalize = False
+            try:
+                from jarvis.platform import window_state  # noqa: PLC0415
+
+                normalized, norm_msg = await asyncio.to_thread(
+                    window_state.normalize_foreground_window,
+                )
+                if normalized:
+                    log.info("[cu] normalized target window: %s", norm_msg)
+            except Exception:  # noqa: BLE001 — normalize is best-effort
+                log.debug("[cu] window normalize failed", exc_info=True)
         try:
             monitor = await asyncio.to_thread(
-                select_monitor, monitor_policy, main_monitor=main_monitor,
+                select_capture_target,
+                monitor_policy,
+                main_monitor=main_monitor,
+                scope=capture_scope,
             )
             frame_coro = asyncio.to_thread(
                 capture_stable_frame,
                 monitor,
-                max_dimension=image_cfg["max_dimension"],
-                blob_dir=image_cfg["blob_dir"],
+                max_dimension=image_cfg.max_dimension,
+                blob_dir=image_cfg.blob_dir,
             )
             snapshot_coro = foreground_ui_snapshot()
             frame, (labels, field_hint, handoff) = await asyncio.wait_for(
@@ -475,14 +519,14 @@ async def run_cu_loop(
         # successful action while the screen never changed means we are
         # circling — judge once (the goal may in fact be met), then stop.
         if (
-            prev_sha is not None
-            and frame.sha256 == prev_sha
+            prev_thumb is not None
+            and thumbs_similar(prev_thumb, frame.thumb)
             and not last_step_had_success
         ):
             fruitless_steps += 1
         else:
             fruitless_steps = 0
-        prev_sha = frame.sha256
+        prev_thumb = frame.thumb
         last_step_had_success = False
         if fruitless_steps >= _STUCK_FRAMES:
             done, proof = await _judge_done(
@@ -506,31 +550,43 @@ async def run_cu_loop(
         t0 = time.monotonic()
         conventions_used: dict[str, CoordinateConvention] = {}
 
-        def _build_prompt(provider: str, brain: Any) -> tuple[str, str]:
+        def _build_prompt(
+            provider: str,
+            brain: Any,
+            *,
+            # Bind THIS step's perception explicitly (B023): the builder runs
+            # inside the same iteration, but explicit defaults make that a
+            # structural guarantee instead of a timing accident.
+            _frame: Frame = frame,
+            _title: str = window_title,
+            _labels: list[str] = labels,
+            _field_hint: str = field_hint,
+            _conv_used: dict[str, CoordinateConvention] = conventions_used,
+        ) -> tuple[str, str]:
             convention = conv_mod.resolve_convention(
                 provider, brain, config_override=coordinate_space,
             )
-            conventions_used[provider] = convention
+            _conv_used[provider] = convention
             system = (
                 _SYSTEM_BASE
                 + conv_mod.coordinate_prompt_block(
-                    convention, frame.image_width, frame.image_height,
+                    convention, _frame.image_width, _frame.image_height,
                 )
                 + "\n\n"
                 + conv_mod.action_grammar_block()
             )
             lines = [f"GOAL: {goal}"]
-            if window_title:
-                lines.append(f"FOREGROUND WINDOW: {window_title}")
-            if labels:
-                lines.append("CLICKABLE ELEMENTS: " + ", ".join(labels))
-            if field_hint:
-                lines.append(field_hint.strip())
+            if _title:
+                lines.append(f"FOREGROUND WINDOW: {_title}")
+            if _labels:
+                lines.append("CLICKABLE ELEMENTS: " + ", ".join(_labels))
+            if _field_hint:
+                lines.append(_field_hint.strip())
             tail = history[-_HISTORY_TAIL:]
             lines.append(
                 "PREVIOUS STEPS:\n" + ("\n".join(tail) if tail else "(none)"),
             )
-            if not frame.stable:
+            if not _frame.stable:
                 lines.append(
                     "NOTE: the screen was still changing when this screenshot "
                     "was captured — verify carefully before acting.",
@@ -671,7 +727,7 @@ async def run_cu_loop(
                 action = {**action, "x": sx, "y": sy}
 
             # -- idempotency ledger -----------------------------------------
-            if ledger.is_duplicate(action, frame.sha256, resolved_xy=resolved_xy):
+            if ledger.is_duplicate(action, frame.thumb, resolved_xy=resolved_xy):
                 guard_hits += 1
                 history.append(
                     f"step {step_idx}: {_summarize_action(action)} REFUSED — "
@@ -708,7 +764,7 @@ async def run_cu_loop(
                 profiler.add("act", t0, step_idx)
                 t0 = time.monotonic()
                 if ok:
-                    ledger.record(action, frame.sha256, resolved_xy=resolved_xy)
+                    ledger.record(action, frame.thumb, resolved_xy=resolved_xy)
                     await asyncio.sleep(_EFFECT_SETTLE_S * settle_scale)
                     post = await asyncio.to_thread(grab_region, monitor.bbox)
                     rect = monitor.bbox
@@ -746,7 +802,7 @@ async def run_cu_loop(
                 profiler.add("act", t0, step_idx)
                 t0 = time.monotonic()
                 if ok:
-                    ledger.record(action, frame.sha256)
+                    ledger.record(action, frame.thumb)
                     if strict_verify:
                         landed = await verify_typed_text(action["text"])
                         if landed is False:
@@ -769,7 +825,7 @@ async def run_cu_loop(
                     ctx, "hotkey", {"keys": action["keys"]}, trace_id,
                 )
                 if ok:
-                    ledger.record(action, frame.sha256)
+                    ledger.record(action, frame.thumb)
                 profiler.add("act", t0, step_idx)
 
             elif kind == "scroll":
@@ -781,7 +837,7 @@ async def run_cu_loop(
                     args["x"], args["y"] = int(action["x"]), int(action["y"])
                 ok, detail = await _dispatch_tool(ctx, "scroll", args, trace_id)
                 if ok:
-                    ledger.record(action, frame.sha256)
+                    ledger.record(action, frame.thumb)
                 profiler.add("act", t0, step_idx)
 
             elif kind == "drag":
@@ -800,7 +856,7 @@ async def run_cu_loop(
                     trace_id,
                 )
                 if ok:
-                    ledger.record(action, frame.sha256)
+                    ledger.record(action, frame.thumb)
                 profiler.add("act", t0, step_idx)
 
             elif kind == "open_app":
@@ -808,7 +864,10 @@ async def run_cu_loop(
                     ctx, "open_app", {"app_name": action["name"]}, trace_id,
                 )
                 if ok:
-                    ledger.record(action, frame.sha256)
+                    ledger.record(action, frame.thumb)
+                    # The freshly focused window gets normalized before the
+                    # next perception (maximize on its own monitor).
+                    need_normalize = normalize_window
                     # Let the app paint its first window; the next perception's
                     # stability probe covers the rest.
                     await asyncio.sleep(1.0 * settle_scale)
@@ -820,7 +879,8 @@ async def run_cu_loop(
                     trace_id,
                 )
                 if ok:
-                    ledger.record(action, frame.sha256)
+                    ledger.record(action, frame.thumb)
+                    need_normalize = normalize_window
                 profiler.add("act", t0, step_idx)
 
             elif kind == "click_element":
@@ -829,7 +889,7 @@ async def run_cu_loop(
                     ctx, "click_element", {"name": action["name"]}, trace_id,
                 )
                 if ok:
-                    ledger.record(action, frame.sha256)
+                    ledger.record(action, frame.thumb)
                 profiler.add("act", t0, step_idx)
 
             elif kind == "wait":
@@ -846,12 +906,19 @@ async def run_cu_loop(
                     f"step {step_idx}: {summary} -> OK"
                     + (f" ({detail[:120]})" if detail else ""),
                 )
+                # Also INFO-log each step: the progress chunks live only in
+                # the harness stdout, which made live per-step forensics
+                # impossible (2026-07-02 x.com run: 15 opaque steps).
+                log.info("[cu] step %d: %s -> OK %s", step_idx, summary,
+                         detail[:120] if detail else "")
                 yield _progress(f"[cu] step {step_idx}: {summary} ok")
             else:
                 consecutive_failures += 1
                 history.append(
                     f"step {step_idx}: {summary} -> FAILED: {detail[:180]}",
                 )
+                log.info("[cu] step %d: %s -> FAILED: %s", step_idx, summary,
+                         detail[:180])
                 yield _progress(f"[cu] step {step_idx}: {summary} FAILED")
                 if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
                     reason = detail or "the last actions kept failing"

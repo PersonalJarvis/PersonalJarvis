@@ -18,6 +18,7 @@ export type KeyFormatKind =
   | "openrouter"
   | "xai"
   | "cartesia"
+  | "elevenlabs"
   | "groq"
   | "unknown";
 
@@ -49,6 +50,10 @@ export function detectKeyFormat(value: string): KeyFormatHint | null {
   if (/^sk-ant-/.test(v)) return { kind: "anthropic", label: "Anthropic API key" };
   if (/^sk-or-/.test(v)) return { kind: "openrouter", label: "OpenRouter API key" };
   if (/^sk_car_/.test(v)) return { kind: "cartesia", label: "Cartesia API key" };
+  // ElevenLabs keys start with `sk_` (tested AFTER the more specific `sk_car_`
+  // so Cartesia wins its own prefix). Older 32-char hex keys fall through to
+  // "unknown" — harmless, since the hint never blocks a save.
+  if (/^sk_/.test(v)) return { kind: "elevenlabs", label: "ElevenLabs API key" };
   if (/^gsk_/.test(v)) return { kind: "groq", label: "Groq API key" };
   if (/^xai-/.test(v)) return { kind: "xai", label: "xAI (Grok) API key" };
   if (/^AIza/.test(v) || /^AQ\./.test(v)) {
@@ -82,6 +87,8 @@ export function expectedKindForSecret(secretKey: string): KeyFormatKind | null {
       return "xai";
     case "cartesia_api_key":
       return "cartesia";
+    case "elevenlabs_api_key":
+      return "elevenlabs";
     case "groq_api_key":
       return "groq";
     default:

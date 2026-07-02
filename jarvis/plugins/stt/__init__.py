@@ -388,17 +388,88 @@ def build_wake_whisper(
         # on base/cpu — far less likely to blow the wedge timeout under app CPU
         # load, and snappier. The phrase bias + sound-folding matcher keep recall.
         beam_size=1,
-        # Run ctranslate2 fully SINGLE-THREADED for the wake model so it cannot
-        # deadlock against PyTorch's OpenMP pool in the shared process — the root
-        # of the intermittent 8 s ``model.transcribe`` HANG that wedged the wake on
-        # BOTH cpu and cuda (live-log 2026-06-30). cpu_threads=4 only REDUCED the
-        # hang (11 wedges / 16 min); 1 removes ctranslate2's internal thread pool
-        # entirely. Slightly slower per window (base+beam1 stays well under the 8 s
-        # timeout) but no thread contention. Only the always-on wake model, which
-        # coexists with torch, sets this. NOTE: transcription wake still cannot
-        # reach 100% here — the definitive fix is a neural KWS model (AP-25).
-        cpu_threads=1,
+        # A FIXED, small ctranslate2 thread count for the wake model (never
+        # auto/all-cores — that deadlocks against PyTorch's OpenMP pool in the
+        # shared process, the 2026-06-30 8 s ``model.transcribe`` hang, AP-24/25).
+        # History: auto -> hang storm; 4 -> reduced (11 wedges / 16 min); 1 ->
+        # no deadlock but ~2x slower per window, and one merely SLOW call under
+        # load still blew the 8 s poll cap (p95 was measured at 7.5 s under
+        # contention on 2026-07-02 — the wedge-cascade trigger). 2026-07-02
+        # measurements: cpu_threads=2 transcribes a 1.8 s window 1.7-2.8x
+        # faster than 1 (median 706 ms vs 2003 ms same-load matrix; 1718 ms vs
+        # 2960 ms under a deliberate 3-thread torch-OpenMP burn) with ZERO
+        # hangs in the 80-round torch-coexistence probe, identical recall, and
+        # it halves the wake trigger latency. Should a rare hang still occur in
+        # the wild, the poll loop now self-heals it in bounded time without the
+        # old teardown cascade (busy-streak accounting + off-path re-warm,
+        # commit 9a4da695) — the failure economics that made 1 the only safe
+        # choice no longer apply. num_workers stays 1 (single inference
+        # stream). NOTE: transcription wake still cannot reach KWS-instant
+        # latency — the definitive fix remains a neural KWS model (AP-25).
+        cpu_threads=2,
     )
 
 
-__all__ = ["build_stt_from_config", "build_wake_whisper"]
+def start_wake_model_prefetch(
+    stt_cfg: Any,
+    *,
+    language: str | None = None,
+    wake_phrase: str | None = None,
+) -> Any:
+    """Load the fast-first wake Whisper MODEL in a daemon thread, off the boot
+    critical path (TTU iteration 10, docs/diagnostics/BOOT-TTU-NOTES.md).
+
+    Drift-free by construction: the exact model parameters are resolved by
+    building a throwaway provider through :func:`build_wake_whisper`
+    (``fast_first=True`` — the same call the boot path makes; the ctor is
+    cheap and fully lazy), then the weights are loaded into the hand-over
+    cache that ``FasterWhisperProvider._ensure_model`` adopts. The phrase
+    bias and language do not participate in the cache key (they are decode
+    parameters, not load parameters), so a key can only miss if the real
+    boot resolves a different model/device — in which case the consumer
+    simply loads lazily as before.
+
+    GIL note (2026-06-22 forensic): the load runs behind the
+    ``inference_only_import_shield`` inside ``_new_whisper_model`` and touches
+    no torch; the first real torch import (Silero VAD) happens seconds later
+    in the deferred loaders, so the shield race window stays clear.
+
+    No-op when voice is disabled (``JARVIS_VOICE``) or on any failure —
+    a prefetch must never break boot. Returns the thread or ``None``.
+    """
+    import threading
+
+    from jarvis.speech.warmup_prefetch import _voice_disabled
+
+    if _voice_disabled():
+        return None
+
+    def _load() -> None:
+        try:
+            from jarvis.plugins.stt.fwhisper import prefetch_model
+
+            probe = build_wake_whisper(
+                stt_cfg,
+                language=language,
+                wake_phrase=wake_phrase,
+                fast_first=True,
+            )
+            prefetch_model(
+                probe._model_name,  # noqa: SLF001 — resolved params, same module family
+                probe._device,  # noqa: SLF001
+                probe._compute_type,  # noqa: SLF001
+                probe._cpu_threads,  # noqa: SLF001
+            )
+        except Exception as exc:  # noqa: BLE001 — a prefetch must never break boot
+            logger.debug("Wake-model prefetch skipped: {}", exc)
+
+    thread = threading.Thread(target=_load, name="wake-model-prefetch", daemon=True)
+    thread.start()
+    return thread
+
+
+__all__ = [
+    "build_stt_from_config",
+    "build_wake_whisper",
+    "start_wake_model_prefetch",
+]

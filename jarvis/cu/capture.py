@@ -73,16 +73,65 @@ def mss_grab(bbox: dict[str, int]) -> tuple[tuple[int, int], bytes]:
 
 @dataclass(frozen=True)
 class Frame:
-    """One perception frame: the image the model sees + its mapper."""
+    """One perception frame: the image the model sees + its mapper.
+
+    ``sha256`` identifies the exact encoded image (blob dedup, events).
+    ``thumb`` is the PERCEPTUAL identity (see :func:`screen_thumb`): the
+    key the idempotency ledger and the no-progress guard compare on via
+    :func:`thumbs_similar`. An exact hash flips on every caret blink, which
+    let duplicate actions through as "the screen changed" (live rig run
+    2026-07-02).
+    """
 
     jpeg: bytes
     image_width: int
     image_height: int
     mapper: CoordinateMapper
     sha256: str
+    thumb: bytes
     captured_at_ns: int
     stable: bool
     blob_path: str | None = None
+
+
+def screen_thumb(raw: tuple[tuple[int, int], bytes]) -> bytes:
+    """Grayscale 96x54 thumbnail bytes — the frame's perceptual identity.
+
+    Compared with :func:`thumbs_similar` (mean-abs-diff threshold), NOT by
+    equality/hash: any hash quantization has boundary artifacts where a
+    one-gray-level caret blink flips the identity and lets a duplicate
+    action through.
+    """
+    from PIL import Image  # noqa: PLC0415
+
+    return Image.frombytes("RGB", raw[0], raw[1]).convert("L").resize(_THUMB_SIZE).tobytes()
+
+
+def thumbs_similar(
+    a: bytes | str, b: bytes | str, *, threshold: float = STABILITY_DIFF_THRESHOLD,
+) -> bool:
+    """Are two screen identities visually the same screen?
+
+    Fast-path equality; a real thumbnail pair is compared by mean absolute
+    difference (caret blinks / antialiasing noise stay below the threshold).
+    Opaque non-thumbnail keys (tests, foreign callers) fall back to equality.
+    """
+    if a == b:
+        return True
+    expected = _THUMB_SIZE[0] * _THUMB_SIZE[1]
+    if (
+        not isinstance(a, (bytes, bytearray))
+        or not isinstance(b, (bytes, bytearray))
+        or len(a) != expected
+        or len(b) != expected
+    ):
+        return False
+    from PIL import Image, ImageChops, ImageStat  # noqa: PLC0415
+
+    img_a = Image.frombytes("L", _THUMB_SIZE, bytes(a))
+    img_b = Image.frombytes("L", _THUMB_SIZE, bytes(b))
+    mean = ImageStat.Stat(ImageChops.difference(img_a, img_b)).mean[0]
+    return mean <= threshold
 
 
 def frames_differ(
@@ -145,6 +194,75 @@ def select_monitor(policy: str, *, main_monitor: str = "primary") -> MonitorInfo
         )
 
 
+#: A window-scoped capture below this size (input units) is useless to a
+#: vision model — fall back to the whole monitor instead.
+_MIN_WINDOW_CAPTURE_W = 160
+_MIN_WINDOW_CAPTURE_H = 120
+
+
+def select_capture_target(
+    policy: str,
+    *,
+    main_monitor: str = "primary",
+    scope: str = "window",
+) -> MonitorInfo:
+    """Resolve the rect Computer-Use captures AND acts on.
+
+    ``scope="window"`` (default) applies the industry-standard framing for
+    pixel-grounded GUI agents: the model sees the TARGET WINDOW, not a whole
+    monitor (OpenAI CUA: fixed viewport; Anthropic reference: one small
+    display the app fills; Microsoft UFO: per-application screenshots). A
+    small window floating on a large desktop otherwise shrinks to stamp size
+    in the downscaled frame and surrounds itself with wallpaper — grounding
+    errors then land OUTSIDE the app and steal its focus (live incident
+    2026-07-02, three desktop clicks in a row next to a restored Chrome).
+
+    Cropping the capture to the window also makes stray clicks structurally
+    impossible: the :class:`CoordinateMapper` clamps every model coordinate
+    into the capture rect, so the click cannot leave the window.
+
+    Falls back to the ``policy`` monitor (previous behaviour) when the
+    foreground window is the shell, has no readable rect (macOS/Linux today,
+    or a headless probe), or is too small to be a real work surface.
+    ``scope="monitor"`` restores the previous behaviour entirely.
+    """
+    monitor = select_monitor(policy, main_monitor=main_monitor)
+    if scope != "window" or policy == "all":
+        return monitor
+
+    from jarvis.platform import window_state as ws  # noqa: PLC0415
+
+    with input_space():
+        win = ws.foreground_window()
+        if win is None or ws.is_shell_window(win):
+            return monitor
+        rect = ws.window_frame_rect(win)
+    if rect is None:
+        return monitor
+    left, top, width, height = rect
+    # Clamp to the selected monitor: a window straddling a mixed-DPI boundary
+    # must not produce a grab that crosses coordinate spaces.
+    clamped_left = max(left, monitor.left)
+    clamped_top = max(top, monitor.top)
+    clamped_right = min(left + width, monitor.left + monitor.width)
+    clamped_bottom = min(top + height, monitor.top + monitor.height)
+    clamped_w = clamped_right - clamped_left
+    clamped_h = clamped_bottom - clamped_top
+    if clamped_w < _MIN_WINDOW_CAPTURE_W or clamped_h < _MIN_WINDOW_CAPTURE_H:
+        return monitor
+    logger.debug(
+        "[cu] window-scoped capture: '%s' rect=(%d,%d %dx%d)",
+        (win.title or "")[:60], clamped_left, clamped_top, clamped_w, clamped_h,
+    )
+    return MonitorInfo(
+        left=clamped_left,
+        top=clamped_top,
+        width=clamped_w,
+        height=clamped_h,
+        name=f"window:{(win.title or '')[:48]}",
+    )
+
+
 def _downscale_and_encode(
     raw: tuple[tuple[int, int], bytes],
     *,
@@ -204,6 +322,7 @@ def capture_stable_frame(
     jpeg, iw, ih = _downscale_and_encode(
         current, max_dimension=max_dimension, jpeg_quality=jpeg_quality,
     )
+    thumb = screen_thumb(current)
     mapper = CoordinateMapper(
         capture_left=monitor.left,
         capture_top=monitor.top,
@@ -232,6 +351,7 @@ def capture_stable_frame(
         image_height=ih,
         mapper=mapper,
         sha256=sha,
+        thumb=thumb,
         captured_at_ns=time.time_ns(),
         stable=stable,
         blob_path=blob_path,

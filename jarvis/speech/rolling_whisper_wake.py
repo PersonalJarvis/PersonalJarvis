@@ -45,6 +45,10 @@ from jarvis.plugins.stt.fwhisper import FasterWhisperProvider, TranscribeBusy
 # keep working. ``pattern=`` also accepts a ``WakeMatcher`` (duck-types
 # ``.search().group(0)``) so a custom wake phrase can drive this backstop.
 from jarvis.speech.wake_constants import JARVIS_WAKE_PATTERN as DEFAULT_PATTERN
+from jarvis.speech.wake_constants import (
+    STT_HALLUCINATION_RE,
+    normalize_phrase_for_match,
+)
 
 log = logging.getLogger("jarvis.wake.rolling")
 
@@ -92,6 +96,29 @@ _WEDGE_RECOVER_AFTER_FAILS = 2
 # while a genuine BUG-036 hang (un-cancellable native call) is still recovered
 # in bounded time (~8 s timeout + this cap).
 _BUSY_HANG_RECOVER_S = 20.0
+
+# Silence gate on a MATCH (not on the pre-transcription decision). A wake
+# Whisper primed with ``initial_prompt=<phrase>`` does not just lift recall — on
+# a near-silent / steady-noise window it HALLUCINATES the primed phrase verbatim
+# and Jarvis "fires out of complete silence" (live forensic 2026-07-02: 'Hey
+# Fable' transcribed at window rms 0.0036-0.0043 — below idle hiss — with nobody
+# speaking; the same silent windows also produced random hallucinations like
+# 'my own great wrist music.'). The strict phrase matcher cannot help (the text
+# IS the phrase) and the bias-echo confirm has holes: it skips a hallucination
+# carrying extra invented words, and it fails OPEN when its second STT pass
+# errors. The physical discriminator is energy — a genuine spoken wake carries a
+# real speech burst whose window rms clears this floor, while a
+# silence-hallucination sits at the noise floor. This mirrors the OpenWakeWord
+# path's ``CUSTOM_WAKE_MIN_RMS`` silence gate.
+#
+# Bounds (data-derived — do NOT raise above the quiet-mic recall contract): the
+# observed silence-ghost cluster tops out at rms 0.0043 and idle hiss at
+# ~0.0046, while a genuine QUIET wake is pinned at window rms ~0.009 by
+# tests/unit/speech/test_rolling_whisper_wake_quiet_mic.py. 0.006 sits cleanly
+# between — above every observed silence-hallucination, comfortably below the
+# quietest genuine wake. It gates ONLY whether a matched transcript is trusted;
+# it never blocks transcription, so nothing that could be a wake is skipped.
+_MATCH_MIN_SPEECH_RMS = 0.006
 
 
 def _save_wav(pcm_bytes: bytes, sample_rate: int, path: Path) -> None:
@@ -226,6 +253,11 @@ class RollingWhisperWake:
         # How long a CONTINUOUS TranscribeBusy streak may run before the
         # in-flight call counts as truly hung (see _BUSY_HANG_RECOVER_S).
         busy_hang_recover_s: float = _BUSY_HANG_RECOVER_S,
+        # Speech-energy floor a MATCHED window must clear to be trusted. A
+        # bias-primed decoder hallucinates the phrase on silence; a real wake
+        # carries a speech burst above this floor (see _MATCH_MIN_SPEECH_RMS).
+        # <= 0 disables the gate (tests that inject pre-transcribed text).
+        match_min_rms: float = _MATCH_MIN_SPEECH_RMS,
     ) -> None:
         self._stt = stt
         self._pattern = pattern
@@ -250,6 +282,7 @@ class RollingWhisperWake:
         self._min_wake_confidence = min_wake_confidence
         self._max_no_speech_prob = max_no_speech_prob
         self._transcribe_timeout_s = float(transcribe_timeout_s)
+        self._match_min_rms = float(match_min_rms)
         # Statistics for the heartbeat
         self._chunks_seen = 0
         self._total_bytes = 0
@@ -271,6 +304,8 @@ class RollingWhisperWake:
         self._stat_rejected_no_match = 0
         self._stat_matched = 0
         self._stat_suppressed_cooldown = 0
+        self._stat_suppressed_echo = 0
+        self._stat_suppressed_silence = 0
 
     def stats(self) -> dict[str, int]:
         """Snapshot of this listen session's wake-evaluation counters.
@@ -293,7 +328,82 @@ class RollingWhisperWake:
             "rejected_no_match": self._stat_rejected_no_match,
             "matched": self._stat_matched,
             "suppressed_cooldown": self._stat_suppressed_cooldown,
+            "suppressed_echo": self._stat_suppressed_echo,
+            "suppressed_silence": self._stat_suppressed_silence,
         }
+
+    async def _is_prompt_echo(
+        self, match: Any, window_text: str, pcm_bytes: bytes
+    ) -> bool:
+        """True when a matched candidate is the bias prompt ECHOING, not speech.
+
+        Ghost-activation forensic (live log 2026-07-02, five activations in
+        ~30 min with media audio in the room): the wake Whisper is primed with
+        ``initial_prompt="<phrase>"`` so the weak model resolves ambiguous
+        noise/breath windows to EXACTLY the primed text — transcript
+        ``'Hey Fable'`` at rms 0.0037, verbatim, no surrounding words. The
+        strict matcher cannot help: the text IS the full phrase. Removing the
+        bias is no fix either (recall collapses 100 % -> 62.5 %, measured).
+
+        The tell-tale is the ECHO SIGNATURE (the transcript consists of the
+        phrase and NOTHING else) — genuine speech usually carries context.
+        Such candidates get ONE unbiased second pass over the SAME window: an
+        unprimed ear hears *something* wherever real speech exists (even a
+        mis-hearing), but hears nothing — or a known hallucination
+        boilerplate — on the noise the primed model echoed over. Costs one
+        extra local transcribe only on exact-phrase candidates. Fail-open on
+        infrastructure errors: a broken confirm must never eat a real wake.
+
+        CRITICAL — this must NEVER require the unbiased pass to reproduce the
+        wake WORD. The whole reason for the bias prompt is that the unprimed
+        base model cannot transcribe a hard proper-noun wake ('Mythos' ->
+        'Mütos'/'Mut', 'Fable' -> 'Farbe'); demanding it there rejects EVERY
+        genuine wake (live recall-kill 2026-07-02). "Heard any real speech" is
+        the only safe test here; the word-agnostic SILENCE guard is the raw
+        energy gate at the match site (``_match_min_rms``), not this transcript.
+        """
+        bias = getattr(self._stt, "bias_prompt", None)
+        if not bias:
+            return False  # unprimed model -> echoes are impossible
+        window_tokens = normalize_phrase_for_match(window_text)
+        matched_tokens = normalize_phrase_for_match(match.group(0))
+        if len(window_tokens) > len(matched_tokens):
+            return False  # real speech around the phrase -> not an echo
+        try:
+            timeout_s = self._transcribe_timeout_s
+            if timeout_s > 0:
+                async with asyncio.timeout(timeout_s):
+                    transcript = await self._stt.transcribe_pcm(
+                        pcm_bytes,
+                        language=self._language,
+                        ignore_initial_prompt=True,
+                    )
+            else:
+                transcript = await self._stt.transcribe_pcm(
+                    pcm_bytes,
+                    language=self._language,
+                    ignore_initial_prompt=True,
+                )
+        except TypeError:
+            return False  # provider has no unbiased pass -> legacy behaviour
+        except Exception as exc:  # noqa: BLE001 — fail-open, never eat a wake
+            log.warning(
+                "echo-confirm: unbiased pass failed (%s) — accepting the wake",
+                exc,
+            )
+            return False
+        unbiased = (transcript.text or "").strip()
+        if unbiased and STT_HALLUCINATION_RE.search(unbiased) is None:
+            log.info(
+                "echo-confirm: unprimed ear heard %r — genuine wake", unbiased[:60]
+            )
+            return False
+        log.info(
+            "echo-confirm: SUPPRESSED prompt echo — biased transcript was "
+            "exactly the phrase but the unprimed ear heard %r",
+            unbiased[:60],
+        )
+        return True
 
     async def detect(
         self, chunks: AsyncIterator[AudioChunk]
@@ -389,6 +499,10 @@ class RollingWhisperWake:
         # last poll was not busy). A streak longer than
         # ``self._busy_hang_recover_s`` is a TRUE hang -> rebuild.
         busy_since: float | None = None
+        # Cross-snapshot join state: final token of the previous RELIABLE
+        # transcript + when it was seen (see the join at the match site).
+        prev_tail = ""
+        prev_tail_t = 0.0
 
         # Boot serialisation state — see the warm gate inside the poll loop.
         warm_wait_t0 = time.time()
@@ -666,11 +780,55 @@ class RollingWhisperWake:
                     continue
 
                 log.info("rolling-whisper: rms=%.4f text=%r", rms, text)
-                m = self._pattern.search(text)
+                # Cross-snapshot prefix join: a short spoken phrase can still
+                # straddle two windows (one snapshot ends with "Hey", the next
+                # starts with the name). The strict full-phrase matcher
+                # (2026-07-02, fire-only-on-the-phrase mandate) needs prefix +
+                # core ADJACENT, so prepend the FINAL token of the previous
+                # reliable transcript when it is fresh (within one window
+                # span). A stale tail must never join — an old "hey" plus a
+                # bare name minutes later is exactly the false fire the strict
+                # matcher exists to prevent.
+                joined = text
+                if (
+                    prev_tail
+                    and now - prev_tail_t <= self._window_samples / self._sample_rate
+                ):
+                    joined = f"{prev_tail} {text}"
+                prev_tail = text.rsplit(None, 1)[-1] if text else ""
+                prev_tail_t = now
+                m = self._pattern.search(joined)
                 if m:
+                    # Silence gate (BEFORE the bias-echo confirm, zero STT cost):
+                    # a match on a near-silent window is a bias-prompt
+                    # hallucination, not a spoken wake — the "fires out of
+                    # complete silence" bug. A genuine wake carries a speech
+                    # burst that clears this floor; a hallucination sits at the
+                    # noise floor. This is the layer that catches the ghosts the
+                    # exact-phrase echo confirm misses: a hallucination with
+                    # extra invented words (which skips the confirm) or one the
+                    # confirm accepts because its second pass errored.
+                    if self._match_min_rms > 0.0 and rms < self._match_min_rms:
+                        self._stat_suppressed_silence += 1
+                        log.info(
+                            "rolling-whisper: SUPPRESSED near-silent match %r in "
+                            "%r (rms=%.4f < %.4f) — bias-prompt hallucination on "
+                            "silence, not a spoken wake",
+                            m.group(0), joined, rms, self._match_min_rms,
+                        )
+                        continue
+                    # Bias-echo gate: a candidate whose transcript is EXACTLY
+                    # the primed phrase may be the initial_prompt echoing on
+                    # noise (ghost activations, live 2026-07-02). One unbiased
+                    # second pass over the same window separates the two.
+                    if await self._is_prompt_echo(m, text, pcm_bytes):
+                        self._stat_suppressed_echo += 1
+                        continue
                     self._stat_matched += 1
                     last_trigger_t = now
-                    log.info("rolling-whisper: WAKE matched %r in %r", m.group(0), text)
+                    log.info(
+                        "rolling-whisper: WAKE matched %r in %r", m.group(0), joined
+                    )
                     yield m.group(0)
                 else:
                     self._stat_rejected_no_match += 1
