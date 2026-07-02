@@ -8,8 +8,8 @@
   "tts": {
     "provider": "grok-voice",
     "fallback": "grok-voice",
-    "voice_de": "Kore",
-    "voice_en": "Kore",
+    "voice_de": "leo",
+    "voice_en": "leo",
     "language_code": "auto",
     "chunk_by_sentence": false,
     "seed": 7,
@@ -18,7 +18,7 @@
     "vertex_project": "",
     "vertex_location": "us-central1",
     "service_account_path": "~/.config/jarvis/vertex-sa.json",
-    "model": "sonic-2"
+    "model": "eleven_flash_v2_5"
   },
   "tts.cartesia": {
     "model_id": "sonic-3.5",
