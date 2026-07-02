@@ -91,7 +91,9 @@ def patched(monkeypatch, tmp_path):
         clicks_seen=0,
     )
 
-    def fake_select_monitor(policy, *, main_monitor="primary"):
+    def fake_select_capture_target(
+        policy, *, main_monitor="primary", scope="window",
+    ):
         return MONITOR
 
     def fake_capture(monitor, *, max_dimension, blob_dir=None, **kw):
@@ -117,12 +119,21 @@ def patched(monkeypatch, tmp_path):
     async def fake_verify_typed(text):
         return state.typed_lands
 
-    monkeypatch.setattr(engine_mod, "select_monitor", fake_select_monitor)
+    monkeypatch.setattr(
+        engine_mod, "select_capture_target", fake_select_capture_target,
+    )
     monkeypatch.setattr(engine_mod, "capture_stable_frame", fake_capture)
     monkeypatch.setattr(engine_mod, "grab_region", fake_grab_region)
     monkeypatch.setattr(engine_mod, "foreground_ui_snapshot", fake_snapshot)
     monkeypatch.setattr(engine_mod, "verify_typed_text", fake_verify_typed)
     monkeypatch.setattr(engine_mod, "_foreground_title", lambda: "Test Window")
+    # The engine normalizes the target window via jarvis.platform.window_state;
+    # tests must never maximize a real window on the dev machine.
+    from jarvis.platform import window_state as ws
+
+    monkeypatch.setattr(
+        ws, "normalize_foreground_window", lambda: (False, "test"),
+    )
     return state
 
 

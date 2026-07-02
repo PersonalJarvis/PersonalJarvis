@@ -81,6 +81,14 @@ class ComputerUseContext:
     # "image_pixels". "auto" resolves per provider (capability first, family
     # metadata second) — see jarvis/cu/conventions.py.
     coordinate_space: str = "auto"
+    # CU v2: capture framing ([computer_use].capture_scope): "window" (default)
+    # crops every capture to the foreground target window; "monitor" restores
+    # the whole-monitor framing. See jarvis/cu/capture.py::select_capture_target.
+    capture_scope: str = "window"
+    # CU v2: maximize the target window on its own monitor before acting
+    # ([computer_use].normalize_window). See
+    # jarvis/platform/window_state.py::normalize_foreground_window.
+    normalize_window: bool = True
 
 
 _CONTEXT: ComputerUseContext | None = None
@@ -231,6 +239,8 @@ _RELOADABLE_FIELDS: tuple[str, ...] = (
     "zoom_before_click",
     "uia_click_fallback",
     "announce_progress",
+    "capture_scope",
+    "normalize_window",
 )
 _subscribed_bus_id: int | None = None
 

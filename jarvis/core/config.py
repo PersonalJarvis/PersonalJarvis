@@ -1479,6 +1479,21 @@ class ComputerUseConfig(BaseModel):
     # or an explicit id (a monitor-name substring, or a 1-based index "1"/"2").
     # An unknown id falls back to the OS primary (never a silent wrong screen).
     main_monitor: str = "primary"
+    # CU v2: what the vision model SEES and acts on. "window" (default) crops
+    # every capture to the foreground TARGET WINDOW — the industry-standard
+    # framing for pixel-grounded GUI agents (OpenAI CUA: fixed viewport;
+    # Anthropic reference: one small display the app fills; Microsoft UFO:
+    # per-application screenshots). It also structurally prevents clicks from
+    # landing outside the app: coordinates are clamped into the capture rect.
+    # "monitor" restores the previous whole-monitor framing (rollback knob).
+    capture_scope: Literal["window", "monitor"] = "window"
+    # CU v2: maximize the target window on ITS OWN monitor before acting (and
+    # again after each open_app/switch_window). A small floating window on a
+    # large screen shrinks to stamp size in the model's downscaled frame —
+    # grounding errors then click the wallpaper next to it (live incident
+    # 2026-07-02). Never moves a window across monitors (mixed-DPI resize
+    # trap); fixed-size dialogs and the desktop shell are left untouched.
+    normalize_window: bool = True
     # Master switch for the per-action read-back verification suite (claude-in-
     # chrome parity): after a type, confirm the text landed in the field; after a
     # click_element, confirm the intended state changed; don't blind-batch a
