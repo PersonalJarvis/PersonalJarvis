@@ -18,7 +18,8 @@
     "vertex_project": "",
     "vertex_location": "us-central1",
     "service_account_path": "~/.config/jarvis/vertex-sa.json",
-    "model": "sonic-2"
+    "model": "sonic-2",
+    "volume": 1.0
   },
   "tts.cartesia": {
     "model_id": "sonic-3.5",

@@ -1298,7 +1298,11 @@ class SpeechPipeline:
         # Bus injected so AudioPlayer publishes AudioOutFirst on the first
         # audible sample — UI subscribers (orb mouth animation + SPEAKING
         # bubble) sync to actual audio start, not the early SPEAKING state.
-        self._player = AudioPlayer(device=output_device, bus=bus)
+        # Master output volume (0.0–1.0) from [tts].volume. Defensive getattr
+        # chain: ``config`` may be None (test fixtures) and older TOMLs predate
+        # the field — both fall back to full volume.
+        _tts_volume = getattr(getattr(config, "tts", None), "volume", 1.0)
+        self._player = AudioPlayer(device=output_device, bus=bus, volume=_tts_volume)
         # Kept so warm-up can re-resolve the output device against a freshly
         # re-enumerated PortAudio table (post-reboot idx-drift cure, BUG-014).
         self._output_device = output_device
@@ -1572,6 +1576,19 @@ class SpeechPipeline:
         setter = getattr(vad, "set_silence_window_ms", None)
         if callable(setter):
             setter(int(ms))
+
+    def set_tts_volume(self, volume: float) -> None:
+        """Live-apply a new master TTS output volume (0.0–1.0) — no restart.
+
+        Delegates to ``AudioPlayer.set_volume`` so a Settings change is audible
+        on the next spoken sub-block. No-op-safe when the player is absent
+        (headless / not yet started) — the value still persisted and applies on
+        the next start.
+        """
+        player = getattr(self, "_player", None)
+        setter = getattr(player, "set_volume", None)
+        if callable(setter):
+            setter(float(volume))
 
     def _wake_poll_interval(self) -> float:
         """The stt_match wake poll interval, derived from the user's Sensitivity

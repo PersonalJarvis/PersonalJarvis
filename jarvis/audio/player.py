@@ -253,6 +253,20 @@ def _resolve_output_device(device: int | str | None) -> int | str | None:
     return None
 
 
+def _clamp_volume(volume: float) -> float:
+    """Clamp a requested master gain into the safe attenuation range [0.0, 1.0].
+
+    A value >1.0 would push samples past full-scale and clip; a negative value
+    would invert the waveform. Both are silently pinned to the bounds so no
+    caller (config, REST, runtime setter) can over-drive playback. A non-numeric
+    value falls back to full volume rather than muting.
+    """
+    try:
+        return max(0.0, min(1.0, float(volume)))
+    except (TypeError, ValueError):
+        return 1.0
+
+
 class AudioPlayer:
     """Thread-safe async player for int16 PCM audio."""
 
@@ -262,12 +276,17 @@ class AudioPlayer:
         sample_rate: int = TTS_SAMPLE_RATE,
         channels: int = 1,
         bus: Any = None,
+        volume: float = 1.0,
     ) -> None:
         # Resolve "auto-headset" / similar strings to the actual device index.
         # Integer values are not resolved — the user specifies those explicitly.
         self._device = _resolve_output_device(device)
         self._sample_rate = sample_rate
         self._channels = channels
+        # Master output gain in [0.0, 1.0] (1.0 = full, historical behaviour).
+        # Applied per sub-block in _write_samples. Clamped so a stray config /
+        # runtime value can never over-drive (>1.0 would clip) or invert (<0).
+        self._volume = _clamp_volume(volume)
         self._device_logged = False  # logged once on the first play call
         # Optional bus reference. When set, play_chunks() publishes
         # AudioOutFirst on the first audible sample so UI subscribers
@@ -373,6 +392,16 @@ class AudioPlayer:
         self._device = new_device
         self._device_logged = False  # re-log the new device on next play
         self.invalidate_device_cache()
+
+    def set_volume(self, volume: float) -> None:
+        """Live-apply a new master output gain (0.0–1.0) — no stream restart.
+
+        The value is read per sub-block in ``_write_samples``, so a change made
+        mid-utterance takes effect on the next ~60 ms block. Clamped to the safe
+        attenuation range; the open PortAudio stream is untouched (gain rides on
+        top of it, orthogonal to device/rate/lifecycle state).
+        """
+        self._volume = _clamp_volume(volume)
 
     def _log_device_once(self) -> None:
         """Log the active output device once per AudioPlayer instance.
@@ -558,10 +587,19 @@ class AudioPlayer:
         # write still provides back-pressure. ~60 ms blocks are large enough to
         # never starve the buffer.
         feed_level = level_tap.has_subscribers()
+        # Master output volume (0.0–1.0). ``gain >= 1.0`` is the fast path — no
+        # copy, so full-volume playback stays byte-identical to before. Below
+        # full we attenuate a per-block copy for the speaker but feed the
+        # PRE-gain RMS to the visualizer, so the orb/equalizer keeps showing
+        # that Jarvis is speaking even at a low volume (bars track speech, not
+        # loudness). ``getattr`` default keeps ``__new__``-built test/hot-reload
+        # instances (which skip ``__init__``) at full volume instead of crashing.
+        gain = getattr(self, "_volume", 1.0)
         block = max(1, int(device_rate * 0.06))
         for start in range(0, arr_f.shape[0], block):
             chunk = arr_f[start:start + block]
-            underflowed = stream.write(chunk)
+            out = chunk if gain >= 1.0 else chunk * gain
+            underflowed = stream.write(out)
             # Playback progress for the pipeline stall watchdog: a healthy
             # ~60 ms sub-block returns well inside the watchdog's stall window;
             # only a wedged device leaves ``last_write_ns`` frozen. ``getattr``

@@ -309,6 +309,13 @@ class TTSConfig(BaseModel):
     style_prompt: str | None = None
     voice_auto_switch: bool = True
     speed: float = 1.0
+    # Master output volume 0.0–1.0 (1.0 = full, unattenuated — the historical
+    # behaviour). Applied as a pure amplitude multiplier on the final PCM in the
+    # shared AudioPlayer, so it is provider-independent and can never clip (a
+    # 0–1 factor only attenuates). Editable live from the Settings "Volume"
+    # slider; on a headless host with no audio device it is simply never
+    # exercised (playback never opens a stream) — no crash.
+    volume: float = Field(default=1.0, ge=0.0, le=1.0)
     streaming: bool = True
     # ElevenLabs-specific VoiceSettings (ignored by other providers).
     stability: float = 0.5

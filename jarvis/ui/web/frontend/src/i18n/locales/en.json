@@ -917,6 +917,13 @@
       "saved_toast": "Thinking pause set to {0}.",
       "restart_caption": "Saved — applies on next start."
     },
+    "volume": {
+      "title": "Volume",
+      "description": "How loudly {name} speaks its answers. 100% is full volume; lower it to make {name} quieter. If it is still too quiet at 100%, raise your system or speaker volume.",
+      "reset": "Reset to default (100%)",
+      "saved_toast": "Volume set to {0}.",
+      "restart_caption": "Saved — applies on next start."
+    },
     "title": "Settings",
     "subtitle": "Wake-word, hotkeys, safety policies, autostart.",
     "overlay_taskbar_group_title": "Bar & Overlay",

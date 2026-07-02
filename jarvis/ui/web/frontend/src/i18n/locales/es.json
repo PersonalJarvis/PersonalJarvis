@@ -916,6 +916,13 @@
       "saved_toast": "Pausa para pensar fijada en {0}.",
       "restart_caption": "Guardado — se aplica en el próximo inicio."
     },
+    "volume": {
+      "title": "Volumen",
+      "description": "Qué tan alto habla {name} sus respuestas. 100% es el volumen máximo; bájalo para que {name} suene más bajo. Si sigue siendo demasiado bajo al 100%, sube el volumen del sistema o del altavoz.",
+      "reset": "Restablecer al valor predeterminado (100%)",
+      "saved_toast": "Volumen fijado en {0}.",
+      "restart_caption": "Guardado — se aplica en el próximo inicio."
+    },
     "title": "Ajustes",
     "subtitle": "Palabra de activación, atajos, políticas de seguridad, inicio automático.",
     "overlay_taskbar_group_title": "Barra y superposición",
