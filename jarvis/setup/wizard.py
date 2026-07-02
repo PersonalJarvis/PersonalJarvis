@@ -380,11 +380,22 @@ def step_mic_check() -> None:
     _println("=" * 60)
     try:
         import sounddevice as sd  # type: ignore[import-untyped]
+
+        devices = sd.query_devices()
     except ImportError:
         _println("⚠  sounddevice not installed. Run `pip install -r requirements.txt`.")
         return
+    except Exception as exc:  # noqa: BLE001 — no audio backend must not kill setup
+        # sd.query_devices() raises (e.g. PortAudioError "library not found") on a
+        # host with no audio backend: a headless server, or a Linux desktop without
+        # libportaudio2. Degrade gracefully — a mic-check failure must NEVER abort
+        # the wizard, or step_finalize never writes the .setup-complete marker and
+        # the app re-runs its whole onboarding (same failure mode as the step-7 bug).
+        _println(f"⚠  Audio system unavailable ({exc}).")
+        _println("   Skipping the microphone check — setup continues.")
+        _println("   Headless server: expected. Linux desktop: install libportaudio2.")
+        return
 
-    devices = sd.query_devices()
     inputs = [d for d in devices if d["max_input_channels"] > 0]
     if not inputs:
         _println("⚠  No microphone detected. Plug in a headset and restart.")
