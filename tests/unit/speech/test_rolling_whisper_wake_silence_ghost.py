@@ -89,17 +89,19 @@ class _BiasedSTT:
 
 
 async def _first_yield(
-    stt: _BiasedSTT, chunk: AudioChunk, *, wait_s: float = 1.5
+    stt: _BiasedSTT, chunk: AudioChunk, *, phrase: str = "Hey Nico", wait_s: float = 1.5
 ) -> str | None:
     """Drive ``RollingWhisperWake`` over ``chunk`` and return the first wake
     keyword it yields within ``wait_s`` (or ``None`` if it stays silent).
 
-    Pre-transcription gates are opened (min_rms/min_peak = 0) so the ONLY thing
-    under test is what happens once a window has been transcribed and matched.
+    ``phrase`` is the configured wake word; the matcher is built from it exactly
+    as the pipeline does, so the biased transcript must contain that phrase to
+    match. Pre-transcription gates are opened (min_rms/min_peak = 0) so the ONLY
+    thing under test is what happens once a window is transcribed and matched.
     """
     wake = RollingWhisperWake(
         stt,
-        pattern=compile_wake_matcher("Hey Nico"),
+        pattern=compile_wake_matcher(phrase),
         poll_interval_s=0.02,
         cooldown_s=0.0,
         min_rms=0.0,
@@ -159,35 +161,28 @@ async def test_phrase_with_hallucinated_context_on_silence_is_suppressed() -> No
     assert await _first_yield(stt, _SILENT) is None
 
 
-async def test_confirm_error_on_quiet_window_fails_closed() -> None:
-    """Hole B: when the bias-echo confirm's second STT pass errors, the gate
-    must fail CLOSED (suppress), not open — the live 'unbiased pass failed ()
-    — accepting the wake' ghost."""
-    stt = _BiasedSTT(biased="Hey Nico", unbiased_raises=True)
-    # Loud enough to clear the energy gate so the confirm actually runs; the
-    # confirm then errors and must suppress rather than accept.
-    assert await _first_yield(stt, _chunk(12000)) is None
-    assert stt.unbiased_calls >= 1, "confirm never ran — test does not cover Hole B"
+async def test_loud_wake_fires_even_when_unbiased_pass_garbles_the_hard_word() -> None:
+    """RECALL REGRESSION GUARD (live 2026-07-02, the reason the wake 'stopped
+    working entirely' after a fix): the whole reason for the bias prompt is
+    that the UNPRIMED base model cannot transcribe a hard proper-noun wake —
+    'Mythos' comes back as 'Mütos'/'Hey, Mut!', 'Fable' as 'Farbe'. A LOUD,
+    genuine wake must fire on that garble. The bias-echo confirm must therefore
+    accept 'heard real speech', and must NEVER require the unbiased pass to
+    reproduce the wake word."""
+    for garble in ("Mütos", "Hey, Mut!", "Mythe"):
+        stt = _BiasedSTT(biased="Hey Mythos", unbiased=garble)
+        assert await _first_yield(stt, _chunk(12000), phrase="Hey Mythos") is not None, (
+            f"genuine loud wake dropped when the unbiased ear heard {garble!r}"
+        )
 
 
-async def test_unbiased_pass_hallucinating_unrelated_words_is_suppressed() -> None:
-    """The base model hallucinates on boosted noise too: the biased pass says
-    the exact phrase and the UNBIASED pass says an unrelated word ('Das ist ein
-    Problem.'). 'Heard something' is NOT corroboration — the unprimed ear must
-    hear the wake CORE. Live 2026-07-02 ghosts: 'Ja.', 'Das ist ein Problem.',
-    'Ich will nicht.' all wrongly accepted as genuine. Loud audio so the energy
-    gate passes and the corroboration check is what must reject it."""
-    stt = _BiasedSTT(biased="Hey Nico", unbiased="Das ist ein Problem.")
-    assert await _first_yield(stt, _chunk(12000)) is None
-    assert stt.unbiased_calls >= 1, "confirm never ran — corroboration untested"
-
-
-async def test_unbiased_pass_hearing_the_garbled_core_still_fires() -> None:
-    """Recall guard for the corroboration rule: a genuine wake the unprimed
-    model garbles to a sound-alike of the core ('niko' for 'Nico') must still
-    be accepted — corroboration is fuzzy + prefix-relaxed, not exact."""
-    stt = _BiasedSTT(biased="Hey Nico", unbiased="niko")
-    assert await _first_yield(stt, _chunk(12000)) is not None
+async def test_confirm_error_does_not_drop_a_loud_wake() -> None:
+    """A confirm that errors (STT timeout under boot load) on a LOUD window must
+    fail OPEN — dropping a genuine wake because the second pass hiccuped is the
+    recall-kill the user hit. Silence is already handled by the energy gate
+    before the confirm, so failing open here cannot ghost-fire on silence."""
+    stt = _BiasedSTT(biased="Hey Mythos", unbiased_raises=True)
+    assert await _first_yield(stt, _chunk(12000), phrase="Hey Mythos") is not None
 
 
 async def test_genuine_quiet_wake_still_fires() -> None:

@@ -283,10 +283,6 @@ class RollingWhisperWake:
         self._max_no_speech_prob = max_no_speech_prob
         self._transcribe_timeout_s = float(transcribe_timeout_s)
         self._match_min_rms = float(match_min_rms)
-        # Cache of prefix-relaxed core matchers, keyed by the phrase core, used
-        # by the bias-echo confirm to check whether the UNBIASED pass also heard
-        # the wake (built lazily so no import cost on the hot path).
-        self._core_matchers: dict[tuple[str, ...], Any] = {}
         # Statistics for the heartbeat
         self._chunks_seen = 0
         self._total_bytes = 0
@@ -351,18 +347,20 @@ class RollingWhisperWake:
 
         The tell-tale is the ECHO SIGNATURE (the transcript consists of the
         phrase and NOTHING else) — genuine speech usually carries context.
-        Such candidates get ONE unbiased second pass over the SAME window and
-        must be CORROBORATED: the unprimed ear has to independently hear the
-        wake's core word. Merely producing *some* text is NOT evidence — the
-        base model ALSO hallucinates unrelated words on the same boosted noise
-        ('Ja.', 'Das ist ein Problem.' — live ghost activations 2026-07-02 that
-        the old "heard anything non-boilerplate → genuine" rule let through).
-        The corroboration reuses the primary matcher's length-aware fuzzy +
-        sound-fold logic (prefix-relaxed), so a garbled genuine wake
-        ('Hey Fabel', 'Ist er niko da') still passes while an unrelated
-        hallucination does not. Costs one extra local transcribe only on
-        exact-phrase candidates. Fail-CLOSED on infrastructure errors (an
-        unconfirmable exact-phrase candidate is suppressed, not accepted).
+        Such candidates get ONE unbiased second pass over the SAME window: an
+        unprimed ear hears *something* wherever real speech exists (even a
+        mis-hearing), but hears nothing — or a known hallucination
+        boilerplate — on the noise the primed model echoed over. Costs one
+        extra local transcribe only on exact-phrase candidates. Fail-open on
+        infrastructure errors: a broken confirm must never eat a real wake.
+
+        CRITICAL — this must NEVER require the unbiased pass to reproduce the
+        wake WORD. The whole reason for the bias prompt is that the unprimed
+        base model cannot transcribe a hard proper-noun wake ('Mythos' ->
+        'Mütos'/'Mut', 'Fable' -> 'Farbe'); demanding it there rejects EVERY
+        genuine wake (live recall-kill 2026-07-02). "Heard any real speech" is
+        the only safe test here; the word-agnostic SILENCE guard is the raw
+        energy gate at the match site (``_match_min_rms``), not this transcript.
         """
         bias = getattr(self._stt, "bias_prompt", None)
         if not bias:
@@ -388,61 +386,24 @@ class RollingWhisperWake:
                 )
         except TypeError:
             return False  # provider has no unbiased pass -> legacy behaviour
-        except Exception as exc:  # noqa: BLE001 — fail-CLOSED, never ghost-fire
-            # We reached this confirm only because the biased transcript was
-            # EXACTLY the primed phrase — the ghost-activation signature. If the
-            # unbiased pass cannot run (timeout / busy / provider error) we
-            # cannot rule out an echo, so we must SUPPRESS, not accept. Failing
-            # open here was a live silence-activation ('unbiased pass failed ()
-            # — accepting the wake', 2026-07-02). The mandate is zero
-            # activations on silence; a dropped borderline wake is repeatable,
-            # a ghost is not. A genuine wake carrying surrounding speech never
-            # reaches this branch (the token-count guard above returns early).
-            log.info(
-                "echo-confirm: unbiased pass failed (%s) — suppressing "
-                "(fail-closed: cannot confirm an exact-phrase candidate)",
+        except Exception as exc:  # noqa: BLE001 — fail-open, never eat a wake
+            log.warning(
+                "echo-confirm: unbiased pass failed (%s) — accepting the wake",
                 exc,
             )
-            return True
+            return False
         unbiased = (transcript.text or "").strip()
-        if unbiased and self._unbiased_corroborates(match.group(0), unbiased):
+        if unbiased and STT_HALLUCINATION_RE.search(unbiased) is None:
             log.info(
-                "echo-confirm: unprimed ear corroborated the wake (heard %r) "
-                "— genuine",
-                unbiased[:60],
+                "echo-confirm: unprimed ear heard %r — genuine wake", unbiased[:60]
             )
             return False
         log.info(
             "echo-confirm: SUPPRESSED prompt echo — biased transcript was "
-            "exactly the phrase but the unprimed ear did not corroborate the "
-            "wake (heard %r)",
+            "exactly the phrase but the unprimed ear heard %r",
             unbiased[:60],
         )
         return True
-
-    def _unbiased_corroborates(self, matched_phrase: str, unbiased_text: str) -> bool:
-        """True if the unbiased transcript independently contains the wake core.
-
-        Builds (once, cached) a PREFIX-RELAXED matcher for the core of the
-        just-matched phrase and runs it over the unprimed transcript, reusing
-        the primary matcher's length-aware fuzzy + sound-fold logic. So a
-        garbled genuine wake ('Hey Fabel', 'niko') still corroborates, while an
-        unrelated silence/noise hallucination ('Ja.', 'Das ist ein Problem.')
-        does not. An empty core (nothing to check) does not suppress.
-        """
-        core = tuple(phrase_core_for_match(matched_phrase))
-        if not core:
-            return True  # nothing to corroborate against -> do not suppress
-        matcher = self._core_matchers.get(core)
-        if matcher is None:
-            from jarvis.speech.wake_phrase import compile_wake_matcher
-
-            # Match on the CORE alone -> compile_wake_matcher does not require a
-            # wake prefix, so the unprimed ear may drop the 'Hey' and still
-            # corroborate the name.
-            matcher = compile_wake_matcher(" ".join(core))
-            self._core_matchers[core] = matcher
-        return matcher.search(unbiased_text) is not None
 
     async def detect(
         self, chunks: AsyncIterator[AudioChunk]
