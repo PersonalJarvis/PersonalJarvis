@@ -133,9 +133,14 @@ async def test_poll_does_not_touch_a_cold_model_then_starts_when_warm() -> None:
 
 async def test_poll_owns_the_warmup_after_the_fallback_window() -> None:
     """If nobody warms the model (unusual wiring), the poll loop must warm it
-    itself after the fallback window instead of waiting forever."""
+    itself after the fallback window instead of waiting forever.
+
+    fallback_s=0.0 (already elapsed on the first poll) keeps this test
+    deterministic: the suite's sleep accelerator fast-forwards small sleeps,
+    so a wall-clock threshold like 0.1 s would never be reached via sleeps.
+    """
     stt = _WarmableSTT(warm=False)
-    wake = _wake(stt, fallback_s=0.1)
+    wake = _wake(stt, fallback_s=0.0)
     shutdown = await _drive_with_audio(wake)
     try:
         for _ in range(300):
