@@ -209,10 +209,19 @@ class TriggerConfig(BaseModel):
         alongside ``hotkey_call`` and there is no PTT (the pre-2026-05-29 wiring).
         Hangup is a separate value read from ``hotkey_hangup`` at the
         SpeechPipeline call sites.
+
+        A blank string means the user explicitly cleared that action (Settings
+        Clear button) — filtered out here so an unbound key never reaches
+        ``HotkeyTrigger`` as a bogus single-element tuple containing ``""``.
         """
         if self.push_to_talk:
-            return (self.hotkey_call,), (self.hotkey,)
-        return (self.hotkey, self.hotkey_call), ()
+            call, ptt = (self.hotkey_call,), (self.hotkey,)
+        else:
+            call, ptt = (self.hotkey, self.hotkey_call), ()
+        return (
+            tuple(h for h in call if h.strip()),
+            tuple(h for h in ptt if h.strip()),
+        )
     # When False (default), the local wake path is lightweight: openWakeWord
     # only (~3.5 MB ONNX, CPU-only, bundled in jarvis/assets/wakeword/), no
     # faster-whisper anywhere — no GPU, no ~1 GB model download. When True, the
