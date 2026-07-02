@@ -34,10 +34,10 @@ def _wire_window(
     *,
     win: WindowInfo | None,
     rect: tuple[int, int, int, int] | None,
-    shell: bool = False,
+    is_shell: bool = False,
 ) -> None:
     monkeypatch.setattr(ws, "foreground_window", lambda: win)
-    monkeypatch.setattr(ws, "is_shell_window", lambda w: shell)
+    monkeypatch.setattr(ws, "is_shell_window", lambda w: is_shell)
     monkeypatch.setattr(ws, "window_frame_rect", lambda w: rect)
 
 
@@ -65,7 +65,7 @@ def test_window_scope_crops_to_foreground_window(fake_monitor, monkeypatch):
 
 def test_shell_window_falls_back_to_monitor(fake_monitor, monkeypatch):
     _wire_window(monkeypatch, win=WindowInfo(title="Program Manager", handle=7),
-                 rect=(-3840, 0, 3840, 2160), shell=True)
+                 rect=(-3840, 0, 3840, 2160), is_shell=True)
     assert select_capture_target("foreground", scope="window") == fake_monitor
 
 
@@ -111,12 +111,12 @@ def _wire_normalize(
     monkeypatch: pytest.MonkeyPatch,
     *,
     win: WindowInfo | None,
-    shell: bool = False,
+    is_shell: bool = False,
     maximized: bool | None = False,
 ) -> list[WindowInfo]:
     calls: list[WindowInfo] = []
     monkeypatch.setattr(ws, "foreground_window", lambda: win)
-    monkeypatch.setattr(ws, "is_shell_window", lambda w: shell)
+    monkeypatch.setattr(ws, "is_shell_window", lambda w: is_shell)
     monkeypatch.setattr(ws, "window_is_maximized", lambda w: maximized)
     monkeypatch.setattr(
         ws, "maximize_window",
@@ -156,7 +156,7 @@ def test_normalize_never_touches_the_shell(monkeypatch):
     calls = _wire_normalize(
         monkeypatch,
         win=WindowInfo(title="Program Manager", handle=7),
-        shell=True,
+        is_shell=True,
         maximized=False,
     )
     ok, _ = ws.normalize_foreground_window()
