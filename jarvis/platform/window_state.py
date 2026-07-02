@@ -779,6 +779,219 @@ def _move_to_primary_windows(win: WindowInfo, primary: dict) -> tuple[bool, str]
     return True, f"moved '{(win.title or 'window')[:40]}' onto the primary monitor"
 
 
+# ----------------------------------------------------------------------
+# Window-scoped Computer-Use helpers (industry practice: the model sees the
+# TARGET WINDOW, not a whole monitor) — precise frame rect, shell detection,
+# and in-place maximize. All best-effort; never raise into a caller.
+# ----------------------------------------------------------------------
+
+#: Top-level window classes that are the Windows shell itself (desktop /
+#: taskbar). Capturing or "normalizing" these would act on the wallpaper.
+_SHELL_WINDOW_CLASSES = frozenset({
+    "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd",
+    "SHELLDLL_DefView",
+})
+
+
+def _window_class_windows(hwnd: int) -> str:
+    import ctypes  # noqa: PLC0415
+
+    buf = ctypes.create_unicode_buffer(256)
+    if not ctypes.windll.user32.GetClassNameW(hwnd, buf, 256):
+        return ""
+    return buf.value or ""
+
+
+def is_shell_window(win: WindowInfo) -> bool:
+    """True when ``win`` is the desktop/taskbar shell rather than an app window.
+
+    Clicking "into" these means clicking the wallpaper — a Computer-Use
+    capture or window-normalize must fall back to monitor scope instead.
+    """
+    try:
+        if detect_platform() == "win32" and win.handle:
+            return _window_class_windows(int(win.handle)) in _SHELL_WINDOW_CLASSES
+        return (win.title or "").strip() == "Program Manager"
+    except Exception:  # noqa: BLE001
+        log.debug("is_shell_window failed", exc_info=True)
+        return False
+
+
+def window_frame_rect(win: WindowInfo) -> tuple[int, int, int, int] | None:
+    """The window's VISIBLE frame ``(left, top, width, height)`` in
+    virtual-desktop coordinates, or ``None`` when unavailable.
+
+    Windows: ``DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)`` — the rect
+    the user actually sees. Plain ``GetWindowRect`` includes the invisible
+    DWM resize-shadow border (~7 px per side), which would leak wallpaper
+    into a window-scoped capture and skew every mapped click. Falls back to
+    ``GetWindowRect`` when DWM is unavailable.
+
+    NOTE: physical-pixel correctness on mixed-DPI desktops requires the
+    calling thread to hold a per-monitor DPI context — Computer-Use callers
+    invoke this inside :func:`jarvis.cu.geometry.input_space`.
+
+    macOS/Linux return ``None`` today — callers keep their monitor-scope
+    fallback (same graceful degrade as :func:`window_rect`).
+    """
+    try:
+        if detect_platform() != "win32" or not win.handle:
+            return None
+        import ctypes  # noqa: PLC0415
+        from ctypes import wintypes  # noqa: PLC0415
+
+        hwnd = int(win.handle)
+        rect = wintypes.RECT()
+        _DWMWA_EXTENDED_FRAME_BOUNDS = 9
+        try:
+            res = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+                wintypes.HWND(hwnd),
+                ctypes.wintypes.DWORD(_DWMWA_EXTENDED_FRAME_BOUNDS),
+                ctypes.byref(rect),
+                ctypes.sizeof(rect),
+            )
+        except (OSError, AttributeError):
+            res = 1  # dwmapi missing — fall through to GetWindowRect
+        if res != 0 and not ctypes.windll.user32.GetWindowRect(
+            hwnd, ctypes.byref(rect)
+        ):
+            return None
+        width = rect.right - rect.left
+        height = rect.bottom - rect.top
+        if width <= 0 or height <= 0:
+            return None
+        return (rect.left, rect.top, width, height)
+    except Exception:  # noqa: BLE001
+        log.debug("window_frame_rect failed", exc_info=True)
+        return None
+
+
+def window_is_maximized(win: WindowInfo) -> bool | None:
+    """Whether the window is maximized; ``None`` when it cannot be read
+    (non-Windows today — callers must treat that as "don't touch")."""
+    try:
+        if detect_platform() != "win32" or not win.handle:
+            return None
+        import ctypes  # noqa: PLC0415
+        from ctypes import wintypes  # noqa: PLC0415
+
+        class _WINDOWPLACEMENT(ctypes.Structure):
+            _fields_ = [
+                ("length", wintypes.UINT), ("flags", wintypes.UINT),
+                ("showCmd", wintypes.UINT), ("ptMinPosition", wintypes.POINT),
+                ("ptMaxPosition", wintypes.POINT),
+                ("rcNormalPosition", wintypes.RECT),
+            ]
+
+        _SW_SHOWMAXIMIZED = 3
+        wp = _WINDOWPLACEMENT()
+        wp.length = ctypes.sizeof(_WINDOWPLACEMENT)
+        if not ctypes.windll.user32.GetWindowPlacement(
+            int(win.handle), ctypes.byref(wp)
+        ):
+            return None
+        return wp.showCmd == _SW_SHOWMAXIMIZED
+    except Exception:  # noqa: BLE001
+        log.debug("window_is_maximized failed", exc_info=True)
+        return None
+
+
+def maximize_window(win: WindowInfo) -> tuple[bool, str]:
+    """Maximize ``win`` ON ITS CURRENT monitor (never a cross-monitor move —
+    moving across a DPI boundary is what shrinks/mangles windows).
+
+    Windows: only windows that advertise a maximize box are touched — a fixed
+    dialog ("Save as…") must never be blown up. macOS/Linux-X11 are
+    best-effort; Wayland/headless refuse honestly. Returns ``(ok, message)``,
+    never raises.
+    """
+    try:
+        plat = detect_platform()
+        if plat == "win32":
+            if not win.handle:
+                return False, "no window handle to maximize"
+            import ctypes  # noqa: PLC0415
+
+            user32 = ctypes.windll.user32
+            hwnd = int(win.handle)
+            _GWL_STYLE, _WS_MAXIMIZEBOX = -16, 0x00010000
+            _SW_MAXIMIZE = 3
+            user32.GetWindowLongW.restype = ctypes.c_long
+            style = int(user32.GetWindowLongW(hwnd, _GWL_STYLE))
+            if not style & _WS_MAXIMIZEBOX:
+                return False, "window has no maximize box (fixed-size dialog)"
+            user32.ShowWindow(hwnd, _SW_MAXIMIZE)
+            return True, f"maximized '{(win.title or 'window')[:40]}'"
+        if plat == "darwin":
+            if shutil.which("osascript") is None:
+                return False, "osascript not found"
+            # AXZoomed = the native green-button "fill the screen" zoom (NOT
+            # the separate macOS full-screen Space). Apps without the
+            # attribute error out -> honest failure, window untouched.
+            script = (
+                'tell application "System Events"\n'
+                "  set frontProc to first application process whose frontmost is true\n"
+                '  set value of attribute "AXZoomed" of front window of frontProc to true\n'
+                "end tell\n"
+            )
+            proc = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True, text=True, timeout=10,
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+            )
+            if proc.returncode != 0:
+                return False, "could not zoom the front window (Accessibility?)"
+            return True, "zoomed the front window to fill the screen"
+        if plat == "linux":
+            if is_wayland() or not display_present():
+                return False, "cannot maximize on Wayland/headless"
+            if shutil.which("wmctrl") is None:
+                return False, "wmctrl not installed"
+            res = subprocess.run(
+                ["wmctrl", "-r", (win.title or ""),
+                 "-b", "add,maximized_vert,maximized_horz"],
+                capture_output=True, timeout=5.0,
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+            )
+            if res.returncode != 0:
+                return False, "wmctrl could not maximize the window"
+            return True, f"maximized '{(win.title or 'window')[:40]}' (X11)"
+        return False, f"maximize not supported on {plat}"
+    except Exception as exc:  # noqa: BLE001
+        log.debug("maximize_window failed", exc_info=True)
+        return False, f"maximize failed: {exc}"
+
+
+def normalize_foreground_window() -> tuple[bool, str]:
+    """Bring the CURRENT foreground window into the state professional
+    computer-use setups act on: maximized on its own monitor.
+
+    Every reference harness normalizes its environment before pixel-grounded
+    clicking (OpenAI CUA: fixed viewport; Anthropic: one small display with
+    the app filling it; Microsoft UFO: per-application scope). On a live
+    desktop the equivalent is "the target window fills its monitor": a small
+    floating window on a 4K screen turns into stamp-sized UI in the model's
+    downscaled frame, and every grounding error lands on the wallpaper
+    (live incident 2026-07-02: three clicks in a row hit the desktop next
+    to a restored Chrome and stole its focus).
+
+    Shell windows and windows that cannot maximize are left untouched.
+    Synchronous — CU calls it via ``asyncio.to_thread``. Never raises.
+    """
+    try:
+        win = foreground_window()
+        if win is None:
+            return False, "no foreground window"
+        if is_shell_window(win):
+            return False, "foreground is the desktop shell"
+        if window_is_maximized(win) is not False:
+            return False, "already maximized (or unknown state)"
+        return maximize_window(win)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("normalize_foreground_window failed", exc_info=True)
+        return False, f"normalize failed: {exc}"
+
+
 def _move_to_primary_linux(win: WindowInfo, primary: dict) -> tuple[bool, str]:
     """Best-effort X11 move via ``wmctrl`` (un-maximize, then reposition by title).
     Unverified on a real desktop; returns honest status."""
