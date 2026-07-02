@@ -1,0 +1,82 @@
+{
+  "voice": "en-US-AndrewNeural",
+  "rate": "+6%",
+  "timing": {
+    "fps": 30,
+    "leadIn": 10,
+    "gap": 7,
+    "tail": 16,
+    "overlap": 14
+  },
+  "scenes": [
+    {
+      "id": "hook",
+      "extra": 8,
+      "lines": [
+        { "id": "h1", "kind": "narration", "text": "Hi. I'm the assistant you're about to install." },
+        { "id": "h2", "kind": "narration", "text": "I'm Personal Jarvis — open source, running on your own computer, and I work by voice." },
+        { "id": "h3", "kind": "narration", "text": "Give me two minutes. I'll show you how to set me up." }
+      ]
+    },
+    {
+      "id": "install",
+      "lines": [
+        { "id": "i1", "kind": "narration", "text": "Step one — install me." },
+        { "id": "i2", "kind": "narration", "text": "One command in your terminal. Windows, Mac, or Linux — I run on all of them." },
+        { "id": "i3", "kind": "narration", "text": "The first time I start, a setup wizard walks you through everything else." }
+      ]
+    },
+    {
+      "id": "keys",
+      "lines": [
+        { "id": "k1", "kind": "narration", "text": "Step two — bring your own key." },
+        { "id": "k2", "kind": "narration", "text": "I'm not locked to one AI company. Claude, OpenAI, Gemini, OpenRouter — any single key gets me thinking.", "tts": "I'm not locked to one AI company. Claude, Open A I, Gemini, Open Router — any single key gets me thinking." },
+        { "id": "k3", "kind": "narration", "text": "Paste it into the API-Keys view — and the dot turns green.", "tts": "Paste it into the A P I keys view — and the dot turns green." }
+      ]
+    },
+    {
+      "id": "wake",
+      "lines": [
+        { "id": "w1", "kind": "narration", "text": "Step three — pick my name." },
+        { "id": "w2", "kind": "narration", "text": "Choose any wake word you like. That's the word I listen for, all day." },
+        { "id": "w3", "kind": "command", "text": "Hey Jarvis." },
+        { "id": "w4", "kind": "narration", "text": "Yes? I'm listening. That's all it takes." }
+      ]
+    },
+    {
+      "id": "talk",
+      "lines": [
+        { "id": "t1", "kind": "narration", "text": "Step four — just talk to me." },
+        { "id": "t2", "kind": "command", "text": "What's on my calendar this afternoon?", "tts": "Hey Jarvis. What's on my calendar this afternoon?" },
+        { "id": "t3", "kind": "narration", "text": "Two meetings. Design review at three, and a call at five." },
+        { "id": "t4", "kind": "narration", "text": "Hands-free, spoken out loud — and I follow your language: English, German, Spanish, mid-conversation." }
+      ]
+    },
+    {
+      "id": "act",
+      "lines": [
+        { "id": "a1", "kind": "narration", "text": "Step five — let me use the computer." },
+        { "id": "a2", "kind": "command", "text": "Open the browser and check my pull requests.", "tts": "Hey Jarvis. Open the browser and check my pull requests." },
+        { "id": "a3", "kind": "narration", "text": "I move the cursor, click, type, and read the screen — while you watch every step." }
+      ]
+    },
+    {
+      "id": "delegate",
+      "lines": [
+        { "id": "d1", "kind": "narration", "text": "Step six — hand me the big jobs." },
+        { "id": "d2", "kind": "command", "text": "Research the EV market and build me a report.", "tts": "Hey Jarvis. Research the E V market and build me a report." },
+        { "id": "d3", "kind": "narration", "text": "I spawn a background agent for it — and a critic reviews the work before you ever see it." },
+        { "id": "d4", "kind": "narration", "text": "The finished report lands in your Outputs folder." }
+      ]
+    },
+    {
+      "id": "outro",
+      "extra": 14,
+      "lines": [
+        { "id": "o1", "kind": "narration", "text": "That's the whole setup." },
+        { "id": "o2", "kind": "narration", "text": "I'm free, I'm open source, and everything stays on your machine." },
+        { "id": "o3", "kind": "narration", "text": "The link's in the description. Say the word." }
+      ]
+    }
+  ]
+}

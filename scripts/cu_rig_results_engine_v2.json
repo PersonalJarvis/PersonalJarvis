@@ -2,17 +2,17 @@
   {
     "scenario": "engine-click-targets",
     "intended_clicks": 4,
-    "received_first_hits": 4,
-    "hit_rate": 1.0,
-    "mean_distance_px": 0.0,
-    "max_distance_px": 0.0,
+    "received_first_hits": 0,
+    "hit_rate": 0.0,
+    "mean_distance_px": null,
+    "max_distance_px": null,
     "duplicate_clicks": 0,
-    "step_latency_s_p50": 1.57,
-    "step_latency_s_max": 1.57,
+    "step_latency_s_p50": 2.605,
+    "step_latency_s_max": 2.605,
     "provoked_duplicates_executed": 0,
     "engine": "v2",
-    "mission_wall_s": 6.28,
-    "final_chunk": "[cu] done (verified: all rig targets were activated)\n[cu] mission profile: steps=5 total=6.3s act=1.2s observe=2.6s think=0.0s verify=2.0s"
+    "mission_wall_s": 10.42,
+    "final_chunk": "[cu] fail at step-4: no progress \u2014 the screen has not changed despite my actions.\n[cu] mission profile: steps=4 total=10.4s act=1.7s observe=5.0s think=0.0s ver"
   },
   {
     "scenario": "engine-type-once",
@@ -20,7 +20,7 @@
     "typed_expected": "example.com",
     "typed_received": "",
     "typed_exactly_once": false,
-    "mission_wall_s": 3.12
+    "mission_wall_s": 5.78
   },
   {
     "scenario": "engine-duplicate-type-provocation",
@@ -29,14 +29,14 @@
     "typed_received": "",
     "duplicates_executed": 0,
     "typed_exactly_once": false,
-    "mission_wall_s": 4.72
+    "mission_wall_s": 8.24
   },
   {
     "scenario": "engine-misaim-provocation",
     "engine": "v2",
-    "dead_space_clicks_executed": 3,
-    "blind_repeats_after_first": 2,
-    "mission_wall_s": 4.97,
-    "final_chunk": "[cu] done (verified: all rig targets were activated)\n[cu] mission profile: steps=4 total=5.0s act=0.9s observe=2.0s think=0.0s verify=1.6s"
+    "dead_space_clicks_executed": 0,
+    "blind_repeats_after_first": 0,
+    "mission_wall_s": 5.25,
+    "final_chunk": "[cu] done (verified: all rig targets were activated)\n[cu] mission profile: steps=4 total=5.2s act=0.4s observe=3.3s think=0.0s verify=0.7s"
   }
 ]

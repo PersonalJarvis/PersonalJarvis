@@ -236,6 +236,19 @@ def _capture_monitor(rig: RigWindow):
     raise RuntimeError("no display detected")
 
 
+def _virtual_rect():
+    """The whole virtual desktop as a rect-like object. The ENGINE scenarios
+    run with [computer_use].monitor='all' so a human focusing another window
+    mid-measurement cannot flip the captured monitor under the mission
+    (observed live: foreground-follow made runs land on the wrong screen)."""
+    from jarvis.cu.geometry import list_monitors, virtual_screen_bounds
+
+    left, top, width, height = virtual_screen_bounds(list_monitors())
+    if width <= 0:
+        raise RuntimeError("no display detected")
+    return SimpleNamespace(left=left, top=top, width=width, height=height)
+
+
 def _activate_rig(rig: RigWindow) -> None:
     """Bring the rig window to the FOREGROUND with a real activation click
     on dead canvas space — the engines' capture follows the foreground
@@ -465,7 +478,7 @@ class LegacyVisionShim:
         from jarvis.cu.capture import mss_grab, select_monitor
         from PIL import Image
 
-        monitor = await asyncio.to_thread(select_monitor, "foreground")
+        monitor = await asyncio.to_thread(select_monitor, "all")
         (w, h), rgb = await asyncio.to_thread(mss_grab, monitor.bbox)
         img = Image.frombytes("RGB", (w, h), rgb)
         blob_dir = REPO_ROOT / "data" / "flight_recorder" / "blobs"
@@ -504,7 +517,7 @@ async def _run_engine_mission(
     if engine == "v2":
         ctx: Any = SimpleNamespace(
             brain_manager=brain, tool_executor=executor, tools=tools,
-            bus=None, step_budget=30, monitor="foreground",
+            bus=None, step_budget=30, monitor="all",
             main_monitor="primary", settle_scale=1.0, strict_verify=True,
             image_max_dimension=1366, coordinate_space="auto",
         )
@@ -518,7 +531,7 @@ async def _run_engine_mission(
             tool_executor=executor,
             tools=tools,
             bus=None,
-            monitor="foreground",
+            monitor="all",
         )
         if engine == "stable":
             from jarvis.harness.screenshot_only_loop_stable import run_cu_loop
@@ -539,7 +552,7 @@ async def _run_engine_mission(
 
 def run_engine_mode(rig: RigWindow, engine: str) -> list[dict[str, Any]]:
     _activate_rig(rig)
-    monitor = _capture_monitor(rig)
+    monitor = _virtual_rect()
     results: list[dict[str, Any]] = []
 
     # -- scenario 1: click all four targets (accuracy + latency) ----------
