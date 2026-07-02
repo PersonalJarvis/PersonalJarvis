@@ -624,11 +624,34 @@ def step_jarvis_agent_harness_check() -> None:
     _println("provider choice under [brain].primary — no Anthropic lock.")
 
 
+class _TermsDeclined(Exception):
+    """Raised when the user declines the Terms of Use — setup cannot complete."""
+
+
 def step_finalize() -> None:
     _println()
     _println("=" * 60)
-    _println(" Step 8 / 8 — Finish setup")
+    _println(" Step 8 / 8 — Terms of use & finish")
     _println("=" * 60)
+    _println()
+
+    # Terms of Use must be accepted before first use. Deliberately short here —
+    # the authoritative full text is docs/legal/TERMS.md (and the desktop app's
+    # Terms view). Declining stops setup: Jarvis is not usable without it.
+    from jarvis.setup.onboarding_meta import CURRENT_TERMS_VERSION
+    from jarvis.setup.state import accept_terms, mark_onboarding_complete
+
+    _println(f"Terms of Use & Disclaimer (v{CURRENT_TERMS_VERSION}) — short version:")
+    _println('  • Free & open-source, provided "as is": no warranty, no liability.')
+    _println("  • You are responsible for your usage, your activation word (trademarks),")
+    _println("    your API keys, and lawful microphone use.")
+    _println("  • Runs locally — the authors run no server and receive none of your data.")
+    _println("  Full text: docs/legal/TERMS.md")
+    _println()
+    if not _ask_yesno("Do you accept these terms?", default=False):
+        raise _TermsDeclined()
+    accept_terms(CURRENT_TERMS_VERSION)
+    _println()
 
     # Default Yes per the maintainer mandate ("start at boot unless explicitly
     # disabled"). Cross-platform via the autostart port (Windows .lnk / macOS
@@ -637,13 +660,16 @@ def step_finalize() -> None:
     autostart = _ask_yesno("Start Jarvis automatically at login?", default=True)
     _apply_autostart_choice(autostart)
 
+    # Record terms acceptance + onboarding completion so the desktop app's
+    # onboarding gate treats setup as done and does NOT re-run its own
+    # onboarding (the CLI wizard and the app share one setup_state.json).
+    mark_onboarding_complete()
     cfg.mark_setup_complete()
     _println()
     _println("✓ Setup complete. Enjoy Jarvis!")
     _println()
-    _println("Next steps:")
-    _println("  1. Implement Phase 1 of the plan (voice I/O with hotkey).")
-    _println("  2. Run `python -m jarvis` again → the tray icon appears.")
+    _println("Next step:")
+    _println("  Run `python -m jarvis` (or run.bat on Windows) → the tray icon appears.")
 
 
 def _apply_autostart_choice(enabled: bool) -> None:
@@ -709,6 +735,12 @@ def run() -> int:
         _println("environment variables or the .env file at runtime.")
         _println("See .env.example for the full list of recognised variable names.")
         _println()
+        from jarvis.setup.onboarding_meta import CURRENT_TERMS_VERSION
+
+        _println(
+            f"By running the non-interactive installer you accept the Terms of Use "
+            f"(v{CURRENT_TERMS_VERSION}, docs/legal/TERMS.md)."
+        )
         cfg.mark_setup_complete()
         _println("✓ Setup marker written.  Starting Jarvis...")
         return 0
@@ -726,6 +758,10 @@ def run() -> int:
         step_jarvis_agent_harness_check()
         step_finalize()
         return 0
+    except _TermsDeclined:
+        _println("\nTerms not accepted — setup stopped. You must accept the terms")
+        _println("to use Jarvis. Re-run `jarvis --wizard` when you're ready.")
+        return 3
     except KeyboardInterrupt:
         _println("\n\n⚠  Setup aborted. Re-run: `python -m jarvis`")
         return 130
