@@ -235,20 +235,33 @@ class JarvisBarOverlay:
 
         from PIL import ImageTk  # noqa: F401 — fail fast here if Pillow missing
 
-        # Per-monitor DPI awareness MUST be set before THIS surface's Tk root is
-        # created — exactly like the orb (ui/orb/overlay.py). Without it, on a
-        # scaled display (e.g. 150%) the window's geometry coordinate space and
-        # the pointer-event space (``event.x_root``) drift apart, so dragging the
-        # bar makes it run AWAY from the cursor toward the bottom-right and become
-        # uncontrollable (the HiDPI "drag-teleport"). The bar boots in its own
-        # thread, often before any other code has set process DPI awareness, so
-        # it must assert it here itself. ``ensure_dpi_awareness`` is idempotent
-        # and a no-op off Windows, so this is safe even when the process is
-        # already aware.
+        # DPI strategy (two steps, order matters — both no-ops off Windows):
+        #
+        # 1. ``ensure_dpi_awareness()`` — the PROCESS must be DPI-aware before
+        #    the per-window pin below can hold. Also fixes the HiDPI
+        #    "drag-teleport" (geometry vs pointer-event space drift) when the
+        #    bar wins the boot race.
+        # 2. ``pin_thread_dpi_unaware()`` — pin THIS thread (the bar's
+        #    dedicated Tk mainloop thread) to the UNAWARE context so the Tk
+        #    root created below carries it per-window: Windows scales the bar
+        #    to the monitor's factor (its familiar size on a 150 % display)
+        #    and keeps its coordinate space virtualised/consistent. Without
+        #    the pin the window follows the PROCESS context, and pywebview's
+        #    ``webview.start()`` flips that at runtime
+        #    (``user32.SetProcessDPIAware()``) — a boot race that shrank the
+        #    bar to ~2/3 raw pixels, jumped its position, and desynced
+        #    dragging (recurring bug, GIF forensic 2026-07-02). With the pin
+        #    the bar looks identical to its historical (unaware-built) self
+        #    and is immune to any later process-level flip.
         try:
-            from jarvis.core.win32_dpi import ensure_dpi_awareness
+            from jarvis.core.win32_dpi import (
+                ensure_dpi_awareness,
+                pin_thread_dpi_unaware,
+            )
 
             ensure_dpi_awareness()
+            if pin_thread_dpi_unaware():
+                log.debug("jarvisbar Tk thread pinned DPI-UNAWARE (per-window)")
         except Exception:  # noqa: BLE001 — never block the bar on a DPI hiccup
             log.debug("jarvisbar DPI-awareness setup skipped", exc_info=True)
 
