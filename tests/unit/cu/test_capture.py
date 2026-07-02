@@ -154,6 +154,33 @@ def test_blob_written_when_dir_given(tmp_path):
     assert (tmp_path / f"{frame.sha256}.jpg").exists()
 
 
+def test_perceptual_hash_ignores_caret_noise_but_sees_real_change():
+    from jarvis.cu.capture import perceptual_hash
+
+    base = _solid((192, 108), (30, 30, 30))
+    # A tiny caret-sized change (2x12 slightly-brighter block).
+    pixels = bytearray(base[1])
+    for row in range(12):
+        for col in range(2):
+            idx = ((20 + row) * 192 + (50 + col)) * 3
+            pixels[idx:idx + 3] = bytes((36, 36, 36))
+    caret = ((192, 108), bytes(pixels))
+    changed = _solid((192, 108), (200, 200, 200))
+    assert perceptual_hash(base) == perceptual_hash(base)
+    assert perceptual_hash(base) == perceptual_hash(caret)
+    assert perceptual_hash(base) != perceptual_hash(changed)
+
+
+def test_frame_carries_both_hashes():
+    frame = capture_stable_frame(
+        _monitor(),
+        grab=lambda bbox: _solid((192, 108), (1, 2, 3)),
+        sleep=lambda s: None,
+    )
+    assert len(frame.sha256) == 64 and len(frame.phash) == 64
+    assert frame.sha256 != frame.phash
+
+
 def test_grab_region_swallows_failures():
     def broken(bbox):
         raise OSError("BitBlt failed")

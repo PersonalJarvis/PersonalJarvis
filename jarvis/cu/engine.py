@@ -485,13 +485,13 @@ async def run_cu_loop(
         # circling — judge once (the goal may in fact be met), then stop.
         if (
             prev_sha is not None
-            and frame.sha256 == prev_sha
+            and frame.phash == prev_sha
             and not last_step_had_success
         ):
             fruitless_steps += 1
         else:
             fruitless_steps = 0
-        prev_sha = frame.sha256
+        prev_sha = frame.phash
         last_step_had_success = False
         if fruitless_steps >= _STUCK_FRAMES:
             done, proof = await _judge_done(
@@ -692,7 +692,7 @@ async def run_cu_loop(
                 action = {**action, "x": sx, "y": sy}
 
             # -- idempotency ledger -----------------------------------------
-            if ledger.is_duplicate(action, frame.sha256, resolved_xy=resolved_xy):
+            if ledger.is_duplicate(action, frame.phash, resolved_xy=resolved_xy):
                 guard_hits += 1
                 history.append(
                     f"step {step_idx}: {_summarize_action(action)} REFUSED — "
@@ -729,7 +729,7 @@ async def run_cu_loop(
                 profiler.add("act", t0, step_idx)
                 t0 = time.monotonic()
                 if ok:
-                    ledger.record(action, frame.sha256, resolved_xy=resolved_xy)
+                    ledger.record(action, frame.phash, resolved_xy=resolved_xy)
                     await asyncio.sleep(_EFFECT_SETTLE_S * settle_scale)
                     post = await asyncio.to_thread(grab_region, monitor.bbox)
                     rect = monitor.bbox
@@ -767,7 +767,7 @@ async def run_cu_loop(
                 profiler.add("act", t0, step_idx)
                 t0 = time.monotonic()
                 if ok:
-                    ledger.record(action, frame.sha256)
+                    ledger.record(action, frame.phash)
                     if strict_verify:
                         landed = await verify_typed_text(action["text"])
                         if landed is False:
@@ -790,7 +790,7 @@ async def run_cu_loop(
                     ctx, "hotkey", {"keys": action["keys"]}, trace_id,
                 )
                 if ok:
-                    ledger.record(action, frame.sha256)
+                    ledger.record(action, frame.phash)
                 profiler.add("act", t0, step_idx)
 
             elif kind == "scroll":
@@ -802,7 +802,7 @@ async def run_cu_loop(
                     args["x"], args["y"] = int(action["x"]), int(action["y"])
                 ok, detail = await _dispatch_tool(ctx, "scroll", args, trace_id)
                 if ok:
-                    ledger.record(action, frame.sha256)
+                    ledger.record(action, frame.phash)
                 profiler.add("act", t0, step_idx)
 
             elif kind == "drag":
@@ -821,7 +821,7 @@ async def run_cu_loop(
                     trace_id,
                 )
                 if ok:
-                    ledger.record(action, frame.sha256)
+                    ledger.record(action, frame.phash)
                 profiler.add("act", t0, step_idx)
 
             elif kind == "open_app":
@@ -829,7 +829,7 @@ async def run_cu_loop(
                     ctx, "open_app", {"app_name": action["name"]}, trace_id,
                 )
                 if ok:
-                    ledger.record(action, frame.sha256)
+                    ledger.record(action, frame.phash)
                     # Let the app paint its first window; the next perception's
                     # stability probe covers the rest.
                     await asyncio.sleep(1.0 * settle_scale)
@@ -841,7 +841,7 @@ async def run_cu_loop(
                     trace_id,
                 )
                 if ok:
-                    ledger.record(action, frame.sha256)
+                    ledger.record(action, frame.phash)
                 profiler.add("act", t0, step_idx)
 
             elif kind == "click_element":
@@ -850,7 +850,7 @@ async def run_cu_loop(
                     ctx, "click_element", {"name": action["name"]}, trace_id,
                 )
                 if ok:
-                    ledger.record(action, frame.sha256)
+                    ledger.record(action, frame.phash)
                 profiler.add("act", t0, step_idx)
 
             elif kind == "wait":

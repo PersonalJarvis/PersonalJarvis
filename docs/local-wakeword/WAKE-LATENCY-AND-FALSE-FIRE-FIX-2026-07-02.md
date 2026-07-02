@@ -90,11 +90,36 @@ after-run below.
 Torch-coexistence probe (3 torch-OpenMP burner threads in-process, 80 rounds
 t2 / 40 rounds t1): **0 hangs both**; t2 median 1718 ms vs t1 2960 ms.
 
-### After fixes
+### After all fixes (production build: base/cpu/int8/threads=2/bias/de +
+strict matcher + cross-snapshot join)
 
-(pending)
+| metric | baseline | after |
+|---|---|---|
+| stream first-try hits | 3/13 (+1 wedge-recover) | 7–8/13, **0 wedge-recovers** (2 runs) |
+| stream word-end→trigger median / p95 | 2694 / 3910 ms | 1138–1389 / 2399–3047 ms |
+| warm transcribe median (same-day load) | 1356–2003 ms | 706–949 ms |
+| cold first transcribe | 2807–4463 ms | 1701–2446 ms |
+| false accepts: bare core word | **71.7 %** | **6.7 %** |
+| false accepts: ambient / quiet / silence | 1.7 / 0 / 0 % | 0 / 0 / 0 % |
+| recall orig / −30 dBFS | 100 % / 69–87.5 % | 100 % / 87.5 % |
+| stress (8 CPU burners): model teardowns | cascade (3 recovers/2 min live) | **0** across four 8 s timeouts |
+
+Remaining honest gaps: (a) stream misses concentrate at rms ≈ 0.003 windows —
+whisper-quiet speech at the silence-gate boundary, outside "normal speaking
+volume"; run-to-run stream variance under fluctuating machine load is ±1–2
+hits. (b) residual 6.7 % bare-core false accepts happen when the bias prompt
+hallucinates the prefix onto a bare-name window; eliminating the bias costs
+far more recall than it saves (matrix). (c) The KWS endgame (trained neural
+model per phrase) remains the path to sub-200 ms wakes.
 
 ## Cross-platform
 
-(pending — Windows measured; Linux via WSL Ubuntu; macOS by code-path
-neutrality: the touched files are pure Python + numpy + faster-whisper CPU.)
+- **Windows**: all numbers above; 1106 speech/stt/audio unit tests green.
+- **Linux (WSL Ubuntu, py3.12, faster-whisper 1.2.1)**: 64 wake unit tests
+  green; window bench (reduced set): recall 100 % orig / 75 % @−30 (n=4,
+  1 gated), false accepts bare 8.3 % (1/12), ambient/quiet/silence 0 %, warm
+  median 1730 ms (CPU shared with the loaded Windows host — behaviour
+  identical, absolute times not comparable).
+- **macOS**: no hardware available. The touched files are pure Python +
+  numpy + faster-whisper CPU wheels with no OS-specific branch; verified by
+  the same tests running unmodified on both other OSes.

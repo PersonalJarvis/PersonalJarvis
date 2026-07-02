@@ -73,16 +73,65 @@ def mss_grab(bbox: dict[str, int]) -> tuple[tuple[int, int], bytes]:
 
 @dataclass(frozen=True)
 class Frame:
-    """One perception frame: the image the model sees + its mapper."""
+    """One perception frame: the image the model sees + its mapper.
+
+    ``sha256`` identifies the exact encoded image (blob dedup, events).
+    ``thumb`` is the PERCEPTUAL identity (see :func:`screen_thumb`): the
+    key the idempotency ledger and the no-progress guard compare on via
+    :func:`thumbs_similar`. An exact hash flips on every caret blink, which
+    let duplicate actions through as "the screen changed" (live rig run
+    2026-07-02).
+    """
 
     jpeg: bytes
     image_width: int
     image_height: int
     mapper: CoordinateMapper
     sha256: str
+    thumb: bytes
     captured_at_ns: int
     stable: bool
     blob_path: str | None = None
+
+
+def screen_thumb(raw: tuple[tuple[int, int], bytes]) -> bytes:
+    """Grayscale 96x54 thumbnail bytes — the frame's perceptual identity.
+
+    Compared with :func:`thumbs_similar` (mean-abs-diff threshold), NOT by
+    equality/hash: any hash quantization has boundary artifacts where a
+    one-gray-level caret blink flips the identity and lets a duplicate
+    action through.
+    """
+    from PIL import Image  # noqa: PLC0415
+
+    return Image.frombytes("RGB", raw[0], raw[1]).convert("L").resize(_THUMB_SIZE).tobytes()
+
+
+def thumbs_similar(
+    a: bytes | str, b: bytes | str, *, threshold: float = STABILITY_DIFF_THRESHOLD,
+) -> bool:
+    """Are two screen identities visually the same screen?
+
+    Fast-path equality; a real thumbnail pair is compared by mean absolute
+    difference (caret blinks / antialiasing noise stay below the threshold).
+    Opaque non-thumbnail keys (tests, foreign callers) fall back to equality.
+    """
+    if a == b:
+        return True
+    expected = _THUMB_SIZE[0] * _THUMB_SIZE[1]
+    if (
+        not isinstance(a, (bytes, bytearray))
+        or not isinstance(b, (bytes, bytearray))
+        or len(a) != expected
+        or len(b) != expected
+    ):
+        return False
+    from PIL import Image, ImageChops, ImageStat  # noqa: PLC0415
+
+    img_a = Image.frombytes("L", _THUMB_SIZE, bytes(a))
+    img_b = Image.frombytes("L", _THUMB_SIZE, bytes(b))
+    mean = ImageStat.Stat(ImageChops.difference(img_a, img_b)).mean[0]
+    return mean <= threshold
 
 
 def frames_differ(
@@ -204,6 +253,7 @@ def capture_stable_frame(
     jpeg, iw, ih = _downscale_and_encode(
         current, max_dimension=max_dimension, jpeg_quality=jpeg_quality,
     )
+    thumb = screen_thumb(current)
     mapper = CoordinateMapper(
         capture_left=monitor.left,
         capture_top=monitor.top,
@@ -232,6 +282,7 @@ def capture_stable_frame(
         image_height=ih,
         mapper=mapper,
         sha256=sha,
+        thumb=thumb,
         captured_at_ns=time.time_ns(),
         stable=stable,
         blob_path=blob_path,

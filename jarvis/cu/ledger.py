@@ -7,13 +7,15 @@ surprising ways. CU v2 replaces them with a single rule:
     An action that already executed against a visually identical screen is
     refused deterministically.
 
-"Visually identical" is keyed by the frame's content hash — if the screen
-changed since the first execution, the same action is legitimate again
-(navigating a list clicks different rows on *different* frames; retyping a
-search on a *changed* page is fine). Clicking twice on the same unchanged
-frame, typing the same URL again into an unchanged address bar, or launching
-the same app while the screen never moved is exactly the double-action bug
-class and is blocked regardless of what the model asks for.
+"Visually identical" is keyed by the frame's PERCEPTUAL identity (the
+grayscale thumbnail compared via ``jarvis.cu.capture.thumbs_similar``, noise-
+tolerant) — if the screen genuinely changed since the first execution, the
+same action is legitimate again (navigating a list clicks different rows on
+*different* frames; retyping a search on a *changed* page is fine). Clicking
+twice on the same unchanged frame, typing the same URL again into an
+unchanged address bar, or launching the same app while the screen never
+moved is exactly the double-action bug class and is blocked regardless of
+what the model asks for.
 
 ``wait`` is exempt (waiting twice is harmless and sometimes right).
 """
@@ -22,6 +24,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Any
+
+from jarvis.cu.capture import thumbs_similar
 
 #: Two click points within this many screen units count as the same target
 #: (model re-aim jitter), mirroring the legacy refine tolerance.
