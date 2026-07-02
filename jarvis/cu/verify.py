@@ -79,21 +79,64 @@ def typed_text_landed(nodes: tuple, typed: str) -> bool | None:
     """Tri-state type read-back (conservative):
 
     ``True``  — an editable field's value contains the typed text.
-    ``False`` — editable fields ARE readable and none holds it (confirmed miss).
-    ``None``  — nothing editable readable / text too short (cannot tell).
+    ``False`` — a FOCUSED editable field is readable and no editable holds
+                the text (confirmed miss: we positively looked at the surface
+                that would have received the input).
+    ``None``  — nothing editable readable, text too short, or editables are
+                readable but NONE holds focus — then the enumeration likely
+                covered the WRONG surface (a start-menu/UWP flyout outside
+                the foreground tree, live incident 2026-07-02 18:00) and a
+                confident ``False`` would stall the mission on a lie.
     """
     t = normalize_for_value_match(typed)
     if len(t) < TYPE_VERIFY_MIN_CHARS:
         return None
-    editable_seen = False
+    focused_editable_seen = False
     for node in nodes or ():
         if getattr(node, "role", "") not in EDITABLE_UIA_ROLES:
             continue
-        editable_seen = True
+        if getattr(node, "focused", False):
+            focused_editable_seen = True
         val = normalize_for_value_match(getattr(node, "value", "") or "")
         if t in val:
             return True
-    return False if editable_seen else None
+    return False if focused_editable_seen else None
+
+
+def click_point_in_focused_element(
+    nodes: tuple, x: int, y: int,
+) -> bool | None:
+    """Did the click point land inside the element HOLDING keyboard focus?
+
+    The rescue evidence for the "click produced no visible change" false
+    miss: clicking a control that is ALREADY in the desired state (e.g. an
+    address bar that is focused by default on a new tab) changes zero
+    pixels, so the pixel effect-check alone fails the click, truncates the
+    batched type behind it, and stalls the mission right at its goal (live
+    incident 2026-07-02 19:06, Chrome guest new-tab). Focus + containment
+    from the accessibility tree proves the click hit its target even though
+    nothing visibly changed. Works on all three platforms (UIA / AX /
+    AT-SPI bounds are screen input units).
+
+    ``True``  — a focused element's bounds contain the point.
+    ``False`` — nodes are readable, no focused element contains the point.
+    ``None``  — no nodes readable (cannot tell).
+    """
+    if not nodes:
+        return None
+    for node in nodes:
+        if not getattr(node, "focused", False):
+            continue
+        bounds = getattr(node, "bounds", None)
+        if not bounds:
+            continue
+        try:
+            bx, by, bw, bh = (int(v) for v in bounds)
+        except (TypeError, ValueError):
+            continue
+        if bw > 0 and bh > 0 and bx <= x < bx + bw and by <= y < by + bh:
+            return True
+    return False
 
 
 def element_is_focused(nodes: tuple, name: str) -> bool | None:
@@ -308,6 +351,23 @@ async def verify_click_focus(name: str) -> bool | None:
     except Exception:  # noqa: BLE001
         return None
     return element_is_focused(tuple(getattr(obs, "nodes", ()) or ()), name)
+
+
+async def verify_click_focus_point(x: int, y: int) -> bool | None:
+    """Fresh tree → :func:`click_point_in_focused_element`. Error → ``None``.
+
+    Runs ONLY on the click-miss path (no happy-path latency): the engine
+    consults it before declaring a zero-pixel-change click a miss.
+    """
+    try:
+        obs = await asyncio.wait_for(
+            _get_ui_tree_source().observe(), timeout=UIA_TIMEOUT_S,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    return click_point_in_focused_element(
+        tuple(getattr(obs, "nodes", ()) or ()), int(x), int(y),
+    )
 
 
 # ---------------------------------------------------------------------------

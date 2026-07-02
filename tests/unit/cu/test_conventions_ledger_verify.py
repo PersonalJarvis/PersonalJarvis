@@ -9,6 +9,7 @@ import pytest
 from jarvis.cu import conventions as conv
 from jarvis.cu.ledger import ActionLedger, action_key
 from jarvis.cu.verify import (
+    click_point_in_focused_element,
     clickable_labels,
     crop_raw,
     element_is_focused,
@@ -17,7 +18,6 @@ from jarvis.cu.verify import (
     regions_equal,
     typed_text_landed,
 )
-
 
 # ---------------------------------------------------------------------------
 # Coordinate convention resolution
@@ -177,17 +177,41 @@ def _node(**kw):
 
 
 def test_typed_text_landed_tristate():
+    # A value match is positive evidence regardless of focus.
     nodes = (_node(value="https://example.com"),)
     assert typed_text_landed(nodes, "example.com") is True
-    assert typed_text_landed(nodes, "other.org") is False
     assert typed_text_landed((), "example.com") is None       # nothing editable
     assert typed_text_landed(nodes, "ab") is None              # too short
+
+
+def test_typed_text_landed_false_needs_focused_editable_evidence():
+    # A confirmed MISS requires having looked at the RECEIVING surface: a
+    # focused editable that does not hold the text. Editables without focus
+    # mean the enumeration covered the wrong surface (start-menu flyout,
+    # live incident 2026-07-02 18:00) — that is "cannot tell", never False.
+    unfocused = (_node(value="something else"),)
+    assert typed_text_landed(unfocused, "spotify") is None
+    focused = (_node(value="something else", focused=True),)
+    assert typed_text_landed(focused, "spotify") is False
 
 
 def test_element_is_focused_positive_only():
     nodes = (_node(role="Button", name="Save", focused=True),)
     assert element_is_focused(nodes, "Save") is True
     assert element_is_focused(nodes, "Cancel") is None         # never False
+
+
+def test_click_point_in_focused_element_tristate():
+    focused_bar = _node(role="Edit", name="Address",
+                        focused=True, bounds=(100, 40, 800, 36))
+    other = _node(role="Button", name="Go", bounds=(950, 40, 60, 36))
+    nodes = (other, focused_bar)
+    assert click_point_in_focused_element(nodes, 400, 58) is True
+    assert click_point_in_focused_element(nodes, 970, 58) is False
+    assert click_point_in_focused_element((), 400, 58) is None
+    # Broken bounds never crash and never count as a hit.
+    broken = (_node(focused=True, bounds=None),)
+    assert click_point_in_focused_element(broken, 400, 58) is False
 
 
 def test_field_values_hint_lists_filled_fields_only():

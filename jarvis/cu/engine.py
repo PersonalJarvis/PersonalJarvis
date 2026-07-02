@@ -66,6 +66,7 @@ from jarvis.cu.verify import (
     foreground_ui_snapshot,
     regions_equal,
     snap_point_to_element,
+    verify_click_focus_point,
     verify_typed_text,
 )
 
@@ -937,6 +938,21 @@ async def run_cu_loop(
 
                         if pre is not None and post is not None and frames_differ(pre, post):
                             detail = (detail + " — screen reacted elsewhere").strip()
+                        elif await verify_click_focus_point(*resolved_xy) is True:
+                            # Zero pixel change because the target was
+                            # ALREADY in the desired state: the click point
+                            # sits inside the control that holds keyboard
+                            # focus (a default-focused address bar changes
+                            # nothing when clicked). Failing this click
+                            # beheads the batched type behind it and stalls
+                            # the mission AT its goal (live incident
+                            # 2026-07-02 19:06).
+                            detail = (
+                                detail
+                                + " — no visible change, but the click "
+                                "landed in the focused control (already in "
+                                "the desired state)"
+                            ).strip(" —")
                         else:
                             ok = False
                             detail = (
@@ -1015,6 +1031,14 @@ async def run_cu_loop(
                     ledger.record(action, frame.thumb)
                     if strict_verify:
                         landed = await verify_typed_text(action["text"])
+                        if landed is False:
+                            # One settle + re-check before failing: async UI
+                            # surfaces (UWP flyouts, start menu) commit the
+                            # typed value AFTER the injection returns, so an
+                            # immediate read-back sees stale state (live
+                            # incident 2026-07-02 18:00).
+                            await asyncio.sleep(0.3 * settle_scale)
+                            landed = await verify_typed_text(action["text"])
                         if landed is False:
                             ok = False
                             detail = (
