@@ -86,10 +86,11 @@ def patched(monkeypatch, tmp_path):
     """Patch every OS touchpoint of the engine to deterministic fakes."""
     state = SimpleNamespace(
         screen_shade=30,
-        typed_lands=True,
+        typed_lands=True,          # bool, or a list popped per verify call
         region_changes_after_click=True,
         clicks_seen=0,
         clickables=[],
+        focus_hit=None,            # verify_click_focus_point verdict
     )
 
     def fake_select_capture_target(
@@ -118,7 +119,12 @@ def patched(monkeypatch, tmp_path):
         return [], "", None, state.clickables
 
     async def fake_verify_typed(text):
+        if isinstance(state.typed_lands, list):
+            return state.typed_lands.pop(0) if state.typed_lands else None
         return state.typed_lands
+
+    async def fake_verify_click_focus_point(x, y):
+        return state.focus_hit
 
     monkeypatch.setattr(
         engine_mod, "select_capture_target", fake_select_capture_target,
@@ -127,6 +133,9 @@ def patched(monkeypatch, tmp_path):
     monkeypatch.setattr(engine_mod, "grab_region", fake_grab_region)
     monkeypatch.setattr(engine_mod, "foreground_ui_snapshot", fake_snapshot)
     monkeypatch.setattr(engine_mod, "verify_typed_text", fake_verify_typed)
+    monkeypatch.setattr(
+        engine_mod, "verify_click_focus_point", fake_verify_click_focus_point,
+    )
     monkeypatch.setattr(engine_mod, "_foreground_title", lambda: "Test Window")
     # The engine normalizes the target window via jarvis.platform.window_state;
     # tests must never maximize a real window on the dev machine.
@@ -227,6 +236,46 @@ async def test_second_pointer_action_in_one_batch_is_skipped(patched):
     clicks = [c for c in executor.calls if c[0] == "click"]
     assert len(clicks) == 1, "a second stale-frame pointer action must not execute"
     assert any("only one pointer action" in user for (_, user) in brain.calls)
+
+
+async def test_click_on_already_focused_target_passes_and_type_proceeds(patched):
+    # Live incident 2026-07-02 19:06 (Chrome guest new-tab): the address bar
+    # is focused BY DEFAULT, so clicking it changes zero pixels. The pixel
+    # effect-check alone judged that a miss, truncated the batched type, and
+    # the mission stalled AT its goal. Focus evidence must rescue the click.
+    patched.region_changes_after_click = False
+    patched.focus_hit = True     # the click point sits in the focused control
+    brain = FakeBrain([
+        '[{"action":"click","x":300,"y":88,"target":"address bar"},'
+        '{"action":"type","text":"weather berlin"}]',
+        '{"action": "done", "reason": "typed the search"}',
+        '{"done": true, "proof": "the address bar shows weather berlin"}',
+    ])
+    executor = FakeExecutor()
+    chunks = await _run(_ctx(brain, executor))
+    assert _final(chunks).exit_code == 0
+    tool_names = [name for (name, _) in executor.calls]
+    assert "click" in tool_names
+    assert "type_text" in tool_names, (
+        "a click on an already-focused target must not behead the batch"
+    )
+    assert not any("NO visible change" in user for (_, user) in brain.calls)
+
+
+async def test_type_false_verdict_is_rechecked_once_before_failing(patched):
+    # Async UI surfaces (UWP flyouts, start menu) commit the typed value
+    # LATER than the injection returns — the first read-back sees stale
+    # state (live incident 2026-07-02 18:00). One re-check absorbs that.
+    patched.typed_lands = [False, True]
+    brain = FakeBrain([
+        '{"action":"type","text":"spotify"}',
+        '{"action": "done", "reason": "typed"}',
+        '{"done": true, "proof": "the search shows spotify"}',
+    ])
+    executor = FakeExecutor()
+    chunks = await _run(_ctx(brain, executor))
+    assert _final(chunks).exit_code == 0
+    assert not any("did NOT land" in user for (_, user) in brain.calls)
 
 
 async def test_missed_click_no_visible_change_is_reported_as_failure(patched):
