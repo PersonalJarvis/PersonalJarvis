@@ -82,7 +82,7 @@ custom_onnx engine had hidden.
 
 ## Next bottlenecks (iteration 3+)
 
-1. ~35-40 s elapse between process start and "Pipeline bereit" (08:58:5x ->
+1. ~35-40 s elapse between process start and "Pipeline bereit" (quoted log marker) (08:58:5x -> <!-- i18n-allow: quoted log line -->
    08:59:33) — profile the bootstrap chain BEFORE the speech pipeline
    (imports, registries, TTS init, uvicorn bootstrap...). This is now the
    dominant TTU block.
