@@ -118,8 +118,8 @@ def test_list_providers_returns_full_catalog(server_with_brain: WebServer, secre
         assert "codex" in ids
         assert "openclaw" not in ids
         assert "gemini-flash-tts" in ids, "Gemini Flash TTS must be in the catalog"
-        assert "faster-whisper" in ids, "Lokales STT als 'none'-Auth-Provider"
-        assert "elevenlabs" not in ids, "ElevenLabs ist Dead-Code"
+        assert "faster-whisper" in ids, "local STT as a 'none'-auth provider"
+        assert "elevenlabs" in ids, "ElevenLabs is a selectable premium TTS provider"
         assert "ollama-local" not in ids, "Ollama was removed on 2026-04-21"
 
 

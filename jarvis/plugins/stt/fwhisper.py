@@ -213,13 +213,31 @@ def prefetch_model(
             return False
         _PREFETCH_EVENTS[key] = threading.Event()
     model: Any = None
+    primed = False
     try:
         model = _new_whisper_model(key[0], device, compute_type, int(cpu_threads))
     except Exception as exc:  # noqa: BLE001 — a prefetch must never break boot
         log.debug("Wake-model prefetch failed (lazy load will cover it): %s", exc)
+    if model is not None:
+        # Prime in the prefetch thread too (TTU iteration 11): the FIRST real
+        # transcribe pays kernel/algo warm-up costs, and paying them here —
+        # still overlapped with the import mountain — lets ``warm_up`` adopt a
+        # READY engine and skip its own priming inference on the critical
+        # path. Best-effort: a priming failure still hands the loaded model
+        # over (``warm_up`` will prime it itself). Nothing else can touch the
+        # engine yet (it is published only after this), so this never races
+        # the provider's inference lock (AP-24).
+        try:
+            rng = np.random.default_rng(0)
+            warm_audio = rng.standard_normal(16_000).astype(np.float32) * 0.001
+            segments_iter, _info = model.transcribe(warm_audio, beam_size=1)
+            list(segments_iter)  # materialise = run the actual decode
+            primed = True
+        except Exception as exc:  # noqa: BLE001 — priming is best-effort
+            log.debug("Wake-model prefetch priming skipped: %s", exc)
     with _PREFETCH_LOCK:
         if model is not None:
-            _PREFETCHED_MODELS[key] = model
+            _PREFETCHED_MODELS[key] = (model, primed)
     _PREFETCH_EVENTS[key].set()
     return model is not None
 

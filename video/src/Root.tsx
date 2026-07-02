@@ -10,6 +10,8 @@ import { TL } from "./intro/onboarding/timeline";
 import { TL_WIKI } from "./intro/wiki/timeline";
 import { TutorialVideo } from "./tutorial/TutorialVideo";
 import { TL_TUT } from "./tutorial/timeline";
+import { PromoVideo } from "./intro/PromoVideo";
+import { TL_PROMO } from "./intro/promo/timeline";
 
 /**
  * Standalone preview of a single tutorial scene, wrapped with the same backdrop
@@ -30,6 +32,14 @@ export const RemotionRoot: React.FC = () => {
         id="JarvisTutorial"
         component={TutorialVideo}
         durationInFrames={TL_TUT.totalFrames}
+        fps={VIDEO.fps}
+        width={VIDEO.width}
+        height={VIDEO.height}
+      />
+      <Composition
+        id="ReadmePromo"
+        component={PromoVideo}
+        durationInFrames={TL_PROMO.totalFrames}
         fps={VIDEO.fps}
         width={VIDEO.width}
         height={VIDEO.height}

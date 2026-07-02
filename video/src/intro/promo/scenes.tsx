@@ -233,8 +233,7 @@ export const AgentsPromo: React.FC<{ scene: TimelineScene }> = ({ scene }) => {
 };
 
 /* ── 5 · MEMORY (real wiki graph screenshot) ──────────────────────────── */
-const WIKI_W = 6824;
-const WIKI_DW = 960;
+const WIKI_DW = 960; // shot-wiki-map.png is 6824x3928 — scaled to fit the 720p stage
 
 export const MemoryPromo: React.FC<{ scene: TimelineScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
