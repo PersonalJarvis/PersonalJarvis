@@ -2275,7 +2275,11 @@ class DesktopApp:
             pipeline = SpeechPipeline(
                 call_hotkeys=_call_hk,
                 ptt_hotkeys=_ptt_hk,
-                hangup_hotkeys=(self.cfg.trigger.hotkey_hangup,),
+                hangup_hotkeys=(
+                    (self.cfg.trigger.hotkey_hangup,)
+                    if self.cfg.trigger.hotkey_hangup.strip()
+                    else ()
+                ),
                 # User-tunable voice silence window ("think buffer"). Without this
                 # the constructor default (1500) always won and the Settings
                 # slider could not change the boot value.

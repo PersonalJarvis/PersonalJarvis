@@ -7876,7 +7876,11 @@ async def _main() -> None:
     pipeline = SpeechPipeline(
         call_hotkeys=_call_hk,
         ptt_hotkeys=_ptt_hk,
-        hangup_hotkeys=(config.trigger.hotkey_hangup,),
+        hangup_hotkeys=(
+            (config.trigger.hotkey_hangup,)
+            if config.trigger.hotkey_hangup.strip()
+            else ()
+        ),
         wake_keywords=("hey_jarvis",),
         wake_threshold=0.15,
         stt=stt,
