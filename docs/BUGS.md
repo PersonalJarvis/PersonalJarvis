@@ -2708,3 +2708,60 @@ wedged engine is a permanent-dead-state in disguise.** Signal: `transcribed` /
 timeout; a restart that does not help (the un-killable threads can even starve
 other thread pools, including the Restart button). Production restart after this
 fix: required (a HARD kill for an already-wedged old process).
+
+## BUG-037: Custom wake — "fires on silence" and "stops working" are ONE bug (transcript-content ghost filtering) (HIGH, 2026-07-02)
+
+**Symptom, seen as three separate complaints across one session:**
+1. Jarvis spawns with nobody speaking — even in complete silence.
+2. After a "ghost fix", the wake word (`Hey Fable`, then `Hey Mythos`) stops
+   triggering **entirely**, even when spoken loudly and clearly.
+3. It takes ~2 s to spawn after the word is said.
+
+**Root cause — one mechanism behind all three.** The `stt_match` wake path
+(`RollingWhisperWake`) is a *transcription* detector: it runs a local Whisper
+over a rolling window and matches the transcript against the phrase. To lift
+recall of a hard proper-noun wake it primes the decoder with
+`initial_prompt=<phrase>` (`jarvis/plugins/stt` `build_wake_whisper`). That
+bias is a double-edged sword:
+- **On silence / steady noise** the primed decoder HALLUCINATES the phrase
+  verbatim (live log: `rms=0.0036 text='Hey Fable'`, below idle hiss) → ghost
+  activation (#1).
+- **On real speech** the *unprimed* base model cannot spell the word — `Mythos`
+  → `Mütos` / `Hey, Mut!`, `Fable` → `Farbe`. That is exactly why the bias
+  exists.
+
+So any ghost fix that tightens **transcript content** — e.g. requiring the
+bias-echo confirm's unbiased second pass to reproduce the wake word — rejects
+**every** genuine wake (#2). Live 2026-07-02: an unbiased-corroboration check
+suppressed 7/7 real `Hey Mythos` utterances at rms 0.03–0.09 while the user
+spoke clearly. "Fires on silence" and "never fires" are the SAME root pulled in
+opposite directions; no transcript-content rule separates ghost from wake.
+
+**The only word-agnostic discriminator is raw audio ENERGY.** A genuine wake
+carries a speech burst; a silence hallucination sits at the noise floor.
+
+**Fix (AP-27).**
+- Silence: a match-site RMS gate (`RollingWhisperWake._match_min_rms = 0.006`) —
+  observed ghost cluster ≤ 0.0043, quiet-mic recall contract 0.009, idle hiss
+  ~0.0046. Suppresses silence hallucinations word-agnostically, zero cost.
+- Recognition: keep the bias-echo confirm **permissive** ("unprimed ear heard
+  any real speech → genuine", fail-**open**). Never require the wake word in
+  the confirm.
+- Latency (#3): each 1.8 s-window transcription is ~0.54 s on base/cpu, and an
+  exact-phrase candidate paid a SECOND full transcription (0.56 s) for the
+  confirm. SKIP the confirm when the matched window is clearly LOUD
+  (`_ECHO_CONFIRM_SKIP_RMS = 0.02`) — a real-volume window is genuine speech,
+  silence is already handled by the energy gate. Poll 0.2 → 0.12. Measured:
+  loud wake fires ~0.6 s vs ~1.1 s. The Sensitivity slider (a no-op on this
+  path — it only fed the openWakeWord threshold) now drives the poll interval
+  (`sensitivity_to_poll_interval`).
+
+**Guards.** `tests/unit/speech/test_rolling_whisper_wake_silence_ghost.py`:
+`test_loud_wake_fires_even_when_unbiased_pass_garbles_the_hard_word` (recall —
+must stay green forever), the silence-suppression tests (energy gate), and the
+loud-skip latency test. Signal to recognize the regression next time: a wake
+"ghost fix" that makes a hard custom word stop triggering — you tightened
+content; revert to the energy gate.
+
+**Endgame.** Truly instant + zero-ghost custom wake needs a trained neural KWS
+model (openWakeWord `custom_onnx`), which does not transcribe (AP-25).
