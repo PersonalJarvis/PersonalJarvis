@@ -612,7 +612,9 @@ WAKE_ONLY_RE = re.compile(
 # Whisper emits on an empty mic / speaker leak). Blocked before the brain
 # call. Single definition lives in wake_constants (the rolling wake's
 # bias-echo confirm consumes the same list — BUG-008 drift rule).
-_STT_HALLUCINATION_RE = wake_constants_module.STT_HALLUCINATION_RE
+from jarvis.speech.wake_constants import (  # noqa: E402
+    STT_HALLUCINATION_RE as _STT_HALLUCINATION_RE,
+)
 
 # Paraphrase-Prefixes die Gemini/Claude bei Unsicherheit voranstellen.
 # Werden als Post-Processing vor dem TTS abgeschnitten.
