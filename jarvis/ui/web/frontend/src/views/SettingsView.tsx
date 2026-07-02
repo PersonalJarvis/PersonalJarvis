@@ -3,6 +3,7 @@ import {
   Settings,
   Mic,
   Keyboard,
+  X,
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { Switch } from "@/components/ui/switch";
@@ -625,6 +626,24 @@ function KeybindRow({
       pushToast("success", t("settings_view.keybinds.saved"));
     } catch (e) {
       // Backend rejected the combo (unsafe / collision) — show its reason.
+      pushToast("error", (e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Immediate, one-click unbind — no staging step, mirroring the "Reset to
+  // default" link's immediacy. Bypasses onSaveClick's trimmed-empty guard,
+  // which exists to stop an in-progress recording from saving nothing.
+  async function onClearClick() {
+    setSaving(true);
+    try {
+      const res = await onSave(action, "");
+      setCombo("");
+      setCapturing(false);
+      setSaved(res.restart_required);
+      pushToast("success", t("settings_view.keybinds.cleared"));
+    } catch (e) {
       pushToast("error", (e as Error).message);
     } finally {
       setSaving(false);
