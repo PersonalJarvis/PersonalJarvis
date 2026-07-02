@@ -333,6 +333,45 @@ def model_capabilities(provider: str, model_id: str) -> dict[str, bool | None]:
     return {"vision": None, "tools": None}
 
 
+def pick_vision_model(provider: str) -> str | None:
+    """The best vision-capable brain model of ``provider``, from the cached
+    ``/v1/models`` catalog — or ``None`` when the catalog carries no modality
+    data for this provider (direct provider endpoints) or no candidate exists.
+
+    Computer-Use is screenshot-grounded: a provider whose CONFIGURED model
+    cannot see images must not drop out of the CU chain when the same key
+    unlocks vision-capable siblings (AP-22 — the key is fine, only the model
+    choice is blind). Candidates run through the SAME brain filter + relevance
+    sort as the picker, so the rescue pick equals the top row the user would
+    see in the vision-filtered dropdown.
+    """
+    from jarvis.core import config as _cfg  # noqa: PLC0415
+
+    cache_path = _cfg.DATA_DIR / "model_catalog_cache.json"
+    try:
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        entries = data.get(provider, {}).get("models", [])
+    except Exception:  # noqa: BLE001 — missing/corrupt cache → no rescue
+        return None
+    candidates: list[ModelInfo] = []
+    for m in entries:
+        mid = str(m.get("id") or "").strip()
+        inp = m.get("input_modalities")
+        if not mid or not (isinstance(inp, list) and "image" in inp):
+            continue
+        out_mods = m.get("output_modalities")
+        params = m.get("supported_parameters")
+        candidates.append(ModelInfo(
+            id=mid,
+            label=str(m.get("label") or mid),
+            output_modalities=tuple(out_mods) if isinstance(out_mods, list) else None,
+            input_modalities=tuple(str(x) for x in inp),
+            supported_parameters=tuple(params) if isinstance(params, list) else None,
+        ))
+    usable = sort_models(provider, filter_brain_models(candidates))
+    return usable[0].id if usable else None
+
+
 def _output_modalities(entry: dict) -> tuple[str, ...] | None:
     """Pull ``architecture.output_modalities`` from a model entry as a tuple.
 

@@ -50,6 +50,48 @@ class BrainReply:
 PromptBuilder = Callable[[str, Any], tuple[str, str]]
 
 
+def _rescue_blind_models(
+    chain: list[tuple[str, str | None]],
+) -> list[tuple[str, str | None]]:
+    """Swap a KNOWN-blind configured model for the provider's best
+    vision-capable sibling, per candidate.
+
+    Computer-Use is screenshot-grounded; a text-only model choice (e.g. an
+    OpenRouter DeepSeek pin) previously knocked the WHOLE provider out of the
+    chain even though the user's key unlocks plenty of vision models — a
+    "works with whatever key you have" violation (AP-22). Only an explicit
+    ``vision is False`` verdict from the model catalog triggers the swap;
+    unknown capability stays untouched (no regression for providers without
+    modality metadata). Never raises — any lookup problem keeps the original
+    pair.
+    """
+    try:
+        from jarvis.brain.model_catalog import (  # noqa: PLC0415
+            model_capabilities,
+            pick_vision_model,
+        )
+    except Exception:  # noqa: BLE001
+        return chain
+    rescued: list[tuple[str, str | None]] = []
+    for provider, model in chain:
+        try:
+            if model and model_capabilities(provider, model).get("vision") is False:
+                alt = pick_vision_model(provider)
+                if alt and alt != model:
+                    logger.info(
+                        "[cu] %s model %s cannot see the screen — using the "
+                        "vision-capable %s for this mission",
+                        provider, model, alt,
+                    )
+                    rescued.append((provider, alt))
+                    continue
+        except Exception:  # noqa: BLE001 — rescue is best-effort
+            logger.debug("[cu] vision-model rescue failed for %s", provider,
+                         exc_info=True)
+        rescued.append((provider, model))
+    return rescued
+
+
 async def call_vision_brain(
     manager: Any,
     *,
@@ -104,6 +146,8 @@ async def call_vision_brain(
         chain = resolved_chain
 
     images_attached = bool(images)
+    if images_attached:
+        chain = _rescue_blind_models(chain)
     selector = ComputerUsePlannerSelector(manager=manager, chain=chain)
     attempted = 0
 

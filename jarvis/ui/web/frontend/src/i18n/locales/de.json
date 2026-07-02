@@ -904,7 +904,8 @@
     "use_main": "Mein Hauptmodell verwenden",
     "using_main": "Verwendet dein Hauptmodell",
     "effective": "Computer-Use nutzt",
-    "cleared": "Computer-Use-Modell auf dein Hauptmodell zurückgesetzt"
+    "cleared": "Computer-Use-Modell auf dein Hauptmodell zurückgesetzt",
+    "vision_note": "Es werden nur Modelle angezeigt, die Bilder verstehen - Computer-Use liest den Bildschirm über Screenshots, ein reines Text-Modell kann es nicht steuern."
   },
   "settings_view": {
     "silence_window": {

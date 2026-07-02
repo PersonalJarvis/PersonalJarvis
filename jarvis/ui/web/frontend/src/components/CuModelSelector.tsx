@@ -65,6 +65,7 @@ export function CuModelSelector({
         providerId={providerId}
         currentModel={cuModel}
         controlled
+        visionOnly
         recommendedModel={recommendedModel}
         headingLabel={t("apikeys_cu_model.heading")}
         placeholder={t("apikeys_cu_model.use_main")}
@@ -76,6 +77,9 @@ export function CuModelSelector({
           return res;
         }}
       />
+      <p className="text-[10px] text-muted-foreground/80">
+        {t("apikeys_cu_model.vision_note")}
+      </p>
       <div className="flex items-center justify-between gap-2">
         <span className="text-[10px] text-muted-foreground">
           {usesMain

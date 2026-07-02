@@ -535,6 +535,11 @@ export interface BrainModel {
   frontier?: boolean;
   value?: boolean;
   starred?: boolean;
+  // Tri-state vision-input capability from the provider's model metadata:
+  // true = understands images, false = text-only, null/undefined = unknown
+  // (the provider doesn't expose modality data — treated as capable). The
+  // Computer-Use picker hides ONLY explicit false entries.
+  vision?: boolean | null;
 }
 
 export interface BrainModelsResult {
