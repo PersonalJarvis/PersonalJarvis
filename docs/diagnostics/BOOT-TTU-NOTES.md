@@ -66,4 +66,22 @@ custom_onnx engine had hidden.
 
 ## Fixes applied (append per loop iteration, with measured effect)
 
-- (pending)
+- **Fix for F1+F2 (iteration 2, commit pending):** single-loader wake warm-up.
+  (a) `FasterWhisperProvider.is_warm` — True once `warm_up` completed (model
+  constructed + primed); reset by `recover()`. (b) The rolling-whisper poll
+  loop skips the transcribe phase (and self-heal fail counting) until
+  `is_warm`; if nobody warms the model within `warm_wait_fallback_s` (20 s),
+  the poll loop warms it once itself — exactly one loader either way.
+  (c) `_wake_model_is_loaded` (heavy-backend gate) now prefers `is_warm`, so
+  the backend CPU storm starts only after the priming inference.
+  Expected effect: wake-model pre-warm back to ~4 s isolated (from 114.7 s),
+  gate opens before its 12 s timeout, no self-heal rebuild during boot.
+  MEASUREMENT PENDING (next boot).
+
+## Lessons (do not repeat)
+
+- The unit-test suite fast-forwards SMALL asyncio sleeps (a sleep accelerator;
+  600 poll iterations in 0.01 s real). Wall-clock-threshold logic cannot be
+  tested with real waits — make thresholds injectable and use 0.0 in tests
+  (see test_rolling_whisper_wake_boot_warm.py). Two hours of "phantom hangs"
+  were exactly this.

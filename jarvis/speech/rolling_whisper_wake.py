@@ -36,7 +36,7 @@ import numpy as np
 
 from jarvis.audio.capture import pcm_bytes_to_np
 from jarvis.core.protocols import AudioChunk
-from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
+from jarvis.plugins.stt.fwhisper import FasterWhisperProvider, TranscribeBusy
 
 # The strict "hey/hi/hallo + jarv-stem" pattern now lives in wake_constants as
 # the single source of truth (the prefix verifier re-exports the same object),
@@ -78,6 +78,20 @@ _DEBUG_WAVS_ENV = os.environ.get("JARVIS_WAKE_DEBUG_WAVS", "").strip().lower() i
 # clears on the very next successful poll and resets the counter, so 2 does not
 # fire spuriously.
 _WEDGE_RECOVER_AFTER_FAILS = 2
+
+# Hard cap on a CONTINUOUS run of ``TranscribeBusy`` polls before the in-flight
+# call is declared truly hung and the model is rebuilt. A busy poll right after
+# an abandoned timeout is the SAME still-running call, not a second independent
+# failure — the old accounting counted it toward ``_WEDGE_RECOVER_AFTER_FAILS``,
+# so ONE transcription slower than the 8 s cap (routine under boot/CPU load,
+# p95 was measured at 5.3 s under contention) tore down a healthy model, and
+# the lazy cold rebuild inside the NEXT poll's 8 s timeout re-wedged — a
+# self-perpetuating deaf cycle (live log 2026-07-02 08:21-08:26: three recover
+# cycles in 2 minutes while the user was audibly speaking). 20 s tolerates any
+# slow-but-alive call (which frees the lock and resets the streak on return)
+# while a genuine BUG-036 hang (un-cancellable native call) is still recovered
+# in bounded time (~8 s timeout + this cap).
+_BUSY_HANG_RECOVER_S = 20.0
 
 
 def _save_wav(pcm_bytes: bytes, sample_rate: int, path: Path) -> None:
@@ -209,10 +223,14 @@ class RollingWhisperWake:
         # -> reload from scratch under the boot CPU storm (114.7 s for a ~4 s
         # load). The poll phase therefore starts only on a warm model.
         warm_wait_fallback_s: float = 20.0,
+        # How long a CONTINUOUS TranscribeBusy streak may run before the
+        # in-flight call counts as truly hung (see _BUSY_HANG_RECOVER_S).
+        busy_hang_recover_s: float = _BUSY_HANG_RECOVER_S,
     ) -> None:
         self._stt = stt
         self._pattern = pattern
         self._warm_wait_fallback_s = float(warm_wait_fallback_s)
+        self._busy_hang_recover_s = float(busy_hang_recover_s)
         self._window_samples = int(window_s * sample_rate)
         self._poll_interval_s = poll_interval_s
         self._cooldown_s = cooldown_s
