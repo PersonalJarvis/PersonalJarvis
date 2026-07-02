@@ -512,8 +512,9 @@ class LegacyVisionShim:
         import time as _time
         from uuid import uuid4
 
-        from jarvis.cu.capture import mss_grab, select_monitor
         from PIL import Image
+
+        from jarvis.cu.capture import mss_grab, select_monitor
 
         monitor = await asyncio.to_thread(select_monitor, "all")
         (w, h), rgb = await asyncio.to_thread(mss_grab, monitor.bbox)

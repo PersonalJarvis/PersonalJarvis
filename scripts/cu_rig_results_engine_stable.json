@@ -7,12 +7,12 @@
     "mean_distance_px": null,
     "max_distance_px": null,
     "duplicate_clicks": 0,
-    "step_latency_s_p50": 1.141,
-    "step_latency_s_max": 1.141,
+    "step_latency_s_p50": 1.406,
+    "step_latency_s_max": 1.406,
     "provoked_duplicates_executed": 0,
     "engine": "stable",
-    "mission_wall_s": 4.56,
-    "final_chunk": "[cu] done at step 5.1 (verified: all rig targets were activated)\n[cu] mission profile: steps=5 total=4.6s act=3.4s observe=1.1s think=0.0s verify=0.0s"
+    "mission_wall_s": 5.62,
+    "final_chunk": "[cu] done at step 5.1 (verified: all rig targets were activated)\n[cu] mission profile: steps=5 total=5.6s act=3.5s observe=2.1s think=0.0s verify=0.0s"
   },
   {
     "scenario": "engine-type-once",
@@ -20,7 +20,7 @@
     "typed_expected": "example.com",
     "typed_received": "",
     "typed_exactly_once": false,
-    "mission_wall_s": 1.88
+    "mission_wall_s": 2.34
   },
   {
     "scenario": "engine-duplicate-type-provocation",
@@ -29,14 +29,14 @@
     "typed_received": "",
     "duplicates_executed": 0,
     "typed_exactly_once": false,
-    "mission_wall_s": 2.25
+    "mission_wall_s": 3.2
   },
   {
     "scenario": "engine-misaim-provocation",
     "engine": "stable",
     "dead_space_clicks_executed": 0,
     "blind_repeats_after_first": 0,
-    "mission_wall_s": 2.53,
-    "final_chunk": "[cu] done at step 4.1 (verified: all rig targets were activated)\n[cu] mission profile: steps=4 total=2.5s act=1.7s observe=0.8s think=0.0s verify=0.0s"
+    "mission_wall_s": 3.41,
+    "final_chunk": "[cu] done at step 4.1 (verified: all rig targets were activated)\n[cu] mission profile: steps=4 total=3.4s act=1.8s observe=1.5s think=0.0s verify=0.1s"
   }
 ]
