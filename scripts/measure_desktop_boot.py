@@ -104,8 +104,10 @@ def run_one(python: str, timeout: float, mode: str = "legacy", voice: bool = Fal
         "wall_ms": None,           # spawn -> /api/health 200 (PRIMARY = window appears)
         "boot_ready_ms": None,     # in-process bootstrap-bind print (secondary)
         "boot_ready_wall_ms": None,
-        "voice_ready_ms": None,       # in-process VOICE_READY print (TTU anchor)
-        "voice_ready_wall_ms": None,  # spawn -> VOICE_READY print (wall clock)
+        "voice_ready_ms": None,        # pipeline-started print (secondary)
+        "voice_ready_wall_ms": None,
+        "voice_usable_ms": None,       # HONEST TTU anchor: wake model warmed
+        "voice_usable_wall_ms": None,  # + VAD + TTS up (VoiceBootStatus ready)
         "phases": {},
         "port": port,
     }
@@ -146,6 +148,13 @@ def run_one(python: str, timeout: float, mode: str = "legacy", voice: bool = Fal
                     result["voice_ready_ms"] = float(line.split("=", 1)[1])
                 except ValueError:
                     result["voice_ready_ms"] = None
+            elif line.startswith("VOICE_USABLE_MS="):
+                # The honest anchor: wake model warmed + VAD + TTS up.
+                result["voice_usable_wall_ms"] = (time.perf_counter() - t_spawn) * 1000.0
+                try:
+                    result["voice_usable_ms"] = float(line.split("=", 1)[1])
+                except ValueError:
+                    result["voice_usable_ms"] = None
                 voice_ok.set()
 
     def poller() -> None:
@@ -187,10 +196,10 @@ def run_one(python: str, timeout: float, mode: str = "legacy", voice: bool = Fal
             f"desktop cold boot did not reach its anchor within {timeout:.0f}s "
             f"(port {port}, voice={voice}) — check the driver / instrumentation"
         )
-    if voice and result["voice_ready_wall_ms"] is None:
+    if voice and result["voice_usable_wall_ms"] is None:
         raise RuntimeError(
-            f"voice stack never printed VOICE_READY_MS within {timeout:.0f}s "
-            f"(port {port}) — TTU anchor missing"
+            f"voice stack never printed VOICE_USABLE_MS within {timeout:.0f}s "
+            f"(port {port}) — honest TTU anchor missing"
         )
     return result
 
@@ -201,6 +210,9 @@ def _summarize(runs: list[dict], *, python: str, pages: int) -> dict:
     bind_walls = [r["boot_ready_wall_ms"] for r in runs if r["boot_ready_wall_ms"] is not None]
     voice_walls = [
         r["voice_ready_wall_ms"] for r in runs if r.get("voice_ready_wall_ms") is not None
+    ]
+    usable_walls = [
+        r["voice_usable_wall_ms"] for r in runs if r.get("voice_usable_wall_ms") is not None
     ]
     phase_names = sorted({k for r in runs for k in r["phases"]})
     phase_medians = {
@@ -225,6 +237,10 @@ def _summarize(runs: list[dict], *, python: str, pages: int) -> dict:
             round(statistics.median(voice_walls), 1) if voice_walls else None
         ),
         "voice_ready_wall_ms_runs": [round(v, 1) for v in voice_walls],
+        "median_voice_usable_wall_ms": (
+            round(statistics.median(usable_walls), 1) if usable_walls else None
+        ),
+        "voice_usable_wall_ms_runs": [round(v, 1) for v in usable_walls],
         "wall_ms_runs": [round(w, 1) for w in walls],
         "boot_ready_ms_runs": [round(r, 1) for r in readies],
         "phase_medians_ms": {k: round(v, 1) for k, v in phase_medians.items()},
