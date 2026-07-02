@@ -92,6 +92,11 @@ def test_chain_unchanged_for_pure_conversation_even_if_active_cant_call_tools() 
     mgr._first_tool_capable_provider = (  # type: ignore[assignment]
         lambda level: ("gemini", "gemini-3.5-flash")
     )
+    # The contract under test is the chain SHAPE (no hijack-prepend on a
+    # non-tool turn), not model resolution — the bare default config carries
+    # no codex model entry, so resolve one deterministically here.
+    mgr._deep_model = lambda name: "m-deep" if name == "codex" else None  # type: ignore[assignment]
+    mgr._fast_model = lambda name: "m-fast" if name == "codex" else None  # type: ignore[assignment]
     mgr._turn_needs_tools = False
     chain = mgr._build_fallback_chain("deep")
     assert chain, "chain must not be empty"
