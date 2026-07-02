@@ -178,3 +178,69 @@ def test_put_persist_calls_config_writer(monkeypatch) -> None:
     assert resp.status_code == 200
     assert resp.json()["persisted"] is True
     assert captured == {"action": "hangup", "hotkey": "ctrl+shift+h"}
+
+
+def test_put_empty_hotkey_unbinds_without_validation_error() -> None:
+    """An explicit empty hotkey clears the action instead of being rejected
+    as an incomplete recording (validate_hotkey normally rejects '')."""
+    body = _client().put(
+        "/api/settings/keybinds",
+        json={"action": "hangup", "hotkey": "", "persist": False},
+    ).json()
+    assert body["ok"] is True
+    assert body["hotkey"] == ""
+
+
+def test_put_empty_hotkey_skips_collision_check() -> None:
+    """Clearing hangup must never be rejected as 'overlapping' with call —
+    there is nothing left to collide with."""
+    resp = _client().put(
+        "/api/settings/keybinds",
+        json={"action": "hangup", "hotkey": "", "persist": False},
+    )
+    assert resp.status_code == 200
+
+
+def test_put_after_clearing_other_action_still_allows_a_new_combo() -> None:
+    """Regression for the false-positive collision bug: an unbound OTHER
+    action's empty key-set must not be treated as a subset of every new
+    combo (an empty set is a mathematical subset of everything), which would
+    otherwise reject every future save once any one action is cleared."""
+    client = _client()
+    client.put(
+        "/api/settings/keybinds",
+        json={"action": "hangup", "hotkey": "", "persist": False},
+    )
+    resp = client.put(
+        "/api/settings/keybinds",
+        json={"action": "call", "hotkey": "f7+f8", "persist": False},
+    )
+    assert resp.status_code == 200
+
+
+def test_put_empty_hotkey_live_applies_empty_list() -> None:
+    """The running pipeline is re-armed with an empty list (not [\"\"])."""
+    calls: list[dict] = []
+
+    class _FakePipeline:
+        def set_keybinds(self, **kw):  # noqa: ANN003
+            calls.append(kw)
+
+    client = _client()
+    client.app.state.speech_pipeline = _FakePipeline()
+    resp = client.put(
+        "/api/settings/keybinds",
+        json={"action": "ptt", "hotkey": "", "persist": False},
+    )
+    assert resp.json()["applied_live"] is True
+    assert calls == [{"ptt": []}]
+
+
+def test_get_reflects_cleared_keybind() -> None:
+    client = _client()
+    client.put(
+        "/api/settings/keybinds",
+        json={"action": "call", "hotkey": "", "persist": False},
+    )
+    body = client.get("/api/settings/keybinds").json()
+    assert body["keybinds"]["call"] == ""
