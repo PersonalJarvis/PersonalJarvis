@@ -1047,6 +1047,19 @@ class SpeechPipeline:
         # utterance STT may still exist (cloud provider). Keep that path alive
         # so the Listening bubble does not stay stuck on "...".
         self._probe_stt: Any = self._stt or self._utterance_stt
+        # User STT dictionary (Wispr-Flow-style custom vocabulary): wrap the
+        # utterance + preview handles so EVERY provider's transcript gets the
+        # user's corrections — brain turns, chat dictation, and the live
+        # preview alike (pure string ops, hot-path safe). The wake path
+        # (``self._stt``, wake whisper, echo confirm) stays UNWRAPPED: wake
+        # matching must never see rewritten transcripts (AP-27 territory).
+        try:
+            from jarvis.speech.stt_dictionary import wrap_stt_with_dictionary
+
+            self._utterance_stt = wrap_stt_with_dictionary(self._utterance_stt)
+            self._probe_stt = wrap_stt_with_dictionary(self._probe_stt)
+        except Exception as exc:  # noqa: BLE001 — corrections must never break voice boot
+            log.warning("STT dictionary wrapper unavailable: %s", exc)
         self._tts = tts or GeminiFlashTTS()
         self._openwakeword_enabled = enable_openwakeword
         # Custom-wake-word plan (jarvis.speech.wake_phrase.WakeWordPlan) or None.
@@ -1661,7 +1674,14 @@ class SpeechPipeline:
                     stt_cfg, language=lang, wake_phrase=getattr(plan, "phrase", None)
                 )
                 if self._probe_stt is None:
-                    self._probe_stt = self._stt
+                    try:
+                        from jarvis.speech.stt_dictionary import (
+                            wrap_stt_with_dictionary,
+                        )
+
+                        self._probe_stt = wrap_stt_with_dictionary(self._stt)
+                    except Exception:  # noqa: BLE001 — preview must survive without it
+                        self._probe_stt = self._stt
                 log.info("Wake-Live-Switch: built local Whisper for custom phrase.")
             except Exception as exc:  # noqa: BLE001 — degrade, never crash the switch
                 log.warning("Wake-Live-Switch: local Whisper build failed: %s", exc)
@@ -5394,8 +5414,10 @@ class SpeechPipeline:
             uuid4(),
             enabled=getattr(lat_cfg, "enabled", True),
         )
-        utt_stt_name = type(self._utterance_stt).__name__
-        log.info("→ Transkribiere (%.1f KB) via %s …", len(pcm) / 1024, utt_stt_name)
+        utt_stt_name = getattr(
+            self._utterance_stt, "provider_label", type(self._utterance_stt).__name__
+        )
+        log.info("→ Transcribing (%.1f KB) via %s …", len(pcm) / 1024, utt_stt_name)
         await self._set_turn_state(TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT)
         transcript = await self._transcribe_final(pcm)
         if transcript is None:
