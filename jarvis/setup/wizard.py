@@ -87,17 +87,17 @@ class SecretSpec:
 
 
 SECRETS: list[SecretSpec] = [
-    # Brain providers that SIMULTANEOUSLY enable the OpenClaw bridge.
-    # OpenClaw reads the standard provider ENV vars (see the AD-6 mapping in
-    # docs/openclaw-bridge.md §2). There is NO separate OPENCLAW_* namespace
-    # — the wizard maintains one key, OpenClaw uses it on subprocess spawn.
+    # Brain providers that SIMULTANEOUSLY enable the Jarvis-Agent worker harness.
+    # The harness reads the standard provider ENV vars (see the AD-6 mapping in
+    # docs/jarvis-agents-bridge.md §2). There is NO separate per-harness namespace
+    # — the wizard maintains one key, the harness uses it on subprocess spawn.
     # Full mapping table: jarvis/missions/worker_runtime/provider_map.py.
     SecretSpec(
         key="anthropic_api_key",
         env_fallback="ANTHROPIC_API_KEY",
         label="Anthropic API Key (Claude)",
         help_url="https://console.anthropic.com/settings/keys",
-        required_for="Brain (Claude via API key) + OpenClaw bridge (anthropic provider)",
+        required_for="Brain (Claude via API key) + Jarvis-Agent harness (anthropic provider)",
         optional=True,
     ),
     SecretSpec(
@@ -105,14 +105,14 @@ SECRETS: list[SecretSpec] = [
         env_fallback="OPENROUTER_API_KEY",
         label="OpenRouter API Key (universal gateway)",
         help_url="https://openrouter.ai/keys",
-        required_for="Brain (universal: access to all models via one key) + OpenClaw bridge (openrouter provider)",
+        required_for="Brain (universal: access to all models via one key) + Jarvis-Agent harness (openrouter provider)",
     ),
     SecretSpec(
         key="openai_api_key",
         env_fallback="OPENAI_API_KEY",
         label="OpenAI API Key",
         help_url="https://platform.openai.com/api-keys",
-        required_for="Brain (GPT), Whisper API (STT), TTS + OpenClaw bridge (openai provider)",
+        required_for="Brain (GPT), Whisper API (STT), TTS + Jarvis-Agent harness (openai provider)",
     ),
     SecretSpec(
         key="codex_openai_api_key",
@@ -126,7 +126,7 @@ SECRETS: list[SecretSpec] = [
         env_fallback="GEMINI_API_KEY",
         label="Google AI Studio / Gemini API Key",
         help_url="https://aistudio.google.com/app/apikey",
-        required_for="Brain (Gemini) + OpenClaw bridge (google provider)",
+        required_for="Brain (Gemini) + Jarvis-Agent harness (google provider)",
     ),
     SecretSpec(
         key="grok_api_key",
@@ -542,31 +542,35 @@ def step_dependency_check() -> None:
         )
 
 
-def step_openclaw_check() -> None:
-    """OpenClaw bridge status — informational, not a key-entry step.
+def step_jarvis_agent_harness_check() -> None:
+    """External Jarvis-Agent worker-harness status — informational, not a key-entry step.
 
-    Contract (docs/openclaw-bridge.md §4.3, Amendment 2026-05-09): NO new
-    ``OPENCLAW_*`` secrets are created in the Credential Manager.
-    OpenClaw uses the standard provider ENV vars (``GEMINI_API_KEY``,
+    Contract (docs/jarvis-agents-bridge.md §4.3, Amendment 2026-05-09): NO new
+    per-harness secrets are created in the Credential Manager. The worker
+    harness uses the standard provider ENV vars (``GEMINI_API_KEY``,
     ``ANTHROPIC_API_KEY``, ...). This step only shows the user:
 
-    1. Whether the ``openclaw`` binary is on PATH (``npm i -g openclaw``).
+    1. Whether the optional external ``openclaw`` binary is on PATH
+       (``npm i -g openclaw`` — the npm package keeps that name).
     2. Which Personal-Jarvis brain providers are thereby Jarvis-Agent-capable
-       (= which of the API keys entered above also enable OpenClaw).
-    3. A pointer to the ``Personal-Jarvis slug → OpenClaw slug`` mapping.
+       (= which of the API keys entered above also enable the harness).
+    3. A pointer to the ``Personal-Jarvis slug → worker-harness slug`` mapping.
     """
     import shutil
 
     _println()
     _println("=" * 60)
-    _println(" Step 7 / 8 — OpenClaw bridge (optional heavy-tasks Jarvis-Agent)")
+    _println(" Step 7 / 8 — Jarvis-Agent worker harness (optional, heavy tasks)")
     _println("=" * 60)
     _println()
-    _println("OpenClaw is the external Jarvis-Agent for complex multi-step tasks")
+    _println("Jarvis-Agents handle complex multi-step tasks for you")
     _println("('read this repo + build X', 'reproduce the bug + propose a fix').")
     _println("Personal Jarvis dispatches via the 'spawn_worker' tool to a short-lived")
-    _println("OpenClaw subprocess; the LLM output only lands in the voice path after")
-    _println("the Kontrollierer signature (see docs/openclaw-bridge.md §3 architecture diagram).")
+    _println("worker subprocess; the LLM output only lands in the voice path after")
+    _println("the Controller signature (see docs/jarvis-agents-bridge.md §3 architecture diagram).")
+    _println()
+    _println("One optional external harness is the 'openclaw' npm binary (that is the")
+    _println("package's own name); the default worker path uses the claude CLI instead.")
     _println()
 
     # 1. Binary check (B-7 finding: .cmd/.ps1 wrappers on Windows count too).
@@ -578,16 +582,16 @@ def step_openclaw_check() -> None:
                 break
 
     if binary:
-        _println(f"✓ OpenClaw binary found: {binary}")
+        _println(f"✓ Worker-harness binary found: {binary}")
     else:
-        _println("–  OpenClaw binary not on PATH.")
+        _println("–  'openclaw' harness binary not on PATH (optional).")
         _println("   Install: npm i -g openclaw   (pin: 2026.5.7, see AD-21)")
-        _println("   The bridge stays inactive until the binary is available — no crash.")
+        _println("   The harness stays inactive until the binary is available — no crash.")
 
     # 2. Show the provider mapping (lazy import — the wizard should also run
     #    without the fully installed modules).
     _println()
-    _println("Provider mapping (Personal-Jarvis → OpenClaw CLI):")
+    _println("Provider mapping (Personal-Jarvis → worker-harness CLI):")
     try:
         from jarvis.missions.worker_runtime.provider_map import MAPPINGS
     except Exception:  # noqa: BLE001
@@ -610,13 +614,13 @@ def step_openclaw_check() -> None:
             v for v in (mapping.env_var, mapping.env_fallback) if v
         )
         _println(
-            f"   {marker} {mapping.jarvis:<11} → {mapping.openclaw:<10} "
+            f"   {marker} {mapping.jarvis:<11} → {mapping.worker_slug:<10} "
             f"(ENV: {envs})"
         )
 
     _println()
-    _println("To activate: set 'enabled = true' in jarvis.toml [harness.openclaw]")
-    _println("AND check 'binary_path'. The bridge automatically follows the")
+    _println("To activate: set 'enabled = true' in jarvis.toml [harness.jarvis_agent]")
+    _println("AND check 'binary_path'. The harness automatically follows the")
     _println("provider choice under [brain].primary — no Anthropic lock.")
 
 
@@ -719,7 +723,7 @@ def run() -> int:
             # Persistence note: the wizard only writes the hotkey into the config actively in Phase 1
         step_wake_word_setup()
         step_dependency_check()
-        step_openclaw_check()
+        step_jarvis_agent_harness_check()
         step_finalize()
         return 0
     except KeyboardInterrupt:
