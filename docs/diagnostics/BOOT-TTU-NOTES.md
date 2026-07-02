@@ -94,6 +94,30 @@ custom_onnx engine had hidden.
 4. Startup-budget regression guard test + "how to add a feature
    boot-neutrally" doc note.
 
+## Iteration 3 findings (bench infra + pre-pipeline timeline)
+
+- **Benchmark infra ALREADY EXISTS:** `scripts/measure_boot.py` (headless) and
+  `scripts/measure_desktop_boot.py` (desktop backend path, no GUI/mic) with
+  full isolation (.boot-bench/, per-run data wipe, seeded vault, free port via
+  `_bench_env`/`_free_port`), warm-up + median over N runs, JSON baseline
+  files. Anchors printed under `JARVIS_BOOT_PROFILE=1`: `BOOT_READY_MS`
+  (window can appear), `VOICE_READY_MS` (wake loop armed, same clock), plus
+  `[BOOT_PROFILE] db_*` marks (pre_webserver, webserver_ctor, server_start).
+  The TTU benchmark should EXTEND this (add the VOICE_READY_MS anchor + an
+  end-to-end typed-turn round-trip), not reinvent it.
+- **Pre-pipeline timeline of the 08:59 boot (no profile flag, from logs):**
+  process spawn ~08:58:47-50 -> first log 08:59:05 (import/interpreter lead,
+  ~15 s incl. relauncher wait) -> autostart reconcile 08:59:11-14 (~4-6 s,
+  network + scheduled-task work, questionable on the critical path) ->
+  WebServer ctor ~08:59:15-28 (~13 s: skills bootstrap ~3 s, DocRegistry
+  ~3 s, Board ready ~6.5 s) -> pipeline built 08:59:33. The voice path waits
+  for the FULL WebServer ctor because `_start_speech_and_orb` needs
+  `server.bus` — candidates: slim the ctor (defer Board/registry setup into
+  `server.start()`), move autostart reconcile behind voice-ready, examine the
+  15 s import lead with `db_` marks.
+- Next iteration: run `measure_desktop_boot.py --runs 3` for a REAL baseline
+  with db_ marks, then attack the largest measured block.
+
 ## Lessons (do not repeat)
 
 - The unit-test suite fast-forwards SMALL asyncio sleeps (a sleep accelerator;
