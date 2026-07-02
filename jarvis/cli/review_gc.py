@@ -242,7 +242,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--runs-root",
         type=Path,
         default=DEFAULT_RUNS_ROOT,
-        help=f"Run-Verzeichnis-Root. Default: {DEFAULT_RUNS_ROOT}",
+        help=f"Run-directory root. Default: {DEFAULT_RUNS_ROOT}",
     )
     parser.add_argument(
         "--gc-log",
