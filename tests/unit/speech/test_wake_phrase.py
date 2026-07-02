@@ -372,9 +372,10 @@ def test_sensitivity_to_poll_interval_makes_the_slider_control_speed() -> None:
     # it only fed the openWakeWord threshold, which that path never scores
     # against. It now drives the poll interval, so moving it changes how fast a
     # spoken wake is picked up. Higher sensitivity => shorter interval => snappier.
-    assert wp.sensitivity_to_poll_interval(0.0) == pytest.approx(0.20)
+    # Both ends are fast ("always as low as possible"); the slider only trims.
+    assert wp.sensitivity_to_poll_interval(0.0) == pytest.approx(0.12)
     assert wp.sensitivity_to_poll_interval(1.0) == pytest.approx(0.08)
-    assert wp.sensitivity_to_poll_interval(0.5) == pytest.approx(0.14)
+    assert wp.sensitivity_to_poll_interval(0.5) == pytest.approx(0.10)
     # strictly monotonic decreasing
     assert wp.sensitivity_to_poll_interval(0.2) > wp.sensitivity_to_poll_interval(0.8)
     # clamps out-of-range input instead of producing absurd intervals

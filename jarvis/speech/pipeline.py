@@ -1366,6 +1366,16 @@ class SpeechPipeline:
         # selbst wieder als "Hey Jarvis" triggert (Speaker→Mic-Feedback-Loop).
         self._wake_lock_until: float = 0.0
         self._post_hangup_lock_s: float = 3.0
+        # A user-initiated HARD hangup (JarvisBar close, hotkey, "auflegen")
+        # stops the player, so there is NO TTS tail to echo — the long
+        # post-hangup lock then only DEAFENS the wake to the user's very next
+        # "Hey <wake>" ("say it twice", live log 2026-07-02 18:40/18:46). Such a
+        # hangup uses this SHORT lock instead: just past the disconnect earcon,
+        # not the 3 s speaker-tail guard. Set by ``_trigger_voice_hangup`` when
+        # it stops the player; reset per session so a no-op hangup while idle
+        # cannot shorten a later natural end's lock.
+        self._explicit_hangup_lock_s: float = 0.4
+        self._explicit_hard_hangup: bool = False
         self._last_wake_keyword: str = ""
         # 2026-05-26: timestamp of the last priority="interrupt"
         # announcement, used by ``_on_announcement`` to gate preamble-class
@@ -3805,6 +3815,20 @@ class SpeechPipeline:
         self._call_event.set()
         return True
 
+    def _post_hangup_lock_seconds(self) -> float:
+        """Wake-lock duration for the session that just ended (one-shot).
+
+        SHORT (`_explicit_hangup_lock_s`) after a user HARD hangup — the
+        JarvisBar close / hotkey / "auflegen" stopped the player, so there is no
+        TTS tail to echo and the long lock would only swallow the user's very
+        next "Hey <wake>". Otherwise the FULL `_post_hangup_lock_s` guards the
+        speaker tail of a natural end / farewell. Consumes the hard-hangup flag
+        so it applies to exactly one session end.
+        """
+        hard = self._explicit_hard_hangup
+        self._explicit_hard_hangup = False
+        return self._explicit_hangup_lock_s if hard else self._post_hangup_lock_s
+
     def request_hangup(self) -> None:
         """End the live voice session from outside the audio path.
 
@@ -3868,6 +3892,10 @@ class SpeechPipeline:
                 self._player.stop()
             except Exception as exc:  # noqa: BLE001
                 log.warning("Player-Stop bei Hangup fehlgeschlagen: %s", exc)
+            # Player stopped => no TTS tail => the next session end uses the
+            # SHORT wake-lock so the user can re-wake immediately. A farewell
+            # hangup (stop_player=False) keeps the full speaker-tail guard.
+            self._explicit_hard_hangup = True
         self._session_end_reason = HANGUP_VOICE_PATTERN
         self._hangup_event.set()
         # BUG-CU-HANGUP (2026-05-28): "auflegen" must also STOP a running
@@ -4403,6 +4431,9 @@ class SpeechPipeline:
                 self._ptt_mode = False
                 continue
             self._hangup_event.clear()
+            # Fresh session: forget any hard-hangup flag left by a no-op hangup
+            # while idle, so ONLY this session's own ending decides its lock.
+            self._explicit_hard_hangup = False
             self._state = PipelineState.ACTIVE
             # Reset per-session completeness signal state: a new session
             # starts "fresh" so the first INCOMPLETE gets an earcon, not a
@@ -4465,10 +4496,10 @@ class SpeechPipeline:
                 # Disconnect-Sound als hörbares Hangup-Signal (earcon — gated
                 # by the global "Sound effects" switch).
                 await self._play_earcon(DISCONNECT_PCM)
-                # Cooldown setzen damit Speaker-Echo nicht sofort re-triggert
-                self._wake_lock_until = time.time() + self._post_hangup_lock_s
-                log.info("📵 AUFGELEGT — zurück zu IDLE (Wake-Lock %.1fs).",
-                         self._post_hangup_lock_s)
+                # Cooldown setzen damit Speaker-Echo nicht sofort re-triggert.
+                lock_s = self._post_hangup_lock_seconds()
+                self._wake_lock_until = time.time() + lock_s
+                log.info("📵 AUFGELEGT — zurück zu IDLE (Wake-Lock %.1fs).", lock_s)
 
     def _earcons_enabled(self) -> bool:
         """Whether synthesized UI earcons may play.
