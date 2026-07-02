@@ -316,6 +316,27 @@ WebServer import/ctor entirely (deep refactor, out of scope).
   voice-usable 5.1 s (3.1x same-method; ~40x vs live). macOS: method
   committed, unmeasured (no hardware).
 
+## Iteration 14 — the REAL user anchor: TTI (deep dive after user pushback)
+
+- **What the 1.2 s window anchor missed:** it measured "the static shell is
+  served". The user-perceived start continues with the WebView render AND —
+  dominant — the serve-first bootstrap HOLDING every UI data request until
+  `set_app`, which ran only AFTER the full `server.start()` init chain
+  (mission/wiki/session/channel). Live 15:26 boot: window at ~1.2 s but
+  set_app at **+16.1 s** — the visible "Getting ready / Starting..." wall
+  (user screenshot).
+- **Fix:** `set_app` + `_write_meta` moved BEFORE `server.start()` in
+  `_heavy_backend_bg`. The WebServer ctor already establishes the per-route
+  contract this relies on (documented 503/None placeholders; chat_store is
+  set before the task) — the UI answers within seconds, subsystems fill in
+  behind. New honest anchor `APP_INTERACTIVE_MS` (printed at set_app,
+  measured by the harness as a required third milestone in --voice mode).
+- **Before/after, same log-timeline method, same live setup:**
+  interactive at **+16.1 s -> <= +7.9 s (2x)**; isolated bench:
+  APP_INTERACTIVE **5.3 s median** (5.7/5.3/4.8), window 1.2 s, voice 5.2 s.
+  Remaining TTI structure: python+registries+ctor ~7 s live (~4 s isolated)
+  — the import/ctor floor documented in iteration 12.
+
 ## How to add a feature WITHOUT slowing boot (doctrine)
 
 - Nothing new runs before VOICE_READY. New subsystems hook into
