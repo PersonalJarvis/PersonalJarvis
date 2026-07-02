@@ -351,3 +351,8 @@ jarvis/ui/web/dist/*
 #     test (bucket 4, same rationale as the speech turn-taking block above) ---
 tests/unit/speech/test_rolling_whisper_wake_echo_confirm.py
 tests/unit/speech/test_rolling_whisper_wake_silence_ghost.py
+# rolling-whisper wake module: verbatim German Whisper-hallucination examples
+# ('Ja.', 'Das ist ein Problem.') inside English docstrings documenting the
+# ghost-activation forensics — inline i18n-allow impossible inside a docstring
+# (bucket 4, forensic; same rationale as the docstring/prompt files above)
+jarvis/speech/rolling_whisper_wake.py
