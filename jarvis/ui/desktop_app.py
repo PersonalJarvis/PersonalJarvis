@@ -771,6 +771,18 @@ class DesktopApp:
         from jarvis.audio.device_init import start_audio_device_prefetch
         start_audio_device_prefetch()
 
+        # Wake-MODEL prefetch (TTU iteration 10): the instrumented timeline
+        # showed the ~3.1 s fast-first wake-model load running strictly AFTER
+        # the import mountain + WebServer ctor. Start it NOW in a daemon
+        # thread so it overlaps them; the deferred warm-up later ADOPTS the
+        # loaded engine (FasterWhisperProvider._ensure_model) instead of
+        # loading again. No-op on JARVIS_VOICE=0 / any failure.
+        try:
+            from jarvis.plugins.stt import start_wake_model_prefetch
+            start_wake_model_prefetch(self.cfg.stt)
+        except Exception:  # noqa: BLE001 — a prefetch must never break boot
+            pass
+
         def _log_unhandled_async(loop_: asyncio.AbstractEventLoop, context: dict) -> None:
             exc = context.get("exception")
             msg = context.get("message", "<no message>")

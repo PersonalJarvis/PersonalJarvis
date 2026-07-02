@@ -410,4 +410,66 @@ def build_wake_whisper(
     )
 
 
-__all__ = ["build_stt_from_config", "build_wake_whisper"]
+def start_wake_model_prefetch(
+    stt_cfg: Any,
+    *,
+    language: str | None = None,
+    wake_phrase: str | None = None,
+) -> Any:
+    """Load the fast-first wake Whisper MODEL in a daemon thread, off the boot
+    critical path (TTU iteration 10, docs/diagnostics/BOOT-TTU-NOTES.md).
+
+    Drift-free by construction: the exact model parameters are resolved by
+    building a throwaway provider through :func:`build_wake_whisper`
+    (``fast_first=True`` — the same call the boot path makes; the ctor is
+    cheap and fully lazy), then the weights are loaded into the hand-over
+    cache that ``FasterWhisperProvider._ensure_model`` adopts. The phrase
+    bias and language do not participate in the cache key (they are decode
+    parameters, not load parameters), so a key can only miss if the real
+    boot resolves a different model/device — in which case the consumer
+    simply loads lazily as before.
+
+    GIL note (2026-06-22 forensic): the load runs behind the
+    ``inference_only_import_shield`` inside ``_new_whisper_model`` and touches
+    no torch; the first real torch import (Silero VAD) happens seconds later
+    in the deferred loaders, so the shield race window stays clear.
+
+    No-op when voice is disabled (``JARVIS_VOICE``) or on any failure —
+    a prefetch must never break boot. Returns the thread or ``None``.
+    """
+    import threading
+
+    from jarvis.speech.warmup_prefetch import _voice_disabled
+
+    if _voice_disabled():
+        return None
+
+    def _load() -> None:
+        try:
+            from jarvis.plugins.stt.fwhisper import prefetch_model
+
+            probe = build_wake_whisper(
+                stt_cfg,
+                language=language,
+                wake_phrase=wake_phrase,
+                fast_first=True,
+            )
+            prefetch_model(
+                probe._model_name,  # noqa: SLF001 — resolved params, same module family
+                probe._device,  # noqa: SLF001
+                probe._compute_type,  # noqa: SLF001
+                probe._cpu_threads,  # noqa: SLF001
+            )
+        except Exception as exc:  # noqa: BLE001 — a prefetch must never break boot
+            logger.debug("Wake-model prefetch skipped: {}", exc)
+
+    thread = threading.Thread(target=_load, name="wake-model-prefetch", daemon=True)
+    thread.start()
+    return thread
+
+
+__all__ = [
+    "build_stt_from_config",
+    "build_wake_whisper",
+    "start_wake_model_prefetch",
+]

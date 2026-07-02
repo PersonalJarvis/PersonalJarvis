@@ -169,6 +169,61 @@ def _new_whisper_model(
     return WhisperModel(model_name, **kwargs)
 
 
+# --- Boot-time wake-model prefetch (TTU iteration 10) -----------------------
+# The instrumented cold-boot timeline (docs/diagnostics/BOOT-TTU-NOTES.md)
+# shows the wake model load+prime (~3.1 s) runs strictly AFTER the import
+# mountain (~2.6 s) and the WebServer ctor (~1.5 s), even though it only needs
+# faster_whisper. Loading it in a daemon thread right after the UI shell is
+# served overlaps those blocks. ``_ensure_model`` ADOPTS the prefetched engine
+# when its exact key (normalized model, device, compute_type, cpu_threads)
+# matches; on a mismatch or a prefetch failure it loads lazily as before —
+# never slower than today beyond the bounded in-flight wait. The adopted model
+# is popped (single use): a later ``recover()`` therefore always rebuilds a
+# FRESH engine and can never re-adopt a possibly wedged prefetch (AP-24).
+# Thread-safety: the prefetch runs in ONE daemon thread and hands over via the
+# event+dict under a lock; the provider's own inference lock is untouched.
+_PREFETCH_LOCK = threading.Lock()
+_PREFETCH_EVENTS: dict[tuple, threading.Event] = {}
+_PREFETCHED_MODELS: dict[tuple, Any] = {}
+# Upper bound on waiting for an in-flight prefetch of the SAME key before
+# falling back to a local load. The prefetch starts seconds earlier than any
+# consumer, so the typical remaining wait is <1 s; the bound only matters if
+# the prefetch thread died mid-load.
+_PREFETCH_WAIT_S = 20.0
+
+
+def _prefetch_key(
+    model_name: str, device: str, compute_type: str, cpu_threads: int
+) -> tuple:
+    return (_normalize_model_name(model_name), device, compute_type, int(cpu_threads))
+
+
+def prefetch_model(
+    model_name: str, device: str, compute_type: str, cpu_threads: int
+) -> bool:
+    """Load a WhisperModel into the hand-over cache (call from a daemon thread).
+
+    Idempotent per key: a second call while one is in flight (or done) is a
+    no-op. Failures are swallowed — the consumer simply loads lazily. Returns
+    True iff a model was cached by THIS call.
+    """
+    key = _prefetch_key(model_name, device, compute_type, cpu_threads)
+    with _PREFETCH_LOCK:
+        if key in _PREFETCH_EVENTS:
+            return False
+        _PREFETCH_EVENTS[key] = threading.Event()
+    model: Any = None
+    try:
+        model = _new_whisper_model(key[0], device, compute_type, int(cpu_threads))
+    except Exception as exc:  # noqa: BLE001 — a prefetch must never break boot
+        log.debug("Wake-model prefetch failed (lazy load will cover it): %s", exc)
+    with _PREFETCH_LOCK:
+        if model is not None:
+            _PREFETCHED_MODELS[key] = model
+    _PREFETCH_EVENTS[key].set()
+    return model is not None
+
+
 class FasterWhisperProvider:
     """Local Whisper STT via faster-whisper (CTranslate2 backend)."""
 
@@ -246,11 +301,38 @@ class FasterWhisperProvider:
         """True when the model is constructed AND primed (safe to poll)."""
         return self._warm
 
+    @property
+    def bias_prompt(self) -> str | None:
+        """The ``initial_prompt`` this instance primes the decoder with.
+
+        The rolling wake uses this to know whether a transcript could be a
+        PROMPT ECHO (the primed model emitting the prompt verbatim on
+        ambiguous noise/breath windows — the 2026-07-02 ghost-activation
+        forensic) and therefore needs the unbiased second-pass confirm."""
+        return self._initial_prompt
+
     def _ensure_model(self) -> None:
         if self._model is not None:
             return
         model_name = _normalize_model_name(self._model_name)
         device, compute_type = self._device, self._compute_type
+        # Adopt the boot-prefetched engine when its exact key matches (see the
+        # prefetch block above). Popped = single use, so recover() always
+        # rebuilds fresh. On an in-flight prefetch of OUR key, wait bounded
+        # instead of double-loading the same weights.
+        key = (model_name, device, compute_type, int(self._cpu_threads))
+        ev = _PREFETCH_EVENTS.get(key)
+        if ev is not None:
+            ev.wait(timeout=_PREFETCH_WAIT_S)
+            with _PREFETCH_LOCK:
+                prefetched = _PREFETCHED_MODELS.pop(key, None)
+            if prefetched is not None:
+                self._model = prefetched
+                log.info(
+                    "Adopted boot-prefetched Whisper model (%s/%s/%s).",
+                    model_name, device, compute_type,
+                )
+                return
         try:
             self._model = _new_whisper_model(
                 model_name, device, compute_type, self._cpu_threads
@@ -355,28 +437,43 @@ class FasterWhisperProvider:
     async def transcribe_pcm(
         self, pcm_bytes: bytes, sample_rate: int = 16_000,
         language: str | None = None,
+        ignore_initial_prompt: bool = False,
     ) -> Transcript:
         """Direct path for VAD output: int16 PCM bytes → transcript.
 
         `language` overrides the default language per call. Useful for the
         wake detector, which should always listen for German even when the
         STT default is "auto".
+
+        ``ignore_initial_prompt=True`` runs THIS call without the configured
+        phrase bias — the rolling wake's echo confirm: when a candidate
+        transcript is exactly the primed phrase, an unbiased second pass on
+        the same window separates a genuine wake (the unprimed ear still
+        hears speech) from a prompt echo on noise/breath (it hears nothing).
         """
         self._ensure_model()
         audio_np = pcm_bytes_to_np(pcm_bytes)
-        return await self._transcribe_np(audio_np, sample_rate, language=language)
+        return await self._transcribe_np(
+            audio_np, sample_rate, language=language,
+            ignore_initial_prompt=ignore_initial_prompt,
+        )
 
     async def _transcribe_np(
         self, audio_np: np.ndarray, sample_rate: int,
         language: str | None = None,
+        ignore_initial_prompt: bool = False,
     ) -> Transcript:
         # faster-whisper is synchronous → ship it off to a thread
         import asyncio
-        return await asyncio.to_thread(self._transcribe_sync, audio_np, sample_rate, language)
+        return await asyncio.to_thread(
+            self._transcribe_sync, audio_np, sample_rate, language,
+            ignore_initial_prompt,
+        )
 
     def _transcribe_sync(
         self, audio_np: np.ndarray, sample_rate: int,
         language: str | None = None,
+        ignore_initial_prompt: bool = False,
     ) -> Transcript:
         # faster-whisper accepts np.ndarray float32 directly when 16 kHz
         if sample_rate != 16_000:
@@ -410,7 +507,12 @@ class FasterWhisperProvider:
                 beam_size=self._beam_size,
                 vad_filter=self._vad_filter,
                 condition_on_previous_text=False,
-                initial_prompt=self._initial_prompt,
+                # Echo-confirm support: the caller may run one UNPRIMED pass
+                # over the same audio to tell a genuine wake from the prompt
+                # echoing back on noise (2026-07-02 ghost activations).
+                initial_prompt=(
+                    None if ignore_initial_prompt else self._initial_prompt
+                ),
                 no_speech_threshold=self._no_speech_threshold,
             )
             # segments_iter is a generator — iterating over it materializes it
