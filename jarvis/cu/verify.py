@@ -243,6 +243,39 @@ def regions_equal(
     return a[0] == b[0] and a[1] == b[1]
 
 
+def crop_raw(
+    raw: tuple[tuple[int, int], bytes],
+    rect: tuple[int, int, int, int],
+    cx: int,
+    cy: int,
+    radius: int,
+) -> tuple[tuple[int, int], bytes] | None:
+    """Crop a square around screen point ``(cx, cy)`` out of a raw monitor
+    grab covering screen ``rect`` (left, top, width, height in input units).
+    ``None`` when the point lies outside the grab. The grab's pixel size may
+    differ from the rect (Retina: point rect, pixel grab) — the point is
+    scaled into grab pixels first. Pure PIL, no re-grab — one monitor grab
+    yields both the local and the global effect signal."""
+    (w, h), rgb = raw
+    rl, rt, rw, rh = rect
+    if rw <= 0 or rh <= 0:
+        return None
+    px = int((int(cx) - rl) * w / rw)
+    py = int((int(cy) - rt) * h / rh)
+    if not (0 <= px < w and 0 <= py < h):
+        return None
+    from PIL import Image  # noqa: PLC0415
+
+    # Radius in input units -> grab pixels (uniform capture scale).
+    r = max(1, int(radius * w / rw))
+    left = max(0, px - r)
+    top = max(0, py - r)
+    right = min(w, px + r)
+    bottom = min(h, py + r)
+    img = Image.frombytes("RGB", (w, h), rgb).crop((left, top, right, bottom))
+    return ((img.width, img.height), img.tobytes())
+
+
 def screen_drifted(
     reference: tuple[tuple[int, int], bytes] | None,
     current: tuple[tuple[int, int], bytes] | None,

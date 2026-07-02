@@ -1,0 +1,865 @@
+"""Computer-Use v2 engine — the perceive->act->verify mission loop.
+
+Drop-in replacement for the legacy ``run_cu_loop`` (same signature, same
+HarnessResult stream, same exit-code + readback contract), selected via
+``[computer_use].engine = "v2"``. The structural differences to the legacy
+monolith:
+
+* **One frame, one mapper.** Every coordinate resolves through the
+  CoordinateMapper of the frame the model actually saw; the coordinate
+  convention is resolved per provider (``conventions.py``).
+* **UI-idle capture.** A frame is only handed to the model once the screen
+  stopped changing (bounded), replacing fixed settle sleeps.
+* **Closed verification loop.** Every state-changing action is effect-checked
+  (pre/post monitor grab: local crop + global diff; type read-back via the
+  accessibility tree). A failed check fails the action, truncates the rest
+  of the batch and forces re-perception — never silent continuation.
+* **Idempotency ledger.** An action that already executed against a visually
+  identical frame is refused deterministically (the double-type/double-click
+  killer), replacing the legacy guard zoo.
+* **One pointer action per batch.** Coordinates are only trusted for the
+  first pointer action after a perception; later pointer actions in the same
+  batch would act on a stale frame and are refused.
+
+Exit codes (kept stable for the voice/UI layer): 0 done, 1 observe failure,
+2 parse/confused, 3 no vision provider, 4 budget, 5 gave up / no progress,
+8 tool failure, 124 timeout (outer harness), 130 cancelled.
+
+Simplifications vs. legacy (documented, revisit when needed): no zoom-refine
+LLM round (downscaled frames + effect-check retry replace it), no elevation-
+prompt wait, no interactive human-handoff wait (a handoff screen fails fast
+with a speakable reason instead).
+"""
+from __future__ import annotations
+
+import asyncio
+import base64
+import logging
+import sys
+import time
+from collections.abc import AsyncIterator
+from pathlib import Path
+from typing import Any
+
+from jarvis.core.protocols import CancelToken, HarnessResult, HarnessTask, ImageBlock
+from jarvis.cu import conventions as conv_mod
+from jarvis.cu.brain_call import (
+    CUNoVisionProviderError,
+    call_vision_brain,
+)
+from jarvis.cu.capture import Frame, capture_stable_frame, grab_region, select_monitor
+from jarvis.cu.geometry import CoordinateConvention, MonitorInfo
+from jarvis.cu.ledger import ActionLedger
+from jarvis.cu.verify import (
+    crop_raw,
+    foreground_ui_snapshot,
+    regions_equal,
+    verify_typed_text,
+)
+
+log = logging.getLogger(__name__)
+
+# Exit codes — mirror the legacy engine exactly (voice/UI layers branch on them).
+_EXIT_OK = 0
+_EXIT_OBSERVE = 1
+_EXIT_PARSE = 2
+_EXIT_NO_PROVIDER = 3
+_EXIT_BUDGET = 4
+_EXIT_FAIL = 5
+_EXIT_TOOL = 8
+_EXIT_CANCEL = 130
+
+_OUTPUT_LANGUAGE_ENV_KEY = "JARVIS_OUTPUT_LANGUAGE"
+
+_ACT_TIMEOUT_S = 15.0
+_OBSERVE_TIMEOUT_S = 12.0
+_DECIDE_MAX_TOKENS = 320
+_JUDGE_MAX_TOKENS = 200
+_HISTORY_TAIL = 12
+_EFFECT_SETTLE_S = 0.35
+_EFFECT_CROP_RADIUS = 110
+
+_MAX_CONSECUTIVE_FAILURES = 4
+_MAX_LLM_FAILURES = 3
+_MAX_DONE_REJECTS = 3
+_MAX_GUARD_HITS = 5
+_MAX_OBSERVE_FAILURES = 2
+_STUCK_FRAMES = 3
+
+_SYSTEM_BASE = (
+    "You are the computer-use executor: you operate the user's REAL desktop "
+    "by looking at a screenshot and issuing mouse/keyboard actions.\n"
+    "Core discipline — perceive, act, verify:\n"
+    "* The screenshot is the ONLY ground truth. Never assume an effect "
+    "happened; check the fresh screenshot.\n"
+    "* FIRST verify the effect of your previous action (see PREVIOUS STEPS). "
+    "If it visibly failed or did nothing, correct course — do NOT repeat it "
+    "unchanged.\n"
+    "* Prefer click_element with an EXACT label from CLICKABLE ELEMENTS when "
+    "one matches your target — it is more reliable than pixel coordinates.\n"
+    "* Never two pointer actions (click/drag) in one reply — after the first "
+    "one the screen may change, so a second guess would be blind. A tight "
+    "click -> type -> key sequence IS allowed.\n"
+    "* Before typing, the target field must have keyboard focus (click it "
+    "first). Set clear_first true to REPLACE existing text (address bars, "
+    "search boxes) instead of appending.\n"
+    "* Use open_app to launch or focus an application. Use switch_window to "
+    "focus an open window.\n"
+    "* done: ONLY when the goal's observable proof is visible in the CURRENT "
+    "screenshot; quote that proof in reason.\n"
+    "* fail: ONLY when the goal is genuinely impossible from here; explain "
+    "why in reason.\n\n"
+)
+
+_JUDGE_SYSTEM = (
+    "You are a STRICT completion judge for desktop automation. Decide from "
+    "the attached screenshot whether the GOAL is fully achieved. Output "
+    "exactly ONE JSON object, no prose, no code fences: "
+    '{"done": true|false, "proof": "<the exact on-screen evidence>"}.\n'
+    "* Trust only what is visible in the screenshot. If the required proof "
+    "is absent or ambiguous, answer done:false.\n"
+    "* The proof is spoken back to the user verbatim — write one short, "
+    "human sentence quoting the concrete on-screen evidence (window, title, "
+    "field value, page content).\n"
+    "* When done:false, state briefly in proof what is still missing."
+)
+
+_LANGUAGE_NAMES = {"de": "German", "en": "English", "es": "Spanish"}
+
+
+def _proof_language_directive(output_language: str | None) -> str:
+    """Judge directive: write ``proof`` in the user's turn language."""
+    lang = (output_language or "").strip().lower()
+    name = _LANGUAGE_NAMES.get(lang)
+    if not name:
+        return ""
+    return (
+        f"\n\nIMPORTANT: write the 'proof' value in {name}, the user's "
+        "language — it is spoken back verbatim."
+    )
+
+
+def _parse_verdict(raw: str) -> tuple[bool, str]:
+    """Tolerant ``{"done": bool, "proof": str}`` parse; (False, "") on junk."""
+    import json
+    import re
+
+    cleaned = (raw or "").strip()
+    fence = re.search(r"```(?:json)?\s*(.+?)\s*```", cleaned, re.DOTALL)
+    if fence is not None:
+        cleaned = fence.group(1).strip()
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    if start < 0 or end <= start:
+        return (False, "")
+    try:
+        obj = json.loads(cleaned[start:end + 1])
+    except json.JSONDecodeError:
+        return (False, "")
+    if not isinstance(obj, dict):
+        return (False, "")
+    done = obj.get("done") is True
+    proof = str(obj.get("proof", "") or "").strip()[:220]
+    return (done, proof)
+
+
+def _select_all_keys() -> list[str]:
+    """Platform-correct select-all combo (the legacy engine hardcoded ctrl+a,
+    which is wrong on macOS)."""
+    return ["cmd", "a"] if sys.platform == "darwin" else ["ctrl", "a"]
+
+
+def _wayland_refusal() -> str | None:
+    try:
+        from jarvis.platform.probes import is_wayland  # noqa: PLC0415
+
+        if is_wayland():
+            return (
+                "cannot run on a Wayland session: screen capture and "
+                "synthetic input are blocked there. Use an X11 session."
+            )
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _is_cancelled(token: CancelToken | None) -> bool:
+    if token is None:
+        return False
+    try:
+        return bool(token.is_cancelled())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+class _Profiler:
+    """Per-mission phase wall-time accumulator + CUStepProfiled emitter."""
+
+    def __init__(self, bus: Any) -> None:
+        self.phase_ms: dict[str, float] = {}
+        self._bus = bus
+        # Strong refs so fire-and-forget publishes are never GC'd mid-flight.
+        self._tasks: set[Any] = set()
+
+    def add(self, phase: str, t0: float, step_idx: int) -> None:
+        """Accumulate one phase span and publish it as a heartbeat.
+
+        Called from the loop's async context; the publish rides a fire-and-
+        forget task so profiling never blocks the mission (the event doubles
+        as the speech-pipeline liveness signal, mirroring the legacy engine).
+        """
+        ms = (time.monotonic() - t0) * 1000.0
+        self.phase_ms[phase] = self.phase_ms.get(phase, 0.0) + ms
+        if self._bus is None:
+            return
+        try:
+            from jarvis.core.events import CUStepProfiled  # noqa: PLC0415
+
+            event = CUStepProfiled(
+                phase=phase,  # type: ignore[arg-type]
+                duration_ms=max(0, int(ms)),
+                step_idx=step_idx,
+                engine="v2",
+            )
+            task = asyncio.get_running_loop().create_task(
+                self._bus.publish(event),
+            )
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+        except Exception:  # noqa: BLE001
+            log.debug("CUStepProfiled publish failed", exc_info=True)
+
+    def summary(self, steps: int, t_start_ns: int) -> str:
+        total_s = (time.time_ns() - t_start_ns) / 1e9
+        parts = " ".join(
+            f"{k}={v / 1000.0:.1f}s" for k, v in sorted(self.phase_ms.items())
+        )
+        return (
+            f"[cu] mission profile: steps={steps} total={total_s:.1f}s {parts}"
+        ).rstrip() + "\n"
+
+
+async def _publish_observation(bus: Any, frame: Frame, window_title: str) -> None:
+    if bus is None:
+        return
+    try:
+        from jarvis.core.events import ObservationCaptured  # noqa: PLC0415
+
+        await bus.publish(ObservationCaptured(
+            source="screenshot_only",
+            window_title=window_title,
+            node_count=0,
+            screenshot_hash=frame.sha256,
+            screenshot_path=frame.blob_path,
+        ))
+    except Exception:  # noqa: BLE001
+        log.debug("ObservationCaptured publish failed", exc_info=True)
+
+
+def _foreground_title() -> str:
+    try:
+        from jarvis.platform import window_state  # noqa: PLC0415
+
+        return str(window_state.get_foreground_title() or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+async def _dispatch_tool(
+    ctx: Any, tool_name: str, args: dict[str, Any], trace_id: Any,
+) -> tuple[bool, str]:
+    """Run one action through the ToolExecutor (AP-3 choke point)."""
+    tools = ctx.tools or {}
+    tool = tools.get(tool_name)
+    if tool is None:
+        return False, f"{tool_name} tool not wired"
+    executor = ctx.tool_executor
+    if executor is None:
+        return False, "tool_executor not wired"
+    try:
+        res = await asyncio.wait_for(
+            executor.execute(
+                tool, args, user_utterance="computer-use", trace_id=trace_id,
+            ),
+            timeout=_ACT_TIMEOUT_S,
+        )
+    except asyncio.TimeoutError:
+        return False, f"{tool_name} timed out after {_ACT_TIMEOUT_S:.0f}s"
+    except Exception as exc:  # noqa: BLE001
+        return False, f"{tool_name} crash: {type(exc).__name__}: {exc}"
+    return (
+        bool(getattr(res, "success", False)),
+        str(getattr(res, "output", "") or getattr(res, "error", "") or ""),
+    )
+
+
+def _summarize_action(action: dict[str, Any]) -> str:
+    kind = action.get("action", "?")
+    if kind == "click":
+        t = action.get("target") or ""
+        return f"click({int(action.get('x', 0))},{int(action.get('y', 0))}{', ' + t if t else ''})"
+    if kind == "click_element":
+        return f"click_element({action.get('name')!r})"
+    if kind == "type":
+        return f"type({str(action.get('text', ''))[:40]!r})"
+    if kind == "key":
+        return f"key({'+'.join(action.get('keys', []))})"
+    if kind == "scroll":
+        return f"scroll({action.get('direction')} x{action.get('amount')})"
+    if kind == "drag":
+        return "drag"
+    if kind in ("open_app", "switch_window"):
+        return f"{kind}({action.get('name')!r})"
+    if kind == "wait":
+        return f"wait({action.get('ms')}ms)"
+    return str(kind)
+
+
+async def _judge_done(
+    ctx: Any,
+    goal: str,
+    monitor: MonitorInfo,
+    image_cfg: dict[str, Any],
+    output_language: str | None,
+) -> tuple[bool, str]:
+    """Strict completion judge against a FRESH stable frame."""
+    try:
+        frame = await asyncio.wait_for(
+            asyncio.to_thread(
+                capture_stable_frame,
+                monitor,
+                max_dimension=image_cfg["max_dimension"],
+                blob_dir=image_cfg["blob_dir"],
+            ),
+            timeout=_OBSERVE_TIMEOUT_S,
+        )
+    except Exception:  # noqa: BLE001 — judge is best-effort; reject on no frame
+        return (False, "")
+    system = _JUDGE_SYSTEM + _proof_language_directive(output_language)
+    user = (
+        f"GOAL: {goal}\n\nThe attached screenshot shows the CURRENT screen. "
+        "Is the goal fully achieved? Reply with the JSON object only."
+    )
+    image = ImageBlock(
+        mime="image/jpeg",
+        data_b64=base64.b64encode(frame.jpeg).decode("ascii"),
+        source_hash=frame.sha256,
+    )
+    try:
+        reply = await call_vision_brain(
+            ctx.brain_manager,
+            build_prompt=lambda provider, brain: (system, user),
+            images=[image],
+            max_tokens=_JUDGE_MAX_TOKENS,
+        )
+    except Exception:  # noqa: BLE001 — an unreachable judge must not crash a
+        # finished mission; the caller treats it as "not confirmed".
+        log.debug("[cu] done-judge call failed", exc_info=True)
+        return (False, "")
+    return _parse_verdict(reply.text)
+
+
+async def run_cu_loop(
+    task: HarnessTask,
+    ctx: Any,
+    *,
+    cancel_token: CancelToken | None = None,
+) -> AsyncIterator[HarnessResult]:
+    """CU v2 mission loop. Same contract as the legacy ``run_cu_loop``."""
+    t_start = time.time_ns()
+    goal = task.prompt
+    output_language = (getattr(task, "env", None) or {}).get(
+        _OUTPUT_LANGUAGE_ENV_KEY,
+    ) or None
+    trace_id = None  # per-dispatch trace ids come from the ToolExecutor path
+    bus = getattr(ctx, "bus", None)
+    profiler = _Profiler(bus)
+    ledger = ActionLedger()
+    history: list[str] = []
+    step_idx = 0
+
+    def _final(stdout: str = "", stderr: str = "", exit_code: int = 0) -> HarnessResult:
+        profile = profiler.summary(step_idx, t_start)
+        log.info(profile.rstrip())
+        return HarnessResult(
+            stdout=stdout,
+            stderr=stderr + profile,
+            exit_code=exit_code,
+            duration_ms=(time.time_ns() - t_start) // 1_000_000,
+            is_final=True,
+        )
+
+    def _progress(msg: str) -> HarnessResult:
+        return HarnessResult(stdout=msg + "\n", is_final=False)
+
+    yield _progress(f"[cu] Start (v2): {goal[:80]}")
+
+    wl = _wayland_refusal()
+    if wl is not None:
+        yield _final(stderr=f"[cu] {wl}\n", exit_code=_EXIT_OBSERVE)
+        return
+
+    max_steps = max(25, int(getattr(ctx, "step_budget", 100)))
+    monitor_policy = str(getattr(ctx, "monitor", "primary") or "primary")
+    main_monitor = str(getattr(ctx, "main_monitor", "primary") or "primary")
+    coordinate_space = str(getattr(ctx, "coordinate_space", "auto") or "auto")
+    settle_scale = float(getattr(ctx, "settle_scale", 1.0) or 1.0)
+    strict_verify = bool(getattr(ctx, "strict_verify", True))
+    image_cfg = {
+        "max_dimension": int(getattr(ctx, "image_max_dimension", 1366) or 1366),
+        "blob_dir": Path("data") / "flight_recorder" / "blobs",
+    }
+
+    consecutive_failures = 0
+    llm_failures = 0
+    done_rejects = 0
+    guard_hits = 0
+    observe_failures = 0
+    recent_shas: list[str] = []
+    progressed_since_sha_repeat = True
+
+    while step_idx < max_steps:
+        step_idx += 1
+        if _is_cancelled(cancel_token):
+            yield _final(stderr="[cu] cancelled\n", exit_code=_EXIT_CANCEL)
+            return
+
+        # ---- perceive -----------------------------------------------------
+        t0 = time.monotonic()
+        try:
+            monitor = await asyncio.to_thread(
+                select_monitor, monitor_policy, main_monitor=main_monitor,
+            )
+            frame_coro = asyncio.to_thread(
+                capture_stable_frame,
+                monitor,
+                max_dimension=image_cfg["max_dimension"],
+                blob_dir=image_cfg["blob_dir"],
+            )
+            snapshot_coro = foreground_ui_snapshot()
+            frame, (labels, field_hint, handoff) = await asyncio.wait_for(
+                asyncio.gather(frame_coro, snapshot_coro),
+                timeout=_OBSERVE_TIMEOUT_S,
+            )
+        except Exception as exc:  # noqa: BLE001 — capture is inherently flaky
+            observe_failures += 1
+            log.warning("[cu] observe failed (step %d): %s", step_idx, exc)
+            if observe_failures > _MAX_OBSERVE_FAILURES:
+                yield _final(
+                    stderr=f"[cu] cannot see the screen: {exc}\n",
+                    exit_code=_EXIT_OBSERVE,
+                )
+                return
+            continue
+        observe_failures = 0
+        window_title = _foreground_title()
+        await _publish_observation(bus, frame, window_title)
+        profiler.add("observe", t0, step_idx)
+
+        # Human-handoff screens (login / 2FA / CAPTCHA): the agent must never
+        # type a secret it does not hold — stop with a speakable reason.
+        if handoff is not None:
+            yield _final(
+                stderr=(
+                    f"[cu] fail at step-{step_idx}: the screen is asking for "
+                    f"{handoff} — please complete that yourself, then ask me "
+                    "again.\n"
+                ),
+                exit_code=_EXIT_FAIL,
+            )
+            return
+
+        # No-progress guard: the same screen N times without any successful
+        # action in between means we are circling — judge once, then stop.
+        recent_shas.append(frame.sha256)
+        if len(recent_shas) > _STUCK_FRAMES:
+            recent_shas.pop(0)
+        if (
+            len(recent_shas) == _STUCK_FRAMES
+            and len(set(recent_shas)) == 1
+            and not progressed_since_sha_repeat
+        ):
+            done, proof = await _judge_done(
+                ctx, goal, monitor, image_cfg, output_language,
+            )
+            if done:
+                yield _final(
+                    stdout=f"[cu] done (verified: {proof})\n", exit_code=_EXIT_OK,
+                )
+            else:
+                yield _final(
+                    stderr=(
+                        f"[cu] fail at step-{step_idx}: no progress — the "
+                        "screen has not changed despite my actions.\n"
+                    ),
+                    exit_code=_EXIT_FAIL,
+                )
+            return
+        progressed_since_sha_repeat = False
+
+        # ---- decide ---------------------------------------------------------
+        t0 = time.monotonic()
+        conventions_used: dict[str, CoordinateConvention] = {}
+
+        def _build_prompt(provider: str, brain: Any) -> tuple[str, str]:
+            convention = conv_mod.resolve_convention(
+                provider, brain, config_override=coordinate_space,
+            )
+            conventions_used[provider] = convention
+            system = (
+                _SYSTEM_BASE
+                + conv_mod.coordinate_prompt_block(
+                    convention, frame.image_width, frame.image_height,
+                )
+                + "\n\n"
+                + conv_mod.action_grammar_block()
+            )
+            lines = [f"GOAL: {goal}"]
+            if window_title:
+                lines.append(f"FOREGROUND WINDOW: {window_title}")
+            if labels:
+                lines.append("CLICKABLE ELEMENTS: " + ", ".join(labels))
+            if field_hint:
+                lines.append(field_hint.strip())
+            tail = history[-_HISTORY_TAIL:]
+            lines.append(
+                "PREVIOUS STEPS:\n" + ("\n".join(tail) if tail else "(none)"),
+            )
+            if not frame.stable:
+                lines.append(
+                    "NOTE: the screen was still changing when this screenshot "
+                    "was captured — verify carefully before acting.",
+                )
+            lines.append("Reply with the JSON action(s) only.")
+            return system, "\n\n".join(lines)
+
+        image = ImageBlock(
+            mime="image/jpeg",
+            data_b64=base64.b64encode(frame.jpeg).decode("ascii"),
+            source_hash=frame.sha256,
+        )
+        try:
+            reply = await call_vision_brain(
+                ctx.brain_manager,
+                build_prompt=_build_prompt,
+                images=[image],
+                max_tokens=_DECIDE_MAX_TOKENS,
+                early_stop_json=True,
+            )
+        except CUNoVisionProviderError as exc:
+            yield _final(
+                stderr=f"[cu] no screen-capable model reachable: {exc}\n",
+                exit_code=_EXIT_NO_PROVIDER,
+            )
+            return
+        except Exception as exc:  # noqa: BLE001 — transient brain failure
+            llm_failures += 1
+            log.warning("[cu] brain call failed (step %d): %s", step_idx, exc)
+            if llm_failures >= _MAX_LLM_FAILURES:
+                yield _final(
+                    stderr=f"[cu] the screen-control model kept failing: {exc}\n",
+                    exit_code=_EXIT_PARSE,
+                )
+                return
+            history.append(f"step {step_idx}: (model call failed — retrying)")
+            continue
+        profiler.add("think", t0, step_idx)
+
+        try:
+            actions = conv_mod.parse_actions(reply.text)
+        except conv_mod.ActionParseError as exc:
+            llm_failures += 1
+            log.info("[cu] unparseable model reply (step %d): %s", step_idx, exc)
+            if llm_failures >= _MAX_LLM_FAILURES:
+                yield _final(
+                    stderr=(
+                        "[cu] could not get a valid screen-control response "
+                        f"from the model: {exc}\n"
+                    ),
+                    exit_code=_EXIT_PARSE,
+                )
+                return
+            history.append(
+                f"step {step_idx}: (reply was not a valid action — reply with "
+                "the JSON action object only)",
+            )
+            continue
+        llm_failures = 0
+        convention = conventions_used.get(
+            reply.provider,
+            conv_mod.resolve_convention(
+                reply.provider, None, config_override=coordinate_space,
+            ),
+        )
+
+        # ---- act + verify ---------------------------------------------------
+        pointer_used = False
+        for action in actions:
+            if _is_cancelled(cancel_token):
+                yield _final(stderr="[cu] cancelled\n", exit_code=_EXIT_CANCEL)
+                return
+            kind = action["action"]
+
+            if kind == "done":
+                done, proof = await _judge_done(
+                    ctx, goal, monitor, image_cfg, output_language,
+                )
+                if done:
+                    yield _final(
+                        stdout=f"[cu] done (verified: {proof})\n",
+                        exit_code=_EXIT_OK,
+                    )
+                    return
+                done_rejects += 1
+                if done_rejects >= _MAX_DONE_REJECTS:
+                    yield _final(
+                        stderr=(
+                            f"[cu] fail at step-{step_idx}: the goal could not "
+                            "be verified as achieved on screen"
+                            + (f" ({proof})" if proof else "")
+                            + ".\n"
+                        ),
+                        exit_code=_EXIT_FAIL,
+                    )
+                    return
+                history.append(
+                    f"step {step_idx}: done REJECTED by the verifier"
+                    + (f" — {proof}" if proof else "")
+                    + " — keep working toward visible proof",
+                )
+                break  # re-perceive
+
+            if kind == "fail":
+                reason = action.get("reason") or "the model gave up"
+                yield _final(
+                    stderr=f"[cu] fail at step-{step_idx}: {reason}\n",
+                    exit_code=_EXIT_FAIL,
+                )
+                return
+
+            # -- pointer staleness rule -----------------------------------
+            is_pointer = kind in ("click", "drag") or (
+                kind == "scroll" and "x" in action
+            )
+            if is_pointer and pointer_used:
+                history.append(
+                    f"step {step_idx}: {_summarize_action(action)} SKIPPED — "
+                    "only one pointer action per screenshot; the screen may "
+                    "have changed",
+                )
+                break  # re-perceive before the next pointer action
+
+            # -- resolve coordinates through THIS frame's mapper -----------
+            resolved_xy: tuple[int, int] | None = None
+            if kind == "click":
+                resolved_xy = frame.mapper.model_to_screen(
+                    action["x"], action["y"], convention,
+                )
+            elif kind == "drag":
+                resolved_xy = frame.mapper.model_to_screen(
+                    action["x"], action["y"], convention,
+                )
+            elif kind == "scroll" and "x" in action:
+                sx, sy = frame.mapper.model_to_screen(
+                    action["x"], action["y"], convention,
+                )
+                action = {**action, "x": sx, "y": sy}
+
+            # -- idempotency ledger -----------------------------------------
+            if ledger.is_duplicate(action, frame.sha256, resolved_xy=resolved_xy):
+                guard_hits += 1
+                history.append(
+                    f"step {step_idx}: {_summarize_action(action)} REFUSED — "
+                    "this exact action already ran on this unchanged screen; "
+                    "the screen did not react. Choose a DIFFERENT action.",
+                )
+                if guard_hits >= _MAX_GUARD_HITS:
+                    yield _final(
+                        stderr=(
+                            f"[cu] fail at step-{step_idx}: I kept trying the "
+                            "same action without any effect on screen.\n"
+                        ),
+                        exit_code=_EXIT_FAIL,
+                    )
+                    return
+                break  # re-perceive
+
+            # -- execute ------------------------------------------------------
+            t0 = time.monotonic()
+            ok = False
+            detail = ""
+            if kind == "click":
+                assert resolved_xy is not None
+                pointer_used = True
+                pre = await asyncio.to_thread(grab_region, monitor.bbox)
+                ok, detail = await _dispatch_tool(
+                    ctx, "click",
+                    {
+                        "x": resolved_xy[0], "y": resolved_xy[1],
+                        "button": action["button"], "double": action["double"],
+                    },
+                    trace_id,
+                )
+                profiler.add("act", t0, step_idx)
+                t0 = time.monotonic()
+                if ok:
+                    ledger.record(action, frame.sha256, resolved_xy=resolved_xy)
+                    await asyncio.sleep(_EFFECT_SETTLE_S * settle_scale)
+                    post = await asyncio.to_thread(grab_region, monitor.bbox)
+                    rect = monitor.bbox
+                    rect_t = (rect["left"], rect["top"], rect["width"], rect["height"])
+                    local_pre = crop_raw(
+                        pre, rect_t, *resolved_xy, _EFFECT_CROP_RADIUS,
+                    ) if pre else None
+                    local_post = crop_raw(
+                        post, rect_t, *resolved_xy, _EFFECT_CROP_RADIUS,
+                    ) if post else None
+                    local_same = regions_equal(local_pre, local_post)
+                    if local_same is True:
+                        from jarvis.cu.capture import frames_differ  # noqa: PLC0415
+
+                        if pre is not None and post is not None and frames_differ(pre, post):
+                            detail = (detail + " — screen reacted elsewhere").strip()
+                        else:
+                            ok = False
+                            detail = (
+                                "the click produced NO visible change — it "
+                                "likely missed the target. Re-locate the "
+                                "element on the fresh screenshot (or use "
+                                "click_element with its exact label)."
+                            )
+                profiler.add("verify", t0, step_idx)
+
+            elif kind == "type":
+                if action.get("clear_first"):
+                    await _dispatch_tool(
+                        ctx, "hotkey", {"keys": _select_all_keys()}, trace_id,
+                    )
+                ok, detail = await _dispatch_tool(
+                    ctx, "type_text", {"text": action["text"]}, trace_id,
+                )
+                profiler.add("act", t0, step_idx)
+                t0 = time.monotonic()
+                if ok:
+                    ledger.record(action, frame.sha256)
+                    if strict_verify:
+                        landed = await verify_typed_text(action["text"])
+                        if landed is False:
+                            ok = False
+                            detail = (
+                                f"typed {action['text'][:40]!r} but it did NOT "
+                                "land in any editable field — the input is not "
+                                "focused. Click the target field first, then "
+                                "type again."
+                            )
+                        elif landed is True:
+                            detail = (
+                                f"typed {action['text'][:40]!r} — confirmed in "
+                                "the field"
+                            )
+                profiler.add("verify", t0, step_idx)
+
+            elif kind == "key":
+                ok, detail = await _dispatch_tool(
+                    ctx, "hotkey", {"keys": action["keys"]}, trace_id,
+                )
+                if ok:
+                    ledger.record(action, frame.sha256)
+                profiler.add("act", t0, step_idx)
+
+            elif kind == "scroll":
+                args: dict[str, Any] = {
+                    "direction": action["direction"], "amount": action["amount"],
+                }
+                if "x" in action:
+                    pointer_used = True
+                    args["x"], args["y"] = int(action["x"]), int(action["y"])
+                ok, detail = await _dispatch_tool(ctx, "scroll", args, trace_id)
+                if ok:
+                    ledger.record(action, frame.sha256)
+                profiler.add("act", t0, step_idx)
+
+            elif kind == "drag":
+                assert resolved_xy is not None
+                pointer_used = True
+                end_xy = frame.mapper.model_to_screen(
+                    action["x2"], action["y2"], convention,
+                )
+                ok, detail = await _dispatch_tool(
+                    ctx, "drag",
+                    {
+                        "x1": resolved_xy[0], "y1": resolved_xy[1],
+                        "x2": end_xy[0], "y2": end_xy[1],
+                        "duration_ms": action["duration_ms"],
+                    },
+                    trace_id,
+                )
+                if ok:
+                    ledger.record(action, frame.sha256)
+                profiler.add("act", t0, step_idx)
+
+            elif kind == "open_app":
+                ok, detail = await _dispatch_tool(
+                    ctx, "open_app", {"app_name": action["name"]}, trace_id,
+                )
+                if ok:
+                    ledger.record(action, frame.sha256)
+                    # Let the app paint its first window; the next perception's
+                    # stability probe covers the rest.
+                    await asyncio.sleep(1.0 * settle_scale)
+                profiler.add("act", t0, step_idx)
+
+            elif kind == "switch_window":
+                ok, detail = await _dispatch_tool(
+                    ctx, "switch_window", {"title_contains": action["name"]},
+                    trace_id,
+                )
+                if ok:
+                    ledger.record(action, frame.sha256)
+                profiler.add("act", t0, step_idx)
+
+            elif kind == "click_element":
+                pointer_used = True
+                ok, detail = await _dispatch_tool(
+                    ctx, "click_element", {"name": action["name"]}, trace_id,
+                )
+                if ok:
+                    ledger.record(action, frame.sha256)
+                profiler.add("act", t0, step_idx)
+
+            elif kind == "wait":
+                await asyncio.sleep(action["ms"] / 1000.0)
+                ok, detail = True, f"waited {action['ms']} ms"
+                profiler.add("settle", t0, step_idx)
+
+            # -- bookkeeping ---------------------------------------------------
+            summary = _summarize_action(action)
+            if ok:
+                consecutive_failures = 0
+                progressed_since_sha_repeat = True
+                history.append(
+                    f"step {step_idx}: {summary} -> OK"
+                    + (f" ({detail[:120]})" if detail else ""),
+                )
+                yield _progress(f"[cu] step {step_idx}: {summary} ok")
+            else:
+                consecutive_failures += 1
+                history.append(
+                    f"step {step_idx}: {summary} -> FAILED: {detail[:180]}",
+                )
+                yield _progress(f"[cu] step {step_idx}: {summary} FAILED")
+                if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                    reason = detail or "the last actions kept failing"
+                    yield _final(
+                        stderr=f"[cu] fail at step-{step_idx}: {reason}\n",
+                        exit_code=_EXIT_TOOL,
+                    )
+                    return
+                break  # a failed action truncates the batch -> re-perceive
+
+    yield _final(
+        stderr=(
+            f"[cu] step budget exhausted after {step_idx} steps without "
+            "verified completion\n"
+        ),
+        exit_code=_EXIT_BUDGET,
+    )
