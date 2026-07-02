@@ -694,7 +694,11 @@ function KeybindRow({
             <ComboChips combo={combo} />
           ) : (
             <span className="text-muted-foreground">
-              {capturing ? t("settings_view.keybinds.recording") : "—"}
+              {capturing
+                ? t("settings_view.keybinds.recording")
+                : loading
+                  ? "—"
+                  : t("settings_view.keybinds.unbound")}
             </span>
           )}
         </button>
@@ -714,6 +718,18 @@ function KeybindRow({
           disabled={saving || loading || !dirty || invalid}
         >
           {saving ? t("settings_view.saving") : t("settings_view.keybinds.save")}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          data-testid={`clear-keybind-${action}`}
+          aria-label={t("settings_view.keybinds.clear")}
+          title={t("settings_view.keybinds.clear")}
+          onClick={onClearClick}
+          disabled={saving || loading || !current}
+        >
+          <X className="h-3.5 w-3.5" />
         </Button>
       </div>
       {/* ONE stable status line: the validation message when there is one,
