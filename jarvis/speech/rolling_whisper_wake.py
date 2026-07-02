@@ -46,8 +46,8 @@ from jarvis.plugins.stt.fwhisper import FasterWhisperProvider, TranscribeBusy
 # ``.search().group(0)``) so a custom wake phrase can drive this backstop.
 from jarvis.speech.wake_constants import JARVIS_WAKE_PATTERN as DEFAULT_PATTERN
 from jarvis.speech.wake_constants import (
+    STT_HALLUCINATION_RE,
     normalize_phrase_for_match,
-    phrase_core_for_match,
 )
 
 log = logging.getLogger("jarvis.wake.rolling")

@@ -52,7 +52,7 @@ from jarvis.cu.capture import (
     Frame,
     capture_stable_frame,
     grab_region,
-    select_monitor,
+    select_capture_target,
     thumbs_similar,
 )
 from jarvis.cu.geometry import CoordinateConvention, MonitorInfo
@@ -418,6 +418,8 @@ async def run_cu_loop(
     max_steps = max(25, int(getattr(ctx, "step_budget", 100)))
     monitor_policy = str(getattr(ctx, "monitor", "primary") or "primary")
     main_monitor = str(getattr(ctx, "main_monitor", "primary") or "primary")
+    capture_scope = str(getattr(ctx, "capture_scope", "window") or "window")
+    normalize_window = bool(getattr(ctx, "normalize_window", True))
     coordinate_space = str(getattr(ctx, "coordinate_space", "auto") or "auto")
     settle_scale = float(getattr(ctx, "settle_scale", 1.0) or 1.0)
     strict_verify = bool(getattr(ctx, "strict_verify", True))
@@ -434,6 +436,11 @@ async def run_cu_loop(
     prev_thumb: bytes | None = None
     fruitless_steps = 0  # steps with zero successful actions on an unchanged screen
     last_step_had_success = False
+    # Normalize the work surface before the first frame and again after every
+    # focus change (open_app / switch_window): professional computer-use
+    # harnesses never pixel-ground on a small window floating in a big desktop
+    # (see jarvis.platform.window_state.normalize_foreground_window).
+    need_normalize = normalize_window
 
     while step_idx < max_steps:
         step_idx += 1
@@ -443,9 +450,24 @@ async def run_cu_loop(
 
         # ---- perceive -----------------------------------------------------
         t0 = time.monotonic()
+        if need_normalize:
+            need_normalize = False
+            try:
+                from jarvis.platform import window_state  # noqa: PLC0415
+
+                normalized, norm_msg = await asyncio.to_thread(
+                    window_state.normalize_foreground_window,
+                )
+                if normalized:
+                    log.info("[cu] normalized target window: %s", norm_msg)
+            except Exception:  # noqa: BLE001 — normalize is best-effort
+                log.debug("[cu] window normalize failed", exc_info=True)
         try:
             monitor = await asyncio.to_thread(
-                select_monitor, monitor_policy, main_monitor=main_monitor,
+                select_capture_target,
+                monitor_policy,
+                main_monitor=main_monitor,
+                scope=capture_scope,
             )
             frame_coro = asyncio.to_thread(
                 capture_stable_frame,
@@ -836,6 +858,9 @@ async def run_cu_loop(
                 )
                 if ok:
                     ledger.record(action, frame.thumb)
+                    # The freshly focused window gets normalized before the
+                    # next perception (maximize on its own monitor).
+                    need_normalize = normalize_window
                     # Let the app paint its first window; the next perception's
                     # stability probe covers the rest.
                     await asyncio.sleep(1.0 * settle_scale)
@@ -848,6 +873,7 @@ async def run_cu_loop(
                 )
                 if ok:
                     ledger.record(action, frame.thumb)
+                    need_normalize = normalize_window
                 profiler.add("act", t0, step_idx)
 
             elif kind == "click_element":
