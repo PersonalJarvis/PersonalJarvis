@@ -370,9 +370,9 @@ async def run_stream_mode(args: argparse.Namespace) -> dict:
     try:
         for p in fx.pos_full[:limit]:
             pos = load_wav(p)
-            lead = np.concatenate([random.Random(7).choice(quiet_pool)
+            lead = np.concatenate([random.Random(7).choice(quiet_pool)  # noqa: S311
                                    for _ in range(2)])
-            tail = np.concatenate([random.Random(9).choice(quiet_pool)
+            tail = np.concatenate([random.Random(9).choice(quiet_pool)  # noqa: S311
                                    for _ in range(4)])
             composite = np.concatenate([lead, pos, tail]).astype(np.float32)
             word_end_s = len(lead) / SAMPLE_RATE + speech_end_s(pos)
