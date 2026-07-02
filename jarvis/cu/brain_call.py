@@ -50,46 +50,73 @@ class BrainReply:
 PromptBuilder = Callable[[str, Any], tuple[str, str]]
 
 
-def _rescue_blind_models(
+def _speed_tune_chain(
     chain: list[tuple[str, str | None]],
+    *,
+    pinned: set[str] = frozenset(),  # type: ignore[assignment]
 ) -> list[tuple[str, str | None]]:
-    """Swap a KNOWN-blind configured model for the provider's best
-    vision-capable sibling, per candidate.
+    """Per candidate: keep an explicit CU pin verbatim; otherwise put the
+    provider's FAST vision-capable model on the mission steps.
 
-    Computer-Use is screenshot-grounded; a text-only model choice (e.g. an
-    OpenRouter DeepSeek pin) previously knocked the WHOLE provider out of the
-    chain even though the user's key unlocks plenty of vision models — a
-    "works with whatever key you have" violation (AP-22). Only an explicit
-    ``vision is False`` verdict from the model catalog triggers the swap;
-    unknown capability stays untouched (no regression for providers without
-    modality metadata). Never raises — any lookup problem keeps the original
-    pair.
+    Two problems, one move (both live-measured 2026-07-02):
+
+    * A KNOWN-blind configured model (OpenRouter DeepSeek pin) knocked the
+      whole provider out of the chain although the same key unlocks vision
+      models (AP-22) — it must be swapped regardless.
+    * A flagship configured model made every step THINK for seconds
+      (think=60.8s of a 75.8s mission on Opus over OpenRouter). Computer-Use
+      issues one small vision call per step — the fast class (flash/haiku/
+      mini) answers in a fraction of the time at no relevant quality loss
+      for "click/type/verify" decisions.
+
+    Providers whose catalog exposes no modality data (direct Gemini/Claude
+    endpoints) return no pick and stay untouched — their configured fast-tier
+    model already IS the fast class. Never raises; any lookup problem keeps
+    the original pair.
     """
     try:
         from jarvis.brain.model_catalog import (  # noqa: PLC0415
             model_capabilities,
-            pick_vision_model,
+            pick_fast_vision_model,
         )
     except Exception:  # noqa: BLE001
         return chain
-    rescued: list[tuple[str, str | None]] = []
+    tuned: list[tuple[str, str | None]] = []
     for provider, model in chain:
+        if provider in pinned:
+            tuned.append((provider, model))
+            continue
         try:
-            if model and model_capabilities(provider, model).get("vision") is False:
-                alt = pick_vision_model(provider)
-                if alt and alt != model:
+            caps = model_capabilities(provider, model) if model else {}
+            blind = caps.get("vision") is False
+            alt = pick_fast_vision_model(provider)
+            if alt and alt != model and (blind or model):
+                if blind:
                     logger.info(
                         "[cu] %s model %s cannot see the screen — using the "
                         "vision-capable %s for this mission",
                         provider, model, alt,
                     )
-                    rescued.append((provider, alt))
-                    continue
-        except Exception:  # noqa: BLE001 — rescue is best-effort
-            logger.debug("[cu] vision-model rescue failed for %s", provider,
-                         exc_info=True)
-        rescued.append((provider, model))
-    return rescued
+                else:
+                    logger.info(
+                        "[cu] %s: stepping with the fast vision model %s "
+                        "instead of %s (pin a Computer-Use model in Settings "
+                        "to override)",
+                        provider, alt, model,
+                    )
+                tuned.append((provider, alt))
+                continue
+            if blind:
+                # Known-blind and no vision sibling — the selector's
+                # blind-skip will drop it; nothing better to offer.
+                logger.info(
+                    "[cu] %s model %s cannot see the screen and no vision "
+                    "sibling is known", provider, model,
+                )
+        except Exception:  # noqa: BLE001 — tuning is best-effort
+            logger.debug("[cu] speed-tune failed for %s", provider, exc_info=True)
+        tuned.append((provider, model))
+    return tuned
 
 
 async def call_vision_brain(
@@ -135,19 +162,27 @@ async def call_vision_brain(
         raise CUBrainCallError("BrainManager fallback chain is empty")
 
     # Per-provider CU model override (Settings can pin a dedicated CU model).
+    # A PIN is the user's explicit word and is never second-guessed; every
+    # unpinned candidate is speed-tuned below.
     cu_model = getattr(manager, "_cu_model", None)
+    pinned_providers: set[str] = set()
     if callable(cu_model):
         resolved_chain: list[tuple[str, str | None]] = []
         for provider, model in chain:
             try:
-                resolved_chain.append((provider, cu_model(provider) or model))
+                pin = cu_model(provider)
             except Exception:  # noqa: BLE001
+                pin = None
+            if pin:
+                pinned_providers.add(provider)
+                resolved_chain.append((provider, pin))
+            else:
                 resolved_chain.append((provider, model))
         chain = resolved_chain
 
     images_attached = bool(images)
     if images_attached:
-        chain = _rescue_blind_models(chain)
+        chain = _speed_tune_chain(chain, pinned=pinned_providers)
     selector = ComputerUsePlannerSelector(manager=manager, chain=chain)
     attempted = 0
 

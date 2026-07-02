@@ -11,7 +11,8 @@ import json
 
 import jarvis.core.config as cfg
 from jarvis.brain.model_catalog import pick_vision_model
-from jarvis.cu.brain_call import _rescue_blind_models
+from jarvis.brain.model_catalog import pick_fast_vision_model
+from jarvis.cu.brain_call import _speed_tune_chain
 
 
 def _write_cache(tmp_path, models, provider="openrouter"):
@@ -79,7 +80,7 @@ def test_chain_swaps_blind_model_for_vision_sibling(monkeypatch, tmp_path):
         {"id": "qwen/qwen3-vl", "input_modalities": ["text", "image"]},
     ])
     chain = [("openrouter", "deepseek/deepseek-v4-flash")]
-    assert _rescue_blind_models(chain) == [("openrouter", "qwen/qwen3-vl")]
+    assert _speed_tune_chain(chain) == [("openrouter", "qwen/qwen3-vl")]
 
 
 def test_chain_keeps_vision_and_unknown_models(monkeypatch, tmp_path):
@@ -92,7 +93,7 @@ def test_chain_keeps_vision_and_unknown_models(monkeypatch, tmp_path):
         ("gemini", "gemini-3.5-flash"),  # unknown -> untouched
         ("claude-api", None),            # no explicit model -> untouched
     ]
-    assert _rescue_blind_models(chain) == chain
+    assert _speed_tune_chain(chain) == chain
 
 
 def test_chain_keeps_blind_model_when_no_sibling_exists(monkeypatch, tmp_path):
@@ -103,4 +104,44 @@ def test_chain_keeps_blind_model_when_no_sibling_exists(monkeypatch, tmp_path):
     ])
     chain = [("openrouter", "x/text-a")]
     # No vision sibling -> unchanged; the selector's blind-skip handles it.
-    assert _rescue_blind_models(chain) == chain
+    assert _speed_tune_chain(chain) == chain
+
+
+# ---------------------------------------------------------------------------
+# Fast-class preference (mission wall-clock is dominated by step THINK time)
+# ---------------------------------------------------------------------------
+
+_FAST_CATALOG = [
+    {"id": "anthropic/claude-opus-4.8", "input_modalities": ["text", "image"]},
+    {"id": "google/gemini-3.5-flash", "input_modalities": ["text", "image"]},
+    {"id": "deepseek/deepseek-v4-flash", "input_modalities": ["text"]},
+]
+
+
+def test_fast_pick_prefers_fast_class_over_flagship(monkeypatch, tmp_path):
+    monkeypatch.setattr(cfg, "DATA_DIR", tmp_path)
+    _write_cache(tmp_path, _FAST_CATALOG)
+    assert pick_fast_vision_model("openrouter") == "google/gemini-3.5-flash"
+
+
+def test_fast_pick_falls_back_to_flagship_without_fast_sibling(monkeypatch, tmp_path):
+    monkeypatch.setattr(cfg, "DATA_DIR", tmp_path)
+    _write_cache(tmp_path, [
+        {"id": "anthropic/claude-opus-4.8", "input_modalities": ["text", "image"]},
+    ])
+    assert pick_fast_vision_model("openrouter") == "anthropic/claude-opus-4.8"
+
+
+def test_chain_steps_flagship_down_to_fast_vision(monkeypatch, tmp_path):
+    monkeypatch.setattr(cfg, "DATA_DIR", tmp_path)
+    _write_cache(tmp_path, _FAST_CATALOG)
+    chain = [("openrouter", "anthropic/claude-opus-4.8")]
+    assert _speed_tune_chain(chain) == [("openrouter", "google/gemini-3.5-flash")]
+
+
+def test_chain_respects_an_explicit_cu_pin(monkeypatch, tmp_path):
+    monkeypatch.setattr(cfg, "DATA_DIR", tmp_path)
+    _write_cache(tmp_path, _FAST_CATALOG)
+    chain = [("openrouter", "anthropic/claude-opus-4.8")]
+    # The user pinned this model for CU — never second-guess it.
+    assert _speed_tune_chain(chain, pinned={"openrouter"}) == chain

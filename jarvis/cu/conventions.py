@@ -138,11 +138,32 @@ class ActionParseError(ValueError):
     """The model reply held no valid action list."""
 
 
+#: Tolerated action-name aliases -> (canonical action, field overrides).
+#: Models drift on the vocabulary ("double" instead of click+double, live
+#: 2026-07-02); mapping the obvious synonyms saves a full re-plan round-trip.
+#: Overrides never clobber a field the model set explicitly.
+_ACTION_ALIASES: dict[str, tuple[str, dict[str, Any]]] = {
+    "double": ("click", {"double": True}),
+    "double_click": ("click", {"double": True}),
+    "doubleclick": ("click", {"double": True}),
+    "right_click": ("click", {"button": "right"}),
+    "rightclick": ("click", {"button": "right"}),
+    "left_click": ("click", {}),
+    "type_text": ("type", {}),
+    "hotkey": ("key", {}),
+    "keypress": ("key", {}),
+}
+
+
 def _validate(obj: Any) -> dict[str, Any]:
     """Validate + normalize one raw action dict. Raises ActionParseError."""
     if not isinstance(obj, dict):
         raise ActionParseError(f"action is not an object: {obj!r}")
     action = str(obj.get("action", "")).strip().lower()
+    if action in _ACTION_ALIASES:
+        canonical, overrides = _ACTION_ALIASES[action]
+        obj = {**{k: v for k, v in overrides.items() if k not in obj}, **obj}
+        action = canonical
     if action not in VALID_ACTIONS:
         raise ActionParseError(f"unknown action: {action!r}")
     out: dict[str, Any] = {"action": action}

@@ -86,6 +86,21 @@ def test_numeric_strings_are_tolerated():
     assert actions[0]["x"] == 512.0 and actions[0]["y"] == 300.5
 
 
+def test_action_aliases_map_to_canonical_actions():
+    # "double" (live model drift 2026-07-02) -> click with double=true.
+    a = conv.parse_actions('{"action":"double","x":10,"y":20}')[0]
+    assert a["action"] == "click" and a["double"] is True
+    a = conv.parse_actions('{"action":"right_click","x":10,"y":20}')[0]
+    assert a["action"] == "click" and a["button"] == "right"
+    a = conv.parse_actions('{"action":"type_text","text":"hi"}')[0]
+    assert a["action"] == "type" and a["text"] == "hi"
+    a = conv.parse_actions('{"action":"hotkey","keys":["ctrl","t"]}')[0]
+    assert a["action"] == "key" and a["keys"] == ["ctrl", "t"]
+    # An explicit field always beats the alias override.
+    a = conv.parse_actions('{"action":"double","x":1,"y":2,"double":false}')[0]
+    assert a["action"] == "click" and a["double"] is False
+
+
 def test_wait_is_capped():
     actions = conv.parse_actions('{"action":"wait","ms":3600000}')
     assert actions[0]["ms"] == conv.MAX_WAIT_MS

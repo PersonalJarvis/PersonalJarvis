@@ -372,6 +372,59 @@ def pick_vision_model(provider: str) -> str | None:
     return usable[0].id if usable else None
 
 
+#: Name markers of the FAST model class (low-latency siblings). Computer-Use
+#: issues one vision call per step, so step latency — not peak intelligence —
+#: dominates mission wall-clock (live forensic 2026-07-02: think=60.8s of a
+#: 75.8s mission on a flagship model). Data, not logic; extend by adding a row.
+_FAST_CLASS_MARKERS: tuple[str, ...] = (
+    "flash", "haiku", "mini", "lite", "turbo", "air", "nano",
+)
+
+
+def pick_fast_vision_model(provider: str) -> str | None:
+    """The best FAST vision-capable model of ``provider`` (or ``None``).
+
+    Same candidate set as :func:`pick_vision_model` (vision input + the brain
+    filter), but the fast class leads: a "flash"/"haiku"/"mini"-style sibling
+    of a known family beats the flagship. Within each band the picker's
+    relevance sort decides. Falls back to the plain vision pick when the
+    provider has no fast vision sibling.
+    """
+    from jarvis.core import config as _cfg  # noqa: PLC0415
+
+    cache_path = _cfg.DATA_DIR / "model_catalog_cache.json"
+    try:
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        entries = data.get(provider, {}).get("models", [])
+    except Exception:  # noqa: BLE001 — missing/corrupt cache → no pick
+        return None
+    candidates: list[ModelInfo] = []
+    for m in entries:
+        mid = str(m.get("id") or "").strip()
+        inp = m.get("input_modalities")
+        if not mid or not (isinstance(inp, list) and "image" in inp):
+            continue
+        out_mods = m.get("output_modalities")
+        params = m.get("supported_parameters")
+        candidates.append(ModelInfo(
+            id=mid,
+            label=str(m.get("label") or mid),
+            output_modalities=tuple(out_mods) if isinstance(out_mods, list) else None,
+            input_modalities=tuple(str(x) for x in inp),
+            supported_parameters=tuple(params) if isinstance(params, list) else None,
+        ))
+    usable = sort_models(provider, filter_brain_models(candidates))
+    if not usable:
+        return None
+    # Fast class first — but only KNOWN families (family rank > 0), so an
+    # obscure "-mini" of an unknown vendor never beats a Gemini Flash / Haiku.
+    for m in usable:
+        low = m.id.lower()
+        if _family_rank(m.id) > 0 and any(mark in low for mark in _FAST_CLASS_MARKERS):
+            return m.id
+    return usable[0].id
+
+
 def _output_modalities(entry: dict) -> tuple[str, ...] | None:
     """Pull ``architecture.output_modalities`` from a model entry as a tuple.
 
