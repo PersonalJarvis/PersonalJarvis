@@ -112,6 +112,20 @@ hallucinates the prefix onto a bare-name window; eliminating the bias costs
 far more recall than it saves (matrix). (c) The KWS endgame (trained neural
 model per phrase) remains the path to sub-200 ms wakes.
 
+## Live smoke (restart 2026-07-02 09:59)
+
+- Fresh boot: the poll loop waited for the single-owner warm-up (10.5 s under
+  the boot storm) and started against a hot model — **zero wedge/abort lines
+  since the restart** (the same morning's old-code boot produced three
+  recover cascades in two minutes).
+- Two genuine spoken "Hey Fable" wakes matched FIRST TRY under the strict
+  matcher (10:01:02 at rms 0.0037 — very quiet speech — and 10:01:31 at
+  rms 0.0544); ambient speech and a "Thank you." hallucination were
+  transcribed and correctly rejected (`no_match`), zero false activations.
+- Speaker-playback latency probes were cut short because the maintainer was
+  actively using voice at that moment; the word-end→trigger latency evidence
+  stands on the stream bench (median 1.1–1.4 s).
+
 ## Cross-platform
 
 - **Windows**: all numbers above; 1106 speech/stt/audio unit tests green.
