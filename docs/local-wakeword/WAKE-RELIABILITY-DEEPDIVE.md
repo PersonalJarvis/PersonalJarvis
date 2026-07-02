@@ -96,7 +96,7 @@ If a custom voice ever over-triggers, set `[stt].wake_high_accuracy = false`.
 
 The `stt_match` wake primes Whisper with `initial_prompt=<phrase>` for recall.
 Consequence: the primed model **invents** the phrase on silence (ghost) and the
-unprimed model **garbles** it on speech (`Mythos`→`Mütos`, `Fable`→`Farbe`). So
+unprimed model **garbles** it on speech (`Mythos`→`Mütos`, `Fable`→`Farbe`). So <!-- i18n-allow: forensic quotes of the German STT-garble tokens under test -->
 any ghost fix that gates on *transcript content* — most tempting, "make the
 unbiased confirm pass also say the word" — rejects every genuine wake. "Fires
 on silence" and "never fires" are the same bug from opposite ends.

@@ -2727,7 +2727,7 @@ bias is a double-edged sword:
   verbatim (live log: `rms=0.0036 text='Hey Fable'`, below idle hiss) → ghost
   activation (#1).
 - **On real speech** the *unprimed* base model cannot spell the word — `Mythos`
-  → `Mütos` / `Hey, Mut!`, `Fable` → `Farbe`. That is exactly why the bias
+  → `Mütos` / `Hey, Mut!`, `Fable` → `Farbe`. That is exactly why the bias <!-- i18n-allow: forensic quotes of the German STT-garble tokens under test -->
   exists.
 
 So any ghost fix that tightens **transcript content** — e.g. requiring the
