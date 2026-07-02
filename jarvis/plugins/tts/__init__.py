@@ -36,6 +36,9 @@ _GROK_TTS_ALIASES = frozenset({
     "grok-voice", "grok_voice", "grok-tts", "xai-tts", "xai-voice",
 })
 _GEMINI_TTS_ALIASES = frozenset({"gemini-flash-tts", "gemini-flash", "gemini"})
+_OPENROUTER_TTS_ALIASES = frozenset({
+    "openrouter", "openrouter-tts", "openrouter_tts", "open-router-tts",
+})
 
 # Credential candidates per TTS family — the (keyring_key, env_var) pairs that
 # hold a usable key, matching what each plugin's own key lookup reads. A fresh
@@ -57,13 +60,17 @@ _TTS_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
         ("xai_api_key", "XAI_API_KEY"),
         ("grok_api_key", "GROK_API_KEY"),
     ),
+    # OpenRouter TTS reuses the ONE OpenRouter key shared with the brain /
+    # Jarvis-Agent providers — a fresh downloader whose only credential is an
+    # OpenRouter key (a gateway to many models) gets working voice for free.
+    "openrouter": (("openrouter_api_key", "OPENROUTER_API_KEY"),),
 }
 
 # Cross-family probe order when the configured provider has no key: the family
 # the maintainer ships first, then the common BYO-key alternatives. Only a family
 # that actually has a key is ever chosen.
 _TTS_CROSS_FAMILY_ORDER: tuple[str, ...] = (
-    "gemini-flash-tts", "elevenlabs", "cartesia", "grok-voice",
+    "gemini-flash-tts", "elevenlabs", "cartesia", "grok-voice", "openrouter",
 )
 
 
@@ -78,6 +85,8 @@ def _canonical_tts_name(name: str) -> str:
         return "grok-voice"
     if n in _GEMINI_TTS_ALIASES:
         return "gemini-flash-tts"
+    if n in _OPENROUTER_TTS_ALIASES:
+        return "openrouter"
     return n
 
 
@@ -320,6 +329,28 @@ def _build_provider(tts_cfg: Any, provider: str) -> Any:
             language=tts_cfg.language_code or "auto",
             speed=tts_cfg.speed,
             allow_sapi5_fallback=allow_sapi5,
+        )
+
+    if provider in ("openrouter", "openrouter-tts", "openrouter_tts", "open-router-tts"):
+        try:
+            from jarvis.plugins.tts.openrouter_speech_models import DEFAULT_MODEL
+            from jarvis.plugins.tts.openrouter_tts import OpenRouterTTS
+        except ImportError as exc:
+            raise RuntimeError(
+                f"TTS provider 'openrouter' configured, but the plugin is not "
+                f"importable: {exc}. Check that "
+                f"jarvis/plugins/tts/openrouter_tts.py exists and httpx is "
+                f"installed.",
+            ) from exc
+        # OpenRouter TTS validates its own voices per selected model, so the
+        # config voice_de / voice_en are passed straight through (a foreign name
+        # is auto-corrected to the model default inside the plugin).
+        return OpenRouterTTS(
+            model=tts_cfg.model or DEFAULT_MODEL,
+            voice_de=getattr(tts_cfg, "voice_de", None),
+            voice_en=getattr(tts_cfg, "voice_en", None),
+            language=tts_cfg.language_code or "auto",
+            speed=tts_cfg.speed,
         )
 
     if provider not in ("gemini-flash-tts", "gemini-flash", "gemini"):

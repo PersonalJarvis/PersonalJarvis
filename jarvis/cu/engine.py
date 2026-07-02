@@ -577,7 +577,10 @@ async def run_cu_loop(
     # 2026-07-02); window-scoped capture covers the grounding need untouched.
     normalize_window = bool(getattr(ctx, "normalize_window", False))
     coordinate_space = str(getattr(ctx, "coordinate_space", "auto") or "auto")
-    settle_scale = float(getattr(ctx, "settle_scale", 1.0) or 1.0)
+    # NOTE: no `or 1.0` here — a configured 0 means "no settle waits" (tests,
+    # speed runs) and must be honored, not silently coerced back to 1.0.
+    raw_settle = getattr(ctx, "settle_scale", None)
+    settle_scale = 1.0 if raw_settle is None else float(raw_settle)
     strict_verify = bool(getattr(ctx, "strict_verify", True))
     image_cfg = _ImageCfg(
         max_dimension=int(getattr(ctx, "image_max_dimension", 1366) or 1366),
@@ -960,7 +963,10 @@ async def run_cu_loop(
 
                         if pre is not None and post is not None and frames_differ(pre, post):
                             detail = (detail + " — screen reacted elsewhere").strip()
-                        elif await verify_click_focus_point(*resolved_xy) is True:
+                        elif await verify_click_focus_point(
+                            *resolved_xy,
+                            capture_area=monitor.width * monitor.height,
+                        ) is True:
                             # Zero pixel change because the target was
                             # ALREADY in the desired state: the click point
                             # sits inside the control that holds keyboard

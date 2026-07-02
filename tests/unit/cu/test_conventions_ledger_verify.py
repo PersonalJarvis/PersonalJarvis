@@ -224,6 +224,34 @@ def test_focused_container_is_never_click_evidence():
     bar = _node(role="Edit", name="Address",
                 focused=True, bounds=(100, 40, 800, 36))
     assert click_point_in_focused_element((window, bar), 400, 58) is True
+    # Large-region roles from all three vocabularies are containers too
+    # (2026-07-02 adversarial review: List/Table/Toolbar and the AT-SPI
+    # document-canvas family were missing from the deny-list).
+    for role in ("List", "Table", "ToolBar", "AXToolbar", "AXList",
+                 "document text", "tool bar"):
+        region = _node(role=role, name="big region",
+                       focused=True, bounds=(0, 0, 1200, 900))
+        assert click_point_in_focused_element((region,), 400, 58) is False, role
+
+
+def test_focused_giant_control_is_not_click_evidence_with_area_cap():
+    # A focused element spanning most of the capture is a REGION even if its
+    # role sounds like a control — rescuing there would mask a genuine miss
+    # anywhere inside it (and skip the zoom-refine retry).
+    giant = _node(role="Edit", name="Editor surface",
+                  focused=True, bounds=(0, 0, 1900, 1000))
+    area = 1920 * 1080
+    assert click_point_in_focused_element(
+        (giant,), 400, 500, capture_area=area,
+    ) is False
+    # Without a capture_area reference the role filter alone decides.
+    assert click_point_in_focused_element((giant,), 400, 500) is True
+    # A normal-sized focused control passes with the cap in force.
+    bar = _node(role="Edit", name="Address",
+                focused=True, bounds=(100, 40, 800, 36))
+    assert click_point_in_focused_element(
+        (bar,), 400, 58, capture_area=area,
+    ) is True
 
 
 def test_field_values_hint_lists_filled_fields_only():

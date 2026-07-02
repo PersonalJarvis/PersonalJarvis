@@ -123,17 +123,40 @@ def virtual_desktop_bounds() -> tuple[int, int, int, int] | None:
 
 
 def _win_virtual_bounds() -> tuple[int, int, int, int] | None:
-    """SM_*VIRTUALSCREEN metrics (physical px once the process is declared
-    per-monitor DPI aware — the idempotent declaration runs first so an
-    unaware host process does not read virtualized 96-dpi values)."""
+    """SM_*VIRTUALSCREEN metrics in physical pixels.
+
+    Uses a THREAD-scoped per-monitor DPI pin (restored afterwards) so the
+    metrics are not DPI-virtualized even in an unaware host process. A
+    process-wide awareness flip is deliberately NOT performed here — this is
+    a read-only getter reached from always-on tree sources, and mutating
+    process awareness as a side effect would race pywebview's own
+    declaration (2026-07-02 review finding, AP-9 class). The CU engine
+    declares the process context itself at mission start.
+    """
     import ctypes  # noqa: PLC0415
 
-    from jarvis.core.win32_dpi import ensure_dpi_awareness  # noqa: PLC0415
-
-    ensure_dpi_awareness()
-    gsm = ctypes.windll.user32.GetSystemMetrics
-    # SM_XVIRTUALSCREEN=76, SM_YVIRTUALSCREEN=77, SM_CX=78, SM_CY=79
-    left, top, width, height = gsm(76), gsm(77), gsm(78), gsm(79)
+    set_ctx = None
+    prev = None
+    try:
+        set_ctx = ctypes.windll.user32.SetThreadDpiAwarenessContext
+        set_ctx.restype = ctypes.c_void_p
+        set_ctx.argtypes = [ctypes.c_void_p]
+        for context in (-4, -3):  # PER_MONITOR_AWARE_V2, then V1 (1607)
+            prev = set_ctx(ctypes.c_void_p(context))
+            if prev is not None:
+                break
+    except (OSError, AttributeError):  # pre-1607: read unpinned
+        set_ctx = None
+    try:
+        gsm = ctypes.windll.user32.GetSystemMetrics
+        # SM_XVIRTUALSCREEN=76, SM_YVIRTUALSCREEN=77, SM_CX=78, SM_CY=79
+        left, top, width, height = gsm(76), gsm(77), gsm(78), gsm(79)
+    finally:
+        if set_ctx is not None and prev is not None:
+            try:
+                set_ctx(ctypes.c_void_p(prev))
+            except Exception:  # noqa: BLE001 — restore is best-effort
+                pass
     if width <= 0 or height <= 0:
         return None
     return (int(left), int(top), int(width), int(height))
@@ -162,7 +185,13 @@ def _macos_virtual_bounds() -> tuple[int, int, int, int] | None:
 
 
 def _x11_virtual_bounds() -> tuple[int, int, int, int] | None:
-    """X11 root-window geometry (the root spans all monitors)."""
+    """X11 root-window geometry (the root spans all monitors).
+
+    Known limitation: on the legacy separate-X-screens ("Zaphod") multihead
+    layout ``xdotool getdisplaygeometry`` reports only screen 0 — callers
+    keep their conservative fallback there. Modern XRandR/Xinerama setups
+    (one logical screen) report the full span.
+    """
     if shutil.which("xdotool") is None:
         return None
     from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # noqa: PLC0415

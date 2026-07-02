@@ -244,13 +244,28 @@ def _ax_query_element_at_point(x: int, y: int) -> PointerElement | None:
         focused: bool | None = bool(val_f) if err_f == 0 else None
     except Exception:  # noqa: BLE001 — attribute read is best-effort
         focused = None
+    # kAXWindowAttribute returns the containing window ELEMENT, not a string
+    # — str() on it would inject an object repr like '<AXUIElementRef 0x…>'
+    # into the model-facing context (2026-07-02 review finding). Resolve the
+    # window's AXTitle instead; any failure degrades to "".
+    window_title = ""
+    try:
+        err_w, win_elem = AXUIElementCopyAttributeValue(elem, "AXWindow", None)
+        if err_w == 0 and win_elem is not None:
+            err_t, title_val = AXUIElementCopyAttributeValue(
+                win_elem, "AXTitle", None,
+            )
+            if err_t == 0 and title_val is not None:
+                window_title = str(title_val).strip()
+    except Exception:  # noqa: BLE001 — window-title read is best-effort
+        window_title = ""
     return PointerElement(
         name=name,
         role=role,
         value=value,
         bounds=(0, 0, 0, 0),
         app_name="",
-        window_title=_attr("AXWindow"),
+        window_title=window_title,
         source="ax_tree",
         focused=focused,
     )
@@ -273,22 +288,48 @@ def _atspi_query_element_at_point(x: int, y: int) -> PointerElement | None:
         except Exception:
             return None
 
-    # Find the top-level window/app under the point, then descend into it.
+    def _hit(acc: Any) -> Any | None:
+        comp = _component(acc)
+        if comp is None:
+            return None
+        try:
+            return comp.getAccessibleAtPoint(int(x), int(y), coord)
+        except Exception:  # noqa: BLE001
+            return None
+
+    # Find the top-level surface under the point. The desktop's direct
+    # children are AT-SPI APPLICATION objects, which do NOT implement the
+    # Component interface — only their child frames/windows do (2026-07-02
+    # review finding: hit-testing the applications directly returned None
+    # for every query). Try the application first anyway (cheap, and some
+    # toolkits do expose Component there), then descend one level into its
+    # frames.
     node: Any = None
     for i in range(desktop.childCount):
         try:
             app = desktop.getChildAtIndex(i)
         except Exception:  # noqa: S112 - best-effort scan; the resolver wraps all errors
             continue
-        comp = _component(app)
-        if comp is None:
+        if app is None:
             continue
+        node = _hit(app)
+        if node is not None:
+            break
         try:
-            hit = comp.getAccessibleAtPoint(int(x), int(y), coord)
-        except Exception:
-            hit = None
-        if hit is not None:
-            node = hit
+            frame_count = int(getattr(app, "childCount", 0) or 0)
+        except Exception:  # noqa: BLE001
+            frame_count = 0
+        for j in range(frame_count):
+            try:
+                frame = app.getChildAtIndex(j)
+            except Exception:  # noqa: S112 - skip an unreadable frame
+                continue
+            if frame is None:
+                continue
+            node = _hit(frame)
+            if node is not None:
+                break
+        if node is not None:
             break
 
     if node is None:

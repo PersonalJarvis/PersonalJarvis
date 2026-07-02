@@ -116,25 +116,39 @@ def typed_text_landed(nodes: tuple, typed: str) -> bool | None:
     return False if focused_editable_seen else None
 
 
-#: Roles that are CONTAINERS, not controls — focus reported on one of these
-#: (a browser window, a web view, a panel) is NOT evidence that a click hit
-#: its intended target: accepting it would rescue every in-window miss and
-#: neuter the effect-check. Covers all three role vocabularies (UIA / AX /
-#: AT-SPI), since the point resolver returns platform-native role names.
+#: Roles that are CONTAINERS or large regions, not controls — focus reported
+#: on one of these (a browser window, a web view, a list, a document body)
+#: is NOT evidence that a click hit its intended target: accepting it would
+#: rescue genuine in-window misses and neuter the effect-check. Covers all
+#: three role vocabularies (UIA / AX / AT-SPI), since the point resolver
+#: returns platform-native role names. (Extended per the 2026-07-02
+#: adversarial review: lists/tables/toolbars and the AT-SPI document-canvas
+#: family were missing.)
 _FOCUS_CONTAINER_ROLES = frozenset({
     # UIA (also the mapped vocabulary of the walked tree nodes)
     "Window", "Pane", "Document", "Group", "Custom", "TitleBar",
+    "List", "Tree", "DataGrid", "Table", "ToolBar", "MenuBar",
     # macOS AX
     "AXWindow", "AXSheet", "AXGroup", "AXScrollArea", "AXWebArea",
-    "AXApplication", "AXDrawer",
+    "AXApplication", "AXDrawer", "AXList", "AXTable", "AXOutline",
+    "AXToolbar", "AXTabGroup", "AXSplitGroup", "AXLayoutArea",
     # AT-SPI role names
     "frame", "window", "panel", "application", "document frame",
-    "document web", "filler",
+    "document web", "filler", "list", "table", "tree", "tree table",
+    "tool bar", "menu bar", "scroll pane", "viewport", "page tab list",
+    "document text", "document spreadsheet", "document presentation",
+    "document email",
 })
+
+#: A focused element LARGER than this fraction of the capture area is a
+#: region, not a control — its focus is not click-target evidence (same
+#: container-trap reasoning as the snap cap in
+#: :data:`_SNAP_MAX_AREA_FRACTION`). Applied wherever bounds are known.
+_FOCUS_MAX_AREA_FRACTION = 0.15
 
 
 def click_point_in_focused_element(
-    nodes: tuple, x: int, y: int,
+    nodes: tuple, x: int, y: int, *, capture_area: int | None = None,
 ) -> bool | None:
     """Did the click point land inside the CONTROL holding keyboard focus?
 
@@ -148,15 +162,23 @@ def click_point_in_focused_element(
     nothing visibly changed. Works on all three platforms (UIA / AX /
     AT-SPI bounds are screen input units).
 
-    Container roles never count (:data:`_FOCUS_CONTAINER_ROLES`): a focused
-    WINDOW containing the point says nothing about the click's target.
+    Two container traps never count as evidence (a focused WINDOW/region
+    containing the point says nothing about the click's target, and would
+    also skip the zoom-refine retry a real miss deserves):
+    * role in :data:`_FOCUS_CONTAINER_ROLES`;
+    * element area above :data:`_FOCUS_MAX_AREA_FRACTION` of
+      ``capture_area`` (when the caller provides one).
 
-    ``True``  — a focused non-container element's bounds contain the point.
+    ``True``  — a focused control-sized element's bounds contain the point.
     ``False`` — nodes are readable, no qualifying element contains the point.
     ``None``  — no nodes readable (cannot tell).
     """
     if not nodes:
         return None
+    max_area = (
+        max(1, int(capture_area * _FOCUS_MAX_AREA_FRACTION))
+        if capture_area else None
+    )
     for node in nodes:
         if not getattr(node, "focused", False):
             continue
@@ -168,6 +190,8 @@ def click_point_in_focused_element(
         try:
             bx, by, bw, bh = (int(v) for v in bounds)
         except (TypeError, ValueError):
+            continue
+        if max_area is not None and bw * bh > max_area:
             continue
         if bw > 0 and bh > 0 and bx <= x < bx + bw and by <= y < by + bh:
             return True
@@ -388,7 +412,9 @@ async def verify_click_focus(name: str) -> bool | None:
     return element_is_focused(tuple(getattr(obs, "nodes", ()) or ()), name)
 
 
-async def verify_click_focus_point(x: int, y: int) -> bool | None:
+async def verify_click_focus_point(
+    x: int, y: int, *, capture_area: int | None = None,
+) -> bool | None:
     """Is the element at ``(x, y)`` the focused control? Error → ``None``.
 
     Two evidence paths, positive-only, both cross-platform:
@@ -400,9 +426,13 @@ async def verify_click_focus_point(x: int, y: int) -> bool | None:
     2. Fallback: scan the walked foreground tree
        (:func:`click_point_in_focused_element`).
 
-    Container focus never counts (:data:`_FOCUS_CONTAINER_ROLES`). Runs
-    ONLY on the click-miss path (no happy-path latency): the engine
-    consults it before declaring a zero-pixel-change click a miss.
+    Container focus never counts (:data:`_FOCUS_CONTAINER_ROLES`), and a
+    focused element larger than :data:`_FOCUS_MAX_AREA_FRACTION` of
+    ``capture_area`` is a region, not a target (applied where bounds are
+    known — the macOS/Linux hit-test reports no bounds yet and relies on
+    the role deny-list). Runs ONLY on the click-miss path (no happy-path
+    latency): the engine consults it before declaring a zero-pixel-change
+    click a miss.
     """
     try:
         element = await asyncio.wait_for(
@@ -417,7 +447,14 @@ async def verify_click_focus_point(x: int, y: int) -> bool | None:
         and str(getattr(element, "role", "") or "")
         not in _FOCUS_CONTAINER_ROLES
     ):
-        return True
+        bounds = getattr(element, "bounds", None) or (0, 0, 0, 0)
+        area = max(0, int(bounds[2])) * max(0, int(bounds[3]))
+        if (
+            not capture_area
+            or area == 0  # backend reports no bounds: role filter decides
+            or area <= max(1, int(capture_area * _FOCUS_MAX_AREA_FRACTION))
+        ):
+            return True
     try:
         obs = await asyncio.wait_for(
             _get_ui_tree_source().observe(), timeout=UIA_TIMEOUT_S,
@@ -426,6 +463,7 @@ async def verify_click_focus_point(x: int, y: int) -> bool | None:
         return None
     return click_point_in_focused_element(
         tuple(getattr(obs, "nodes", ()) or ()), int(x), int(y),
+        capture_area=capture_area,
     )
 
 

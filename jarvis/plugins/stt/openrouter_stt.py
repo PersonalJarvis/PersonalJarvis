@@ -90,9 +90,17 @@ class Transcript:
 
 
 class OpenRouterSTT:
-    """OpenRouter-hosted cloud STT (non-streaming, JSON transcription API)."""
+    """OpenRouter-hosted cloud STT (non-streaming, JSON transcription API).
 
-    name = "openrouter"
+    The provider id is ``openrouter-stt`` (NOT ``openrouter``) on purpose: the
+    OpenRouter *brain* already owns the ``openrouter`` id in the shared model-
+    catalog and provider-spec namespaces, so the STT variant takes a distinct id
+    — mirroring the repo's own ``openai`` (brain) vs ``openai-api`` (STT) split.
+    The underlying credential (``openrouter_api_key``) is still SHARED with the
+    brain, so no second key is needed.
+    """
+
+    name = "openrouter-stt"
     supports_streaming = False
 
     def __init__(
@@ -309,24 +317,22 @@ def _model_output_modalities(model: Any) -> tuple[str, ...] | None:
     ``None`` when the field is absent/unusable (→ treated as not-transcription).
     """
     # 1) Object with an ``output_modalities`` attribute (e.g. ModelInfo).
-    attr = getattr(model, "output_modalities", None)
-    if attr is not None and not isinstance(model, dict):
-        return tuple(str(x) for x in attr) if _is_seq(attr) else None
+    if not isinstance(model, dict):
+        attr = getattr(model, "output_modalities", None)
+        if isinstance(attr, (list, tuple)):
+            return tuple(str(x) for x in attr)
+        return None
 
-    if isinstance(model, dict):
-        arch = model.get("architecture")
-        if isinstance(arch, dict):
-            mods = arch.get("output_modalities")
-            if _is_seq(mods):
-                return tuple(str(x) for x in mods)
-        flat = model.get("output_modalities")
-        if _is_seq(flat):
-            return tuple(str(x) for x in flat)
+    # 2) Raw OpenRouter ``/v1/models`` entry dict.
+    arch = model.get("architecture")
+    if isinstance(arch, dict):
+        mods = arch.get("output_modalities")
+        if isinstance(mods, (list, tuple)):
+            return tuple(str(x) for x in mods)
+    flat = model.get("output_modalities")
+    if isinstance(flat, (list, tuple)):
+        return tuple(str(x) for x in flat)
     return None
-
-
-def _is_seq(value: Any) -> bool:
-    return isinstance(value, (list, tuple))
 
 
 def is_transcription_model(model: Any) -> bool:

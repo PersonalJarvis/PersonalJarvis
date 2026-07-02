@@ -296,6 +296,8 @@ class AtspiTreeSource:
                 enabled=n.enabled,
                 parent_index=n.parent_index,
                 value=n.value,
+                is_password=n.is_password,
+                focused=n.focused,
             )
             for n in raw
         ]
@@ -351,6 +353,22 @@ def _atspi_pick_active_app(desktop: Any) -> Any:
             first = child
         if _atspi_is_active(child):
             return child
+        # The ACTIVE/FOCUSED state lives on the FRAME (window), not on the
+        # application object — probe one level down before moving on
+        # (2026-07-02 review finding: the app-level probe practically never
+        # matched, so the tree silently enumerated the FIRST app instead of
+        # the active one on multi-app desktops).
+        try:
+            frame_count = int(getattr(child, "childCount", 0) or 0)
+        except Exception:  # noqa: BLE001
+            frame_count = 0
+        for j in range(frame_count):
+            try:
+                frame = child.getChildAtIndex(j)
+            except Exception:  # noqa: BLE001, S112 — skip an unreadable frame
+                continue
+            if frame is not None and _atspi_is_active(frame):
+                return child
     return first
 
 
@@ -440,6 +458,29 @@ def _atspi_enabled(accessible: Any) -> bool:
         return True
 
 
+def _atspi_focused(accessible: Any) -> bool:
+    """True when the AT-SPI state set contains FOCUSED (best-effort).
+
+    Feeds ``UIANode.focused`` — the click-rescue and focus-verification
+    evidence. Until 2026-07-02 the Linux flatten never populated it, which
+    silently disabled those verifications on Linux (review finding).
+    """
+    try:
+        get_state = getattr(accessible, "getState", None)
+        if not callable(get_state):
+            return False
+        state = get_state()
+        contains = getattr(state, "contains", None)
+        if not callable(contains):
+            return False
+        pyatspi = _import_pyatspi()
+        if pyatspi is not None:
+            return bool(contains(pyatspi.STATE_FOCUSED))
+        return bool(contains("STATE_FOCUSED"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _atspi_bounds(accessible: Any) -> tuple[int, int, int, int]:
     """Read screen bounds via the AT-SPI Component interface (best-effort)."""
     extents = None
@@ -500,6 +541,9 @@ def _atspi_flatten(
         automation_id = ""  # AT-SPI has no stable AutomationId equivalent.
         bounds = _atspi_bounds(element)
         enabled = _atspi_enabled(element)
+        focused = _atspi_focused(element)
+        # AT-SPI marks secure edits with a dedicated ROLE, not a flag.
+        is_password = native_role.strip().upper() == "ROLE_PASSWORD_TEXT"
     except Exception:  # noqa: BLE001
         return
 
@@ -524,6 +568,8 @@ def _atspi_flatten(
         depth=depth,
         parent_index=parent_index,
         value=value,
+        is_password=is_password,
+        focused=focused,
     ))
 
     if depth >= max_depth:

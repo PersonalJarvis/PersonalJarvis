@@ -125,7 +125,7 @@ MODEL_VOICES: dict[str, tuple[str, ...]] = {
 # picker offline / when the live ``?output_modalities=speech`` fetch is
 # unreachable — mirroring how ``CURATED_MODELS`` backs the brain picker.
 CURATED_SPEECH_MODELS: tuple[tuple[str, str], ...] = (
-    ("google/gemini-3.1-flash-tts-preview", "Google: Gemini 3.1 Flash TTS (multilingual, recommended)"),
+    ("google/gemini-3.1-flash-tts-preview", "Google: Gemini 3.1 Flash TTS (multilingual)"),
     ("hexgrad/kokoro-82m", "hexgrad: Kokoro 82M (cheapest, English)"),
     ("x-ai/grok-voice-tts-1.0", "xAI: Grok Voice TTS 1.0"),
     ("microsoft/mai-voice-2", "Microsoft: MAI-Voice-2"),

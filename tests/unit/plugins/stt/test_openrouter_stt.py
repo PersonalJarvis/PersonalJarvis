@@ -34,6 +34,13 @@ def _silent_pcm(num_samples: int = 1600) -> bytes:
     return b"\x00\x00" * num_samples
 
 
+def test_provider_identity_is_distinct_from_brain() -> None:
+    """The STT provider id must NOT be ``openrouter`` (that is the brain's id in
+    the shared catalog / provider-spec namespaces) and must be non-streaming."""
+    assert OpenRouterSTT.name == "openrouter-stt"
+    assert OpenRouterSTT.supports_streaming is False
+
+
 def _mock_client(handler) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
