@@ -20,7 +20,7 @@ import logging
 import time
 from typing import Any, Literal, get_args
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from jarvis.brain import provider_test as _provider_test
@@ -1507,6 +1507,207 @@ async def tts_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         "live_switched": live_switched,
         "restart_required": restart_required,
     }
+
+
+# ----------------------------------------------------------------------
+# Per-model VOICE picker + audio preview (OpenRouter TTS)
+# ----------------------------------------------------------------------
+#
+# A TTS model (Gemini Flash TTS, Kokoro, MAI-Voice, ...) ships its OWN set of
+# voices, each speaking a specific language (or multilingual). These two routes
+# feed the desktop voice picker: list the chosen model's voices tagged by
+# language, and synthesise a short spoken sample so the user can HEAR a voice
+# before committing. The provider id is always ``openrouter-tts`` today; the
+# routes 400 for any other id rather than guessing.
+
+# The only TTS provider that exposes a per-model voice list + preview so far.
+_VOICE_PICKER_PROVIDER = "openrouter-tts"
+
+# The short fixed sentence spoken by the preview, per language. Deliberately
+# tiny so a preview is cheap and quick. Every supported runtime-output language
+# has an entry (never a de/en-only table — AP-21 / runtime-language doctrine).
+_TTS_PREVIEW_SAMPLES: dict[str, str] = {
+    "de": "Hallo, ich bin dein Assistent.",
+    "en": "Hi, I am your assistant.",
+    "es": "Hola, soy tu asistente.",
+}
+_TTS_PREVIEW_DEFAULT_LANG = "en"
+
+
+def _pcm_to_wav(pcm: bytes, *, sample_rate: int, channels: int = 1) -> bytes:
+    """Wrap int16 little-endian PCM in a minimal in-memory WAV container.
+
+    Mirrors ``jarvis.plugins.stt.openrouter_stt._wrap_pcm_as_wav`` so an
+    ``<audio>`` element can play the OpenRouter TTS stream (raw 24 kHz mono
+    s16le PCM) directly without a client-side decoder.
+    """
+    import io
+    import wave
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wav:
+        wav.setnchannels(max(1, channels))
+        wav.setsampwidth(2)  # int16
+        wav.setframerate(sample_rate)
+        wav.writeframes(pcm)
+    return buf.getvalue()
+
+
+class TtsVoiceEntry(BaseModel):
+    id: str
+    # ISO-639-1 code ("en"/"de"/"es"/"fr"/…) or "multi" for a multilingual /
+    # voice-agnostic model. The UI maps it to a flag chip (unknown → the code).
+    language: str
+
+
+class TtsVoicesResponse(BaseModel):
+    provider: str
+    model: str
+    voices: list[TtsVoiceEntry]
+    # The model's own safe default voice (used to pre-select the picker).
+    default: str = ""
+    # The voice currently persisted in [tts] IF it is valid for this model,
+    # else "" (a stale voice from another model shows the placeholder instead).
+    current: str = ""
+
+
+@router.get("/tts/voices")
+async def list_tts_voices(
+    request: Request, provider: str = _VOICE_PICKER_PROVIDER, model: str = ""
+) -> TtsVoicesResponse:
+    """Voices for a TTS model, each tagged with its spoken language.
+
+    Feeds the voice picker after a model is chosen. ``language`` is an ISO-639-1
+    code or ``"multi"`` (multilingual / voice-agnostic model). Only
+    ``openrouter-tts`` exposes a per-model voice list today; any other provider
+    id is a clean 400.
+    """
+    if provider != _VOICE_PICKER_PROVIDER:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Per-model voices are only available for '{_VOICE_PICKER_PROVIDER}' "
+                f"(got {provider!r})."
+            ),
+        )
+    from jarvis.plugins.tts.openrouter_speech_models import (
+        MODEL_DEFAULT_VOICE,
+        coerce_speech_model,
+        voice_entries_for_model,
+    )
+
+    resolved = coerce_speech_model(model)
+    entries = voice_entries_for_model(resolved)
+    default = MODEL_DEFAULT_VOICE.get(resolved, "") or (
+        entries[0]["id"] if entries else ""
+    )
+    # Reflect the persisted voice only when it belongs to THIS model, so the
+    # picker never shows a stale voice from a previously selected model.
+    cfg = _resolve_cfg(request)
+    persisted = getattr(getattr(cfg, "tts", None), "voice_de", "") or ""
+    valid_ids = {e["id"] for e in entries}
+    current = persisted if persisted in valid_ids else ""
+    return TtsVoicesResponse(
+        provider=provider,
+        model=resolved,
+        voices=[TtsVoiceEntry(**e) for e in entries],
+        default=default,
+        current=current,
+    )
+
+
+class TtsVoiceBody(BaseModel):
+    # Empty is not meaningful here — a voice must be chosen. Bounded like the
+    # other selection bodies.
+    voice: str = Field(default="", max_length=200)
+    persist: bool = Field(default=True)
+
+
+@router.post("/tts/voice")
+async def set_tts_voice_selection(
+    body: TtsVoiceBody, request: Request
+) -> BrainModelSaveResponse:
+    """Persist + live-apply the global TTS voice (``[tts] voice_de``/``voice_en``).
+
+    A TTS model ships several voices; this pins the chosen one. Reuses the shared
+    ``_apply_tts_selection`` path (config-soll-synced write + a live rebuild of
+    the running SpeechPipeline's TTS) so the next spoken turn uses it without a
+    restart when voice is active.
+    """
+    voice = body.voice.strip()
+    if not voice:
+        raise HTTPException(status_code=400, detail="A voice id is required.")
+    return _apply_tts_selection(
+        _VOICE_PICKER_PROVIDER,
+        voice,
+        "voice",
+        BrainModelBody(model=voice, persist=body.persist),
+        request,
+    )
+
+
+class TtsPreviewBody(BaseModel):
+    provider: str = Field(default=_VOICE_PICKER_PROVIDER)
+    model: str = Field(default="", max_length=200)
+    voice: str = Field(default="", max_length=200)
+    # The sample language to speak ("de" | "en" | "es"). Falls back to English.
+    language: str = Field(default=_TTS_PREVIEW_DEFAULT_LANG, max_length=16)
+
+
+@router.post("/tts/preview")
+async def tts_preview(body: TtsPreviewBody) -> Response:
+    """Synthesise a SHORT spoken sample with the given model + voice.
+
+    Returns ``audio/wav`` bytes (24 kHz mono s16le wrapped in a WAV container) so
+    an ``<audio>`` element can play it directly. Kept cheap: one tiny fixed
+    sentence. Any failure (no key / 4xx / transport) is a clean 4xx/5xx JSON
+    error — never a 500 that breaks the page — so the picker can show a toast.
+    """
+    if body.provider != _VOICE_PICKER_PROVIDER:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Preview is only available for '{_VOICE_PICKER_PROVIDER}' "
+                f"(got {body.provider!r})."
+            ),
+        )
+    lang = (body.language or _TTS_PREVIEW_DEFAULT_LANG).lower().split("-", 1)[0]
+    sample = _TTS_PREVIEW_SAMPLES.get(lang, _TTS_PREVIEW_SAMPLES[_TTS_PREVIEW_DEFAULT_LANG])
+
+    from jarvis.plugins.tts.openrouter_speech_models import coerce_speech_model
+    from jarvis.plugins.tts.openrouter_tts import (
+        OPENROUTER_TTS_SAMPLE_RATE,
+        OpenRouterTTS,
+        OpenRouterTTSError,
+    )
+
+    model = coerce_speech_model(body.model)
+    voice = body.voice.strip() or None
+    tts = OpenRouterTTS(model=model)
+    pcm = bytearray()
+    try:
+        async for chunk in tts.synthesize(sample, voice=voice, language_code=lang):
+            pcm += bytes(chunk.pcm)
+    except OpenRouterTTSError as exc:
+        # No key / 401 / 402 / 429 / transport — the message is already clear
+        # English; surface it as a 502 so the picker shows an honest toast.
+        raise HTTPException(status_code=502, detail=f"Voice preview failed: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001 — never 500 the page
+        raise HTTPException(
+            status_code=500,
+            detail=f"Voice preview error: {type(exc).__name__}: {exc}",
+        ) from exc
+    finally:
+        await tts.aclose()
+
+    if not pcm:
+        raise HTTPException(status_code=502, detail="Voice preview produced no audio.")
+    wav = _pcm_to_wav(bytes(pcm), sample_rate=OPENROUTER_TTS_SAMPLE_RATE, channels=1)
+    return Response(
+        content=wav,
+        media_type="audio/wav",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.post("/stt/switch")

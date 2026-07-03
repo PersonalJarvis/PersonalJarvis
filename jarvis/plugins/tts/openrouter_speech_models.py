@@ -234,3 +234,108 @@ def voices_for_model_id(model_id: str | None) -> list[str]:
     if not model_id:
         return []
     return list(MODEL_VOICES.get(model_id.strip(), ()))
+
+
+# ----------------------------------------------------------------------
+# Per-voice language classification (the single source of truth)
+# ----------------------------------------------------------------------
+#
+# The provider (``openrouter_tts.py``) and the voice-picker REST endpoint both
+# need to answer "what language does this voice speak?". Keeping that logic here
+# — in the pure, dependency-light module — means there is exactly ONE classifier
+# both call, so the wake/voice list and the UI language chips can never drift.
+
+# Sentinel language code for a voice that is language-AGNOSTIC (one voice speaks
+# any language). Not an ISO-639-1 code on purpose — the UI maps it to the 🌐
+# "Multilingual" chip.
+MULTILINGUAL = "multi"
+
+# Models whose voice ids carry NO language in them: Gemini + Grok ship
+# personality-named voices (Charon, Kore, leo, rex) and each voice is
+# multilingual. Listed explicitly so a coincidental prefix-looking name can
+# never be mis-tagged; every other model is classified per-voice from its
+# id prefix below.
+LANGUAGE_AGNOSTIC_MODELS: frozenset[str] = frozenset({
+    "google/gemini-3.1-flash-tts-preview",
+    "x-ai/grok-voice-tts-1.0",
+})
+
+# Kokoro's first-character language family (``af_`` a=English female,
+# ``ef_`` e=Spanish, ``ff_`` f=French, ...). Second char is gender (f/m).
+_KOKORO_FAMILY: dict[str, str] = {
+    "a": "en", "b": "en", "e": "es", "f": "fr", "h": "hi",
+    "i": "it", "j": "ja", "p": "pt", "z": "zh",
+}
+
+# Two-letter LOCALE/region prefixes (Voxtral: ``en_``, ``gb_``, ``fr_``) that
+# denote a spoken language rather than an ISO language code. ``gb``/``us``/``au``
+# are all English regions, so they normalise to ``en``; anything else falls
+# through as its own two-letter code.
+_LOCALE_TO_LANG: dict[str, str] = {"gb": "en", "us": "en", "au": "en"}
+
+
+def _voice_language_from_prefix(voice: str) -> str | None:
+    """The ISO-639-1 language a language-prefixed voice id speaks.
+
+    Returns ``None`` when the id carries NO recognisable language prefix (a
+    language-agnostic / multilingual voice such as Gemini "Charon" or Grok
+    "leo"). Handles the three prefix styles in the catalog:
+
+    * BCP-47-ish ``de-DE-Klaus`` / ``en-US-Harper:MAI-Voice-2`` (MAI-Voice),
+    * Kokoro ``af_``/``am_`` (English), ``ef_``/``em_`` (Spanish), ``ff_`` (French),
+    * a plain two-letter locale prefix ``en_``/``gb_``/``fr_`` (Voxtral).
+    """
+    v = (voice or "").lower()
+    # BCP-47-ish: first hyphen-separated token is a 2-letter language code.
+    if "-" in v and len(v.split("-", 1)[0]) == 2:
+        return v.split("-", 1)[0]
+    # Kokoro style: <family><gender>_... — gender char is 'f' or 'm'.
+    if len(v) >= 3 and v[1] in ("f", "m") and v[2] == "_":
+        return _KOKORO_FAMILY.get(v[0])
+    # Two-letter locale prefix like "en_", "gb_", "fr_".
+    if len(v) >= 3 and v[2] == "_" and v[0].isalpha() and v[1].isalpha():
+        code = v[:2]
+        return _LOCALE_TO_LANG.get(code, code)
+    return None
+
+
+def voice_matches_language(voice: str, short_lang: str) -> bool:
+    """Heuristic: does a language-prefixed voice id belong to ``short_lang``?
+
+    ``short_lang`` is a two-letter language code (``"de"``/``"en"``/``"es"``/…).
+    Returns ``True`` for a voice with no recognisable language prefix (it is
+    language-agnostic and fits any requested language), so a filter over a
+    language-agnostic model never narrows to empty. Single source of truth — the
+    provider's ``list_voices`` and the voice-picker endpoint both call it.
+    """
+    lang = _voice_language_from_prefix(voice)
+    if lang is None:
+        return True
+    return lang == (short_lang or "").lower().split("-", 1)[0]
+
+
+def voice_language(model_id: str | None, voice: str) -> str:
+    """The language a single voice speaks, as an ISO-639-1 code or ``"multi"``.
+
+    * A voice of a language-AGNOSTIC model (Gemini, Grok) → :data:`MULTILINGUAL`.
+    * A language-prefixed voice (Kokoro ``af_``→``en`` / ``ef_``→``es``,
+      MAI-Voice ``de-DE-``→``de``, Voxtral ``fr_``→``fr``) → its ISO code.
+    * A voice with no recognisable prefix (a language-agnostic voice on any
+      model) → :data:`MULTILINGUAL`.
+    """
+    if (model_id or "") in LANGUAGE_AGNOSTIC_MODELS:
+        return MULTILINGUAL
+    return _voice_language_from_prefix(voice) or MULTILINGUAL
+
+
+def voice_entries_for_model(model_id: str | None) -> list[dict[str, str]]:
+    """Per-voice ``{"id", "language"}`` entries for a model id (sync, offline).
+
+    ``language`` is an ISO-639-1 code or ``"multi"`` (see :func:`voice_language`).
+    Empty list for an unknown model id. Feeds the voice picker after a TTS model
+    is chosen.
+    """
+    return [
+        {"id": v, "language": voice_language(model_id, v)}
+        for v in voices_for_model_id(model_id)
+    ]

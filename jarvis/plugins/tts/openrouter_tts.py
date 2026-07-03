@@ -36,6 +36,7 @@ from jarvis.plugins.tts.openrouter_speech_models import (
     MODEL_DEFAULT_VOICE,
     MODEL_VOICES,
     coerce_speech_model,
+    voice_matches_language,
 )
 
 log = logging.getLogger("jarvis.tts.openrouter")
@@ -201,7 +202,7 @@ class OpenRouterTTS:
             return [dv] if dv else []
         if language:
             short = language.lower().split("-", 1)[0]
-            narrowed = [v for v in voices if _voice_matches_language(v, short)]
+            narrowed = [v for v in voices if voice_matches_language(v, short)]
             if narrowed:
                 return narrowed
         return voices
@@ -286,27 +287,3 @@ class OpenRouterTTS:
                 timestamp_ns=0,
                 channels=1,
             )
-
-
-def _voice_matches_language(voice: str, short_lang: str) -> bool:
-    """Heuristic: does a language-prefixed voice id belong to ``short_lang``?
-
-    Handles the two prefix styles in the catalog: BCP-47-ish (``de-DE-Klaus``)
-    and Kokoro's two-letter locale prefix (``de_``, ``af_``/``am_``/``bf_``/
-    ``bm_`` = English, ``ef_``/``em_`` = Spanish, ``ff_`` = French, ...). Returns
-    True for voices with no recognisable language prefix (language-agnostic).
-    """
-    v = voice.lower()
-    if "-" in v and len(v.split("-", 1)[0]) == 2:
-        return v.startswith(short_lang + "-")
-    # Kokoro style: first char = language family, second = gender, then "_".
-    kokoro_family = {
-        "a": "en", "b": "en", "e": "es", "f": "fr", "h": "hi",
-        "i": "it", "j": "ja", "p": "pt", "z": "zh",
-    }
-    if len(v) >= 3 and v[1] in ("f", "m") and v[2] == "_":
-        return kokoro_family.get(v[0]) == short_lang
-    if len(v) >= 3 and v[2] == "_" and v[0].isalpha() and v[1].isalpha():
-        # Two-letter locale prefix like "de_", "en_", "fr_".
-        return v[:2] == short_lang
-    return True
