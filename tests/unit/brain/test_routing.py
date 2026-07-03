@@ -3101,3 +3101,129 @@ def test_actionable_turn_keeps_computer_use(utterance: str) -> None:
     assert "computer_use" in gated, (
         f"computer_use must stay for an actionable turn: {utterance!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# PC-control run-skill hide (forensic 2026-07-02, voice session 20:28): the
+# explicit desktop request "ein Terminal oeffnen, Cloud-Code oeffnen, … und
+# fuer mich ein Prompt geben …" (STT-garbled "Claude Code") ALSO mentioned
+# looking for bugs, so the SKILLS-FIRST router rule ("when in doubt, call the
+# skill") let the semantically-similar cloud-debug skill hijack the turn:
+# run-skill returned its mission directive, the model followed neither it nor
+# computer_use, and spoke the dictated capability refusal ("mir fehlt dafuer
+# das passende Werkzeug"). The vehicle the user NAMES (the desktop) must
+# outrank a loose skill CONTENT match — run-skill leaves the surface on such a
+# turn so computer_use stays authoritative.
+# ---------------------------------------------------------------------------
+
+
+class _FakeRunSkillTool:
+    name = "run-skill"
+    schema: dict[str, Any] = {}
+
+
+def _manager_with_cu_runskill_search() -> BrainManager:
+    executor = _RecordingExecutor()
+    return BrainManager(
+        config=JarvisConfig(),
+        bus=EventBus(),
+        tools={
+            "computer_use": _FakeCuTool(),
+            "run-skill": _FakeRunSkillTool(),
+            "search_web": _FakeSearchTool(),
+        },
+        tool_executor=executor,  # type: ignore[arg-type]
+    )
+
+
+# The live incident transcript (STT-garbled: "Cloud-Code" = Claude Code) plus
+# simpler members of the same class: the user names the DESKTOP as vehicle.
+PC_CONTROL_TURNS_THAT_MUST_NOT_REACH_RUN_SKILL = [
+    (
+        # i18n-allow: live incident transcript under test
+        "Kannst du bitte für mich mal für mich ein Terminal öffnen, Cloud-Code "
+        "öffnen, in den Jarvis-Vorordnern, in das Jarvis-Directly-Renavigieren "
+        "und für mich ein Prompt geben, und zwar, dass er mal einen kompletten "
+        "Deep-Dive machen soll und gucken, ob es irgendwelche Bugs gibt. Er soll "
+        "nur ein Report schreiben und keine einzige Datei verändern oder löschen "
+        "oder sowas etc."
+    ),
+    "Oeffne ein Terminal und starte Claude Code",  # i18n-allow: German voice command under test
+    "Klick auf den Play-Button",                   # i18n-allow: German voice command under test
+    "Open a terminal and type npm install",
+]
+
+
+@pytest.mark.parametrize("utterance", PC_CONTROL_TURNS_THAT_MUST_NOT_REACH_RUN_SKILL)
+def test_pc_control_turn_hides_run_skill_keeps_computer_use(utterance: str) -> None:
+    """An explicit desktop request (open an app/terminal, click, type) must not
+    be hijackable by a semantically-similar skill: run-skill leaves the surface,
+    computer_use stays."""
+    manager = _manager_with_cu_runskill_search()
+    gated = manager._hide_run_skill_on_pc_control_turn(
+        dict(manager._tools), utterance
+    )
+    assert "run-skill" not in gated, (
+        f"run-skill must be hidden on a pc-control turn: {utterance!r}"
+    )
+    assert "computer_use" in gated, "computer_use must stay authoritative"
+    assert "search_web" in gated, "unrelated tools must be untouched"
+
+
+NON_PC_CONTROL_SKILL_TURNS = [
+    "Wie sieht mein Tag aus?",          # i18n-allow: morning-routine skill trigger under test
+    "Finde den Bug im Login-Test",      # i18n-allow: cloud-debug-shaped task, no desktop vehicle
+    "What does my day look like?",
+]
+
+
+@pytest.mark.parametrize("utterance", NON_PC_CONTROL_SKILL_TURNS)
+def test_non_pc_control_turn_keeps_run_skill(utterance: str) -> None:
+    """A turn without a desktop-vehicle signal keeps run-skill — skills stay
+    first-class for the kind of task they exist for."""
+    manager = _manager_with_cu_runskill_search()
+    gated = manager._hide_run_skill_on_pc_control_turn(
+        dict(manager._tools), utterance
+    )
+    assert "run-skill" in gated, (
+        f"run-skill must stay on a non-pc-control turn: {utterance!r}"
+    )
+
+
+def test_explicit_skill_request_keeps_run_skill_even_on_pc_control_turn() -> None:
+    """The user literally naming a skill is its own vehicle — it must never be
+    vetoed, even when the same turn opens an app (mirrors AD-S9 for spawn)."""
+    manager = _manager_with_cu_runskill_search()
+    gated = manager._hide_run_skill_on_pc_control_turn(
+        dict(manager._tools),
+        # i18n-allow: German voice command under test
+        "Oeffne Chrome und nutz den Skill browser-tabs",
+    )
+    assert "run-skill" in gated, "an explicit skill request must keep run-skill"
+
+
+def test_run_skill_stays_when_computer_use_absent() -> None:
+    """On a host without the CU harness the gate must stand down — hiding
+    run-skill there would leave the desktop request with NO handler at all."""
+    executor = _RecordingExecutor()
+    manager = BrainManager(
+        config=JarvisConfig(),
+        bus=EventBus(),
+        tools={"run-skill": _FakeRunSkillTool(), "search_web": _FakeSearchTool()},
+        tool_executor=executor,  # type: ignore[arg-type]
+    )
+    gated = manager._hide_run_skill_on_pc_control_turn(
+        # i18n-allow: German voice command under test
+        dict(manager._tools), "Oeffne ein Terminal und starte Claude Code"
+    )
+    assert "run-skill" in gated, (
+        "without computer_use in the surface the gate must not hide run-skill"
+    )
+
+
+def test_pc_control_run_skill_gate_is_fault_tolerant() -> None:
+    """Any fault (non-dict surface) returns the tools unchanged — a gate bug
+    must never blind the brain."""
+    manager = _manager_with_cu_runskill_search()
+    sentinel = object()
+    assert manager._hide_run_skill_on_pc_control_turn(sentinel, "Oeffne Chrome") is sentinel  # type: ignore[arg-type]  # i18n-allow: German voice command under test

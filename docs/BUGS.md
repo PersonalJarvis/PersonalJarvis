@@ -2851,3 +2851,71 @@ degrade safely): the Windows hit-test may be flaky across COM apartments
 rich editor can still read as "did not land"; legacy Zaphod X11 multihead
 under-reports the virtual bounds; Linux foreground-follow costs ~6 xdotool
 spawns per perceive frame.
+
+## BUG-039: Explicit desktop request hijacked by a topical skill match — "mir fehlt das passende Werkzeug" despite computer_use being available (HIGH, 2026-07-02)
+
+**Symptom.** Voice session 20:28, turn 1: "Kannst du bitte … ein Terminal
+öffnen, Cloud-Code öffnen, … und für mich ein Prompt geben, … kompletten <!-- i18n-allow: forensic quote of the live German voice turn -->
+Deep-Dive machen … ob es irgendwelche Bugs gibt" (STT-garbled "Claude Code" →
+"Cloud-Code") — an unambiguous desktop request. Jarvis spoke the preamble
+"Okay, ich starte cloud-debug." and then refused: "Das kann ich gerade nicht <!-- i18n-allow: forensic quote of the live German refusal -->
+ausführen — mir fehlt dafür das passende Werkzeug." No terminal was opened; <!-- i18n-allow: forensic quote of the live German refusal -->
+nothing happened.
+
+**Forensics (sessions.db, session 62198a59, turn auto-1).** The turn had the
+FULL router tool surface (computer_use present; `_looks_like_pc_control`
+matches the transcript, so no hide-gate stripped it). `tool_calls_json` shows
+exactly one call: `run-skill` → `ActionExecuted success=true` with
+`skill_name='cloud-debug', execution='mission'`, returning the mission
+directive "Call the spawn_worker tool NOW …". The model (gemini-3.5-flash,
+58k-token context) followed neither the directive nor computer_use and
+emitted the system-prompt-dictated capability refusal (manager.py "STRENGE
+REGEL" sentence). Turn 2 ("Thank you for watching!") was Whisper silence
+hallucination.
+
+**Root cause — a precedence gap, the desktop twin of BUG-035.** The router
+prompt's SKILLS-FIRST clause ("check skills BEFORE classifying; when in
+doubt, call the skill; a matching skill ALWAYS beats the free answer and
+spawn_worker") had only ONE counter-rule: an explicitly named heavy vehicle
+("Sub-Agent", "deep dive") wins. There was NO rule for the explicitly named
+DESKTOP vehicle ("open an app/terminal, click, type"), and none of the
+deterministic tool-hide gates (knowledge-question, signalless-turn,
+plugin-tool) ever constrained `run-skill`. So a loose CONTENT match ("find
+bugs" ≈ cloud-debug's when_to_use) hijacked a turn whose named VEHICLE was
+the desktop — and the utterance's own "Deep-Dive" pointed the heavy-vehicle
+rule at spawn_worker, doubly away from computer_use. The deterministic layer
+already got this right (`_trigger_names_vehicle` partition: a depth marker
+must not override a pc-control signal); the LLM-facing layer had no
+equivalent.
+
+**Fix (deterministic gate + prompt precedence, provider-agnostic).**
+- `jarvis/brain/manager.py::_hide_run_skill_on_pc_control_turn` — on a turn
+  with a deterministic pc-control/open-app signal, `run-skill` leaves the
+  tool surface so computer_use stays authoritative. Narrow: fires only when
+  `computer_use` is actually present (a CU-less host keeps run-skill);
+  stands down when the user literally says "Skill" (an explicit skill
+  request is its own vehicle, mirrors AD-S9); the AD-S4 inline trigger-match
+  path is untouched; any fault returns the tools unchanged.
+- `jarvis/brain/router.py` SYSTEM_PROMPT — three amendments: (1) SKILLS-FIRST
+  exception: an explicit SCREEN action beats every skill match unless the
+  skill is named; (2) "VEHIKEL SCHLAEGT INHALT": open/click/type requests are
+  computer_use even when the CONTENT of what gets typed sounds like heavy
+  work or a skill ("öffne ein Terminal, starte Claude Code und gib ihm den <!-- i18n-allow: quote of the German router-prompt example under change -->
+  Prompt: mach einen Deep-Dive …" → computer_use(goal=verbatim)); (3) "KEIN <!-- i18n-allow: quote of the German router-prompt rule under change -->
+  SKILL-DEAD-END": if a called skill's returned instructions do not fit the
+  actual request, ignore them and use the other tools — never answer "mir
+  fehlt das passende Werkzeug" while a present tool can do the job. <!-- i18n-allow: quotes of the German router-prompt rules under change -->
+
+**Guards.** `tests/unit/brain/test_routing.py::
+test_pc_control_turn_hides_run_skill_keeps_computer_use` (includes the live
+incident transcript verbatim), `…_non_pc_control_turn_keeps_run_skill`,
+`…_explicit_skill_request_keeps_run_skill_even_on_pc_control_turn`,
+`…_run_skill_stays_when_computer_use_absent`, and a fault-tolerance test.
+
+**Class rule (generalize, per the maintainer).** The vehicle the user NAMES
+outranks any semantic CONTENT match — for skills, spawns, and future
+integrations alike. "Open X and have it do Y" means: operate the desktop
+(computer_use); Y is the OTHER program's job, not Jarvis's. This is also the
+routing foundation for the planned "Jarvis drives CLI coding agents (Claude
+Code / OpenCode)" capability: those turns are Computer-Use tasks today, never
+"feature not available".
