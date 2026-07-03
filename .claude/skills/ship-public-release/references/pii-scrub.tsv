@@ -26,6 +26,7 @@ scrub	Lütke	Maintainer	maintainer surname
 scrub	Luetke	Maintainer	maintainer surname (ascii-fold)
 
 scrub	luetke	maintainer	maintainer surname (lowercase residue in slugs)
+scrub	lütke	maintainer	maintainer surname (lowercase umlaut residue)
 
 # --- maintainer bare first names: full-depersonalization (2026-06-01). Two
 # --- distinct neutral names preserve router-prompt semantics where "Ruben" is
