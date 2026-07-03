@@ -213,6 +213,20 @@ jobs:
         # docs/jarvis-cli-reference.md. Mirrors the pre-push docgen gate.
         run: python scripts/ci/gen_cli_reference.py --check
 
+      - name: Install base runtime deps for the test suite (robust; no hand-list)
+        shell: bash
+        # The cli_ctl unit tests import deeper jarvis modules that transitively
+        # pull in base runtime deps (pydantic, pyyaml, loguru, …). Install the
+        # package's BASE deps — torch-/GPU-free per the cloud-first base-install
+        # mandate — instead of the hand-maintained dep list above, which silently
+        # rots and REDS CI the moment a test imports one more transitive lib (the
+        # recurring "ModuleNotFoundError: No module named 'yaml'/'pydantic'"
+        # collection errors). The heavy desktop/voice extras stay OUT, so the
+        # --help smoke above still proves the light install path.
+        run: |
+          python -m pip install -e .
+          python -m pip install pytest pytest-asyncio hypothesis
+
       - name: pytest (jarvisctl unit suite)
         run: python -m pytest tests/unit/cli_ctl/ -v
 
