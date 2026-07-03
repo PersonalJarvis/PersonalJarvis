@@ -293,6 +293,11 @@ short version:
 - New providers must pass the contract test suite (`pytest tests/contract/`).
 - Found a security issue? Please report it privately — see [`SECURITY.md`](SECURITY.md).
 
+## Author
+
+Personal Jarvis is created and maintained by **Ruben Lütke**.
+Say hi on X — [@Ruben_Herz](https://x.com/Ruben_Herz).
+
 ## License
 
 Released under the **MIT License** — free to use, modify, and distribute, including
@@ -307,6 +312,6 @@ to. Personal Jarvis is not affiliated with or endorsed by any of them — see
 <br/>
 
 <p align="center">
-  <sub>Built by the Personal Jarvis Maintainers · © 2026 · MIT</sub><br/>
+  <sub>Created by <b>Ruben Lütke</b> · <a href="https://x.com/Ruben_Herz">@Ruben_Herz</a> · © 2026 · MIT</sub><br/>
   <sub><a href="https://discord.gg/UPu6pFWrJ">Discord</a> · <a href="https://x.com/PersonalJarvis">X</a> · <a href="https://www.instagram.com/personaljarvis/">Instagram</a></sub>
 </p>

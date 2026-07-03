@@ -9,7 +9,7 @@ description = "Voice-driven meta-orchestrator that turns one spoken request into
 requires-python = ">=3.11"
 readme = "README.md"
 license = { text = "MIT" }
-authors = [{ name = "Personal Jarvis Maintainers" }]
+authors = [{ name = "Ruben Lütke" }]
 
 dependencies = [
     "anthropic>=0.96",
