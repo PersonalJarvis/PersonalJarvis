@@ -20,7 +20,12 @@
     "restarting": "{name} startet neu…",
     "restart_failed": "Neustart fehlgeschlagen",
     "restart_force": "Trotzdem neu starten?",
-    "restart_missions_running": "Mission(en) laufen noch — nochmal klicken zum Erzwingen"
+    "restart_missions_running": "Mission(en) laufen noch — nochmal klicken zum Erzwingen",
+    "update_available": "Update verfügbar",
+    "updating": "{name} wird aktualisiert…",
+    "update_failed": "Update fehlgeschlagen",
+    "update_hint": "Neue Version herunterladen und installieren",
+    "update_deps_warning": "Aktualisiert — einige Komponenten brauchen evtl. eine manuelle Neuinstallation"
   },
   "nav": {
     "chats": "Chats",

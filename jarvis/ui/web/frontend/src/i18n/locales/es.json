@@ -20,7 +20,12 @@
     "restarting": "Reiniciando {name}…",
     "restart_failed": "Error al reiniciar",
     "restart_force": "¿Reiniciar de todos modos?",
-    "restart_missions_running": "misión(es) en curso — haz clic de nuevo para reiniciar igualmente"
+    "restart_missions_running": "misión(es) en curso — haz clic de nuevo para reiniciar igualmente",
+    "update_available": "Actualización disponible",
+    "updating": "Actualizando {name}…",
+    "update_failed": "Error al actualizar",
+    "update_hint": "Descargar e instalar la nueva versión",
+    "update_deps_warning": "Actualizado — algunos componentes pueden requerir reinstalación manual"
   },
   "nav": {
     "chats": "Chats",

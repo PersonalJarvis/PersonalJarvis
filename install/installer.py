@@ -30,6 +30,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import platform
 import shutil
@@ -158,6 +159,29 @@ def step_preflight() -> None:
     if not (repo_root() / "pyproject.toml").exists():
         console.print("[bad]      pyproject.toml not found — installer.py was invoked outside the repo.[/]")
         sys.exit(1)
+
+
+def write_managed_marker() -> None:
+    """Mark this checkout as an installer-managed copy.
+
+    The in-app "Update Now" button (jarvis/ui/web/update_routes.py) only appears,
+    and only ever runs ``git reset --hard``, when this marker is present AND the
+    checkout's ``origin`` is the official public repo. A maintainer's dev tree or
+    a manual clone never gets this marker, so neither can be self-reset — this is
+    the load-bearing safety guard for the whole updater. Best-effort: a marker
+    failure must never fail the install (it only disables in-app updates).
+    """
+    marker = repo_root() / ".jarvis-managed-install"
+    payload = {
+        "managed": True,
+        "install_path": str(repo_root()),
+        "created_by": "install/installer.py",
+    }
+    try:
+        marker.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        ok("registered as a managed install (in-app updates enabled)")
+    except OSError as exc:
+        note(f"could not write update marker ({exc}); in-app updates stay disabled")
 
 
 def step_pip_install(*, with_desktop: bool, with_voice_local: bool, dry_run: bool) -> None:
@@ -328,6 +352,8 @@ def main(argv: list[str] | None = None) -> int:
         with_desktop = True
 
     step_preflight()
+    if not args.dry_run:
+        write_managed_marker()
     if not os.environ.get("JARVIS_INSTALL_NO_PIP"):
         step_pip_install(
             with_desktop=with_desktop,
