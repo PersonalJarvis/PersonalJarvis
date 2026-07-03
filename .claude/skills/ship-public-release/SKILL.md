@@ -321,15 +321,19 @@ If the user does not clearly approve, abort and leave `$WORK` for inspection.
 
 ### 9. Commit, tag, push (dist repo only)
 
-Force the commit author to the public noreply identity (Hard rule 1: `-C` is the
-**dist** clone, never the working repo).
+Author the commit as the maintainer's GitHub profile, using GitHub's privacy
+noreply email — this links the profile (avatar + link on github.com) WITHOUT
+exposing any real email, and the display name is the GitHub *username*, not the
+real name (the PII scrub still strips the real name from file CONTENTS; this only
+changes who the commit is attributed to). Hard rule 1 still holds: `-C` is the
+**dist** clone, never the working repo.
 
 **Release mode** (commit + tag + push branch and tag):
 
 ```bash
 git -C "$WORK/dist" \
-  -c user.name="Personal Jarvis Maintainer" \
-  -c user.email="noreply@personaljarvis.dev" \
+  -c user.name="rubenluetke10-beep" \
+  -c user.email="226271791+rubenluetke10-beep@users.noreply.github.com" \
   commit -m "release: vX.Y.Z — <short summary>"
 
 git -C "$WORK/dist" tag -a "vX.Y.Z" -m "vX.Y.Z — <short summary>"
@@ -341,8 +345,8 @@ git -C "$WORK/dist" push origin "vX.Y.Z"
 
 ```bash
 git -C "$WORK/dist" \
-  -c user.name="Personal Jarvis Maintainer" \
-  -c user.email="noreply@personaljarvis.dev" \
+  -c user.name="rubenluetke10-beep" \
+  -c user.email="226271791+rubenluetke10-beep@users.noreply.github.com" \
   commit -m "snapshot: <YYYY-MM-DD> — <short summary>"
 
 git -C "$WORK/dist" push origin HEAD:main
