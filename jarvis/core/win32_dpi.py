@@ -23,15 +23,58 @@ logger = logging.getLogger(__name__)
 _DPI_AWARENESS_SET: bool = False
 
 
+# DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 (winuser.h). V2 additionally
+# covers non-client areas and child windows and is the declaration
+# window-centric Computer-Use relies on: window rects, monitor metrics and
+# SendInput normalization all read the SAME physical-pixel virtual desktop.
+_DPI_CTX_PER_MONITOR_V2 = -4
+_E_ACCESSDENIED = -2147024891  # 0x80070005 — awareness already set: fine
+
+
+def _apply_process_awareness(windll) -> str:
+    """Declare process DPI awareness, most capable tier first.
+
+    Returns which tier landed: ``"per_monitor_v2"`` | ``"per_monitor"`` |
+    ``"system"`` | ``"none"``. Takes the ``ctypes.windll`` namespace injected
+    so the ladder is testable on any OS. Never raises.
+
+    1. ``user32.SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)``
+       (Windows 10 1703+) — the declaration the multi-monitor window
+       pipeline requires.
+    2. ``shcore.SetProcessDpiAwareness(2)`` (Windows 8.1+, per-monitor V1).
+    3. ``user32.SetProcessDPIAware()`` (system-aware last resort).
+    """
+    import ctypes  # noqa: PLC0415
+
+    try:
+        set_ctx = windll.user32.SetProcessDpiAwarenessContext
+        if set_ctx(ctypes.c_void_p(_DPI_CTX_PER_MONITOR_V2)):
+            return "per_monitor_v2"
+    except (OSError, AttributeError):
+        logger.debug("SetProcessDpiAwarenessContext unavailable", exc_info=True)
+    try:
+        # PROCESS_PER_MONITOR_DPI_AWARE = 2; E_ACCESSDENIED = already set.
+        res = windll.shcore.SetProcessDpiAwareness(2)
+        if res in (0, _E_ACCESSDENIED):
+            return "per_monitor"
+        logger.debug("SetProcessDpiAwareness returned 0x%x", res & 0xFFFFFFFF)
+    except (OSError, AttributeError):
+        logger.debug("SetProcessDpiAwareness unavailable", exc_info=True)
+    try:
+        if windll.user32.SetProcessDPIAware():
+            return "system"
+    except (OSError, AttributeError):
+        logger.warning("Could not set DPI awareness", exc_info=True)
+    return "none"
+
+
 def ensure_dpi_awareness() -> None:
-    """Sets PER_MONITOR_AWARE_V2 via shcore (or user32 fallback).
+    """Declare the process PER_MONITOR_AWARE_V2 (with graceful fallbacks).
 
     Idempotent — safe to call multiple times without side effects. Non-Windows
     is a no-op; under Win32 the first call sets the awareness level,
-    all subsequent calls are no-ops.
-
-    - ``shcore.SetProcessDpiAwareness(2)`` is the modern API (Windows 8.1+).
-    - ``user32.SetProcessDPIAware()`` as fallback for older systems.
+    all subsequent calls are no-ops. See :func:`_apply_process_awareness`
+    for the exact ladder (V2 context -> shcore per-monitor -> system-aware).
     """
     global _DPI_AWARENESS_SET
     if _DPI_AWARENESS_SET:
@@ -42,18 +85,10 @@ def ensure_dpi_awareness() -> None:
     try:
         import ctypes  # noqa: PLC0415
 
-        # PROCESS_PER_MONITOR_DPI_AWARE = 2
-        res = ctypes.windll.shcore.SetProcessDpiAwareness(2)
-        # S_OK == 0; E_ACCESSDENIED is returned when already set — that is OK.
-        if res not in (0, -2147024891):  # 0x80070005 = E_ACCESSDENIED
-            logger.debug("SetProcessDpiAwareness returned 0x%x", res & 0xFFFFFFFF)
-    except (OSError, AttributeError):
-        try:
-            import ctypes  # noqa: PLC0415
-
-            ctypes.windll.user32.SetProcessDPIAware()
-        except Exception:  # noqa: BLE001
-            logger.warning("Could not set DPI awareness", exc_info=True)
+        tier = _apply_process_awareness(ctypes.windll)
+        logger.debug("process DPI awareness declared: %s", tier)
+    except Exception:  # noqa: BLE001 — declaration is best-effort
+        logger.warning("Could not set DPI awareness", exc_info=True)
     finally:
         _DPI_AWARENESS_SET = True
 

@@ -706,6 +706,13 @@ _DETERMINISTIC_WRITE_TOOL_NAMES: frozenset[str] = frozenset({
     "call-contact",
 })
 
+# The user literally names a skill ("nutz den Skill cloud-debug", "run the
+# skill …"). An explicit skill request is its own vehicle and always keeps
+# ``run-skill`` visible — the pc-control run-skill hide below must never veto
+# it. Same word in DE/EN; matched with word boundaries so unrelated words
+# ("skillful") don't trip it.
+_EXPLICIT_SKILL_REQUEST_RE = re.compile(r"\bskills?\b", re.IGNORECASE)
+
 # Interrogative opener (DE / EN / ES) — the leading question word of a plain
 # "what/which/who/how/…"-style factual question. Anchored at the start after an
 # optional wake/greeting/politeness run so "Jarvis, welche Firmen …" still
@@ -4210,6 +4217,53 @@ class BrainManager:
             log.debug("plugin-tool spawn-hide gate failed", exc_info=True)
             return tools
 
+    def _hide_run_skill_on_pc_control_turn(
+        self, tools: dict[str, "Tool"], user_text: str
+    ) -> dict[str, "Tool"]:
+        """Hide ``run-skill`` when the turn explicitly asks to operate THIS
+        computer's screen (open an app/terminal, click, type into a program),
+        so ``computer_use`` stays authoritative for the named desktop vehicle.
+
+        Forensic 2026-07-02 (voice session 20:28, turn 1): "ein Terminal
+        öffnen, Cloud-Code öffnen, … und für mich ein Prompt geben …
+        kompletten Deep-Dive machen … ob es irgendwelche Bugs gibt" — an
+        unambiguous desktop request (open a terminal, open Claude Code, type a
+        prompt into it). The SKILLS-FIRST router rule ("when in doubt, call
+        the skill") let the semantically-similar ``cloud-debug`` skill hijack
+        the turn: run-skill returned its mission directive, the model followed
+        neither it nor computer_use and spoke the dictated capability refusal
+        ("mir fehlt dafür das passende Werkzeug"). The vehicle the user NAMED
+        (the desktop) must outrank a loose skill CONTENT match — and the
+        surest way to stop a wrong tool call is to not offer the tool (mirrors
+        the knowledge-question / plugin-tool hides above).
+
+        Narrow on purpose: fires ONLY when a deterministic pc-control /
+        open-app signal is present AND ``computer_use`` is actually in the
+        surface (a host without the CU harness keeps run-skill so the turn
+        stays handleable). Stands down when the user literally says "skill" —
+        an explicit skill request is its own vehicle. The deterministic
+        trigger-match inline path (AD-S4) is untouched: a skill whose OWN
+        trigger phrase matched rides the turn context before this gate and
+        needs no run-skill call. Pure regex + existing detectors (AP-11 safe,
+        provider-agnostic). Defensive: any fault returns the tools unchanged
+        so a gate bug can never blind the brain.
+        """
+        if not isinstance(tools, dict):
+            return tools
+        try:
+            t = (user_text or "").strip()
+            if not t or "run-skill" not in tools or "computer_use" not in tools:
+                return tools
+            if not (is_open_app_intent(t) or _looks_like_pc_control(t)):
+                return tools
+            # User literally named a skill → that request wins, keep run-skill.
+            if _EXPLICIT_SKILL_REQUEST_RE.search(t):
+                return tools
+            return {n: tool for n, tool in tools.items() if n != "run-skill"}
+        except Exception:  # noqa: BLE001 — gate must never blind the brain
+            log.debug("pc-control run-skill-hide gate failed", exc_info=True)
+            return tools
+
     def _apply_plugin_relevance(
         self, user_text: str, tools: dict[str, "Tool"]
     ) -> dict[str, "Tool"]:
@@ -6668,6 +6722,16 @@ class BrainManager:
             # the spawn vehicles so the router uses the plugin tool DIRECTLY.
             if isinstance(_turn_tools, dict):
                 _turn_tools = self._hide_spawn_when_plugin_tool_handles_turn(
+                    _turn_tools, user_text
+                )
+            # PC-control run-skill hide (forensic 2026-07-02, voice 20:28): "ein
+            # Terminal öffnen, Cloud-Code öffnen, … ein Prompt geben" — an
+            # explicit desktop request — was hijacked by the semantically-similar
+            # cloud-debug skill via the SKILLS-FIRST rule and dead-ended in the
+            # capability refusal. When the user names the desktop vehicle,
+            # computer_use is authoritative — drop run-skill from the surface.
+            if isinstance(_turn_tools, dict):
+                _turn_tools = self._hide_run_skill_on_pc_control_turn(
                     _turn_tools, user_text
                 )
             # AI Pointer: on a deictic pointer turn the cursor crop is already the

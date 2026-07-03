@@ -24,7 +24,6 @@ import asyncio
 import hashlib
 import io
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Literal
@@ -152,29 +151,29 @@ def select_capture_monitor(
         logger.debug("select_capture_monitor: strategy=primary -> %s", primary.get("name"))
         return primary
 
-    if os.name != "nt":
-        return primary
-
     try:
-        import ctypes  # noqa: PLC0415
-        from ctypes import wintypes  # noqa: PLC0415
+        # Cross-platform foreground follow (every OS is first-class): the
+        # window identity + frame rect come from the one platform seam
+        # (Win32 hwnd/DWM, macOS Quartz points, X11 xdotool root pixels) —
+        # the same units the mss monitor rects use on each platform.
+        from jarvis.platform import window_state as ws  # noqa: PLC0415
 
-        hwnd = ctypes.windll.user32.GetForegroundWindow()
-        if not hwnd:
+        win = ws.foreground_window()
+        if win is None:
             logger.debug(
                 "select_capture_monitor: no foreground window — falling back to primary",
             )
             return primary
 
-        rect = wintypes.RECT()
-        if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        rect = ws.window_frame_rect(win) or ws.window_rect(win)
+        if rect is None:
             logger.debug(
-                "select_capture_monitor: GetWindowRect failed — falling back to primary",
+                "select_capture_monitor: foreground rect unreadable — falling back to primary",
             )
             return primary
 
-        cx = (rect.left + rect.right) // 2
-        cy = (rect.top + rect.bottom) // 2
+        cx = rect[0] + rect[2] // 2
+        cy = rect[1] + rect[3] // 2
 
         for m in physical:
             left, top = m["left"], m["top"]
@@ -183,7 +182,9 @@ def select_capture_monitor(
             if left <= cx < right and top <= cy < bottom:
                 if m is not primary:
                     logger.info(
-                        "select_capture_monitor: foreground on %s (left=%d top=%d %dx%d) — capturing there instead of primary",
+                        "select_capture_monitor: foreground on %s "
+                        "(left=%d top=%d %dx%d) — capturing there "
+                        "instead of primary",
                         m.get("name"),
                         left,
                         top,
@@ -200,7 +201,8 @@ def select_capture_monitor(
         # Foreground center lies outside all physical monitors
         # (e.g. window minimized -> rect = -32000/-32000).
         logger.debug(
-            "select_capture_monitor: foreground center (%d,%d) is on no monitor — falling back to primary",
+            "select_capture_monitor: foreground center (%d,%d) is on no "
+            "monitor — falling back to primary",
             cx,
             cy,
         )

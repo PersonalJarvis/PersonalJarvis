@@ -463,7 +463,7 @@ class VisionSource(Protocol):
         ...
 
     async def close(self) -> None:
-        """Gibt Ressourcen frei (Handles, Memory-Caches)."""
+        """Releases resources (handles, memory caches)."""
         ...
 
 

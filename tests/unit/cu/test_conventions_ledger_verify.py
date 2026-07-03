@@ -9,6 +9,7 @@ import pytest
 from jarvis.cu import conventions as conv
 from jarvis.cu.ledger import ActionLedger, action_key
 from jarvis.cu.verify import (
+    click_point_in_focused_element,
     clickable_labels,
     crop_raw,
     element_is_focused,
@@ -17,7 +18,6 @@ from jarvis.cu.verify import (
     regions_equal,
     typed_text_landed,
 )
-
 
 # ---------------------------------------------------------------------------
 # Coordinate convention resolution
@@ -176,18 +176,91 @@ def _node(**kw):
     return SimpleNamespace(**defaults)
 
 
+def test_crop_raw_aspect_mismatch_returns_cannot_tell():
+    # A grab whose pixel size does not match the rect's aspect is not a grab
+    # OF that rect (window resized between select and grab) — crop_raw must
+    # answer None ("cannot tell"), never crop at a wrong scale.
+    raw = ((200, 100), bytes(200 * 100 * 3))   # 2:1 grab
+    rect = (0, 0, 100, 100)                    # 1:1 rect
+    assert crop_raw(raw, rect, 50, 50, 10) is None
+
+
 def test_typed_text_landed_tristate():
+    # A value match is positive evidence regardless of focus.
     nodes = (_node(value="https://example.com"),)
     assert typed_text_landed(nodes, "example.com") is True
-    assert typed_text_landed(nodes, "other.org") is False
     assert typed_text_landed((), "example.com") is None       # nothing editable
     assert typed_text_landed(nodes, "ab") is None              # too short
+
+
+def test_typed_text_landed_false_needs_focused_editable_evidence():
+    # A confirmed MISS requires having looked at the RECEIVING surface: a
+    # focused editable that does not hold the text. Editables without focus
+    # mean the enumeration covered the wrong surface (start-menu flyout,
+    # live incident 2026-07-02 18:00) — that is "cannot tell", never False.
+    unfocused = (_node(value="something else"),)
+    assert typed_text_landed(unfocused, "spotify") is None
+    focused = (_node(value="something else", focused=True),)
+    assert typed_text_landed(focused, "spotify") is False
 
 
 def test_element_is_focused_positive_only():
     nodes = (_node(role="Button", name="Save", focused=True),)
     assert element_is_focused(nodes, "Save") is True
     assert element_is_focused(nodes, "Cancel") is None         # never False
+
+
+def test_click_point_in_focused_element_tristate():
+    focused_bar = _node(role="Edit", name="Address",
+                        focused=True, bounds=(100, 40, 800, 36))
+    other = _node(role="Button", name="Go", bounds=(950, 40, 60, 36))
+    nodes = (other, focused_bar)
+    assert click_point_in_focused_element(nodes, 400, 58) is True
+    assert click_point_in_focused_element(nodes, 970, 58) is False
+    assert click_point_in_focused_element((), 400, 58) is None
+    # Broken bounds never crash and never count as a hit.
+    broken = (_node(focused=True, bounds=None),)
+    assert click_point_in_focused_element(broken, 400, 58) is False
+
+
+def test_focused_container_is_never_click_evidence():
+    # Chrome reports keyboard focus on its top-level WINDOW node — accepting
+    # that would rescue EVERY in-window miss and neuter the effect-check.
+    window = _node(role="Window", name="Browser",
+                   focused=True, bounds=(0, 0, 2560, 1400))
+    assert click_point_in_focused_element((window,), 400, 58) is False
+    # A real focused control inside the focused window still qualifies.
+    bar = _node(role="Edit", name="Address",
+                focused=True, bounds=(100, 40, 800, 36))
+    assert click_point_in_focused_element((window, bar), 400, 58) is True
+    # Large-region roles from all three vocabularies are containers too
+    # (2026-07-02 adversarial review: List/Table/Toolbar and the AT-SPI
+    # document-canvas family were missing from the deny-list).
+    for role in ("List", "Table", "ToolBar", "AXToolbar", "AXList",
+                 "document text", "tool bar"):
+        region = _node(role=role, name="big region",
+                       focused=True, bounds=(0, 0, 1200, 900))
+        assert click_point_in_focused_element((region,), 400, 58) is False, role
+
+
+def test_focused_giant_control_is_not_click_evidence_with_area_cap():
+    # A focused element spanning most of the capture is a REGION even if its
+    # role sounds like a control — rescuing there would mask a genuine miss
+    # anywhere inside it (and skip the zoom-refine retry).
+    giant = _node(role="Edit", name="Editor surface",
+                  focused=True, bounds=(0, 0, 1900, 1000))
+    area = 1920 * 1080
+    assert click_point_in_focused_element(
+        (giant,), 400, 500, capture_area=area,
+    ) is False
+    # Without a capture_area reference the role filter alone decides.
+    assert click_point_in_focused_element((giant,), 400, 500) is True
+    # A normal-sized focused control passes with the cap in force.
+    bar = _node(role="Edit", name="Address",
+                focused=True, bounds=(100, 40, 800, 36))
+    assert click_point_in_focused_element(
+        (bar,), 400, 58, capture_area=area,
+    ) is True
 
 
 def test_field_values_hint_lists_filled_fields_only():
@@ -222,6 +295,44 @@ def test_clickable_labels_filters_roles_and_dedupes():
         _node(role="Button", name="Disabled", enabled=False),
     )
     assert clickable_labels(nodes) == ["OK", "File"]
+
+
+def test_snap_point_to_element_smallest_containing_rect_wins():
+    from jarvis.cu.verify import snap_point_to_element
+
+    clickables = [
+        ("Panel", "Button", (0, 0, 800, 600)),      # container-sized: capped
+        ("Row", "ListItem", (100, 100, 400, 40)),
+        ("Star", "Button", (480, 110, 24, 24)),     # smallest leaf
+    ]
+    # Point inside BOTH the row and the star -> the star's center wins.
+    hit = snap_point_to_element(490, 120, clickables, capture_area=1920 * 1080)
+    assert hit == (492, 122, "Star")
+    # Point only inside the row -> row center.
+    hit = snap_point_to_element(150, 120, clickables, capture_area=1920 * 1080)
+    assert hit == (300, 120, "Row")
+    # Point in dead space -> no snap.
+    assert snap_point_to_element(700, 500, clickables, capture_area=1920 * 1080) is None
+    # Container trap: the panel is > 15% of a small capture -> never snaps.
+    assert snap_point_to_element(700, 500, [("Panel", "Button", (0, 0, 800, 600))],
+                                 capture_area=800 * 600) is None
+
+
+def test_clickable_rects_keeps_nameless_elements_and_valid_bounds():
+    from jarvis.cu.verify import clickable_rects
+
+    nodes = (
+        _node(role="Button", name="", enabled=True, bounds=(10, 10, 30, 20)),
+        _node(role="Button", name="Zero", bounds=(0, 0, 0, 0)),      # degenerate
+        _node(role="Slider", name="Vol", bounds=(5, 5, 50, 10)),     # not clickable role
+        _node(role="MenuItem", name="File", bounds=(50, 0, 40, 18)),
+        _node(role="Button", name="Off", enabled=False, bounds=(1, 1, 5, 5)),
+    )
+    rects = clickable_rects(nodes)
+    assert ("", "Button", (10, 10, 30, 20)) in rects
+    assert ("File", "MenuItem", (50, 0, 40, 18)) in rects
+    assert all(name != "Zero" for name, _, _ in rects)
+    assert all(name != "Off" for name, _, _ in rects)
 
 
 def test_regions_equal_tristate():

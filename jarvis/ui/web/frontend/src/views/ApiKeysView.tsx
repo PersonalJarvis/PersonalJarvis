@@ -4,6 +4,7 @@ import { ViewHeader } from "@/views/ChatsView";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
+import { OpenRouterTtsControls } from "@/components/OpenRouterTtsVoicePicker";
 import { CuModelSelector } from "@/components/CuModelSelector";
 import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
 import { JarvisAgentSection } from "@/components/JarvisAgentSection";
@@ -716,12 +717,22 @@ function ProviderCard({
       {((descriptor.tier === "brain" && isBrainSwitchable) ||
         ((descriptor.tier === "tts" || descriptor.tier === "stt") &&
           descriptor.active &&
-          descriptor.configured)) && (
-        <BrainModelSelector
-          providerId={descriptor.id}
-          recommendedModel={descriptor.recommended_model}
-        />
-      )}
+          descriptor.configured)) &&
+        // OpenRouter TTS is the one provider where the user also picks a VOICE
+        // (per model, language-tagged, with an audio preview) — render the
+        // combined model + voice controls; every other tier keeps the plain
+        // model/voice picker.
+        (descriptor.id === "openrouter-tts" ? (
+          <OpenRouterTtsControls
+            providerId={descriptor.id}
+            recommendedModel={descriptor.recommended_model}
+          />
+        ) : (
+          <BrainModelSelector
+            providerId={descriptor.id}
+            recommendedModel={descriptor.recommended_model}
+          />
+        ))}
 
       {/* TTS/STT model/voice is a single global value, so a configured-but-
           inactive provider can't own it — make the capability discoverable with

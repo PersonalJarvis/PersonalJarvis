@@ -5,15 +5,28 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-FFD60A?style=flat-square&labelColor=0A0A0A" /></a>
-  <a href="https://discord.gg/UPu6pFWrJ"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-FFD60A?style=flat-square&logo=discord&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
-  <a href="https://x.com/PersonalJarvis"><img alt="X" src="https://img.shields.io/badge/X-@PersonalJarvis-FFD60A?style=flat-square&logo=x&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
-  <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11+-FFD60A?style=flat-square&logo=python&logoColor=0A0A0A&labelColor=0A0A0A" />
-  <img alt="Platforms" src="https://img.shields.io/badge/Linux%20·%20macOS%20·%20Windows-242424?style=flat-square&labelColor=0A0A0A" />
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-e7c46e?style=for-the-badge&labelColor=242424" /></a>
+  <a href="https://discord.gg/UPu6pFWrJ"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=242424" /></a>
+  <a href="https://x.com/PersonalJarvis"><img alt="Follow @PersonalJarvis on X" src="https://img.shields.io/badge/Follow-%40PersonalJarvis-e7c46e?style=for-the-badge&logo=x&logoColor=white&labelColor=242424" /></a>
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-e7c46e?style=for-the-badge&logo=python&logoColor=e7c46e&labelColor=242424" />
+  <img alt="Platforms: Linux, macOS, Windows" src="https://img.shields.io/badge/Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-242424?style=for-the-badge&labelColor=242424&color=242424" />
 </p>
 
 <p align="center">
   <b>Talk to your computer — and watch it do the work: an open-source, privacy-first voice agent with full command of your PC.</b>
+</p>
+
+<!--
+  Hero = click-to-play poster linking to the onboarding video on YouTube. The video is
+  NOT committed to the source tree, so a `git clone` never pulls it — only this ~100 KB
+  poster ships; clicking it opens the video on YouTube (which GitHub can't embed inline).
+  Refresh the poster: replace assets/demo/demo-poster.jpg (keep width≈820)
+  Video: https://www.youtube.com/watch?v=FXz1HclXL1g
+-->
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=FXz1HclXL1g">
+    <img src="assets/demo/demo-poster.jpg" alt="Personal Jarvis — watch the onboarding video on YouTube (click to play)" width="820" />
+  </a>
 </p>
 
 ---
@@ -26,6 +39,26 @@ language. It is **provider-agnostic by design** (swap Gemini, Claude, OpenAI, or
 OpenRouter with one setting), **self-modifying** (it can safely edit its own configuration
 through an audited, reversible pipeline), and runs everywhere — from a headless server with
 a browser UI to a full desktop with a tray app, an Orb overlay, and global-hotkey wake.
+
+## What do you actually say to it?
+
+You talk to it the way you'd hand a task to a capable assistant — then it goes and does
+it. A few things it can do today:
+
+- **"Research the best open-source vector databases and drop a comparison in my Outputs."**
+  → spawns a background mission: a worker does the digging, a critic checks the work, and
+  you get a downloadable write-up in **Outputs**.
+- **"Read the README in my current project and summarize it in three sentences."**
+  → a file-aware worker opens the files, reads them, and reports back.
+- **"Open my browser and pull up the weather in Berlin."**
+  → drives the screen directly through computer-use — real clicks and keystrokes, not a
+  canned integration.
+- **"Call the clinic on Main Street and ask for their next open appointment."**
+  → places a real outbound phone call through the optional Twilio integration.
+- **"Remember that Alex prefers Signal over email."**
+  → writes the fact to the Knowledge Wiki so it sticks across every future session.
+- **"When the download finishes, ping me on Telegram."**
+  → sets a when-this-then-that trigger and reaches you on your channel when it fires.
 
 ## Why it's different
 
@@ -234,7 +267,7 @@ straight into provider costs, infrastructure, and development time.
 
 <p align="center">
   <i>This wall is empty — for now.</i><br/>
-  Want to be the first? Reach out at <a href="mailto:aethroc@gmail.com">aethroc@gmail.com</a>.
+  Want to be the first? Reach out on <a href="https://discord.gg/UPu6pFWrJ">Discord</a> or <a href="https://x.com/PersonalJarvis">X</a>.
 </p>
 
 | Tier | You get |
@@ -244,8 +277,7 @@ straight into provider costs, infrastructure, and development time.
 | **Sponsor** | The above + your logo on the sponsor wall |
 | **Partner** | The above + a seat at the roadmap table |
 
-> Sponsorship is being set up. Want to talk before the page is live? Email
-> [aethroc@gmail.com](mailto:aethroc@gmail.com), or reach out on
+> Sponsorship is being set up. Want to talk before the page is live? Reach out on
 > [Discord](https://discord.gg/UPu6pFWrJ) or [X](https://x.com/PersonalJarvis).
 
 ## Contributing

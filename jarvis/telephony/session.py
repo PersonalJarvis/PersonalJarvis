@@ -432,6 +432,14 @@ class TelephonyCallSession:
         Returns the number of 20 ms outbound media frames sent. Cancellable:
         a barge-in cancels the underlying task mid-stream.
         """
+        # Master output volume (shared with the local speaker + browser sinks) so
+        # the setting works on a call too, not just at the desk. Read once per
+        # turn so a live change lands on the next utterance. numpy import is lazy
+        # to keep the telephony module's cold-import light.
+        from jarvis.audio.gain import apply_output_gain_pcm16
+
+        vol = getattr(getattr(self._config, "tts", None), "volume", 1.0)
+
         self._speaking = True
         sent = 0
         try:
@@ -448,6 +456,7 @@ class TelephonyCallSession:
                     pcm8 = resample_pcm16(pcm, rate, TWILIO_SAMPLE_RATE)
                 else:
                     pcm8 = self._out_resampler.process(pcm)
+                pcm8 = apply_output_gain_pcm16(pcm8, vol)
                 ulaw = pcm16_to_ulaw(pcm8)
                 for frame in frame_ulaw(ulaw):
                     await self._send_media(frame)

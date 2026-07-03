@@ -43,6 +43,7 @@
     "wiki": "Wiki",
     "apikeys": "API-Keys",
     "settings": "Einstellungen",
+    "dictionary": "Wörterbuch",
     "telephony": "Telefonie",
     "outputs": "Outputs",
     "socials": "Socials",
@@ -155,6 +156,34 @@
       "acquaintance": "Bekannte/r",
       "other": "Andere"
     }
+  },
+  "dictionary": {
+    "title": "Wörterbuch",
+    "description": "Bring der Spracherkennung deine Wörter bei — Namen, Marken, Fachbegriffe. Füge ein Wort hinzu oder korrigiere, was sie immer wieder falsch versteht.",
+    "add": "Wort hinzufügen",
+    "search": "Wörterbuch durchsuchen…",
+    "loading": "Wörterbuch wird geladen…",
+    "empty": "Noch keine Wörter — füge Namen oder Begriffe hinzu, die die Spracherkennung kennen soll.",
+    "no_matches": "Keine Einträge passen zu deiner Suche.",
+    "edit": "Bearbeiten",
+    "delete": "Löschen",
+    "added": "„{0}\" wurde ins Wörterbuch aufgenommen.",
+    "saved": "Wörterbuch-Eintrag gespeichert.",
+    "deleted": "„{0}\" wurde aus dem Wörterbuch entfernt.",
+    "applies_note": "Änderungen gelten ab deiner nächsten Äußerung — kein Neustart nötig.",
+    "dialog_add_title": "Zum Wortschatz hinzufügen",
+    "dialog_edit_title": "Wörterbuch-Eintrag bearbeiten",
+    "correction_toggle": "Falsch Erkanntes korrigieren",
+    "correction_hint_on": "Immer wenn die linke Seite verstanden wird, wird sie durch die rechte ersetzt.",
+    "correction_hint_off": "Füge ein Wort hinzu, damit die Erkennung es kennt und genau so schreibt.",
+    "word_placeholder": "Neues Wort hinzufügen",
+    "word_correct_placeholder": "Richtige Schreibweise",
+    "misheard_placeholder": "Falsch erkannt als…",
+    "misheard_comma_hint": "Mehrere falsch erkannte Varianten mit Kommas trennen.",
+    "cancel": "Abbrechen",
+    "save": "Speichern",
+    "add_confirm": "Wort hinzufügen",
+    "research_preview": "Research Preview"
   },
   "voice_state": {
     "idle": "Bereit",
@@ -899,6 +928,20 @@
     "filter_hint_frontier": "Wenn der Preis egal ist — die leistungsstärksten Modelle.",
     "filter_hint_value": "Die beste Leistung fürs Geld."
   },
+  "apikeys_voice": {
+    "heading": "Stimme",
+    "voice_label": "Stimme",
+    "choose_voice": "Stimme wählen…",
+    "multilingual": "Mehrsprachig",
+    "saved": "Stimme gespeichert",
+    "load_failed": "Stimmen konnten nicht geladen werden",
+    "no_voices": "Keine Stimmen für dieses Modell",
+    "count_hint": "{0} Stimmen",
+    "preview": "Stimme anhören",
+    "preview_failed": "Vorschau fehlgeschlagen",
+    "preview_language": "Sprache der Vorschau",
+    "preview_in": "Vorschau in"
+  },
   "apikeys_cu_model": {
     "heading": "Modell für Computer-Use",
     "use_main": "Mein Hauptmodell verwenden",
@@ -914,6 +957,13 @@
       "unit_seconds": "s",
       "reset": "Auf Standard zurücksetzen (1,5 s)",
       "saved_toast": "Denkpause auf {0} gesetzt.",
+      "restart_caption": "Gespeichert — wird beim nächsten Start aktiv."
+    },
+    "volume": {
+      "title": "Lautstärke",
+      "description": "Wie laut {name} seine Antworten ausgibt. 100% ist am lautesten — herunterregeln, wenn {name} zu laut ist. Die Sprache wird angehoben, damit sie so laut wie Musik trägt, ohne zu verzerren.",
+      "reset": "Auf Standard zurücksetzen (100%)",
+      "saved_toast": "Lautstärke auf {0} gesetzt.",
       "restart_caption": "Gespeichert — wird beim nächsten Start aktiv."
     },
     "title": "Einstellungen",

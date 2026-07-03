@@ -27,6 +27,11 @@ ENTRY_POINT_GROUP = "jarvis.stt"
 # left untouched (unknown / third-party entry-points cannot be probed).
 _STT_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
     "groq-api": (("groq_api_key", "GROQ_API_KEY"),),
+    # OpenRouter STT reuses the SAME key slot as the OpenRouter brain, so a user
+    # who configured OpenRouter for chat gets cloud STT for free. The id is
+    # ``openrouter-stt`` (distinct from the ``openrouter`` brain id) to avoid a
+    # collision in the shared model-catalog / provider-spec namespaces.
+    "openrouter-stt": (("openrouter_api_key", "OPENROUTER_API_KEY"),),
     "openai-api": (("openai_api_key", "OPENAI_API_KEY"),),
     "deepgram": (("deepgram_api_key", "DEEPGRAM_API_KEY"),),
     "deepgram-flux": (("deepgram_api_key", "DEEPGRAM_API_KEY"),),
@@ -82,6 +87,22 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
     language = getattr(stt_cfg, "language", "auto")
     language = language if language and language != "auto" else None
     bias_prompt = (getattr(stt_cfg, "bias_prompt", "") or "").strip()
+    # Merge the user's STT-dictionary words into the decoder bias for
+    # prompt-capable providers (capability-gated: providers that reject the
+    # kwarg keep working via the TypeError retry below, and every provider
+    # still gets the dictionary's post-STT corrections — AP-21/22). The local
+    # utterance fwhisper deliberately receives NO initial_prompt (silence-
+    # hallucination risk, see _build_local_fallback).
+    try:
+        from jarvis.speech.stt_dictionary import dictionary_bias_words
+
+        vocab = dictionary_bias_words()
+    except Exception as exc:  # noqa: BLE001 — the dictionary must never break STT build
+        logger.debug("STT dictionary bias words unavailable: {}", exc)
+        vocab = []
+    if vocab:
+        joined = ", ".join(vocab)
+        bias_prompt = f"{bias_prompt}, {joined}" if bias_prompt else joined
 
     cls = _load_provider_class(provider_name) if provider_name else None
     if cls is not None and provider_name != "faster-whisper":

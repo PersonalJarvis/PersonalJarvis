@@ -2708,3 +2708,214 @@ wedged engine is a permanent-dead-state in disguise.** Signal: `transcribed` /
 timeout; a restart that does not help (the un-killable threads can even starve
 other thread pools, including the Restart button). Production restart after this
 fix: required (a HARD kill for an already-wedged old process).
+
+## BUG-037: Custom wake — "fires on silence" and "stops working" are ONE bug (transcript-content ghost filtering) (HIGH, 2026-07-02)
+
+**Symptom, seen as three separate complaints across one session:**
+1. Jarvis spawns with nobody speaking — even in complete silence.
+2. After a "ghost fix", the wake word (`Hey Fable`, then `Hey Mythos`) stops
+   triggering **entirely**, even when spoken loudly and clearly.
+3. It takes ~2 s to spawn after the word is said.
+
+**Root cause — one mechanism behind all three.** The `stt_match` wake path
+(`RollingWhisperWake`) is a *transcription* detector: it runs a local Whisper
+over a rolling window and matches the transcript against the phrase. To lift
+recall of a hard proper-noun wake it primes the decoder with
+`initial_prompt=<phrase>` (`jarvis/plugins/stt` `build_wake_whisper`). That
+bias is a double-edged sword:
+- **On silence / steady noise** the primed decoder HALLUCINATES the phrase
+  verbatim (live log: `rms=0.0036 text='Hey Fable'`, below idle hiss) → ghost
+  activation (#1).
+- **On real speech** the *unprimed* base model cannot spell the word — `Mythos`
+  → `Mütos` / `Hey, Mut!`, `Fable` → `Farbe`. That is exactly why the bias <!-- i18n-allow: forensic quotes of the German STT-garble tokens under test -->
+  exists.
+
+So any ghost fix that tightens **transcript content** — e.g. requiring the
+bias-echo confirm's unbiased second pass to reproduce the wake word — rejects
+**every** genuine wake (#2). Live 2026-07-02: an unbiased-corroboration check
+suppressed 7/7 real `Hey Mythos` utterances at rms 0.03–0.09 while the user
+spoke clearly. "Fires on silence" and "never fires" are the SAME root pulled in
+opposite directions; no transcript-content rule separates ghost from wake.
+
+**The only word-agnostic discriminator is raw audio ENERGY.** A genuine wake
+carries a speech burst; a silence hallucination sits at the noise floor.
+
+**Fix (AP-27).**
+- Silence: a match-site RMS gate (`RollingWhisperWake._match_min_rms = 0.006`) —
+  observed ghost cluster ≤ 0.0043, quiet-mic recall contract 0.009, idle hiss
+  ~0.0046. Suppresses silence hallucinations word-agnostically, zero cost.
+- Recognition: keep the bias-echo confirm **permissive** ("unprimed ear heard
+  any real speech → genuine", fail-**open**). Never require the wake word in
+  the confirm.
+- Latency (#3): each 1.8 s-window transcription is ~0.54 s on base/cpu, and an
+  exact-phrase candidate paid a SECOND full transcription (0.56 s) for the
+  confirm. SKIP the confirm when the matched window is clearly LOUD
+  (`_ECHO_CONFIRM_SKIP_RMS = 0.02`) — a real-volume window is genuine speech,
+  silence is already handled by the energy gate. Poll 0.2 → 0.12. Measured:
+  loud wake fires ~0.6 s vs ~1.1 s. The Sensitivity slider (a no-op on this
+  path — it only fed the openWakeWord threshold) now drives the poll interval
+  (`sensitivity_to_poll_interval`).
+
+**Guards.** `tests/unit/speech/test_rolling_whisper_wake_silence_ghost.py`:
+`test_loud_wake_fires_even_when_unbiased_pass_garbles_the_hard_word` (recall —
+must stay green forever), the silence-suppression tests (energy gate), and the
+loud-skip latency test. Signal to recognize the regression next time: a wake
+"ghost fix" that makes a hard custom word stop triggering — you tightened
+content; revert to the energy gate.
+
+**Endgame.** Truly instant + zero-ghost custom wake needs a trained neural KWS
+model (openWakeWord `custom_onnx`), which does not transcribe (AP-25).
+
+## BUG-038: Computer-Use stalls AT its goal — false-miss verification on secondary monitors (HIGH, 2026-07-02)
+
+**Symptom.** A mission opens Chrome (guest), clicks land pixel-perfect on the
+window — on whatever monitor it sits — then the agent "gets stuck": it clicks
+the address bar repeatedly, never types, and finally gives up with "I tried it
+on screen but could not do it". Live run 19:05–19:06: steps 2–4 OK (including
+negative-X clicks on the left monitor), steps 5+7 `click(address bar) ->
+FAILED: the click produced NO visible change`, mission aborted.
+
+**Root causes — THREE stacked verification defects, none of them pointing.**
+
+1. **Idempotent-click false miss.** The flight-recorder frames show the guest
+   new-tab's address bar was focused BEFORE the click (blue ring + caret). A
+   click on a control that is already in the desired state changes ZERO
+   pixels, so the pre/post effect-check judged it a miss; a failed action
+   truncates the batch, so the type behind it never ran; the retry hit the
+   same false miss; the mission died at a state that was already correct.
+2. **Primary-monitor clipping of the accessibility tree.** Every UI-tree
+   source clipped its on-screen overlap filter to the PRIMARY monitor
+   (Windows `GetSystemMetrics(0/1)`, macOS `CGMainDisplayID`, Linux a
+   hardcoded 1920x1080 — which even clipped a single 4K screen). A window on
+   a secondary monitor lost its ENTIRE walked tree: no clickable anchors, no
+   field-content hints, no focus evidence. (Verified live: a Chrome window at
+   x=-2324 produced a 1-node tree.)
+3. **Confident-but-wrong type read-back.** `typed_text_landed` returned a
+   hard `False` whenever readable editables lacked the text — even when the
+   REAL receiver (start-menu/UWP flyout) was outside the enumerated tree or
+   had not committed the value yet (18:00 run: `typed 'Spotify' but it did
+   NOT land in any editable field` while the text had landed).
+
+**Fix (all three platforms, one seam each).**
+- **Focus-evidence click rescue** (`jarvis/cu/verify.py::
+  verify_click_focus_point`, consumed by the engine's click-miss path only —
+  zero happy-path latency): before declaring a zero-pixel-change click a
+  miss, ask (a) the native point hit-test (UIA `ElementFromPoint` / AX
+  element-at-position / AT-SPI `getAccessibleAtPoint`; depth- and
+  pruning-independent, new `PointerElement.focused` field) and (b) the walked
+  tree, whether the click point sits inside the FOCUSED control. Container
+  focus (window/pane/document/web-area) NEVER counts — accepting it would
+  rescue genuine in-window misses (`_FOCUS_CONTAINER_ROLES`).
+- **Virtual-desktop on-screen filter**
+  (`jarvis/platform/monitors.py::virtual_desktop_bounds`, union of all
+  monitors per platform: `SM_*VIRTUALSCREEN` under the PMv2 declaration /
+  `CGGetActiveDisplayList` / X11 root geometry) used by all three tree
+  sources; injected bounds and legacy fallbacks preserved.
+- **Honest type verdict**: `typed_text_landed` says `False` only when a
+  FOCUSED editable was readable (we provably looked at the receiving
+  surface), else `None`; the engine re-verifies once after a short settle
+  before failing a type (async surfaces commit late).
+
+**Live proof (Windows, 2026-07-02):** fresh Chrome on the LEFT monitor —
+hit-test at the omnibox returns `Edit 'Adress- und Suchleiste' focused=True`,
+rescue verdict `True`; mid-page point returns `False` (real misses still
+fail). Guards: `tests/unit/cu/test_engine_loop.py` (rescued click lets the
+batched type run; re-checked type verdict), `tests/unit/cu/
+test_conventions_ledger_verify.py` (container trap, focused-editable
+evidence), `tests/unit/vision/test_screen_bounds_virtual_desktop.py`
+(secondary-monitor tree survives; per-OS bounds helpers).
+
+**Review hardening (same day, three-agent adversarial/macOS/Linux review):**
+(1) the rescue's container deny-list was extended with List/Table/Toolbar/
+MenuBar-class roles across all three vocabularies plus the AT-SPI
+document-canvas family, and an area cap (`_FOCUS_MAX_AREA_FRACTION`) rejects
+focus evidence from region-sized elements — a false rescue would also have
+skipped the zoom-refine retry; (2) the Linux rescue was structurally INERT:
+the AT-SPI point hit-test queried Application objects (which do not
+implement Component — it now descends into their frames) and the AT-SPI
+flatten never populated `focused`/`is_password` (now read from
+STATE_FOCUSED / ROLE_PASSWORD_TEXT and passed through to the nodes);
+(3) the macOS point resolver stringified the `AXWindow` ELEMENT into
+`window_title` (an `<AXUIElementRef …>` repr fed to the model) — it now
+resolves the window's `AXTitle`; (4) `virtual_desktop_bounds` no longer
+flips process DPI awareness from a read-only getter (thread-scoped pin,
+restored — AP-9 class); (5) `settle_scale=0` is honored instead of being
+`or`-coerced to 1.0. Done-latency fixes from the same complaint: the
+done-judge reuses the perception frame when no batch action executed (the
+model's claimed evidence IS the current screen — faster AND more faithful),
+judge replies stop at the first complete JSON, and a discarded VAD false
+start now releases the announcement floor (a 96 ms mic blip had deferred
+the spoken "done" by 31 s). Known accepted residuals (documented, all
+degrade safely): the Windows hit-test may be flaky across COM apartments
+(misses a rescue, never fakes one); a successful type into a value-less
+rich editor can still read as "did not land"; legacy Zaphod X11 multihead
+under-reports the virtual bounds; Linux foreground-follow costs ~6 xdotool
+spawns per perceive frame.
+
+## BUG-039: Explicit desktop request hijacked by a topical skill match — "mir fehlt das passende Werkzeug" despite computer_use being available (HIGH, 2026-07-02)
+
+**Symptom.** Voice session 20:28, turn 1: "Kannst du bitte … ein Terminal
+öffnen, Cloud-Code öffnen, … und für mich ein Prompt geben, … kompletten <!-- i18n-allow: forensic quote of the live German voice turn -->
+Deep-Dive machen … ob es irgendwelche Bugs gibt" (STT-garbled "Claude Code" →
+"Cloud-Code") — an unambiguous desktop request. Jarvis spoke the preamble
+"Okay, ich starte cloud-debug." and then refused: "Das kann ich gerade nicht <!-- i18n-allow: forensic quote of the live German refusal -->
+ausführen — mir fehlt dafür das passende Werkzeug." No terminal was opened; <!-- i18n-allow: forensic quote of the live German refusal -->
+nothing happened.
+
+**Forensics (sessions.db, session 62198a59, turn auto-1).** The turn had the
+FULL router tool surface (computer_use present; `_looks_like_pc_control`
+matches the transcript, so no hide-gate stripped it). `tool_calls_json` shows
+exactly one call: `run-skill` → `ActionExecuted success=true` with
+`skill_name='cloud-debug', execution='mission'`, returning the mission
+directive "Call the spawn_worker tool NOW …". The model (gemini-3.5-flash,
+58k-token context) followed neither the directive nor computer_use and
+emitted the system-prompt-dictated capability refusal (manager.py "STRENGE
+REGEL" sentence). Turn 2 ("Thank you for watching!") was Whisper silence
+hallucination.
+
+**Root cause — a precedence gap, the desktop twin of BUG-035.** The router
+prompt's SKILLS-FIRST clause ("check skills BEFORE classifying; when in
+doubt, call the skill; a matching skill ALWAYS beats the free answer and
+spawn_worker") had only ONE counter-rule: an explicitly named heavy vehicle
+("Sub-Agent", "deep dive") wins. There was NO rule for the explicitly named
+DESKTOP vehicle ("open an app/terminal, click, type"), and none of the
+deterministic tool-hide gates (knowledge-question, signalless-turn,
+plugin-tool) ever constrained `run-skill`. So a loose CONTENT match ("find
+bugs" ≈ cloud-debug's when_to_use) hijacked a turn whose named VEHICLE was
+the desktop — and the utterance's own "Deep-Dive" pointed the heavy-vehicle
+rule at spawn_worker, doubly away from computer_use. The deterministic layer
+already got this right (`_trigger_names_vehicle` partition: a depth marker
+must not override a pc-control signal); the LLM-facing layer had no
+equivalent.
+
+**Fix (deterministic gate + prompt precedence, provider-agnostic).**
+- `jarvis/brain/manager.py::_hide_run_skill_on_pc_control_turn` — on a turn
+  with a deterministic pc-control/open-app signal, `run-skill` leaves the
+  tool surface so computer_use stays authoritative. Narrow: fires only when
+  `computer_use` is actually present (a CU-less host keeps run-skill);
+  stands down when the user literally says "Skill" (an explicit skill
+  request is its own vehicle, mirrors AD-S9); the AD-S4 inline trigger-match
+  path is untouched; any fault returns the tools unchanged.
+- `jarvis/brain/router.py` SYSTEM_PROMPT — three amendments: (1) SKILLS-FIRST
+  exception: an explicit SCREEN action beats every skill match unless the
+  skill is named; (2) "VEHIKEL SCHLAEGT INHALT": open/click/type requests are
+  computer_use even when the CONTENT of what gets typed sounds like heavy
+  work or a skill ("öffne ein Terminal, starte Claude Code und gib ihm den <!-- i18n-allow: quote of the German router-prompt example under change -->
+  Prompt: mach einen Deep-Dive …" → computer_use(goal=verbatim)); (3) "KEIN <!-- i18n-allow: quote of the German router-prompt rule under change -->
+  SKILL-DEAD-END": if a called skill's returned instructions do not fit the
+  actual request, ignore them and use the other tools — never answer "mir
+  fehlt das passende Werkzeug" while a present tool can do the job. <!-- i18n-allow: quotes of the German router-prompt rules under change -->
+
+**Guards.** `tests/unit/brain/test_routing.py::
+test_pc_control_turn_hides_run_skill_keeps_computer_use` (includes the live
+incident transcript verbatim), `…_non_pc_control_turn_keeps_run_skill`,
+`…_explicit_skill_request_keeps_run_skill_even_on_pc_control_turn`,
+`…_run_skill_stays_when_computer_use_absent`, and a fault-tolerance test.
+
+**Class rule (generalize, per the maintainer).** The vehicle the user NAMES
+outranks any semantic CONTENT match — for skills, spawns, and future
+integrations alike. "Open X and have it do Y" means: operate the desktop
+(computer_use); Y is the OTHER program's job, not Jarvis's. This is also the
+routing foundation for the planned "Jarvis drives CLI coding agents (Claude
+Code / OpenCode)" capability: those turns are Computer-Use tasks today, never
+"feature not available".

@@ -1047,6 +1047,19 @@ class SpeechPipeline:
         # utterance STT may still exist (cloud provider). Keep that path alive
         # so the Listening bubble does not stay stuck on "...".
         self._probe_stt: Any = self._stt or self._utterance_stt
+        # User STT dictionary (Wispr-Flow-style custom vocabulary): wrap the
+        # utterance + preview handles so EVERY provider's transcript gets the
+        # user's corrections — brain turns, chat dictation, and the live
+        # preview alike (pure string ops, hot-path safe). The wake path
+        # (``self._stt``, wake whisper, echo confirm) stays UNWRAPPED: wake
+        # matching must never see rewritten transcripts (AP-27 territory).
+        try:
+            from jarvis.speech.stt_dictionary import wrap_stt_with_dictionary
+
+            self._utterance_stt = wrap_stt_with_dictionary(self._utterance_stt)
+            self._probe_stt = wrap_stt_with_dictionary(self._probe_stt)
+        except Exception as exc:  # noqa: BLE001 — corrections must never break voice boot
+            log.warning("STT dictionary wrapper unavailable: %s", exc)
         self._tts = tts or GeminiFlashTTS()
         self._openwakeword_enabled = enable_openwakeword
         # Custom-wake-word plan (jarvis.speech.wake_phrase.WakeWordPlan) or None.
@@ -1096,12 +1109,15 @@ class SpeechPipeline:
         # When a wake_plan is set, its matcher drives the phrase match so a
         # custom phrase ("Computer") is detected instead of "jarvis".
         if enable_whisper_wake and self._stt is not None:
+            _poll = self._wake_poll_interval()
             if self._wake_matcher is not None:
                 self._whisper_wake = RollingWhisperWake(
-                    self._stt, pattern=self._wake_matcher
+                    self._stt, pattern=self._wake_matcher, poll_interval_s=_poll
                 )
             else:
-                self._whisper_wake = RollingWhisperWake(self._stt)
+                self._whisper_wake = RollingWhisperWake(
+                    self._stt, poll_interval_s=_poll
+                )
         else:
             self._whisper_wake = None
         # require_hey_prefix may arrive either as an explicit kwarg or from
@@ -1295,7 +1311,11 @@ class SpeechPipeline:
         # Bus injected so AudioPlayer publishes AudioOutFirst on the first
         # audible sample — UI subscribers (orb mouth animation + SPEAKING
         # bubble) sync to actual audio start, not the early SPEAKING state.
-        self._player = AudioPlayer(device=output_device, bus=bus)
+        # Master output volume (0.0–1.0) from [tts].volume. Defensive getattr
+        # chain: ``config`` may be None (test fixtures) and older TOMLs predate
+        # the field — both fall back to full volume.
+        _tts_volume = getattr(getattr(config, "tts", None), "volume", 1.0)
+        self._player = AudioPlayer(device=output_device, bus=bus, volume=_tts_volume)
         # Kept so warm-up can re-resolve the output device against a freshly
         # re-enumerated PortAudio table (post-reboot idx-drift cure, BUG-014).
         self._output_device = output_device
@@ -1359,6 +1379,16 @@ class SpeechPipeline:
         # selbst wieder als "Hey Jarvis" triggert (Speaker→Mic-Feedback-Loop).
         self._wake_lock_until: float = 0.0
         self._post_hangup_lock_s: float = 3.0
+        # A user-initiated HARD hangup (JarvisBar close, hotkey, "auflegen")
+        # stops the player, so there is NO TTS tail to echo — the long
+        # post-hangup lock then only DEAFENS the wake to the user's very next
+        # "Hey <wake>" ("say it twice", live log 2026-07-02 18:40/18:46). Such a
+        # hangup uses this SHORT lock instead: just past the disconnect earcon,
+        # not the 3 s speaker-tail guard. Set by ``_trigger_voice_hangup`` when
+        # it stops the player; reset per session so a no-op hangup while idle
+        # cannot shorten a later natural end's lock.
+        self._explicit_hangup_lock_s: float = 0.4
+        self._explicit_hard_hangup: bool = False
         self._last_wake_keyword: str = ""
         # 2026-05-26: timestamp of the last priority="interrupt"
         # announcement, used by ``_on_announcement`` to gate preamble-class
@@ -1570,6 +1600,35 @@ class SpeechPipeline:
         if callable(setter):
             setter(int(ms))
 
+    def set_tts_volume(self, volume: float) -> None:
+        """Live-apply a new master TTS output volume (0.0–1.0) — no restart.
+
+        Delegates to ``AudioPlayer.set_volume`` so a Settings change is audible
+        on the next spoken sub-block. No-op-safe when the player is absent
+        (headless / not yet started) — the value still persisted and applies on
+        the next start.
+        """
+        player = getattr(self, "_player", None)
+        setter = getattr(player, "set_volume", None)
+        if callable(setter):
+            setter(float(volume))
+
+    def _wake_poll_interval(self) -> float:
+        """The stt_match wake poll interval, derived from the user's Sensitivity
+        slider (``[trigger.wake_word].sensitivity``). Higher sensitivity polls
+        more often, so a spoken wake is picked up sooner. Defensive: any missing
+        field falls back to the balanced default. This is what makes the slider
+        actually DO something on the local-Whisper transcript path (it never
+        scored against the openWakeWord threshold the slider used to feed)."""
+        from jarvis.speech.wake_phrase import sensitivity_to_poll_interval
+
+        ww = getattr(getattr(self, "_config", None), "trigger", None)
+        ww = getattr(ww, "wake_word", None)
+        try:
+            return sensitivity_to_poll_interval(getattr(ww, "sensitivity", 0.5))
+        except (TypeError, ValueError):
+            return sensitivity_to_poll_interval(0.5)
+
     def set_wake_plan(self, plan: Any) -> None:
         """Live-apply a resolved WakeWordPlan — no app/pipeline restart.
 
@@ -1615,7 +1674,14 @@ class SpeechPipeline:
                     stt_cfg, language=lang, wake_phrase=getattr(plan, "phrase", None)
                 )
                 if self._probe_stt is None:
-                    self._probe_stt = self._stt
+                    try:
+                        from jarvis.speech.stt_dictionary import (
+                            wrap_stt_with_dictionary,
+                        )
+
+                        self._probe_stt = wrap_stt_with_dictionary(self._stt)
+                    except Exception:  # noqa: BLE001 — preview must survive without it
+                        self._probe_stt = self._stt
                 log.info("Wake-Live-Switch: built local Whisper for custom phrase.")
             except Exception as exc:  # noqa: BLE001 — degrade, never crash the switch
                 log.warning("Wake-Live-Switch: local Whisper build failed: %s", exc)
@@ -1642,7 +1708,9 @@ class SpeechPipeline:
             if self._stt is not None:
                 self._openwakeword_enabled = False
                 self._whisper_wake = RollingWhisperWake(
-                    self._stt, pattern=self._wake_matcher
+                    self._stt,
+                    pattern=self._wake_matcher,
+                    poll_interval_s=self._wake_poll_interval(),
                 )
                 self._whisper_wake_enabled = True
             else:
@@ -1754,8 +1822,19 @@ class SpeechPipeline:
         # bei ACTIVE-Familie (LISTENING/THINKING/SPEAKING) resumen.
         self._maybe_toggle_vision_on_state(new_state)
 
-    async def _set_turn_state(self, new_state: TurnTakingState) -> None:
+    async def _set_turn_state(
+        self,
+        new_state: TurnTakingState,
+        *,
+        only_from: TurnTakingState | None = None,
+    ) -> None:
         previous = getattr(self, "_turn_state", TurnTakingState.IDLE)
+        # Conditional transition (``only_from``): apply ONLY when the state is
+        # still the expected origin. Used by callbacks that may race a newer
+        # state (a late VAD false-start endpoint must never yank the machine
+        # out of JARVIS_SPEAKING).
+        if only_from is not None and previous != only_from:
+            return
         if previous != new_state:
             log.info("turn-state: %s -> %s", previous.value, new_state.value)
         # Jarvis just STOPPED speaking → the floor goes back to the user. Stamp it
@@ -1810,12 +1889,20 @@ class SpeechPipeline:
             return "SPEAKING"
         return "IDLE"
 
-    def _schedule_turn_state(self, state: TurnTakingState) -> None:
+    def _schedule_turn_state(
+        self,
+        state: TurnTakingState,
+        *,
+        only_from: TurnTakingState | None = None,
+    ) -> None:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        loop.create_task(self._set_turn_state(state), name=f"turn-state-{state.value}")
+        loop.create_task(
+            self._set_turn_state(state, only_from=only_from),
+            name=f"turn-state-{state.value}",
+        )
 
     def _on_vad_speech_start(self) -> None:
         log.info("voice activity start")
@@ -1857,6 +1944,17 @@ class SpeechPipeline:
         self._reset_probe_state()
         if reason != "false_start":
             self._schedule_turn_state(TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT)
+        else:
+            # A discarded false start must RELEASE the floor: the VAD start
+            # set USER_SPEAKING, no transcript will ever follow, and without
+            # this transition every completion announcement is deferred
+            # "user holds the floor" until some unrelated event (live
+            # 2026-07-02 19:06: the mission readback sat 31 s behind a 96 ms
+            # VAD blip). Guarded so a racing newer state is never regressed.
+            self._schedule_turn_state(
+                TurnTakingState.LISTENING,
+                only_from=TurnTakingState.USER_SPEAKING,
+            )
 
     def _reset_probe_state(self) -> None:
         self._probe_last_text = ""
@@ -3767,6 +3865,20 @@ class SpeechPipeline:
         self._call_event.set()
         return True
 
+    def _post_hangup_lock_seconds(self) -> float:
+        """Wake-lock duration for the session that just ended (one-shot).
+
+        SHORT (`_explicit_hangup_lock_s`) after a user HARD hangup — the
+        JarvisBar close / hotkey / "auflegen" stopped the player, so there is no
+        TTS tail to echo and the long lock would only swallow the user's very
+        next "Hey <wake>". Otherwise the FULL `_post_hangup_lock_s` guards the
+        speaker tail of a natural end / farewell. Consumes the hard-hangup flag
+        so it applies to exactly one session end.
+        """
+        hard = self._explicit_hard_hangup
+        self._explicit_hard_hangup = False
+        return self._explicit_hangup_lock_s if hard else self._post_hangup_lock_s
+
     def request_hangup(self) -> None:
         """End the live voice session from outside the audio path.
 
@@ -3830,6 +3942,10 @@ class SpeechPipeline:
                 self._player.stop()
             except Exception as exc:  # noqa: BLE001
                 log.warning("Player-Stop bei Hangup fehlgeschlagen: %s", exc)
+            # Player stopped => no TTS tail => the next session end uses the
+            # SHORT wake-lock so the user can re-wake immediately. A farewell
+            # hangup (stop_player=False) keeps the full speaker-tail guard.
+            self._explicit_hard_hangup = True
         self._session_end_reason = HANGUP_VOICE_PATTERN
         self._hangup_event.set()
         # BUG-CU-HANGUP (2026-05-28): "auflegen" must also STOP a running
@@ -4365,6 +4481,9 @@ class SpeechPipeline:
                 self._ptt_mode = False
                 continue
             self._hangup_event.clear()
+            # Fresh session: forget any hard-hangup flag left by a no-op hangup
+            # while idle, so ONLY this session's own ending decides its lock.
+            self._explicit_hard_hangup = False
             self._state = PipelineState.ACTIVE
             # Reset per-session completeness signal state: a new session
             # starts "fresh" so the first INCOMPLETE gets an earcon, not a
@@ -4427,10 +4546,10 @@ class SpeechPipeline:
                 # Disconnect-Sound als hörbares Hangup-Signal (earcon — gated
                 # by the global "Sound effects" switch).
                 await self._play_earcon(DISCONNECT_PCM)
-                # Cooldown setzen damit Speaker-Echo nicht sofort re-triggert
-                self._wake_lock_until = time.time() + self._post_hangup_lock_s
-                log.info("📵 AUFGELEGT — zurück zu IDLE (Wake-Lock %.1fs).",
-                         self._post_hangup_lock_s)
+                # Cooldown setzen damit Speaker-Echo nicht sofort re-triggert.
+                lock_s = self._post_hangup_lock_seconds()
+                self._wake_lock_until = time.time() + lock_s
+                log.info("📵 AUFGELEGT — zurück zu IDLE (Wake-Lock %.1fs).", lock_s)
 
     def _earcons_enabled(self) -> bool:
         """Whether synthesized UI earcons may play.
@@ -5295,8 +5414,10 @@ class SpeechPipeline:
             uuid4(),
             enabled=getattr(lat_cfg, "enabled", True),
         )
-        utt_stt_name = type(self._utterance_stt).__name__
-        log.info("→ Transkribiere (%.1f KB) via %s …", len(pcm) / 1024, utt_stt_name)
+        utt_stt_name = getattr(
+            self._utterance_stt, "provider_label", type(self._utterance_stt).__name__
+        )
+        log.info("→ Transcribing (%.1f KB) via %s …", len(pcm) / 1024, utt_stt_name)
         await self._set_turn_state(TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT)
         transcript = await self._transcribe_final(pcm)
         if transcript is None:

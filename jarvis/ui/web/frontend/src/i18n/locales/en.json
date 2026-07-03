@@ -43,6 +43,7 @@
     "wiki": "Wiki",
     "apikeys": "API Keys",
     "settings": "Settings",
+    "dictionary": "Dictionary",
     "telephony": "Telephony",
     "outputs": "Outputs",
     "socials": "Socials",
@@ -155,6 +156,34 @@
       "acquaintance": "Acquaintance",
       "other": "Other"
     }
+  },
+  "dictionary": {
+    "title": "Dictionary",
+    "description": "Teach speech recognition your words — names, brands, technical terms. Add a word, or fix something it keeps hearing wrong.",
+    "add": "Add word",
+    "search": "Search dictionary…",
+    "loading": "Loading dictionary…",
+    "empty": "No words yet — add names or terms the voice recognition should know.",
+    "no_matches": "No entries match your search.",
+    "edit": "Edit",
+    "delete": "Delete",
+    "added": "\"{0}\" added to the dictionary.",
+    "saved": "Dictionary entry saved.",
+    "deleted": "\"{0}\" removed from the dictionary.",
+    "applies_note": "Changes apply to the next thing you say — no restart needed.",
+    "dialog_add_title": "Add to your vocabulary",
+    "dialog_edit_title": "Edit dictionary entry",
+    "correction_toggle": "Fix a misrecognition",
+    "correction_hint_on": "Whenever the left side is heard, it is replaced by the right side.",
+    "correction_hint_off": "Add a word so the recognition knows it and spells it exactly like this.",
+    "word_placeholder": "Add a new word",
+    "word_correct_placeholder": "Correct spelling",
+    "misheard_placeholder": "Misrecognized as…",
+    "misheard_comma_hint": "Separate several misheard variants with commas.",
+    "cancel": "Cancel",
+    "save": "Save",
+    "add_confirm": "Add word",
+    "research_preview": "Research Preview"
   },
   "voice_state": {
     "idle": "Ready",
@@ -900,6 +929,20 @@
     "filter_hint_frontier": "When price doesn't matter — the most capable models.",
     "filter_hint_value": "The best performance for the price."
   },
+  "apikeys_voice": {
+    "heading": "Voice",
+    "voice_label": "Voice",
+    "choose_voice": "Choose a voice…",
+    "multilingual": "Multilingual",
+    "saved": "Voice saved",
+    "load_failed": "Could not load voices",
+    "no_voices": "No voices for this model",
+    "count_hint": "{0} voices",
+    "preview": "Preview voice",
+    "preview_failed": "Preview failed",
+    "preview_language": "Preview language",
+    "preview_in": "Preview in"
+  },
   "apikeys_cu_model": {
     "heading": "Computer-Use model",
     "use_main": "Use my main model",
@@ -915,6 +958,13 @@
       "unit_seconds": "s",
       "reset": "Reset to default (1.5 s)",
       "saved_toast": "Thinking pause set to {0}.",
+      "restart_caption": "Saved — applies on next start."
+    },
+    "volume": {
+      "title": "Volume",
+      "description": "How loudly {name} speaks its answers. 100% is the loudest — turn it down if {name} is too loud. Speech is boosted so it carries as loud as music, without distortion.",
+      "reset": "Reset to default (100%)",
+      "saved_toast": "Volume set to {0}.",
       "restart_caption": "Saved — applies on next start."
     },
     "title": "Settings",

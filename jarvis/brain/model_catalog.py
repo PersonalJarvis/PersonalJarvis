@@ -181,6 +181,23 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
         "de-DE-Neural2-B", "de-DE-Neural2-C", "de-DE-Neural2-D", "de-DE-Neural2-F",
     ])),
     "cartesia": ("model", _ids(["sonic-3.5", "sonic-2", "sonic-turbo"])),
+    # OpenRouter TTS — the model picker offers ONLY speech-synthesis models.
+    # This curated snapshot mirrors the live `?output_modalities=speech` list
+    # (verified 2026-07-02); music (Lyria) and audio-chat models are excluded.
+    # The user picks a MODEL here; the per-model voice list comes from the built
+    # provider's list_voices() (each model ships its own supported_voices). The
+    # default model (google/gemini-3.1-flash-tts-preview) is listed first.
+    "openrouter-tts": ("model", _ids([
+        "google/gemini-3.1-flash-tts-preview",
+        "hexgrad/kokoro-82m",
+        "x-ai/grok-voice-tts-1.0",
+        "mistralai/voxtral-mini-tts-2603",
+        "microsoft/mai-voice-2",
+        "sesame/csm-1b",
+        "canopylabs/orpheus-3b-0.1-ft",
+        "zyphra/zonos-v0.1-transformer",
+        "zyphra/zonos-v0.1-hybrid",
+    ])),
 }
 
 # STT model catalogs (the ``[stt] model`` is a single global value).
@@ -191,6 +208,22 @@ STT_CATALOG: dict[str, list[ModelInfo]] = {
     ]),
     "openai-api": _ids(["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"]),
     "deepgram": _ids(["nova-3", "nova-2", "nova-2-general", "enhanced", "base"]),
+    # OpenRouter STT — the model picker offers ONLY transcription models. This
+    # curated snapshot mirrors the live `?output_modalities=transcription` list
+    # (verified 2026-07-02); audio-in chat models are excluded. The default
+    # model (openai/whisper-large-v3) is listed first.
+    "openrouter-stt": _ids([
+        "openai/whisper-large-v3",
+        "openai/gpt-4o-transcribe",
+        "openai/gpt-4o-mini-transcribe",
+        "openai/whisper-1",
+        "openai/whisper-large-v3-turbo",
+        "google/chirp-3",
+        "mistralai/voxtral-mini-transcribe",
+        "qwen/qwen3-asr-flash-2026-02-10",
+        "nvidia/parakeet-tdt-0.6b-v3",
+        "microsoft/mai-transcribe-1.5",
+    ]),
 }
 
 

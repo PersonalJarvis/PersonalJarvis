@@ -69,7 +69,7 @@ class CliAuthManager:
         missing = [k for k in spec.auth.secret_keys if not secrets.get(k)]
         required = list(spec.auth.secret_keys)
         if missing and missing == required:
-            return False, f"secrets fehlen: {', '.join(missing)}"
+            return False, f"missing secrets: {', '.join(missing)}"
 
         if validate:
             import os

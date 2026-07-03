@@ -27,6 +27,7 @@ else:
         sd = None  # type: ignore[assignment]
 
 from jarvis.audio import level_tap
+from jarvis.audio.gain import apply_output_gain, clamp_volume
 from jarvis.core.events import AudioOutFirst
 from jarvis.core.protocols import AudioChunk
 
@@ -262,12 +263,18 @@ class AudioPlayer:
         sample_rate: int = TTS_SAMPLE_RATE,
         channels: int = 1,
         bus: Any = None,
+        volume: float = 1.0,
     ) -> None:
         # Resolve "auto-headset" / similar strings to the actual device index.
         # Integer values are not resolved — the user specifies those explicitly.
         self._device = _resolve_output_device(device)
         self._sample_rate = sample_rate
         self._channels = channels
+        # Master output volume knob in [0.0, 1.0]. Applied in _write_samples via
+        # the shared gain helper (jarvis.audio.gain), which scales it to a makeup
+        # boost + soft limiter so 100% is a real loudness lift, not just unity.
+        # Clamped so a stray config/runtime value can never invert or over-range.
+        self._volume = clamp_volume(volume)
         self._device_logged = False  # logged once on the first play call
         # Optional bus reference. When set, play_chunks() publishes
         # AudioOutFirst on the first audible sample so UI subscribers
@@ -373,6 +380,16 @@ class AudioPlayer:
         self._device = new_device
         self._device_logged = False  # re-log the new device on next play
         self.invalidate_device_cache()
+
+    def set_volume(self, volume: float) -> None:
+        """Live-apply a new master output volume (0.0–1.0) — no stream restart.
+
+        The value is read per sub-block in ``_write_samples``, so a change made
+        mid-utterance takes effect on the next ~60 ms block. Clamped to [0, 1];
+        the open PortAudio stream is untouched (gain rides on top of it,
+        orthogonal to device/rate/lifecycle state).
+        """
+        self._volume = clamp_volume(volume)
 
     def _log_device_once(self) -> None:
         """Log the active output device once per AudioPlayer instance.
@@ -558,26 +575,38 @@ class AudioPlayer:
         # write still provides back-pressure. ~60 ms blocks are large enough to
         # never starve the buffer.
         feed_level = level_tap.has_subscribers()
+        # Master output volume: scale the whole buffer once via the shared gain
+        # helper (makeup boost + soft limiter above unity, plain attenuation
+        # below), then write it in sub-blocks. ``arr_out is arr_f`` when the knob
+        # sits exactly at unity, so full playback stays byte-identical. The
+        # visualizer is fed the PRE-gain RMS (arr_f), so the orb/equalizer keeps
+        # tracking the speech itself — full bars even when the volume is low, and
+        # not artificially pumped when it is boosted. ``getattr`` default keeps
+        # ``__new__``-built test/hot-reload instances (which skip ``__init__``)
+        # at unity instead of crashing.
+        arr_out = apply_output_gain(arr_f, getattr(self, "_volume", 1.0))
         block = max(1, int(device_rate * 0.06))
-        for start in range(0, arr_f.shape[0], block):
-            chunk = arr_f[start:start + block]
-            underflowed = stream.write(chunk)
+        for start in range(0, arr_out.shape[0], block):
+            out = arr_out[start:start + block]
+            underflowed = stream.write(out)
             # Playback progress for the pipeline stall watchdog: a healthy
             # ~60 ms sub-block returns well inside the watchdog's stall window;
             # only a wedged device leaves ``last_write_ns`` frozen. ``getattr``
             # defaults keep this resilient for ``__new__``-built instances (test
             # fixtures / hot-reload) that skipped ``_init_progress`` — progress
             # telemetry must never be the thing that crashes playback.
-            self.frames_written = getattr(self, "frames_written", 0) + int(chunk.shape[0])
+            self.frames_written = getattr(self, "frames_written", 0) + int(out.shape[0])
             self.last_write_ns = time.monotonic_ns()
             if underflowed:
                 log.warning(
                     "PortAudio underflow during write (frames=%d, source=%dHz, "
                     "device=%dHz) — buffer drained mid-stream, audible click/crackle",
-                    chunk.shape[0], source_rate, device_rate,
+                    out.shape[0], source_rate, device_rate,
                 )
-            if feed_level and chunk.size:
-                level_tap.feed(float(np.sqrt(np.mean(np.square(chunk)))))
+            if feed_level:
+                pre = arr_f[start:start + block]  # PRE-gain RMS for the visualizer
+                if pre.size:
+                    level_tap.feed(float(np.sqrt(np.mean(np.square(pre)))))
 
     def _close_output_stream(self, stream: sd.OutputStream) -> None:
         """Flush and stop: ``stream.stop()`` blocks until the buffer is empty."""

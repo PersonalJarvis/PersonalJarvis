@@ -12,6 +12,7 @@ import { OverlayTaskbarGroup } from "@/views/settings/OverlayTaskbarGroup";
 import { LanguagesGroup } from "@/views/settings/LanguagesGroup";
 import { AppSettingsGroup } from "@/views/settings/AppSettingsGroup";
 import { SilenceWindowGroup } from "@/views/settings/SilenceWindowGroup";
+import { VolumeGroup } from "@/views/settings/VolumeGroup";
 import { SystemPromptGroup } from "@/views/settings/SystemPromptGroup";
 import { useWakeWord, type WakeWordSaveResult } from "@/hooks/useWakeWord";
 import {
@@ -66,6 +67,7 @@ export function SettingsView() {
         <SystemPromptGroup />
         <WakeWordPanel />
         <SilenceWindowGroup />
+        <VolumeGroup />
         <KeybindsPanel />
 
         <ul className="mt-2 space-y-2">

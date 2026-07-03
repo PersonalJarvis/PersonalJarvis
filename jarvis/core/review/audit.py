@@ -120,7 +120,7 @@ class ReviewAudit:
                 ) as fh:
                     fh.write(line)
                     fh.write("\n")
-        except Exception as exc:  # noqa: BLE001 — Caller darf nie crashen
+        except Exception as exc:  # noqa: BLE001 — the caller must never crash
             _LOG.warning(
                 "ReviewAudit.append_iteration failed: %s (path=%s)",
                 exc,

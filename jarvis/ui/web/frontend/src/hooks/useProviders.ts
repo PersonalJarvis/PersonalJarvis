@@ -608,6 +608,88 @@ export async function saveBrainProviderModel(
   return body as BrainModelSaveResult;
 }
 
+// ── Per-model TTS voice picker + audio preview (OpenRouter TTS) ──────────────
+// A TTS model ships its own voices, each speaking a language (or multilingual).
+// These feed the voice picker under the model selector on the OpenRouter-TTS
+// card: list the chosen model's voices tagged by language, persist a pick, and
+// synthesise a short spoken sample so the user can HEAR a voice.
+
+export interface TtsVoiceEntry {
+  id: string;
+  /** ISO-639-1 code ("en"/"de"/"es"/"fr"/…) or "multi" (multilingual). */
+  language: string;
+}
+
+export interface TtsVoicesResult {
+  provider: string;
+  model: string;
+  voices: TtsVoiceEntry[];
+  /** The model's safe default voice (pre-selects the picker). */
+  default: string;
+  /** The persisted voice IF valid for this model, else "" (stale → placeholder). */
+  current: string;
+}
+
+/** Lists a TTS model's voices, each tagged with its spoken language. */
+export async function getTtsVoices(
+  model: string,
+  provider = "openrouter-tts",
+): Promise<TtsVoicesResult> {
+  const res = await fetch(
+    `/api/tts/voices?provider=${encodeURIComponent(provider)}&model=${encodeURIComponent(model)}`,
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as TtsVoicesResult;
+}
+
+/** Persists the chosen global TTS voice ([tts] voice_de/voice_en). */
+export async function saveTtsVoice(
+  voice: string,
+  persist = true,
+): Promise<BrainModelSaveResult> {
+  const res = await fetch("/api/tts/voice", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ voice, persist }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as BrainModelSaveResult;
+}
+
+/**
+ * Synthesises a SHORT spoken sample with a model + voice in the given language
+ * and returns it as a WAV Blob (playable by an <audio> element). Throws a clean
+ * Error with the backend's message on any failure (no key / rate limit / …).
+ */
+export async function fetchTtsPreview(opts: {
+  model: string;
+  voice: string;
+  language: "de" | "en" | "es";
+  provider?: string;
+}): Promise<Blob> {
+  const res = await fetch("/api/tts/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      provider: opts.provider ?? "openrouter-tts",
+      model: opts.model,
+      voice: opts.voice,
+      language: opts.language,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return await res.blob();
+}
+
 // Phase 3: per-provider Computer-Use model. CU runs on the provider's main
 // `model` by default; a pinned `cu_model` lets the user run CU on a different
 // (e.g. stronger) model than chat. `cu_model === ""` means "use my main model".
