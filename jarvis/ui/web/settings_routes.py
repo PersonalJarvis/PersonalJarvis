@@ -361,6 +361,87 @@ def _local_whisper_available() -> bool:
     return importlib.util.find_spec("faster_whisper") is not None
 
 
+# --- Local-speech (any-phrase wake) opt-in install --------------------------
+# ``faster-whisper`` powers the ``stt_match`` wake path — the ONLY local way to
+# detect an arbitrary, user-invented wake phrase. It is a torch-FREE opt-in
+# package (ctranslate2 CPU wheels, cross-platform) that the cloud-first base
+# install deliberately omits (CLAUDE.md §3). Historically it was dropped from
+# every extra (2026-05-18, "Groq Whisper API is the new default"), so a fresh
+# install could not use a custom wake word at all and silently degraded to the
+# bundled "Hey Rhasspy" model. This endpoint pulls the package from INSIDE the
+# app so any wake word works everywhere without dropping to a shell — the §3
+# "recoverable in-app" contract. The spec is pinned to the [local-voice] extra
+# in pyproject.toml so the two never drift.
+_LOCAL_SPEECH_PACKAGE = "faster-whisper>=1.0"
+
+_local_speech_install_lock = threading.Lock()
+# state ∈ {"idle", "running", "done", "error"}; message is the last pip detail.
+_local_speech_install: dict[str, str] = {"state": "idle", "message": ""}
+
+
+def _run_local_speech_install() -> None:
+    """Blocking pip install, run on a daemon thread; updates shared state."""
+    import importlib
+
+    from jarvis.setup.dependencies import install_pip_package
+
+    ok, message = install_pip_package(_LOCAL_SPEECH_PACKAGE)
+    # Let this same process's find_spec see the freshly-installed package, so the
+    # status endpoint flips to available without a restart (the wake PIPELINE
+    # still needs a restart to actually use it — the UI says so).
+    importlib.invalidate_caches()
+    with _local_speech_install_lock:
+        _local_speech_install["state"] = "done" if ok else "error"
+        _local_speech_install["message"] = message
+    log.info("local-speech install finished: ok=%s msg=%s", ok, message[:200])
+
+
+@router.post("/wake-word/enable-local-speech")
+async def enable_local_speech(request: Request) -> dict[str, object]:
+    """Install the local-speech pack (faster-whisper) so ANY wake word works.
+
+    Idempotent and non-blocking: returns immediately with a ``state`` the UI
+    polls via the status endpoint. A second call while a run is in flight does
+    not start a duplicate install.
+    """
+    if _local_whisper_available():
+        return {
+            "state": "done",
+            "already": True,
+            "available": True,
+            "message": "Local speech pack already installed.",
+        }
+    with _local_speech_install_lock:
+        if _local_speech_install["state"] == "running":
+            return {
+                "state": "running",
+                "available": False,
+                "message": _local_speech_install["message"],
+            }
+        _local_speech_install["state"] = "running"
+        _local_speech_install["message"] = f"Installing {_LOCAL_SPEECH_PACKAGE}"
+    threading.Thread(
+        target=_run_local_speech_install,
+        name="local-speech-install",
+        daemon=True,
+    ).start()
+    return {"state": "running", "available": False, "message": "Install started."}
+
+
+@router.get("/wake-word/enable-local-speech/status")
+async def enable_local_speech_status() -> dict[str, object]:
+    """Report the local-speech install progress + whether the pack is present."""
+    available = _local_whisper_available()
+    with _local_speech_install_lock:
+        state = _local_speech_install["state"]
+        message = _local_speech_install["message"]
+    # Present but this process never ran the installer (e.g. installed manually,
+    # or a prior run before a restart) → report done so the UI is truthful.
+    if available and state in ("idle", "running"):
+        state = "done"
+    return {"state": state, "message": message, "available": available}
+
+
 @router.get("/wake-word")
 async def get_wake_word(request: Request) -> dict[str, object]:
     from jarvis.core.config import WakeWordConfig
