@@ -228,11 +228,33 @@ def step_wizard(*, dry_run: bool) -> None:
         sys.exit(3)
 
 
+def _resolved_admin_port() -> int:
+    """The port the headless launcher will ACTUALLY bind — a jarvis.toml
+    ``[ui].admin_api_port`` override if present, else the packaged default.
+
+    Reads it from the launcher itself so the "your server is here" hint can never
+    drift from the port the process opens. A hard-coded hint (the old
+    ``localhost:8765``) sent every headless/VPS downloader to a dead port while
+    the server was serving elsewhere. Falls back to the packaged default if the
+    import is somehow unavailable, so this never breaks the launch step."""
+    try:
+        from jarvis.ui.web.launcher import _DEFAULT_ADMIN_PORT, _fast_admin_port
+
+        return _fast_admin_port()
+    except Exception:  # noqa: BLE001 — a hint must never block the launch
+        try:
+            from jarvis.ui.web.launcher import _DEFAULT_ADMIN_PORT
+
+            return _DEFAULT_ADMIN_PORT
+        except Exception:  # noqa: BLE001
+            return 47821
+
+
 def step_launch(*, headless: bool, dry_run: bool) -> None:
     step("Launch")
     if headless or is_headless_linux():
         cmd = [str(venv_python()), "-m", "jarvis.ui.web.launcher", "--headless"]
-        msg = "headless server on http://localhost:8765"
+        msg = f"headless server on http://localhost:{_resolved_admin_port()}"
     elif sys.platform == "win32":
         cmd = [str(repo_root() / "run.bat")]
         msg = "Desktop App via run.bat"
