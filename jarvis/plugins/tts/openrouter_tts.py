@@ -32,10 +32,10 @@ from typing import Any
 from jarvis.core import config as cfg
 from jarvis.core.protocols import AudioChunk
 from jarvis.plugins.tts.openrouter_speech_models import (
-    DEFAULT_MODEL,
     GENERIC_DEFAULT_VOICE,
     MODEL_DEFAULT_VOICE,
     MODEL_VOICES,
+    coerce_speech_model,
 )
 
 log = logging.getLogger("jarvis.tts.openrouter")
@@ -77,7 +77,18 @@ class OpenRouterTTS:
         language: str = "auto",
         speed: float = 1.0,
     ) -> None:
-        self._model = (model or DEFAULT_MODEL).strip()
+        # Coerce a foreign / unknown / empty model id to a real OpenRouter speech
+        # model. The [tts] block shares ONE global `model` across all TTS
+        # providers, so switching to OpenRouter can inherit e.g. Cartesia's
+        # `sonic-2` — sending that verbatim 400s ("Model sonic-2 does not
+        # exist"). This makes an untouched / cross-provider config Just Work.
+        requested = (model or "").strip()
+        self._model = coerce_speech_model(model)
+        if requested and requested != self._model:
+            log.info(
+                "TTS model %r is not an OpenRouter speech model — using %r.",
+                requested, self._model,
+            )
         # Per-language config voices (mirrors the [tts] voice_de / voice_en split).
         self._voice_de = (voice_de or "").strip() or None
         self._voice_en = (voice_en or "").strip() or None

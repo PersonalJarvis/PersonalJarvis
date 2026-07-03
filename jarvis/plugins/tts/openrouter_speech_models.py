@@ -137,6 +137,40 @@ CURATED_SPEECH_MODELS: tuple[tuple[str, str], ...] = (
 )
 
 
+# Every model id we KNOW is an OpenRouter speech model (curated snapshot above).
+KNOWN_SPEECH_MODEL_IDS: frozenset[str] = frozenset(
+    mid for mid, _ in CURATED_SPEECH_MODELS
+) | frozenset(MODEL_VOICES)
+
+
+def coerce_speech_model(model_id: str | None) -> str:
+    """Return a usable OpenRouter speech-model id for ``model_id``.
+
+    Guards against a FOREIGN model id left in the shared ``[tts].model`` config
+    after switching TTS providers. The ``[tts]`` block has a single global
+    ``model`` shared across every TTS provider, so when the user flips to
+    OpenRouter the field can still hold another provider's value (e.g. Cartesia's
+    ``sonic-2`` or Groq's ``whisper-large-v3``) — OpenRouter then 400s with
+    "Model sonic-2 does not exist". Resolution:
+
+    * empty                     → the default model,
+    * a known speech model      → itself,
+    * unknown but OpenRouter-shaped (contains ``/`` — every OpenRouter id is
+      ``vendor/model``)          → itself (trust a NEW speech model we don't list
+      yet, rather than block it),
+    * unknown single-token id    → the default model (a foreign provider's id
+      like ``sonic-2``; OpenRouter ids always carry a ``/``).
+    """
+    mid = (model_id or "").strip()
+    if not mid:
+        return DEFAULT_MODEL
+    if mid in KNOWN_SPEECH_MODEL_IDS:
+        return mid
+    if "/" in mid:
+        return mid
+    return DEFAULT_MODEL
+
+
 def _architecture(model_obj: Any) -> dict[str, Any]:
     """Best-effort extract the ``architecture`` mapping from a raw model object."""
     if isinstance(model_obj, dict):

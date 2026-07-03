@@ -17,6 +17,7 @@ from jarvis.core.protocols import AudioChunk
 from jarvis.plugins.tts import openrouter_tts as ortts
 from jarvis.plugins.tts.openrouter_speech_models import (
     DEFAULT_MODEL,
+    coerce_speech_model,
     filter_tts_models,
     is_speech_model,
     voices_for_model,
@@ -279,3 +280,38 @@ def test_voices_for_model_reads_live_supported_voices() -> None:
 def test_voices_for_model_falls_back_to_curated_by_id() -> None:
     obj = {"id": "x-ai/grok-voice-tts-1.0"}  # no live supported_voices
     assert set(voices_for_model(obj)) == {"eve", "ara", "rex", "sal", "leo"}
+
+
+# --------------------------------------------------------------------------- #
+# Model coercion — a foreign / empty model must NOT reach the API verbatim     #
+# (the [tts] block shares one global `model` across all TTS providers)         #
+# --------------------------------------------------------------------------- #
+
+
+def test_coerce_speech_model_resolves_foreign_and_empty_to_default() -> None:
+    # Foreign single-token ids left over from another TTS provider -> default.
+    assert coerce_speech_model("sonic-2") == DEFAULT_MODEL  # Cartesia
+    assert coerce_speech_model("whisper-large-v3") == DEFAULT_MODEL  # Groq/STT
+    assert coerce_speech_model("") == DEFAULT_MODEL
+    assert coerce_speech_model(None) == DEFAULT_MODEL
+    # Known OpenRouter speech models pass through unchanged.
+    assert coerce_speech_model("x-ai/grok-voice-tts-1.0") == "x-ai/grok-voice-tts-1.0"
+    # Unknown but OpenRouter-shaped (vendor/model) is trusted (a new TTS model).
+    assert coerce_speech_model("newvendor/brand-new-tts") == "newvendor/brand-new-tts"
+
+
+@pytest.mark.asyncio
+async def test_foreign_model_in_config_falls_back_to_default_not_400() -> None:
+    """Regression: switching TTS providers leaves a foreign `sonic-2` + `leo` in
+    the shared [tts] block. The provider must send the default model + a valid
+    voice, never the foreign `sonic-2` that 400s ("Model sonic-2 does not exist").
+    """
+    resp = _FakeStreamResponse(200, chunks=[b"\x00\x00"])
+    tts, client = _tts_with_client(resp, model="sonic-2", voice_de="leo", voice_en="leo")
+
+    _ = [c async for c in tts.synthesize("Hallo.", language_code="de-DE")]
+
+    payload = client.captured["payload"]
+    assert payload["model"] == DEFAULT_MODEL  # not "sonic-2"
+    # "leo" is a Grok voice, invalid for the Gemini default -> its model default.
+    assert payload["voice"] == "Charon"
