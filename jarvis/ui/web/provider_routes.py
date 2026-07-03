@@ -48,9 +48,14 @@ router = APIRouter(prefix="/api", tags=["providers"])
 # Setup-Wizard deklarierten Slots.
 ALLOWED_SECRET_KEYS: frozenset[str] = frozenset(s.key for s in WIZARD_SECRETS)
 
-# Lokale Provider, die im Privacy-Mode erlaubt bleiben.
-# Ollama wurde 2026-04-21 entfernt — nur STT (faster-whisper) ist aktuell lokal.
-LOCAL_PROVIDERS: frozenset[str] = frozenset({"faster-whisper"})
+# Local providers allowed to stay active in the airgapped privacy profile.
+# Empty since v1.0.1: Ollama was removed 2026-04-21, and the local
+# "faster-whisper" STT dictation provider was removed from the user-selectable
+# catalog (see provider_spec.py). With no local brain/STT provider left, the
+# airgapped profile admits no provider switch — an honest state, not a
+# regression: airgapped means "local only", and there is currently no local
+# provider to switch TO. (Wake still runs its own local Whisper off this list.)
+LOCAL_PROVIDERS: frozenset[str] = frozenset()
 
 # Codex subagent slugs (_CODEX_SUBAGENT_SLUGS / _CODEX_SUBAGENT_CANONICAL) are
 # imported from jarvis.missions.worker_runtime.provider_map — the single source

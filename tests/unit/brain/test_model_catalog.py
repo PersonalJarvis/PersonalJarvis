@@ -79,7 +79,9 @@ class TestProviderCatalog:
         assert any("sonic" in m.id for m in spec.curated)
 
     def test_stt_providers_select_a_model(self) -> None:
-        for p in ("groq-api", "faster-whisper", "openai-api", "deepgram"):
+        # Local "faster-whisper" was removed as a user-selectable STT provider
+        # (v1.0.1); the cloud STT providers still each expose a model list.
+        for p in ("groq-api", "openai-api", "deepgram"):
             spec = catalog_spec(p)
             assert spec is not None, p
             assert spec.tier == "stt"

@@ -118,7 +118,10 @@ def test_list_providers_returns_full_catalog(server_with_brain: WebServer, secre
         assert "codex" in ids
         assert "openclaw" not in ids
         assert "gemini-flash-tts" in ids, "Gemini Flash TTS must be in the catalog"
-        assert "faster-whisper" in ids, "local STT as a 'none'-auth provider"
+        assert "faster-whisper" not in ids, (
+            "local faster-whisper STT was removed as a user-selectable provider "
+            "in v1.0.1 (install-detection + model-list defects); cloud STT only"
+        )
         assert "elevenlabs" in ids, "ElevenLabs is a selectable premium TTS provider"
         assert "ollama-local" not in ids, "Ollama was removed on 2026-04-21"
 
@@ -212,7 +215,6 @@ def test_list_providers_exposes_credential_help_and_billing(
         assert by_id["gemini"]["billing"] == "api"
         assert by_id["antigravity"]["billing"] == "subscription_or_api"
         assert by_id["codex"]["billing"] == "subscription_or_api"
-        assert by_id["faster-whisper"]["billing"] == "local"
 
 
 def test_list_providers_exposes_gemini_vertex_alt_path(
