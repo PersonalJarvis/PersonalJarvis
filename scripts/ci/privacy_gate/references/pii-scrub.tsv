@@ -14,42 +14,49 @@
 # paths = 0 hits (already cleaned in place); private emails = .mailmap only
 # (intentional, exempt); real name = ~7 shipping files; GCP id = 0 (kept as a
 # regression guard). The scan double-checks regardless.
+#
+# 2026-07-03: the maintainer's real name scrub was RE-ACTIVATED (it had been
+# commented out under a "name public" decision, which re-exposed the surname the
+# v1.0.0 history was filter-repo-scrubbed of). Per explicit maintainer decision,
+# the real surname "Lütke"/"Luetke" stays OUT of the public tree, consistent with
+# v1.0.0. The public brand handle "@Ruben_Herz"/"Herz" remains intentionally
+# public (see the Herz note at the end of this file) and is NOT scrubbed.
 
 # --- maintainer GitHub login + entity slug (MUST precede the bare-name rules
 # --- below, else the bare "ruben" rule would fragment them) -----------------
-# NAME-KEPT (maintainer wants their name public): scrub	rubenluetke10-beep	octocat	maintainer github login (appears in a stream-evidence test fixture)
-# NAME-KEPT (maintainer wants their name public): scrub	ruben-luetke	personal-jarvis-maintainer	maintainer entity slug (= slugify of full name; keeps name->slug test couplings consistent)
+scrub	rubenluetke10-beep	octocat	maintainer github login (appears in a stream-evidence test fixture)
+scrub	ruben-luetke	personal-jarvis-maintainer	maintainer entity slug (= slugify of full name; keeps name->slug test couplings consistent)
 
 # --- maintainer real name (order matters: full name before surname) ---------
-# NAME-KEPT (maintainer wants their name public): scrub	Ruben Lütke	Personal Jarvis Maintainer	maintainer real name (full)
-# NAME-KEPT (maintainer wants their name public): scrub	Lütke	Maintainer	maintainer surname
-# NAME-KEPT (maintainer wants their name public): scrub	Luetke	Maintainer	maintainer surname (ascii-fold)
+scrub	Ruben Lütke	Personal Jarvis Maintainer	maintainer real name (full)
+scrub	Lütke	Maintainer	maintainer surname
+scrub	Luetke	Maintainer	maintainer surname (ascii-fold)
 
-# NAME-KEPT (maintainer wants their name public): scrub	luetke	maintainer	maintainer surname (lowercase residue in slugs)
-# NAME-KEPT (maintainer wants their name public): scrub	lütke	maintainer	maintainer surname (lowercase umlaut residue)
+scrub	luetke	maintainer	maintainer surname (lowercase residue in slugs)
+scrub	lütke	maintainer	maintainer surname (lowercase umlaut residue)
 
 # --- maintainer bare first names: full-depersonalization (2026-06-01). Two
 # --- distinct neutral names preserve router-prompt semantics where "Ruben" is
 # --- the user (address) and "Harald" is an example third person mentioned. ---
-# NAME-KEPT (maintainer wants their name public): scrub	Ruben	Alex	maintainer first name (sample/address user) -> neutral
-# NAME-KEPT (maintainer wants their name public): scrub	ruben	alex	maintainer first name lowercase (config defaults, slugs, branch tags)
+scrub	Ruben	Alex	maintainer first name (sample/address user) -> neutral
+scrub	ruben	alex	maintainer first name lowercase (config defaults, slugs, branch tags)
 # Accented spelling 'Rubén' — the ASCII 'Ruben' rules above do NOT match the é,
 # so the accented real first name shipped through (2026-06-30 sub-agent review:
 # docs/phase-b1-wiki-curator/*, tests/unit/memory/wiki/test_page.py, etc.).
-# NAME-KEPT (maintainer wants their name public): scrub	Rubén	Alex	maintainer first name accented (é) -> neutral
-# NAME-KEPT (maintainer wants their name public): scrub	rubén	alex	maintainer first name accented lowercase
-# NAME-KEPT (maintainer wants their name public): scrub	RUBÉN	ALEX	maintainer first name accented all-caps (regression guard)
-# NAME-KEPT (maintainer wants their name public): scrub	Harald	Sam	maintainer alt first name (example person in prompts/tests)
-# NAME-KEPT (maintainer wants their name public): scrub	harald	sam	maintainer alt first name lowercase (ADR owner field, slugs, test emails)
+scrub	Rubén	Alex	maintainer first name accented (é) -> neutral
+scrub	rubén	alex	maintainer first name accented lowercase
+scrub	RUBÉN	ALEX	maintainer first name accented all-caps (regression guard)
+scrub	Harald	Sam	maintainer alt first name (example person in prompts/tests)
+scrub	harald	sam	maintainer alt first name lowercase (ADR owner field, slugs, test emails)
 
 # --- all-caps identifier residue: the case-sensitive scrub above misses
 # --- SCREAMING_CASE used in JS test constants (e.g. HARALD_PAGE) and slug-fn
 # --- test inputs (e.g. person_slug("RUBEN")). Preserve the all-caps style in
 # --- the replacement so the depersonalized test stays internally consistent. -
-# NAME-KEPT (maintainer wants their name public): scrub	HARALD	SAM	maintainer alt first name all-caps (JS test constants, e.g. HARALD_PAGE)
-# NAME-KEPT (maintainer wants their name public): scrub	RUBEN	ALEX	maintainer first name all-caps (slug-fn test input, e.g. person_slug("RUBEN"))
-# NAME-KEPT (maintainer wants their name public): scrub	LÜTKE	MAINTAINER	maintainer surname all-caps (regression guard; 0 current hits)
-# NAME-KEPT (maintainer wants their name public): scrub	LUETKE	MAINTAINER	maintainer surname all-caps ascii-fold (regression guard)
+scrub	HARALD	SAM	maintainer alt first name all-caps (JS test constants, e.g. HARALD_PAGE)
+scrub	RUBEN	ALEX	maintainer first name all-caps (slug-fn test input, e.g. person_slug("RUBEN"))
+scrub	LÜTKE	MAINTAINER	maintainer surname all-caps (regression guard; 0 current hits)
+scrub	LUETKE	MAINTAINER	maintainer surname all-caps ascii-fold (regression guard)
 
 # --- personal paths ---------------------------------------------------------
 # `.` matches the path separator on any OS, so no backslash escaping is needed.
