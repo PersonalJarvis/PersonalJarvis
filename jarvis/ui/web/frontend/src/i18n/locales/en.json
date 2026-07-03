@@ -1456,10 +1456,11 @@
       "prefix": "Hey",
       "input_label": "Your wake word",
       "placeholder": "e.g. Nova",
-      "notice": "Choose your own activation word. Make sure it doesn't use someone else's trademark. You are responsible for your choice.",
+      "notice": "Pick any word — just make sure it isn't someone else's trademark.",
+      "learn_more": "How to check",
       "references_title": "Where to check protected names",
       "references_caveat": "These references are informational and may be incomplete or out of date — they are not a substitute for your own check.",
-      "ack_label": "I have reviewed the information on protected names and accept that I am solely responsible for the activation word I choose.",
+      "ack_label": "I'm responsible for the wake word I choose.",
       "cta": "Save wake word",
       "saving": "Saving…",
       "derived_name": "Your assistant will be called: {0}"

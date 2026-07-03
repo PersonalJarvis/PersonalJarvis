@@ -1455,10 +1455,11 @@
       "prefix": "Hey",
       "input_label": "Dein Aktivierungswort",
       "placeholder": "z. B. Nova",
-      "notice": "Wähle dein eigenes Aktivierungswort. Achte darauf, keine fremde Marke zu verwenden. Du bist für deine Wahl verantwortlich.",
+      "notice": "Nimm irgendein Wort — achte nur darauf, dass es keine fremde Marke ist.",
+      "learn_more": "Wie prüfen?",
       "references_title": "Wo du geschützte Namen prüfen kannst",
       "references_caveat": "Diese Referenzen dienen nur zur Information und können unvollständig oder veraltet sein — sie ersetzen nicht deine eigene Prüfung.",
-      "ack_label": "Ich habe die Informationen zu geschützten Namen gesichtet und akzeptiere, dass ich allein für das gewählte Aktivierungswort verantwortlich bin.",
+      "ack_label": "Ich bin für mein gewähltes Weckwort selbst verantwortlich.",
       "cta": "Aktivierungswort speichern",
       "saving": "Speichern…",
       "derived_name": "Dein Assistent heißt dann: {0}"
