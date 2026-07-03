@@ -1,16 +1,15 @@
 # X launch thread draft (@PersonalJarvis)
 
 > **Status: DRAFT — do not post without maintainer review.**
-> Attach the demo video to tweet 1 — upload the MP4 natively (X re-encodes;
-> for best quality render the 4K master from the promo project:
-> `npx remotion render src/index.ts PersonalJarvisReadme out/readme-hero-4k.mp4 --scale 2 --crf 16`).
+> Attach a demo video to tweet 1 — upload the MP4 natively (X re-encodes, so
+> use the highest-quality master you have).
 > House rule: no emojis in post text. Post the tweets as one thread.
 
 ---
 
 **Tweet 1 — hook + video**
 
-Everyone wants a Jarvis. So I built one — and open-sourced it.
+I wanted an assistant that actually runs my computer by voice. So I built one — and open-sourced it.
 
 You talk. Your computer does the work: it delegates to coding agents, reviews
 their output, opens the pull request, and tells you when it's done.

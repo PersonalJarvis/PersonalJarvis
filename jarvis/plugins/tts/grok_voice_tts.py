@@ -6,7 +6,7 @@ ElevenLabs path, so the `sounddevice` playback needs no adjustment
 and no MP3 decoder is needed.
 
 Voice whitelist:
-  - leo  — authoritative, command-like (JARVIS default, butler counterpart
+  - leo  — authoritative, command-like (the default voice, counterpart
            to ElevenLabs "Daniel" / Gemini "Charon")
   - rex  — business-confident
   - sal  — neutral, balanced
@@ -51,8 +51,8 @@ _QUOTA_COOLDOWN_S = 900.0
 # anyway, so a single sentence practically never reaches the limit.
 _MAX_CHARS_PER_REQUEST = 15_000
 
-# 5 voices per the launch blog (April 2026). JARVIS default = "leo"
-# (authoritative, command-like — fits the butler pattern).
+# 5 voices per the launch blog (April 2026). Default voice = "leo"
+# (authoritative, command-like — a calm, formal register).
 GROK_VOICE_LEO = "leo"
 GROK_VOICE_REX = "rex"
 GROK_VOICE_SAL = "sal"

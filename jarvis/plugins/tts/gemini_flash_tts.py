@@ -69,11 +69,11 @@ _SAPI5_FORMAT_22K_16MONO = 22  # SPSF_22kHz16BitMono
 
 # 30 prebuilt voices per the launch blog — we whitelist a curated handful.
 # Voices are language-agnostic; `language_code` or inline text determines the language.
-# JARVIS mode: deep, formal, male voices preferred.
+# Default mode: deep, formal, male voices preferred.
 DEFAULT_VOICES: tuple[str, ...] = (
-    "Charon",     # JARVIS default — informative, calm, butler tone
-    "Orus",       # firm, authoritative — JARVIS alternative 1
-    "Iapetus",    # clear, precise — JARVIS alternative 2
+    "Charon",     # default — informative, calm, formal tone
+    "Orus",       # firm, authoritative — alternative 1
+    "Iapetus",    # clear, precise — alternative 2
     "Rasalgethi", # informative, warmer
     "Algenib",    # gravelly, deeper
     "Algieba",    # neutral, previous default
@@ -100,7 +100,7 @@ class GeminiFlashTTS:
     def __init__(
         self,
         model: str = "gemini-3.1-flash-tts-preview",
-        default_voice: str = "Charon",  # JARVIS-Butler-Voice
+        default_voice: str = "Charon",  # default voice — calm, formal tone
         language_code: str = "en-US",
         style_prompt: str | None = None,  # Gemini TTS doesn't tolerate an inline style — disabled
         chunk_by_sentence: bool = True,

@@ -1321,7 +1321,7 @@ class TwilioConfig(BaseModel):
     account_sid: str = ""           # AC... (account identifier, not a secret)
     phone_number: str = ""          # E.164, e.g. +49...
     public_base_url: str = ""       # https://jarvis.example.com (no trailing slash)
-    greeting: str = ""              # optional spoken welcome; empty = butler default
+    greeting: str = ""              # optional spoken welcome; empty = neutral name-based default
     language_code: str = "de-DE"    # default TTS/STT language hint
     fallback_mode: str = "media"    # reserved: "media" (v1) | "conversationrelay"
     max_call_seconds: int = 600     # safety cap to end runaway calls
