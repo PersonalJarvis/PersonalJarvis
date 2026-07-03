@@ -3116,6 +3116,29 @@ class BrainManager:
                 provider, was_dead, len(keys_to_drop),
             )
 
+    def _active_has_usable_credential(self) -> bool:
+        """Whether the currently active brain provider has a usable credential.
+
+        True iff an API key is present in any of the active provider's secret
+        slots, or a keyless provider is rescued by a connected OAuth login
+        (mirrors the pre-boot key check in ``from_tier_config`` so the two stay
+        consistent). Used by the ``SecretConfigured`` handler to decide whether a
+        fresh-install ``brain.primary`` default — which the downloader has no key
+        for — should yield to the provider the user just configured.
+        """
+        from jarvis.core import config as _cfg_mod
+        from jarvis.core.config import PROVIDER_SECRET_CANDIDATES
+
+        active = self._active_name
+        specs = PROVIDER_SECRET_CANDIDATES.get(active)
+        if specs:
+            try:
+                if _cfg_mod.get_secret_any(specs):
+                    return True
+            except Exception:  # noqa: BLE001 — an unreadable keyring counts as "no key"
+                pass
+        return _keyless_provider_is_rescued_by_oauth(active)
+
     def apply_provider_model(self, provider: str, model: str) -> bool:
         """Live-apply a model override for a brain provider (no restart).
 
@@ -7657,6 +7680,38 @@ class BrainManager:
             if not provider:
                 return
             self.reactivate_provider(provider)
+            # Fresh-install heal (open-source AP-22/AP-23): on a first run there
+            # is no jarvis.toml, so brain.primary is the packaged code-default
+            # (e.g. claude-api) that the downloader has NO key for. Setting a key
+            # for a DIFFERENT provider used to leave that dead default active, so
+            # the brain kept reporting "not configured" even though a usable key
+            # was now present — the #1 fresh-laptop symptom. If the currently
+            # active provider has no usable credential, promote the provider the
+            # user just keyed to active and persist it. This is NOT the autonomous
+            # self-switch the USER-ONLY / provider_lock mandate forbids: it fires
+            # only in direct response to the user's OWN key-set action (the same
+            # path as a manual "Set as active" click, via config_writer — never
+            # the locked self-mod writer), and it never overrides a provider the
+            # user deliberately selected (one that already has a working key or
+            # OAuth login is left untouched).
+            if provider == self._active_name:
+                return  # reactivate_provider already re-armed the active one
+            if self._active_has_usable_credential():
+                return
+            previous_active = self._active_name
+            try:
+                await self.switch(provider, persist=True)
+                log.info(
+                    "Fresh-install heal: active brain %r had no usable "
+                    "credential; promoted just-keyed provider %r to active and "
+                    "persisted brain.primary.",
+                    previous_active, provider,
+                )
+            except Exception:  # noqa: BLE001 — a subscriber must never kill the bus (AP-18)
+                log.warning(
+                    "auto-activate on key-set failed for provider %r",
+                    provider, exc_info=True,
+                )
 
         target_bus.subscribe(SecretConfigured, _on_secret_configured)
 
