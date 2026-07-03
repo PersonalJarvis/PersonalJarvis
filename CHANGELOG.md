@@ -7,9 +7,28 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
-## [1.0.1] — 2026-07-03
+## [1.0.0] — 2026-07-03
 
-Bug-fix release.
+First **public** release of Personal Jarvis — a voice-driven meta-orchestrator
+that turns one spoken request into a fleet of self-checking AI agents.
+
+### Highlights
+
+- **Voice-first pipeline** — wake word → speech-to-text → multi-provider Brain →
+  text-to-speech, fully streaming, with honest, language-aware readbacks
+  (`de` / `en` / `es`).
+- **Provider-agnostic by design** — every tier (router, ack, STT, TTS, worker,
+  critic) degrades or crosses provider families on a missing or dead key. No
+  single provider is load-bearing, and credentials are managed entirely in-app.
+- **Cross-platform core** — the base install boots on a headless
+  `python:3.11-slim` VPS; Windows-desktop and local-voice features live behind
+  optional extras.
+- **Jarvis-Agents mission system** — isolated `git worktree` workers with a
+  self-healing critic loop.
+- **Plugin marketplace** (OAuth + MCP) and a cross-platform control CLI
+  (`jarvisctl`).
+- **In-app "Update available" button** — managed desktop installs get a one-click
+  "Update Now" control in the top bar when a newer version ships.
 
 ### Fixed
 
@@ -30,32 +49,6 @@ Bug-fix release.
   speech-to-text provider; cloud STT (Groq / OpenAI / OpenRouter) is the
   supported dictation path. The wake word (which uses its own local Whisper) and
   the key-free STT resilience fallback are unaffected.
-
----
-
-## [1.0.0] — 2026-06-29
-
-First **public** release of Personal Jarvis — a voice-driven meta-orchestrator
-that turns one spoken request into a fleet of self-checking AI agents.
-
-### Highlights
-
-- **Voice-first pipeline** — wake word → speech-to-text → multi-provider Brain →
-  text-to-speech, fully streaming, with honest, language-aware readbacks
-  (`de` / `en` / `es`).
-- **Provider-agnostic by design** — every tier (router, ack, STT, TTS, worker,
-  critic) degrades or crosses provider families on a missing or dead key. No
-  single provider is load-bearing, and credentials are managed entirely in-app.
-- **Cross-platform core** — the base install boots on a headless
-  `python:3.11-slim` VPS; Windows-desktop and local-voice features live behind
-  optional extras.
-- **Jarvis-Agents mission system** — isolated `git worktree` workers with a
-  self-healing critic loop.
-- **Plugin marketplace** (OAuth + MCP) and a cross-platform control CLI
-  (`jarvisctl`).
-
-### Fixed
-
 - Declared `click` as an explicit dependency so the `jarvisctl` CLI imports on a
   clean install (it no longer arrives transitively via `typer`), restoring a
   green CI.
