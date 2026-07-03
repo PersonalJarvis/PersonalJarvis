@@ -12,6 +12,7 @@ export function WakeWordStep({ onb, goNext }: StepProps) {
   const [ack, setAck] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [showRefs, setShowRefs] = useState(false);
 
   const trimmed = word.trim();
   const canSave = trimmed.length >= 2 && ack && !busy;
@@ -60,20 +61,32 @@ export function WakeWordStep({ onb, goNext }: StepProps) {
         </p>
       ) : null}
 
-      <p className="text-xs text-muted-foreground">{t("onboarding.wake_word.notice")}</p>
-      <div className="text-xs">
-        <div className="font-medium">{t("onboarding.wake_word.references_title")}</div>
-        <ul className="mt-1 list-disc pl-4">
-          {refs.map((r) => (
-            <li key={r.url}>
-              <a href={r.url} target="_blank" rel="noreferrer" className="text-primary underline">
-                {r.label}
-              </a>
-            </li>
-          ))}
-        </ul>
-        <p className="mt-1 text-muted-foreground">{t("onboarding.wake_word.references_caveat")}</p>
-      </div>
+      <p className="text-xs text-muted-foreground">
+        {t("onboarding.wake_word.notice")}{" "}
+        <button
+          type="button"
+          onClick={() => setShowRefs((v) => !v)}
+          className="text-primary underline"
+        >
+          {t("onboarding.wake_word.learn_more")}
+        </button>
+      </p>
+
+      {showRefs && refs.length > 0 && (
+        <div className="text-xs">
+          <div className="font-medium">{t("onboarding.wake_word.references_title")}</div>
+          <ul className="mt-1 list-disc pl-4">
+            {refs.map((r) => (
+              <li key={r.url}>
+                <a href={r.url} target="_blank" rel="noreferrer" className="text-primary underline">
+                  {r.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-muted-foreground">{t("onboarding.wake_word.references_caveat")}</p>
+        </div>
+      )}
 
       <label className="flex items-start gap-2 text-sm">
         <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} className="mt-1" />

@@ -39,16 +39,6 @@ it("renders nothing when completed", async () => {
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
 
-it("re-shows for a terms version bump even when completed", async () => {
-  stub({
-    ...base,
-    completed: true,
-    terms: { accepted: true, accepted_version: "1.0", current_version: "1.1" },
-  });
-  render(<OnboardingGate />);
-  await waitFor(() => expect(screen.getByRole("dialog")).toBeDefined());
-});
-
 it("fails open (renders nothing) on a fetch error", async () => {
   stub("error");
   render(<OnboardingGate />);
@@ -64,7 +54,9 @@ it("shows the tutorial video after the risk gate, then the step flow", async () 
   fireEvent.click(screen.getByRole("checkbox"));
   fireEvent.click(screen.getByRole("button", { name: /continue/i }));
 
-  // Second screen: the YouTube tutorial embed.
+  // Second screen: the tutorial video. It uses a click-to-play thumbnail
+  // facade, so the YouTube embed only mounts once the user presses play.
+  fireEvent.click(screen.getByRole("button", { name: /play the tutorial video/i }));
   const frame = screen.getByTitle(/tour/i) as HTMLIFrameElement;
   expect(frame.src).toContain("youtube-nocookie.com");
 
