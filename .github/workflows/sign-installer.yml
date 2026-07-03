@@ -836,20 +836,34 @@ jobs:
       # work item — cross-runner-hash + install-verify.sh axis-3) downloads
       # it and runs `slsa-verifier verify-artifact …`.
       upload-assets: true
+      # private-repository: true lets the SLSA generator run while the repo is
+      # still PRIVATE. By default it HALTS on a private repo ("Repository is
+      # private. The workflow has halted …") to avoid publishing the repo name
+      # to the public Sigstore/Rekor transparency log — which failed the
+      # `provenance / final` check (the red X) on every release while the repo
+      # was private. The name `PersonalJarvis/PersonalJarvis` is not secret and
+      # the repo is destined to be public, so recording it in Rekor is accepted.
+      private-repository: true
 
   # ----------------------------------------------------------------------
   # Job 3: release
   #
   # Downloads the signed bundle from `sign` and attaches every file to the
-  # GitHub Release. Runs ONLY after both `sign` and `provenance` succeed,
-  # so a release can never go live with signatures but no SLSA provenance.
-  #
-  # The SLSA provenance file itself (`personal-jarvis.intoto.jsonl` and
-  # its `.sig`) is attached by the `provenance` job's `upload-assets: true`
-  # setting — we do not re-list it here.
+  # GitHub Release. Gated on `sign` ONLY (not `provenance`): the signed
+  # installer assets are the load-bearing deliverable, and coupling their upload
+  # to the OPTIONAL SLSA provenance attestation once skipped the entire
+  # release-asset upload when provenance's aggregator failed — shipping releases
+  # with ZERO downloadable installer files, so the signed install one-liner
+  # (`curl …/releases/download/vX.Y.Z/install-verify.sh`) 404'd (v1.0.0 and the
+  # first v1.0.1 both landed 0 assets). Provenance still runs (`needs: sign`) and
+  # attaches its own `personal-jarvis.intoto.jsonl` (+ `.sig`) via
+  # `upload-assets: true`; a provenance failure no longer blocks installer
+  # delivery. Trade-off accepted: a release CAN now carry the signed installers
+  # without the SLSA attestation if provenance fails — the Sigstore + Ed25519 +
+  # ML-DSA signatures (the `sign` job) remain mandatory.
   # ----------------------------------------------------------------------
   release:
-    needs: [sign, provenance]
+    needs: [sign]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
