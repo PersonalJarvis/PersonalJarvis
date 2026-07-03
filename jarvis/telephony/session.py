@@ -70,9 +70,12 @@ log = logging.getLogger("jarvis.telephony.session")
 # jarvis/speech/hangup.py (stdlib-only — no sounddevice import on this path).
 # HANGUP_RE is re-exported below (see __all__) so importers keep working.
 
-# Default greeting when TwilioConfig.greeting is empty (butler persona).
-DEFAULT_GREETING_DE = "Hier ist Jarvis. Wie kann ich helfen?"  # i18n-allow: German TTS greeting spoken to phone callers
-DEFAULT_GREETING_EN = "Jarvis here. How can I help?"
+# Default greeting when TwilioConfig.greeting is empty AND no assistant name has
+# been resolved yet — a neutral, name-free welcome. When a name IS set the
+# assistant announces itself by THAT name instead (see _default_greeting); the
+# product imposes no fixed name here (jarvis/brain/assistant_name.py).
+DEFAULT_GREETING_DE = "Guten Tag, wie kann ich helfen?"  # i18n-allow: German TTS greeting spoken to phone callers
+DEFAULT_GREETING_EN = "Hello, how can I help?"
 
 # Send callback signature: an awaitable that ships one JSON-serialisable dict
 # to Twilio over the WS.
@@ -91,7 +94,9 @@ class TelephonyCallSession:
         tts: an object exposing ``synthesize(text, language_code=...)``.
         from_number / to_number: caller / called E.164 numbers.
         language_code: TTS/STT language hint.
-        greeting: optional spoken welcome (empty -> persona default).
+        greeting: optional spoken welcome (empty -> name-based default).
+        assistant_name: the assistant's resolved name (from the wake phrase);
+            used to build the default greeting. Empty/neutral -> name-free.
         max_call_seconds: hard cap; the call is ended when exceeded.
         bus: optional EventBus for telephony events (publish is best-effort).
     """
@@ -109,6 +114,7 @@ class TelephonyCallSession:
         to_number: str = "",
         language_code: str = "de-DE",
         greeting: str = "",
+        assistant_name: str = "",
         direction: str = "inbound",
         opening: str = "",
         max_call_seconds: int = 600,
@@ -125,6 +131,7 @@ class TelephonyCallSession:
         self.to_number = to_number
         self.language_code = language_code or "de-DE"
         self.greeting = greeting
+        self.assistant_name = assistant_name
         # Chunk C: an outbound call ("outbound") speaks ``opening`` first instead
         # of the inbound greeting. Anything other than "outbound" is inbound and
         # behaves exactly as before.
@@ -576,7 +583,21 @@ class TelephonyCallSession:
         return "en" if self.language_code.lower().startswith("en") else "de"
 
     def _default_greeting(self) -> str:
-        return DEFAULT_GREETING_EN if self._lang_short() == "en" else DEFAULT_GREETING_DE
+        """Greeting spoken when no custom ``greeting`` was configured.
+
+        The assistant announces itself by its OWN resolved name (derived from the
+        user's wake phrase). When no name is set yet — the neutral shipped
+        fallback — it greets without any name rather than imposing "Jarvis".
+        """
+        lang = self._lang_short()
+        name = (self.assistant_name or "").strip()
+        from jarvis.brain.assistant_name import DEFAULT_ASSISTANT_NAME
+
+        if name and name != DEFAULT_ASSISTANT_NAME:
+            if lang == "en":
+                return f"{name} here. How can I help?"
+            return f"Hier ist {name}. Wie kann ich helfen?"  # i18n-allow: German TTS greeting
+        return DEFAULT_GREETING_EN if lang == "en" else DEFAULT_GREETING_DE
 
     def _fallback_phrase(self) -> str:
         if self._lang_short() == "en":

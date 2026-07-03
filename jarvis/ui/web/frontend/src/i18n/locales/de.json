@@ -1136,8 +1136,8 @@
     "safety_description": "Patterns die ohne Nachfrage ausgeführt werden, auch bei Risk-Tier 'ask'. Vermeidet Confirmation-Fatigue."
   },
   "telephony_view": {
-    "title": "Telefonie",
-    "subtitle": "Ruf deinen Assistenten unter einer echten Telefonnummer an. Dieselbe STT, Brain und Charon-Stimme wie der lokale Wake-Word-Pfad.",
+    "title": "Telefonie (experimentell)",
+    "subtitle": "Ruf deinen Assistenten unter einer echten Telefonnummer an. Dieselbe STT, Brain und Charon-Stimme wie der lokale Wake-Word-Pfad. Hinweis: Diese Telefonie-Integration ist experimentell und wurde noch nicht getestet.",
     "load_error": "Telefonie-Status konnte nicht geladen werden",
     "not_configured_hint": "Trag unten deine Twilio Account-SID, das Auth-Token und die Telefonnummer ein, um das Setup abzuschließen, dann starte \"Verbindung testen\".",
     "unavailable_title": "Telefonie-Extra nicht installiert",
@@ -1172,7 +1172,7 @@
       "public_url": "Öffentliche Basis-URL",
       "language": "Sprachcode",
       "greeting": "Begrüßung (optional)",
-      "greeting_placeholder": "Leer lassen für die {name}-Butler-Standardbegrüßung",
+      "greeting_placeholder": "Leer lassen für die Standardbegrüßung von {name}",
       "test_connection": "Verbindung testen",
       "self_test": "Stimme selbst testen",
       "setup_script": "Setup-Skripte",

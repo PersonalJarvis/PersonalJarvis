@@ -31,7 +31,7 @@ _MAX_CHARS_PER_REQUEST = 8_000
 
 DEFAULT_MODEL_ID = "sonic-3.5"
 
-# Per-language native voices chosen for the JARVIS butler pattern
+# Per-language native voices chosen for the default assistant pattern
 # (masculine, authoritative, calm — parallel to ElevenLabs Daniel, Gemini
 # Charon, Grok leo). Source: Cartesia voice library (api.cartesia.ai/voices,
 # fetched 2026-05-27, filtered by language). User can override any of these

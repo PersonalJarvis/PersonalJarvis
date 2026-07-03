@@ -853,6 +853,13 @@ def _build_session(
         log.warning("telephony: speech stack build failed: %s", exc)
         return None
 
+    try:
+        from jarvis.brain.assistant_name import resolve_assistant_name
+
+        _assistant_name = resolve_assistant_name(cfg)
+    except Exception:  # noqa: BLE001 — never break call setup on name resolution
+        _assistant_name = ""
+
     return TelephonyCallSession(
         call_sid=call_sid,
         stream_sid=stream_sid,
@@ -864,6 +871,7 @@ def _build_session(
         to_number=to_number,
         language_code=language_code or "de-DE",
         greeting=getattr(twilio, "greeting", "") if twilio else "",
+        assistant_name=_assistant_name,
         direction=direction or "inbound",
         opening=opening,
         max_call_seconds=int(getattr(twilio, "max_call_seconds", 600) or 600) if twilio else 600,

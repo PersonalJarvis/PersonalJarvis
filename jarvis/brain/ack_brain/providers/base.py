@@ -41,7 +41,7 @@ class AbstractAckProvider(Protocol):
             utterance: The user's raw utterance (after STT-final).
             language: ISO-639 language hint, "de" or "en".
             persona_prompt: The locked system prompt that primes the LLM
-                with the JARVIS butler persona. Provided by
+                with the assistant's persona. Provided by
                 AckGenerator from persona_prompt.py.
 
         Returns:
