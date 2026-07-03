@@ -228,16 +228,15 @@ _ALL_ZERO = "0" * 40
 
 
 class TestMain:
-    def test_public_target_blocks_before_reading_stdin(self):
-        class _Boom:
-            def read(self):  # must never be reached for a public target
-                raise AssertionError("stdin must not be read for a public target")
-
+    def test_public_target_no_longer_blocks(self):
+        # Public-target block DISABLED at the maintainer's explicit request
+        # (2026-07-03): a direct push to the public repo is now ALLOWED. With no
+        # refs on stdin there is nothing else to flag, so main() returns 0.
         rc = gate.main(
             ["prog", "public", "https://github.com/PersonalJarvis/PersonalJarvis.git"],
-            _Boom(),
+            io.StringIO(""),
         )
-        assert rc == 1
+        assert rc == 0
 
     def test_clean_private_push_allows(self, monkeypatch):
         monkeypatch.setattr(gate, "_git", lambda *a: f"sha1\t{_NOREPLY}\t{_NOREPLY}\n")

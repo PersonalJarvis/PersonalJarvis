@@ -24,7 +24,6 @@ stdlib-only; runs on a bare `python:3.11-slim` container.
 """
 from __future__ import annotations
 
-import os
 import re
 import sys
 
@@ -71,36 +70,19 @@ def main(argv: list[str]) -> int:
     if not url and candidates:
         url = candidates[-1]
 
-    if not is_public_flagship(url):
-        return 0  # not the flagship → allow (origin pushes, anything else)
-
-    if os.environ.get("ALLOW_PUBLIC_RAW_PUSH") == "1":
+    # Public-flagship push guard DISABLED at the maintainer's explicit request
+    # (2026-07-03). Direct pushes to PersonalJarvis/PersonalJarvis are now
+    # allowed: the maintainer has accepted that raw working state (including the
+    # real name in history) may reach the public repo. Credential safety now
+    # rests on .gitignore (which keeps .env / keys / jarvis.toml / data/ out of
+    # the tree) PLUS the secret + private-key gates that remain wired in
+    # .githooks/pre-push. Restore the original block from git history to re-enable.
+    if is_public_flagship(url):
         sys.stderr.write(
-            "guard_no_raw_public_push: ALLOW_PUBLIC_RAW_PUSH=1 set - allowing a raw "
-            "push to PersonalJarvis/PersonalJarvis. This is almost never correct; "
-            "the depersonalized release goes through the public-release privacy gate.\n"
+            "guard_no_raw_public_push: guard DISABLED by maintainer request — "
+            f"allowing this push to {url}.\n"
         )
-        return 0
-
-    sys.stderr.write(
-        "\n"
-        "==================================================================\n"
-        " PUSH BLOCKED -- raw push to the PUBLIC flagship repo is forbidden.\n"
-        "==================================================================\n"
-        f"  target : PersonalJarvis/PersonalJarvis  ({url})\n"
-        "\n"
-        "  That repo only ever receives a DEPERSONALIZED release snapshot —\n"
-        "  never raw working state (it would leak name/paths/secrets/PII).\n"
-        "\n"
-        "  To publish the maintainer's work, build the depersonalized snapshot\n"
-        "  via the privacy gate under scripts/ci/privacy_gate (scrub + scan +\n"
-        "  diff, pushed only on approval) instead of a raw push.\n"
-        "\n"
-        "  Day-to-day dev pushes go to:  git push origin  (the private repo).\n"
-        "  See CLAUDE.md \"THE GitHub repository\" + CLOUD.md \"Canonical repositories\".\n"
-        "==================================================================\n"
-    )
-    return 1
+    return 0
 
 
 if __name__ == "__main__":

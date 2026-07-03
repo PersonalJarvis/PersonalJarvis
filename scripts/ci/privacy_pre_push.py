@@ -275,24 +275,16 @@ def main(argv: list[str], stdin) -> int:
     remote_name = argv[1] if len(argv) > 1 else ""
     remote_url = argv[2] if len(argv) > 2 else ""
 
-    # (A) Public-repo guard — always evaluated, always fail-closed. ----------
+    # (A) Public-repo guard DISABLED at the maintainer's explicit request
+    # (2026-07-03): a direct push to the public repo is now ALLOWED. Credential
+    # safety stays with .gitignore + the secret (C) and private-key gates below.
+    # The public target is still detected — for a heads-up log only, never a block.
     if target_is_public(remote_name, remote_url):
         print(
-            "\n"
-            "==================================================================\n"
-            " PUSH BLOCKED: direct push to the PUBLIC repo is not allowed.\n"
-            f"   remote: {remote_name!r}  url: {remote_url!r}\n"
-            "\n"
-            " The public distribution repo (PersonalJarvis/PersonalJarvis) is\n"
-            " populated ONLY by the depersonalized public-release snapshot.\n"
-            " A raw push would leak your config, identity and personal data.\n"
-            "\n"
-            " Build the depersonalized snapshot (privacy gate under\n"
-            " scripts/ci/privacy_gate) instead of pushing raw.\n"
-            "==================================================================",
+            "privacy-pre-push: public-target block is DISABLED (maintainer "
+            f"request); allowing push to remote {remote_name!r}.",
             file=sys.stderr,
         )
-        return 1
 
     try:
         # Read and parse the pushed refs once.
