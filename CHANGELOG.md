@@ -7,6 +7,32 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
+## [1.0.1] — 2026-07-03
+
+Bug-fix release.
+
+### Fixed
+
+- **Desktop app could hang forever on "Getting ready to listen".** The startup
+  banner and the top-left voice status cleared only when the speech pipeline
+  published its one-shot ready signal. If pipeline construction crashed or an
+  un-timed model load wedged warm-up, that signal never fired and the UI stayed
+  in "starting up" indefinitely — even though typing already worked. Added two
+  fail-safes: the pipeline-construction crash handler now publishes an honest
+  degraded-ready signal so the UI is released immediately, and a
+  pipeline-independent watchdog in the web server force-releases the UI after a
+  generous deadline. The banner can no longer stick forever.
+- **Local "Faster-Whisper" appeared as a ready STT provider even when not
+  installed.** The provider list never checked whether the local-voice extra was
+  present, so the card always showed as configured on a base install, and its
+  model dropdown listed all Whisper checkpoints regardless of what was
+  downloaded. Local Faster-Whisper has been removed as a user-selectable
+  speech-to-text provider; cloud STT (Groq / OpenAI / OpenRouter) is the
+  supported dictation path. The wake word (which uses its own local Whisper) and
+  the key-free STT resilience fallback are unaffected.
+
+---
+
 ## [1.0.0] — 2026-06-29
 
 First **public** release of Personal Jarvis — a voice-driven meta-orchestrator
