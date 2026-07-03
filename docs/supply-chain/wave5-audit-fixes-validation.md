@@ -311,13 +311,13 @@ container; the happy-path smoke was executed in the same harness.
 [3/13] Fetching install.sh + Fulcio trio + offline-ceremony signature from release v0.5.1-supplychain-wave5-audit-fixes...
   [R-Wave5-A TAMPER] swapping entire install.sh artifact set to v0.4.0-supplychain-wave3
       install.sh + .sig + .pem + .bundle + .cosign.sig downloaded
-      offline-ceremony pubkey fingerprint OK (40cdb1b9e255e797909fba4fb5983450ccf7fa26ec17c80f473fe360da5549ee)
+      offline-ceremony pubkey fingerprint OK (1e8f2fa590e6454daff34e88e7bde8ffcf04b1eb235f0ca11ff9ebc65e2d1d3a)
 
 [4/13] Verifying Fulcio keyless signature (axis A — GitHub Actions OIDC)...
       axis A OK (identity=PersonalJarvis/PersonalJarvis / .github/workflows/sign-installer.yml, issuer=https://token.actions.githubusercontent.com)
 
 [5/13] Verifying offline-ceremony signature (axis B — Ed25519, air-gapped)...
-      axis B OK (Ed25519, key fingerprint=40cdb1b9e255e797909fba4fb5983450ccf7fa26ec17c80f473fe360da5549ee)
+      axis B OK (Ed25519, key fingerprint=1e8f2fa590e6454daff34e88e7bde8ffcf04b1eb235f0ca11ff9ebc65e2d1d3a)
 
 [6/13] Checking Rekor inclusion proof freshness (≤ 86400s)...
       Rekor inclusion proof age: 12842s (limit 86400s)
@@ -476,8 +476,11 @@ defensive gaps.
 ## 5. Fix-forwards expected during release
 
 The Wave-4 release required four fix-forwards because the ML-DSA-65
-toolchain landed late in OpenSSL and the iter-count of the encrypted
-PQ key was off. Wave 5 inherits the working Wave-4 release pipeline
+toolchain landed late in OpenSSL and, under the since-removed
+encrypt-at-rest scheme, the iter-count of the wrapped PQ key was off
+(that scheme was retired in the 2026-07-03 rotation — the private keys
+now live only as GitHub Actions secrets). Wave 5 inherits the working
+Wave-4 release pipeline
 unchanged; the changes are additive (one new signed artifact,
 verifier extension, install.sh pin consumption). The expected fix-
 forward count is **0** for the v0.5.1 cut, with the following

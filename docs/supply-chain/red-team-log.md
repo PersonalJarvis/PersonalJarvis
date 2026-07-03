@@ -416,7 +416,7 @@ Sample attacker fingerprint generated on 2026-05-27 run:
 ```
 [3/8] Fetching install.sh + Fulcio trio + offline-ceremony signature from release v0.3.0-supplychain-wave2...
       install.sh + .sig + .pem + .bundle + .cosign.sig downloaded
-      offline-ceremony pubkey fingerprint OK (40cdb1b9e255e797909fba4fb5983450ccf7fa26ec17c80f473fe360da5549ee)
+      offline-ceremony pubkey fingerprint OK (1e8f2fa590e6454daff34e88e7bde8ffcf04b1eb235f0ca11ff9ebc65e2d1d3a)
 
 [4/8] Verifying Fulcio keyless signature (axis A — GitHub Actions OIDC)...
 Verified OK
@@ -428,7 +428,7 @@ Error: failed to verify signature
 main.go:74: error during command execution: failed to verify signature
   axis B: offline-ceremony signature check FAILED.
   install.sh.cosign.sig does NOT validate against the pinned Ed25519 pubkey
-  (fingerprint 40cdb1b9e255e797909fba4fb5983450ccf7fa26ec17c80f473fe360da5549ee).
+  (fingerprint 1e8f2fa590e6454daff34e88e7bde8ffcf04b1eb235f0ca11ff9ebc65e2d1d3a).
   refusing to execute — Wave 2 demands BOTH axes to pass.
 R_WAVE2_B_EXIT=1
 ```
@@ -622,9 +622,9 @@ sides, compare to the pinned constant baked into `install-verify.sh`.
 
     $ openssl genpkey -algorithm ML-DSA-65 -out attacker.key
     $ openssl pkey -in attacker.key -pubout -out attacker.pub.pem
-    $ PINNED=30a634809c19c41abcead8e657bfe19a53f9f4c831a82d2939cb7d5c40efe01a
+    $ PINNED=db0073bf5b77d5b0e4e5547bfcf86227031c9a138cb3088a57c270b8fbac4073
     $ openssl pkey -in pq-mldsa65.pub.pem    -pubin -outform DER | openssl dgst -sha256
-      # 30a634809c19c41abcead8e657bfe19a53f9f4c831a82d2939cb7d5c40efe01a  ← matches PINNED
+      # db0073bf5b77d5b0e4e5547bfcf86227031c9a138cb3088a57c270b8fbac4073  ← matches PINNED
     $ openssl pkey -in attacker.pub.pem      -pubin -outform DER | openssl dgst -sha256
       # 701c09495ac239bb2f8e4387f099789d1cf0af8435598ed879c948e608c15e3b  ← MISMATCH
 
@@ -726,12 +726,15 @@ Four fix-forwards landed during the v0.5.0 cut:
    (which was built specifically as a defense in TRUST_ROOT §5.4)
    caught it on the first attempt. Fixed by re-pinning to the
    upstream-published value.
-2. **#2** (`#26` / `c611cb1`) — SA-1's actual key wrap used PBKDF2
-   default `-iter 10000`, while the SA-1 commentary and TRUST_ROOT.md
-   §5 both claimed `-iter 600000`. The decrypt step's `bad decrypt`
-   error is a fail-closed posture (refuse-to-decrypt over
-   silent-garbage-decrypt). Pinned to Wave 4.1 alongside HSM
-   migration.
+2. **#2** (`#26` / `c611cb1`) — under the since-removed encrypt-at-rest
+   scheme, SA-1's actual key wrap used a lower KDF iteration count than
+   the SA-1 commentary and TRUST_ROOT.md §5 claimed; the decrypt step's
+   `bad decrypt` error was a fail-closed posture (refuse-to-decrypt over
+   silent-garbage-decrypt). **Moot as of the 2026-07-03 rotation:** the
+   signing keys are no longer wrapped or committed at all — they live
+   only as GitHub Actions secrets (`WAVE2_OFFLINE_KEY_B64`,
+   `WAVE4_MLDSA65_KEY_B64`, base64 PKCS#8 PEM), so there is no key-wrap
+   iteration count to get wrong.
 3. **#3** (`#27` / `3ae740a`) — On hosts with OpenSSL < 3.5
    (transition-mode hosts, e.g. Ubuntu 24.04 LTS shipping 3.0.13),
    the `openssl pkey -pubin` parse fails because the binary doesn't
@@ -747,6 +750,8 @@ Four fix-forwards landed during the v0.5.0 cut:
    verifier can tell pkey-parse-failed from valid-but-different.
 
 None of the four fix-forwards re-opens a classical-axis attack
-surface. Wave 4.1 follow-ups: PQ key rotation + HSM migration +
-iteration-count bump back to 600 000.
+surface. Wave 4.1 follow-up: hardware-token (HSM) custody of the
+signing keys. (The former "iteration-count bump" item is obsolete — the
+2026-07-03 rotation removed encrypt-at-rest entirely; the private keys
+now live only as GitHub Actions secrets.)
 

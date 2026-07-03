@@ -1,0 +1,145 @@
+# Fresh-install smoke: prove the RAW installer path a real downloader runs
+# (install/installer.py → editable install → runtime deps) end-to-end, then boot
+# the headless server and confirm it actually answers on its real admin port.
+#
+# This is the CI twin of the manual Docker sandbox test: it is deliberately
+# separate from `verify-installer-smoke.yml` (which exercises the SIGNED release
+# wrapper against a published tag) and from `ci.yml` (which runs the dev test
+# suite). Neither of those runs `installer.py` itself nor boots the server, so a
+# port/boot regression on a fresh machine would slip past them.
+#
+# Cost policy (mirrors ci.yml): macOS runners bill at ~10x the Linux rate, so the
+# macOS leg is OFF for ordinary pushes and ON only for a manual workflow_dispatch
+# (include_macos, default true). Proving macOS is usually the whole point of
+# dispatching by hand; a push that touches the installer still gets the cheap
+# Linux leg for free.
+
+name: Fresh-install smoke (installer.py end-to-end)
+
+on:
+  workflow_dispatch:
+    inputs:
+      include_macos:
+        description: "Also run the macOS leg (~10x runner cost). On by default for a manual run, since proving macOS is usually the point of dispatching by hand."
+        type: boolean
+        default: true
+  push:
+    branches: [ main ]
+    paths:
+      - 'install/installer.py'
+      - 'install/install.sh'
+      - 'pyproject.toml'
+      - 'requirements.txt'
+      - '.github/workflows/fresh-install-smoke.yml'
+
+# A new push to the same ref cancels the previous in-flight run so a burst of
+# commits doesn't stack billable minutes.
+concurrency:
+  group: fresh-install-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Single source of truth for which OS legs run (same cost-aware pattern as
+  # ci.yml): macOS only on a manual dispatch with include_macos=true.
+  configure:
+    name: configure matrix (cost-aware)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      os-matrix: ${{ steps.pick.outputs.os-matrix }}
+    steps:
+      - name: Pick OS matrix
+        id: pick
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.include_macos }}" = "true" ]; then
+            echo 'os-matrix=["ubuntu-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
+            echo "macOS leg INCLUDED (manual dispatch)."
+          else
+            echo 'os-matrix=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
+            echo "macOS leg SKIPPED (cheap push run). Dispatch manually to include it."
+          fi
+
+  smoke:
+    name: fresh install (${{ matrix.os }})
+    needs: configure
+    strategy:
+      fail-fast: false # we want to see ALL OS legs, not just the first red one
+      matrix:
+        os: ${{ fromJSON(needs.configure.outputs.os-matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Run the REAL installer end-to-end (headless, no wizard, no launch)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Reproduce exactly what install.sh does after the git clone: a venv,
+          # the bootstrap deps, then hand off to installer.py. --no-launch keeps
+          # the runner from spawning a server we don't tear down here (a dedicated
+          # step below boots + probes it). --no-wizard = no interactive prompts.
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install rich packaging
+          python install/installer.py --headless --no-launch --no-wizard
+
+      - name: Import smoke (the package loads on a fresh machine)
+        shell: bash
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          python -c "import jarvis; print('import OK ->', jarvis.__file__)"
+
+      - name: Boot the headless server + health probe on the REAL admin port
+        shell: bash
+        run: |
+          set -uo pipefail
+          . .venv/bin/activate
+          # Ask the launcher for the port it will actually bind (no jarvis.toml on
+          # a fresh checkout → the packaged default), so this can never drift the
+          # way the installer's launch hint did.
+          PORT=$(python -c "from jarvis.ui.web.launcher import _fast_admin_port; print(_fast_admin_port())")
+          echo "expected admin port: $PORT"
+          python -m jarvis.ui.web.launcher --headless > boot.log 2>&1 &
+          BOOTPID=$!
+          set +e
+          python - "$PORT" <<'PYEOF'
+          import sys, time, http.client
+          port = int(sys.argv[1])
+          for i in range(80):  # up to ~120 s
+              try:
+                  c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+                  c.request("GET", "/")
+                  r = c.getresponse(); r.read()
+                  # 503 = fast-boot bootstrap still holding the request while the
+                  # full app warms up — keep polling until the real app takes over.
+                  if r.status == 503 and i < 79:
+                      time.sleep(1.5); continue
+                  print(f"server UP: HTTP {r.status} after ~{i * 1.5:.0f}s")
+                  sys.exit(0)
+              except Exception:
+                  time.sleep(1.5)
+          print("server NEVER answered on the admin port within ~120 s")
+          sys.exit(7)
+          PYEOF
+          RC=$?
+          set -e
+          echo "----- boot.log (last 40 lines) -----"
+          tail -40 boot.log || true
+          kill "$BOOTPID" 2>/dev/null || true
+          exit $RC
