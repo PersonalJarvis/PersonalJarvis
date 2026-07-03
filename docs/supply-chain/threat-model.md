@@ -229,17 +229,17 @@ treated as code, not as marketing.
 ## 7. Wave 2 — multi-axis signing (FOUNDATION COMPLETE, full workflow integration pending in follow-up sub-agents)
 
 > Status: foundation step landed on branch `feat/wave2-foundation`. The
-> keypair, encrypted private key, TUF root metadata with `threshold=2`,
-> and the ceremony documentation are committed. The workflow change that
-> actually mints the offline-ceremony signature on each release, and the
-> verifier change that demands 2-of-2 at install time, are scoped for
-> follow-up sub-agents Wave-2-SA-2 (verifier), Wave-2-SA-3 (workflow),
-> Wave-2-SA-4 (tests + red-team), Wave-2-SA-5 (integration PR).
+> keypair, the committed public key, TUF root metadata with `threshold=2`,
+> and the ceremony documentation are in place; the private key lives only
+> as the `WAVE2_OFFLINE_KEY_B64` GitHub Actions secret, never committed. The
+> workflow change that actually mints the offline-ceremony signature on each
+> release, and the verifier change that demands 2-of-2 at install time, are
+> scoped for follow-up sub-agents Wave-2-SA-2 (verifier), Wave-2-SA-3
+> (workflow), Wave-2-SA-4 (tests + red-team), Wave-2-SA-5 (integration PR).
 >
 > Companion documents:
-> - `install/TRUST_ROOT.md` §3 — user-facing trust roots + passphrase
->   disclosure (the demo passphrase is committed in §3.3 with full
->   honesty about the production migration path).
+> - `install/TRUST_ROOT.md` §3 — user-facing trust roots + key custody (the
+>   private key is held only as a GitHub Actions secret; §3.3).
 > - `docs/supply-chain/wave2-key-ceremony.md` — exhaustive ceremony log
 >   + verifier contract + recovery procedure.
 
@@ -281,9 +281,10 @@ Re-walking the scenarios from §3 with Wave 2 active:
   is still legitimate, so cosign accepts. **Wave 2 mitigation:** if the
   attacker's malicious workflow step *can* mint the cosign signature
   (the workflow's OIDC identity), it **cannot** mint the offline-
-  ceremony signature — the offline private key is stored outside the
-  runner (production posture) or its passphrase is a separate secret
-  (transitional posture). The verifier refuses.
+  ceremony signature — minting it needs the Ed25519 private key, which is
+  not the workflow's OIDC identity. Today that key lives in a separate
+  GitHub Actions secret (`WAVE2_OFFLINE_KEY_B64`); the hardware-token
+  endgame keeps it off the runner entirely. The verifier refuses.
 - **Residual gap closed:** the case where the attacker compromises both
   the Action and the GitHub Actions secret store simultaneously is the
   remaining residual. That is Wave 3 scope (HSM-backed signing outside
@@ -294,7 +295,7 @@ Re-walking the scenarios from §3 with Wave 2 active:
   release, forensic recovery is possible after disclosure. **Wave 2
   mitigation:** if the offline-ceremony key is held by a *different*
   maintainer (or the same maintainer's separately-secured laptop, with
-  the passphrase in a hardware token), the xz-utils attacker — who
+  the private key in a hardware token), the xz-utils attacker — who
   cultivated trust *only* over the GitHub account — cannot mint the
   second signature. **The xz-utils attack as historically executed
   fails against a Wave-2 verifier.**
@@ -346,44 +347,47 @@ Re-walking the scenarios from §3 with Wave 2 active:
    tracked; the offline-ceremony key can be replaced with Ed448 +
    ML-DSA-65 dual-signing at Wave 4. Out of scope here.
 4. **Recovery from loss of the offline-ceremony private key.** Wave 2
-   has no automated recovery; loss of the key + passphrase means the
-   maintainer cannot mint new releases until a fresh TUF root version
-   is bootstrapped to every installed client. This bootstrap problem
+   has no automated recovery; loss of the key (both the GitHub secret and
+   the password-manager backup) means the maintainer cannot mint new
+   releases until a fresh TUF root version is bootstrapped to every
+   installed client. This bootstrap problem
    is itself Wave 3 scope (signed TUF refresh metadata channel). The
    recovery procedure is documented in `wave2-key-ceremony.md` §5.
 5. **In-toto / SLSA L3 / reproducible builds.** Wave 2 proves *who*
    signed; it does not prove *what they signed matches the source
    commit*. Wave 3 ships in-toto layout + cross-attesting rebuilders.
 
-### 7.4 The demo-posture honest disclosure
+### 7.4 Key custody — private key only in a GitHub Actions secret
 
-The committed branch includes the **decryption passphrase** for the
-offline-ceremony private key, in `install/TRUST_ROOT.md` §3.3, in plain
-text. A reader of this public repository can extract the private key.
+As of the 2026-07-03 key rotation, the offline-ceremony **private** key
+is not in this repository — not in plaintext, and not encrypted. It
+exists only as a GitHub Actions secret (`WAVE2_OFFLINE_KEY_B64`, the
+base64 of the PKCS#8 PEM) plus a local backup in the maintainer's
+password manager. The repo carries only the **public** key
+(`install/keys/offline-ceremony.pub`) and its inlined copy in the
+verifier scripts. There is no decryption passphrase, because there is no
+encrypted key file to decrypt.
 
-This is **intentional** for the foundation step:
+This preserves the Wave 2 architecture unchanged:
 
-- The Wave 2 *architectural* claim is that the verifier machinery
-  (TUF root with threshold=2, dual signature paths, separate-axis
-  pin) is in place and exercised end-to-end. That claim is fully
-  delivered by this branch regardless of where the passphrase lives.
-- The Wave 2 *operational* claim — that the production deployment
-  derives the second axis's key material in a genuinely-air-gapped
-  ceremony with hardware-token-backed custody — is **not yet** made
-  by this branch. The migration path is documented in
-  `wave2-key-ceremony.md` §4 and is part of Wave-2-SA-3's brief.
-- Honesty bar: **`install/TRUST_ROOT.md` §3.3 must contain the literal
-  passphrase line so any reader can verify both halves are present.**
-  Hiding the passphrase while *claiming* an offline ceremony was
-  performed would be the worst-of-both-worlds outcome — pretending
-  to have security one doesn't actually have.
+- The Wave 2 *architectural* claim — that the verifier machinery (TUF
+  root with threshold=2, dual signature paths, separate-axis pin) is in
+  place and exercised end-to-end — is fully delivered regardless of
+  where the private key lives.
+- The Wave 2 *operational* posture is now that the second axis's private
+  half never appears in the public tree. The signing workflow reads the
+  key from the secret at run time, signs, and never persists the decoded
+  PEM. A reader of the public repository can no longer extract the
+  private key.
+- The remaining hardening step — deriving the key inside a genuinely
+  air-gapped ceremony with hardware-token-backed custody (NitroKey /
+  YubiKey) — is documented in `wave2-key-ceremony.md` §4 and is still a
+  follow-up.
 
-When the production passphrase is moved to the GitHub Actions secret
-`WAVE2_CEREMONY_PASSPHRASE` (per the migration in
-`wave2-key-ceremony.md` §4.2), the §3.3 disclosure is replaced with a
-pointer to the secret name and the date of the migration. Until that
-happens, the passphrase remains in §3.3 as the truthful description of
-the system as actually deployed.
+Rotating the key is: generate a fresh keypair, `gh secret set
+WAVE2_OFFLINE_KEY_B64`, swap the public key + its inlined verifier block
++ the pinned fingerprint, and append a row to the rotation-history table
+in `install/TRUST_ROOT.md`.
 
 ### 7.5 Detection if Wave 2 fails
 
@@ -614,11 +618,11 @@ Wave 4 closes two gaps that Waves 1-3 structurally cannot:
    **alongside** the existing Wave 1+2 signatures — defense in depth, not
    replacement. SA-1 of Wave 4 generated the ML-DSA-65 keypair using
    OpenSSL 3.5.6 (`openssl genpkey -algorithm ML-DSA-65`); the public key
-   is committed plain at `install/keys/pq-mldsa65.pub.pem`, the private
-   key is AES-256-CBC encrypted at rest at `install/keys/pq-mldsa65.key.enc`
-   under the same passphrase pattern as the Wave-2 offline ceremony key.
-   Production rotation of the PQ passphrase happens before the
-   v0.5.0-wave4 release cut, identical discipline to Wave 2.
+   is committed plain at `install/keys/pq-mldsa65.pub.pem`; the private
+   key is not in the repo — it lives only as a GitHub Actions secret
+   (`WAVE4_MLDSA65_KEY_B64`, base64 PKCS#8 PEM), the same secret-only
+   custody as the Wave-2 offline key. Rotation follows the same
+   discipline as Wave 2.
 
 **Scenario coverage update.** The Wave 4 mitigation matrix in
 `docs/supply-chain/wave4-distribution.md` enumerates eight scenarios; the
@@ -660,7 +664,8 @@ A fifth scenario the post-quantum work explicitly addresses:
   at v0.4.0-supplychain-wave3 release asset `install-verify.ps1` with
   SHA-256 `ac6d6668ab36697510fc357f893a7b3f16b946f209252cb1a6872860751496e9`.
 - `install/keys/pq-mldsa65.pub.pem` — ML-DSA-65 public key.
-- `install/keys/pq-mldsa65.key.enc` — ML-DSA-65 private key, encrypted.
+- ML-DSA-65 private key — not committed; held only as the
+  `WAVE4_MLDSA65_KEY_B64` GitHub Actions secret (base64 PKCS#8 PEM).
 - `docs/supply-chain/wave4-distribution.md` — full Wave 4 architecture +
   user-facing command differences + Wave-1-3-scenario mitigation matrix +
   PQ migration plan.
@@ -668,8 +673,9 @@ A fifth scenario the post-quantum work explicitly addresses:
 **What Wave 4 follow-up sub-agents (SA-W4-2..SA-W4-5) MUST do:**
 
 - SA-W4-2: Add ML-DSA-65 signing step to `.github/workflows/sign-installer.yml`,
-  gated on a new GitHub Actions secret `PQ_MLDSA65_PASSPHRASE` (identical
-  pattern to Wave 2's `OFFLINE_CEREMONY_PASSPHRASE`).
+  reading the private key from the `WAVE4_MLDSA65_KEY_B64` GitHub Actions
+  secret (base64 PKCS#8 PEM — same secret-only custody as Wave 2's
+  `WAVE2_OFFLINE_KEY_B64`).
 - SA-W4-3: Add `install-verify.sh.pqsig` and `install-verify.ps1.pqsig`
   to every release asset bundle. Update `checksums.txt` to include them.
 - SA-W4-4: Add stage `[11.5/12]` (or renumber to `[12/13]` etc.) to both
@@ -698,10 +704,11 @@ A fifth scenario the post-quantum work explicitly addresses:
   toolchain doesn't have ML-DSA. If OpenSSL < 3.5 (no ML-DSA support),
   the correct response is to **defer** the PQ axis to Wave 4.1, not to
   silently fall back to a non-PQ algorithm.
-- **Do not** commit the ML-DSA-65 private key in plaintext. The encrypted
-  blob `pq-mldsa65.key.enc` is fine to commit; the passphrase lives in
-  GitHub Actions secrets + the maintainer's password manager and is
-  rotated before the v0.5.0-wave4 release.
+- **Do not** commit the ML-DSA-65 private key to the repo in any form —
+  not plaintext, not encrypted. The private key lives ONLY as the
+  `WAVE4_MLDSA65_KEY_B64` GitHub Actions secret (base64 PKCS#8 PEM), with
+  a local backup in the maintainer's password manager. Only the public
+  key (`pq-mldsa65.pub.pem`) is committed.
 - **Do not** assume `brew tap` / `scoop bucket add` "just works" without
   smoke-testing on a fresh OS image. The community-test pattern from
   Wave 2/Wave 3 (`docs/supply-chain/wave{2,3}-community-tests.md`) MUST
@@ -732,10 +739,11 @@ SA-W4-5 integration.
      `$PQ_OPENSSL` for the subsequent steps. The build is reproducible
      in the FIPS 204 deterministic sense (repeated runs against the same
      tarball produce byte-identical `pkeyutl -sign -rawin` output).
-   - "Decrypt ML-DSA-65 private key" — `aes-256-cbc -d -pbkdf2 -iter
-     600000`, identical parameters to the Wave-2 decrypt step, gated on
-     the existing `WAVE2_CEREMONY_PASSPHRASE` secret. Production
-     migration to a separate `PQ_MLDSA65_PASSPHRASE` is Wave 4.1.
+   - "Load ML-DSA-65 private key" — base64-decode the
+     `WAVE4_MLDSA65_KEY_B64` GitHub Actions secret to the PKCS#8 PEM in a
+     runner tempfile (no passphrase, no encrypt-at-rest), identical
+     secret-only custody to the Wave-2 offline key's
+     `WAVE2_OFFLINE_KEY_B64`.
    - "Sign each artifact" + "Independently verify" — five `pkeyutl
      -sign -rawin` invocations producing `<artifact>.mldsa.sig` (~3309
      bytes per FIPS 204 §5 table 2), each cross-verified against the
@@ -747,7 +755,7 @@ SA-W4-5 integration.
    - `[12/13]` — fetch `<artifact>.mldsa.sig` + the released
      `pq-mldsa65.pub.pem`; cross-check both against the inlined heredoc
      by SHA-256(DER(SPKI)) fingerprint
-     `30a634809c19c41abcead8e657bfe19a53f9f4c831a82d2939cb7d5c40efe01a`.
+     `db0073bf5b77d5b0e4e5547bfcf86227031c9a138cb3088a57c270b8fbac4073`.
    - `[13/13]` — TRANSITION-MODE verify. If local OpenSSL ≥ 3.5 is on
      PATH, `openssl pkeyutl -verify -pubin -rawin` is enforced
      hard-closed. Otherwise, an explicit
@@ -756,8 +764,9 @@ SA-W4-5 integration.
      have already validated.
 3. `install/TRUST_ROOT.md` §5 — new "Wave 4 — Post-quantum signing
    (ML-DSA-65, NIST FIPS 204)" section covering algorithm selection
-   (ML-DSA over FALCON/SLH-DSA), custody (same `WAVE2_CEREMONY_PASSPHRASE`
-   pattern with Wave-4.1 rotation pending), transition strategy
+   (ML-DSA over FALCON/SLH-DSA), custody (same secret-only
+   `WAVE4_MLDSA65_KEY_B64` model as the Wave-2 offline key), transition
+   strategy
    (parallel-with-classical until NIST CNSA 2.0 ~2030+), toolchain pin
    (OpenSSL 3.5.6 SHA-256), and the rotation procedure.
 
@@ -790,8 +799,9 @@ hard-required.** Reasoning:
 
 - Homebrew + Scoop manifest bumps to v0.5.0-wave4 (SA-1 left them
   pinned at v0.4.0-supplychain-wave3).
-- Hardware-token (NitroKey HSM 2) custody — currently the encrypted
-  key sits in-repo + the passphrase is reused from Wave 2.
+- Hardware-token (NitroKey HSM 2) custody — the ML-DSA private key
+  currently lives in the `WAVE4_MLDSA65_KEY_B64` GitHub Actions secret,
+  briefly decoded onto the runner at sign time.
 - Community-test sweep across macOS x86/arm64 + Linux for brew, and
   Windows 10/11/Server for scoop — pending a release with the PQ
   asset bundle attached.

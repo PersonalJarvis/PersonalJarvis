@@ -83,9 +83,10 @@ it pulls fresh signature material across every other role's expiry window.
 This deployment uses a **two-axis 2-of-2** signing model encoded in the
 root, but with a deliberate division of labour:
 
-1. **`offline_ceremony` (Ed25519, encrypted at rest)** signs every TUF
-   metadata file (root, targets, snapshot, timestamp). This is what gives
-   each metadata file its single satisfied signature in the demo posture.
+1. **`offline_ceremony` (Ed25519; private key held only as a GitHub Actions
+   secret)** signs every TUF metadata file (root, targets, snapshot,
+   timestamp). This is what gives each metadata file its single satisfied
+   signature in the demo posture.
 2. **`fulcio_oidc` (Sigstore keyless via GitHub Actions OIDC)** signs the
    actual binary blobs (`install.sh`, `installer.py`, …) out-of-band via
    `cosign verify-blob`, gated by `.github/workflows/sign-installer.yml`.
@@ -114,16 +115,17 @@ and targets-blob) is disclosed inline as a `_comment` field in
 This is the operational recipe a maintainer runs whenever the
 `offline_ceremony` key is rotated (suspected compromise, scheduled annual
 ceremony, or first production deployment per
-`install/TRUST_ROOT.md` §3.3 step 1).
+`install/TRUST_ROOT.md` §3.5 rotation procedure).
 
 ### 4.1 Re-key the offline key
 
 Follow `docs/supply-chain/wave2-key-ceremony.md` to generate a fresh
-Ed25519 keypair and a fresh passphrase from `openssl rand -base64 18`.
-Encrypt the private half with
-`openssl aes-256-cbc -pbkdf2 -iter 600000 -salt`. Overwrite
-`install/keys/offline-ceremony.pub` and
-`install/keys/offline-ceremony.key.enc`.
+Ed25519 keypair in an air-gapped environment. Set the new private key as
+the `WAVE2_OFFLINE_KEY_B64` GitHub Actions secret
+(`base64 -w0 new-offline.key | gh secret set WAVE2_OFFLINE_KEY_B64`) —
+never committed — and overwrite the committed **public** key
+`install/keys/offline-ceremony.pub` and its inlined fingerprint in the
+verifier scripts.
 
 ### 4.2 Bump the root
 
@@ -156,7 +158,8 @@ from securesystemslib.signer import CryptoSigner, SSlibKey
 from tuf.api.metadata import Metadata
 from tuf.api.serialization.json import JSONSerializer
 
-# Decrypt the offline key with the rotated passphrase.
+# Load the offline key from the WAVE2_OFFLINE_KEY_B64 secret (base64 PKCS#8 PEM).
+pem_bytes = base64.b64decode(os.environ["WAVE2_OFFLINE_KEY_B64"])
 priv = serialization.load_pem_private_key(pem_bytes, password=None)
 pub  = SSlibKey(keyid="offline_ceremony", keytype="ed25519",
                 scheme="ed25519",
@@ -203,9 +206,9 @@ The metadata files in this directory are committed at version 1 by
 - runs the daily timestamp cron,
 
 is wired in by Wave 2 SA-5 in
-`.github/workflows/sign-installer.yml`. SA-5 reuses the
-`WAVE2_CEREMONY_PASSPHRASE` GitHub Actions secret described in
-`install/TRUST_ROOT.md` §3.3 step 2.
+`.github/workflows/sign-installer.yml`. SA-5 reads the offline private key
+from the `WAVE2_OFFLINE_KEY_B64` GitHub Actions secret described in
+`install/TRUST_ROOT.md` §3.3.
 
 ---
 

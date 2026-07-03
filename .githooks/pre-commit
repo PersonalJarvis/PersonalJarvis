@@ -65,4 +65,23 @@ if [ -f "$lang" ]; then
     fi
 fi
 
+# --- PRIVATE-KEY gate (FAIL-CLOSED) -------------------------------------------
+# Signing private keys and the retired signing passphrase must NEVER be
+# committed — they live only in GitHub Actions secrets. Catches a full PEM
+# PRIVATE KEY block, a *.key/*.key.enc file, or a WAVE2_CEREMONY_PASSPHRASE=
+# <value> line in the STAGED changes (the demo passphrase leaked into 14 public
+# snapshots; this is the guard for that class). rc 1 = confirmed block.
+privkey="scripts/ci/check_no_private_keys.py"
+if [ -f "$privkey" ]; then
+    "$PY" "$privkey" --staged </dev/null
+    if [ "$?" -eq 1 ]; then
+        echo ""
+        echo "pre-commit BLOCKED: PRIVATE-KEY gate — key material in staged changes."
+        echo "  Signing private keys live ONLY in GitHub Actions secrets, never in"
+        echo "  the repo. Remove the key/passphrase shown above (public keys are fine)."
+        echo "  Bypass once with:  git commit --no-verify"
+        exit 1
+    fi
+fi
+
 exit 0
