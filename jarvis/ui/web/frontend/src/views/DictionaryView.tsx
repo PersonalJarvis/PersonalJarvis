@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   ArrowRight,
-  BookOpen,
+  BookA,
   Loader2,
   Pencil,
   Plus,
@@ -9,6 +9,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { ViewHeader } from "@/views/ChatsView";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -19,15 +20,16 @@ import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 
 /**
- * "Dictionary" panel inside the Settings view — the Wispr-Flow-style custom
- * vocabulary for speech recognition. Users add words the STT keeps getting
- * wrong (proper nouns, brand names, e-mail addresses) either as a plain
- * vocabulary word or as an explicit "misheard → correct" fix. Entries apply
- * to the NEXT utterance (the backend corrector live-reloads) — no restart.
+ * "Dictionary" section — the Wispr-Flow-style custom vocabulary for speech
+ * recognition, as its own sidebar destination. Users add words the STT keeps
+ * getting wrong (proper nouns, brand names, e-mail addresses) either as a
+ * plain vocabulary word or as an explicit "misheard → correct" fix. Entries
+ * apply to the NEXT utterance (the backend corrector live-reloads) — no
+ * restart.
  *
  * Backed by /api/dictionary (GET/POST/PATCH/DELETE) via useDictionary.
  */
-export function DictionaryGroup() {
+export function DictionaryView() {
   const t = useT();
   const { entries, loading, error, createEntry, updateEntry, removeEntry } =
     useDictionary();
@@ -61,20 +63,30 @@ export function DictionaryGroup() {
   }
 
   return (
-    <div className="mt-2 rounded-lg border border-border bg-card/60 p-4">
-      <div className="flex items-start gap-3">
-        <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h4 className="font-display text-sm font-semibold">
-              {t("dictionary.title")}
-            </h4>
+    <div className="flex h-full flex-col">
+      <ViewHeader
+        icon={<BookA className="h-4 w-4 text-primary" />}
+        title={t("dictionary.title")}
+        subtitle={t("dictionary.description")}
+      />
+      <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
+        <div className="mx-auto max-w-3xl">
+          <div className="flex items-center gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={t("dictionary.search")}
+                data-testid="dictionary-search"
+                className="w-full rounded-md border border-input bg-background py-1.5 pl-8 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
             {entries.length > 0 && (
               <span className="rounded-full border border-border bg-muted/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
                 {entries.length}
               </span>
             )}
-            <div className="flex-1" />
             <Button
               size="sm"
               className="gap-1.5"
@@ -88,88 +100,74 @@ export function DictionaryGroup() {
               {t("dictionary.add")}
             </Button>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {t("dictionary.description")}
-          </p>
 
           {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
 
-          {entries.length > 3 && (
-            <div className="relative mt-3">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={t("dictionary.search")}
-                data-testid="dictionary-search"
-                className="w-full rounded-md border border-input bg-background py-1.5 pl-8 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-            </div>
-          )}
-
-          {loading ? (
-            <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              {t("dictionary.loading")}
-            </div>
-          ) : entries.length === 0 ? (
-            <p className="mt-4 text-xs text-muted-foreground">
-              {t("dictionary.empty")}
-            </p>
-          ) : filtered.length === 0 ? (
-            <p className="mt-4 text-xs text-muted-foreground">
-              {t("dictionary.no_matches")}
-            </p>
-          ) : (
-            <ul className="mt-3 divide-y divide-border/60" data-testid="dictionary-list">
-              {filtered.map((entry) => (
-                <li
-                  key={entry.id}
-                  className="group flex items-center gap-2 py-2"
-                >
-                  <div className="min-w-0 flex-1 text-sm">
-                    {entry.misheard.length > 0 ? (
-                      <span className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-muted-foreground">
-                          {entry.misheard.join(", ")}
+          <div className="mt-4 rounded-lg border border-border bg-card/60 px-4 py-2">
+            {loading ? (
+              <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {t("dictionary.loading")}
+              </div>
+            ) : entries.length === 0 ? (
+              <p className="py-3 text-xs text-muted-foreground">
+                {t("dictionary.empty")}
+              </p>
+            ) : filtered.length === 0 ? (
+              <p className="py-3 text-xs text-muted-foreground">
+                {t("dictionary.no_matches")}
+              </p>
+            ) : (
+              <ul className="divide-y divide-border/60" data-testid="dictionary-list">
+                {filtered.map((entry) => (
+                  <li
+                    key={entry.id}
+                    className="group flex items-center gap-2 py-2.5"
+                  >
+                    <div className="min-w-0 flex-1 text-sm">
+                      {entry.misheard.length > 0 ? (
+                        <span className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-muted-foreground">
+                            {entry.misheard.join(", ")}
+                          </span>
+                          <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+                          <span className="font-medium">{entry.word}</span>
                         </span>
-                        <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+                      ) : (
                         <span className="font-medium">{entry.word}</span>
-                      </span>
-                    ) : (
-                      <span className="font-medium">{entry.word}</span>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    aria-label={t("dictionary.edit")}
-                    data-testid={`dictionary-edit-${entry.id}`}
-                    onClick={() => {
-                      setEditing(entry);
-                      setDialogOpen(true);
-                    }}
-                    className="text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus:opacity-100 group-hover:opacity-100"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={t("dictionary.delete")}
-                    data-testid={`dictionary-delete-${entry.id}`}
-                    disabled={deletingId === entry.id}
-                    onClick={() => void onDelete(entry)}
-                    className="text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus:opacity-100 group-hover:opacity-100 disabled:opacity-50"
-                  >
-                    {deletingId === entry.id ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Trash2 className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      aria-label={t("dictionary.edit")}
+                      data-testid={`dictionary-edit-${entry.id}`}
+                      onClick={() => {
+                        setEditing(entry);
+                        setDialogOpen(true);
+                      }}
+                      className="text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus:opacity-100 group-hover:opacity-100"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={t("dictionary.delete")}
+                      data-testid={`dictionary-delete-${entry.id}`}
+                      disabled={deletingId === entry.id}
+                      onClick={() => void onDelete(entry)}
+                      className="text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus:opacity-100 group-hover:opacity-100 disabled:opacity-50"
+                    >
+                      {deletingId === entry.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
 
           <p className="mt-3 text-[11px] text-muted-foreground">
             {t("dictionary.applies_note")}

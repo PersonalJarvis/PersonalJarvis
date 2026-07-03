@@ -43,6 +43,7 @@
     "wiki": "Wiki",
     "apikeys": "API Keys",
     "settings": "Settings",
+    "dictionary": "Dictionary",
     "telephony": "Telephony",
     "outputs": "Outputs",
     "socials": "Socials",
@@ -926,6 +927,20 @@
     "filter_hint_free": "Zero-cost models — no API credit needed.",
     "filter_hint_frontier": "When price doesn't matter — the most capable models.",
     "filter_hint_value": "The best performance for the price."
+  },
+  "apikeys_voice": {
+    "heading": "Voice",
+    "voice_label": "Voice",
+    "choose_voice": "Choose a voice…",
+    "multilingual": "Multilingual",
+    "saved": "Voice saved",
+    "load_failed": "Could not load voices",
+    "no_voices": "No voices for this model",
+    "count_hint": "{0} voices",
+    "preview": "Preview voice",
+    "preview_failed": "Preview failed",
+    "preview_language": "Preview language",
+    "preview_in": "Preview in"
   },
   "apikeys_cu_model": {
     "heading": "Computer-Use model",

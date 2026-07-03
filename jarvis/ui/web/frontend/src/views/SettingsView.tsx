@@ -14,7 +14,6 @@ import { AppSettingsGroup } from "@/views/settings/AppSettingsGroup";
 import { SilenceWindowGroup } from "@/views/settings/SilenceWindowGroup";
 import { VolumeGroup } from "@/views/settings/VolumeGroup";
 import { SystemPromptGroup } from "@/views/settings/SystemPromptGroup";
-import { DictionaryGroup } from "@/views/settings/DictionaryGroup";
 import { useWakeWord, type WakeWordSaveResult } from "@/hooks/useWakeWord";
 import {
   useKeybinds,
@@ -67,7 +66,6 @@ export function SettingsView() {
         <AppSettingsGroup />
         <SystemPromptGroup />
         <WakeWordPanel />
-        <DictionaryGroup />
         <SilenceWindowGroup />
         <VolumeGroup />
         <KeybindsPanel />

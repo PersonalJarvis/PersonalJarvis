@@ -43,6 +43,7 @@
     "wiki": "Wiki",
     "apikeys": "Claves API",
     "settings": "Ajustes",
+    "dictionary": "Diccionario",
     "telephony": "Telefonía",
     "outputs": "Salidas",
     "socials": "Redes",
@@ -925,6 +926,20 @@
     "filter_hint_free": "Modelos gratuitos — sin necesidad de crédito de API.",
     "filter_hint_frontier": "Cuando el precio no importa — los modelos más capaces.",
     "filter_hint_value": "La mejor relación calidad-precio."
+  },
+  "apikeys_voice": {
+    "heading": "Voz",
+    "voice_label": "Voz",
+    "choose_voice": "Elige una voz…",
+    "multilingual": "Multilingüe",
+    "saved": "Voz guardada",
+    "load_failed": "No se pudieron cargar las voces",
+    "no_voices": "Sin voces para este modelo",
+    "count_hint": "{0} voces",
+    "preview": "Escuchar voz",
+    "preview_failed": "La vista previa falló",
+    "preview_language": "Idioma de la vista previa",
+    "preview_in": "Vista previa en"
   },
   "apikeys_cu_model": {
     "heading": "Modelo para Computer-Use",

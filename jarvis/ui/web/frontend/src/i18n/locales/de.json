@@ -43,6 +43,7 @@
     "wiki": "Wiki",
     "apikeys": "API-Keys",
     "settings": "Einstellungen",
+    "dictionary": "Wörterbuch",
     "telephony": "Telefonie",
     "outputs": "Outputs",
     "socials": "Socials",
@@ -925,6 +926,20 @@
     "filter_hint_free": "Kostenlose Modelle — kein API-Guthaben nötig.",
     "filter_hint_frontier": "Wenn der Preis egal ist — die leistungsstärksten Modelle.",
     "filter_hint_value": "Die beste Leistung fürs Geld."
+  },
+  "apikeys_voice": {
+    "heading": "Stimme",
+    "voice_label": "Stimme",
+    "choose_voice": "Stimme wählen…",
+    "multilingual": "Mehrsprachig",
+    "saved": "Stimme gespeichert",
+    "load_failed": "Stimmen konnten nicht geladen werden",
+    "no_voices": "Keine Stimmen für dieses Modell",
+    "count_hint": "{0} Stimmen",
+    "preview": "Stimme anhören",
+    "preview_failed": "Vorschau fehlgeschlagen",
+    "preview_language": "Sprache der Vorschau",
+    "preview_in": "Vorschau in"
   },
   "apikeys_cu_model": {
     "heading": "Modell für Computer-Use",

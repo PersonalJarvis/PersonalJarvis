@@ -19,6 +19,7 @@ import { ContactsView } from "@/views/contacts/ContactsView";
 import { FeedbackView } from "@/views/feedback/FeedbackView";
 import { AgentInstructionsView } from "@/views/AgentInstructionsView";
 import { TelephonySetupView } from "@/views/TelephonyView";
+import { DictionaryView } from "@/views/DictionaryView";
 
 /**
  * Main area to the right of the sidebar. All views are switched the classic
@@ -92,6 +93,8 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     case "taskbar":
     case "languages":
       return <SettingsView />;
+    case "dictionary":
+      return <DictionaryView />;
     case "outputs":
       return <OutputsView />;
     case "socials":

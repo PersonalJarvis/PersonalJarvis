@@ -35,7 +35,8 @@ export type SectionId =
   | "taskbar"
   | "contacts"
   | "feedback"
-  | "agent-instructions";
+  | "agent-instructions"
+  | "dictionary";
 
 export const SECTION_IDS = [
   "chats",
@@ -63,6 +64,7 @@ export const SECTION_IDS = [
   "contacts",
   "feedback",
   "agent-instructions",
+  "dictionary",
 ] as const satisfies readonly SectionId[];
 
 export function isSectionId(value: unknown): value is SectionId {
@@ -95,6 +97,7 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   contacts: "Contacts",
   feedback: "Feedback",
   "agent-instructions": "Agent Instructions",
+  dictionary: "Dictionary",
 };
 
 export interface EventItem {
