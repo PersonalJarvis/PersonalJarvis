@@ -29,8 +29,8 @@ MARKER_END = "# <<< guard_no_raw_public_push <<<"
 
 GUARD_BLOCK = f"""{MARKER_BEGIN}
 # Hard-block a raw push to the PUBLIC flagship repo PersonalJarvis/PersonalJarvis.
-# That repo only ever receives a depersonalized snapshot via the
-# ship-public-release skill (CLAUDE.md rule 2). git passes: pre-push <name> <url>.
+# That repo only ever receives a depersonalized snapshot via the public-release
+# privacy gate (CLAUDE.md rule 2). git passes: pre-push <name> <url>.
 __pj_guard="scripts/ci/guard_no_raw_public_push.py"
 if [ -f "$__pj_guard" ]; then
     __pj_py="/c/Program Files/Python311/python.exe"

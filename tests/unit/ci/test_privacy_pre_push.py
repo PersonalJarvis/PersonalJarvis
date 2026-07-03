@@ -36,9 +36,9 @@ import privacy_pre_push as gate  # noqa: E402
 def _load_strip_and_scan():
     path = (
         _REPO_ROOT
-        / ".claude"
-        / "skills"
-        / "ship-public-release"
+        / "scripts"
+        / "ci"
+        / "privacy_gate"
         / "scripts"
         / "strip_and_scan.py"
     )

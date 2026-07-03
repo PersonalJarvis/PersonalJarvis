@@ -3,7 +3,7 @@
 
 This is the *fast, deterministic* half of the docs privacy defence (the slow,
 semantic half is the ``docs-privacy-reviewer`` sub-agent). It reuses the single
-source of truth for masking — the ``ship-public-release`` skill's
+source of truth for masking — the public-release privacy gate's
 ``pii-scrub.tsv`` — so a hit here means exactly the same thing it means at ship
 time: a personal identifier reached a file that is world-readable forever once
 pushed.
@@ -40,7 +40,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MANIFEST = REPO_ROOT / ".claude" / "skills" / "ship-public-release" / "references" / "pii-scrub.tsv"
+MANIFEST = REPO_ROOT / "scripts" / "ci" / "privacy_gate" / "references" / "pii-scrub.tsv"
 
 # Where a private maintainer email gets masked inside docs (the real addresses
 # live only in the manifest + .mailmap; this script never spells one out).

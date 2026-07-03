@@ -10,7 +10,7 @@ It enforces exactly three things on an ordinary push:
 
   (A) Public-repo guard. A direct push to the PUBLIC distribution repo
       (PersonalJarvis/PersonalJarvis) is hard-blocked. The only sanctioned path
-      to public is the `ship-public-release` skill, which depersonalizes the
+      to public is the depersonalized public-release snapshot, which scrubs the
       tree first. Detected by remote name == "public" OR a remote URL
       containing (case-insensitive) "personaljarvis/personaljarvis".
 
@@ -174,17 +174,17 @@ def load_private_emails() -> set[str]:
 
 
 def load_secret_scanner(repo_root: Path) -> tuple[dict | None, set, set]:
-    """Import the ship skill's strip_and_scan.py and return its scan ingredients.
+    """Import the privacy gate's strip_and_scan.py and return its scan ingredients.
 
     Returns (compiled_patterns, forbidden_basenames, allowlist). On ANY failure
-    (skill missing, import error, attribute missing) returns (None, set(), set())
+    (file missing, import error, attribute missing) returns (None, set(), set())
     so the caller fails OPEN for the secret checks — layer 3 (CI) is the backstop.
     """
     try:
-        skill_dir = (
-            repo_root / ".claude" / "skills" / "ship-public-release"
+        gate_dir = (
+            repo_root / "scripts" / "ci" / "privacy_gate"
         )
-        script = skill_dir / "scripts" / "strip_and_scan.py"
+        script = gate_dir / "scripts" / "strip_and_scan.py"
         spec = importlib.util.spec_from_file_location(
             "ship_strip_and_scan", script
         )
@@ -197,7 +197,7 @@ def load_secret_scanner(repo_root: Path) -> tuple[dict | None, set, set]:
             name: re.compile(p) for name, p in module.SECRET_PATTERNS.items()
         }
         forbidden = set(module.FORBIDDEN_BASENAMES)
-        allowlist = module._load_allowlist(skill_dir)
+        allowlist = module._load_allowlist(gate_dir)
         return compiled, forbidden, allowlist
     except Exception as exc:  # pragma: no cover - defensive fail-open path
         print(
@@ -284,10 +284,11 @@ def main(argv: list[str], stdin) -> int:
             f"   remote: {remote_name!r}  url: {remote_url!r}\n"
             "\n"
             " The public distribution repo (PersonalJarvis/PersonalJarvis) is\n"
-            " populated ONLY by the depersonalizing `ship-public-release` skill.\n"
+            " populated ONLY by the depersonalized public-release snapshot.\n"
             " A raw push would leak your config, identity and personal data.\n"
             "\n"
-            " Run the ship-public-release skill instead.\n"
+            " Build the depersonalized snapshot (privacy gate under\n"
+            " scripts/ci/privacy_gate) instead of pushing raw.\n"
             "==================================================================",
             file=sys.stderr,
         )
