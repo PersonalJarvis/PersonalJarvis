@@ -203,9 +203,10 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
 # STT model catalogs (the ``[stt] model`` is a single global value).
 STT_CATALOG: dict[str, list[ModelInfo]] = {
     "groq-api": _ids(["whisper-large-v3", "whisper-large-v3-turbo", "distil-whisper-large-v3-en"]),
-    "faster-whisper": _ids([
-        "distil-large-v3", "large-v3", "large-v3-turbo", "medium", "small", "base", "tiny",
-    ]),
+    # "faster-whisper" (local) was removed as a user-selectable STT provider in
+    # v1.0.1 — see the note in provider_spec.py. The wake-word local Whisper and
+    # the key-free STT fallback do NOT use this catalog (they read [stt].wake_*
+    # / construct FasterWhisperProvider directly), so no wake/fallback breakage.
     "openai-api": _ids(["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"]),
     "deepgram": _ids(["nova-3", "nova-2", "nova-2-general", "enhanced", "base"]),
     # OpenRouter STT — the model picker offers ONLY transcription models. This

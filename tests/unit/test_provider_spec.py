@@ -141,7 +141,18 @@ def test_provider_billing_is_derived_from_auth_mode() -> None:
     assert provider_billing(by_id["gemini"]) == "api"
     assert provider_billing(by_id["antigravity"]) == "subscription_or_api"
     assert provider_billing(by_id["codex"]) == "subscription_or_api"
-    assert provider_billing(by_id["faster-whisper"]) == "local"
+    # No auth_mode="none" provider ships today — the local "faster-whisper" STT
+    # was removed as a user-selectable provider in v1.0.1 — but the capability
+    # mapping still resolves "none" → "local" for any future local provider.
+    _local = ProviderSpec(
+        id="synthetic-local",
+        label="Synthetic Local",
+        tier="stt",
+        auth_mode="none",
+        secret_keys=(),
+        dashboard_url=None,
+    )
+    assert provider_billing(_local) == "local"
 
 
 def test_antigravity_accepts_api_key_billing() -> None:

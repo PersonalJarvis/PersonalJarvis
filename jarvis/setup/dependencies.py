@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from typing import Final
 
@@ -242,6 +243,48 @@ def install_npm_package(package: str, *, timeout_s: float = 300.0) -> tuple[bool
     return True, (result.stdout or "").strip()[:400] or "install reported success"
 
 
+def install_pip_package(package: str, *, timeout_s: float = 600.0) -> tuple[bool, str]:
+    """Best-effort ``<python> -m pip install <package>`` into the RUNNING
+    interpreter. Never raises. Returns ``(ok, message)``.
+
+    Used to pull an opt-in runtime extra from inside the app (e.g.
+    ``faster-whisper`` for the any-phrase local wake path), so a user never has
+    to drop to a shell — the CLAUDE.md §3 "recoverable in-app" contract. Runs
+    against ``sys.executable`` so the package lands in the same environment the
+    app imports from, and passes ``NO_WINDOW_CREATIONFLAGS`` so a ``pythonw.exe``
+    host does not flash a console (AP-1). Cross-platform: ``python -m pip`` is
+    the one install invocation that behaves identically on Windows/macOS/Linux.
+    A frozen/no-pip interpreter fails cleanly with a message instead of raising.
+    """
+    if not sys.executable:
+        return False, "no Python interpreter available to run pip"
+
+    logger.info("install_pip_package: %s -m pip install %s", sys.executable, package)
+    try:
+        result = subprocess.run(  # noqa: S603 -- args are controlled, not user input
+            [
+                sys.executable, "-m", "pip", "install",
+                "--disable-pip-version-check", package,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"pip install timed out after {timeout_s:.0f}s"
+    except OSError as exc:
+        return False, f"pip spawn failed: {exc}"
+
+    if result.returncode != 0:
+        # The tail of stderr carries pip's actual reason (resolver conflict,
+        # no matching wheel for the platform, network error).
+        stderr = (result.stderr or "").strip()[-600:]
+        return False, f"pip exited {result.returncode}: {stderr or 'no stderr'}"
+
+    return True, (result.stdout or "").strip()[-400:] or "install reported success"
+
+
 def install_claude_cli() -> tuple[bool, DependencyStatus]:
     """Auto-install + re-probe ``claude``. Returns the post-install status."""
     ok, message = install_npm_package("@anthropic-ai/claude-code")
@@ -264,4 +307,5 @@ __all__ = [
     "check_openclaw",
     "install_claude_cli",
     "install_npm_package",
+    "install_pip_package",
 ]

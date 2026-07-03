@@ -41,8 +41,7 @@ sensitivity = 0.5
 
 # ── Speech-to-Text ──
 [stt]
-provider = "groq-api"        # groq-api | openai-api | deepgram-flux | deepgram-nova3 | faster-whisper
-fallback = "faster-whisper"  # offline fallback (needs the [desktop] local-whisper extra)
+provider = "groq-api"        # groq-api | openai-api | openrouter-stt | deepgram-flux | deepgram-nova3
 device = "cpu"               # cpu | cuda — keep "cpu" unless you have a local GPU
 language = "auto"            # "de" | "en" | "auto"
 bias_prompt = ""             # optional comma-separated vocab to stabilize proper nouns

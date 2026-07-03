@@ -3,6 +3,7 @@ import {
   Settings,
   Mic,
   Keyboard,
+  Loader2,
   X,
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
@@ -14,7 +15,11 @@ import { AppSettingsGroup } from "@/views/settings/AppSettingsGroup";
 import { SilenceWindowGroup } from "@/views/settings/SilenceWindowGroup";
 import { VolumeGroup } from "@/views/settings/VolumeGroup";
 import { SystemPromptGroup } from "@/views/settings/SystemPromptGroup";
-import { useWakeWord, type WakeWordSaveResult } from "@/hooks/useWakeWord";
+import {
+  useWakeWord,
+  useLocalSpeechInstall,
+  type WakeWordSaveResult,
+} from "@/hooks/useWakeWord";
 import {
   useKeybinds,
   chordToCombo,
@@ -110,8 +115,11 @@ function SettingRow({ row }: { row: SettingRow }) {
  */
 function WakeWordPanel() {
   const t = useT();
-  const { config, loading, error, saveWakeWord } = useWakeWord();
+  const { config, loading, error, saveWakeWord, refetch } = useWakeWord();
   const pushToast = useEventStore((s) => s.pushToast);
+  // In-app installer for the local speech pack (faster-whisper) that unlocks any
+  // wake phrase. Refetch the wake config on success so the hint clears.
+  const { status: installStatus, install } = useLocalSpeechInstall(refetch);
 
   const [phrase, setPhrase] = useState("");
   const [engine, setEngine] = useState<string>("auto");
@@ -159,6 +167,15 @@ function WakeWordPanel() {
       pushToast("error", (e as Error).message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function onRestart() {
+    try {
+      await fetch("/api/settings/restart-app", { method: "POST" });
+      pushToast("info", t("settings_view.wake_word.restarting"));
+    } catch (e) {
+      pushToast("error", (e as Error).message);
     }
   }
 
@@ -248,11 +265,56 @@ function WakeWordPanel() {
             className="mt-1.5 w-full accent-primary disabled:opacity-50"
           />
 
-          {/* Inline degrade hint */}
+          {/* Any-phrase enablement: install the local speech pack in-app so
+              an arbitrary wake word works, instead of silently degrading. */}
           {showNeedsWhisperHint && (
-            <p className="mt-3 text-xs text-amber-500">
-              {t("settings_view.wake_word.needs_whisper_hint")}
-            </p>
+            <div className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-500">
+              <p>{t("settings_view.wake_word.needs_whisper_hint")}</p>
+
+              {installStatus.state === "idle" && (
+                <Button
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => void install()}
+                >
+                  {t("settings_view.wake_word.enable_local_button")}
+                </Button>
+              )}
+
+              {installStatus.state === "running" && (
+                <p className="mt-2 flex items-center gap-2 text-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  {t("settings_view.wake_word.enable_local_installing")}
+                </p>
+              )}
+
+              {installStatus.state === "error" && (
+                <div className="mt-2 text-destructive">
+                  <p>{t("settings_view.wake_word.enable_local_error")}</p>
+                  {installStatus.message && (
+                    <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                      {installStatus.message}
+                    </p>
+                  )}
+                  <Button
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => void install()}
+                  >
+                    {t("settings_view.wake_word.enable_local_retry")}
+                  </Button>
+                </div>
+              )}
+
+              {installStatus.state === "done" && (
+                <div className="mt-2 text-foreground">
+                  <p>{t("settings_view.wake_word.enable_local_done")}</p>
+                  <Button size="sm" className="mt-2" onClick={() => void onRestart()}>
+                    {t("settings_view.wake_word.enable_local_restart")}
+                  </Button>
+                </div>
+              )}
+            </div>
           )}
 
           {/* Save button */}

@@ -48,9 +48,14 @@ router = APIRouter(prefix="/api", tags=["providers"])
 # Setup-Wizard deklarierten Slots.
 ALLOWED_SECRET_KEYS: frozenset[str] = frozenset(s.key for s in WIZARD_SECRETS)
 
-# Lokale Provider, die im Privacy-Mode erlaubt bleiben.
-# Ollama wurde 2026-04-21 entfernt — nur STT (faster-whisper) ist aktuell lokal.
-LOCAL_PROVIDERS: frozenset[str] = frozenset({"faster-whisper"})
+# Local providers allowed to stay active in the airgapped privacy profile.
+# Empty since v1.0.1: Ollama was removed 2026-04-21, and the local
+# "faster-whisper" STT dictation provider was removed from the user-selectable
+# catalog (see provider_spec.py). With no local brain/STT provider left, the
+# airgapped profile admits no provider switch — an honest state, not a
+# regression: airgapped means "local only", and there is currently no local
+# provider to switch TO. (Wake still runs its own local Whisper off this list.)
+LOCAL_PROVIDERS: frozenset[str] = frozenset()
 
 # Codex subagent slugs (_CODEX_SUBAGENT_SLUGS / _CODEX_SUBAGENT_CANONICAL) are
 # imported from jarvis.missions.worker_runtime.provider_map — the single source
@@ -1281,9 +1286,18 @@ async def delete_secret_value(key: str, request: Request) -> dict[str, Any]:
 async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     brain = getattr(request.app.state, "brain", None)
     if brain is None or not hasattr(brain, "switch"):
+        # The brain is built on a background task after boot, so a very early
+        # click can land before it is ready. It can also be genuinely absent on
+        # a headless build. Either way "wait and retry" is the honest guidance —
+        # the old "headless mode" wording misdiagnosed a fresh-install brain that
+        # simply had not finished building yet (see BrainManager.from_tier_config
+        # default-router synthesis).
         raise HTTPException(
             status_code=503,
-            detail="Brain-Manager nicht verfügbar (vermutlich Headless-Mode)",
+            detail=(
+                "Brain is still starting up or unavailable — wait a moment and "
+                "try again. If it persists, check the server logs."
+            ),
         )
 
     spec = get_spec(body.provider)

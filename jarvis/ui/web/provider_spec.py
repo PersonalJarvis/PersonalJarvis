@@ -330,18 +330,17 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "lists only transcription-capable models."
         ),
     ),
-    ProviderSpec(
-        id="faster-whisper",
-        label="Faster-Whisper (lokal)",
-        tier="stt",
-        auth_mode="none",
-        secret_keys=(),
-        dashboard_url=None,
-        credential_help=(
-            "Runs locally on your machine — no API key, no account. Needs the "
-            "[desktop] extra and a one-time model download."
-        ),
-    ),
+    # Local "Faster-Whisper (lokal)" STT was REMOVED as a user-selectable
+    # provider (2026-07-03, v1.0.1). Two defects made the card actively
+    # misleading: the provider list never checked whether the local-voice extra
+    # was actually installed, so it always showed as "ready" on a base install;
+    # and the model dropdown listed all seven Whisper checkpoints regardless of
+    # what was downloaded. Cloud STT (groq-api / openai-api / openrouter-stt) is
+    # the supported dictation path. NOTE: this only removes the *dictation*
+    # provider from the UI — the wake word still uses its own local Whisper
+    # (build_wake_whisper, reading [stt].wake_*), and build_stt_from_config keeps
+    # a key-free local faster-whisper *fallback* (_build_local_fallback, AP-22)
+    # as an invisible resilience floor for a user with no cloud STT key.
 )
 
 

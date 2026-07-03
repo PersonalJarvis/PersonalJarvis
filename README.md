@@ -122,6 +122,20 @@ curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/
 | `--no-launch` | Install only; don't start the app |
 | `--no-wizard` | Skip the first-run key wizard |
 
+**Uninstall** — one command removes everything a plain folder-delete would miss: the
+install folder, the login-autostart entry, and the API keys saved in your OS keychain.
+Add `--dry-run` to preview, or `--yes` to skip the confirmation.
+
+```powershell
+# Windows (PowerShell)
+& "$env:USERPROFILE\.personal-jarvis\install\uninstall.ps1"
+```
+
+```bash
+# macOS · Linux
+bash ~/.personal-jarvis/install/uninstall.sh
+```
+
 <details>
 <summary><b>Prefer pipx, or a manual clone?</b></summary>
 
@@ -293,6 +307,11 @@ short version:
 - New providers must pass the contract test suite (`pytest tests/contract/`).
 - Found a security issue? Please report it privately — see [`SECURITY.md`](SECURITY.md).
 
+## Author
+
+Personal Jarvis is created and maintained by **Ruben Herz**.
+Say hi on X — [@Ruben_Herz](https://x.com/Ruben_Herz).
+
 ## License
 
 Released under the **MIT License** — free to use, modify, and distribute, including
@@ -307,6 +326,6 @@ to. Personal Jarvis is not affiliated with or endorsed by any of them — see
 <br/>
 
 <p align="center">
-  <sub>Built by the Personal Jarvis Maintainers · © 2026 · MIT</sub><br/>
+  <sub>Created by <b>Ruben Herz</b> · <a href="https://x.com/Ruben_Herz">@Ruben_Herz</a> · © 2026 · MIT</sub><br/>
   <sub><a href="https://discord.gg/UPu6pFWrJ">Discord</a> · <a href="https://x.com/PersonalJarvis">X</a> · <a href="https://www.instagram.com/personaljarvis/">Instagram</a></sub>
 </p>

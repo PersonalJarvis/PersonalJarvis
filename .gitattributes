@@ -14,6 +14,10 @@ install/install.ps1          text eol=lf
 install/installer.py         text eol=lf
 install/install-verify.sh    text eol=lf
 install/install-verify.ps1   text eol=lf
+# Uninstaller bootstraps — NOT under signature, but a CRLF shell script breaks
+# `bash uninstall.sh` on macOS/Linux, so pin them to LF unconditionally too.
+install/uninstall.sh         text eol=lf
+install/uninstall.ps1        text eol=lf
 # Wave 6: the hash-pinned dependency lockfile + its source `requirements.in`
 # are signed alongside the install scripts. Same LF-pinning discipline so
 # the cross-runner hash assertion (cross-runner-hash.yml) does not break
