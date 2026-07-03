@@ -3,7 +3,7 @@
 
 Doctrine (CLAUDE.md "THE GitHub repository", CLOUD.md "Canonical repositories"):
 the public **`PersonalJarvis/PersonalJarvis`** repo is written EXCLUSIVELY by the
-`ship-public-release` skill — a depersonalized, secrets-/PII-scrubbed snapshot.
+depersonalized public-release process — a secrets-/PII-scrubbed snapshot.
 A plain `git push` of raw working state to it is a defect (it would leak the
 maintainer's name, paths, `jarvis.toml`, `.env`, `data/`, Vault, …).
 
@@ -11,7 +11,7 @@ This guard makes rule 2 *enforced*, not just documented. It is invoked by the
 `pre-push` hook with git's standard args (`<remote-name> <remote-url>`) and exits
 non-zero — aborting the push — when the destination is the public flagship.
 
-Why this never blocks the legitimate release: `ship-public-release` pushes from a
+Why this never blocks the legitimate release: the release pushes from a
 *separate, fresh clone* (its own `.git`), so this working-repo hook is not on that
 push path at all. Normal `git push origin` to a non-flagship working repo is
 allowed. Only a raw push from THIS working tree to `PersonalJarvis/PersonalJarvis`
@@ -78,7 +78,7 @@ def main(argv: list[str]) -> int:
         sys.stderr.write(
             "guard_no_raw_public_push: ALLOW_PUBLIC_RAW_PUSH=1 set - allowing a raw "
             "push to PersonalJarvis/PersonalJarvis. This is almost never correct; "
-            "the depersonalized release goes through the ship-public-release skill.\n"
+            "the depersonalized release goes through the public-release privacy gate.\n"
         )
         return 0
 
@@ -92,9 +92,9 @@ def main(argv: list[str]) -> int:
         "  That repo only ever receives a DEPERSONALIZED release snapshot —\n"
         "  never raw working state (it would leak name/paths/secrets/PII).\n"
         "\n"
-        "  To publish the maintainer's work, use the skill instead:\n"
-        "      ship-public-release   (builds a scrubbed snapshot, scans it,\n"
-        "                             shows a diff, pushes only on approval)\n"
+        "  To publish the maintainer's work, build the depersonalized snapshot\n"
+        "  via the privacy gate under scripts/ci/privacy_gate (scrub + scan +\n"
+        "  diff, pushed only on approval) instead of a raw push.\n"
         "\n"
         "  Day-to-day dev pushes go to:  git push origin  (the private repo).\n"
         "  See CLAUDE.md \"THE GitHub repository\" + CLOUD.md \"Canonical repositories\".\n"
