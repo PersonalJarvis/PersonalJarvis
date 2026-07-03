@@ -295,7 +295,7 @@ short version:
 
 ## Author
 
-Personal Jarvis is created and maintained by **Ruben Lütke**.
+Personal Jarvis is created and maintained by **Ruben Lütke**. <!-- i18n-allow: maintainer proper name (umlaut) -->
 Say hi on X — [@Ruben_Herz](https://x.com/Ruben_Herz).
 
 ## License
@@ -312,6 +312,6 @@ to. Personal Jarvis is not affiliated with or endorsed by any of them — see
 <br/>
 
 <p align="center">
-  <sub>Created by <b>Ruben Lütke</b> · <a href="https://x.com/Ruben_Herz">@Ruben_Herz</a> · © 2026 · MIT</sub><br/>
+  <sub>Created by <b>Ruben Lütke</b> · <a href="https://x.com/Ruben_Herz">@Ruben_Herz</a> · © 2026 · MIT</sub><br/> <!-- i18n-allow: maintainer proper name (umlaut) -->
   <sub><a href="https://discord.gg/UPu6pFWrJ">Discord</a> · <a href="https://x.com/PersonalJarvis">X</a> · <a href="https://www.instagram.com/personaljarvis/">Instagram</a></sub>
 </p>
