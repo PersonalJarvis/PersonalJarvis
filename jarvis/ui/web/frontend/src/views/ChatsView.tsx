@@ -520,11 +520,15 @@ function EmptyState() {
 export function ViewHeader({
   icon,
   title,
+  titleBadge,
   subtitle,
   right,
 }: {
   icon: React.ReactNode;
   title: string;
+  // Optional inline accessory rendered right next to the title (e.g. a
+  // "Research Preview" / "Beta" pill). Absent for every other view.
+  titleBadge?: React.ReactNode;
   subtitle?: string;
   right?: React.ReactNode;
 }) {
@@ -534,7 +538,10 @@ export function ViewHeader({
         {icon}
       </div>
       <div className="flex-1 min-w-0">
-        <h2 className="font-display text-base font-semibold tracking-tight">{title}</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="font-display text-base font-semibold tracking-tight">{title}</h2>
+          {titleBadge}
+        </div>
         {subtitle && (
           <p className="truncate text-xs text-muted-foreground">{subtitle}</p>
         )}

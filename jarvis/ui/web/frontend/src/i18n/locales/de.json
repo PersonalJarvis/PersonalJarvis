@@ -182,7 +182,8 @@
     "misheard_comma_hint": "Mehrere falsch erkannte Varianten mit Kommas trennen.",
     "cancel": "Abbrechen",
     "save": "Speichern",
-    "add_confirm": "Wort hinzufügen"
+    "add_confirm": "Wort hinzufügen",
+    "research_preview": "Research Preview"
   },
   "voice_state": {
     "idle": "Bereit",

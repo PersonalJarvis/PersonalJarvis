@@ -67,6 +67,11 @@ export function DictionaryView() {
       <ViewHeader
         icon={<BookA className="h-4 w-4 text-primary" />}
         title={t("dictionary.title")}
+        titleBadge={
+          <span className="shrink-0 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+            {t("dictionary.research_preview")}
+          </span>
+        }
         subtitle={t("dictionary.description")}
       />
       <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">

@@ -182,7 +182,8 @@
     "misheard_comma_hint": "Separate several misheard variants with commas.",
     "cancel": "Cancel",
     "save": "Save",
-    "add_confirm": "Add word"
+    "add_confirm": "Add word",
+    "research_preview": "Research Preview"
   },
   "voice_state": {
     "idle": "Ready",

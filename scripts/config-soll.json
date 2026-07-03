@@ -18,7 +18,7 @@
     "vertex_project": "",
     "vertex_location": "us-central1",
     "service_account_path": "~/.config/jarvis/vertex-sa.json",
-    "model": "google/gemini-3.1-flash-tts-preview",
+    "model": "x-ai/grok-voice-tts-1.0",
     "volume": 1.0
   },
   "tts.cartesia": {
