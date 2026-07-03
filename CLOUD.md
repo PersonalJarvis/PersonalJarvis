@@ -81,6 +81,16 @@ If **no** → either (a) the OS/hardware-specific portion is correctly gated beh
 
 ---
 
+## In-app updates — every release reaches users via the "Update available" button (added 2026-07-03)
+
+**The desktop app self-updates.** Since 2026-07-03 the top bar carries an in-app updater (`jarvis/ui/web/update_routes.py` + `jarvis/ui/web/frontend/src/components/layout/TopBar.tsx`): when a newer version is published, an **"Update available · vX.Y.Z"** button appears next to Restart; one click pulls the new code and restarts, so an end user never re-runs the installer from a terminal. This is now **the** way a new version reaches everyone, so the release process must keep it working:
+
+1. **A user-visible update = a real GitHub Release (a `vX.Y.Z` tag).** The button detects the newest *published Release* (`api.github.com/repos/PersonalJarvis/PersonalJarvis/releases/latest`), NOT raw `main`. A **DISCREET** snapshot (no tag) deliberately does NOT surface an update — only the **RELEASE** ceremony does (bump + tag + GitHub Release; see the "Canonical repositories" section above). So "ship an update our users actually see" means run the RELEASE ceremony, not a discreet snapshot. The Release notes (`body`) are what the button shows on hover — write them for users, not for maintainers.
+2. **The pull needs the prebuilt frontend + the marker.** Each public release must ship a freshly built `jarvis/ui/web/dist/` (the release skill already rebuilds it) so the update's `git fetch` + `git reset --hard origin/main` refreshes the UI with no Node/npm on the user's machine. The updater is active **only** on an installer-managed checkout — proven by BOTH a `.jarvis-managed-install` marker (written by `install/installer.py`, gitignored so it never ships) AND an `origin` resolving exactly to `PersonalJarvis/PersonalJarvis`. A dev tree, a manual clone, or a look-alike fork never shows the button and can never be self-reset. That guard is load-bearing — do not weaken it.
+3. **Cross-platform, like everything else (Rule #1).** The updater rides git + the existing detached relauncher, so it behaves identically on Windows/macOS/Linux and degrades honestly on a headless host (the restart step returns 503 → "update installed, please restart manually"). It adds no OS-bound dependency.
+
+---
+
 ## Pointer network
 
 - Full doctrine: [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md)
