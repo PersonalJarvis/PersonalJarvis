@@ -46,6 +46,12 @@ node_modules/
 dist/
 build/
 
+# Installer-managed-install marker: written by install/installer.py at install
+# time to opt a checkout into in-app self-update. Must NEVER be committed — a
+# manual clone or a dev tree must not look like a managed install (else the
+# in-app updater could git-reset --hard it). See jarvis/ui/web/update_routes.py.
+.jarvis-managed-install
+
 # Jarvis Runtime-Daten (nie committen)
 data/*
 data/**/

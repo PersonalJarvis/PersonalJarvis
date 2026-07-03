@@ -266,6 +266,7 @@ class WebServer:
         from .tasks_routes import router as tasks_router
         from .telephony_routes import router as telephony_router
         from .tools_routes import router as tools_router
+        from .update_routes import router as update_router
         from .wiki_routes import router as wiki_router
         from .wiki_ws import router as wiki_ws_router
         from .workflows_routes import router as workflows_router
@@ -286,6 +287,9 @@ class WebServer:
         app.include_router(control_router)
         app.include_router(profile_router)
         app.include_router(settings_router)
+        # In-app updater (GET status / POST apply). Managed-install only — see
+        # jarvis/ui/web/update_routes.py; refuses to self-reset a dev checkout.
+        app.include_router(update_router)
         # Frontier auto-switch modal API (GET pending / POST ack) + Self-Mod
         # read/restore API. Both were the last route modules left unmounted; the
         # 404 on /api/frontier/pending silently broke the desktop auto-switch

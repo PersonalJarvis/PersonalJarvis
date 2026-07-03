@@ -20,7 +20,12 @@
     "restarting": "Restarting {name}…",
     "restart_failed": "Restart failed",
     "restart_force": "Restart anyway?",
-    "restart_missions_running": "mission(s) still running — click again to restart anyway"
+    "restart_missions_running": "mission(s) still running — click again to restart anyway",
+    "update_available": "Update available",
+    "updating": "Updating {name}…",
+    "update_failed": "Update failed",
+    "update_hint": "Download and install the new version",
+    "update_deps_warning": "Updated — some components may need a manual reinstall"
   },
   "nav": {
     "chats": "Chats",
