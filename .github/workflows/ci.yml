@@ -309,8 +309,8 @@ jobs:
   # Docs privacy gate (layer-3 backstop for the .githooks/pre-push docs scan,
   # which `--no-verify` can skip). Scans the tracked docs/ tree for the
   # maintainer's real name, private email/handle, personal Windows paths, and
-  # machine/account ids, using the SAME manifest the ship-public-release scrub
-  # uses (.claude/skills/ship-public-release/references/pii-scrub.tsv) so the two
+  # machine/account ids, using the SAME manifest the public-release scrub
+  # uses (scripts/ci/privacy_gate/references/pii-scrub.tsv) so the two
   # never drift. Unlike privacy-gate above, this DOES check the real name — but
   # ONLY inside docs/, where (maintainer decision 2026-06-29) it must never
   # appear, so it cannot false-positive on code where the name lives

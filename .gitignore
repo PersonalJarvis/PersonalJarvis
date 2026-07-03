@@ -128,6 +128,11 @@ Desktop.ini
 !.claude/agents/
 !.claude/commands/
 !.claude/skills/
+# ...except the security-github skill: a LOCAL-ONLY maintainer tool. It orchestrates
+# the depersonalized public-release push and must never itself be versioned or
+# pushed to any GitHub repo. Its deterministic engine lives (versioned) under
+# scripts/ci/privacy_gate/, so CI and the pre-push hook keep working without it.
+.claude/skills/security-github/
 .playwright-mcp/
 
 # TypeScript incremental build cache (regenerated on every `tsc --build`)

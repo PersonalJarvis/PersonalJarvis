@@ -1,0 +1,12 @@
+# Files that exist in the distribution repo but NOT in the working tree, and
+# must be PRESERVED during reconcile (one gitignore-ish glob per line).
+#
+# The reconcile step makes the distribution tree match the staged tree by
+# deleting its tracked files and copying the staged ones in. Any file listed
+# here is skipped by that deletion so a deliberately dist-only file is not wiped
+# every release.
+#
+# AGENTS.md: public-facing contributor guide that lives only in the public repo
+# (the working tree uses CLAUDE.md instead). Verified as the only dist-only file
+# on 2026-05-31; re-checked each run by the skill's reconcile diff.
+AGENTS.md

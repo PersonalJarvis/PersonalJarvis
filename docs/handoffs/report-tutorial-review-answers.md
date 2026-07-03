@@ -68,7 +68,7 @@ That tutorial-that-demos-a-report is the "Report" + "Tutorial" combination.
 - Tracked: 115 files under `video/` (TSX, JSON, screenshots, VO audio, analysis
   frames).
 - Withheld from public ship: `video/**` is on the distribution denylist —
-  `.claude/skills/ship-public-release/references/distribution-denylist.txt:134`
+  `scripts/ci/privacy_gate/references/distribution-denylist.txt:134`
   (rationale lines 126–133).
 - Additionally `.gitignore`d (never tracked at all): the rendered films
   (`git check-ignore video/out/onboarding.mp4` → IGNORED) and the stray ShareX
@@ -104,7 +104,7 @@ rendered film = intentionally public (that is its whole purpose).
 **Both.**
 
 - Denylist: `video/**` —
-  `.claude/skills/ship-public-release/references/distribution-denylist.txt:134`.
+  `scripts/ci/privacy_gate/references/distribution-denylist.txt:134`.
 - `.gitignore`: rendered `video/out/*.mp4` and root-level `video/*.png`
   screenshots are ignored (confirmed via `git check-ignore`).
 

@@ -1,8 +1,8 @@
 #!/bin/sh
 # >>> guard_no_raw_public_push (managed by scripts/ci/install_git_hooks.py) >>>
 # Hard-block a raw push to the PUBLIC flagship repo PersonalJarvis/PersonalJarvis.
-# That repo only ever receives a depersonalized snapshot via the
-# ship-public-release skill (CLAUDE.md rule 2). git passes: pre-push <name> <url>.
+# That repo only ever receives a depersonalized snapshot via the public-release
+# privacy gate (CLAUDE.md rule 2). git passes: pre-push <name> <url>.
 __pj_guard="scripts/ci/guard_no_raw_public_push.py"
 if [ -f "$__pj_guard" ]; then
     __pj_py="/c/Program Files/Python311/python.exe"
@@ -123,9 +123,9 @@ fi
 # the maintainer's real name, private email/handle, personal Windows paths,
 # machine/account ids. This is the docs-content half the privacy_pre_push gate
 # above does NOT cover (it checks commit author emails + real secrets, not the
-# name/path text inside docs/). Same canonical manifest the ship-public-release
-# scrub uses (.claude/skills/ship-public-release/references/pii-scrub.tsv), so
-# the two never drift. Read-only scan over tracked docs/; exit 1 on any hit.
+# name/path text inside docs/). Same canonical manifest the public-release
+# scrub uses (scripts/ci/privacy_gate/references/pii-scrub.tsv), so the two
+# never drift. Read-only scan over tracked docs/; exit 1 on any hit.
 docs_privacy_gate="scripts/ci/docs_privacy_scan.py"
 if [ -f "$docs_privacy_gate" ]; then
     "$PY" "$docs_privacy_gate" </dev/null
@@ -195,7 +195,7 @@ if [ "$status" -ne 0 ]; then
     echo ""
     if [ "$privacy_hit" -ne 0 ]; then
         echo "pre-push BLOCKED: PRIVACY gate (public target / private email / secret)."
-        echo "  See the findings above. Public releases go via the ship-public-release skill."
+        echo "  See the findings above. Public releases go via the depersonalized release snapshot."
     fi
     if [ "$language_hit" -ne 0 ]; then
         echo "pre-push BLOCKED: LANGUAGE gate (newly added German text)."

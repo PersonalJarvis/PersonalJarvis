@@ -1,0 +1,214 @@
+# Distribution denylist — paths that must NEVER ship to the public repo.
+#
+# This is a CURATED DENYLIST, not a working-vs-dist diff. New feature code is
+# never listed here, so it ships automatically; only personal / secret /
+# internal-process artifacts are withheld. Each line is a gitignore-ish glob
+# matched against the posix, repo-relative path of every git-TRACKED file.
+# Globs: `**` = any depth, `*` = within a path segment, `?` = one char.
+# Lines starting with `#` and blank lines are ignored.
+#
+# Decision record: the maintainer chose (2026-05-31) to keep withholding all
+# internal dev docs (OpenClaw-style clean public repo) and the encrypted
+# release-signing keys (forks generate their own). Confirmed in the skill plan.
+#
+# WHY a denylist and not the file diff: the working↔dist diff conflates two
+# different things — deliberately-withheld files AND files merely newer than the
+# last release. Baking the diff into "always exclude" would freeze out real
+# features (e.g. jarvis/state/*, jarvis/plugins/tts/fallback_tts.py). So those
+# are intentionally ABSENT from this list and ship normally.
+
+# --- .claude/ contributor toolchain: SHIP it (like OpenClaw), minus the
+#     maintainer's own release skill (2026-06-27, revised) ----------------------
+# REVISED: .claude/ is Claude-Code CONTRIBUTOR tooling — subagent definitions,
+# slash-commands, dev skills — exactly what a fork needs to keep developing with
+# the same AI workflow. The reference project openclaw/openclaw (380k+ stars)
+# ships .agents/ + AGENTS.md + CLAUDE.md publicly; this is a professionalism
+# signal, not clutter. NOTHING in the runtime jarvis/ package loads it, so it is
+# product-safe. (The single personal path in phase6-adr-update/SKILL.md is
+# depersonalized by the PII scrub, not withheld.)
+#
+# The privacy gate itself is personal: scripts/ci/privacy_gate/references/
+# (pii-scrub.tsv, secret-allowlist.tsv) carry the maintainer's real name +
+# emails as scrub *patterns* — shipping them would leak exactly what they exist
+# to remove, and a fork generates its own. So withhold that whole subtree.
+scripts/ci/privacy_gate/**
+
+# --- .mailmap: full-depersonalization decision (2026-06-01) ------------------
+# The dist repo's history is already 100% noreply-authored (no real-email
+# commits exist there), so .mailmap maps nothing and is NOT load-bearing in the
+# distribution — it only ships the maintainer's two private emails + full name
+# as file data. Per the maintainer's "full depersonalization" choice for the
+# v0.1.0 release, drop it from the snapshot entirely (cleanest cut: removes both
+# real emails and the full name with zero scrub artifacts). reconcile deletes it
+# from the dist tree.
+.mailmap
+
+# --- Encrypted release-signing keys (maintainer identity) -------------------
+install/keys/*.key.enc
+
+# --- Wave-2 demo passphrase carriers (2026-06-17) ---------------------------
+# The encrypted key above is withheld, but the passphrase that decrypts it is
+# committed in plain text in install/TRUST_ROOT.md (§3.3) and in these two
+# ceremony docs (the `WAVE2_CEREMONY_PASSPHRASE=...` / `-pass "pass:..."`
+# lines). Withhold the passphrase too so a public release never ships either
+# half of the offline-ceremony key. (Private repo keeps both — Foundation-demo
+# posture, rotation deferred to the documented v0.5.0 cut.)
+install/TRUST_ROOT.md
+docs/supply-chain/wave2-key-ceremony.md
+docs/supply-chain/wave4-distribution.md
+
+# --- Internal scratch scripts (underscore-prefixed convention) --------------
+scripts/_*.py
+
+# --- Dead WhisperBar dev-probe scripts (2026-06-30) -------------------------
+# Standalone desktop-capture probes that still `import jarvis.ui.whisperbar`,
+# a module renamed to jarvis.ui.jarvisbar (whisperbar->jarvisbar rename,
+# 2026-06-30). The import is dead, so the scripts are broken dev-only probes
+# with no downstream value — and the release verify gate (top-level unresolved
+# import) correctly refuses to ship them. They are not product code; a fork has
+# no use for them.
+scripts/whisperbar_live_probe.py
+scripts/whisperbar_thinking_preview.py
+
+# --- Personal operational state + scratch (2026-06-19 privacy review) -------
+# config-soll.json is the maintainer's PRIVATE drift-guard desired-state pin  # i18n-allow
+# (internal _reason changelog re: GCP/billing/model mandates) — a fork generates
+# its own. .tmp_research/ is scratch probing. Neither has downstream value.
+# drift-guard-task.xml is a generated Windows Task-Scheduler export carrying the
+# maintainer's Windows account SID (S-1-5-21-...-500) + local paths — a fork
+# regenerates it from the .ps1; it must never ship (2026-06-19 scan BLOCK).
+scripts/config-soll.json
+scripts/drift-guard-task.xml
+.tmp_research/**
+# Root-level optimization/loop ledgers — internal dev scratchpads (the running
+# notes of a /loop session: measurements, reasoning, file paths). Like the
+# untracked progress.md, they have no downstream product value. boot-progress.md
+# was committed (so it is tracked) and would otherwise ship; withhold it.
+boot-progress.md
+
+# --- Internal dev-process docs: whole subtrees ------------------------------
+docs/superpowers/**
+docs/plans/**
+docs/phase-b1-wiki-curator/**
+docs/diagnostics/**
+
+# --- Contributor doctrine now SHIPS (2026-06-27, revised) -------------------
+# CLAUDE.md + CLOUD.md are the binding contributor doctrine. AGENTS.md is the
+# byte-twin of CLAUDE.md and ALREADY ships, so withholding CLAUDE.md was
+# inconsistent — its content was public via AGENTS.md regardless. OpenClaw ships
+# CLAUDE.md + VISION.md publicly; matching that is the professional move. Both
+# are depersonalized by the PII scrub on the way out. (docs/BUGS.md stays
+# withheld below — that is the internal bug log, not contributor doctrine.)
+
+# --- BUGS.md now SHIPS (2026-06-27): the recurring-bug "journey" log is strong
+# --- contributor/reader material. VERIFIED — applying the PII scrub to it leaves
+# --- 0 personal paths (5 -> <USER_HOME>), 0 real name, 0 private mail; only
+# --- 127.0.0.1 (loopback) + hardware names (RTX / headset) remain, which are
+# --- non-identifying. The fail-closed scrub+scan re-checks on every ship. -----
+
+# --- Internal dev-process docs: individual files ----------------------------
+docs/adr/0009-self-healing-worker-critic.md
+docs/agents-self-verification.md
+docs/deepgram-stt-research-2026-05-20.md
+docs/openclaw-bridge.md
+docs/openclaw-spawn-failure-analysis-2026-05-18.md
+docs/persona-audit-report.md
+docs/persona-refactor-results.md
+docs/persona-research.md
+docs/phase1c-test-results.md
+docs/phase2-integration-test-results.md
+docs/phase6-handoff-2026-04-26.md
+docs/phase6-test-report.md
+docs/spike-results-openclaw.md
+docs/voice-acceptance-brief.md
+docs/bug-019-spawn-failure-report.html
+docs/jarvis-board/PHASE_A_DONE.md
+
+# --- The whole video/ Remotion build project (2026-06-27) -------------------
+# video/ is the Remotion source project used to RENDER the YouTube onboarding
+# film; it is a generator tool, not a runtime asset. The frontend embeds the
+# finished film straight from youtube-nocookie.com (IntroVideoScreen.tsx) and
+# loads nothing from this dir; .dockerignore already excludes video/. This
+# subsumes the earlier video/analysis/** entry: those frames are review/debug
+# artifacts that can carry personalized demo text in pixels (caught by semantic
+# image scanners, not file-text scanners), so the whole tree stays out.
+video/**
+
+# --- Standalone side-projects: ship in their OWN repos, not the flagship (2026-06-27) ---
+# Self-contained projects that merely co-live in this monorepo. The runtime
+# jarvis/ package imports NOTHING from them (verified 2026-06-27 — 0 import
+# sites). Patterns are ^-anchored, so each hits ONLY the top-level dir, never a
+# same-named subdir (e.g. src/** does not touch jarvis/ui/web/frontend/src/).
+#   - skillbook/ : independent decentralized agent-memory research project
+#                  (own CLAUDE.md / ADRs / tests; unrelated to the product)
+#   - keyproxy/  : standalone LLM-key reverse proxy ("zero dependency on jarvis")
+#   - src/       : orphaned duplicate of the web-search skill; the LIVE tool is
+#                  jarvis/plugins/tool/search_web.py (no sys.path/loader points here)
+# DELIBERATELY KEPT (verified load-bearing, do NOT add): board-backend/
+# (jarvis/board/sync.py + federation_proxy_routes.py import board_backend.crypto),
+# OS-Level/ (jarvis/overlay/schema.py re-exports OS-Level/src/overlay), ui/
+# (the Orb overlay is imported at runtime), conductor/ (3 import sites).
+skillbook/**
+keyproxy/**
+src/**
+
+# --- Internal maintainer demo / perf scripts (2026-06-27) -------------------
+# tools/ holds board_demo.py / board_pentest.py / board_perf.py — internal
+# bring-up & perf probes for the Board, not product code. A fork has no use for
+# them (the product's own tooling lives inside the jarvis/ package).
+tools/**
+
+# --- Internal QA protocols (2026-06-27) -------------------------------------
+# docs/qa/ is the maintainer's internal voice-QA checklist — same internal-
+# process class as docs/superpowers/** / docs/plans/** already withheld above.
+docs/qa/**
+
+# --- Internal privacy/red-team agent spec (2026-06-30) ----------------------
+# docs-privacy-reviewer.md is the maintainer's OWN depersonalization red-team
+# guide: in source it enumerates the real maintainer identity (real name in
+# every spelling incl. the accented 'Rubén', alt name 'Harald Herz', the private
+# email shapes, GitHub login) and the entire scrub scheme. Shipping the doc that
+# lists what to hide is itself the leak (2026-06-30 sub-agent review). It is an
+# internal dev tool with no downstream value; a fork writes its own.
+.claude/agents/docs-privacy-reviewer.md
+
+# --- Internal handoff notes carrying the maintainer's private email (2026-06-30) ---
+# docs/handoffs/ holds internal review-answer handoffs. report-tutorial-review-
+# answers.md is a meta-note ABOUT the depersonalization scheme: it quotes the
+# maintainer's private email in plain text (lines 30/142/242) as a pattern to
+# protect — same self-leak class as docs-privacy-reviewer.md and the pii-scrub
+# map already withheld above. The email is a block-only scrub rule, so leaving
+# the file in would fail-close the ship anyway; withhold the whole subtree so a
+# valid snapshot never depends on a last-minute abort. Internal process doc with
+# no downstream value; a fork writes its own.
+docs/handoffs/**
+
+# --- Voice-session transcripts (2026-06-30) ---------------------------------
+# voice-session-*.{md,txt} are raw transcripts of the maintainer talking to
+# Jarvis (e.g. "was-geht-ab…") — personal speech content with no downstream
+# value, occasionally git-tracked by accident (an auto-save / `git add -A` in a
+# parallel session). Withhold every voice-session transcript, at any depth, so a
+# stray one never reaches public history.
+voice-session-*
+**/voice-session-*
+
+# --- Internal pick-up / handoff prompt notes (2026-06-30) -------------------
+# reporttutorialpickupprompt*.md is a loose top-level "pick-up" prompt: an
+# internal instruction to a Claude session to run the §2 privacy review. It
+# names the maintainer real name ("Ruben", "Lütke / Luetke") and enumerates the  # i18n-allow
+# private categories to hunt for — the same self-leak class as
+# docs-privacy-reviewer.md and docs/handoffs/** already withheld above (shipping
+# the doc that lists what to hide IS the leak). Internal process artifact, zero
+# downstream value, occasionally git-tracked by accident. Withhold any such loose
+# pick-up/handoff prompt at the repo root.
+reporttutorialpickupprompt*
+**/reporttutorialpickupprompt*
+*pickupprompt*.md
+
+# --- Launch-marketing drafts (2026-07-02) ------------------------------------
+# marketing/launch/* holds the maintainer's pre-launch drafts (Show-HN post,
+# Reddit/X threads, hero one-liners, a manual GitHub-setup checklist). Internal
+# process artifacts: publishing the launch plan before the launch IS the leak,
+# and none of it is product content a downstream user needs. A fork writes its
+# own marketing. Withhold the whole subtree.
+marketing/**

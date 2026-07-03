@@ -355,7 +355,7 @@ guarantee.
 ### 9.3 Scaffolding skill (the ergonomics)
 
 `.claude/skills/generate-cli-command/SKILL.md` — a project skill a coding agent
-runs at "definition of done", modeled on `ship-public-release`:
+runs at "definition of done", modeled on the public-release privacy gate:
 
 1. Diff routes since `main` (`git diff main...HEAD` over `*_routes.py`).
 2. For each new route, verify OpenAPI metadata (so the gate will pass).

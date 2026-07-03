@@ -78,10 +78,6 @@ docs/plans/ai-pointer/DESIGN.md
 docs/superpowers/plans/2026-06-02-configurable-keybinds.md
 docs/superpowers/specs/2026-06-02-configurable-keybinds-design.md
 
-# --- Skill that needs bilingual trigger phrases in its description so a
-#     German-speaking user can invoke it (trigger-matching data, like i18n) ---
-.claude/skills/ship-public-release/SKILL.md
-
 # Implementation plan for plugin<->skill pairing (2026-06-07): an internal
 # reference doc that quotes illustrative German voice-input test utterances
 # (intentional — they demonstrate the German speech path the tests exercise).
@@ -325,7 +321,7 @@ scripts/config-soll.json
 # German maintainer trigger phrases in YAML folded-scalar frontmatter (bucket 3-analog)
 .claude/skills/publish-new-version/SKILL.md
 # glob pattern references the German-named config-soll.json (matching data)
-.claude/skills/ship-public-release/references/distribution-denylist.txt
+scripts/ci/privacy_gate/references/distribution-denylist.txt
 # verbatim German brain-output leak quoted as forensic evidence in a code block (bucket 4)
 docs/persona-audit-report.md
 # German voice-output example inside a multi-line code span (bucket 1/4)

@@ -17,8 +17,9 @@ One public repo, infrequent releases. This is the maintainer's **single entry
 point** to put the CURRENT folder state — **all features, none of the personal
 data** — onto the public GitHub repo as a clean, versioned update, and to **prove
 it actually landed**. It does NOT reimplement the privacy machinery; it runs the
-quality checks the maintainer cares about, then drives the tested
-`ship-public-release` skill, then verifies.
+quality checks the maintainer cares about, then drives the local
+`security-github` skill (the depersonalized public-release privacy gate), then
+verifies.
 
 ## Context you must hold (the mental model)
 
@@ -50,7 +51,7 @@ Verify each, **with evidence**, before anything is shipped:
 Report every item as **PASS** or **STOP** with the evidence. No silent skips.
 
 ### 2. Privacy gate + push (the engine — do NOT duplicate it here)
-**REQUIRED:** run the `ship-public-release` skill in **RELEASE** mode. It performs the
+**REQUIRED:** run the local `security-github` skill in **RELEASE** mode. It performs the
 full fail-closed privacy gate (tracked-files-only export → distribution denylist →
 deterministic PII scrub → **mandatory sub-agent privacy review** → secret/PII scan →
 human review) plus the SemVer bump + git tag + CHANGELOG entry, from a separate clean

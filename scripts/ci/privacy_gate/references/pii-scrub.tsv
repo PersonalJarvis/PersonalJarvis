@@ -1,0 +1,83 @@
+# PII scrub manifest. Tab-separated: action <TAB> pattern <TAB> replacement <TAB> note
+#
+#   action = scrub       -> applied as a regex substitution during `build`
+#            block-only  -> never substituted, but BLOCKS the ship if found in a
+#                           non-exempt file during `scan` (defence in depth)
+#            warn        -> surfaced in the review, never blocks (FP-prone)
+#
+# `pattern` is a Python regex (it is fed straight to re.compile). All rows are
+# re-checked during `scan`: scrub+block-only must be 0 in non-exempt files, else
+# the ship is blocked (a scrub gap is treated as a leak, fail-closed). Matches
+# inside scrub-exempt paths (.mailmap) are downgraded to warnings.
+#
+# Footprint verified 2026-05-31 against the live working tree: personal Windows
+# paths = 0 hits (already cleaned in place); private emails = .mailmap only
+# (intentional, exempt); real name = ~7 shipping files; GCP id = 0 (kept as a
+# regression guard). The scan double-checks regardless.
+
+# --- maintainer GitHub login + entity slug (MUST precede the bare-name rules
+# --- below, else the bare "ruben" rule would fragment them) -----------------
+scrub	rubenluetke10-beep	octocat	maintainer github login (appears in a stream-evidence test fixture)
+scrub	ruben-luetke	personal-jarvis-maintainer	maintainer entity slug (= slugify of full name; keeps name->slug test couplings consistent)
+
+# --- maintainer real name (order matters: full name before surname) ---------
+scrub	Ruben Lütke	Personal Jarvis Maintainer	maintainer real name (full)
+scrub	Lütke	Maintainer	maintainer surname
+scrub	Luetke	Maintainer	maintainer surname (ascii-fold)
+
+scrub	luetke	maintainer	maintainer surname (lowercase residue in slugs)
+scrub	lütke	maintainer	maintainer surname (lowercase umlaut residue)
+
+# --- maintainer bare first names: full-depersonalization (2026-06-01). Two
+# --- distinct neutral names preserve router-prompt semantics where "Ruben" is
+# --- the user (address) and "Harald" is an example third person mentioned. ---
+scrub	Ruben	Alex	maintainer first name (sample/address user) -> neutral
+scrub	ruben	alex	maintainer first name lowercase (config defaults, slugs, branch tags)
+# Accented spelling 'Rubén' — the ASCII 'Ruben' rules above do NOT match the é,
+# so the accented real first name shipped through (2026-06-30 sub-agent review:
+# docs/phase-b1-wiki-curator/*, tests/unit/memory/wiki/test_page.py, etc.).
+scrub	Rubén	Alex	maintainer first name accented (é) -> neutral
+scrub	rubén	alex	maintainer first name accented lowercase
+scrub	RUBÉN	ALEX	maintainer first name accented all-caps (regression guard)
+scrub	Harald	Sam	maintainer alt first name (example person in prompts/tests)
+scrub	harald	sam	maintainer alt first name lowercase (ADR owner field, slugs, test emails)
+
+# --- all-caps identifier residue: the case-sensitive scrub above misses
+# --- SCREAMING_CASE used in JS test constants (e.g. HARALD_PAGE) and slug-fn
+# --- test inputs (e.g. person_slug("RUBEN")). Preserve the all-caps style in
+# --- the replacement so the depersonalized test stays internally consistent. -
+scrub	HARALD	SAM	maintainer alt first name all-caps (JS test constants, e.g. HARALD_PAGE)
+scrub	RUBEN	ALEX	maintainer first name all-caps (slug-fn test input, e.g. person_slug("RUBEN"))
+scrub	LÜTKE	MAINTAINER	maintainer surname all-caps (regression guard; 0 current hits)
+scrub	LUETKE	MAINTAINER	maintainer surname all-caps ascii-fold (regression guard)
+
+# --- personal paths ---------------------------------------------------------
+# `.` matches the path separator on any OS, so no backslash escaping is needed.
+# The `[\\/]+` rule below additionally catches ESCAPED / double-separator forms
+# (e.g. "C:\\Users\\Administrator" in source string literals & docstrings) that
+# the single-`.` pattern misses; it is a strict superset and runs as defence.
+scrub	C:.Users.Administrator	<USER_HOME>	windows personal home path
+scrub	C:[\\/]+Users[\\/]+Administrator	<USER_HOME>	windows personal home path (escaped/double-separator variant in source literals & docstrings)
+scrub	C--Users-Administrator-Desktop-Personal-Jarvis	<your-claude-project-dir>	personal .claude memory dir
+
+# --- cloud project identifier (regression guard; 0 current hits) ------------
+scrub	gen-lang-client-0108934957	<GCP_PROJECT_ID>	personal GCP project id
+
+# --- windows account SID (2026-06-19 privacy review) ------------------------
+# The maintainer's machine/account SID leaked via scripts/drift-guard-task.xml
+# (the -500 RID = builtin Administrator). Mask the unique machine-identifier
+# prefix; any RID suffix is preserved so the XML stays SID-shaped as a template.
+scrub	S-1-5-21-420352953-976713421-1014275510	S-1-5-21-0-0-0	windows account SID machine identifier (maintainer box)
+
+# --- private emails: never auto-edited (would break the .mailmap mechanism), --
+# --- but BLOCK if they appear in any non-exempt shipping file ----------------
+block-only	harald\.herz@gmx\.de		private email (must only live in .mailmap)
+block-only	ruben\.luetke10@gmail\.com		private email (must only live in .mailmap)
+
+# --- any other consumer-mailbox address: surface for a human look -----------
+warn	[A-Za-z0-9._%+-]+@(?:gmail|gmx|outlook|hotmail|yahoo|protonmail|proton|web)\.[a-z.]+	consumer email address
+# "Herz" scrub REMOVED 2026-06-27 by maintainer decision: @Ruben_Herz is the
+# INTENTIONAL public build-in-public X handle (README social link + socials seed +
+# tests), kept public on purpose. Do NOT re-add a Herz scrub — it would anonymize
+# the maintainer's own chosen public project identity. (The real surname "Lütke"
+# stays scrubbed above; "Herz" is the deliberately-public brand handle.)
