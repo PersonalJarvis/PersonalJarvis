@@ -135,6 +135,22 @@ if [ -f "$docs_privacy_gate" ]; then
     fi
 fi
 
+# --- 5b) PRIVATE-KEY gate (FAIL-CLOSED) ---------------------------------------
+# Signing private keys (and the retired signing passphrase) must NEVER enter the
+# repo — they live ONLY in GitHub Actions secrets (WAVE2_OFFLINE_KEY_B64 /
+# WAVE4_MLDSA65_KEY_B64). Blocks a full PEM PRIVATE KEY block, a tracked
+# *.key/*.key.enc file, or a WAVE2_CEREMONY_PASSPHRASE=<value> line. The demo
+# passphrase once leaked into 14 public snapshots; this guards that class.
+# Public keys are fine. Stdlib + git only, so it runs anywhere the hook does.
+privkey_gate="scripts/ci/check_no_private_keys.py"
+if [ -f "$privkey_gate" ]; then
+    "$PY" "$privkey_gate" </dev/null
+    if [ "$?" -ne 0 ]; then
+        status=1
+        privkey_hit=1
+    fi
+fi
+
 # --- 6) REQUIREMENTS SYNC gate (FAIL-CLOSED) ----------------------------------
 # requirements.in (source for the hash-pinned requirements.txt lockfile) must
 # mirror pyproject.toml [project].dependencies exactly. When they drift, an
@@ -213,6 +229,11 @@ if [ "$status" -ne 0 ]; then
         echo "  See the findings above. Fix with:"
         echo "    python scripts/ci/docs_privacy_scan.py --fix <file>"
         echo "  or run the docs-privacy-reviewer sub-agent for a semantic pass."
+    fi
+    if [ "${privkey_hit:-0}" -ne 0 ]; then
+        echo "pre-push BLOCKED: PRIVATE-KEY gate (private key / passphrase in the tree)."
+        echo "  Signing private keys live ONLY in GitHub Actions secrets, never in the"
+        echo "  repo. Remove the key material shown above (public keys are fine)."
     fi
     if [ "${reqsync_hit:-0}" -ne 0 ]; then
         echo "pre-push BLOCKED: REQUIREMENTS SYNC gate (requirements.in != pyproject deps)."

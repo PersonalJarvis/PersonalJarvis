@@ -14,10 +14,10 @@
 #         to this workflow's identity. Signature + cert written to disk.
 #         Cosign records the signature in Rekor (transparency log) and we
 #         independently re-verify Rekor inclusion afterwards.
-#      e. Wave 2 — offline-ceremony Ed25519: decrypts the offline-ceremony
-#         private key with the WAVE2_CEREMONY_PASSPHRASE secret and produces
-#         a second signature per artifact. Independently re-verifies. The
-#         decrypted key is scrubbed from the runner in an `if: always()` step.
+#      e. Wave 2 — offline-ceremony Ed25519: materializes the offline-
+#         ceremony private key from the WAVE2_OFFLINE_KEY_B64 secret and
+#         produces a second signature per artifact. Independently re-verifies.
+#         The key is scrubbed from the runner in an `if: always()` step.
 #      f. Uploads the signed artifact bundle (install/*, .sig, .pem,
 #         .bundle, .cosign.sig, checksums.txt) as a workflow artifact so the
 #         `release` job can attach it to the Release. Also exposes a
@@ -51,7 +51,10 @@ on:
     tags:
       - "v*.*.*"
 
-# No secrets needed. Keyless signing uses OIDC.
+# Wave 1 (keyless) needs no secrets — it uses OIDC. Wave 2 (Ed25519) and
+# Wave 4 (ML-DSA-65) read their PRIVATE KEYS from the WAVE2_OFFLINE_KEY_B64
+# and WAVE4_MLDSA65_KEY_B64 secrets (base64 of the PEM); the keys never live
+# in the repo, not even encrypted.
 # id-token=write is required by both Sigstore Fulcio (Wave 1) and by the
 # slsa-github-generator reusable workflow (Wave 3 — it mints its OWN OIDC
 # token inside the isolated `provenance` job, but the caller workflow must
@@ -362,63 +365,61 @@ jobs:
       # The Wave 1 keyless signature proves "GitHub Actions in this repo at
       # this tag signed this blob" (Fulcio OIDC, ephemeral cert, Rekor).
       # The Wave 2 key-bound signature adds an independent axis: an Ed25519
-      # private key generated in an offline ceremony, stored encrypted at
-      # rest in `install/keys/offline-ceremony.key.enc` (AES-256-CBC,
-      # PBKDF2-HMAC-SHA256, 600 000 iterations), with the matching public
-      # key checked into `install/keys/offline-ceremony.pub`.
+      # private key whose PUBLIC half is checked into
+      # `install/keys/offline-ceremony.pub` and inlined into the verifier.
+      # The PRIVATE half lives ONLY in the WAVE2_OFFLINE_KEY_B64 GitHub
+      # Actions secret (base64 of the PKCS#8 PEM) — never in the repo, not
+      # even encrypted. The preceding step materializes it into RUNNER_TEMP.
       #
-      # The verifier (install-verify.sh / .ps1) will require BOTH
-      # signatures from this release forward — Wave-1-only artifacts are
-      # treated as compromised. That is why this step MUST fail fast if
-      # the passphrase secret is missing (no silent fallback to Wave-1).
-      #
-      # Production passphrase lives in the `WAVE2_CEREMONY_PASSPHRASE`
-      # GitHub Actions repo secret. For the foundation/demo state, the
-      # passphrase is also documented in install/TRUST_ROOT.md §3.3 —
-      # rotating to production means setting the secret AND deleting that
-      # section of TRUST_ROOT.md (never both at the same time; see §3.3).
+      # The verifier (install-verify.sh / .ps1) requires BOTH signatures
+      # from this release forward — Wave-1-only artifacts are treated as
+      # compromised. That is why the fail-fast step above refuses to proceed
+      # if either key secret is missing (no silent fallback to Wave-1).
       # ------------------------------------------------------------------
-      - name: Fail fast if Wave 2 passphrase secret is unset
+      - name: Fail fast if the private signing-key secrets are unset
         env:
-          WAVE2_CEREMONY_PASSPHRASE: ${{ secrets.WAVE2_CEREMONY_PASSPHRASE }}
+          WAVE2_OFFLINE_KEY_B64: ${{ secrets.WAVE2_OFFLINE_KEY_B64 }}
+          WAVE4_MLDSA65_KEY_B64: ${{ secrets.WAVE4_MLDSA65_KEY_B64 }}
         run: |
           set -euo pipefail
-          if [ -z "${WAVE2_CEREMONY_PASSPHRASE:-}" ]; then
-            echo "::error::WAVE2_CEREMONY_PASSPHRASE secret is not set. Wave-2 key-bound signing is mandatory; the verifier requires both signatures. Refusing to fall back to Wave-1-only mode."
+          # Wave-2 (Ed25519) and Wave-4 (ML-DSA-65) key-bound signing are
+          # mandatory; the verifier requires both signatures. The private
+          # keys live ONLY in GitHub Actions secrets (base64 of the PEM),
+          # never in the repo — not even encrypted (see
+          # docs/supply-chain/wave2-key-ceremony.md). Refuse to proceed with
+          # no silent fall-back to Wave-1-only if either secret is missing.
+          missing=""
+          [ -z "${WAVE2_OFFLINE_KEY_B64:-}" ] && missing="${missing} WAVE2_OFFLINE_KEY_B64"
+          [ -z "${WAVE4_MLDSA65_KEY_B64:-}" ] && missing="${missing} WAVE4_MLDSA65_KEY_B64"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required signing-key secret(s):${missing}. Set them with 'gh secret set <NAME>' (base64 of the private-key PEM). Refusing to fall back to Wave-1-only mode."
             exit 1
           fi
-          # Mask the secret defensively even though GitHub already masks
-          # registered secrets — protects against a future change that
-          # would route the value through a non-secret env path.
-          echo "::add-mask::${WAVE2_CEREMONY_PASSPHRASE}"
-          echo "Wave 2 passphrase secret is present (value masked)."
+          echo "Both private-key secrets are present (values masked by GitHub)."
 
-      - name: Decrypt offline-ceremony key into runner temp
+      - name: Materialize offline-ceremony key from secret into runner temp
         env:
-          WAVE2_CEREMONY_PASSPHRASE: ${{ secrets.WAVE2_CEREMONY_PASSPHRASE }}
+          WAVE2_OFFLINE_KEY_B64: ${{ secrets.WAVE2_OFFLINE_KEY_B64 }}
         run: |
           set -euo pipefail
-          # AES-256-CBC + PBKDF2-HMAC-SHA256 with 600 000 iterations must
-          # match the parameters used when install/keys/offline-ceremony.key.enc
-          # was produced. Diverging from `-iter 600000` will yield a
-          # silent garbage decryption that openssl reports as success but
-          # cosign will reject as a malformed key — fail fast either way.
-          #
-          # `-pass env:WAVE2_CEREMONY_PASSPHRASE` reads the passphrase
-          # from the env var WITHOUT placing it on the argv (avoids `ps`
-          # exposure) and WITHOUT echoing it via `cat`/here-doc.
-          openssl aes-256-cbc -d -pbkdf2 -iter 600000 \
-            -pass env:WAVE2_CEREMONY_PASSPHRASE \
-            -in install/keys/offline-ceremony.key.enc \
-            -out "${RUNNER_TEMP}/offline-ceremony.key"
+          # The Wave-2 Ed25519 private key is stored as base64 of its PKCS#8
+          # PEM in the WAVE2_OFFLINE_KEY_B64 secret. Decode it into
+          # RUNNER_TEMP ONLY; it is scrubbed in an `if: always()` step after
+          # signing. The private key is NEVER written into the repo tree and
+          # never appears (even encrypted) in git history.
+          printf '%s' "${WAVE2_OFFLINE_KEY_B64}" | base64 -d > "${RUNNER_TEMP}/offline-ceremony.key"
           chmod 600 "${RUNNER_TEMP}/offline-ceremony.key"
-          # Sanity: decrypted key file exists and is non-empty. Do NOT
-          # cat / hexdump / wc the contents — only test the size.
+          # Sanity: decoded key exists, is non-empty, and is a PEM private
+          # key. Do NOT cat / hexdump the contents — only structural checks.
           if [ ! -s "${RUNNER_TEMP}/offline-ceremony.key" ]; then
-            echo "::error::decrypted key file is empty or missing"
+            echo "::error::decoded offline-ceremony key is empty — check the WAVE2_OFFLINE_KEY_B64 secret (must be base64 of the PEM)"
             exit 1
           fi
-          echo "Decrypted offline-ceremony key to runner temp (contents not logged)."
+          if ! grep -q "BEGIN PRIVATE KEY" "${RUNNER_TEMP}/offline-ceremony.key"; then
+            echo "::error::decoded offline-ceremony key is not a PEM private key — check the base64 encoding of WAVE2_OFFLINE_KEY_B64"
+            exit 1
+          fi
+          echo "Offline-ceremony key materialized to runner temp (contents not logged)."
 
       - name: Sign each artifact with the offline-ceremony key (Wave 2)
         working-directory: out
@@ -519,12 +520,11 @@ jobs:
       # not replacement. Migration to PQ-only completes when NIST
       # mandates classical retirement (likely 2030+).
       #
-      # KEY CUSTODY: identical pattern to the Wave 2 offline ceremony
-      # key — encrypted at rest under the same `WAVE2_CEREMONY_PASSPHRASE`
-      # secret. Production hardening (separate `PQ_MLDSA65_PASSPHRASE`
-      # secret + NitroKey ML-DSA hardware token) lands in Wave 4.1; the
-      # foundation reuses the Wave 2 passphrase pattern to avoid
-      # introducing two secret-rotation procedures on the same release.
+      # KEY CUSTODY: identical pattern to the Wave 2 offline-ceremony key —
+      # the PRIVATE key lives ONLY in a GitHub Actions secret
+      # (WAVE4_MLDSA65_KEY_B64, base64 of the PKCS#8 PEM), never in the repo,
+      # not even encrypted. Hardware-token custody (NitroKey ML-DSA) is a
+      # future Wave 4.1 step.
       #
       # TOOLCHAIN: ML-DSA support landed in OpenSSL 3.5.0 (April 2025).
       # `ubuntu-latest` (Ubuntu 24.04 LTS) ships OpenSSL 3.0.13 by
@@ -593,46 +593,33 @@ jobs:
           fi
           echo "ML-DSA-65 is available in PQ openssl."
 
-      - name: Decrypt ML-DSA-65 private key into runner temp
+      - name: Materialize ML-DSA-65 key from secret into runner temp
         env:
-          WAVE2_CEREMONY_PASSPHRASE: ${{ secrets.WAVE2_CEREMONY_PASSPHRASE }}
+          WAVE4_MLDSA65_KEY_B64: ${{ secrets.WAVE4_MLDSA65_KEY_B64 }}
         run: |
           set -euo pipefail
-          # AES-256-CBC + PBKDF2-HMAC-SHA256.
+          # The Wave-4 ML-DSA-65 private key is stored as base64 of its
+          # PKCS#8 PEM in the WAVE4_MLDSA65_KEY_B64 secret. Decode it into
+          # RUNNER_TEMP ONLY; scrubbed after signing. Never written into the
+          # repo tree and never present (even encrypted) in git history.
           #
-          # NOTE (SA-5 fix-forward #2, 2026-05-27): SA-1's foundation
-          # commit wrapped install/keys/pq-mldsa65.key.enc with the
-          # PBKDF2 default iteration count (10 000), NOT the 600 000
-          # value referenced in the SA-1 commentary + TRUST_ROOT.md §5.
-          # SA-4's signing step inherited the 600 000 number from the
-          # Wave-2 (offline-ceremony) precedent (which IS at 600 000 and
-          # works), and on the v0.5.0 tag the first run failed with
-          # `bad decrypt` because the iteration count must match what
-          # the key was wrapped with. Empirically confirmed by SA-5:
-          # `-iter 10000` decrypts the SA-1-committed key to a
-          # well-formed `OpenSSH private key (no password)` (the
-          # ML-DSA-65 PEM that the next step needs).
-          #
-          # The right long-term fix is to re-wrap the key at 600 000
-          # in a rotation ceremony and then bump this back, but that's
-          # a Wave-4.1 follow-up. For v0.5, align the workflow with
-          # the actually-shipped key material.
-          #
-          # `-pass env:WAVE2_CEREMONY_PASSPHRASE` reads the passphrase
-          # WITHOUT placing it on argv (avoids `ps` exposure). We use
-          # the PQ-pinned openssl explicitly because `aes-256-cbc` is
-          # available on either binary but ML-DSA `pkeyutl -sign` in
-          # the next step requires the 3.5.x build.
-          "$PQ_OPENSSL" aes-256-cbc -d -pbkdf2 -iter 10000 \
-            -pass env:WAVE2_CEREMONY_PASSPHRASE \
-            -in install/keys/pq-mldsa65.key.enc \
-            -out "${RUNNER_TEMP}/pq-mldsa65.key"
+          # This replaces the former encrypt-at-rest scheme
+          # (install/keys/pq-mldsa65.key.enc + a repo-committed passphrase),
+          # which was structurally unsafe: the demo passphrase leaked into
+          # 14 public snapshots. Storing the key only as a GitHub secret
+          # removes the encrypted-blob-plus-passphrase attack surface
+          # entirely. No `-iter`/`bad decrypt` foot-gun remains.
+          printf '%s' "${WAVE4_MLDSA65_KEY_B64}" | base64 -d > "${RUNNER_TEMP}/pq-mldsa65.key"
           chmod 600 "${RUNNER_TEMP}/pq-mldsa65.key"
           if [ ! -s "${RUNNER_TEMP}/pq-mldsa65.key" ]; then
-            echo "::error::decrypted PQ key file is empty or missing"
+            echo "::error::decoded ML-DSA-65 key is empty — check the WAVE4_MLDSA65_KEY_B64 secret (must be base64 of the PEM)"
             exit 1
           fi
-          echo "Decrypted ML-DSA-65 private key to runner temp (contents not logged)."
+          if ! grep -q "BEGIN PRIVATE KEY" "${RUNNER_TEMP}/pq-mldsa65.key"; then
+            echo "::error::decoded ML-DSA-65 key is not a PEM private key — check the base64 encoding of WAVE4_MLDSA65_KEY_B64"
+            exit 1
+          fi
+          echo "ML-DSA-65 key materialized to runner temp (contents not logged)."
 
       - name: Sign each artifact with the ML-DSA-65 key (Wave 4 axis D)
         working-directory: out

@@ -89,11 +89,20 @@ honest anchor.
 
 ## 3. Wave 2 — second signing axis (offline-ceremony Ed25519)
 
-> **Status:** *foundation step.* The keypair, passphrase, encrypted private key,
-> TUF root metadata, and ceremony documentation are committed in this branch
-> (`feat/wave2-foundation`). The workflow integration that actually *uses* the
+> **Status:** *foundation step.* The keypair, the committed **public** key, the
+> TUF root metadata, and the ceremony documentation are in place. The
+> **private** key lives only as the `WAVE2_OFFLINE_KEY_B64` GitHub Actions
+> secret — never committed. The workflow integration that actually *uses* the
 > offline key to co-sign each release (and the corresponding verifier change
 > that demands 2-of-2) is built by follow-up sub-agents in Wave 2.
+>
+> **Key rotation — 2026-07-03.** Both signing keys (this Ed25519 offline key
+> and the Wave 4 ML-DSA-65 key) were rotated on 2026-07-03, and the old
+> encrypt-at-rest scheme was removed. The previously-committed demo passphrase
+> is considered **burned**, and every key it protected is **retired**. Private
+> keys are now held ONLY as GitHub Actions secrets (base64 of the PKCS#8 PEM);
+> there is no passphrase and no `*.key.enc` in the repo. New fingerprints are
+> pinned in §3.2 (Ed25519) and §5.2 (ML-DSA-65).
 
 ### 3.1 Why this section exists
 
@@ -105,91 +114,74 @@ trusted maintainer is one social-engineering campaign away from a supply-chain
 incident (CVE-2024-3094, March 2024).
 
 Wave 2 closes this with a **second, independent signing axis**: a long-lived
-Ed25519 keypair generated **offline** in a ceremony, encrypted at rest, with
-its private half kept outside GitHub. The verifier demands 2-of-2 — both the
-Fulcio (online, ephemeral) signature *and* the offline-ceremony signature
-must validate. Compromising either axis alone yields nothing.
+Ed25519 keypair generated **offline** in a ceremony, with its private half
+kept out of the repository — held only as a GitHub Actions secret. The
+verifier demands 2-of-2 — both the Fulcio (online, ephemeral) signature *and*
+the offline-ceremony signature must validate. Compromising either axis alone
+yields nothing.
 
-### 3.2 What is committed in this branch
+### 3.2 What is committed, and where the key lives
 
-| File | Purpose |
+| Item | Purpose |
 |---|---|
-| `install/keys/offline-ceremony.pub` | Ed25519 public key in PEM format. Committed in plain. |
-| `install/keys/offline-ceremony.key.enc` | Ed25519 private key, encrypted with AES-256-CBC + PBKDF2 (600 000 iterations). Committed encrypted. |
+| `install/keys/offline-ceremony.pub` | Ed25519 public key in PEM format. Committed in plain. Its SHA-256(DER(SPKI)) fingerprint `1e8f2fa590e6454daff34e88e7bde8ffcf04b1eb235f0ca11ff9ebc65e2d1d3a` is inlined into both verifier scripts and cross-checked at stage `[3/13]`. |
+| `WAVE2_OFFLINE_KEY_B64` (GitHub Actions secret) | Ed25519 private key, base64 of the PKCS#8 PEM. **Never committed** — held only in GitHub's encrypted secret store plus a local backup in the maintainer's password manager. |
 | `install/tuf/1.root.json` | TUF root metadata version 1: lists both trust axes (`fulcio_oidc` + `offline_ceremony`) with `threshold=2` on every role. Expires 365 days from generation (2027-05-26). |
 | `docs/supply-chain/wave2-key-ceremony.md` | Step-by-step ceremony log: how the key was generated, why 2-of-2 closes xz-utils, production-deployment migration path. |
 
-### 3.3 The passphrase — DEMO POSTURE, FULLY DISCLOSED
+### 3.3 Key custody — private key only in a GitHub Actions secret
 
-> **Read this paragraph carefully.** It is the honesty bar for this entire
-> branch.
+> **Read this paragraph carefully.** It is the honesty bar for this axis.
 
-For this **Wave 2 foundation demo**, the passphrase that decrypts
-`install/keys/offline-ceremony.key.enc` is committed in this repository, in
-plain text, in this file, **right here on this line**:
+The offline-ceremony Ed25519 **private** key is not in this repository —
+not in plaintext, and not encrypted. It exists only as the
+`WAVE2_OFFLINE_KEY_B64` GitHub Actions secret (the base64 of the PKCS#8
+PEM), with a single offline backup in the maintainer's password manager.
+The repository holds only the **public** key
+(`install/keys/offline-ceremony.pub`) and its inlined copy in the verifier
+scripts. There is no decryption passphrase, because there is no encrypted
+key file to decrypt.
 
-```
-WAVE2_CEREMONY_PASSPHRASE=env++ci2NDWCOLeLfgTTZRks
-```
+> **Historical note — retired demo posture (2026-07-03).** Earlier foundation
+> branches stored the private key AES-256-CBC-encrypted inside the repo
+> (`offline-ceremony.key.enc`), unlocked by a passphrase that was, for the
+> demo, disclosed in plaintext right here in §3.3. That posture was removed in
+> the 2026-07-03 rotation: the encrypted key file is deleted, the demo
+> passphrase is **burned**, and the key it protected is **retired**. Do not
+> reintroduce an at-rest key or a committed passphrase.
 
-That is the literal 24-character passphrase emitted by `openssl rand -base64 18`
-during the ceremony. It decrypts the offline-ceremony Ed25519 private key.
-A reader of the public GitHub repository can extract the private key.
+**Why this is the right posture.** The Wave 2 artefact is the **2-of-2
+verifier machinery** — a TUF root with `threshold=2`, two independent trust
+axes, and dual signature paths in the verifier. That machinery is identical
+regardless of where the second key lives; keeping the private key solely in
+GitHub's secret store (plus an offline backup) means a reader of the public
+repository cannot extract it, while the *existence* of the second axis still
+closes the single-point-of-failure.
 
-**Does this defeat the point of Wave 2?** No, *because of what Wave 2 is
-proving*. The artefact under demonstration is the **2-of-2 verifier
-machinery** — TUF root with `threshold=2`, two independent trust axes, dual
-signature paths in the verifier script (built in follow-up sub-agents). That
-machinery is identical whether the second key's passphrase lives in the
-repository, in a GitHub Actions secret, in a maintainer's password manager,
-or in a hardware token. Only the *secrecy of the second axis* changes; the
-*existence* of the second axis is what closes the single-point-of-failure.
+**Signing flow.** `sign-installer.yml` base64-decodes
+`${{ secrets.WAVE2_OFFLINE_KEY_B64 }}` into a runner tempfile, signs the
+artefact with the Ed25519 private key, uploads `<asset>.ed25519.sig`, and
+immediately scrubs the decoded key from disk (`shred -uz` on Linux,
+`Remove-Item -Force` then `cipher /w:` on Windows). The decoded PEM never
+persists past the run.
 
-**Production deployments must move this passphrase out of the repository.**
-The exact migration path (do this on real production releases):
-
-1. **Generate a fresh keypair** following the recipe in
-   `docs/supply-chain/wave2-key-ceremony.md`. **Do not reuse this demo key
-   in production.**
-2. **Store the production passphrase as a GitHub Actions repository secret.**
-   The exact command (run by a maintainer with `secrets` access on the repo):
-   ```bash
-   gh secret set WAVE2_CEREMONY_PASSPHRASE \
-     --repo PersonalJarvis/PersonalJarvis \
-     --body "<your 24+ char passphrase from openssl rand -base64 18>"
-   ```
-   After setting, `gh secret list --repo PersonalJarvis/PersonalJarvis`
-   must show `WAVE2_CEREMONY_PASSPHRASE` with a recent updated_at.
-3. **Sign-installer.yml** then references the secret as
-   `${{ secrets.WAVE2_CEREMONY_PASSPHRASE }}` to decrypt the private key
-   inside the workflow runner, sign the artifact, and immediately scrub
-   the decrypted bytes from disk (`shred -uz` on Linux,
-   `Remove-Item -Force` then `cipher /w:` on Windows).
-4. **Remove the demo passphrase line** from this `TRUST_ROOT.md` §3.3
-   and rotate the demo key out via §3.5 below.
-5. **Even better:** the production passphrase is itself derived inside an
-   air-gapped key ceremony on a hardware token (YubiKey FIPS or equivalent),
-   never appearing on a network-attached machine. The GitHub secret then
-   stores only an encrypted-with-token blob; the workflow needs token-
-   touch for signing, which is what Sigstore's own root-key ceremony does.
-
-**Why we did not do that in this foundation step.** Wave 2 is split into
-five sub-agents. This sub-agent (Wave-2-SA-1) builds the *architecture* —
-key material, TUF metadata, threat-model update, ceremony documentation —
-that the *integration* sub-agents (Wave-2-SA-2 through SA-5) consume to
-wire the second axis into the workflow and the verifier. Asking this
-foundation step to also gate on a real hardware ceremony would block the
-parallel integration work. The honest tradeoff is recorded here.
+**Even stronger (future).** The production endgame derives the key inside an
+air-gapped ceremony on a hardware token (YubiKey FIPS or equivalent), so the
+private key never appears on a network-attached machine at all — the GitHub
+secret would then hold only a token-wrapped blob and signing needs a physical
+touch, mirroring Sigstore's own root-key ceremony. That hardware step is a
+documented follow-up, not yet in place.
 
 ### 3.4 What §3 does NOT claim
 
-This section deliberately does **not** claim that the demo posture provides
-the security guarantee of a real production 2-of-2 deployment. It claims
-that the *plumbing* required for 2-of-2 (TUF root with threshold=2, two
-distinct key materialisations, dual verifier paths) is in place and exercised
-end-to-end. The remaining production gap is the single line above (the
-passphrase secrecy boundary) plus the workflow + verifier wiring done by
-the next sub-agents in Wave 2.
+This section deliberately does **not** claim that keeping the private key in a
+GitHub Actions secret is equivalent to a hardware-token air-gapped ceremony.
+It claims that the *plumbing* required for 2-of-2 (TUF root with threshold=2,
+two distinct key materialisations, dual verifier paths) is in place and
+exercised end-to-end, and that the private key is no longer extractable from
+the public repo. The remaining hardening gap is the hardware-token custody
+described above — the key is still briefly decoded onto a network-attached
+runner at sign time.
 
 ### 3.5 Rotation procedure for the offline-ceremony key
 
@@ -197,20 +189,19 @@ The offline key has a 365-day expiry (recorded in `1.root.json`'s `expires`
 field). Before expiry, AND any time the key is suspected compromised:
 
 1. Run the ceremony script in `docs/supply-chain/wave2-key-ceremony.md` to
-   generate a new Ed25519 keypair + a fresh `openssl rand -base64 18`
-   passphrase.
-2. Encrypt with `openssl aes-256-cbc -pbkdf2 -iter 600000 -salt`.
-3. Overwrite `install/keys/offline-ceremony.pub` and
-   `install/keys/offline-ceremony.key.enc`.
+   generate a new Ed25519 keypair in an air-gapped environment.
+2. Set the new private key as the GitHub Actions secret — never commit it:
+   `base64 -w0 new-offline.key | gh secret set WAVE2_OFFLINE_KEY_B64 --repo
+   PersonalJarvis/PersonalJarvis`. Keep the offline backup in the password
+   manager.
+3. Overwrite the committed **public** key `install/keys/offline-ceremony.pub`
+   and its inlined copy + pinned fingerprint in both verifier scripts.
 4. Bump TUF root version: regenerate `install/tuf/2.root.json` (do NOT
    delete `1.root.json` — TUF clients walk the version chain).
    The new file MUST embed the previous key's keyid as a *revoked* entry
    inside `unrecognized_fields.wave2_revocation` so the verifier knows to
    reject artifacts signed by the old key.
-5. Set the new `WAVE2_CEREMONY_PASSPHRASE` GitHub Actions secret (production)
-   or update §3.3 above (demo). Never both at the same time — if §3.3
-   contains a passphrase, the production deployment is not yet active.
-6. Append a row to §8 (rotation history) with the date, reason, and the
+5. Append a row to §8 (rotation history) with the date, reason, and the
    first tag signed under the new key.
 
 ---
@@ -388,9 +379,9 @@ pin matches a permissive layout regexp would collapse axis C.
 ## 5. Wave 4 — Post-quantum signing (ML-DSA-65, NIST FIPS 204)
 
 > **Status:** axis D is wired into the signing workflow + the 14-stage
-> verifier in `feat/wave4-pq` (SA-4). Production passphrase rotation
-> (separate `PQ_MLDSA65_PASSPHRASE` secret + hardware-token custody)
-> remains a Wave 4.1 follow-up.
+> verifier in `feat/wave4-pq` (SA-4). The private key is held only as the
+> `WAVE4_MLDSA65_KEY_B64` GitHub Actions secret (base64 PKCS#8 PEM);
+> hardware-token custody remains a Wave 4.1 follow-up.
 
 ### 5.1 Why ML-DSA-65, not FALCON or SLH-DSA
 
@@ -428,47 +419,33 @@ We pick **ML-DSA-65** because:
    ML-DSA in beta as of 2026-Q1; production custody will migrate to a
    NitroKey before the v0.6.0 release cut, matching the Wave 2 plan.
 
-### 5.2 Custody — same passphrase pattern as Wave 2
+### 5.2 Custody — private key only in a GitHub Actions secret
 
-The ML-DSA-65 private key lives at `install/keys/pq-mldsa65.key.enc`,
-encrypted at rest with AES-256-CBC + PBKDF2-HMAC-SHA256.
+The ML-DSA-65 **private** key is not in the repository. It exists only as
+the `WAVE4_MLDSA65_KEY_B64` GitHub Actions secret (the base64 of the PKCS#8
+PEM), with a local backup in the maintainer's password manager — the same
+secret-only custody as the Wave-2 offline key. There is no encrypted key
+file and no passphrase.
 
-**SA-1 / SA-4 iteration-count discrepancy (Wave 4.1 follow-up).**
-The original SA-1 commit message and this section's first version
-claimed the key was wrapped at `-iter 600000`, matching the
-Wave-2 offline-ceremony precedent (`docs/supply-chain/wave2-key-ceremony.md`
-§"Encrypt at rest"). On the v0.5.0-supplychain-wave4 tag, SA-5 hit
-`bad decrypt` in the signing workflow with `-iter 600000` and
-empirically confirmed (decrypt success against the *committed*
-encrypted blob) that SA-1 used the PBKDF2 default `-iter 10000`.
-The workflow's decrypt step is therefore pinned to `-iter 10000`
-for v0.5.x. The rotation ceremony in §5.5 bumps this back to
-`-iter 600000` and is a hard prerequisite for v0.6.0; this is
-tracked as Wave 4.1 alongside HSM migration. **Functionally the
-demo passphrase is the bottleneck, not the iteration count** —
-the demo passphrase is fully disclosed in §3.3, so the
-`-iter 10000` posture does not weaken the trust story relative
-to the documented one (an attacker who reads §3.3 also doesn't
-care about the iteration count).
+The signing workflow base64-decodes `${{ secrets.WAVE4_MLDSA65_KEY_B64 }}`
+into a runner tempfile, signs each artefact, and scrubs the decoded key on
+the way out (`rm -f` / `shred`). **Hardware-token custody** (a NitroKey
+HSM 2 holding the ML-DSA key so it never appears on a network-attached
+runner) remains the Wave 4.1 endgame and MUST land before the v0.6.0 tag.
 
-```
-openssl aes-256-cbc -salt -pbkdf2 -iter 10000 \
-  -pass env:WAVE2_CEREMONY_PASSPHRASE \
-  -in pq-mldsa65.key.pem -out pq-mldsa65.key.enc
-```
-
-The foundation reuses the same `WAVE2_CEREMONY_PASSPHRASE` GitHub Actions
-secret to avoid introducing two parallel secret-rotation procedures on
-a single release. **Production migration** (separates the two secrets,
-moves the PQ key to a NitroKey HSM 2, rotates the foundation
-passphrase, AND bumps `-iter` to 600 000) is tracked as Wave 4.1 and
-MUST land before the v0.6.0 tag.
+> **Historical note — retired (2026-07-03).** Earlier foundation branches
+> stored this private key AES-256-CBC-encrypted at `pq-mldsa65.key.enc`,
+> unlocked by the shared demo passphrase. That posture — including a known
+> KDF-iteration discrepancy between the SA-1 commit and the workflow — was
+> removed in the 2026-07-03 rotation. The encrypted file is deleted and the
+> passphrase is burned; there is nothing left to unlock, so the iteration
+> count is moot.
 
 The PQ public key fingerprint is pinned in three places:
 
 1. `install/keys/pq-mldsa65.pub.pem` — committed plain.
 2. `install/install-verify.sh` heredoc + `PQ_MLDSA65_PUBKEY_FINGERPRINT`
-   constant: `30a634809c19c41abcead8e657bfe19a53f9f4c831a82d2939cb7d5c40efe01a`
+   constant: `db0073bf5b77d5b0e4e5547bfcf86227031c9a138cb3088a57c270b8fbac4073`
 3. `install/install-verify.ps1` heredoc + `$PQ_MLDSA65_PUBKEY_FINGERPRINT`
    constant: same value as above.
 
@@ -533,15 +510,15 @@ ceremony in `docs/supply-chain/wave2-key-ceremony.md`:
    3.5: `openssl genpkey -algorithm ML-DSA-65 -out new.key.pem`.
 2. Compute the new fingerprint:
    `openssl pkey -in new.pub.pem -pubin -outform DER | openssl dgst -sha256`.
-3. Encrypt the private key at rest with the same AES-256-CBC + PBKDF2
-   600 000-iter pattern, using a freshly-generated passphrase (do NOT
-   reuse the rotated-out one).
-4. Commit `install/keys/pq-mldsa65.pub.pem` + `install/keys/pq-mldsa65.key.enc`.
+3. Set the new private key as the GitHub Actions secret — never commit it:
+   `base64 -w0 new.key.pem | gh secret set WAVE4_MLDSA65_KEY_B64 --repo
+   PersonalJarvis/PersonalJarvis`. Keep the offline backup in the password
+   manager.
+4. Overwrite the committed **public** key `install/keys/pq-mldsa65.pub.pem`.
 5. Update the inlined heredoc + `PQ_MLDSA65_PUBKEY_FINGERPRINT` in BOTH
-   `install/install-verify.sh` AND `install/install-verify.ps1`.
-6. Rotate `WAVE2_CEREMONY_PASSPHRASE` (or the new `PQ_MLDSA65_PASSPHRASE`
-   secret once Wave 4.1 separates the two) via `gh secret set`.
-7. Append an entry to §8 "Rotation history".
+   `install/install-verify.sh` AND `install/install-verify.ps1` to the new
+   fingerprint.
+6. Append an entry to §8 "Rotation history".
 
 The verifier rejects releases signed with the OLD key automatically:
 the inlined fingerprint cross-check in `[12/13]` catches both an

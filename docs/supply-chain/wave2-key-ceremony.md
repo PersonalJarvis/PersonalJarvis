@@ -4,9 +4,16 @@
 > generated and committed. Workflow + verifier integration is built by
 > follow-up Jarvis-Agents (Wave-2-SA-2 through SA-5).
 >
+> **Key custody update (2026-07-03).** The offline-ceremony keys were rotated
+> and the encrypt-at-rest scheme was removed. The private key is no longer
+> committed in any form — it lives only as the `WAVE2_OFFLINE_KEY_B64` GitHub
+> Actions secret (base64 of the PKCS#8 PEM). There is no passphrase. The
+> sections below have been updated to the new model; the retired demo key and
+> its once-disclosed passphrase are considered burned.
+>
 > Companion documents:
 > - `install/TRUST_ROOT.md` §3 — the user-facing trust-root explanation,
->   passphrase disclosure, and rotation procedure.
+>   key custody, and rotation procedure.
 > - `docs/supply-chain/threat-model.md` §7 — what Wave 2 stops and what it
 >   still does not.
 
@@ -63,18 +70,15 @@ branch `feat/wave2-foundation`.
   `pip install "tuf>=4"`; the meta-package `tuf>=4` actually resolves to
   `python-tuf` 7.0.0 — the major-version numbering on PyPI is non-linear).
 
-### 2.2 Step 1 — generate a fresh passphrase
+### 2.2 Step 1 — key custody model (no passphrase)
 
-```bash
-openssl rand -base64 18 > /tmp/wave2_passphrase.txt
-cat /tmp/wave2_passphrase.txt
-# → env++ci2NDWCOLeLfgTTZRks   (24 base64 characters)
-```
-
-The passphrase is 18 bytes of CSPRNG output encoded as 24 base64
-characters — approximately 144 bits of entropy, well above any feasible
-brute-force budget against AES-256-CBC with PBKDF2(SHA-256, 600 000
-iterations) salt.
+The private key is **not** stored in the repository, so there is no
+at-rest passphrase to generate. After the keypair is created (Step 2),
+its private half is base64-encoded and stored as the
+`WAVE2_OFFLINE_KEY_B64` GitHub Actions secret (Step 3). The only secret
+material is the raw key itself, held by GitHub's encrypted secret store
+plus a local backup in the maintainer's password manager. The repository
+carries only the public key.
 
 ### 2.3 Step 2 — generate the Ed25519 keypair
 
@@ -94,46 +98,46 @@ from a deterministic seed. It was generated from `openssl genpkey`'s
 default RNG (system CSPRNG). The Wave-1 ceremony was on a single online
 workstation (the maintainer's), so calling this an "offline ceremony" is
 aspirational at this foundation step — the *machinery* is in place
-(passphrase-encrypted key file, TUF root with threshold=2, separate-axis
-verifier contract) but the **operational discipline** of a real offline
+(private key held only as a GitHub Actions secret, TUF root with
+threshold=2, separate-axis verifier contract) but the **operational
+discipline** of a real offline
 ceremony (air-gapped laptop, hardware token, witness on a second
 maintainer's machine) is the production migration described in §4 below.
 We are deliberately honest about this rather than claiming an offline
 ceremony was performed.
 
-### 2.4 Step 3 — encrypt the private key
+### 2.4 Step 3 — export the private key as a GitHub Actions secret
 
 ```bash
-PASSPHRASE=$(cat /tmp/wave2_passphrase.txt)
-openssl aes-256-cbc -pbkdf2 -iter 600000 -salt \
-    -in /tmp/wave2_offline.key \
-    -out install/keys/offline-ceremony.key.enc \
-    -pass "pass:$PASSPHRASE"
+# base64 the PKCS#8 PEM and store it as an encrypted GitHub secret.
+# The key never touches the repository.
+base64 -w0 /tmp/wave2_offline.key | \
+    gh secret set WAVE2_OFFLINE_KEY_B64 --repo PersonalJarvis/PersonalJarvis
 ```
 
-Parameters chosen:
+Custody model:
 
-| Parameter | Value | Why |
+| Property | Value | Why |
 |---|---|---|
-| Algorithm | AES-256-CBC | Industry-standard symmetric cipher; CBC is fine here because we authenticate the entire artefact via the TUF root + dual signatures, not via the encryption layer. |
-| KDF | PBKDF2-HMAC-SHA256 | OpenSSL's `-pbkdf2` flag. Replaces the legacy `EVP_BytesToKey` derivation which is cryptographically weak. |
-| Iterations | 600 000 | OWASP 2023 recommendation for PBKDF2-HMAC-SHA256. Slows a brute-force attempt against the 144-bit passphrase enough that the passphrase entropy is the binding security parameter, not the KDF cost. |
-| Salt | 8 random bytes | OpenSSL default; embedded in the ciphertext header. |
+| At-rest location | GitHub Actions secret `WAVE2_OFFLINE_KEY_B64` | GitHub encrypts secrets at rest and injects them only into workflow runs; the private key never appears in the repo tree, not even encrypted. |
+| Encoding | base64 of the PKCS#8 PEM | Lets a multi-line PEM travel as a single secret value; the workflow base64-decodes it into a runner tempfile at sign time. |
+| Passphrase | none | There is no encrypted key file to unlock, so there is no passphrase to store, disclose, or rotate. |
+| Backup | maintainer's password manager | A single offline copy so the key can be re-set if the GitHub secret is ever lost. |
 
 ### 2.5 Step 4 — round-trip validation
 
 ```bash
-openssl aes-256-cbc -d -pbkdf2 -iter 600000 \
-    -in install/keys/offline-ceremony.key.enc \
-    -pass "pass:$PASSPHRASE" \
-    -out /tmp/wave2_decrypted.key
-openssl pkey -in /tmp/wave2_decrypted.key -noout
+# Decode the secret value back to a PEM and confirm it is a valid key.
+gh secret list --repo PersonalJarvis/PersonalJarvis   # WAVE2_OFFLINE_KEY_B64 present
+base64 -d /tmp/wave2_offline_b64.txt > /tmp/wave2_decoded.key
+openssl pkey -in /tmp/wave2_decoded.key -noout
 # (no output = valid PEM Ed25519 private key)
 ```
 
-This proves the passphrase + encryption pipeline works. The plaintext key
-in `/tmp` was deleted immediately after this validation; only the
-encrypted form is persisted.
+This proves the base64 round-trip preserves a valid key. The plaintext
+key in `/tmp` was deleted immediately after this validation; the repo
+persists only the public key, and the private key persists only inside
+the GitHub secret store.
 
 ### 2.6 Step 5 — TUF root metadata
 
@@ -207,18 +211,20 @@ the threshold with one signature twice.
 
 ## 4. Production migration path
 
-The demo posture committed in this branch has one explicit gap: the
-passphrase is in the repository (see `install/TRUST_ROOT.md` §3.3, with
-full disclosure). To run real production releases under Wave 2, do
-these things — in this order — and the gap closes without changing the
+The private key already lives only in a GitHub Actions secret, not in the
+repository (see `install/TRUST_ROOT.md` §3, key custody). One hardening
+gap remains: the key is generated on, and briefly decoded onto, a
+network-attached machine. To reach a fully air-gapped production posture
+under Wave 2, do these things — in this order — without changing the
 verifier code:
 
 ### 4.1 Generate a fresh keypair (don't reuse this demo key)
 
 Run the §2 ceremony again, but on an air-gapped or freshly-imaged laptop
 that has never been online with credentials. The deliverables are the
-same (`offline-ceremony.pub`, `offline-ceremony.key.enc`); only the
-provenance of the RNG inputs improves.
+same (`offline-ceremony.pub` committed to the repo, the private half set
+as the `WAVE2_OFFLINE_KEY_B64` secret); only the provenance of the RNG
+inputs improves.
 
 Ideally:
 
@@ -233,37 +239,37 @@ Ideally:
 - Have a second maintainer present as a witness.
 - Photograph the openssl command and its output for the audit trail.
 
-### 4.2 Move the passphrase out of the repository
+### 4.2 Set the private-key secret
 
 ```bash
-gh secret set WAVE2_CEREMONY_PASSPHRASE \
-    --repo PersonalJarvis/PersonalJarvis \
-    --body "<new passphrase from openssl rand -base64 18>"
+base64 -w0 offline-ceremony.key | \
+    gh secret set WAVE2_OFFLINE_KEY_B64 --repo PersonalJarvis/PersonalJarvis
 # Verify:
 gh secret list --repo PersonalJarvis/PersonalJarvis
-# WAVE2_CEREMONY_PASSPHRASE  Updated 2026-MM-DD HH:MM:SS
+# WAVE2_OFFLINE_KEY_B64  Updated 2026-MM-DD HH:MM:SS
 ```
 
 Once the GitHub secret is set:
 
-1. Wave-2-SA-3 (workflow integration) modifies `sign-installer.yml` to
-   add a "Sign with offline-ceremony key" step. That step:
-   - decrypts `install/keys/offline-ceremony.key.enc` using
-     `${{ secrets.WAVE2_CEREMONY_PASSPHRASE }}`.
+1. The signing workflow (`sign-installer.yml`) has a "Sign with
+   offline-ceremony key" step. That step:
+   - base64-decodes `${{ secrets.WAVE2_OFFLINE_KEY_B64 }}` into a runner
+     tempfile (no passphrase — the decoded bytes are the PKCS#8 PEM).
    - signs the artefact with the Ed25519 private key.
    - uploads `<asset>.ed25519.sig` as a release asset.
-   - immediately `shred -uz`-overwrites the decrypted private key.
-2. Update `install/TRUST_ROOT.md` §3.3 to **remove** the demo passphrase
-   line and replace it with: "Production deployment: passphrase moved to
-   `WAVE2_CEREMONY_PASSPHRASE` GitHub Actions secret on 2026-MM-DD."
+   - immediately `shred -uz`-overwrites the decoded private key.
+2. Swap the committed public key (`offline-ceremony.pub`) + its inlined
+   copy in the verifier scripts + the pinned fingerprint, and append a
+   row to the rotation-history table in `install/TRUST_ROOT.md`.
 
 ### 4.3 Better: HSM-backed signing
 
-The §4.2 model still requires the passphrase to exist briefly as
-plaintext inside the GitHub-hosted runner. An attacker who compromises
-the GitHub Actions infrastructure (or the cosign-installer Action, or
-any other Action in the workflow — see threat-model §3 Scenario B) can
-exfiltrate the passphrase and the decrypted key while the workflow runs.
+The §4.2 model still requires the private key to exist briefly as
+plaintext inside the GitHub-hosted runner (the base64 secret is decoded
+there before signing). An attacker who compromises the GitHub Actions
+infrastructure (or the cosign-installer Action, or any other Action in
+the workflow — see threat-model §3 Scenario B) can exfiltrate the
+decoded key while the workflow runs.
 
 A truly air-gapped production posture moves the signing operation
 **out of GitHub Actions entirely**:
@@ -275,9 +281,9 @@ A truly air-gapped production posture moves the signing operation
 - The HSM (YubiKey, Nitrokey, SoloKey v2, or a YubiHSM 2 for shared-
   maintainer scenarios) holds the Ed25519 private key in tamper-resistant
   hardware. Every sign operation needs physical touch.
-- The passphrase ceases to exist — there is no PEM file to decrypt; the
-  signing is done by sending bytes through a USB protocol that asks the
-  token to sign with a key it has never exported.
+- The exported key ceases to exist — there is no PEM in a secret to
+  decode; the signing is done by sending bytes through a USB protocol
+  that asks the token to sign with a key it has never exported.
 
 This is exactly Sigstore's own model for their root TUF ceremonies
 (see Sigstore Issue #1432 and the November 2024 root-signing ceremony
@@ -290,9 +296,9 @@ recording). Wave 2.5 / Wave 3 will adopt it; Wave 2 documents the path.
 > **Wave 2 has no automated recovery.** This is a deliberate design
 > tradeoff and a known Wave 2.5 / Wave 3 follow-up.
 
-If `install/keys/offline-ceremony.key.enc` is lost AND the passphrase is
-forgotten (or vice versa — both halves are needed) and no production-
-posture HSM exists, the maintainer cannot mint new 2-of-2 signatures.
+If the `WAVE2_OFFLINE_KEY_B64` secret is lost AND the password-manager
+backup of the private key is gone, and no production-posture HSM exists,
+the maintainer cannot mint new 2-of-2 signatures.
 All future releases would either be unsigned-by-the-offline-axis (which
 the Wave-2-SA-2 verifier refuses) or signed under a fresh key the
 verifier does not yet trust.
@@ -311,12 +317,12 @@ The recovery path is:
    trusted channel, which it does not have until Wave 3 ships the
    TUF refresh workflow.
 
-The lesson: in Wave 2, **do not lose the offline key.** Store the
-passphrase in a 1Password vault, in a paper printout in a fire safe,
-or split across two trustees via Shamir's Secret Sharing. The
-encrypted-private-key file is committed in the public repo and so is
-already replicated worldwide; the passphrase secrecy is the only thing
-to protect.
+The lesson: in Wave 2, **do not lose the offline key.** Keep the
+password-manager backup of the private key in a vault, in a paper
+printout in a fire safe, or split across two trustees via Shamir's
+Secret Sharing. The private key exists only in the GitHub secret store
+plus that backup — losing both is unrecoverable, so the backup is the
+thing to protect.
 
 Wave 3 fixes this with a published TUF refresh metadata channel + a
 threshold-key recovery key held by an independent project (e.g. the
@@ -429,26 +435,21 @@ Jarvis-Agent should re-run them as sanity checks):
 # 1. Public key committed as a blob
 git ls-tree HEAD install/keys/offline-ceremony.pub
 
-# 2. Encrypted private key committed as a blob
-git ls-tree HEAD install/keys/offline-ceremony.key.enc
+# 2. Private key is NOT tracked in the repo (only the .pub is)
+git ls-tree HEAD install/keys/ | grep -F 'PRIVATE KEY' && echo "FAIL: private key committed" || echo "PASS: only public key tracked"
 
 # 3. TUF root committed as a blob
 git ls-tree HEAD install/tuf/1.root.json
 
-# 4. Decryption round-trip works (proves passphrase + encryption)
-openssl aes-256-cbc -d -pbkdf2 -iter 600000 \
-    -in install/keys/offline-ceremony.key.enc \
-    -pass "pass:env++ci2NDWCOLeLfgTTZRks" \
-    -out /tmp/wave2_decrypted.key
-openssl pkey -in /tmp/wave2_decrypted.key -noout && echo PASS
-rm -f /tmp/wave2_decrypted.key   # scrub immediately
+# 4. Private-key secret is set (proves custody)
+gh secret list --repo PersonalJarvis/PersonalJarvis | grep -F 'WAVE2_OFFLINE_KEY_B64'
 
 # 5. TUF root metadata loads + threshold=2
 python -c "from tuf.api.metadata import Metadata; m = Metadata.from_file('install/tuf/1.root.json'); assert m.signed.roles['root'].threshold == 2; print('PASS')"
 
-# 6. Passphrase committed in TRUST_ROOT.md §3.3 (literal disclosure)
-grep -F 'WAVE2_CEREMONY_PASSPHRASE=env++ci2NDWCOLeLfgTTZRks' install/TRUST_ROOT.md
+# 6. No plaintext key material tracked under install/keys/ (must find only .pub)
+git grep -nl 'PRIVATE KEY' -- install/keys/ && echo "FAIL: private key material tracked" || echo "PASS: no private key at rest"
 ```
 
-If any of the six commands fails, this branch is not Wave-2-foundation-
-ready and must be regenerated.
+If any check fails, this branch is not Wave-2-foundation-ready and must
+be regenerated.

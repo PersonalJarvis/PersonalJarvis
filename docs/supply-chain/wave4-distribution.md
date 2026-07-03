@@ -107,7 +107,7 @@ Scenarios S-1..S-3 are the Wave 1-3 axes; Wave 4 leaves them as-is (the 12-stage
 **Wave 4 PQ scaffolding (SA-1 work):**
 
 - `install/keys/pq-mldsa65.pub.pem` — ML-DSA-65 public key, plain.
-- `install/keys/pq-mldsa65.key.enc` — ML-DSA-65 private key, AES-256-CBC encrypted with PBKDF2-derived key from the Wave-2 passphrase pattern (`env++ci2NDWCOLeLfgTTZRks`). Encryption round-trip verified at generation time.
+- ML-DSA-65 private key — not committed to the repo. It lives only as the `WAVE4_MLDSA65_KEY_B64` GitHub Actions secret (base64 of the PKCS#8 PEM); the repo carries only the public key.
 - Tooling: OpenSSL 3.5.6 (ML-DSA support added in OpenSSL 3.5.0 via the OQS provider integration).
 
 **What this Wave does NOT do:**
@@ -119,7 +119,7 @@ Scenarios S-1..S-3 are the Wave 1-3 axes; Wave 4 leaves them as-is (the 12-stage
 
 **What Wave 4.1 (follow-up Jarvis-Agents) MUST do:**
 
-- SA-W4-2: Add ML-DSA-65 signing step to the GitHub Actions workflow, gated by a GitHub Actions secret `PQ_MLDSA65_PASSPHRASE` (identical pattern to Wave 2's offline-ceremony secret).
+- SA-W4-2: Add ML-DSA-65 signing step to the GitHub Actions workflow, reading the private key from the `WAVE4_MLDSA65_KEY_B64` GitHub Actions secret (base64 PKCS#8 PEM — same secret-only custody as Wave 2's `WAVE2_OFFLINE_KEY_B64`).
 - SA-W4-3: Add `install-verify.sh.pqsig` and `install-verify.ps1.pqsig` to every release asset bundle.
 - SA-W4-4: Add stage `[11.5/12]` to both verifier scripts: ML-DSA-65 signature verification using `openssl pkeyutl -verify -inkey pq-mldsa65.pub.pem -rawin -in <asset> -sigfile <asset>.pqsig`. Hard-fail-closed identical to the other axes.
 - SA-W4-5: Integrate the Homebrew Formula + Scoop manifest into the org repos (`personal-jarvis/homebrew-jarvis`, `personal-jarvis/scoop-jarvis`), publish the v0.5.0-wave4 release, update SHA-256 pins, smoke-test the new install path.
@@ -127,7 +127,7 @@ Scenarios S-1..S-3 are the Wave 1-3 axes; Wave 4 leaves them as-is (the 12-stage
 **PQ key storage strategy:**
 
 - Public key: committed plain in `install/keys/pq-mldsa65.pub.pem` and **inlined into the verifier scripts** (same pattern as the Wave-2 offline key — defends against asset-store-only substitution).
-- Private key: encrypted at rest in `install/keys/pq-mldsa65.key.enc`. The passphrase is **never committed**; it lives in GitHub Actions secrets (`PQ_MLDSA65_PASSPHRASE`) and in the maintainer's password manager. The Wave-2 passphrase pattern (`env++ci2NDWCOLeLfgTTZRks`) is reused at SA-1 only for *encrypt-at-rest of the test material*; production rotation happens before the v0.5.0-wave4 cut.
+- Private key: **never committed to the repo — not even encrypted.** It lives only as the `WAVE4_MLDSA65_KEY_B64` GitHub Actions secret (base64 of the PKCS#8 PEM), with a local backup in the maintainer's password manager. The signing workflow base64-decodes it into a runner tempfile at sign time and scrubs it afterwards; there is no passphrase and no `.key.enc` at rest.
 - Fingerprint: see `install/keys/pq-mldsa65.pub.pem` (SHA-256 of DER-encoded SubjectPublicKeyInfo). Will be pinned in `TRUST_ROOT.md §5` (Wave 4.1).
 
 ---
