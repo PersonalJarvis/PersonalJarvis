@@ -122,6 +122,20 @@ curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/
 | `--no-launch` | Install only; don't start the app |
 | `--no-wizard` | Skip the first-run key wizard |
 
+**Uninstall** — one command removes everything a plain folder-delete would miss: the
+install folder, the login-autostart entry, and the API keys saved in your OS keychain.
+Add `--dry-run` to preview, or `--yes` to skip the confirmation.
+
+```powershell
+# Windows (PowerShell)
+& "$env:USERPROFILE\.personal-jarvis\install\uninstall.ps1"
+```
+
+```bash
+# macOS · Linux
+bash ~/.personal-jarvis/install/uninstall.sh
+```
+
 <details>
 <summary><b>Prefer pipx, or a manual clone?</b></summary>
 

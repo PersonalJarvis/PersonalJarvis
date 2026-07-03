@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID, uuid4
 
 from jarvis.core.bus import EventBus
-from jarvis.core.config import JarvisConfig
+from jarvis.core.config import BrainTierConfig, JarvisConfig
 from jarvis.core.events import (
     ActionExecuted,
     AnnouncementRequested,
@@ -77,7 +77,6 @@ from jarvis.safety.tool_executor import ToolExecutor
 from jarvis.brain.provider_test import BILLING_LIMIT_MARKERS
 
 from .dispatcher import BrainDispatcher
-from .healthcheck import BrainConfigError
 from .intent_router import RoutingDecision, classify
 from .local_action_gate import (
     HARNESS_NAME,
@@ -1967,10 +1966,31 @@ class BrainManager:
         """
         tier_cfg = getattr(config.brain, tier, None)
         if tier_cfg is None:
-            raise BrainConfigError(
-                f"No [brain.{tier}] block in config. "
-                f"Tiered routing requires [brain.router] in jarvis.toml."
+            # A fresh install ships NO [brain.router] block: jarvis.toml.example
+            # has a [brain] table but no [brain.router] sub-table, and neither
+            # the wizard, the installer, nor onboarding ever writes one. Raising
+            # here left ``app.state.brain = None``, which bricked BOTH the
+            # voice/chat brain AND the provider-switch route — the latter then
+            # surfaced the misleading "headless mode" 503 on every "Set active"
+            # click. This only ever hit downloaders: the maintainer's own
+            # jarvis.toml HAS the block (textbook AP-23 "works on my machine").
+            # Instead of failing, synthesize the tier from the user's REAL
+            # selection. BrainTierConfig only requires ``provider``; the model is
+            # filled per-provider by ``_resolve_tier_model``. Provider-agnostic —
+            # it honours whatever main provider the fresh user configured, and an
+            # explicit [brain.router] block still overrides this untouched.
+            default_provider = (
+                (config.brain.primary or "").strip()
+                or (config.brain.routing_provider or "").strip()
+                or "claude-api"
             )
+            log.info(
+                "No [brain.%s] block in config — synthesizing a default tier from "
+                "brain.primary=%r so a fresh install boots a working brain.",
+                tier,
+                default_provider,
+            )
+            tier_cfg = BrainTierConfig(provider=default_provider)
 
         local_config = config.model_copy(deep=True)
         requested_provider = provider_override or tier_cfg.provider

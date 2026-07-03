@@ -1281,9 +1281,18 @@ async def delete_secret_value(key: str, request: Request) -> dict[str, Any]:
 async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     brain = getattr(request.app.state, "brain", None)
     if brain is None or not hasattr(brain, "switch"):
+        # The brain is built on a background task after boot, so a very early
+        # click can land before it is ready. It can also be genuinely absent on
+        # a headless build. Either way "wait and retry" is the honest guidance —
+        # the old "headless mode" wording misdiagnosed a fresh-install brain that
+        # simply had not finished building yet (see BrainManager.from_tier_config
+        # default-router synthesis).
         raise HTTPException(
             status_code=503,
-            detail="Brain-Manager nicht verfügbar (vermutlich Headless-Mode)",
+            detail=(
+                "Brain is still starting up or unavailable — wait a moment and "
+                "try again. If it persists, check the server logs."
+            ),
         )
 
     spec = get_spec(body.provider)
