@@ -45,8 +45,30 @@ import os
 import sys
 from dataclasses import dataclass
 
+from rich.console import Console
+from rich.markup import escape
+from rich.padding import Padding
+from rich.panel import Panel
+from rich.theme import Theme
+
 from jarvis.core import config as cfg
 from jarvis.hardware import detection
+
+# Brand palette (Charcoal + Gold) — identical to install/installer.py so the
+# first-run wizard reads as one continuous, on-brand experience with the
+# installer that launched it. Rich auto-strips color on a non-TTY (headless
+# VPS, CI, piped/captured output), so the same calls degrade to clean plain
+# text there — no separate code path needed.
+_THEME = Theme(
+    {
+        "brand": "#e7c46e",
+        "brand.bold": "bold #e7c46e",
+        "ok": "#7ac88c",
+        "muted": "#8c8c8c",
+        "bad": "#e07a6e",
+    }
+)
+_console = Console(theme=_THEME, highlight=False)
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +106,11 @@ class SecretSpec:
     # advanced, app-only secrets (e.g. per-provider BYO OAuth client ids) so they
     # don't lengthen onboarding.
     prompt: bool = True
+    # Which onboarding SECTION this key belongs to (see ``_SECTIONS``). The wizard
+    # groups prompted keys under their section so the user immediately sees "one
+    # brain, one voice, one STT — I only need ONE per group, not all of them".
+    # Non-prompted / advanced slots keep the default and are never rendered.
+    section: str = "other"
 
 
 SECRETS: list[SecretSpec] = [
@@ -99,6 +126,7 @@ SECRETS: list[SecretSpec] = [
         help_url="https://console.anthropic.com/settings/keys",
         required_for="Brain (Claude via API key) + Jarvis-Agent harness (anthropic provider)",
         optional=True,
+        section="brain",
     ),
     SecretSpec(
         key="openrouter_api_key",
@@ -106,6 +134,7 @@ SECRETS: list[SecretSpec] = [
         label="OpenRouter API Key (universal gateway)",
         help_url="https://openrouter.ai/keys",
         required_for="Brain (universal: access to all models via one key) + Jarvis-Agent harness (openrouter provider)",
+        section="brain",
     ),
     SecretSpec(
         key="openai_api_key",
@@ -113,6 +142,7 @@ SECRETS: list[SecretSpec] = [
         label="OpenAI API Key",
         help_url="https://platform.openai.com/api-keys",
         required_for="Brain (GPT), Whisper API (STT), TTS + Jarvis-Agent harness (openai provider)",
+        section="brain",
     ),
     SecretSpec(
         key="codex_openai_api_key",
@@ -120,6 +150,7 @@ SECRETS: list[SecretSpec] = [
         label="OpenAI Codex API Key",
         help_url="https://platform.openai.com/api-keys",
         required_for="OpenAI Codex API-key mode (separate from the OpenAI Brain provider)",
+        section="brain",
     ),
     SecretSpec(
         key="gemini_api_key",
@@ -127,6 +158,7 @@ SECRETS: list[SecretSpec] = [
         label="Google AI Studio / Gemini API Key",
         help_url="https://aistudio.google.com/app/apikey",
         required_for="Brain (Gemini) + Jarvis-Agent harness (google provider)",
+        section="brain",
     ),
     SecretSpec(
         key="grok_api_key",
@@ -134,6 +166,7 @@ SECRETS: list[SecretSpec] = [
         label="xAI Grok Voice API Key (TTS)",
         help_url="https://console.x.ai/",
         required_for="TTS (Grok Voice — leo/rex/sal/ara/eve)",
+        section="tts",
     ),
     SecretSpec(
         key="google_tts_credentials_path",
@@ -141,6 +174,7 @@ SECRETS: list[SecretSpec] = [
         label="Path to the Google Cloud service-account JSON (for TTS)",
         help_url="https://console.cloud.google.com/apis/credentials",
         required_for="TTS (Google Neural2 — high-quality voice output)",
+        section="tts",
     ),
     SecretSpec(
         key="deepgram_api_key",
@@ -148,6 +182,7 @@ SECRETS: list[SecretSpec] = [
         label="Deepgram API Key (fast STT)",
         help_url="https://console.deepgram.com/",
         required_for="STT (Deepgram — cloud alternative to Whisper)",
+        section="stt",
     ),
     SecretSpec(
         key="groq_api_key",
@@ -155,6 +190,7 @@ SECRETS: list[SecretSpec] = [
         label="Groq API Key (ultra-fast Whisper)",
         help_url="https://console.groq.com/keys",
         required_for="STT (Groq Whisper — <50ms latency)",
+        section="stt",
     ),
     SecretSpec(
         key="picovoice_access_key",
@@ -162,6 +198,7 @@ SECRETS: list[SecretSpec] = [
         label="Picovoice Access Key (Porcupine wake word)",
         help_url="https://console.picovoice.ai/",
         required_for="Wake-word detection (Porcupine)",
+        section="wake",
     ),
     SecretSpec(
         key="tavily_api_key",
@@ -169,6 +206,7 @@ SECRETS: list[SecretSpec] = [
         label="Tavily API Key (web search for agents)",
         help_url="https://app.tavily.com/home",
         required_for="Tool (search_web)",
+        section="tools",
     ),
     SecretSpec(
         key="elevenlabs_api_key",
@@ -176,6 +214,7 @@ SECRETS: list[SecretSpec] = [
         label="ElevenLabs API Key (premium TTS, multi-language)",
         help_url="https://elevenlabs.io/app/settings/api-keys",
         required_for="TTS (ElevenLabs — mature British voice with DE+EN auto-detect)",
+        section="tts",
     ),
     SecretSpec(
         key="cartesia_api_key",
@@ -183,6 +222,7 @@ SECRETS: list[SecretSpec] = [
         label="Cartesia.ai API Key (Sonic 3.5 TTS, 42 languages)",
         help_url="https://play.cartesia.ai/keys",
         required_for="TTS (Cartesia Sonic 3.5 — multilingual incl. German, ~90ms TTFB)",
+        section="tts",
     ),
     # Team / hosted-proxy mode (2026-06-20 spec). The per-user token a client
     # presents to the shared key proxy instead of holding a real vendor key.
@@ -195,6 +235,7 @@ SECRETS: list[SecretSpec] = [
         help_url="",
         required_for="Team mode — per-user token for the shared key proxy",
         optional=True,
+        section="team",
     ),
     # Phase 5 — admin-helper HMAC key. NOT asked interactively:
     # on the helper's first start, `jarvis.admin.launcher` generates 32
@@ -208,6 +249,11 @@ SECRETS: list[SecretSpec] = [
         help_url="",
         required_for="Phase 5 — admin ops (winget, services, registry, firewall)",
         optional=True,
+        # Auto-generated on the admin helper's first start (32 random bytes) and
+        # persisted by ``jarvis.admin.launcher``. Asking the user to *type* an
+        # auto-generated key made no sense, so it is whitelisted for the API but
+        # never prompted — the secrets overview still shows "already stored".
+        prompt=False,
     ),
     # === F-FRIENDS [F1] · feature/friends-section · ruben-2026-04-30 ===
     # Phase F1 — Telegram-channel bot token. The user creates a bot via
@@ -220,6 +266,7 @@ SECRETS: list[SecretSpec] = [
         help_url="https://t.me/BotFather",
         required_for="Channel (Telegram) — two-way chat with friends",
         optional=True,
+        section="channels",
     ),
     # Twilio telephony — the user calls a phone number and talks to Jarvis
     # over Twilio Media Streams (raw audio), reusing Jarvis's own STT/Brain/TTS
@@ -233,6 +280,7 @@ SECRETS: list[SecretSpec] = [
         help_url="https://console.twilio.com",
         required_for="Telephony (call Jarvis on a Twilio phone number)",
         optional=True,
+        section="telephony",
     ),
     # === Bring-your-own OAuth client (marketplace plugins) ===
     # A downloader can run their OWN production OAuth app instead of the shipped
@@ -300,6 +348,83 @@ SECRETS: list[SecretSpec] = [
 ]
 
 
+@dataclass(slots=True, frozen=True)
+class _Section:
+    """A user-facing group of API keys in the first-run wizard.
+
+    The whole point of grouping is honesty about choice: the user sees "voices",
+    "brains", "speech-to-text" as *buckets* and immediately understands they pick
+    at most ONE provider per bucket — not the whole list. ``pick_one`` drives the
+    "you only need ONE of these" hint; ``essential`` marks the single bucket
+    Jarvis truly needs to function (the brain).
+    """
+
+    id: str
+    title: str
+    blurb: str        # one plain-English line: what this bucket is for
+    pick_one: bool = True
+    essential: bool = False
+
+
+# Ordered most-important-first. Only sections that actually have a prompted key
+# are rendered (see ``step_api_keys``), so adding/removing a SecretSpec section
+# automatically shows/hides the group.
+_SECTIONS: tuple[_Section, ...] = (
+    _Section(
+        id="brain",
+        title="Brain — the AI that thinks",
+        blurb=(
+            "The ONE thing Jarvis needs to work. Pick a single provider you "
+            "already have. Tip: OpenRouter gives you almost every model with one key."
+        ),
+        essential=True,
+    ),
+    _Section(
+        id="stt",
+        title="Speech-to-text — understanding your voice",
+        blurb=(
+            "Optional. Jarvis can also transcribe locally & offline. Add one cloud "
+            "key only if you want faster/other transcription. (OpenAI Whisper uses "
+            "the OpenAI key from the Brain group.)"
+        ),
+    ),
+    _Section(
+        id="tts",
+        title="Voice — how Jarvis speaks back",
+        blurb=(
+            "Optional. Pick one for a natural cloud voice; without any, a basic "
+            "local/system voice is used."
+        ),
+    ),
+    _Section(
+        id="wake",
+        title="Wake word",
+        blurb="Optional. Only needed for the Porcupine wake engine.",
+    ),
+    _Section(
+        id="tools",
+        title="Web search & tools",
+        blurb="Optional. Lets Jarvis and its agents search the live web.",
+    ),
+    _Section(
+        id="channels",
+        title="Messaging channels",
+        blurb="Optional. Chat with Jarvis from Telegram.",
+    ),
+    _Section(
+        id="telephony",
+        title="Phone calls",
+        blurb="Optional. Call Jarvis on a Twilio phone number.",
+    ),
+    _Section(
+        id="team",
+        title="Team / shared-key proxy",
+        blurb="Advanced & optional. Only for a shared team key proxy.",
+        pick_one=False,
+    ),
+)
+
+
 def _println(msg: str = "") -> None:
     print(msg)
 
@@ -342,34 +467,85 @@ def step_hardware_check() -> detection.HardwareReport:
     return report
 
 
+def _secret_store_location() -> str:
+    """Plain-English name for where a saved key lands on this OS.
+
+    The old copy always said "Windows Credential Manager", which was wrong (and
+    slightly alarming) on macOS/Linux. ``get_secret`` resolves keyring → ENV →
+    .env → local file, so we describe the general guarantee, not a Windows-only
+    store."""
+    if sys.platform == "win32":
+        return "Windows Credential Manager"
+    if sys.platform == "darwin":
+        return "macOS Keychain"
+    return "your OS keyring (or an encrypted local fallback)"
+
+
+def _api_keys_intro() -> None:
+    """The framing that makes onboarding calm: everything here is skippable and
+    you only ever need one provider per group."""
+    _console.print()
+    _console.print(" [brand.bold]Step 2 / 8 — API keys[/]  [muted](all optional)[/]")
+    body = (
+        "[ok]Nothing here is required right now.[/] Press [brand]Enter[/] to skip any "
+        "field — or every field — and add keys later in the app under "
+        "[brand]Settings → API Keys[/].\n\n"
+        "You only need [brand.bold]ONE provider per group[/] (one brain, one voice, "
+        "one speech-to-text …) — never the whole list. The only group Jarvis truly "
+        "needs to think is the [brand.bold]Brain[/].\n\n"
+        f"[muted]Whatever you enter is stored securely in {_secret_store_location()} — "
+        "never in the code or a plain config file.[/]"
+    )
+    _console.print(Panel(body, border_style="brand", padding=(1, 2)))
+
+
 def step_api_keys() -> dict[str, str]:
-    _println()
-    _println("=" * 60)
-    _println(" Step 2 / 8 — Set up API keys")
-    _println("=" * 60)
-    _println("Keys are stored (encrypted) in the Windows Credential Manager.")
-    _println("Leave empty to skip. At least one Brain provider is needed.")
-    _println()
+    _api_keys_intro()
 
     stored: dict[str, str] = {}
-    for spec in SECRETS:
-        if not spec.prompt:
-            # Advanced, app-only slot (e.g. a BYO OAuth client id) — whitelisted
-            # for the API but intentionally not asked here to keep onboarding short.
+    for section in _SECTIONS:
+        specs = [s for s in SECRETS if s.prompt and s.section == section.id]
+        if not specs:
             continue
-        existing = cfg.get_secret(spec.key)
-        marker = "✓ already stored" if existing else "–"
-        _println(f"• {spec.label}  [{marker}]")
-        _println(f"  For: {spec.required_for}")
-        _println(f"  Get a key: {spec.help_url}")
-        val = _ask("  Enter key/path (Enter = skip)", default="")
-        if val:
-            if cfg.set_secret(spec.key, val):
-                stored[spec.key] = val
-                _println("  → saved in the Credential Manager.")
-            else:
-                _println("  ⚠  Credential Manager not available, using the .env fallback.")
-        _println()
+
+        # Section header: title + one plain line + the "pick one" nudge. Wrapped
+        # sub-lines hang-indent (Padding left=2) so a long blurb stays aligned
+        # under the title instead of falling back to the left margin.
+        _console.print()
+        tag = "[bad]needed[/]" if section.essential else "[muted]optional[/]"
+        _console.print(f"[brand.bold]▸ {escape(section.title)}[/]  ({tag})")
+        _console.print(Padding(f"[muted]{escape(section.blurb)}[/]", (0, 0, 0, 2)))
+        if section.pick_one and len(specs) > 1:
+            _console.print(
+                Padding("[muted]You only need ONE of the following.[/]", (0, 0, 0, 2))
+            )
+        _console.print()
+
+        for spec in specs:
+            existing = cfg.get_secret(spec.key)
+            marker = "[ok]✓ already set[/]" if existing else "[muted]— not set[/]"
+            _console.print(f"  [brand]•[/] {escape(spec.label)}   {marker}")
+            if spec.help_url:
+                _console.print(f"    [muted]Get a key:[/] {escape(spec.help_url)}")
+            val = _ask("    Key/path (Enter = skip)", default="")
+            if val:
+                if cfg.set_secret(spec.key, val):
+                    stored[spec.key] = val
+                    _console.print("    [ok]→ saved.[/]")
+                else:
+                    _console.print(
+                        "    [bad]⚠ keyring unavailable — saved to the .env fallback.[/]"
+                    )
+            _console.print()
+
+    # Closing reassurance — the single most important line for a nervous first-timer.
+    if stored:
+        _console.print(f"  [ok]Saved {len(stored)} key(s).[/] "
+                       "[muted]Change or add more any time in Settings → API Keys.[/]")
+    else:
+        _console.print("  [muted]No keys entered — that's fine. You can add them "
+                       "any time in the app under Settings → API Keys.[/]")
+    _console.print()
     return stored
 
 
