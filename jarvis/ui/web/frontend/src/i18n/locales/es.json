@@ -156,6 +156,33 @@
       "other": "Otro"
     }
   },
+  "dictionary": {
+    "title": "Diccionario",
+    "description": "Enseña al reconocimiento de voz tus palabras — nombres, marcas, términos técnicos. Añade una palabra o corrige lo que siempre entiende mal.",
+    "add": "Añadir palabra",
+    "search": "Buscar en el diccionario…",
+    "loading": "Cargando diccionario…",
+    "empty": "Aún no hay palabras — añade nombres o términos que el reconocimiento de voz deba conocer.",
+    "no_matches": "Ninguna entrada coincide con tu búsqueda.",
+    "edit": "Editar",
+    "delete": "Eliminar",
+    "added": "«{0}» se añadió al diccionario.",
+    "saved": "Entrada del diccionario guardada.",
+    "deleted": "«{0}» se eliminó del diccionario.",
+    "applies_note": "Los cambios se aplican a tu próxima frase — no hace falta reiniciar.",
+    "dialog_add_title": "Añadir a tu vocabulario",
+    "dialog_edit_title": "Editar entrada del diccionario",
+    "correction_toggle": "Corregir un error de reconocimiento",
+    "correction_hint_on": "Siempre que se entienda el lado izquierdo, se sustituye por el derecho.",
+    "correction_hint_off": "Añade una palabra para que el reconocimiento la conozca y la escriba exactamente así.",
+    "word_placeholder": "Añadir una palabra nueva",
+    "word_correct_placeholder": "Escritura correcta",
+    "misheard_placeholder": "Reconocido erróneamente como…",
+    "misheard_comma_hint": "Separa varias variantes mal reconocidas con comas.",
+    "cancel": "Cancelar",
+    "save": "Guardar",
+    "add_confirm": "Añadir palabra"
+  },
   "voice_state": {
     "idle": "Listo",
     "listening": "Escuchando",

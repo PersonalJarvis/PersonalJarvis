@@ -156,6 +156,33 @@
       "other": "Andere"
     }
   },
+  "dictionary": {
+    "title": "Wörterbuch",
+    "description": "Bring der Spracherkennung deine Wörter bei — Namen, Marken, Fachbegriffe. Füge ein Wort hinzu oder korrigiere, was sie immer wieder falsch versteht.",
+    "add": "Wort hinzufügen",
+    "search": "Wörterbuch durchsuchen…",
+    "loading": "Wörterbuch wird geladen…",
+    "empty": "Noch keine Wörter — füge Namen oder Begriffe hinzu, die die Spracherkennung kennen soll.",
+    "no_matches": "Keine Einträge passen zu deiner Suche.",
+    "edit": "Bearbeiten",
+    "delete": "Löschen",
+    "added": "„{0}\" wurde ins Wörterbuch aufgenommen.",
+    "saved": "Wörterbuch-Eintrag gespeichert.",
+    "deleted": "„{0}\" wurde aus dem Wörterbuch entfernt.",
+    "applies_note": "Änderungen gelten ab deiner nächsten Äußerung — kein Neustart nötig.",
+    "dialog_add_title": "Zum Wortschatz hinzufügen",
+    "dialog_edit_title": "Wörterbuch-Eintrag bearbeiten",
+    "correction_toggle": "Falsch Erkanntes korrigieren",
+    "correction_hint_on": "Immer wenn die linke Seite verstanden wird, wird sie durch die rechte ersetzt.",
+    "correction_hint_off": "Füge ein Wort hinzu, damit die Erkennung es kennt und genau so schreibt.",
+    "word_placeholder": "Neues Wort hinzufügen",
+    "word_correct_placeholder": "Richtige Schreibweise",
+    "misheard_placeholder": "Falsch erkannt als…",
+    "misheard_comma_hint": "Mehrere falsch erkannte Varianten mit Kommas trennen.",
+    "cancel": "Abbrechen",
+    "save": "Speichern",
+    "add_confirm": "Wort hinzufügen"
+  },
   "voice_state": {
     "idle": "Bereit",
     "listening": "Hört zu",

@@ -6,7 +6,7 @@
     "single_turn_mode": false
   },
   "tts": {
-    "provider": "grok-voice",
+    "provider": "openrouter-tts",
     "fallback": "grok-voice",
     "voice_de": "Kore",
     "voice_en": "Kore",

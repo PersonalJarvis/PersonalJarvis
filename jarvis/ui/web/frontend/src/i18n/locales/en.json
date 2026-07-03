@@ -156,6 +156,33 @@
       "other": "Other"
     }
   },
+  "dictionary": {
+    "title": "Dictionary",
+    "description": "Teach speech recognition your words — names, brands, technical terms. Add a word, or fix something it keeps hearing wrong.",
+    "add": "Add word",
+    "search": "Search dictionary…",
+    "loading": "Loading dictionary…",
+    "empty": "No words yet — add names or terms the voice recognition should know.",
+    "no_matches": "No entries match your search.",
+    "edit": "Edit",
+    "delete": "Delete",
+    "added": "\"{0}\" added to the dictionary.",
+    "saved": "Dictionary entry saved.",
+    "deleted": "\"{0}\" removed from the dictionary.",
+    "applies_note": "Changes apply to the next thing you say — no restart needed.",
+    "dialog_add_title": "Add to your vocabulary",
+    "dialog_edit_title": "Edit dictionary entry",
+    "correction_toggle": "Fix a misrecognition",
+    "correction_hint_on": "Whenever the left side is heard, it is replaced by the right side.",
+    "correction_hint_off": "Add a word so the recognition knows it and spells it exactly like this.",
+    "word_placeholder": "Add a new word",
+    "word_correct_placeholder": "Correct spelling",
+    "misheard_placeholder": "Misrecognized as…",
+    "misheard_comma_hint": "Separate several misheard variants with commas.",
+    "cancel": "Cancel",
+    "save": "Save",
+    "add_confirm": "Add word"
+  },
   "voice_state": {
     "idle": "Ready",
     "listening": "Listening",
