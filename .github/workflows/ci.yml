@@ -186,8 +186,11 @@ jobs:
           python -m pip install -e ".[dev]" --no-deps
           # pytest is needed to RUN the suite; --no-deps above skips it (and all
           # of [dev]'s deps), so install the test runner explicitly alongside the
-          # CLI's own runtime deps. Keeps the job light (no torch/heavy deps).
-          python -m pip install typer platformdirs click httpx rich pytest pytest-asyncio
+          # CLI's own runtime deps AND the light libs the cli_ctl test modules pull
+          # in transitively (pyyaml/pydantic/loguru/dotenv/packaging, via
+          # dispatch / self-control-catalog / discovery importing deeper jarvis
+          # modules). Still light — no torch/audio/GUI/desktop deps.
+          python -m pip install typer platformdirs click httpx rich pytest pytest-asyncio pyyaml pydantic loguru python-dotenv packaging
 
       - name: Import + --help smoke (CLI runs without desktop deps)
         # python:3.11-slim-equivalent: `--no-deps` above skipped torch / sounddevice
