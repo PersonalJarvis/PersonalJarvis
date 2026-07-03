@@ -27,18 +27,38 @@ from jarvis.cli_ctl.__main__ import app  # noqa: E402
 _OUT = _REPO / "docs" / "jarvis-cli-reference.md"
 
 
+def _is_group(cmd: click.Command) -> bool:
+    """True if ``cmd`` is a command *container* (i.e. has sub-commands).
+
+    Typer 0.26+ vendors its own Click (``typer._click``), so the object returned
+    by ``typer.main.get_command`` is a ``typer.core.TyperGroup`` that is NOT a
+    subclass of the *installed* ``click.Group``. A hard ``isinstance(root,
+    click.Group)`` therefore raises AssertionError under the newer Typer/Click
+    that CI installs, even though the command tree is perfectly valid. Detect a
+    group by its capability (a ``.commands`` mapping) instead of its concrete
+    type, so the reference builds identically on old and new Typer/Click.
+    """
+    return isinstance(cmd, click.Group) or hasattr(cmd, "commands")
+
+
 def _usage(cmd: click.Command) -> str:
+    # Discriminate arguments vs options by Click's stable ``param_type_name``
+    # ("argument" / "option") rather than isinstance against the installed
+    # ``click``. Typer 0.26+ vendors its own Click, so a command's params are not
+    # instances of the external ``click.Argument`` / ``click.Option`` and an
+    # isinstance check silently drops every arg/option from the usage line.
     parts: list[str] = []
     for p in cmd.params:
-        if isinstance(p, click.Argument):
+        ptype = getattr(p, "param_type_name", "")
+        if ptype == "argument":
             parts.append(f"<{p.name}>")
-        elif isinstance(p, click.Option) and p.opts:
+        elif ptype == "option" and getattr(p, "opts", None):
             parts.append(p.opts[0])
     return " ".join(parts)
 
 
 def _walk(cmd: click.Command, prefix: str, lines: list[str]) -> None:
-    if isinstance(cmd, click.Group):
+    if _is_group(cmd):
         for name in sorted(cmd.commands):
             _walk(cmd.commands[name], f"{prefix} {name}".strip(), lines)
     else:
@@ -51,7 +71,8 @@ def _walk(cmd: click.Command, prefix: str, lines: list[str]) -> None:
 
 def _build_reference() -> str:
     root = typer.main.get_command(app)
-    assert isinstance(root, click.Group)
+    if not _is_group(root):  # defensive: a bare single-command app has no tree
+        raise SystemExit("jarvisctl root is not a command group — cannot build reference")
     lines = [
         "# Jarvis CLI — Command Reference",
         "",
