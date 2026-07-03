@@ -70,3 +70,51 @@ async def test_voice_status_tracks_latest_state() -> None:
     assert srv._voice_ready is True
     await bus.publish(VoiceBootStatus(ready=False))
     assert srv._voice_ready is False
+
+
+@pytest.mark.asyncio
+async def test_voice_ready_watchdog_force_releases_stuck_ui(monkeypatch) -> None:
+    """Permanent "starting up" backstop: if warm-up never signals ready (a crash
+    during pipeline construction or a wedged model load), the watchdog fires
+    after its deadline and force-releases the UI so the banner cannot hang
+    forever. The forced signal carries detail="watchdog_timeout" (a degraded
+    release, not a genuine "you can speak now")."""
+    monkeypatch.delenv("JARVIS_VOICE", raising=False)
+    bus = EventBus()
+    srv = WebServer(JarvisConfig(), bus=bus)
+    assert srv._voice_ready is False
+
+    seen: list[VoiceBootStatus] = []
+
+    async def _collect(evt: VoiceBootStatus) -> None:
+        seen.append(evt)
+
+    bus.subscribe(VoiceBootStatus, _collect)
+
+    await srv._voice_ready_watchdog(deadline_s=0.01)
+
+    assert srv._voice_ready is True
+    assert any(e.ready and e.detail == "watchdog_timeout" for e in seen)
+
+
+@pytest.mark.asyncio
+async def test_voice_ready_watchdog_is_noop_when_already_ready(monkeypatch) -> None:
+    """A healthy boot flips _voice_ready before the deadline; the watchdog then
+    does nothing — it must NOT emit a spurious watchdog_timeout event."""
+    monkeypatch.delenv("JARVIS_VOICE", raising=False)
+    bus = EventBus()
+    srv = WebServer(JarvisConfig(), bus=bus)
+    await bus.publish(VoiceBootStatus(ready=True, detail="listening"))
+    assert srv._voice_ready is True
+
+    seen: list[VoiceBootStatus] = []
+
+    async def _collect(evt: VoiceBootStatus) -> None:
+        seen.append(evt)
+
+    bus.subscribe(VoiceBootStatus, _collect)
+
+    await srv._voice_ready_watchdog(deadline_s=0.01)
+
+    assert srv._voice_ready is True
+    assert not any(e.detail == "watchdog_timeout" for e in seen)

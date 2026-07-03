@@ -2616,6 +2616,27 @@ class DesktopApp:
                 logger.debug(
                     "could not schedule voice-offline alert", exc_info=True
                 )
+            # UI un-stick (permanent "Getting ready to listen" bug): the frontend's
+            # startup banner + top-left "STARTING…" status clear ONLY when a
+            # VoiceBootStatus(ready=True) is published. A crash in pipeline
+            # construction here would otherwise publish NO status at all (warm-up
+            # never runs), so the banner sticks forever even though the user can
+            # already type. Voice is genuinely offline, so emit ready=True with an
+            # honest "voice_unavailable" detail to release the UI — text works,
+            # voice does not until restart. Guarded so the un-stick never re-crashes
+            # boot. (A slower, pipeline-independent backstop also lives in the
+            # WebServer's voice-ready watchdog for the warm-up-hang case.)
+            try:
+                from jarvis.core.events import VoiceBootStatus as _VBS
+                if bus is not None:
+                    loop.create_task(
+                        bus.publish(_VBS(ready=True, detail="voice_unavailable")),
+                        name="voice-offline-ready-signal",
+                    )
+            except Exception:  # noqa: BLE001 — the un-stick must never crash boot
+                logger.debug(
+                    "could not publish voice-unavailable ready signal", exc_info=True
+                )
 
     def _install_focus_route(self, server: WebServer) -> None:
         """Replaces the placeholder ``/api/window/focus`` with a real call.

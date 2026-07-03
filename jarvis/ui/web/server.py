@@ -435,6 +435,44 @@ class WebServer:
 
         return app
 
+    async def _voice_ready_watchdog(self, deadline_s: float = 45.0) -> None:
+        """Guarantee the UI never hangs on "starting up" forever.
+
+        The startup banner + "STARTING…" status flip to listening ONLY when a
+        ``VoiceBootStatus(ready=True)`` arrives (mirrored by /api/voice/status).
+        The pipeline emits it at the end of warm-up — but if construction crashes
+        or an un-timed model download/load wedges warm-up, that event is never
+        published and the banner sticks forever even though the user can already
+        type (permanent "Getting ready to listen"). This backstop fires once,
+        well past a healthy cold boot (voice-usable budget ≤ 20 s, AP-26), and
+        force-releases the UI. A genuine ready flips ``_voice_ready`` first, in
+        which case this is a silent no-op. ``detail="watchdog_timeout"`` marks the
+        signal as a degraded release (voice may be offline until restart), not a
+        real "you can speak now".
+        """
+        try:
+            await asyncio.sleep(deadline_s)
+        except asyncio.CancelledError:
+            return
+        if self._voice_ready:
+            return
+        logger.warning(
+            "Voice-ready watchdog fired after %.0fs — the speech pipeline never "
+            "signalled ready (a construction crash or a wedged warm-up load). "
+            "Force-releasing the UI from 'starting up'; voice may be offline until "
+            "restart.",
+            deadline_s,
+        )
+        # Set the endpoint mirror first so /api/voice/status is correct even if
+        # the bus publish below fails; the WS event then updates live tabs.
+        self._voice_ready = True
+        try:
+            await self.bus.publish(
+                VoiceBootStatus(ready=True, detail="watchdog_timeout")
+            )
+        except Exception as exc:  # noqa: BLE001 — mirror already set; never crash
+            logger.debug("watchdog VoiceBootStatus publish failed: %s", exc)
+
     def _setup_board(self, app: FastAPI) -> None:
         """Initialize the board store + aggregator + evaluator + BioGenerator.
 
@@ -1631,6 +1669,19 @@ class WebServer:
 
         _boot_mark("uvicorn_serve")
 
+        # Voice-ready UI backstop (permanent "starting up" bug): the frontend's
+        # startup banner + top-left "STARTING…" status clear ONLY on a
+        # VoiceBootStatus(ready=True). If the speech pipeline crashes during
+        # construction or an un-timed model load wedges warm-up, that event never
+        # fires and the UI hangs forever. Arm a watchdog that force-releases the UI
+        # after a generous deadline — but only when voice is meant to warm up
+        # (else _voice_ready is already seeded True and there is nothing to wait
+        # for, e.g. JARVIS_VOICE=0 / headless).
+        if not self._voice_ready:
+            self._voice_ready_watchdog_task = asyncio.create_task(
+                self._voice_ready_watchdog(), name="voice-ready-watchdog"
+            )
+
         # Phase-6 mission stack — MissionManager with a DB path derived from
         # the config's memory data_dir (same folder as data/jarvis.db, its
         # own file data/missions.db). Recovery runs in start().
@@ -2509,6 +2560,19 @@ class WebServer:
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning("Board-aggregator shutdown error")
             self._board_aggregator_task = None
+        # Voice-ready backstop watchdog: usually already finished (it fires once
+        # and returns), but cancel it if a shutdown lands inside its deadline so
+        # it is never orphaned as a pending task at loop close.
+        _watchdog_task = getattr(self, "_voice_ready_watchdog_task", None)
+        if _watchdog_task is not None:
+            _watchdog_task.cancel()
+            try:
+                await asyncio.wait_for(_watchdog_task, timeout=2.0)
+            except (TimeoutError, asyncio.CancelledError):
+                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.opt(exception=exc).debug("voice-ready watchdog shutdown: {}", exc)
+            self._voice_ready_watchdog_task = None
         if self._bio_scheduler is not None:
             try:
                 await self._bio_scheduler.stop()
