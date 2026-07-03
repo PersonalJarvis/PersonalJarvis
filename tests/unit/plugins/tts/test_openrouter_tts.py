@@ -17,9 +17,12 @@ from jarvis.core.protocols import AudioChunk
 from jarvis.plugins.tts import openrouter_tts as ortts
 from jarvis.plugins.tts.openrouter_speech_models import (
     DEFAULT_MODEL,
+    MULTILINGUAL,
     coerce_speech_model,
     filter_tts_models,
     is_speech_model,
+    voice_entries_for_model,
+    voice_language,
     voices_for_model,
 )
 from jarvis.plugins.tts.openrouter_tts import (
@@ -298,6 +301,58 @@ def test_coerce_speech_model_resolves_foreign_and_empty_to_default() -> None:
     assert coerce_speech_model("x-ai/grok-voice-tts-1.0") == "x-ai/grok-voice-tts-1.0"
     # Unknown but OpenRouter-shaped (vendor/model) is trusted (a new TTS model).
     assert coerce_speech_model("newvendor/brand-new-tts") == "newvendor/brand-new-tts"
+
+
+# --------------------------------------------------------------------------- #
+# Per-voice language classification (the voice-picker language chips)           #
+# --------------------------------------------------------------------------- #
+
+
+def test_voice_language_gemini_and_grok_are_multilingual() -> None:
+    """Gemini + Grok voices carry no language in the id -> every voice is multi."""
+    assert voice_language("google/gemini-3.1-flash-tts-preview", "Charon") == MULTILINGUAL
+    assert voice_language("google/gemini-3.1-flash-tts-preview", "Kore") == MULTILINGUAL
+    assert voice_language("x-ai/grok-voice-tts-1.0", "leo") == MULTILINGUAL
+
+
+def test_voice_language_kokoro_prefixes() -> None:
+    """Kokoro voices are language-prefixed: af_/am_ = English, ef_/em_ = Spanish."""
+    assert voice_language("hexgrad/kokoro-82m", "af_bella") == "en"
+    assert voice_language("hexgrad/kokoro-82m", "am_adam") == "en"
+    assert voice_language("hexgrad/kokoro-82m", "bf_alice") == "en"  # British female
+    assert voice_language("hexgrad/kokoro-82m", "ef_dora") == "es"
+    assert voice_language("hexgrad/kokoro-82m", "em_alex") == "es"
+    assert voice_language("hexgrad/kokoro-82m", "ff_siwis") == "fr"
+
+
+def test_voice_language_mai_voice_bcp47_prefix() -> None:
+    """MAI-Voice ids are BCP-47-ish (de-DE-Klaus, es-MX-Valeria)."""
+    assert voice_language("microsoft/mai-voice-2", "de-DE-Klaus:MAI-Voice-2") == "de"
+    assert voice_language("microsoft/mai-voice-2", "en-US-Harper:MAI-Voice-2") == "en"
+    assert voice_language("microsoft/mai-voice-2", "es-MX-Valeria:MAI-Voice-2") == "es"
+    assert voice_language("microsoft/mai-voice-2", "fr-FR-Soleil:MAI-Voice-2") == "fr"
+
+
+def test_voice_language_voxtral_locale_prefix() -> None:
+    """Voxtral ids use a two-letter locale prefix (en_/gb_/fr_); gb -> English."""
+    assert voice_language("mistralai/voxtral-mini-tts-2603", "en_paul_neutral") == "en"
+    assert voice_language("mistralai/voxtral-mini-tts-2603", "gb_oliver_neutral") == "en"
+    assert voice_language("mistralai/voxtral-mini-tts-2603", "fr_marie_neutral") == "fr"
+
+
+def test_voice_entries_for_model_tags_each_voice() -> None:
+    """Every curated Gemini voice is tagged multilingual; the ids round-trip."""
+    entries = voice_entries_for_model("google/gemini-3.1-flash-tts-preview")
+    assert entries  # non-empty
+    assert all(e["language"] == MULTILINGUAL for e in entries)
+    assert {"id", "language"} == set(entries[0])
+    # Kokoro's curated voices are all English families (a*/b*) in the snapshot.
+    kokoro = voice_entries_for_model("hexgrad/kokoro-82m")
+    assert kokoro and all(e["language"] == "en" for e in kokoro)
+
+
+def test_voice_entries_for_unknown_model_is_empty() -> None:
+    assert voice_entries_for_model("no/such-model") == []
 
 
 @pytest.mark.asyncio

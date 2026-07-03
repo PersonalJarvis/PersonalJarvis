@@ -312,3 +312,151 @@ def test_cu_model_rejected_for_non_brain_provider(server: WebServer) -> None:
             ).status_code
             == 400
         )
+
+
+# ── GET /tts/voices (per-model voice list, language-tagged) ───────────────────
+
+
+def test_get_tts_voices_tags_language(server: WebServer) -> None:
+    with TestClient(server.app) as client:
+        resp = client.get(
+            "/api/tts/voices",
+            params={"provider": "openrouter-tts", "model": "hexgrad/kokoro-82m"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["provider"] == "openrouter-tts"
+        assert body["model"] == "hexgrad/kokoro-82m"
+        assert body["voices"]  # non-empty
+        first = body["voices"][0]
+        assert set(first) == {"id", "language"}
+        # Kokoro's curated snapshot voices are all English families.
+        assert all(v["language"] == "en" for v in body["voices"])
+        assert body["default"]  # a safe default voice is offered
+
+
+def test_get_tts_voices_gemini_is_multilingual(server: WebServer) -> None:
+    with TestClient(server.app) as client:
+        resp = client.get(
+            "/api/tts/voices",
+            params={
+                "provider": "openrouter-tts",
+                "model": "google/gemini-3.1-flash-tts-preview",
+            },
+        )
+        assert resp.status_code == 200
+        assert all(v["language"] == "multi" for v in resp.json()["voices"])
+
+
+def test_get_tts_voices_rejects_other_provider(server: WebServer) -> None:
+    with TestClient(server.app) as client:
+        resp = client.get(
+            "/api/tts/voices", params={"provider": "grok-voice", "model": "x"}
+        )
+        assert resp.status_code == 400
+
+
+# ── POST /tts/voice (persist the chosen voice) ────────────────────────────────
+
+
+def test_post_tts_voice_persists(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    voices: list[str] = []
+    monkeypatch.setattr(
+        "jarvis.core.config_writer.set_tts_voice", lambda v, **k: voices.append(v)
+    )
+    with TestClient(server.app) as client:
+        resp = client.post("/api/tts/voice", json={"voice": "af_bella", "persist": True})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["persisted"] is True
+        assert body["model"] == "af_bella"  # the picker's "value" is the voice
+        assert body["probe"] is None
+    assert voices == ["af_bella"]
+
+
+def test_post_tts_voice_rejects_empty(server: WebServer) -> None:
+    with TestClient(server.app) as client:
+        assert client.post("/api/tts/voice", json={"voice": "  "}).status_code == 400
+
+
+# ── POST /tts/preview (synthesise a short WAV sample) ─────────────────────────
+
+
+def test_post_tts_preview_returns_wav(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fake OpenRouterTTS streams raw PCM; the route wraps it into a WAV blob."""
+    from jarvis.core.protocols import AudioChunk
+
+    captured: dict[str, object] = {}
+
+    class _FakeTTS:
+        def __init__(self, *, model: str = "", **_k: object) -> None:
+            captured["model"] = model
+
+        async def synthesize(self, text, voice=None, language_code=None):
+            captured["text"] = text
+            captured["voice"] = voice
+            captured["language_code"] = language_code
+            yield AudioChunk(pcm=b"\x01\x02" * 240, sample_rate=24_000,
+                             timestamp_ns=0, channels=1)
+
+        async def aclose(self) -> None:
+            captured["closed"] = True
+
+    monkeypatch.setattr("jarvis.plugins.tts.openrouter_tts.OpenRouterTTS", _FakeTTS)
+
+    with TestClient(server.app) as client:
+        resp = client.post(
+            "/api/tts/preview",
+            json={
+                "provider": "openrouter-tts",
+                "model": "google/gemini-3.1-flash-tts-preview",
+                "voice": "Charon",
+                "language": "de",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "audio/wav"
+        assert resp.content[:4] == b"RIFF"  # a real WAV container
+        assert len(resp.content) > 44  # header + samples
+    assert captured["voice"] == "Charon"
+    assert captured["text"] == "Hallo, ich bin dein Assistent."  # German sample
+    assert captured.get("closed") is True
+
+
+def test_post_tts_preview_maps_provider_error_to_502(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.plugins.tts.openrouter_tts import OpenRouterTTSError
+
+    class _DeadTTS:
+        def __init__(self, **_k: object) -> None:
+            pass
+
+        async def synthesize(self, text, voice=None, language_code=None):
+            raise OpenRouterTTSError("No OpenRouter API key found")
+            yield  # pragma: no cover — makes this an async generator
+
+        async def aclose(self) -> None:
+            pass
+
+    monkeypatch.setattr("jarvis.plugins.tts.openrouter_tts.OpenRouterTTS", _DeadTTS)
+
+    with TestClient(server.app) as client:
+        resp = client.post(
+            "/api/tts/preview",
+            json={"provider": "openrouter-tts", "model": "", "voice": "", "language": "en"},
+        )
+        assert resp.status_code == 502
+        assert "API key" in resp.json()["detail"]
+
+
+def test_post_tts_preview_rejects_other_provider(server: WebServer) -> None:
+    with TestClient(server.app) as client:
+        resp = client.post(
+            "/api/tts/preview", json={"provider": "grok-voice", "language": "en"}
+        )
+        assert resp.status_code == 400
