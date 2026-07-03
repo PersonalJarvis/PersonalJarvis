@@ -71,6 +71,36 @@ def mss_grab(bbox: dict[str, int]) -> tuple[tuple[int, int], bytes]:
     return (tuple(raw.size), raw.rgb)
 
 
+def grabber_for(target: MonitorInfo) -> Grabber:
+    """The grabber for a capture target.
+
+    A window target (``window_handle`` set) prefers the platform's NATIVE
+    per-window capture (:func:`jarvis.platform.window_capture.grab_window`,
+    e.g. ScreenCaptureKit by CGWindowID on macOS) and falls back to the rect
+    grab of the window's frame — pixel-identical for the raised foreground
+    window. The native-unavailable verdict sticks for the grabber's lifetime
+    (one perception frame) so stability re-grabs don't re-probe a dead path.
+    Plain monitor rects grab via mss directly.
+    """
+    if target.window_handle is None:
+        return mss_grab
+    handle = int(target.window_handle)
+    native_alive = True
+
+    def grab(bbox: dict[str, int]) -> tuple[tuple[int, int], bytes]:
+        nonlocal native_alive
+        if native_alive:
+            from jarvis.platform import window_capture  # noqa: PLC0415
+
+            raw = window_capture.grab_window(handle, bbox)
+            if raw is not None:
+                return raw
+            native_alive = False
+        return mss_grab(bbox)
+
+    return grab
+
+
 @dataclass(frozen=True)
 class Frame:
     """One perception frame: the image the model sees + its mapper.
@@ -250,6 +280,10 @@ def select_capture_target(
     clamped_h = clamped_bottom - clamped_top
     if clamped_w < _MIN_WINDOW_CAPTURE_W or clamped_h < _MIN_WINDOW_CAPTURE_H:
         return monitor
+    # A native per-window grab captures the FULL window — only wire the
+    # window id through when the rect survived unclamped, so the mapper's
+    # capture rect always matches the grabbed image (aspect guard).
+    unclamped = (clamped_left, clamped_top, clamped_w, clamped_h) == rect
     logger.debug(
         "[cu] window-scoped capture: '%s' rect=(%d,%d %dx%d)",
         (win.title or "")[:60], clamped_left, clamped_top, clamped_w, clamped_h,
@@ -260,6 +294,7 @@ def select_capture_target(
         width=clamped_w,
         height=clamped_h,
         name=f"window:{(win.title or '')[:48]}",
+        window_handle=int(win.handle) if (win.handle and unclamped) else None,
     )
 
 
@@ -302,8 +337,13 @@ def capture_stable_frame(
     the screen is still changing, up to ``stability_timeout_s``. Returns the
     freshest grab either way; ``Frame.stable`` records whether idle was
     reached. Never raises on a merely-unstable screen — only on a failed grab.
+
+    The grabber defaults to :func:`grabber_for` — native per-window capture
+    for window targets, the mss rect grab otherwise. Whatever grabbed the
+    pixels, the frame's mapper is built from the TARGET rect in input units
+    plus the encoded image size: the one central translation.
     """
-    grabber = grab or mss_grab
+    grabber = grab or grabber_for(monitor)
     deadline = time.monotonic() + max(0.0, stability_timeout_s)
     current = grabber(monitor.bbox)
     stable = False

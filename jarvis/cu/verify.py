@@ -47,6 +47,7 @@ _PASSWORD_FIELD_TOKENS = ("password", "passwort", "passcode")  # noqa: S105 — 
 # Cached UI tree source (constructing one per step pays setup cost for the
 # same foreground enumeration).
 _UI_TREE_SOURCE: Any = None
+_POINTER_RESOLVER: Any = None
 
 
 def _get_ui_tree_source() -> Any:
@@ -56,6 +57,18 @@ def _get_ui_tree_source() -> Any:
 
         _UI_TREE_SOURCE = make_ui_tree_source()
     return _UI_TREE_SOURCE
+
+
+def _get_pointer_resolver() -> Any:
+    """Cached per-OS accessibility point resolver (hit-test at a point)."""
+    global _POINTER_RESOLVER
+    if _POINTER_RESOLVER is None:
+        from jarvis.vision.element_at_point import (  # noqa: PLC0415
+            make_pointer_resolver,
+        )
+
+        _POINTER_RESOLVER = make_pointer_resolver()
+    return _POINTER_RESOLVER
 
 
 # ---------------------------------------------------------------------------
@@ -79,21 +92,110 @@ def typed_text_landed(nodes: tuple, typed: str) -> bool | None:
     """Tri-state type read-back (conservative):
 
     ``True``  — an editable field's value contains the typed text.
-    ``False`` — editable fields ARE readable and none holds it (confirmed miss).
-    ``None``  — nothing editable readable / text too short (cannot tell).
+    ``False`` — a FOCUSED editable field is readable and no editable holds
+                the text (confirmed miss: we positively looked at the surface
+                that would have received the input).
+    ``None``  — nothing editable readable, text too short, or editables are
+                readable but NONE holds focus — then the enumeration likely
+                covered the WRONG surface (a start-menu/UWP flyout outside
+                the foreground tree, live incident 2026-07-02 18:00) and a
+                confident ``False`` would stall the mission on a lie.
     """
     t = normalize_for_value_match(typed)
     if len(t) < TYPE_VERIFY_MIN_CHARS:
         return None
-    editable_seen = False
+    focused_editable_seen = False
     for node in nodes or ():
         if getattr(node, "role", "") not in EDITABLE_UIA_ROLES:
             continue
-        editable_seen = True
+        if getattr(node, "focused", False):
+            focused_editable_seen = True
         val = normalize_for_value_match(getattr(node, "value", "") or "")
         if t in val:
             return True
-    return False if editable_seen else None
+    return False if focused_editable_seen else None
+
+
+#: Roles that are CONTAINERS or large regions, not controls — focus reported
+#: on one of these (a browser window, a web view, a list, a document body)
+#: is NOT evidence that a click hit its intended target: accepting it would
+#: rescue genuine in-window misses and neuter the effect-check. Covers all
+#: three role vocabularies (UIA / AX / AT-SPI), since the point resolver
+#: returns platform-native role names. (Extended per the 2026-07-02
+#: adversarial review: lists/tables/toolbars and the AT-SPI document-canvas
+#: family were missing.)
+_FOCUS_CONTAINER_ROLES = frozenset({
+    # UIA (also the mapped vocabulary of the walked tree nodes)
+    "Window", "Pane", "Document", "Group", "Custom", "TitleBar",
+    "List", "Tree", "DataGrid", "Table", "ToolBar", "MenuBar",
+    # macOS AX
+    "AXWindow", "AXSheet", "AXGroup", "AXScrollArea", "AXWebArea",
+    "AXApplication", "AXDrawer", "AXList", "AXTable", "AXOutline",
+    "AXToolbar", "AXTabGroup", "AXSplitGroup", "AXLayoutArea",
+    # AT-SPI role names
+    "frame", "window", "panel", "application", "document frame",
+    "document web", "filler", "list", "table", "tree", "tree table",
+    "tool bar", "menu bar", "scroll pane", "viewport", "page tab list",
+    "document text", "document spreadsheet", "document presentation",
+    "document email",
+})
+
+#: A focused element LARGER than this fraction of the capture area is a
+#: region, not a control — its focus is not click-target evidence (same
+#: container-trap reasoning as the snap cap in
+#: :data:`_SNAP_MAX_AREA_FRACTION`). Applied wherever bounds are known.
+_FOCUS_MAX_AREA_FRACTION = 0.15
+
+
+def click_point_in_focused_element(
+    nodes: tuple, x: int, y: int, *, capture_area: int | None = None,
+) -> bool | None:
+    """Did the click point land inside the CONTROL holding keyboard focus?
+
+    The rescue evidence for the "click produced no visible change" false
+    miss: clicking a control that is ALREADY in the desired state (e.g. an
+    address bar that is focused by default on a new tab) changes zero
+    pixels, so the pixel effect-check alone fails the click, truncates the
+    batched type behind it, and stalls the mission right at its goal (live
+    incident 2026-07-02 19:06, Chrome guest new-tab). Focus + containment
+    from the accessibility tree proves the click hit its target even though
+    nothing visibly changed. Works on all three platforms (UIA / AX /
+    AT-SPI bounds are screen input units).
+
+    Two container traps never count as evidence (a focused WINDOW/region
+    containing the point says nothing about the click's target, and would
+    also skip the zoom-refine retry a real miss deserves):
+    * role in :data:`_FOCUS_CONTAINER_ROLES`;
+    * element area above :data:`_FOCUS_MAX_AREA_FRACTION` of
+      ``capture_area`` (when the caller provides one).
+
+    ``True``  — a focused control-sized element's bounds contain the point.
+    ``False`` — nodes are readable, no qualifying element contains the point.
+    ``None``  — no nodes readable (cannot tell).
+    """
+    if not nodes:
+        return None
+    max_area = (
+        max(1, int(capture_area * _FOCUS_MAX_AREA_FRACTION))
+        if capture_area else None
+    )
+    for node in nodes:
+        if not getattr(node, "focused", False):
+            continue
+        if str(getattr(node, "role", "") or "") in _FOCUS_CONTAINER_ROLES:
+            continue
+        bounds = getattr(node, "bounds", None)
+        if not bounds:
+            continue
+        try:
+            bx, by, bw, bh = (int(v) for v in bounds)
+        except (TypeError, ValueError):
+            continue
+        if max_area is not None and bw * bh > max_area:
+            continue
+        if bw > 0 and bh > 0 and bx <= x < bx + bw and by <= y < by + bh:
+            return True
+    return False
 
 
 def element_is_focused(nodes: tuple, name: str) -> bool | None:
@@ -181,28 +283,110 @@ def clickable_labels(nodes: tuple, max_n: int = 28) -> list[str]:
     return names
 
 
+def clickable_rects(
+    nodes: tuple, max_n: int = 200,
+) -> list[tuple[str, str, tuple[int, int, int, int]]]:
+    """Enabled clickable elements WITH their bounding rects, as
+    ``(name, role, (x, y, w, h))`` in screen input units.
+
+    The rects come from the accessibility tree the snapshot already walks
+    (UIA physical pixels / AX points / AT-SPI pixels — the same units the
+    actuator clicks in, now that the process is per-monitor DPI aware).
+    Unlike :func:`clickable_labels` this keeps NAMELESS elements too: an
+    icon-only button has no label but its rect still anchors a click.
+    """
+    out: list[tuple[str, str, tuple[int, int, int, int]]] = []
+    for node in nodes or ():
+        if not getattr(node, "enabled", True):
+            continue
+        role = getattr(node, "role", "")
+        if role not in CLICKABLE_UIA_ROLES:
+            continue
+        bounds = getattr(node, "bounds", None) or (0, 0, 0, 0)
+        try:
+            x, y, w, h = (int(v) for v in bounds)
+        except (TypeError, ValueError):
+            continue
+        if w <= 0 or h <= 0:
+            continue
+        out.append(((getattr(node, "name", "") or "").strip(), role, (x, y, w, h)))
+        if len(out) >= max_n:
+            break
+    return out
+
+
+#: An element larger than this fraction of the capture area is a CONTAINER
+#: (panel, document body) — snapping to its center would be a wrong-but-
+#: plausible click far from the model's intent.
+_SNAP_MAX_AREA_FRACTION = 0.15
+
+
+def snap_point_to_element(
+    x: int,
+    y: int,
+    clickables: list[tuple[str, str, tuple[int, int, int, int]]],
+    *,
+    capture_area: int,
+    capture_rect: tuple[int, int, int, int] | None = None,
+) -> tuple[int, int, str] | None:
+    """Snap a model-predicted point to the CENTER of the smallest clickable
+    element whose rect contains it — or ``None`` (keep the raw point).
+
+    Converts the vision model's job from "hit an exact pixel" to "point
+    anywhere inside the right element": the residual 1-3% pointing error
+    stops mattering, at zero added latency (the rects ride the snapshot that
+    already runs in parallel with the capture). The SMALLEST containing rect
+    wins (leaf over ancestor); rects above ``_SNAP_MAX_AREA_FRACTION`` of
+    the capture area never snap (container trap). When ``capture_rect``
+    (left, top, width, height) is given, an element whose center lies
+    OUTSIDE it never snaps — a window-scoped capture must not let the
+    accessibility tree push a click out of the window the model saw.
+    Pure; never raises.
+    """
+    best: tuple[int, str, int, int] | None = None  # (area, label, cx, cy)
+    max_area = max(1, int(capture_area * _SNAP_MAX_AREA_FRACTION))
+    for name, _role, (rx, ry, rw, rh) in clickables or ():
+        if not (rx <= x < rx + rw and ry <= y < ry + rh):
+            continue
+        area = rw * rh
+        if area > max_area:
+            continue
+        cx, cy = rx + rw // 2, ry + rh // 2
+        if capture_rect is not None:
+            cl, ct, cw, ch = capture_rect
+            if not (cl <= cx < cl + cw and ct <= cy < ct + ch):
+                continue
+        if best is None or area < best[0]:
+            best = (area, name, cx, cy)
+    if best is None:
+        return None
+    return (best[2], best[3], best[1])
+
+
 # ---------------------------------------------------------------------------
 # Async tree snapshots (best-effort; failures degrade to "cannot tell")
 # ---------------------------------------------------------------------------
 
 async def foreground_ui_snapshot(
     timeout_s: float = UIA_TIMEOUT_S, max_labels: int = 28,
-) -> tuple[list[str], str, str | None]:
+) -> tuple[list[str], str, str | None, list[tuple[str, str, tuple[int, int, int, int]]]]:
     """One tree observation → (clickable labels, field-values hint, handoff
-    reason). ``([], "", None)`` on any failure or a label-less surface —
-    that empty path self-gates the loop back to pixel clicks."""
+    reason, clickable rects). ``([], "", None, [])`` on any failure or a
+    label-less surface — that empty path self-gates the loop back to raw
+    pixel clicks (canvas apps expose no useful tree)."""
     try:
         obs = await asyncio.wait_for(
             _get_ui_tree_source().observe(), timeout=timeout_s,
         )
     except Exception as exc:  # noqa: BLE001 — best-effort enumeration
         logger.debug("[cu] UI-tree snapshot failed (non-fatal): %s", exc)
-        return [], "", None
+        return [], "", None, []
     nodes = tuple(getattr(obs, "nodes", ()) or ())
     return (
         clickable_labels(nodes, max_n=max_labels),
         field_values_hint(nodes),
         human_handoff_reason(nodes),
+        clickable_rects(nodes),
     )
 
 
@@ -228,6 +412,61 @@ async def verify_click_focus(name: str) -> bool | None:
     return element_is_focused(tuple(getattr(obs, "nodes", ()) or ()), name)
 
 
+async def verify_click_focus_point(
+    x: int, y: int, *, capture_area: int | None = None,
+) -> bool | None:
+    """Is the element at ``(x, y)`` the focused control? Error → ``None``.
+
+    Two evidence paths, positive-only, both cross-platform:
+
+    1. Native point hit-test (UIA ``ElementFromPoint`` / AX element-at-
+       position / AT-SPI ``getAccessibleAtPoint``) — depth- and pruning-
+       independent, so it works even where the walked tree cannot reach the
+       control (Chrome nests its omnibox below the walk depth).
+    2. Fallback: scan the walked foreground tree
+       (:func:`click_point_in_focused_element`).
+
+    Container focus never counts (:data:`_FOCUS_CONTAINER_ROLES`), and a
+    focused element larger than :data:`_FOCUS_MAX_AREA_FRACTION` of
+    ``capture_area`` is a region, not a target (applied where bounds are
+    known — the macOS/Linux hit-test reports no bounds yet and relies on
+    the role deny-list). Runs ONLY on the click-miss path (no happy-path
+    latency): the engine consults it before declaring a zero-pixel-change
+    click a miss.
+    """
+    try:
+        element = await asyncio.wait_for(
+            asyncio.to_thread(_get_pointer_resolver().at, int(x), int(y)),
+            timeout=UIA_TIMEOUT_S,
+        )
+    except Exception:  # noqa: BLE001 — hit-test is best-effort
+        element = None
+    if (
+        element is not None
+        and getattr(element, "focused", None) is True
+        and str(getattr(element, "role", "") or "")
+        not in _FOCUS_CONTAINER_ROLES
+    ):
+        bounds = getattr(element, "bounds", None) or (0, 0, 0, 0)
+        area = max(0, int(bounds[2])) * max(0, int(bounds[3]))
+        if (
+            not capture_area
+            or area == 0  # backend reports no bounds: role filter decides
+            or area <= max(1, int(capture_area * _FOCUS_MAX_AREA_FRACTION))
+        ):
+            return True
+    try:
+        obs = await asyncio.wait_for(
+            _get_ui_tree_source().observe(), timeout=UIA_TIMEOUT_S,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    return click_point_in_focused_element(
+        tuple(getattr(obs, "nodes", ()) or ()), int(x), int(y),
+        capture_area=capture_area,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Pixel-effect primitives
 # ---------------------------------------------------------------------------
@@ -250,20 +489,31 @@ def crop_raw(
     cy: int,
     radius: int,
 ) -> tuple[tuple[int, int], bytes] | None:
-    """Crop a square around screen point ``(cx, cy)`` out of a raw monitor
-    grab covering screen ``rect`` (left, top, width, height in input units).
+    """Crop a square around screen point ``(cx, cy)`` out of a raw grab
+    covering screen ``rect`` (left, top, width, height in input units).
     ``None`` when the point lies outside the grab. The grab's pixel size may
-    differ from the rect (Retina: point rect, pixel grab) — the point is
-    scaled into grab pixels first. Pure PIL, no re-grab — one monitor grab
-    yields both the local and the global effect signal."""
+    differ from the rect (Retina: point rect, pixel grab) — the screen point
+    resolves into grab pixels through the ONE central translation
+    (:class:`jarvis.cu.geometry.CoordinateMapper`), never hand-rolled math.
+    Pure PIL, no re-grab — one grab yields both the local and the global
+    effect signal."""
+    from jarvis.cu.geometry import CoordinateMapper  # noqa: PLC0415
+
     (w, h), rgb = raw
     rl, rt, rw, rh = rect
     if rw <= 0 or rh <= 0:
         return None
-    px = int((int(cx) - rl) * w / rw)
-    py = int((int(cy) - rt) * h / rh)
-    if not (0 <= px < w and 0 <= py < h):
+    try:
+        mapper = CoordinateMapper(
+            capture_left=rl, capture_top=rt,
+            capture_width=rw, capture_height=rh,
+            image_width=w, image_height=h,
+        )
+    except ValueError:  # aspect mismatch: this grab is not of this rect
         return None
+    if not mapper.contains_screen(int(cx), int(cy)):
+        return None
+    px, py = mapper.screen_to_image(int(cx), int(cy))
     from PIL import Image  # noqa: PLC0415
 
     # Radius in input units -> grab pixels (uniform capture scale).

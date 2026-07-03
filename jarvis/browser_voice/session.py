@@ -75,6 +75,7 @@ class BrowserVoiceSession:
         language_code: str = "de-DE",
         max_session_seconds: int = 1800,
         bus: Any = None,
+        config: Any = None,
     ) -> None:
         self.session_id = session_id
         self._send_binary = send_binary
@@ -82,6 +83,9 @@ class BrowserVoiceSession:
         self._stt = stt
         self._brain = brain
         self._tts = tts
+        # Shared config reference so _speak can read [tts].volume per turn (a live
+        # change lands on the next utterance). None in test factories → full.
+        self._config = config
         self.browser_sample_rate = int(browser_sample_rate or STT_SAMPLE_RATE)
         self.language_code = language_code or "de-DE"
         self.max_session_seconds = max_session_seconds
@@ -214,7 +218,15 @@ class BrowserVoiceSession:
         the number of binary frames sent. Cancellable: a barge-in cancels the
         underlying task mid-stream.
         """
+        from jarvis.audio.gain import (
+            apply_output_gain_pcm16,  # noqa: PLC0415 — lazy: keep cold-import light
+        )
         from jarvis.browser_voice.audio import resample_pcm16  # noqa: PLC0415 — off-rate fallback
+
+        # Master output volume (shared with the local speaker + telephony sinks)
+        # so the setting works over the browser too — the only voice path on a
+        # headless server. Read once per turn; a live change lands next utterance.
+        vol = getattr(getattr(self._config, "tts", None), "volume", 1.0)
 
         self._speaking = True
         sent = 0
@@ -227,6 +239,7 @@ class BrowserVoiceSession:
                     continue
                 if rate != TTS_SAMPLE_RATE:
                     pcm = resample_pcm16(pcm, rate, TTS_SAMPLE_RATE)
+                pcm = apply_output_gain_pcm16(pcm, vol)
                 await self._send_binary(pcm)
                 sent += 1
             await self._send_json({"type": "tts_end"})

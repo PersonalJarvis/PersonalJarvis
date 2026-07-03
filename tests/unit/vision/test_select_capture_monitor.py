@@ -30,10 +30,29 @@ def test_primary_strategy_picks_the_origin_monitor_not_physical0() -> None:
 
 
 def test_foreground_fallback_uses_true_primary(monkeypatch) -> None:
-    # Off Windows / when foreground detection is unavailable, the foreground
-    # strategy returns `primary` — which must be the (0,0) main monitor.
-    monkeypatch.setattr("jarvis.vision.screenshot.os.name", "posix")
+    # When foreground detection is unavailable (headless probe, Wayland),
+    # the foreground strategy returns `primary` — the (0,0) main monitor.
+    # The follow probe itself is cross-platform now (one window_state seam).
+    monkeypatch.setattr(
+        "jarvis.platform.window_state.foreground_window", lambda: None,
+    )
     assert select_capture_monitor(_MONITORS, strategy="foreground") is _MAIN
+
+
+def test_foreground_strategy_follows_the_window_monitor(monkeypatch) -> None:
+    # The window sits on the LEFT secondary monitor — the capture must follow
+    # it there on every platform, not pin the primary.
+    from jarvis.platform.window_state import WindowInfo
+
+    monkeypatch.setattr(
+        "jarvis.platform.window_state.foreground_window",
+        lambda: WindowInfo(title="App", handle=7),
+    )
+    monkeypatch.setattr(
+        "jarvis.platform.window_state.window_frame_rect",
+        lambda w: (-2000, 100, 800, 600),
+    )
+    assert select_capture_monitor(_MONITORS, strategy="foreground") is _LEFT
 
 
 def test_explicit_is_primary_flag_still_wins() -> None:

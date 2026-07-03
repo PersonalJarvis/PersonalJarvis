@@ -22,7 +22,11 @@ from jarvis.speech.wake_phrase import compile_wake_matcher
 
 
 def _loud_chunk(marker: int, n: int = 1600) -> AudioChunk:
-    arr = np.full(n, 12000 + (marker % 5) * 100, dtype=np.int16)
+    # Borderline speaking volume (rms ~0.012): above the silence energy gate but
+    # BELOW the loud-skip bar (0.02), so the bias-echo confirm actually runs.
+    # A clearly-loud window intentionally skips the confirm for latency, so the
+    # echo logic under test here is exercised in the band where it still fires.
+    arr = np.full(n, 400 + (marker % 5) * 3, dtype=np.int16)
     return AudioChunk(pcm=arr.tobytes(), sample_rate=16000, timestamp_ns=0)
 
 

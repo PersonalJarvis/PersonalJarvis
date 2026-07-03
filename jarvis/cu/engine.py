@@ -55,12 +55,18 @@ from jarvis.cu.capture import (
     select_capture_target,
     thumbs_similar,
 )
-from jarvis.cu.geometry import CoordinateConvention, MonitorInfo
+from jarvis.cu.geometry import (
+    CoordinateConvention,
+    CoordinateMapper,
+    MonitorInfo,
+)
 from jarvis.cu.ledger import ActionLedger
 from jarvis.cu.verify import (
     crop_raw,
     foreground_ui_snapshot,
     regions_equal,
+    snap_point_to_element,
+    verify_click_focus_point,
     verify_typed_text,
 )
 
@@ -100,7 +106,9 @@ _SYSTEM_BASE = (
     "* FIRST CHECK, before choosing ANY action: is the GOAL's proof already "
     "visible in this screenshot? Then reply with the done action IMMEDIATELY "
     "— every extra action after success is a failure (it wastes seconds and "
-    "can undo the result).\n"
+    "can undo the result). Scrolling around, waiting, or re-checking 'to be "
+    "sure' AFTER the proof is visible is exactly that failure — the user is "
+    "waiting for your confirmation.\n"
     "* The screenshot is the ONLY ground truth. Never assume an effect "
     "happened; check the fresh screenshot.\n"
     "* FIRST verify the effect of your previous action (see PREVIOUS STEPS). "
@@ -185,8 +193,10 @@ def _wayland_refusal() -> str | None:
 
         if is_wayland():
             return (
-                "cannot run on a Wayland session: screen capture and "
-                "synthetic input are blocked there. Use an X11 session."
+                "cannot run on a Wayland session: Wayland blocks global "
+                "screen capture and synthetic input by design. Log into an "
+                "X11 session instead (running single apps under XWayland "
+                "is not enough — the desktop session itself must be X11)."
             )
     except Exception:  # noqa: BLE001
         return None
@@ -333,26 +343,153 @@ def _summarize_action(action: dict[str, Any]) -> str:
     return str(kind)
 
 
+#: Zoom-refine crop half-side in input units. Near-square context crops
+#: preserve surroundings better than tight boxes (MEGA-GUI / UI-Zoomer).
+_REFINE_RADIUS = 220
+
+def _crop_norm_to_screen(
+    bbox: dict[str, int], image_size: tuple[int, int], nx: float, ny: float,
+) -> tuple[int, int]:
+    """Resolve a 0-1000 point WITHIN a zoom crop to absolute screen units.
+
+    Builds a :class:`CoordinateMapper` for the crop rect — the SAME central
+    translation every other coordinate resolves through — so the refine path
+    can never disagree with the main mapping. The image size is the crop's
+    native pixel size (2x the rect on Retina); the result is clamped inside
+    the crop rect like every other mapped coordinate.
+    """
+    mapper = CoordinateMapper(
+        capture_left=int(bbox["left"]),
+        capture_top=int(bbox["top"]),
+        capture_width=int(bbox["width"]),
+        capture_height=int(bbox["height"]),
+        image_width=int(image_size[0]),
+        image_height=int(image_size[1]),
+    )
+    return mapper.normalized_to_screen(nx, ny)
+
+
+_REFINE_SYSTEM = (
+    "You are a precision click-refinement assistant. The attached image is a "
+    "ZOOMED-IN crop of the live screen, centered on a click that produced NO "
+    "visible effect. Locate the TARGET element inside the crop. Output "
+    "exactly ONE JSON object, no prose, no fences:\n"
+    '  {"found": true, "x": <0-1000>, "y": <0-1000>}  — x/y on a 0-1000 grid '
+    "WITHIN THIS CROP (0,0 = crop top-left), aimed at the CENTER of the "
+    "target.\n"
+    '  {"found": false}  — the target is not visible anywhere in the crop.\n'
+    "Never guess a position for an element you cannot actually see."
+)
+
+
+async def _zoom_refine_point(
+    ctx: Any,
+    frame: Frame,
+    x: int,
+    y: int,
+    *,
+    goal: str,
+    target: str,
+) -> tuple[int, int] | None:
+    """One coarse-to-fine grounding round after a VERIFIED miss.
+
+    Grabs a native-resolution crop around the missed point (no downscale —
+    this is where zoom methods earn their ScreenSpot-Pro gains) and asks the
+    FAST vision chain to re-locate the target inside it. Returns the refined
+    absolute point, or ``None`` (keep/abandon). Runs ONLY on the miss path,
+    so the ordinary click costs zero extra model calls.
+    """
+    import io  # noqa: PLC0415
+    import json as _json  # noqa: PLC0415
+    import re as _re  # noqa: PLC0415
+
+    bbox = frame.mapper.region_around(int(x), int(y), _REFINE_RADIUS)
+    raw = await asyncio.to_thread(grab_region, bbox)
+    if raw is None:
+        return None
+    try:
+        from PIL import Image  # noqa: PLC0415
+
+        img = Image.frombytes("RGB", raw[0], raw[1])
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+        crop_jpeg = buf.getvalue()
+    except Exception:  # noqa: BLE001
+        return None
+    user = (
+        f"TARGET: {target or 'the element the GOAL needs clicked next'}\n"
+        f"GOAL: {goal}\n"
+        f"The crop is {bbox['width']}x{bbox['height']} screen units, centered "
+        "on the missed click. Reply with the JSON object only."
+    )
+    try:
+        reply = await call_vision_brain(
+            ctx.brain_manager,
+            build_prompt=lambda provider, brain: (_REFINE_SYSTEM, user),
+            images=[ImageBlock(
+                mime="image/jpeg",
+                data_b64=base64.b64encode(crop_jpeg).decode("ascii"),
+            )],
+            max_tokens=64,
+            early_stop_json=True,
+        )
+    except Exception:  # noqa: BLE001 — refine is strictly best-effort
+        log.debug("[cu] zoom refine call failed", exc_info=True)
+        return None
+    cleaned = (reply.text or "").strip()
+    fence = _re.search(r"```(?:json)?\s*(.+?)\s*```", cleaned, _re.DOTALL)
+    if fence is not None:
+        cleaned = fence.group(1).strip()
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        obj = _json.loads(cleaned[start:end + 1])
+    except _json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict) or obj.get("found") is not True:
+        return None
+    try:
+        nx = min(max(float(obj.get("x", 0)), 0.0), 1000.0)
+        ny = min(max(float(obj.get("y", 0)), 0.0), 1000.0)
+    except (TypeError, ValueError):
+        return None
+    return _crop_norm_to_screen(bbox, raw[0], nx, ny)
+
+
 async def _judge_done(
     ctx: Any,
     goal: str,
     monitor: MonitorInfo,
     image_cfg: _ImageCfg,
     output_language: str | None,
+    *,
+    frame: Frame | None = None,
 ) -> tuple[bool, str]:
-    """Strict completion judge against a FRESH stable frame."""
-    try:
-        frame = await asyncio.wait_for(
-            asyncio.to_thread(
-                capture_stable_frame,
-                monitor,
-                max_dimension=image_cfg.max_dimension,
-                blob_dir=image_cfg.blob_dir,
-            ),
-            timeout=_OBSERVE_TIMEOUT_S,
-        )
-    except Exception:  # noqa: BLE001 — judge is best-effort; reject on no frame
-        return (False, "")
+    """Strict completion judge.
+
+    Verifies against ``frame`` when the caller passes one — the perception
+    frame of the CURRENT step, valid when no action executed since it was
+    captured (the model claims "the proof is visible in THIS screenshot",
+    so judging that exact evidence is both faster AND the more faithful
+    check). Without a frame (actions ran in this batch), a FRESH stable
+    capture is taken as before. The recapture cost the completion readback
+    ~0.5–1.5 s per done (live complaint 2026-07-02: "he was done but said
+    nothing for too long").
+    """
+    if frame is None:
+        try:
+            frame = await asyncio.wait_for(
+                asyncio.to_thread(
+                    capture_stable_frame,
+                    monitor,
+                    max_dimension=image_cfg.max_dimension,
+                    blob_dir=image_cfg.blob_dir,
+                ),
+                timeout=_OBSERVE_TIMEOUT_S,
+            )
+        except Exception:  # noqa: BLE001 — judge is best-effort; reject on no frame
+            return (False, "")
     system = _JUDGE_SYSTEM + _proof_language_directive(output_language)
     user = (
         f"GOAL: {goal}\n\nThe attached screenshot shows the CURRENT screen. "
@@ -369,6 +506,7 @@ async def _judge_done(
             build_prompt=lambda provider, brain: (system, user),
             images=[image],
             max_tokens=_JUDGE_MAX_TOKENS,
+            early_stop_json=True,
         )
     except Exception:  # noqa: BLE001 — an unreachable judge must not crash a
         # finished mission; the caller treats it as "not confirmed".
@@ -419,6 +557,17 @@ async def run_cu_loop(
         yield _final(stderr=f"[cu] {wl}\n", exit_code=_EXIT_OBSERVE)
         return
 
+    # Windows: declare the process PER_MONITOR_AWARE_V2 before any geometry
+    # is read (idempotent no-op elsewhere / on later calls). The thread pin
+    # in input_space() remains the per-call enforcement; the declaration
+    # keeps window rects and monitor metrics un-virtualized process-wide.
+    try:
+        from jarvis.core.win32_dpi import ensure_dpi_awareness  # noqa: PLC0415
+
+        ensure_dpi_awareness()
+    except Exception:  # noqa: BLE001 — declaration is best-effort
+        log.debug("[cu] DPI awareness declaration failed", exc_info=True)
+
     max_steps = max(25, int(getattr(ctx, "step_budget", 100)))
     monitor_policy = str(getattr(ctx, "monitor", "primary") or "primary")
     main_monitor = str(getattr(ctx, "main_monitor", "primary") or "primary")
@@ -428,7 +577,10 @@ async def run_cu_loop(
     # 2026-07-02); window-scoped capture covers the grounding need untouched.
     normalize_window = bool(getattr(ctx, "normalize_window", False))
     coordinate_space = str(getattr(ctx, "coordinate_space", "auto") or "auto")
-    settle_scale = float(getattr(ctx, "settle_scale", 1.0) or 1.0)
+    # NOTE: no `or 1.0` here — a configured 0 means "no settle waits" (tests,
+    # speed runs) and must be honored, not silently coerced back to 1.0.
+    raw_settle = getattr(ctx, "settle_scale", None)
+    settle_scale = 1.0 if raw_settle is None else float(raw_settle)
     strict_verify = bool(getattr(ctx, "strict_verify", True))
     image_cfg = _ImageCfg(
         max_dimension=int(getattr(ctx, "image_max_dimension", 1366) or 1366),
@@ -483,7 +635,7 @@ async def run_cu_loop(
                 blob_dir=image_cfg.blob_dir,
             )
             snapshot_coro = foreground_ui_snapshot()
-            frame, (labels, field_hint, handoff) = await asyncio.wait_for(
+            frame, (labels, field_hint, handoff, clickables) = await asyncio.wait_for(
                 asyncio.gather(frame_coro, snapshot_coro),
                 timeout=_OBSERVE_TIMEOUT_S,
             )
@@ -531,6 +683,7 @@ async def run_cu_loop(
         if fruitless_steps >= _STUCK_FRAMES:
             done, proof = await _judge_done(
                 ctx, goal, monitor, image_cfg, output_language,
+                frame=frame,  # captured this step; the screen is unchanged
             )
             if done:
                 yield _final(
@@ -655,6 +808,7 @@ async def run_cu_loop(
 
         # ---- act + verify ---------------------------------------------------
         pointer_used = False
+        batch_acted = False  # any executed action invalidates the step frame
         for action in actions:
             if _is_cancelled(cancel_token):
                 yield _final(stderr="[cu] cancelled\n", exit_code=_EXIT_CANCEL)
@@ -664,6 +818,10 @@ async def run_cu_loop(
             if kind == "done":
                 done, proof = await _judge_done(
                     ctx, goal, monitor, image_cfg, output_language,
+                    # No action ran since perception -> the screen IS the
+                    # frame the model called done on; judge that evidence
+                    # directly instead of paying a second stability capture.
+                    frame=None if batch_acted else frame,
                 )
                 if done:
                     yield _final(
@@ -716,6 +874,30 @@ async def run_cu_loop(
                 resolved_xy = frame.mapper.model_to_screen(
                     action["x"], action["y"], convention,
                 )
+                # Element anchoring: a point INSIDE a clickable element snaps
+                # to that element's center (smallest containing rect, capped
+                # against container traps) — the model only has to point
+                # anywhere inside the right control, its residual 1-3%
+                # pointing error stops mattering. Zero added latency: the
+                # rects ride the snapshot already captured in parallel.
+                snapped = snap_point_to_element(
+                    resolved_xy[0], resolved_xy[1], clickables,
+                    capture_area=monitor.width * monitor.height,
+                    capture_rect=(
+                        monitor.left, monitor.top,
+                        monitor.width, monitor.height,
+                    ),
+                )
+                if snapped is not None:
+                    sx2, sy2, snap_label = snapped
+                    if (sx2, sy2) != resolved_xy:
+                        log.info(
+                            "[cu] click (%d,%d) anchored to element center "
+                            "(%d,%d)%s", resolved_xy[0], resolved_xy[1],
+                            sx2, sy2,
+                            f" '{snap_label[:40]}'" if snap_label else "",
+                        )
+                    resolved_xy = (sx2, sy2)
             elif kind == "drag":
                 resolved_xy = frame.mapper.model_to_screen(
                     action["x"], action["y"], convention,
@@ -781,6 +963,24 @@ async def run_cu_loop(
 
                         if pre is not None and post is not None and frames_differ(pre, post):
                             detail = (detail + " — screen reacted elsewhere").strip()
+                        elif await verify_click_focus_point(
+                            *resolved_xy,
+                            capture_area=monitor.width * monitor.height,
+                        ) is True:
+                            # Zero pixel change because the target was
+                            # ALREADY in the desired state: the click point
+                            # sits inside the control that holds keyboard
+                            # focus (a default-focused address bar changes
+                            # nothing when clicked). Failing this click
+                            # beheads the batched type behind it and stalls
+                            # the mission AT its goal (live incident
+                            # 2026-07-02 19:06).
+                            detail = (
+                                detail
+                                + " — no visible change, but the click "
+                                "landed in the focused control (already in "
+                                "the desired state)"
+                            ).strip(" —")
                         else:
                             ok = False
                             detail = (
@@ -789,6 +989,60 @@ async def run_cu_loop(
                                 "element on the fresh screenshot (or use "
                                 "click_element with its exact label)."
                             )
+                            # Coarse-to-fine rescue (miss path only): re-ground
+                            # the target inside a native-resolution zoom crop
+                            # and retry ONCE at the refined point. This is the
+                            # step behind the ScreenSpot-Pro zoom gains; the
+                            # happy path never pays for it.
+                            refined = await _zoom_refine_point(
+                                ctx, frame, *resolved_xy,
+                                goal=goal, target=str(action.get("target", "")),
+                            )
+                            if refined is not None and (
+                                abs(refined[0] - resolved_xy[0]) > 12
+                                or abs(refined[1] - resolved_xy[1]) > 12
+                            ):
+                                log.info(
+                                    "[cu] zoom refine: retrying click at "
+                                    "(%d,%d) after miss at (%d,%d)",
+                                    refined[0], refined[1], *resolved_xy,
+                                )
+                                pre2 = await asyncio.to_thread(
+                                    grab_region, monitor.bbox,
+                                )
+                                ok2, detail2 = await _dispatch_tool(
+                                    ctx, "click",
+                                    {
+                                        "x": refined[0], "y": refined[1],
+                                        "button": action["button"],
+                                        "double": action["double"],
+                                    },
+                                    trace_id,
+                                )
+                                if ok2:
+                                    ledger.record(
+                                        action, frame.thumb, resolved_xy=refined,
+                                    )
+                                    await asyncio.sleep(
+                                        _EFFECT_SETTLE_S * settle_scale,
+                                    )
+                                    post2 = await asyncio.to_thread(
+                                        grab_region, monitor.bbox,
+                                    )
+                                    lp2 = crop_raw(
+                                        pre2, rect_t, *refined,
+                                        _EFFECT_CROP_RADIUS,
+                                    ) if pre2 else None
+                                    lq2 = crop_raw(
+                                        post2, rect_t, *refined,
+                                        _EFFECT_CROP_RADIUS,
+                                    ) if post2 else None
+                                    if regions_equal(lp2, lq2) is not True:
+                                        ok = True
+                                        detail = (
+                                            f"{detail2} (zoom-refined retry "
+                                            "after a verified miss)"
+                                        )
                 profiler.add("verify", t0, step_idx)
 
             elif kind == "type":
@@ -805,6 +1059,14 @@ async def run_cu_loop(
                     ledger.record(action, frame.thumb)
                     if strict_verify:
                         landed = await verify_typed_text(action["text"])
+                        if landed is False:
+                            # One settle + re-check before failing: async UI
+                            # surfaces (UWP flyouts, start menu) commit the
+                            # typed value AFTER the injection returns, so an
+                            # immediate read-back sees stale state (live
+                            # incident 2026-07-02 18:00).
+                            await asyncio.sleep(0.3 * settle_scale)
+                            landed = await verify_typed_text(action["text"])
                         if landed is False:
                             ok = False
                             detail = (
@@ -898,6 +1160,7 @@ async def run_cu_loop(
                 profiler.add("settle", t0, step_idx)
 
             # -- bookkeeping ---------------------------------------------------
+            batch_acted = True
             summary = _summarize_action(action)
             if ok:
                 consecutive_failures = 0

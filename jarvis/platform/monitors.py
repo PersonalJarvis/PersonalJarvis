@@ -17,6 +17,8 @@ rather than silently picking a wrong screen.
 """
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
 from typing import Any
 
@@ -92,6 +94,127 @@ def resolve_primary_monitor(
     if at_zero is not None:
         return at_zero
     return physical[0]
+
+
+def virtual_desktop_bounds() -> tuple[int, int, int, int] | None:
+    """Bounding box ``(left, top, width, height)`` over ALL monitors, in the
+    platform's input units — or ``None`` when it cannot be determined
+    (headless, Wayland, missing native API).
+
+    This is the correct scope for any "is this UI element on screen?"
+    filter: clipping such a filter to the PRIMARY monitor silently drops
+    every element of a window on a secondary monitor (2026-07-02 incident —
+    the whole accessibility tree of a Chrome window on the left monitor was
+    pruned away, so Computer-Use lost its clickable anchors, field hints and
+    focus evidence there). Never raises.
+    """
+    try:
+        if sys.platform == "win32":
+            return _win_virtual_bounds()
+        if sys.platform == "darwin":
+            return _macos_virtual_bounds()
+        from jarvis.platform.probes import is_wayland  # noqa: PLC0415
+
+        if is_wayland():
+            return None
+        return _x11_virtual_bounds()
+    except Exception:  # noqa: BLE001 — best-effort probe, callers keep a fallback
+        return None
+
+
+def _win_virtual_bounds() -> tuple[int, int, int, int] | None:
+    """SM_*VIRTUALSCREEN metrics in physical pixels.
+
+    Uses a THREAD-scoped per-monitor DPI pin (restored afterwards) so the
+    metrics are not DPI-virtualized even in an unaware host process. A
+    process-wide awareness flip is deliberately NOT performed here — this is
+    a read-only getter reached from always-on tree sources, and mutating
+    process awareness as a side effect would race pywebview's own
+    declaration (2026-07-02 review finding, AP-9 class). The CU engine
+    declares the process context itself at mission start.
+    """
+    import ctypes  # noqa: PLC0415
+
+    set_ctx = None
+    prev = None
+    try:
+        set_ctx = ctypes.windll.user32.SetThreadDpiAwarenessContext
+        set_ctx.restype = ctypes.c_void_p
+        set_ctx.argtypes = [ctypes.c_void_p]
+        for context in (-4, -3):  # PER_MONITOR_AWARE_V2, then V1 (1607)
+            prev = set_ctx(ctypes.c_void_p(context))
+            if prev is not None:
+                break
+    except (OSError, AttributeError):  # pre-1607: read unpinned
+        set_ctx = None
+    try:
+        gsm = ctypes.windll.user32.GetSystemMetrics
+        # SM_XVIRTUALSCREEN=76, SM_YVIRTUALSCREEN=77, SM_CX=78, SM_CY=79
+        left, top, width, height = gsm(76), gsm(77), gsm(78), gsm(79)
+    finally:
+        if set_ctx is not None and prev is not None:
+            try:
+                set_ctx(ctypes.c_void_p(prev))
+            except Exception:  # noqa: BLE001 — restore is best-effort
+                pass
+    if width <= 0 or height <= 0:
+        return None
+    return (int(left), int(top), int(width), int(height))
+
+
+def _macos_virtual_bounds() -> tuple[int, int, int, int] | None:
+    """Union over ``CGGetActiveDisplayList`` bounds (global points)."""
+    try:
+        from Quartz import (  # noqa: PLC0415
+            CGDisplayBounds,
+            CGGetActiveDisplayList,
+        )
+    except Exception:  # noqa: BLE001 — pyobjc not installed
+        return None
+    err, display_ids, count = CGGetActiveDisplayList(16, None, None)
+    if err or not display_ids or not count:
+        return None
+    rects = [CGDisplayBounds(d) for d in list(display_ids)[:count]]
+    left = min(int(r.origin.x) for r in rects)
+    top = min(int(r.origin.y) for r in rects)
+    right = max(int(r.origin.x + r.size.width) for r in rects)
+    bottom = max(int(r.origin.y + r.size.height) for r in rects)
+    if right <= left or bottom <= top:
+        return None
+    return (left, top, right - left, bottom - top)
+
+
+def _x11_virtual_bounds() -> tuple[int, int, int, int] | None:
+    """X11 root-window geometry (the root spans all monitors).
+
+    Known limitation: on the legacy separate-X-screens ("Zaphod") multihead
+    layout ``xdotool getdisplaygeometry`` reports only screen 0 — callers
+    keep their conservative fallback there. Modern XRandR/Xinerama setups
+    (one logical screen) report the full span.
+    """
+    if shutil.which("xdotool") is None:
+        return None
+    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # noqa: PLC0415
+
+    proc = subprocess.run(
+        ["xdotool", "getdisplaygeometry"],
+        capture_output=True,
+        text=True,
+        timeout=3.0,
+        creationflags=NO_WINDOW_CREATIONFLAGS,
+    )
+    if proc.returncode != 0:
+        return None
+    parts = (proc.stdout or "").split()
+    if len(parts) < 2:
+        return None
+    try:
+        width, height = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return (0, 0, width, height)
 
 
 def native_primary_origin() -> tuple[int, int] | None:

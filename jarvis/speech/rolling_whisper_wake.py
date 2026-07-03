@@ -120,6 +120,17 @@ _BUSY_HANG_RECOVER_S = 20.0
 # it never blocks transcription, so nothing that could be a wake is skipped.
 _MATCH_MIN_SPEECH_RMS = 0.006
 
+# Latency: skip the bias-echo confirm's SECOND transcription when the matched
+# window is clearly LOUD. A window at real speaking volume is genuine speech,
+# never a silence echo, so the ~0.5 s unbiased re-transcription (measured
+# 0.56 s on a warm base/cpu wake model, live log 2026-07-02) is pure delay
+# there. Below this level the confirm still runs (the borderline band, where a
+# quiet primed hallucination is plausible). This roughly halves wake latency on
+# a normal, clearly-spoken wake — every genuine wake in the live log peaked at
+# rms 0.027-0.12, well above this bar. Silence is handled earlier and more
+# cheaply by the raw energy gate (``_MATCH_MIN_SPEECH_RMS``).
+_ECHO_CONFIRM_SKIP_RMS = 0.02
+
 
 def _save_wav(pcm_bytes: bytes, sample_rate: int, path: Path) -> None:
     """Writes int16 PCM as a valid WAV file."""
@@ -177,7 +188,7 @@ class RollingWhisperWake:
         # the bar within one snappier poll. The gates skip silence cheaply, so the
         # extra polls only transcribe when a window actually passes the audio
         # gates — negligible extra cost, a visibly faster reaction.
-        poll_interval_s: float = 0.2,
+        poll_interval_s: float = 0.12,
         cooldown_s: float = 5.0,      # longer cooldown → less over-triggering
         sample_rate: int = 16_000,
         # 2026-04-22 (3rd iteration): RMS/peak gates back down to low. The
@@ -333,7 +344,7 @@ class RollingWhisperWake:
         }
 
     async def _is_prompt_echo(
-        self, match: Any, window_text: str, pcm_bytes: bytes
+        self, match: Any, window_text: str, pcm_bytes: bytes, *, window_rms: float
     ) -> bool:
         """True when a matched candidate is the bias prompt ECHOING, not speech.
 
@@ -365,6 +376,11 @@ class RollingWhisperWake:
         bias = getattr(self._stt, "bias_prompt", None)
         if not bias:
             return False  # unprimed model -> echoes are impossible
+        # Latency fast-path: a clearly-loud window is real speech, not a silence
+        # echo — accept without the ~0.5 s second transcription. Below the bar
+        # the confirm still runs (the borderline band).
+        if window_rms >= _ECHO_CONFIRM_SKIP_RMS:
+            return False
         window_tokens = normalize_phrase_for_match(window_text)
         matched_tokens = normalize_phrase_for_match(match.group(0))
         if len(window_tokens) > len(matched_tokens):
@@ -821,7 +837,9 @@ class RollingWhisperWake:
                     # the primed phrase may be the initial_prompt echoing on
                     # noise (ghost activations, live 2026-07-02). One unbiased
                     # second pass over the same window separates the two.
-                    if await self._is_prompt_echo(m, text, pcm_bytes):
+                    if await self._is_prompt_echo(
+                        m, text, pcm_bytes, window_rms=rms
+                    ):
                         self._stat_suppressed_echo += 1
                         continue
                     self._stat_matched += 1

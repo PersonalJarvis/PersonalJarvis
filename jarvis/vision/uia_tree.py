@@ -78,9 +78,21 @@ class UIATreeSource:
         if cancel_token is not None and cancel_token.is_cancelled():
             raise RuntimeError(f"cancelled: {cancel_token.reason}")
 
-        monitor_bounds = self._monitor_bounds or await asyncio.to_thread(
-            self._detect_primary_monitor_bounds
-        )
+        # On-screen filter scope: the WHOLE virtual desktop, never one
+        # monitor — a window on a secondary monitor must keep its tree
+        # (2026-07-02 incident). Falls back to the legacy primary-monitor
+        # rect only when the union cannot be determined.
+        monitor_bounds = self._monitor_bounds
+        if monitor_bounds is None:
+            from jarvis.platform import monitors as _monitors  # noqa: PLC0415
+
+            monitor_bounds = await asyncio.to_thread(
+                _monitors.virtual_desktop_bounds,
+            )
+        if monitor_bounds is None:
+            monitor_bounds = await asyncio.to_thread(
+                self._detect_primary_monitor_bounds
+            )
 
         # Retry ladder: on node overflow we shorten the depth.
         nodes_before = 0

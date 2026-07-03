@@ -141,7 +141,7 @@ class OpenWakeWordProvider:
     """
 
     name = "openwakeword"
-    supported_keywords = ("hey_jarvis",)  # openWakeWord built-in Model
+    supported_keywords = ("hey_jarvis",)  # openWakeWord built-in model
 
     def __init__(
         self,

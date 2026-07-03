@@ -277,6 +277,21 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "multilingual Sonic voices incl. German."
         ),
     ),
+    ProviderSpec(
+        id="openrouter-tts",
+        label="OpenRouter (TTS)",
+        tier="tts",
+        auth_mode="api_key",
+        secret_keys=("openrouter_api_key",),
+        dashboard_url="https://openrouter.ai/keys",
+        credential_help=(
+            "Same OpenRouter API key as the OpenRouter brain (starts with "
+            "sk-or-) — no extra key needed. One key reaches many text-to-speech "
+            "models (Gemini Flash TTS, Grok Voice, MAI-Voice, Voxtral, Kokoro). "
+            "The model picker shows ONLY speech models; each model has its own "
+            "voice list. Billed per token on your OpenRouter account."
+        ),
+    ),
     # ── STT ───────────────────────────────────────────────────────────────
     ProviderSpec(
         id="groq-api",
@@ -300,6 +315,19 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         credential_help=(
             "Uses your OpenAI API key (shared with the GPT brain) for Whisper "
             "speech-to-text."
+        ),
+    ),
+    ProviderSpec(
+        id="openrouter-stt",
+        label="OpenRouter (STT)",
+        tier="stt",
+        auth_mode="api_key",
+        secret_keys=("openrouter_api_key",),
+        dashboard_url="https://openrouter.ai/keys",
+        credential_help=(
+            "Uses your OpenRouter API key (shared with the OpenRouter brain — "
+            "no second key needed) for cloud transcription. The model picker "
+            "lists only transcription-capable models."
         ),
     ),
     ProviderSpec(

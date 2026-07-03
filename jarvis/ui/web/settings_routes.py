@@ -1572,3 +1572,87 @@ async def put_silence_window(body: SilenceWindowBody, request: Request) -> dict[
         "applied_live": applied_live,
         "restart_required": not applied_live,
     }
+
+
+# ---------------------------------------------------------------------------
+# Master TTS output volume — how loudly Jarvis speaks.
+#
+# GET to read, PUT to change. A 0.0–1.0 amplitude gain (1.0 = full, the
+# historical unattenuated behaviour), the same unit as [tts].volume; the UI
+# renders it as a 0–100% slider. Persisted to jarvis.toml [tts].volume AND
+# live-applied to the running SpeechPipeline (set_tts_volume → AudioPlayer), so
+# a change is audible immediately without a restart; a headless/down pipeline
+# falls back to "applies on next start". Provider-independent (applied in the
+# shared player, so it covers every TTS provider and ack chimes alike).
+# ---------------------------------------------------------------------------
+
+_TTS_VOLUME_DEFAULT = 1.0
+
+
+class TtsVolumeBody(BaseModel):
+    volume: float = Field(..., ge=0.0, le=1.0)
+    persist: bool = Field(default=True, description="Persist as boot default in jarvis.toml")
+
+
+def _current_tts_volume(request: Request) -> float:
+    cfg = _config(request)
+    tts = getattr(cfg, "tts", None)
+    try:
+        return max(0.0, min(1.0, float(getattr(tts, "volume", _TTS_VOLUME_DEFAULT))))
+    except (TypeError, ValueError):
+        return _TTS_VOLUME_DEFAULT
+
+
+@router.get("/tts-volume")
+async def get_tts_volume(request: Request) -> dict[str, object]:
+    return {
+        "volume": _current_tts_volume(request),
+        "default": _TTS_VOLUME_DEFAULT,
+        "min": 0.0,
+        "max": 1.0,
+    }
+
+
+@router.put("/tts-volume")
+async def put_tts_volume(body: TtsVolumeBody, request: Request) -> dict[str, object]:
+    volume = float(body.volume)  # already range-validated by the Pydantic Field
+
+    # Best-effort in-memory cfg update so a later cfg read agrees pre-restart.
+    cfg = _config(request)
+    if cfg is not None and getattr(cfg, "tts", None) is not None:
+        try:
+            cfg.tts.volume = volume  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — frozen model is not an error
+            log.debug("in-memory tts.volume update skipped: %s", exc)
+
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core import config_writer
+            from jarvis.core.config import resolve_config_path
+
+            config_writer.set_tts_volume(volume, path=resolve_config_path())
+            persisted = True
+        except Exception as exc:  # noqa: BLE001 — persist is best-effort
+            log.warning("tts-volume persist failed (live apply still attempted): %s", exc)
+
+    # Live-apply to the running voice pipeline so the new volume is audible
+    # immediately — no app restart. Best-effort: a headless/down pipeline just
+    # means it applies on next start.
+    applied_live = False
+    pipeline = getattr(request.app.state, "speech_pipeline", None)
+    if pipeline is not None and hasattr(pipeline, "set_tts_volume"):
+        try:
+            pipeline.set_tts_volume(volume)
+            applied_live = True
+        except Exception as exc:  # noqa: BLE001 — never fail the save on a live-apply hiccup
+            log.warning("tts-volume live-apply failed (persisted; applies on restart): %s", exc)
+
+    return {
+        "ok": True,
+        "volume": volume,
+        "default": _TTS_VOLUME_DEFAULT,
+        "persisted": persisted,
+        "applied_live": applied_live,
+        "restart_required": not applied_live,
+    }

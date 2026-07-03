@@ -91,3 +91,20 @@ The code is committed but the running app must **restart** to pick it up
 (Settings → restart, or `POST /api/settings/restart-app`). After restart, the
 GPU turbo model hot-swaps in a few seconds after boot; then say "Hey Nico" once.
 If a custom voice ever over-triggers, set `[stt].wake_high_accuracy = false`.
+
+## The transcript-content trap (2026-07-02, BUG-037 / AP-27)
+
+The `stt_match` wake primes Whisper with `initial_prompt=<phrase>` for recall.
+Consequence: the primed model **invents** the phrase on silence (ghost) and the
+unprimed model **garbles** it on speech (`Mythos`→`Mütos`, `Fable`→`Farbe`). So <!-- i18n-allow: forensic quotes of the German STT-garble tokens under test -->
+any ghost fix that gates on *transcript content* — most tempting, "make the
+unbiased confirm pass also say the word" — rejects every genuine wake. "Fires
+on silence" and "never fires" are the same bug from opposite ends.
+
+**Rule:** gate silence on raw audio **energy** (word-agnostic match-site RMS
+gate, `RollingWhisperWake._match_min_rms`), never on transcript content. Keep
+the bias-echo confirm permissive (fail-open) and skip it on a clearly-loud
+window for latency (`_ECHO_CONFIRM_SKIP_RMS`; a loud wake fires ~0.6 s vs
+~1.1 s). The recall guard `test_loud_wake_fires_even_when_unbiased_pass_garbles_the_hard_word`
+must stay green. The clean endgame remains a trained neural KWS model
+(`custom_onnx`) that does not transcribe at all.

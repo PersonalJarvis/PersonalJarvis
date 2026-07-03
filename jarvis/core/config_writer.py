@@ -237,6 +237,24 @@ def set_tts_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
         log.warning("Could not sync tts.model to config-soll.json: %s", exc)  # i18n-allow
 
 
+def set_tts_volume(volume: float, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Set the master TTS output volume (``[tts] volume``), a 0.0–1.0 gain.
+
+    Clamped to the same bounds the config field enforces (``ge=0.0, le=1.0``) so
+    a stray value can never over-drive (>1.0 clips) or invert (<0) playback. The
+    ``[tts]`` block is drift-guard pinned (its reference snapshot already tracks
+    other ``[tts]`` keys), so a TOML-only write would be reverted — we sync that
+    snapshot too, exactly like :func:`set_tts_voice`. The Settings route applies
+    the change live to the running player; this persists the boot default.
+    """
+    v = max(0.0, min(1.0, float(volume)))
+    _patch_table(path, "tts", "volume", v)
+    try:
+        _update_config_soll_section("tts", {"volume": v})  # i18n-allow
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning("Could not sync tts.volume to config-soll.json: %s", exc)  # i18n-allow
+
+
 def set_stt_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Set the global STT model (``[stt] model``) across all THREE layers.
 

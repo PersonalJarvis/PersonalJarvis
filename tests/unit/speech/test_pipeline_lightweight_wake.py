@@ -49,7 +49,10 @@ def test_lightweight_mode_instantiates_no_faster_whisper() -> None:
     )
     assert pipe._stt is None
     assert pipe._whisper_wake is None
-    assert type(pipe._utterance_stt).__name__ == "GroqWhisperAPI"
+    # The utterance STT is wrapped by the user-dictionary corrector; the
+    # resolved provider underneath must still be the configured Groq cloud STT.
+    assert type(pipe._utterance_stt).__name__ == "DictionaryCorrectingSTT"
+    assert pipe._utterance_stt.provider_label == "GroqWhisperAPI"
 
 
 def test_heavy_mode_keeps_faster_whisper_by_default() -> None:

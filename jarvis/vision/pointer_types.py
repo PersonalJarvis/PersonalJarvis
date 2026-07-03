@@ -37,6 +37,11 @@ class PointerElement:
     app_name: str = ""
     window_title: str = ""
     source: PointerSource = "ax_tree"
+    #: Does the element under the point hold keyboard focus? Tri-state:
+    #: ``True``/``False`` when the native API answered, ``None`` when the
+    #: backend could not tell. Consumed by the Computer-Use click
+    #: verification as positive already-in-desired-state evidence.
+    focused: bool | None = None
 
     @property
     def is_labeled(self) -> bool:

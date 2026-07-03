@@ -662,13 +662,23 @@ def window_rect(win: WindowInfo) -> tuple[int, int, int, int] | None:
 
 
 def foreground_window() -> WindowInfo | None:
-    """The current foreground window as a :class:`WindowInfo` (carrying the hwnd
-    on Windows), or ``None``. Best-effort; never raises. macOS/Linux return a
-    title-only WindowInfo (no handle), which the move path treats as "can't move"
-    rather than acting blind."""
+    """The current foreground window as a :class:`WindowInfo`, or ``None``.
+
+    Carries the platform window id in ``handle`` on ALL three platforms
+    (Win32 hwnd; macOS CGWindowID via Quartz; X11 window id via xdotool) —
+    the id the window-centric capture pipeline resolves rects and native
+    grabs through. Hosts without the native backend (no Quartz, no xdotool,
+    Wayland) degrade to a title-only WindowInfo or ``None``. Best-effort;
+    never raises.
+    """
     try:
-        if detect_platform() == "win32":
+        plat = detect_platform()
+        if plat == "win32":
             return _foreground_window_windows()
+        if plat == "darwin":
+            return _foreground_window_macos()
+        if plat == "linux":
+            return _foreground_window_linux()
         title = get_foreground_title()
         return WindowInfo(title=title) if title else None
     except Exception:  # noqa: BLE001
@@ -687,6 +697,96 @@ def _foreground_window_windows() -> WindowInfo | None:
     buf = ctypes.create_unicode_buffer(length + 1)
     user32.GetWindowTextW(hwnd, buf, length + 1)
     return WindowInfo(title=buf.value or "", handle=int(hwnd))
+
+
+def _quartz_window_list() -> list:
+    """On-screen window info dicts via Quartz, front-to-back; ``[]`` when the
+    framework is absent (base install without ``[desktop-macos]``) or the call
+    fails. Bounds and ids come in the CG global space (points, top-left
+    origin) — the SAME space Quartz mouse events and mss capture rects use,
+    so no extra conversion may ever be applied to them."""
+    try:
+        from Quartz import (  # noqa: PLC0415
+            CGWindowListCopyWindowInfo,
+            kCGNullWindowID,
+            kCGWindowListExcludeDesktopElements,
+            kCGWindowListOptionOnScreenOnly,
+        )
+    except Exception:  # noqa: BLE001 — pyobjc not installed
+        return []
+    try:
+        return list(CGWindowListCopyWindowInfo(
+            kCGWindowListOptionOnScreenOnly
+            | kCGWindowListExcludeDesktopElements,
+            kCGNullWindowID,
+        ) or [])
+    except Exception:  # noqa: BLE001 — permission / transient CG error
+        log.debug("CGWindowListCopyWindowInfo failed", exc_info=True)
+        return []
+
+
+def _foreground_window_macos() -> WindowInfo | None:
+    """Frontmost normal-layer window with its CGWindowID.
+
+    ``CGWindowListCopyWindowInfo`` returns windows ordered front-to-back, so
+    the first entry on layer 0 is the frontmost app window (status items,
+    the Dock and overlays live on higher layers). ``kCGWindowName`` needs
+    the Screen-Recording permission — without it the owning app's name still
+    identifies the window. Falls back to the osascript title (no handle)
+    when Quartz is unavailable.
+    """
+    for entry in _quartz_window_list():
+        try:
+            if int(entry.get("kCGWindowLayer", 0) or 0) != 0:
+                continue
+            number = int(entry.get("kCGWindowNumber", 0) or 0)
+            title = str(
+                entry.get("kCGWindowName")
+                or entry.get("kCGWindowOwnerName")
+                or ""
+            )
+            return WindowInfo(title=title, handle=number or None)
+        except (TypeError, ValueError):
+            continue
+    title = get_foreground_title()
+    return WindowInfo(title=title) if title else None
+
+
+def _foreground_window_linux() -> WindowInfo | None:
+    """Active X11 window with its window id via xdotool.
+
+    Wayland and headless sessions return ``None`` (no global window identity
+    by design there); a missing xdotool degrades to the title-only path.
+    """
+    if is_wayland() or not display_present():
+        return None
+    if shutil.which("xdotool") is None:
+        title = get_foreground_title()
+        return WindowInfo(title=title) if title else None
+    proc = subprocess.run(
+        ["xdotool", "getactivewindow"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        creationflags=NO_WINDOW_CREATIONFLAGS,
+    )
+    if proc.returncode != 0:
+        return None
+    try:
+        win_id = int((proc.stdout or "").strip() or "0")
+    except ValueError:
+        return None
+    if not win_id:
+        return None
+    name = subprocess.run(
+        ["xdotool", "getwindowname", str(win_id)],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        creationflags=NO_WINDOW_CREATIONFLAGS,
+    )
+    title = (name.stdout or "").strip() if name.returncode == 0 else ""
+    return WindowInfo(title=title, handle=win_id)
 
 
 def move_window_to_primary(
@@ -818,24 +918,34 @@ def is_shell_window(win: WindowInfo) -> bool:
 
 
 def window_frame_rect(win: WindowInfo) -> tuple[int, int, int, int] | None:
-    """The window's VISIBLE frame ``(left, top, width, height)`` in
-    virtual-desktop coordinates, or ``None`` when unavailable.
+    """The window's VISIBLE frame ``(left, top, width, height)`` in the
+    platform's INPUT UNITS on the virtual desktop, or ``None`` when
+    unavailable. This is the rect the window-centric Computer-Use pipeline
+    captures and maps clicks into, so each backend MUST report the same
+    coordinate space the platform's input APIs consume:
 
-    Windows: ``DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)`` — the rect
-    the user actually sees. Plain ``GetWindowRect`` includes the invisible
-    DWM resize-shadow border (~7 px per side), which would leak wallpaper
-    into a window-scoped capture and skew every mapped click. Falls back to
-    ``GetWindowRect`` when DWM is unavailable.
-
-    NOTE: physical-pixel correctness on mixed-DPI desktops requires the
-    calling thread to hold a per-monitor DPI context — Computer-Use callers
-    invoke this inside :func:`jarvis.cu.geometry.input_space`.
-
-    macOS/Linux return ``None`` today — callers keep their monitor-scope
-    fallback (same graceful degrade as :func:`window_rect`).
+    * Windows — ``DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)`` (the
+      rect the user actually sees; plain ``GetWindowRect`` includes the
+      invisible resize-shadow border, which would leak wallpaper into the
+      capture and skew every mapped click), physical virtual-desktop pixels.
+      Mixed-DPI correctness requires the calling thread to hold a
+      per-monitor DPI context — CU callers invoke this inside
+      :func:`jarvis.cu.geometry.input_space`.
+    * macOS — Quartz ``kCGWindowBounds`` by CGWindowID: global POINTS with a
+      top-left origin, exactly the space Quartz mouse events and mss rects
+      use (Retina backing pixels never appear here).
+    * Linux/X11 — ``xdotool getwindowgeometry`` by window id: root-window
+      pixels (the client-area rect; WM decorations are not part of it).
+      Wayland and headless sessions return ``None`` — callers fall back to
+      monitor scope and the engine's X11/XWayland refusal explains why.
     """
     try:
-        if detect_platform() != "win32" or not win.handle:
+        plat = detect_platform()
+        if plat == "darwin":
+            return _window_frame_rect_macos(win)
+        if plat == "linux":
+            return _window_frame_rect_linux(win)
+        if plat != "win32" or not win.handle:
             return None
         import ctypes  # noqa: PLC0415
         from ctypes import wintypes  # noqa: PLC0415
@@ -864,6 +974,71 @@ def window_frame_rect(win: WindowInfo) -> tuple[int, int, int, int] | None:
     except Exception:  # noqa: BLE001
         log.debug("window_frame_rect failed", exc_info=True)
         return None
+
+
+def _window_frame_rect_macos(win: WindowInfo) -> tuple[int, int, int, int] | None:
+    """Window bounds by CGWindowID (or the frontmost layer-0 window when the
+    :class:`WindowInfo` carries no handle). Global points, top-left origin."""
+    target: dict | None = None
+    for entry in _quartz_window_list():
+        try:
+            if win.handle:
+                if int(entry.get("kCGWindowNumber", -1) or -1) == int(win.handle):
+                    target = entry
+                    break
+            elif int(entry.get("kCGWindowLayer", 0) or 0) == 0:
+                target = entry
+                break
+        except (TypeError, ValueError):
+            continue
+    if target is None:
+        return None
+    bounds = target.get("kCGWindowBounds") or {}
+    try:
+        left = int(bounds.get("X", 0))
+        top = int(bounds.get("Y", 0))
+        width = int(bounds.get("Width", 0))
+        height = int(bounds.get("Height", 0))
+    except (TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return (left, top, width, height)
+
+
+def _window_frame_rect_linux(win: WindowInfo) -> tuple[int, int, int, int] | None:
+    """Window geometry by X11 window id via ``xdotool getwindowgeometry
+    --shell`` (root-relative pixels). ``None`` on Wayland/headless/no tool."""
+    if is_wayland() or not display_present():
+        return None
+    if not win.handle or shutil.which("xdotool") is None:
+        return None
+    proc = subprocess.run(
+        ["xdotool", "getwindowgeometry", "--shell", str(int(win.handle))],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        creationflags=NO_WINDOW_CREATIONFLAGS,
+    )
+    if proc.returncode != 0:
+        return None
+    fields: dict[str, int] = {}
+    for line in (proc.stdout or "").splitlines():
+        key, sep, value = line.strip().partition("=")
+        if not sep:
+            continue
+        try:
+            fields[key.strip().upper()] = int(value.strip())
+        except ValueError:
+            continue
+    try:
+        left, top = fields["X"], fields["Y"]
+        width, height = fields["WIDTH"], fields["HEIGHT"]
+    except KeyError:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return (left, top, width, height)
 
 
 def window_is_maximized(win: WindowInfo) -> bool | None:

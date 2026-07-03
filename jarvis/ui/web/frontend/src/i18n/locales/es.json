@@ -43,6 +43,7 @@
     "wiki": "Wiki",
     "apikeys": "Claves API",
     "settings": "Ajustes",
+    "dictionary": "Diccionario",
     "telephony": "Telefonía",
     "outputs": "Salidas",
     "socials": "Redes",
@@ -155,6 +156,34 @@
       "acquaintance": "Conocido",
       "other": "Otro"
     }
+  },
+  "dictionary": {
+    "title": "Diccionario",
+    "description": "Enseña al reconocimiento de voz tus palabras — nombres, marcas, términos técnicos. Añade una palabra o corrige lo que siempre entiende mal.",
+    "add": "Añadir palabra",
+    "search": "Buscar en el diccionario…",
+    "loading": "Cargando diccionario…",
+    "empty": "Aún no hay palabras — añade nombres o términos que el reconocimiento de voz deba conocer.",
+    "no_matches": "Ninguna entrada coincide con tu búsqueda.",
+    "edit": "Editar",
+    "delete": "Eliminar",
+    "added": "«{0}» se añadió al diccionario.",
+    "saved": "Entrada del diccionario guardada.",
+    "deleted": "«{0}» se eliminó del diccionario.",
+    "applies_note": "Los cambios se aplican a tu próxima frase — no hace falta reiniciar.",
+    "dialog_add_title": "Añadir a tu vocabulario",
+    "dialog_edit_title": "Editar entrada del diccionario",
+    "correction_toggle": "Corregir un error de reconocimiento",
+    "correction_hint_on": "Siempre que se entienda el lado izquierdo, se sustituye por el derecho.",
+    "correction_hint_off": "Añade una palabra para que el reconocimiento la conozca y la escriba exactamente así.",
+    "word_placeholder": "Añadir una palabra nueva",
+    "word_correct_placeholder": "Escritura correcta",
+    "misheard_placeholder": "Reconocido erróneamente como…",
+    "misheard_comma_hint": "Separa varias variantes mal reconocidas con comas.",
+    "cancel": "Cancelar",
+    "save": "Guardar",
+    "add_confirm": "Añadir palabra",
+    "research_preview": "Research Preview"
   },
   "voice_state": {
     "idle": "Listo",
@@ -899,6 +928,20 @@
     "filter_hint_frontier": "Cuando el precio no importa — los modelos más capaces.",
     "filter_hint_value": "La mejor relación calidad-precio."
   },
+  "apikeys_voice": {
+    "heading": "Voz",
+    "voice_label": "Voz",
+    "choose_voice": "Elige una voz…",
+    "multilingual": "Multilingüe",
+    "saved": "Voz guardada",
+    "load_failed": "No se pudieron cargar las voces",
+    "no_voices": "Sin voces para este modelo",
+    "count_hint": "{0} voces",
+    "preview": "Escuchar voz",
+    "preview_failed": "La vista previa falló",
+    "preview_language": "Idioma de la vista previa",
+    "preview_in": "Vista previa en"
+  },
   "apikeys_cu_model": {
     "heading": "Modelo para Computer-Use",
     "use_main": "Usar mi modelo principal",
@@ -914,6 +957,13 @@
       "unit_seconds": "s",
       "reset": "Restablecer al valor predeterminado (1,5 s)",
       "saved_toast": "Pausa para pensar fijada en {0}.",
+      "restart_caption": "Guardado — se aplica en el próximo inicio."
+    },
+    "volume": {
+      "title": "Volumen",
+      "description": "Qué tan alto habla {name} sus respuestas. 100% es el máximo — bájalo si {name} suena demasiado alto. La voz se amplifica para sonar tan fuerte como la música, sin distorsión.",
+      "reset": "Restablecer al valor predeterminado (100%)",
+      "saved_toast": "Volumen fijado en {0}.",
       "restart_caption": "Guardado — se aplica en el próximo inicio."
     },
     "title": "Ajustes",
