@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
  * Current wake-word configuration as returned by GET /api/settings/wake-word.
@@ -109,4 +109,79 @@ export function useWakeWord() {
   );
 
   return { config, loading, error, refetch, saveWakeWord };
+}
+
+/**
+ * Progress of the in-app "local speech pack" (faster-whisper) install that
+ * unlocks ANY wake phrase. Mirrors the backend state machine in
+ * jarvis/ui/web/settings_routes.py (enable-local-speech).
+ */
+export interface LocalSpeechStatus {
+  state: "idle" | "running" | "done" | "error";
+  message: string;
+  available: boolean;
+}
+
+/**
+ * Drives POST /api/settings/wake-word/enable-local-speech and polls its status
+ * endpoint until the install finishes. Calls `onInstalled` once the pack is
+ * present so the caller can refetch the wake config. The install runs in the
+ * backend; this only starts it and reflects progress.
+ */
+export function useLocalSpeechInstall(onInstalled?: () => void) {
+  const [status, setStatus] = useState<LocalSpeechStatus>({
+    state: "idle",
+    message: "",
+    available: true,
+  });
+  const pollRef = useRef<number | null>(null);
+  const onInstalledRef = useRef(onInstalled);
+  onInstalledRef.current = onInstalled;
+
+  const stopPoll = useCallback(() => {
+    if (pollRef.current !== null) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  const poll = useCallback(async () => {
+    try {
+      const res = await fetch(
+        "/api/settings/wake-word/enable-local-speech/status",
+      );
+      const data = (await res.json()) as LocalSpeechStatus;
+      setStatus(data);
+      if (data.state === "done" || data.state === "error") {
+        stopPoll();
+        if (data.state === "done") onInstalledRef.current?.();
+      }
+    } catch {
+      // Transient network blip during a long install — keep polling.
+    }
+  }, [stopPoll]);
+
+  const install = useCallback(async () => {
+    setStatus({ state: "running", message: "", available: false });
+    try {
+      const res = await fetch("/api/settings/wake-word/enable-local-speech", {
+        method: "POST",
+      });
+      const data = (await res.json()) as LocalSpeechStatus & { already?: boolean };
+      if (data.state === "done" && data.available) {
+        setStatus({ state: "done", message: data.message ?? "", available: true });
+        onInstalledRef.current?.();
+        return;
+      }
+      stopPoll();
+      pollRef.current = window.setInterval(() => void poll(), 2000);
+    } catch (e) {
+      setStatus({ state: "error", message: (e as Error).message, available: false });
+    }
+  }, [poll, stopPoll]);
+
+  // Clean up the interval if the panel unmounts mid-install.
+  useEffect(() => () => stopPoll(), [stopPoll]);
+
+  return { status, install };
 }
