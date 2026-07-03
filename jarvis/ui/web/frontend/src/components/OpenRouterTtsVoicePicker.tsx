@@ -115,10 +115,10 @@ function VoicePicker({ model }: { model: string }) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [open, setOpen] = useState(false);
-  // The sample language — defaults to the app's UI language (falls back to EN
-  // for any non-DE locale, since the sample sentences are DE/EN).
-  const [previewLang, setPreviewLang] = useState<"de" | "en">(
-    uiLang === "de" ? "de" : "en",
+  // The sample language — defaults to the app's UI language (DE/EN/ES are the
+  // supported sample languages; any other locale falls back to EN).
+  const [previewLang, setPreviewLang] = useState<"de" | "en" | "es">(
+    uiLang === "de" ? "de" : uiLang === "es" ? "es" : "en",
   );
   // The voice currently PLAYING vs. the voice whose audio is being FETCHED — the
   // preview button shows a spinner while loading, a stop icon while playing.
@@ -254,7 +254,7 @@ function VoicePicker({ model }: { model: string }) {
           <span className="text-[10px] text-muted-foreground">
             {t("apikeys_voice.preview_in")}
           </span>
-          {(["de", "en"] as const).map((lng) => (
+          {(["de", "en", "es"] as const).map((lng) => (
             <button
               key={lng}
               type="button"

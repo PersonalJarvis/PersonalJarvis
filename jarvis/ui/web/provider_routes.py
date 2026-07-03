@@ -1523,13 +1523,24 @@ async def tts_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
 # The only TTS provider that exposes a per-model voice list + preview so far.
 _VOICE_PICKER_PROVIDER = "openrouter-tts"
 
-# The short fixed sentence spoken by the preview, per language. Deliberately
-# tiny so a preview is cheap and quick. Every supported runtime-output language
-# has an entry (never a de/en-only table — AP-21 / runtime-language doctrine).
+# The fixed sentence spoken by the preview, per language. Long enough that a
+# voice's timbre and character are actually audible (a one-liner made every
+# voice sound alike), but still short enough to stay a cheap, quick preview.
+# Every supported runtime-output language has an entry (never a de/en-only
+# table — AP-21 / runtime-language doctrine).
 _TTS_PREVIEW_SAMPLES: dict[str, str] = {
-    "de": "Hallo, ich bin dein Assistent.",
-    "en": "Hi, I am your assistant.",
-    "es": "Hola, soy tu asistente.",
+    "de": (
+        "Hallo! Ich bin dein persönlicher Assistent. "
+        "So klingt meine Stimme, wenn ich für dich spreche und dir zuhöre."
+    ),
+    "en": (
+        "Hi there! I am your personal assistant. "
+        "This is how my voice sounds when I speak with you and help you out."
+    ),
+    "es": (
+        "¡Hola! Soy tu asistente personal. "
+        "Así suena mi voz cuando hablo contigo y te ayudo con tus tareas."
+    ),
 }
 _TTS_PREVIEW_DEFAULT_LANG = "en"
 
