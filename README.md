@@ -17,16 +17,15 @@
 </p>
 
 <!--
-  Hero = click-to-play poster. The demo video is hosted as a GitHub Release asset
-  (release tag: media) and is DELIBERATELY NOT committed to the source tree, so a
-  `git clone` never pulls the ~60 MB video — only this ~100 KB poster ships. Clicking
-  the poster opens the video, which GitHub streams on demand.
-  Refresh the video:  gh release upload media <new.mp4> --repo PersonalJarvis/PersonalJarvis --clobber
+  Hero = click-to-play poster linking to the onboarding video on YouTube. The video is
+  NOT committed to the source tree, so a `git clone` never pulls it — only this ~100 KB
+  poster ships; clicking it opens the video on YouTube (which GitHub can't embed inline).
   Refresh the poster: replace assets/demo/demo-poster.jpg (keep width≈820)
+  Video: https://www.youtube.com/watch?v=FXz1HclXL1g
 -->
 <p align="center">
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/releases/download/media/personal-jarvis-onboarding-4K.mp4">
-    <img src="assets/demo/demo-poster.jpg" alt="Personal Jarvis — watch the demo (click to play)" width="820" />
+  <a href="https://www.youtube.com/watch?v=FXz1HclXL1g">
+    <img src="assets/demo/demo-poster.jpg" alt="Personal Jarvis — watch the onboarding video on YouTube (click to play)" width="820" />
   </a>
 </p>
 
