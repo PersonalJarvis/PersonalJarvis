@@ -15,9 +15,12 @@ logger = logging.getLogger(__name__)
 CURRENT_TERMS_VERSION = "1.0"
 
 # Canonical step order — must match the frontend step REGISTRY keys.
+# The standalone Terms & Disclaimer step was removed (2026-07-03): the legal
+# posture now rests on the up-front risk gate + the MIT-license disclaimer, so
+# first-run stays short. The /terms + /accept-terms routes remain for back-compat
+# but are no longer part of the guided flow.
 ONBOARDING_STEPS: list[str] = [
     "welcome",
-    "terms",
     "language",
     "wake-word",
     "api-keys",
