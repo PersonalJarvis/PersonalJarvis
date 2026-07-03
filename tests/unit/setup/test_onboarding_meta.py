@@ -4,7 +4,10 @@ from jarvis.setup import onboarding_meta as m
 def test_meta_constants():
     assert m.CURRENT_TERMS_VERSION == "1.0"
     assert m.ONBOARDING_STEPS[0] == "welcome"
-    assert m.ONBOARDING_STEPS[1] == "terms"
+    # The standalone Terms & Disclaimer step was removed (2026-07-03); the risk
+    # gate + MIT-license disclaimer carry the legal posture now.
+    assert "terms" not in m.ONBOARDING_STEPS
+    assert m.ONBOARDING_STEPS[1] == "language"
     assert m.ONBOARDING_STEPS[-1] == "finish"
     assert "wake-word" in m.ONBOARDING_STEPS
     assert "persona-theme" not in m.ONBOARDING_STEPS
@@ -13,7 +16,7 @@ def test_meta_constants():
     assert "system-style" not in m.ONBOARDING_STEPS
     assert "mic-test" not in m.ONBOARDING_STEPS
     assert m.ONBOARDING_STEPS[-2] == "api-keys"
-    assert len(m.ONBOARDING_STEPS) == 6
+    assert len(m.ONBOARDING_STEPS) == 5
     assert len(m.WAKE_WORD_LEGAL_REFERENCES) >= 3
     for ref in m.WAKE_WORD_LEGAL_REFERENCES:
         assert ref["label"] and ref["url"].startswith("https://")

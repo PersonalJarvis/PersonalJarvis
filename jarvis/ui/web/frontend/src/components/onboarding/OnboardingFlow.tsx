@@ -3,7 +3,6 @@ import { MascotGigi } from "@/components/MascotGigi";
 import { useT } from "@/i18n";
 import type { useOnboarding } from "@/hooks/useOnboarding";
 import { WelcomeStep } from "./steps/WelcomeStep";
-import { TermsStep } from "./steps/TermsStep";
 import { LanguageStep } from "./steps/LanguageStep";
 import { WakeWordStep } from "./steps/WakeWordStep";
 import { ApiKeysStep } from "./steps/ApiKeysStep";
@@ -20,7 +19,6 @@ export interface StepProps {
 
 const REGISTRY: Record<string, (p: StepProps) => JSX.Element> = {
   welcome: WelcomeStep,
-  terms: TermsStep,
   language: LanguageStep,
   "wake-word": WakeWordStep,
   "api-keys": ApiKeysStep,
@@ -34,19 +32,16 @@ export const STEP_KEYS = Object.keys(REGISTRY);
 
 export function OnboardingFlow({
   onb,
-  initialStep,
 }: {
   onb: ReturnType<typeof useOnboarding>;
-  initialStep?: string;
 }) {
   const t = useT();
   const steps = onb.state?.steps ?? ["welcome", "finish"];
   // Always begin at the first step so every run walks each step in order. We do
   // NOT resume to a saved current_step: a user who already finished once would
   // otherwise be auto-jumped to the last step, which feels like the flow skipped
-  // itself. An explicit initialStep (the terms-version-bump re-open) still wins.
-  const initialIdx = initialStep ? Math.max(0, steps.indexOf(initialStep)) : 0;
-  const [idx, setIdx] = useState(initialIdx);
+  // itself.
+  const [idx, setIdx] = useState(0);
   const [skipped, setSkipped] = useState<string[]>(onb.state?.skipped_steps ?? []);
 
   const StepComp = useMemo(
