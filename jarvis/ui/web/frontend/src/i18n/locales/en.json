@@ -1137,8 +1137,8 @@
     "safety_description": "Patterns executed without confirmation, even at risk-tier 'ask'. Avoids confirmation fatigue."
   },
   "telephony_view": {
-    "title": "Telephony",
-    "subtitle": "Call your assistant on a real phone number. Same STT, Brain, and Charon voice as the local wake-word path.",
+    "title": "Telephony (experimental)",
+    "subtitle": "Call your assistant on a real phone number. Same STT, Brain, and Charon voice as the local wake-word path. Note: this telephony integration is experimental and has not been tested yet.",
     "load_error": "Could not load telephony status",
     "not_configured_hint": "Set your Twilio Account SID, Auth Token, and phone number below to finish setup, then run \"Test connection\".",
     "unavailable_title": "Telephony extra not installed",
@@ -1173,7 +1173,7 @@
       "public_url": "Public base URL",
       "language": "Language code",
       "greeting": "Greeting (optional)",
-      "greeting_placeholder": "Leave empty for the {name} butler default",
+      "greeting_placeholder": "Leave empty for the default {name} greeting",
       "test_connection": "Test connection",
       "self_test": "Self-test voice",
       "setup_script": "Setup script",

@@ -175,7 +175,7 @@ SECRETS: list[SecretSpec] = [
         env_fallback="ELEVENLABS_API_KEY",
         label="ElevenLabs API Key (premium TTS, multi-language)",
         help_url="https://elevenlabs.io/app/settings/api-keys",
-        required_for="TTS (ElevenLabs — Jarvis butler voice with DE+EN auto-detect)",
+        required_for="TTS (ElevenLabs — mature British voice with DE+EN auto-detect)",
     ),
     SecretSpec(
         key="cartesia_api_key",
