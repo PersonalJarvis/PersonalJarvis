@@ -20,10 +20,10 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 
 ## brain
 
-- `jarvis brain deep-model <model> --persist --yes --dry-run` — Set the Jarvis-Agent deep model.
+- `jarvis brain deep-model <model> --persist --yes --dry-run` — Set the sub-agent deep model.
 - `jarvis brain list` — List configured brain providers (alias of status).
 - `jarvis brain status` — Show configured providers and which one is active.
-- `jarvis brain subagent-switch <provider> --persist --yes --dry-run` — Switch the Jarvis-Agent / worker provider (e.g. Codex -> OpenAI).
+- `jarvis brain subagent-switch <provider> --persist --yes --dry-run` — Switch the sub-agent / worker provider (e.g. Codex -> OpenAI).
 - `jarvis brain switch <provider> --persist --yes --dry-run` — Switch the ACTIVE main brain provider (e.g. `jarvis brain switch openai`).
 - `jarvis brain test <provider> --dry-run` — Test connectivity + auth for a provider.
 

@@ -184,8 +184,8 @@ class TestVocabularyWords:
 
     def test_multiword_casing_with_umlaut(self) -> None:
         # The umlaut pins Unicode word-boundary handling.
-        c = corrector_for(("Nico Maintainer", []))  # i18n-allow: umlauted proper name under test
-        assert c.correct("write to nico maintainer") == "write to Nico Maintainer"  # i18n-allow: umlauted proper name under test
+        c = corrector_for(("Nico Müller", []))  # i18n-allow: umlauted proper name under test
+        assert c.correct("write to nico müller") == "write to Nico Müller"  # i18n-allow: umlauted proper name under test
 
     def test_email_entry_matches_boundary(self) -> None:
         c = corrector_for(("aethroc@gmail.com", []))
