@@ -7,9 +7,8 @@ import { IntroVideoScreen } from "./IntroVideoScreen";
 /**
  * Blocking overlay that shows the onboarding flow until it is completed.
  * Fails open (renders nothing) while loading or on a fetch error so a broken
- * guide never traps the user. Re-shows once when the accepted Terms version is
- * older than the shipped version (opening at the terms step). `?onboarding=force`
- * forces the flow for non-destructive dev replay.
+ * guide never traps the user. `?onboarding=force` forces the flow for
+ * non-destructive dev replay.
  */
 export function OnboardingGate() {
   const onb = useOnboarding();
@@ -46,18 +45,10 @@ export function OnboardingGate() {
   if (onb.error) return null; // fail open — never trap the user
   if (!onb.state) return null;
 
-  const termsOutdated =
-    onb.state.terms.accepted &&
-    onb.state.terms.accepted_version !== onb.state.terms.current_version;
-  const show = (forced || !onb.state.completed || termsOutdated) && !dismissed;
+  const show = (forced || !onb.state.completed) && !dismissed;
   if (!show) return null;
 
-  // On a terms version bump for an already-completed install, re-open at terms.
-  const isTermsBumpReopen = Boolean(onb.state.completed && termsOutdated);
-  const initialStep = isTermsBumpReopen ? "terms" : undefined;
-  // Skip the tutorial on a pure terms-bump re-open: that user has already seen
-  // it and is only re-accepting a new Terms version.
-  const showVideo = !videoSeen && !isTermsBumpReopen;
+  const showVideo = !videoSeen;
 
   return (
     <div
@@ -70,7 +61,7 @@ export function OnboardingGate() {
       ) : showVideo ? (
         <IntroVideoScreen onContinue={() => setVideoSeen(true)} />
       ) : (
-        <OnboardingFlow onb={onb} initialStep={initialStep} />
+        <OnboardingFlow onb={onb} />
       )}
     </div>
   );

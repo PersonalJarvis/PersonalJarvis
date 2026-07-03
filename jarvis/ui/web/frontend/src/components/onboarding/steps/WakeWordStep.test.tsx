@@ -24,6 +24,9 @@ it("requires word + acknowledgment, then saves 'Hey <word>' and advances", async
   const goNext = vi.fn();
   render(<WakeWordStep onb={onb} goNext={goNext} goBack={vi.fn()} skip={vi.fn()} isFirst={false} isLast={false} />);
 
+  // The trademark references are tucked behind a "How to check" toggle now —
+  // reveal them before asserting the register link is present.
+  fireEvent.click(screen.getByRole("button", { name: "onboarding.wake_word.learn_more" }));
   expect(screen.getByRole("link", { name: "EUIPO" })).toBeDefined();
 
   const cta = screen.getByRole("button", { name: "onboarding.wake_word.cta" });

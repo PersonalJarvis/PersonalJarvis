@@ -15,7 +15,6 @@ const { dbl } = vi.hoisted(() => {
   return { dbl };
 });
 vi.mock("./steps/WelcomeStep", () => ({ WelcomeStep: dbl("step-welcome") }));
-vi.mock("./steps/TermsStep", () => ({ TermsStep: dbl("step-terms") }));
 vi.mock("./steps/LanguageStep", () => ({ LanguageStep: dbl("step-language") }));
 vi.mock("./steps/WakeWordStep", () => ({ WakeWordStep: dbl("step-wake-word") }));
 vi.mock("./steps/ApiKeysStep", () => ({ ApiKeysStep: dbl("step-api-keys") }));
@@ -34,7 +33,7 @@ function makeOnb(stateOverrides: Record<string, unknown> = {}) {
       terms: { accepted: false, accepted_version: null, current_version: "1.0" },
       wake_word_acknowledged: false,
       legal_references: [],
-      steps: ["welcome", "terms", "finish"],
+      steps: ["welcome", "language", "finish"],
       ...stateOverrides,
     },
     loading: false,
@@ -58,8 +57,8 @@ it("advancing persists the next step and shows it", () => {
   render(<OnboardingFlow onb={onb} />);
   fireEvent.click(within(screen.getByTestId("step-welcome")).getByText("next"));
   expect((onb as never as { saveStep: ReturnType<typeof vi.fn> }).saveStep)
-    .toHaveBeenCalledWith("terms", []);
-  expect(screen.getByTestId("step-terms")).toBeDefined();
+    .toHaveBeenCalledWith("language", []);
+  expect(screen.getByTestId("step-language")).toBeDefined();
 });
 
 it("always starts at the first step, ignoring a saved current_step", () => {
@@ -69,23 +68,18 @@ it("always starts at the first step, ignoring a saved current_step", () => {
   expect(screen.getByTestId("step-welcome")).toBeDefined();
 });
 
-it("honors an explicit initialStep (the terms-version-bump re-open)", () => {
-  render(<OnboardingFlow onb={makeOnb({ current_step: "finish" })} initialStep="terms" />);
-  expect(screen.getByTestId("step-terms")).toBeDefined();
-});
-
 it("skip accumulates the skipped step", () => {
   const onb = makeOnb();
   render(<OnboardingFlow onb={onb} />);
   fireEvent.click(within(screen.getByTestId("step-welcome")).getByText("skip"));
   expect((onb as never as { saveStep: ReturnType<typeof vi.fn> }).saveStep)
-    .toHaveBeenCalledWith("terms", ["welcome"]);
+    .toHaveBeenCalledWith("language", ["welcome"]);
 });
 
 it("REGISTRY covers exactly the canonical backend steps", () => {
   expect(new Set(STEP_KEYS)).toEqual(
     new Set([
-      "welcome", "terms", "language", "wake-word",
+      "welcome", "language", "wake-word",
       "api-keys", "finish",
     ]),
   );
