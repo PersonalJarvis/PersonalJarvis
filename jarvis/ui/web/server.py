@@ -230,6 +230,7 @@ class WebServer:
         from .drop_routes import router as drop_router
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
+        from .dictionary_routes import router as dictionary_router
         from .docs_routes import router as docs_router
         from .federation_proxy_routes import router as federation_proxy_router
         from .friends_routes import router as friends_router
@@ -325,6 +326,7 @@ class WebServer:
         app.include_router(workspace_router)
         # Contacts section — user-curated address book (pure file store, no Brain dep).
         app.include_router(contacts_router)
+        app.include_router(dictionary_router)
         app.include_router(workflows_router)
         if conductor_router is not None:
             app.include_router(conductor_router)
