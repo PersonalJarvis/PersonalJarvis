@@ -5,6 +5,8 @@ Usage:
     python -m jarvis --wizard       # Re-run the setup wizard
     python -m jarvis --check        # Show hardware analysis only
     python -m jarvis --plugins      # List the plugin registry
+    python -m jarvis --uninstall    # Remove Jarvis from this machine (folder,
+                                    #   login-autostart entry, saved API keys)
 """
 from __future__ import annotations
 
@@ -62,6 +64,30 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="reset_onboarding",
         help="Clear onboarding markers so the first-run guide shows again.",
+    )
+    parser.add_argument(
+        "--uninstall",
+        action="store_true",
+        help="Remove this Jarvis install from the machine: the install folder, "
+             "the login-autostart entry, and the API keys saved in the OS "
+             "keychain. Asks for confirmation first.",
+    )
+    parser.add_argument(
+        "--yes", "-y", action="store_true", dest="assume_yes",
+        help="With --uninstall: skip the confirmation prompt.",
+    )
+    parser.add_argument(
+        "--keep-keys", action="store_true", dest="keep_keys",
+        help="With --uninstall: keep the saved API keys in the OS keychain.",
+    )
+    parser.add_argument(
+        "--keep-folder", action="store_true", dest="keep_folder",
+        help="With --uninstall: leave the install folder in place (used by the "
+             "uninstall.ps1/.sh bootstraps, which delete it from outside the venv).",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", dest="dry_run",
+        help="With --uninstall: show what would be removed, change nothing.",
     )
     parser.add_argument(
         "command",
@@ -308,6 +334,18 @@ def _cmd_reset_onboarding() -> int:
     return 0
 
 
+def _cmd_uninstall(args: argparse.Namespace) -> int:
+    """Remove this Jarvis install from the machine (folder + autostart + keys)."""
+    from jarvis.setup import uninstall
+
+    return uninstall.run_uninstall(
+        assume_yes=args.assume_yes,
+        keep_keys=args.keep_keys,
+        keep_folder=args.keep_folder,
+        dry_run=args.dry_run,
+    )
+
+
 def _cmd_install_admin_helper() -> int:
     """Generates the HMAC shared secret (if missing) in the Credential Manager."""
     try:
@@ -442,6 +480,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_doctor()
     if args.install_admin_helper:
         return _cmd_install_admin_helper()
+    if args.uninstall:
+        return _cmd_uninstall(args)
     if args.reset_onboarding:
         return _cmd_reset_onboarding()
     if args.command == "serve":

@@ -1033,7 +1033,14 @@
         "openwakeword": "openWakeWord (eingebaute Phrasen)",
         "stt_match": "STT-Abgleich (beliebige Phrase, braucht lokales Whisper)",
         "custom_onnx": "Eigenes ONNX-Modell"
-      }
+      },
+      "enable_local_button": "Beliebiges Wake-Word aktivieren",
+      "enable_local_installing": "Sprachpaket wird installiert… das kann einen Moment dauern.",
+      "enable_local_done": "Sprachpaket installiert. Starte neu, um dein Wake-Word zu nutzen.",
+      "enable_local_error": "Installation fehlgeschlagen. Prüfe deine Internetverbindung und versuche es erneut.",
+      "enable_local_retry": "Erneut versuchen",
+      "enable_local_restart": "Jetzt neu starten",
+      "restarting": "Neustart…"
     },
     "onboarding": {
       "wake_word": {

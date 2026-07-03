@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID, uuid4
 
 from jarvis.core.bus import EventBus
-from jarvis.core.config import JarvisConfig
+from jarvis.core.config import BrainTierConfig, JarvisConfig
 from jarvis.core.events import (
     ActionExecuted,
     AnnouncementRequested,
@@ -77,7 +77,6 @@ from jarvis.safety.tool_executor import ToolExecutor
 from jarvis.brain.provider_test import BILLING_LIMIT_MARKERS
 
 from .dispatcher import BrainDispatcher
-from .healthcheck import BrainConfigError
 from .intent_router import RoutingDecision, classify
 from .local_action_gate import (
     HARNESS_NAME,
@@ -1967,10 +1966,31 @@ class BrainManager:
         """
         tier_cfg = getattr(config.brain, tier, None)
         if tier_cfg is None:
-            raise BrainConfigError(
-                f"No [brain.{tier}] block in config. "
-                f"Tiered routing requires [brain.router] in jarvis.toml."
+            # A fresh install ships NO [brain.router] block: jarvis.toml.example
+            # has a [brain] table but no [brain.router] sub-table, and neither
+            # the wizard, the installer, nor onboarding ever writes one. Raising
+            # here left ``app.state.brain = None``, which bricked BOTH the
+            # voice/chat brain AND the provider-switch route — the latter then
+            # surfaced the misleading "headless mode" 503 on every "Set active"
+            # click. This only ever hit downloaders: the maintainer's own
+            # jarvis.toml HAS the block (textbook AP-23 "works on my machine").
+            # Instead of failing, synthesize the tier from the user's REAL
+            # selection. BrainTierConfig only requires ``provider``; the model is
+            # filled per-provider by ``_resolve_tier_model``. Provider-agnostic —
+            # it honours whatever main provider the fresh user configured, and an
+            # explicit [brain.router] block still overrides this untouched.
+            default_provider = (
+                (config.brain.primary or "").strip()
+                or (config.brain.routing_provider or "").strip()
+                or "claude-api"
             )
+            log.info(
+                "No [brain.%s] block in config — synthesizing a default tier from "
+                "brain.primary=%r so a fresh install boots a working brain.",
+                tier,
+                default_provider,
+            )
+            tier_cfg = BrainTierConfig(provider=default_provider)
 
         local_config = config.model_copy(deep=True)
         requested_provider = provider_override or tier_cfg.provider
@@ -3095,6 +3115,29 @@ class BrainManager:
                 "Provider '%s' reaktiviert (dead=%s, brain_cache_dropped=%d)",
                 provider, was_dead, len(keys_to_drop),
             )
+
+    def _active_has_usable_credential(self) -> bool:
+        """Whether the currently active brain provider has a usable credential.
+
+        True iff an API key is present in any of the active provider's secret
+        slots, or a keyless provider is rescued by a connected OAuth login
+        (mirrors the pre-boot key check in ``from_tier_config`` so the two stay
+        consistent). Used by the ``SecretConfigured`` handler to decide whether a
+        fresh-install ``brain.primary`` default — which the downloader has no key
+        for — should yield to the provider the user just configured.
+        """
+        from jarvis.core import config as _cfg_mod
+        from jarvis.core.config import PROVIDER_SECRET_CANDIDATES
+
+        active = self._active_name
+        specs = PROVIDER_SECRET_CANDIDATES.get(active)
+        if specs:
+            try:
+                if _cfg_mod.get_secret_any(specs):
+                    return True
+            except Exception:  # noqa: BLE001 — an unreadable keyring counts as "no key"
+                pass
+        return _keyless_provider_is_rescued_by_oauth(active)
 
     def apply_provider_model(self, provider: str, model: str) -> bool:
         """Live-apply a model override for a brain provider (no restart).
@@ -7637,6 +7680,38 @@ class BrainManager:
             if not provider:
                 return
             self.reactivate_provider(provider)
+            # Fresh-install heal (open-source AP-22/AP-23): on a first run there
+            # is no jarvis.toml, so brain.primary is the packaged code-default
+            # (e.g. claude-api) that the downloader has NO key for. Setting a key
+            # for a DIFFERENT provider used to leave that dead default active, so
+            # the brain kept reporting "not configured" even though a usable key
+            # was now present — the #1 fresh-laptop symptom. If the currently
+            # active provider has no usable credential, promote the provider the
+            # user just keyed to active and persist it. This is NOT the autonomous
+            # self-switch the USER-ONLY / provider_lock mandate forbids: it fires
+            # only in direct response to the user's OWN key-set action (the same
+            # path as a manual "Set as active" click, via config_writer — never
+            # the locked self-mod writer), and it never overrides a provider the
+            # user deliberately selected (one that already has a working key or
+            # OAuth login is left untouched).
+            if provider == self._active_name:
+                return  # reactivate_provider already re-armed the active one
+            if self._active_has_usable_credential():
+                return
+            previous_active = self._active_name
+            try:
+                await self.switch(provider, persist=True)
+                log.info(
+                    "Fresh-install heal: active brain %r had no usable "
+                    "credential; promoted just-keyed provider %r to active and "
+                    "persisted brain.primary.",
+                    previous_active, provider,
+                )
+            except Exception:  # noqa: BLE001 — a subscriber must never kill the bus (AP-18)
+                log.warning(
+                    "auto-activate on key-set failed for provider %r",
+                    provider, exc_info=True,
+                )
 
         target_bus.subscribe(SecretConfigured, _on_secret_configured)
 

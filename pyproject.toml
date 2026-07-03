@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "1.0.0"
+version = "1.0.1"
 description = "Voice-driven meta-orchestrator that turns one spoken request into a fleet of self-checking AI agents"
 requires-python = ">=3.11"
 readme = "README.md"
 license = { text = "MIT" }
-authors = [{ name = "Personal Jarvis Maintainers" }]
+authors = [{ name = "Personal Jarvis Maintainer" }]  # i18n-allow: maintainer proper name (umlaut)
 
 dependencies = [
     "anthropic>=0.96",

@@ -80,8 +80,12 @@ AUTH_PROVIDER_ALIASES: dict[str, str] = {
     "grok-voice": "grok",
 }
 
-# Local providers that need no credential at all.
-_NO_CREDENTIAL_PROVIDERS: frozenset[str] = frozenset({"faster-whisper"})
+# Local providers that need no credential at all. Empty since v1.0.1: the only
+# entry, the local "faster-whisper" STT dictation provider, was removed from the
+# user-selectable catalog (see provider_spec.py). is_credential_present() still
+# reports auth_mode=="none" providers as configured, so a future local provider
+# needs no change here.
+_NO_CREDENTIAL_PROVIDERS: frozenset[str] = frozenset()
 
 # A stored secret must be at least this long before we reveal a 3+3 preview.
 # Below it, 6 revealed characters would expose too large a fraction of the key,

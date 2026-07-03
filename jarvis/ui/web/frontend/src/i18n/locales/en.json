@@ -1034,7 +1034,14 @@
         "openwakeword": "openWakeWord (built-in phrases)",
         "stt_match": "STT match (any phrase, needs local Whisper)",
         "custom_onnx": "Custom ONNX model"
-      }
+      },
+      "enable_local_button": "Enable any wake word",
+      "enable_local_installing": "Installing the local speech pack… this can take a minute.",
+      "enable_local_done": "Local speech pack installed. Restart to use your wake word.",
+      "enable_local_error": "Install failed. Check your internet connection and try again.",
+      "enable_local_retry": "Try again",
+      "enable_local_restart": "Restart now",
+      "restarting": "Restarting…"
     },
     "onboarding": {
       "wake_word": {

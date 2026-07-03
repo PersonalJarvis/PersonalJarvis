@@ -28,7 +28,7 @@ export function BrandIcon({
     return (
       <div
         className={cn(
-          "flex shrink-0 items-center justify-center rounded-xl ring-1 ring-white/10",
+          "flex shrink-0 items-center justify-center rounded-xl ring-1 ring-white/20",
           className,
         )}
         style={{ width: size, height: size, backgroundColor: "#3f3f46" }}
@@ -41,7 +41,7 @@ export function BrandIcon({
   return (
     <div
       className={cn(
-        "flex shrink-0 items-center justify-center rounded-xl ring-1 ring-white/10",
+        "flex shrink-0 items-center justify-center rounded-xl ring-1 ring-white/20",
         className,
       )}
       style={{ width: size, height: size, backgroundColor: brand.hex }}
