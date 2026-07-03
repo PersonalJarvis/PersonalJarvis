@@ -836,6 +836,14 @@ jobs:
       # work item — cross-runner-hash + install-verify.sh axis-3) downloads
       # it and runs `slsa-verifier verify-artifact …`.
       upload-assets: true
+      # private-repository: true lets the SLSA generator run while the repo is
+      # still PRIVATE. By default it HALTS on a private repo ("Repository is
+      # private. The workflow has halted …") to avoid publishing the repo name
+      # to the public Sigstore/Rekor transparency log — which failed the
+      # `provenance / final` check (the red X) on every release while the repo
+      # was private. The name `PersonalJarvis/PersonalJarvis` is not secret and
+      # the repo is destined to be public, so recording it in Rekor is accepted.
+      private-repository: true
 
   # ----------------------------------------------------------------------
   # Job 3: release
