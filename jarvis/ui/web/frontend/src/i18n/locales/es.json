@@ -1033,7 +1033,14 @@
         "openwakeword": "openWakeWord (frases integradas)",
         "stt_match": "Coincidencia STT (cualquier frase, requiere Whisper local)",
         "custom_onnx": "Modelo ONNX personalizado"
-      }
+      },
+      "enable_local_button": "Activar cualquier palabra de activación",
+      "enable_local_installing": "Instalando el paquete de voz local… puede tardar un momento.",
+      "enable_local_done": "Paquete de voz local instalado. Reinicia para usar tu palabra de activación.",
+      "enable_local_error": "Error en la instalación. Comprueba tu conexión a Internet e inténtalo de nuevo.",
+      "enable_local_retry": "Intentar de nuevo",
+      "enable_local_restart": "Reiniciar ahora",
+      "restarting": "Reiniciando…"
     },
     "onboarding": {
       "wake_word": {
