@@ -24,16 +24,8 @@
     "update_available": "Update verfügbar",
     "updating": "{name} wird aktualisiert…",
     "update_failed": "Update fehlgeschlagen",
-    "update_hint": "Ansehen, was neu ist, und installieren",
-    "update_deps_warning": "Aktualisiert — einige Komponenten brauchen evtl. eine manuelle Neuinstallation",
-    "update_whats_new": "Was ist neu",
-    "update_now": "Jetzt aktualisieren",
-    "update_later": "Später",
-    "update_force": "Trotzdem aktualisieren?",
-    "update_released": "Veröffentlicht",
-    "update_view_online": "Auf GitHub ansehen",
-    "update_no_notes": "Für diese Version liegen keine Detailangaben vor.",
-    "update_installing": "Wird aktualisiert…"
+    "update_hint": "Neue Version herunterladen und installieren",
+    "update_deps_warning": "Aktualisiert — einige Komponenten brauchen evtl. eine manuelle Neuinstallation"
   },
   "nav": {
     "chats": "Chats",
