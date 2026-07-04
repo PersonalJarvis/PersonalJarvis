@@ -18,11 +18,30 @@ Two guarantees pinned here:
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 import jarvis.audio.capture as cap
 import jarvis.audio.player as pl
 from jarvis.audio.device_select import is_legacy_primary_mapper
+
+
+@pytest.fixture(autouse=True)
+def _neutralize_os_default(monkeypatch) -> None:
+    """Simulate "no OS-selected default device" by default so the priority /
+    mapper / generic tests here stay deterministic on any host. The "your device
+    first" tests below re-patch ``sd.default`` to a specific system default;
+    without this fixture the resolver would read the REAL machine's default and
+    the outcome would depend on the test host."""
+    monkeypatch.setattr(pl.sd, "default", SimpleNamespace(device=(-1, -1)))
+    monkeypatch.setattr(cap.sd, "default", SimpleNamespace(device=(-1, -1)))
+
+
+def _set_os_default(monkeypatch, *, in_idx: int = -1, out_idx: int = -1) -> None:
+    """Point ``sd.default.device`` (input, output) at the given fake-table indices."""
+    monkeypatch.setattr(pl.sd, "default", SimpleNamespace(device=(in_idx, out_idx)))
+    monkeypatch.setattr(cap.sd, "default", SimpleNamespace(device=(in_idx, out_idx)))
 
 
 def _patch_out(monkeypatch, hostapis, devices) -> None:
@@ -162,3 +181,117 @@ def test_mapper_helper_only_flags_mme_and_directsound() -> None:
     hostapis = [{"name": "Windows WASAPI", "devices": [0]}]
     devices = [{"name": "Speakers", "max_output_channels": 2, "hostapi": 0}]
     assert is_legacy_primary_mapper(0, hostapis, devices, output=True) is False
+
+
+# --------------------------------------------------------------------------- #
+# 4. "Your device first" — the OS-selected default drives auto-headset         #
+# --------------------------------------------------------------------------- #
+def test_output_os_default_wins_via_its_best_hostapi_twin(monkeypatch) -> None:
+    """A real OS-default speaker beats the generic list AND is taken on its best
+    host-API twin (WASAPI), even when it was named by an MME twin — proving the
+    default is injected as a NAME, not a raw index."""
+    hostapis = [{"name": "MME", "devices": [0, 1, 2]},
+                {"name": "Windows WASAPI", "devices": [3, 4]}]
+    devices = [
+        {"name": "Microsoft Sound Mapper - Output", "max_output_channels": 2,
+         "max_input_channels": 0, "hostapi": 0},                 # idx0: MME mapper
+        {"name": "Speakers (PRO X)", "max_output_channels": 2,
+         "max_input_channels": 0, "hostapi": 0},                 # idx1: generic pick
+        {"name": "Desk Speakers (Focusrite)", "max_output_channels": 2,
+         "max_input_channels": 0, "hostapi": 0},                 # idx2: OS default (MME)
+        {"name": "Speakers (PRO X)", "max_output_channels": 2,
+         "max_input_channels": 0, "hostapi": 1},                 # idx3
+        {"name": "Desk Speakers (Focusrite)", "max_output_channels": 2,
+         "max_input_channels": 0, "hostapi": 1},                 # idx4: WASAPI twin
+    ]
+    _patch_out(monkeypatch, hostapis, devices)
+    _set_os_default(monkeypatch, out_idx=2)  # system default = Focusrite (MME)
+
+    # Focusrite (the OS default) beats the generic PRO X and is taken on WASAPI.
+    assert pl._resolve_output_device("auto-headset") == 4
+
+
+def test_output_junk_os_default_falls_back_to_headset(monkeypatch) -> None:
+    """A monitor/HDMI OS default is rejected; the real headset is chosen."""
+    hostapis = [{"name": "Windows WASAPI", "devices": [0, 1]}]
+    devices = [
+        {"name": "M28U (NVIDIA High Definition Audio)", "max_output_channels": 2,
+         "max_input_channels": 0, "hostapi": 0},   # OS default = monitor via HDMI
+        {"name": "Speakers (PRO X)", "max_output_channels": 2,
+         "max_input_channels": 0, "hostapi": 0},
+    ]
+    _patch_out(monkeypatch, hostapis, devices)
+    _set_os_default(monkeypatch, out_idx=0)  # junk default (blocked HDMI name)
+
+    assert pl._resolve_output_device("auto-headset") == 1
+
+
+def test_input_virtual_os_default_falls_back_to_real_mic(monkeypatch) -> None:
+    """The exact maintainer case: the OS default mic is a virtual NVIDIA
+    Broadcast, so auto-headset must pick the real headset mic instead of feeding
+    the wake loop digital silence."""
+    hostapis = [{"name": "MME", "devices": [0, 1]}]
+    devices = [
+        {"name": "Microphone (NVIDIA Broadcast)", "max_input_channels": 2,
+         "max_output_channels": 0, "hostapi": 0},   # OS default = virtual mic
+        {"name": "Microphone (PRO X)", "max_input_channels": 1,
+         "max_output_channels": 0, "hostapi": 0},    # real headset mic
+    ]
+    _patch_in(monkeypatch, hostapis, devices)
+    _set_os_default(monkeypatch, in_idx=0)  # virtual mic as system default
+
+    assert cap._resolve_input_device("auto-headset") == 1
+
+
+def test_input_real_os_default_wins_over_generic(monkeypatch) -> None:
+    """A real OS-default mic beats a generic-list mic that would otherwise win."""
+    hostapis = [{"name": "MME", "devices": [0, 1]}]
+    devices = [
+        {"name": "Microphone (PRO X)", "max_input_channels": 1,
+         "max_output_channels": 0, "hostapi": 0},        # generic default winner
+        {"name": "Podcast Mic (Focusrite)", "max_input_channels": 1,
+         "max_output_channels": 0, "hostapi": 0},         # user's OS default
+    ]
+    _patch_in(monkeypatch, hostapis, devices)
+    _set_os_default(monkeypatch, in_idx=1)
+
+    assert cap._resolve_input_device("auto-headset") == 1
+
+
+def test_user_priority_still_beats_os_default(monkeypatch) -> None:
+    """An explicit user priority outranks even the OS-selected default."""
+    hostapis = [{"name": "Windows WASAPI", "devices": [0, 1]}]
+    devices = [
+        {"name": "Desk Speakers (Focusrite)", "max_output_channels": 2,
+         "max_input_channels": 0, "hostapi": 0},   # OS default
+        {"name": "Bose QuietComfort Ultra", "max_output_channels": 2,
+         "max_input_channels": 0, "hostapi": 0},    # user-named
+    ]
+    _patch_out(monkeypatch, hostapis, devices)
+    _set_os_default(monkeypatch, out_idx=0)
+
+    # No user priority -> the OS default (Focusrite) wins.
+    assert pl._resolve_output_device("auto-headset") == 0
+    # User names Bose -> it beats even the OS default.
+    assert pl._resolve_output_device("auto-headset", ["Bose"]) == 1
+
+
+def test_os_default_helper_rejects_junk_and_accepts_real(monkeypatch) -> None:
+    """The helper itself: rejects a blocked/virtual/mapper default, accepts a
+    real one — the guard that makes the fallback safe."""
+    hostapis = [{"name": "MME", "devices": [0, 1, 2]}]
+    devices = [
+        {"name": "Microsoft Sound Mapper - Input", "max_input_channels": 2,
+         "max_output_channels": 0, "hostapi": 0},                 # idx0: mapper
+        {"name": "Microphone (NVIDIA Broadcast)", "max_input_channels": 2,
+         "max_output_channels": 0, "hostapi": 0},                 # idx1: virtual
+        {"name": "Podcast Mic (Focusrite)", "max_input_channels": 1,
+         "max_output_channels": 0, "hostapi": 0},                 # idx2: real
+    ]
+    # idx0 mapper -> None; idx1 virtual -> None; idx2 real -> its name.
+    monkeypatch.setattr(cap.sd, "default", SimpleNamespace(device=(0, -1)))
+    assert cap._os_default_input_name(devices, hostapis) is None
+    monkeypatch.setattr(cap.sd, "default", SimpleNamespace(device=(1, -1)))
+    assert cap._os_default_input_name(devices, hostapis) is None
+    monkeypatch.setattr(cap.sd, "default", SimpleNamespace(device=(2, -1)))
+    assert cap._os_default_input_name(devices, hostapis) == "Podcast Mic (Focusrite)"

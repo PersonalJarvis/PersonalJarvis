@@ -175,6 +175,39 @@ def _candidate_output_rates(source_rate: int, device_default: int = 0) -> list[i
     return candidates
 
 
+def _os_default_output_name(
+    devices: Sequence[Any], hostapis: Sequence[Any]
+) -> str | None:
+    """Name of the user's OS-selected default OUTPUT device, when it is a real,
+    usable sink — else None.
+
+    The "your device first" contract: ``auto-headset`` prefers whatever the user
+    picked as their system default speaker, EXCEPT when that default is a device
+    auto-headset exists to avoid — a monitor/HDMI or SPDIF output, or the
+    localized MME/DirectSound virtual mapper. In those cases this returns None so
+    the resolver falls back to the generic headset heuristic instead of routing
+    to a wrong/dead sink. The NAME (not the index) is returned so the existing
+    candidate sort still picks the device's best host-API twin (WASAPI over MME)
+    and skips WDM-KS. A missing default / absent sounddevice yields None.
+    """
+    try:
+        default_out = sd.default.device[1]
+    except Exception:  # noqa: BLE001 — no default / no sounddevice -> no preference
+        return None
+    if not isinstance(default_out, int) or not (0 <= default_out < len(devices)):
+        return None
+    dev = devices[default_out]
+    name = str(dev.get("name", ""))
+    if not name or dev.get("max_output_channels", 0) <= 0:
+        return None
+    low = name.lower()
+    if any(b.lower() in low for b in _BLOCKED_OUTPUT_SUBSTRINGS):
+        return None
+    if is_legacy_primary_mapper(default_out, hostapis, devices, output=True):
+        return None
+    return name
+
+
 def _resolve_output_device(
     device: int | str | None,
     priority: Sequence[str] | None = None,
@@ -208,6 +241,17 @@ def _resolve_output_device(
     except Exception as exc:  # noqa: BLE001
         log.warning("Device query failed, using system default: %s", exc)
         return None
+
+    # "Your device first": prefer the user's OS-selected default OUTPUT device
+    # over the generic headset guesses, UNLESS it is a device auto-headset exists
+    # to bypass (monitor/HDMI, SPDIF, the localized virtual mapper) — then fall
+    # back to the heuristic below so playback never lands on a wrong/dead sink.
+    # Injected as a NAME so the candidate sort still picks its best host-API twin
+    # (WASAPI) and skips WDM-KS. Ranks BELOW an explicit output_device_priority.
+    os_default_name = _os_default_output_name(devices, hostapis)
+    effective_priority = (
+        (*user_priority, os_default_name) if os_default_name else user_priority
+    )
 
     # Candidates: real output devices that are not on the blocklist.
     # WDM-KS is filtered when the same device (same name) is available on
@@ -260,17 +304,18 @@ def _resolve_output_device(
 
     def _name_rank(entry: tuple[int, dict]) -> int:
         low = entry[1].get("name", "").lower()
-        # User-configured names take strict precedence: any match in the user's
-        # priority list ranks ahead of every generic match. Both blocks keep
-        # "earlier entry = stronger". The generic block is offset by the user
-        # list length so a generic hit can never tie or beat a user hit.
-        for rank, sub in enumerate(user_priority):
+        # Precedence: explicit user priority, then the OS-selected default device
+        # (both carried in ``effective_priority``), then the generic headset list.
+        # Each block keeps "earlier entry = stronger"; the generic block is offset
+        # by len(effective_priority) so a generic hit can never tie or beat a
+        # user / OS-default hit.
+        for rank, sub in enumerate(effective_priority):
             if sub.lower() in low:
                 return rank
         for rank, sub in enumerate(_HEADSET_PRIORITY):
             if sub.lower() in low:
-                return len(user_priority) + rank
-        return len(user_priority) + len(_HEADSET_PRIORITY)
+                return len(effective_priority) + rank
+        return len(effective_priority) + len(_HEADSET_PRIORITY)
 
     # Primary sort key: name match; secondary: host API preference. Without a
     # name match the original order (system default) is preserved.

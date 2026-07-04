@@ -180,6 +180,43 @@ def _fallback_input_devices(primary_idx: int) -> list[int]:
     return [idx for idx, _ in matches]
 
 
+def _os_default_input_name(
+    devices: Sequence[dict], hostapis: Sequence[dict]
+) -> str | None:
+    """Name of the user's OS-selected default INPUT (microphone) device, when it
+    is a real, usable mic — else None.
+
+    The "your device first" contract for capture: ``auto-headset`` prefers the
+    user's system default microphone, EXCEPT when that default is a device the
+    resolver exists to avoid — a loopback/monitor source, the localized virtual
+    mapper, or a virtual/AI mic (NVIDIA Broadcast, VB-Audio, …) that goes silent
+    when its companion app is closed. In those cases this returns None so the
+    resolver falls back to the generic heuristic and picks a real hardware mic
+    instead of feeding digital silence to the wake loop. The NAME is returned so
+    the candidate sort still picks the mic's best host-API twin (MME/DirectSound
+    resample to 16 kHz) and skips WDM-KS. A missing default / absent sounddevice
+    yields None.
+    """
+    try:
+        default_in = sd.default.device[0]
+    except Exception:  # noqa: BLE001 — no default / no sounddevice -> no preference
+        return None
+    if not isinstance(default_in, int) or not (0 <= default_in < len(devices)):
+        return None
+    dev = devices[default_in]
+    name = str(dev.get("name", ""))
+    if not name or dev.get("max_input_channels", 0) <= 0:
+        return None
+    low = name.lower()
+    if any(b.lower() in low for b in _BLOCKED_INPUT_SUBSTRINGS):
+        return None
+    if is_legacy_primary_mapper(default_in, hostapis, devices, output=False):
+        return None
+    if any(v.lower() in low for v in _INPUT_DEPRIORITIZE):
+        return None  # virtual/AI mic as OS default -> fall back to a real mic
+    return name
+
+
 def _resolve_input_device(
     device: int | str | None,
     priority: Sequence[str] | None = None,
@@ -217,6 +254,17 @@ def _resolve_input_device(
         _log.warning("Mic-Resolve: sd.query_devices() failed ({}). Falling back to system default.", exc)
         return None
 
+    # "Your device first": prefer the user's OS-selected default MICROPHONE over
+    # the generic guesses, UNLESS it is a loopback/monitor, the localized virtual
+    # mapper, or a virtual/AI mic that can go silent — then fall back to the
+    # heuristic so the wake loop gets a real mic. Injected as a NAME so the sort
+    # still picks the mic's best host-API twin (MME) and skips WDM-KS. Ranks
+    # BELOW an explicit input_device_priority.
+    os_default_name = _os_default_input_name(devices, hostapis)
+    effective_priority = (
+        (*user_priority, os_default_name) if os_default_name else user_priority
+    )
+
     candidates: list[tuple[int, dict]] = []
     for idx, dev in enumerate(devices):
         if dev.get("max_input_channels", 0) <= 0:
@@ -249,17 +297,19 @@ def _resolve_input_device(
 
     def _name_rank(entry: tuple[int, dict]) -> int:
         low = str(entry[1].get("name", "")).lower()
-        # User-configured names take strict precedence and are trusted as an
-        # explicit choice: they rank ahead of every generic match AND are exempt
-        # from the virtual/AI-mic deprioritize below (if the user deliberately
-        # names their virtual cable / broadcast mic, honor it).
-        for r, sub in enumerate(user_priority):
+        # Precedence: explicit user priority, then the OS-selected default mic
+        # (both carried in ``effective_priority``), then the generic list. A
+        # user / OS-default match ranks ahead of every generic match AND is exempt
+        # from the virtual/AI-mic deprioritize below — the OS-default name is only
+        # ever a real mic (``_os_default_input_name`` rejects virtual ones), and
+        # an explicit user name is honored deliberately.
+        for r, sub in enumerate(effective_priority):
             if sub.lower() in low:
                 return r
-        rank = len(user_priority) + len(_INPUT_PRIORITY)
+        rank = len(effective_priority) + len(_INPUT_PRIORITY)
         for r, sub in enumerate(_INPUT_PRIORITY):
             if sub.lower() in low:
-                rank = len(user_priority) + r
+                rank = len(effective_priority) + r
                 break
         # Push virtual / AI mics (NVIDIA Broadcast, voice changers, virtual
         # cables) BEHIND every real hardware mic — they often deliver silence
