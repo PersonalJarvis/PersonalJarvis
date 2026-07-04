@@ -5,6 +5,7 @@ import { useEventStore } from "@/store/events";
 import { useUpdate } from "@/hooks/useUpdate";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { WhatsNewModal } from "./WhatsNewModal";
 
 /**
  * Global top bar rendered above every view (see App.tsx). It carries the app-
@@ -149,19 +150,21 @@ export function TopBar() {
 
 /**
  * Shown ONLY when the backend reports a managed install with a newer published
- * release (``status.update_available``). One click pulls the new code
- * (`POST /api/update/apply`) and then restarts to load it, reusing the same
- * mission-guard (409 → force) flow as the restart button. Hovering reveals the
- * release notes. On a dev tree / manual clone the status is ``managed: false``,
- * so this renders nothing and can never trigger a self-update.
+ * release (``status.update_available``). A click opens the "What's new" modal
+ * (``WhatsNewModal``) that previews the full release notes; the user confirms
+ * there with "Update now", which pulls the new code (`POST /api/update/apply`)
+ * and restarts to load it, reusing the same mission-guard (409 → force) flow as
+ * the restart button. On a dev tree / manual clone the status is
+ * ``managed: false``, so this renders nothing and can never trigger a
+ * self-update.
  */
 function UpdateButton() {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
   const { status } = useUpdate();
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [forceArmed, setForceArmed] = useState(false);
-  const [showNotes, setShowNotes] = useState(false);
   const resetTimer = useRef<number | null>(null);
 
   const clearResetTimer = useCallback(() => {
@@ -177,7 +180,6 @@ function UpdateButton() {
   async function run(force: boolean) {
     clearResetTimer();
     setBusy(true);
-    setShowNotes(false);
     try {
       // 1. Pull the new code. The server re-verifies the managed-install guard,
       // so a spoofed client can't force a reset on an unmanaged checkout.
@@ -204,6 +206,8 @@ function UpdateButton() {
         } catch {
           /* malformed body — still arm the override */
         }
+        // Keep the modal OPEN so the next "Update now" click is the user's
+        // explicit override — mirrors the restart button's 409 → force flow.
         setBusy(false);
         setForceArmed(true);
         clearResetTimer();
@@ -216,7 +220,7 @@ function UpdateButton() {
       }
       if (!restartRes.ok) throw new Error(`restart-failed:${restartRes.status}`);
       // Success — the code is pulled and the window goes away shortly; keep the
-      // busy state so the button never flips back before the app dies.
+      // busy state so the modal never flips back before the app dies.
       pushToast("info", t("topbar.updating"));
     } catch {
       // apply failed (403 on an unmanaged host, 502/500 on a git error) or the
@@ -227,56 +231,41 @@ function UpdateButton() {
     }
   }
 
-  function onClick() {
-    if (busy) return;
-    void run(forceArmed);
+  function closeModal() {
+    if (busy) return; // never dismiss mid-update
+    setOpen(false);
+    setForceArmed(false);
+    clearResetTimer();
   }
 
-  const label = busy
-    ? t("topbar.updating")
-    : forceArmed
-      ? t("topbar.restart_force")
-      : t("topbar.update_available");
-
   return (
-    <div
-      className="relative"
-      onMouseEnter={() => !busy && status.notes && setShowNotes(true)}
-      onMouseLeave={() => setShowNotes(false)}
-    >
+    <>
       <button
         type="button"
-        onClick={onClick}
-        disabled={busy}
+        onClick={() => setOpen(true)}
         title={t("topbar.update_hint")}
         className={cn(
-          "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-default disabled:opacity-70",
-          forceArmed
-            ? "border-amber-500/60 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20"
-            : "border-primary/50 bg-primary/10 text-primary hover:bg-primary/20",
+          "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+          "border-primary/50 bg-primary/10 text-primary hover:bg-primary/20",
         )}
       >
-        <Download
-          aria-hidden
-          className={cn("h-3.5 w-3.5", busy && "animate-pulse")}
-        />
-        {label}
-        {!busy && !forceArmed && status.latest && (
+        <Download aria-hidden className="h-3.5 w-3.5" />
+        {t("topbar.update_available")}
+        {status.latest && (
           <span className="rounded bg-primary/20 px-1 text-[10px] tabular-nums">
             v{status.latest}
           </span>
         )}
       </button>
-      {showNotes && status.notes && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-80 rounded-md border border-border bg-background p-3 text-left shadow-lg">
-          <div className="mb-1 text-xs font-semibold text-foreground">
-            {t("topbar.update_available")} · v{status.latest}
-          </div>
-          <div className="max-h-64 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
-            {status.notes.slice(0, 800)}
-          </div>
-        </div>
+      {open && (
+        <WhatsNewModal
+          status={status}
+          busy={busy}
+          forceArmed={forceArmed}
+          onApply={() => void run(forceArmed)}
+          onClose={closeModal}
+        />
       )}
-    </div>
+    </>
   );
 }

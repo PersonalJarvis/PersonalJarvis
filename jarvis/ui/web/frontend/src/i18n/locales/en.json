@@ -24,8 +24,16 @@
     "update_available": "Update available",
     "updating": "Updating {name}…",
     "update_failed": "Update failed",
-    "update_hint": "Download and install the new version",
-    "update_deps_warning": "Updated — some components may need a manual reinstall"
+    "update_hint": "See what's new and install",
+    "update_deps_warning": "Updated — some components may need a manual reinstall",
+    "update_whats_new": "What's new",
+    "update_now": "Update now",
+    "update_later": "Later",
+    "update_force": "Update anyway?",
+    "update_released": "Released",
+    "update_view_online": "View on GitHub",
+    "update_no_notes": "No release notes available for this version.",
+    "update_installing": "Updating…"
   },
   "nav": {
     "chats": "Chats",
