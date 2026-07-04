@@ -27,7 +27,7 @@ import pytest
 from jarvis.core.events import TranscriptionUpdate
 from jarvis.core.protocols import AudioChunk
 from jarvis.sessions.constants import HANGUP_HOTKEY, HANGUP_TURN_COMPLETE
-from jarvis.speech.pipeline import PipelineState, SpeechPipeline
+from jarvis.speech.pipeline import _PTT_TAP_TO_LISTEN, PipelineState, SpeechPipeline
 
 
 class FakeTTS:
@@ -176,8 +176,11 @@ async def test_ptt_session_records_until_release_and_submits(monkeypatch):
     assert captured.get("skip_completion") is True
 
 
-async def test_ptt_session_short_tap_submits_nothing(monkeypatch):
-    """An accidental tap (sub-300 ms) carries no real speech — no brain turn."""
+async def test_ptt_session_tap_hands_off_to_listen(monkeypatch):
+    """A tap (sub-300 ms) is NOT submitted as PTT audio, but instead of ending
+    the session it hands off to a hands-free VAD listen (tap = toggle). The
+    min-hold SUBMIT gate is unchanged — the tapped audio never reaches the brain.
+    """
     pipe = _make_pipeline()
     _silence_side_effects(pipe)
     pipe._ptt_mode = True
@@ -196,8 +199,50 @@ async def test_ptt_session_short_tap_submits_nothing(monkeypatch):
     pipe._ptt_release_event.set()  # released before any meaningful audio
     reason = await asyncio.wait_for(pipe._ptt_session(), timeout=2.0)
 
-    assert reason == HANGUP_TURN_COMPLETE
-    assert handled["called"] is False
+    assert reason == _PTT_TAP_TO_LISTEN  # hand off to the hands-free listen path
+    assert pipe._ptt_mode is False  # left raw-recording mode so the VAD path runs
+    assert handled["called"] is False  # the tapped audio is NOT submitted
+
+
+async def test_active_session_falls_through_to_listen_on_tap(monkeypatch):
+    """When ``_ptt_session`` reports a tap, ``_active_session`` must NOT return —
+    it falls through to the normal VAD listen path (opening the mic)."""
+    pipe = _make_pipeline()
+    pipe._ptt_mode = True
+
+    async def _tap() -> str:
+        pipe._ptt_mode = False
+        return _PTT_TAP_TO_LISTEN
+
+    pipe._ptt_session = _tap  # type: ignore[method-assign]
+
+    class _ReachedVAD(Exception):
+        pass
+
+    def _boom(device=None):  # noqa: ANN001
+        raise _ReachedVAD
+
+    monkeypatch.setattr("jarvis.speech.pipeline.MicrophoneCapture", _boom)
+    with pytest.raises(_ReachedVAD):
+        await pipe._active_session()
+
+
+async def test_active_session_returns_ptt_reason_when_held(monkeypatch):
+    """A real held-then-released PTT turn returns its reason and never reaches
+    the VAD listen path (no double session)."""
+    pipe = _make_pipeline()
+    pipe._ptt_mode = True
+
+    async def _held() -> str:
+        return HANGUP_TURN_COMPLETE
+
+    pipe._ptt_session = _held  # type: ignore[method-assign]
+
+    def _boom(device=None):  # noqa: ANN001
+        raise AssertionError("held PTT must not fall through to the VAD listen path")
+
+    monkeypatch.setattr("jarvis.speech.pipeline.MicrophoneCapture", _boom)
+    assert await pipe._active_session() == HANGUP_TURN_COMPLETE
 
 
 async def test_ptt_session_hangup_during_hold_returns_hotkey(monkeypatch):

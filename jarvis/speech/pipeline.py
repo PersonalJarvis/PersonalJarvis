@@ -223,6 +223,15 @@ def _should_hold_complete_delegation_for_grace(text: str | None) -> bool:
 # questions room to pause. See tests/unit/speech/test_long_composition_patience.py.
 _LONG_COMPOSITION_MIN_WORDS = 7
 
+# Internal sentinel returned by ``_ptt_session`` when the push-to-talk key was
+# TAPPED (released before the 300 ms min-hold) rather than held. Instead of
+# silently ending the session (which felt like "the keybind opens then closes
+# instantly"), ``_active_session`` treats a tap as a hands-free TOGGLE: it falls
+# through to the normal VAD-driven listen session (like the wake word). Hold =
+# push-to-talk; tap = start listening. NOT a hangup reason — the state loop
+# never sees it (``_active_session`` consumes it internally).
+_PTT_TAP_TO_LISTEN = "__ptt_tap_to_listen__"
+
 
 def _looks_like_long_composition(partial: str | None) -> bool:
     """True when the live partial shows an ongoing LONG dictation that deserves a
@@ -4612,7 +4621,13 @@ class SpeechPipeline:
         self._last_announcement_spoken_monotonic = None
         self._last_answer_floor_monotonic = None
         if self._ptt_mode:
-            return await self._ptt_session()
+            reason = await self._ptt_session()
+            if reason != _PTT_TAP_TO_LISTEN:
+                return reason
+            # Tap-to-toggle: the key was tapped, not held. ``_ptt_session`` has
+            # cleared ``_ptt_mode`` and asked us to fall through to the normal
+            # hands-free VAD listen session below (like the wake word), so a tap
+            # opens a listening turn instead of instantly ending the session.
         async with MicrophoneCapture(device=self._input_device) as mic:
             vad_iter = self._vad.utterances(
                 self._session_input_stream(mic.stream())
@@ -4828,12 +4843,19 @@ class SpeechPipeline:
         # Whisper hallucination. 300 ms @ 16 kHz int16 = 9600 bytes.
         min_bytes = int(0.3 * 16_000 * 2)
         if len(buffer) < min_bytes:
+            # A tap, not a hold. The <300 ms capture carries no real speech (it
+            # would only transcribe to nothing or a Whisper hallucination), so it
+            # is NOT submitted as push-to-talk audio — the min-hold submit gate is
+            # unchanged. But instead of ENDING the session (which felt like "the
+            # keybind opens then closes instantly"), hand off to a hands-free VAD
+            # listen: tap = toggle "start listening", hold = talk-while-held.
             log.info(
-                "PTT: hold too short (%.0f ms recorded, %.0f ms mic-open) — nothing to submit.",
+                "PTT: tap (%.0f ms held, %.0f ms open) — switching to hands-free listen.",
                 (len(buffer) / 2) / 16_000 * 1000,
                 (time.monotonic() - mic_open_at) * 1000,
             )
-            return HANGUP_TURN_COMPLETE
+            self._ptt_mode = False  # leave raw-recording mode; the VAD path runs next
+            return _PTT_TAP_TO_LISTEN
 
         pcm = bytes(buffer)
         # The key — not the VAD — is the endpoint, so there is never a forced-cut
