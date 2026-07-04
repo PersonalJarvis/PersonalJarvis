@@ -832,10 +832,12 @@ class SessionRollupConfig(BaseModel):
         Outer ``asyncio.wait_for`` cap on the brain call.
 
     ``user_entity_slug``
-        Slug of the user's own entity page (schema default ``alex``).
-        Every session page links it in the ``## Related`` backbone footer
-        when the page exists, so each session is wired into the graph
-        through the shared user hub instead of floating as an island.
+        Slug of the user's own entity page. Empty by default so a fresh
+        install carries no personal name; onboarding/profile resolves the
+        real slug at runtime. When set (and the page exists), every session
+        page links it in the ``## Related`` backbone footer, wiring each
+        session into the graph through the shared user hub instead of
+        floating as an island.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -850,7 +852,7 @@ class SessionRollupConfig(BaseModel):
     # streaming truncation guard rejects anything still length-capped.
     max_output_tokens: int = 1200
     timeout_s: float = 30.0
-    user_entity_slug: str = "alex"
+    user_entity_slug: str = ""
     # D2 (2026-06): the awareness-episode -> durable session-page feed is
     # retired. The worker still READS awareness episodes and still produces
     # the rollup paragraph (live awareness is unaffected), but the durable
@@ -1118,6 +1120,27 @@ class MCPServerConfig(BaseModel):
 class AudioConfig(BaseModel):
     input_device: str = "auto-headset"
     output_device: str = "auto-headset"
+    # Optional user-defined device-name priority for the "auto-headset" resolver.
+    # Each entry is a case-insensitive substring of a device name; earlier =
+    # higher priority. When non-empty, these are matched BEFORE the built-in
+    # generic headset list, so a user with an uncommon device (e.g. "Focusrite",
+    # "Bose", "AirPods", a specific USB dongle) makes it win without editing
+    # code. Empty (default) keeps the generic auto-detection. Ignored when
+    # input_device/output_device is an explicit index or a concrete name.
+    output_device_priority: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Preferred output-device name substrings (highest priority first); "
+            "consulted before the generic headset auto-detection."
+        ),
+    )
+    input_device_priority: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Preferred input (microphone) device name substrings (highest "
+            "priority first); consulted before the generic auto-detection."
+        ),
+    )
     echo_cancellation: bool = True
     sample_rate: int = 16000
     frame_ms: int = 10

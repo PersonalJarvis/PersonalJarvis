@@ -109,7 +109,7 @@ async def test_active_session_never_idle_hangs_up_when_disabled(
     fired immediately and returned ``HANGUP_IDLE_TIMEOUT``."""
     pipe = _pipeline(0)
     monkeypatch.setattr(
-        pipeline_mod, "MicrophoneCapture", lambda device=None: _FakeMic(),
+        pipeline_mod, "MicrophoneCapture", lambda device=None, **kwargs: _FakeMic(),
     )
     pipe._vad = _FakeVAD()
 
@@ -135,7 +135,7 @@ async def test_active_session_still_idle_hangs_up_when_enabled(
     the default behaviour (and every downloader) is unchanged."""
     pipe = _pipeline(0.05)  # tiny positive window → fast test
     monkeypatch.setattr(
-        pipeline_mod, "MicrophoneCapture", lambda device=None: _FakeMic(),
+        pipeline_mod, "MicrophoneCapture", lambda device=None, **kwargs: _FakeMic(),
     )
     pipe._vad = _FakeVAD()
 

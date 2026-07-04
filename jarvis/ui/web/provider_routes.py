@@ -355,13 +355,58 @@ def _active_brain(request: Request) -> str | None:
 
 
 def _active_tts(request: Request) -> str | None:
+    """The TTS provider actually powering voice output — the resolved cross-family
+    provider, not the raw configured default.
+
+    Mirrors ``_active_brain`` reporting the LIVE provider. Without this, a user
+    whose only key is (say) ElevenLabs sees an amber "Gemini Flash TTS: no key set"
+    dot even though the runtime crossed to ElevenLabs and voice works — pointing
+    them at the wrong fix and masking that the fallback is healthy. Only reports a
+    DIFFERENT provider when the runtime genuinely crossed away from the configured
+    one; otherwise returns the raw configured value so the health lookup behaves
+    exactly as before. Health must never 500, so any resolver error falls back to
+    the configured value.
+    """
     cfg = _resolve_cfg(request)
-    return getattr(getattr(cfg, "tts", None), "provider", None) if cfg else None
+    tts_cfg = getattr(cfg, "tts", None) if cfg else None
+    if tts_cfg is None:
+        return None
+    configured = getattr(tts_cfg, "provider", None)
+    try:
+        from jarvis.plugins.tts import (
+            _canonical_tts_name,
+            _resolve_keyed_tts_provider,
+        )
+
+        resolved, _ = _resolve_keyed_tts_provider((configured or "").lower(), tts_cfg)
+        if _canonical_tts_name((configured or "").lower()) != resolved:
+            return resolved
+    except Exception as exc:  # noqa: BLE001 — the health panel must never 500
+        log.debug("resolved-provider health probe failed (%s); using configured.", exc)
+    return configured
 
 
 def _active_stt(request: Request) -> str | None:
+    """The STT provider actually powering voice input — the resolved cross-family
+    provider, not the raw configured default (which may be a dead, keyless default
+    the runtime already crossed away from). See ``_active_tts`` for the rationale.
+    """
     cfg = _resolve_cfg(request)
-    return getattr(getattr(cfg, "stt", None), "provider", None) if cfg else None
+    stt_cfg = getattr(cfg, "stt", None) if cfg else None
+    if stt_cfg is None:
+        return None
+    configured = (getattr(stt_cfg, "provider", None) or "").strip() or None
+    if not configured:
+        return configured
+    try:
+        from jarvis.plugins.stt import _resolve_keyed_stt_provider
+
+        resolved = _resolve_keyed_stt_provider(configured)
+        if resolved and resolved != configured:
+            return resolved
+    except Exception as exc:  # noqa: BLE001 — the health panel must never 500
+        log.debug("resolved-provider health probe failed (%s); using configured.", exc)
+    return configured
 
 
 def _resolve_cfg(request: Request):

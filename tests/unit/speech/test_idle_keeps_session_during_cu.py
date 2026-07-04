@@ -137,7 +137,7 @@ async def test_active_session_survives_idle_windows_while_cu_runs(
             return gen()
 
     monkeypatch.setattr(
-        pipeline_mod, "MicrophoneCapture", lambda device=None: FakeMic(),
+        pipeline_mod, "MicrophoneCapture", lambda device=None, **kwargs: FakeMic(),
     )
     pipe._vad = FakeVAD()
 
@@ -227,7 +227,7 @@ async def test_session_survives_idle_window_after_mission_readback(
             return gen()
 
     monkeypatch.setattr(
-        pipeline_mod, "MicrophoneCapture", lambda device=None: FakeMic(),
+        pipeline_mod, "MicrophoneCapture", lambda device=None, **kwargs: FakeMic(),
     )
     pipe._vad = FakeVAD()
 

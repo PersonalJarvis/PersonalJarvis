@@ -63,6 +63,13 @@ data/**/
 *.ppn
 *.onnx
 models/
+# ...but the Silero VAD model we deliberately BUNDLE and ship in-repo is tracked
+# (jarvis/audio/vad.py loads it): it must ship in the base wheel so end-of-speech
+# detection works out-of-the-box on a fresh install — it is NOT an ignored
+# user/cache model. Scoped to the exact file so nearby *.onnx (user-trained custom
+# wake models, Whisper cache) stay ignored. NOTE: the bundled openWakeWord models
+# under jarvis/assets/wakeword/ are NOT tracked here — that is a separate decision.
+!jarvis/assets/vad/silero_vad.onnx
 
 # Audio-Blobs + Flight-Recorder-Traces
 blobs/

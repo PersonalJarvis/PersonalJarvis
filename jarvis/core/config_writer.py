@@ -449,6 +449,25 @@ def set_wake_word(
         log.debug("persona-name strip skipped: %s", exc)
 
 
+def set_wake_word_enabled(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist the wake-word activation toggle to ``[trigger] wake_word_enabled``.
+
+    This is the "how do you activate Jarvis" master switch: True = always-on wake
+    word (which requires a local model that matches the user's word — see
+    ``resolve_wake_plan``), False = hotkey / push-to-talk only. It was previously
+    settable ONLY by hand-editing jarvis.toml (default False), so a fresh
+    downloader could never turn their wake word on in-app.
+
+    TOML-only by design, same as ``set_autostart``: ``trigger.wake_word_enabled``
+    is NOT tracked in ``config-soll.json`` (only ``trigger.single_turn_mode`` is),  # i18n-allow
+    so the drift-guard never reverts it and a plain atomic write suffices.
+
+    Takes effect on the next voice-pipeline bootstrap (a Jarvis restart): the
+    detector enable-flags are resolved once at SpeechPipeline construction.
+    """
+    _patch_table(path, "trigger", "wake_word_enabled", bool(enabled))
+
+
 def set_autostart(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the login-autostart toggle to ``[autostart] enabled`` in jarvis.toml.
 
@@ -886,6 +905,19 @@ _TTS_DEFAULTS: dict[str, dict[str, str]] = {
         # falsy gate in _patch_tts_block. When a real plugin is added, update
         # these to the correct model (e.g. "tts-1-hd") and voice (e.g.
         # "onyx" for a masculine default — see OpenAI voice options).
+        "model": "",
+        "voice_de": "",
+        "voice_en": "",
+        "language_code": "auto",
+    },
+    "openrouter-tts": {
+        # OpenRouter TTS reuses the shared OpenRouter key and resolves its own
+        # model + voice defaults internally (jarvis/plugins/tts/openrouter_tts.py:
+        # MODEL_DEFAULT_VOICE / GENERIC_DEFAULT_VOICE). Leave these blank — the
+        # falsy gate in _patch_tts_block skips empty values, so the provider picks
+        # sensible per-model defaults. This entry exists so the provider-parity
+        # test passes and set_tts_provider() can reconcile the [tts] block on a
+        # switch to OpenRouter TTS.
         "model": "",
         "voice_de": "",
         "voice_en": "",

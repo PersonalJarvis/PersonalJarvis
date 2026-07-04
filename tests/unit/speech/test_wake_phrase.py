@@ -293,16 +293,31 @@ def test_arbitrary_phrase_with_local_whisper_resolves_to_stt_match() -> None:
     assert plan.matcher.search("hey computer") is not None
 
 
-def test_arbitrary_phrase_without_local_whisper_degrades_to_rhasspy() -> None:
-    # Path D now falls back to the bundled hey_rhasspy model (neutral default).
+def test_arbitrary_phrase_without_local_whisper_is_hotkey_only() -> None:
+    # Product rule (2026-07-04): no local model for the user's OWN word -> the
+    # wake word is OFF (hotkey / push-to-talk activation), NOT a silent branded
+    # 'Hey Rhasspy' fallback that listens for a word the user never says.
     plan = resolve_wake_plan(_cfg(phrase="Computer"), local_whisper_available=False)
-    assert plan.engine == "openwakeword"
-    assert plan.oww_keyword == "hey_rhasspy"
+    assert plan.wake_available is False
+    assert plan.engine == "none"
+    assert plan.oww_model_path is None
     assert plan.degraded is True
-    assert plan.verify_prefix is False   # rhasspy model IS the discriminator
     assert "computer" in plan.message.lower()
-    # The degraded message must point the user at the real options.
-    assert "whisper" in plan.message.lower() or "onnx" in plan.message.lower()
+    # The message must point the user at the real options AND the hotkey.
+    assert "local" in plan.message.lower() or "onnx" in plan.message.lower()
+    assert "hotkey" in plan.message.lower() or "push-to-talk" in plan.message.lower()
+
+
+def test_wake_available_reflects_whether_a_local_model_exists() -> None:
+    # The product rule in one test: an arbitrary word works IF a local model is
+    # available (stt_match via local Whisper), and is hotkey-only otherwise —
+    # never a silent branded substitute.
+    with_model = resolve_wake_plan(_cfg(phrase="Nebula"), local_whisper_available=True)
+    assert with_model.engine == "stt_match"
+    assert with_model.wake_available is True
+    without = resolve_wake_plan(_cfg(phrase="Nebula"), local_whisper_available=False)
+    assert without.engine == "none"
+    assert without.wake_available is False
 
 
 def test_explicit_custom_onnx_loads_user_model(tmp_path: object) -> None:
@@ -332,20 +347,20 @@ def test_custom_onnx_missing_file_degrades_to_stt_match_when_whisper_present(
     assert plan.degraded is True
 
 
-def test_blank_phrase_degrades_to_rhasspy() -> None:
-    # Blank phrase (shipped default / pre-onboarding) now degrades to hey_rhasspy.
+def test_blank_phrase_without_whisper_is_hotkey_only() -> None:
+    # Blank phrase (shipped default / pre-onboarding) + no local model -> wake OFF
+    # (hotkey-only), never a branded fallback.
     plan = resolve_wake_plan(_cfg(phrase="  "), local_whisper_available=False)
-    assert plan.oww_keyword == "hey_rhasspy"
-    assert plan.engine == "openwakeword"
+    assert plan.wake_available is False
+    assert plan.engine == "none"
     assert plan.degraded is True
-    assert plan.verify_prefix is False
 
 
-def test_blank_phrase_without_whisper_degrades_to_rhasspy() -> None:
+def test_blank_cfg_without_whisper_is_hotkey_only() -> None:
     plan = resolve_wake_plan(_cfg_blank(), local_whisper_available=False)
-    assert plan.oww_keyword == "hey_rhasspy"
+    assert plan.wake_available is False
+    assert plan.engine == "none"
     assert plan.degraded is True
-    assert plan.verify_prefix is False
 
 
 def test_jarvis_stays_typeable_resolves_to_hey_jarvis_model() -> None:

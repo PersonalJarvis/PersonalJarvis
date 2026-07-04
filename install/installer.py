@@ -10,8 +10,11 @@ Steps:
     2. Install Personal Jarvis editable + runtime deps via pip.
     3. Optionally install the ``[desktop]`` extras (Windows + macOS GUI
        users; skipped on headless Linux servers unless ``--with-desktop``).
-    4. Optionally install ``[local-voice]`` extras (faster-whisper, Silero,
-       openWakeWord). Off by default — 1.5 GB model download.
+    4. Optionally install ``[local-voice]`` extras (Silero VAD, WebRTC VAD,
+       Porcupine). Off by default — ~1.5 GB (Silero pulls torch). The always-on
+       neural wake word (openWakeWord) is a BASE dependency and does NOT need
+       this; only an arbitrary custom wake phrase does (via the separate in-app
+       local-Whisper install).
     5. Run the existing first-run wizard (``python -m jarvis --wizard``)
        unless ``--no-wizard``.
     6. Launch the Desktop App / headless server unless ``--no-launch``.
@@ -216,7 +219,7 @@ def step_pip_install(*, with_desktop: bool, with_voice_local: bool, dry_run: boo
     if with_desktop:
         plans.append(("desktop extras", pip + ["install", "-e", ".[desktop]"]))
     if with_voice_local:
-        plans.append(("local-voice extras (faster-whisper, Silero, openWakeWord)",
+        plans.append(("local-voice extras (Silero VAD, WebRTC VAD, Porcupine)",
                       pip + ["install", "-e", ".[local-voice]"]))
 
     note("this can take a minute — grabbing dependencies")
@@ -336,7 +339,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--with-desktop", action="store_true",
                         help="install [desktop] extras (default: auto-detect by platform)")
     parser.add_argument("--with-voice-local", action="store_true",
-                        help="install local STT/wake/VAD models (~1.5 GB download)")
+                        help="install the heavier local voice extras (Silero/WebRTC VAD, "
+                             "Porcupine, ~1.5 GB). NOT needed for the always-on neural "
+                             "wake word — that ships in the base install.")
     parser.add_argument("--dry-run", action="store_true",
                         help="print what would be done; don't run pip/wizard/launch")
     args = parser.parse_args(argv)

@@ -318,6 +318,13 @@ class WakeWordPlan:
     # discriminator, and the STT would mis-transcribe the foreign brand word
     # and wrongly reject valid hits.
     verify_prefix: bool
+    # Product rule (2026-07-04): a wake word REQUIRES a local model that matches
+    # the user's OWN chosen word. When no such model is available (no custom
+    # ONNX, no local Whisper) we do NOT silently substitute a branded fallback
+    # model — we return wake_available=False so the app arms NO detector and the
+    # honest alternative is hotkey / push-to-talk activation. True for every
+    # real engine (custom_onnx / openwakeword / stt_match).
+    wake_available: bool = True
 
 
 def _read(cfg: Any, name: str, default: Any) -> Any:
@@ -455,29 +462,31 @@ def resolve_wake_plan(cfg: Any, *, local_whisper_available: bool) -> WakeWordPla
             verify_prefix=matcher.is_jarvis_default,
         )
 
-    # 4. Graceful degrade — fall back to the bundled hey_rhasspy model (neutral
-    # offline fallback that ships without any product-name association). The
-    # hey_rhasspy model is its own discriminator, so the German-pinned STT prefix
-    # verifier must NOT run (verify_prefix=False): applying it would reject valid
-    # hits because the STT transcribes the rhasspy sound differently from "Jarvis".
-    rhasspy_path = resolve_oww_model_path("hey_rhasspy")
-    _phrase_label = phrase or "Hey Rhasspy"
+    # 4. No local model for the user's OWN word. The product rule (2026-07-04)
+    # forbids silently substituting a branded fallback (the old 'Hey Rhasspy'
+    # degrade made the app listen for a word the user never says). Instead we
+    # return wake_available=False: the app arms NO wake detector, and the honest
+    # alternative is hotkey / push-to-talk activation. The user's requested phrase
+    # is preserved; installing the local speech pack (works for ANY word) or
+    # supplying a custom .onnx is what makes the wake word actually fire.
+    _phrase_label = phrase or "your wake word"
     return WakeWordPlan(
         phrase=phrase,
-        engine="openwakeword",
-        oww_model_path=rhasspy_path,
-        oww_keyword="hey_rhasspy",
+        engine="none",
+        oww_model_path=None,
+        oww_keyword=canonical,
         threshold=threshold,
-        matcher=compile_wake_matcher("Hey Rhasspy"),
+        matcher=matcher,
         needs_local_whisper=False,
         degraded=True,
         message=(
-            f"Wake phrase '{_phrase_label}' needs the local-Whisper extra ([desktop])"
-            " or a custom ONNX model; falling back to the bundled 'Hey Rhasspy'"
-            " offline model. Install [desktop] or supply a custom .onnx to use a"
-            " different phrase."
+            f"Wake word '{_phrase_label}' needs a local model. Install the local "
+            "speech pack (works for any word) or supply a custom .onnx to enable "
+            "it. Until then the wake word is off — use the hotkey / push-to-talk "
+            "to start a voice turn."
         ),
-        verify_prefix=False,  # rhasspy model IS the discriminator; no prefix gate
+        verify_prefix=False,
+        wake_available=False,
     )
 
 

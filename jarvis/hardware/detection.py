@@ -57,7 +57,7 @@ class HardwareReport:
 class WhisperRecommendation:
     """Recommended Whisper configuration based on detected hardware."""
     provider: str          # "faster-whisper" | "openai-api"
-    model: str             # tiny | base | small | distil-small | distil-large-v3 | large-v3
+    model: str             # tiny | base | small | large-v3-turbo | large-v3
     device: str            # cuda | cpu
     compute_type: str      # int8_float16 | fp16 | int8
     expected_latency_ms: int
@@ -232,11 +232,14 @@ def recommend_whisper(report: HardwareReport) -> WhisperRecommendation:
     """Maps a HardwareReport to the recommended Whisper configuration.
 
     Heuristic:
-    - NVIDIA GPU with >= 8 GB VRAM → distil-large-v3 (multilingual, fast)
-    - NVIDIA GPU with 4-8 GB VRAM  → distil-small or small
-    - NVIDIA GPU with < 4 GB VRAM  → tiny/base CPU or OpenAI API
+    - NVIDIA GPU with >= 4 GB VRAM → large-v3-turbo (fast, MULTILINGUAL)
+    - NVIDIA GPU with < 4 GB VRAM  → base (multilingual)
     - No CUDA but plenty of RAM    → CPU faster-whisper tiny/base
     - Otherwise                    → OpenAI Whisper API
+
+    Never recommends a Distil-Whisper model: all distil-* checkpoints are
+    English-only and mangle German/Spanish (the runtime force-upgrades them to
+    large-v3-turbo anyway).
     """
     if not report.has_nvidia_gpu or not report.torch_cuda_available:
         if report.ram_total_mb >= 8192:
@@ -265,29 +268,24 @@ def recommend_whisper(report: HardwareReport) -> WhisperRecommendation:
         )
 
     vram = report.total_vram_mb
-    if vram >= 8000:
+    if vram >= 4000:
+        # large-v3-turbo, NOT a Distil model: every distil-* checkpoint is
+        # English-only (there is no multilingual distil) and mangles German/
+        # Spanish into English words — the runtime already force-upgrades them to
+        # large-v3-turbo (jarvis/plugins/stt/fwhisper.py::_ENGLISH_ONLY_MODELS),
+        # so recommending distil here only persists a confusing, self-overridden
+        # value into jarvis.toml. large-v3-turbo is the fast MULTILINGUAL
+        # checkpoint (~1.5 GB, fits from 4 GB VRAM up).
         return WhisperRecommendation(
             provider="faster-whisper",
-            model="distil-large-v3",
+            model="large-v3-turbo",
             device="cuda",
             compute_type="int8_float16",
             expected_latency_ms=250,
             rationale=(
-                f"NVIDIA GPU with {vram} MB VRAM — runs distil-large-v3 (multilingual DE+EN) "
-                f"at ~250ms latency. Optimal for local privacy + low latency."
-            ),
-        )
-    if vram >= 4000:
-        return WhisperRecommendation(
-            provider="faster-whisper",
-            model="distil-small",
-            device="cuda",
-            compute_type="int8_float16",
-            expected_latency_ms=200,
-            rationale=(
-                f"NVIDIA GPU with {vram} MB VRAM — distil-small recommended "
-                f"(~200ms latency, 97% quality). Switchable to distil-large-v3 later "
-                f"for higher precision once VRAM frees up."
+                f"NVIDIA GPU with {vram} MB VRAM — runs large-v3-turbo (fast, "
+                f"MULTILINGUAL incl. DE/EN/ES, ~1.5 GB) at ~250ms latency. Optimal "
+                f"for local privacy + low latency."
             ),
         )
     return WhisperRecommendation(
@@ -297,8 +295,8 @@ def recommend_whisper(report: HardwareReport) -> WhisperRecommendation:
         compute_type="int8_float16",
         expected_latency_ms=180,
         rationale=(
-            f"NVIDIA GPU with only {vram} MB VRAM — 'base' model fits. "
-            f"Quality is sufficient for German/English, latency ~180ms."
+            f"NVIDIA GPU with only {vram} MB VRAM — 'base' (multilingual) model "
+            f"fits. Quality is sufficient for German/English, latency ~180ms."
         ),
     )
 

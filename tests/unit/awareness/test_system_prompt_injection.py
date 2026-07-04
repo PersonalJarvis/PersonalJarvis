@@ -40,24 +40,24 @@ def test_no_awareness_manager_no_snapshot_in_prompt() -> None:
     """Backward compat: without ``awareness_manager``, NOTHING may be injected."""
     brain = _make_brain(awareness_manager=None)
     prompt = brain._build_system_prompt()
-    assert "AKTUELLER KONTEXT" not in prompt
+    assert "CURRENT CONTEXT" not in prompt
 
 
 def test_awareness_manager_with_empty_state_no_snapshot() -> None:
     """``state.snapshot_for_prompt()`` returns '' when ``current_frame is None``.
 
     In that case the injection block must NOT emit an empty
-    ``AKTUELLER KONTEXT:`` marker — the prompt should stay clean.
+    ``CURRENT CONTEXT:`` marker — the prompt should stay clean.
     """
     mgr = AwarenessManager(AwarenessConfig.default())
     assert mgr.state.current_frame is None
     brain = _make_brain(awareness_manager=mgr)
     prompt = brain._build_system_prompt()
-    assert "AKTUELLER KONTEXT" not in prompt
+    assert "CURRENT CONTEXT" not in prompt
 
 
 def test_awareness_manager_with_frame_injects_snapshot() -> None:
-    """A set ``current_frame`` must land in the prompt as ``AKTUELLER KONTEXT``."""
+    """A set ``current_frame`` must land in the prompt as ``CURRENT CONTEXT``."""
     mgr = AwarenessManager(AwarenessConfig.default())
     mgr.state.current_frame = FrameSnapshot(
         timestamp_ns=time.time_ns(),
@@ -70,7 +70,7 @@ def test_awareness_manager_with_frame_injects_snapshot() -> None:
     brain = _make_brain(awareness_manager=mgr)
     prompt = brain._build_system_prompt()
 
-    assert "AKTUELLER KONTEXT" in prompt
+    assert "CURRENT CONTEXT" in prompt
     assert "Editor — main.py" in prompt
     assert "Code.exe" in prompt
     assert "pid=12345" in prompt
@@ -92,4 +92,4 @@ def test_snapshot_failure_does_not_break_prompt_build() -> None:
     prompt = brain._build_system_prompt()
     assert isinstance(prompt, str)
     assert len(prompt) > 0
-    assert "AKTUELLER KONTEXT" not in prompt
+    assert "CURRENT CONTEXT" not in prompt

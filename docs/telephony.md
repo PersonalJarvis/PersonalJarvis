@@ -2,7 +2,7 @@
 
 Jarvis can answer a real phone call. A caller dials a Twilio number and talks to
 Jarvis as a real-time voice agent, using **Jarvis's own** speech stack — the
-same STT, the same Brain, and the same **Charon** voice as the "Hey Jarvis"
+same STT, the same Brain, and the same **Charon** voice as the desktop
 microphone path. Nothing about the voice changes between the desk and the phone.
 
 Under the hood the call audio is bridged with **Twilio Media Streams** (raw

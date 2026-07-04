@@ -15,7 +15,19 @@ excludes WDM-KS unconditionally whenever any safe output device exists.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
+
 import jarvis.audio.player as player_mod
+
+
+@pytest.fixture(autouse=True)
+def _no_os_default(monkeypatch) -> None:
+    """Pin "no OS-selected default device" so these WDM-KS regression tests do
+    not depend on the real test host's default speaker — the resolver now
+    consults it for the "your device first" contract."""
+    monkeypatch.setattr(player_mod.sd, "default", SimpleNamespace(device=(-1, -1)))
 
 
 def _patch_devices(monkeypatch, hostapis, devices) -> None:

@@ -115,7 +115,7 @@ function SettingRow({ row }: { row: SettingRow }) {
  */
 function WakeWordPanel() {
   const t = useT();
-  const { config, loading, error, saveWakeWord, refetch } = useWakeWord();
+  const { config, loading, error, saveWakeWord, refetch, setWakeActivation } = useWakeWord();
   const pushToast = useEventStore((s) => s.pushToast);
   // In-app installer for the local speech pack (faster-whisper) that unlocks any
   // wake phrase. Refetch the wake config on success so the hint clears.
@@ -127,6 +127,10 @@ function WakeWordPanel() {
   const [customModelPath, setCustomModelPath] = useState("");
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<WakeWordSaveResult | null>(null);
+  // The activation master switch (product rule 2026-07-04): on = always-on wake
+  // word (needs a local model for the user's word), off = hotkey / push-to-talk.
+  const [enabled, setEnabled] = useState(false);
+  const [togglingActivation, setTogglingActivation] = useState(false);
 
   // Hydrate the form once the GET resolves (and whenever the config changes).
   useEffect(() => {
@@ -135,7 +139,23 @@ function WakeWordPanel() {
     setEngine(config.engine || "auto");
     setSensitivity(config.sensitivity);
     setCustomModelPath(config.custom_model_path ?? "");
+    // ?? false keeps the Switch controlled even if an older backend omits it.
+    setEnabled(config.enabled ?? false);
   }, [config]);
+
+  async function onToggleActivation(next: boolean) {
+    setTogglingActivation(true);
+    setEnabled(next); // optimistic
+    try {
+      await setWakeActivation(next);
+      pushToast("info", t("settings_view.wake_word.activation_saved"));
+    } catch (e) {
+      setEnabled(!next); // revert on failure
+      pushToast("error", (e as Error).message);
+    } finally {
+      setTogglingActivation(false);
+    }
+  }
 
   const localWhisperAvailable = config?.local_whisper_available ?? true;
 
@@ -189,6 +209,20 @@ function WakeWordPanel() {
           </h4>
           <p className="mt-1 text-xs text-muted-foreground">
             {t("settings_view.wake_word.description")}
+          </p>
+
+          <div className="mt-3 flex items-center justify-between gap-4">
+            <span className="text-xs font-medium">
+              {t("settings_view.wake_word.activation_title")}
+            </span>
+            <Switch
+              checked={enabled}
+              disabled={loading || togglingActivation}
+              onCheckedChange={onToggleActivation}
+            />
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("settings_view.wake_word.activation_hint")}
           </p>
 
           {error && (

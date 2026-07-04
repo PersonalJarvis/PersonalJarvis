@@ -32,7 +32,11 @@ from uuid import uuid4
 import numpy as np
 
 from jarvis.audio import mic_level
-from jarvis.audio.capture import MicrophoneCapture, pcm_bytes_to_np
+from jarvis.audio.capture import (
+    REALTIME_QUEUE_CHUNKS,
+    MicrophoneCapture,
+    pcm_bytes_to_np,
+)
 from jarvis.audio.chime import CHIME_PCM, CHIME_SAMPLE_RATE, DISCONNECT_PCM, READY_PCM
 from jarvis.audio.device_init import wait_for_stable_audio_devices
 from jarvis.audio.player import AudioPlayer
@@ -870,6 +874,29 @@ async def _queue_iter(q: asyncio.Queue) -> AsyncIterator[AudioChunk]:
         yield chunk
 
 
+def _default_tts_for_pipeline(config: Any) -> Any:
+    """The default TTS when the caller supplies none — key-aware (AP-22).
+
+    Mirrors the STT default a few lines into ``__init__``: build through the same
+    key-aware ``build_tts_from_config`` the real construction paths use, so a
+    single-key user's spoken output — INCLUDING the deterministic "couldn't
+    understand you" readback — crosses to whatever TTS family the user actually
+    has a key for instead of being hard-pinned to a keyless Gemini default that
+    goes silently mute (AP-22/AP-6). Degrades to a bare ``GeminiFlashTTS`` only
+    when there is no config or the factory itself fails, so voice boot is never
+    broken. (In practice every real caller passes a TTS built this way already;
+    this closes the latent ``tts=None`` fallback that ignored the user's key.)
+    """
+    if config is not None and getattr(config, "tts", None) is not None:
+        try:
+            from jarvis.plugins.tts import build_tts_from_config
+
+            return build_tts_from_config(config.tts)
+        except Exception as exc:  # noqa: BLE001 — a TTS build must never break voice boot
+            log.warning("TTS factory failed (%s); using the default Gemini voice.", exc)
+    return GeminiFlashTTS()
+
+
 class SpeechPipeline:
     """End-to-End Pipeline mit Call/Hangup-Lifecycle + Parallel-Wake."""
 
@@ -1060,7 +1087,7 @@ class SpeechPipeline:
             self._probe_stt = wrap_stt_with_dictionary(self._probe_stt)
         except Exception as exc:  # noqa: BLE001 — corrections must never break voice boot
             log.warning("STT dictionary wrapper unavailable: %s", exc)
-        self._tts = tts or GeminiFlashTTS()
+        self._tts = tts or _default_tts_for_pipeline(config)
         self._openwakeword_enabled = enable_openwakeword
         # Custom-wake-word plan (jarvis.speech.wake_phrase.WakeWordPlan) or None.
         # When None, the wake path is byte-identical to the legacy "Hey Jarvis"
@@ -1315,7 +1342,23 @@ class SpeechPipeline:
         # chain: ``config`` may be None (test fixtures) and older TOMLs predate
         # the field — both fall back to full volume.
         _tts_volume = getattr(getattr(config, "tts", None), "volume", 1.0)
-        self._player = AudioPlayer(device=output_device, bus=bus, volume=_tts_volume)
+        # Optional user device-name priority ([audio].*_device_priority) fed into
+        # the "auto-headset" resolver so an uncommon headset/mic wins by name
+        # without a code edit. Defensive getattr: ``config`` may be None (test
+        # fixtures) and older TOMLs predate the fields — both mean "no override".
+        _audio_cfg = getattr(config, "audio", None)
+        self._output_priority: tuple[str, ...] = tuple(
+            getattr(_audio_cfg, "output_device_priority", None) or ()
+        )
+        self._input_priority: tuple[str, ...] = tuple(
+            getattr(_audio_cfg, "input_device_priority", None) or ()
+        )
+        self._player = AudioPlayer(
+            device=output_device,
+            bus=bus,
+            volume=_tts_volume,
+            device_priority=self._output_priority,
+        )
         # Kept so warm-up can re-resolve the output device against a freshly
         # re-enumerated PortAudio table (post-reboot idx-drift cure, BUG-014).
         self._output_device = output_device
@@ -1686,7 +1729,26 @@ class SpeechPipeline:
             except Exception as exc:  # noqa: BLE001 — degrade, never crash the switch
                 log.warning("Wake-Live-Switch: local Whisper build failed: %s", exc)
 
-        if engine in ("openwakeword", "custom_onnx"):
+        if not getattr(plan, "wake_available", True):
+            # No local model for the user's OWN word — arm NO detector. This is
+            # the explicit, honest "wake off, use the hotkey" mode (product rule
+            # 2026-07-04), NOT a dead listener: the user activates via hotkey /
+            # push-to-talk. Do NOT fall back to the bundled branded 'Hey Rhasspy'
+            # model — listening for a word the user never says is the bug we are
+            # removing. Installing the local speech pack (any word) or a custom
+            # .onnx re-arms the wake via a later set_wake_plan.
+            self._openwakeword_enabled = False
+            self._whisper_wake_enabled = False
+            if self._whisper_wake is not None and self._wake_matcher is not None:
+                self._whisper_wake._pattern = self._wake_matcher  # noqa: SLF001
+            log.info(
+                "Wake-Live-Switch: no local model for %r — wake word OFF; "
+                "hotkey / push-to-talk is the activation. Install the local "
+                "speech pack (works for any word) or supply a custom .onnx to "
+                "enable the wake word.",
+                self._wake_phrase_label,
+            )
+        elif engine in ("openwakeword", "custom_onnx"):
             self._wake = OpenWakeWordProvider(
                 keywords=(plan.oww_keyword,),
                 activation_threshold=plan.threshold,
@@ -1714,33 +1776,22 @@ class SpeechPipeline:
                 )
                 self._whisper_wake_enabled = True
             else:
-                # No local Whisper could be built: rather than disable BOTH
-                # detectors — a SILENT DEAD LISTENER that only an app restart
-                # could recover ("Hey/Neko sometimes stops waking entirely") —
-                # fall back to the bundled hey_rhasspy OWW model so the wake path
-                # stays ALIVE. The user keeps a working wake word (the neutral
-                # offline phrase "Hey Rhasspy") instead of a dead custom one, and
-                # a later set_wake_plan with a buildable Whisper re-arms the
-                # custom phrase. AP-22 + the mission's "no dead state blocks
-                # waking": a missing capability must degrade, never brick.
-                from jarvis.speech.wake_constants import resolve_oww_model_path
-
-                rhasspy_path = resolve_oww_model_path("hey_rhasspy")
-                self._wake = OpenWakeWordProvider(
-                    keywords=("hey_rhasspy",),
-                    activation_threshold=getattr(
-                        plan, "threshold", PRODUCTION_WAKE_THRESHOLD
-                    ),
-                    model_path=rhasspy_path,
-                )
-                self._openwakeword_enabled = True
+                # stt_match was requested but the local Whisper engine could not
+                # be built. Product rule (2026-07-04): do NOT fall back to a
+                # branded 'Hey Rhasspy' model (listening for a word the user never
+                # says). Arm NO detector — the wake word is OFF and the honest
+                # activation is the hotkey / push-to-talk. This is an explicit,
+                # user-visible mode, not a silent dead listener; installing or
+                # repairing the local speech pack re-arms the custom phrase via a
+                # later set_wake_plan.
+                self._openwakeword_enabled = False
                 self._whisper_wake_enabled = False
                 log.warning(
                     "Wake-Live-Switch: stt_match requested but no local Whisper "
-                    "could be built — degrading to the bundled 'Hey Rhasspy' "
-                    "offline model so the wake stays alive (say 'Hey Rhasspy'). "
-                    "Install the [desktop] extra or supply a custom .onnx to use "
-                    "the custom phrase."
+                    "could be built for %r — wake word OFF; use the hotkey / "
+                    "push-to-talk. Install or repair the local speech pack (works "
+                    "for any word) or supply a custom .onnx to enable it.",
+                    self._wake_phrase_label,
                 )
 
         log.info(
@@ -4286,7 +4337,18 @@ class SpeechPipeline:
                 return f"whisper:{kw}"
             return ""
 
-        async with MicrophoneCapture(device=self._input_device) as mic:
+        # NOTE: the wake mic keeps the DEEP default queue on purpose. Its
+        # detectors offload inference (openWakeWord ``to_thread``; whisper-wake
+        # ``await transcribe_pcm``), so the event loop stays free and the cheap
+        # ``_fanout`` drains this queue near-instantly — it never fills, so a
+        # shallow depth would be inert here anyway. The wake path's real staleness
+        # lever is the per-detector queues below (``oww_queue`` / ``whisper_queue``),
+        # which belong to the wake layer; this change deliberately does not touch
+        # them. The drop-OLDEST overflow policy (capture ``_safe_put``) still
+        # applies and is safe here.
+        async with MicrophoneCapture(
+            device=self._input_device, device_priority=self._input_priority
+        ) as mic:
             fanout_task = asyncio.create_task(_fanout(mic), name="fanout")
             oww_task = (
                 asyncio.create_task(_run_oww(), name="oww-wake")
@@ -4613,7 +4675,11 @@ class SpeechPipeline:
         self._last_answer_floor_monotonic = None
         if self._ptt_mode:
             return await self._ptt_session()
-        async with MicrophoneCapture(device=self._input_device) as mic:
+        async with MicrophoneCapture(
+            device=self._input_device,
+            max_queue_chunks=REALTIME_QUEUE_CHUNKS,
+            device_priority=self._input_priority,
+        ) as mic:
             vad_iter = self._vad.utterances(
                 self._session_input_stream(mic.stream())
             ).__aiter__()
@@ -4754,7 +4820,9 @@ class SpeechPipeline:
         """
         buffer = bytearray()
         hung_up = False
-        async with MicrophoneCapture(device=self._input_device) as mic:
+        async with MicrophoneCapture(
+            device=self._input_device, device_priority=self._input_priority
+        ) as mic:
             mic_open_at = time.monotonic()
             await self._set_turn_state(TurnTakingState.LISTENING)
             await self._publish_event(ListeningStarted(source_layer="speech"))
@@ -5013,7 +5081,9 @@ class SpeechPipeline:
                 pass
 
         try:
-            async with MicrophoneCapture(device=self._input_device) as mic:
+            async with MicrophoneCapture(
+                device=self._input_device, device_priority=self._input_priority
+            ) as mic:
 
                 async def _drain() -> None:
                     async for chunk in mic.stream():
@@ -7873,7 +7943,11 @@ class SpeechPipeline:
         detector._ensure_model()
 
         try:
-            async with MicrophoneCapture(device=self._input_device) as mic:
+            async with MicrophoneCapture(
+                device=self._input_device,
+                max_queue_chunks=REALTIME_QUEUE_CHUNKS,
+                device_priority=self._input_priority,
+            ) as mic:
                 residual = np.empty(0, dtype=np.float32)
                 speech_run = 0
                 async for chunk in mic.stream():

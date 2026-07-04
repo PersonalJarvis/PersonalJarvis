@@ -372,6 +372,121 @@ def test_archive_skips_managed_contract_files(
     )
 
 
+# --- committed-deliverable capture (live forensic 2026-07-03, mission
+#     019f26d0-bb07) -----------------------------------------------------------
+#
+# A worker built a complete `schokolade-99.html`, then `git add` + `git commit`-ed
+# it (as coding agents habitually do). After a commit the file is TRACKED, so
+# `git diff --cached HEAD` is empty and `git ls-files --others` no longer lists
+# it — the deliverable fell out of the untracked-only capture and was lost when
+# the worktree was pruned; the user received only a materialised `.md` summary.
+# The fix records the worktree's base SHA at creation and diffs/enumerates
+# against that base so committed files reappear. These tests exercise the real
+# WorktreeManager.create -> commit -> capture/archive flow.
+
+
+def _commit(cwd: Path, *paths: str, message: str) -> None:
+    """Stage + commit paths in a lean/throwaway repo with an explicit identity.
+
+    A lean `git init` repo has no user.name/user.email; passing them via `-c`
+    keeps the commit deterministic and prompt-free, exactly like the worker's
+    own commits in the live mission.
+    """
+    _git("add", *paths, cwd=cwd)
+    _git(
+        "-c", "user.name=Worker", "-c", "user.email=worker@personal-jarvis.local",
+        "commit", "-m", message, cwd=cwd,
+    )
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not in PATH")
+def test_create_writes_base_sha_sidecar(lean_manager: WorktreeManager) -> None:
+    """WorktreeManager.create records the base commit next to (not inside) the
+    workspace so the capture can diff against the fork-point."""
+    from jarvis.missions.isolation.worktree import (
+        BASE_SHA_SIDECAR,
+        read_worktree_base_sha,
+    )
+
+    ws = lean_manager.create(
+        mission_slug="choc", task_id="01-base-sha", needs_repo=False
+    )
+    try:
+        sidecar = ws.parent / BASE_SHA_SIDECAR
+        assert sidecar.exists(), "base-SHA sidecar was not written"
+        assert not (ws / BASE_SHA_SIDECAR).exists(), (
+            "sidecar must live OUTSIDE the worktree so it never pollutes the diff"
+        )
+        sha = read_worktree_base_sha(ws)
+        assert sha and len(sha) >= 7, f"unusable base sha: {sha!r}"
+    finally:
+        lean_manager.remove(ws, force=True)
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not in PATH")
+def test_capture_diff_surfaces_committed_file(
+    lean_manager: WorktreeManager, kontrollierer: Kontrollierer
+) -> None:
+    """A deliverable the worker COMMITS must still appear in the captured diff.
+
+    Pre-fix this returned empty (HEAD moved past the file); diffing against the
+    recorded base makes the committed file reappear so the Critic can grade it.
+    """
+    ws = lean_manager.create(
+        mission_slug="choc", task_id="01-committed-diff", needs_repo=False
+    )
+    try:
+        (ws / "schokolade-99.html").write_text(
+            "<!doctype html><html><h1>99% Schokolade</h1></html>\n",
+            encoding="utf-8",
+        )
+        _commit(ws, "schokolade-99.html", message="feat: add chocolate page")
+        diff = kontrollierer._capture_diff(ws)
+        assert diff, "committed deliverable produced an empty diff"
+        assert "schokolade-99.html" in diff, (
+            f"committed file missing from diff: {diff!r}"
+        )
+    finally:
+        lean_manager.remove(ws, force=True)
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not in PATH")
+def test_archive_captures_committed_deliverable(
+    lean_manager: WorktreeManager, kontrollierer: Kontrollierer, tmp_path: Path
+) -> None:
+    """The core regression: a worker that commits its file still yields the file
+    (not a `.md` summary) in artifacts/files/. Reproduces mission 019f26d0-bb07.
+    """
+    ws = lean_manager.create(
+        mission_slug="choc", task_id="01-committed-archive", needs_repo=False
+    )
+    mission_dir = tmp_path / "mission_root"
+    mission_dir.mkdir()
+    task_id = "019f26d0be1f0000"
+    try:
+        (ws / "schokolade-99.html").write_text(
+            "<!doctype html><html><h1>99% Schokolade</h1></html>\n",
+            encoding="utf-8",
+        )
+        _commit(ws, "schokolade-99.html", message="feat: add chocolate page")
+
+        artifacts = kontrollierer._archive_task_artifacts(
+            worktree=ws, mission_dir=mission_dir, task_id=task_id,
+        )
+
+        assert artifacts is not None
+        copied = artifacts / "files" / "schokolade-99.html"
+        assert copied.exists(), (
+            "committed deliverable was not archived — the data-loss bug is back"
+        )
+        assert "99% Schokolade" in copied.read_text(encoding="utf-8")
+        assert "schokolade-99.html" in (
+            artifacts / "diff.patch"
+        ).read_text(encoding="utf-8")
+    finally:
+        lean_manager.remove(ws, force=True)
+
+
 def test_archive_skips_browser_profile_scratch(
     worktree: Path, kontrollierer: Kontrollierer, tmp_path: Path
 ) -> None:

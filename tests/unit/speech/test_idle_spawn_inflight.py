@@ -65,6 +65,7 @@ def _make_active_session_pipeline(idle_timeout_s: float) -> SpeechPipeline:
     pipe._ptt_mode = False
     pipe._idle_timeout_s = idle_timeout_s
     pipe._input_device = None
+    pipe._input_priority = ()
     pipe._hangup_event = asyncio.Event()
     pipe._session_end_reason = None
     pipe._carry_pcm = bytearray()
@@ -96,7 +97,7 @@ async def test_idle_timeout_extended_while_background_mission_in_flight(
     pipe._spawn_watchdog_tasks = [watchdog]
 
     monkeypatch.setattr(
-        pipeline_mod, "MicrophoneCapture", lambda device=None: _FakeMic()
+        pipeline_mod, "MicrophoneCapture", lambda device=None, **kwargs: _FakeMic()
     )
 
     task = asyncio.create_task(pipe._active_session())
@@ -130,7 +131,7 @@ async def test_idle_timeout_still_hangs_up_without_inflight_mission(
     pipe = _make_active_session_pipeline(idle_timeout_s=0.02)
 
     monkeypatch.setattr(
-        pipeline_mod, "MicrophoneCapture", lambda device=None: _FakeMic()
+        pipeline_mod, "MicrophoneCapture", lambda device=None, **kwargs: _FakeMic()
     )
 
     reason = await asyncio.wait_for(pipe._active_session(), timeout=2.0)

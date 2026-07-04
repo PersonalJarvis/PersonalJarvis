@@ -151,7 +151,7 @@ async def test_ptt_session_records_until_release_and_submits(monkeypatch):
     # 5 chunks = 500 ms — comfortably over the 300 ms min-hold gate.
     monkeypatch.setattr(
         "jarvis.speech.pipeline.MicrophoneCapture",
-        lambda device=None: _FakeMic(chunks=[_CHUNK_100MS] * 5),
+        lambda device=None, **kwargs: _FakeMic(chunks=[_CHUNK_100MS] * 5),
     )
     captured: dict[str, object] = {}
 
@@ -184,7 +184,7 @@ async def test_ptt_session_short_tap_submits_nothing(monkeypatch):
     # One 100 ms chunk, then immediate release → below the 300 ms gate.
     monkeypatch.setattr(
         "jarvis.speech.pipeline.MicrophoneCapture",
-        lambda device=None: _FakeMic(chunks=[_CHUNK_100MS]),
+        lambda device=None, **kwargs: _FakeMic(chunks=[_CHUNK_100MS]),
     )
     handled = {"called": False}
 
@@ -206,7 +206,7 @@ async def test_ptt_session_hangup_during_hold_returns_hotkey(monkeypatch):
     pipe._ptt_mode = True
     monkeypatch.setattr(
         "jarvis.speech.pipeline.MicrophoneCapture",
-        lambda device=None: _FakeMic(chunks=[_CHUNK_100MS] * 3),
+        lambda device=None, **kwargs: _FakeMic(chunks=[_CHUNK_100MS] * 3),
     )
     handled = {"called": False}
 
@@ -345,7 +345,7 @@ async def test_ptt_publishes_live_partials_while_holding(monkeypatch):
     pipe._handle_utterance = _fake_handle  # type: ignore[method-assign]
     monkeypatch.setattr(
         "jarvis.speech.pipeline.MicrophoneCapture",
-        lambda device=None: _FakeMic(chunks=[_CHUNK_100MS] * 10),  # ~1s buffered
+        lambda device=None, **kwargs: _FakeMic(chunks=[_CHUNK_100MS] * 10),  # ~1s buffered
     )
 
     async def _release_later() -> None:
@@ -378,7 +378,7 @@ async def test_ptt_live_feed_disabled_when_interval_zero(monkeypatch):
     pipe._handle_utterance = _fake_handle  # type: ignore[method-assign]
     monkeypatch.setattr(
         "jarvis.speech.pipeline.MicrophoneCapture",
-        lambda device=None: _FakeMic(chunks=[_CHUNK_100MS] * 10),
+        lambda device=None, **kwargs: _FakeMic(chunks=[_CHUNK_100MS] * 10),
     )
 
     async def _release_later() -> None:

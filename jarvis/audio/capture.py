@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -27,6 +27,7 @@ else:
     except Exception:  # noqa: BLE001 — sounddevice/PortAudio (libportaudio2) absent (headless/slim)
         sd = None  # type: ignore[assignment]
 
+from jarvis.audio.device_select import is_legacy_primary_mapper
 from jarvis.core.protocols import AudioChunk
 
 SAMPLE_RATE = 16_000       # Whisper native rate
@@ -34,6 +35,24 @@ CHANNELS = 1               # Mono is sufficient for speech
 BLOCKSIZE = 1600           # 100 ms blocks — compromise between latency and CPU overhead
 DTYPE = "int16"
 
+# Queue depth for a REAL-TIME detection consumer (VAD endpointing, wake, barge).
+# ~0.6 s: shallow enough that on a CPU which can't process every frame in real
+# time the drop-OLDEST overflow policy keeps the audio near-present (so
+# end-of-speech silence and the wake word are seen promptly, not seconds late),
+# yet deep enough to absorb normal scheduling jitter on a machine that keeps up
+# (which never fills it). Bulk recorders that must keep every frame
+# (push-to-talk, dictation) use the deeper default instead. See MicrophoneCapture.
+REALTIME_QUEUE_CHUNKS = 6
+
+# Input NAMES we never open as a microphone: playback/loopback/monitor sources
+# (opening one feeds constant hiss or TTS echo into the wake path) and GPU-HDMI
+# audio. Matched case-insensitively. A few translated playback labels (the
+# localized speaker/headphone words listed below) are additive coverage for a
+# localized Windows where a loopback enumerates under its translated name — data,
+# prose. The MME "Sound Mapper" / DirectSound "Primary Sound Driver" virtual
+# routers are NOT listed here (their name is localized); they are skipped
+# STRUCTURALLY via ``is_legacy_primary_mapper``, which also correctly catches
+# the DirectSound *recording* mapper that no fixed substring covered.
 _BLOCKED_INPUT_SUBSTRINGS = (
     "Stereo Mix",
     "What U Hear",
@@ -50,15 +69,20 @@ _BLOCKED_INPUT_SUBSTRINGS = (
     "Display",
     "NVIDIA High Definition",
     "AMD HD Audio",
-    "Microsoft Soundmapper",
-    "Primaerer Soundtreiber",  # i18n-allow: matched against a localized (German) Windows device name
-    "Primärer Soundtreiber",  # i18n-allow: matched against a localized (German) Windows device name
 )
 
+# Generic default preference order for "auto-headset" microphone selection, most
+# specific first. Not tied to any one machine's hardware — a user whose mic is
+# not covered names it via ``[audio].input_device_priority`` (consulted BEFORE
+# this list) or pins an explicit ``[audio].input_device`` index, without editing
+# code. Bare product tokens (PRO X, Arctis, …) exist because sounddevice often
+# enumerates a headset mic without the vendor prefix. "Microphone" / "Mikrofon"
+# are the generic last-resort real-mic labels across common Windows UI locales.
 _INPUT_PRIORITY = (
     "Logitech PRO X", "PRO X", "Logitech",
-    "Jabra", "Sennheiser", "SteelSeries", "Corsair", "HyperX", "Razer",
-    "USB Audio", "Headset", "Microphone", "Mikrofon",  # i18n-allow: matched against a localized (German) Windows device name
+    "Jabra", "Sennheiser", "SteelSeries", "Arctis", "Corsair", "HyperX",
+    "Razer", "Bose", "AirPods",
+    "USB Audio", "Headset", "Microphone", "Mikrofon",  # i18n-allow: localized (German) generic mic label used as matching data
     "Realtek HD Audio", "Realtek",
 )
 
@@ -156,13 +180,60 @@ def _fallback_input_devices(primary_idx: int) -> list[int]:
     return [idx for idx, _ in matches]
 
 
-def _resolve_input_device(device: int | str | None) -> int | str | None:
+def _os_default_input_name(
+    devices: Sequence[dict], hostapis: Sequence[dict]
+) -> str | None:
+    """Name of the user's OS-selected default INPUT (microphone) device, when it
+    is a real, usable mic — else None.
+
+    The "your device first" contract for capture: ``auto-headset`` prefers the
+    user's system default microphone, EXCEPT when that default is a device the
+    resolver exists to avoid — a loopback/monitor source, the localized virtual
+    mapper, or a virtual/AI mic (NVIDIA Broadcast, VB-Audio, …) that goes silent
+    when its companion app is closed. In those cases this returns None so the
+    resolver falls back to the generic heuristic and picks a real hardware mic
+    instead of feeding digital silence to the wake loop. The NAME is returned so
+    the candidate sort still picks the mic's best host-API twin (MME/DirectSound
+    resample to 16 kHz) and skips WDM-KS. A missing default / absent sounddevice
+    yields None.
+    """
+    try:
+        default_in = sd.default.device[0]
+    except Exception:  # noqa: BLE001 — no default / no sounddevice -> no preference
+        return None
+    if not isinstance(default_in, int) or not (0 <= default_in < len(devices)):
+        return None
+    dev = devices[default_in]
+    name = str(dev.get("name", ""))
+    if not name or dev.get("max_input_channels", 0) <= 0:
+        return None
+    low = name.lower()
+    if any(b.lower() in low for b in _BLOCKED_INPUT_SUBSTRINGS):
+        return None
+    if is_legacy_primary_mapper(default_in, hostapis, devices, output=False):
+        return None
+    if any(v.lower() in low for v in _INPUT_DEPRIORITIZE):
+        return None  # virtual/AI mic as OS default -> fall back to a real mic
+    return name
+
+
+def _resolve_input_device(
+    device: int | str | None,
+    priority: Sequence[str] | None = None,
+) -> int | str | None:
     """Resolve ``auto-headset`` to a concrete microphone device.
 
     Windows exposes loopback and monitor sources as input devices. If Jarvis
     opens one of those for always-on wake detection, users hear constant hiss or
     TTS echo through the capture path. Prefer named headset microphones and
-    skip known playback/loopback inputs.
+    skip known playback/loopback inputs and the localized MME/DirectSound
+    virtual mapper.
+
+    ``priority`` is the user's own mic-name preference
+    (``[audio].input_device_priority``). When non-empty, a device whose name
+    contains a user entry outranks EVERY generic ``_INPUT_PRIORITY`` match, so a
+    user with an uncommon microphone wins by naming it — no code edit. Empty
+    ``priority`` reproduces the generic-only behavior exactly.
     """
     if device is None or isinstance(device, int):
         if device is not None:
@@ -174,6 +245,8 @@ def _resolve_input_device(device: int | str | None) -> int | str | None:
         _log.info("Mic-Resolve: named device '{}'.", device)
         return device
 
+    user_priority = tuple(p for p in (priority or ()) if p)
+
     try:
         devices = sd.query_devices()
         hostapis = sd.query_hostapis()
@@ -181,12 +254,27 @@ def _resolve_input_device(device: int | str | None) -> int | str | None:
         _log.warning("Mic-Resolve: sd.query_devices() failed ({}). Falling back to system default.", exc)
         return None
 
+    # "Your device first": prefer the user's OS-selected default MICROPHONE over
+    # the generic guesses, UNLESS it is a loopback/monitor, the localized virtual
+    # mapper, or a virtual/AI mic that can go silent — then fall back to the
+    # heuristic so the wake loop gets a real mic. Injected as a NAME so the sort
+    # still picks the mic's best host-API twin (MME) and skips WDM-KS. Ranks
+    # BELOW an explicit input_device_priority.
+    os_default_name = _os_default_input_name(devices, hostapis)
+    effective_priority = (
+        (*user_priority, os_default_name) if os_default_name else user_priority
+    )
+
     candidates: list[tuple[int, dict]] = []
     for idx, dev in enumerate(devices):
         if dev.get("max_input_channels", 0) <= 0:
             continue
         name = str(dev.get("name", ""))
         if any(blocked.lower() in name.lower() for blocked in _BLOCKED_INPUT_SUBSTRINGS):
+            continue
+        # Locale-independent skip of the MME "Sound Mapper" / DirectSound
+        # "Primary Sound Driver" recording mapper (translated display name).
+        if is_legacy_primary_mapper(idx, hostapis, devices, output=False):
             continue
         # Drop hostapis that can't serve PortAudio blocking-stream I/O —
         # WDM-KS makes InputStream.start() raise PaErrorCode -9996 even
@@ -208,18 +296,27 @@ def _resolve_input_device(device: int | str | None) -> int | str | None:
         return 99
 
     def _name_rank(entry: tuple[int, dict]) -> int:
-        name = str(entry[1].get("name", ""))
-        rank = len(_INPUT_PRIORITY)
+        low = str(entry[1].get("name", "")).lower()
+        # Precedence: explicit user priority, then the OS-selected default mic
+        # (both carried in ``effective_priority``), then the generic list. A
+        # user / OS-default match ranks ahead of every generic match AND is exempt
+        # from the virtual/AI-mic deprioritize below — the OS-default name is only
+        # ever a real mic (``_os_default_input_name`` rejects virtual ones), and
+        # an explicit user name is honored deliberately.
+        for r, sub in enumerate(effective_priority):
+            if sub.lower() in low:
+                return r
+        rank = len(effective_priority) + len(_INPUT_PRIORITY)
         for r, sub in enumerate(_INPUT_PRIORITY):
-            if sub.lower() in name.lower():
-                rank = r
+            if sub.lower() in low:
+                rank = len(effective_priority) + r
                 break
         # Push virtual / AI mics (NVIDIA Broadcast, voice changers, virtual
         # cables) BEHIND every real hardware mic — they often deliver silence
         # when their companion app is closed (see _INPUT_DEPRIORITIZE). They are
         # not blocked, only ranked last, so they still serve as a fallback when
         # no real mic exists.
-        if any(v.lower() in name.lower() for v in _INPUT_DEPRIORITIZE):
+        if any(v.lower() in low for v in _INPUT_DEPRIORITIZE):
             rank += 1000
         return rank
 
@@ -270,14 +367,31 @@ class MicrophoneCapture:
         sample_rate: int = SAMPLE_RATE,
         blocksize: int = BLOCKSIZE,
         channels: int = CHANNELS,
+        max_queue_chunks: int = 20,
+        device_priority: Sequence[str] | None = None,
     ) -> None:
-        self._device = _resolve_input_device(device)
+        # User-configured mic-name priority ([audio].input_device_priority),
+        # consulted BEFORE the generic _INPUT_PRIORITY default when resolving
+        # "auto-headset". Empty = today's generic behavior.
+        self._device_priority: tuple[str, ...] = tuple(device_priority or ())
+        self._device = _resolve_input_device(device, self._device_priority)
         self._sample_rate = sample_rate
         self._blocksize = blocksize
         self._channels = channels
-        # Queue bridges PortAudio thread → asyncio. maxsize limits back-pressure
-        # to ~2 seconds of audio (20 blocks of 100 ms each) before frames are dropped.
-        self._queue: asyncio.Queue[AudioChunk] = asyncio.Queue(maxsize=20)
+        # Queue bridges PortAudio thread → asyncio. maxsize bounds how STALE the
+        # audio a consumer sees may get: with the drop-OLDEST policy in
+        # ``_safe_put`` a full queue always holds the most-recent
+        # ``max_queue_chunks`` blocks, so worst-case staleness ==
+        # max_queue_chunks x 100 ms. The default 20 (~2 s) is generous back-
+        # pressure for a bulk consumer (push-to-talk, which records every frame).
+        # A REAL-TIME detection consumer (VAD endpointing, wake) passes a SHALLOW
+        # depth (~0.6 s) so that on a CPU that can't keep up the end-of-speech
+        # silence and the wake word are seen near-present, not 2 s late — the
+        # "stuck listening / missed wake on a weaker laptop" bug. A machine that
+        # keeps up never fills the queue, so the depth is invisible there.
+        self._queue: asyncio.Queue[AudioChunk] = asyncio.Queue(
+            maxsize=max(1, int(max_queue_chunks))
+        )
         self._stream: sd.InputStream | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._drops = 0
@@ -315,7 +429,7 @@ class MicrophoneCapture:
                 self._drops += 1
 
     def _safe_put(self, chunk: AudioChunk) -> None:
-        """Runs in the event loop — safe put with drop-on-full."""
+        """Runs in the event loop — safe put with drop-OLDEST on full."""
         # Heartbeat update for the stall watchdog. Even if the queue is full,
         # the stream is considered alive — we update the timestamp before the
         # put; otherwise drops would corrupt the stall signal.
@@ -323,6 +437,24 @@ class MicrophoneCapture:
         try:
             self._queue.put_nowait(chunk)
         except asyncio.QueueFull:
+            # A consumer that cannot keep up in real time (a weaker CPU running
+            # the per-frame VAD / wake inference) backs the queue up. Drop the
+            # OLDEST chunk and enqueue the newest so the consumer always processes
+            # near-PRESENT audio (staleness bounded to the queue depth) instead of
+            # a growing stale backlog — the wake detector then scores fresh frames
+            # and the VAD sees the current end-of-speech silence promptly, not a
+            # 2 s-old snapshot. Mirrors the wake fanout's existing drop-oldest
+            # policy (``_run_parallel_wake``). Still counted as a drop; the VAD's
+            # timestamp gap-credit accounts for the dropped time so end-of-speech
+            # stays anchored to real wall-clock, not delivered-frame count.
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                self._queue.put_nowait(chunk)
+            except asyncio.QueueFull:
+                pass
             self._drops += 1
 
     async def _try_open_stream(self) -> None:

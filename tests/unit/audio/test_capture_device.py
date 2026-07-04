@@ -1,6 +1,18 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
+
 from jarvis.audio import capture
+
+
+@pytest.fixture(autouse=True)
+def _no_os_default(monkeypatch) -> None:
+    """Pin "no OS-selected default device" so these pure-heuristic tests do not
+    depend on the real test host's default microphone — the resolver now consults
+    it for the "your device first" contract."""
+    monkeypatch.setattr(capture.sd, "default", SimpleNamespace(device=(-1, -1)))
 
 
 def test_auto_headset_prefers_real_microphone_over_loopback(monkeypatch) -> None:

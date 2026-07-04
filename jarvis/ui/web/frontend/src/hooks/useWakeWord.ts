@@ -13,6 +13,9 @@ export interface WakeWordConfig {
   engines: string[];
   instant_phrases: string[];
   local_whisper_available: boolean;
+  // The activation master switch: true = always-on wake word (needs a local
+  // model for the user's word), false = hotkey / push-to-talk only.
+  enabled: boolean;
 }
 
 /**
@@ -39,6 +42,9 @@ export interface WakeWordSaveResult {
   engine: string;
   resolved_engine: string;
   degraded: boolean;
+  // False when no local model matches the user's word: the wake word is off and
+  // hotkey / push-to-talk is the activation.
+  wake_available: boolean;
   message: string;
   persisted: boolean;
   restart_required: boolean;
@@ -108,7 +114,27 @@ export function useWakeWord() {
     [],
   );
 
-  return { config, loading, error, refetch, saveWakeWord };
+  // Turn the always-on wake word ON/OFF (the activation master switch). Persists
+  // to jarvis.toml; the change takes effect after a voice restart. Returns
+  // whether a restart is required (always true today).
+  const setWakeActivation = useCallback(
+    async (enabled: boolean): Promise<{ ok: boolean; enabled: boolean; restart_required: boolean }> => {
+      const res = await fetch("/api/settings/wake-word/activation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.detail ?? `HTTP ${res.status}`);
+      }
+      window.dispatchEvent(new CustomEvent("jarvis:wake-word-changed"));
+      return body as { ok: boolean; enabled: boolean; restart_required: boolean };
+    },
+    [],
+  );
+
+  return { config, loading, error, refetch, saveWakeWord, setWakeActivation };
 }
 
 /**
