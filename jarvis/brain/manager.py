@@ -2751,9 +2751,9 @@ class BrainManager:
                 snap = self._awareness_manager.state.snapshot_for_prompt(max_chars=600)
                 if snap:
                     parts.append(
-                        "AKTUELLER KONTEXT (Hintergrund, nur zur Orientierung, "
-                        "NICHT vorlesen oder aufzaehlen, ausser der User fragt "
-                        f"direkt danach):\n{snap}"
+                        "CURRENT CONTEXT (background, for orientation only, do "
+                        "NOT read aloud or enumerate unless the user asks "
+                        f"directly):\n{snap}"
                     )
             except Exception:  # noqa: BLE001
                 pass
@@ -3005,19 +3005,32 @@ class BrainManager:
             return ""
         from datetime import datetime
 
+        # Deterministic English weekday. ``strftime('%A')`` renders the weekday
+        # name in the process locale ("Freitag" on German Windows, "vendredi" on
+        # French, a CJK string on a Chinese host), leaking a machine-locale,
+        # often non-English token into the LLM context. Index a fixed English
+        # tuple by ``weekday()`` (0=Monday) so the label reads the same English on
+        # every OS. The date is ISO-8601 (unambiguous internationally, unlike a
+        # dotted d.m.Y); wall-clock time stays local (``datetime.now``).
+        _weekdays_en = (
+            "Monday", "Tuesday", "Wednesday", "Thursday",
+            "Friday", "Saturday", "Sunday",
+        )
+        _now = datetime.now()
         parts: list[str] = [
             # Date/time belongs per-turn, never in the cached prefix (also fixes
             # the missing BUG-005 date injection).
-            f"[Aktueller Zeitpunkt: {datetime.now().strftime('%A, %d.%m.%Y %H:%M')}]"
+            f"[Current date and time: {_weekdays_en[_now.weekday()]}, "
+            f"{_now.strftime('%Y-%m-%d %H:%M')}]"
         ]
         if self._awareness_manager is not None:
             try:
                 snap = self._awareness_manager.state.snapshot_for_prompt(max_chars=600)
                 if snap:
                     parts.append(
-                        "AKTUELLER KONTEXT (Hintergrund, nur zur Orientierung, "
-                        "NICHT vorlesen oder aufzaehlen, ausser der User fragt "
-                        f"direkt danach):\n{snap}"
+                        "CURRENT CONTEXT (background, for orientation only, do "
+                        "NOT read aloud or enumerate unless the user asks "
+                        f"directly):\n{snap}"
                     )
             except Exception:  # noqa: BLE001
                 pass
