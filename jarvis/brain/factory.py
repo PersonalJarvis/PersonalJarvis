@@ -646,6 +646,48 @@ def is_worker_bootstrap_failed() -> bool:
     return bool(_WORKER_BOOTSTRAP_FAILED[0])
 
 
+def _resolve_verdichter_provider_model(
+    v_cfg: Any, brain_config: Any
+) -> tuple[str, str]:
+    """Resolve ``(provider, model)`` for the awareness Verdichter brain call.
+
+    ``AwarenessVerdichterConfig`` still DEFAULTS to ``provider="claude-api"`` /
+    ``model="claude-haiku-4-5-20251001"`` for legacy Anthropic users, but the
+    user's ``[brain.primary]`` is the real source of truth. When primary is
+    non-Claude this redirects the provider AND resolves a model that is VALID
+    for that provider — NEVER the hardcoded Anthropic id, which OpenRouter and
+    other gateways reject with ``400 - '…' is not a valid model ID`` (live
+    "Verdichter brain-call failed"). The old code only pulled the provider's
+    configured ``model`` and left ``v_model`` at the Anthropic default whenever
+    the provider had no ``model`` pinned (or no ``[brain.providers.<p>]`` block
+    at all) — the exact 400.
+
+    Precedence mirrors ``BrainManager._fast_model`` (capability/tier-based, no
+    provider name special-cased, AP-21): the provider's configured ``model`` /
+    ``deep_model`` → the provider's fast/router-tier default. The Verdichter is
+    short + latency-sensitive, so the fast (router) tier fits.
+    """
+    from jarvis.brain.manager import get_tier_default_model
+
+    provider = v_cfg.provider
+    model = v_cfg.model
+    primary = getattr(brain_config, "primary", None)
+    if provider == "claude-api" and primary and primary != "claude-api":
+        provider = primary
+        providers = getattr(brain_config, "providers", None) or {}
+        primary_cfg = providers.get(provider) if hasattr(providers, "get") else None
+        configured_model = None
+        if primary_cfg is not None:
+            configured_model = (
+                getattr(primary_cfg, "model", None)
+                or getattr(primary_cfg, "deep_model", None)
+            )
+        resolved = configured_model or get_tier_default_model("router", provider)
+        if resolved:
+            model = str(resolved)
+    return provider, str(model)
+
+
 def _phase2_full_brain(
     tier: Literal["router"] = "router",
     bus: Any | None = None,
@@ -736,39 +778,21 @@ def _phase2_full_brain(
                 from jarvis.brain.provider_registry import BrainProviderRegistry
 
                 # BUG-LIVE-04 (2026-05-14) — honour the user-mandate "no
-                # Anthropic account". `AwarenessVerdichterConfig` still
-                # defaults to provider="claude-api" / model="claude-haiku"
-                # for legacy compatibility, but the user's
-                # `[brain.primary]` is the real source of truth: every
-                # other brain-call path (Critic, ack-brain, sub-jarvis
-                # chain) routes through it. The verdichter is the last
-                # Anthropic-hardcoded hold-out — when primary is
-                # non-Claude, redirect this call too so live logs stop
-                # screaming `Your credit balance is too low to access
-                # the Anthropic API` every 30 seconds.
-                v_provider = v_cfg.provider
-                v_model = v_cfg.model
-                if (
-                    v_provider == "claude-api"
-                    and config.brain.primary != "claude-api"
-                ):
-                    v_provider = config.brain.primary
-                    primary_cfg = config.brain.providers.get(v_provider)
-                    if primary_cfg is not None:
-                        # Verdichter is short, factual, latency-sensitive
-                        # — pick a lightweight model from the provider's
-                        # config: prefer `model`, fall back to
-                        # `deep_model` only when `model` is missing.
-                        primary_model = (
-                            getattr(primary_cfg, "model", None)
-                            or getattr(primary_cfg, "deep_model", None)
-                        )
-                        if primary_model:
-                            v_model = str(primary_model)
+                # Anthropic account". The Verdichter config still defaults to
+                # provider="claude-api" / model="claude-haiku-…" for legacy
+                # compatibility, but the user's `[brain.primary]` is the real
+                # source of truth. The resolver redirects the provider AND picks
+                # a model VALID for it (capability/tier-based), so the last
+                # Anthropic-hardcoded hold-out stops 400/402-ing on non-Claude
+                # keys. See `_resolve_verdichter_provider_model`.
+                v_provider, v_model = _resolve_verdichter_provider_model(
+                    v_cfg, config.brain
+                )
+                if v_provider != v_cfg.provider:
                     log.info(
-                        "Verdichter provider redirected: claude-api -> %s "
-                        "(brain.primary mandate, BUG-LIVE-04)",
-                        v_provider,
+                        "Verdichter provider redirected: %s -> %s "
+                        "(model=%s, brain.primary mandate, BUG-LIVE-04)",
+                        v_cfg.provider, v_provider, v_model,
                     )
 
                 v_registry = BrainProviderRegistry()
@@ -1612,6 +1636,34 @@ def build_ack_brain(jcfg: Any | None = None) -> Any:
         return None
 
 
+def _flash_fallback_provider(jcfg: Any, registry: Any) -> str | None:
+    """Pick a Flash-Brain provider the user actually has a credential for.
+
+    Replaces the historical hardcoded ``"gemini"`` fallback, which silently
+    failed for a downloader whose only key is OpenRouter (or any non-Gemini
+    provider): the flash tier fell back to a keyless Gemini and produced nothing
+    (§3 / AP-22 — no provider is load-bearing; a tier must reach whatever key the
+    user actually has). Preference favours a keyed cloud provider; ``ollama``
+    (local, no key) is only a last resort. Returns ``None`` when no adapter is
+    reachable so the caller disables the flash tier honestly instead of wiring a
+    keyless provider that always fails.
+    """
+    from jarvis.core import config as cfg
+
+    # Keyed cloud providers, in a stable preference order — first with a key wins.
+    for name in ("openrouter", "gemini", "openai"):
+        if name in registry:
+            try:
+                if cfg.get_provider_secret(name):
+                    return name
+            except Exception:  # noqa: BLE001, S112 — a secret-lookup miss must not crash wiring
+                continue
+    # Local, keyless last resort (only usable when an Ollama server is running).
+    if "ollama" in registry:
+        return "ollama"
+    return None
+
+
 def _build_flash_provider(jcfg: Any, ack_cfg: Any) -> Any:
     """Construct the flash-LLM provider adapter for ``ack_cfg``, or ``None``.
 
@@ -1619,10 +1671,11 @@ def _build_flash_provider(jcfg: Any, ack_cfg: Any) -> Any:
     both flash consumers resolve providers identically. Handles the
     "follow_brain" meta-value: resolve to whatever ``brain.primary``
     currently points at, so the user does not have to keep two provider
-    settings in sync. If the main brain is on a provider the Flash-Brain
-    has no adapter for (openrouter, claude_api), fall back to "gemini" —
-    the historical default. Mutates ``ack_cfg.provider`` to the resolved
-    name so telemetry labels show the concrete provider.
+    settings in sync. When the main brain is on a provider the Flash-Brain has
+    no adapter for (e.g. claude-api), fall back to a provider the user actually
+    has a KEY for (``_flash_fallback_provider``) — never a hardcoded keyless
+    gemini (§3 / AP-22). Mutates ``ack_cfg.provider`` to the resolved name so
+    telemetry labels show the concrete provider.
     """
     from jarvis.brain.ack_brain.providers import REGISTRY
 
@@ -1637,12 +1690,20 @@ def _build_flash_provider(jcfg: Any, ack_cfg: Any) -> Any:
             )
             provider_name = primary
         else:
+            fallback = _flash_fallback_provider(jcfg, REGISTRY)
+            if fallback is None:
+                log.warning(
+                    "Flash-Brain: brain.primary=%r has no Flash adapter "
+                    "(REGISTRY=%s) and no adapter has a usable key; disabled.",
+                    primary, sorted(REGISTRY.keys()),
+                )
+                return None
             log.warning(
                 "Flash-Brain: brain.primary=%r has no Flash adapter "
-                "(REGISTRY=%s); falling back to gemini.",
-                primary, sorted(REGISTRY.keys()),
+                "(REGISTRY=%s); using key-aware fallback %r.",
+                primary, sorted(REGISTRY.keys()), fallback,
             )
-            provider_name = "gemini"
+            provider_name = fallback
         ack_cfg.provider = provider_name
     provider_cls = REGISTRY.get(provider_name)
     if provider_cls is None:

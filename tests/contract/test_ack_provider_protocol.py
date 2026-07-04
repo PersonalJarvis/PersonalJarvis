@@ -30,6 +30,7 @@ from jarvis.brain.ack_brain.config import (
     GeminiAckProviderConfig,
     OllamaAckProviderConfig,
     OpenAIAckProviderConfig,
+    OpenRouterAckProviderConfig,
 )
 from jarvis.brain.ack_brain.providers import (
     REGISTRY,
@@ -37,6 +38,7 @@ from jarvis.brain.ack_brain.providers import (
     GeminiFlashAck,
     OllamaFlashAck,
     OpenAIMiniAck,
+    OpenRouterFlashAck,
 )
 
 # ---------------------------------------------------------------------------
@@ -54,6 +56,11 @@ def _config_for(provider_name: str) -> Any:
     if provider_name == "openai":
         return OpenAIAckProviderConfig(
             model="gpt-5-mini", max_output_tokens=_MAX_TOKENS_FIXTURE
+        )
+    if provider_name == "openrouter":
+        return OpenRouterAckProviderConfig(
+            model="nvidia/nemotron-3-ultra-550b-a55b:free",
+            max_output_tokens=_MAX_TOKENS_FIXTURE,
         )
     if provider_name == "ollama":
         return OllamaAckProviderConfig(
@@ -288,6 +295,31 @@ def _wire_adapter(
                 else None
             ),
         )
+    if provider_name == "openrouter":
+        # OpenRouter is OpenAI-compatible: same AsyncOpenAI transport, but the
+        # credential/endpoint come from resolve_provider_endpoint (not get_secret).
+        fake = _install_openai_fake(monkeypatch)
+        from jarvis.core import config as cfg_module
+
+        monkeypatch.setattr(
+            cfg_module,
+            "resolve_provider_endpoint",
+            lambda *a, **k: cfg_module.ResolvedEndpoint(
+                base_url="https://openrouter.ai/api/v1",
+                credential="fake-key",
+                via_proxy=False,
+            ),
+            raising=True,
+        )
+        adapter = cls(config)
+        return _AdapterFixture(
+            adapter=adapter,
+            capture_max_tokens=lambda: (
+                fake.chat.completions.calls[-1].get("max_tokens")
+                if fake.chat.completions.calls
+                else None
+            ),
+        )
     if provider_name == "ollama":
         fake = _install_httpx_fake(monkeypatch)
         adapter = cls(config)
@@ -337,7 +369,7 @@ def test_every_adapter_satisfies_abstract_protocol(
 def test_registry_contains_all_known_adapter_classes() -> None:
     """Adapter classes are also directly importable — sanity guard against
     accidental removal from the package ``__all__``."""
-    expected = {GeminiFlashAck, OpenAIMiniAck, OllamaFlashAck}
+    expected = {GeminiFlashAck, OpenAIMiniAck, OpenRouterFlashAck, OllamaFlashAck}
     assert set(REGISTRY.values()) == expected
 
 

@@ -94,6 +94,52 @@ def test_follow_brain_tracks_primary_provider_swap(caplog: pytest.LogCaptureFixt
 
 
 # ---------------------------------------------------------------------------
+# Case 1b: OpenRouter-only user — Flash-Brain must have a working adapter.
+# Live bug: brain.primary='openrouter' had no Flash adapter (REGISTRY=
+# ['gemini','ollama','openai']) so follow_brain fell back to a keyless gemini
+# and silently failed (§3 / AP-22). openrouter is now a first-class adapter.
+# ---------------------------------------------------------------------------
+
+
+def test_follow_brain_openrouter_resolves_openrouter_adapter() -> None:
+    """An OpenRouter-only user (brain.primary='openrouter', ack='follow_brain')
+    gets the OpenRouter Flash adapter directly — never a keyless gemini."""
+    jcfg = SimpleNamespace(
+        ack_brain=make_ack_config(provider="follow_brain"),
+        brain=SimpleNamespace(primary="openrouter"),
+    )
+    ack = build_ack_brain(jcfg)
+    assert ack is not None
+    assert ack._provider_name == "openrouter"
+    assert type(ack._provider).__name__ == "OpenRouterFlashAck"
+
+
+def test_follow_brain_no_adapter_uses_key_aware_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When brain.primary has no Flash adapter (e.g. claude-api), the fallback
+    picks a provider the user actually has a KEY for — here OpenRouter — not the
+    hardcoded keyless gemini that used to break OpenRouter-only downloaders."""
+    from jarvis.core import config as cfg_module
+
+    # The user's only credential is the OpenRouter key.
+    monkeypatch.setattr(
+        cfg_module,
+        "get_provider_secret",
+        lambda name: "sk-or-xxxx" if name == "openrouter" else None,
+        raising=True,
+    )
+    jcfg = SimpleNamespace(
+        ack_brain=make_ack_config(provider="follow_brain"),
+        brain=SimpleNamespace(primary="claude-api"),
+    )
+    ack = build_ack_brain(jcfg)
+    assert ack is not None
+    assert ack._provider_name == "openrouter"
+    assert type(ack._provider).__name__ == "OpenRouterFlashAck"
+
+
+# ---------------------------------------------------------------------------
 # Case 2: missing API key → None + ack_provider_error_total++
 # ---------------------------------------------------------------------------
 

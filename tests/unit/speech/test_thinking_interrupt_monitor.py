@@ -30,7 +30,7 @@ def _guard_pipeline(*, enabled=True):
 async def test_interrupt_during_thinking_aborts_and_returns_barged(monkeypatch):
     p = _guard_pipeline()
 
-    async def fake_monitor(*, grace_s, respect_input_suppression=False):
+    async def fake_monitor(*, grace_s, respect_input_suppression=False, abort_brain=False):
         return True
 
     async def slow_brain():
@@ -51,7 +51,7 @@ async def test_interrupt_during_thinking_aborts_and_returns_barged(monkeypatch):
 async def test_no_interrupt_returns_brain_result(monkeypatch):
     p = _guard_pipeline()
 
-    async def quiet_monitor(*, grace_s, respect_input_suppression=False):
+    async def quiet_monitor(*, grace_s, respect_input_suppression=False, abort_brain=False):
         await asyncio.sleep(10)
         return False
 
@@ -72,7 +72,7 @@ async def test_no_interrupt_returns_brain_result(monkeypatch):
 async def test_monitor_stands_down_after_first_frame(monkeypatch):
     p = _guard_pipeline()
 
-    async def fake_monitor(*, grace_s, respect_input_suppression=False):
+    async def fake_monitor(*, grace_s, respect_input_suppression=False, abort_brain=False):
         p._brain_first_frame_played = True
         await asyncio.sleep(0.05)
         return True
@@ -96,7 +96,7 @@ async def test_disabled_does_not_start_monitor(monkeypatch):
     p = _guard_pipeline(enabled=False)
     started = {"called": False}
 
-    async def tracking_monitor(*, grace_s, respect_input_suppression=False):
+    async def tracking_monitor(*, grace_s, respect_input_suppression=False, abort_brain=False):
         started["called"] = True
         return True
 
@@ -131,7 +131,7 @@ async def test_muted_session_does_not_abort_brain_turn(monkeypatch):
     p = _guard_pipeline()
     p._muted = True
 
-    async def fake_monitor(*, grace_s, respect_input_suppression=False):
+    async def fake_monitor(*, grace_s, respect_input_suppression=False, abort_brain=False):
         # The monitor's second mic "hears" audio even though voice is muted.
         return True
 
@@ -158,7 +158,7 @@ async def test_muted_session_does_not_start_thinking_monitor(monkeypatch):
     p._muted = True
     started = {"called": False}
 
-    async def tracking_monitor(*, grace_s, respect_input_suppression=False):
+    async def tracking_monitor(*, grace_s, respect_input_suppression=False, abort_brain=False):
         started["called"] = True
         return True
 
@@ -208,7 +208,8 @@ class _DrainPlayer:
 
 
 async def _grace_aware_barge(
-    *, grace_s: float = 1.5, respect_input_suppression: bool = False
+    *, grace_s: float = 1.5, respect_input_suppression: bool = False,
+    abort_brain: bool = False,
 ) -> bool:
     # The stall-guard thinking monitor uses the short 0.3 s grace; the per-playback
     # barge created INSIDE _brain_streaming uses the 1.5 s default. Fire only the
@@ -297,7 +298,7 @@ async def test_interrupt_does_not_wedge_when_brain_ignores_cancel(monkeypatch):
     p._brain_cancel_grace_s = 0.05
     release = asyncio.Event()
 
-    async def fake_monitor(*, grace_s, respect_input_suppression=False):
+    async def fake_monitor(*, grace_s, respect_input_suppression=False, abort_brain=False):
         return True
 
     async def stubborn_brain():
@@ -337,7 +338,7 @@ async def test_hangup_during_thinking_aborts_turn(monkeypatch):
     p = _guard_pipeline()
     p._hangup_event = asyncio.Event()
 
-    async def quiet_monitor(*, grace_s, respect_input_suppression=False):
+    async def quiet_monitor(*, grace_s, respect_input_suppression=False, abort_brain=False):
         await asyncio.sleep(3600)
         return False
 

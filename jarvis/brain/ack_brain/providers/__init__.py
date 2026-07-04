@@ -19,10 +19,12 @@ from jarvis.brain.ack_brain.providers.base import AbstractAckProvider
 from jarvis.brain.ack_brain.providers.gemini import GeminiFlashAck
 from jarvis.brain.ack_brain.providers.ollama import OllamaFlashAck
 from jarvis.brain.ack_brain.providers.openai import OpenAIMiniAck
+from jarvis.brain.ack_brain.providers.openrouter import OpenRouterFlashAck
 
 REGISTRY: dict[str, type[AbstractAckProvider]] = {
     "gemini": GeminiFlashAck,
     "openai": OpenAIMiniAck,
+    "openrouter": OpenRouterFlashAck,
     "ollama": OllamaFlashAck,
 }
 
@@ -31,5 +33,6 @@ __all__ = [
     "AbstractAckProvider",
     "GeminiFlashAck",
     "OpenAIMiniAck",
+    "OpenRouterFlashAck",
     "OllamaFlashAck",
 ]

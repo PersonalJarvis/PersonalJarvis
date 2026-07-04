@@ -173,6 +173,70 @@ _MAX_CARRY_PCM_BYTES = 16_000 * 2 * 60  # 16 kHz * int16 * 60 s ≈ 1.9 MB
 # there is no TTS playing, so speaker->mic echo is not a concern.
 _CONTINUATION_THINKING_GRACE_S: float = 0.3
 
+# ---------------------------------------------------------------------------
+# Barge-in noise discrimination (live bug: spurious continuation interrupt).
+# ---------------------------------------------------------------------------
+# A thinking-phase continuation interrupt ABORTS a fully-worked brain turn, so a
+# false positive on background NOISE is expensive — the log shows "→ Brain …"
+# immediately followed by "✋ Continuation interrupt … aborting brain turn" and
+# the user hears no answer. We discriminate genuine speech from noise on three
+# axes so mere noise never aborts the turn, while a real interruption still does:
+#   1. Speech-model confidence — a high Silero probability is the primary signal.
+#   2. Real energy — a bare probability spike on near-silence (electrical noise,
+#      faint speaker echo) is rejected by a per-frame RMS floor; genuine speech
+#      carries energy well above the silence-ghost cluster (~0.0043, see AP-27).
+#   3. Sustained duration — a real interruption is a spoken word, not a transient;
+#      several consecutive candidate frames are required.
+# The brain-ABORT path (thinking interrupt) demands a longer run than the
+# playback barge because aborting an answer costs more than merely ducking TTS.
+_BARGE_SPEECH_PROB: float = 0.97
+# Real-speech energy floor for the model-confidence path. Above the silence-ghost
+# cluster (~0.0043) and faint echo, below normal (even quiet ~0.009) speech, so a
+# prob spike on near-silence is rejected without dropping a genuine barge.
+_BARGE_MODEL_MIN_RMS: float = 0.006
+# Consecutive candidate frames (32 ms each) required, model-confidence path.
+_BARGE_MIN_SPEECH_FRAMES: int = 12          # ~384 ms — playback barge (duck TTS)
+_BARGE_MIN_SPEECH_FRAMES_ABORT: int = 16    # ~512 ms — abort a thinking brain turn
+# Energy-only fallback (no Silero speech model loaded): probability is
+# unavailable, so energy alone must decide — and energy cannot tell speech from
+# noise. Be deliberately conservative: demand a LOUD frame (well above ambient
+# noise) sustained for much longer, most of all on the brain-abort path, so a
+# noisy room can never silence a working answer. A genuine, clearly-spoken
+# interruption is loud + long enough to still cross the bar (never disabled).
+_BARGE_ENERGY_ONLY_RMS: float = 0.05
+_BARGE_ENERGY_ONLY_MIN_FRAMES: int = 24         # ~768 ms — playback barge
+_BARGE_ENERGY_ONLY_MIN_FRAMES_ABORT: int = 40   # ~1.28 s — abort a thinking turn
+
+
+def _barge_frame_is_candidate(*, energy_only: bool, prob: float, rms: float) -> bool:
+    """Whether a single 32 ms VAD frame looks like genuine speech for barge-in.
+
+    Model mode: a high Silero probability AND a real energy floor are both
+    required — a bare probability spike on near-silence is noise/echo, not a
+    user interrupting. Energy-only mode (no speech model): probability is
+    meaningless, so only a LOUD frame — clearly above ambient noise — counts.
+    """
+    if energy_only:
+        return rms >= _BARGE_ENERGY_ONLY_RMS
+    return prob >= _BARGE_SPEECH_PROB and rms >= _BARGE_MODEL_MIN_RMS
+
+
+def _barge_run_target(*, energy_only: bool, abort_brain: bool) -> int:
+    """Consecutive candidate frames required to declare a barge-in.
+
+    Aborting a thinking brain turn is the costly action (a spurious one silences
+    a fully-worked answer), so it demands a longer sustained run than merely
+    ducking TTS. Energy-only mode demands the longest run of all because energy
+    cannot tell speech from noise, so only a long, loud burst is trusted.
+    """
+    if energy_only:
+        return (
+            _BARGE_ENERGY_ONLY_MIN_FRAMES_ABORT
+            if abort_brain
+            else _BARGE_ENERGY_ONLY_MIN_FRAMES
+        )
+    return _BARGE_MIN_SPEECH_FRAMES_ABORT if abort_brain else _BARGE_MIN_SPEECH_FRAMES
+
 # How long to wait for a cancelled brain turn to unwind before ABANDONING it.
 # A brain stream blocked on an inline action that ignores asyncio cancellation
 # (a long ``computer_use`` step stops only via its own ``cancel_active_cu``
@@ -7155,6 +7219,7 @@ class SpeechPipeline:
                 self._barge_monitor(
                     grace_s=_CONTINUATION_THINKING_GRACE_S,
                     respect_input_suppression=True,
+                    abort_brain=True,
                 ),
                 name="thinking-interrupt-monitor",
             )
@@ -7849,28 +7914,61 @@ class SpeechPipeline:
         return barged
 
     async def _barge_monitor(
-        self, *, grace_s: float = 1.5, respect_input_suppression: bool = False
+        self,
+        *,
+        grace_s: float = 1.5,
+        respect_input_suppression: bool = False,
+        abort_brain: bool = False,
     ) -> bool:
-        """Lauscht auf einer zweiten Mic-Instanz, ob der User während Jarvis'
-        TTS-Ausgabe zu sprechen beginnt. Returnt ``True`` sobald das der Fall ist.
+        """Listens on a second mic instance for the user speaking over Jarvis and
+        returns ``True`` as soon as a genuine interruption is detected.
 
-        User-Feedback 2026-04-22: Barge-in feuerte fast sofort nach TTS-Start
-        (z.B. ~600 ms) und wuergte die Antwort ab — Ursache war Speaker→Mic-
-        Echo (Kopfhoerer-Leakage oder Open-Back). Ohne Hardware-AEC koennen
-        wir nur per Heuristik filtern. Jetzt aggressiv konservativ:
-          - 1500 ms Grace-Period (TTS-Start + initiale Echo-Phase)
-          - Silero-Threshold 0.97 (nur bei *sehr* klarem Speech)
-          - 12 consecutive Frames (~380 ms) — Echos sind kurz/fluktuierend
-        Ergebnis: Barge-in greift nur wenn User klar ueber die TTS-Ausgabe
-        spricht, nicht bei Lautsprecher-Rueckkopplung.
+        Two callers: the TTS-playback barge (duck the answer) and the thinking-
+        phase continuation interrupt (``abort_brain=True`` — cancel a still-
+        working brain turn). The abort path is the expensive one: a false
+        positive on background NOISE silences a fully-worked answer (live bug:
+        "→ Brain …" immediately followed by "✋ Continuation interrupt …").
+
+        Noise vs. speech is discriminated on three axes (see the module-level
+        ``_barge_frame_is_candidate`` / ``_barge_run_target``): Silero speech
+        probability, a real per-frame energy floor (rejects a probability spike
+        on near-silence / faint echo), and a sustained-duration run. Without
+        hardware AEC these heuristics are all we have; they are tuned so mere
+        noise never fires while a clearly-spoken interruption still does.
+
+        History (2026-04-22): the barge fired ~600 ms after TTS start on
+        speaker->mic echo and cut the answer off. Hence the 1.5 s playback grace
+        + the 0.97 probability + multi-frame confirmation kept here.
+
+        Energy-only fallback: when the Silero speech model cannot load,
+        probability is unavailable and energy alone cannot tell speech from
+        noise — so the monitor gets deliberately conservative (a much louder /
+        longer sustained burst, longest on the abort path) instead of crashing
+        or aborting a working turn on noise.
         """
         try:
             await asyncio.sleep(grace_s)
         except asyncio.CancelledError:
             return False
 
-        detector = SileroEndpointer(speech_threshold=0.97)
-        detector._ensure_model()
+        detector = SileroEndpointer(speech_threshold=_BARGE_SPEECH_PROB)
+        # Energy-only fallback: never let a missing/failed speech model crash the
+        # monitor (an unhandled raise here surfaced through the stall guard's
+        # ``monitor_task.result()``). Degrade to raw RMS energy with a much
+        # higher, longer bar so a noisy room cannot abort a working brain turn.
+        energy_only = False
+        try:
+            detector._ensure_model()
+        except Exception as exc:  # noqa: BLE001 — degrade, never crash the monitor
+            energy_only = True
+            log.info(
+                "Barge-monitor: Silero speech model unavailable (%s) — energy-only "
+                "fallback (%s).",
+                exc,
+                "loud+long, abort-conservative" if abort_brain else "loud+long",
+            )
+
+        run_target = _barge_run_target(energy_only=energy_only, abort_brain=abort_brain)
 
         try:
             async with MicrophoneCapture(device=self._input_device) as mic:
@@ -7907,10 +8005,15 @@ class SpeechPipeline:
                     frames = buf[: n_full * VAD_FRAME_SAMPLES].reshape(n_full, VAD_FRAME_SAMPLES)
                     residual = buf[n_full * VAD_FRAME_SAMPLES:]
                     for frame in frames:
-                        prob = detector._prob(frame)
-                        if prob >= 0.97:
+                        rms = float(np.sqrt(np.mean(np.square(frame))))
+                        # In energy-only mode _prob() would re-raise (no model);
+                        # skip it and let raw energy decide.
+                        prob = 0.0 if energy_only else detector._prob(frame)
+                        if _barge_frame_is_candidate(
+                            energy_only=energy_only, prob=prob, rms=rms
+                        ):
                             speech_run += 1
-                            if speech_run >= 12:
+                            if speech_run >= run_target:
                                 return True
                         else:
                             speech_run = 0

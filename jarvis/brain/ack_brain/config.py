@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 # "gemini" with a warning. Letting users pin a separate flash provider
 # stays possible by setting one of the four concrete names.
 SUPPORTED_PROVIDERS: tuple[str, ...] = (
-    "follow_brain", "gemini", "openai", "ollama",
+    "follow_brain", "gemini", "openai", "openrouter", "ollama",
 )
 
 
@@ -45,6 +45,18 @@ class OpenAIAckProviderConfig(_ProviderBase):
     api_key_secret: str = Field(default="openai_api_key")
 
 
+class OpenRouterAckProviderConfig(_ProviderBase):
+    """OpenRouter gateway provider config (OpenAI-compatible).
+
+    Default model is a FREE general-purpose model so an OpenRouter-only
+    downloader's key reaches a working ack out of the box (§3 / AP-22) — never a
+    paid Anthropic id that a spend-limited key would 402/403 on. Pin a faster
+    model in ``[ack_brain.providers.openrouter].model`` if desired.
+    """
+
+    api_key_secret: str = Field(default="openrouter_api_key")
+
+
 class OllamaAckProviderConfig(_ProviderBase):
     """Local Ollama provider config - no API key, just an HTTP endpoint."""
 
@@ -61,6 +73,11 @@ class _ProvidersBundle(BaseModel):
     )
     openai: OpenAIAckProviderConfig = Field(
         default_factory=lambda: OpenAIAckProviderConfig(model="gpt-5-mini")
+    )
+    openrouter: OpenRouterAckProviderConfig = Field(
+        default_factory=lambda: OpenRouterAckProviderConfig(
+            model="nvidia/nemotron-3-ultra-550b-a55b:free"
+        )
     )
     ollama: OllamaAckProviderConfig = Field(
         default_factory=lambda: OllamaAckProviderConfig(model="llama3.1:8b")
