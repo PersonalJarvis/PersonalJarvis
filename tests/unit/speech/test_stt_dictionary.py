@@ -188,10 +188,10 @@ class TestVocabularyWords:
         assert c.correct("write to nico müller") == "write to Nico Müller"  # i18n-allow: umlauted proper name under test
 
     def test_email_entry_matches_boundary(self) -> None:
-        c = corrector_for(("aethroc@gmail.com", []))
+        c = corrector_for(("aethroc@example.com", []))
         assert (
-            c.correct("send it to Aethroc@Gmail.com please")
-            == "send it to aethroc@gmail.com please"
+            c.correct("send it to Aethroc@Example.com please")
+            == "send it to aethroc@example.com please"
         )
 
     def test_empty_dictionary_is_noop(self) -> None:
