@@ -547,6 +547,9 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
         "engine": engine,
         "resolved_engine": plan.engine,
         "degraded": plan.degraded,
+        # False when no local model matches the user's word: the wake word is off
+        # and hotkey / push-to-talk is the activation (product rule 2026-07-04).
+        "wake_available": plan.wake_available,
         "message": plan.message,
         "persisted": persisted,
         # When live-applied, the running pipeline already swapped the detector;

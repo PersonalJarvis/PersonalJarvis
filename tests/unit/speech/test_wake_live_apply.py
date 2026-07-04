@@ -98,14 +98,13 @@ def test_verify_prefix_false_for_stt_match_custom_name() -> None:
     assert plan.verify_prefix is False
 
 
-def test_degraded_fallback_to_rhasspy_neutral_model() -> None:
-    # Trademark neutralization (wake_phrase.py step 4): an unknown phrase
-    # without local Whisper degrades to the bundled, product-name-neutral
-    # ``hey_rhasspy`` model — which is its own discriminator, so the STT
-    # prefix verifier must NOT run (verify_prefix=False).
+def test_unknown_phrase_without_model_is_hotkey_only() -> None:
+    # Product rule (2026-07-04): an unknown phrase without a local model does NOT
+    # degrade to a branded 'Hey Rhasspy' model — the wake word is OFF and the
+    # user activates via hotkey / push-to-talk. No detector is armed.
     plan = resolve_wake_plan(_cfg(phrase="Computer"), local_whisper_available=False)
-    assert plan.oww_keyword == "hey_rhasspy"
-    assert plan.verify_prefix is False
+    assert plan.engine == "none"
+    assert plan.wake_available is False
 
 
 # --------------------------------------------------------------------------

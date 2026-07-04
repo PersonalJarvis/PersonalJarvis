@@ -145,9 +145,10 @@ def test_stale_custom_model_lets_pretrained_phrase_through(tmp_path) -> None:
     assert plan.degraded is False
 
 
-def test_stale_custom_model_without_whisper_degrades_honestly(tmp_path) -> None:
-    # Mismatching model + no local Whisper: fall through to the bundled
-    # offline fallback with a clear message — never a silent dead listener.
+def test_stale_custom_model_without_whisper_is_hotkey_only(tmp_path) -> None:
+    # Mismatching model + no local Whisper: the wake word is OFF (hotkey-only,
+    # product rule 2026-07-04) with a clear message — never a silent branded
+    # fallback and never a dead listener.
     from jarvis.speech.wake_phrase import resolve_wake_plan
 
     model = tmp_path / "hey_nico.onnx"
@@ -156,8 +157,8 @@ def test_stale_custom_model_without_whisper_degrades_honestly(tmp_path) -> None:
         _cfg(str(model), phrase="Hey Fable", engine="auto"),
         local_whisper_available=False,
     )
-    assert plan.engine == "openwakeword"
-    assert plan.oww_keyword == "hey_rhasspy"
+    assert plan.engine == "none"
+    assert plan.wake_available is False
     assert plan.degraded is True
 
 
