@@ -1482,7 +1482,10 @@
       "ack_label": "Ich bin für mein gewähltes Weckwort selbst verantwortlich.",
       "cta": "Aktivierungswort speichern",
       "saving": "Speichern…",
-      "derived_name": "Dein Assistent heißt dann: {0}"
+      "derived_name": "Dein Assistent heißt dann: {0}",
+      "recommended_cta": "„Hey Jarvis“ nehmen — läuft sofort auf jedem Computer",
+      "instant_ok": "Läuft sofort — kein Download nötig.",
+      "continue_anyway": "Trotzdem fortfahren"
     },
     "api_keys": {
       "title": "Verbinde deine KI-Dienste (optional)",

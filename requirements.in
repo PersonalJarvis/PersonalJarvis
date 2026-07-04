@@ -39,12 +39,20 @@ keyring>=25.5
 sounddevice>=0.5
 numpy>=1.26,<2.2
 scipy>=1.14
-# Local VAD (silero-vad → torch), webrtcvad-wheels and the wake-word engines
-# (pvporcupine, openwakeword) are NOT base deps: they live in the
-# pyproject.toml [local-voice] extra per the cloud-first doctrine (CLAUDE.md
-# §3). torch must never land in the base lockfile — it pulls a multi-GB,
-# GPU-specific CUDA wheel stack (nvidia-*), which is unresolvable on a plain
-# PyPI install and bricks the installer for every non-maintainer machine.
+# Always-on neural wake word — BASE (2026-07-04). The pretrained ONNX models ship
+# in every wheel already; openwakeword + CPU onnxruntime are the tiny (~15 MB),
+# torch-free runtime that runs them, so "Hey Jarvis" fires out-of-the-box on any
+# machine incl. a headless CPU VPS. CPU onnxruntime is universal and NOT on the
+# lockfile forbidden list (only torch/ctranslate2/faster-whisper/onnxruntime-gpu
+# are). See pyproject.toml note.
+openwakeword>=0.6
+onnxruntime>=1.17
+# Local VAD (silero-vad → torch), webrtcvad-wheels and the Porcupine wake engine
+# (pvporcupine) are NOT base deps: they live in the pyproject.toml [local-voice]
+# extra per the cloud-first doctrine (CLAUDE.md §3). torch must never land in the
+# base lockfile — it pulls a multi-GB, GPU-specific CUDA wheel stack (nvidia-*),
+# which is unresolvable on a plain PyPI install and bricks the installer for every
+# non-maintainer machine.
 
 # TTS
 google-cloud-texttospeech>=2.21

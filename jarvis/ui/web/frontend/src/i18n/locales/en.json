@@ -1483,7 +1483,10 @@
       "ack_label": "I'm responsible for the wake word I choose.",
       "cta": "Save wake word",
       "saving": "Saving…",
-      "derived_name": "Your assistant will be called: {0}"
+      "derived_name": "Your assistant will be called: {0}",
+      "recommended_cta": "Use \"Hey Jarvis\" — works instantly on any computer",
+      "instant_ok": "Works instantly — no download needed.",
+      "continue_anyway": "Continue anyway"
     },
     "api_keys": {
       "title": "Connect your AI services (optional)",

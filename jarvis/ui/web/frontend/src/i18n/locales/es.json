@@ -1482,7 +1482,10 @@
       "ack_label": "Soy responsable de la palabra de activación que elijo.",
       "cta": "Guardar palabra de activación",
       "saving": "Guardando…",
-      "derived_name": "Tu asistente se llamará: {0}"
+      "derived_name": "Tu asistente se llamará: {0}",
+      "recommended_cta": "Usar «Hey Jarvis» — funciona al instante en cualquier ordenador",
+      "instant_ok": "Funciona al instante — sin descargas.",
+      "continue_anyway": "Continuar de todos modos"
     },
     "api_keys": {
       "title": "Conecta tus servicios de IA (opcional)",
