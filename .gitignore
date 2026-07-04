@@ -63,6 +63,11 @@ data/**/
 *.ppn
 *.onnx
 models/
+# ...but the ONNX model assets we deliberately BUNDLE and ship in-repo are tracked
+# (the openWakeWord wake models and the Silero VAD model). They must ship in the
+# base wheel so wake + end-of-speech detection work out-of-the-box on a fresh
+# install — the whole point is that they are NOT the ignored user/cache models.
+!jarvis/assets/**/*.onnx
 
 # Audio-Blobs + Flight-Recorder-Traces
 blobs/

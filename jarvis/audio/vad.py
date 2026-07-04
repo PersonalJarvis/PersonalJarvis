@@ -196,21 +196,40 @@ class SileroEndpointer:
     def _ensure_model(self) -> None:
         if self._session is not None:
             return
-        # Locate the bundled Silero ONNX model WITHOUT importing the silero_vad
-        # package (its __init__ -> model.py does ``import torch`` at module
-        # level, which is exactly the multi-second cost we are avoiding).
-        # ``find_spec`` resolves the install path without executing the package.
-        import importlib.util
         import os
 
         import onnxruntime  # already warm: the wake model imported it
 
-        spec = importlib.util.find_spec("silero_vad")
-        if spec is None or spec.origin is None:
-            raise RuntimeError("silero_vad package not installed")
-        model_path = os.path.join(
-            os.path.dirname(spec.origin), "data", "silero_vad.onnx"
-        )
+        # Prefer the model bundled in-repo (jarvis/assets/vad/silero_vad.onnx):
+        # it ships in EVERY base install, so end-of-speech detection works out of
+        # the box without the opt-in ``silero-vad`` pip package (which drags torch,
+        # so it stays in the [local-voice] extra). Before this was bundled the
+        # voice loop could hear the wake word but never close the utterance on a
+        # fresh install — the wake fired, then this raised and the turn died.
+        # We still never IMPORT the silero_vad package (its __init__ -> model.py
+        # does ``import torch`` at module level, exactly the multi-second cost we
+        # avoid); the bundled ONNX is byte-identical and run torch-free here.
+        from jarvis.assets import bundled_silero_vad_model
+
+        bundled = bundled_silero_vad_model()
+        if bundled is not None:
+            model_path = str(bundled)
+        else:
+            # Fallback for a partial checkout / slim layout without the bundled
+            # asset: locate the model inside an installed silero_vad package.
+            # ``find_spec`` resolves the install path without executing it.
+            import importlib.util
+
+            spec = importlib.util.find_spec("silero_vad")
+            if spec is None or spec.origin is None:
+                raise RuntimeError(
+                    "Silero VAD model unavailable: neither the bundled asset "
+                    "(jarvis/assets/vad/silero_vad.onnx) nor the silero_vad package "
+                    "was found"
+                )
+            model_path = os.path.join(
+                os.path.dirname(spec.origin), "data", "silero_vad.onnx"
+            )
         opts = onnxruntime.SessionOptions()
         opts.inter_op_num_threads = 1
         opts.intra_op_num_threads = 1

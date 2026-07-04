@@ -219,19 +219,24 @@ desktop-macos = [
 # the headless server boot without them.
 #
 # torch note: NONE of Jarvis's own code imports torch on any runtime path — the
-# VAD runs the bundled Silero ONNX via onnxruntime (jarvis/audio/vad.py), STT
-# uses ctranslate2 (faster-whisper), wake uses onnxruntime/tflite. torch is only
-# an UNUSED transitive dependency of the `silero-vad` package (its own model
-# loader imports it), so it arrives with this opt-in extra but is never executed;
-# a normal/base install pulls no torch and no NVIDIA/CUDA wheels at all.
+# VAD runs the bundled Silero ONNX (jarvis/assets/vad/silero_vad.onnx) via
+# onnxruntime (jarvis/audio/vad.py), STT uses ctranslate2 (faster-whisper), wake
+# uses onnxruntime/tflite. torch is only an UNUSED transitive dependency of the
+# `silero-vad` package (its own model loader imports it), so it arrives with this
+# opt-in extra but is never executed; a normal/base install pulls no torch and no
+# NVIDIA/CUDA wheels at all.
 # `sentence-transformers` was removed 2026-07-01: it had ZERO importers in jarvis/
 # (an embedding vestige) yet dragged in torch + a large transformers/HF tree.
 # openwakeword + onnxruntime moved to BASE 2026-07-04 (torch-free, ~15 MB) so the
 # always-on neural wake fires out-of-the-box on any machine — they are NO LONGER
-# here. This extra now covers only the heavier local paths: the torch-pulling
-# Silero VAD, WebRTC VAD, and the Porcupine wake engine. (faster-whisper — the
-# local-Whisper arbitrary-custom-phrase wake for phrases with no pretrained model
-# — is not in any extra; it is pulled on demand by the in-app "enable local
+# here. The Silero VAD *model* moved to BASE too (2026-07-04): it is bundled as an
+# ~2.2 MB MIT asset under jarvis/assets/vad/ and run torch-free via onnxruntime, so
+# end-of-speech detection also works out-of-the-box — the `silero-vad` PACKAGE
+# below is now only an optional fallback for a partial checkout without the asset.
+# This extra therefore covers only heavier/alternate local paths: the torch-pulling
+# silero-vad package, WebRTC VAD, and the Porcupine wake engine. (faster-whisper —
+# the local-Whisper arbitrary-custom-phrase wake for phrases with no pretrained
+# model — is not in any extra; it is pulled on demand by the in-app "enable local
 # speech" installer, see jarvis/ui/web/settings_routes.py.)
 local-voice = [
     "silero-vad>=5.1",
