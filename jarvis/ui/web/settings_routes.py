@@ -449,8 +449,10 @@ async def get_wake_word(request: Request) -> dict[str, object]:
 
     cfg = _config(request)
     ww = None
+    enabled = False
     if cfg is not None and getattr(cfg, "trigger", None) is not None:
         ww = getattr(cfg.trigger, "wake_word", None)
+        enabled = bool(getattr(cfg.trigger, "wake_word_enabled", False))
     if ww is None:
         ww = WakeWordConfig()
     return {
@@ -462,6 +464,9 @@ async def get_wake_word(request: Request) -> dict[str, object]:
         "engines": list(WAKE_ENGINES),
         "instant_phrases": list(INSTANT_WAKE_PHRASES),
         "local_whisper_available": _local_whisper_available(),
+        # The activation master switch: True = always-on wake word (needs a local
+        # model), False = hotkey / push-to-talk only.
+        "enabled": enabled,
     }
 
 
@@ -557,6 +562,42 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
         "applied_live": applied_live,
         "restart_required": not applied_live,
     }
+
+
+class WakeActivationBody(BaseModel):
+    enabled: bool
+
+
+@router.post("/wake-word/activation")
+async def set_wake_activation(body: WakeActivationBody, request: Request) -> dict[str, object]:
+    """Turn the always-on wake word ON/OFF — the "how do you activate Jarvis"
+    master switch (product rule 2026-07-04).
+
+    ``True`` = always-on wake word, which REQUIRES a local model matching the
+    user's own word (see ``resolve_wake_plan``); ``False`` = hotkey / push-to-talk
+    only. This was previously settable only by hand-editing jarvis.toml (default
+    False), so a fresh downloader could never enable their wake word in-app.
+
+    Persisted to ``[trigger] wake_word_enabled``; takes effect on the next voice
+    restart (the detector enable-flags are wired at pipeline construction), so
+    ``restart_required`` is always True.
+    """
+    try:
+        from jarvis.core import config_writer
+
+        config_writer.set_wake_word_enabled(bool(body.enabled))
+    except Exception as exc:  # noqa: BLE001 — surface a clean 500, never a stack
+        raise HTTPException(
+            status_code=500, detail=f"Could not persist wake activation: {exc}"
+        ) from exc
+    # Best-effort in-memory update so a later cfg read agrees pre-restart.
+    cfg = _config(request)
+    if cfg is not None and getattr(cfg, "trigger", None) is not None:
+        try:
+            cfg.trigger.wake_word_enabled = bool(body.enabled)
+        except Exception as exc:  # noqa: BLE001 — frozen model is not an error
+            log.debug("in-memory wake_word_enabled update skipped: %s", exc)
+    return {"ok": True, "enabled": bool(body.enabled), "restart_required": True}
 
 
 # ---------------------------------------------------------------------------

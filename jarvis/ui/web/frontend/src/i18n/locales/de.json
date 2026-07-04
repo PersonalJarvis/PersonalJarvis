@@ -1022,6 +1022,9 @@
     "wake_word": {
       "title": "Wake-Word",
       "description": "Aktivierungsphrase für den Sprachmodus. Tippe deine eigene ein.",
+      "activation_title": "Aktivierungswort einschalten",
+      "activation_hint": "An: Jarvis hört ständig auf dein Wort (braucht ein lokales Modell). Aus: aktiviere per Tastenkombination (Push-to-Talk).",
+      "activation_saved": "Aktivierung gespeichert — Neustart nötig, damit sie greift.",
       "phrase_label": "Aktivierungsphrase",
       "phrase_placeholder": "z. B. Jonas",
       "engine_label": "Erkennungs-Engine",
@@ -1462,6 +1465,15 @@
       "reply_label": "Antwortsprache"
     },
     "wake_word": {
+      "choice_title": "Wie möchtest du {name} aktivieren?",
+      "choice_body": "Wähle, was zu deiner Arbeitsweise passt — du kannst das später in den Einstellungen ändern.",
+      "mode_wake_title": "Aktivierungswort",
+      "mode_wake_body": "Sag jederzeit dein eigenes Wort — {name} hört ständig mit. Braucht ein kleines lokales Modell für genau dein Wort.",
+      "mode_shortcut_title": "Tastenkombination",
+      "mode_shortcut_body": "Kein Aktivierungswort — halte eine Taste gedrückt, um zu sprechen, lass los zum Senden (Push-to-Talk).",
+      "back_to_choice": "Zurück",
+      "shortcut_note": "Du aktivierst {name} stattdessen über eine Tastenkombination statt über ein Aktivierungswort. Die genaue Taste kannst du jederzeit in den Einstellungen → Wake-Word festlegen.",
+      "shortcut_cta": "Weiter",
       "title": "Wähle dein Aktivierungswort",
       "body": "Wähle das Wort, das deinen Assistenten aufweckt. \"Hey\" bleibt fest — den Rest bestimmst du.",
       "prefix": "Hey",
@@ -1475,8 +1487,6 @@
       "cta": "Aktivierungswort speichern",
       "saving": "Speichern…",
       "derived_name": "Dein Assistent heißt dann: {0}",
-      "recommended_cta": "„Hey Jarvis“ nehmen — läuft sofort auf jedem Computer",
-      "instant_ok": "Läuft sofort — kein Download nötig.",
       "continue_anyway": "Trotzdem fortfahren"
     },
     "api_keys": {

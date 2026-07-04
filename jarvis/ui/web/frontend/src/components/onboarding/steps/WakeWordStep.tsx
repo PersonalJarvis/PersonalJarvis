@@ -5,25 +5,31 @@ import { useT } from "@/i18n";
 import { deriveAssistantName } from "@/lib/deriveAssistantName";
 import type { StepProps } from "../OnboardingFlow";
 
-// Phrases that run on the always-on neural wake (openWakeWord) with zero
-// download and no GPU — they ship as pretrained models in every install
-// (KNOWN_OWW_MODELS in jarvis/speech/wake_constants.py). Any OTHER phrase needs
-// the local-Whisper pack; without it the backend degrades to a built-in phrase.
-// Kept in lockstep with KNOWN_OWW_MODELS; a miss here only means we skip the
-// green "instant" hint — the authoritative signal is the save's `degraded` flag.
-const INSTANT_CORE_WORDS = new Set(["jarvis", "rhasspy"]);
+type Mode = "choice" | "wake" | "shortcut";
 
+/**
+ * Two honest activation paths — no branded default (Marvel owns "Jarvis" as a
+ * trademark, so recommending "Hey Jarvis" out of the box is off the table):
+ *
+ *  - "wake": the user picks their OWN word. It only actually fires once a local
+ *    model exists for that exact word — if the save comes back `degraded` we do
+ *    NOT silently advance, we offer the one-click local-speech install or an
+ *    honest "continue anyway" (wake word off until the pack lands).
+ *  - "shortcut": no wake word at all — push-to-talk via a keyboard shortcut,
+ *    editable later in Settings. This is a first-class option, not a fallback.
+ */
 export function WakeWordStep({ onb, goNext }: StepProps) {
   const t = useT();
-  const { saveWakeWord } = useWakeWord();
+  const { saveWakeWord, setWakeActivation } = useWakeWord();
+  const [mode, setMode] = useState<Mode>("choice");
   const [word, setWord] = useState("");
   const [ack, setAck] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [showRefs, setShowRefs] = useState(false);
-  // Set when a save resolved to a degraded engine (the chosen phrase has no
-  // pretrained model AND local Whisper is absent). We DON'T advance silently in
-  // that case — we tell the user and offer the one-click local-speech install.
+  // Set when a save resolved to a degraded engine (no local model matches the
+  // user's own word). We DON'T advance silently in that case — we tell the
+  // user and offer the one-click local-speech install, or an honest opt-out.
   const [degraded, setDegraded] = useState(false);
   const { status: install, install: startInstall } = useLocalSpeechInstall();
 
@@ -31,7 +37,6 @@ export function WakeWordStep({ onb, goNext }: StepProps) {
   const canSave = trimmed.length >= 2 && ack && !busy;
   const derivedName = deriveAssistantName(`Hey ${trimmed}`);
   const refs = onb.state?.legal_references ?? [];
-  const isInstantWord = INSTANT_CORE_WORDS.has(trimmed.toLowerCase());
 
   function setWordReset(next: string) {
     // Any edit invalidates a previous degraded verdict — back to the normal CTA.
@@ -40,7 +45,7 @@ export function WakeWordStep({ onb, goNext }: StepProps) {
     if (err) setErr(null);
   }
 
-  async function onSave() {
+  async function onSaveWake() {
     if (!canSave) return;
     setBusy(true);
     setErr(null);
@@ -48,12 +53,14 @@ export function WakeWordStep({ onb, goNext }: StepProps) {
       await onb.acknowledgeWakeWord();
       const result = await saveWakeWord({ phrase: `Hey ${trimmed}`, engine: "auto", persist: true });
       // Honesty gate: only advance when the phrase will actually be heard. A
-      // degraded result means the app would listen for a built-in fallback word,
-      // not the user's — surface it instead of pretending it worked.
+      // degraded result means no local model matches the user's own word — the
+      // wake word would effectively be off — so surface that instead of
+      // pretending it worked.
       if (result.degraded) {
         setDegraded(true);
         return;
       }
+      await setWakeActivation(true);
       goNext();
     } catch (e) {
       setErr((e as Error).message);
@@ -62,9 +69,93 @@ export function WakeWordStep({ onb, goNext }: StepProps) {
     }
   }
 
+  async function onContinueDegraded() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await setWakeActivation(true);
+      goNext();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onChooseShortcut() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await setWakeActivation(false);
+      goNext();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (mode === "choice") {
+    return (
+      <div className="flex flex-col gap-4">
+        <h2 className="font-display text-lg font-semibold">{t("onboarding.wake_word.choice_title")}</h2>
+        <p className="text-sm text-muted-foreground">{t("onboarding.wake_word.choice_body")}</p>
+        <div className="flex flex-col gap-3">
+          <button
+            type="button"
+            onClick={() => setMode("wake")}
+            className="flex flex-col gap-1 rounded-lg border border-muted-foreground/25 p-4 text-left hover:border-primary hover:bg-primary/5"
+          >
+            <span className="font-medium">{t("onboarding.wake_word.mode_wake_title")}</span>
+            <span className="text-xs text-muted-foreground">{t("onboarding.wake_word.mode_wake_body")}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("shortcut")}
+            className="flex flex-col gap-1 rounded-lg border border-muted-foreground/25 p-4 text-left hover:border-primary hover:bg-primary/5"
+          >
+            <span className="font-medium">{t("onboarding.wake_word.mode_shortcut_title")}</span>
+            <span className="text-xs text-muted-foreground">{t("onboarding.wake_word.mode_shortcut_body")}</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === "shortcut") {
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <h2 className="font-display text-lg font-semibold">{t("onboarding.wake_word.mode_shortcut_title")}</h2>
+          <button
+            type="button"
+            onClick={() => setMode("choice")}
+            className="text-xs text-muted-foreground underline"
+          >
+            {t("onboarding.wake_word.back_to_choice")}
+          </button>
+        </div>
+        <p className="text-sm text-muted-foreground">{t("onboarding.wake_word.shortcut_note")}</p>
+        {err && <p className="text-xs text-amber-500">{err}</p>}
+        <Button className="w-full" disabled={busy} onClick={onChooseShortcut}>
+          {busy ? t("onboarding.wake_word.saving") : t("onboarding.wake_word.shortcut_cta")}
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-4">
-      <h2 className="font-display text-lg font-semibold">{t("onboarding.wake_word.title")}</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-lg font-semibold">{t("onboarding.wake_word.title")}</h2>
+        <button
+          type="button"
+          onClick={() => setMode("choice")}
+          className="text-xs text-muted-foreground underline"
+        >
+          {t("onboarding.wake_word.back_to_choice")}
+        </button>
+      </div>
       <p className="text-sm text-muted-foreground">{t("onboarding.wake_word.body")}</p>
 
       <div className="flex items-center gap-2">
@@ -83,26 +174,11 @@ export function WakeWordStep({ onb, goNext }: StepProps) {
         />
       </div>
 
-      {/* Recommended shortcut: "Hey Jarvis" runs out-of-the-box on any machine. */}
-      {!isInstantWord && (
-        <button
-          type="button"
-          onClick={() => setWordReset("Jarvis")}
-          className="self-start rounded-md border border-primary/40 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/10"
-        >
-          {t("onboarding.wake_word.recommended_cta")}
-        </button>
-      )}
-
       {trimmed.length >= 2 && derivedName ? (
         <p className="text-xs text-muted-foreground">
           {t("onboarding.wake_word.derived_name").replace("{0}", derivedName)}
         </p>
       ) : null}
-
-      {isInstantWord && (
-        <p className="text-xs text-emerald-500">{t("onboarding.wake_word.instant_ok")}</p>
-      )}
 
       <p className="text-xs text-muted-foreground">
         {t("onboarding.wake_word.notice")}{" "}
@@ -139,9 +215,9 @@ export function WakeWordStep({ onb, goNext }: StepProps) {
       {err && <p className="text-xs text-amber-500">{err}</p>}
 
       {degraded ? (
-        // The chosen phrase has no pretrained model and local Whisper is absent.
-        // Offer the one-click local-speech install, or continue with the honest
-        // knowledge that the word takes effect after the pack is installed.
+        // The chosen word has no pretrained model and local Whisper is absent.
+        // Offer the one-click local-speech install, or continue with the
+        // honest knowledge that the wake word stays off until the pack lands.
         <div className="flex flex-col gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
           <p className="text-xs text-amber-500">
             {t("settings_view.wake_word.needs_whisper_hint")}
@@ -172,13 +248,13 @@ export function WakeWordStep({ onb, goNext }: StepProps) {
                   : t("settings_view.wake_word.enable_local_button")}
               </Button>
             )}
-            <Button className="flex-1" onClick={goNext}>
+            <Button className="flex-1" disabled={busy} onClick={onContinueDegraded}>
               {t("onboarding.wake_word.continue_anyway")}
             </Button>
           </div>
         </div>
       ) : (
-        <Button className="w-full" disabled={!canSave} onClick={onSave}>
+        <Button className="w-full" disabled={!canSave} onClick={onSaveWake}>
           {busy ? t("onboarding.wake_word.saving") : t("onboarding.wake_word.cta")}
         </Button>
       )}
