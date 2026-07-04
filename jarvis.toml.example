@@ -21,8 +21,10 @@ name = "default"
 language = "auto"            # "de" | "en" | "auto" (bilingual auto-detect)
 
 [persona]
-# The assistant's name. Empty -> derived from the wake-word phrase below
-# (e.g. "Hey Jarvis" -> "Jarvis"). Leave blank to keep the default.
+# The assistant's name. Empty -> derived from your chosen wake-word phrase
+# below (e.g. a phrase like "Hey Nova" gives the name "Nova"). Leave blank
+# to keep the default. The wake word is always YOUR choice — nothing is
+# preset for you.
 name = ""
 
 # ── Voice trigger (optional; irrelevant on a headless/browser-only host) ──
