@@ -106,6 +106,34 @@ def test_404_model_not_found_is_model_unavailable() -> None:
     assert classify_provider_error(msg) == "model_unavailable"
 
 
+def test_400_response_format_is_model_unavailable_not_bad_key() -> None:
+    """The live OpenRouter-TTS bug: a valid, funded key gets HTTP 400 because the
+    model rejects response_format=pcm. That must read as an amber "model/format"
+    issue (integration_ok), never a red "bad key"."""
+    msg = (
+        'OpenRouter TTS HTTP 400 (model=mistralai/voxtral-mini-tts-2603, '
+        'voice=en_paul_neutral): {"error":{"message":"Mistral TTS only supports '
+        'response_format=\\"mp3\\". Got \\"pcm\\".","code":400}}'
+    )
+    assert classify_provider_error(msg) == "model_unavailable"
+
+
+def test_400_unknown_model_is_model_unavailable() -> None:
+    msg = "HTTP 400 - {'error': {'message': 'Model sonic-2 does not exist'}}"
+    assert classify_provider_error(msg) == "model_unavailable"
+
+
+def test_400_with_billing_marker_is_no_credits() -> None:
+    msg = "HTTP 400 - your credit balance is too low"
+    assert classify_provider_error(msg) == "no_credits"
+
+
+def test_400_generic_without_markers_stays_error() -> None:
+    """A bare 400 with no model/voice/format/billing marker is not silently
+    whitewashed to integration_ok — it stays a plain error."""
+    assert classify_provider_error("HTTP 400 - malformed request") == "error"
+
+
 def test_connection_error_is_unreachable() -> None:
     assert classify_provider_error("APIConnectionError: Connection error.") == "unreachable"
 

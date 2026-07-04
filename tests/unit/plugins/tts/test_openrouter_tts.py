@@ -17,10 +17,12 @@ from jarvis.core.protocols import AudioChunk
 from jarvis.plugins.tts import openrouter_tts as ortts
 from jarvis.plugins.tts.openrouter_speech_models import (
     DEFAULT_MODEL,
+    MP3_ONLY_MODELS,
     MULTILINGUAL,
     coerce_speech_model,
     filter_tts_models,
     is_speech_model,
+    response_format_for_model,
     voice_entries_for_model,
     voice_language,
     voices_for_model,
@@ -38,10 +40,11 @@ from jarvis.plugins.tts.openrouter_tts import (
 
 class _FakeStreamResponse:
     def __init__(self, status_code: int, chunks: list[bytes] | None = None,
-                 error_body: bytes = b"") -> None:
+                 error_body: bytes = b"", headers: dict[str, str] | None = None) -> None:
         self.status_code = status_code
         self._chunks = chunks or []
         self._error_body = error_body
+        self.headers = headers or {}
 
     async def aread(self) -> bytes:
         return self._error_body
@@ -146,6 +149,74 @@ async def test_empty_text_yields_nothing() -> None:
     tts, _ = _tts_with_client(resp)
     out = [c async for c in tts.synthesize("   ")]
     assert out == []
+
+
+@pytest.mark.asyncio
+async def test_pcm_model_reads_real_sample_rate_from_content_type() -> None:
+    """A non-24 kHz PCM model's true rate (audio/pcm;rate=<n>) is honoured, not
+    hardcoded to 24000 — otherwise the voice plays at the wrong pitch."""
+    resp = _FakeStreamResponse(
+        200,
+        chunks=[b"\x01\x02" * 8],
+        headers={"content-type": "audio/pcm;rate=16000;channels=1"},
+    )
+    tts, _ = _tts_with_client(resp, model=DEFAULT_MODEL)
+    out = [c async for c in tts.synthesize("Hi.")]
+    assert out and all(c.sample_rate == 16000 for c in out)
+
+
+# --------------------------------------------------------------------------- #
+# mp3-only models (Mistral Voxtral): request mp3, decode to PCM                 #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_mp3_only_model_requests_mp3_and_decodes_to_pcm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for the live HTTP 400: Voxtral rejects response_format=pcm.
+    The provider must request mp3 for an mp3-only model and decode it to PCM the
+    pipeline can play (instead of blindly sending pcm and 400ing)."""
+    resp = _FakeStreamResponse(200, chunks=[b"ID3-fake-mp3-bytes-....."])
+    tts, client = _tts_with_client(resp, model="mistralai/voxtral-mini-tts-2603")
+    # Decode is exercised via its own unit; here inject a fake so the test needs
+    # no real mp3 fixture / miniaudio.
+    monkeypatch.setattr(ortts, "_decode_mp3_to_pcm", lambda data: b"\x11\x22" * 64)
+
+    out = [c async for c in tts.synthesize("Hello.")]
+
+    assert client.captured["payload"]["response_format"] == "mp3"
+    assert out and all(isinstance(c, AudioChunk) for c in out)
+    assert all(c.sample_rate == OPENROUTER_TTS_SAMPLE_RATE for c in out)
+    assert all(c.channels == 1 for c in out)
+    assert b"".join(c.pcm for c in out) == b"\x11\x22" * 64
+
+
+@pytest.mark.asyncio
+async def test_mp3_decode_failure_raises_before_any_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing decoder / decode error is fatal BEFORE the first chunk, so
+    FallbackTTS crosses to a PCM model instead of shipping silence."""
+    resp = _FakeStreamResponse(200, chunks=[b"mp3-bytes"])
+    tts, _ = _tts_with_client(resp, model="mistralai/voxtral-mini-tts-2603")
+
+    def _boom(data: bytes) -> bytes:
+        raise OpenRouterTTSError("no miniaudio decoder")
+
+    monkeypatch.setattr(ortts, "_decode_mp3_to_pcm", _boom)
+    with pytest.raises(OpenRouterTTSError):
+        _ = [c async for c in tts.synthesize("Hello.")]
+
+
+def test_response_format_for_model_maps_mp3_only_models() -> None:
+    """pcm for the common case; mp3 for the mp3-only models — the gate the
+    request path uses so it never hardcodes one provider's output format."""
+    assert response_format_for_model(DEFAULT_MODEL) == "pcm"
+    assert response_format_for_model("x-ai/grok-voice-tts-1.0") == "pcm"
+    assert response_format_for_model("mistralai/voxtral-mini-tts-2603") == "mp3"
+    assert response_format_for_model(None) == "pcm"
+    assert "mistralai/voxtral-mini-tts-2603" in MP3_ONLY_MODELS
 
 
 # --------------------------------------------------------------------------- #

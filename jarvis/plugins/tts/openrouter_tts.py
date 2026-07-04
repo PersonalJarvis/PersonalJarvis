@@ -5,16 +5,21 @@ Jarvis-Agent providers already use — reaches every speech-synthesis model
 OpenRouter hosts (Gemini Flash TTS, Grok Voice, Microsoft MAI-Voice, Mistral
 Voxtral, Kokoro, Orpheus, Zonos, Sesame CSM, ...).
 
-Endpoint (verified live 2026-07-02):
+Endpoint (verified live 2026-07-02, format matrix 2026-07-03):
   ``POST https://openrouter.ai/api/v1/audio/speech`` — OpenAI-compatible.
   Body ``{"model","input","voice","response_format":"pcm"|"mp3","speed"?}``.
   ``response_format`` accepts ONLY ``"mp3"`` and ``"pcm"`` (``wav`` is rejected
-  with a Zod validation error). We request ``pcm`` and the endpoint answers with
-  ``Content-Type: audio/pcm;rate=24000;channels=1`` — raw 16-bit signed
-  little-endian mono PCM at 24 kHz, i.e. EXACTLY the format the Jarvis playback
-  pipeline consumes (same as Gemini / Grok / Cartesia), so no decode and no
-  resample is needed. Streaming is real chunked-transfer over ``aiter_bytes``, so
-  the first audio frame leaves as soon as the provider flushes it.
+  with a Zod validation error). **The format is chosen PER MODEL, not blanket
+  ``pcm``** (:func:`~jarvis.plugins.tts.openrouter_speech_models.response_format_for_model`):
+  most models return raw ``Content-Type: audio/pcm;rate=<n>;channels=1`` — 16-bit
+  signed little-endian mono PCM (24 kHz for the default) that the Jarvis playback
+  pipeline consumes with NO decode — so those stream chunk-by-chunk over
+  ``aiter_bytes`` and the first frame leaves as soon as the provider flushes it.
+  An mp3-only model (Mistral Voxtral, which 400s on ``pcm``) is requested as
+  ``mp3``, buffered, and decoded to 24 kHz mono PCM via the optional ``miniaudio``
+  decoder (:func:`_decode_mp3_to_pcm`); missing the decoder fails honestly so
+  ``FallbackTTS`` crosses to a PCM model. The true PCM rate is read from the
+  response ``Content-Type`` so a non-24 kHz model never plays at the wrong pitch.
 
 Error contract (open-source AP-22 resilience): a fatal error (missing key,
 401/402/403/429, or a transport failure) is raised BEFORE the first
@@ -36,6 +41,7 @@ from jarvis.plugins.tts.openrouter_speech_models import (
     MODEL_DEFAULT_VOICE,
     MODEL_VOICES,
     coerce_speech_model,
+    response_format_for_model,
     voice_matches_language,
 )
 
@@ -49,6 +55,58 @@ BASE_URL = "https://openrouter.ai/api/v1"
 _HTTP_TIMEOUT_S = 60.0
 # OpenAI-style speech endpoints cap input length; keep a generous bound.
 _MAX_CHARS_PER_REQUEST = 12_000
+# When a whole (mp3-only) response is decoded up front, hand the PCM to the
+# pipeline in ~0.1 s slices (24 kHz * 2 bytes * 0.1 s) so playback still starts
+# promptly instead of one giant chunk.
+_PCM_CHUNK_BYTES = OPENROUTER_TTS_SAMPLE_RATE * 2 // 10
+
+
+def _sample_rate_from_content_type(content_type: str | None) -> int:
+    """Parse the true PCM rate from ``audio/pcm;rate=24000;channels=1``.
+
+    The endpoint reports the real sample rate in the response ``Content-Type``;
+    honouring it keeps a non-24 kHz model (e.g. a 44.1 kHz voice) from playing at
+    the wrong pitch. Falls back to :data:`OPENROUTER_TTS_SAMPLE_RATE` when the
+    header is absent or unparseable.
+    """
+    if not content_type:
+        return OPENROUTER_TTS_SAMPLE_RATE
+    for part in content_type.split(";"):
+        key, _, value = part.strip().partition("=")
+        if key.strip().lower() == "rate":
+            try:
+                rate = int(value.strip())
+            except ValueError:
+                return OPENROUTER_TTS_SAMPLE_RATE
+            return rate if rate > 0 else OPENROUTER_TTS_SAMPLE_RATE
+    return OPENROUTER_TTS_SAMPLE_RATE
+
+
+def _decode_mp3_to_pcm(data: bytes) -> bytes:
+    """Decode mp3 bytes to 24 kHz mono s16le PCM (the pipeline's native format).
+
+    mp3-only OpenRouter models (Mistral Voxtral) cannot return raw PCM, so their
+    output is decoded here via ``miniaudio`` — a small, ffmpeg-free, universal
+    wheel. The import is lazy so a base install WITHOUT the decoder fails
+    honestly (a clear :class:`OpenRouterTTSError` raised before the first chunk,
+    so ``FallbackTTS`` crosses to a PCM model) instead of breaking at import
+    time or shipping silence.
+    """
+    try:
+        import miniaudio
+    except ImportError as exc:  # pragma: no cover - exercised via the honest-error path
+        raise OpenRouterTTSError(
+            "This OpenRouter TTS model returns mp3, which needs the optional "
+            "'miniaudio' decoder (pip install miniaudio). Pick a PCM model "
+            "(e.g. Gemini Flash TTS or Grok Voice) or install the decoder."
+        ) from exc
+    decoded = miniaudio.decode(
+        data,
+        output_format=miniaudio.SampleFormat.SIGNED16,
+        nchannels=1,
+        sample_rate=OPENROUTER_TTS_SAMPLE_RATE,
+    )
+    return decoded.samples.tobytes()
 
 
 class OpenRouterTTSError(RuntimeError):
@@ -232,11 +290,15 @@ class OpenRouterTTS:
         self._ensure_client()
 
         resolved_voice = self._resolve_voice(voice, language_code)
+        # Gate the wire format on a per-model CAPABILITY, never a blanket "pcm":
+        # an mp3-only model (Mistral Voxtral) 400s on pcm. PCM streams raw and
+        # plays with no decoder; mp3 is buffered and decoded to PCM below.
+        response_format = response_format_for_model(self._model)
         payload: dict[str, Any] = {
             "model": self._model,
             "input": text[:_MAX_CHARS_PER_REQUEST],
             "voice": resolved_voice,
-            "response_format": "pcm",
+            "response_format": response_format,
         }
         # Only send speed when non-default: some speech models reject an
         # unexpected field; the default (1.0) never needs it.
@@ -245,7 +307,14 @@ class OpenRouterTTS:
 
         assert self._client is not None
         url = self._base_url + OPENROUTER_TTS_ENDPOINT_PATH
+
+        if response_format == "mp3":
+            async for chunk in self._synthesize_mp3(url, payload, resolved_voice):
+                yield chunk
+            return
+
         carry = b""
+        sample_rate = OPENROUTER_TTS_SAMPLE_RATE
         try:
             async with self._client.stream("POST", url, json=payload) as resp:
                 if resp.status_code >= 400:
@@ -255,6 +324,13 @@ class OpenRouterTTS:
                         f"OpenRouter TTS HTTP {resp.status_code} "
                         f"(model={self._model}, voice={resolved_voice}): {detail}"
                     )
+                # Honour the model's real rate (audio/pcm;rate=<n>) so a non-24 kHz
+                # model does not play at the wrong pitch.
+                sample_rate = _sample_rate_from_content_type(
+                    getattr(resp, "headers", {}).get("content-type")
+                    if getattr(resp, "headers", None)
+                    else None
+                )
                 async for raw in resp.aiter_bytes():
                     if not raw:
                         continue
@@ -265,7 +341,7 @@ class OpenRouterTTS:
                     if chunk:
                         yield AudioChunk(
                             pcm=chunk,
-                            sample_rate=OPENROUTER_TTS_SAMPLE_RATE,
+                            sample_rate=sample_rate,
                             timestamp_ns=0,
                             channels=1,
                         )
@@ -283,7 +359,55 @@ class OpenRouterTTS:
             # 24 kHz s16le stream is byte-even in practice).
             yield AudioChunk(
                 pcm=carry + b"\x00",
-                sample_rate=OPENROUTER_TTS_SAMPLE_RATE,
+                sample_rate=sample_rate,
                 timestamp_ns=0,
                 channels=1,
             )
+
+    async def _synthesize_mp3(
+        self,
+        url: str,
+        payload: dict[str, Any],
+        resolved_voice: str,
+    ) -> AsyncIterator[AudioChunk]:
+        """Buffer an mp3-only response, decode to PCM, and yield it in slices.
+
+        mp3 is not cleanly decodable at arbitrary network-chunk boundaries, so
+        the whole (short TTS) clip is read, then decoded to 24 kHz mono s16le PCM
+        and handed out in ``_PCM_CHUNK_BYTES`` slices. A fatal error (4xx, decode
+        failure, missing decoder, transport) is raised BEFORE the first chunk so
+        ``FallbackTTS`` can cross to a PCM model.
+        """
+        assert self._client is not None
+        buf = bytearray()
+        try:
+            async with self._client.stream("POST", url, json=payload) as resp:
+                if resp.status_code >= 400:
+                    body = await resp.aread()
+                    detail = body.decode("utf-8", "replace")[:300] if body else "<empty>"
+                    raise OpenRouterTTSError(
+                        f"OpenRouter TTS HTTP {resp.status_code} "
+                        f"(model={self._model}, voice={resolved_voice}): {detail}"
+                    )
+                async for raw in resp.aiter_bytes():
+                    if raw:
+                        buf.extend(raw)
+        except OpenRouterTTSError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — transport/stream failure
+            raise OpenRouterTTSError(
+                f"OpenRouter TTS request failed ({exc.__class__.__name__}): {exc}"
+            ) from exc
+
+        # Decode OUTSIDE the transport try so a decoder/format error surfaces as
+        # its own honest OpenRouterTTSError (raised before any chunk is yielded).
+        pcm = _decode_mp3_to_pcm(bytes(buf))
+        for start in range(0, len(pcm), _PCM_CHUNK_BYTES):
+            chunk = pcm[start : start + _PCM_CHUNK_BYTES]
+            if chunk:
+                yield AudioChunk(
+                    pcm=chunk,
+                    sample_rate=OPENROUTER_TTS_SAMPLE_RATE,
+                    timestamp_ns=0,
+                    channels=1,
+                )

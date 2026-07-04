@@ -142,6 +142,32 @@ KNOWN_SPEECH_MODEL_IDS: frozenset[str] = frozenset(
     mid for mid, _ in CURATED_SPEECH_MODELS
 ) | frozenset(MODEL_VOICES)
 
+# Models whose ``/audio/speech`` endpoint accepts ONLY ``response_format="mp3"``
+# and REJECTS ``"pcm"`` with an HTTP 400. Verified live 2026-07-03: Mistral
+# Voxtral answers ``{"message":"Mistral TTS only supports
+# response_format=\"mp3\". Got \"pcm\"."}``. Every OTHER catalog model returns
+# raw 24 kHz s16le PCM the playback pipeline consumes with no decoder; an
+# mp3-only model needs an mp3->PCM decode step (see ``openrouter_tts``). This is
+# a real per-model CAPABILITY, gated by id here so the request path never
+# hardcodes one provider's output format (AP-21). Extend by pasting a model id
+# whose endpoint 400s on ``pcm``.
+MP3_ONLY_MODELS: frozenset[str] = frozenset(
+    {
+        "mistralai/voxtral-mini-tts-2603",
+    }
+)
+
+
+def response_format_for_model(model_id: str | None) -> str:
+    """The ``response_format`` an OpenRouter speech model accepts.
+
+    ``"pcm"`` for the vast majority (streamed raw, played with no decoder) and
+    ``"mp3"`` for an mp3-only model such as Mistral Voxtral, which 400s on
+    ``pcm`` (:data:`MP3_ONLY_MODELS`). Gate the request on this capability —
+    never blindly send ``pcm`` to every model.
+    """
+    return "mp3" if (model_id or "").strip() in MP3_ONLY_MODELS else "pcm"
+
 
 def coerce_speech_model(model_id: str | None) -> str:
     """Return a usable OpenRouter speech-model id for ``model_id``.

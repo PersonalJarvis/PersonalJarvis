@@ -143,6 +143,32 @@ def classify_provider_error(message: str | None) -> str:
     code_match = _HTTP_CODE_RE.search(msg)
     code = int(code_match.group(1)) if code_match else None
 
+    if code == 400:
+        # A 400 means the provider PARSED our request and rejected its CONTENT
+        # (an unknown model id, a foreign voice, an unsupported response_format /
+        # parameter). The credential still AUTHENTICATED (else 401) and cleared
+        # billing (else 402), so the integration itself is sound — this must NOT
+        # show as a red "bad key". The live trigger: OpenRouter TTS answered
+        # HTTP 400 "Mistral TTS only supports response_format=\"mp3\". Got
+        # \"pcm\"." for a perfectly valid, funded key. Frame it as
+        # "would work with a valid model/voice" (integration_ok), never red.
+        if _has_billing(msg):
+            return NO_CREDITS
+        if any(
+            k in msg
+            for k in (
+                "model",
+                "voice",
+                "response_format",
+                "format",
+                "parameter",
+                "unsupported",
+                "not supported",
+                "does not exist",
+            )
+        ):
+            return MODEL_UNAVAILABLE
+        return ERROR
     if code == 401:
         return BAD_KEY
     if code == 402:
