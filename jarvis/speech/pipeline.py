@@ -32,7 +32,11 @@ from uuid import uuid4
 import numpy as np
 
 from jarvis.audio import mic_level
-from jarvis.audio.capture import MicrophoneCapture, pcm_bytes_to_np
+from jarvis.audio.capture import (
+    REALTIME_QUEUE_CHUNKS,
+    MicrophoneCapture,
+    pcm_bytes_to_np,
+)
 from jarvis.audio.chime import CHIME_PCM, CHIME_SAMPLE_RATE, DISCONNECT_PCM, READY_PCM
 from jarvis.audio.device_init import wait_for_stable_audio_devices
 from jarvis.audio.player import AudioPlayer
@@ -4317,6 +4321,15 @@ class SpeechPipeline:
                 return f"whisper:{kw}"
             return ""
 
+        # NOTE: the wake mic keeps the DEEP default queue on purpose. Its
+        # detectors offload inference (openWakeWord ``to_thread``; whisper-wake
+        # ``await transcribe_pcm``), so the event loop stays free and the cheap
+        # ``_fanout`` drains this queue near-instantly — it never fills, so a
+        # shallow depth would be inert here anyway. The wake path's real staleness
+        # lever is the per-detector queues below (``oww_queue`` / ``whisper_queue``),
+        # which belong to the wake layer; this change deliberately does not touch
+        # them. The drop-OLDEST overflow policy (capture ``_safe_put``) still
+        # applies and is safe here.
         async with MicrophoneCapture(device=self._input_device) as mic:
             fanout_task = asyncio.create_task(_fanout(mic), name="fanout")
             oww_task = (
@@ -4644,7 +4657,9 @@ class SpeechPipeline:
         self._last_answer_floor_monotonic = None
         if self._ptt_mode:
             return await self._ptt_session()
-        async with MicrophoneCapture(device=self._input_device) as mic:
+        async with MicrophoneCapture(
+            device=self._input_device, max_queue_chunks=REALTIME_QUEUE_CHUNKS
+        ) as mic:
             vad_iter = self._vad.utterances(
                 self._session_input_stream(mic.stream())
             ).__aiter__()
@@ -7904,7 +7919,9 @@ class SpeechPipeline:
         detector._ensure_model()
 
         try:
-            async with MicrophoneCapture(device=self._input_device) as mic:
+            async with MicrophoneCapture(
+                device=self._input_device, max_queue_chunks=REALTIME_QUEUE_CHUNKS
+            ) as mic:
                 residual = np.empty(0, dtype=np.float32)
                 speech_run = 0
                 async for chunk in mic.stream():

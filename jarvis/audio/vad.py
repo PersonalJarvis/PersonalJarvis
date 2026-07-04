@@ -305,8 +305,40 @@ class SileroEndpointer:
         # ``silence`` so the consumer flushes its carry.
         tail_pending = False
         tail_silent_run = 0
+        # Wall-clock anchor for the silence timer (real-time gap credit). The
+        # endpoint decision counts silent FRAMES and treats each as 32 ms of
+        # elapsed time — which silently assumes frames arrive in lockstep with
+        # real time. On hardware that cannot consume the mic stream in real time
+        # the capture queue overflows and whole chunks are DROPPED (and delivery
+        # lags), so the frame count runs slow or stalls and the turn ends far too
+        # late or never (the "stuck listening / never advances" bug on weaker
+        # laptops). The surviving chunks still carry the true capture wall-clock
+        # in ``timestamp_ns``; ``prev_chunk_ts`` lets us detect a jump larger than
+        # a chunk's own audio duration (= dropped/lagged time) and credit it to
+        # the silence timer below, so end-of-speech stays anchored to real time,
+        # not to how many frames happened to survive.
+        prev_chunk_ts: int = 0
 
         async for chunk in chunks:
+            # Real-time gap in frames: how much silent time to credit if this
+            # chunk arrives after a capture drop/lag. Inert (<= 0) when timestamps
+            # are absent / unrealistic (tests use tiny counters) or contiguous (a
+            # machine that keeps up), and capped so one huge gap cannot overshoot
+            # the window. Applied only inside an active end-of-speech silence run
+            # (see the silence branch), never to speech or a fresh utterance.
+            gap_frames = 0
+            ts = int(getattr(chunk, "timestamp_ns", 0) or 0)
+            n_samples = len(chunk.pcm) // 2  # int16 mono
+            nominal_ms = (n_samples / VAD_SAMPLE_RATE * 1000.0) if n_samples else 0.0
+            if prev_chunk_ts and ts > prev_chunk_ts and nominal_ms > 0.0:
+                missing_ms = (ts - prev_chunk_ts) / 1e6 - nominal_ms
+                if missing_ms >= 16.0:  # at least ~half a VAD frame went missing
+                    gap_frames = min(
+                        int(missing_ms // 32), self._effective_silence_frames
+                    )
+            prev_chunk_ts = ts
+            pending_gap_frames = gap_frames
+
             samples = pcm_bytes_to_np(chunk.pcm)
             buf = np.concatenate([residual, samples])
 
@@ -375,6 +407,10 @@ class SileroEndpointer:
                     active_frames.append(frame)
                     total_frames += 1
                     if is_speech:
+                        # Speech resumed inside this chunk — a capture gap here
+                        # was (at least partly) real speech, so do NOT credit it
+                        # as silence. Drop the pending credit.
+                        pending_gap_frames = 0
                         speech_frames += 1
                         # Probe-independent patience: a long active-speech run is
                         # a long dictation — widen the natural silence window so a
@@ -418,6 +454,17 @@ class SileroEndpointer:
                                 peak_speech_rms,
                             )
                         silent_run += 1
+                        # Real-time gap credit: this chunk arrived after a capture
+                        # drop/lag and its frames are silence, so the missing time
+                        # was almost certainly more end-of-speech silence. Credit
+                        # it ONCE (on the first silent frame of the chunk) so the
+                        # silence timer tracks real wall-clock instead of stalling
+                        # on the frames a slow machine failed to deliver — the fix
+                        # for "the turn never ends on a weaker laptop". Capped at
+                        # construction; harmless (0) on a machine that keeps up.
+                        if pending_gap_frames:
+                            silent_run += pending_gap_frames
+                            pending_gap_frames = 0
 
                     # Probe hook: hand only the *tail* of the active buffer
                     # (last `probe_tail_frames`) to the external stability

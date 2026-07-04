@@ -34,6 +34,15 @@ CHANNELS = 1               # Mono is sufficient for speech
 BLOCKSIZE = 1600           # 100 ms blocks — compromise between latency and CPU overhead
 DTYPE = "int16"
 
+# Queue depth for a REAL-TIME detection consumer (VAD endpointing, wake, barge).
+# ~0.6 s: shallow enough that on a CPU which can't process every frame in real
+# time the drop-OLDEST overflow policy keeps the audio near-present (so
+# end-of-speech silence and the wake word are seen promptly, not seconds late),
+# yet deep enough to absorb normal scheduling jitter on a machine that keeps up
+# (which never fills it). Bulk recorders that must keep every frame
+# (push-to-talk, dictation) use the deeper default instead. See MicrophoneCapture.
+REALTIME_QUEUE_CHUNKS = 6
+
 _BLOCKED_INPUT_SUBSTRINGS = (
     "Stereo Mix",
     "What U Hear",
@@ -270,14 +279,26 @@ class MicrophoneCapture:
         sample_rate: int = SAMPLE_RATE,
         blocksize: int = BLOCKSIZE,
         channels: int = CHANNELS,
+        max_queue_chunks: int = 20,
     ) -> None:
         self._device = _resolve_input_device(device)
         self._sample_rate = sample_rate
         self._blocksize = blocksize
         self._channels = channels
-        # Queue bridges PortAudio thread → asyncio. maxsize limits back-pressure
-        # to ~2 seconds of audio (20 blocks of 100 ms each) before frames are dropped.
-        self._queue: asyncio.Queue[AudioChunk] = asyncio.Queue(maxsize=20)
+        # Queue bridges PortAudio thread → asyncio. maxsize bounds how STALE the
+        # audio a consumer sees may get: with the drop-OLDEST policy in
+        # ``_safe_put`` a full queue always holds the most-recent
+        # ``max_queue_chunks`` blocks, so worst-case staleness ==
+        # max_queue_chunks x 100 ms. The default 20 (~2 s) is generous back-
+        # pressure for a bulk consumer (push-to-talk, which records every frame).
+        # A REAL-TIME detection consumer (VAD endpointing, wake) passes a SHALLOW
+        # depth (~0.6 s) so that on a CPU that can't keep up the end-of-speech
+        # silence and the wake word are seen near-present, not 2 s late — the
+        # "stuck listening / missed wake on a weaker laptop" bug. A machine that
+        # keeps up never fills the queue, so the depth is invisible there.
+        self._queue: asyncio.Queue[AudioChunk] = asyncio.Queue(
+            maxsize=max(1, int(max_queue_chunks))
+        )
         self._stream: sd.InputStream | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._drops = 0
@@ -315,7 +336,7 @@ class MicrophoneCapture:
                 self._drops += 1
 
     def _safe_put(self, chunk: AudioChunk) -> None:
-        """Runs in the event loop — safe put with drop-on-full."""
+        """Runs in the event loop — safe put with drop-OLDEST on full."""
         # Heartbeat update for the stall watchdog. Even if the queue is full,
         # the stream is considered alive — we update the timestamp before the
         # put; otherwise drops would corrupt the stall signal.
@@ -323,6 +344,24 @@ class MicrophoneCapture:
         try:
             self._queue.put_nowait(chunk)
         except asyncio.QueueFull:
+            # A consumer that cannot keep up in real time (a weaker CPU running
+            # the per-frame VAD / wake inference) backs the queue up. Drop the
+            # OLDEST chunk and enqueue the newest so the consumer always processes
+            # near-PRESENT audio (staleness bounded to the queue depth) instead of
+            # a growing stale backlog — the wake detector then scores fresh frames
+            # and the VAD sees the current end-of-speech silence promptly, not a
+            # 2 s-old snapshot. Mirrors the wake fanout's existing drop-oldest
+            # policy (``_run_parallel_wake``). Still counted as a drop; the VAD's
+            # timestamp gap-credit accounts for the dropped time so end-of-speech
+            # stays anchored to real wall-clock, not delivered-frame count.
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                self._queue.put_nowait(chunk)
+            except asyncio.QueueFull:
+                pass
             self._drops += 1
 
     async def _try_open_stream(self) -> None:
