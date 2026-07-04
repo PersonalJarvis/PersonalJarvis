@@ -870,6 +870,29 @@ async def _queue_iter(q: asyncio.Queue) -> AsyncIterator[AudioChunk]:
         yield chunk
 
 
+def _default_tts_for_pipeline(config: Any) -> Any:
+    """The default TTS when the caller supplies none — key-aware (AP-22).
+
+    Mirrors the STT default a few lines into ``__init__``: build through the same
+    key-aware ``build_tts_from_config`` the real construction paths use, so a
+    single-key user's spoken output — INCLUDING the deterministic "couldn't
+    understand you" readback — crosses to whatever TTS family the user actually
+    has a key for instead of being hard-pinned to a keyless Gemini default that
+    goes silently mute (AP-22/AP-6). Degrades to a bare ``GeminiFlashTTS`` only
+    when there is no config or the factory itself fails, so voice boot is never
+    broken. (In practice every real caller passes a TTS built this way already;
+    this closes the latent ``tts=None`` fallback that ignored the user's key.)
+    """
+    if config is not None and getattr(config, "tts", None) is not None:
+        try:
+            from jarvis.plugins.tts import build_tts_from_config
+
+            return build_tts_from_config(config.tts)
+        except Exception as exc:  # noqa: BLE001 — a TTS build must never break voice boot
+            log.warning("TTS factory failed (%s); using the default Gemini voice.", exc)
+    return GeminiFlashTTS()
+
+
 class SpeechPipeline:
     """End-to-End Pipeline mit Call/Hangup-Lifecycle + Parallel-Wake."""
 
@@ -1060,7 +1083,7 @@ class SpeechPipeline:
             self._probe_stt = wrap_stt_with_dictionary(self._probe_stt)
         except Exception as exc:  # noqa: BLE001 — corrections must never break voice boot
             log.warning("STT dictionary wrapper unavailable: %s", exc)
-        self._tts = tts or GeminiFlashTTS()
+        self._tts = tts or _default_tts_for_pipeline(config)
         self._openwakeword_enabled = enable_openwakeword
         # Custom-wake-word plan (jarvis.speech.wake_phrase.WakeWordPlan) or None.
         # When None, the wake path is byte-identical to the legacy "Hey Jarvis"
