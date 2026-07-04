@@ -57,7 +57,7 @@ from ..events import (
     WorkerSpawned,
     now_ms,
 )
-from ..isolation.worktree import WorktreeManager
+from ..isolation.worktree import WorktreeManager, read_worktree_base_sha
 from ..worker_runtime.workspace import materialize_worker_contract
 from ..manager import MissionManager
 from ..stream_evidence import (
@@ -1860,10 +1860,20 @@ class Kontrollierer:
         prompt reads the diff as text, so comment-prefixed lines are
         informational and don't require a parser change.
 
+        Committed-deliverable capture (2026-07-03, mission 019f26d0-bb07): when
+        the worktree records a BASE commit SHA (``read_worktree_base_sha``), we
+        diff the index against that BASE rather than the live ``HEAD``. A worker
+        that ``git commit``s its file advances ``HEAD`` past the deliverable, so
+        ``git diff --cached HEAD`` renders EMPTY for it and the file is lost;
+        diffing against the fork-point base surfaces committed AND uncommitted
+        changes alike. Falls back to ``HEAD`` when no base was recorded (older /
+        externally-created worktrees), so this is purely additive.
+
         All git calls are best-effort with a 10s cap; failure returns ""
         and logs at WARNING so the upstream Critic still gets a
         (truthful) empty diff rather than a stale one.
         """
+        diff_base = read_worktree_base_sha(worktree) or "HEAD"
         try:
             subprocess.run(  # noqa: S603
                 ["git", "add", "-A", "."],
@@ -1889,7 +1899,9 @@ class Kontrollierer:
                 # worker-created file via this exact sequence.
                 # `-c core.quotepath=false` keeps non-ASCII paths raw UTF-8
                 # instead of octal-escaping them (HIGH finding 2026-05-27).
-                ["git", "-c", "core.quotepath=false", "diff", "--cached", "HEAD"],
+                # `diff_base` is the worktree's fork-point (or HEAD when none was
+                # recorded) so a worker's own commits are still captured.
+                ["git", "-c", "core.quotepath=false", "diff", "--cached", diff_base],
                 cwd=str(worktree),
                 check=False,
                 capture_output=True,
@@ -2226,6 +2238,37 @@ class Kontrollierer:
                     if rel and rel not in untracked:
                         untracked.append(rel)
 
+            # THIRD enumeration — files the worker COMMITTED (2026-07-03, mission
+            # 019f26d0-bb07). A committed deliverable is tracked, so neither
+            # `ls-files --others` above nor the staged `git diff HEAD` sees it,
+            # and it is lost when the worktree is pruned. When a base commit was
+            # recorded (`read_worktree_base_sha`), enumerate every file
+            # added/copied/modified/renamed between the base and the current HEAD
+            # and union them in — they exist on disk in the worktree (a commit
+            # does not remove the working-tree file) and are copied verbatim
+            # below like any other deliverable. `--diff-filter=ACMR` excludes
+            # deletions (D) so a removed file is never resurrected as an empty
+            # copy. Best-effort: no base / a git hiccup just falls back to the
+            # untracked-only behaviour.
+            archive_base = read_worktree_base_sha(worktree)
+            if archive_base:
+                r_committed = subprocess.run(  # noqa: S603
+                    ["git", "-c", "core.quotepath=false", "diff",
+                     "--name-only", "--diff-filter=ACMR", archive_base, "HEAD"],
+                    cwd=str(worktree),
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=10.0,
+                    creationflags=NO_WINDOW_CREATIONFLAGS,
+                )
+                for ln in (r_committed.stdout or "").splitlines():
+                    rel = ln.strip()
+                    if rel and rel not in untracked:
+                        untracked.append(rel)
+
             # `git add -A .` stages full-content blobs so new files show
             # up in `git diff HEAD` with their bytes (2026-05-24: was
             # `add -N`, whose empty intent-to-add blob made new files
@@ -2255,7 +2298,11 @@ class Kontrollierer:
                 # "+opus direct works" while `git diff HEAD` was empty).
                 # `-c core.quotepath=false` keeps non-ASCII paths raw UTF-8
                 # instead of octal-escaping them (HIGH finding 2026-05-27).
-                ["git", "-c", "core.quotepath=false", "diff", "--cached", "HEAD"],
+                # Diff against the recorded base (fork-point) when present so the
+                # fallback diff.patch includes files the worker committed; else
+                # HEAD (unchanged pre-fix behaviour).
+                ["git", "-c", "core.quotepath=false", "diff", "--cached",
+                 archive_base or "HEAD"],
                 cwd=str(worktree),
                 check=False,
                 capture_output=True,

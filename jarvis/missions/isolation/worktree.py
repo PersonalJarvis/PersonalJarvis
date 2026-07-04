@@ -45,6 +45,40 @@ _MAX_WORKTREE_PATH_LEN = 200
 # Slug sanitizer: allows [a-z0-9-], everything else -> '-', leading/trailing trim.
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
+# Sidecar file (in the TASK dir, one level ABOVE ``workspace/`` so it never
+# pollutes the worktree diff) that records the worktree's BASE commit SHA — the
+# HEAD it was forked from at creation time (the ``main`` checkout for a full
+# worktree, the ``lean-workspace-init`` empty commit for a lean one). The
+# Kontrollierer diffs against this base instead of the live HEAD so a worker
+# that ``git commit``s its deliverable is still captured: after a commit,
+# ``git diff --cached HEAD`` is empty and ``git ls-files --others`` no longer
+# lists the file (it is now tracked), so the committed deliverable would
+# otherwise be invisible to archiving and silently lost when the worktree is
+# pruned. Live forensic 2026-07-03, mission 019f26d0-bb07: a worker built a
+# complete ``schokolade-99.html``, then (as coding agents habitually do)
+# ``git add`` + ``git commit``-ed it; the file fell out of the untracked-only
+# capture and the user received only a materialised ``.md`` summary — the HTML
+# was gone. Diffing against the base makes committed files reappear.
+BASE_SHA_SIDECAR: str = ".mission_base_sha"
+
+
+def read_worktree_base_sha(workspace: Path) -> str | None:
+    """Return the recorded base commit SHA for a worktree, or ``None``.
+
+    Reads the :data:`BASE_SHA_SIDECAR` file written by
+    :meth:`WorktreeManager._write_base_sha` at creation time. ``None`` when the
+    sidecar is absent (a pre-fix / externally-created worktree) or unreadable —
+    callers then fall back to their pre-existing ``HEAD``-relative behaviour, so
+    this is purely additive and never breaks an older mission.
+    """
+    try:
+        raw = (workspace.parent / BASE_SHA_SIDECAR).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    # A commit SHA is 40 hex chars (or the short form). Guard against a truncated
+    # / corrupt sidecar so we never hand git a bogus revision.
+    return raw if re.fullmatch(r"[0-9a-fA-F]{7,40}", raw) else None
+
 # Worktree RUN-dir name shape: ``<YYYYMMDDTHHMMSS>__<slug>__<8-hex>`` (see
 # ``create`` below). ONLY these transient scaffolding dirs are eligible for the
 # leaked-worktree sweep. The persistent ``mission_<id>`` archive dirs that
@@ -207,6 +241,9 @@ class WorktreeManager:
         logger.info("WorktreeManager.create: %s", " ".join(cmd))
         self._run_git(cmd)
 
+        # Record the base commit (the forked-from HEAD) so the Kontrollierer can
+        # diff against it and capture files the worker later ``git commit``s.
+        self._write_base_sha(workspace)
         return workspace
 
     # Identity used for the lean repo's initial commit. A fresh ``git init``
@@ -252,7 +289,33 @@ class WorktreeManager:
         # repo's `.git/info/exclude` (which already ignores node_modules/) and
         # its `.git` is a FILE, so there is nothing local to write here.
         self._write_dependency_excludes(workspace)
+        # Record the base commit (the lean repo's initial empty commit) so the
+        # Kontrollierer can diff against it and capture files a worker commits.
+        self._write_base_sha(workspace)
         return workspace
+
+    def _write_base_sha(self, workspace: Path) -> None:
+        """Persist the worktree's base commit SHA next to (not inside) the tree.
+
+        Runs ``git rev-parse HEAD`` in the freshly-created ``workspace`` and
+        writes the result to ``workspace.parent / BASE_SHA_SIDECAR`` — the task
+        dir, which is OUTSIDE the worktree so the sidecar never appears in a
+        ``git add -A`` / ``git diff`` capture. Best-effort: a failure only
+        regresses to the pre-fix ``HEAD``-relative capture and must never block
+        workspace creation.
+        """
+        try:
+            r = self._run_git_in(["git", "rev-parse", "HEAD"], cwd=workspace)
+            sha = (r.stdout or "").strip()
+            if sha:
+                (workspace.parent / BASE_SHA_SIDECAR).write_text(
+                    sha, encoding="utf-8"
+                )
+        except (subprocess.CalledProcessError, OSError) as exc:
+            logger.warning(
+                "could not record base SHA for %s: %s — committed deliverables "
+                "may not be captured for this task", workspace, exc,
+            )
 
     def _write_dependency_excludes(self, workspace: Path) -> None:
         """Append `_DEPENDENCY_EXCLUDE_DIRS` to the lean repo's
