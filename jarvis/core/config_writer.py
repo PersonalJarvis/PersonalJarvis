@@ -910,6 +910,19 @@ _TTS_DEFAULTS: dict[str, dict[str, str]] = {
         "voice_en": "",
         "language_code": "auto",
     },
+    "openrouter-tts": {
+        # OpenRouter TTS reuses the shared OpenRouter key and resolves its own
+        # model + voice defaults internally (jarvis/plugins/tts/openrouter_tts.py:
+        # MODEL_DEFAULT_VOICE / GENERIC_DEFAULT_VOICE). Leave these blank — the
+        # falsy gate in _patch_tts_block skips empty values, so the provider picks
+        # sensible per-model defaults. This entry exists so the provider-parity
+        # test passes and set_tts_provider() can reconcile the [tts] block on a
+        # switch to OpenRouter TTS.
+        "model": "",
+        "voice_de": "",
+        "voice_en": "",
+        "language_code": "auto",
+    },
 }
 
 # Per-provider voice allowlist — when the existing voice does not match the

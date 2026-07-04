@@ -65,6 +65,7 @@ def _make_active_session_pipeline(idle_timeout_s: float) -> SpeechPipeline:
     pipe._ptt_mode = False
     pipe._idle_timeout_s = idle_timeout_s
     pipe._input_device = None
+    pipe._input_priority = ()
     pipe._hangup_event = asyncio.Event()
     pipe._session_end_reason = None
     pipe._carry_pcm = bytearray()
