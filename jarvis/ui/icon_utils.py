@@ -416,9 +416,38 @@ def load_ico_as_pil_image(ico_path: Path, size: int = 64) -> Any | None:
 
 
 def project_icon_path() -> Path:
-    """Resolves the default icon path: ``<project-root>/assets/icons/jarvis.ico``.
+    """Resolve the desktop/taskbar icon (``jarvis.ico``), install-layout agnostic.
 
-    The file lives outside the ``jarvis`` package. We go up three levels
-    from ``jarvis/ui/icon_utils.py`` to the project root.
+    Every Win32 icon surface (window class icon, AUMID icon, Start-Menu shortcut,
+    taskbar name, tray) resolves the icon through this one function — so if it
+    returns a non-existent path, ALL of them silently fall back to the
+    ``pythonw.exe`` Python logo. That is exactly the "taskbar shows Python on a
+    fresh machine" symptom: the icon historically lived only at
+    ``<repo-root>/assets/icons/jarvis.ico`` (``parents[2]``), which resolves only
+    for a run *from the project folder*; a real ``pip install`` relocates the
+    package to ``site-packages`` where that repo-root ``assets/`` is absent.
+
+    Resolution order (first existing wins):
+      1. the **bundled** in-package copy ``jarvis/assets/icons/jarvis.ico`` — ships
+         with the code via ``package-data``, so it is present on every install;
+      2. the legacy ``<repo-root>/assets/icons/jarvis.ico`` — the dev/editable and
+         build-tool copy (PyInstaller spec, ``install_shortcuts.py``).
+
+    Falls back to the bundled path (even if missing) so callers get a stable,
+    descriptive path in log warnings.
     """
-    return Path(__file__).resolve().parents[2] / "assets" / "icons" / "jarvis.ico"
+    try:
+        from jarvis.assets import bundled_app_icon
+
+        bundled = bundled_app_icon()
+        if bundled is not None:
+            return bundled
+    except Exception as exc:  # noqa: BLE001 — never let icon resolution crash boot
+        logger.debug("bundled_app_icon lookup failed, trying repo-root: {}", exc)
+
+    repo_root = Path(__file__).resolve().parents[2] / "assets" / "icons" / "jarvis.ico"
+    if repo_root.is_file():
+        return repo_root
+
+    # Nothing found — return the bundled location for a descriptive warning.
+    return Path(__file__).resolve().parent.parent / "assets" / "icons" / "jarvis.ico"

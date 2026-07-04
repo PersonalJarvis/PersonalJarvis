@@ -11,6 +11,12 @@ Currently:
   drags torch) lives only in the ``[local-voice]`` extra, but the model file
   itself is torch-free and run via base ``onnxruntime``. Loaded via
   :func:`bundled_silero_vad_model`.
+- ``icons/``: the Windows desktop/taskbar icon (``jarvis.ico``, the Gigi ghost
+  mascot). Bundled so every Win32 icon surface (window class icon, AUMID icon,
+  Start-Menu shortcut, taskbar name) can find it regardless of how the package
+  was installed. Loaded via :func:`bundled_app_icon`. Byte-identical to the
+  build-tool copy at ``<repo-root>/assets/icons/jarvis.ico`` (kept in sync by
+  ``tests/unit/ui/test_icon_identity.py``).
 
 Future bundles (e.g. packaged voice clips) live under this package.
 """
@@ -27,6 +33,9 @@ _WAKEWORD_FILES = {
 
 _VAD_DIR = Path(__file__).resolve().parent / "vad"
 _SILERO_VAD_FILE = "silero_vad.onnx"
+
+_ICONS_DIR = Path(__file__).resolve().parent / "icons"
+_APP_ICON_FILE = "jarvis.ico"
 
 
 def bundled_wakeword_models() -> dict[str, Path] | None:
@@ -68,4 +77,27 @@ def bundled_silero_vad_model() -> Path | None:
     return path if path.is_file() else None
 
 
-__all__ = ["bundled_wakeword_models", "bundled_silero_vad_model"]
+def bundled_app_icon() -> Path | None:
+    """Return the absolute path to the bundled ``jarvis.ico``, or ``None``.
+
+    ``None`` only when the file is missing (partial checkout). Shipping the icon
+    *inside* the package — rather than at ``<repo-root>/assets/icons/`` where the
+    build-tool copy lives — is what makes the Windows taskbar/titlebar icon work
+    on a fresh install no matter how it was installed. The legacy repo-root path
+    resolves only for a run *from the project folder* (``parents[2]`` == repo
+    root); a real ``pip install`` puts the package under ``site-packages`` where
+    that repo-root ``assets/`` does not exist, so every Win32 icon surface (class
+    icon, AUMID icon, Start-Menu shortcut, taskbar name) silently fell back to
+    the ``pythonw.exe`` Python logo. The in-package copy always ships with the
+    code (``package-data`` glob ``assets/**/*``). Same fix class as the bundled
+    Silero VAD model above.
+    """
+    path = _ICONS_DIR / _APP_ICON_FILE
+    return path if path.is_file() else None
+
+
+__all__ = [
+    "bundled_wakeword_models",
+    "bundled_silero_vad_model",
+    "bundled_app_icon",
+]
