@@ -172,8 +172,12 @@ def test_set_device_with_auto_headset_string_resolves(monkeypatch) -> None:
     """
     import jarvis.audio.player as player_mod
 
+    # _resolve_output_device now takes an optional priority arg (user
+    # device-name preference); the stub accepts and ignores it.
     monkeypatch.setattr(
-        player_mod, "_resolve_output_device", lambda d: 42 if d == "auto-headset" else d
+        player_mod,
+        "_resolve_output_device",
+        lambda d, priority=None: 42 if d == "auto-headset" else d,
     )
 
     p = _make_player(device=3)

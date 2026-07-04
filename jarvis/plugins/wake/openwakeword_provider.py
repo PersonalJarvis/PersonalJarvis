@@ -184,6 +184,12 @@ class OpenWakeWordProvider:
         self._score_log_threshold = score_log_threshold
         self._model_path = model_path
         self._model = None  # lazy
+        # Set once if the openWakeWord runtime cannot be imported, so the
+        # detector degrades to a logged no-op instead of crashing the speech
+        # pipeline. openwakeword + onnxruntime are BASE deps (2026-07-04), so
+        # this should never trip on a normal install — it is a safety net for a
+        # broken/partial environment.
+        self._runtime_unavailable = False
         self._last_trigger_ns: int = 0
         self._residual = np.empty(0, dtype=np.int16)
         # Volume-robust wake: lift quiet input toward a target peak before
@@ -306,13 +312,29 @@ class OpenWakeWordProvider:
         return raw
 
     def _ensure_model(self) -> None:
-        if self._model is None:
+        if self._model is not None or self._runtime_unavailable:
+            return
+        try:
             from openwakeword.model import Model
-            # wakeword_models=[...] accepts either built-in names or paths to
-            # .onnx / .tflite files. We prefer the bundled local ONNX paths
-            # (see _model_kwargs) — no runtime download, offline-capable on
-            # first boot.
-            self._model = Model(**self._model_kwargs())
+        except ImportError as exc:
+            # openwakeword + onnxruntime are BASE deps, so this only happens on a
+            # broken/partial install. Degrade to a no-op wake (the pipeline keeps
+            # running; the user can still talk via the app/push-to-talk) instead
+            # of an uncaught ImportError that would take the whole speech pipeline
+            # down. Actionable, English, one line.
+            self._runtime_unavailable = True
+            log.error(
+                "Wake word disabled: the openWakeWord runtime is not importable "
+                "(%s). Reinstall the base dependencies (`pip install -e .`) to "
+                "restore the always-on wake word.",
+                exc,
+            )
+            return
+        # wakeword_models=[...] accepts either built-in names or paths to
+        # .onnx / .tflite files. We prefer the bundled local ONNX paths
+        # (see _model_kwargs) — no runtime download, offline-capable on
+        # first boot.
+        self._model = Model(**self._model_kwargs())
 
     def _warmup_model(self) -> None:
         """Run ONE throwaway inference so the first real wake frame is not cold.
@@ -376,7 +398,11 @@ class OpenWakeWordProvider:
         raw confidence values (protocol requirement).
         """
         self._ensure_model()
-        assert self._model is not None
+        if self._model is None:
+            # Runtime unavailable (already logged in _ensure_model). Degrade to a
+            # no-op detector: end the stream cleanly so the speech pipeline keeps
+            # running instead of dying on an uncaught error.
+            return
 
         # Per-session reset (the "no dead state blocks waking" guard): start each
         # listen from clean audio + counter state so a stale loud gain envelope

@@ -1022,6 +1022,9 @@
     "wake_word": {
       "title": "Palabra de activación",
       "description": "Frase de activación para el modo de voz. Escribe la tuya.",
+      "activation_title": "Activar palabra de activación",
+      "activation_hint": "Activado: Jarvis escucha siempre tu palabra (necesita un modelo local). Desactivado: actívalo con un atajo de teclado (pulsar para hablar).",
+      "activation_saved": "Activación guardada — reinicia para aplicar.",
       "phrase_label": "Frase de activación",
       "phrase_placeholder": "p. ej. Jonas",
       "engine_label": "Motor de detección",
@@ -1462,6 +1465,15 @@
       "reply_label": "Idioma de respuesta"
     },
     "wake_word": {
+      "choice_title": "¿Cómo quieres activar a {name}?",
+      "choice_body": "Elige lo que mejor se adapte a tu forma de trabajar — puedes cambiarlo después en Ajustes.",
+      "mode_wake_title": "Palabra de activación",
+      "mode_wake_body": "Di tu propia palabra en cualquier momento — {name} escucha todo el tiempo. Necesita un pequeño modelo local para tu palabra exacta.",
+      "mode_shortcut_title": "Atajo de teclado",
+      "mode_shortcut_body": "Sin palabra de activación — mantén pulsada una tecla para hablar y suéltala para enviar (pulsar para hablar).",
+      "back_to_choice": "Atrás",
+      "shortcut_note": "Activarás a {name} con un atajo de teclado en lugar de una palabra de activación. Puedes configurar la tecla exacta en cualquier momento en Ajustes → Palabra de activación.",
+      "shortcut_cta": "Continuar",
       "title": "Elige tu palabra de activación",
       "body": "Elige la palabra que activa tu asistente. \"Hey\" queda fija — tú eliges el resto.",
       "prefix": "Hey",
@@ -1474,7 +1486,8 @@
       "ack_label": "Soy responsable de la palabra de activación que elijo.",
       "cta": "Guardar palabra de activación",
       "saving": "Guardando…",
-      "derived_name": "Tu asistente se llamará: {0}"
+      "derived_name": "Tu asistente se llamará: {0}",
+      "continue_anyway": "Continuar de todos modos"
     },
     "api_keys": {
       "title": "Conecta tus servicios de IA (opcional)",

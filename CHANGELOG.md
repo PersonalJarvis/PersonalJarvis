@@ -7,6 +7,44 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
+## [1.0.2] — 2026-07-04
+
+Bugfix release: the voice pipeline and wake word now work on a fresh,
+non-maintainer machine — not just where the local voice models happen to be
+installed.
+
+### Fixed
+
+- **Speech-to-text stayed silent on a fresh install, even over the cloud.** On a
+  machine without a local Whisper model, the STT factory fell back only to local
+  faster-whisper (absent from the base install) instead of the cloud STT the user
+  has a key for — nothing was transcribed and voice "listened forever". It now
+  crosses to a keyed cloud STT family (OpenRouter / Groq) before ever reaching for
+  a local model.
+- **End-of-speech detection failed out of the box.** The Silero VAD model is now
+  bundled in the base install (torch-free via onnxruntime), so utterances are
+  captured on any machine.
+- **The wake word needed the heavy optional pack to run at all.** The neural wake
+  runtime (openWakeWord + CPU onnxruntime) moved into the base install — a chosen
+  wake word works out-of-the-box, no GPU and no ~1 GB download.
+- **On weaker laptops the end-of-speech never triggered.** The VAD silence timer
+  counted delivered frames and stalled when the capture queue overflowed; it now
+  credits real-time gaps and drops oldest frames under load.
+- **The desktop taskbar showed the Python logo instead of the Jarvis icon** — the
+  icon is now bundled in-package.
+
+### Changed
+
+- **A wake word now requires a local model for the user's own word.** With no
+  local model the wake word is off and the honest alternative is a keyboard
+  shortcut (push-to-talk) — no more silently listening for a branded fallback the
+  user never says. Added an in-app activation switch and a two-way onboarding
+  choice (wake word vs hotkey).
+- **The hardware wizard recommends a multilingual Whisper model** instead of an
+  English-only one that mangled German / Spanish.
+- **Default TTS is key-aware** — it no longer hard-pins to one provider when none
+  is configured.
+
 ## [1.0.0] — 2026-07-03
 
 First **public** release of Personal Jarvis — a voice-driven meta-orchestrator

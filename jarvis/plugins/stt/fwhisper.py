@@ -268,6 +268,22 @@ class FasterWhisperProvider:
         self._model_name = model
         self._device = device
         self._compute_type = compute_type
+        # CPU + a CUDA-only compute type is a guaranteed construction error, not a
+        # silent downgrade: CTranslate2 RAISES ``ValueError("Requested int8_float16
+        # compute type, but the target device or backend do not support efficient
+        # int8_float16 computation")`` — it does not fall back on its own (verified
+        # 2026-07-04 against ctranslate2 on a CPU device). The shipped cloud-first
+        # default pairs ``device="cpu"`` with ``compute_type="int8_float16"`` (the
+        # value the maintainer's CUDA box needs), so EVERY fresh CPU/VPS install
+        # otherwise hits that ValueError on the first model build — twice (boot
+        # prefetch + the first real ``_ensure_model``) — before ``_ensure_model``'s
+        # retry recovers it to ``int8``. Pre-coercing here when the device is CPU
+        # skips the doomed attempt and its scary WARNING while landing on the exact
+        # same engine the fallback already produces. Only fires for ``device="cpu"``
+        # (case-insensitive), so a ``cuda`` / ``auto`` device is untouched — the GPU
+        # path keeps int8_float16 verbatim.
+        if self._device.lower() == "cpu":
+            self._compute_type = _cpu_safe_compute_type(self._compute_type)
         self._language = language if language and language != "auto" else None
         # Defense-in-depth (forensic 2026-06-28): an English-only model fed
         # non-English audio mangles it into English words. Unless the user has

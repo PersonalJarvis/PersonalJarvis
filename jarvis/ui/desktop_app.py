@@ -2181,7 +2181,14 @@ class DesktopApp:
                 local_whisper_available=_local_whisper_available,
             )
             from loguru import logger as _wlog
-            if wake_plan.degraded:
+            if not wake_plan.wake_available:
+                _wlog.info(
+                    "Wake-word OFF: no local model for {!r} — hotkey / push-to-talk "
+                    "is the activation. {}",
+                    wake_plan.phrase,
+                    wake_plan.message,
+                )
+            elif wake_plan.degraded:
                 _wlog.warning("Wake-word degraded: {}", wake_plan.message)
             else:
                 _wlog.info(
@@ -2347,12 +2354,18 @@ class DesktopApp:
                 #   - stt_match (custom phrase, no pretrained model) -> the
                 #     neural model can't detect the phrase, so OWW is OFF and the
                 #     RollingWhisperWake transcript-match IS the wake path.
+                #   - no local model for the user's word (wake_plan.wake_available
+                #     False) -> arm NOTHING; hotkey / push-to-talk is the only
+                #     activation. The product rule (2026-07-04): a wake word needs
+                #     a local model, never a silent branded fallback.
                 enable_openwakeword=(
                     self.cfg.trigger.wake_word_enabled
+                    and wake_plan.wake_available
                     and wake_plan.engine in ("openwakeword", "custom_onnx")
                 ),
                 enable_whisper_wake=(
                     self.cfg.trigger.wake_word_enabled
+                    and wake_plan.wake_available
                     and (
                         wake_plan.engine == "stt_match"
                         or self.cfg.trigger.heavy_local_whisper

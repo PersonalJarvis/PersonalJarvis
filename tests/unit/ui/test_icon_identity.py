@@ -26,6 +26,7 @@ from jarvis.ui.icon_utils import (
     APP_USER_MODEL_ID,
     START_MENU_SHORTCUT_NAME,
     ensure_start_menu_shortcut,
+    project_icon_path,
     register_windows_app_user_model_id,
 )
 
@@ -55,6 +56,66 @@ def _delete_test_key() -> None:
         winreg.DeleteKey(winreg.HKEY_CURRENT_USER, _TEST_SUBKEY)
     except OSError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Icon RESOLUTION — the single point every Win32 icon surface depends on.
+#
+# The window class icon, AUMID icon, Start-Menu shortcut, taskbar name and tray
+# all resolve the icon through ``project_icon_path()``. If that returns a path
+# that does not exist, ALL of them silently fall back to the ``pythonw.exe``
+# Python logo — the "taskbar shows Python on a fresh machine" report. The icon
+# used to live ONLY at ``<repo-root>/assets/icons/jarvis.ico`` (found via
+# ``parents[2]``), which resolves only for a run from the project folder; a real
+# ``pip install`` relocates the package to ``site-packages`` where that repo-root
+# ``assets/`` is absent. The fix bundles the icon inside the package. These
+# tests are platform-neutral on purpose: the bug is about file *presence*, which
+# must hold on every OS / CI runner, not just Windows.
+# ---------------------------------------------------------------------------
+
+
+def test_project_icon_path_always_exists() -> None:
+    """The resolved desktop icon must be a real file on every install layout."""
+    p = project_icon_path()
+    assert p.is_file(), (
+        f"project_icon_path() -> {p} does not exist; every Win32 icon surface "
+        "would fall back to the pythonw.exe Python logo"
+    )
+    assert p.suffix == ".ico"
+
+
+def test_project_icon_path_prefers_bundled_in_package_copy() -> None:
+    """The primary resolution is the in-package copy, so it ships with any install."""
+    from jarvis.assets import bundled_app_icon
+
+    bundled = bundled_app_icon()
+    assert bundled is not None and bundled.is_file()
+    # The in-package copy lives under jarvis/assets/icons/, NOT the repo root.
+    assert bundled.as_posix().endswith("jarvis/assets/icons/jarvis.ico")
+    # project_icon_path() returns exactly that bundled copy when present.
+    assert project_icon_path() == bundled
+
+
+def test_bundled_icon_is_byte_identical_to_repo_root_copy() -> None:
+    """Drift guard: the packaged icon must match the build-tool repo-root copy.
+
+    The repo-root ``assets/icons/jarvis.ico`` is still referenced by the
+    PyInstaller spec and ``scripts/install_shortcuts.py``. Keeping the two copies
+    byte-identical means updating the brand icon in one place without the runtime
+    and the installer drifting apart. If this fails, re-copy the repo-root icon
+    into ``jarvis/assets/icons/``.
+    """
+    repo_root = Path(__file__).resolve().parents[3] / "assets" / "icons" / "jarvis.ico"
+    if not repo_root.is_file():
+        pytest.skip("repo-root icon copy absent (slim checkout)")
+    from jarvis.assets import bundled_app_icon
+
+    bundled = bundled_app_icon()
+    assert bundled is not None
+    assert bundled.read_bytes() == repo_root.read_bytes(), (
+        "jarvis/assets/icons/jarvis.ico drifted from assets/icons/jarvis.ico — "
+        "re-copy the repo-root icon into the package"
+    )
 
 
 def test_app_display_name_is_personal_jarvis() -> None:

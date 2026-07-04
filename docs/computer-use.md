@@ -200,7 +200,7 @@ Manual validation checklist:
 
 1. `Mach Spotify auf`
    Expected: direct fast path, no provider call, no vision collection.
-2. `Hey Jarvis, can you open Spotify?`
+2. `Hey Nova, can you open Spotify?`
    Expected: direct fast path, not smalltalk.
 3. `How can I open Chrome?`
    Expected: no app launch; normal answer path.

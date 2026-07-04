@@ -10,16 +10,17 @@ Two concrete permanent-dead-state paths found in the wake plumbing:
    re-enabling a detector wakes it back up, in-app.
 
 2. ``set_wake_plan(engine="stt_match")`` on a box where the local Whisper engine
-   cannot be built used to disable BOTH detectors → the silent dead listener
-   above. It must instead degrade to the bundled hey_rhasspy OWW model so the
-   wake stays alive (AP-22: a missing capability must degrade, never brick).
+   cannot be built used to leave a permanently-parked dead listener. It must park
+   RECOVERABLY on ``_wake_reload_event`` (both detectors off = the honest
+   hotkey-only mode per the 2026-07-04 product rule, re-armable in-app by a later
+   ``set_wake_plan``), and must NOT fall back to a branded 'Hey Rhasspy' model
+   (listening for a word the user never says).
 """
 from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
 
-from jarvis.plugins.wake.openwakeword_provider import OpenWakeWordProvider
 from jarvis.speech.pipeline import PipelineState, SpeechPipeline
 from jarvis.speech.wake_phrase import resolve_wake_plan
 
@@ -90,10 +91,12 @@ def _shell_for_set_wake_plan() -> SpeechPipeline:
     return pipe
 
 
-def test_set_wake_plan_stt_match_without_whisper_degrades_to_rhasspy(monkeypatch) -> None:
+def test_set_wake_plan_stt_match_without_whisper_is_hotkey_only(monkeypatch) -> None:
     """A live switch to a custom phrase on a box where the wake Whisper cannot be
-    built must NOT disable both detectors (the silent dead listener). It degrades
-    to the bundled hey_rhasspy OWW model so wake stays alive."""
+    built must NOT fall back to a branded 'Hey Rhasspy' model (product rule
+    2026-07-04). It arms NO detector — wake OFF, hotkey/PTT activation — which is
+    a RECOVERABLE parked state (the wake loop parks on _wake_reload_event so a
+    later set_wake_plan re-arms it), not the old permanent dead listener."""
     import jarvis.plugins.stt as stt_pkg
 
     def _boom(*_a: object, **_k: object) -> object:
@@ -107,12 +110,10 @@ def test_set_wake_plan_stt_match_without_whisper_degrades_to_rhasspy(monkeypatch
     pipe = _shell_for_set_wake_plan()
     pipe.set_wake_plan(plan)
 
-    # Wake must stay ALIVE — at least one detector enabled, never both off.
-    assert pipe._wake_listening_enabled() is True
-    assert pipe._openwakeword_enabled is True
+    # No branded fallback: both detectors off (honest hotkey-only mode). This is
+    # recoverable, not dead — the wake loop parks on _wake_reload_event.
+    assert pipe._openwakeword_enabled is False
     assert pipe._whisper_wake_enabled is False
-    assert isinstance(pipe._wake, OpenWakeWordProvider)
-    assert pipe._wake._keywords == ("hey_rhasspy",)  # neutral offline fallback
 
 
 def test_set_wake_plan_stt_match_with_whisper_uses_rolling_wake(monkeypatch) -> None:

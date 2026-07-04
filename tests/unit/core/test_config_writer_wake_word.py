@@ -94,3 +94,17 @@ def test_set_wake_word_creates_section_if_missing(tmp_path: Path) -> None:
     ww = _load(f)["trigger"]["wake_word"]
     assert ww["phrase"] == "Computer"
     assert ww["engine"] == "stt_match"
+
+
+def test_set_wake_word_enabled_toggles_the_activation_switch(tmp_path: Path) -> None:
+    # The activation master switch (product rule 2026-07-04): in-app on/off,
+    # persisted to [trigger] wake_word_enabled, preserving sibling keys + comments.
+    f = _write(tmp_path)
+    config_writer.set_wake_word_enabled(True, path=f)
+    trig = _load(f)["trigger"]
+    assert trig["wake_word_enabled"] is True
+    assert trig["single_turn_mode"] is False  # sibling key untouched
+    assert "keep this comment" in f.read_text(encoding="utf-8")  # comment preserved
+    # And it flips back off.
+    config_writer.set_wake_word_enabled(False, path=f)
+    assert _load(f)["trigger"]["wake_word_enabled"] is False

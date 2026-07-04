@@ -38,6 +38,18 @@ _STT_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
     "deepgram-nova3": (("deepgram_api_key", "DEEPGRAM_API_KEY"),),
 }
 
+# Cross-family probe order when the configured cloud STT has no usable key: the
+# family the maintainer ships first, then the common BYO-key alternatives. Only a
+# family that BOTH has a key AND is registered as a `jarvis.stt` entry-point is
+# ever chosen (unregistered names — e.g. openai/deepgram today — are skipped, so
+# we never promise an STT we cannot build). This mirrors the TTS factory's
+# `_TTS_CROSS_FAMILY_ORDER`; it is what lets a fresh downloader whose only key is
+# an OpenRouter key (a gateway shared with the brain) get working voice input
+# instead of dead-ending on local faster-whisper the base install never shipped.
+_STT_CROSS_FAMILY_ORDER: tuple[str, ...] = (
+    "groq-api", "openrouter-stt", "openai-api", "deepgram",
+)
+
 
 def _stt_has_credential(provider_name: str, kwargs: dict[str, Any]) -> bool:
     """Whether the configured cloud STT has a usable key (else: fall to local).
@@ -55,6 +67,58 @@ def _stt_has_credential(provider_name: str, kwargs: dict[str, Any]) -> bool:
     from jarvis.core import config as _cfg
 
     return _cfg.get_secret_any(candidates) is not None
+
+
+def _stt_family_has_key(provider_name: str) -> bool:
+    """Whether the STT *family* ``provider_name`` has a usable credential on this host.
+
+    Like :func:`_stt_has_credential` but without kwargs — used by the cross-family
+    resolver to probe candidate families. Honours the team proxy for the proxy-
+    capable ``groq-api`` (a proxied provider carries a per-user token even with no
+    local key), and treats unknown / third-party providers (no entry in
+    ``_STT_SECRET_CANDIDATES``) as keyed so their path is never gated.
+    """
+    from jarvis.core import config as _cfg
+
+    if provider_name == "groq-api":
+        try:
+            ep = _cfg.resolve_provider_endpoint("groq-api")
+            if getattr(ep, "via_proxy", False) and getattr(ep, "credential", None):
+                return True
+        except Exception as exc:  # noqa: BLE001 — a proxy probe must never break STT build
+            logger.debug("STT groq proxy probe failed ({}); using key candidates.", exc)
+    candidates = _STT_SECRET_CANDIDATES.get(provider_name)
+    if candidates is None:
+        return True
+    return _cfg.get_secret_any(candidates) is not None
+
+
+def _resolve_keyed_stt_provider(primary_name: str) -> str:
+    """Pick a cloud STT the host can actually run (open-source AP-22).
+
+    Keeps the configured provider when it has a usable key — so the maintainer
+    path (whose configured key resolves) is untouched. Otherwise crosses to the
+    first cloud STT family the user DOES have a key for AND that is registered as
+    an entry-point. When NO cloud family has a usable key, returns the configured
+    name unchanged; the caller then drops to the key-free local faster-whisper as
+    the universal floor. Mirrors the TTS factory's ``_resolve_keyed_tts_provider``.
+    """
+    if _stt_family_has_key(primary_name):
+        return primary_name
+    for cand in _STT_CROSS_FAMILY_ORDER:
+        if cand == primary_name:
+            continue
+        if _stt_family_has_key(cand) and _load_provider_class(cand) is not None:
+            logger.warning(
+                "STT provider {!r} has no usable API key; crossing to {!r} — the "
+                "cloud STT family the user actually has a key for — so voice input "
+                "still works for a single-key user (open-source AP-22). Set "
+                "[stt].provider to silence this.",
+                primary_name,
+                cand,
+            )
+            return cand
+    return primary_name
 
 
 def _load_provider_class(name: str) -> type | None:
@@ -84,6 +148,13 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
     no entry-point or raises on construction.
     """
     provider_name = (getattr(stt_cfg, "provider", "") or "").strip()
+    # Open-source AP-22: when the configured cloud STT has no usable key, cross to
+    # a cloud STT family the user DOES have a key for BEFORE dropping to local
+    # faster-whisper (which is not installed on a base/headless host). The
+    # maintainer (whose configured key resolves) is unaffected; local whisper stays
+    # the last-resort floor when no cloud family has a usable key.
+    if provider_name and provider_name != "faster-whisper":
+        provider_name = _resolve_keyed_stt_provider(provider_name)
     language = getattr(stt_cfg, "language", "auto")
     language = language if language and language != "auto" else None
     bias_prompt = (getattr(stt_cfg, "bias_prompt", "") or "").strip()
