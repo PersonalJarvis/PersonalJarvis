@@ -273,6 +273,32 @@ class OrbBusBridge:
         # If attach() runs on the backend loop (the live async-startup path),
         # capture it now so the very first gesture already marshals correctly.
         self._remember_loop()
+        # Live audio → equalizer bars. Wired FIRST and each in its OWN try, OUTSIDE
+        # the bus-subscription block below. The mic/TTS level feed is what makes the
+        # bars move, and it must NEVER be skipped just because some unrelated
+        # bus.subscribe() or surface-setter call raised. Buried at the END of the one
+        # big try (as it used to be), a single earlier failure jumped straight to the
+        # outer except and the mic subscription never ran — so
+        # ``mic_level.has_subscribers()`` stayed False, the VAD frame loop skipped its
+        # ``mic_level.feed(rms)`` guard, and the equalizer was PERMANENTLY DEAD (bars
+        # never reacted to your voice) even though the bar itself — constructed
+        # separately in ``DesktopApp._build_overlay_surface`` — still showed and still
+        # switched looks on state changes. Idempotent: guarded on the stored unsub so a
+        # repeated attach() cannot double-register.
+        if self._mic_level_unsub is None:
+            try:
+                from jarvis.audio import mic_level
+
+                self._mic_level_unsub = mic_level.subscribe(self._on_mic_level)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("OrbBridge mic_level subscribe failed: %s", exc)
+        if self._tts_recency_unsub is None:
+            try:
+                from jarvis.audio import level_tap
+
+                self._tts_recency_unsub = level_tap.subscribe(self._note_tts_level)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("OrbBridge level_tap recency subscribe failed: %s", exc)
         try:
             self._bus.subscribe(SystemStateChanged, self._on_state)
             # Earliest safe visual wake cue: WakeWordDetected is emitted only
@@ -332,26 +358,10 @@ class OrbBusBridge:
             show_window_setter = getattr(self._orb, "set_on_show_window", None)
             if show_window_setter is not None:
                 show_window_setter(self._publish_show_window)
-            # Live mic loudness → equalizer bars during LISTENING. The VAD frame
-            # loop feeds jarvis.audio.mic_level from the audio already captured
-            # for STT — no second mic stream. One subscription for the bridge's
-            # whole life; it forwards to whichever surface is current.
-            try:
-                from jarvis.audio import mic_level
-
-                self._mic_level_unsub = mic_level.subscribe(self._on_mic_level)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("OrbBridge mic_level subscribe failed: %s", exc)
-            # Track TTS-output activity so the (silent) mic does not clobber
-            # Jarvis's voice level on the shared set_level while TTS plays. The
-            # surface's OWN level_tap subscription does the actual SPEAKING
-            # set_level; here we only note the recency.
-            try:
-                from jarvis.audio import level_tap
-
-                self._tts_recency_unsub = level_tap.subscribe(self._note_tts_level)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("OrbBridge level_tap recency subscribe failed: %s", exc)
+            # NOTE: the mic_level + level_tap (equalizer) subscriptions are wired
+            # at the TOP of attach(), BEFORE this try — see the comment there. They
+            # must not live here at the end of the bus-subscription block, or an
+            # earlier failure in this block silently kills the live equalizer.
             log.info(
                 "OrbBridge subscribed to SystemStateChanged + VoiceSessionStarted "
                 "+ VoiceSessionEnded + ListeningStarted + TranscriptionUpdate "

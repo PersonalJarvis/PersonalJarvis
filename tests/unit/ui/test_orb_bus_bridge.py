@@ -943,6 +943,71 @@ async def test_session_start_drives_mic_equalizer_immediately() -> None:
     assert ("set_level", 0.5) in orb.calls
 
 
+async def test_equalizer_subscription_survives_failing_bus_wiring() -> None:
+    """The live mic→equalizer wiring must not depend on the rest of attach().
+
+    Regression: the ``mic_level`` (+ ``level_tap``) subscriptions used to sit at
+    the END of attach()'s one big try-block, AFTER ~14 ``bus.subscribe()`` calls
+    and 3 surface-setter calls. A single earlier failure jumped straight to the
+    outer ``except`` and the mic subscription NEVER ran — so
+    ``mic_level.has_subscribers()`` stayed False, the VAD frame loop skipped its
+    guarded ``mic_level.feed(rms)``, and the equalizer bars were permanently dead
+    (never reacted to your voice) even though the bar itself — built separately —
+    still showed and still switched looks on state changes. The subscription now
+    runs FIRST, independent of that block.
+    """
+    from jarvis.audio import level_tap, mic_level
+
+    mic_level.reset_for_tests()
+    level_tap.reset()
+
+    class _BoomBus:
+        def subscribe(self, _event_type, _handler) -> None:
+            raise RuntimeError("bus wiring blew up mid-attach")
+
+    orb = _FakeOrb()
+    bridge = OrbBusBridge(bus=_BoomBus(), orb=orb, idle_animations_enabled=False)  # type: ignore[arg-type]
+    bridge.attach()
+
+    assert mic_level.has_subscribers(), (
+        "equalizer mic_level subscription must survive a failing bus.subscribe"
+    )
+
+    # And the forward path still moves the bars end to end.
+    bridge._last_state = "LISTENING"  # noqa: SLF001
+    orb.calls.clear()
+    mic_level.feed(0.5)
+    assert any(call == "set_level" for (call, _v) in orb.calls), (
+        "mic level must still reach the surface after a failed bus wiring"
+    )
+
+    mic_level.reset_for_tests()
+    level_tap.reset()
+
+
+async def test_attach_is_idempotent_for_the_equalizer_subscription() -> None:
+    """A repeated attach() must not double-register the mic_level sink."""
+    from jarvis.audio import level_tap, mic_level
+
+    mic_level.reset_for_tests()
+    level_tap.reset()
+
+    orb = _FakeOrb()
+    bridge = OrbBusBridge(bus=_FakeBus(), orb=orb, idle_animations_enabled=False)  # type: ignore[arg-type]
+    bridge.attach()
+    bridge.attach()
+
+    # Exactly one forward per feed — not two from a double subscription.
+    bridge._last_state = "LISTENING"  # noqa: SLF001
+    orb.calls.clear()
+    mic_level.feed(0.5)
+    set_level_calls = [c for c in orb.calls if c[0] == "set_level"]
+    assert len(set_level_calls) == 1, f"double subscription: {set_level_calls}"
+
+    mic_level.reset_for_tests()
+    level_tap.reset()
+
+
 async def test_session_start_then_real_listening_does_not_double_show() -> None:
     """The normal flow (session start FOLLOWED by a genuine
     SystemStateChanged(LISTENING)) must enter the listening look exactly once —
