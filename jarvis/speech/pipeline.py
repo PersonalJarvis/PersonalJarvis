@@ -1342,7 +1342,23 @@ class SpeechPipeline:
         # chain: ``config`` may be None (test fixtures) and older TOMLs predate
         # the field — both fall back to full volume.
         _tts_volume = getattr(getattr(config, "tts", None), "volume", 1.0)
-        self._player = AudioPlayer(device=output_device, bus=bus, volume=_tts_volume)
+        # Optional user device-name priority ([audio].*_device_priority) fed into
+        # the "auto-headset" resolver so an uncommon headset/mic wins by name
+        # without a code edit. Defensive getattr: ``config`` may be None (test
+        # fixtures) and older TOMLs predate the fields — both mean "no override".
+        _audio_cfg = getattr(config, "audio", None)
+        self._output_priority: tuple[str, ...] = tuple(
+            getattr(_audio_cfg, "output_device_priority", None) or ()
+        )
+        self._input_priority: tuple[str, ...] = tuple(
+            getattr(_audio_cfg, "input_device_priority", None) or ()
+        )
+        self._player = AudioPlayer(
+            device=output_device,
+            bus=bus,
+            volume=_tts_volume,
+            device_priority=self._output_priority,
+        )
         # Kept so warm-up can re-resolve the output device against a freshly
         # re-enumerated PortAudio table (post-reboot idx-drift cure, BUG-014).
         self._output_device = output_device
@@ -4330,7 +4346,9 @@ class SpeechPipeline:
         # which belong to the wake layer; this change deliberately does not touch
         # them. The drop-OLDEST overflow policy (capture ``_safe_put``) still
         # applies and is safe here.
-        async with MicrophoneCapture(device=self._input_device) as mic:
+        async with MicrophoneCapture(
+            device=self._input_device, device_priority=self._input_priority
+        ) as mic:
             fanout_task = asyncio.create_task(_fanout(mic), name="fanout")
             oww_task = (
                 asyncio.create_task(_run_oww(), name="oww-wake")
@@ -4658,7 +4676,9 @@ class SpeechPipeline:
         if self._ptt_mode:
             return await self._ptt_session()
         async with MicrophoneCapture(
-            device=self._input_device, max_queue_chunks=REALTIME_QUEUE_CHUNKS
+            device=self._input_device,
+            max_queue_chunks=REALTIME_QUEUE_CHUNKS,
+            device_priority=self._input_priority,
         ) as mic:
             vad_iter = self._vad.utterances(
                 self._session_input_stream(mic.stream())
@@ -4800,7 +4820,9 @@ class SpeechPipeline:
         """
         buffer = bytearray()
         hung_up = False
-        async with MicrophoneCapture(device=self._input_device) as mic:
+        async with MicrophoneCapture(
+            device=self._input_device, device_priority=self._input_priority
+        ) as mic:
             mic_open_at = time.monotonic()
             await self._set_turn_state(TurnTakingState.LISTENING)
             await self._publish_event(ListeningStarted(source_layer="speech"))
@@ -5059,7 +5081,9 @@ class SpeechPipeline:
                 pass
 
         try:
-            async with MicrophoneCapture(device=self._input_device) as mic:
+            async with MicrophoneCapture(
+                device=self._input_device, device_priority=self._input_priority
+            ) as mic:
 
                 async def _drain() -> None:
                     async for chunk in mic.stream():
@@ -7920,7 +7944,9 @@ class SpeechPipeline:
 
         try:
             async with MicrophoneCapture(
-                device=self._input_device, max_queue_chunks=REALTIME_QUEUE_CHUNKS
+                device=self._input_device,
+                max_queue_chunks=REALTIME_QUEUE_CHUNKS,
+                device_priority=self._input_priority,
             ) as mic:
                 residual = np.empty(0, dtype=np.float32)
                 speech_run = 0

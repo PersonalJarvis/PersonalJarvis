@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -27,6 +27,7 @@ else:
     except Exception:  # noqa: BLE001 — sounddevice/PortAudio (libportaudio2) absent (headless/slim)
         sd = None  # type: ignore[assignment]
 
+from jarvis.audio.device_select import is_legacy_primary_mapper
 from jarvis.core.protocols import AudioChunk
 
 SAMPLE_RATE = 16_000       # Whisper native rate
@@ -43,6 +44,15 @@ DTYPE = "int16"
 # (push-to-talk, dictation) use the deeper default instead. See MicrophoneCapture.
 REALTIME_QUEUE_CHUNKS = 6
 
+# Input NAMES we never open as a microphone: playback/loopback/monitor sources
+# (opening one feeds constant hiss or TTS echo into the wake path) and GPU-HDMI
+# audio. Matched case-insensitively. A few translated playback labels (the
+# localized speaker/headphone words listed below) are additive coverage for a
+# localized Windows where a loopback enumerates under its translated name — data,
+# prose. The MME "Sound Mapper" / DirectSound "Primary Sound Driver" virtual
+# routers are NOT listed here (their name is localized); they are skipped
+# STRUCTURALLY via ``is_legacy_primary_mapper``, which also correctly catches
+# the DirectSound *recording* mapper that no fixed substring covered.
 _BLOCKED_INPUT_SUBSTRINGS = (
     "Stereo Mix",
     "What U Hear",
@@ -59,15 +69,20 @@ _BLOCKED_INPUT_SUBSTRINGS = (
     "Display",
     "NVIDIA High Definition",
     "AMD HD Audio",
-    "Microsoft Soundmapper",
-    "Primaerer Soundtreiber",  # i18n-allow: matched against a localized (German) Windows device name
-    "Primärer Soundtreiber",  # i18n-allow: matched against a localized (German) Windows device name
 )
 
+# Generic default preference order for "auto-headset" microphone selection, most
+# specific first. Not tied to any one machine's hardware — a user whose mic is
+# not covered names it via ``[audio].input_device_priority`` (consulted BEFORE
+# this list) or pins an explicit ``[audio].input_device`` index, without editing
+# code. Bare product tokens (PRO X, Arctis, …) exist because sounddevice often
+# enumerates a headset mic without the vendor prefix. "Microphone" / "Mikrofon"
+# are the generic last-resort real-mic labels across common Windows UI locales.
 _INPUT_PRIORITY = (
     "Logitech PRO X", "PRO X", "Logitech",
-    "Jabra", "Sennheiser", "SteelSeries", "Corsair", "HyperX", "Razer",
-    "USB Audio", "Headset", "Microphone", "Mikrofon",  # i18n-allow: matched against a localized (German) Windows device name
+    "Jabra", "Sennheiser", "SteelSeries", "Arctis", "Corsair", "HyperX",
+    "Razer", "Bose", "AirPods",
+    "USB Audio", "Headset", "Microphone", "Mikrofon",  # i18n-allow: localized (German) generic mic label used as matching data
     "Realtek HD Audio", "Realtek",
 )
 
@@ -165,13 +180,23 @@ def _fallback_input_devices(primary_idx: int) -> list[int]:
     return [idx for idx, _ in matches]
 
 
-def _resolve_input_device(device: int | str | None) -> int | str | None:
+def _resolve_input_device(
+    device: int | str | None,
+    priority: Sequence[str] | None = None,
+) -> int | str | None:
     """Resolve ``auto-headset`` to a concrete microphone device.
 
     Windows exposes loopback and monitor sources as input devices. If Jarvis
     opens one of those for always-on wake detection, users hear constant hiss or
     TTS echo through the capture path. Prefer named headset microphones and
-    skip known playback/loopback inputs.
+    skip known playback/loopback inputs and the localized MME/DirectSound
+    virtual mapper.
+
+    ``priority`` is the user's own mic-name preference
+    (``[audio].input_device_priority``). When non-empty, a device whose name
+    contains a user entry outranks EVERY generic ``_INPUT_PRIORITY`` match, so a
+    user with an uncommon microphone wins by naming it — no code edit. Empty
+    ``priority`` reproduces the generic-only behavior exactly.
     """
     if device is None or isinstance(device, int):
         if device is not None:
@@ -182,6 +207,8 @@ def _resolve_input_device(device: int | str | None) -> int | str | None:
     if not isinstance(device, str) or device != "auto-headset":
         _log.info("Mic-Resolve: named device '{}'.", device)
         return device
+
+    user_priority = tuple(p for p in (priority or ()) if p)
 
     try:
         devices = sd.query_devices()
@@ -196,6 +223,10 @@ def _resolve_input_device(device: int | str | None) -> int | str | None:
             continue
         name = str(dev.get("name", ""))
         if any(blocked.lower() in name.lower() for blocked in _BLOCKED_INPUT_SUBSTRINGS):
+            continue
+        # Locale-independent skip of the MME "Sound Mapper" / DirectSound
+        # "Primary Sound Driver" recording mapper (translated display name).
+        if is_legacy_primary_mapper(idx, hostapis, devices, output=False):
             continue
         # Drop hostapis that can't serve PortAudio blocking-stream I/O —
         # WDM-KS makes InputStream.start() raise PaErrorCode -9996 even
@@ -217,18 +248,25 @@ def _resolve_input_device(device: int | str | None) -> int | str | None:
         return 99
 
     def _name_rank(entry: tuple[int, dict]) -> int:
-        name = str(entry[1].get("name", ""))
-        rank = len(_INPUT_PRIORITY)
+        low = str(entry[1].get("name", "")).lower()
+        # User-configured names take strict precedence and are trusted as an
+        # explicit choice: they rank ahead of every generic match AND are exempt
+        # from the virtual/AI-mic deprioritize below (if the user deliberately
+        # names their virtual cable / broadcast mic, honor it).
+        for r, sub in enumerate(user_priority):
+            if sub.lower() in low:
+                return r
+        rank = len(user_priority) + len(_INPUT_PRIORITY)
         for r, sub in enumerate(_INPUT_PRIORITY):
-            if sub.lower() in name.lower():
-                rank = r
+            if sub.lower() in low:
+                rank = len(user_priority) + r
                 break
         # Push virtual / AI mics (NVIDIA Broadcast, voice changers, virtual
         # cables) BEHIND every real hardware mic — they often deliver silence
         # when their companion app is closed (see _INPUT_DEPRIORITIZE). They are
         # not blocked, only ranked last, so they still serve as a fallback when
         # no real mic exists.
-        if any(v.lower() in name.lower() for v in _INPUT_DEPRIORITIZE):
+        if any(v.lower() in low for v in _INPUT_DEPRIORITIZE):
             rank += 1000
         return rank
 
@@ -280,8 +318,13 @@ class MicrophoneCapture:
         blocksize: int = BLOCKSIZE,
         channels: int = CHANNELS,
         max_queue_chunks: int = 20,
+        device_priority: Sequence[str] | None = None,
     ) -> None:
-        self._device = _resolve_input_device(device)
+        # User-configured mic-name priority ([audio].input_device_priority),
+        # consulted BEFORE the generic _INPUT_PRIORITY default when resolving
+        # "auto-headset". Empty = today's generic behavior.
+        self._device_priority: tuple[str, ...] = tuple(device_priority or ())
+        self._device = _resolve_input_device(device, self._device_priority)
         self._sample_rate = sample_rate
         self._blocksize = blocksize
         self._channels = channels

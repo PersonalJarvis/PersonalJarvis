@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -27,6 +27,7 @@ else:
         sd = None  # type: ignore[assignment]
 
 from jarvis.audio import level_tap
+from jarvis.audio.device_select import is_legacy_primary_mapper
 from jarvis.audio.gain import apply_output_gain, clamp_volume
 from jarvis.core.events import AudioOutFirst
 from jarvis.core.protocols import AudioChunk
@@ -42,23 +43,35 @@ _PortAudioError: type[BaseException] = sd.PortAudioError if sd is not None else 
 TTS_SAMPLE_RATE = 24_000  # Gemini 3.1 Flash TTS output rate
 TTS_WRITE_BUFFER_MS = 120
 
-# Audio devices we NEVER select as auto-headset output — monitor speakers
-# via HDMI/DisplayPort. Typical GPU audio chip names.
+# Audio devices we NEVER auto-select as headset output. These are
+# locale-independent hardware/interface names: monitor speakers reached over
+# HDMI/DisplayPort (GPU audio chips) and digital passthrough with no guaranteed
+# sink. Matched case-insensitively. The Windows MME "Sound Mapper" and
+# DirectSound "Primary Sound Driver" virtual routers are NOT listed here — their
+# display name is localized, so they are skipped STRUCTURALLY instead (see
+# ``is_legacy_primary_mapper``), which works on every Windows UI language.
 _BLOCKED_OUTPUT_SUBSTRINGS = (
     "NVIDIA High Definition",  # NVIDIA GPU audio (monitor via HDMI/DP)
     "AMD HD Audio",            # AMD GPU audio
-    "Primärer Soundtreiber",  # i18n-allow: Windows primary hook, ambiguous — matched against a localized (German) Windows device name
-    "Microsoft Soundmapper",
-    "SPDIF",                   # digital-out with no target on unknown setups
+    "SPDIF",                   # digital-out with no guaranteed sink
 )
 
-# Preference order for "auto-headset": the first match is used.
-# 2026-05-10: "PRO X" is listed first because sounddevice often lists Logitech
-# headsets as "Lautsprecher (PRO X)" (without the manufacturer name) — "Logitech
-# PRO X" misses the user's headset and falls back to the Realtek on-board device.
+# Generic default preference order for "auto-headset" output: a curated list of
+# common consumer headset product families, most specific first. It is NOT tied
+# to any one machine's hardware — a user whose device is not covered names it
+# via ``[audio].output_device_priority`` (consulted BEFORE this list) or pins an
+# explicit ``[audio].output_device`` index, both without editing code.
+#
+# "PRO X" precedes "Logitech PRO X" because sounddevice frequently enumerates
+# Logitech headsets as "Lautsprecher (PRO X)" / "Speakers (PRO X)" WITHOUT the
+# vendor name, so the bare product token matches where "Logitech PRO X" would
+# miss and fall back to the on-board Realtek device. The other bare tokens
+# (Arctis, AirPods, Bose, …) exist for the same reason — many headsets list
+# their model without the vendor prefix.
 _HEADSET_PRIORITY = (
     "PRO X", "Logitech PRO X", "Logitech",
-    "Jabra", "Sennheiser", "SteelSeries", "Corsair", "HyperX", "Razer",
+    "Jabra", "Sennheiser", "SteelSeries", "Arctis", "Corsair", "HyperX",
+    "Razer", "Bose", "AirPods",
     "USB Audio", "Headset",
     "Realtek HD Audio", "Realtek",
 )
@@ -162,19 +175,32 @@ def _candidate_output_rates(source_rate: int, device_default: int = 0) -> list[i
     return candidates
 
 
-def _resolve_output_device(device: int | str | None) -> int | str | None:
+def _resolve_output_device(
+    device: int | str | None,
+    priority: Sequence[str] | None = None,
+) -> int | str | None:
     """Resolve "auto-headset" or None to a concrete device index.
 
     - int: returned as-is (user specified an explicit index)
     - None: system default
     - "auto-headset": searches output devices for headset patterns, skips
-      GPU-HDMI outputs (monitor speakers), prefers WASAPI over MME
-      (mono routing bug on 8-channel surround)
+      GPU-HDMI outputs (monitor speakers) and the localized MME/DirectSound
+      virtual mapper, prefers WASAPI over MME (mono routing bug on 8-channel
+      surround)
+
+    ``priority`` is the user's own device-name preference
+    (``[audio].output_device_priority``). When non-empty, a device whose name
+    contains a user entry outranks EVERY generic ``_HEADSET_PRIORITY`` match, so
+    a user with an uncommon headset (Focusrite, an audio interface, a specific
+    dongle) wins by naming it — no code edit. Empty ``priority`` reproduces the
+    generic-only behavior exactly.
     """
     if device is None or isinstance(device, int):
         return device
     if not isinstance(device, str) or device != "auto-headset":
         return device
+
+    user_priority = tuple(p for p in (priority or ()) if p)
 
     try:
         devices = sd.query_devices()
@@ -193,7 +219,12 @@ def _resolve_output_device(device: int | str | None) -> int | str | None:
         if d.get("max_output_channels", 0) <= 0:
             continue
         name = d.get("name", "")
-        if any(blocked in name for blocked in _BLOCKED_OUTPUT_SUBSTRINGS):
+        low = name.lower()
+        if any(blocked.lower() in low for blocked in _BLOCKED_OUTPUT_SUBSTRINGS):
+            continue
+        # Locale-independent skip of the MME "Sound Mapper" / DirectSound
+        # "Primary Sound Driver" virtual router (translated display name).
+        if is_legacy_primary_mapper(idx, hostapis, devices, output=True):
             continue
         hostapi_idx = d.get("hostapi", -1)
         hostapi_name = (
@@ -228,11 +259,18 @@ def _resolve_output_device(device: int | str | None) -> int | str | None:
         return 99
 
     def _name_rank(entry: tuple[int, dict]) -> int:
-        name = entry[1].get("name", "")
-        for rank, sub in enumerate(_HEADSET_PRIORITY):
-            if sub.lower() in name.lower():
+        low = entry[1].get("name", "").lower()
+        # User-configured names take strict precedence: any match in the user's
+        # priority list ranks ahead of every generic match. Both blocks keep
+        # "earlier entry = stronger". The generic block is offset by the user
+        # list length so a generic hit can never tie or beat a user hit.
+        for rank, sub in enumerate(user_priority):
+            if sub.lower() in low:
                 return rank
-        return len(_HEADSET_PRIORITY)
+        for rank, sub in enumerate(_HEADSET_PRIORITY):
+            if sub.lower() in low:
+                return len(user_priority) + rank
+        return len(user_priority) + len(_HEADSET_PRIORITY)
 
     # Primary sort key: name match; secondary: host API preference. Without a
     # name match the original order (system default) is preserved.
@@ -264,10 +302,17 @@ class AudioPlayer:
         channels: int = 1,
         bus: Any = None,
         volume: float = 1.0,
+        device_priority: Sequence[str] | None = None,
     ) -> None:
+        # User-configured device-name priority ([audio].output_device_priority).
+        # Consulted BEFORE the generic _HEADSET_PRIORITY default when resolving
+        # "auto-headset", so an uncommon headset wins by name without a code
+        # edit. Empty tuple = today's generic behavior. Kept so set_device can
+        # re-resolve with the same preference after a hot-swap.
+        self._device_priority: tuple[str, ...] = tuple(device_priority or ())
         # Resolve "auto-headset" / similar strings to the actual device index.
         # Integer values are not resolved — the user specifies those explicitly.
-        self._device = _resolve_output_device(device)
+        self._device = _resolve_output_device(device, self._device_priority)
         self._sample_rate = sample_rate
         self._channels = channels
         # Master output volume knob in [0.0, 1.0]. Applied in _write_samples via
@@ -374,7 +419,12 @@ class AudioPlayer:
         ``self._device = _resolve_output_device(device)`` plus relogging
         the new device on the next play.
         """
-        new_device = _resolve_output_device(device)
+        # ``getattr`` default keeps ``__new__``-built instances (test fixtures /
+        # hot-reload that skip ``__init__``) working — same pattern as the
+        # ``_volume`` / progress-counter reads elsewhere in this class.
+        new_device = _resolve_output_device(
+            device, getattr(self, "_device_priority", ())
+        )
         if new_device == self._device:
             return  # no-op; avoid needless cache flush
         self._device = new_device
