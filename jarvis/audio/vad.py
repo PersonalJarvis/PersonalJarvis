@@ -105,6 +105,19 @@ class SileroEndpointer:
         self._session = None
         self._vad_state = None  # np.ndarray [2,1,128] float32, carried per frame
         self._vad_context = None  # np.ndarray [1,64] float32, carried per frame
+        # Energy-only fallback (open-source universality, CLAUDE.md §3). The
+        # bundled Silero ONNX model lives only in the opt-in ``[local-voice]``
+        # extra; a plain / headless / cloud-only install has neither
+        # ``silero_vad`` nor ``onnxruntime``. Rather than raise (which made every
+        # NON-PTT session — the wake word AND the ``call`` hotkey — die on the
+        # first frame with ``HANGUP_SHUTDOWN``, "works on my machine" AP-23),
+        # ``_ensure_model`` flips this flag and the endpointer runs on ENERGY
+        # (RMS) alone. The whole segmentation state machine below is already
+        # RMS-driven; only the per-frame Silero probability is skipped. Silero
+        # stays the higher-accuracy default whenever it IS installed — no
+        # regression for a ``[local-voice]`` box.
+        self._energy_only = False
+        self._energy_only_logged = False
 
         self._min_speech_rms = min_speech_rms
         self._relative_silence_rms_ratio = relative_silence_rms_ratio
@@ -193,8 +206,26 @@ class SileroEndpointer:
         """Silence frames required to end the turn, including any patience grant."""
         return self._silence_frames + self._extra_silence_frames
 
+    def _enter_energy_only(self, reason: str) -> None:
+        """Fall back to energy-only (RMS) endpointing; log the reason once.
+
+        Keeps the wake word and the ``call`` hotkey working on a machine without
+        the ``[local-voice]`` extra, at the cost of Silero's noise robustness.
+        """
+        self._energy_only = True
+        if not self._energy_only_logged:
+            log.warning(
+                "%s — using the energy-only VAD fallback (RMS endpointing, no "
+                "model). The wake word and the push-to-talk 'call' hotkey still "
+                "segment speech on any machine, but endpointing is less robust "
+                "in a noisy room; install the local-voice extra "
+                "(pip install '.[local-voice]') for the higher-accuracy Silero VAD.",
+                reason,
+            )
+            self._energy_only_logged = True
+
     def _ensure_model(self) -> None:
-        if self._session is not None:
+        if self._session is not None or self._energy_only:
             return
         # Locate the bundled Silero ONNX model WITHOUT importing the silero_vad
         # package (its __init__ -> model.py does ``import torch`` at module
@@ -203,20 +234,33 @@ class SileroEndpointer:
         import importlib.util
         import os
 
-        import onnxruntime  # already warm: the wake model imported it
-
         spec = importlib.util.find_spec("silero_vad")
         if spec is None or spec.origin is None:
-            raise RuntimeError("silero_vad package not installed")
+            # No bundled model on this install (base / cloud-only / headless) —
+            # degrade to energy-only instead of raising (which killed every
+            # non-PTT session, AP-23). Silero is opt-in via ``[local-voice]``.
+            self._enter_energy_only("silero_vad not installed")
+            return
+        try:
+            import onnxruntime  # already warm on a voice box: the wake model imported it
+        except ImportError:
+            self._enter_energy_only("onnxruntime not installed")
+            return
         model_path = os.path.join(
             os.path.dirname(spec.origin), "data", "silero_vad.onnx"
         )
-        opts = onnxruntime.SessionOptions()
-        opts.inter_op_num_threads = 1
-        opts.intra_op_num_threads = 1
-        self._session = onnxruntime.InferenceSession(
-            model_path, providers=["CPUExecutionProvider"], sess_options=opts
-        )
+        try:
+            opts = onnxruntime.SessionOptions()
+            opts.inter_op_num_threads = 1
+            opts.intra_op_num_threads = 1
+            self._session = onnxruntime.InferenceSession(
+                model_path, providers=["CPUExecutionProvider"], sess_options=opts
+            )
+        except Exception as exc:  # noqa: BLE001 — any onnx/model/file failure → energy floor
+            self._enter_energy_only(
+                f"Silero VAD model load failed ({exc.__class__.__name__})"
+            )
+            return
         # Recurrent state + 64-sample context, mirroring silero_vad.OnnxWrapper.
         self._vad_state = np.zeros((2, 1, 128), dtype=np.float32)
         self._vad_context = np.zeros((1, 64), dtype=np.float32)
@@ -231,6 +275,11 @@ class SileroEndpointer:
         the probabilities match the torch model bit-for-bit within float
         tolerance while never importing torch on the voice-boot path.
         """
+        if self._energy_only:
+            # No Silero model on this install: return a pass-through 1.0 so the
+            # speech test ``prob >= threshold and rms >= min_speech_rms``
+            # collapses to the RMS gate — energy-only endpointing.
+            return 1.0
         self._ensure_model()
         assert self._session is not None
         x = np.ascontiguousarray(frame, dtype=np.float32).reshape(1, -1)  # [1,512]

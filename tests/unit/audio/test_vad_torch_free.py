@@ -30,6 +30,7 @@ def _bare_endpointer() -> SileroEndpointer:
     ep._session = None
     ep._vad_state = None
     ep._vad_context = None
+    ep._energy_only = False  # Silero present here → real ONNX prob path, not the floor
     return ep
 
 
@@ -77,6 +78,7 @@ def test_vad_path_imports_no_torch() -> None:
         "from jarvis.audio.vad import SileroEndpointer;\n"
         "ep = SileroEndpointer.__new__(SileroEndpointer);\n"
         "ep._session = None; ep._vad_state = None; ep._vad_context = None;\n"
+        "ep._energy_only = False;\n"
         "ep._prob(np.zeros(512, dtype=np.float32));\n"
         "assert 'torch' not in sys.modules, 'VAD path imported torch';\n"
         "assert 'onnxruntime' in sys.modules, 'VAD should use onnxruntime';\n"
