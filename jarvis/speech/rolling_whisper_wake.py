@@ -533,6 +533,35 @@ class RollingWhisperWake:
 
         def _recover_wedged(reason: str) -> None:
             nonlocal busy_since, consecutive_fail, rewarm_owed
+            # GPU-upgrade backstop: the background hot-swap attaches the proven
+            # base/cpu provider to the turbo instance (``_wake_gpu_fallback``).
+            # A wedge on THAT model means the one-off GPU inference probe was
+            # wrong for this host, so rebuilding the same CUDA model would just
+            # wedge again (the AP-25 deaf cycle). Swap straight back to the
+            # still-warm base model and persist the bad verdict so every later
+            # build (and restart) stays on CPU until the ctranslate2 runtime
+            # changes. No re-warm owed — the fallback kept its loaded model.
+            fallback = getattr(self._stt, "_wake_gpu_fallback", None)
+            if fallback is not None:
+                log.error(
+                    "rolling-whisper: %s on the GPU wake model — swapping back "
+                    "to the base/cpu fallback and marking the GPU probe bad "
+                    "(self-heal, no restart).",
+                    reason,
+                )
+                try:
+                    from jarvis.plugins.stt import mark_wake_gpu_bad
+
+                    mark_wake_gpu_bad()
+                except Exception as exc:  # noqa: BLE001 — heal must never crash
+                    log.warning(
+                        "rolling-whisper: could not persist the bad GPU "
+                        "verdict: %s", exc,
+                    )
+                self._stt = fallback
+                busy_since = None
+                consecutive_fail = 0
+                return
             recover = getattr(self._stt, "recover", None)
             if callable(recover):
                 log.error(

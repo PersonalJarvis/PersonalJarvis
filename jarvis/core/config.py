@@ -269,20 +269,25 @@ class STTConfig(BaseModel):
     wake_model: str = "base"
     wake_device: str = "cpu"
     wake_compute_type: str = "int8"
-    # When True AND a CUDA GPU is present, a CUSTOM wake phrase (the
-    # transcription-based ``stt_match`` path) runs the strong ``large-v3-turbo``
-    # model on the GPU instead of the small ``base`` model on the CPU.
-    # DEFAULT False (2026-06-30, live-log evidence): on the maintainer's Blackwell
-    # GPU (RTX 5070 Ti / sm_120) CTranslate2's ``model.transcribe`` HANGS on every
-    # live inference (an 8 s timeout every time -> the wake self-heal drops and
-    # rebuilds the model -> a fresh cold inference hangs again -> a vicious cycle
-    # that leaves the wake permanently deaf). Enabling GPU turbo there made the
-    # wake WORSE, not better. It is kept as an opt-in for GPUs where CTranslate2
-    # inference is stable (RTX 30xx/40xx), but the transcription wake fundamentally
-    # cannot reach "Hey Google" reliability — that needs a trained neural
-    # keyword-spotting model (the ``custom_onnx`` engine). Set True only on a GPU
-    # you have verified does not hang on repeated faster-whisper inference.
-    wake_high_accuracy: bool = False
+    # When True AND a real turbo/cuda inference has been VERIFIED on this host,
+    # a CUSTOM wake phrase (the transcription-based ``stt_match`` path) runs the
+    # strong ``large-v3-turbo`` model on the GPU instead of the small ``base``
+    # model on the CPU — far better proper-noun recall and ~120 ms/window vs
+    # ~700 ms. History: the default was flipped to False on 2026-06-30 because
+    # on the maintainer's Blackwell GPU (RTX 5070 Ti / sm_120) CTranslate2's
+    # ``model.transcribe`` hung on every live inference under the then-current
+    # runtime (AP-25). Re-measured 2026-07-05 on the same GPU (ctranslate2
+    # 4.7.1 + torch 2.11-cu128): 40/40 inferences under in-process torch-OpenMP
+    # load, zero hangs, p50 117 ms — the hang was constellation-specific, not
+    # "Blackwell forever". The gate is therefore no longer this blind flag but
+    # an automated out-of-process inference probe (one killable subprocess run,
+    # cached per ctranslate2 version — ``jarvis.plugins.stt.
+    # _wake_gpu_inference_verified``), plus a live backstop that drops back to
+    # base/cpu and persists the bad verdict if the swapped-in GPU model ever
+    # wedges. False remains the hard opt-out (never try the GPU). The
+    # transcription wake still cannot reach "Hey Google" reliability — that
+    # needs a trained neural keyword-spotting model (the ``custom_onnx`` engine).
+    wake_high_accuracy: bool = True
     language: str = "auto"
     # Vocabulary biasing passed to Whisper's ``prompt`` field — the same
     # mechanism dictation tools like Wispr Flow use to keep proper nouns and

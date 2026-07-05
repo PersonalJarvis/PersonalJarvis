@@ -2589,6 +2589,15 @@ class DesktopApp:
                             else turbo._ensure_model
                         )
                         if ww is not None:
+                            # Runtime backstop: keep the proven base/cpu model
+                            # reachable from the turbo instance. If the GPU
+                            # model ever wedges live (a hang the one-off probe
+                            # missed), the rolling wake's self-heal swaps back
+                            # to this fallback and persists the bad verdict
+                            # (mark_wake_gpu_bad) instead of rebuilding the
+                            # same hung CUDA model — bounded-time recovery to
+                            # the pre-upgrade state. ~80 MB RAM held on purpose.
+                            turbo._wake_gpu_fallback = ww._stt
                             # Atomic ref swap (GIL); the next transcribe uses turbo.
                             ww._stt = turbo
                             logger.info(

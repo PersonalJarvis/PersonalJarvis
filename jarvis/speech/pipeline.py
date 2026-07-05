@@ -1713,8 +1713,18 @@ class SpeechPipeline:
                 # is ~71 s; base/cpu ~0.45 s, measured). Seed the prompt with the
                 # custom phrase so the small model transcribes the (proper-noun)
                 # wake name instead of a common word — forensic 2026-06-22.
+                # fast_first: this runs on a live settings switch (often from
+                # the FastAPI handler), so it must stay non-blocking. The
+                # non-fast build now runs the one-time GPU inference probe
+                # (blocking up to minutes on a cache miss) — that belongs to
+                # the boot hot-swap only. Trade-off: after a LIVE wake-word
+                # switch the stt_match wake runs on base/cpu until the next
+                # app start, whose background hot-swap restores turbo/cuda.
                 self._stt = build_wake_whisper(
-                    stt_cfg, language=lang, wake_phrase=getattr(plan, "phrase", None)
+                    stt_cfg,
+                    language=lang,
+                    wake_phrase=getattr(plan, "phrase", None),
+                    fast_first=True,
                 )
                 if self._probe_stt is None:
                     try:

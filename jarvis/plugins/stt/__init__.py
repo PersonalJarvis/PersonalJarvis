@@ -341,6 +341,177 @@ def _wake_cuda_available() -> bool:
     return available
 
 
+def _wake_gpu_probe_cache_path() -> Path:
+    """Location of the persisted GPU wake-inference probe result.
+
+    Separate from ``wake_cuda_probe.json`` (mere CUDA *presence*): this file
+    records whether a real ``large-v3-turbo`` CUDA *inference* completed on this
+    host — presence and usability diverged in AP-25 (a Blackwell sm_120 box HAD
+    CUDA but every CTranslate2 inference hung under the then-current runtime).
+    Delete the file to force a re-probe after a GPU/driver change.
+    """
+    base = os.environ.get("JARVIS__MEMORY__DATA_DIR") or "data"
+    return Path(base) / "wake_gpu_probe.json"
+
+
+# Success marker the probe subprocess prints AFTER its real CUDA inferences.
+# The probe verdict is this marker in stdout, NEVER the exit code: a CUDA
+# process can die in native teardown (observed exit 127 on 2026-07-05) after
+# doing all its work correctly.
+_WAKE_GPU_PROBE_MARKER = "WAKE_GPU_PROBE_OK"
+
+# Generous ceiling for ONE probe run: a cold Blackwell kernel-JIT model load
+# was measured at ~71 s; a healthy warm load + two inferences is < 15 s. A
+# probe that cannot finish inside this window is exactly the AP-25 hang the
+# probe exists to catch.
+_WAKE_GPU_PROBE_TIMEOUT_S = 180.0
+
+# The probe exercises the SAME model the CUDA upgrade branches below swap in.
+_WAKE_GPU_PROBE_SCRIPT = r"""
+import numpy as np
+from faster_whisper import WhisperModel
+m = WhisperModel("large-v3-turbo", device="cuda", compute_type="int8_float16")
+pcm = (np.random.default_rng(0).standard_normal(19200) * 0.05).astype("float32")
+for _ in range(2):
+    segments, _info = m.transcribe(pcm, language="de", beam_size=1)
+    list(segments)  # consume the generator — this is what runs the inference
+print("WAKE_GPU_PROBE_OK", flush=True)
+"""
+
+
+def _ctranslate2_version() -> str:
+    """Installed ctranslate2 version (metadata only — no heavy import)."""
+    try:
+        return importlib_metadata.version("ctranslate2")
+    except Exception:  # noqa: BLE001 — absent/broken install means "unknown"
+        return "unknown"
+
+
+def _run_wake_gpu_probe_subprocess() -> bool:
+    """Run one real turbo/cuda inference in a KILLABLE child process.
+
+    Out-of-process on purpose (BUG-036/AP-24): a hung native inference thread
+    inside THIS process could never be cancelled and would poison the app; a
+    child process is killed on timeout and leaves no residue. Blocking — only
+    ever called from the background hot-swap thread, never the boot path.
+    """
+    import subprocess
+    import sys
+
+    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+
+    try:
+        proc = subprocess.run(  # noqa: S603 — fixed argv, our own interpreter
+            [sys.executable, "-c", _WAKE_GPU_PROBE_SCRIPT],
+            capture_output=True,
+            text=True,
+            timeout=_WAKE_GPU_PROBE_TIMEOUT_S,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "Wake-GPU probe: inference did not finish within {:.0f} s — the "
+            "AP-25 hang signature. GPU wake upgrade stays OFF on this host.",
+            _WAKE_GPU_PROBE_TIMEOUT_S,
+        )
+        return False
+    except Exception as exc:  # noqa: BLE001 — a probe must never break the caller
+        logger.warning("Wake-GPU probe: could not launch ({}).", exc)
+        return False
+    ok = _WAKE_GPU_PROBE_MARKER in (proc.stdout or "")
+    if not ok:
+        tail = ((proc.stderr or proc.stdout or "").strip())[-300:]
+        logger.warning(
+            "Wake-GPU probe: no success marker (exit={}). Tail: {}",
+            proc.returncode,
+            tail or "<empty>",
+        )
+    return ok
+
+
+@lru_cache(maxsize=1)
+def _wake_gpu_inference_verified() -> bool:
+    """True iff a real turbo/cuda wake inference VERIFIABLY completes here.
+
+    This is the capability gate (AP-21) that replaced the blanket AP-25
+    "GPU turbo off by default": CUDA presence alone is not enough — on one
+    Blackwell host every CTranslate2 inference hung under the then-current
+    runtime while ``get_cuda_device_count()`` was happily > 0. The verdict is
+    cached on disk keyed by the ctranslate2 version (a runtime upgrade that
+    may fix — or break — the hang triggers exactly one re-probe).
+
+    BLOCKING (up to ``_WAKE_GPU_PROBE_TIMEOUT_S`` on a cache miss): call it
+    only from the background hot-swap (``fast_first=False`` builds), never on
+    the boot / hear-ready path (AP-26).
+    """
+    ct2_version = _ctranslate2_version()
+    cache_path = _wake_gpu_probe_cache_path()
+    try:
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        if (
+            isinstance(cached, dict)
+            and isinstance(cached.get("ok"), bool)
+            and cached.get("ctranslate2") == ct2_version
+        ):
+            logger.info(
+                "Wake-GPU probe: cache HIT ({}, ctranslate2 {}) — probe skipped.",
+                "verified" if cached["ok"] else "unusable",
+                ct2_version,
+            )
+            return cached["ok"]
+    except FileNotFoundError:
+        pass
+    except Exception as exc:  # noqa: BLE001 — a corrupt cache must never break the swap
+        logger.debug("Wake-GPU probe cache unreadable ({}); re-probing.", exc)
+
+    t0 = time.perf_counter()
+    ok = _run_wake_gpu_probe_subprocess()
+    logger.info(
+        "Wake-GPU probe: real turbo/cuda inference {} in {:.1f} s "
+        "(ctranslate2 {}).",
+        "VERIFIED" if ok else "FAILED",
+        time.perf_counter() - t0,
+        ct2_version,
+    )
+    _persist_wake_gpu_probe(ok, ct2_version)
+    return ok
+
+
+def _persist_wake_gpu_probe(ok: bool, ct2_version: str | None = None) -> None:
+    """Best-effort write of the probe verdict (shared by probe + bad-mark)."""
+    cache_path = _wake_gpu_probe_cache_path()
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(
+            json.dumps(
+                {
+                    "ok": ok,
+                    "ctranslate2": ct2_version or _ctranslate2_version(),
+                    "model": "large-v3-turbo",
+                }
+            ),
+            encoding="utf-8",
+        )
+    except Exception as exc:  # noqa: BLE001 — caching is best-effort
+        logger.debug("Wake-GPU probe cache write failed ({}).", exc)
+
+
+def mark_wake_gpu_bad() -> None:
+    """Record that the LIVE GPU wake model wedged — future builds stay on CPU.
+
+    Runtime backstop for a hang the one-off probe missed: the rolling wake's
+    self-heal calls this right before swapping back to its base/cpu fallback,
+    so the very next build (and every restart) skips the GPU upgrade until the
+    ctranslate2 version changes (which re-keys the cache and re-probes).
+    """
+    _persist_wake_gpu_probe(False)
+    _wake_gpu_inference_verified.cache_clear()
+    logger.warning(
+        "Wake-GPU probe: marked UNUSABLE after a live wedge — wake stays on "
+        "the base/cpu model until the ctranslate2 runtime changes."
+    )
+
+
 def build_wake_whisper(
     stt_cfg: Any,
     *,
@@ -419,18 +590,27 @@ def build_wake_whisper(
     # above). The caller then hot-swaps in the turbo/cuda model in the background
     # for faster steady-state inference, so the 2026-06-24 accuracy upgrade is
     # preserved — only its load is moved off the hear-ready path.
+    # Both CUDA branches additionally require the one-time out-of-process
+    # INFERENCE probe (``_wake_gpu_inference_verified``): CUDA presence alone
+    # proved insufficient in AP-25 (a Blackwell box had CUDA but every
+    # CTranslate2 inference hung under the then-current runtime). The probe is
+    # blocking on its first run, which is safe here: ``fast_first`` builds
+    # (the boot path) never reach it, so it only ever runs inside the
+    # background hot-swap. Short-circuit order keeps it last — a CPU-only or
+    # opted-out host never pays for it.
     if (
         not fast_first
         and not bias
         and model == "base"
         and device == "cpu"
         and cuda_available
+        and _wake_gpu_inference_verified()
     ):
         model, device, compute = "large-v3-turbo", "cuda", "int8_float16"
         bias = None  # strong model needs no bias; the bias is what hallucinates
         logger.info(
-            "Wake-Whisper: CUDA present -> GPU turbo (large-v3-turbo/cuda), "
-            "bias OFF (fast + no silence hallucination)."
+            "Wake-Whisper: CUDA inference verified -> GPU turbo "
+            "(large-v3-turbo/cuda), bias OFF (fast + no silence hallucination)."
         )
     elif (
         not fast_first
@@ -439,6 +619,7 @@ def build_wake_whisper(
         and device == "cpu"
         and cuda_available
         and bool(getattr(stt_cfg, "wake_high_accuracy", True))
+        and _wake_gpu_inference_verified()
     ):
         # CUSTOM WAKE PHRASE on a CUDA box: upgrade to the strong turbo model on
         # the GPU BUT KEEP the phrase bias. Mission 2026-06-30, live-log evidence
@@ -459,9 +640,9 @@ def build_wake_whisper(
         # contend with it. Reversible: wake_high_accuracy=False forces base/cpu.
         model, device, compute = "large-v3-turbo", "cuda", "int8_float16"
         logger.info(
-            "Wake-Whisper: custom phrase on CUDA -> GPU turbo (large-v3-turbo/cuda) "
-            "WITH bias — fast (~150 ms, no wedge) + accurate. Set "
-            "[stt].wake_high_accuracy=false to force base/cpu."
+            "Wake-Whisper: custom phrase, CUDA inference verified -> GPU turbo "
+            "(large-v3-turbo/cuda) WITH bias — fast (~150 ms, no wedge) + "
+            "accurate. Set [stt].wake_high_accuracy=false to force base/cpu."
         )
     elif fast_first and model == "base" and device == "cpu" and cuda_available:
         logger.info(
@@ -563,5 +744,6 @@ def start_wake_model_prefetch(
 __all__ = [
     "build_stt_from_config",
     "build_wake_whisper",
+    "mark_wake_gpu_bad",
     "start_wake_model_prefetch",
 ]
