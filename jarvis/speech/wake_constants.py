@@ -31,9 +31,14 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 #: ``auto``        — resolve the best engine for the phrase automatically.
 #: ``openwakeword``— neural pretrained model (CPU, instant, fixed vocabulary).
+#: ``vosk_kws``    — per-language Vosk grammar keyword spotting (any phrase,
+#:                   CPU-only, identical on every OS; needs the per-language
+#:                   Vosk model directory — see ``resolve_vosk_model_path``).
 #: ``stt_match``   — local-Whisper transcript match (any phrase, needs whisper).
 #: ``custom_onnx`` — a user-supplied/trained .onnx model (CPU, any phrase).
-WAKE_ENGINES: tuple[str, ...] = ("auto", "openwakeword", "stt_match", "custom_onnx")
+WAKE_ENGINES: tuple[str, ...] = (
+    "auto", "openwakeword", "vosk_kws", "stt_match", "custom_onnx"
+)
 
 DEFAULT_WAKE_PHRASE = ""  # empty = neutral pre-onboarding default; user must opt in
 
@@ -241,6 +246,59 @@ def resolve_oww_model_path(model_name: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Vosk model directory resolution (vosk_kws engine)
+# ---------------------------------------------------------------------------
+
+def _vosk_models_root() -> Path:
+    """Per-install Vosk model store: ``<data>/wake_models/vosk/<lang>/``.
+
+    Honours the same data-dir env seam the rest of the app uses. Models are
+    fetched once at setup for the configured language (a ~45 MB small model
+    per language — too heavy to bundle for every locale) and are fully
+    offline afterwards.
+    """
+    base = os.environ.get("JARVIS__MEMORY__DATA_DIR") or "data"
+    return Path(base) / "wake_models" / "vosk"
+
+
+def resolve_vosk_model_path(language: str | None) -> str | None:
+    """Absolute path to an extracted Vosk model dir for ``language``, or None.
+
+    ``language`` is a BCP-47-ish code ("de", "de-DE", "auto", None). A
+    concrete language looks up its own folder; ``auto``/None falls back to
+    the FIRST language folder present (a single-language install just works).
+    A folder counts as a model when it carries Vosk's ``am/`` subdir or a
+    ``conf/model.conf`` (top-level or one level down, so both an extracted
+    ``vosk-model-small-de-0.15/`` inside the lang folder and a flattened
+    layout resolve).
+    """
+    root = _vosk_models_root()
+    if not root.is_dir():
+        return None
+
+    def _model_dir(cand: Path) -> Path | None:
+        if (cand / "am").is_dir() or (cand / "conf" / "model.conf").is_file():
+            return cand
+        for sub in sorted(p for p in cand.iterdir() if p.is_dir()):
+            if (sub / "am").is_dir() or (sub / "conf" / "model.conf").is_file():
+                return sub
+        return None
+
+    lang = (language or "").strip().lower().split("-")[0]
+    candidates: list[Path] = []
+    if lang and lang != "auto":
+        candidates.append(root / lang)
+    else:
+        candidates.extend(sorted(p for p in root.iterdir() if p.is_dir()))
+    for cand in candidates:
+        if cand.is_dir():
+            found = _model_dir(cand)
+            if found is not None:
+                return str(found)
+    return None
+
+
 __all__ = [
     "WAKE_ENGINES",
     "DEFAULT_WAKE_PHRASE",
@@ -255,4 +313,5 @@ __all__ = [
     "sound_fold",
     "match_known_oww_model",
     "resolve_oww_model_path",
+    "resolve_vosk_model_path",
 ]
