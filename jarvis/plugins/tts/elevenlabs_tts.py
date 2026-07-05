@@ -37,6 +37,43 @@ ELEVENLABS_TTS_SAMPLE_RATE = 24_000
 _OUTPUT_FORMAT = "pcm_24000"
 _STREAMING_LATENCY_OPTIMIZATION = 1
 
+DEFAULT_MODEL = "eleven_flash_v2_5"
+
+# Every ElevenLabs speech model id starts with ``eleven`` (the API namespace).
+# Curated snapshot for an exact-match fast path; the prefix rule below still
+# admits a NEW eleven_* model we don't list yet.
+_KNOWN_ELEVEN_MODELS: frozenset[str] = frozenset({
+    "eleven_flash_v2_5", "eleven_flash_v2",
+    "eleven_turbo_v2_5", "eleven_turbo_v2",
+    "eleven_multilingual_v2", "eleven_multilingual_v1",
+    "eleven_monolingual_v1", "eleven_v3",
+    "eleven_english_sts_v2", "eleven_multilingual_sts_v2",
+})
+
+
+def coerce_elevenlabs_model(model_id: str | None) -> str:
+    """Return a usable ElevenLabs model id for ``model_id``.
+
+    Guards against a FOREIGN model id left in the shared ``[tts].model`` config
+    after switching TTS providers. ``[tts]`` has a single global ``model`` field
+    shared across every TTS family, so flipping TO ElevenLabs can leave another
+    provider's value in place (Cartesia's ``sonic-2``, Gemini's ``gemini-*``,
+    an OpenRouter ``vendor/model``) — ElevenLabs then 400s ("An invalid ID has
+    been received for voice: 'sonic-2'"). Mirrors ``coerce_speech_model`` for
+    OpenRouter. Resolution:
+
+    * empty                → the default model,
+    * a known eleven model → itself,
+    * any ``eleven*`` id   → itself (trust a NEW model we don't list yet),
+    * anything else        → the default model (a foreign provider's id).
+    """
+    mid = (model_id or "").strip()
+    if not mid:
+        return DEFAULT_MODEL
+    if mid in _KNOWN_ELEVEN_MODELS or mid.lower().startswith("eleven"):
+        return mid
+    return DEFAULT_MODEL
+
 # On quota exhaustion / an auth problem, skip ElevenLabs briefly
 # so not every sentence retriggers the 429 path.
 _QUOTA_COOLDOWN_S = 900.0
