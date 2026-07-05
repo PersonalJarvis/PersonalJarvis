@@ -6,11 +6,11 @@
     "single_turn_mode": false
   },
   "tts": {
-    "provider": "elevenlabs",
+    "provider": "openrouter-tts",
     "fallback": "grok-voice",
-    "voice_de": "Kore",
-    "voice_en": "Kore",
-    "language_code": "de-DE",
+    "voice_de": "ara",
+    "voice_en": "ara",
+    "language_code": "auto",
     "chunk_by_sentence": false,
     "seed": 7,
     "temperature": 0.7,
@@ -18,7 +18,7 @@
     "vertex_project": "",
     "vertex_location": "us-central1",
     "service_account_path": "~/.config/jarvis/vertex-sa.json",
-    "model": "sonic-2",
+    "model": "x-ai/grok-voice-tts-1.0",
     "volume": 1.0
   },
   "tts.cartesia": {
