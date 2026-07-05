@@ -366,8 +366,20 @@ _WAKE_GPU_PROBE_MARKER = "WAKE_GPU_PROBE_OK"
 # probe exists to catch.
 _WAKE_GPU_PROBE_TIMEOUT_S = 180.0
 
-# The probe exercises the SAME model the CUDA upgrade branches below swap in.
+# The probe exercises the SAME model the CUDA upgrade branches below swap in,
+# in the SAME process constellation the live hot-swap runs in: torch loaded
+# first (best effort). This matters twice over — (a) on this host
+# cublas64_12.dll ships ONLY inside torch\lib and becomes loadable when
+# torch's import registers its DLL directory (in the live app Silero VAD has
+# done that long before the hot-swap; without it CTranslate2 raises
+# "Library cublas64_12.dll is not found", measured 2026-07-05), and (b) the
+# AP-25 hang class was specifically ctranslate2 *coexisting* with torch's
+# OpenMP in one process, so probing without torch would test the wrong thing.
 _WAKE_GPU_PROBE_SCRIPT = r"""
+try:
+    import torch  # noqa: F401 — mirror the live app: torch (Silero VAD) is loaded first
+except Exception:
+    pass
 import numpy as np
 from faster_whisper import WhisperModel
 m = WhisperModel("large-v3-turbo", device="cuda", compute_type="int8_float16")
