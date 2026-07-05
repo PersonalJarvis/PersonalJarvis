@@ -68,6 +68,36 @@ fixture classes):
 If the spike fails on German/free-word recall, the fallback plan is the
 pretrained-catalog approach — decided WITH the maintainer, not silently.
 
+## Spike results (2026-07-05, measured on real captured fixtures)
+
+Neutral positives = windows an independent judge (large-v3-turbo/cuda, no
+bias, beam 5) clearly heard the phrase in; negatives = judged ambient speech
+plus quiet/silence classes. German-spoken "Hey Ruben" is the hard case.
+
+| contender | Ruben | Luca | FA ambient/quiet/silence | CPU (RTF) |
+|---|---|---|---|---|
+| A production base+bias stt_match | 92 % | 100 % | 0 / 0 / 0 | ~0.4x, 0.7 s/window |
+| B sherpa-onnx KWS gigaspeech (en, BPE) | **4 %** | 100 % | 0 / 0 / 0 | 0.03x |
+| C sherpa-onnx KWS zh-en (phoneme) | **0 %** | 75 % | 0 / 0 / 0 | 0.02x |
+| D Vosk small-de, grammar mode | **96 %** | 100 % | **34 %** / 13 / 1.3 | 0.02x |
+| E Vosk free decode + strict matcher | 54 % | 100 % | 0 / 0 / 0 | 0.23x |
+| D+E grammar → conf-gate → permissive sound-confirm | 79 % | 100 % | 1 / 0 / 0 | 0.05x |
+
+Verdict: the pretrained en/zh sherpa models do NOT hear German-spoken words
+(harness sanity-checked green on the models' own English test wavs; no
+German/multilingual KWS models exist in the k2-fsa release). **Vosk per-locale
+models DO** — grammar mode hears the hard German name at 96 % where the
+challenger classes sit at 0-4 %. The chosen engine is therefore Vosk
+(Apache-2.0, official wheels win/mac/linux x86+ARM, torch-free) in a
+two-stage arrangement: streaming grammar detector (partial-result trigger —
+fires DURING the phrase, measured t=1.3 s into a 1.8 s stream) confirmed by a
+free-decode sound-level plausibility pass (PERMISSIVE, AP-27: never demand
+the free pass spell the word). OOV/fantasy words don't crash the grammar and
+fall through to the free-decode fuzzy path (best effort — honest limit).
+Model files are per-language (~45 MB small-de), fetched once at setup for the
+configured locale (bundling 3+ locales would bloat the repo); no model →
+graceful fall back to the existing stt_match chain.
+
 ## Architecture sketch
 
 - New engine value `phoneme_kws` in `WAKE_ENGINES` + a provider under
