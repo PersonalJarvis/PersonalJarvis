@@ -1543,7 +1543,8 @@
       "body": "Your assistant is ready. Try saying your wake word, or type a command to begin.",
       "skipped_title": "You skipped — set up anytime in Settings:",
       "start_cta": "Get started",
-      "boot_notice": "Heads up: the first launch takes about 10 seconds while your assistant warms up — that's completely normal."
+      "boot_notice": "Heads up: the first launch takes about 10 seconds while your assistant warms up — that's completely normal.",
+      "autostart_label": "Start Jarvis automatically at login"
     }
   },
   "languages_view": {

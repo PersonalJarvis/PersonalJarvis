@@ -1542,7 +1542,8 @@
       "body": "Dein Assistent ist startklar. Sag dein Aktivierungswort oder tippe einen Befehl, um zu beginnen.",
       "skipped_title": "Du hast übersprungen — jederzeit in den Einstellungen nachholbar:",
       "start_cta": "Loslegen",
-      "boot_notice": "Hinweis: Der erste Start dauert etwa 10 Sekunden, während dein Assistent hochfährt — das ist völlig normal."
+      "boot_notice": "Hinweis: Der erste Start dauert etwa 10 Sekunden, während dein Assistent hochfährt — das ist völlig normal.",
+      "autostart_label": "Jarvis beim Anmelden automatisch starten"
     }
   },
   "languages_view": {

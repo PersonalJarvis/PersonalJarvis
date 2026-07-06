@@ -1542,7 +1542,8 @@
       "body": "Tu asistente está listo. Di tu palabra de activación o escribe un comando para empezar.",
       "skipped_title": "Omitiste — configúralo cuando quieras en Ajustes:",
       "start_cta": "Empezar",
-      "boot_notice": "Nota: el primer inicio tarda unos 10 segundos mientras tu asistente se inicia — es completamente normal."
+      "boot_notice": "Nota: el primer inicio tarda unos 10 segundos mientras tu asistente se inicia — es completamente normal.",
+      "autostart_label": "Iniciar Jarvis automáticamente al iniciar sesión"
     }
   },
   "languages_view": {
