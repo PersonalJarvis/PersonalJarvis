@@ -21,6 +21,14 @@ from jarvis.speech.pipeline import SpeechPipeline
 from jarvis.speech.wake_phrase import resolve_wake_plan
 
 
+@pytest.fixture(autouse=True)
+def _no_vosk_model(monkeypatch):
+    """Isolate from any per-install Vosk model: this module pins the
+    stt_match/openwakeword live-apply contracts. vosk_kws has its own suite
+    in test_wake_plan_vosk.py."""
+    monkeypatch.setattr(wp, "resolve_vosk_model_path", lambda *_: None)
+
+
 @dataclass
 class _FakeTTS:
     name: str = "fake-tts"

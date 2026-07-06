@@ -2179,6 +2179,9 @@ class DesktopApp:
             wake_plan = resolve_wake_plan(
                 self.cfg.trigger.wake_word,
                 local_whisper_available=_local_whisper_available,
+                # Selects the per-language Vosk model for the any-word
+                # vosk_kws engine; "auto" falls back to the first installed.
+                language=self.cfg.stt.language,
             )
             from loguru import logger as _wlog
             if not wake_plan.wake_available:

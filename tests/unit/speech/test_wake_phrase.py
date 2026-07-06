@@ -23,12 +23,23 @@ from jarvis.speech.wake_phrase import (
     sensitivity_to_threshold,
 )
 
+
+@pytest.fixture(autouse=True)
+def _no_vosk_model(monkeypatch):
+    """Isolate from any per-install Vosk model: this module pins the NON-vosk
+    resolution chain (stt_match / none). The vosk_kws chain has its own
+    dedicated suite in test_wake_plan_vosk.py."""
+    monkeypatch.setattr(wp, "resolve_vosk_model_path", lambda *_: None)
+
+
 # --------------------------------------------------------------------------
 # WAKE_ENGINES single source of truth
 # --------------------------------------------------------------------------
 
-def test_wake_engines_are_the_four_canonical_engines() -> None:
-    assert wc.WAKE_ENGINES == ("auto", "openwakeword", "stt_match", "custom_onnx")
+def test_wake_engines_are_the_five_canonical_engines() -> None:
+    assert wc.WAKE_ENGINES == (
+        "auto", "openwakeword", "vosk_kws", "stt_match", "custom_onnx"
+    )
 
 
 def test_default_wake_phrase_is_empty() -> None:

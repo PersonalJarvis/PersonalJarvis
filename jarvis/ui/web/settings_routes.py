@@ -486,6 +486,8 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
 
     # Preview the resolved plan so the UI can tell the user immediately whether
     # the chosen phrase will work as-is or degrade (e.g. no local Whisper).
+    _cfg_for_lang = _config(request)
+    _stt_lang = getattr(getattr(_cfg_for_lang, "stt", None), "language", None)
     plan = resolve_wake_plan(
         SimpleNamespace(
             phrase=body.phrase,
@@ -495,6 +497,8 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
             fuzzy_match_ratio=body.fuzzy_match_ratio,
         ),
         local_whisper_available=_local_whisper_available(),
+        # Per-language Vosk model lookup for the any-word vosk_kws engine.
+        language=_stt_lang,
     )
 
     # Best-effort in-memory cfg update so a later cfg read agrees pre-restart.

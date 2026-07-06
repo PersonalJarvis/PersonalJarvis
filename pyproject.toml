@@ -38,6 +38,13 @@ dependencies = [
     # proven. Both are lazy-imported in openwakeword_provider.py.
     "openwakeword>=0.6",
     "onnxruntime>=1.17",  # CPU-only; pinned explicitly though openwakeword pulls it
+    # Any-word wake keyword spotting (vosk_kws engine, design spec 2026-07-05):
+    # Vosk is Apache-2.0, torch-free, ~7 MB wheel with bundled libvosk, official
+    # CPU wheels for win/mac/manylinux x86+ARM — the identical-on-every-OS
+    # detector for a freely chosen wake phrase. The per-language model (~45 MB)
+    # is fetched once at setup into data/wake_models/vosk/<lang>/, NOT bundled.
+    # Lazy-imported in vosk_kws_provider.py; base `import jarvis` stays clean.
+    "vosk>=0.3.45",
     # Local VAD (silero-vad, which pulls torch), webrtcvad, the Porcupine wake
     # engine (pvporcupine) and the local-Whisper arbitrary-phrase path stay in the
     # [local-voice] extra per the cloud-first doctrine (CLAUDE.md): the default

@@ -1768,6 +1768,21 @@ class SpeechPipeline:
                 "enable the wake word.",
                 self._wake_phrase_label,
             )
+        elif engine == "vosk_kws":
+            # Any-word Vosk grammar KWS (design spec 2026-07-05) — same
+            # detector on every OS; the phrase is pure configuration, so a
+            # live wake-word change is just a new provider instance.
+            from jarvis.plugins.wake.vosk_kws_provider import VoskKwsProvider
+
+            self._wake = VoskKwsProvider(
+                phrase=plan.phrase,
+                model_path=getattr(plan, "vosk_model_path", None) or "",
+                keyword=plan.oww_keyword,
+            )
+            self._openwakeword_enabled = True
+            if self._whisper_wake is not None and self._wake_matcher is not None:
+                self._whisper_wake._pattern = self._wake_matcher  # noqa: SLF001
+            self._whisper_wake_enabled = False
         elif engine in ("openwakeword", "custom_onnx"):
             self._wake = OpenWakeWordProvider(
                 keywords=(plan.oww_keyword,),

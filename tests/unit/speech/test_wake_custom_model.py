@@ -13,6 +13,18 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_vosk_model(monkeypatch):
+    """Isolate from any per-install Vosk model: this module pins the custom_onnx
+    vs stt_match/none chain. The vosk_kws chain has its own suite in
+    test_wake_plan_vosk.py."""
+    import jarvis.speech.wake_phrase as wp
+
+    monkeypatch.setattr(wp, "resolve_vosk_model_path", lambda *_: None)
+
 
 def _cfg(
     model_path: str,

@@ -1039,6 +1039,7 @@
       "engine_options": {
         "auto": "Automatisch (empfohlen)",
         "openwakeword": "openWakeWord (eingebaute Phrasen)",
+        "vosk_kws": "Keyword-Spotting (beliebige Phrase, überall gleich)",
         "stt_match": "STT-Abgleich (beliebige Phrase, braucht lokales Whisper)",
         "custom_onnx": "Eigenes ONNX-Modell"
       },

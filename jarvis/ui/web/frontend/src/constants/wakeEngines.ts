@@ -9,7 +9,13 @@
 // See docs/local-wakeword/CUSTOM-WAKE-WORD-DESIGN.md and
 // docs/anti-drift-three-layer.md.
 
-export const WAKE_ENGINES = ["auto", "openwakeword", "stt_match", "custom_onnx"] as const;
+export const WAKE_ENGINES = [
+  "auto",
+  "openwakeword",
+  "vosk_kws",
+  "stt_match",
+  "custom_onnx",
+] as const;
 
 export type WakeEngine = (typeof WAKE_ENGINES)[number];
 
@@ -18,6 +24,7 @@ export type WakeEngine = (typeof WAKE_ENGINES)[number];
 export const WAKE_ENGINE_I18N_KEY: Record<WakeEngine, string> = {
   auto: "settings_view.wake_word.engine_options.auto",
   openwakeword: "settings_view.wake_word.engine_options.openwakeword",
+  vosk_kws: "settings_view.wake_word.engine_options.vosk_kws",
   stt_match: "settings_view.wake_word.engine_options.stt_match",
   custom_onnx: "settings_view.wake_word.engine_options.custom_onnx",
 };

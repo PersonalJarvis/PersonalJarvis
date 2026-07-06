@@ -1040,6 +1040,7 @@
       "engine_options": {
         "auto": "Auto (recommended)",
         "openwakeword": "openWakeWord (built-in phrases)",
+        "vosk_kws": "Keyword spotting (any phrase, same on every device)",
         "stt_match": "STT match (any phrase, needs local Whisper)",
         "custom_onnx": "Custom ONNX model"
       },

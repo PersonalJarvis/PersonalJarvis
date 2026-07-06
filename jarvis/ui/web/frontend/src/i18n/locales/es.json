@@ -1039,6 +1039,7 @@
       "engine_options": {
         "auto": "Automático (recomendado)",
         "openwakeword": "openWakeWord (frases integradas)",
+        "vosk_kws": "Detección de palabras clave (cualquier frase, igual en todos los equipos)",
         "stt_match": "Coincidencia STT (cualquier frase, requiere Whisper local)",
         "custom_onnx": "Modelo ONNX personalizado"
       },
