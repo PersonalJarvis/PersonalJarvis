@@ -66,6 +66,53 @@ def restart(
     render.emit(out or {"restarting": True}, as_json=as_json())
 
 
+@app.command("audio-devices")
+def audio_devices(
+    output: str = typer.Option(
+        None,
+        "--output",
+        help=(
+            "Pick the voice OUTPUT device by display name "
+            "('auto-headset' restores automatic selection)."
+        ),
+    ),
+    input_: str = typer.Option(
+        None,
+        "--input",
+        help=(
+            "Pick the MICROPHONE by display name "
+            "('auto-headset' restores automatic selection)."
+        ),
+    ),
+) -> None:
+    """List audio devices, or pick where the voice plays / which mic listens.
+
+    Without options: GET /api/settings/audio-devices — one entry per physical
+    device plus the current [audio] selection. With --output/--input: PUT the
+    pick; it persists to jarvis.toml and applies live to the running voice
+    pipeline (reversible, so no --yes gate).
+    """
+    from jarvis.cli_ctl.__main__ import as_json, make_client
+
+    try:
+        with make_client() as client:
+            if output is None and input_ is None:
+                out = client.request("GET", "/api/settings/audio-devices")
+            else:
+                body: dict[str, object] = {"persist": True}
+                if output is not None:
+                    body["output_device"] = output
+                if input_ is not None:
+                    body["input_device"] = input_
+                out = client.request(
+                    "PUT", "/api/settings/audio-devices", json=body
+                )
+    except ApiError as exc:
+        render.error(exc.message)
+        raise typer.Exit(code=1) from exc
+    render.emit(out, as_json=as_json())
+
+
 @app.command()
 def status() -> None:
     """Report server reachability + version (GET /api/control/auth/probe)."""

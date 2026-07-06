@@ -342,6 +342,17 @@ async def connect_start(plugin_id: str, background: BackgroundTasks) -> dict[str
     if isinstance(spec.auth, HostedMcpOAuthDcrAuth):
         handler = _build_dcr_handler(plugin_id, spec.auth)
     elif isinstance(spec.auth, OAuthDeviceFlowAuth):
+        from jarvis.marketplace.connect_helpers import is_placeholder_client_id
+
+        if is_placeholder_client_id(spec.auth.client_id):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"oauth client not configured for plugin {plugin_id!r}: "
+                    "placeholder client_id in the catalog. Supply your own "
+                    "OAuth client first."
+                ),
+            )
         handler = DeviceFlowHandler(
             DeviceFlowConfig(
                 plugin_id=plugin_id,
@@ -356,11 +367,26 @@ async def connect_start(plugin_id: str, background: BackgroundTasks) -> dict[str
         # Resolve the effective client from secrets so a reconnect uses the
         # operator's real Google client, not the catalog placeholder (the same
         # resolution the refresh scheduler uses — connect/refresh stay in sync).
-        from jarvis.marketplace.connect_helpers import resolve_pkce_client
+        from jarvis.marketplace.connect_helpers import (
+            is_placeholder_client_id,
+            resolve_pkce_client,
+        )
 
         _pkce_client_id, _pkce_client_secret = resolve_pkce_client(
             plugin_id, spec.auth.client_id, spec.auth.client_secret
         )
+        if is_placeholder_client_id(_pkce_client_id):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"oauth client not configured for plugin {plugin_id!r}: the "
+                    "shipped catalog carries a placeholder client_id and no "
+                    "<family>_oauth_client_id secret is set. Open the connect "
+                    "dialog's 'Use your own OAuth client' section (or follow "
+                    "the plugin's setup hint) and paste your own client id — "
+                    "then retry."
+                ),
+            )
         handler = PkceLoopbackHandler(
             PkceLoopbackConfig(
                 plugin_id=plugin_id,
