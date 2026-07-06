@@ -9,20 +9,14 @@ not on blocking.
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from jarvis.core.config import is_first_run
 from jarvis.setup import state as st
-from jarvis.setup.onboarding_meta import (
-    CURRENT_TERMS_VERSION,
-    ONBOARDING_STEPS,
-    WAKE_WORD_LEGAL_REFERENCES,
-    read_terms_text,
-)
+from jarvis.setup.onboarding_fastpath import state_payload as _shared_state_payload
+from jarvis.setup.onboarding_meta import CURRENT_TERMS_VERSION, read_terms_text
 
 log = logging.getLogger(__name__)
 
@@ -42,45 +36,11 @@ class StepBody(BaseModel):
     skipped: list[str] | None = None
 
 
-def _force_onboarding() -> bool:
-    return bool(os.environ.get("JARVIS_FORCE_ONBOARDING"))
-
-
 def _safe_state_payload() -> dict:
-    """Build the GET /state payload. Never raises — fails open to 'incomplete'."""
-    try:
-        s = st.get_onboarding_state(_path())
-    except Exception as exc:  # noqa: BLE001 — UI must keep working
-        log.warning("onboarding_get_state_failed: %s", exc, exc_info=True)
-        s = {
-            "completed_at": None, "current_step": None, "skipped_steps": [],
-            "terms_accepted_at": None, "terms_version": None,
-            "wake_word_acknowledged_at": None,
-        }
-
-    legacy_done = False
-    try:
-        legacy_done = not is_first_run()
-    except Exception as exc:  # noqa: BLE001
-        log.debug("onboarding: is_first_run failed: %s", exc)
-
-    completed = (s["completed_at"] is not None) or legacy_done
-    if _force_onboarding():
-        completed = False
-
-    return {
-        "completed": completed,
-        "current_step": s["current_step"],
-        "skipped_steps": s["skipped_steps"],
-        "terms": {
-            "accepted": s["terms_accepted_at"] is not None,
-            "accepted_version": s["terms_version"],
-            "current_version": CURRENT_TERMS_VERSION,
-        },
-        "wake_word_acknowledged": s["wake_word_acknowledged_at"] is not None,
-        "legal_references": WAKE_WORD_LEGAL_REFERENCES,
-        "steps": ONBOARDING_STEPS,
-    }
+    """Build the GET /state payload — shared with the fast-boot handler
+    (jarvis.setup.onboarding_fastpath) so the warming window and the real app
+    can never disagree. Never raises — fails open to 'incomplete'."""
+    return _shared_state_payload(_path())
 
 
 @router.get("/state")

@@ -2,14 +2,21 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from jarvis.setup import state as setup_state
 from jarvis.ui.web import onboarding_routes
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
+def state_dir(tmp_path, monkeypatch):
+    # The legacy .setup-complete marker resolves next to the state file, so a
+    # tmp state path isolates BOTH stores (see setup_complete_marker_path).
     monkeypatch.setattr(onboarding_routes, "_STATE_PATH_OVERRIDE", tmp_path / "s.json")
-    monkeypatch.setattr(onboarding_routes, "is_first_run", lambda: True)
     monkeypatch.delenv("JARVIS_FORCE_ONBOARDING", raising=False)
+    return tmp_path
+
+
+@pytest.fixture
+def client(state_dir):
     app = FastAPI()
     app.include_router(onboarding_routes.router)
     return TestClient(app)
@@ -46,22 +53,22 @@ def test_accept_then_complete(client):
     assert body["current_step"] == "finish"
 
 
-def test_legacy_install_is_migrated(client, monkeypatch):
-    monkeypatch.setattr(onboarding_routes, "is_first_run", lambda: False)
+def test_legacy_install_is_migrated(client, state_dir):
+    (state_dir / ".setup-complete").write_text("done\n", encoding="utf-8")
     assert client.get("/api/onboarding/state").json()["completed"] is True
 
 
-def test_force_env_overrides(client, monkeypatch):
-    monkeypatch.setattr(onboarding_routes, "is_first_run", lambda: False)
+def test_force_env_overrides(client, state_dir, monkeypatch):
+    (state_dir / ".setup-complete").write_text("done\n", encoding="utf-8")
     monkeypatch.setenv("JARVIS_FORCE_ONBOARDING", "1")
     assert client.get("/api/onboarding/state").json()["completed"] is False
 
 
-def test_migration_fail_open_when_is_first_run_raises(client, monkeypatch):
-    def boom() -> bool:
+def test_migration_fail_open_when_marker_probe_raises(client, monkeypatch):
+    def boom(path=None) -> bool:
         raise RuntimeError("marker check failed")
 
-    monkeypatch.setattr(onboarding_routes, "is_first_run", boom)
+    monkeypatch.setattr(setup_state, "setup_complete_marker_exists", boom)
     r = client.get("/api/onboarding/state")
     assert r.status_code == 200
     assert r.json()["completed"] is False  # safe default, not a 500
