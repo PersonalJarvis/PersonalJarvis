@@ -309,6 +309,18 @@ _ARG_MAXLEN: dict[str, tuple[str, int]] = {
 }
 
 
+def _canonical_tool_name(name: str) -> str:
+    """Hyphen/underscore- and case-insensitive canonical form of a tool name.
+
+    The registered tool surface mixes naming conventions (``wiki-recall`` vs
+    ``run_shell``), so models cross-normalize and invent the OTHER spelling of a
+    real tool (live incident 2026-07-05: gemini called ``run-shell``). Both
+    spellings collapse to one canonical key so an unambiguous variant still
+    resolves to the registered tool instead of the missing-tool refusal.
+    """
+    return (name or "").strip().lower().replace("-", "_")
+
+
 def _is_stt_hallucinated(tool_name: str, args: Any) -> tuple[bool, str]:
     """Checks whether the tool args look like an STT hallucination.
 
@@ -351,11 +363,44 @@ class ToolUseLoop:
         self._brain = brain
         self._tools = tools
         self._executor = executor
+        # Canonical form → registered name, for hyphen/underscore-tolerant
+        # lookup. A canonical collision (two registered tools differing only in
+        # separator/case) maps to None: an inexact name must never guess
+        # between twins — only the exact spelling reaches either of them.
+        self._alias_map: dict[str, str | None] = {}
+        for registered in tools:
+            canon = _canonical_tool_name(registered)
+            self._alias_map[canon] = (
+                None if canon in self._alias_map else registered
+            )
         self._system_prompt = system_prompt
         self._budget = budget or IterationBudget()
         # Per-response output ceiling forwarded onto every BrainRequest this
         # loop issues. Safety ceiling, not a target (see BrainConfig.max_tokens).
         self._max_tokens = max_tokens
+
+    def _resolve_tool(self, requested: str) -> tuple[Tool | None, str]:
+        """Look up a model-requested tool name, tolerating separator/case drift.
+
+        Exact match wins. Otherwise the canonical (hyphen/underscore/case-
+        insensitive) form resolves — but only when it maps to exactly ONE
+        registered tool. Returns ``(tool, registered_name)``; unknown names
+        return ``(None, requested)`` so the anti-silence fallback still fires.
+        """
+        tool = self._tools.get(requested)
+        if tool is not None or not requested:
+            return tool, requested
+        alias = self._alias_map.get(_canonical_tool_name(requested))
+        if alias is None:
+            return None, requested
+        tool = self._tools.get(alias)
+        if tool is None:
+            return None, requested
+        log.info(
+            "tool_use_loop: model called tool %r — resolved to registered "
+            "tool %r via separator-insensitive alias", requested, alias,
+        )
+        return tool, alias
 
     def _tool_schemas(self) -> list[dict[str, Any]]:
         """Schemas in Anthropic-compatible format (providers normalise)."""
@@ -490,6 +535,10 @@ class ToolUseLoop:
                 ack_attempted = True
                 first_call = agg.tool_calls[0]
                 first_name = first_call.get("name", "") or ""
+                # Normalize to the registered name so the caller's skip-list /
+                # template selection (keyed on registered names) still matches
+                # when the model used the other separator spelling.
+                _, first_name = self._resolve_tool(first_name)
                 first_input = first_call.get("input", {}) or {}
                 if not isinstance(first_input, dict):
                     first_input = {}
@@ -527,7 +576,11 @@ class ToolUseLoop:
                 # check for image artifacts below.
                 result = None
 
-                tool = self._tools.get(tool_name)
+                # Separator-tolerant resolution: from here on ``tool_name`` is
+                # the REGISTERED name (guards, telemetry, executed_tool_names
+                # and the tool-result message all key on it); the raw model
+                # spelling stays in ``final_agg.tool_calls`` above.
+                tool, tool_name = self._resolve_tool(tool_name)
                 stt_blocked, stt_reason = (
                     _is_stt_hallucinated(tool_name, tool_args)
                     if tool is not None else (False, "")
