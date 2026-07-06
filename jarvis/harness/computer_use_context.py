@@ -311,7 +311,7 @@ def get_computer_use_context() -> ComputerUseContext:
     return _CONTEXT
 
 
-def peek_computer_use_context() -> "ComputerUseContext | None":
+def peek_computer_use_context() -> ComputerUseContext | None:
     """Non-raising read of the global CU context (None when never wired).
 
     Lets callers degrade honestly on machines where [computer_use].enabled is

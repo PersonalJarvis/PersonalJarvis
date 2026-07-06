@@ -87,13 +87,20 @@ feature actually used).
 
 ## Fix priorities (proposal, no code changed yet)
 
-1. **Honesty layer (highest value/effort ratio).** Call
-   `is_placeholder_client_id()` in `connect_start` and fail with an actionable
-   message; gate the `computer-use` router tool on `cu_enabled` (or return an
-   honest "disabled — enable in Settings" ToolResult); make `wiki-ingest`
-   report "nothing written" as failure; make the Notion Live badge do a real
-   token probe + refresh the live MCP session; gate mission worker `tools=` on
-   `can_call_tools()` and validate the resolved model supports tools.
+1. **Honesty layer (highest value/effort ratio).** ✅ LANDED 2026-07-06 (plan
+   `docs/superpowers/plans/2026-07-06-fresh-machine-honesty-layer.md`, all six
+   tasks reviewed clean):
+   - connect_start rejects placeholder client ids with an actionable 409
+     (guard in shared-tree commit `8cf3a00a`, test hardening `14831367`);
+   - `computer-use` returns an honest "not active — enable in Settings"
+     ToolResult instead of the RuntimeError (`8bab57b3`);
+   - `wiki-ingest` reports a curator no-op as failure (`a3a24c7c`);
+   - mission worker pre-gates on `can_call_tools()` + converts the
+     no-tool-endpoints provider error into an actionable early failure
+     (`abf7dd4f`, `9f26e494`);
+   - MCP live badge probes the live registry — connected-with-zero-tools is
+     no longer shown live (`da9e9409`);
+   - refreshed tokens now reach the live MCP session (`10478f99`).
 2. **First-run experience.** Installer creates the windowless pythonw shortcut
    (fixes console + icon timing); surface desktop-extra failures; harden the
    smoke test to assert the real UI + one real chat turn.
