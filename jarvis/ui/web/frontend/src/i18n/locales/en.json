@@ -1460,7 +1460,9 @@
       "body": "It can control your computer, run commands, open apps, send messages, and change files on your behalf — and it can make mistakes. It may do unintended or even destructive things.",
       "liability": "You use it entirely at your own risk. The developers accept no liability for any damage, data loss, or other consequences. Only continue if you understand and accept this.",
       "accept_label": "I understand the risks and accept that I use Personal Jarvis at my own risk.",
-      "proceed": "I understand — continue"
+      "proceed": "I understand — continue",
+      "view_terms": "View the full Terms of Use",
+      "terms_loading": "Loading terms…"
     },
     "intro": {
       "scene_1": "Meet your voice-first assistant.",

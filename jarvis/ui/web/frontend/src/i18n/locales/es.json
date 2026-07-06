@@ -1459,7 +1459,9 @@
       "body": "Puede controlar tu ordenador, ejecutar comandos, abrir aplicaciones, enviar mensajes y modificar archivos en tu nombre, y puede cometer errores. Podría hacer cosas no deseadas o incluso destructivas.",
       "liability": "Lo usas completamente bajo tu propia responsabilidad. Los desarrolladores no aceptan responsabilidad alguna por daños, pérdida de datos u otras consecuencias. Continúa solo si lo entiendes y lo aceptas.",
       "accept_label": "Entiendo los riesgos y acepto que uso Personal Jarvis bajo mi propia responsabilidad.",
-      "proceed": "Lo entiendo — continuar"
+      "proceed": "Lo entiendo — continuar",
+      "view_terms": "Ver los Términos de uso completos",
+      "terms_loading": "Cargando los términos…"
     },
     "intro": {
       "scene_1": "Te presentamos a tu asistente de voz.",

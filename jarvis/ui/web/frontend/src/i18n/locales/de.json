@@ -1459,7 +1459,9 @@
       "body": "Sie kann deinen Computer steuern, Befehle ausführen, Apps öffnen, Nachrichten senden und Dateien in deinem Namen verändern — und sie kann Fehler machen. Sie kann ungewollte oder sogar zerstörerische Dinge tun.",
       "liability": "Die Nutzung erfolgt vollständig auf eigenes Risiko. Die Entwickler übernehmen keine Haftung für Schäden, Datenverlust oder andere Folgen. Fahre nur fort, wenn du das verstehst und akzeptierst.",
       "accept_label": "Ich verstehe die Risiken und akzeptiere, dass ich Personal Jarvis auf eigenes Risiko nutze.",
-      "proceed": "Verstanden — fortfahren"
+      "proceed": "Verstanden — fortfahren",
+      "view_terms": "Vollständige Nutzungsbedingungen anzeigen",
+      "terms_loading": "Bedingungen werden geladen…"
     },
     "intro": {
       "scene_1": "Triff deinen sprachgesteuerten Assistenten.",

@@ -45,6 +45,33 @@ it("fails open (renders nothing) on a fetch error", async () => {
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull(), { timeout: 500 });
 });
 
+it("persists terms acceptance when the risk gate is accepted", async () => {
+  const calls: Array<[string, RequestInit | undefined]> = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push([url, init]);
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ ...base, completed: false, ok: true }),
+      });
+    }),
+  );
+  render(<OnboardingGate />);
+  await waitFor(() => expect(screen.getByRole("dialog")).toBeDefined());
+
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+  await waitFor(() =>
+    expect(
+      calls.some(
+        ([url, init]) => url === "/api/onboarding/accept-terms" && init?.method === "POST",
+      ),
+    ).toBe(true),
+  );
+});
+
 it("shows the tutorial video after the risk gate, then the step flow", async () => {
   stub({ ...base, completed: false });
   render(<OnboardingGate />);
