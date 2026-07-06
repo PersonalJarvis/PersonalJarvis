@@ -229,6 +229,56 @@ async def test_underscore_alias_resolves_to_hyphenated_tool() -> None:
     assert "wiki-recall" in result.executed_tool_names
 
 
+class _ExecWithDeniedLog(_ExecOK):
+    """Executor fake that records guard-denied publications (Task-3 contract)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.denied: list[tuple[str, str]] = []
+
+    async def publish_guard_denied(self, tool_name, reason, *, trace_id=None):
+        self.denied.append((tool_name, reason))
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_publishes_guard_denied_event() -> None:
+    """A model-invented tool name must leave a visible trace (2026-07-06
+    audit: the 'run-shell' incident produced ZERO events — the timeline
+    could not show why the turn refused)."""
+    brain = _AliasCallingBrain("totally_made_up_tool")
+    executor = _ExecWithDeniedLog()
+    loop = ToolUseLoop(
+        brain,
+        {"run_shell": _RunShellTool()},
+        executor,  # type: ignore[arg-type]
+    )
+
+    await loop.run([], user_utterance="zeig mir den letzten Commit")
+
+    assert executor.calls == []
+    assert executor.denied, "unknown tool must publish a guard-denied event"
+    assert executor.denied[0][0] == "totally_made_up_tool"
+    assert "unknown tool name" in executor.denied[0][1]
+
+
+@pytest.mark.asyncio
+async def test_howto_guard_publishes_guard_denied_event() -> None:
+    brain = _Brain()
+    executor = _ExecWithDeniedLog()
+    loop = ToolUseLoop(
+        brain,
+        {"dispatch_to_harness": _Tool()},
+        executor,  # type: ignore[arg-type]
+    )
+
+    await loop.run(
+        [],
+        user_utterance="Wie kann ich bei Windows reinzoomen?",  # i18n-allow: simulated German user utterance under test
+    )
+
+    assert executor.denied and "how-to" in executor.denied[0][1]
+
+
 @pytest.mark.asyncio
 async def test_ambiguous_alias_is_not_guessed() -> None:
     """If two registered tools collide on the normalized form, an inexact name

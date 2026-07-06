@@ -8,8 +8,8 @@
   "tts": {
     "provider": "openrouter-tts",
     "fallback": "grok-voice",
-    "voice_de": "ara",
-    "voice_en": "ara",
+    "voice_de": "Kore",
+    "voice_en": "Kore",
     "language_code": "auto",
     "chunk_by_sentence": false,
     "seed": 7,
@@ -18,7 +18,7 @@
     "vertex_project": "",
     "vertex_location": "us-central1",
     "service_account_path": "~/.config/jarvis/vertex-sa.json",
-    "model": "x-ai/grok-voice-tts-1.0",
+    "model": "sonic-2",
     "volume": 1.0
   },
   "tts.cartesia": {

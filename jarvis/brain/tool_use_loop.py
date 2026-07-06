@@ -402,6 +402,24 @@ class ToolUseLoop:
         )
         return tool, alias
 
+    async def _publish_guard_denied(
+        self, tool_name: str, reason: str, tid: UUID,
+    ) -> None:
+        """Make a guard-blocked / unknown-name tool call visible on the bus.
+
+        The guard branches in ``run`` never reach ``ToolExecutor.execute``, so
+        no ActionProposed/ActionExecuted fires — the session timeline showed NO
+        trace of why a turn refused (2026-07-06 audit). Defensive: test fakes
+        and older executors may not have the publisher; skip silently then.
+        """
+        publisher = getattr(self._executor, "publish_guard_denied", None)
+        if publisher is None:
+            return
+        try:
+            await publisher(tool_name, reason, trace_id=tid)
+        except Exception:  # noqa: BLE001 — observability must never break the loop
+            log.debug("guard-denied publish failed", exc_info=True)
+
     def _tool_schemas(self) -> list[dict[str, Any]]:
         """Schemas in Anthropic-compatible format (providers normalise)."""
         return [
@@ -594,6 +612,11 @@ class ToolUseLoop:
                         "tool_use_loop: side-effect tool '%s' blocked for a how-to question",
                         tool_name,
                     )
+                    await self._publish_guard_denied(
+                        tool_name,
+                        "guard: how-to question — side-effect tool not executed",
+                        tid,
+                    )
                     tool_result_payload = {
                         "success": False,
                         "output": None,
@@ -612,6 +635,11 @@ class ToolUseLoop:
                     log.info(
                         "tool_use_loop: side-effect tool '%s' blocked for self-identification",
                         tool_name,
+                    )
+                    await self._publish_guard_denied(
+                        tool_name,
+                        "guard: self-identification turn — side-effect tool not executed",
+                        tid,
                     )
                     tool_result_payload = {
                         "success": False,
@@ -638,6 +666,12 @@ class ToolUseLoop:
                         "tool_use_loop: tool '%s' not in the router tool set — "
                         "anti-silence fallback instead of an empty response", tool_name,
                     )
+                    await self._publish_guard_denied(
+                        tool_name,
+                        "unknown tool name — not in this turn's tool set "
+                        "(model-invented or gated off this turn)",
+                        tid,
+                    )
                     tool_result_payload = {"error": f"Tool '{tool_name}' not available"}
                     suppress_output = _anti_silence_phrase(
                         user_utterance, reply_language
@@ -645,6 +679,11 @@ class ToolUseLoop:
                 elif tool_name == "spawn_worker" and _is_meta_debug_intent(user_utterance):
                     log.info(
                         "tool_use_loop: spawn_worker blocked for a meta/debug utterance"
+                    )
+                    await self._publish_guard_denied(
+                        tool_name,
+                        "guard: meta/debug utterance — spawn_worker not executed",
+                        tid,
                     )
                     # Asking the LLM to "answer directly and concretely" via a
                     # tool_result error message turned out to be unreliable —
@@ -682,6 +721,11 @@ class ToolUseLoop:
                         "tool_use_loop: STT-hallucination guard blocked %s — %s",
                         tool_name, stt_reason,
                     )
+                    await self._publish_guard_denied(
+                        tool_name,
+                        f"guard: STT-hallucination suspect args — {stt_reason}",
+                        tid,
+                    )
                     tool_result_payload = {
                         "success": False,
                         "output": None,
@@ -706,6 +750,11 @@ class ToolUseLoop:
                         "tool_use_loop: action tool '%s' blocked on research intent "
                         "(intent_level=%s) — LLM redirected to search_web",
                         tool_name, intent_level,
+                    )
+                    await self._publish_guard_denied(
+                        tool_name,
+                        "guard: research intent — action tool redirected to search_web",
+                        tid,
                     )
                     tool_result_payload = {
                         "success": False,

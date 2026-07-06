@@ -28,6 +28,7 @@ from jarvis.brain.ack_generator import (
     _SEARCH_TOPIC_ACK,
     _SHELL_ACK,
     AckPhrasePicker,
+    describe_tool_action,
     final_summary_marker,
     generate_ack,
     is_voice_control_utterance,
@@ -404,6 +405,44 @@ class TestGermanDiacritics:
                 low = phrase.lower()
                 for bad in bad_tokens:
                     assert bad not in low, f"ASCII umlaut substitute in {phrase!r}"
+
+
+class TestDescribeToolAction:
+    """English action descriptions consumed as PROMPT INPUT by the contextual
+    interim composer (v2 spec) — never spoken verbatim."""
+
+    def test_search_names_the_query(self) -> None:
+        desc = describe_tool_action("search_web", {"query": "PrimeRandat github"})
+        assert "web search" in desc
+        assert "PrimeRandat" in desc
+
+    def test_cli_names_the_service(self) -> None:
+        assert "GitHub" in describe_tool_action("cli_gh", {"command": "gh repo view"})
+        assert "Google Cloud" in describe_tool_action("cli_gcloud", {})
+
+    def test_cli_never_echoes_the_raw_command(self) -> None:
+        desc = describe_tool_action("cli_gh", {"command": "gh api graphql --paginate"})
+        assert "graphql" not in desc
+
+    def test_shell_stays_generic(self) -> None:
+        desc = describe_tool_action("run_shell", {"command": "rm -rf /tmp/x"})
+        assert "rm -rf" not in desc
+        assert desc
+
+    def test_spawn_family_describes_the_handover(self) -> None:
+        for tool in ("spawn_worker", "spawn_sub_jarvis", "dispatch_to_harness"):
+            assert "background helper" in describe_tool_action(tool, {})
+
+    def test_gmail_send_vs_read(self) -> None:
+        assert "email" in describe_tool_action("gmail", {"action": "send_message"})
+        assert "fetching" in describe_tool_action("gmail", {"action": "list_messages"})
+
+    def test_open_app_names_the_app(self) -> None:
+        assert "Notepad" in describe_tool_action("open_app", {"app": "Notepad"})
+
+    def test_unknown_tool_is_neutral_and_total(self) -> None:
+        assert describe_tool_action("mystery_tool", {"x": object()})
+        assert describe_tool_action("", None)
 
 
 class TestFinalSummaryMarker:

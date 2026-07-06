@@ -1457,6 +1457,12 @@ class SpeechPipeline:
         # verbatim in quick succession (forensic 2026-07-05: the identical
         # grounded ack spoke three times in one session).
         self._last_preamble_spoken: tuple[str, float] | None = None
+        # v2 anti-loop backstop: monotonic timestamps of SPOKEN preamble/
+        # progress lines. ``_on_announcement`` drops anything beyond
+        # ``preamble_rate_limit_per_min`` in a rolling 60 s window so the
+        # historical "kept repeating forever" bug class dies at this shared
+        # chokepoint no matter which emitter misbehaves.
+        self._preamble_spoken_times: deque[float] = deque(maxlen=32)
         # AD-OE5/OE6: completion-class announcements that arrive while the user
         # holds the floor are parked here and flushed at the next turn-boundary
         # (when the turn-state returns to LISTENING/IDLE) instead of barging
@@ -2893,7 +2899,32 @@ class SpeechPipeline:
                     event.text[:80],
                 )
                 return
-            self._last_preamble_spoken = (spoken_text, time.monotonic())
+            # v2 anti-loop backstop: hard cap on spoken preamble/progress
+            # lines per rolling 60 s window, ANY source. Kills the historical
+            # "kept saying it forever" bug class at the last shared
+            # chokepoint. Completion/interrupt readbacks never enter this
+            # branch (owed answers are exempt).
+            rate_limit = int(
+                getattr(dedup_cfg, "preamble_rate_limit_per_min", 3) or 0
+            )
+            spoken_times = getattr(self, "_preamble_spoken_times", None)
+            if spoken_times is None:
+                spoken_times = deque(maxlen=32)
+                self._preamble_spoken_times = spoken_times
+            now_monotonic = time.monotonic()
+            if rate_limit > 0:
+                recent_count = sum(
+                    1 for t in spoken_times if now_monotonic - t < 60.0
+                )
+                if recent_count >= rate_limit:
+                    log.warning(
+                        "Preamble dropped — rate-limit backstop (%d spoken in "
+                        "the last 60s, cap %d): %r",
+                        recent_count, rate_limit, event.text[:80],
+                    )
+                    return
+            self._last_preamble_spoken = (spoken_text, now_monotonic)
+            spoken_times.append(now_monotonic)
         # We are now committed to actually speaking this announcement (past every
         # suppression / defer / empty guard). Record it as voice activity so the
         # idle-timeout branch in ``_active_session`` re-arms a fresh window: an

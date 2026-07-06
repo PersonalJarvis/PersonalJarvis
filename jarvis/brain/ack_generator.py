@@ -49,6 +49,7 @@ from typing import Any
 __all__ = [
     "ACK_SKIP_TOOLS",
     "AckPhrasePicker",
+    "describe_tool_action",
     "final_summary_marker",
     "generate_ack",
     "is_voice_control_utterance",
@@ -745,6 +746,81 @@ def generate_ack(
         except Exception:  # noqa: BLE001 — never let a broken template muzzle the ack
             pass
     return chooser.pick(_GENERIC_ACK[lang])
+
+
+def describe_tool_action(
+    tool_name: str, tool_args: Mapping[str, Any] | None = None
+) -> str:
+    """Compact ENGLISH description of what the tool call is about to do.
+
+    Prompt input for the contextual interim composer (`ReadbackComposer`),
+    NOT product surface — the composer answers in the resolved turn language.
+    Extracts the most informative arg (query / app / skill / CLI service)
+    without ever echoing raw shell commands. Total: never raises; unknown
+    tools get a neutral "working on the request".
+    """
+    norm = _normalize_tool_name(tool_name)
+    args: Mapping[str, Any] = tool_args or {}
+
+    def _arg(*names: str, max_len: int = 60) -> str:
+        for name in names:
+            try:
+                value = str(args.get(name) or "").strip()
+            except Exception:  # noqa: BLE001 — garbage args must not break the ack
+                value = ""
+            if value:
+                return _trim_to_words(value, max_len)
+        return ""
+
+    try:
+        if norm.startswith("cli_") and norm != "cli_tools":
+            suffix = norm[len("cli_"):].strip("_")
+            service = _CLI_SERVICE_NAMES.get(
+                suffix, suffix.replace("_", " ").title()
+            )
+            return f"querying {service}" if service else "running a quick lookup"
+        if norm == "search_web":
+            query = _arg("query", "q")
+            return (
+                f"running a web search for {query!r}" if query
+                else "running a web search"
+            )
+        if norm in ("run_shell", "cli_tools"):
+            return "running a quick check on the computer"
+        if norm in ("dispatch_to_harness", "dispatch_with_review",
+                    "spawn_sub_jarvis", "spawn_worker"):
+            return "handing the task to a background helper"
+        if norm == "multi_spawn":
+            tasks = args.get("tasks") or args.get("jobs") or []
+            n = len(tasks) if isinstance(tasks, (list, tuple)) else 0
+            return (
+                f"starting {n} tasks in parallel" if n >= 2
+                else "starting background tasks"
+            )
+        if norm == "open_app":
+            app = _arg("app", "app_name", "name", max_len=30)
+            return f"opening {app}" if app else "opening an application"
+        if norm == "run_skill":
+            skill = _arg("skill", "skill_name", "name", max_len=40)
+            return f"running the {skill} routine" if skill else "running a routine"
+        if norm == "gmail":
+            action = str(args.get("action") or "list_messages").strip()
+            if action == "send_message":
+                return "preparing an email"
+            return "fetching the user's email"
+        if norm == "google_calendar":
+            return "checking the user's calendar"
+        if norm == "remember":
+            return "saving a note to memory"
+        if norm in ("verify_via_curl", "verify_localhost"):
+            return "verifying the result"
+        if norm == "start_preview_server":
+            return "starting the preview server"
+        if norm == "set_config_value":
+            return "updating a setting"
+    except Exception:  # noqa: BLE001 — a description bug must not mute the ack
+        pass
+    return "working on the request"
 
 
 def final_summary_marker(language: str = "de") -> str:

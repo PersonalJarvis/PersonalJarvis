@@ -77,6 +77,7 @@ def _make_pipeline(
     *,
     commit_grace_ms: int = 900,
     dedup_window_s: int = 180,
+    rate_limit_per_min: int = 3,
 ) -> SpeechPipeline:
     pipeline = SpeechPipeline(tts=tts, bus=bus, enable_whisper_wake=False)
     pipeline._player = player  # type: ignore[assignment]
@@ -85,6 +86,7 @@ def _make_pipeline(
             suppress_preamble_after_interrupt_ms=5000,
             grounded_ack_commit_grace_ms=commit_grace_ms,
             preamble_dedup_window_s=dedup_window_s,
+            preamble_rate_limit_per_min=rate_limit_per_min,
         )
     )
     return pipeline
@@ -166,6 +168,62 @@ async def test_completion_readbacks_are_never_deduped() -> None:
         )
 
     assert player.plays == 2, "an owed completion readback was deduped"
+
+
+# ---------------------------------------------------------------------------
+# Anti-loop rate-limit backstop (v2)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_rate_limit_caps_preambles_per_minute() -> None:
+    """The historical 'kept saying it forever' loop dies here: beyond the
+    per-minute cap, further preamble-class lines are dropped — even with
+    DISTINCT wording (dedup alone would not catch a looping emitter that
+    varies its text)."""
+    bus = EventBus()
+    tts = FakeTTS()
+    player = FakePlayer()
+    _make_pipeline(tts, bus, player, rate_limit_per_min=3)
+
+    for i in range(5):
+        await bus.publish(_preamble(f"Zwischenmeldung Nummer {i}."))  # i18n-allow: German TTS fixture
+
+    assert player.plays == 3, "the rate-limit backstop did not cap the loop"
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_zero_disables_the_backstop() -> None:
+    bus = EventBus()
+    tts = FakeTTS()
+    player = FakePlayer()
+    _make_pipeline(tts, bus, player, rate_limit_per_min=0)
+
+    for i in range(5):
+        await bus.publish(_preamble(f"Zwischenmeldung Nummer {i}."))  # i18n-allow: German TTS fixture
+
+    assert player.plays == 5
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_never_touches_completions() -> None:
+    """Completion readbacks are owed answers — a burst of finished missions
+    must all be spoken regardless of the preamble cap."""
+    bus = EventBus()
+    tts = FakeTTS()
+    player = FakePlayer()
+    _make_pipeline(tts, bus, player, rate_limit_per_min=1)
+
+    for i in range(3):
+        await bus.publish(
+            AnnouncementRequested(
+                text=f"Auftrag {i} ist fertig geworden.",  # i18n-allow: German TTS fixture
+                language="de",
+                priority="normal",
+                kind="completion",
+            )
+        )
+
+    assert player.plays == 3
 
 
 # ---------------------------------------------------------------------------

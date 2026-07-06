@@ -701,7 +701,11 @@ _INHERITABLE_ACTION_TOOL_NAMES: frozenset[str] = _SPAWN_TOOL_NAMES | {"computer_
 # reads never regress. The background wiki (VoiceFactBridge) is untouched — it is
 # not a model-callable tool (AP-9).
 _DETERMINISTIC_WRITE_TOOL_NAMES: frozenset[str] = frozenset({
-    "contact-upsert", "update-profile", "wiki-ingest", "google_calendar",
+    # Keys are the tools' .name attributes (what the turn dict is keyed by) —
+    # NOT the hyphenated entry-point names. "update-profile" (the ep name)
+    # sat here since introduction, so the signalless gate never actually
+    # stripped update_profile (found in the 2026-07-06 pipeline audit).
+    "contact-upsert", "update_profile", "wiki-ingest", "google_calendar",
     "call-contact",
 })
 
@@ -1699,6 +1703,28 @@ def _provider_down_phrase(lang: str, idx: int) -> str:
     return variants[idx % len(variants)]
 
 
+# AD-OE6: a model round that dies AFTER tools already ran must end in an honest
+# spoken notice, never silence. Forensic 2026-07-05 (session 3e27dd8e): the
+# provider sent finish_reason="error" on a ~224k-token round following 10+
+# executed tools; the empty-response guard is (correctly) skipped when tool
+# calls exist, so the turn counted as success with empty text — the user heard
+# NOTHING. Voice-safe: no provider names, no jargon (ADR-0010).
+_MID_ANSWER_ERROR_PHRASES: dict[str, str] = {
+    "de": (
+        "Ich habe die Zwischenschritte ausgeführt, aber beim Formulieren der "  # i18n-allow
+        "Antwort gab es einen Fehler. Frag mich bitte gleich noch einmal."  # i18n-allow
+    ),
+    "en": (
+        "I ran the steps, but something went wrong while composing the answer. "
+        "Please ask me again in a moment."
+    ),
+    "es": (
+        "Ejecuté los pasos, pero algo falló al redactar la respuesta. "
+        "Vuelve a preguntarme en un momento."
+    ),
+}
+
+
 class BrainManager:
     """Top-level orchestrator with intent router and smart fallback."""
 
@@ -2326,32 +2352,46 @@ class BrainManager:
 
         Returns an async callback the tool-use loop awaits ONCE, the moment the
         router brain has actually SELECTED a tool call — so the otherwise-silent
-        tool-execution + readback window speaks a short, deterministic, LLM-free
-        line ("Okay, ich schaue in deine Mails."). This bridges the wait on slow
-        plugin turns (e.g. a cold email/calendar fetch) where the persona forbids
-        any spoken preamble before the tool and round-2 has not started yet.
+        tool-execution + readback window speaks a short interim line. This
+        bridges the wait on slow turns (e.g. a cold email/calendar fetch, a
+        multi-tool research) where the persona forbids any spoken preamble
+        before the tool and round-2 has not started yet.
+
+        Contextual Interim Voice (2026-07-06 v2 spec): when the manager's
+        ``ReadbackComposer`` has a live flash provider, the spoken text is
+        COMPOSED for this exact turn (user request + concrete action) instead
+        of drawn from a phrase pool — the pool line remains only as the
+        instant deterministic fallback (keyless install, breaker open,
+        timeout, rejected output). Composition + publish run fire-and-forget
+        so the tool-use loop is never delayed; ``[ack_brain].contextual_interim
+        = false`` is the kill switch back to pools-only.
 
         Returns ``None`` when there is no bus, the feature is off
         (``[ack_brain].grounded_tool_ack = false``), or the utterance is a
         Voice-Control command (the action itself is the confirmation).
 
         GROUNDED, not speculative: unlike the retired Flash-Brain preamble it
-        fires only after a real tool decision, never on suspicion. The words are
-        rendered by ``generate_ack`` (skip-list-aware, so passive reads / low-
-        latency UI events stay silent) and the language is re-resolved and
-        re-scrubbed authoritatively at the speech layer, so the reply-language
-        pin and conversation stickiness still win there. Publishing with
-        ``source_layer="brain.router.ack"`` means the existing pipeline guard
-        keeps "one ack per turn" when a machine re-enables the Flash-Brain
-        preamble (``jarvis/speech/pipeline.py`` drops this source while the
-        Flash-Brain is active); with the preamble off (the default) it is heard.
+        fires only after a real tool decision, never on suspicion. The fallback
+        words are rendered by ``generate_ack`` (skip-list-aware, so passive
+        reads / low-latency UI events stay silent) and the language is
+        re-resolved and re-scrubbed authoritatively at the speech layer, so the
+        reply-language pin and conversation stickiness still win there.
+        Publishing with ``source_layer="brain.router.ack"`` keeps every
+        pipeline gate on this source: the necessity commit-grace (speak only if
+        the brain is STILL busy), duplicate-wording dedup, the rate-limit
+        backstop, and the legacy one-ack-per-turn drop while the Flash-Brain
+        preamble is active.
         """
         if self._bus is None:
             return None
         ack_cfg = getattr(self._config, "ack_brain", None) if self._config else None
         if not getattr(ack_cfg, "grounded_tool_ack", True):
             return None
-        from .ack_generator import generate_ack, is_voice_control_utterance
+        from .ack_generator import (
+            describe_tool_action,
+            generate_ack,
+            is_voice_control_utterance,
+        )
 
         if is_voice_control_utterance(user_text):
             return None
@@ -2387,20 +2427,75 @@ class BrainManager:
                         "(min gap %.0fs)", time.monotonic() - last, min_gap_s,
                     )
                     return
-            text = generate_ack(tool_name, tool_args, language=language)
-            if text is None:  # skip-list tool (passive read / UI micro-event)
+            canned_text = generate_ack(tool_name, tool_args, language=language)
+            if canned_text is None:  # skip-list tool (passive read / UI micro-event)
                 return
             fired = True
             self._last_grounded_ack_monotonic = time.monotonic()
-            await bus.publish(
-                AnnouncementRequested(
-                    text=text,
-                    priority="normal",
-                    language=language,
-                    kind="preamble",
-                    source_layer="brain.router.ack",
+
+            async def _publish(text: str) -> None:
+                await bus.publish(
+                    AnnouncementRequested(
+                        text=text,
+                        priority="normal",
+                        language=language,
+                        kind="preamble",
+                        source_layer="brain.router.ack",
+                    )
                 )
-            )
+
+            composer = getattr(self, "_readback_composer", None)
+            contextual = bool(getattr(ack_cfg, "contextual_interim", True))
+            if not (contextual and bool(getattr(composer, "has_llm", False))):
+                # Deterministic path (keyless install / kill switch): publish
+                # inline — sub-millisecond, the historical contract.
+                await _publish(canned_text)
+                return
+
+            action = describe_tool_action(tool_name, tool_args)
+
+            async def _compose_and_publish() -> None:
+                # Runs detached: composition must never delay tool execution
+                # (the loop already moved on) and must never raise. The
+                # pipeline's commit-grace re-checks necessity AFTER this
+                # composition lands, so the flash latency costs nothing.
+                text = canned_text
+                try:
+                    from jarvis.voice.contextual_readback import (  # noqa: PLC0415
+                        render_readback,
+                    )
+                    text = await render_readback(
+                        composer,
+                        instruction=(
+                            f"You have JUST started {action} to answer the "
+                            "user's request and it is taking a moment. In one "
+                            "short sentence, tell the user what you are doing "
+                            "RIGHT NOW, tied to their actual topic — an "
+                            "in-progress bridge line, never a result."
+                        ),
+                        language=language,
+                        canned=lambda: canned_text,
+                        facts={
+                            "user_request": user_text[:200],
+                            "current_action": action,
+                        },
+                        in_progress=True,
+                        latency_budget_ms=1200,
+                    )
+                except Exception as exc:  # noqa: BLE001 — fall back to the pool line
+                    log.debug("Contextual interim compose failed: %s", exc)
+                try:
+                    await _publish(text)
+                except Exception as exc:  # noqa: BLE001 — a publish fault must die here
+                    log.warning("Interim ack publish failed: %s", exc)
+
+            tasks = getattr(self, "_interim_ack_tasks", None)
+            if tasks is None:
+                tasks = set()
+                self._interim_ack_tasks = tasks
+            task = asyncio.create_task(_compose_and_publish())
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
 
         return emit
 
@@ -6937,6 +7032,29 @@ class BrainManager:
                     continue
 
                 response_text = agg.text
+                # Honest mid-answer error notice (AD-OE6): the model round
+                # AFTER tool execution died mid-stream (the provider sent
+                # finish_reason="error") and produced no text. The empty-
+                # response guard above is correctly skipped when tool calls
+                # exist, so without this branch the turn counts as a success
+                # with empty text and the user hears NOTHING (forensic
+                # 2026-07-05, session 3e27dd8e, 223k-token round). Do NOT
+                # fall through to the next provider — the executed tools
+                # would re-run their side effects; speak honestly instead.
+                if (
+                    response_empty
+                    and tool_calls_executed
+                    and str(agg.finish_reason or "") == "error"
+                ):
+                    response_text = _MID_ANSWER_ERROR_PHRASES.get(
+                        self._resolve_turn_lang(), _MID_ANSWER_ERROR_PHRASES["de"]
+                    )
+                    log.warning(
+                        "Brain %s(%s): stream ended finish_reason=error AFTER "
+                        "%d tool call(s) — speaking the honest mid-answer "
+                        "error notice instead of an empty (silent) turn.",
+                        prov_name, model, len(agg.tool_calls),
+                    )
                 # Record whether THIS (winning) turn was a fire-and-forget
                 # ``suppress_response`` spawn, so the voice pipeline can stay
                 # silent for it but speak a clarifying question for a different
