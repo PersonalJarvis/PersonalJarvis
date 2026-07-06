@@ -290,7 +290,8 @@ def step_worker_cli(*, dry_run: bool) -> None:
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=600,
         )
-        verdict = (result.stdout or "").strip().splitlines()[-1] if (result.stdout or "").strip() else "failed"
+        stdout = (result.stdout or "").strip()
+        verdict = stdout.splitlines()[-1] if stdout else "failed"
     except (OSError, subprocess.TimeoutExpired):
         verdict = "failed"
     if verdict == "present":
