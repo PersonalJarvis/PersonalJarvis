@@ -47,11 +47,15 @@ else:
 # inside their resolvers, so there is no import cycle.)
 from jarvis.audio.capture import (
     _HOSTAPI_BLOCKLIST as _INPUT_FORBIDDEN_HOSTAPIS,
+)
+from jarvis.audio.capture import (
     _HOSTAPI_PREFERENCE as _INPUT_HOSTAPI_PREFERENCE,
 )
 from jarvis.audio.device_select import is_legacy_primary_mapper
 from jarvis.audio.player import (
     _FORBIDDEN_OUTPUT_HOSTAPIS as _OUTPUT_FORBIDDEN_HOSTAPIS,
+)
+from jarvis.audio.player import (
     _HOSTAPI_PREFERENCE as _OUTPUT_HOSTAPI_PREFERENCE,
 )
 

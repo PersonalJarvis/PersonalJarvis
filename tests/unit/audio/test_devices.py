@@ -115,6 +115,28 @@ def test_os_default_is_flagged_and_sorts_first(monkeypatch) -> None:
     assert all(not d.is_default for d in out[1:])
 
 
+def test_short_generic_default_does_not_flag_prefix_extensions(monkeypatch) -> None:
+    """A default mic named just "Microphone" must NOT also flag the distinct
+    "Microphone Array (...)" device — only a >=30-char prefix relation can be
+    an MME-truncation twin of the same endpoint (review finding 2026-07-06)."""
+    hostapis = [{"name": "Windows WASAPI", "devices": [0, 1]}]
+    devices = [
+        {"name": "Microphone", "hostapi": 0,
+         "max_output_channels": 0, "max_input_channels": 1},
+        {"name": "Microphone Array (Realtek(R) Audio)", "hostapi": 0,
+         "max_output_channels": 0, "max_input_channels": 2},
+    ]
+    _patch_tables(monkeypatch, hostapis, devices, default=(0, -1))
+
+    entries = dv.list_devices(output=False)
+
+    flags = {e.name: e.is_default for e in entries}
+    assert flags == {
+        "Microphone": True,
+        "Microphone Array (Realtek(R) Audio)": False,
+    }
+
+
 def test_list_devices_headless_returns_empty(monkeypatch) -> None:
     def fail_query():
         raise RuntimeError("portaudio unavailable")
