@@ -160,7 +160,7 @@ async def test_confirm_rejection_suppresses_the_fire(fake_vosk) -> None:
 
     async def _drive() -> None:
         async def _iter() -> AsyncIterator[AudioChunk]:
-            for _ in range(6):
+            for _ in range(12):
                 await asyncio.sleep(0.005)
                 yield _chunk()
 
@@ -176,7 +176,7 @@ async def test_near_silent_candidate_is_gated_on_energy(fake_vosk) -> None:
     # AP-27: silence suppression happens on raw RMS at the match site — even
     # though the fake grammar "hears" the phrase, an all-zero window must gate.
     p = VoskKwsProvider("Hey Nova", model_path="fake", keyword="nova")
-    fired = await _run_detect(p, [_silent_chunk() for _ in range(6)])
+    fired = await _run_detect(p, [_silent_chunk() for _ in range(12)])
     assert fired == []
     assert p.stats()["gated_rms"] >= 1
 
@@ -196,6 +196,6 @@ def test_confirm_infrastructure_error_fails_open(fake_vosk, monkeypatch) -> None
 
 async def test_cooldown_suppresses_immediate_refire(fake_vosk) -> None:
     p = VoskKwsProvider("Hey Nova", model_path="fake", keyword="nova", cooldown_s=60.0)
-    fired = await _run_detect(p, [_chunk() for _ in range(14)])
+    fired = await _run_detect(p, [_chunk() for _ in range(24)])
     assert fired == ["nova"]  # second grammar hit lands inside the cooldown
     assert p.stats()["suppressed_cooldown"] >= 1
