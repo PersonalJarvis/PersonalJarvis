@@ -971,6 +971,19 @@
       "saved_toast": "Volumen fijado en {0}.",
       "restart_caption": "Guardado — se aplica en el próximo inicio."
     },
+    "audio_devices": {
+      "title": "Dispositivos de audio",
+      "description": "Elige por dónde sale la voz de {name} y con qué micrófono escucha {name}. Automático elige tu auricular por ti y se adapta cuando los dispositivos van y vienen.",
+      "output_label": "Salida de voz",
+      "input_label": "Micrófono",
+      "auto_option": "Automático (recomendado)",
+      "default_suffix": "(predeterminado del sistema)",
+      "rescan": "Volver a buscar dispositivos",
+      "none_found": "No se encontraron dispositivos de audio en este equipo — {name} sigue funcionando sin sonido.",
+      "output_saved_toast": "Dispositivo de salida guardado.",
+      "input_saved_toast": "Micrófono guardado.",
+      "restart_caption": "Guardado — se aplica en el próximo inicio."
+    },
     "title": "Ajustes",
     "subtitle": "Palabra de activación, atajos, políticas de seguridad, inicio automático.",
     "overlay_taskbar_group_title": "Barra y superposición",

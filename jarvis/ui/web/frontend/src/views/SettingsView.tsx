@@ -14,6 +14,7 @@ import { LanguagesGroup } from "@/views/settings/LanguagesGroup";
 import { AppSettingsGroup } from "@/views/settings/AppSettingsGroup";
 import { SilenceWindowGroup } from "@/views/settings/SilenceWindowGroup";
 import { VolumeGroup } from "@/views/settings/VolumeGroup";
+import { AudioDevicesGroup } from "@/views/settings/AudioDevicesGroup";
 import { SystemPromptGroup } from "@/views/settings/SystemPromptGroup";
 import {
   useWakeWord,
@@ -73,6 +74,7 @@ export function SettingsView() {
         <WakeWordPanel />
         <SilenceWindowGroup />
         <VolumeGroup />
+        <AudioDevicesGroup />
         <KeybindsPanel />
 
         <ul className="mt-2 space-y-2">

@@ -972,6 +972,19 @@
       "saved_toast": "Volume set to {0}.",
       "restart_caption": "Saved — applies on next start."
     },
+    "audio_devices": {
+      "title": "Audio devices",
+      "description": "Pick where {name}'s voice comes out and which microphone {name} listens with. Automatic picks your headset for you and adapts when devices come and go.",
+      "output_label": "Voice output",
+      "input_label": "Microphone",
+      "auto_option": "Automatic (recommended)",
+      "default_suffix": "(system default)",
+      "rescan": "Rescan devices",
+      "none_found": "No audio devices found on this machine — {name} keeps running without sound.",
+      "output_saved_toast": "Voice output device saved.",
+      "input_saved_toast": "Microphone saved.",
+      "restart_caption": "Saved — applies on next start."
+    },
     "title": "Settings",
     "subtitle": "Wake-word, hotkeys, safety policies, autostart.",
     "overlay_taskbar_group_title": "Bar & Overlay",

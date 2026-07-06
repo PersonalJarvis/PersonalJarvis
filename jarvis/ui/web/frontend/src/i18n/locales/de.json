@@ -971,6 +971,19 @@
       "saved_toast": "Lautstärke auf {0} gesetzt.",
       "restart_caption": "Gespeichert — wird beim nächsten Start aktiv."
     },
+    "audio_devices": {
+      "title": "Audiogeräte",
+      "description": "Lege fest, wo die Stimme von {name} herauskommt und mit welchem Mikrofon {name} zuhört. Automatisch wählt dein Headset für dich und passt sich an, wenn Geräte kommen und gehen.",
+      "output_label": "Sprachausgabe",
+      "input_label": "Mikrofon",
+      "auto_option": "Automatisch (empfohlen)",
+      "default_suffix": "(System-Standard)",
+      "rescan": "Geräte neu suchen",
+      "none_found": "Keine Audiogeräte auf diesem Rechner gefunden — {name} läuft ohne Ton weiter.",
+      "output_saved_toast": "Ausgabegerät gespeichert.",
+      "input_saved_toast": "Mikrofon gespeichert.",
+      "restart_caption": "Gespeichert — wird beim nächsten Start aktiv."
+    },
     "title": "Einstellungen",
     "subtitle": "Wake-Word, Hotkeys, Safety-Policies, Autostart.",
     "overlay_taskbar_group_title": "Leiste & Overlay",
