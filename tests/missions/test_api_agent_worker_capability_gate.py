@@ -70,6 +70,21 @@ class _NoEndpointsBrain:
         yield  # pragma: no cover
 
 
+class _UnrelatedToolErrorBrain:
+    """A turn-0 provider error that mentions tools + support but is NOT the
+    'no endpoints support tool use' capability error — the wrap must let it
+    propagate to the generic handler, not mislabel it as tool-incapable."""
+
+    def can_call_tools(self) -> bool:
+        return True
+
+    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        raise RuntimeError(
+            "Request rejected: too many tools defined, exceeds support limit of 128"
+        )
+        yield  # pragma: no cover
+
+
 def _patch_brain(monkeypatch: pytest.MonkeyPatch, brain: object) -> None:
     import jarvis.missions.workers.api_agent_worker as mod
 
@@ -143,3 +158,24 @@ async def test_first_round_trip_no_endpoints_error_is_translated(
     msg = (errors[-1].result or "").lower()
     assert "cannot call tools" in msg
     assert "jarvis-agents" in msg
+
+
+async def test_unrelated_tool_error_is_not_mislabeled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Negative guard for the match tightening: a turn-0 error mentioning
+    'tools' and 'support' that is NOT OpenRouter's no-tool-endpoints copy must
+    take the generic error path — no 'cannot call tools' preamble."""
+    _patch_brain(monkeypatch, _UnrelatedToolErrorBrain())
+    worker = ApiAgentWorker("openrouter")
+    events = await _drain(
+        worker, prompt="build x", worktree=tmp_path, env={}, job=None,
+        worker_id="m::0", log_dir=tmp_path / "_logs",
+    )
+
+    errors = [e for e in events if getattr(e, "is_error", False)]
+    assert errors, "expected an error result from the generic handler"
+    msg = (errors[-1].result or "").lower()
+    assert "cannot call tools" not in msg
+    # the raw provider text still reaches the user via the generic handler
+    assert "too many tools defined" in msg

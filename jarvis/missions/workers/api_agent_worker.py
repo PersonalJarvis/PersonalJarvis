@@ -283,13 +283,21 @@ class ApiAgentWorker:
                     # The capability pre-gate (above) catches a model the brain
                     # ALREADY knows is tool-incapable. Some providers (OpenRouter
                     # routing to a tool-less upstream) only discover this on the
-                    # FIRST live round-trip, surfacing as a 404 "no endpoints
+                    # FIRST live round-trip, surfacing as a 404 "No endpoints
                     # found that support tool use"-class error. Recognize that
                     # shape on turn 0 and convert it to the SAME honest message
                     # instead of letting the raw provider error propagate up as
-                    # an inscrutable worker failure.
+                    # an inscrutable worker failure. Matched tightly against
+                    # OpenRouter's actual copy so an unrelated turn-0 error that
+                    # merely mentions tools + support (e.g. "too many tools
+                    # defined, exceeds support limit") is NOT mislabeled.
                     low = str(exc).lower()
-                    if turn == 0 and "tool" in low and ("support" in low or "404" in low):
+                    no_tool_endpoints = (
+                        ("no endpoints" in low and "tool" in low)
+                        or "support tool use" in low
+                        or ("404" in low and "tool" in low)
+                    )
+                    if turn == 0 and no_tool_endpoints:
                         res = ClaudeResult(
                             subtype="error_during_execution", is_error=True,
                             session_id=session_id,
