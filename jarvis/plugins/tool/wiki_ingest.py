@@ -173,14 +173,18 @@ class WikiIngestTool:
         failed = list(getattr(result, "failed_validation", []) or [])
 
         if not applied and not skipped and not failed:
-            # Curator legitimately decided this was not salient.  Surface
-            # that to the brain so it does not claim success.
+            # Curator judged the content not salient. The old success=True here made
+            # the model tell users "stored" when NOTHING was written (fresh-machine
+            # forensics Bug 12/18) -- a no-op is a failure from the caller's intent.
             log.info("wiki-ingest: curator returned no updates (salience filter)")
             return ToolResult(
-                success=True,
-                output=(
-                    "Curator decided the content was not salient enough to "
-                    "store. No pages were modified."
+                success=False,
+                output="",
+                error=(
+                    "nothing was stored: the curator judged the content not salient "
+                    "enough for the wiki. Tell the user the wiki was NOT updated; if "
+                    "they explicitly asked to store this, apologize and suggest they "
+                    "add it via the Wiki view instead."
                 ),
             )
 
