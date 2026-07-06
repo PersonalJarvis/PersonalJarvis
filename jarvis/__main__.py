@@ -1,8 +1,10 @@
 """Jarvis entry point.
 
 Usage:
-    python -m jarvis                # Starts the wizard (first run) or tray app
-    python -m jarvis --wizard       # Re-run the setup wizard
+    python -m jarvis                # Starts the tray app (first-run setup
+                                    #   happens in the app's onboarding)
+    python -m jarvis --wizard       # Terminal setup wizard (explicit opt-in,
+                                    #   e.g. SSH-only hosts)
     python -m jarvis --check        # Show hardware analysis only
     python -m jarvis --plugins      # List the plugin registry
     python -m jarvis --uninstall    # Remove Jarvis from this machine (folder,
@@ -500,12 +502,17 @@ def main(argv: list[str] | None = None) -> int:
         from jarvis.ui.web import launcher
 
         return launcher.main(["--headless"])
-    if args.wizard or cfg.is_first_run():
-        rc = _cmd_wizard()
-        if rc != 0 or args.wizard:
-            return rc
-        # after setup completion: start the tray app
+    if _should_run_wizard(args.wizard):
+        return _cmd_wizard()
     return asyncio.run(_run_tray_app(debug=args.debug))
+
+
+def _should_run_wizard(wizard_flag: bool) -> bool:
+    """Setup lives in the desktop/browser onboarding (first-launch guide);
+    the terminal wizard is an explicit opt-in for SSH-only setups. First-run
+    state deliberately does NOT factor in — a fresh install boots straight
+    into the app, which shows the one-time onboarding itself."""
+    return wizard_flag
 
 
 def _entrypoint() -> NoReturn:
