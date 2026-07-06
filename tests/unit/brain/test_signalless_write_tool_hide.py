@@ -35,7 +35,11 @@ def _surface() -> dict:
         "wiki-recall": object(),      # read — must stay
         "screenshot": object(),       # read — must stay
         "contact-upsert": object(),   # write — hide on signalless
-        "update-profile": object(),   # write — hide on signalless
+        # Keyed by the tool's .name attribute (update_profile) — NOT the
+        # hyphenated entry-point name. The 2026-07-06 pipeline audit found the
+        # constant AND this test both carried "update-profile", so the gate
+        # never actually stripped the real tool from a live turn.
+        "update_profile": object(),   # write — hide on signalless
         "wiki-ingest": object(),      # write — hide on signalless
         "google_calendar": object(),  # write path — hide on signalless
         "call-contact": object(),     # action (places a call) — hide
@@ -48,7 +52,7 @@ def test_signalless_turn_hides_write_and_record_tools():
     m = _mgr()
     out = m._hide_action_tools_on_signalless_turn(_surface(), "Was geht ab?")
     for hidden in (
-        "contact-upsert", "update-profile", "wiki-ingest",
+        "contact-upsert", "update_profile", "wiki-ingest",
         "google_calendar", "call-contact", "computer_use", "spawn_worker",
     ):
         assert hidden not in out, hidden
