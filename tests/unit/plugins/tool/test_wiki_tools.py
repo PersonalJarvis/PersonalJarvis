@@ -236,13 +236,16 @@ async def test_wiki_ingest_passes_explicit_source() -> None:
 
 @pytest.mark.asyncio
 async def test_wiki_ingest_reports_not_salient_when_no_updates() -> None:
+    """Bug 12/18: a curator no-op is a failure, not a success (fresh-machine
+    forensics found the model paraphrasing this as "I stored it" although
+    NOTHING was written)."""
     fake = _FakeCurator(result=_FakeWriteResult())   # all three lists empty
     tool = WikiIngestTool(curator_resolver=lambda: fake)
     result = await tool.execute(
         {"text": "Ein belangloser Satz ohne Substanz."}, ctx=None,
     )
-    assert result.success is True
-    assert "not salient" in result.output.lower() or "salience" in result.output.lower()
+    assert result.success is False
+    assert "not" in (result.error or "").lower() and "stored" in (result.error or "").lower()
 
 
 @pytest.mark.asyncio
