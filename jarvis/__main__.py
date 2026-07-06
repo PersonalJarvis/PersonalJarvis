@@ -331,12 +331,7 @@ def _cmd_reset_onboarding() -> int:
     from jarvis.setup import state as onb_state
 
     removed = onb_state.reset_onboarding(_ONBOARDING_STATE_PATH)
-    marker = cfg.DATA_DIR / ".setup-complete"
-    if marker.exists():
-        try:
-            marker.unlink()
-        except OSError as exc:
-            print(f"Could not remove {marker}: {exc}")
+    onb_state.remove_setup_complete_marker(_ONBOARDING_STATE_PATH)
     print(f"Onboarding reset. Cleared keys: {removed or 'none'}; removed .setup-complete.")
     print("Next launch will show the setup guide.")
     return 0

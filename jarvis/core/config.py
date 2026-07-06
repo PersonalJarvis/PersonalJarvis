@@ -2632,20 +2632,25 @@ def ensure_project_root_cwd() -> Path:
 
 
 def is_first_run() -> bool:
-    """Return True when the user has not yet completed the setup wizard."""
-    # Delegates to jarvis.setup.state so the stdlib-only fast-boot onboarding
-    # path and this heavy module can never disagree on the marker location.
+    """True when the LEGACY ``.setup-complete`` marker is absent.
+
+    This only reflects the terminal wizard / legacy marker — the in-app
+    onboarding records completion in ``setup_state.json`` instead (see
+    ``jarvis.setup.state.is_onboarding_complete``). Delegates to
+    ``jarvis.setup.state`` so the stdlib-only fast-boot onboarding path and
+    this heavy module can never disagree on the marker location.
+    """
     from jarvis.setup.state import setup_complete_marker_exists
 
     return not setup_complete_marker_exists()
 
 
 def mark_setup_complete() -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    (DATA_DIR / ".setup-complete").write_text(
-        f"Setup completed on Python {sys.version.split()[0]}\n",
-        encoding="utf-8",
-    )
+    # Read/write/delete of the marker all live in jarvis.setup.state so the
+    # location can never desync between callers.
+    from jarvis.setup.state import write_setup_complete_marker
+
+    write_setup_complete_marker(f"Setup completed on Python {sys.version.split()[0]}\n")
 
 
 # ----------------------------------------------------------------------

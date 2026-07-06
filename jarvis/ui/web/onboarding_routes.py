@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from pydantic import BaseModel
 
 from jarvis.setup import state as st
@@ -44,7 +44,10 @@ def _safe_state_payload() -> dict:
 
 
 @router.get("/state")
-async def get_state() -> dict:
+async def get_state(response: Response) -> dict:
+    # Same no-cache guarantee the fast-boot handler gives: the gate must never
+    # act on a cached completed/incomplete verdict.
+    response.headers["cache-control"] = "no-store, max-age=0"
     return _safe_state_payload()
 
 

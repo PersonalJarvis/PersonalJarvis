@@ -108,9 +108,12 @@ async def _send_json(send: Any, payload: dict, status: int = 200) -> None:
 async def handle(scope: dict, receive: Any, send: Any) -> bool:
     """Answer an ``/api/onboarding/*`` request; True iff handled.
 
-    Mirrors ``onboarding_routes.py``: every write is fail-open (the state
-    helpers never raise) and unknown sub-paths return 404 so a typo is
-    visible instead of silently held.
+    Mirrors ``onboarding_routes.py`` in payload shape and semantics; every
+    write is fail-open (the state helpers never raise). One deliberate
+    simplification: any unknown sub-path OR wrong method returns 404 (the
+    FastAPI router would answer 405 for a wrong method) — nothing in the
+    frontend depends on that distinction, and a flat 404 keeps this handler
+    trivially small.
     """
     if scope.get("type") != "http":
         return False
