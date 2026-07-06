@@ -166,6 +166,49 @@ def _worker_error_is_transient(err: str) -> bool:
         )
     )
 
+
+def _worker_error_is_auth(err: str) -> bool:
+    """True when a worker's terminal error means its provider AUTH is dead.
+
+    Provider-agnostic by design (AP-21/AP-22): every worker kind surfaces its
+    credential failure through this one classifier — the claude CLI's
+    "Failed to authenticate. API Error: 401 Invalid authentication credentials"
+    (2026-07-06, expired Claude Max OAuth token), codex's "Failed to refresh
+    token. Please log in again." (2026-06-08), an API worker's
+    "invalid_api_key" / 401, a CLI's "Not logged in".
+
+    Why it matters: dead auth used to fall through to the fatal task_error
+    branch, killing the mission terminally even though the worker factory is
+    re-consulted on every iteration and — with the dead provider flagged by
+    the worker (claude_auth_dead / codex_needs_reauth) — would pick a HEALTHY
+    family on the retry. Classifying auth as retryable turns a one-provider
+    brick into a cross-family recovery for EVERY worker kind.
+    """
+    if not err:
+        return False
+    err_lower = err.lower()
+    return any(
+        m in err_lower
+        for m in (
+            "failed to authenticate",
+            "invalid authentication",
+            "authentication failed",
+            "authentication_error",
+            "unauthorized",
+            "401",
+            "invalid api key",
+            "invalid x-api-key",
+            "invalid_api_key",
+            "not logged in",
+            "please run /login",
+            "log in again",
+            "login again",
+            "token expired",
+            "expired token",
+            "oauth token has expired",
+        )
+    )
+
 # Mission-level wall-clock safety net. Bounds TOTAL execution time across all
 # critic iterations + the critic subprocess + decomposition — the per-iteration
 # worker cap does not. Measured AFTER the concurrency semaphore is acquired
@@ -1240,6 +1283,14 @@ class Kontrollierer:
                 # subscription throttles under load (2026-06-09 codex verify:
                 # task_error rounds were throttle, not a code fault).
                 is_transient = _worker_error_is_transient(err_lower)
+                # Dead provider AUTH (401 / not logged in / expired token) is
+                # retryable too — not because the credential heals, but because
+                # the worker factory is re-consulted on every iteration and the
+                # failing worker flagged its provider dead (claude_auth_dead /
+                # codex_needs_reauth), so the retry runs on a DIFFERENT family
+                # (2026-07-06: expired Claude OAuth token killed every mission
+                # terminally while codex + OpenRouter were healthy — AP-22).
+                is_auth = _worker_error_is_auth(err_lower)
                 kill_reason: Literal[
                     "timeout", "user", "budget", "parent_cancelled",
                     "injection_detected", "path_guard", "worker_error",
@@ -1271,11 +1322,14 @@ class Kontrollierer:
                 # diff means nothing was produced (a genuine zero-output hang,
                 # e.g. Claude Max OAuth contention), so keep the transient-retry
                 # / hard-fail behaviour for that case.
-                if (is_timeout or is_transient) and not _real_diff_is_empty(diff_text):
+                if (
+                    is_timeout or is_transient or is_auth
+                ) and not _real_diff_is_empty(diff_text):
                     logger.warning(
-                        "Task %s iter %d: worker hit a timeout/transient error but "
-                        "left a non-empty diff (%d bytes) — grading the partial "
-                        "work with the critic instead of failing as task_error",
+                        "Task %s iter %d: worker hit a timeout/transient/auth "
+                        "error but left a non-empty diff (%d bytes) — grading "
+                        "the partial work with the critic instead of failing "
+                        "as task_error",
                         step.task_id, iteration, len(diff_text),
                     )
                     # Deliberately fall through (no continue / no return): the
@@ -1293,12 +1347,20 @@ class Kontrollierer:
                 # the whole mission — the heavy-phase semaphore (_mission_sem,
                 # default 1) serialises the retry so it no longer competes with
                 # the spawn that just timed out. Budget/auth errors stay fatal.
-                elif (is_timeout or is_transient) and iteration < MAX_CRITIC_LOOPS - 1:
+                elif (
+                    is_timeout or is_transient or is_auth
+                ) and iteration < MAX_CRITIC_LOOPS - 1:
                     logger.warning(
                         "Task %s iter %d: worker %s with no usable output — "
-                        "retrying on a fresh spawn",
+                        "retrying on a fresh spawn%s",
                         step.task_id, iteration,
-                        "timed out" if is_timeout else "hit a transient/rate-limit error",
+                        "timed out" if is_timeout
+                        else "hit a transient/rate-limit error" if is_transient
+                        else "hit a dead-auth error (401/not logged in)",
+                        "" if not is_auth
+                        else "; the worker factory will pick a different "
+                        "provider family (the failing provider is flagged "
+                        "auth-dead)",
                     )
                     continue
                 else:

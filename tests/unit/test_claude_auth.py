@@ -56,22 +56,57 @@ def _service(
 
 def test_oauth_from_credentials_detects_subscription() -> None:
     creds = {"claudeAiOauth": {"accessToken": "sk-ant-oat01-abc", "subscriptionType": "max"}}
-    connected, sub = _oauth_from_credentials(creds)
+    connected, sub, expired = _oauth_from_credentials(creds)
     assert connected is True
     assert sub == "max"
+    assert expired is False
 
 
 def test_oauth_from_credentials_rejects_api_key_token() -> None:
     # A classic API key in the bearer slot is NOT a subscription login.
     creds = {"claudeAiOauth": {"accessToken": "sk-ant-api03-abc"}}
-    connected, sub = _oauth_from_credentials(creds)
+    connected, sub, expired = _oauth_from_credentials(creds)
     assert connected is False
     assert sub is None
+    assert expired is False
+
+
+def test_oauth_from_credentials_flags_expired_token() -> None:
+    """2026-07-06 incident: the bearer is PRESENT but expiresAt has passed —
+    every API call 401s, so reporting connected=True is a lie that hid the
+    root cause of the all-subagents-fail incident."""
+    creds = {
+        "claudeAiOauth": {
+            "accessToken": "sk-ant-oat01-abc",
+            "subscriptionType": "max",
+            "expiresAt": 1_000.0 * 1000.0,  # epoch ms, long past
+        }
+    }
+    connected, sub, expired = _oauth_from_credentials(
+        creds, now_fn=lambda: 2_000.0
+    )
+    assert connected is False
+    assert expired is True
+    assert sub == "max"
+
+
+def test_oauth_from_credentials_future_expiry_is_connected() -> None:
+    creds = {
+        "claudeAiOauth": {
+            "accessToken": "sk-ant-oat01-abc",
+            "expiresAt": 3_000.0 * 1000.0,
+        }
+    }
+    connected, _sub, expired = _oauth_from_credentials(
+        creds, now_fn=lambda: 2_000.0
+    )
+    assert connected is True
+    assert expired is False
 
 
 @pytest.mark.parametrize("bad", [None, {}, {"claudeAiOauth": "nope"}, {"claudeAiOauth": {}}])
 def test_oauth_from_credentials_tolerates_garbage(bad) -> None:
-    assert _oauth_from_credentials(bad) == (False, None)
+    assert _oauth_from_credentials(bad) == (False, None, False)
 
 
 def test_account_from_claude_json_reads_email() -> None:
@@ -132,6 +167,50 @@ def test_status_not_connected_without_creds_or_key(tmp_path, monkeypatch) -> Non
     assert st.connected is False
     assert st.mode == "unknown"
     assert st.api_key_present is False
+
+
+def test_status_expired_subscription_is_not_connected(tmp_path, monkeypatch) -> None:
+    """The presence-only check reported 'Connected via Claude Max' for a token
+    that had been dead since 02:53 (2026-07-06) — the UI showed green while
+    every subagent spawn 401'd. An expired login must be honest and say how
+    to fix it."""
+    svc = _service(
+        tmp_path,
+        monkeypatch,
+        creds={
+            "claudeAiOauth": {
+                "accessToken": "sk-ant-oat01-x",
+                "subscriptionType": "max",
+                "expiresAt": 1.0,  # epoch ms, long past
+            }
+        },
+        claude_json=None,
+    )
+    st = svc.status()
+    assert st.installed is True
+    assert st.connected is False
+    assert "expired" in st.message.lower()
+    assert "/login" in st.message
+
+
+def test_status_expired_oauth_falls_back_to_api_key(tmp_path, monkeypatch) -> None:
+    """Expired subscription login + a configured API key → the key is the
+    honest connected surface (it can still authenticate the CLI/API)."""
+    svc = _service(
+        tmp_path,
+        monkeypatch,
+        creds={
+            "claudeAiOauth": {
+                "accessToken": "sk-ant-oat01-x",
+                "expiresAt": 1.0,
+            }
+        },
+        claude_json=None,
+        api_key_present=True,
+    )
+    st = svc.status()
+    assert st.connected is True
+    assert st.mode == "api_key"
 
 
 def test_status_surfaces_api_key_present_even_under_subscription(

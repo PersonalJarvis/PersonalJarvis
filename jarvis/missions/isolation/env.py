@@ -21,8 +21,10 @@ import json
 import logging
 import os
 import shutil
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Literal
 
 from jarvis.missions.workers.process_utils import resolve_node_executable
 
@@ -285,9 +287,54 @@ _WORKER_CLAUDE_SETTINGS: dict[str, object] = {
 }
 
 
-def read_live_claude_oauth_token() -> str | None:
-    """Return the current Claude Max OAuth access token from the user's
-    ``~/.claude/.credentials.json``, or ``None`` if unavailable.
+# Minimum remaining lifetime for an injected OAuth token. A token that dies
+# seconds after the spawn would 401 mid-mission (the isolated worker holds no
+# refresh token), so anything expiring within this slack counts as expired.
+_OAUTH_EXPIRY_SLACK_S: float = 120.0
+
+
+def _claude_credentials_path() -> Path:
+    """Path of the user's live Claude CLI credentials file (test seam)."""
+    return Path(os.path.expanduser("~/.claude/.credentials.json"))
+
+
+def live_claude_oauth_status(
+    *, now_fn: Callable[[], float] = time.time
+) -> Literal["valid", "expired", "absent"]:
+    """Classify the Claude Max OAuth login in ``~/.claude/.credentials.json``.
+
+    - ``"valid"``: an ``sk-ant-oat`` bearer with ``expiresAt`` comfortably in
+      the future (or no ``expiresAt`` at all — older credential shapes stay
+      fail-open).
+    - ``"expired"``: the bearer exists but its ``expiresAt`` has passed (or is
+      within :data:`_OAUTH_EXPIRY_SLACK_S`). Injecting it guarantees a 401 —
+      the isolated worker cannot refresh (2026-07-06 incident, missions
+      019f36e5 + 019f38b1: token expired 02:53, every spawn died
+      "401 Invalid authentication credentials").
+    - ``"absent"``: no readable ``sk-ant-oat`` bearer at all.
+    """
+    try:
+        data = json.loads(_claude_credentials_path().read_text(encoding="utf-8"))
+        oauth = data.get("claudeAiOauth", {})
+        token = oauth.get("accessToken")
+        expires_at = oauth.get("expiresAt")
+    except (OSError, ValueError, AttributeError, TypeError):
+        return "absent"
+    if not (isinstance(token, str) and token.startswith("sk-ant-oat")):
+        return "absent"
+    if isinstance(expires_at, (int, float)) and expires_at > 0:
+        # `claude` writes epoch milliseconds; tolerate seconds defensively.
+        expires_s = expires_at / 1000.0 if expires_at > 1e12 else float(expires_at)
+        if expires_s <= now_fn() + _OAUTH_EXPIRY_SLACK_S:
+            return "expired"
+    return "valid"
+
+
+def read_live_claude_oauth_token(
+    *, now_fn: Callable[[], float] = time.time
+) -> str | None:
+    """Return the current, NON-EXPIRED Claude Max OAuth access token from the
+    user's ``~/.claude/.credentials.json``, or ``None`` if unavailable.
 
     Why this exists: ``claude`` refreshes its OAuth access token IN PLACE in
     that file, but Jarvis' own secret store (Windows Credential Manager / ENV /
@@ -299,10 +346,19 @@ def read_live_claude_oauth_token() -> str | None:
     fails with ``401 Invalid authentication`` (verified live 2026-05-29). So we
     prefer the live file token. Only OAuth (``sk-ant-oat``) tokens are returned;
     a classic API-key user keeps their own key.
+
+    EXPIRY-aware since 2026-07-06: the live file itself can hold a DEAD token —
+    when nothing on the host runs the ``claude`` CLI against that config dir
+    anymore, the access token expires in place and is never refreshed again.
+    Injecting it produced a deterministic 401 on every subagent spawn (missions
+    019f36e5 + 019f38b1). An expired token is treated exactly like an absent
+    one; the caller's provider-viability gate then routes the worker to a
+    different family instead of a guaranteed-dead Claude spawn.
     """
+    if live_claude_oauth_status(now_fn=now_fn) != "valid":
+        return None
     try:
-        path = Path(os.path.expanduser("~/.claude/.credentials.json"))
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(_claude_credentials_path().read_text(encoding="utf-8"))
         token = data.get("claudeAiOauth", {}).get("accessToken")
     except (OSError, ValueError, AttributeError, TypeError):
         return None

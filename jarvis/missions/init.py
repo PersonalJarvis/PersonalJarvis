@@ -449,6 +449,49 @@ def _live_subagent_provider(boot_snapshot: str | None) -> str | None:
     return boot_snapshot
 
 
+def _claude_cli_auth_viable() -> bool:
+    """True when the ``claude`` CLI has a REACHABLE auth surface for a worker.
+
+    Binary presence alone is NOT viability (2026-07-06 incident): the worker
+    runs ``claude --print`` pinned to an isolated CLAUDE_CONFIG_DIR, so its
+    ONLY auth surface is the credential Jarvis injects — a live non-expired
+    OAuth bearer (``CLAUDE_CODE_OAUTH_TOKEN``) or a classic Anthropic API key.
+    An OAuth token that expired in place (nothing refreshes ``~/.claude`` on a
+    host whose interactive sessions use a different config dir) is a
+    deterministic 401 on every spawn, while ``claude status`` still says
+    connected (presence-only check).
+
+    Three gates, all cheap and offline:
+    1. the process-local ``claude_auth_dead`` flag (a worker PROVED the current
+       credential dead this session — fingerprinted, so a fresh login/key
+       re-enables Claude instantly);
+    2. a live, non-expired OAuth login in ``~/.claude/.credentials.json``;
+    3. failing that, a CLASSIC (non-``sk-ant-oat``) stored Anthropic API key —
+       a stored ``sk-ant-oat`` is a stale OAuth copy that would be routed to
+       the OAuth slot and 401.
+    """
+    from jarvis.claude_auth_state import claude_auth_dead, credential_fingerprint
+    from jarvis.missions.isolation.env import (
+        live_claude_oauth_status,
+        read_live_claude_oauth_token,
+    )
+
+    if live_claude_oauth_status() == "valid":
+        token = read_live_claude_oauth_token()
+        return not claude_auth_dead(
+            current_fingerprint=credential_fingerprint(token)
+        )
+    try:
+        from jarvis.core.config import get_secret
+
+        key = get_secret("anthropic_api_key", env_fallback="ANTHROPIC_API_KEY")
+    except Exception:  # noqa: BLE001 — unreadable secret store => not viable
+        return False
+    if not key or key.startswith("sk-ant-oat"):
+        return False
+    return not claude_auth_dead(current_fingerprint=credential_fingerprint(key))
+
+
 def _cross_family_last_resort_worker(task_text: str) -> Any | None:
     """The key-aware, cross-family LAST-resort heavy worker (open-source AP-22/23).
 
@@ -477,11 +520,22 @@ def _cross_family_last_resort_worker(task_text: str) -> Any | None:
     has no Claude at all (the §3 single-key downloader).
     """
     # 1. Claude Max OAuth CLI — subscription, no metered key, preferred floor.
+    #    Auth-aware since 2026-07-06: binary presence alone picked a claude CLI
+    #    whose OAuth token had expired in place, and every mission 401'd while
+    #    a healthy codex login + OpenRouter key sat unused (AP-22).
     from jarvis.missions.workers.claude_direct_worker import _resolve_claude_binary
 
     if _resolve_claude_binary() is not None:
-        return ClaudeDirectWorker(
-            mcp_servers=_assemble_worker_mcp_servers(task_text=task_text)
+        if _claude_cli_auth_viable():
+            return ClaudeDirectWorker(
+                mcp_servers=_assemble_worker_mcp_servers(task_text=task_text)
+            )
+        logger.warning(
+            "Mission worker: the `claude` CLI is installed but its auth is "
+            "dead/expired (no live OAuth login, no classic Anthropic key) — "
+            "skipping Claude and crossing provider families. Run "
+            "`claude /login` or save a fresh Anthropic key in the API-Keys "
+            "view to restore Claude."
         )
     # 2. ChatGPT subscription via the codex CLI OAuth login (no API key).
     from jarvis.codex_auth_state import codex_needs_reauth
@@ -772,6 +826,15 @@ async def bootstrap_missions(
         live_oat = read_live_claude_oauth_token()
         if live_oat:
             anthropic_key = live_oat
+        elif anthropic_key and anthropic_key.startswith("sk-ant-oat"):
+            # 2026-07-06: no live (non-expired) OAuth login, and the stored
+            # credential is itself an OAuth bearer — i.e. a STALE copy of a
+            # login that no longer exists. Injecting it is a guaranteed 401
+            # ("Failed to authenticate. API Error: 401 Invalid authentication
+            # credentials", missions 019f36e5 + 019f38b1). Drop it so the
+            # worker either runs on a different family (the factory's
+            # viability gate) or fails with the honest "Not logged in".
+            anthropic_key = None
 
         return build_worker_env(
             run_dir=mission_dir,
