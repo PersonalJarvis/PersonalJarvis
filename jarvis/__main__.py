@@ -66,6 +66,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Clear onboarding markers so the first-run guide shows again.",
     )
     parser.add_argument(
+        "--prefetch",
+        action="store_true",
+        help="Download all voice models the current config needs, then exit. "
+             "Used by the installer so the first launch has nothing left to fetch.",
+    )
+    parser.add_argument(
         "--uninstall",
         action="store_true",
         help="Remove this Jarvis install from the machine: the install folder, "
@@ -484,6 +490,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_uninstall(args)
     if args.reset_onboarding:
         return _cmd_reset_onboarding()
+    if args.prefetch:
+        from jarvis.setup.prefetch import prefetch_all
+
+        return prefetch_all()
     if args.command == "serve":
         # Headless web UI — the cloud-first path (no desktop/tray). Delegates to
         # the web launcher so `jarvis serve` == `python -m jarvis.ui.web.launcher --headless`.
