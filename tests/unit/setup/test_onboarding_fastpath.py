@@ -97,6 +97,25 @@ async def test_step_persists_progress(tmp_path: Path) -> None:
         fp._STATE_PATH_OVERRIDE = None
 
 
+async def test_completed_survives_any_version_bump(tmp_path: Path) -> None:
+    """The update contract: NOTHING version-shaped may re-open the gate.
+
+    Completed markers set + a terms-version bump => still completed. If someone
+    ever wires a version comparison into `completed`, this fails.
+    """
+    fp._STATE_PATH_OVERRIDE = tmp_path / "setup_state.json"
+    try:
+        st.accept_terms("0.1-ancient", path=tmp_path / "setup_state.json")
+        st.mark_onboarding_complete(path=tmp_path / "setup_state.json")
+        sent, send = _collector()
+        await fp.handle(_scope("GET", "/api/onboarding/state"), _receive_empty, send)
+        payload = _body_json(sent)
+        assert payload["completed"] is True
+        assert payload["terms"]["accepted_version"] != payload["terms"]["current_version"]
+    finally:
+        fp._STATE_PATH_OVERRIDE = None
+
+
 async def test_non_onboarding_path_not_handled() -> None:
     sent, send = _collector()
     handled = await fp.handle(_scope("GET", "/api/health"), _receive_empty, send)

@@ -45,6 +45,18 @@ it("fails open (renders nothing) on a fetch error", async () => {
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull(), { timeout: 500 });
 });
 
+it("stays hidden when completed, even with an outdated accepted terms version", async () => {
+  // The update contract: a version bump (app or terms) must never re-open the
+  // gate — `completed` is the only signal it reads.
+  stub({
+    ...base,
+    completed: true,
+    terms: { accepted: true, accepted_version: "0.1", current_version: "9.9" },
+  });
+  render(<OnboardingGate />);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});
+
 it("persists terms acceptance when the risk gate is accepted", async () => {
   const calls: Array<[string, RequestInit | undefined]> = [];
   vi.stubGlobal(
