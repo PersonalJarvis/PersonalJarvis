@@ -14,12 +14,14 @@ in tests/integration/test_ack_flow.py).
 
 from __future__ import annotations
 
+import time
 import types
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from jarvis.brain.ack_generator import _GMAIL_READ_ACK
 from jarvis.brain.manager import BrainManager
 from jarvis.core.events import AnnouncementRequested
 
@@ -38,9 +40,13 @@ def _make_stub(
     grounded_tool_ack: bool = True,
     reply_language: str = "auto",
     conversation_language: str = "",
+    grounded_ack_min_gap_s: int = 20,
 ) -> SimpleNamespace:
     """Minimal object exposing exactly what _build_tool_ack_emitter reads."""
-    ack_brain = SimpleNamespace(grounded_tool_ack=grounded_tool_ack)
+    ack_brain = SimpleNamespace(
+        grounded_tool_ack=grounded_tool_ack,
+        grounded_ack_min_gap_s=grounded_ack_min_gap_s,
+    )
     stub = SimpleNamespace(
         _bus=bus,
         _config=SimpleNamespace(ack_brain=ack_brain),
@@ -70,7 +76,7 @@ async def test_grounded_gmail_ack_is_published() -> None:
     preambles = _preambles(bus)
     assert len(preambles) == 1
     ann = preambles[0]
-    assert ann.text == "Okay, ich schaue in deine Mails."
+    assert ann.text in _GMAIL_READ_ACK["de"]
     assert ann.source_layer == "brain.router.ack"
     assert ann.language == "de"
 
@@ -140,5 +146,69 @@ async def test_spanish_pin_keeps_ack_spanish() -> None:
 
     preambles = _preambles(bus)
     assert len(preambles) == 1
-    assert preambles[0].text == "Vale, reviso tu correo."
+    assert preambles[0].text in _GMAIL_READ_ACK["es"]
     assert preambles[0].language == "es"
+
+
+@pytest.mark.asyncio
+async def test_min_gap_suppresses_next_turns_ack() -> None:
+    """2026-07-06 redesign: a SECOND turn's grounded ack within the min gap is
+    suppressed — the forensic bug was the identical ack once per utterance,
+    three utterances in a row."""
+    bus = _RecordingBus()
+    stub = _make_stub(bus=bus)
+
+    emit_turn_1 = stub._build_tool_ack_emitter("Was steht in meinen Mails")
+    assert emit_turn_1 is not None
+    await emit_turn_1("gmail", {"action": "list_messages"})
+
+    emit_turn_2 = stub._build_tool_ack_emitter("Und im Kalender?")
+    assert emit_turn_2 is not None
+    await emit_turn_2("google_calendar", {})
+
+    assert len(_preambles(bus)) == 1
+
+
+@pytest.mark.asyncio
+async def test_min_gap_zero_restores_legacy_per_turn_acks() -> None:
+    bus = _RecordingBus()
+    stub = _make_stub(bus=bus, grounded_ack_min_gap_s=0)
+
+    emit_turn_1 = stub._build_tool_ack_emitter("Was steht in meinen Mails")
+    await emit_turn_1("gmail", {"action": "list_messages"})
+    emit_turn_2 = stub._build_tool_ack_emitter("Und im Kalender?")
+    await emit_turn_2("google_calendar", {})
+
+    assert len(_preambles(bus)) == 2
+
+
+@pytest.mark.asyncio
+async def test_ack_returns_after_the_gap_elapses() -> None:
+    bus = _RecordingBus()
+    stub = _make_stub(bus=bus)
+
+    emit_turn_1 = stub._build_tool_ack_emitter("Was steht in meinen Mails")
+    await emit_turn_1("gmail", {"action": "list_messages"})
+    # Simulate the gap having elapsed instead of sleeping 20 s.
+    stub._last_grounded_ack_monotonic = time.monotonic() - 21.0
+
+    emit_turn_2 = stub._build_tool_ack_emitter("Und im Kalender?")
+    await emit_turn_2("google_calendar", {})
+
+    assert len(_preambles(bus)) == 2
+
+
+@pytest.mark.asyncio
+async def test_skip_tool_does_not_arm_the_gap() -> None:
+    """A skip-list tool publishes nothing — it must not start the cooldown
+    (nothing was spoken, so there is nothing to avoid repeating)."""
+    bus = _RecordingBus()
+    stub = _make_stub(bus=bus)
+
+    emit_turn_1 = stub._build_tool_ack_emitter("Klick da drauf")
+    await emit_turn_1("click", {})
+    assert _preambles(bus) == []
+
+    emit_turn_2 = stub._build_tool_ack_emitter("Was steht in meinen Mails")
+    await emit_turn_2("gmail", {"action": "list_messages"})
+    assert len(_preambles(bus)) == 1

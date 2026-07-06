@@ -27,8 +27,8 @@ from jarvis.core.config import JarvisConfig
 from jarvis.core.protocols import ToolResult
 
 _EN_ANTI_SILENCE = "I can't do that right now — I'm missing the right tool for it."
-_DE_ANTI_SILENCE_MARKER = "mir fehlt dafuer das passende Werkzeug"  # i18n-allow: German TTS phrase
-_DE_ACTION_FAILED = "Ich habe die Aktion erkannt, konnte sie aber nicht ausfuehren."  # i18n-allow
+_DE_ANTI_SILENCE_MARKER = "mir fehlt dafür das passende Werkzeug"  # i18n-allow: German TTS phrase
+_DE_ACTION_FAILED = "Ich habe die Aktion erkannt, konnte sie aber nicht ausführen."  # i18n-allow
 _EN_ACTION_FAILED = "I recognized the action but couldn't execute it."
 _ES_ACTION_FAILED = "Reconocí la acción, pero no pude ejecutarla."
 

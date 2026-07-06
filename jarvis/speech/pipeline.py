@@ -2818,11 +2818,7 @@ class SpeechPipeline:
             and getattr(self, "_turn_state", TurnTakingState.IDLE)
             is TurnTakingState.PROCESSING
         ):
-            ack_cfg = (
-                getattr(self._config, "ack_brain", None)
-                if self._config is not None
-                else None
-            )
+            ack_cfg = getattr(getattr(self, "_config", None), "ack_brain", None)
             commit_grace_ms = int(
                 getattr(ack_cfg, "grounded_ack_commit_grace_ms", 900) or 0
             )
@@ -2879,11 +2875,7 @@ class SpeechPipeline:
         # three times. Only the ephemeral kinds are deduped;
         # completion/interrupt readbacks deliver owed answers and may repeat.
         if is_preamble or is_progress:
-            dedup_cfg = (
-                getattr(self._config, "ack_brain", None)
-                if self._config is not None
-                else None
-            )
+            dedup_cfg = getattr(getattr(self, "_config", None), "ack_brain", None)
             dedup_window_s = float(
                 getattr(dedup_cfg, "preamble_dedup_window_s", 180) or 0
             )
