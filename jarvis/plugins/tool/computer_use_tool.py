@@ -30,6 +30,7 @@ from jarvis.brain.local_action_gate import HARNESS_NAME
 from jarvis.core.bus import EventBus
 from jarvis.core.events import AnnouncementRequested
 from jarvis.core.protocols import ExecutionContext, ToolResult
+from jarvis.harness.computer_use_context import peek_computer_use_context
 from jarvis.harness.manager import HarnessManager
 from jarvis.plugins.tool.dispatch_to_harness import DispatchToHarnessTool
 from jarvis.voice.action_phrases import (
@@ -160,6 +161,24 @@ class ComputerUseTool:
         goal = (args.get("goal") or "").strip()
         if not goal:
             return ToolResult(success=False, output=None, error="goal missing")
+        # Fresh-machine honesty (2026-07-06): computer_use stays in ROUTER_TOOLS
+        # unconditionally (ADR-0011), but the CU context is only wired when
+        # [computer_use].enabled AND a vision engine exist (factory.py). On a
+        # fresh install (the shipped default is disabled) every dispatch used
+        # to die deep inside the harness with "RuntimeError: ComputerUseHarness
+        # context not set". Peek the singleton BEFORE dispatching so an unwired
+        # machine gets an honest, actionable ToolResult instead of a crash.
+        if peek_computer_use_context() is None:
+            return ToolResult(
+                success=False,
+                output=None,
+                error=(
+                    "computer-use is not active on this machine: [computer_use].enabled "
+                    "is false (the shipped default) or no vision engine could be built. "
+                    "Tell the user desktop control is currently OFF and can be switched "
+                    "on in Settings; do not retry this tool in this turn."
+                ),
+            )
         # Wave 0 (frontier-speed, 2026-06-09): with a bus wired (production),
         # the mission runs as a BACKGROUND task and the brain turn gets an
         # immediate ACK. Run inline, the mission would live inside the brain

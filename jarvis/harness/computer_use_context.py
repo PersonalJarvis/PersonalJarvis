@@ -309,3 +309,13 @@ def get_computer_use_context() -> ComputerUseContext:
             "before the first dispatch.",
         )
     return _CONTEXT
+
+
+def peek_computer_use_context() -> "ComputerUseContext | None":
+    """Non-raising read of the global CU context (None when never wired).
+
+    Lets callers degrade honestly on machines where [computer_use].enabled is
+    false or the vision engine failed to build, instead of hitting the
+    RuntimeError in get_computer_use_context().
+    """
+    return _CONTEXT
