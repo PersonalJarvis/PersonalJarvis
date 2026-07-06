@@ -317,14 +317,13 @@ auto-activated (AP-15).
 | AP-22 | Configure a tier (router/ack/STT/TTS/worker/critic/fallback) whose primary AND fallback resolve to the SAME provider family, or build a fallback chain from hardcoded provider NAMES | Single-provider brick: one missing key / 429 / 402 / outage kills the whole tier even with a healthy DIFFERENT provider present. Resolve every tier through one key-aware chain that skips dead/keyless providers, crosses families, and degrades honestly only when NO family is reachable — recoverable in-app |
 | AP-23 | Build or TEST a feature only against the maintainer's config / keys / provider / OS and claim it done | The whole API-keys surface silently bricked for every other downloader + on a headless VPS (credentials couldn't be SAVED, ENV keys read as "not configured", channels/plugins/OAuth 500'd). Verify the three non-maintainer paths in §3 |
 
-The remaining anti-patterns need more context than a table cell allows:
+AP-24 to AP-29 need more room than a table cell:
 
 ### AP-24 — Never share a native inference engine between concurrent callers
 
-Never call a shared native inference engine (ctranslate2/faster-whisper, an
-ONNX/torch session) concurrently from two callers, and never "recover" a hung
-inference with only a timeout that re-polls the SAME wedged engine.
-`WhisperModel.transcribe` is NOT thread-safe: the wake poll loop + VAD probe
+This covers ctranslate2/faster-whisper and ONNX/torch sessions. Equally
+banned: "recovering" a hung inference with only a timeout that re-polls the
+SAME wedged engine. `WhisperModel.transcribe` is NOT thread-safe: the wake poll loop + VAD probe
 sharing one provider hung it forever, and a hung `to_thread` can't be
 cancelled — a timeout only BOUNDS, never RECOVERS. Fix: a non-blocking
 per-instance inference lock (second call → skip) + a `recover()` that rebuilds

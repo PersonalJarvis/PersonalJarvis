@@ -105,6 +105,56 @@ def test_codex_needing_reauth_is_skipped(monkeypatch: pytest.MonkeyPatch) -> Non
     assert worker.provider == "gemini"
 
 
+# --- 2026-07-06: a PRESENT `claude` binary with DEAD auth must not dead-end ---
+
+
+def test_claude_binary_with_dead_auth_routes_to_codex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The 2026-07-06 incident shape: the `claude` binary exists, but its OAuth
+    token is expired/dead (auth non-viable). The old binary-presence-only check
+    picked ClaudeDirectWorker anyway and every mission died 401. Claude must be
+    SKIPPED so the healthy codex subscription runs."""
+    _patch_env(
+        monkeypatch,
+        claude_binary="/usr/bin/claude",
+        claude_auth_viable=False,
+        codex_oauth=True,
+    )
+    worker = mi._cross_family_last_resort_worker("t")
+    assert isinstance(worker, CodexDirectWorker)
+
+
+def test_claude_binary_with_dead_auth_crosses_to_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dead claude auth + no codex → the configured API-key family runs."""
+    _patch_env(
+        monkeypatch,
+        claude_binary="/usr/bin/claude",
+        claude_auth_viable=False,
+        keys=("openrouter",),
+    )
+    worker = mi._cross_family_last_resort_worker("t")
+    assert isinstance(worker, ApiAgentWorker)
+    assert worker.provider == "openrouter"
+
+
+def test_claude_binary_with_live_auth_stays_preferred(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sanity: a claude binary WITH viable auth keeps the subscription floor."""
+    _patch_env(
+        monkeypatch,
+        claude_binary="/usr/bin/claude",
+        claude_auth_viable=True,
+        codex_oauth=True,
+        keys=("openrouter",),
+    )
+    worker = mi._cross_family_last_resort_worker("t")
+    assert isinstance(worker, ClaudeDirectWorker)
+
+
 # --- The genuine no-credential case still degrades honestly -------------------
 
 
@@ -112,4 +162,15 @@ def test_nothing_reachable_returns_none(monkeypatch: pytest.MonkeyPatch) -> None
     """No binary, no codex, no key → None, so the caller keeps the honest Claude
     last resort (which fails legibly rather than silently)."""
     _patch_env(monkeypatch)
+    assert mi._cross_family_last_resort_worker("t") is None
+
+
+def test_claude_binary_dead_auth_nothing_else_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dead claude auth and no other family → None; the caller's honest Claude
+    last resort then fails legibly (and its 401 re-arms the dead flag)."""
+    _patch_env(
+        monkeypatch, claude_binary="/usr/bin/claude", claude_auth_viable=False
+    )
     assert mi._cross_family_last_resort_worker("t") is None
