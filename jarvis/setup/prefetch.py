@@ -57,7 +57,7 @@ def _whisper_models_needed() -> list[str]:
 def _download_whisper_model(name: str) -> None:
     """Fetch one faster-whisper model into the standard HuggingFace cache —
     the exact cache ``WhisperModel(name)`` resolves at runtime."""
-    from faster_whisper.utils import download_model
+    from faster_whisper.utils import download_model  # type: ignore[import-not-found]
 
     download_model(name)
 
