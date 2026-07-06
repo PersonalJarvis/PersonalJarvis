@@ -25,6 +25,7 @@ and the stream-open resolvers.
 """
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -38,26 +39,25 @@ else:
     except Exception:  # noqa: BLE001 — sounddevice/PortAudio (libportaudio2) absent
         sd = None  # type: ignore[assignment]
 
+# Host-API policy is NOT re-declared here: the preference tables and the
+# WDM-KS denylists live in the player/capture modules next to the BUG-014
+# forensics that justify them, and this module imports them so a future
+# host-API fix there can never silently drift apart from the picker /
+# name-resolution behavior. (player/capture import THIS module only lazily
+# inside their resolvers, so there is no import cycle.)
+from jarvis.audio.capture import (
+    _HOSTAPI_BLOCKLIST as _INPUT_FORBIDDEN_HOSTAPIS,
+    _HOSTAPI_PREFERENCE as _INPUT_HOSTAPI_PREFERENCE,
+)
 from jarvis.audio.device_select import is_legacy_primary_mapper
+from jarvis.audio.player import (
+    _FORBIDDEN_OUTPUT_HOSTAPIS as _OUTPUT_FORBIDDEN_HOSTAPIS,
+    _HOSTAPI_PREFERENCE as _OUTPUT_HOSTAPI_PREFERENCE,
+)
 
 #: The config sentinel for "pick a device automatically" (the default in
 #: ``[audio].input_device`` / ``[audio].output_device``).
 AUTO_DEVICE = "auto-headset"
-
-# Host APIs that cannot serve PortAudio's blocking stream API at all —
-# OutputStream open crashes with -9999 (BUG-014), InputStream.start with
-# -9996. Excluded from the picker AND from name resolution: offering or
-# resolving to one of these hands the caller a guaranteed crash.
-_FORBIDDEN_HOSTAPIS: frozenset[str] = frozenset({"Windows WDM-KS"})
-
-# Host-API preference per direction (lower = better), mirroring the resolvers
-# in jarvis.audio.player / jarvis.audio.capture — see their docstrings for the
-# forensics (WASAPI mono routing for playback; MME 16 kHz resampling for the
-# always-on wake capture). Non-Windows host APIs (CoreAudio, ALSA, pulse) fall
-# to the default rank 99, i.e. enumeration order — correct there, since each
-# device appears once.
-_OUTPUT_HOSTAPI_PREFERENCE = {"Windows WASAPI": 0, "Windows DirectSound": 1, "MME": 2}
-_INPUT_HOSTAPI_PREFERENCE = {"MME": 0, "Windows DirectSound": 1, "Windows WASAPI": 2}
 
 # PortAudio's WMME backend truncates device names (32-byte buffer → ~31
 # chars). A shorter name that is a strict PREFIX of a longer one and at least
@@ -71,6 +71,18 @@ class AudioDeviceInfo:
 
     name: str
     is_default: bool
+
+
+def _canon(s: str) -> str:
+    """Canonical form for name comparison: NFC-normalized + casefolded.
+
+    NFC guards against the same physical device enumerating under two
+    Unicode spellings of a diacritic (e.g. a composed vs. decomposed "ö" in
+    a localized name) between the time a name was persisted and a later
+    stream-open lookup — without it the exact-match branch would miss and
+    silently fall back to auto-headset.
+    """
+    return unicodedata.normalize("NFC", s).casefold()
 
 
 def _hostapi_name(dev: dict[str, Any], hostapis: list[Any]) -> str:
@@ -105,7 +117,10 @@ def _candidates(
         if is_legacy_primary_mapper(idx, hostapis, devices, output=output):
             continue
         hostapi = _hostapi_name(dev, hostapis)
-        if hostapi in _FORBIDDEN_HOSTAPIS:
+        forbidden = (
+            _OUTPUT_FORBIDDEN_HOSTAPIS if output else _INPUT_FORBIDDEN_HOSTAPIS
+        )
+        if hostapi in forbidden:
             continue
         out.append((idx, dev, hostapi))
     return out
@@ -146,10 +161,10 @@ def list_devices(*, output: bool) -> list[AudioDeviceInfo]:
 
     # Exact-name dedupe: keep one representative per display name (the flag
     # only needs the name; twins are equivalent for the picker).
-    by_name: dict[str, str] = {}  # casefolded -> display name
+    by_name: dict[str, str] = {}  # canonical -> display name
     for _idx, dev, _hostapi in cands:
         name = str(dev.get("name", ""))
-        by_name.setdefault(name.casefold(), name)
+        by_name.setdefault(_canon(name), name)
 
     # Truncation merge: drop a name that is a >=_MME_TRUNCATION_MIN-char
     # strict prefix of another (the WMME-truncated twin of the full name).
@@ -157,7 +172,7 @@ def list_devices(*, output: bool) -> list[AudioDeviceInfo]:
     merged: list[str] = []
     for name in names:
         is_truncated_twin = len(name) >= _MME_TRUNCATION_MIN and any(
-            other != name and other.casefold().startswith(name.casefold())
+            other != name and _canon(other).startswith(_canon(name))
             for other in names
         )
         if not is_truncated_twin:
@@ -166,10 +181,17 @@ def list_devices(*, output: bool) -> list[AudioDeviceInfo]:
     def _is_default(name: str) -> bool:
         if not default_name:
             return False
-        a, b = name.casefold(), default_name.casefold()
+        a, b = _canon(name), _canon(default_name)
+        if a == b:
+            return True
         # The default endpoint may be enumerated under its truncated MME name
-        # while the picker kept the full twin (or vice versa).
-        return a == b or a.startswith(b) or b.startswith(a)
+        # while the picker kept the full twin (or vice versa) — but ONLY a
+        # >=_MME_TRUNCATION_MIN-char prefix relation can be that truncated
+        # twin (same floor as the merge above). Without the floor, a short
+        # generic default like "Microphone" would also flag every DISTINCT
+        # device that merely extends it ("Microphone Array (Realtek...)").
+        shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+        return len(shorter) >= _MME_TRUNCATION_MIN and longer.startswith(shorter)
 
     entries = [AudioDeviceInfo(name=n, is_default=_is_default(n)) for n in merged]
     entries.sort(key=lambda e: (not e.is_default, e.name.casefold()))
@@ -194,7 +216,7 @@ def resolve_device_by_name(name: str, *, output: bool) -> int | None:
         return None
     devices, hostapis = tables
 
-    target_cf = target.casefold()
+    target_cf = _canon(target)
     # Same-device pool: exact matches plus truncation twins (the candidate is
     # a >=_MME_TRUNCATION_MIN-char prefix of the target — the WMME-truncated
     # enumeration of the SAME endpoint). Within the pool the direction's
@@ -207,7 +229,7 @@ def resolve_device_by_name(name: str, *, output: bool) -> int | None:
     same_device: list[tuple[int, str]] = []
     extensions: list[tuple[int, str]] = []
     for idx, dev, hostapi in _candidates(devices, hostapis, output=output):
-        dev_cf = str(dev.get("name", "")).casefold()
+        dev_cf = _canon(str(dev.get("name", "")))
         if dev_cf == target_cf or (
             len(dev_cf) >= _MME_TRUNCATION_MIN and target_cf.startswith(dev_cf)
         ):

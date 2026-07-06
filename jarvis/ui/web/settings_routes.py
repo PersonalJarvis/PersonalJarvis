@@ -1903,10 +1903,19 @@ async def put_audio_devices(
     pipeline = getattr(request.app.state, "speech_pipeline", None)
     if pipeline is not None and hasattr(pipeline, "set_audio_devices"):
         try:
-            pipeline.set_audio_devices(
-                input_device=body.input_device,
-                output_device=body.output_device,
-            )
+            # The OUTPUT swap can block: AudioPlayer.set_device tears down the
+            # persistent stream, and PortAudio's stream.stop() drains the
+            # ~200 ms playback buffer (longer while Jarvis is mid-sentence).
+            # Run it off the event loop so a device switch never freezes the
+            # whole API/WS surface. The INPUT side must stay ON the loop: it
+            # only sets an attribute and flips the asyncio wake-reload Event,
+            # and asyncio primitives are not thread-safe.
+            if body.output_device is not None:
+                await asyncio.to_thread(
+                    pipeline.set_audio_devices, output_device=body.output_device
+                )
+            if body.input_device is not None:
+                pipeline.set_audio_devices(input_device=body.input_device)
             applied_live = True
         except Exception as exc:  # noqa: BLE001 — never fail the save on a live-apply hiccup
             log.warning(
