@@ -2367,15 +2367,31 @@ class BrainManager:
         # tool-use loop (a provider that emits tool_calls then errors would
         # otherwise re-announce on the fallback provider's re-run).
         fired = False
+        # Cross-utterance cooldown (2026-07-06 interim-ack redesign): the
+        # per-turn guard above cannot stop the NEXT utterance from acking
+        # again seconds later — forensically that produced the same spoken
+        # ack three times in one session. Checked at emit time (tool
+        # selection can lag turn start by seconds) against the manager-wide
+        # timestamp of the last PUBLISHED grounded ack.
+        min_gap_s = float(getattr(ack_cfg, "grounded_ack_min_gap_s", 20) or 0)
 
         async def emit(tool_name: str, tool_args: dict[str, Any]) -> None:
             nonlocal fired
             if fired:
                 return
+            if min_gap_s > 0:
+                last = getattr(self, "_last_grounded_ack_monotonic", None)
+                if last is not None and (time.monotonic() - last) < min_gap_s:
+                    log.debug(
+                        "Grounded tool-ack suppressed — last ack %.1fs ago "
+                        "(min gap %.0fs)", time.monotonic() - last, min_gap_s,
+                    )
+                    return
             text = generate_ack(tool_name, tool_args, language=language)
             if text is None:  # skip-list tool (passive read / UI micro-event)
                 return
             fired = True
+            self._last_grounded_ack_monotonic = time.monotonic()
             await bus.publish(
                 AnnouncementRequested(
                     text=text,
@@ -7872,7 +7888,7 @@ def _is_rate_limit_exc(exc: Exception) -> bool:
 _ACTION_FAILED_PHRASES: dict[str, str] = {
     "de": (
         "Ich habe die Aktion erkannt, "  # i18n-allow: spoken German TTS
-        "konnte sie aber nicht ausfuehren."  # i18n-allow: spoken German TTS
+        "konnte sie aber nicht ausführen."  # i18n-allow: spoken German TTS
     ),
     "en": "I recognized the action but couldn't execute it.",
     "es": "Reconocí la acción, pero no pude ejecutarla.",

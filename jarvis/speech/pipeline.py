@@ -1450,6 +1450,13 @@ class SpeechPipeline:
         # docs/plans/voice-phrase-mismatch-2026-05-26/README.md and the
         # ``suppress_preamble_after_interrupt_ms`` knob on AckBrainConfig.
         self._last_interrupt_announcement_ts: float | None = None
+        # 2026-07-06 interim-ack redesign: (text, monotonic) of the last SPOKEN
+        # preamble/progress announcement. ``_on_announcement`` drops a new
+        # preamble/progress line with identical wording inside the
+        # ``preamble_dedup_window_s`` window — no emitter may repeat itself
+        # verbatim in quick succession (forensic 2026-07-05: the identical
+        # grounded ack spoke three times in one session).
+        self._last_preamble_spoken: tuple[str, float] | None = None
         # AD-OE5/OE6: completion-class announcements that arrive while the user
         # holds the floor are parked here and flushed at the next turn-boundary
         # (when the turn-state returns to LISTENING/IDLE) instead of barging
@@ -2797,6 +2804,39 @@ class SpeechPipeline:
                 event.text[:80],
             )
             return
+        # Usefulness gate (2026-07-06 interim-ack redesign): the grounded
+        # router ack publishes the instant a tool is SELECTED — too early to
+        # know whether the bridge is even needed. When the voice turn is
+        # currently PROCESSING, hold the ack for the commit grace and only
+        # speak it if the brain is STILL busy afterwards (same AD-OE5 helper
+        # the Flash-Brain streaming path uses); a turn that answers within
+        # the grace stays ack-free. Announcements arriving with no voice turn
+        # in flight (chat path) keep legacy behavior.
+        if (
+            is_preamble
+            and getattr(event, "source_layer", None) == "brain.router.ack"
+            and getattr(self, "_turn_state", TurnTakingState.IDLE)
+            is TurnTakingState.PROCESSING
+        ):
+            ack_cfg = (
+                getattr(self._config, "ack_brain", None)
+                if self._config is not None
+                else None
+            )
+            commit_grace_ms = int(
+                getattr(ack_cfg, "grounded_ack_commit_grace_ms", 900) or 0
+            )
+            if commit_grace_ms > 0 and not await self._await_ack_turn_commit(
+                commit_grace_ms
+            ):
+                log.info(
+                    "Grounded ack dropped — turn left PROCESSING during the "
+                    "%d ms commit grace (state=%s): %r",
+                    commit_grace_ms,
+                    getattr(self._turn_state, "name", self._turn_state),
+                    event.text[:80],
+                )
+                return
         if event.priority == "interrupt":
             # Arm the quiet window BEFORE TTS so a synchronous publish of a
             # preamble immediately afterwards sees the up-to-date timestamp.
@@ -2832,6 +2872,36 @@ class SpeechPipeline:
         if not scrubbed.cleaned.strip():
             log.info("Announcement nach Filter leer — schweige.")
             return
+        # Duplicate-wording safety net (2026-07-06 interim-ack redesign): no
+        # emitter may speak the SAME preamble/progress line twice in quick
+        # succession, regardless of source (grounded ack, Flash-Brain, skill) —
+        # forensic 2026-07-05: one session spoke the identical grounded ack
+        # three times. Only the ephemeral kinds are deduped;
+        # completion/interrupt readbacks deliver owed answers and may repeat.
+        if is_preamble or is_progress:
+            dedup_cfg = (
+                getattr(self._config, "ack_brain", None)
+                if self._config is not None
+                else None
+            )
+            dedup_window_s = float(
+                getattr(dedup_cfg, "preamble_dedup_window_s", 180) or 0
+            )
+            spoken_text = scrubbed.cleaned.strip()
+            last_spoken = getattr(self, "_last_preamble_spoken", None)
+            if (
+                dedup_window_s > 0
+                and last_spoken is not None
+                and last_spoken[0] == spoken_text
+                and (time.monotonic() - last_spoken[1]) < dedup_window_s
+            ):
+                log.info(
+                    "Preamble dropped — identical wording spoken %.0fs ago: %r",
+                    time.monotonic() - last_spoken[1],
+                    event.text[:80],
+                )
+                return
+            self._last_preamble_spoken = (spoken_text, time.monotonic())
         # We are now committed to actually speaking this announcement (past every
         # suppression / defer / empty guard). Record it as voice activity so the
         # idle-timeout branch in ``_active_session`` re-arms a fresh window: an

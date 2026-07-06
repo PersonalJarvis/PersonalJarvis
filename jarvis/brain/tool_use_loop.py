@@ -168,8 +168,8 @@ def _is_meta_debug_intent(utterance: str) -> bool:
 # text; ambiguous text keeps the historical German default.
 _ANTI_SILENCE_PHRASES: dict[str, str] = {
     "de": (
-        "Das kann ich gerade nicht ausfuehren — "  # i18n-allow: spoken German TTS
-        "mir fehlt dafuer das passende Werkzeug."  # i18n-allow: spoken German TTS
+        "Das kann ich gerade nicht ausführen — "  # i18n-allow: spoken German TTS
+        "mir fehlt dafür das passende Werkzeug."  # i18n-allow: spoken German TTS
     ),
     "en": "I can't do that right now — I'm missing the right tool for it.",
     "es": "Ahora mismo no puedo hacerlo — me falta la herramienta adecuada.",

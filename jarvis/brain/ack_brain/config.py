@@ -109,6 +109,27 @@ class AckBrainConfig(BaseModel):
     # (skip-list-aware) and re-scrubbed at the speech layer. Set False to go
     # back to pure silence during tool execution.
     grounded_tool_ack: bool = Field(default=True)
+    # 2026-07-06 interim-ack redesign (spec: docs/superpowers/specs/
+    # 2026-07-06-interim-ack-redesign-design.md). Forensic finding: one voice
+    # session spoke the identical grounded ack once per utterance, three
+    # times in a row — pure chatter. Minimum gap between two PUBLISHED
+    # grounded acks (manager-wide, across utterances). Within the gap the
+    # emitter stays silent: Jarvis just said it is working; saying it again
+    # seconds later is noise. 0 restores the legacy per-turn-only guard.
+    grounded_ack_min_gap_s: int = Field(default=20, ge=0, le=600)
+    # Usefulness gate for the grounded ack at the speech layer: when the
+    # announcement arrives while a voice turn is in PROCESSING, the pipeline
+    # waits this long (AD-OE5 commit-grace helper) and only speaks the ack if
+    # the brain is STILL busy — a turn that answers quickly stays ack-free.
+    # 0 restores speak-immediately.
+    grounded_ack_commit_grace_ms: int = Field(default=900, ge=0, le=5000)
+    # Duplicate-text safety net at the speech layer: a preamble/progress-class
+    # announcement whose (scrubbed) text is identical to the previously spoken
+    # preamble/progress line within this window is dropped — no source may
+    # repeat itself verbatim in quick succession. Completion/interrupt
+    # readbacks are exempt (they deliver an answer the user is owed).
+    # 0 disables the dedup.
+    preamble_dedup_window_s: int = Field(default=180, ge=0, le=3600)
     # "follow_brain" mirrors cfg.brain.primary so the Flash-Brain
     # naturally tracks whatever main provider the user is on. Pin to
     # a concrete name (gemini/grok/openai/ollama) to override.
