@@ -694,11 +694,19 @@ async def _run_headless(args) -> int:
         from jarvis.marketplace.refresh_scheduler import RefreshScheduler
         from jarvis.marketplace.token_store import TokenStore
 
+        def _refresh_live_session(plugin_id: str) -> None:
+            # Lazy import: keeps this off the boot-critical import path (AP-26) —
+            # it is only ever needed once a background refresh actually succeeds.
+            from jarvis.ui.web.marketplace_routes import _refresh_plugin_in_live_registry
+
+            _refresh_plugin_in_live_registry(plugin_id)
+
         _token_store = TokenStore()
         _refresh_scheduler = RefreshScheduler(
             plugin_ids_fn=lambda: connected_plugin_ids(_token_store),
             store=_token_store,
             build_handler=build_handler_from_catalog,
+            on_refreshed=_refresh_live_session,
         )
         _refresh_scheduler.start()
         server.app.state.refresh_scheduler = _refresh_scheduler

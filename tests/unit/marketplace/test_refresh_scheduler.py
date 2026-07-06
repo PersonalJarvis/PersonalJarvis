@@ -314,6 +314,54 @@ def test_log_cycle_no_warning_when_all_healthy(caplog) -> None:  # noqa: ANN001
 
 
 @pytest.mark.asyncio
+async def test_on_refreshed_fires_after_successful_refresh() -> None:
+    # The scheduler writes the fresh token to the store, but a live MCP client
+    # session (e.g. an open Notion connection) never learns the token rotated
+    # unless something tells it to. on_refreshed is that "something" — fired
+    # once per plugin id right after its token save succeeds.
+    store = _store()
+    store.save("notion", _tokens(60))
+    handler = _FakeHandler("notion", new_tokens=Tokens(access="a1", refresh="r1"))
+    seen: list[str] = []
+    sched = RefreshScheduler(
+        plugin_ids_fn=lambda: ["notion"],
+        store=store,
+        build_handler=lambda pid: handler,
+        on_refreshed=seen.append,
+    )
+
+    outcomes = await sched.run_once()
+
+    assert outcomes == {"notion": REFRESHED}
+    assert seen == ["notion"]
+
+
+@pytest.mark.asyncio
+async def test_on_refreshed_exception_does_not_break_the_loop(caplog) -> None:  # noqa: ANN001
+    # A UI-refresh hiccup (e.g. the live registry lookup throwing) must never
+    # take down the refresh cycle itself — the token is already safely saved.
+    store = _store()
+    store.save("notion", _tokens(60))
+    handler = _FakeHandler("notion", new_tokens=Tokens(access="a1", refresh="r1"))
+
+    def _boom(plugin_id: str) -> None:
+        raise RuntimeError("ui refresh failed")
+
+    sched = RefreshScheduler(
+        plugin_ids_fn=lambda: ["notion"],
+        store=store,
+        build_handler=lambda pid: handler,
+        on_refreshed=_boom,
+    )
+
+    caplog.set_level(logging.WARNING)
+    outcomes = await sched.run_once()  # must not raise
+
+    assert outcomes == {"notion": REFRESHED}
+    assert store.load("notion").access == "a1"  # token save is unaffected
+
+
+@pytest.mark.asyncio
 async def test_scheduler_keep_alive_refreshes_long_lived_token() -> None:
     # The scheduler must apply keep-alive so a long-lived / no-expiry token still
     # gets its refresh token exercised — the durable "stay connected forever" path.
