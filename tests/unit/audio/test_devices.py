@@ -34,9 +34,10 @@ def _patch_tables(monkeypatch, hostapis, devices, *, default=(-1, -1)) -> None:
 # Windows-like table: one headset + one Realtek board, each on 4 host APIs,   #
 # plus the virtual mappers. Mirrors a real PortAudio enumeration.             #
 # --------------------------------------------------------------------------- #
-_FULL_HEADSET_OUT = "Lautsprecher (Logitech PRO X Gaming Headset)"  # i18n-allow: localized Windows device name under test
+# Localized Windows device names under test (matching data, not prose).
+_FULL_HEADSET_OUT = "Lautsprecher (Logitech PRO X Gaming Headset)"  # i18n-allow
 _MME_HEADSET_OUT = _FULL_HEADSET_OUT[:31]  # MME truncates at ~31 chars
-_FULL_HEADSET_IN = "Mikrofon (Logitech PRO X Gaming Headset)"  # i18n-allow: localized Windows device name under test
+_FULL_HEADSET_IN = "Mikrofon (Logitech PRO X Gaming Headset)"  # i18n-allow
 _MME_HEADSET_IN = _FULL_HEADSET_IN[:31]
 
 

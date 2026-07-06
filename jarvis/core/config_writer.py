@@ -263,9 +263,9 @@ def set_audio_device(
     ``kind`` is ``"input"`` or ``"output"``; ``value`` is a device display
     NAME (the identifier stable across reboots/hot-plugs) or the
     ``"auto-headset"`` sentinel to restore automatic selection. The ``[audio]``
-    block is NOT pinned in config-soll.json, so the atomic TOML patch alone  # i18n-allow: filename reference
-    persists it. The Settings route live-applies the change to the running
-    pipeline; this stores the boot default.
+    block is NOT drift-guard pinned, so the atomic TOML patch alone persists
+    it. The Settings route live-applies the change to the running pipeline;
+    this stores the boot default.
     """
     if kind not in ("input", "output"):
         raise ValueError(f"kind must be 'input' or 'output', got {kind!r}")
