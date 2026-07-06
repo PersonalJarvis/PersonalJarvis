@@ -135,8 +135,10 @@ async def _run_detect(provider: VoskKwsProvider, chunks: list[AudioChunk]) -> li
 
 
 async def test_partial_hit_with_confirm_fires_the_keyword(fake_vosk) -> None:
+    # partial hit at chunk 3, then 0.6 s (6 chunks) of tail land in the ring
+    # before the confirm runs — the free decoder must see the WHOLE phrase.
     p = VoskKwsProvider("Hey Nova", model_path="fake", keyword="nova")
-    fired = await _run_detect(p, [_chunk() for _ in range(6)])
+    fired = await _run_detect(p, [_chunk() for _ in range(12)])
     assert fired == ["nova"]
     assert p.stats()["fired"] == 1
 

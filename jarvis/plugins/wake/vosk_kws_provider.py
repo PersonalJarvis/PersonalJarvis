@@ -74,6 +74,15 @@ _RING_SECONDS = 3.0
 # Refractory period after a fired wake.
 _COOLDOWN_S = 5.0
 
+# How much audio to let land in the ring AFTER a PARTIAL candidate before the
+# confirm pass runs. A partial fires DURING the phrase (that is its virtue),
+# but confirming at that instant hands the free decoder a truncated utterance
+# ("hey lu…") which it then rejects — measured E2E: 50 % recall on "Hey Luca"
+# vs 100 % when the confirm sees the whole phrase. 0.6 s covers the tail of a
+# short core word; final candidates skip the wait (the endpoint already
+# passed).
+_CONFIRM_TAIL_S = 0.6
+
 
 def _folded(text: str) -> str:
     return " ".join(sound_fold(t) for t in normalize_phrase_for_match(text))
@@ -122,6 +131,7 @@ class VoskKwsProvider:
         confirm_ratio: float = _CONFIRM_RATIO,
         match_min_rms: float = _MATCH_MIN_RMS,
         cooldown_s: float = _COOLDOWN_S,
+        confirm_tail_s: float = _CONFIRM_TAIL_S,
         # Production poll-loop parity: peak-normalize the confirm window to
         # -3 dBFS (gain capped at 40 dB) exactly like the other wake paths.
         target_peak: float = 0.7079,
@@ -135,6 +145,7 @@ class VoskKwsProvider:
         self._confirm_ratio = float(confirm_ratio)
         self._match_min_rms = float(match_min_rms)
         self._cooldown_s = float(cooldown_s)
+        self._confirm_tail_bytes = int(float(confirm_tail_s) * sample_rate) * 2
         self._target_peak = float(target_peak)
         self._max_gain = float(max_gain)
         self._model: Any = None
@@ -274,23 +285,41 @@ class VoskKwsProvider:
         await asyncio.to_thread(self._ensure_model)
         rec = self._new_grammar_rec()
         last_fire_t = 0.0
+        # Pending candidate: a PARTIAL hit waits for ``confirm_tail_s`` more
+        # audio before the confirm pass so the free decoder sees the WHOLE
+        # phrase, not a truncated one (E2E-measured recall trap). Finals skip
+        # the wait — their endpoint already passed.
+        pending: tuple[bool, float] | None = None
+        pending_tail = 0
         async for chunk in chunks:
             self._stat_chunks += 1
             pcm = chunk.pcm
             self._ring_push(pcm)
-            hit = self._grammar_hit(rec, pcm)
-            if hit is None:
-                continue
-            is_final, conf = hit
+            if pending is not None:
+                pending_tail += len(pcm)
+                if pending_tail < self._confirm_tail_bytes:
+                    continue
+                is_final, conf = pending
+                pending = None
+            else:
+                hit = self._grammar_hit(rec, pcm)
+                if hit is None:
+                    continue
+                is_final, conf = hit
+                now = time.time()
+                if now - last_fire_t < self._cooldown_s:
+                    self._stat_suppressed_cooldown += 1
+                    rec = self._new_grammar_rec()
+                    continue
+                self._stat_candidates += 1
+                if is_final and conf < self._min_final_conf:
+                    rec = self._new_grammar_rec()
+                    continue
+                if not is_final and self._confirm_tail_bytes > 0:
+                    pending = (is_final, conf)
+                    pending_tail = 0
+                    continue
             now = time.time()
-            if now - last_fire_t < self._cooldown_s:
-                self._stat_suppressed_cooldown += 1
-                rec = self._new_grammar_rec()
-                continue
-            self._stat_candidates += 1
-            if is_final and conf < self._min_final_conf:
-                rec = self._new_grammar_rec()
-                continue
             window = self._ring_window()
             rms = float(np.sqrt(np.mean(window * window) + 1e-12)) if len(window) else 0.0
             if rms < self._match_min_rms:
