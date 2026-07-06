@@ -51,12 +51,23 @@ def test_sound_confirm_finds_phrase_inside_longer_speech() -> None:
 # --- fake vosk runtime ----------------------------------------------------------
 
 
+def _timed_words(text: str, conf: float, start: float = 0.5) -> list[dict]:
+    out = []
+    t = start
+    for w in text.split():
+        out.append({"word": w, "start": t, "end": t + 0.3, "conf": conf})
+        t += 0.35
+    return out
+
+
 class _FakeRecognizer:
     """Scriptable KaldiRecognizer stand-in.
 
     Grammar mode (grammar arg passed): after ``fire_after`` chunks the partial
-    contains the phrase. Free mode (no grammar): FinalResult returns
-    ``free_text`` — the knob the confirm-path tests turn.
+    contains the phrase; FinalResult re-hears the phrase with timed words at
+    ``model.grammar_conf`` (the verify re-score input). Free mode (no
+    grammar): FinalResult returns ``model.free_text`` with timed words in the
+    same span — the knob the confirm-path tests turn.
     """
 
     def __init__(self, model, rate, grammar=None):  # noqa: ANN001
@@ -80,7 +91,16 @@ class _FakeRecognizer:
         return json.dumps({"text": ""})
 
     def FinalResult(self):  # noqa: N802
-        return json.dumps({"text": self._model.free_text})
+        if self._grammar is not None:
+            phrase = self._model.phrase.lower()
+            return json.dumps({
+                "text": phrase,
+                "result": _timed_words(phrase, self._model.grammar_conf),
+            })
+        return json.dumps({
+            "text": self._model.free_text,
+            "result": _timed_words(self._model.free_text, 0.9),
+        })
 
 
 class _FakeModel:
@@ -88,6 +108,7 @@ class _FakeModel:
         self.path = path
         self.phrase = "hey nova"
         self.free_text = "hey nova"
+        self.grammar_conf = 0.95
         self.fire_after = 3
 
 
@@ -183,7 +204,7 @@ async def test_near_silent_candidate_is_gated_on_energy(fake_vosk) -> None:
 
 def test_confirm_infrastructure_error_fails_open(fake_vosk, monkeypatch) -> None:
     # A broken confirm must never eat a real wake (mirrors the echo-confirm
-    # contract on the stt_match path): _free_confirm returns True on ANY
+    # contract on the stt_match path): _verify_candidate returns True on ANY
     # infrastructure exception.
     p = VoskKwsProvider("Hey Nova", model_path="fake", keyword="nova")
 
@@ -191,7 +212,30 @@ def test_confirm_infrastructure_error_fails_open(fake_vosk, monkeypatch) -> None
         raise RuntimeError("confirm infra down")
 
     monkeypatch.setattr(p, "_ensure_model", _boom)
-    assert p._free_confirm(np.full(1600, 0.2, dtype=np.float32)) is True
+    assert p._verify_candidate(np.full(1600, 0.2, dtype=np.float32)) is True
+
+
+def test_low_rescore_confidence_suppresses(fake_vosk) -> None:
+    # Live forensic 2026-07-06: the streaming PARTIAL has no confidence (its
+    # 1.00 placeholder passed the gate), so room speech fired constantly.
+    # The verify re-score must supply a REAL confidence and gate on it.
+    p = VoskKwsProvider("Hey Nova", model_path="fake", keyword="nova")
+    p._ensure_model()
+    fake_vosk["model"].grammar_conf = 0.2  # weak re-hear -> not a wake
+    assert p._verify_candidate(np.full(48000, 0.2, dtype=np.float32)) is False
+
+
+def test_free_words_outside_the_span_cannot_confirm(fake_vosk) -> None:
+    # The sound confirm must judge what was said AT the candidate's position;
+    # a sound-close pair elsewhere in the 3 s window must not count.
+    p = VoskKwsProvider("Hey Nova", model_path="fake", keyword="nova")
+    p._ensure_model()
+    m = fake_vosk["model"]
+    m.free_text = "ganz andere worte hier hey nowa"  # i18n-allow: utterance under test
+    # free words start at 0.5s and stride 0.35s -> "hey nowa" sits ~1.9-2.6s,
+    # far outside the grammar span (0.5-1.15s +-0.3) -> localised confirm
+    # sees only unrelated words and rejects.
+    assert p._verify_candidate(np.full(48000, 0.2, dtype=np.float32)) is False
 
 
 async def test_cooldown_suppresses_immediate_refire(fake_vosk) -> None:

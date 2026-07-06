@@ -51,11 +51,16 @@ from jarvis.speech.wake_constants import normalize_phrase_for_match, sound_fold
 
 log = logging.getLogger("jarvis.wake.vosk")
 
-# Minimum per-word grammar confidence on a FINAL result. Spike distribution:
-# genuine wakes p25..max = 1.0 (one outlier 0.483), false accepts p50 = 0.707
-# — so 0.5 keeps nearly every genuine hit and trims the weakest ghosts before
-# the (decisive) sound confirm.
-_MIN_FINAL_CONF = 0.5
+# Minimum per-word grammar confidence for the verify RE-SCORE over the ring
+# window. This is the precision anchor (live forensic 2026-07-06, "Hey Ruben"
+# fired on plain room speech): genuine wakes re-score at ~1.0 (spike
+# distribution p25..max = 1.0), room speech pulled onto the phrase re-scores
+# lower. Calibrated on 6 min of judged continuous room speech vs the
+# hardest common-sound phrase: conf>=0.9 + the permissive 0.55 sound ratio =
+# 0 false fires at Ruben 20/24 / Luca 8/8 recall; conf 0.5 leaked
+# 0.84 fires/min. Raising the sound ratio instead costs recall (AP-27) —
+# keep the ratio permissive and let the REAL confidence carry precision.
+_MIN_FINAL_CONF = 0.9
 
 # Sound-similarity floor for the free-decode confirm. Spike sweep: 0.55 keeps
 # 79-100 % recall at 1/0/0 % false accepts; 0.45 lifts recall ~8 points but
@@ -243,11 +248,31 @@ class VoskKwsProvider:
             return (False, 1.0)  # partials carry no conf; the confirm decides
         return None
 
-    def _free_confirm(self, window: np.ndarray) -> bool:
-        """Unconstrained decode over the ring window + permissive sound match.
+    def _verify_candidate(self, window: np.ndarray) -> bool:
+        """Three checks over the ring window; ALL must pass before a fire.
 
-        Fail-OPEN on infrastructure errors: a broken confirm must never eat a
-        real wake (mirrors the stt_match echo-confirm contract).
+        Why this shape (live forensic 2026-07-06, "Hey Ruben" fired on plain
+        room speech every few minutes): the streaming PARTIAL that makes the
+        detector fast carries no confidence — its 1.00 placeholder sailed
+        through the conf gate — and the old confirm compared the phrase
+        against the BEST two-word window anywhere in ~3 s of speech, so for a
+        phrase built from common German sounds SOME pair ("herr oben",
+        "bei ihm") always eventually cleared 0.55. Both holes were
+        word-dependent — exactly the class this engine exists to kill.
+
+        1. **Grammar re-score**: a fresh grammar pass over the window must
+           re-hear the phrase as a FINAL — yielding a real per-word confidence
+           (gate: ``min_final_conf``) and the phrase's TIME SPAN.
+        2. **Energy**: the word-agnostic RMS floor is measured over that span
+           (not the whole ring, where surrounding silence dilutes it — AP-27:
+           silence gates on energy, never transcript).
+        3. **Localised sound confirm**: the free decode keeps only words
+           OVERLAPPING the span (±0.3 s) — the permissive sound match then
+           judges what was said AT the candidate's position instead of
+           fishing the best pair out of three seconds of conversation.
+
+        Fail-OPEN only on infrastructure errors (a broken confirm must never
+        eat a real wake); a clean "the phrase is not there" is a rejection.
         """
         try:
             from vosk import KaldiRecognizer
@@ -258,17 +283,65 @@ class VoskKwsProvider:
                     window * min(self._target_peak / peak, self._max_gain), -1.0, 1.0
                 )
             pcm = (window * 32767.0).astype(np.int16).tobytes()
-            rec = KaldiRecognizer(self._ensure_model(), self._sample_rate)
-            rec.AcceptWaveform(pcm)
-            free_text = json.loads(rec.FinalResult()).get("text", "")
+
+            # 1) grammar re-score: real confidence + time span for the phrase
+            g = self._new_grammar_rec()
+            g.AcceptWaveform(pcm)
+            gres = json.loads(g.FinalResult())
+            gwords = [
+                w for w in gres.get("result", [])
+                if w.get("word") in self._grammar_words
+            ]
+            if self._phrase.lower() not in gres.get("text", "") or not gwords:
+                log.info(
+                    "vosk-kws: verify SUPPRESSED — re-score did not re-hear "
+                    "%r (heard %r)",
+                    self._phrase, gres.get("text", "")[:60],
+                )
+                return False
+            conf = min(w.get("conf", 0.0) for w in gwords)
+            if conf < self._min_final_conf:
+                log.info(
+                    "vosk-kws: verify SUPPRESSED — re-score conf %.2f < %.2f "
+                    "for %r", conf, self._min_final_conf, self._phrase,
+                )
+                return False
+            span_a = min(w.get("start", 0.0) for w in gwords) - 0.3
+            span_b = max(w.get("end", 0.0) for w in gwords) + 0.3
+
+            # 2) word-agnostic energy over the phrase span
+            a = max(0, int(span_a * self._sample_rate))
+            b = min(len(window), int(span_b * self._sample_rate))
+            segment = window[a:b] if b > a else window
+            rms = float(np.sqrt(np.mean(segment * segment) + 1e-12)) if len(segment) else 0.0
+            if rms < self._match_min_rms:
+                self._stat_gated_rms += 1
+                log.info(
+                    "vosk-kws: verify SUPPRESSED — span rms %.4f < %.4f "
+                    "(silence can never fire)", rms, self._match_min_rms,
+                )
+                return False
+
+            # 3) free decode, localised to the phrase span
+            f = KaldiRecognizer(self._ensure_model(), self._sample_rate)
+            f.SetWords(True)
+            f.AcceptWaveform(pcm)
+            fres = json.loads(f.FinalResult())
+            local = [
+                w.get("word", "") for w in fres.get("result", [])
+                if w.get("end", 0.0) >= span_a and w.get("start", 0.0) <= span_b
+            ]
+            free_local = " ".join(local)
         except Exception as exc:  # noqa: BLE001 — fail-open, never eat a wake
-            log.warning("vosk-kws: free confirm failed (%s) — accepting.", exc)
+            log.warning("vosk-kws: verify failed (%s) — accepting.", exc)
             return True
-        ok = sound_confirm(free_text, self._phrase, ratio=self._confirm_ratio)
+        ok = sound_confirm(free_local, self._phrase, ratio=self._confirm_ratio)
         log.info(
-            "vosk-kws: confirm %s — free ear heard %r vs phrase %r",
+            "vosk-kws: verify %s — free ear heard %r at the candidate span "
+            "(conf=%.2f) vs phrase %r",
             "OK" if ok else "SUPPRESSED",
-            free_text[:60],
+            free_local[:60],
+            conf,
             self._phrase,
         )
         return ok
@@ -321,13 +394,7 @@ class VoskKwsProvider:
                     continue
             now = time.time()
             window = self._ring_window()
-            rms = float(np.sqrt(np.mean(window * window) + 1e-12)) if len(window) else 0.0
-            if rms < self._match_min_rms:
-                # AP-27: silence is rejected on raw ENERGY, never on transcript
-                self._stat_gated_rms += 1
-                rec = self._new_grammar_rec()
-                continue
-            confirmed = await asyncio.to_thread(self._free_confirm, window)
+            confirmed = await asyncio.to_thread(self._verify_candidate, window)
             if not confirmed:
                 self._stat_suppressed_confirm += 1
                 rec = self._new_grammar_rec()
@@ -335,11 +402,9 @@ class VoskKwsProvider:
             self._stat_fired += 1
             last_fire_t = now
             log.info(
-                "vosk-kws: WAKE fired for %r (%s, conf=%.2f, rms=%.4f)",
+                "vosk-kws: WAKE fired for %r (%s candidate)",
                 self._phrase,
                 "final" if is_final else "partial",
-                conf,
-                rms,
             )
             yield self._keyword
             rec = self._new_grammar_rec()
