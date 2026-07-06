@@ -317,14 +317,13 @@ auto-activated (AP-15).
 | AP-22 | Configure a tier (router/ack/STT/TTS/worker/critic/fallback) whose primary AND fallback resolve to the SAME provider family, or build a fallback chain from hardcoded provider NAMES | Single-provider brick: one missing key / 429 / 402 / outage kills the whole tier even with a healthy DIFFERENT provider present. Resolve every tier through one key-aware chain that skips dead/keyless providers, crosses families, and degrades honestly only when NO family is reachable — recoverable in-app |
 | AP-23 | Build or TEST a feature only against the maintainer's config / keys / provider / OS and claim it done | The whole API-keys surface silently bricked for every other downloader + on a headless VPS (credentials couldn't be SAVED, ENV keys read as "not configured", channels/plugins/OAuth 500'd). Verify the three non-maintainer paths in §3 |
 
-The remaining anti-patterns need more context than a table cell allows:
+AP-24 to AP-29 need more room than a table cell:
 
 ### AP-24 — Never share a native inference engine between concurrent callers
 
-Never call a shared native inference engine (ctranslate2/faster-whisper, an
-ONNX/torch session) concurrently from two callers, and never "recover" a hung
-inference with only a timeout that re-polls the SAME wedged engine.
-`WhisperModel.transcribe` is NOT thread-safe: the wake poll loop + VAD probe
+This covers ctranslate2/faster-whisper and ONNX/torch sessions. Equally
+banned: "recovering" a hung inference with only a timeout that re-polls the
+SAME wedged engine. `WhisperModel.transcribe` is NOT thread-safe: the wake poll loop + VAD probe
 sharing one provider hung it forever, and a hung `to_thread` can't be
 cancelled — a timeout only BOUNDS, never RECOVERS. Fix: a non-blocking
 per-instance inference lock (second call → skip) + a `recover()` that rebuilds
@@ -332,9 +331,9 @@ a FRESH model after N failures (BUG-036).
 
 ### AP-25 — Never enable GPU wake on CUDA *presence* or a hardware name
 
-Never run the always-on wake/keyword Whisper on the GPU via
-CTranslate2/faster-whisper based on CUDA *presence* alone, and never hand-pin
-the upgrade to a hardware name. CUDA presence and CUDA *usability* diverge: on
+The always-on wake/keyword Whisper (CTranslate2/faster-whisper) must never
+move to the GPU on CUDA *presence* alone, nor be hand-pinned to a hardware
+name. CUDA presence and CUDA *usability* diverge: on
 the maintainer's Blackwell GPU (RTX 5070 Ti / sm_120), CTranslate2
 `model.transcribe` once HUNG every inference under the then-current runtime
 (8 s timeout → self-heal rebuilds the model → the cold rebuild hangs again →
@@ -360,8 +359,8 @@ neural KWS model (openWakeWord `custom_onnx`), NOT transcription. See
 
 ### AP-26 — Never put a feature's init/import on the startup critical path
 
-Never put init/import work before `APP_INTERACTIVE` / `VOICE_USABLE` — no sync
-load in `_run_backend`, the `WebServer` ctor, `_start_speech_and_orb`, or a
+Nothing initializes before `APP_INTERACTIVE` / `VOICE_USABLE`: no sync load
+in `_run_backend`, the `WebServer` ctor, or `_start_speech_and_orb`, no
 module-level heavy import. Boot creep: every feature "only adds a second"
 until boot takes 30+ s (TTU forensic: one wake change added a 114.7 s
 cascade). New subsystems hook into `_heavy_backend_bg`, a deferred registry
@@ -372,10 +371,10 @@ app-interactive ≤ 20 s). Doctrine: `docs/diagnostics/BOOT-TTU-NOTES.md`.
 
 ### AP-27 — Never suppress wake ghosts by tightening transcript content
 
-Never suppress `stt_match` wake ghosts via TRANSCRIPT CONTENT — requiring the
-bias-echo confirm's unbiased pass to reproduce the wake word, raising
-phrase-matcher strictness on the confirm, or adding any second content check
-that must contain the phrase. That kills recognition ENTIRELY: "fires on
+For `stt_match` wake ghosts that means: never require the bias-echo confirm's
+unbiased pass to reproduce the wake word, never raise phrase-matcher
+strictness on the confirm, never add any second content check that must
+contain the phrase. That kills recognition ENTIRELY: "fires on
 silence" flips to "never fires". A bias-primed local Whisper
 (`initial_prompt=<phrase>`, needed for proper-noun recall) HALLUCINATES the
 phrase on silence AND GARBLES it on speech
@@ -405,11 +404,9 @@ CAPABILITY, never concrete type (`.commands`, Click's stable
 red cause understood + fixed — reproduce against the SAME unpinned versions CI
 installs, not your local pins.**
 
-### AP-29 — Never commit a signing PRIVATE key (or its passphrase, or an encrypted copy)
+### AP-29 — Never commit a signing PRIVATE key, its passphrase, or a `*.key.enc` "encrypted at rest" copy
 
-Never commit a signing PRIVATE key — nor its passphrase, nor a `*.key.enc`
-"encrypted at rest" copy. The installer is signed on key-bound axes (Wave 2
-Ed25519, Wave 4 ML-DSA-65). The former scheme stored encrypted private keys
+The installer is signed on key-bound axes (Wave 2 Ed25519, Wave 4 ML-DSA-65). The former scheme stored encrypted private keys
 in-repo + a DEMO passphrase in plaintext docs; that passphrase leaked into 14
 public snapshots (v0.1.0..v0.9.1), permanent + world-readable — so any key it
 wrapped is forgeable. Private keys now live ONLY in GitHub Actions secrets

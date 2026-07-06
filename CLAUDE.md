@@ -331,9 +331,9 @@ a FRESH model after N failures (BUG-036).
 
 ### AP-25 — Never enable GPU wake on CUDA *presence* or a hardware name
 
-Never run the always-on wake/keyword Whisper on the GPU via
-CTranslate2/faster-whisper based on CUDA *presence* alone, and never hand-pin
-the upgrade to a hardware name. CUDA presence and CUDA *usability* diverge: on
+The always-on wake/keyword Whisper (CTranslate2/faster-whisper) must never
+move to the GPU on CUDA *presence* alone, nor be hand-pinned to a hardware
+name. CUDA presence and CUDA *usability* diverge: on
 the maintainer's Blackwell GPU (RTX 5070 Ti / sm_120), CTranslate2
 `model.transcribe` once HUNG every inference under the then-current runtime
 (8 s timeout → self-heal rebuilds the model → the cold rebuild hangs again →
@@ -359,8 +359,8 @@ neural KWS model (openWakeWord `custom_onnx`), NOT transcription. See
 
 ### AP-26 — Never put a feature's init/import on the startup critical path
 
-Never put init/import work before `APP_INTERACTIVE` / `VOICE_USABLE` — no sync
-load in `_run_backend`, the `WebServer` ctor, `_start_speech_and_orb`, or a
+Nothing initializes before `APP_INTERACTIVE` / `VOICE_USABLE`: no sync load
+in `_run_backend`, the `WebServer` ctor, or `_start_speech_and_orb`, no
 module-level heavy import. Boot creep: every feature "only adds a second"
 until boot takes 30+ s (TTU forensic: one wake change added a 114.7 s
 cascade). New subsystems hook into `_heavy_backend_bg`, a deferred registry
@@ -371,10 +371,10 @@ app-interactive ≤ 20 s). Doctrine: `docs/diagnostics/BOOT-TTU-NOTES.md`.
 
 ### AP-27 — Never suppress wake ghosts by tightening transcript content
 
-Never suppress `stt_match` wake ghosts via TRANSCRIPT CONTENT — requiring the
-bias-echo confirm's unbiased pass to reproduce the wake word, raising
-phrase-matcher strictness on the confirm, or adding any second content check
-that must contain the phrase. That kills recognition ENTIRELY: "fires on
+For `stt_match` wake ghosts that means: never require the bias-echo confirm's
+unbiased pass to reproduce the wake word, never raise phrase-matcher
+strictness on the confirm, never add any second content check that must
+contain the phrase. That kills recognition ENTIRELY: "fires on
 silence" flips to "never fires". A bias-primed local Whisper
 (`initial_prompt=<phrase>`, needed for proper-noun recall) HALLUCINATES the
 phrase on silence AND GARBLES it on speech
@@ -404,11 +404,9 @@ CAPABILITY, never concrete type (`.commands`, Click's stable
 red cause understood + fixed — reproduce against the SAME unpinned versions CI
 installs, not your local pins.**
 
-### AP-29 — Never commit a signing PRIVATE key (or its passphrase, or an encrypted copy)
+### AP-29 — Never commit a signing PRIVATE key, its passphrase, or a `*.key.enc` "encrypted at rest" copy
 
-Never commit a signing PRIVATE key — nor its passphrase, nor a `*.key.enc`
-"encrypted at rest" copy. The installer is signed on key-bound axes (Wave 2
-Ed25519, Wave 4 ML-DSA-65). The former scheme stored encrypted private keys
+The installer is signed on key-bound axes (Wave 2 Ed25519, Wave 4 ML-DSA-65). The former scheme stored encrypted private keys
 in-repo + a DEMO passphrase in plaintext docs; that passphrase leaked into 14
 public snapshots (v0.1.0..v0.9.1), permanent + world-readable — so any key it
 wrapped is forgeable. Private keys now live ONLY in GitHub Actions secrets
