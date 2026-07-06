@@ -184,17 +184,23 @@ def _mcp_live(
 
     Bug 14: an http plugin's connect-time ``list_tools()`` can 401 and be
     swallowed, leaving status "connected" with ZERO live tools — a green
-    "Connected · Live" badge over a dead session. When a live registry is
-    reachable AND the plugin is "connected" AND it reports zero tools, the
-    session is dead (expired token, 401 at list_tools) and the badge goes
-    honest. No registry reachable (early boot / headless) -> fail open, exactly
+    "Connected · Live" badge over a dead session. When a BOOTSTRAPPED live
+    registry is reachable AND the plugin is "connected" AND it reports zero
+    tools, the session is dead (expired token, 401 at list_tools) and the badge
+    goes honest. No registry reachable (headless), or a registry that is
+    published but still bootstrapping in the background (the boot window where
+    every count reads 0 although nothing is dead) -> fail open, exactly
     today's behaviour.
     """
     transport = str(mcp.get("transport", "")).lower()
     if transport == "http":
         if status == "connected":
             reg = _live_plugin_registry()  # the same accessor refresh uses
-            if reg is not None and reg.live_tool_count(plugin_id) == 0:
+            if (
+                reg is not None
+                and reg.is_bootstrapped()
+                and reg.live_tool_count(plugin_id) == 0
+            ):
                 hint = reg.last_connect_error(plugin_id) or "no tools loaded — reconnect"
                 return False, hint
         return True, None
