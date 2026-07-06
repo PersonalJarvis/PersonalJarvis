@@ -13,8 +13,8 @@ Design constraints:
 * **Varied, never robotic.** Every tool family carries a POOL of phrase
   variants per language and a process-wide no-repeat memory
   (:class:`AckPhrasePicker`) guarantees consecutive acks never sound
-  identical — the 2026-07-05 forensic finding was the same "Moment."
-  spoken three times in one session (one per utterance). # i18n-allow: forensic quote of the retired German single-phrase ack
+  identical — the 2026-07-05 forensic finding was the same one-word
+  German ack spoken three times in one session (once per utterance).
 * **Tool-family-specific.** Per-tool handlers extract the most informative
   arg (search query, app name, skill name, CLI service) into the ack so the
   user knows the right intent was understood — generic "okay, one moment"
@@ -31,8 +31,8 @@ Design constraints:
   per the project's output-language policy.
 
 Companion functions ``final_summary_marker`` and ``should_prepend_marker``
-support the second half of the pattern: a short "Erledigt." prepended to
-the brain's final response, unless the brain already self-confirmed. # i18n-allow: quoted German completion marker
+support the second half of the pattern: a short completion marker
+prepended to the final response, unless the brain already self-confirmed.
 
 .. note:: The phrase strings in this module are runtime voice/TTS product
    content (multilingual product surface). German lines carry inline
@@ -399,7 +399,7 @@ _SEARCH_GENERIC_ACK: dict[str, tuple[str, ...]] = {
 _MULTI_SPAWN_ACK: dict[str, tuple[str, ...]] = {
     "de": (  # i18n-allow: German runtime voice product (ack phrase pool)
         "Okay, ich erledige {n} Sachen parallel.",  # i18n-allow: German runtime voice product
-        "Ich nehme mir die {n} Aufgaben gleichzeitig vor.",  # i18n-allow: German runtime voice product
+        "Ich nehme mir die {n} Aufgaben gleichzeitig vor.",  # i18n-allow: German voice product
         "{n} Dinge parallel — läuft.",  # i18n-allow: German runtime voice product
     ),
     "en": (

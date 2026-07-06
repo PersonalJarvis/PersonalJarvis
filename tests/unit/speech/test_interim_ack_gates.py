@@ -127,8 +127,8 @@ async def test_different_preamble_wording_still_plays() -> None:
     player = FakePlayer()
     _make_pipeline(tts, bus, player)
 
-    await bus.publish(_preamble("Ich schaue kurz nach."))  # i18n-allow: German TTS fixture under test
-    await bus.publish(_preamble("Einen Moment, ich sehe nach."))  # i18n-allow: German TTS fixture under test
+    await bus.publish(_preamble("Ich schaue kurz nach."))  # i18n-allow: German TTS fixture
+    await bus.publish(_preamble("Einen Moment, ich sehe nach."))  # i18n-allow: German TTS fixture
 
     assert player.plays == 2, "a varied preamble was wrongly deduped"
 
@@ -158,7 +158,7 @@ async def test_completion_readbacks_are_never_deduped() -> None:
     for _ in range(2):
         await bus.publish(
             AnnouncementRequested(
-                text="Fertig. Das Ergebnis liegt bereit.",  # i18n-allow: German TTS fixture under test
+                text="Fertig. Das Ergebnis liegt bereit.",  # i18n-allow: German TTS fixture
                 language="de",
                 priority="normal",
                 kind="completion",
