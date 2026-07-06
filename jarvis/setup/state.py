@@ -67,6 +67,22 @@ def state_path(override: Path | None = None) -> Path:
     return override if override is not None else _DEFAULT_STATE_PATH
 
 
+def setup_complete_marker_path(path: Path | None = None) -> Path:
+    """Location of the legacy ``.setup-complete`` marker.
+
+    Lives next to the setup-state file (the ``data/`` dir) so the fast-boot
+    onboarding path and ``jarvis.core.config.is_first_run`` agree on ONE file
+    without importing the heavy config module. ``path`` is the state-file
+    override used by tests.
+    """
+    return state_path(path).parent / ".setup-complete"
+
+
+def setup_complete_marker_exists(path: Path | None = None) -> bool:
+    """True when the legacy wizard/setup completion marker is present."""
+    return setup_complete_marker_path(path).exists()
+
+
 def load_setup_state(path: Path | None = None) -> dict[str, Any]:
     """Read the setup-state file and return its dict view.
 
@@ -273,6 +289,8 @@ def reset_onboarding(path: Path | None = None) -> list[str]:
 
 __all__ = [
     "state_path",
+    "setup_complete_marker_path",
+    "setup_complete_marker_exists",
     "load_setup_state",
     "has_seen_obsidian_setup",
     "mark_obsidian_seen",

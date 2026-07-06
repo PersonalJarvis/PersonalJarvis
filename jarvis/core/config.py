@@ -2633,14 +2633,17 @@ def ensure_project_root_cwd() -> Path:
 
 def is_first_run() -> bool:
     """Return True when the user has not yet completed the setup wizard."""
-    marker = DATA_DIR / ".setup-complete"
-    return not marker.exists()
+    # Delegates to jarvis.setup.state so the stdlib-only fast-boot onboarding
+    # path and this heavy module can never disagree on the marker location.
+    from jarvis.setup.state import setup_complete_marker_exists
+
+    return not setup_complete_marker_exists()
 
 
 def mark_setup_complete() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     (DATA_DIR / ".setup-complete").write_text(
-        f"Setup abgeschlossen auf Python {sys.version.split()[0]}\n",
+        f"Setup completed on Python {sys.version.split()[0]}\n",
         encoding="utf-8",
     )
 
