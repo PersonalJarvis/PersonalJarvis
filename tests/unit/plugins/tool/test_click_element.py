@@ -133,3 +133,34 @@ async def test_no_match_lists_available_names(
     assert result.error is not None
     assert "Save" in result.error
     assert "Cancel" in result.error
+
+
+@pytest.mark.asyncio
+async def test_posix_unavailable_backend_reports_actionable_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-Windows without an input backend: the capability-probe message
+    (Wayland/headless/extras missing) must reach the model — not a raw
+    pyautogui ImportError (§3 honest degradation)."""
+    from jarvis.cu.actuate.base import ActuationUnavailable
+
+    monkeypatch.setattr("jarvis.plugins.tool.click_element.os.name", "posix")
+
+    def _unavailable() -> None:
+        raise ActuationUnavailable(
+            "Cannot control mouse/keyboard: no input backend is installed. "
+            "Install the desktop extras (pip install "
+            "'personal-jarvis[desktop]') to get pynput/pyautogui."
+        )
+
+    monkeypatch.setattr("jarvis.cu.actuate.base.get_actuator", _unavailable)
+
+    nodes = (
+        UIANode(role="Button", name="Save", bounds=(10, 20, 100, 40), enabled=True),
+    )
+    tool = ClickElementTool(vision_source=_FakeVisionSource(nodes))
+
+    result = await tool.execute({"name": "save"}, _ctx())
+
+    assert result.success is False
+    assert "desktop extras" in (result.error or "")

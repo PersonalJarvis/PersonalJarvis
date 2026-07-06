@@ -681,6 +681,13 @@ git commit -m "fix(onboarding): retry state fetch during backend warmup instead 
 
 ### Task 4b: Global "Jarvis is starting…" banner while the backend warms (spec B3)
 
+> **RESOLVED WITHOUT CODE (2026-07-06):** spec B3 is already implemented by
+> `VoiceWarmingBanner` + `useVoiceReadiness` (`bootWarming = !connected &&
+> wsWarming`, store default `wsWarming: true` — `store/events.ts:296` with a
+> test pinning it). The banner covers both the fast-boot window and the voice
+> warmup from the first second. Building the hook below would duplicate that
+> single source of truth, so this task is intentionally skipped.
+
 **Files:**
 - Create: `jarvis/ui/web/frontend/src/hooks/useBackendWarming.ts`
 - Modify: `jarvis/ui/web/frontend/src/App.tsx` (mount the banner)
