@@ -1063,7 +1063,16 @@ def _phase2_full_brain(
                     if _inst.name not in cu_tools:
                         cu_tools[_inst.name] = _inst
                 except Exception as _exc:  # noqa: BLE001
-                    log.debug("CU extra tool '%s' not loadable: %s", _ep.name, _exc)
+                    # WARNING, not debug: a CU tool that silently vanishes
+                    # here makes every plan that names it fail at execute
+                    # time with "tool not wired" — invisible at default log
+                    # level for months (2026-07-06 forensic: click/
+                    # click_element/move_mouse were dropped on every host
+                    # without the OS-Level editable install).
+                    log.warning(
+                        "CU tool '%s' failed to load and is DROPPED from the "
+                        "Computer-Use tool set: %s", _ep.name, _exc,
+                    )
             # The `drag` action has no entry-point plugin (it was historically
             # handled inline); inject it directly so the CU loop routes drag
             # through the ToolExecutor for risk-tier / blacklist / audit parity
@@ -1074,7 +1083,10 @@ def _phase2_full_brain(
 
                 cu_tools.setdefault("drag", DragTool())
             except Exception as _exc:  # noqa: BLE001
-                log.debug("CU drag tool not loadable: %s", _exc)
+                log.warning(
+                    "CU drag tool failed to load and is DROPPED from the "
+                    "Computer-Use tool set: %s", _exc,
+                )
             # Wave 3: optionally build the native Gemini computer_use engine.
             # Returns None unless [computer_use].prefer_native is on AND the
             # active provider is Gemini, so the default (hand-rolled) path is

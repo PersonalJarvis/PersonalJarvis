@@ -20,7 +20,6 @@ from typing import Iterator, Optional
 
 from jarvis.overlay import (
     ActionKind,
-    get_overlay,
     overlay_action_sync,
 )
 from jarvis.overlay.cursor_writer import CursorStreamer
@@ -72,7 +71,15 @@ def click(
     """
     import pyautogui  # lazy
 
-    bridge = get_overlay()
+    # Lazy + defensive: get_overlay pulls the IPC bridge stack (OS-Level
+    # schema package). On a host without that install the ripple overlay
+    # degrades to a no-op — the click itself must never depend on it.
+    try:
+        from jarvis.overlay import get_overlay  # noqa: PLC0415
+
+        bridge = get_overlay()
+    except Exception:  # noqa: BLE001
+        bridge = None
     # Pre-resolve click coordinates so emit_click receives the real values
     # (pyautogui.click(x=None) uses the current cursor position).
     if x is None or y is None:
