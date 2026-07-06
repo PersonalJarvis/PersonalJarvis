@@ -125,3 +125,47 @@ def test_no_vosk_no_whisper_is_honest_wake_off(vosk_model_dir) -> None:
     )
     assert plan.engine == "none"
     assert plan.wake_available is False
+
+
+# --------------------------------------------------------------------------
+# Pipeline live-apply: a vosk plan must actually ARM the detector
+# --------------------------------------------------------------------------
+
+
+def test_set_wake_plan_vosk_arms_the_provider(vosk_model_dir) -> None:
+    # Regression guard for the 2026-07-06 live finding: the plan resolved to
+    # vosk_kws but the detector flag stayed off (OWW=off in the ready log), so
+    # the wake was silently dead. The vosk provider rides the OWW slot/loop —
+    # arming it must flip the flag on.
+    from collections.abc import AsyncIterator
+    from dataclasses import dataclass
+
+    from jarvis.plugins.wake.vosk_kws_provider import VoskKwsProvider
+    from jarvis.speech.pipeline import SpeechPipeline
+
+    @dataclass
+    class _FakeTTS:
+        name: str = "fake-tts"
+        supports_streaming: bool = True
+
+        async def synthesize(
+            self, text: str, voice: str | None = None, language_code: str | None = None
+        ) -> AsyncIterator:
+            if False:  # pragma: no cover
+                yield
+
+    pipe = SpeechPipeline(
+        tts=_FakeTTS(), bus=None,
+        enable_openwakeword=False, enable_whisper_wake=False,
+        enable_local_whisper=False, config=None,
+    )
+    plan = resolve_wake_plan(
+        _cfg(), local_whisper_available=False, language="de", vosk_available=True
+    )
+    assert plan.engine == "vosk_kws"
+    pipe.set_wake_plan(plan)
+
+    assert isinstance(pipe._wake, VoskKwsProvider)
+    assert pipe._openwakeword_enabled is True  # the detector loop is armed
+    assert pipe._whisper_wake_enabled is False
+    assert pipe._wake_reload_event.is_set()

@@ -2361,10 +2361,12 @@ class DesktopApp:
                 #     False) -> arm NOTHING; hotkey / push-to-talk is the only
                 #     activation. The product rule (2026-07-04): a wake word needs
                 #     a local model, never a silent branded fallback.
+                # vosk_kws rides the same detector slot/loop as OWW (the
+                # provider is duck-compatible), so it enables the flag too.
                 enable_openwakeword=(
                     self.cfg.trigger.wake_word_enabled
                     and wake_plan.wake_available
-                    and wake_plan.engine in ("openwakeword", "custom_onnx")
+                    and wake_plan.engine in ("openwakeword", "custom_onnx", "vosk_kws")
                 ),
                 enable_whisper_wake=(
                     self.cfg.trigger.wake_word_enabled
