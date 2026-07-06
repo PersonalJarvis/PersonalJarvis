@@ -111,3 +111,30 @@ feature actually used).
    absolute constants.
 5. **Persona/vault clarity.** Import/hint path for user-named instruction
    files; Wiki view shows the vault path prominently.
+
+## Cross-platform verification of the honesty layer (2026-07-06)
+
+- **Windows (native):** full fast suite 10950 passed; the 3 failures are
+  pre-existing shared-tree issues with no plan file involved (provider-test
+  NoneType, navigate section-id parity, wiki session-rollup links).
+- **Headless Linux (real run, `python:3.11-slim` container, git-archived
+  tree):** BASE `pip install -e .` OK → `import jarvis` OK →
+  `python -m jarvis --check` exit 0 → all 229 focused tests of the six fixes
+  pass. The §3 headless contract holds.
+- **macOS (no hardware available):** the plan's whole diff contains zero
+  OS-specific constructs (verified by pattern scan: no win32/ctypes/
+  creationflags/darwin/path literals), and the touched modules are pure
+  Python/FastAPI logic also exercised by the POSIX container run. Real macOS
+  execution is deferred to the Level-3 release gate (CI runner).
+
+**New finding (this verification):** `pip install ".[desktop]"` — and therefore
+`".[dev]"`, which pulls it — BREAKS on Linux systems without kernel headers:
+`pynput` (all-platform desktop hotkey, pyproject `[desktop]`) depends on
+`evdev`, which is source-only on PyPI and needs `linux/input.h` to compile
+(verified live on `python:3.11-slim`: "Failed building wheel for evdev").
+The BASE install is unaffected. Impact: Linux desktop users and any slim CI
+image. Candidate fixes for the Level-3 work: depend on `evdev-binary` as a
+fallback, gate `pynput` behind a `platform_machine`/headers probe, or document
+`apt-get install linux-headers-$(uname -r)` in the Linux desktop path — decide
+when building the release gate (its Linux job must install BASE, not `[dev]`,
+or use an image with build tools).
