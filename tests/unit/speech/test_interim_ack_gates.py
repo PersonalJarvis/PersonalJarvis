@@ -186,7 +186,7 @@ async def test_rate_limit_caps_preambles_per_minute() -> None:
     _make_pipeline(tts, bus, player, rate_limit_per_min=3)
 
     for i in range(5):
-        await bus.publish(_preamble(f"Zwischenmeldung Nummer {i}."))  # i18n-allow: German TTS fixture
+        await bus.publish(_preamble(f"Meldung Nummer {i}."))  # i18n-allow: German fixture
 
     assert player.plays == 3, "the rate-limit backstop did not cap the loop"
 
@@ -199,7 +199,7 @@ async def test_rate_limit_zero_disables_the_backstop() -> None:
     _make_pipeline(tts, bus, player, rate_limit_per_min=0)
 
     for i in range(5):
-        await bus.publish(_preamble(f"Zwischenmeldung Nummer {i}."))  # i18n-allow: German TTS fixture
+        await bus.publish(_preamble(f"Meldung Nummer {i}."))  # i18n-allow: German fixture
 
     assert player.plays == 5
 

@@ -262,7 +262,7 @@ async def test_contextual_line_is_composed_from_the_turn() -> None:
     the composer receives the user's request + the concrete action as facts."""
     bus = _RecordingBus()
     stub = _make_stub(bus=bus)
-    composer = _FakeComposer("Ich grabe gerade durch die GitHub-Profile.")  # i18n-allow: German TTS fixture
+    composer = _FakeComposer("Ich grabe gerade durch die Profile.")  # i18n-allow: German fixture
     stub._readback_composer = composer
 
     emit = stub._build_tool_ack_emitter("Wo liegt das PrimeRandat-Repo?")
@@ -272,7 +272,7 @@ async def test_contextual_line_is_composed_from_the_turn() -> None:
 
     preambles = _preambles(bus)
     assert len(preambles) == 1
-    assert preambles[0].text == "Ich grabe gerade durch die GitHub-Profile."  # i18n-allow: German TTS fixture
+    assert preambles[0].text == "Ich grabe gerade durch die Profile."  # i18n-allow: German fixture
     call = composer.calls[0]
     assert call["in_progress"] is True
     assert "PrimeRandat" in call["facts"]["user_request"]
