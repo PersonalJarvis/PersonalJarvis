@@ -24,6 +24,7 @@ def _patch_env(
     monkeypatch: pytest.MonkeyPatch,
     *,
     claude_binary: str | None = None,
+    claude_auth_viable: bool = True,
     codex_oauth: bool = False,
     codex_reauth: bool = False,
     keys: tuple[str, ...] = (),
@@ -33,6 +34,7 @@ def _patch_env(
         "jarvis.missions.workers.claude_direct_worker._resolve_claude_binary",
         lambda: claude_binary,
     )
+    monkeypatch.setattr(mi, "_claude_cli_auth_viable", lambda: claude_auth_viable)
     monkeypatch.setattr(
         "jarvis.missions.workers.codex_direct_worker._codex_oauth_available",
         lambda: codex_oauth,
