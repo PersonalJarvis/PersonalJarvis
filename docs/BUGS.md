@@ -2965,3 +2965,41 @@ registry must tolerate separator/case drift (unambiguously) or normalize the
 advertised names to one convention. New tools should prefer underscore names
 (`snake_case`) — the majority convention — so the mixed-surface confusion
 shrinks over time.
+
+## BUG-041: Total silence after a mid-stream provider error on a tool turn (HIGH, 2026-07-06)
+
+**Symptom.** Voice session 2026-07-05 19:48 (session 3e27dd8e, turn 2): the
+turn executed 10+ tools (cli_gh, search_web, run_shell), then Jarvis said
+NOTHING — no answer, no error, no retry. The log signature is the empty
+streamed line: `🤖 Jarvis [de] (streamed): ` with nothing after it.
+
+**Forensics.** `voice_events`: `BrainTurnCompleted {finish_reason: "error",
+tokens_in: 223942, text_len: 0}` — OpenRouter returned HTTP 200 but sent
+`finish_reason="error"` in the SSE stream (upstream abort on the ~224k-token
+prompt the tool loop had accumulated). The providers pass that value through
+verbatim (`_openai_base.py` yields the raw finish_reason).
+
+**Root cause — a hole between two correct guards.** The manager's
+empty-response guard treats empty text as a soft-fail and tries the next
+provider, but is (correctly, since 2026-04-29) skipped when the turn has tool
+calls — otherwise fire-and-forget spawns would re-run on every provider. A
+turn that executed tools and THEN died mid-stream therefore counted as a
+SUCCESS with empty text. Downstream, `_handle_silent_brain_turn` only speaks
+for all-failed / desktop-action / beheaded-playback turns; the default branch
+returns silently (clarify feature off by default). Net effect: the harder the
+turn worked, the more silent its death.
+
+**Fix.** `jarvis/brain/manager.py`: after the guards, a turn with
+`finish_reason=="error"` + empty text + executed tool calls returns the
+localized honest notice (`_MID_ANSWER_ERROR_PHRASES`, de/en/es via
+`_resolve_turn_lang`) instead of empty text. Deliberately NO provider
+fall-through: the executed tools would re-run their side effects.
+
+**Guards.** `tests/unit/brain/test_stream_error_after_tools.py` (asserts a
+non-empty spoken notice, tool ran exactly once, fallback brain untouched).
+
+**Class rule.** Every path that can END a turn must terminate in either text
+or an explicitly-decided silence (AD-OE6). When adding a new finish_reason or
+guard interaction, trace where the empty turn lands in
+`_handle_silent_brain_turn` — the default branch is SILENT by design, so a
+new "empty but worked" shape needs its own honest phrase.
