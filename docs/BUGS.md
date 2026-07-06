@@ -2919,3 +2919,49 @@ integrations alike. "Open X and have it do Y" means: operate the desktop
 routing foundation for the planned "Jarvis drives CLI coding agents (Claude
 Code / OpenCode)" capability: those turns are Computer-Use tasks today, never
 "feature not available".
+
+## BUG-040: Real tool refused as "missing" — the model called the OTHER separator spelling of a registered tool (HIGH, 2026-07-06)
+
+**Symptom.** Voice session 2026-07-05 19:47 (session 3e27dd8e, screenshot from
+the maintainer): after four successful `cli_gh` calls the turn ended with the
+canned capability refusal ("Das kann ich gerade nicht ausfuehren — mir fehlt <!-- i18n-allow: forensic quote of the live German refusal -->
+dafuer das passende Werkzeug.") although every tool the model needed was <!-- i18n-allow: forensic quote of the live German refusal -->
+present and healthy. Stochastic: the same request sometimes works, sometimes
+refuses — the maintainer's long-standing "some tools just can't be called
+sometimes" complaint.
+
+**Forensics.** `data/jarvis_desktop.2026-07-05_*.log` 19:49:56:
+`tool_use_loop: tool 'run-shell' not in the router tool set`. The registered
+name is `run_shell`. The advertised tool surface mixes naming conventions —
+hyphen (`wiki-recall`, `run-skill`, `contact-lookup`), underscore
+(`run_shell`, `search_web`, `computer_use`) and plain (`click`, `gmail`) — so
+the model cross-normalizes and invents the OTHER spelling of a real tool.
+`ToolUseLoop` looked the name up with an exact dict `.get()`; a miss fed the
+AD-OE6 anti-silence refusal. The provider-side sanitizer
+(`_openai_base._sanitize_openai_function_name`) only rewrites INVALID
+characters (slash, dot) and keeps a reverse map for those — hyphens are valid,
+so separator drift sailed through untranslated.
+
+**Root cause.** Mixed separator conventions across the registered tool
+surface + an exact-match-only lookup at the single model-facing resolution
+site. (The CU engine and manager pre-fetch paths use hardcoded registered
+names — only `ToolUseLoop` resolves model-emitted names.)
+
+**Fix.** `jarvis/brain/tool_use_loop.py::_resolve_tool` — exact match first,
+then a canonical (hyphen/underscore/case-insensitive) alias resolves to the
+registered tool, but ONLY when unambiguous: two registered tools that collide
+on the canonical form stay exact-match-only (never guess between twins).
+The ack-emitter tool name is normalized the same way so skip-lists keyed on
+registered names keep matching. Unknown names still fire the anti-silence
+fallback.
+
+**Guards.** `tests/unit/brain/test_tool_use_loop.py::
+test_hyphenated_alias_resolves_to_underscore_tool`,
+`…::test_underscore_alias_resolves_to_hyphenated_tool`,
+`…::test_ambiguous_alias_is_not_guessed`.
+
+**Class rule.** Any site that resolves a MODEL-emitted identifier against a
+registry must tolerate separator/case drift (unambiguously) or normalize the
+advertised names to one convention. New tools should prefer underscore names
+(`snake_case`) — the majority convention — so the mixed-surface confusion
+shrinks over time.
