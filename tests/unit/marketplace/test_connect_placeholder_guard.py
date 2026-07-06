@@ -38,13 +38,31 @@ def _pkce_spec(client_id: str):
     pytest.skip("no oauth_pkce_loopback plugin in catalog")
 
 
+class _StubPkceHandler:
+    """Stands in for ``PkceLoopbackHandler`` past the guard: constructing the
+    real handler and awaiting ``start()`` would bind a real fixed TCP port
+    (e.g. Slack's 3118) and park the handler/session in the process-global
+    FlowRegistry singleton — flaky and never cleaned up. The stub raises a
+    sentinel from ``start()`` which the route turns into its 502 path, proving
+    control passed the 409 guard without touching any socket or registry."""
+
+    _SENTINEL = "stub-pkce-handler-start-called"
+
+    def __init__(self, config):
+        self.config = config
+
+    async def start(self, plugin_spec):
+        raise RuntimeError(self._SENTINEL)
+
+
 async def test_connect_start_rejects_placeholder_client(monkeypatch):
     spec = _pkce_spec("REPLACE_WITH_JARVIS_GOOGLE_CLIENT_ID")
     monkeypatch.setattr(mr, "load_catalog", lambda: _Catalog([spec]))
     with pytest.raises(HTTPException) as exc_info:
         await mr.connect_start(spec.id, BackgroundTasks())
     assert exc_info.value.status_code == 409
-    assert "oauth client not configured" in str(exc_info.value.detail).lower()
+    # Contract: the detail BEGINS with the phrase (frontend renders it verbatim).
+    assert str(exc_info.value.detail).lower().startswith("oauth client not configured")
 
 
 async def test_connect_start_secret_override_beats_placeholder(monkeypatch):
@@ -55,9 +73,10 @@ async def test_connect_start_secret_override_beats_placeholder(monkeypatch):
         "jarvis.marketplace.connect_helpers.resolve_pkce_client",
         lambda pid, cid, csec: ("real-client-id.apps.example", None),
     )
-    # The flow proceeds past the guard; it may fail LATER for unrelated
-    # reasons (no browser/port in CI) — anything but the 409 guard is fine.
-    try:
+    monkeypatch.setattr(mr, "PkceLoopbackHandler", _StubPkceHandler)
+    # The flow proceeds past the guard into the stubbed handler, whose start()
+    # sentinel surfaces as the route's 502 — anything but the 409 guard is fine.
+    with pytest.raises(HTTPException) as exc_info:
         await mr.connect_start(spec.id, BackgroundTasks())
-    except HTTPException as exc:
-        assert exc.status_code != 409
+    assert exc_info.value.status_code != 409
+    assert _StubPkceHandler._SENTINEL in str(exc_info.value.detail)
