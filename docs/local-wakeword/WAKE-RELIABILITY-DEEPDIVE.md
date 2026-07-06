@@ -167,3 +167,37 @@ probe is short-circuited behind `cuda_available`). Guards:
 `tests/unit/plugins/stt/test_wake_whisper_build.py`,
 `tests/unit/speech/test_rolling_whisper_wake_gpu_backstop.py`.
 Bench: `scripts/wake_bench.py --device cuda`.
+
+## The any-word engine lands: vosk_kws (2026-07-06)
+
+The GPU-probe work above fixes the NVIDIA-host tier; the `vosk_kws` engine
+(design + spike: `docs/superpowers/specs/2026-07-05-universal-wake-kws-design.md`)
+is the **one-identical-system-everywhere** answer: a per-language Vosk model
+(Apache-2.0, torch-free, official CPU wheels win/mac/linux x86+ARM) streams
+audio through a grammar-constrained recognizer that only knows the configured
+phrase + `[unk]`. Any freely chosen word is pure configuration — no per-user
+training, no cloud, no GPU. Detection is two-stage and AP-27-safe: the
+grammar PARTIAL fires during the phrase; a candidate then waits 0.6 s so the
+phrase tail lands in the ring (E2E-measured: confirming mid-word truncates
+the utterance and halves recall), passes a word-agnostic RMS gate, and ONE
+free-decode pass must merely be SOUND-CLOSE to the phrase (never spell it —
+the free ear hears "hey room"/"herum" for a genuine German "Hey Ruben";
+ambient "vielen dank" is nowhere near). <!-- i18n-allow: forensic quotes of German utterances under test -->
+
+End-to-end through the real `VoskKwsProvider.detect()` on real captured
+streams (neutral judge-approved positives): **Hey Ruben 21/24 (88 %),
+Hey Luca 8/8 (100 %), false accepts 0/120** on judged ambient-speech streams
+— and **bit-identical numbers on Linux (WSL Ubuntu, py3.12)**; vosk also
+installs + imports clean on headless `python:3.11-slim`. Live on the
+maintainer's box the ready log arms `WAKE=['nova']` and the confirm visibly
+suppresses continuous room speech with zero false fires. Boot: model loads in
+0.7-6 s inside `_start_wake`; boot-budget gate green (voice TTU 8.9 s ≤ 20 s).
+
+Engine chain: custom_onnx (matching file) → pretrained OWW → **vosk_kws
+(any phrase, default)** → stt_match (fallback) → none/hotkey. Honest limits:
+(a) the ~45 MB per-language model is fetched once at setup (not bundled;
+missing model falls through to stt_match with a clear message), (b) fantasy
+words outside the model lexicon ride the free-decode fuzzy path — best
+effort, (c) the definitive sub-200 ms class remains a trained neural KWS.
+Guards: `tests/unit/plugins/wake/test_vosk_kws_provider.py`,
+`tests/unit/speech/test_wake_plan_vosk.py` (chain + live-arming regression).
