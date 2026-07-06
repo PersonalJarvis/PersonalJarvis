@@ -30,11 +30,16 @@ features have **no path to work without it** and fail dishonestly.
 
 ## Root 2 — Free-model default + missing capability gates
 
-A fresh OpenRouter account without credit can only call `:free` models. The
-deliberate anti-overbilling default (`openrouter.py:22`,
-`nvidia/nemotron-3-ultra-550b-a55b:free`; tier defaults `manager.py:291,307`)
-means the whole assistant runs on a weak free model — and several subsystems
-assume a strong, tool-capable model.
+**Correction (2026-07-06, maintainer):** the test machine used the SAME
+OpenRouter key as the dev box, WITH credit — the initial "no-credit account"
+assumption was wrong, and the "only Nemotron works" symptom resolved itself
+(exact trigger unconfirmed; a transient upstream error amplified by the
+provider dead-listing below is the leading suspect). The maintainer marked the
+OpenRouter model-selection symptom as no-further-action. The MECHANICS in this
+section remain real defects regardless: the deliberate anti-overbilling free
+default (`openrouter.py:22`, `nvidia/nemotron-3-ultra-550b-a55b:free`; tier
+defaults `manager.py:291,307`) means a fresh install runs a weak free model —
+and several subsystems assume a strong, tool-capable model.
 
 | Bug | Symptom | Evidence |
 |---|---|---|
