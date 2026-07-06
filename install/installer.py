@@ -4,6 +4,11 @@ The Stage-1 shell bootstraps a venv with ``rich`` + ``packaging`` and then
 ``exec``s this script with the venv's Python. From here we own the full
 install lifecycle in Python, where it is portable and testable.
 
+The installer is fully NON-INTERACTIVE: it downloads and prepares everything,
+explains each step in one line, and launches the app as its LAST action. All
+setup questions (language, wake word, API keys, Terms) live in the app's
+one-time first-launch onboarding — never in this terminal.
+
 Steps:
     1. Detect platform + Python version (sanity check; Stage 1 already
        gate-keeps this, but we re-assert so manual invocations stay safe).
@@ -15,19 +20,22 @@ Steps:
        neural wake word (openWakeWord) is a BASE dependency and does NOT need
        this; only an arbitrary custom wake phrase does (via the separate in-app
        local-Whisper install).
-    5. Run the existing first-run wizard (``python -m jarvis --wizard``)
-       unless ``--no-wizard``.
-    6. Launch the Desktop App / headless server unless ``--no-launch``.
+    5. Prefetch every voice model the config needs (``python -m jarvis
+       --prefetch``) so the first launch has nothing left to download.
+    6. Best-effort: install the Jarvis-Agent worker CLI (npm) and, on Windows,
+       the Start-Menu shortcut that names the taskbar button.
+    7. Verify the shipped UI build is present + intact.
+    8. Print the summary, then launch the Desktop App / headless server as the
+       last action unless ``--no-launch``.
 
 Environment variables (any can be set before re-invoking the installer):
     JARVIS_INSTALL_DIR      override install location
-    JARVIS_INSTALL_NO_PIP   skip the pip install steps (re-run wizard only)
+    JARVIS_INSTALL_NO_PIP   skip the pip install steps
 
 Exit codes:
     0  success
     1  pre-flight failure (Python version, missing files)
     2  pip install failure
-    3  wizard failure
     4  launch failure
 """
 from __future__ import annotations
@@ -36,7 +44,6 @@ import argparse
 import json
 import os
 import platform
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -240,19 +247,115 @@ def step_pip_install(*, with_desktop: bool, with_voice_local: bool, dry_run: boo
         ok(label)
 
 
-def step_wizard(*, dry_run: bool) -> None:
-    step("First-run wizard")
-    note("API keys, microphone, hotkey, mascot")
-    cmd = [str(venv_python()), "-m", "jarvis", "--wizard"]
+def is_update_run() -> bool:
+    """True when this checkout was already installer-managed (re-run = update)."""
+    return (repo_root() / ".jarvis-managed-install").exists()
+
+
+def step_models(*, dry_run: bool) -> None:
+    step("Voice models")
+    note("downloading everything the voice pipeline needs, so the first")
+    note("launch is ready immediately - nothing is fetched at startup")
+    cmd = [str(venv_python()), "-m", "jarvis", "--prefetch"]
     if dry_run:
         console.print(f"[muted]      (dry-run) {' '.join(cmd)}[/]")
         return
-    console.print()
     rc = run(cmd, cwd=repo_root(), check=False)
-    if rc != 0:
-        console.print("[bad]      Wizard exited non-zero. You can re-run it later with:[/]")
-        console.print(f"[muted]        {shutil.which('jarvis') or 'jarvis'} --wizard[/]")
-        sys.exit(3)
+    if rc == 0:
+        ok("all voice models are on disk")
+    else:
+        console.print("[bad]      Some models could not be downloaded - the app "
+                      "will fetch them on first launch instead.[/]")
+
+
+def step_worker_cli(*, dry_run: bool) -> None:
+    step("Jarvis-Agent worker CLI")
+    note("the coding-agent worker Jarvis delegates missions to (needs Node.js)")
+    if dry_run:
+        console.print("[muted]      (dry-run) npm i -g @anthropic-ai/claude-code[/]")
+        return
+    probe = (
+        "from jarvis.setup.dependencies import check_claude_cli, check_npm, install_claude_cli\n"
+        "import sys\n"
+        "if check_claude_cli().present:\n"
+        "    print('present'); sys.exit(0)\n"
+        "if not check_npm().present:\n"
+        "    print('no-npm'); sys.exit(0)\n"
+        "installed, _status = install_claude_cli()\n"
+        "print('installed' if installed else 'failed')\n"
+    )
+    try:
+        result = subprocess.run(
+            [str(venv_python()), "-c", probe], cwd=repo_root(),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=600,
+        )
+        verdict = (result.stdout or "").strip().splitlines()[-1] if (result.stdout or "").strip() else "failed"
+    except (OSError, subprocess.TimeoutExpired):
+        verdict = "failed"
+    if verdict == "present":
+        ok("worker CLI already installed")
+    elif verdict == "installed":
+        ok("worker CLI installed (npm)")
+    elif verdict == "no-npm":
+        note("Node.js/npm not found - the Jarvis-Agent worker can be added later in-app")
+    else:
+        note("worker CLI install failed - it can be added later in-app")
+
+
+def step_shortcut(*, dry_run: bool) -> None:
+    if sys.platform != "win32":
+        return
+    step("Start Menu & taskbar identity")
+    note("so the very first launch shows the Jarvis name + icon, not a generic Python entry")
+    if dry_run:
+        console.print("[muted]      (dry-run) ensure_start_menu_shortcut()[/]")
+        return
+    probe = (
+        "from jarvis.ui.icon_utils import ensure_start_menu_shortcut\n"
+        "print('ok' if ensure_start_menu_shortcut() else 'skipped')\n"
+    )
+    try:
+        result = subprocess.run(
+            [str(venv_python()), "-c", probe], cwd=repo_root(),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=120,
+        )
+        outcome = (result.stdout or "").strip()
+    except (OSError, subprocess.TimeoutExpired):
+        outcome = ""
+    if outcome.endswith("ok"):
+        ok("shortcut in place")
+    else:
+        note("could not create the shortcut - the app will retry on first launch")
+
+
+def step_ui_bundle_check() -> None:
+    """Honest packaging check: the shipped UI build must be present + intact.
+
+    The public snapshot ships a prebuilt ``jarvis/ui/web/dist``; a dev clone
+    may not have one. Missing or torn builds are the 'old/broken app' symptom,
+    so say it out loud instead of letting the first launch look broken.
+    """
+    step("UI bundle")
+    dist = repo_root() / "jarvis" / "ui" / "web" / "dist"
+    index = dist / "index.html"
+    if not index.is_file():
+        note("no prebuilt UI found (dev clone?) - the app will serve a minimal page")
+        note("public installs always ship the UI; if you used the one-liner, please report this")
+        return
+    import re
+
+    html = index.read_text(encoding="utf-8", errors="replace")
+    missing = [
+        ref for ref in re.findall(r'(?:src|href)="/?(assets/[^"]+)"', html)
+        if not (dist / ref.replace("/", os.sep)).is_file()
+    ]
+    if missing:
+        console.print(f"[bad]      UI build is incomplete ({missing[0]} missing) - "
+                      "please report this; the app may look broken.[/]")
+    else:
+        ok("UI build present and intact")
 
 
 def _resolved_admin_port() -> int:
@@ -303,25 +406,39 @@ def step_launch(*, headless: bool, dry_run: bool) -> None:
         sys.exit(4)
 
 
-def step_summary(*, no_launch: bool) -> None:
+def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
     console.print()
+    if update:
+        next_line = "Your setup and settings are kept - no re-onboarding."
+    elif headless or is_headless_linux():
+        next_line = (
+            "Open the printed server address in your browser - a one-time\n"
+            "  setup guide (language, wake word, API keys) runs there.\n"
+            "  It never shows again after that."
+        )
+    else:
+        next_line = (
+            "The app opens with a one-time setup guide (language, wake word,\n"
+            "  API keys). It never shows again after that."
+        )
     console.print(Panel.fit(
-        "[ok]Personal Jarvis is installed.[/]\n\n"
+        "[ok]Personal Jarvis is " + ("updated" if update else "installed") + ".[/]\n\n"
         f"[muted]Repo[/]   {repo_root()}\n"
         f"[muted]Venv[/]   {venv_python().parent.parent}\n\n"
+        f"[brand.bold]{'Update' if update else 'What happens next'}[/]\n"
+        f"  {next_line}\n\n"
         "[brand.bold]Re-run anytime[/]\n"
         "  • Windows:  [brand]run.bat[/]\n"
-        "  • macOS/Linux:  [brand]python -m jarvis.ui.web.launcher[/]\n"
-        "  • Re-run wizard:  [brand]python -m jarvis --wizard[/]\n\n"
-        "[brand.bold]Update[/]\n"
-        "  Re-invoke the same one-liner — it detects the existing checkout\n"
-        "  and pulls latest main.",
+        "  • macOS/Linux:  [brand]python -m jarvis.ui.web.launcher[/]\n\n"
+        "[brand.bold]Update later[/]\n"
+        "  Re-run the same install one-liner - it updates in place and keeps\n"
+        "  your setup.",
         border_style="brand",
         title="[brand.bold]✓ Done[/]",
         title_align="left",
     ))
     if not no_launch:
-        console.print("\n[muted]The Desktop App is launching in a separate window.[/]")
+        console.print("\n[muted]Launching now…[/]")
 
 
 # ---------------------------------------------------------------- entry
@@ -331,7 +448,8 @@ def main(argv: list[str] | None = None) -> int:
         description="Personal Jarvis Stage-2 installer",
     )
     parser.add_argument("--no-wizard", action="store_true",
-                        help="skip the interactive first-run wizard")
+                        help="deprecated no-op: the installer never runs the terminal "
+                             "wizard anymore (setup happens in the app)")
     parser.add_argument("--no-launch", action="store_true",
                         help="don't launch the Desktop App at the end")
     parser.add_argument("--headless", action="store_true",
@@ -356,6 +474,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         with_desktop = True
 
+    # Detect BEFORE write_managed_marker stamps the tree: a pre-existing
+    # marker means this run is an update of a managed install.
+    update = is_update_run()
+
     step_preflight()
     if not args.dry_run:
         write_managed_marker()
@@ -366,13 +488,16 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
         )
 
-    if not args.no_wizard:
-        step_wizard(dry_run=args.dry_run)
+    step_models(dry_run=args.dry_run)
+    step_worker_cli(dry_run=args.dry_run)
+    step_shortcut(dry_run=args.dry_run)
+    step_ui_bundle_check()
 
+    # Summary FIRST, launch LAST: when the app window appears, the terminal
+    # story is already told — and everything the first launch needs is on disk.
+    step_summary(no_launch=args.no_launch, update=update, headless=args.headless)
     if not args.no_launch:
         step_launch(headless=args.headless, dry_run=args.dry_run)
-
-    step_summary(no_launch=args.no_launch)
     return 0
 
 
