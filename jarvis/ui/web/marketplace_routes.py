@@ -75,6 +75,20 @@ def _refresh_plugin_in_live_registry(plugin_id: str) -> None:
         log.warning("live plugin refresh failed for %s", plugin_id, exc_info=True)
 
 
+def _live_plugin_registry() -> Any:
+    """The active ``PluginToolRegistry``, or ``None`` if unreachable.
+
+    Same lookup as ``_refresh_plugin_in_live_registry`` — returns ``None`` on
+    any failure (early boot, headless) so callers can fail open.
+    """
+    try:
+        from jarvis.marketplace.plugin_shared import get_active_plugin_registry
+
+        return get_active_plugin_registry()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
@@ -158,16 +172,31 @@ _validate_token = _make_validator()
 # ----------------------------------------------------------------------
 
 
-def _mcp_live(mcp: dict[str, Any]) -> tuple[bool, str | None]:
+def _mcp_live(
+    mcp: dict[str, Any], *, plugin_id: str = "", status: str = ""
+) -> tuple[bool, str | None]:
     """``(is_live, runtime_missing)`` for an MCP plugin's transport.
 
     M2 (honest status): a stdio plugin (GitHub=docker, Supabase=npx) is only LIVE if
     its launcher binary is on PATH — else connecting saves the token but the tools
-    never appear, so a green "Connected · Live" badge is a lie. http transports are
-    always live; ``runtime_missing`` is the absent launcher name for an honest UI hint.
+    never appear, so a green "Connected · Live" badge is a lie. ``runtime_missing``
+    is the absent launcher name for an honest UI hint.
+
+    Bug 14: an http plugin's connect-time ``list_tools()`` can 401 and be
+    swallowed, leaving status "connected" with ZERO live tools — a green
+    "Connected · Live" badge over a dead session. When a live registry is
+    reachable AND the plugin is "connected" AND it reports zero tools, the
+    session is dead (expired token, 401 at list_tools) and the badge goes
+    honest. No registry reachable (early boot / headless) -> fail open, exactly
+    today's behaviour.
     """
     transport = str(mcp.get("transport", "")).lower()
     if transport == "http":
+        if status == "connected":
+            reg = _live_plugin_registry()  # the same accessor refresh uses
+            if reg is not None and reg.live_tool_count(plugin_id) == 0:
+                hint = reg.last_connect_error(plugin_id) or "no tools loaded — reconnect"
+                return False, hint
         return True, None
     if transport == "stdio":
         import shutil
@@ -199,7 +228,7 @@ async def list_plugins(response: Response) -> dict[str, Any]:
         item["expires_at"] = expires_at
         item["last_refreshed"] = last_refreshed
         mcp = spec.mcp_server or {}
-        mcp_live, runtime_missing = _mcp_live(mcp)
+        mcp_live, runtime_missing = _mcp_live(mcp, plugin_id=spec.id, status=status)
         if runtime_missing:
             item["runtime_missing"] = runtime_missing
         native_live = False
