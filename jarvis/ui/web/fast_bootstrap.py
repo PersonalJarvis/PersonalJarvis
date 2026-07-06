@@ -97,6 +97,16 @@ class FastBootstrap:
             await self._ok_health(send)
             return
 
+        # First-run onboarding must render from the first second — the gate's
+        # state/terms/step/complete calls are answered here (stdlib-only
+        # handler, shared with the real routes) instead of being held. Once
+        # set_app runs, the delegation branch above owns these paths again.
+        if kind == "http" and scope.get("path", "").startswith("/api/onboarding"):
+            from jarvis.setup.onboarding_fastpath import handle as _onboarding_handle
+
+            if await _onboarding_handle(scope, receive, send):
+                return
+
         # A websocket during warming must NOT hold the handshake open: a
         # browser times out a pending WS handshake (tens of seconds) and its
         # client then escalates its reconnect backoff, so the desktop window
