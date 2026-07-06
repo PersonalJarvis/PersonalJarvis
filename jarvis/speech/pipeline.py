@@ -1110,6 +1110,16 @@ class SpeechPipeline:
         self._hotkey_reload_event = asyncio.Event()
         if wake is not None:
             self._wake = wake
+        elif wake_plan is not None and getattr(wake_plan, "engine", "") == "vosk_kws":
+            # Any-word Vosk grammar KWS (design spec 2026-07-05): identical
+            # CPU-only detector on every OS, phrase is pure configuration.
+            from jarvis.plugins.wake.vosk_kws_provider import VoskKwsProvider
+
+            self._wake = VoskKwsProvider(
+                phrase=wake_plan.phrase,
+                model_path=wake_plan.vosk_model_path or "",
+                keyword=wake_plan.oww_keyword,
+            )
         elif wake_plan is not None:
             self._wake = OpenWakeWordProvider(
                 keywords=(wake_plan.oww_keyword,),

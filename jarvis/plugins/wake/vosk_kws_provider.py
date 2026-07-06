@@ -139,6 +139,11 @@ class VoskKwsProvider:
         self._max_gain = float(max_gain)
         self._model: Any = None
         self._grammar_words = [w for w in self._phrase.lower().split() if w]
+        # Duck-typing parity with OpenWakeWordProvider: the pipeline's ready
+        # log reads ``_keywords`` and ``_threshold`` off whatever detector is
+        # armed. The confirm ratio is the closest analogue of a threshold.
+        self._keywords = (self._keyword,)
+        self._threshold = float(confirm_ratio)
         # Ring buffer of raw int16 PCM bytes for the confirm pass.
         self._ring: deque[bytes] = deque()
         self._ring_len = 0

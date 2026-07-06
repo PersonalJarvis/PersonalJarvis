@@ -38,6 +38,7 @@ from jarvis.speech.wake_constants import (
     phrase_core,
     phrase_core_for_match,
     resolve_oww_model_path,
+    resolve_vosk_model_path,
     sound_fold,
 )
 
@@ -316,15 +317,18 @@ class WakeWordPlan:
     # False only for a specific PRETRAINED model (alexa/mycroft/rhasspy):
     # those are trained on large curated datasets, ARE their own
     # discriminator, and the STT would mis-transcribe the foreign brand word
-    # and wrongly reject valid hits.
+    # and wrongly reject valid hits. Also False for vosk_kws — its permissive
+    # free-decode sound confirm is built into the provider itself.
     verify_prefix: bool
     # Product rule (2026-07-04): a wake word REQUIRES a local model that matches
     # the user's OWN chosen word. When no such model is available (no custom
     # ONNX, no local Whisper) we do NOT silently substitute a branded fallback
     # model — we return wake_available=False so the app arms NO detector and the
     # honest alternative is hotkey / push-to-talk activation. True for every
-    # real engine (custom_onnx / openwakeword / stt_match).
+    # real engine (custom_onnx / openwakeword / vosk_kws / stt_match).
     wake_available: bool = True
+    # Extracted Vosk model directory for the vosk_kws engine (None otherwise).
+    vosk_model_path: str | None = None
 
 
 def _read(cfg: Any, name: str, default: Any) -> Any:
@@ -332,11 +336,22 @@ def _read(cfg: Any, name: str, default: Any) -> Any:
     return default if value is None else value
 
 
-def resolve_wake_plan(cfg: Any, *, local_whisper_available: bool) -> WakeWordPlan:
+def resolve_wake_plan(
+    cfg: Any,
+    *,
+    local_whisper_available: bool,
+    language: str | None = None,
+    vosk_available: bool | None = None,
+) -> WakeWordPlan:
     """Resolve a ``[trigger.wake_word]`` config into a :class:`WakeWordPlan`.
 
     ``cfg`` is duck-typed: any object exposing ``phrase``, ``engine``,
     ``custom_model_path``, ``sensitivity``, ``fuzzy_match_ratio``.
+
+    ``language`` selects the per-language Vosk model for the ``vosk_kws``
+    engine (falls back to the first installed model on ``auto``/None).
+    ``vosk_available`` overrides the vosk import probe (tests); None probes
+    ``importlib.util.find_spec("vosk")``.
     """
     phrase = str(_read(cfg, "phrase", DEFAULT_WAKE_PHRASE)).strip()
     engine_pref = str(_read(cfg, "engine", "auto")).strip().lower()
@@ -425,9 +440,44 @@ def resolve_wake_plan(cfg: Any, *, local_whisper_available: bool) -> WakeWordPla
             )
         log.warning("Pretrained model '%s' not found on disk.", known)
 
-    # 3. Arbitrary phrase via local-Whisper transcript match.
+    # 3. Any-word Vosk grammar keyword spotting — the one-identical-system-
+    # everywhere engine (design spec 2026-07-05): per-language model, CPU-only,
+    # no training, no cloud, no GPU; spike-measured 79-100 % recall at
+    # 1/0/0 % false accepts where the transcription path is machine- and
+    # word-dependent. Chosen on "auto" for any phrase without a pretrained
+    # OWW model, or forced via engine="vosk_kws". Requires the vosk package
+    # (base dep) AND a per-language model directory; missing either falls
+    # through to the stt_match chain below (graceful, message says why).
+    if phrase and engine_pref in ("auto", "vosk_kws"):
+        if vosk_available is None:
+            import importlib.util as _ilu
+
+            vosk_available = _ilu.find_spec("vosk") is not None
+        vosk_model = resolve_vosk_model_path(language) if vosk_available else None
+        if vosk_model is not None and (
+            engine_pref == "vosk_kws"
+            or (not known and (not custom_path or custom_stale or custom_missing))
+        ):
+            return WakeWordPlan(
+                phrase=phrase,
+                engine="vosk_kws",
+                oww_model_path=None,
+                oww_keyword=canonical,
+                threshold=threshold,
+                matcher=matcher,
+                needs_local_whisper=False,
+                degraded=False,
+                message=(
+                    f"Any-word Vosk keyword spotting for '{phrase}' "
+                    f"(model: {vosk_model})."
+                ),
+                verify_prefix=False,  # the provider's sound confirm is built in
+                vosk_model_path=vosk_model,
+            )
+
+    # 4. Arbitrary phrase via local-Whisper transcript match.
     want_stt = (
-        engine_pref in ("auto", "stt_match")
+        engine_pref in ("auto", "stt_match", "vosk_kws")
         or bool(custom_path)                       # custom file missing -> best effort
         or (engine_pref == "openwakeword" and not known)
     )
@@ -462,7 +512,7 @@ def resolve_wake_plan(cfg: Any, *, local_whisper_available: bool) -> WakeWordPla
             verify_prefix=matcher.is_jarvis_default,
         )
 
-    # 4. No local model for the user's OWN word. The product rule (2026-07-04)
+    # 5. No local model for the user's OWN word. The product rule (2026-07-04)
     # forbids silently substituting a branded fallback (the old 'Hey Rhasspy'
     # degrade made the app listen for a word the user never says). Instead we
     # return wake_available=False: the app arms NO wake detector, and the honest
