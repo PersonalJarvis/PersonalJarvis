@@ -137,6 +137,25 @@ def _build_brain(provider: str, model: str) -> Any:
     return getattr(mod, cls_name)(model=model)
 
 
+def _tool_incapable_message(model: str, provider: str, *, detail: str = "") -> str:
+    """Shared honest-failure text for a worker model that cannot call tools.
+
+    Missions deliver ALL work through tool calls (Write/Edit/Bash/...); a
+    text-only reply produces an empty diff and the mission dies 3 critic
+    loops later with an inscrutable ``critic_loop_exhausted`` (forensics
+    Bug 10). Fail fast and actionably instead.
+    """
+    msg = (
+        f"worker model {model!r} (provider {provider!r}) cannot call tools, "
+        "and missions deliver work exclusively through tool calls. Pick a "
+        "tool-capable model under Settings -> Jarvis-Agents (brain.worker), "
+        "then retry the mission."
+    )
+    if detail:
+        msg = f"{msg} (provider error: {detail})"
+    return msg
+
+
 class ApiAgentWorker:
     """Phase-6 worker that drives an OpenAI-compatible API brain in a tool loop.
 
@@ -201,6 +220,25 @@ class ApiAgentWorker:
             yield res
             return
 
+        # AP-21: gate on CAPABILITY, and only on an explicit "no" — an absent
+        # probe or one that raises is UNKNOWN, and unknown must PROCEED (never
+        # brick a mission on a probe glitch). Only can_call_tools() returning
+        # False literally gates. Checked BEFORE the turn loop so a tool-less
+        # model fails in one line instead of 3 silent critic loops later.
+        try:
+            can_call_tools = bool(brain.can_call_tools())
+        except Exception:  # noqa: BLE001 — capability probe must never brick a mission
+            can_call_tools = True
+        if not can_call_tools:
+            res = ClaudeResult(
+                subtype="error_during_execution", is_error=True, session_id=session_id,
+                duration_ms=0,
+                result=_tool_incapable_message(resolved_model, self.provider),
+            )
+            _emit_line(res)
+            yield res
+            return
+
         logger.info(
             "ApiAgentWorker[%s] spawn in-process: provider=%s model=%s cwd=%s",
             worker_id, self.provider, resolved_model, worktree,
@@ -235,11 +273,35 @@ class ApiAgentWorker:
                 )
                 text_parts: list[str] = []
                 tool_calls: list[dict[str, Any]] = []
-                async for delta in brain.complete(req):
-                    if delta.content:
-                        text_parts.append(delta.content)
-                    if delta.tool_call:
-                        tool_calls.append(delta.tool_call)
+                try:
+                    async for delta in brain.complete(req):
+                        if delta.content:
+                            text_parts.append(delta.content)
+                        if delta.tool_call:
+                            tool_calls.append(delta.tool_call)
+                except Exception as exc:  # noqa: BLE001
+                    # The capability pre-gate (above) catches a model the brain
+                    # ALREADY knows is tool-incapable. Some providers (OpenRouter
+                    # routing to a tool-less upstream) only discover this on the
+                    # FIRST live round-trip, surfacing as a 404 "no endpoints
+                    # found that support tool use"-class error. Recognize that
+                    # shape on turn 0 and convert it to the SAME honest message
+                    # instead of letting the raw provider error propagate up as
+                    # an inscrutable worker failure.
+                    low = str(exc).lower()
+                    if turn == 0 and "tool" in low and ("support" in low or "404" in low):
+                        res = ClaudeResult(
+                            subtype="error_during_execution", is_error=True,
+                            session_id=session_id,
+                            duration_ms=int((time.perf_counter() - t0) * 1000),
+                            result=_tool_incapable_message(
+                                resolved_model, self.provider, detail=str(exc)
+                            ),
+                        )
+                        _emit_line(res)
+                        yield res
+                        return
+                    raise
 
                 assistant_text = "".join(text_parts).strip()
                 if assistant_text:
