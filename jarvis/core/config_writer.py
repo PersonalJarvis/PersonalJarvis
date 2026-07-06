@@ -255,6 +255,23 @@ def set_tts_volume(volume: float, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
         log.warning("Could not sync tts.volume to config-soll.json: %s", exc)  # i18n-allow
 
 
+def set_audio_device(
+    kind: str, value: str, *, path: Path = DEFAULT_CONFIG_FILE
+) -> None:
+    """Set ``[audio] input_device`` / ``[audio] output_device``.
+
+    ``kind`` is ``"input"`` or ``"output"``; ``value`` is a device display
+    NAME (the identifier stable across reboots/hot-plugs) or the
+    ``"auto-headset"`` sentinel to restore automatic selection. The ``[audio]``
+    block is NOT pinned in config-soll.json, so the atomic TOML patch alone  # i18n-allow: filename reference
+    persists it. The Settings route live-applies the change to the running
+    pipeline; this stores the boot default.
+    """
+    if kind not in ("input", "output"):
+        raise ValueError(f"kind must be 'input' or 'output', got {kind!r}")
+    _patch_table(path, "audio", f"{kind}_device", str(value))
+
+
 def set_stt_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Set the global STT model (``[stt] model``) across all THREE layers.
 

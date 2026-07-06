@@ -31,7 +31,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from jarvis.brain.manager import SUPPORTED_REPLY_LANGUAGES
 from jarvis.memory.wiki.integration import get_running_curator
@@ -1781,6 +1781,144 @@ async def put_tts_volume(body: TtsVolumeBody, request: Request) -> dict[str, obj
         "ok": True,
         "volume": volume,
         "default": _TTS_VOLUME_DEFAULT,
+        "persisted": persisted,
+        "applied_live": applied_live,
+        "restart_required": not applied_live,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Audio device pickers — which device Jarvis's voice plays on and which
+# microphone it listens with.
+#
+# GET lists one entry per PHYSICAL device (host-API twins deduped, the
+# localized virtual mapper and WDM-KS hidden — jarvis.audio.devices) plus the
+# current selection; PUT persists a device NAME (stable across reboots, unlike
+# PortAudio indices) or the "auto-headset" sentinel to jarvis.toml [audio] and
+# live-applies it to the running pipeline (output: player hot-swap; input:
+# wake-session re-arm). Headless / no PortAudio → available=false, the UI
+# degrades to a caption; a save still persists for the next start.
+# ---------------------------------------------------------------------------
+
+AUDIO_AUTO_DEVICE = "auto-headset"
+
+
+class AudioDeviceSelectBody(BaseModel):
+    output_device: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+        description=(
+            "Output device display name, or 'auto-headset' for automatic "
+            "selection. Omit to leave unchanged."
+        ),
+    )
+    input_device: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+        description=(
+            "Microphone display name, or 'auto-headset' for automatic "
+            "selection. Omit to leave unchanged."
+        ),
+    )
+    persist: bool = Field(default=True, description="Persist as boot default in jarvis.toml")
+
+    @model_validator(mode="after")
+    def _at_least_one_side(self) -> AudioDeviceSelectBody:
+        if self.output_device is None and self.input_device is None:
+            raise ValueError("Provide output_device and/or input_device.")
+        return self
+
+
+def _selected_audio_devices(request: Request) -> tuple[str, str]:
+    """The persisted (output, input) selection strings from the live config."""
+    cfg = _config(request)
+    audio = getattr(cfg, "audio", None)
+    out = str(getattr(audio, "output_device", AUDIO_AUTO_DEVICE) or AUDIO_AUTO_DEVICE)
+    inp = str(getattr(audio, "input_device", AUDIO_AUTO_DEVICE) or AUDIO_AUTO_DEVICE)
+    return out, inp
+
+
+@router.get("/audio-devices")
+async def get_audio_devices(request: Request) -> dict[str, object]:
+    """Enumerate output/input devices + the current selection for the pickers."""
+    from jarvis.audio.devices import list_devices
+
+    outputs = await asyncio.to_thread(lambda: list_devices(output=True))
+    inputs = await asyncio.to_thread(lambda: list_devices(output=False))
+    selected_output, selected_input = _selected_audio_devices(request)
+    return {
+        "available": bool(outputs or inputs),
+        "auto_value": AUDIO_AUTO_DEVICE,
+        "outputs": [{"name": d.name, "is_default": d.is_default} for d in outputs],
+        "inputs": [{"name": d.name, "is_default": d.is_default} for d in inputs],
+        "selected_output": selected_output,
+        "selected_input": selected_input,
+    }
+
+
+@router.put("/audio-devices")
+async def put_audio_devices(
+    body: AudioDeviceSelectBody, request: Request
+) -> dict[str, object]:
+    """Persist + live-apply the audio device selection (name or auto)."""
+    # Best-effort in-memory cfg update so later cfg reads (voice-offline
+    # alerts, the voice watchdog restart path) agree pre-restart.
+    cfg = _config(request)
+    audio_cfg = getattr(cfg, "audio", None)
+    if audio_cfg is not None:
+        try:
+            if body.output_device is not None:
+                audio_cfg.output_device = body.output_device
+            if body.input_device is not None:
+                audio_cfg.input_device = body.input_device
+        except Exception as exc:  # noqa: BLE001 — frozen model is not an error
+            log.debug("in-memory audio device update skipped: %s", exc)
+
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core import config_writer
+            from jarvis.core.config import resolve_config_path
+
+            cfg_path = resolve_config_path()
+            if body.output_device is not None:
+                config_writer.set_audio_device(
+                    "output", body.output_device, path=cfg_path
+                )
+            if body.input_device is not None:
+                config_writer.set_audio_device(
+                    "input", body.input_device, path=cfg_path
+                )
+            persisted = True
+        except Exception as exc:  # noqa: BLE001 — persist is best-effort
+            log.warning(
+                "audio-device persist failed (live apply still attempted): %s", exc
+            )
+
+    # Live-apply to the running voice pipeline — no app restart. Best-effort:
+    # a headless/down pipeline just means it applies on next start.
+    applied_live = False
+    pipeline = getattr(request.app.state, "speech_pipeline", None)
+    if pipeline is not None and hasattr(pipeline, "set_audio_devices"):
+        try:
+            pipeline.set_audio_devices(
+                input_device=body.input_device,
+                output_device=body.output_device,
+            )
+            applied_live = True
+        except Exception as exc:  # noqa: BLE001 — never fail the save on a live-apply hiccup
+            log.warning(
+                "audio-device live-apply failed (persisted; applies on restart): %s",
+                exc,
+            )
+
+    selected_output, selected_input = _selected_audio_devices(request)
+    return {
+        "ok": True,
+        "selected_output": selected_output,
+        "selected_input": selected_input,
         "persisted": persisted,
         "applied_live": applied_live,
         "restart_required": not applied_live,

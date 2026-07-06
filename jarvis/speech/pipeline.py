@@ -1666,6 +1666,38 @@ class SpeechPipeline:
         if callable(setter):
             setter(float(volume))
 
+    def set_audio_devices(
+        self,
+        *,
+        input_device: str | None = None,
+        output_device: str | None = None,
+    ) -> None:
+        """Live-apply a Settings device pick — no app/pipeline restart.
+
+        ``None`` leaves a side unchanged; a device NAME pins it and the
+        ``"auto-headset"`` sentinel restores automatic selection (resolution
+        happens at stream-open time in the player/capture resolvers).
+
+        - Output: ``AudioPlayer.set_device`` re-resolves and tears down the
+          persistent stream, so the next utterance plays on the new device.
+        - Input: every mic open reads ``self._input_device`` (per-turn opens
+          pick it up naturally); the long-lived wake session is re-armed via
+          ``_wake_reload_event`` — the same live-reload contract as
+          ``set_wake_plan`` — so the always-on mic reopens on the new device
+          within a moment.
+        """
+        if output_device is not None:
+            self._output_device = output_device or None
+            player = getattr(self, "_player", None)
+            setter = getattr(player, "set_device", None)
+            if callable(setter):
+                setter(self._output_device)
+        if input_device is not None:
+            self._input_device = input_device or None
+            reload_event = getattr(self, "_wake_reload_event", None)
+            if reload_event is not None:
+                reload_event.set()
+
     def _wake_poll_interval(self) -> float:
         """The stt_match wake poll interval, derived from the user's Sensitivity
         slider (``[trigger.wake_word].sensitivity``). Higher sensitivity polls

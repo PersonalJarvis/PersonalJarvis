@@ -216,6 +216,11 @@ def _resolve_output_device(
 
     - int: returned as-is (user specified an explicit index)
     - None: system default
+    - a concrete NAME (the Settings device picker persists names — the only
+      identifier stable across reboots/hot-plugs): resolved to an index via
+      :func:`jarvis.audio.devices.resolve_device_by_name` (best host-API twin,
+      WDM-KS/mapper excluded). An unplugged/unknown name falls through to the
+      auto-headset heuristic below — playback never bricks on a missing device.
     - "auto-headset": searches output devices for headset patterns, skips
       GPU-HDMI outputs (monitor speakers) and the localized MME/DirectSound
       virtual mapper, prefers WASAPI over MME (mono routing bug on 8-channel
@@ -230,8 +235,21 @@ def _resolve_output_device(
     """
     if device is None or isinstance(device, int):
         return device
-    if not isinstance(device, str) or device != "auto-headset":
+    if not isinstance(device, str):
         return device
+    if device != "auto-headset":
+        from jarvis.audio.devices import resolve_device_by_name
+
+        named_idx = resolve_device_by_name(device, output=True)
+        if named_idx is not None:
+            log.info("Output device %r resolved to index %d.", device, named_idx)
+            return named_idx
+        log.warning(
+            "Configured output device %r not found — falling back to "
+            "auto-headset selection.",
+            device,
+        )
+        # Fall through to the auto-headset heuristic below.
 
     user_priority = tuple(p for p in (priority or ()) if p)
 

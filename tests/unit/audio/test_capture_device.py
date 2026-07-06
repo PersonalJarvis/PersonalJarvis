@@ -90,11 +90,33 @@ def test_auto_headset_falls_back_to_default_when_query_fails(monkeypatch) -> Non
     assert capture._resolve_input_device("auto-headset") is None
 
 
-def test_explicit_input_device_is_not_resolved(monkeypatch) -> None:
+def test_explicit_index_is_not_resolved(monkeypatch) -> None:
     def fail_query():
         raise AssertionError("query_devices should not be called")
 
     monkeypatch.setattr(capture.sd, "query_devices", fail_query)
 
-    assert capture._resolve_input_device("Microphone (Manual)") == "Microphone (Manual)"
     assert capture._resolve_input_device(3) == 3
+
+
+def test_explicit_name_resolves_to_index(monkeypatch) -> None:
+    """A concrete NAME (persisted by the Settings device picker) resolves to
+    its PortAudio index at open time — names are the stable identifier across
+    reboots; raw name strings handed to PortAudio are ambiguous across host
+    APIs (the pre-2026-07 pass-through contract)."""
+    from jarvis.audio import devices as dv
+
+    devices = [
+        {
+            "name": "Microphone (Manual)",
+            "max_input_channels": 1,
+            "max_output_channels": 0,
+            "hostapi": 0,
+        },
+    ]
+    hostapis = [{"name": "Windows WASAPI"}]
+    for mod in (capture, dv):
+        monkeypatch.setattr(mod.sd, "query_devices", lambda: devices)
+        monkeypatch.setattr(mod.sd, "query_hostapis", lambda: hostapis)
+
+    assert capture._resolve_input_device("Microphone (Manual)") == 0

@@ -237,13 +237,31 @@ def _resolve_input_device(
     """
     if device is None or isinstance(device, int):
         if device is not None:
-            _log.info("Mic-Resolve: explizites Device {} verwendet.", device)
+            _log.info("Mic-Resolve: explicit device {} used.", device)
         else:
             _log.info("Mic-Resolve: system default input (device=None).")
         return device
-    if not isinstance(device, str) or device != "auto-headset":
-        _log.info("Mic-Resolve: named device '{}'.", device)
+    if not isinstance(device, str):
         return device
+    if device != "auto-headset":
+        # A concrete NAME (the Settings device picker persists names — the
+        # only identifier stable across reboots/hot-plugs): resolve to an
+        # index via the shared lookup (best host-API twin — MME first for
+        # 16 kHz capture — WDM-KS/mapper excluded). An unplugged/unknown name
+        # falls through to the auto-headset heuristic so the wake loop never
+        # bricks on a missing device.
+        from jarvis.audio.devices import resolve_device_by_name
+
+        named_idx = resolve_device_by_name(device, output=False)
+        if named_idx is not None:
+            _log.info("Mic-Resolve: named device '{}' -> index {}.", device, named_idx)
+            return named_idx
+        _log.warning(
+            "Mic-Resolve: configured input device '{}' not found — falling "
+            "back to auto-headset selection.",
+            device,
+        )
+        # Fall through to the auto-headset heuristic below.
 
     user_priority = tuple(p for p in (priority or ()) if p)
 
