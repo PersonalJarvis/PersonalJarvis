@@ -160,6 +160,97 @@ class _BigContextBrain:
         yield BrainDelta(finish_reason="stop")
 
 
+class _RunShellTool:
+    name = "run_shell"
+    schema: dict[str, Any] = {}
+
+
+class _WikiRecallTool:
+    name = "wiki-recall"
+    schema: dict[str, Any] = {}
+
+
+class _AliasCallingBrain:
+    """Live incident 2026-07-05 (session 3e27dd8e, 19:49:56): the tool surface
+    mixes hyphen names (wiki-recall) and underscore names (run_shell), so the
+    model cross-normalized and called 'run-shell'. The exact-match lookup missed
+    and the turn ended in the canned 'missing the right tool' refusal."""
+
+    def __init__(self, called_name: str) -> None:
+        self.requests: list[BrainRequest] = []
+        self._called_name = called_name
+
+    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        self.requests.append(req)
+        if len(self.requests) == 1:
+            yield BrainDelta(tool_call={
+                "id": "c1", "name": self._called_name, "input": {},
+            })
+            yield BrainDelta(finish_reason="tool_use")
+            return
+        yield BrainDelta(content="Hier ist das Ergebnis.")
+        yield BrainDelta(finish_reason="stop")
+
+
+@pytest.mark.asyncio
+async def test_hyphenated_alias_resolves_to_underscore_tool() -> None:
+    """'run-shell' from the model must execute the registered 'run_shell'."""
+    brain = _AliasCallingBrain("run-shell")
+    executor = _ExecOK()
+    loop = ToolUseLoop(
+        brain,
+        {"run_shell": _RunShellTool(), "wiki-recall": _WikiRecallTool()},
+        executor,  # type: ignore[arg-type]
+    )
+
+    result = await loop.run([], user_utterance="zeig mir den letzten Commit")
+
+    assert executor.calls, "'run-shell' must resolve to the registered 'run_shell'"
+    assert executor.calls[0][0].name == "run_shell"
+    assert "Werkzeug" not in result.text, "must not speak the missing-tool refusal"
+    assert "run_shell" in result.executed_tool_names
+
+
+@pytest.mark.asyncio
+async def test_underscore_alias_resolves_to_hyphenated_tool() -> None:
+    """The reverse direction: 'wiki_recall' must execute 'wiki-recall'."""
+    brain = _AliasCallingBrain("wiki_recall")
+    executor = _ExecOK()
+    loop = ToolUseLoop(
+        brain,
+        {"run_shell": _RunShellTool(), "wiki-recall": _WikiRecallTool()},
+        executor,  # type: ignore[arg-type]
+    )
+
+    result = await loop.run([], user_utterance="such mal im Wiki nach dem Projekt")
+
+    assert executor.calls, "'wiki_recall' must resolve to the registered 'wiki-recall'"
+    assert executor.calls[0][0].name == "wiki-recall"
+    assert "wiki-recall" in result.executed_tool_names
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_alias_is_not_guessed() -> None:
+    """If two registered tools collide on the normalized form, an inexact name
+    must NOT silently pick one of them — the unknown-tool fallback stays."""
+
+    class _HyphenTwin:
+        name = "run-shell"
+        schema: dict[str, Any] = {}
+
+    brain = _AliasCallingBrain("Run-Shell")
+    executor = _ExecOK()
+    loop = ToolUseLoop(
+        brain,
+        {"run_shell": _RunShellTool(), "run-shell": _HyphenTwin()},
+        executor,  # type: ignore[arg-type]
+    )
+
+    await loop.run([], user_utterance="zeig mir den letzten Commit")
+
+    assert executor.calls == [], "an ambiguous alias must not execute either twin"
+
+
 @pytest.mark.asyncio
 async def test_tool_executes_despite_huge_per_turn_input_tokens() -> None:
     """Regression (live bug 2026-06-01): in a long conversation a single turn's
