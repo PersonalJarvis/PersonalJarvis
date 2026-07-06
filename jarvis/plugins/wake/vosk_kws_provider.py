@@ -151,6 +151,16 @@ class VoskKwsProvider:
         self._match_min_rms = float(match_min_rms)
         self._cooldown_s = float(cooldown_s)
         self._confirm_tail_bytes = int(float(confirm_tail_s) * sample_rate) * 2
+        # Short-core hardening (calibrated 2026-07-06): phrases whose longest
+        # sound-folded token is very short ("Karl", "Anton") re-score
+        # spuriously high on room speech more often — 3 leaked fires across a
+        # 10-word x 3-min matrix, all on the two shortest cores. Genuine
+        # calls of those words re-score at ~1.0, so demanding 0.95 for them
+        # closes the leak without deafening the word.
+        tokens = normalize_phrase_for_match(self._phrase)
+        longest = max((len(sound_fold(t)) for t in tokens), default=0)
+        if longest < 6:
+            self._min_final_conf = max(self._min_final_conf, 0.95)
         self._target_peak = float(target_peak)
         self._max_gain = float(max_gain)
         self._model: Any = None
@@ -284,30 +294,55 @@ class VoskKwsProvider:
                 )
             pcm = (window * 32767.0).astype(np.int16).tobytes()
 
-            # 1) grammar re-score: real confidence + time span for the phrase
-            g = self._new_grammar_rec()
-            g.AcceptWaveform(pcm)
-            gres = json.loads(g.FinalResult())
-            gwords = [
-                w for w in gres.get("result", [])
-                if w.get("word") in self._grammar_words
-            ]
-            if self._phrase.lower() not in gres.get("text", "") or not gwords:
+            # 1) grammar re-score: real confidence + time span for the phrase.
+            # Two fair attempts: the full ring first, then only its last
+            # ~1.8 s. The candidate just fired, so the phrase sits at the END
+            # of the ring — on the full window the surrounding context can
+            # shred the constrained final ("hey hey [unk]") or depress the
+            # confidence (both observed on genuine embedded calls), while the
+            # short window isolates the phrase. Both attempts face the SAME
+            # gates, so this is a retry, not a loosening.
+            def _rescore(raw: bytes) -> tuple[float, float, float] | None:
+                g = self._new_grammar_rec()
+                g.AcceptWaveform(raw)
+                gres = json.loads(g.FinalResult())
+                gwords = [
+                    w for w in gres.get("result", [])
+                    if w.get("word") in self._grammar_words
+                ]
+                if self._phrase.lower() not in gres.get("text", "") or not gwords:
+                    return None
+                return (
+                    min(w.get("conf", 0.0) for w in gwords),
+                    min(w.get("start", 0.0) for w in gwords),
+                    max(w.get("end", 0.0) for w in gwords),
+                )
+
+            short_bytes = int(1.8 * self._sample_rate) * 2
+            short_off_s = max(0, (len(pcm) - short_bytes)) / 2 / self._sample_rate
+            scored = _rescore(pcm)
+            if scored is None or scored[0] < self._min_final_conf:
+                retry = _rescore(pcm[-short_bytes:]) if len(pcm) > short_bytes else None
+                if retry is not None:
+                    # times are relative to the short window — shift to ring time
+                    retry = (retry[0], retry[1] + short_off_s, retry[2] + short_off_s)
+                if retry is not None and (scored is None or retry[0] > scored[0]):
+                    scored = retry
+            if scored is None:
                 log.info(
-                    "vosk-kws: verify SUPPRESSED — re-score did not re-hear "
-                    "%r (heard %r)",
-                    self._phrase, gres.get("text", "")[:60],
+                    "vosk-kws: verify SUPPRESSED — re-score did not re-hear %r",
+                    self._phrase,
                 )
                 return False
-            conf = min(w.get("conf", 0.0) for w in gwords)
+            conf, start_s, end_s = scored
             if conf < self._min_final_conf:
                 log.info(
                     "vosk-kws: verify SUPPRESSED — re-score conf %.2f < %.2f "
                     "for %r", conf, self._min_final_conf, self._phrase,
                 )
                 return False
-            span_a = min(w.get("start", 0.0) for w in gwords) - 0.3
-            span_b = max(w.get("end", 0.0) for w in gwords) + 0.3
+            span_a = start_s - 0.3
+            span_b = end_s + 0.3
 
             # 2) word-agnostic energy over the phrase span
             a = max(0, int(span_a * self._sample_rate))
