@@ -500,6 +500,21 @@ def set_autostart(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "autostart", "enabled", bool(enabled))
 
 
+def set_wiki_vault_root(vault_root: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[wiki_integration] vault_root`` in jarvis.toml (AP-7).
+
+    Written when the Obsidian setup wizard registers the "existing vault"
+    mode (spec A6): the wiki subsystem is repointed to ``<vault>/Jarvis``
+    so every wiki write stays contained inside the user's own vault.
+    TOML-only by design: ``wiki_integration`` is NOT tracked in
+    ``config-soll.json``, so the drift-guard never reverts it (same  # i18n-allow
+    rationale as :func:`set_overlay_style`). Takes effect on the next app
+    restart — the running curator/FTS index still targets the old vault
+    until then.
+    """
+    _patch_table(path, "wiki_integration", "vault_root", vault_root)
+
+
 def set_overlay_style(style: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the on-screen overlay style to ``[ui] orb_style`` in jarvis.toml.
 
