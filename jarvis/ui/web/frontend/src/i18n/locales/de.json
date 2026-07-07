@@ -1789,7 +1789,18 @@
     "live_test_body": "Klick den Knopf — dein Browser öffnet das Vault direkt in Obsidian.",
     "open_in_obsidian": "In Obsidian öffnen",
     "did_not_work": "Hat nicht geklappt",
-    "it_worked": "Hat geklappt — Fertig"
+    "it_worked": "Hat geklappt — Fertig",
+    "vault_choice_heading": "Wo soll {name} sein Wiki ablegen?",
+    "mode_separate_label": "Ein eigenes Jarvis-Vault anlegen",
+    "mode_separate_hint": "Der Standard — {name} führt ein eigenes Vault, getrennt von deinen anderen Notizen.",
+    "mode_existing_label": "Mein vorhandenes Vault nutzen",
+    "mode_existing_hint": "{name} schreibt in einen \"Jarvis\"-Unterordner innerhalb des gewählten Vaults.",
+    "mode_existing_disabled_hint": "Keine vorhandenen Vaults gefunden — registriere zuerst eines in Obsidian.",
+    "vault_select_label": "Vorhandenes Vault",
+    "active_vault_label": "{name} schreibt nach",
+    "restart_required_hint": "Starte {name} neu, damit der neue Speicherort verwendet wird.",
+    "restart_now": "Jetzt neu starten",
+    "restarting": "Starte neu…"
   },
   "docs_sidebar": {
     "title": "Dokumentation",

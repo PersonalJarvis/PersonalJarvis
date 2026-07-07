@@ -1789,7 +1789,18 @@
     "live_test_body": "Haz clic en el botón — tu navegador abre el almacén directamente en Obsidian.",
     "open_in_obsidian": "Abrir en Obsidian",
     "did_not_work": "No funcionó",
-    "it_worked": "Funcionó — listo"
+    "it_worked": "Funcionó — listo",
+    "vault_choice_heading": "¿Dónde debería {name} guardar su wiki?",
+    "mode_separate_label": "Crear un almacén independiente para {name}",
+    "mode_separate_hint": "La opción predeterminada — {name} mantiene su propio almacén, separado de tus otras notas.",
+    "mode_existing_label": "Usar mi almacén existente",
+    "mode_existing_hint": "{name} escribe en una subcarpeta \"Jarvis\" dentro del almacén que elijas.",
+    "mode_existing_disabled_hint": "No se encontraron almacenes existentes — registra uno en Obsidian primero.",
+    "vault_select_label": "Almacén existente",
+    "active_vault_label": "{name} escribe en",
+    "restart_required_hint": "Reinicia {name} para empezar a escribir en la nueva ubicación.",
+    "restart_now": "Reiniciar ahora",
+    "restarting": "Reiniciando…"
   },
   "docs_sidebar": {
     "title": "Documentación",
