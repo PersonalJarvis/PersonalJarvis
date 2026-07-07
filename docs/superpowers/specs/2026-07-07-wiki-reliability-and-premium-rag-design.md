@@ -1,7 +1,10 @@
 # Wiki Reliability + Premium RAG — Design
 
 **Date:** 2026-07-07
-**Status:** Approved by maintainer (brainstorming session)
+**Status:** Approved by maintainer (brainstorming session).
+Implementation is phased (maintainer decision 2026-07-07): **Pillar A ships
+first and alone** (rollout steps 1–3); Pillar B (Premium tier) is deferred to
+a later, separate implementation plan.
 **Scope:** `jarvis/memory/wiki/*`, wiki tools, wiki routes/UI, Obsidian setup flow
 
 ## 1. Problem
