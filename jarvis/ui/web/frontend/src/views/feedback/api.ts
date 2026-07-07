@@ -18,6 +18,9 @@ export interface FeedbackResult {
   ok: boolean;
   status: FeedbackStatus;
   detail: string;
+  // Populated only for status === "not_configured": a public GitHub issues
+  // URL the caller can render as a "report it on GitHub" fallback.
+  github_url?: string | null;
 }
 
 const BASE = "/api/feedback";

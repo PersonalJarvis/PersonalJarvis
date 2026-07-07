@@ -233,3 +233,91 @@ async def test_engine_absent_degrades_gracefully(monkeypatch) -> None:
     result = await tool.execute({"name": "Christoph"}, None)
     assert result.success is False
     assert "telephony" in (result.error or "").lower()
+
+
+# --------------------------------------------------------------------------- #
+# ``_default_call_config`` — real config-shape resolution (finding 11)
+#
+# ``JarvisConfig`` has no top-level ``telephony`` field; Twilio lives under
+# ``integrations.twilio`` (config.py:~1398) and its field is ``phone_number``,
+# not ``from_number`` (config.py:~1350). Before the fix, ``_default_call_config``
+# always returned ``None`` even when Twilio was fully configured, so the "call
+# X" voice tool silently no-opped for every install.
+# --------------------------------------------------------------------------- #
+@dataclass
+class _FakeTwilioCfg:
+    account_sid: str = "AC_real_test"
+    phone_number: str = "+4930000001"
+    public_base_url: str = "https://real.example.test"
+    enabled: bool = True
+
+
+@dataclass
+class _FakeIntegrationsCfg:
+    twilio: _FakeTwilioCfg = field(default_factory=_FakeTwilioCfg)
+
+
+@dataclass
+class _FakeJarvisConfig:
+    integrations: _FakeIntegrationsCfg = field(default_factory=_FakeIntegrationsCfg)
+
+
+def test_default_call_config_resolves_when_twilio_is_configured(monkeypatch) -> None:
+    """A fake config shaped like the real ``JarvisConfig`` (Twilio under
+    ``integrations.twilio``, field ``phone_number``) must resolve a full call
+    config — no longer a false "not set up"."""
+    import jarvis.core.config as real_cfg
+
+    fake_config = _FakeJarvisConfig()
+    monkeypatch.setattr(real_cfg, "load_config", lambda: fake_config)
+    monkeypatch.setattr(
+        real_cfg,
+        "get_secret",
+        lambda key, env_fallback=None: "tok_real_secret" if key == "twilio_auth_token" else None,
+    )
+
+    result = call_contact_mod._default_call_config()
+
+    assert result == {
+        "account_sid": "AC_real_test",
+        "auth_token": "tok_real_secret",
+        "from_number": "+4930000001",
+        "public_base_url": "https://real.example.test",
+    }
+
+
+def test_default_call_config_reads_secret_via_the_real_credential_key(monkeypatch) -> None:
+    """The Twilio auth token is stored under the ``twilio_auth_token`` credential
+    key (see config.py TwilioConfig docstring + telephony_routes.py
+    ``_AUTH_TOKEN_KEY``), not under the ENV var name. Resolution must use that
+    real key so a token saved via the Telephony UI/wizard is actually found."""
+    import jarvis.core.config as real_cfg
+
+    fake_config = _FakeJarvisConfig()
+    monkeypatch.setattr(real_cfg, "load_config", lambda: fake_config)
+
+    def _fake_get_secret(key: str, env_fallback: str | None = None) -> str | None:
+        # Only the real credential-manager key resolves a value; anything else
+        # (e.g. the old, wrong "TWILIO_AUTH_TOKEN" key) must miss.
+        return "tok_via_keyring" if key == "twilio_auth_token" else None
+
+    monkeypatch.setattr(real_cfg, "get_secret", _fake_get_secret)
+
+    result = call_contact_mod._default_call_config()
+
+    assert result is not None
+    assert result["auth_token"] == "tok_via_keyring"
+
+
+def test_default_call_config_returns_none_when_twilio_genuinely_unconfigured(monkeypatch) -> None:
+    """A real config shape with Twilio present but not filled in (no phone
+    number, no secret) must still degrade to ``None`` — the honest no-op case
+    is preserved, not just "any config object is truthy"."""
+    import jarvis.core.config as real_cfg
+
+    fake_config = _FakeJarvisConfig()
+    fake_config.integrations.twilio.phone_number = ""
+    monkeypatch.setattr(real_cfg, "load_config", lambda: fake_config)
+    monkeypatch.setattr(real_cfg, "get_secret", lambda key, env_fallback=None: None)
+
+    assert call_contact_mod._default_call_config() is None
