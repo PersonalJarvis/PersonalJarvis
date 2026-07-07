@@ -228,6 +228,48 @@ def test_execute_rejects_unknown_rubric_id(tmp_path: Path) -> None:
     assert "rubric" in result.error.lower()
 
 
+def test_execute_degrades_honestly_when_no_worker_harness_registered(
+    tmp_path: Path,
+) -> None:
+    """AP-23 wave-2 finding 5 (tool level, no mocks): the real production
+    construction path — ``DispatchWithReviewTool(runs_root=..., ...)`` with
+    no injected `pipeline`/`harness_manager`, exactly the ``cls()``
+    fall-through in ``jarvis/brain/factory.py`` — must NOT raise a raw
+    ``KeyError`` and must NOT leak the dead internal ``openclaw`` harness
+    name. Every install today (this one included — see
+    ``pyproject.toml``'s ``[project.entry-points."jarvis.harness"]``) has
+    neither ``jarvis_agent`` nor ``openclaw`` registered (Welle-4 removed
+    the old subprocess bridge), so this exercises the real spawn path.
+    """
+    from jarvis.harness.manager import HarnessManager
+
+    real_manager = HarnessManager()
+    assert not ({"jarvis_agent", "openclaw"} & set(real_manager.available())), (
+        "test assumption violated: a worker harness is now registered — "
+        "update this test to match the new install-wide reality"
+    )
+
+    tool = DispatchWithReviewTool(
+        harness_manager=real_manager,
+        runs_root=tmp_path / "runs",
+        audit_log_path=tmp_path / "review.log",
+    )
+
+    result = asyncio.run(
+        tool.execute(
+            {"task": "write a python script that prints hello world"},
+            _make_ctx(),
+        )
+    )
+
+    assert result.success is False
+    assert result.error is not None
+    assert "openclaw" not in result.error.lower()
+    assert "KeyError" not in result.error
+    assert "harness" in result.error.lower()
+    assert "unavailable" in result.error.lower()
+
+
 def test_execute_handles_pipeline_exception(tmp_path: Path) -> None:
     """Pipeline crash becomes ToolResult.success=False, NOT propagated."""
     audit = ReviewAudit(path=tmp_path / "review.log")
