@@ -78,7 +78,9 @@ class ObsidianRegisterResponse(BaseModel):
     can drive its toast / banner from one place. ``active_vault_root`` and
     ``restart_required`` (spec A6) are populated for both ``mode``s so the
     UI always has a stable field to show, regardless of which vault choice
-    the user made.
+    the user made. ``active_vault_root`` is only guaranteed on the HTTP 200
+    responses returned here; the HTTP 409/500 error branches raise an
+    ``HTTPException`` whose detail payload does not carry it.
     """
 
     status: Literal["added", "already_registered", "config_missing", "rolled_back"]
@@ -274,8 +276,13 @@ def obsidian_register(
     req = body or ObsidianRegisterRequest()
 
     if req.mode == "existing":
-        target_vault = Path(req.existing_vault_path or "")
-        if not target_vault.is_dir():
+        # Fail closed: an omitted/empty path must be rejected, never coerced
+        # to ``Path("")`` -> ``Path(".")`` (the server's own CWD, which IS a
+        # directory) — that would silently repoint the vault into the working
+        # directory instead of surfacing the user-input error.
+        raw_path = (req.existing_vault_path or "").strip()
+        target_vault = Path(raw_path) if raw_path else None
+        if target_vault is None or not target_vault.is_dir():
             return ObsidianRegisterResponse(
                 status="config_missing",
                 error="existing vault path not found",
@@ -283,10 +290,13 @@ def obsidian_register(
                 restart_required=False,
             )
         jarvis_root = target_vault / "Jarvis"
-        jarvis_root.mkdir(parents=True, exist_ok=True)
-        _write_vault_root_config(
-            {"wiki_integration": {"vault_root": str(jarvis_root)}}
-        )
+        # ``dry_run`` previews the would-be vault root without touching disk
+        # or config — same contract the ``separate`` branch gives the flag.
+        if not dry_run:
+            jarvis_root.mkdir(parents=True, exist_ok=True)
+            _write_vault_root_config(
+                {"wiki_integration": {"vault_root": str(jarvis_root)}}
+            )
         return ObsidianRegisterResponse(
             status="added",
             active_vault_root=str(jarvis_root),

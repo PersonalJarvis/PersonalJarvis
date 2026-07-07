@@ -77,3 +77,43 @@ def test_register_existing_mode_rejects_unknown_path(tmp_path):
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "config_missing"
+
+
+def test_register_existing_mode_rejects_missing_path(tmp_path, monkeypatch):
+    """Omitted path must fail closed, never default to Path('.') == server CWD."""
+    monkeypatch.chdir(tmp_path)  # so an accidental Path(".") hit is observable
+    app = _app(tmp_path, {"vaults": {}})
+
+    written: dict = {}
+    monkeypatch.setattr(setup_routes, "_write_vault_root_config", written.update)
+    resp = TestClient(app).post(
+        "/api/setup/obsidian/register",
+        json={"mode": "existing"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "config_missing"
+    assert not (tmp_path / "Jarvis").exists()  # no folder in the server CWD
+    assert not written                          # config was never touched
+
+
+def test_register_existing_mode_dry_run_previews_without_side_effects(
+    tmp_path, monkeypatch,
+):
+    """?dry_run=true previews the would-be vault root: no mkdir, no config write."""
+    user_vault = tmp_path / "MyVault"
+    user_vault.mkdir()
+    app = _app(tmp_path, {"vaults": {"abc123": {"path": str(user_vault)}}})
+
+    written: dict = {}
+    monkeypatch.setattr(setup_routes, "_write_vault_root_config", written.update)
+    resp = TestClient(app).post(
+        "/api/setup/obsidian/register?dry_run=true",
+        json={"mode": "existing", "existing_vault_path": str(user_vault)},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "added"
+    assert body["active_vault_root"] == str(user_vault / "Jarvis")
+    assert body["restart_required"] is True
+    assert not (user_vault / "Jarvis").exists()  # nothing created
+    assert not written                            # nothing persisted
