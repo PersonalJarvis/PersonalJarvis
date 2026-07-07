@@ -376,3 +376,70 @@ async def test_seed_dir_exists() -> None:
     assert SEED_YAML_DIR.exists()
     yamls = list(SEED_YAML_DIR.glob("*.yaml"))
     assert len(yamls) >= 3
+
+
+# ---------------------------------------------------------------------
+# Seed security: demo webhook must not ship enabled with a known token
+# (AP-23 wave-2 audit, finding 4).
+# ---------------------------------------------------------------------
+
+_DEMO_WEBHOOK_TOKEN = "demo_token_change_me_in_production_1234"
+
+
+async def test_webhook_demo_seed_ships_disabled() -> None:
+    """A demo job on a shell-exec webhook path must not ship live."""
+    from conductor.core.seed import load_job_from_yaml
+    job = await load_job_from_yaml(SEED_YAML_DIR / "webhook_demo.yaml")
+    assert job.enabled is False
+
+
+async def test_load_job_from_yaml_regenerates_known_demo_webhook_token() -> None:
+    """The shipped, publicly-known demo token must never survive loading,
+    even though it is 38 characters and would pass the min_length=16
+    guard as-is."""
+    from conductor.core.seed import load_job_from_yaml
+    job = await load_job_from_yaml(SEED_YAML_DIR / "webhook_demo.yaml")
+    assert job.schedule.type == "webhook"
+    assert job.schedule.token != _DEMO_WEBHOOK_TOKEN
+    assert len(job.schedule.token) >= 16
+
+
+async def test_load_job_from_yaml_generates_a_fresh_token_every_call() -> None:
+    """Each load must mint a new random token, not one cached/fixed value —
+    proving the fix truly regenerates rather than swapping in a second
+    hardcoded constant."""
+    from conductor.core.seed import load_job_from_yaml
+    job_a = await load_job_from_yaml(SEED_YAML_DIR / "webhook_demo.yaml")
+    job_b = await load_job_from_yaml(SEED_YAML_DIR / "webhook_demo.yaml")
+    assert job_a.schedule.token != job_b.schedule.token
+
+
+async def test_ensure_seed_jobs_never_persists_known_demo_webhook_token(
+    store: ConductorStore,
+) -> None:
+    """End-to-end: a fresh boot's seeding must not leave the shipped
+    literal in the store, and the demo job must be disabled."""
+    await ensure_seed_jobs(store)
+    rows = await store.list_jobs()
+    hook_row = next(r for r in rows if r["name"] == "Webhook-Ping")
+    assert hook_row["webhook_token"] != _DEMO_WEBHOOK_TOKEN
+    assert hook_row["webhook_token"] is not None
+    assert len(hook_row["webhook_token"]) >= 16
+    assert not hook_row["enabled"]
+
+
+async def test_ensure_seed_jobs_regenerates_token_after_forced_reseed(
+    store: ConductorStore,
+) -> None:
+    """Forced re-seed (e.g. after the demo job was deleted) must not
+    recreate it with the shipped literal token either."""
+    await ensure_seed_jobs(store)
+    rows = await store.list_jobs()
+    hook_row = next(r for r in rows if r["name"] == "Webhook-Ping")
+    await store.delete_job(hook_row["id"])
+
+    await ensure_seed_jobs(store, force=True)
+
+    rows = await store.list_jobs()
+    hook_row_2 = next(r for r in rows if r["name"] == "Webhook-Ping")
+    assert hook_row_2["webhook_token"] != _DEMO_WEBHOOK_TOKEN

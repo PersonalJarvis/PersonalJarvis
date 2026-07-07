@@ -5,9 +5,11 @@ name: Webhook-Ping
 description: >
   Example of an externally-triggered job. Call the webhook URL from
   wherever (GitHub Action, Zapier, Shortcuts.app, curl) — this
-  job fires once. The token is set to the one stored here during
-  seeding; regenerate it for production.
-enabled: true
+  job fires once. Ships disabled: enable it explicitly once you have
+  reviewed the shell step. The token below is a placeholder only —
+  the seed loader always replaces it with a fresh random one, so the
+  literal here is never the one actually stored.
+enabled: false
 tags: [demo, webhook]
 spec:
   type: shell

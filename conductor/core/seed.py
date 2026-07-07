@@ -15,7 +15,7 @@ from typing import Any
 
 import yaml
 
-from .schema import Job
+from .schema import Job, regenerate_weak_webhook_token
 from .store import ConductorStore
 
 log = logging.getLogger(__name__)
@@ -24,9 +24,15 @@ SEED_YAML_DIR = Path(__file__).resolve().parent.parent / "seed"
 
 
 async def load_job_from_yaml(yaml_path: Path) -> Job:
-    """Parses a YAML file into a validated ``Job`` model."""
+    """Parses a YAML file into a validated ``Job`` model.
+
+    Any webhook token equal to a known, publicly-shipped placeholder (or
+    otherwise too short) is force-regenerated — a seed YAML is checked
+    into a public repo, so its committed token is never a secret.
+    """
     data: dict[str, Any] = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
-    return Job.model_validate(data)
+    job = Job.model_validate(data)
+    return regenerate_weak_webhook_token(job)
 
 
 async def ensure_seed_jobs(
