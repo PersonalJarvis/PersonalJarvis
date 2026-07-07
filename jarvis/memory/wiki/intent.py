@@ -1,0 +1,105 @@
+"""Deterministic wiki-write intent matcher (spec A1).
+
+Explicit "write this to the wiki" commands must never depend on the
+router LLM choosing the ``wiki-ingest`` tool — the weak free default
+model on fresh installs almost never does (forensics Bug 12/18). This
+matcher runs on the final user transcript in the brain's fast-path
+pre-pass (same philosophy as ``jarvis/brain/local_action_gate.py``) and
+fires the ingest pipeline model-independently.
+
+Pure regex — no LLM, no IO (AP-9/AP-11). The de/en/es tokens are
+speech-recognition input vocabulary (closed-list category 3).
+Precision over recall: a false positive writes noise to the vault, a
+false negative falls back to the (possibly capable) LLM tool path — so
+every pattern REQUIRES an explicit wiki object.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+
+_UMLAUTS = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})  # i18n-allow: transliteration table
+
+# Write verbs (normalized, de/en/es).  # i18n-allow: input vocabulary
+_VERBS = (
+    r"(?:schreib(?:e|st)?|notier(?:e)?|speicher(?:e)?|merk(?:e)?\s+dir|"
+    r"trag(?:e)?\s+.{0,20}?ein|halte?\s+.{0,30}?fest|"
+    r"write|save|note|add|store|put|record|"
+    r"escribe|guarda|anota|apunta|agrega)"
+)
+
+# Explicit wiki object (normalized, de/en/es).  # i18n-allow: input vocabulary
+_WIKI_OBJ = (
+    r"(?:(?:ins|in\s+das|im|in\s+mein(?:em)?|zum)\s+wiki"  # i18n-allow: input vocabulary
+    r"|(?:to|in|into)\s+(?:the\s+|my\s+)?wiki"
+    r"|(?:en|al)\s+(?:la\s+|el\s+|mi\s+)?wiki)"
+)
+
+_PREFIX = r"^(?:hey\s+)?(?:jarvis[,\s]+)?"
+
+# Question openers that mean recall/general questions, never a write command.
+_QUESTION_RE = re.compile(
+    r"^(?:was|wer|wie|wo|wann|warum|what|who|how|where|when|why|que|qu|quien|"
+    r"como|donde|cuando)\b",
+)
+
+# Anaphoric objects: the command refers to prior conversation content.
+_ANAPHORA = frozenset({
+    "das", "es", "dies", "diese", "dieses", "den", "die",   # i18n-allow
+    "that", "this", "it", "them",
+    "eso", "esto", "lo", "la",                              # i18n-allow
+})
+
+_COMMAND_RE = re.compile(
+    _PREFIX
+    + _VERBS
+    + r"\s+(?P<pre>.*?)\s*"
+    + _WIKI_OBJ
+    + r"\s*[:,]?\s*(?P<post>.*?)\s*[?.!]*$",
+    re.IGNORECASE,
+)
+
+_FILLER_RE = re.compile(
+    r"^(?:bitte|mal|doch|kurz|please|por\s+favor|que|dass|,)+\s*"  # i18n-allow
+)
+
+
+@dataclass(frozen=True, slots=True)
+class WikiIntentMatch:
+    #: Inline content to ingest; ``None`` = anaphoric — the caller supplies
+    #: the last conversation exchange as the source.
+    content: str | None
+    #: The full matched utterance (normalized) for logging.
+    matched: str
+
+
+def _normalize(text: str) -> str:
+    return text.strip().lower().translate(_UMLAUTS)
+
+
+def _strip_filler(fragment: str) -> str:
+    prev = None
+    frag = fragment.strip()
+    while prev != frag:
+        prev = frag
+        frag = _FILLER_RE.sub("", frag).strip()
+    return frag
+
+
+def match_wiki_intent(user_text: str) -> WikiIntentMatch | None:
+    """Return a match for an explicit wiki-WRITE command, else ``None``."""
+    norm = _normalize(user_text)
+    if not norm or len(norm) > 600:
+        return None
+    if _QUESTION_RE.match(norm) or norm.endswith("?"):
+        return None
+    m = _COMMAND_RE.match(norm)
+    if m is None:
+        return None
+    pre = _strip_filler(m.group("pre") or "")
+    post = _strip_filler(m.group("post") or "")
+    content = " ".join(part for part in (pre, post) if part).strip()
+    words = [w for w in re.split(r"\s+", content) if w]
+    if not words or all(w in _ANAPHORA for w in words):
+        return WikiIntentMatch(content=None, matched=norm)
+    return WikiIntentMatch(content=content, matched=norm)
