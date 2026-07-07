@@ -318,6 +318,24 @@ describe("ObsidianSetupDialog", () => {
   });
 
   describe("vault choice (spec A6)", () => {
+    it("interpolates the assistant name into the vault-choice strings (no literal {name})", () => {
+      // The vault-choice strings refer to the assistant by the `{name}`
+      // token (i18n/index.ts invariant), resolved through the same
+      // interpolation `useT()` applies to every sibling string. In tests the
+      // token resolves to the neutral default name ("Assistant"), so the
+      // rendered card must show that — never a raw "{name}" placeholder.
+      render(
+        <ObsidianSetupDialog
+          open
+          onClose={() => {}}
+          initialStatus={STATUS_NOT_REGISTERED}
+        />,
+      );
+      const separateBtn = screen.getByTestId("obsidian-setup-mode-separate");
+      expect(separateBtn.textContent).toContain("Assistant");
+      expect(separateBtn.textContent).not.toContain("{name}");
+    });
+
     it("renders both vault-choice options, 'existing' enabled once the vault list loads", async () => {
       const fetchImpl = makeVaultAwareFetch(VAULTS, {
         status: "added",

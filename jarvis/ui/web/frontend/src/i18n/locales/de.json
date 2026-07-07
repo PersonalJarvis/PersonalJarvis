@@ -1791,7 +1791,7 @@
     "did_not_work": "Hat nicht geklappt",
     "it_worked": "Hat geklappt — Fertig",
     "vault_choice_heading": "Wo soll {name} sein Wiki ablegen?",
-    "mode_separate_label": "Ein eigenes Jarvis-Vault anlegen",
+    "mode_separate_label": "Ein eigenes {name}-Vault anlegen",
     "mode_separate_hint": "Der Standard — {name} führt ein eigenes Vault, getrennt von deinen anderen Notizen.",
     "mode_existing_label": "Mein vorhandenes Vault nutzen",
     "mode_existing_hint": "{name} schreibt in einen \"Jarvis\"-Unterordner innerhalb des gewählten Vaults.",
