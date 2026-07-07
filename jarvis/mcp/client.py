@@ -16,6 +16,7 @@ import asyncio
 import logging
 import os
 import re
+import shutil
 import time
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -30,6 +31,34 @@ log = logging.getLogger(__name__)
 # Circuit-breaker defaults
 _CB_THRESHOLD = 3
 _CB_COOLDOWN_NS = 60_000_000_000  # 60 seconds
+
+# Launcher binaries covered by a concrete "install Node.js" hint — the vast
+# majority of stdio MCP servers are npm packages launched via ``npx``/``node``.
+_NODE_LAUNCHERS = frozenset({"node", "npx", "npm"})
+
+
+def _stdio_launcher_missing_message(spec_name: str, command: str) -> str:
+    """Actionable message for a stdio MCP server whose launcher binary is
+    absent from PATH (AP-23 wave-2 finding 10).
+
+    Without this, a missing ``npx``/``node`` surfaces as a raw
+    ``FileNotFoundError: [Errno 2] No such file or directory: 'npx'`` on the
+    plugin badge (caught generically at ``mcp/registry.py``'s
+    ``except Exception as e: error_msg = f"{type(e).__name__}: {e}"``). Mirrors
+    the honest launcher check already used at connect-time in
+    ``marketplace_routes._mcp_live`` (``shutil.which`` on the stdio
+    ``install`` command) so the badge and the live client agree on what
+    "missing" means and both name the actual missing binary.
+    """
+    if command in _NODE_LAUNCHERS:
+        return (
+            f"{spec_name}: install Node.js 18+ to use this plugin "
+            f"('{command}' not found on PATH)"
+        )
+    return (
+        f"{spec_name}: '{command}' not found on PATH — install it to use "
+        "this plugin"
+    )
 
 
 def _read_call_timeout_s() -> float:
@@ -95,6 +124,13 @@ class MCPClient:
         try:
             if self.spec.transport == "stdio":
                 command, args, env = self._resolve_install_command()
+                if shutil.which(command) is None:
+                    # Fail actionable, not raw: without this check
+                    # ``stdio_client`` spawns the launcher itself and a
+                    # missing binary surfaces as a bare FileNotFoundError.
+                    raise FileNotFoundError(
+                        _stdio_launcher_missing_message(self.spec.name, command)
+                    )
                 params = StdioServerParameters(
                     command=command,
                     args=args,

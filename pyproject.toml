@@ -469,6 +469,37 @@ jarvis = [
     # Node bot scripts shipped alongside their Python bridge tools (e.g. the
     # google_calendar bot). Not Python, so packages.find won't pick them up.
     "plugins/tool/*.mjs",
+    # AP-23 wave-2 finding 6: runtime data files read via `Path(__file__)` at
+    # first use, missing from wheel installs — masked today only because
+    # every dev install is editable (source tree == package tree).
+    # SQLite bootstrap schemas + versioned migrations
+    # (board/memory/missions/sessions/tasks/workflows). Every `.sql` file
+    # under the package is a runtime schema/migration, never source config,
+    # so one broad glob is safe (audited 2026-07-07: 9 files total).
+    "**/*.sql",
+    # Voice persona (brain/persona_loader.py), skill-authoring import
+    # allowlist (skills/authoring/draft_writer.py), Jarvis-Agent critic
+    # verdict JSON-schema (core/review/spawns.py).
+    "brain/JARVIS_PERSONA.md",
+    "skills/safe_imports.txt",
+    "core/review/verdict_schema.json",
+    # Seed catalogs (CLI tools / skills / marketplace plugins) — named
+    # explicitly rather than a repo-wide "**/*.json" glob, which would also
+    # sweep in jarvis/ui/web/frontend's SOURCE config (package.json,
+    # tsconfig.json, .claude/settings.local.json — never meant to ship).
+    "clis/catalog/seed_catalog.json",
+    "skills/catalog/seed_catalog.json",
+    "marketplace/seed_catalog.json",
+    # Marketplace "how to use this plugin" cards shown in the UI
+    # (marketplace/usage_cards/loader.py).
+    "marketplace/usage_cards/*.md",
+    # Wiki bootstrap templates for a new vault (memory/wiki/__init__.py's
+    # TEMPLATES_DIR + integration.py's schema.md read).
+    "memory/wiki/templates/*.md",
+    # Built-in skills: SKILL.md plus their reference/asset/script support
+    # files (e.g. skill-creator ships references/, scripts/, agents/,
+    # assets/ alongside its SKILL.md).
+    "skills/builtin/**/*",
 ]
 
 [tool.ruff]
