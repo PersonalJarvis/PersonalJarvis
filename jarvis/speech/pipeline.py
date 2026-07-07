@@ -4300,23 +4300,21 @@ class SpeechPipeline:
         (genuine other speech) suppresses, preserving the bare-"Jarvis"
         BUG-009 guard. How a WORKING STT that heard no speech (empty
         transcript / silence-hallucination boilerplate) is treated depends on
-        the engine: the pretrained hey_jarvis path degrades open (forensic
-        2026-06-28 — short real wakes often mis-transcribe to nothing), while
-        a user-trained custom_onnx hit SUPPRESSES (live forensic 2026-07-01 —
-        such models false-fire on breath/noise, so "no speech heard" is
-        evidence of a false fire, not an STT problem).
+        the engine: a user-trained custom_onnx hit SUPPRESSES (live forensic
+        2026-07-01 — such models false-fire on breath/noise, so "no speech
+        heard" is evidence of a false fire, not an STT problem), while any
+        other OWW hit keeps the historical degrade-open behaviour (forensic
+        2026-06-28 — short real wakes often mis-transcribe to nothing).
         """
         if not self._require_hey_prefix:
             return True
-        # The STT re-verification runs for the jarvis family (the hey_jarvis
-        # model also fires on bare "Jarvis" — BUG-009) AND for user-trained
-        # custom_onnx models (live forensic 2026-07-01: a few-shot model scored
-        # breath/ambient/other speech up to 1.000 — a false-positive storm;
-        # the transcript matched against the phrase's own sound-folded fuzzy
-        # matcher is the real discriminator). Only a specific PRETRAINED model
-        # (alexa/mycroft/rhasspy) is exempt via verify_prefix=False: those are
-        # their own discriminator, and the STT would mis-transcribe the foreign
-        # brand word and wrongly reject valid hits.
+        # The STT re-verification runs for user-trained custom_onnx models
+        # (live forensic 2026-07-01: a few-shot model scored breath/ambient/
+        # other speech up to 1.000 — a false-positive storm; the transcript
+        # matched against the phrase's own sound-folded fuzzy matcher is the
+        # real discriminator). Since the product ships no pretrained model
+        # (design 2026-07-07), custom_onnx plans are the only source of OWW
+        # hits; vosk_kws is exempt via verify_prefix=False (its own confirm).
         plan = getattr(self, "_wake_plan", None)
         if plan is not None and not getattr(plan, "verify_prefix", True):
             return True
@@ -4364,15 +4362,15 @@ class SpeechPipeline:
             return True
         # For a custom-model hit, a WORKING STT that heard no wake phrase —
         # an empty transcript or a known silence-hallucination boilerplate —
-        # is evidence of a false fire and must SUPPRESS. The pretrained
-        # hey_jarvis path keeps its documented degrade-open behaviour (its
-        # false fires happen on real speech, so an empty transcript there
-        # really does mean the STT failed, forensic 2026-06-28).
+        # is evidence of a false fire and must SUPPRESS. Any other OWW hit
+        # keeps the documented degrade-open behaviour (historical forensic
+        # 2026-06-28: false fires happened on real speech, so an empty
+        # transcript there really does mean the STT failed).
         #
         # Persistent verify-STT failure (Groq 429/503/timeout after retries):
-        # - hey_jarvis: degrade OPEN. Candidates are rare, so an unreachable
-        #   STT is a provider problem, not evidence about what the user said;
-        #   accepting keeps the wake alive through an outage (AP-22).
+        # - non-custom hit: degrade OPEN. Candidates are rare, so an
+        #   unreachable STT is a provider problem, not evidence about what the
+        #   user said; accepting keeps the wake alive through an outage (AP-22).
         # - custom_onnx: FAIL CLOSED (live 2026-07-02, 3 ghost activations
         #   overnight). The fire flood of a weak model eventually hits an STT
         #   timeout, and degrade-open then activates Jarvis although nobody
@@ -4399,7 +4397,7 @@ class SpeechPipeline:
         # "Vielen Dank."). Whisper emits these on silence/noise buffers.
         # - custom_onnx: the buffer held silence/noise → the model false-fired
         #   on breath/ambient → suppress (fail-closed).
-        # - hey_jarvis: forensic 2026-06-28 showed short REAL "Hey Jarvis"
+        # - non-custom hit: forensic 2026-06-28 showed short REAL wake
         #   buffers hallucinate these for ~half of all valid wakes → accept
         #   (degrade-open), else the wake "stops working" intermittently.
         # An arbitrary non-matching transcript (genuine OTHER speech) still
@@ -4422,10 +4420,10 @@ class SpeechPipeline:
         # - custom_onnx: no speech in the buffer → breath/noise false fire →
         #   suppress. This is the "fires out of nowhere" half of the
         #   2026-07-01 storm.
-        # - hey_jarvis: an empty transcription on a strong hit is far more
-        #   likely a silence-mis-transcription of a short real wake than a
-        #   spontaneous model fire → accept (degrade-open, forensic
-        #   2026-06-28 "Hey Jarvis sometimes stops working entirely").
+        # - non-custom hit: an empty transcription on a strong hit is far
+        #   more likely a silence-mis-transcription of a short real wake than
+        #   a spontaneous model fire → accept (degrade-open, forensic
+        #   2026-06-28 "the wake sometimes stops working entirely").
         if not text:
             if custom_model_hit:
                 log.info(

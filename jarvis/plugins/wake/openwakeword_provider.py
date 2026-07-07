@@ -430,7 +430,7 @@ class OpenWakeWordProvider:
                 # so a normal-volume "Hey Jarvis" reaches the score band the
                 # threshold expects (no shouting). Amplify-only + noise-floor gated.
                 norm_frame = self._gain.process(frame) if self._gain is not None else frame
-                # predict() returns a dict: {"hey_jarvis": score_float, ...}
+                # predict() returns a dict: {"<model_stem>": score_float, ...}
                 scores = await asyncio.to_thread(self._model.predict, norm_frame)
                 self._frames_seen += 1
                 frame_max = max(scores.values()) if scores else 0.0
