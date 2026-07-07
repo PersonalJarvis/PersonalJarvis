@@ -22,11 +22,15 @@ import pytest
 
 from jarvis.missions.isolation import env as env_mod
 
+# Test fixtures, not real credentials.
+_TEST_OAT = "sk-ant-oat01-test-token"  # noqa: S105 — test fixture, not a real token
+_TEST_CLASSIC_KEY = "sk-ant-api03-classic-key"  # noqa: S105 — test fixture
+
 
 def _write_credentials(
     tmp_path: Path,
     *,
-    token: str = "sk-ant-oat01-test-token",
+    token: str = _TEST_OAT,
     expires_at_ms: float | None = None,
     omit_expiry: bool = False,
 ) -> Path:
@@ -55,7 +59,7 @@ def test_valid_token_is_returned(
     )
     _pin_credentials_path(monkeypatch, creds)
     token = env_mod.read_live_claude_oauth_token(now_fn=lambda: NOW_S)
-    assert token == "sk-ant-oat01-test-token"
+    assert token == _TEST_OAT
     assert env_mod.live_claude_oauth_status(now_fn=lambda: NOW_S) == "valid"
 
 
@@ -89,7 +93,7 @@ def test_missing_expiry_field_stays_fail_open(
     creds = _write_credentials(tmp_path, omit_expiry=True)
     _pin_credentials_path(monkeypatch, creds)
     token = env_mod.read_live_claude_oauth_token(now_fn=lambda: NOW_S)
-    assert token == "sk-ant-oat01-test-token"
+    assert token == _TEST_OAT
     assert env_mod.live_claude_oauth_status(now_fn=lambda: NOW_S) == "valid"
 
 
@@ -106,7 +110,7 @@ def test_non_oat_token_reports_absent(
 ) -> None:
     """Only sk-ant-oat bearers count — anything else is not a live OAuth login."""
     creds = _write_credentials(
-        tmp_path, token="sk-ant-api03-classic-key",
+        tmp_path, token=_TEST_CLASSIC_KEY,
         expires_at_ms=(NOW_S + 3600.0) * 1000.0,
     )
     _pin_credentials_path(monkeypatch, creds)

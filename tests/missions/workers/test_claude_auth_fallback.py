@@ -19,8 +19,9 @@ This is the exact mirror of the 2026-06-08 codex incident
 """
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 import pytest
 
@@ -33,7 +34,6 @@ from jarvis.missions.workers.claude_direct_worker import (
 )
 from jarvis.missions.workers.provider_chain import _FallbackStep
 from jarvis.missions.workers.stream_consumer import ClaudeResult
-
 
 # The verbatim live failure text from missions 019f36e5 / 019f38b1.
 _LIVE_401 = "Failed to authenticate. API Error: 401 Invalid authentication credentials"
