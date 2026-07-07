@@ -210,7 +210,7 @@ desktop = [
     # (libtcl9tkdnd2.9.5.dylib) which fails to load on the standard Tcl-8.6 Python
     # ("incompatible stubs mechanism") — breaking the overlay drop on Apple
     # Silicon. 0.4.2 ships the Tcl-8 osx-arm64 binary that loads on all three OSes.
-    "tkinterdnd2==0.4.2",
+    "tkinterdnd2==0.6.2",
 ]
 # macOS accessibility / overlay extras (Wave 2, AD-14). pyobjc frameworks back
 # the macOS AX-tree UI-element-click source (Wave 2.1) and are macOS-only, so
