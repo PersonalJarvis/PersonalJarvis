@@ -185,6 +185,11 @@ FAILURE_REASON_PHRASES: Final[dict[Lang, dict[str, str]]] = {
         "empty_diff": "Es wurden keine Dateien geschrieben.",  # i18n-allow
         "critic_unavailable": "Der Prüfer ist abgestürzt, die Arbeit liegt im Worktree.",  # i18n-allow
         "worktree_setup_failed": "Ich konnte keinen Arbeitsbereich anlegen.",  # i18n-allow
+        "git_missing": "Jarvis-Agents brauchen eine Git-Installation im PATH.",  # i18n-allow
+        "git_not_a_repository": (
+            "Jarvis-Agents brauchen einen Git-Checkout, bitte über den "  # i18n-allow
+            "Git-Installer installieren, nicht als ZIP."  # i18n-allow
+        ),
     },
     "en": {
         "critic_loop_exhausted": "Three attempts were not enough.",
@@ -200,6 +205,11 @@ FAILURE_REASON_PHRASES: Final[dict[Lang, dict[str, str]]] = {
             "The reviewer crashed; the work is preserved in the worktree."
         ),
         "worktree_setup_failed": "I could not create a workspace.",
+        "git_missing": "Jarvis-Agents require git to be installed and on PATH.",
+        "git_not_a_repository": (
+            "Jarvis-Agents require a git checkout (install via the "
+            "git-based installer, not a ZIP download)."
+        ),
     },
 }
 

@@ -245,6 +245,38 @@ def _classify_worker_error(err: str, *, timed_out: bool = False) -> str | None:
         return "provider_unreachable"
     return None
 
+
+def _classify_worktree_setup_failure(exc: BaseException) -> str:
+    """Map a ``WorktreeManager.create()`` failure to an actionable reason code.
+
+    AP-23 wave-2 audit finding 1: a fresh, ZIP-downloaded, or PATH-broken
+    install used to make ``create()`` raise a raw ``FileNotFoundError`` (git
+    binary missing) that escaped the task loop entirely — every mission,
+    even a pure in-process API-worker task, crashed with no user-visible
+    reason because every task is wrapped in a worktree first. Distinguishes:
+
+    - ``git_missing``: no git executable on PATH at all
+      (``FileNotFoundError``/``OSError`` from the subprocess spawn itself).
+    - ``git_not_a_repository``: git IS present but ``repo_root`` has no
+      ``.git`` (the "Download ZIP" install facet) — ``git worktree add``
+      exits 128 with a "not a git repository" stderr.
+    - ``worktree_setup_failed``: the pre-existing generic fallback for
+      everything else (200-char path-length cap ``ValueError``, an
+      index-lock ``CalledProcessError``, etc.) — unchanged behaviour.
+
+    Pure + offline; never raises. Any exception type not explicitly handled
+    above falls through to the generic fallback so this is always safe to
+    call from an except clause.
+    """
+    if isinstance(exc, FileNotFoundError):
+        return "git_missing"
+    if isinstance(exc, subprocess.CalledProcessError):
+        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+        if exc.returncode == 128 and "not a git repository" in stderr.lower():
+            return "git_not_a_repository"
+    return "worktree_setup_failed"
+
+
 # Mission-level wall-clock safety net. Bounds TOTAL execution time across all
 # critic iterations + the critic subprocess + decomposition — the per-iteration
 # worker cap does not. Measured AFTER the concurrency semaphore is acquired
@@ -681,6 +713,10 @@ class TaskOutcome:
     # distinct outcome lets the failure-reason mapper surface
     # `worktree_setup_failed` ("Could not create a workspace.") so the
     # user hears an actionable cause instead of "The worker was aborted."
+    # AP-23 wave-2 finding 1 (2026-07-07): the same outcome now also covers
+    # a missing git binary and a ZIP/no-.git install — see
+    # `_classify_worktree_setup_failure` and `_setup_failure_reason`, which
+    # refine the surfaced reason to `git_missing` / `git_not_a_repository`.
     SETUP_FAILED = "setup_failed"
     # Live deep-dive 2026-06-07 (mission 019ea1da): a Computer-Use mission whose
     # final iteration hit the 630s wall-clock cap returned the generic ERROR,
@@ -769,6 +805,15 @@ class Kontrollierer:
         # Popped on BOTH terminal paths (fail + approve) so a retried-then-
         # approved mission never leaks a stale context into a later run.
         self._mission_failure_context: dict[str, dict[str, str | None]] = {}
+        # Per-mission classified worktree-setup-failure reason (AP-23 wave-2
+        # finding 1) — written by the except clause in
+        # `_run_task_with_critic_loop` when `WorktreeManager.create()` raises,
+        # consumed once (popped) by the `SETUP_FAILED` aggregation branch in
+        # `run_mission` so the terminal reason names the real cause
+        # ("git_missing" / "git_not_a_repository") instead of the generic
+        # "worktree_setup_failed" fallback. Last write wins, same convention
+        # as `_mission_failure_context`.
+        self._setup_failure_reason: dict[str, str] = {}
         # Per-mission worker answers for read-only/informational tasks (empty
         # diff + tool evidence). Surfaced as MissionApproved.summary_de so the
         # voice readback speaks the actual answer instead of "Mission
@@ -1017,10 +1062,17 @@ class Kontrollierer:
                 mission_id, "critic_loop_exhausted", partial_artifacts=partial
             )
         elif TaskOutcome.SETUP_FAILED in task_outcomes:
-            # Worktree-create failure (path cap / git index lock) — surface an
-            # actionable cause instead of the generic "worker aborted" (#8).
+            # Worktree-create failure (path cap / git index lock / missing git
+            # binary / no .git repo) — surface an actionable cause instead of
+            # the generic "worker aborted" (#8). AP-23 wave-2 finding 1: the
+            # classified reason (git_missing / git_not_a_repository) set by
+            # `_run_task_with_critic_loop`'s except clause takes priority over
+            # the pre-existing generic fallback.
+            setup_reason = self.__dict__.get("_setup_failure_reason", {}).pop(
+                mission_id, "worktree_setup_failed"
+            )
             await self._fail_mission(
-                mission_id, "worktree_setup_failed", partial_artifacts=partial
+                mission_id, setup_reason, partial_artifacts=partial
             )
         elif TaskOutcome.TIMED_OUT in task_outcomes:
             # Final-attempt wall-clock timeout — honest "timeout" reason instead
@@ -1077,8 +1129,19 @@ class Kontrollierer:
                     task_id=step.task_id,
                     needs_repo=step.needs_repo,
                 )
-            except (subprocess.CalledProcessError, ValueError) as exc:
+            except (subprocess.CalledProcessError, ValueError, OSError) as exc:
+                # OSError added (AP-23 wave-2 finding 1): a missing git binary
+                # raises FileNotFoundError (an OSError subclass), which used
+                # to escape uncaught here and crash every mission — even a
+                # pure in-process API-worker task, since every task is
+                # wrapped in a worktree first. Classify the cause so the
+                # aggregation branch in ``run_mission`` can surface an
+                # actionable reason instead of the generic
+                # "worktree_setup_failed" for every facet.
                 logger.exception("Task %s: worktree-create failed: %s", step.task_id, exc)
+                self.__dict__.setdefault("_setup_failure_reason", {})[mission_id] = (
+                    _classify_worktree_setup_failure(exc)
+                )
                 return TaskOutcome.SETUP_FAILED
 
             # BUG-021 fix: materialise AGENTS.md contract into the worktree so

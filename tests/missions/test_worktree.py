@@ -311,6 +311,62 @@ def test_create_raises_when_path_too_long(tmp_git_repo: Path, tmp_path: Path) ->
         mgr.create(mission_slug="m", task_id="01")
 
 
+# --- AP-23 wave-2 audit finding 1: missing git binary propagates honestly ----
+
+
+def test_create_propagates_filenotfounderror_when_git_missing(
+    manager: WorktreeManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing git executable must not be swallowed at this layer.
+
+    `WorktreeManager.create()` is the choke point the orchestrator's task
+    loop wraps in a try/except (`_classify_worktree_setup_failure`) to turn
+    a missing git binary into an honest SETUP_FAILED reason. That only works
+    if `create()` itself lets `FileNotFoundError` propagate unmodified —
+    this guards against a future change accidentally catching and hiding it
+    here instead.
+    """
+    def fake_run_git(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        raise FileNotFoundError(2, "The system cannot find the file specified", "git")
+
+    monkeypatch.setattr(manager, "_run_git", fake_run_git)
+
+    with pytest.raises(FileNotFoundError):
+        manager.create(mission_slug="m", task_id="01-nogit")
+
+
+# --- AP-23 wave-2 audit finding 7: _run_git UTF-8 decoding parity ------------
+
+
+def test_run_git_uses_utf8_encoding_with_replace_errors(
+    manager: WorktreeManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_run_git` must decode subprocess output the same way its sibling
+    `_run_git_in` already does. Before this fix, `_run_git` omitted
+    `encoding="utf-8", errors="replace"` entirely (relying on the platform
+    default, cp1252 on Windows) — a non-cp1252 branch/file name in git's
+    stdout/stderr raised `UnicodeDecodeError` instead of being decoded (with
+    replacement chars in the worst case)."""
+    captured: dict[str, object] = {}
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(args[0], 0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "jarvis.missions.isolation.worktree.subprocess.run", fake_run
+    )
+
+    manager._run_git(["git", "status"])
+
+    assert captured.get("encoding") == "utf-8", (
+        f"expected encoding='utf-8', got kwargs={captured!r}"
+    )
+    assert captured.get("errors") == "replace", (
+        f"expected errors='replace', got kwargs={captured!r}"
+    )
+
+
 # --- remove() ----------------------------------------------------------------
 
 

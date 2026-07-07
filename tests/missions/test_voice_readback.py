@@ -96,6 +96,34 @@ def test_render_failed_maps_worktree_setup_failed() -> None:
     assert "Arbeitsbereich" in out, f"expected actionable cause, got {out!r}"
 
 
+def test_render_failed_maps_git_missing_to_actionable_phrase() -> None:
+    """AP-23 wave-2 audit finding 1: a missing git binary must speak an
+    actionable cause, not the generic worktree_setup_failed phrase."""
+    rb = MissionReadback()
+    out_de = rb.render_failed(reason="git_missing", language="de")
+    assert "git_missing" not in out_de
+    assert "Git" in out_de, f"expected actionable git cause, got {out_de!r}"
+
+    out_en = rb.render_failed(reason="git_missing", language="en")
+    assert "git_missing" not in out_en
+    assert "git" in out_en.lower() and "path" in out_en.lower(), (
+        f"expected actionable git cause, got {out_en!r}"
+    )
+
+
+def test_render_failed_maps_git_not_a_repository_to_zip_install_phrase() -> None:
+    """Facet of finding 1: the ZIP/no-.git install must be distinguished
+    from a missing git binary with its own actionable phrase."""
+    rb = MissionReadback()
+    out_de = rb.render_failed(reason="git_not_a_repository", language="de")
+    assert "git_not_a_repository" not in out_de
+    assert "Git" in out_de, f"expected actionable git cause, got {out_de!r}"
+
+    out_en = rb.render_failed(reason="git_not_a_repository", language="en")
+    assert "git_not_a_repository" not in out_en
+    assert "zip" in out_en.lower(), f"expected the ZIP-install hint, got {out_en!r}"
+
+
 def test_render_failed_maps_attempts_timed_out_to_honest_timeout_phrase() -> None:
     """Live deep-dive 2026-06-07 (mission 019ea1da): a Computer-Use mission
     whose final iteration hit the 630s wall-clock cap was failed with the

@@ -668,6 +668,13 @@ class WorktreeManager:
         On ``CalledProcessError`` the stderr/stdout from git are logged
         before re-raising so the underlying reason (path-length, lock,
         existing branch, …) is visible in ``data/jarvis_desktop.log``.
+
+        Raises ``FileNotFoundError``/``OSError`` unmodified when the ``git``
+        executable itself is missing from PATH — the caller (currently
+        ``WorktreeManager.create()`` -> the orchestrator's task loop) is
+        responsible for turning that into an honest, actionable failure
+        (AP-23 wave-2 finding 1); this helper only shapes and logs the
+        command, it never swallows an exception.
         """
         if cmd and cmd[0] == "git":
             patched = ["git", "-c", "core.longpaths=true", *cmd[1:]]
@@ -680,6 +687,8 @@ class WorktreeManager:
                 check=True,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 creationflags=NO_WINDOW_CREATIONFLAGS,
             )
         except subprocess.CalledProcessError as exc:
