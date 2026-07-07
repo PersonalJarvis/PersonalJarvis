@@ -3003,3 +3003,58 @@ or an explicitly-decided silence (AD-OE6). When adding a new finish_reason or
 guard interaction, trace where the empty turn lands in
 `_handle_silent_brain_turn` — the default branch is SILENT by design, so a
 new "empty but worked" shape needs its own honest phrase.
+
+## BUG-042: Every mission fails — usage-capped codex re-picked forever, fallback hardcoded to a dead Claude (HIGH, 2026-07-07)
+
+**Symptom.** Every Jarvis-Agent mission ends ERROR after ~80–95 s with zero
+files saved (Outputs view full of red ERROR badges). jarvis_desktop.log
+15:50–15:52, mission_019f3cd8-1dd4: three identical iterations of
+`CodexDirectWorker … codex usage/rate limit hit ("You've hit your usage
+limit … try again at Jul 31st") — falling back to the Claude Max OAuth
+worker` followed by `ClaudeDirectWorker … claude auth is dead ('Not logged
+in · Please run /login')`.
+
+**Forensics.** Two provider outages stacked: the codex ChatGPT plan was
+usage-capped until its billing reset (while `codex status` still reported
+`connected=True` — a login probe, not a quota probe), AND the Claude Max
+OAuth login was dead (nothing refreshes `~/.claude` on this host). A healthy
+OpenRouter key was configured the whole time — the Brain chatted over it
+happily — but no mission ever reached it.
+
+**Root cause — two AP-22 violations in the worker chain.**
+1. *No memory of the codex cap.* `claude_quota_state` existed for the Claude
+   direction, but a usage-capped codex was deliberately NOT flagged ("the
+   next mission retries codex automatically"), so
+   `_cross_family_last_resort_worker` re-picked codex on every mission AND
+   every retry iteration — each spawn burning ~28 s to re-prove the cap.
+2. *Hardcoded cross-worker fallback.* `CodexDirectWorker`'s cap/auth fallback
+   spawned `ClaudeDirectWorker` unconditionally — a fallback chain built from
+   a provider NAME, not from viability. With Claude auth dead, that nested
+   spawn was a guaranteed "Not logged in" terminal error; the orchestrator's
+   per-iteration factory re-consult never got a chance to cross families
+   because the factory's picks (codex first) never changed.
+
+**Fix.** `jarvis/codex_quota_state.py` (new, mirror of
+`claude_quota_state`): a time-based, self-expiring cooldown armed by a
+usage-capped codex worker and cleared by a codex success.
+`CodexDirectWorker` arms it and gates its nested Claude fallback on
+`_claude_cli_auth_viable()` — when Claude cannot authenticate it surfaces the
+honest cap error instead (transient ⇒ the orchestrator retries and the
+factory, seeing the cooldown, crosses to the user's API-key family).
+`init.py` (`_cross_family_last_resort_worker`, `reachable_worker_families`,
+the proactive claude-cooldown→codex route) and `ClaudeDirectWorker`'s two
+claude→codex fallbacks all skip codex while the cooldown is armed.
+
+**Guards.** `tests/missions/workers/test_codex_quota_state.py`;
+`tests/missions/workers/test_codex_auth_fallback.py` (cap arms cooldown +
+falls back only to a VIABLE Claude; dead Claude ⇒ one spawn, honest error;
+success clears cooldown); `tests/missions/test_worker_cross_family_fallback.py::
+test_usage_capped_codex_crosses_to_api_key`;
+`tests/missions/test_reachable_worker_families.py::test_usage_capped_codex_is_not_listed`.
+
+**Class rule.** "Connected" is not "can run": a subscription CLI's status
+probe checks the LOGIN, never the QUOTA. Any worker that can hit a
+usage/rate cap needs a process-local, self-expiring cooldown its factory
+consults (mirror pair: `claude_quota_state` / `codex_quota_state`), and a
+cross-WORKER fallback must probe the target's viability before spawning it —
+never jump to a provider by name (AP-22).
