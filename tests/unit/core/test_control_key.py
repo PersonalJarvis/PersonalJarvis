@@ -112,3 +112,63 @@ def test_env_seed_used_when_no_keyring_no_file(isolated, monkeypatch) -> None:
     # ensure must NOT overwrite an operator-provided env seed
     assert ck.ensure_control_key() == "jctl_envseed0000"
     assert ck.KEYRING_SLOT not in isolated
+
+
+# --- shipped docker-compose.yml placeholder must never be accepted as real ---
+
+
+def test_shipped_placeholder_constant_matches_docker_compose() -> None:
+    # docker-compose.yml ships this exact literal; keep both in lockstep.
+    assert ck.SHIPPED_PLACEHOLDER_KEY == "jctl_local_sandbox_change_me_before_any_real_use"
+
+
+def test_get_treats_placeholder_env_seed_as_unset(isolated, monkeypatch) -> None:
+    monkeypatch.setenv("JARVIS_CONTROL_API_KEY", ck.SHIPPED_PLACEHOLDER_KEY)
+    assert ck.get_control_key() is None
+
+
+def test_get_treats_placeholder_keyring_value_as_unset(isolated) -> None:
+    isolated[ck.KEYRING_SLOT] = ck.SHIPPED_PLACEHOLDER_KEY
+    assert ck.get_control_key() is None
+
+
+def test_get_treats_placeholder_file_value_as_unset(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(cfg, "set_secret", lambda *a, **k: False)
+    monkeypatch.setattr(cfg, "get_secret", lambda *a, **k: None)
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("JARVIS_CONTROL_API_KEY", raising=False)
+    ck.control_key_file().parent.mkdir(parents=True, exist_ok=True)
+    ck.control_key_file().write_text(ck.SHIPPED_PLACEHOLDER_KEY, encoding="utf-8")
+
+    assert ck.get_control_key() is None
+
+
+def test_verify_rejects_the_placeholder_itself(isolated, monkeypatch) -> None:
+    monkeypatch.setenv("JARVIS_CONTROL_API_KEY", ck.SHIPPED_PLACEHOLDER_KEY)
+    # Presenting the exact placeholder must be denied — same as "no key configured".
+    assert ck.verify_control_key(ck.SHIPPED_PLACEHOLDER_KEY) is False
+
+
+def test_ensure_regenerates_a_real_key_when_placeholder_configured(isolated, monkeypatch) -> None:
+    monkeypatch.setenv("JARVIS_CONTROL_API_KEY", ck.SHIPPED_PLACEHOLDER_KEY)
+    fresh = ck.ensure_control_key()
+    assert fresh != ck.SHIPPED_PLACEHOLDER_KEY
+    assert fresh.startswith("jctl_")
+    # The freshly generated key is now the active one (stored, not the env seed).
+    assert ck.get_control_key() == fresh
+    assert isolated.get(ck.KEYRING_SLOT) == fresh
+
+
+def test_get_logs_a_warning_naming_the_remedy(isolated, monkeypatch, caplog) -> None:
+    # The warning is deliberately logged only once per process (get_control_key
+    # is on the hot request path); reset that latch so this test is independent
+    # of whatever ran earlier in the same session.
+    monkeypatch.setattr(ck, "_warned_shipped_placeholder", False)
+    monkeypatch.setenv("JARVIS_CONTROL_API_KEY", ck.SHIPPED_PLACEHOLDER_KEY)
+    with caplog.at_level("WARNING", logger="jarvis.core.control_key"):
+        assert ck.get_control_key() is None
+    assert any(
+        "JARVIS_CONTROL_API_KEY" in record.getMessage()
+        and "fresh random value" in record.getMessage()
+        for record in caplog.records
+    )

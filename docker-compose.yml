@@ -16,9 +16,14 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
-      # The Control-API key authorises the non-loopback (0.0.0.0) bind. Change
-      # this — it is the only boundary protecting the control surface.
-      JARVIS_CONTROL_API_KEY: "jctl_local_sandbox_change_me_before_any_real_use"
+      # The Control-API key authorises the non-loopback (0.0.0.0) bind — it is
+      # the only boundary protecting the control surface. No default is
+      # shipped: compose refuses to start until you export a fresh random
+      # value (e.g. `export JARVIS_CONTROL_API_KEY=$(openssl rand -hex 32)`),
+      # so a copy-pasted deployment can never end up on a world-known key. The
+      # app itself also refuses the old shipped literal if it is ever set
+      # again, treating it as if no key were configured.
+      JARVIS_CONTROL_API_KEY: "${JARVIS_CONTROL_API_KEY:?set a fresh random control key}"
       # Provider keys — set your OWN keys. At least one brain provider is needed
       # for a real reply; the server still boots and serves the UI without them.
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"

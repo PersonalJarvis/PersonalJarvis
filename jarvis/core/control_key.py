@@ -20,6 +20,7 @@ dedicated key-reveal endpoint.
 """
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 import stat
@@ -27,11 +28,42 @@ from pathlib import Path
 
 from jarvis.core import config as cfg
 
+logger = logging.getLogger(__name__)
+
 KEY_PREFIX = "jctl_"
 KEYRING_SLOT = "jarvis_control_api_key"
 ENV_VAR = "JARVIS_CONTROL_API_KEY"
 _FILE_NAME = ".control_api_key"
 _TOKEN_BYTES = 32  # 256-bit
+
+# The literal value shipped as the default in docker-compose.yml. It is
+# world-known (public repo, public image) the moment it is ever used
+# unmodified, so it must never be accepted as a real key — wherever it is
+# found (keyring, file fallback, or the env seed) it is treated exactly as if
+# no key were configured at all.
+SHIPPED_PLACEHOLDER_KEY = "jctl_local_sandbox_change_me_before_any_real_use"
+
+_warned_shipped_placeholder = False
+
+
+def _warn_shipped_placeholder_once() -> None:
+    """Log a single, clear warning the first time the placeholder is seen.
+
+    ``get_control_key()`` can be called on every request (via
+    ``verify_control_key``); logging on every call would flood the log, so
+    this fires once per process.
+    """
+    global _warned_shipped_placeholder
+    if _warned_shipped_placeholder:
+        return
+    _warned_shipped_placeholder = True
+    logger.warning(
+        "Jarvis Control API key is set to the shipped placeholder value "
+        "from docker-compose.yml — refusing it and treating it as if no key "
+        "were configured. Set %s to a fresh random value before exposing the "
+        "control surface.",
+        ENV_VAR,
+    )
 
 
 def generate_control_key() -> str:
@@ -108,14 +140,36 @@ def _store(key: str) -> None:
 
 
 def get_control_key() -> str | None:
-    """The active key. Order: keyring -> 0600 file -> env seed."""
+    """The active key. Order: keyring -> 0600 file -> env seed.
+
+    The shipped ``docker-compose.yml`` placeholder (``SHIPPED_PLACEHOLDER_KEY``)
+    is never returned as a real key, no matter which layer it was found in —
+    it is treated exactly as if that layer held nothing, and resolution keeps
+    falling through the chain.
+    """
+    saw_placeholder = False
+
     value = cfg.get_secret(KEYRING_SLOT)  # keyring only (no env fallback here)
     if value:
-        return value
+        if value != SHIPPED_PLACEHOLDER_KEY:
+            return value
+        saw_placeholder = True
+
     value = _read_file_key()
     if value:
-        return value
-    return _env_key()
+        if value != SHIPPED_PLACEHOLDER_KEY:
+            return value
+        saw_placeholder = True
+
+    value = _env_key()
+    if value:
+        if value != SHIPPED_PLACEHOLDER_KEY:
+            return value
+        saw_placeholder = True
+
+    if saw_placeholder:
+        _warn_shipped_placeholder_once()
+    return None
 
 
 def ensure_control_key() -> str:
