@@ -141,19 +141,21 @@ async def test_verify_oww_hit_still_verifies_jarvis() -> None:
 # set_wake_plan — live reconfiguration (no restart)
 # --------------------------------------------------------------------------
 
-def test_set_wake_plan_live_swaps_to_pretrained_model(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_set_wake_plan_live_swaps_to_custom_model(tmp_path) -> None:
     pipe = _pipe()
-    _pretend_oww_models_exist(monkeypatch, "alexa")
-    plan = resolve_wake_plan(_cfg(phrase="Alexa"), local_whisper_available=False)
+    onnx = tmp_path / "hey_fable.onnx"
+    onnx.write_bytes(b"stub")
+    plan = resolve_wake_plan(
+        _cfg(phrase="Hey Fable", engine="custom_onnx", custom_model_path=str(onnx)),
+        local_whisper_available=False,
+    )
     pipe.set_wake_plan(plan)
 
-    assert pipe._wake._keywords == ("alexa",)
+    assert pipe._wake._keywords == (plan.oww_keyword,)
     assert pipe._wake._model_path == plan.oww_model_path
     assert pipe._wake_matcher is plan.matcher
     assert pipe._openwakeword_enabled is True
-    assert pipe._wake_phrase_label == "Alexa"
+    assert pipe._wake_phrase_label == "Hey Fable"
     assert pipe._wake_reload_event.is_set()  # running wake loop will re-arm
 
 
@@ -169,13 +171,15 @@ def test_set_wake_plan_stt_match_enables_whisper_disables_oww() -> None:
     assert pipe._wake_reload_event.is_set()
 
 
-def test_set_wake_plan_switch_back_to_jarvis_reenables_oww() -> None:
+def test_set_wake_plan_switch_between_phrases_stays_on_stt_match(tmp_path) -> None:
+    # Both phrases run the generic stt_match path now — switching phrases
+    # re-arms the whisper wake and never re-enables a bundled OWW model.
     pipe = _pipe()
     pipe.set_wake_plan(resolve_wake_plan(_cfg(phrase="Computer"), local_whisper_available=True))
     pipe._wake_reload_event.clear()
     pipe.set_wake_plan(resolve_wake_plan(_cfg(phrase="Hey Jarvis"), local_whisper_available=True))
 
-    assert pipe._openwakeword_enabled is True
-    assert pipe._wake._keywords == ("hey_jarvis",)
-    assert pipe._whisper_wake_enabled is False
+    assert pipe._openwakeword_enabled is False
+    assert pipe._whisper_wake_enabled is True
+    assert pipe._wake_phrase_label == "Hey Jarvis"
     assert pipe._wake_reload_event.is_set()
