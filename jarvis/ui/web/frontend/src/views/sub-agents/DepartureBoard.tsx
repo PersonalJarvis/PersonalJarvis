@@ -13,8 +13,11 @@ import {
 } from "lucide-react";
 
 import type { SubAgentNode, ToolCallEntry } from "@/store/jarvisAgents";
+import type { SectionHealth } from "@/hooks/useProviders";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
+import { useT } from "@/i18n";
+import { failureLabel } from "./failureLabel";
 
 const STATUS_COLOR: Record<SubAgentNode["status"], string> = {
   running: "text-primary",

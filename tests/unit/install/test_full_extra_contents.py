@@ -4,9 +4,8 @@
 Whisper wake/STT runtime; pvporcupine (dead, proprietary-keyed, branded
 built-in keywords) must be gone from the dependency surface entirely.
 """
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 _PYPROJECT = Path(__file__).resolve().parents[3] / "pyproject.toml"
 
