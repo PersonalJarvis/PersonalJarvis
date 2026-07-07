@@ -689,8 +689,9 @@ def _worker_flagged_dead(provider: str) -> bool:
             return claude_in_quota_cooldown() or not _claude_cli_auth_viable()
         if p in _CODEX_SUBAGENT_SLUGS or p in {"codex", "openai-codex"}:
             from jarvis.codex_auth_state import codex_needs_reauth
+            from jarvis.codex_quota_state import codex_in_quota_cooldown
 
-            return codex_needs_reauth()
+            return codex_needs_reauth() or codex_in_quota_cooldown()
     except Exception:  # noqa: BLE001
         return False
     return False

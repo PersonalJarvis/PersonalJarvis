@@ -113,6 +113,26 @@ class TestSubagentSectionHealth:
         assert health.reason == "degraded"
         assert "codex" in health.detail
 
+    def test_usage_capped_codex_selected_is_degraded(self, monkeypatch) -> None:
+        """BUG-042 shape: selected provider codex, ChatGPT usage cap active —
+        the tab must NOT stay green while the factory skips codex."""
+        from jarvis.ui.web import provider_routes as pr
+
+        monkeypatch.setattr(pr, "_worker_usable", lambda p: True)
+        monkeypatch.setattr(
+            "jarvis.codex_auth_state.codex_needs_reauth", lambda: False
+        )
+        monkeypatch.setattr(
+            "jarvis.codex_quota_state.codex_in_quota_cooldown",
+            lambda **_k: True,
+        )
+        monkeypatch.setattr(
+            "jarvis.missions.init.reachable_worker_families", lambda: ["openrouter"]
+        )
+        health = pr._jarvis_agent_section_health(self._cfg(provider="codex"))
+        assert health.status == sh.NEEDS_SETUP
+        assert health.reason == "degraded"
+
     def test_nothing_reachable_is_error(self, monkeypatch) -> None:
         from jarvis.ui.web import provider_routes as pr
 

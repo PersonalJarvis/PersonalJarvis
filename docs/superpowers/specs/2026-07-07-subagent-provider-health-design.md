@@ -53,7 +53,8 @@ New closed token set `MISSION_ERROR_CLASSES` (single source of truth in
 `MissionFailed` (`jarvis/missions/events.py:122`) gains two OPTIONAL fields
 (backward compatible — old stored events validate with defaults):
 
-- `error_detail: str | None` — the upstream error text, truncated (~200 chars).
+- `error_detail: str | None` — the upstream error text, truncated (300 chars,
+  the orchestrator's existing upstream-error cap).
 - `failed_provider: str | None` — provider slug of the worker that failed
   (`getattr(worker, "provider", None) or worker.cli`).
 
