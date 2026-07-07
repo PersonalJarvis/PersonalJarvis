@@ -778,33 +778,6 @@ def _build_curator(
     )
 
 
-def _fire_journal_trigger(scheduler: Any, *, task_name: str, log_context: str) -> None:
-    """Fire one background JOURNAL trigger (fire-and-forget, AP-9).
-
-    Shared by every journal-pressure site — the boot-time backlog drain
-    (:func:`kick_journal_backlog`) and the age-based flush loop
-    (:func:`_journal_age_flush_loop`) — so the actual
-    ``scheduler.trigger(...)`` call shape cannot drift between them.
-    Callers are responsible for their own preconditions (scheduler present,
-    something actually pending) before calling this.
-    """
-    from jarvis.memory.wiki.scheduler import TriggerSource
-
-    task = asyncio.create_task(
-        scheduler.trigger(TriggerSource.JOURNAL),
-        name=task_name,
-    )
-
-    def _log_outcome(t: "asyncio.Task[Any]") -> None:
-        if t.cancelled():
-            return
-        exc = t.exception()
-        if exc is not None:
-            log.warning("wiki_integration: %s failed: %s", log_context, exc)
-
-    task.add_done_callback(_log_outcome)
-
-
 def kick_journal_backlog(journal: Any, scheduler: Any) -> None:
     """Boot-time backlog drain (Wave-2 C1).
 
@@ -822,8 +795,12 @@ def kick_journal_backlog(journal: Any, scheduler: Any) -> None:
         _record_backlog_health(backlog)
         if backlog <= 0:
             return
-        _fire_journal_trigger(
-            scheduler, task_name="wiki-journal-boot-drain", log_context="boot journal drain",
+        from jarvis.memory.wiki.scheduler import fire_journal_trigger
+
+        fire_journal_trigger(
+            scheduler,
+            name="wiki-journal-boot-drain",
+            log_context="boot journal drain",
         )
         log.info(
             "wiki_integration: boot drain triggered for %d pending candidate(s)",
@@ -835,18 +812,36 @@ def kick_journal_backlog(journal: Any, scheduler: Any) -> None:
         log.warning("wiki_integration: boot journal drain skipped: %s", exc)
 
 
+def _should_age_flush(oldest_ms: int | None, now_ms: int, max_age_min: int) -> bool:
+    """Pure decision for the age-based flush (spec A4).
+
+    ``True`` only when the age flush is enabled (``max_age_min > 0``),
+    something is pending (``oldest_ms is not None``), and the oldest pending
+    candidate is at least ``max_age_min`` minutes old. Extracted from the
+    loop so the age/enable/empty logic is unit-testable without a clock.
+    """
+    if max_age_min <= 0 or oldest_ms is None:
+        return False
+    age_min = (now_ms - oldest_ms) / 60_000
+    return age_min >= max_age_min
+
+
 async def _journal_age_flush_loop(journal: Any, scheduler: Any, sched_cfg: Any) -> None:
     """Fire a JOURNAL trigger when the oldest pending candidate exceeds the
     configured age (spec A4).
 
     Below-threshold backlogs on a quiet install never cross
     ``consolidate_after_candidates`` on their own — this loop is the
-    backstop that still gets them written. Runs off the voice hot path
-    (AP-9) and was started off the boot critical path (AP-26); cancelled in
-    :meth:`WikiIntegrationHandle.shutdown` exactly like the hourly
-    telemetry loop. Never raises — a check failure is logged and the loop
-    keeps polling.
+    backstop that still gets them written, the below-threshold counterpart
+    to the extractor's count-gated trigger (both go through the shared
+    :func:`~jarvis.memory.wiki.scheduler.fire_journal_trigger`). Runs off
+    the voice hot path (AP-9) and was started off the boot critical path
+    (AP-26); cancelled in :meth:`WikiIntegrationHandle.shutdown` exactly
+    like the hourly telemetry loop. Never raises — a check failure is
+    logged and the loop keeps polling.
     """
+    from jarvis.memory.wiki.scheduler import fire_journal_trigger
+
     max_age_min = int(getattr(sched_cfg, "flush_pending_max_age_minutes", 10))
     if max_age_min <= 0:
         log.debug("wiki_integration: age-based journal flush disabled (max_age<=0)")
@@ -855,13 +850,10 @@ async def _journal_age_flush_loop(journal: Any, scheduler: Any, sched_cfg: Any) 
         await asyncio.sleep(120)
         try:
             oldest = journal.oldest_pending_ms()
-            if oldest is None:
-                continue
-            age_min = (time.time() * 1000 - oldest) / 60_000
-            if age_min >= max_age_min:
-                _fire_journal_trigger(
+            if _should_age_flush(oldest, int(time.time() * 1000), max_age_min):
+                fire_journal_trigger(
                     scheduler,
-                    task_name="wiki-journal-age-flush-trigger",
+                    name="wiki-journal-age-flush-trigger",
                     log_context="age-based journal flush",
                 )
         except Exception:  # noqa: BLE001 — never kill the loop

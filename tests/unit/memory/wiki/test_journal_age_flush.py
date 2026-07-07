@@ -65,3 +65,43 @@ def test_default_consolidation_threshold_is_three() -> None:
     cfg = SchedulerConfig()
     assert cfg.consolidate_after_candidates == 3
     assert cfg.flush_pending_max_age_minutes == 10
+
+
+# ---------------------------------------------------------------------------
+# _should_age_flush: pure age/enable/empty decision behind the flush loop
+# (spec A4). Testing it directly avoids driving the 120s-sleep loop.
+# ---------------------------------------------------------------------------
+
+_NOW_MS = 10_000_000
+
+
+def test_should_age_flush_false_when_nothing_pending() -> None:
+    from jarvis.memory.wiki.integration import _should_age_flush
+
+    assert _should_age_flush(None, _NOW_MS, 10) is False
+
+
+def test_should_age_flush_false_when_disabled() -> None:
+    from jarvis.memory.wiki.integration import _should_age_flush
+
+    # max_age_min <= 0 disables the flush even for an arbitrarily old row.
+    assert _should_age_flush(0, _NOW_MS, 0) is False
+    assert _should_age_flush(0, _NOW_MS, -5) is False
+
+
+def test_should_age_flush_false_below_threshold() -> None:
+    from jarvis.memory.wiki.integration import _should_age_flush
+
+    # 9 minutes old, threshold 10 → not yet.
+    oldest = _NOW_MS - 9 * 60_000
+    assert _should_age_flush(oldest, _NOW_MS, 10) is False
+
+
+def test_should_age_flush_true_at_and_over_threshold() -> None:
+    from jarvis.memory.wiki.integration import _should_age_flush
+
+    # Exactly 10 minutes old → fire (>=), and clearly over → fire.
+    at_threshold = _NOW_MS - 10 * 60_000
+    over_threshold = _NOW_MS - 20 * 60_000
+    assert _should_age_flush(at_threshold, _NOW_MS, 10) is True
+    assert _should_age_flush(over_threshold, _NOW_MS, 10) is True
