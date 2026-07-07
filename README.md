@@ -240,9 +240,9 @@ Inside `jarvis/`, the layout mirrors the 8-layer model above — `jarvis/brain/`
 - **Self-mod & skills** — Jarvis can adjust its own configuration safely and author new
   skills as reviewable drafts (never auto-activated).
 
-<p align="center">
-  <img src="assets/screenshots/view-wiki.png" alt="Knowledge Wiki" width="410" />
-</p>
+<!-- Wiki screenshot removed 2026-07-07: the previous capture showed a live
+     personal vault (privacy review finding). Re-add once a staged demo-vault
+     screenshot exists. -->
 
 ## Documentation
 

@@ -88,3 +88,9 @@ warn	[A-Za-z0-9._%+-]+@(?:gmail|gmx|outlook|hotmail|yahoo|protonmail|proton|web)
 # tests), kept public on purpose. Do NOT re-add a Herz scrub — it would anonymize
 # the maintainer's own chosen public project identity. (The real surname "Lütke"
 # stays scrubbed above; "Herz" is the deliberately-public brand handle.)
+# --- 2026-07-07 sub-agent privacy review: internal note-folder + community ids
+scrub	(?i)bridgemind	exampleserver	real personal Discord server name quoted in live-bug transcripts (9 files) — consistent rename keeps test fixtures self-consistent
+scrub	Unbenanntes Dokument \(\d+\)\.(?:md|pdf)	internal-research-notes.md	private German-named note-doc family (maintainer local notes)
+scrub	Jarvis\s{1,2}Long-Term Memory	internal notes	private local notes folder name
+scrub	SubAgentenSt	internal-research	private local research folder name
+scrub	Latenz/\*\.md	notes/*.md	private local notes folder (precise literal — plain "Latenz" is a common German word in prose)

@@ -92,6 +92,15 @@ boot-progress.md
 # privacy-review finding). Glob covers the "(2)" suffix and any sibling copies.
 Unbenanntes*.pdf
 *.pdf
+# Internal WSL verification scratch (2026-07-07 sub-agent privacy review):
+# carries the maintainer's personal home path + a Claude session UUID and
+# references non-shipped data/ captures. Dev scratch, no downstream value.
+.tmp_pytest/**
+# README wiki screenshot (2026-07-07 sub-agent privacy review): the capture
+# showed the maintainer's LIVE personal vault (relocation plans, finances,
+# contacts). Withheld until a staged demo-vault screenshot replaces it; the
+# README image reference was removed in the same review.
+assets/screenshots/view-wiki.png
 
 # --- Internal dev-process docs: whole subtrees ------------------------------
 docs/superpowers/**
