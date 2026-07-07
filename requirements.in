@@ -49,8 +49,9 @@ openwakeword>=0.6
 onnxruntime>=1.17
 # Any-word wake keyword spotting (vosk_kws engine, 2026-07-05): torch-free,
 # Apache-2.0, universal CPU wheels; per-language model fetched at setup, not
-# bundled. See pyproject.toml note.
-vosk>=0.3.45
+# bundled. See pyproject.toml note. CAP below 0.3.45: that release ships NO
+# macOS wheel, and the universal lock must stay installable on every OS (AP-23).
+vosk>=0.3.44,<0.3.45
 # Local VAD (silero-vad → torch), webrtcvad-wheels and the Porcupine wake engine
 # (pvporcupine) are NOT base deps: they live in the pyproject.toml [local-voice]
 # extra per the cloud-first doctrine (CLAUDE.md §3). torch must never land in the
