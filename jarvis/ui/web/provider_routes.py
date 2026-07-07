@@ -1687,36 +1687,71 @@ class TtsVoicesResponse(BaseModel):
     current: str = ""
 
 
-@router.get("/tts/voices")
-async def list_tts_voices(
-    request: Request, provider: str = _VOICE_PICKER_PROVIDER, model: str = ""
-) -> TtsVoicesResponse:
-    """Voices for a TTS model, each tagged with its spoken language.
+def _tts_voice_entries(provider: str, model: str) -> tuple[list[dict], str, str]:
+    """Voice payload for a TTS provider: ``(entries, resolved_model, default)``.
 
-    Feeds the voice picker after a model is chosen. ``language`` is an ISO-639-1
-    code or ``"multi"`` (multilingual / voice-agnostic model). Only
-    ``openrouter-tts`` exposes a per-model voice list today; any other provider
-    id is a clean 400.
+    Cross-provider (design 2026-07-07): OpenRouter exposes per-model voices
+    (filtered to the allowlisted models); every other allowed family serves its
+    curated voices from ``curated_catalog``. Raises ``HTTPException(400)`` for an
+    unknown / unsupported / non-allowlisted provider or model.
     """
-    if provider != _VOICE_PICKER_PROVIDER:
+    from jarvis.plugins.tts import _canonical_tts_name
+    from jarvis.plugins.tts import curated_catalog as cc
+
+    fam = _canonical_tts_name(provider)
+    if fam == "openrouter":
+        from jarvis.plugins.tts.openrouter_speech_models import (
+            MODEL_DEFAULT_VOICE,
+            coerce_speech_model,
+            voice_entries_for_model,
+        )
+
+        resolved = coerce_speech_model(model)
+        if not cc.is_allowed("openrouter", resolved):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model {resolved!r} is not on the TTS allowlist.",
+            )
+        entries = voice_entries_for_model(resolved)
+        default = MODEL_DEFAULT_VOICE.get(resolved, "") or (
+            entries[0]["id"] if entries else ""
+        )
+        return entries, resolved, default
+
+    models = cc.allowed_models(family=fam)
+    if not models:
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"Per-model voices are only available for '{_VOICE_PICKER_PROVIDER}' "
-                f"(got {provider!r})."
-            ),
+            detail=f"No curated TTS voices for provider {provider!r}.",
         )
-    from jarvis.plugins.tts.openrouter_speech_models import (
-        MODEL_DEFAULT_VOICE,
-        coerce_speech_model,
-        voice_entries_for_model,
-    )
+    model_id = models[0].model_id
+    voices = cc.allowed_voices(fam, model_id)
+    if voices:
+        entries = [{"id": v.id, "language": v.language} for v in voices]
+    else:
+        # A model-level provider (e.g. Cartesia): fall back to the static catalog
+        # pick list; those ids are language-agnostic voice/model handles.
+        from jarvis.brain.model_catalog import TTS_CATALOG
 
-    resolved = coerce_speech_model(model)
-    entries = voice_entries_for_model(resolved)
-    default = MODEL_DEFAULT_VOICE.get(resolved, "") or (
-        entries[0]["id"] if entries else ""
-    )
+        _sel, ms = TTS_CATALOG.get(fam, ("voice", []))
+        entries = [{"id": m.id, "language": cc.MULTILINGUAL} for m in ms]
+    default = entries[0]["id"] if entries else ""
+    return entries, model_id, default
+
+
+@router.get("/tts/voices")
+async def list_tts_voices(
+    request: Request, provider: str = "", model: str = ""
+) -> TtsVoicesResponse:
+    """Voices for a TTS provider, each tagged with its spoken language.
+
+    Feeds the voice picker. ``language`` is an ISO-639-1 code or ``"multi"``
+    (multilingual / voice-agnostic). Serves EVERY allowlisted family (Inworld,
+    Gemini, ElevenLabs, Grok, Cartesia, OpenRouter) — not OpenRouter-only. An
+    unknown / non-allowlisted provider or model is a clean 400.
+    """
+    prov = (provider or "").strip() or (_active_tts(request) or _VOICE_PICKER_PROVIDER)
+    entries, resolved, default = _tts_voice_entries(prov, model)
     # Reflect the persisted voice only when it belongs to THIS model, so the
     # picker never shows a stale voice from a previously selected model.
     cfg = _resolve_cfg(request)
@@ -1724,7 +1759,7 @@ async def list_tts_voices(
     valid_ids = {e["id"] for e in entries}
     current = persisted if persisted in valid_ids else ""
     return TtsVoicesResponse(
-        provider=provider,
+        provider=prov,
         model=resolved,
         voices=[TtsVoiceEntry(**e) for e in entries],
         default=default,
@@ -1753,8 +1788,11 @@ async def set_tts_voice_selection(
     voice = body.voice.strip()
     if not voice:
         raise HTTPException(status_code=400, detail="A voice id is required.")
+    # Persist against the ACTIVE TTS provider, not a hardcoded OpenRouter id, so
+    # picking an Inworld/Gemini/ElevenLabs voice writes it for that provider.
+    active = _active_tts(request) or _VOICE_PICKER_PROVIDER
     return _apply_tts_selection(
-        _VOICE_PICKER_PROVIDER,
+        active,
         voice,
         "voice",
         BrainModelBody(model=voice, persist=body.persist),
@@ -1779,46 +1817,43 @@ async def tts_preview(body: TtsPreviewBody) -> Response:
     sentence. Any failure (no key / 4xx / transport) is a clean 4xx/5xx JSON
     error — never a 500 that breaks the page — so the picker can show a toast.
     """
-    if body.provider != _VOICE_PICKER_PROVIDER:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Preview is only available for '{_VOICE_PICKER_PROVIDER}' "
-                f"(got {body.provider!r})."
-            ),
-        )
     lang = (body.language or _TTS_PREVIEW_DEFAULT_LANG).lower().split("-", 1)[0]
     sample = _TTS_PREVIEW_SAMPLES.get(lang, _TTS_PREVIEW_SAMPLES[_TTS_PREVIEW_DEFAULT_LANG])
 
-    from jarvis.plugins.tts.openrouter_speech_models import coerce_speech_model
-    from jarvis.plugins.tts.openrouter_tts import (
-        OPENROUTER_TTS_SAMPLE_RATE,
-        OpenRouterTTS,
-        OpenRouterTTSError,
-    )
+    from jarvis.core.config import TTSConfig
+    from jarvis.plugins.tts import _build_provider, _canonical_tts_name
 
-    model = coerce_speech_model(body.model)
+    fam = _canonical_tts_name(body.provider)
     voice = body.voice.strip() or None
-    tts = OpenRouterTTS(model=model)
+    # Build the EXACT requested family (not the key-aware cross-resolve) so the
+    # preview plays what the user picked. A missing key makes synthesize fall
+    # back / error → an honest 502 toast, never a broken page.
+    tcfg = TTSConfig(provider=fam, model=body.model or None)
+    try:
+        tts = _build_provider(tcfg, fam)
+    except Exception as exc:  # noqa: BLE001 — never 500 the page
+        raise HTTPException(
+            status_code=400, detail=f"Cannot preview {body.provider!r}: {exc}"
+        ) from exc
+
     pcm = bytearray()
+    sample_rate = 24_000
     try:
         async for chunk in tts.synthesize(sample, voice=voice, language_code=lang):
             pcm += bytes(chunk.pcm)
-    except OpenRouterTTSError as exc:
-        # No key / 401 / 402 / 429 / transport — the message is already clear
-        # English; surface it as a 502 so the picker shows an honest toast.
-        raise HTTPException(status_code=502, detail=f"Voice preview failed: {exc}") from exc
+            sample_rate = chunk.sample_rate
     except Exception as exc:  # noqa: BLE001 — never 500 the page
         raise HTTPException(
-            status_code=500,
-            detail=f"Voice preview error: {type(exc).__name__}: {exc}",
+            status_code=502, detail=f"Voice preview failed: {exc}"
         ) from exc
     finally:
-        await tts.aclose()
+        aclose = getattr(tts, "aclose", None)
+        if aclose is not None:
+            await aclose()
 
     if not pcm:
         raise HTTPException(status_code=502, detail="Voice preview produced no audio.")
-    wav = _pcm_to_wav(bytes(pcm), sample_rate=OPENROUTER_TTS_SAMPLE_RATE, channels=1)
+    wav = _pcm_to_wav(bytes(pcm), sample_rate=sample_rate, channels=1)
     return Response(
         content=wav,
         media_type="audio/wav",
