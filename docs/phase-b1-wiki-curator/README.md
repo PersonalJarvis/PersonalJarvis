@@ -17,7 +17,7 @@ user's Windows 11 machine. It is **not** a classical voice assistant
 and dispatches work to other agents. The voice layer is the interface,
 but the brain underneath is what matters.
 
-The user is **Personal Jarvis Maintainer** (Rubén). He is not a software developer. He
+The user is **Personal Jarvis Maintainer** (Alex). He is not a software developer. He
 talks to Jarvis in German with English code/identifier mixed in. He
 operates Personal Jarvis autonomously and trusts the agents he spawns to
 make sensible technical choices. He reads structured German prose; he

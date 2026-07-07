@@ -52,7 +52,7 @@ spike fails), commercial Porcupine (closed source, per-user account).
 ## Spike gate (before any pipeline change)
 
 Measure the candidate model CPU-only against the real captured fixtures in
-`data/wake_debug/` (positives: Hey Nova / Hey Nico / Hey Ruben / Hey Luca;
+`data/wake_debug/` (positives: Hey Nova / Hey Nico / Hey Alex / Hey Luca;
 negatives: bare-core, ambient speech, quiet noise, silence — the wake_bench
 fixture classes):
 
@@ -72,9 +72,9 @@ pretrained-catalog approach — decided WITH the maintainer, not silently.
 
 Neutral positives = windows an independent judge (large-v3-turbo/cuda, no
 bias, beam 5) clearly heard the phrase in; negatives = judged ambient speech
-plus quiet/silence classes. German-spoken "Hey Ruben" is the hard case.
+plus quiet/silence classes. German-spoken "Hey Alex" is the hard case.
 
-| contender | Ruben | Luca | FA ambient/quiet/silence | CPU (RTF) |
+| contender | Alex | Luca | FA ambient/quiet/silence | CPU (RTF) |
 |---|---|---|---|---|
 | A production base+bias stt_match | 92 % | 100 % | 0 / 0 / 0 | ~0.4x, 0.7 s/window |
 | B sherpa-onnx KWS gigaspeech (en, BPE) | **4 %** | 100 % | 0 / 0 / 0 | 0.03x |

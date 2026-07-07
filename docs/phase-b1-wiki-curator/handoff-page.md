@@ -42,8 +42,8 @@ Plus two test files:
 ### 1. Frontmatter is `dict[str, str]` — literal strings, no YAML round-trip
 
 `WikiPage.frontmatter` keeps values as the raw literal after the first
-colon. `aliases: [Rubén, Personal Jarvis Maintainer]` becomes
-`{"aliases": "[Rubén, Personal Jarvis Maintainer]"}` (note: the string, not a list).
+colon. `aliases: [Alex, Personal Jarvis Maintainer]` becomes
+`{"aliases": "[Alex, Personal Jarvis Maintainer]"}` (note: the string, not a list).
 
 **Why:** PyYAML round-trips list-shaped values inconsistently (it may
 quote, reorder keys, or change whitespace). A trivial `key: value`

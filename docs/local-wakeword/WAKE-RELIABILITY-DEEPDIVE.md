@@ -181,11 +181,11 @@ grammar PARTIAL fires during the phrase; a candidate then waits 0.6 s so the
 phrase tail lands in the ring (E2E-measured: confirming mid-word truncates
 the utterance and halves recall), passes a word-agnostic RMS gate, and ONE
 free-decode pass must merely be SOUND-CLOSE to the phrase (never spell it —
-the free ear hears "hey room"/"herum" for a genuine German "Hey Ruben";
+the free ear hears "hey room"/"herum" for a genuine German "Hey Alex";
 ambient "vielen dank" is nowhere near). <!-- i18n-allow: forensic quotes of German utterances under test -->
 
 End-to-end through the real `VoskKwsProvider.detect()` on real captured
-streams (neutral judge-approved positives): **Hey Ruben 21/24 (88 %),
+streams (neutral judge-approved positives): **Hey Alex 21/24 (88 %),
 Hey Luca 8/8 (100 %), false accepts 0/120** on judged ambient-speech streams
 — and **bit-identical numbers on Linux (WSL Ubuntu, py3.12)**; vosk also
 installs + imports clean on headless `python:3.11-slim`. Live on the

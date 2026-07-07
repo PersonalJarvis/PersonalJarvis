@@ -22,7 +22,7 @@ consumes the honest signals this plan creates.
 - AP-21: gate on capability, never provider/model NAME; an UNKNOWN capability must proceed (fail open), only an explicit "cannot" gates.
 - ADR-0011: `ROUTER_TOOLS` stays untouched — the computer-use fix must NOT remove the tool from the router set; it makes the tool itself honest.
 - Tool-result/HTTP error strings are English; the brain rephrases them into the turn language (never bake German into ToolResults).
-- Run tests via `pytest <path> -v` from the repo root (`C:\Users\Administrator\Desktop\Personal Jarvis`).
+- Run tests via `pytest <path> -v` from the repo root (`<USER_HOME>\Desktop\Personal Jarvis`).
 - Conventional commits, each ending with `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
 
 ---
