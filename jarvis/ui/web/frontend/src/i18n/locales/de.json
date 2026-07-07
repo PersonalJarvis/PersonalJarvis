@@ -281,6 +281,14 @@
       "running": "fährt",
       "completed": "ankunft",
       "failed": "störung"
+    },
+    "health_degraded": "Subagent-Anbieter beeinträchtigt",
+    "health_error": "Kein Subagent-Anbieter erreichbar",
+    "error_class": {
+      "provider_auth": "Anbieter-Anmeldung ungültig oder abgelaufen — in der API-Keys-Ansicht neu verbinden.",
+      "provider_quota": "Anbieter-Kontingent erschöpft — Missionen weichen auf einen anderen Anbieter aus.",
+      "provider_unreachable": "Anbieter vorübergehend nicht erreichbar.",
+      "worker_timeout": "Der Worker hat das Zeitlimit überschritten."
     }
   },
   "tasks_view": {

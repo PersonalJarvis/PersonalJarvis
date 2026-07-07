@@ -27,6 +27,7 @@ def _patch_env(
     claude_auth_viable: bool = True,
     codex_oauth: bool = False,
     codex_reauth: bool = False,
+    codex_quota_capped: bool = False,
     keys: tuple[str, ...] = (),
 ) -> None:
     """Pin every probe the last-resort helper consults to a known world."""
@@ -41,6 +42,10 @@ def _patch_env(
     )
     monkeypatch.setattr(
         "jarvis.codex_auth_state.codex_needs_reauth", lambda: codex_reauth
+    )
+    monkeypatch.setattr(
+        "jarvis.codex_quota_state.codex_in_quota_cooldown",
+        lambda **_k: codex_quota_capped,
     )
     keyset = {k.strip().lower() for k in keys}
     monkeypatch.setattr(
@@ -103,6 +108,27 @@ def test_codex_needing_reauth_is_skipped(monkeypatch: pytest.MonkeyPatch) -> Non
     worker = mi._cross_family_last_resort_worker("t")
     assert isinstance(worker, ApiAgentWorker)
     assert worker.provider == "gemini"
+
+
+def test_usage_capped_codex_crosses_to_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The 2026-07-07 incident shape: the codex ChatGPT plan is usage-capped
+    ("try again at Jul 31st") while `codex status` still says connected, AND the
+    claude binary's auth is dead. The factory must skip BOTH subscription
+    families and run on the healthy API key instead of the codex->claude
+    guaranteed-fail loop."""
+    _patch_env(
+        monkeypatch,
+        claude_binary="/usr/bin/claude",
+        claude_auth_viable=False,
+        codex_oauth=True,
+        codex_quota_capped=True,
+        keys=("openrouter",),
+    )
+    worker = mi._cross_family_last_resort_worker("t")
+    assert isinstance(worker, ApiAgentWorker)
+    assert worker.provider == "openrouter"
 
 
 # --- 2026-07-06: a PRESENT `claude` binary with DEAD auth must not dead-end ---

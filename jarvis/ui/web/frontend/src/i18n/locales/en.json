@@ -281,6 +281,14 @@
       "running": "running",
       "completed": "arrived",
       "failed": "failed"
+    },
+    "health_degraded": "Subagent provider degraded",
+    "health_error": "No subagent provider reachable",
+    "error_class": {
+      "provider_auth": "Provider sign-in invalid or expired — reconnect it in the API-Keys view.",
+      "provider_quota": "Provider quota exhausted — missions retry on another provider.",
+      "provider_unreachable": "Provider temporarily unreachable.",
+      "worker_timeout": "The worker hit its time limit."
     }
   },
   "tasks_view": {

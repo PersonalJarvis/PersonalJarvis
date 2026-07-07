@@ -276,11 +276,13 @@ function AgentRow({
   nowMs,
   expanded,
   onToggle,
+  t,
 }: {
   agent: SubAgentNode;
   nowMs: number;
   expanded: boolean;
   onToggle: () => void;
+  t: (key: string) => string;
 }) {
   const hasDrilldown = agent.tool_calls.length > 0 || agent.error || agent.prompts.length > 0;
 
@@ -317,8 +319,8 @@ function AgentRow({
         </span>
         <span className="text-zinc-400">{agent.tool_calls.length}</span>
         <span className="text-zinc-400">{runtimeLabel(agent, nowMs)}</span>
-        <span className="truncate text-zinc-400" title={resultLabel(agent)}>
-          {resultLabel(agent)}
+        <span className="truncate text-zinc-400" title={resultLabel(agent, t)}>
+          {resultLabel(agent, t)}
         </span>
       </button>
 
@@ -356,7 +358,9 @@ function AgentRow({
                     ))}
                   </div>
                 )}
-                {agent.error && <div className="text-destructive">{agent.error}</div>}
+                {failureLabel(agent, t) && (
+                  <div className="text-destructive">{failureLabel(agent, t)}</div>
+                )}
                 <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-700">
                   trace {agent.trace_id.slice(0, 10)}
                 </div>

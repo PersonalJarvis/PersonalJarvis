@@ -261,6 +261,151 @@ async def test_codex_auth_expired_falls_back_to_claude(
     assert calls["claude_argv"] and calls["claude_argv"][0] == "claude"
 
 
+# --- 2026-07-07 incident: usage-capped codex + dead Claude looped forever -----
+#
+# Forensic ground truth (jarvis_desktop.log 15:50-15:52, mission_019f3cd8-1dd4):
+# the ChatGPT plan was usage-capped until Jul 31, `codex status` still said
+# connected=True, and the Claude Max OAuth login was dead. Every iteration then
+# spawned codex (~28 s to the cap error), fell back HARDCODED to Claude ("Not
+# logged in"), failed, and retried the identical pair — three times per mission,
+# every mission, while a healthy OpenRouter key sat unused (AP-22).
+
+_USAGE_CAP_STDOUT = (
+    b'{"type":"error","message":"You\'ve hit your usage limit. Upgrade to Plus '
+    b'to continue using Codex (https://chatgpt.com/explore/plus), or try again '
+    b'at Jul 31st, 2026 6:06 PM."}\n'
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_viable_claude_fallback")
+async def test_codex_usage_cap_arms_cooldown_and_falls_back_to_claude(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A usage-capped codex must arm the quota cooldown (so the worker factory
+    skips codex until it self-expires) AND still complete the mission on a
+    VIABLE Claude fallback."""
+    from jarvis.codex_quota_state import codex_in_quota_cooldown
+
+    claude_result_line = (
+        b'{"type":"result","subtype":"success","is_error":false,'
+        b'"result":"OK","session_id":"s1"}\n'
+    )
+    calls: dict[str, Any] = {"n": 0}
+
+    async def _fake_exec(*_a: Any, **_k: Any) -> _FakeProc:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _FakeProc(_USAGE_CAP_STDOUT, returncode=1)
+        return _FakeProc(b"", returncode=0, streaming=claude_result_line)
+
+    monkeypatch.setattr(cdw.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(
+        cdw_claude, "_resolve_provider_chain",
+        lambda *a, **k: (_FallbackStep("claude-api", "claude-opus-4-8"),),
+    )
+    monkeypatch.setattr(cdw_claude, "_resolve_claude_argv_prefix", lambda: ["claude"])
+
+    events = await _drive(CodexDirectWorker(), tmp_path)
+
+    final = events[-1]
+    assert getattr(final, "is_error", None) is False
+    assert calls["n"] == 2
+    # The proactive complement: the factory now knows codex is capped.
+    assert codex_in_quota_cooldown() is True
+
+
+@pytest.mark.asyncio
+async def test_codex_usage_cap_with_dead_claude_surfaces_error_honestly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE 2026-07-07 loop killer: when Claude auth is NOT viable, the usage-cap
+    fallback must NOT spawn the guaranteed-401 Claude worker. It surfaces the
+    honest usage-limit error (transient => the orchestrator retries and the
+    factory — seeing the armed cooldown — crosses to an API-key family)."""
+    from jarvis.codex_quota_state import codex_in_quota_cooldown
+    from jarvis.missions import init as mi
+
+    calls: dict[str, Any] = {"n": 0}
+
+    async def _fake_exec(*_a: Any, **_k: Any) -> _FakeProc:
+        calls["n"] += 1
+        return _FakeProc(_USAGE_CAP_STDOUT, returncode=1)
+
+    monkeypatch.setattr(cdw.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(cdw_claude, "_resolve_claude_binary", lambda: "claude")
+    monkeypatch.setattr(mi, "_claude_cli_auth_viable", lambda: False)
+
+    events = await _drive(CodexDirectWorker(), tmp_path)
+
+    final = events[-1]
+    assert getattr(final, "is_error", None) is True
+    assert "usage limit" in final.result.lower()
+    assert calls["n"] == 1, "must NOT spawn the known-dead Claude fallback"
+    assert codex_in_quota_cooldown() is True
+
+
+@pytest.mark.asyncio
+async def test_codex_auth_dead_with_dead_claude_surfaces_error_honestly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same gate on the auth-dead path: dead codex login + dead Claude must not
+    ping-pong into a guaranteed-401 nested spawn."""
+    from jarvis.codex_auth_state import codex_needs_reauth
+    from jarvis.missions import init as mi
+
+    stdout = (
+        b'{"type":"error","message":{"message":"Failed to refresh token. '
+        b'Please log in again."}}\n'
+    )
+    calls: dict[str, Any] = {"n": 0}
+
+    async def _fake_exec(*_a: Any, **_k: Any) -> _FakeProc:
+        calls["n"] += 1
+        return _FakeProc(stdout, returncode=1)
+
+    monkeypatch.setattr(cdw.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(cdw_claude, "_resolve_claude_binary", lambda: "claude")
+    monkeypatch.setattr(mi, "_claude_cli_auth_viable", lambda: False)
+
+    events = await _drive(CodexDirectWorker(), tmp_path)
+
+    final = events[-1]
+    assert getattr(final, "is_error", None) is True
+    assert calls["n"] == 1, "must NOT spawn the known-dead Claude fallback"
+    # The dead login is still flagged so the factory skips codex this session.
+    assert codex_needs_reauth() is True
+
+
+@pytest.mark.asyncio
+async def test_codex_success_clears_quota_cooldown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A codex success proves the cap reset — the cooldown must clear so the
+    subscription-first ordering returns to codex immediately."""
+    from jarvis.codex_quota_state import (
+        codex_in_quota_cooldown,
+        mark_codex_quota_cooldown,
+    )
+
+    mark_codex_quota_cooldown()
+    stdout = (
+        b'{"type":"item.completed","item":{"type":"agent_message","text":"done"}}\n'
+        b'{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}\n'
+    )
+
+    async def _fake_exec(*_a: Any, **_k: Any) -> _FakeProc:
+        return _FakeProc(stdout, returncode=0)
+
+    monkeypatch.setattr(cdw.asyncio, "create_subprocess_exec", _fake_exec)
+
+    events = await _drive(CodexDirectWorker(), tmp_path)
+
+    final = events[-1]
+    assert getattr(final, "is_error", None) is False
+    assert codex_in_quota_cooldown() is False
+
+
 @pytest.mark.asyncio
 async def test_codex_hardcap_timeout_preserves_work_and_flags_timed_out(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
