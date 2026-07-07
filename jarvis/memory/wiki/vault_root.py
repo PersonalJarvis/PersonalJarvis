@@ -41,18 +41,22 @@ def _non_empty_dir(p: Path) -> bool:
 
 
 def resolve_vault_root(
-    raw: str | Path | None, *, cwd: Path | None = None,
+    raw: str | Path | None,
+    *,
+    cwd: Path | None = None,
+    anchor: Path | None = None,
 ) -> VaultRootResolution:
     """Resolve the configured vault root to an absolute path.
 
-    ``cwd`` is injectable for tests; production callers omit it.
+    ``cwd`` and ``anchor`` are injectable for tests; production callers
+    omit both (``anchor`` defaults to :func:`repo_root`).
     """
     raw_path = Path(raw) if raw else _DEFAULT_RELATIVE
     if raw_path.is_absolute():
         res = VaultRootResolution(raw_path.resolve(), "absolute", False)
         return _remember(res)
 
-    anchored = (repo_root() / raw_path).resolve()
+    anchored = ((anchor or repo_root()) / raw_path).resolve()
     legacy = ((cwd or Path.cwd()) / raw_path).resolve()
     if legacy == anchored:
         return _remember(VaultRootResolution(anchored, "repo_root", False))

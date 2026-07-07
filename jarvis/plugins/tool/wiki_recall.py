@@ -164,10 +164,12 @@ def _build_search_instance() -> "VaultSearch":
     except Exception as exc:  # noqa: BLE001
         log.debug("wiki-recall: config load skipped: %s", exc)
 
+    resolved = resolve_vault_root(raw).path
     if raw is None:
         log.warning(
             "wiki-recall: cfg.wiki_integration.vault_root not found; "
-            "defaulting to the standard vault location",
+            "defaulting to %s",
+            resolved,
         )
 
-    return VaultSearch(resolve_vault_root(raw).path)
+    return VaultSearch(resolved)

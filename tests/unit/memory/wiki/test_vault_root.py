@@ -17,13 +17,36 @@ def test_absolute_root_passes_through(tmp_path):
 
 
 def test_populated_legacy_cwd_vault_wins_and_flags_conflict(tmp_path):
-    legacy = tmp_path / "wiki" / "obsidian-vault"
+    """Hermetic: anchored vault EMPTY + legacy CWD vault POPULATED → legacy wins."""
+    anchor = tmp_path / "repo"
+    (anchor / "wiki" / "obsidian-vault").mkdir(parents=True)  # exists but empty
+    old_cwd = tmp_path / "elsewhere"
+    legacy = old_cwd / "wiki" / "obsidian-vault"
     legacy.mkdir(parents=True)
     (legacy / "log.md").write_text("# log\n", encoding="utf-8")
-    res = resolve_vault_root("wiki/obsidian-vault", cwd=tmp_path)
-    # The anchored repo-root vault exists and is populated in this repo, so
-    # the anchor wins; the conflict must still be flagged for the health
-    # surface. If the anchored path were empty, legacy would win (see module).
+
+    res = resolve_vault_root("wiki/obsidian-vault", cwd=old_cwd, anchor=anchor)
+
+    assert res.path == legacy.resolve()
+    assert res.source == "legacy_cwd"
+    assert res.legacy_conflict is True
+
+
+def test_populated_anchored_vault_wins_over_populated_legacy(tmp_path):
+    """Hermetic: BOTH populated → the anchor wins, conflict still flagged."""
+    anchor = tmp_path / "repo"
+    anchored = anchor / "wiki" / "obsidian-vault"
+    anchored.mkdir(parents=True)
+    (anchored / "log.md").write_text("# anchored log\n", encoding="utf-8")
+    old_cwd = tmp_path / "elsewhere"
+    legacy = old_cwd / "wiki" / "obsidian-vault"
+    legacy.mkdir(parents=True)
+    (legacy / "log.md").write_text("# legacy log\n", encoding="utf-8")
+
+    res = resolve_vault_root("wiki/obsidian-vault", cwd=old_cwd, anchor=anchor)
+
+    assert res.path == anchored.resolve()
+    assert res.source == "repo_root"
     assert res.legacy_conflict is True
 
 

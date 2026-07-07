@@ -173,12 +173,12 @@ def _build_page_read_tool() -> "WikiPageReadTool":
     except Exception as exc:  # noqa: BLE001
         log.debug("wiki-page-read: config load skipped: %s", exc)
 
+    vault_root = resolve_vault_root(raw).path
     if raw is None:
         log.warning(
             "wiki-page-read: cfg.wiki_integration.vault_root not found; "
-            "defaulting to the standard vault location",
+            "defaulting to %s",
+            vault_root,
         )
-
-    vault_root = resolve_vault_root(raw).path
 
     return WikiPageReadTool(vault_root=vault_root)

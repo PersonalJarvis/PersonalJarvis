@@ -30,6 +30,8 @@ import logging
 import sys
 from pathlib import Path
 
+from .vault_root import resolve_vault_root
+
 # Windows console encoding (cp1252 by default) breaks on em-dashes and
 # arrows; reconfigure to UTF-8 so user-visible output renders properly.
 # Same pattern as scripts/wiki_migrate_v0_to_v1.py and jarvis/__main__.py.
@@ -40,10 +42,11 @@ if hasattr(sys.stderr, "reconfigure"):
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-# Runtime default vault — mirrors WikiIntegrationConfig.vault_root
-# ("wiki/obsidian-vault"). The legacy "data/workspace" tree is the
-# soft-disabled B4 Curator snapshot and is NOT the search vault.
-DEFAULT_VAULT = REPO_ROOT / "wiki" / "obsidian-vault"
+# Runtime default vault — resolved through the one canonical resolver
+# (spec A7), same as every other WikiIntegrationConfig.vault_root consumer.
+# The legacy "data/workspace" tree is the soft-disabled B4 Curator snapshot
+# and is NOT the search vault.
+DEFAULT_VAULT = resolve_vault_root(None).path
 DEFAULT_BACKUP_DIR = REPO_ROOT / "data" / "backups"
 DEFAULT_DB = REPO_ROOT / "data" / "jarvis.db"
 
