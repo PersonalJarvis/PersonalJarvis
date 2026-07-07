@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Literal
 from jarvis.brain.output_filter import scrub_for_voice
 from jarvis.core.bus import EventBus
 from jarvis.core.events import AnnouncementRequested
-from jarvis.missions.voice.readback import FAILURE_REASON_PHRASES
+from jarvis.missions.voice.readback import FAILURE_REASON_PHRASES, failure_phrase_key
 from jarvis.voice.contextual_readback import render_readback
 
 if TYPE_CHECKING:
@@ -240,7 +240,9 @@ class MissionAnnouncer:
             # boot. Map the reason to a short human cue so the user
             # knows what to do next.
             reason = (getattr(payload, "reason", "") or "").strip()
-            short_reason = reason.split(":", 1)[0].strip()
+            short_reason = failure_phrase_key(
+                reason, getattr(payload, "error_class", None)
+            )
             # crash_recovery and interrupted are boot-time housekeeping, NOT
             # live failures: on every startup `startup_recover` sweeps
             # still-in-flight missions to FAILED('crash_recovery') or

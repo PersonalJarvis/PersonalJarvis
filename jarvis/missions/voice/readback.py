@@ -198,6 +198,13 @@ FAILURE_REASON_PHRASES: Final[dict[str, dict[str, str]]] = {
             "Jarvis-Agents brauchen einen Git-Checkout, bitte über den "  # i18n-allow
             "Git-Installer installieren, nicht als ZIP."  # i18n-allow
         ),
+        # error_class keys (looked up BEFORE the reason key; see
+        # failure_phrase_key). Same table so announcer + direct-TTS listener
+        # cannot drift (2026-05-27 finding #7).
+        "provider_auth": "Die Anmeldung beim KI-Anbieter ist ungültig oder abgelaufen.",  # i18n-allow
+        "provider_quota": "Das Kontingent des KI-Anbieters ist erschöpft.",  # i18n-allow
+        "provider_unreachable": "Der KI-Anbieter ist gerade nicht erreichbar.",  # i18n-allow
+        "worker_timeout": "Der Worker hat das Zeitlimit überschritten.",  # i18n-allow
     },
     "en": {
         "critic_loop_exhausted": "Three attempts were not enough.",
@@ -218,6 +225,10 @@ FAILURE_REASON_PHRASES: Final[dict[str, dict[str, str]]] = {
             "Jarvis-Agents require a git checkout (install via the "
             "git-based installer, not a ZIP download)."
         ),
+        "provider_auth": "The AI provider sign-in is invalid or expired.",
+        "provider_quota": "The AI provider's quota is exhausted.",
+        "provider_unreachable": "The AI provider is currently unreachable.",
+        "worker_timeout": "The worker hit its time limit.",
     },
     # Spanish is an equal supported product-surface language (CLAUDE.md §1).
     # Only the two git-setup reason keys added with this fix carry ``es`` for
@@ -231,6 +242,20 @@ FAILURE_REASON_PHRASES: Final[dict[str, dict[str, str]]] = {
         ),
     },
 }
+
+
+def failure_phrase_key(reason: str, error_class: str | None) -> str:
+    """Pick the phrase-table key for a failed mission.
+
+    A populated ``error_class`` (e.g. ``provider_auth``) is more specific
+    than the mission-level ``reason`` (often the generic ``task_error``), so
+    it wins whenever the table carries it. Falls back to the reason's short
+    form. Single source for the announcer AND the direct-TTS listener.
+    """
+    ec = (error_class or "").strip()
+    if ec and ec in FAILURE_REASON_PHRASES["en"]:
+        return ec
+    return (reason or "").split(":", 1)[0].strip()
 
 
 def _truncate(text: str, max_chars: int = MAX_VOICE_CHARS) -> str:
@@ -320,8 +345,14 @@ class MissionReadback:
             safe_summary = safe_summary[:max_insert].rstrip()
         return _truncate(template.format(summary=safe_summary))
 
-    def render_failed(self, *, reason: str = "", language: Lang = "de") -> str:
-        short_reason = (reason or "").split(":", 1)[0].strip()
+    def render_failed(
+        self,
+        *,
+        reason: str = "",
+        language: Lang = "de",
+        error_class: str | None = None,
+    ) -> str:
+        short_reason = failure_phrase_key(reason, error_class)
         # crash_recovery and interrupted are swept/interrupted previous-session
         # missions, not live task failures — speak a dedicated non-alarming phrase
         # instead of framing them as "gescheitert. Grund: <reason>"
@@ -393,4 +424,5 @@ __all__ = [
     "MissionReadback",
     "READBACK_TEMPLATES",
     "TemplateKey",
+    "failure_phrase_key",
 ]

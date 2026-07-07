@@ -393,6 +393,100 @@ async def test_failed_attempts_timed_out_speaks_honest_timeout(store_and_bus) ->
 
 
 @pytest.mark.asyncio
+async def test_failed_announcement_names_provider_auth_cause_de(store_and_bus) -> None:
+    """error_class beats the generic reason phrase: a provider_auth failure
+    must not be spoken as the meaningless "Der Worker ist abgebrochen." i18n-allow
+    ("The worker aborted.")."""
+    store, bus = store_and_bus
+    speech_bus = EventBus()
+    captured = _collect_announcements(speech_bus)
+
+    announcer = MissionAnnouncer(bus=bus, store=store, speech_bus=speech_bus)
+    await announcer.start()
+
+    mid = await _seed_voice_mission(store, language="de")
+    await store.append_and_publish(
+        EventEnvelope(
+            mission_id=mid,
+            source_actor="kontrollierer",
+            ts_ms=now_ms(),
+            payload=MissionFailed(
+                reason="task_error",
+                error_class="provider_auth",
+                last_state="RUNNING",
+                partial_artifacts=[],
+            ),
+        )
+    )
+
+    assert len(captured) == 1
+    assert "Anmeldung" in captured[0].text  # i18n-allow: asserted German TTS output
+
+
+@pytest.mark.asyncio
+async def test_failed_announcement_names_provider_auth_cause_en(store_and_bus) -> None:
+    """Same as above in English: the honest provider_auth cause must be
+    spoken, never the generic 'worker aborted' phrasing."""
+    store, bus = store_and_bus
+    speech_bus = EventBus()
+    captured = _collect_announcements(speech_bus)
+
+    announcer = MissionAnnouncer(bus=bus, store=store, speech_bus=speech_bus)
+    await announcer.start()
+
+    mid = await _seed_voice_mission(store, language="en")
+    await store.append_and_publish(
+        EventEnvelope(
+            mission_id=mid,
+            source_actor="kontrollierer",
+            ts_ms=now_ms(),
+            payload=MissionFailed(
+                reason="task_error",
+                error_class="provider_auth",
+                last_state="RUNNING",
+                partial_artifacts=[],
+            ),
+        )
+    )
+
+    assert len(captured) == 1
+    assert "sign-in" in captured[0].text
+    assert "worker aborted" not in captured[0].text.lower()
+
+
+@pytest.mark.asyncio
+async def test_failed_announcement_without_error_class_keeps_reason_phrase(
+    store_and_bus,
+) -> None:
+    """No error_class populated (the common case for non-worker-caused
+    failures) must keep behaving exactly as before: the reason-keyed phrase
+    is spoken unchanged."""
+    store, bus = store_and_bus
+    speech_bus = EventBus()
+    captured = _collect_announcements(speech_bus)
+
+    announcer = MissionAnnouncer(bus=bus, store=store, speech_bus=speech_bus)
+    await announcer.start()
+
+    mid = await _seed_voice_mission(store, language="en")
+    await store.append_and_publish(
+        EventEnvelope(
+            mission_id=mid,
+            source_actor="kontrollierer",
+            ts_ms=now_ms(),
+            payload=MissionFailed(
+                reason="task_error",
+                last_state="RUNNING",
+                partial_artifacts=[],
+            ),
+        )
+    )
+
+    assert len(captured) == 1
+    assert "The worker aborted." in captured[0].text
+
+
+@pytest.mark.asyncio
 async def test_interrupted_is_not_announced(store_and_bus) -> None:
     """'interrupted' is startup-sweep housekeeping — the same suppression rule
     that applies to 'crash_recovery' must also apply here. A mission swept as
