@@ -209,6 +209,42 @@ def _worker_error_is_auth(err: str) -> bool:
         )
     )
 
+
+def _classify_worker_error(err: str, *, timed_out: bool = False) -> str | None:
+    """Map a worker's terminal error onto MISSION_ERROR_CLASSES, or ``None``.
+
+    Pure + offline; the single place the orchestrator derives the
+    provider-failure class that flows to WorkerKilled/MissionFailed and from
+    there to the Sub-Agents view and the voice announcer. Order matters:
+    the structured timeout flag wins (it is the robust signal), then auth
+    (the most specific text class), then quota/billing, then the generic
+    transient bucket. Unclassifiable errors return ``None`` so consumers
+    fall back to the mission-level ``reason``.
+    """
+    if timed_out:
+        return "worker_timeout"
+    if not err:
+        return None
+    low = err.lower()
+    if _worker_error_is_auth(low):
+        return "provider_auth"
+    if any(
+        m in low
+        for m in (
+            "balance", "billing", "credit",
+            "session limit", "usage limit",
+            "rate limit", "rate_limit", "ratelimit",
+            "too many requests", "429",
+            "out of credits", "out_of_credits",
+        )
+    ):
+        return "provider_quota"
+    if "timeout" in low:
+        return "worker_timeout"
+    if _worker_error_is_transient(low):
+        return "provider_unreachable"
+    return None
+
 # Mission-level wall-clock safety net. Bounds TOTAL execution time across all
 # critic iterations + the critic subprocess + decomposition — the per-iteration
 # worker cap does not. Measured AFTER the concurrency semaphore is acquired
