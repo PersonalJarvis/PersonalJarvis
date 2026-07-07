@@ -1,10 +1,10 @@
 """Bundled binary assets shipped with the Jarvis package.
 
 Currently:
-- ``wakeword/``: ONNX models for openWakeWord (hey_rhasspy_v0.1 bundled as the
-  neutral shipped default, hey_jarvis_v0.1 kept for users who type "Jarvis",
-  melspectrogram, embedding). Loaded via :func:`bundled_wakeword_models` from
-  the openWakeWord provider so first-boot stays offline.
+- ``wakeword/``: the word-agnostic openWakeWord feature backbones
+  (melspectrogram, embedding) that a user-trained custom wake model needs to
+  load offline. NO named wake model ships (design 2026-07-07). Loaded via
+  :func:`bundled_wakeword_models` from the openWakeWord provider.
 - ``vad/``: the Silero VAD ONNX model (MIT-licensed, ~2.2 MB) that powers
   end-of-speech detection (:mod:`jarvis.audio.vad`). Bundled so the core voice
   loop closes a turn on a base install too: the ``silero-vad`` pip package (which
@@ -26,7 +26,6 @@ from pathlib import Path
 
 _WAKEWORD_DIR = Path(__file__).resolve().parent / "wakeword"
 _WAKEWORD_FILES = {
-    "wakeword": "hey_rhasspy_v0.1.onnx",
     "melspec": "melspectrogram.onnx",
     "embedding": "embedding_model.onnx",
 }
@@ -39,15 +38,15 @@ _APP_ICON_FILE = "jarvis.ico"
 
 
 def bundled_wakeword_models() -> dict[str, Path] | None:
-    """Return absolute paths to the bundled openWakeWord ONNX assets.
+    """Return absolute paths to the bundled openWakeWord backbone assets.
 
-    Returns ``None`` when any of the three required files is missing (partial
-    checkout, slim install, or a forthcoming opt-in extras-only layout). The
-    caller (``openwakeword_provider``) then falls back to openWakeWord's
-    built-in keyword names + auto-download.
+    Returns ``None`` when either required file is missing (partial checkout).
+    The caller (``openwakeword_provider``) then hands a bare custom-model path
+    to openWakeWord, which resolves backbones from its own package resources.
+    No named wake model ships (design 2026-07-07).
 
-    Keys: ``wakeword`` (the hey_rhasspy_v0.1 detector — neutral shipped default),
-    ``melspec`` (preprocessing), ``embedding`` (shared backbone).
+    Keys: ``melspec`` (preprocessing), ``embedding`` (shared backbone) — both
+    word-agnostic; they carry no wake vocabulary of their own.
     """
     if not _WAKEWORD_DIR.is_dir():
         return None

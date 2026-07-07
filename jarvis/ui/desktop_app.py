@@ -2335,7 +2335,10 @@ class DesktopApp:
                 # the constructor default (1500) always won and the Settings
                 # slider could not change the boot value.
                 vad_silence_ms=self.cfg.speech.vad_silence_ms,
-                wake_keywords=("hey_jarvis",),
+                # No shipped wake model (design 2026-07-07): the wake plan is
+                # the only source of a detector; the legacy keyword default
+                # is empty.
+                wake_keywords=(),
                 # BUG-009 episode 5 (2026-05-24): the 0.06 over-correction from
                 # episode 4 made OWW fire on the entire ambient band (idle
                 # telemetry showed bare "Hallo"/room noise scoring 0.06-0.11 and

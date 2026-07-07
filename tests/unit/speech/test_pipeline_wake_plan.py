@@ -65,8 +65,10 @@ def _pipe(wake_plan: object | None) -> SpeechPipeline:
 def test_no_plan_keeps_matcher_none_legacy_behaviour() -> None:
     pipe = _pipe(None)
     assert pipe._wake_matcher is None
-    # Default OWW keyword unchanged.
-    assert pipe._wake._keywords == ("hey_jarvis",)
+    # No shipped wake model: the legacy no-plan provider carries no keywords
+    # and no model — it degrades to a logged no-op (design 2026-07-07).
+    assert pipe._wake._keywords == ()
+    assert pipe._wake._model_path is None
 
 
 def test_plan_builds_oww_from_custom_model(tmp_path: Path) -> None:

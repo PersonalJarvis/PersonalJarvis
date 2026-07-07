@@ -911,7 +911,9 @@ class SpeechPipeline:
         # ``cfg.trigger.hotkey`` when ``cfg.trigger.push_to_talk`` is True.
         ptt_hotkeys: tuple[str, ...] = (),
         hangup_hotkeys: tuple[str, ...] = ("f1+f2",),
-        wake_keywords: tuple[str, ...] = ("hey_jarvis",),
+        # Legacy keyword seed for the no-plan provider. Empty: no wake model
+        # ships (design 2026-07-07); only a wake plan arms a real detector.
+        wake_keywords: tuple[str, ...] = (),
         wake_threshold: float = 0.10,
         stt: FasterWhisperProvider | None = None,
         tts: GeminiFlashTTS | None = None,
@@ -8215,7 +8217,7 @@ async def _main() -> None:
             if config.trigger.hotkey_hangup.strip()
             else ()
         ),
-        wake_keywords=("hey_jarvis",),
+        wake_keywords=(),
         wake_threshold=0.15,
         stt=stt,
         tts=tts,

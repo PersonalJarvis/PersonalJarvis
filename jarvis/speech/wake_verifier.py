@@ -1,16 +1,15 @@
 """Post-detection prefix verifier for the OpenWakeWord wake path.
 
-The neural ``hey_jarvis_v0.1`` model generalises onto bare "Jarvis" because
-its features overlap with the full "Hey Jarvis" utterance. Pendulum-style
+A neural wake model generalises onto near-misses of its phrase (historically:
+a bare core word fired the full-phrase model — BUG-009). Pendulum-style
 threshold edits have been forbidden by ``tests/unit/speech/test_wake_threshold``
 since BUG-009 episode 5. The clean fix is a second-stage check: when OWW
 fires, transcribe the few seconds preceding the hit with the cloud STT that
-the rest of the voice path already uses (Groq by default) and require a
-strict "hey/hi/hallo + jarv" pattern in the transcript before activating.
+the rest of the voice path already uses (Groq by default) and require the
+configured phrase's matcher to confirm the transcript before activating.
 
-The regex is the *same* pattern that the heavy ``RollingWhisperWake`` backstop
-uses — see ``rolling_whisper_wake.DEFAULT_PATTERN``. We deliberately import
-that constant instead of duplicating the literal, so the two wake paths can
+The matcher is the *same* object the heavy ``RollingWhisperWake`` backstop
+uses (the wake plan's compiled phrase matcher), so the two wake paths can
 never drift apart (BUG-008 territory).
 """
 from __future__ import annotations

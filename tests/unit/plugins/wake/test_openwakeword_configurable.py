@@ -1,10 +1,9 @@
-"""OpenWakeWordProvider can load a configurable model (pretrained or custom).
+"""OpenWakeWordProvider loads a configurable user-trained model.
 
-The custom-wake-word feature needs the provider to load any ONNX model — a
-pretrained alexa/mycroft/rhasspy from the package, or a user-supplied custom
-model — while reusing the bundled melspec/embedding backbones so the wake path
-stays offline. The default (no model_path) must keep the bundled hey_jarvis
-behaviour untouched.
+The custom-wake-word feature needs the provider to load any ONNX model the
+user supplies, while reusing the bundled word-agnostic melspec/embedding
+backbones so the wake path stays offline. Without a model_path there is
+nothing to load — the product ships no named model (design 2026-07-07).
 """
 from __future__ import annotations
 
@@ -12,8 +11,8 @@ from jarvis.plugins.wake.openwakeword_provider import OpenWakeWordProvider
 
 
 def test_explicit_model_path_is_used_with_bundled_backbones() -> None:
-    fake = "/models/alexa_v0.1.onnx"
-    provider = OpenWakeWordProvider(keywords=("alexa",), model_path=fake)
+    fake = "/models/my_word_v0.1.onnx"
+    provider = OpenWakeWordProvider(keywords=("my_word",), model_path=fake)
     kw = provider._model_kwargs()
 
     assert kw["wakeword_models"] == [fake]
@@ -24,13 +23,14 @@ def test_explicit_model_path_is_used_with_bundled_backbones() -> None:
 
 
 def test_explicit_model_path_canonicalises_keyword() -> None:
-    provider = OpenWakeWordProvider(keywords=("alexa",), model_path="/x/alexa_v0.1.onnx")
-    assert provider._canonical_keyword("alexa_v0.1") == "alexa"
+    provider = OpenWakeWordProvider(
+        keywords=("my_word",), model_path="/x/my_word_v0.1.onnx"
+    )
+    assert provider._canonical_keyword("my_word_v0.1") == "my_word"
 
 
-def test_default_still_uses_bundled_neutral_model() -> None:
-    # Regression: the zero-arg construction path loads the neutral bundled
-    # default (hey_rhasspy — no branded/trademarked default wake word).
+def test_default_has_no_model_to_load() -> None:
+    # Design 2026-07-07: the zero-arg construction path has NOTHING to load —
+    # no bundled model, no built-in names, no auto-download.
     provider = OpenWakeWordProvider()
-    kw = provider._model_kwargs()
-    assert kw["wakeword_models"][0].endswith("hey_rhasspy_v0.1.onnx")
+    assert provider._model_kwargs() is None

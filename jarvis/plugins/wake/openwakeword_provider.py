@@ -1,8 +1,9 @@
-"""openWakeWord plugin — detects "Hey Jarvis" / "Jarvis" in the audio stream.
+"""openWakeWord plugin — runs a user-trained wake model on the audio stream.
 
-openWakeWord is a free, open-source wake-word system (MIT), uses the
-ONNX runtime, and ships "hey_jarvis" as a built-in pretrained model —
-zero API key needed.
+openWakeWord is a free, open-source wake-word runtime (MIT) on top of the
+ONNX runtime — zero API key needed. The product ships NO named wake model
+(design 2026-07-07): this provider only ever loads an explicit ``model_path``
+(the user's own trained custom .onnx); without one it is a logged no-op.
 
 Input format: 16 kHz mono int16 PCM, frame size must be 1280 samples (80 ms).
 We buffer mic chunks and split on the frame boundary.
@@ -135,17 +136,17 @@ class WakeGainNormalizer:
 class OpenWakeWordProvider:
     """Wake-word detector — structurally compatible with `WakeWordProvider`.
 
-    By default it listens for "hey_jarvis" — in my testing the pretrained
-    model reacts to both "Hey Jarvis" and "Jarvis" alone, as long as the
-    threshold is low enough (0.5 works).
+    Runs whatever model ``model_path`` points at (a user-trained custom
+    .onnx). Without a model it degrades to a logged no-op — it never loads
+    or downloads a named built-in model (design 2026-07-07).
     """
 
     name = "openwakeword"
-    supported_keywords = ("hey_jarvis",)  # openWakeWord built-in model
+    supported_keywords: tuple[str, ...] = ()  # no shipped model, no fixed vocabulary
 
     def __init__(
         self,
-        keywords: tuple[str, ...] = ("hey_jarvis",),
+        keywords: tuple[str, ...] = (),
         # The FIRE bar. Defaults to the documented, data-driven
         # PRODUCTION_WAKE_THRESHOLD so omitting it gives the SAME behaviour the
         # desktop app wires explicitly — one consistent threshold, not a quieter
@@ -161,11 +162,10 @@ class OpenWakeWordProvider:
         # the user speaks too quietly, or the model doesn't handle German
         # pronunciation well).
         score_log_threshold: float = 0.05,
-        # Explicit ONNX wake-model path. When set (custom-wake-word feature: a
-        # pretrained alexa/mycroft/rhasspy from the openWakeWord package, or a
-        # user-supplied custom .onnx) it overrides the bundled hey_jarvis model.
-        # The shared melspec/embedding backbones are still reused from the
-        # in-repo bundle so any model loads offline. None = bundled hey_jarvis.
+        # Explicit ONNX wake-model path (the user's own trained custom .onnx).
+        # The shared word-agnostic melspec/embedding backbones are reused from
+        # the in-repo bundle so any model loads offline. None = no model —
+        # the provider stays a logged no-op (never a named built-in model).
         model_path: str | None = None,
         # Volume-robust wake (root cause of "only triggers when shouted",
         # 2026-06-28): openWakeWord's score is amplitude-dependent, so on a quiet
@@ -260,51 +260,39 @@ class OpenWakeWordProvider:
     def _model_kwargs(self) -> dict:
         """Build the openWakeWord ``Model(...)`` kwargs.
 
-        Prefer the ONNX models bundled in-repo (``jarvis/assets/wakeword/``):
-        passing explicit local paths keeps the wake path offline on first boot
-        and avoids the package-cache auto-download. When the bundle is absent
-        (e.g. a partial checkout), fall back to built-in keyword names, which
-        triggers openWakeWord's own auto-download.
+        The ONLY loadable model is an explicit ``model_path`` (the user's own
+        trained custom .onnx). The word-agnostic melspec/embedding backbones
+        bundled in-repo (``jarvis/assets/wakeword/``) are reused so that model
+        loads offline. Returns ``None`` when no model is configured — the
+        caller then disables this provider. Never fall back to openWakeWord
+        built-in keyword names: that auto-downloads third-party brand models
+        (design 2026-07-07).
         """
         import jarvis.assets
 
+        if not self._model_path:
+            return None
+
         bundled = jarvis.assets.bundled_wakeword_models()
-
-        # Custom-wake-word path: an explicit model overrides the bundled
-        # hey_jarvis wakeword, but the shared melspec/embedding backbones are
-        # reused from the bundle (they are model-agnostic) so any pretrained or
-        # custom model still loads offline. If the bundle is absent, hand the
-        # bare path to openWakeWord (it auto-resolves backbones from its own
-        # package resources).
-        if self._model_path:
-            kwargs: dict = {
-                "wakeword_models": [self._model_path],
-                "inference_framework": "onnx",
-            }
-            if bundled is not None:
-                kwargs["melspec_model_path"] = str(bundled["melspec"])
-                kwargs["embedding_model_path"] = str(bundled["embedding"])
-            return kwargs
-
-        if bundled is not None:
-            return {
-                "wakeword_models": [str(bundled["wakeword"])],
-                "melspec_model_path": str(bundled["melspec"]),
-                "embedding_model_path": str(bundled["embedding"]),
-                "inference_framework": "onnx",
-            }
-        return {
-            "wakeword_models": list(self._keywords),
-            "inference_framework": self._inference_framework,
+        kwargs: dict = {
+            "wakeword_models": [self._model_path],
+            "inference_framework": "onnx",
         }
+        # If the backbone bundle is absent (partial checkout), hand the bare
+        # path to openWakeWord (it auto-resolves backbones from its own
+        # package resources).
+        if bundled is not None:
+            kwargs["melspec_model_path"] = str(bundled["melspec"])
+            kwargs["embedding_model_path"] = str(bundled["embedding"])
+        return kwargs
 
     def _canonical_keyword(self, raw: str) -> str:
         """Map a raw openWakeWord model key back to the configured keyword.
 
-        Loading the bundled ``hey_jarvis_v0.1.onnx`` makes openWakeWord report
-        the score under the file stem ``hey_jarvis_v0.1``. Downstream code and
-        ``supported_keywords`` use the canonical ``hey_jarvis``; normalise so a
-        bundled load and a built-in load are indistinguishable to consumers.
+        Loading a model file like ``my_word_v0.1.onnx`` makes openWakeWord
+        report the score under the file stem ``my_word_v0.1``. Downstream code
+        uses the canonical configured keyword (``my_word``); normalise so the
+        file-stem suffix never leaks to consumers.
         """
         for kw in self._keywords:
             if raw == kw or raw.startswith(f"{kw}_"):
@@ -330,11 +318,19 @@ class OpenWakeWordProvider:
                 exc,
             )
             return
-        # wakeword_models=[...] accepts either built-in names or paths to
-        # .onnx / .tflite files. We prefer the bundled local ONNX paths
-        # (see _model_kwargs) — no runtime download, offline-capable on
-        # first boot.
-        self._model = Model(**self._model_kwargs())
+        kwargs = self._model_kwargs()
+        if kwargs is None:
+            # No model configured -> nothing to arm. The flag doubles as the
+            # "disabled" latch so detect() stays a clean no-op (never load or
+            # auto-download a named built-in model — design 2026-07-07).
+            self._runtime_unavailable = True
+            log.warning(
+                "OpenWakeWord armed without a model — wake via this provider "
+                "is disabled. Configure a custom wake model or use the "
+                "generic vosk/whisper wake engines."
+            )
+            return
+        self._model = Model(**kwargs)
 
     def _warmup_model(self) -> None:
         """Run ONE throwaway inference so the first real wake frame is not cold.

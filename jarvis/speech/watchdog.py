@@ -130,7 +130,7 @@ async def _main() -> None:
             if config.trigger.hotkey_hangup.strip()
             else ()
         ),
-        wake_keywords=("hey_jarvis",),
+        wake_keywords=(),
         # Single source of truth — see PRODUCTION_WAKE_THRESHOLD and the
         # data-driven reasoning in openwakeword_provider.py (BUG-009 episode 5,
         # 2026-05-24: the 0.06 over-correction made OWW fire on ambient speech).
