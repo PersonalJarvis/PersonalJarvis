@@ -18,7 +18,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-_UMLAUTS = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})  # i18n-allow: transliteration table
+# i18n-allow: German-umlaut transliteration table (input normalization)
+_UMLAUTS = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
 
 # Write verbs (normalized, de/en/es).  # i18n-allow: input vocabulary
 _VERBS = (
@@ -48,6 +49,14 @@ _ANAPHORA = frozenset({
     "das", "es", "dies", "diese", "dieses", "den", "die",   # i18n-allow
     "that", "this", "it", "them",
     "eso", "esto", "lo", "la",                              # i18n-allow
+})
+
+# Standalone filler particles (single tokens from _FILLER_RE's alternation)
+# that carry no content on their own — e.g. "schreib das BITTE ins wiki" is
+# still anaphoric even though "bitte" trails the anaphor instead of leading
+# the fragment, so the prefix-anchored _FILLER_RE strip alone misses it.
+_FILLER_WORDS = frozenset({
+    "bitte", "mal", "doch", "kurz", "please", "por", "favor", "que", "dass",  # i18n-allow
 })
 
 _COMMAND_RE = re.compile(
@@ -100,6 +109,7 @@ def match_wiki_intent(user_text: str) -> WikiIntentMatch | None:
     post = _strip_filler(m.group("post") or "")
     content = " ".join(part for part in (pre, post) if part).strip()
     words = [w for w in re.split(r"\s+", content) if w]
-    if not words or all(w in _ANAPHORA for w in words):
+    meaningful = [w for w in words if w not in _ANAPHORA and w not in _FILLER_WORDS]
+    if not meaningful:
         return WikiIntentMatch(content=None, matched=norm)
     return WikiIntentMatch(content=content, matched=norm)
