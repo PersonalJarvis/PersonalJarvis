@@ -130,13 +130,13 @@ class WakeWordConfig(BaseModel):
     # legacy key through a self-mod pre-validate round-trip (AP-16).
     model_config = ConfigDict(extra="allow")
 
-    # The human wake word the user wants — e.g. "Hey Jarvis", "Computer",
-    # "Athena". The single source of truth the UI/wizard edit.
+    # The human wake word the user wants — any phrase of their choice.
+    # The single source of truth the UI/wizard edit.
     phrase: str = DEFAULT_WAKE_PHRASE
-    # Detection engine. "auto" resolves the best path for the phrase:
-    #   pretrained openWakeWord model (jarvis/alexa/mycroft/rhasspy) -> else
-    #   local-Whisper transcript match for an arbitrary phrase -> else
-    #   graceful fallback to "Hey Jarvis" with a clear message.
+    # Detection engine. "auto" resolves the best generic path for the phrase:
+    #   user-trained custom .onnx -> any-word Vosk keyword spotting ->
+    #   local-Whisper transcript match -> honest hotkey-only degrade
+    #   (no bundled model, no branded fallback — design 2026-07-07).
     # Validated against wake_constants.WAKE_ENGINES; unknown coerces to "auto"
     # so a stale/hand-edited value cannot brick the boot (AP-16).
     engine: str = "auto"
