@@ -131,6 +131,36 @@ def test_usage_capped_codex_crosses_to_api_key(
     assert worker.provider == "openrouter"
 
 
+def test_stale_oauth_bearer_does_not_count_as_claude_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """2026-07-07, mission 019f3d01 (the verify run of the codex-cooldown fix):
+    the stored anthropic credential was a STALE `sk-ant-oat` OAuth bearer — the
+    env builder deliberately drops that shape (guaranteed 401) and
+    _claude_cli_auth_viable refuses it, but the family walk counted its mere
+    EXISTENCE as a claude-api key and dead-ended every retry on
+    ApiAgentWorker('claude-api') 401s while a healthy openrouter key sat one
+    slot further in the SAME loop. Key existence is not key viability."""
+    _patch_env(
+        monkeypatch,
+        claude_binary="/usr/bin/claude",
+        claude_auth_viable=False,
+        codex_oauth=True,
+        codex_quota_capped=True,
+        keys=("openrouter",),
+    )
+    monkeypatch.setattr(
+        "jarvis.core.config.get_provider_secret",
+        lambda p: {
+            "claude-api": "sk-ant-oat01-STALE-COPY",
+            "openrouter": "KEY",
+        }.get((p or "").strip().lower()),
+    )
+    worker = mi._cross_family_last_resort_worker("t")
+    assert isinstance(worker, ApiAgentWorker)
+    assert worker.provider == "openrouter"
+
+
 # --- 2026-07-06: a PRESENT `claude` binary with DEAD auth must not dead-end ---
 
 

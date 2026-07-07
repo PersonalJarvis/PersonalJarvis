@@ -81,3 +81,23 @@ def test_usage_capped_codex_is_not_listed(monkeypatch: pytest.MonkeyPatch) -> No
     fams = mi.reachable_worker_families()
     assert "codex" not in fams
     assert fams == ["openrouter"]
+
+
+def test_stale_oauth_bearer_claude_api_is_not_listed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stored `sk-ant-oat` bearer is a stale OAuth copy, not an API key —
+    listing claude-api as reachable on its existence alone kept the section
+    green while every ApiAgentWorker('claude-api') spawn 401'd (2026-07-07,
+    mission 019f3d01)."""
+    _patch_env(monkeypatch)
+    monkeypatch.setattr(
+        "jarvis.core.config.get_provider_secret",
+        lambda p: {
+            "claude-api": "sk-ant-oat01-STALE-COPY",
+            "openrouter": "KEY",
+        }.get((p or "").strip().lower()),
+    )
+    fams = mi.reachable_worker_families()
+    assert "claude-api" not in fams
+    assert fams == ["openrouter"]

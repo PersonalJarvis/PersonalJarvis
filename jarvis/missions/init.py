@@ -492,6 +492,38 @@ def _claude_cli_auth_viable() -> bool:
     return not claude_auth_dead(current_fingerprint=credential_fingerprint(key))
 
 
+def _api_key_family_viable(provider: str) -> bool:
+    """True when *provider* has a USABLE API key for the in-process worker.
+
+    Key EXISTENCE is not key viability (2026-07-07, mission 019f3d01 — the
+    verify run of the codex-cooldown fix): the stored anthropic credential was
+    a stale ``sk-ant-oat`` OAuth bearer — the copy of a login that no longer
+    exists. The worker env builder deliberately DROPS that shape (guaranteed
+    401) and ``_claude_cli_auth_viable`` refuses it, but the cross-family walk
+    counted its mere existence as a claude-api key and dead-ended every retry
+    on ApiAgentWorker('claude-api') 401s while a healthy openrouter key sat
+    one slot further in the SAME loop (AP-22). Apply the one shared rule here
+    too: an ``sk-ant-oat`` bearer is not an API key, and a classic key a
+    worker already proved dead this session (fingerprinted) is skipped until
+    it changes.
+    """
+    from jarvis.core.config import get_provider_secret
+
+    key = get_provider_secret(provider)
+    if not key:
+        return False
+    if provider == "claude-api":
+        if key.startswith("sk-ant-oat"):
+            return False
+        from jarvis.claude_auth_state import (
+            claude_auth_dead,
+            credential_fingerprint,
+        )
+
+        return not claude_auth_dead(current_fingerprint=credential_fingerprint(key))
+    return True
+
+
 def reachable_worker_families() -> list[str]:
     """Which worker families could run a heavy mission RIGHT NOW (cheap,
     offline — file reads + process-local flags, never a network probe).
@@ -517,11 +549,10 @@ def reachable_worker_families() -> list[str]:
         and not codex_in_quota_cooldown()
     ):
         families.append("codex")
-    from jarvis.core.config import get_provider_secret
     from jarvis.missions.workers.api_agent_worker import supports_api_agent_worker
 
     for prov in ("claude-api", "gemini", "openrouter", "openai"):
-        if supports_api_agent_worker(prov) and get_provider_secret(prov):
+        if supports_api_agent_worker(prov) and _api_key_family_viable(prov):
             families.append(prov)
     return families
 
@@ -591,11 +622,11 @@ def _cross_family_last_resort_worker(task_text: str) -> Any | None:
         )
     # 3. In-process API worker on whatever single key the user has, crossing
     #    families — the same cross-family set the Brain fallback chain uses.
-    from jarvis.core.config import get_provider_secret
+    #    Viability-gated (not existence-gated): see _api_key_family_viable.
     from jarvis.missions.workers.api_agent_worker import supports_api_agent_worker
 
     for prov in ("claude-api", "gemini", "openrouter", "openai"):
-        if supports_api_agent_worker(prov) and get_provider_secret(prov):
+        if supports_api_agent_worker(prov) and _api_key_family_viable(prov):
             logger.warning(
                 "Mission worker -> ApiAgentWorker(%r): no Claude CLI / Codex login "
                 "reachable, crossing to the configured API-key family so the heavy "
@@ -952,11 +983,12 @@ async def bootstrap_missions(
             # CLI binary — run the heavy worker IN-PROCESS via ApiAgentWorker on the
             # API key instead of failing on the missing binary. The CLI stays
             # preferred (subscription-first) whenever the binary IS present.
-            from jarvis.core.config import get_provider_secret
             from jarvis.missions.workers.claude_direct_worker import (
                 _resolve_claude_binary,
             )
-            if _resolve_claude_binary() is None and get_provider_secret("claude-api"):
+            if _resolve_claude_binary() is None and _api_key_family_viable(
+                "claude-api"
+            ):
                 logger.info(
                     "Mission worker -> ApiAgentWorker('claude-api'): no `claude` CLI "
                     "binary, running in-process on the Anthropic API key."

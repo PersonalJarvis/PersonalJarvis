@@ -3021,7 +3021,9 @@ OAuth login was dead (nothing refreshes `~/.claude` on this host). A healthy
 OpenRouter key was configured the whole time — the Brain chatted over it
 happily — but no mission ever reached it.
 
-**Root cause — two AP-22 violations in the worker chain.**
+**Root cause — three AP-22 violations in the worker chain** (the third only
+became visible once the first two were fixed and the live verify mission
+019f3d01 reached the API-key walk):
 1. *No memory of the codex cap.* `claude_quota_state` existed for the Claude
    direction, but a usage-capped codex was deliberately NOT flagged ("the
    next mission retries codex automatically"), so
@@ -3033,6 +3035,15 @@ happily — but no mission ever reached it.
    spawn was a guaranteed "Not logged in" terminal error; the orchestrator's
    per-iteration factory re-consult never got a chance to cross families
    because the factory's picks (codex first) never changed.
+3. *Key existence counted as key viability.* The API-key family walk
+   (`claude-api → gemini → openrouter → openai`) gated each family on
+   `get_provider_secret(prov)` truthiness. The stored anthropic credential
+   was a stale `sk-ant-oat` OAuth bearer — a shape the worker env builder
+   deliberately DROPS (guaranteed 401) and `_claude_cli_auth_viable` refuses
+   — yet its mere existence made the walk pick
+   `ApiAgentWorker('claude-api')`, which 401'd ("invalid x-api-key") on
+   every retry while the healthy openrouter key sat ONE slot further in the
+   SAME loop.
 
 **Fix.** `jarvis/codex_quota_state.py` (new, mirror of
 `claude_quota_state`): a time-based, self-expiring cooldown armed by a
@@ -3044,6 +3055,11 @@ factory, seeing the cooldown, crosses to the user's API-key family).
 `init.py` (`_cross_family_last_resort_worker`, `reachable_worker_families`,
 the proactive claude-cooldown→codex route) and `ClaudeDirectWorker`'s two
 claude→codex fallbacks all skip codex while the cooldown is armed.
+`_api_key_family_viable` (init.py) replaces the bare
+`get_provider_secret(prov)` gate everywhere the factory walks API-key
+families: for `claude-api` an `sk-ant-oat` bearer never counts, and a
+classic key a worker fingerprint-flagged dead this session is skipped until
+it changes.
 
 **Guards.** `tests/missions/workers/test_codex_quota_state.py`;
 `tests/missions/workers/test_codex_auth_fallback.py` (cap arms cooldown +
