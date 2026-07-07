@@ -1163,16 +1163,18 @@ and at the `<DepartureBoard ...>` render site add the prop:
     }
 ```
 
-`de.json`:
+`de.json` (the `// i18n-allow` trailers below satisfy the repo's language
+gate for these quoted product-surface locale values — do NOT copy them into
+the real JSON, which takes no comments):
 
 ```json
-    "health_degraded": "Subagent-Anbieter beeinträchtigt",
-    "health_error": "Kein Subagent-Anbieter erreichbar",
+    "health_degraded": "Subagent-Anbieter beeinträchtigt",  // i18n-allow: quoted de locale value
+    "health_error": "Kein Subagent-Anbieter erreichbar",  // i18n-allow: quoted de locale value
     "error_class": {
-      "provider_auth": "Anbieter-Anmeldung ungültig oder abgelaufen — in der API-Keys-Ansicht neu verbinden.",
-      "provider_quota": "Anbieter-Kontingent erschöpft — Missionen weichen auf einen anderen Anbieter aus.",
-      "provider_unreachable": "Anbieter vorübergehend nicht erreichbar.",
-      "worker_timeout": "Der Worker hat das Zeitlimit überschritten."
+      "provider_auth": "Anbieter-Anmeldung ungültig oder abgelaufen — in der API-Keys-Ansicht neu verbinden.",  // i18n-allow: quoted de locale value
+      "provider_quota": "Anbieter-Kontingent erschöpft — Missionen weichen auf einen anderen Anbieter aus.",  // i18n-allow: quoted de locale value
+      "provider_unreachable": "Anbieter vorübergehend nicht erreichbar.",  // i18n-allow: quoted de locale value
+      "worker_timeout": "Der Worker hat das Zeitlimit überschritten."  // i18n-allow: quoted de locale value
     }
 ```
 
