@@ -11,9 +11,10 @@ Two endpoints power the Desktop App's "Obsidian" setup card:
   => 409, ``rolled_back`` => 500.
 
 The vault root is read from ``app.state.config.wiki_integration.vault_root``
-(same surface as :mod:`jarvis.ui.web.wiki_routes`). When the path is
-relative, it is resolved against ``app.state.repo_root`` if present,
-otherwise against ``Path.cwd()``. No mutation of app state happens here.
+(same surface as :mod:`jarvis.ui.web.wiki_routes`) and resolved through the
+canonical :func:`jarvis.memory.wiki.vault_root.resolve_vault_root` (spec
+A7) — a relative path anchors to the repo root, never the process CWD. No
+mutation of app state happens here.
 
 This module owns only the HTTP surface. All detection + write logic lives
 in :mod:`jarvis.setup.obsidian` (Sub-Agents 1 + 2). This file is a pure
@@ -28,6 +29,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
+from jarvis.memory.wiki.vault_root import resolve_vault_root
 from jarvis.setup.obsidian import (
     detect_obsidian,
     is_vault_registered,
@@ -92,10 +94,12 @@ class SetupStateResponse(BaseModel):
 def _resolve_vault_path(request: Request) -> Path:
     """Return the absolute vault path the wizard should target.
 
-    Falls back to ``<cwd>/wiki/obsidian-vault`` when no config is wired up
-    so the route stays useful in minimal test apps. Resolves a relative
-    ``vault_root`` against ``app.state.repo_root`` when present, otherwise
-    against ``Path.cwd()`` (same as :mod:`jarvis.ui.web.wiki_routes`).
+    Resolves through the canonical
+    :func:`jarvis.memory.wiki.vault_root.resolve_vault_root` (spec A7) —
+    same resolver used by :mod:`jarvis.ui.web.wiki_routes` — so a relative
+    ``vault_root`` anchors to the repo root, never the process CWD. Falls
+    back to the resolver's default vault location when no config is wired
+    up, so the route stays useful in minimal test apps.
     """
     config = getattr(request.app.state, "config", None)
     raw: Path | str | None = None
@@ -104,17 +108,7 @@ def _resolve_vault_path(request: Request) -> Path:
         if wiki_cfg is not None:
             raw = getattr(wiki_cfg, "vault_root", None)
 
-    if raw is None:
-        raw = Path("wiki/obsidian-vault")
-
-    path = Path(raw)
-    if not path.is_absolute():
-        repo_root = getattr(request.app.state, "repo_root", None)
-        base = Path(repo_root) if repo_root is not None else Path.cwd()
-        path = (base / path).resolve()
-    else:
-        path = path.resolve()
-    return path
+    return resolve_vault_root(raw).path
 
 
 # ---------------------------------------------------------------------------

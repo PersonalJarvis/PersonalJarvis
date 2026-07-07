@@ -154,27 +154,31 @@ def _build_page_read_tool() -> "WikiPageReadTool":
     """Construct a :class:`WikiPageReadTool` with the configured vault root.
 
     Mirrors :func:`jarvis.plugins.tool.wiki_recall._build_search_instance` so
-    the factory can wire both tools the same way.  Falls back to
-    ``Path("wiki/obsidian-vault")`` (relative to CWD) when the config field
-    is absent, and logs a single WARNING in that case.
+    the factory can wire both tools the same way.  Resolves through
+    :func:`jarvis.memory.wiki.vault_root.resolve_vault_root` (spec A7), so a
+    relative root anchors to the repo root, never the process CWD.  Falls
+    back to the resolver's default vault location when the config field is
+    absent, and logs a single WARNING in that case.
     """
-    vault_root: Path | None = None
+    from jarvis.memory.wiki.vault_root import resolve_vault_root
+
+    raw: str | Path | None = None
     try:
         from jarvis.core import config as cfg
 
         loaded = cfg.load_config()
         wiki_cfg = getattr(loaded, "wiki_integration", None)
         if wiki_cfg is not None:
-            vault_root = Path(wiki_cfg.vault_root)
+            raw = wiki_cfg.vault_root
     except Exception as exc:  # noqa: BLE001
         log.debug("wiki-page-read: config load skipped: %s", exc)
 
-    if vault_root is None:
-        vault_root = Path("wiki/obsidian-vault")
+    if raw is None:
         log.warning(
             "wiki-page-read: cfg.wiki_integration.vault_root not found; "
-            "defaulting to %s",
-            vault_root.resolve(),
+            "defaulting to the standard vault location",
         )
+
+    vault_root = resolve_vault_root(raw).path
 
     return WikiPageReadTool(vault_root=vault_root)

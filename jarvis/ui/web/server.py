@@ -2183,11 +2183,9 @@ class WebServer:
             return
 
         repo = MarkdownPageRepository()
-        vault_root = Path(wiki_cfg.vault_root)
-        if not vault_root.is_absolute():
-            # Resolve relative to the repo root (same convention as the rest
-            # of the app — CWD is the repo root at runtime).
-            vault_root = Path.cwd() / vault_root
+        from jarvis.memory.wiki.vault_root import resolve_vault_root
+
+        vault_root = resolve_vault_root(wiki_cfg.vault_root).path
 
         def _wiki_scheduler_factory(*, curator):  # noqa: ANN001, ANN202
             """Build the CuratorScheduler (cooldown + VaultLock, Wave-2 B4).
@@ -2247,9 +2245,9 @@ class WebServer:
         if not wiki_cfg.enabled:
             return
 
-        vault_root = Path(wiki_cfg.vault_root)
-        if not vault_root.is_absolute():
-            vault_root = Path.cwd() / vault_root
+        from jarvis.memory.wiki.vault_root import resolve_vault_root
+
+        vault_root = resolve_vault_root(wiki_cfg.vault_root).path
         if not vault_root.is_dir():
             logger.info("wiki_boot_index: vault missing — skipping ({})", vault_root)
             return
@@ -2285,6 +2283,7 @@ class WebServer:
         the desktop app must boot when the vault is empty or watchdog
         cannot start an observer.
         """
+        from jarvis.memory.wiki.vault_root import resolve_vault_root
         from jarvis.memory.wiki.watcher import WikiWatcher
 
         wiki_cfg = self.cfg.wiki_integration
@@ -2292,9 +2291,7 @@ class WebServer:
             logger.info("wiki_watcher: wiki_integration disabled — skipping")
             return
 
-        vault_root = Path(wiki_cfg.vault_root)
-        if not vault_root.is_absolute():
-            vault_root = Path.cwd() / vault_root
+        vault_root = resolve_vault_root(wiki_cfg.vault_root).path
 
         watcher = WikiWatcher(vault_root=vault_root, bus=self.bus)
         try:

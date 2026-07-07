@@ -6,9 +6,11 @@ detector + writer in :mod:`jarvis.setup.obsidian` so the real
 HTTP shapes / status codes documented in the route module.
 
 The tests use a tiny ``SimpleNamespace`` config so we never have to
-construct a full :class:`JarvisConfig`. The vault path resolution path
-through ``app.state.repo_root`` is exercised by passing ``tmp_path`` as
-the repo root.
+construct a full :class:`JarvisConfig`. Vault path resolution goes through
+the canonical ``jarvis.memory.wiki.vault_root.resolve_vault_root`` (spec
+A7), which anchors a relative ``vault_root`` to the repo root — the routes
+under test only ever inspect the resolved path's suffix, so they stay
+agnostic to which concrete repo root the resolver picks.
 """
 from __future__ import annotations
 
@@ -41,17 +43,11 @@ from jarvis.ui.web.setup_routes import router as setup_router
 
 
 def _make_app(tmp_path: Path) -> FastAPI:
-    """Build a minimal FastAPI app with the setup router mounted.
-
-    ``app.state.repo_root`` is set to ``tmp_path`` so a relative
-    ``vault_root`` resolves into a writable scratch directory rather
-    than the real repo.
-    """
+    """Build a minimal FastAPI app with the setup router mounted."""
     app = FastAPI()
     app.include_router(setup_router)
     wiki_cfg = SimpleNamespace(vault_root=Path("wiki/obsidian-vault"))
     app.state.config = SimpleNamespace(wiki_integration=wiki_cfg)
-    app.state.repo_root = tmp_path
     return app
 
 
