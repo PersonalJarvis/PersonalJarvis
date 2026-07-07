@@ -24,6 +24,12 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import type { ObsidianStatus } from "@/types/setup";
+import {
+  fetchObsidianVaults,
+  registerObsidianVault,
+  type ObsidianVaultInfo,
+  type RegisterMode,
+} from "@/lib/obsidian";
 
 export interface ObsidianSetupDialogProps {
   /** Whether the dialog is visible. */
@@ -55,7 +61,11 @@ interface RegisterResponse {
   vault_uuid?: string | null;
   backup_path?: string | null;
   error?: string | null;
+  active_vault_root?: string | null;
+  restart_required?: boolean;
 }
+
+const RESTART_URL = "/api/settings/restart-app";
 
 /**
  * Extract the final segment of the vault path so the
@@ -183,11 +193,43 @@ export function ObsidianSetupDialog({
   const [registerHint, setRegisterHint] = useState<string | null>(null);
   const [registerError, setRegisterError] = useState<string | null>(null);
 
+  // Step 2 — vault choice (spec A6): "separate" (default, today's behavior)
+  // vs. "existing" (repoint into a vault the user already has in Obsidian).
+  const [registerMode, setRegisterMode] = useState<RegisterMode>("separate");
+  const [vaults, setVaults] = useState<ObsidianVaultInfo[]>([]);
+  const [selectedVaultPath, setSelectedVaultPath] = useState<string | null>(null);
+
+  // Result of a successful register, surfaced on step 3 regardless of mode.
+  const [activeVaultRoot, setActiveVaultRoot] = useState<string | null>(null);
+  const [restartRequired, setRestartRequired] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+
   // Stable fetch reference.
   const fetchRef = useRef<typeof fetch>(fetchImpl ?? window.fetch.bind(window));
   useEffect(() => {
     fetchRef.current = fetchImpl ?? window.fetch.bind(window);
   }, [fetchImpl]);
+
+  // Fetch the existing-vault picker list once when the dialog opens. Best
+  // effort — a failed fetch just leaves "use my existing vault" disabled,
+  // it never blocks the default "separate" path.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await fetchObsidianVaults(fetchRef.current);
+        if (cancelled) return;
+        setVaults(list);
+        setSelectedVaultPath((prev) => prev ?? list[0]?.path ?? null);
+      } catch {
+        // Keep the picker disabled — this list is a nice-to-have.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   // Escape closes the dialog.
   useEffect(() => {
@@ -255,6 +297,8 @@ export function ObsidianSetupDialog({
           body.status === "added" ||
           body.status === "already_registered"
         ) {
+          setActiveVaultRoot(body?.active_vault_root ?? null);
+          setRestartRequired(Boolean(body?.restart_required));
           advance(3);
         } else {
           // Defensive: 200 with an unexpected body — surface as error.
@@ -296,6 +340,61 @@ export function ObsidianSetupDialog({
       setRegistering(false);
     }
   }, [advance, t]);
+
+  // "Use my existing vault" (mode="existing") — unlike `handleRegister`
+  // above, the backend always answers HTTP 200 with a flat body for this
+  // mode (see `registerObsidianVault`'s docstring), so no status-code
+  // branching is needed here.
+  const handleRegisterExisting = useCallback(async () => {
+    if (!selectedVaultPath) return;
+    setRegisterHint(null);
+    setRegisterError(null);
+    setRegistering(true);
+    try {
+      const body = await registerObsidianVault(
+        "existing",
+        selectedVaultPath,
+        fetchRef.current,
+      );
+      if (body.status === "added" || body.status === "already_registered") {
+        setActiveVaultRoot(body.active_vault_root ?? null);
+        setRestartRequired(Boolean(body.restart_required));
+        advance(3);
+      } else {
+        setRegisterError(
+          `${t("obsidian_setup_dialog.register_failed")}: ${
+            body.error ?? t("obsidian_setup_dialog.unknown_status")
+          }`,
+        );
+      }
+    } catch (exc) {
+      const msg = exc instanceof Error ? exc.message : String(exc);
+      setRegisterError(`${t("obsidian_setup_dialog.register_failed")}: ${msg}`);
+    } finally {
+      setRegistering(false);
+    }
+  }, [advance, selectedVaultPath, t]);
+
+  const handleConfirmRegister = useCallback(() => {
+    if (registerMode === "existing") {
+      void handleRegisterExisting();
+    } else {
+      void handleRegister();
+    }
+  }, [registerMode, handleRegisterExisting, handleRegister]);
+
+  const handleRestartNow = useCallback(async () => {
+    setRestarting(true);
+    try {
+      await fetchRef.current(RESTART_URL, { method: "POST" });
+      // On success the app tears itself down and relaunches — leave
+      // `restarting` true so the button stays disabled until that happens.
+    } catch {
+      // Re-enable so the user can retry; the vault choice is already
+      // persisted either way.
+      setRestarting(false);
+    }
+  }, []);
 
   const vaultName = useMemo(() => deriveVaultName(vaultPath), [vaultPath]);
 
