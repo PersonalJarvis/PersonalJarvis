@@ -3021,9 +3021,9 @@ OAuth login was dead (nothing refreshes `~/.claude` on this host). A healthy
 OpenRouter key was configured the whole time — the Brain chatted over it
 happily — but no mission ever reached it.
 
-**Root cause — three AP-22 violations in the worker chain** (the third only
-became visible once the first two were fixed and the live verify mission
-019f3d01 reached the API-key walk):
+**Root cause — four AP-22 violations in the worker chain** (each next one
+only became visible once the previous was fixed and a live verify mission
+— 019f3d01, then 019f3d0f — walked one family further):
 1. *No memory of the codex cap.* `claude_quota_state` existed for the Claude
    direction, but a usage-capped codex was deliberately NOT flagged ("the
    next mission retries codex automatically"), so
@@ -3044,6 +3044,12 @@ became visible once the first two were fixed and the live verify mission
    `ApiAgentWorker('claude-api')`, which 401'd ("invalid x-api-key") on
    every retry while the healthy openrouter key sat ONE slot further in the
    SAME loop.
+4. *No memory of a failing API family.* With defect 3 fixed, the walk
+   reached gemini — whose prepaid credits were DEPLETED (429
+   RESOURCE_EXHAUSTED, mission 019f3d0f). `ApiAgentWorker` recorded nothing
+   about the failure, so every retry deterministically re-picked gemini;
+   openrouter was never reached. The claude/codex directions had quota
+   cooldowns, the API families had none.
 
 **Fix.** `jarvis/codex_quota_state.py` (new, mirror of
 `claude_quota_state`): a time-based, self-expiring cooldown armed by a
@@ -3059,7 +3065,12 @@ claude→codex fallbacks all skip codex while the cooldown is armed.
 `get_provider_secret(prov)` gate everywhere the factory walks API-key
 families: for `claude-api` an `sk-ant-oat` bearer never counts, and a
 classic key a worker fingerprint-flagged dead this session is skipped until
-it changes.
+it changes. `jarvis/api_family_quota_state.py` (new, generic per-provider
+mirror of the claude/codex cooldowns): `ApiAgentWorker` arms it when a run
+dies on a quota/auth provider error and clears it on success;
+`_api_key_family_viable` consults it. FINGERPRINT-bound: saving a new key in
+the API-Keys view lifts the block instantly (in-app recovery, §3), while the
+same dead key stays skipped until the cooldown self-expires.
 
 **Guards.** `tests/missions/workers/test_codex_quota_state.py`;
 `tests/missions/workers/test_codex_auth_fallback.py` (cap arms cooldown +

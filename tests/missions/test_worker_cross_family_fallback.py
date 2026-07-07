@@ -196,6 +196,31 @@ def test_claude_binary_with_dead_auth_crosses_to_api_key(
     assert worker.provider == "openrouter"
 
 
+def test_quota_depleted_family_is_skipped_in_the_walk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mission 019f3d0f (2026-07-07): gemini's prepaid credits were depleted
+    (429) and every retry re-picked gemini — openrouter, one slot further in
+    the SAME loop, was never reached. A family in quota cooldown must be
+    walked past."""
+    from jarvis.api_family_quota_state import (
+        clear_api_family_cooldown,
+        mark_api_family_cooldown,
+    )
+    from jarvis.claude_auth_state import credential_fingerprint
+
+    _patch_env(monkeypatch, keys=("gemini", "openrouter"))
+    mark_api_family_cooldown(
+        "gemini", fingerprint=credential_fingerprint("KEY")
+    )
+    try:
+        worker = mi._cross_family_last_resort_worker("t")
+        assert isinstance(worker, ApiAgentWorker)
+        assert worker.provider == "openrouter"
+    finally:
+        clear_api_family_cooldown("gemini")
+
+
 def test_claude_binary_with_live_auth_stays_preferred(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

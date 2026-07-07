@@ -512,14 +512,20 @@ def _api_key_family_viable(provider: str) -> bool:
     key = get_provider_secret(provider)
     if not key:
         return False
+    # A family a worker just proved quota-depleted / auth-dead is skipped
+    # until its cooldown self-expires — fingerprinted, so saving a NEW key in
+    # the API-Keys view lifts the block instantly (mission 019f3d0f: gemini's
+    # depleted prepaid credits were re-picked on every retry, BUG-042).
+    from jarvis.api_family_quota_state import api_family_in_cooldown
+    from jarvis.claude_auth_state import claude_auth_dead, credential_fingerprint
+
+    if api_family_in_cooldown(
+        provider, current_fingerprint=credential_fingerprint(key)
+    ):
+        return False
     if provider == "claude-api":
         if key.startswith("sk-ant-oat"):
             return False
-        from jarvis.claude_auth_state import (
-            claude_auth_dead,
-            credential_fingerprint,
-        )
-
         return not claude_auth_dead(current_fingerprint=credential_fingerprint(key))
     return True
 

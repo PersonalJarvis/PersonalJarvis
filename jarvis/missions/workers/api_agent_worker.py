@@ -44,6 +44,40 @@ from .stream_consumer import (
 
 logger = logging.getLogger(__name__)
 
+# Provider errors that mean the FAMILY's key is unusable right now — quota
+# depleted / rate-capped ("Your prepayment credits are depleted", 429
+# RESOURCE_EXHAUSTED) or auth-dead ("invalid x-api-key", 401). Either way,
+# retrying the same family is a guaranteed repeat; the per-family cooldown
+# tells the factory's family walk to cross to the next key (missions
+# 019f3d01 + 019f3d0f, 2026-07-07 / BUG-042).
+_FAMILY_UNUSABLE_MARKERS: tuple[str, ...] = (
+    # quota / rate / billing
+    "429",
+    "quota",
+    "rate limit",
+    "rate_limit",
+    "too many requests",
+    "resource_exhausted",
+    "depleted",
+    "credit",
+    "billing",
+    "insufficient",
+    # auth
+    "401",
+    "unauthorized",
+    "authentication",
+    "invalid x-api-key",
+    "invalid api key",
+    "invalid_api_key",
+)
+
+
+def _error_means_family_unusable(text: str) -> bool:
+    """True when a provider error proves the key itself cannot run right now."""
+    low = (text or "").lower()
+    return any(marker in low for marker in _FAMILY_UNUSABLE_MARKERS)
+
+
 # Provider slug -> (module, class). Lazy-imported so a worker for one provider
 # never imports another's SDK path. Slugs match jarvis provider ids.
 _BRAIN_BY_PROVIDER: dict[str, tuple[str, str]] = {
@@ -380,6 +414,10 @@ class ApiAgentWorker:
                 subtype="success", is_error=False, session_id=session_id,
                 num_turns=turns, duration_ms=wall_ms, result=summary[:4000],
             )
+            # This family's key works — lift any armed cooldown immediately.
+            from jarvis.api_family_quota_state import clear_api_family_cooldown
+
+            clear_api_family_cooldown(self.provider)
             _emit_line(res)
             yield res
         except asyncio.CancelledError:
@@ -387,6 +425,28 @@ class ApiAgentWorker:
         except Exception as exc:  # noqa: BLE001
             wall_ms = int((time.perf_counter() - t0) * 1000)
             logger.warning("ApiAgentWorker[%s] failed: %s", worker_id, exc, exc_info=True)
+            if _error_means_family_unusable(str(exc)):
+                # Remember that THIS key cannot run right now, fingerprinted so
+                # a freshly saved key lifts the block instantly. The factory's
+                # family walk skips the family on the retry and crosses to the
+                # user's next healthy key (AP-22, BUG-042).
+                from jarvis.api_family_quota_state import mark_api_family_cooldown
+                from jarvis.claude_auth_state import credential_fingerprint
+
+                fp: str | None = None
+                try:
+                    from jarvis.core.config import get_provider_secret
+
+                    fp = credential_fingerprint(get_provider_secret(self.provider))
+                except Exception:  # noqa: BLE001 — unreadable store => unbound cooldown
+                    fp = None
+                mark_api_family_cooldown(self.provider, fingerprint=fp)
+                logger.warning(
+                    "ApiAgentWorker[%s]: provider %r key is unusable (quota/auth) "
+                    "— arming the family cooldown so the worker factory crosses "
+                    "to the next reachable key family on the retry.",
+                    worker_id, self.provider,
+                )
             res = ClaudeResult(
                 subtype="error_during_execution", is_error=True, session_id=session_id,
                 num_turns=turns, duration_ms=wall_ms,
