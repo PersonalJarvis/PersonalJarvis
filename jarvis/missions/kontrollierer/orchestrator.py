@@ -762,6 +762,13 @@ class Kontrollierer:
         # when later iterations overwrite the worktree with a no-op.
         # See live forensic 2026-05-16 mission_019e3288.
         self._task_iter_diffs: dict[str, list[tuple[int, str]]] = {}
+        # Last classified worker-failure per mission (error_class,
+        # error_detail, failed_provider) — written by the worker_error branch
+        # in the critic loop, consumed once by _fail_mission so the terminal
+        # MissionFailed event can name the real cause (2026-07-06 incident).
+        # Popped on BOTH terminal paths (fail + approve) so a retried-then-
+        # approved mission never leaks a stale context into a later run.
+        self._mission_failure_context: dict[str, dict[str, str | None]] = {}
         # Per-mission worker answers for read-only/informational tasks (empty
         # diff + tool evidence). Surfaced as MissionApproved.summary_de so the
         # voice readback speaks the actual answer instead of "Mission
@@ -1327,6 +1334,20 @@ class Kontrollierer:
                 # (2026-07-06: expired Claude OAuth token killed every mission
                 # terminally while codex + OpenRouter were healthy — AP-22).
                 is_auth = _worker_error_is_auth(err_lower)
+                # Record the classified failure for the terminal MissionFailed
+                # event. Last write wins: the final iteration's cause is the
+                # one the mission actually died of.
+                self._mission_failure_context[mission_id] = {
+                    "error_class": _classify_worker_error(
+                        spawn_result.worker_error,
+                        timed_out=spawn_result.worker_timed_out,
+                    ),
+                    "error_detail": spawn_result.worker_error[:300],
+                    "failed_provider": (
+                        getattr(worker, "provider", None)
+                        or getattr(worker, "cli", None)
+                    ),
+                }
                 kill_reason: Literal[
                     "timeout", "user", "budget", "parent_cancelled",
                     "injection_detected", "path_guard", "worker_error",
@@ -1404,6 +1425,10 @@ class Kontrollierer:
                         mission_id=mission_id,
                         worker_id=spawn_result.worker_id,
                         reason=kill_reason,
+                        error_class=self._mission_failure_context.get(
+                            mission_id, {}
+                        ).get("error_class"),
+                        error_detail=spawn_result.worker_error[:300],
                     )
                     # A worker that ran out of time (wall-clock cap) on its
                     # final attempt is a TIMEOUT, not a crash. Surface the
@@ -1906,6 +1931,8 @@ class Kontrollierer:
         mission_id: str,
         worker_id: str,
         reason: str,
+        error_class: str | None = None,
+        error_detail: str | None = None,
     ) -> None:
         """Emits a WorkerKilled event on the bus + store."""
         # Reason is mapped onto the literal set in events.WorkerKilled.
@@ -1925,7 +1952,12 @@ class Kontrollierer:
             worker_id=worker_id,
             source_actor="kontrollierer",
             ts_ms=now_ms(),
-            payload=WorkerKilled(worker_id=worker_id, reason=mapped),  # type: ignore[arg-type]
+            payload=WorkerKilled(
+                worker_id=worker_id,
+                reason=mapped,  # type: ignore[arg-type]
+                error_class=error_class,
+                error_detail=error_detail,
+            ),
         )
         await self._manager.store.append_and_publish(env)
 
@@ -2506,6 +2538,9 @@ class Kontrollierer:
     async def _approve_mission(
         self, mission_id: str, plan: MissionPlan, *, prompt: str = ""
     ) -> None:
+        # Hygiene: a retried-then-approved mission must not leak a stale
+        # worker-failure context into a later run (mirror of _fail_mission).
+        self._mission_failure_context.pop(mission_id, None)
         await self._safe_transition(mission_id, MissionState.APPROVED, "all_tasks_approved")
         # Point `result_uri` at the real mission directory so the Outputs
         # view and any voice-readback consumer can resolve it to actual
@@ -2616,6 +2651,11 @@ class Kontrollierer:
         partial_artifacts: list[str] | None = None,
     ) -> None:
         self._task_answers.pop(mission_id, None)  # hygiene: drop captured answers
+        # Consume the classified worker-failure context (if any) so the
+        # terminal MissionFailed event names the real cause instead of the
+        # bare mission-level reason (2026-07-06 incident: error_class was
+        # always None and the UI/voice could not name a dead credential).
+        failure_ctx = self._mission_failure_context.pop(mission_id, {})
         # Only transition when not already terminal
         view = await self._manager.mission(mission_id)
         if view is None or view.state in (
@@ -2632,6 +2672,9 @@ class Kontrollierer:
             ts_ms=now_ms(),
             payload=MissionFailed(
                 reason=reason,
+                error_class=failure_ctx.get("error_class"),
+                error_detail=failure_ctx.get("error_detail"),
+                failed_provider=failure_ctx.get("failed_provider"),
                 last_state=view.state.value,
                 partial_artifacts=partial_artifacts or [],
             ),

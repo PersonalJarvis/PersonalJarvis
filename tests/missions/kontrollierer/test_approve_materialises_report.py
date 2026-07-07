@@ -66,6 +66,7 @@ def _build_orch(
     o._isolation_root = tmp_path / "iso"
     o._isolation_root.mkdir(parents=True, exist_ok=True)
     o._task_answers = {}
+    o._mission_failure_context = {}
     o._state_locks = {}
     o._manager = _FakeManager()
     o._budget = _FakeBudget()
