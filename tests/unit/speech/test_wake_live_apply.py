@@ -62,21 +62,6 @@ def _cfg(**kw: object) -> SimpleNamespace:
     return SimpleNamespace(**base)
 
 
-def _pretend_oww_models_exist(
-    monkeypatch: pytest.MonkeyPatch, *model_names: str
-) -> None:
-    models = set(model_names)
-    original_resolve = wc.resolve_oww_model_path
-
-    def fake_resolve(model_name: str) -> str | None:
-        if model_name in models:
-            return f"C:/fake-openwakeword/{model_name}_v0.1.onnx"
-        return original_resolve(model_name)
-
-    monkeypatch.setattr(wc, "resolve_oww_model_path", fake_resolve)
-    monkeypatch.setattr(wp, "resolve_oww_model_path", fake_resolve)
-
-
 def _pipe() -> SpeechPipeline:
     return SpeechPipeline(
         tts=_FakeTTS(), bus=None,
@@ -86,17 +71,26 @@ def _pipe() -> SpeechPipeline:
 
 
 # --------------------------------------------------------------------------
-# WakeWordPlan.verify_prefix — only the jarvis family needs STT re-verification
+# WakeWordPlan.verify_prefix — only custom_onnx plans need STT re-verification
 # --------------------------------------------------------------------------
 
-def test_verify_prefix_true_for_jarvis_default() -> None:
-    plan = resolve_wake_plan(_cfg(phrase="Hey Jarvis"), local_whisper_available=False)
+def test_verify_prefix_true_for_custom_onnx(tmp_path) -> None:
+    onnx = tmp_path / "hey_fable.onnx"
+    onnx.write_bytes(b"stub")
+    plan = resolve_wake_plan(
+        _cfg(phrase="Hey Fable", engine="custom_onnx", custom_model_path=str(onnx)),
+        local_whisper_available=False,
+    )
+    assert plan.engine == "custom_onnx"
     assert plan.verify_prefix is True
 
 
-def test_verify_prefix_false_for_alexa_and_mycroft() -> None:
+def test_brand_phrases_resolve_generically_without_a_model() -> None:
+    # No bundled/pretrained models (design 2026-07-07): brand words are
+    # ordinary phrases; with no local engine they degrade honestly.
     for phrase in ("Alexa", "Hey Mycroft", "Rhasspy"):
         plan = resolve_wake_plan(_cfg(phrase=phrase), local_whisper_available=False)
+        assert plan.engine == "none", phrase
         assert plan.verify_prefix is False, phrase
 
 

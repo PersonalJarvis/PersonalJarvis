@@ -231,22 +231,6 @@ def _cfg(**kw: object) -> SimpleNamespace:
     return SimpleNamespace(**base)
 
 
-def _pretend_oww_models_exist(
-    monkeypatch: pytest.MonkeyPatch, *model_names: str
-) -> None:
-    """Make package-model tests independent of the local openwakeword install."""
-    models = set(model_names)
-    original_resolve = wc.resolve_oww_model_path
-
-    def fake_resolve(model_name: str) -> str | None:
-        if model_name in models:
-            return f"C:/fake-openwakeword/{model_name}_v0.1.onnx"
-        return original_resolve(model_name)
-
-    monkeypatch.setattr(wc, "resolve_oww_model_path", fake_resolve)
-    monkeypatch.setattr(wp, "resolve_oww_model_path", fake_resolve)
-
-
 def _cfg_blank(**kw: object) -> SimpleNamespace:
     """Config with empty phrase — the new shipped default pre-onboarding state."""
     base = dict(
@@ -260,39 +244,29 @@ def _cfg_blank(**kw: object) -> SimpleNamespace:
     return SimpleNamespace(**base)
 
 
-def test_default_phrase_resolves_to_bundled_hey_jarvis_oww() -> None:
+def test_jarvis_phrase_resolves_generically_not_to_a_bundled_model() -> None:
+    """Design 2026-07-07: no pretrained brand models — 'Hey Jarvis' is just a phrase."""
+    plan = resolve_wake_plan(_cfg(), local_whisper_available=True)
+    assert plan.engine == "stt_match"  # vosk is fenced off by the autouse fixture
+    assert plan.oww_model_path is None
+    assert plan.oww_keyword == "jarvis"
+    assert plan.degraded is False
+
+
+def test_brand_phrase_never_loads_an_upstream_package_model() -> None:
+    """Typing a third-party brand word must NOT pull that brand's model."""
+    for phrase in ("Alexa", "Hey Mycroft", "Rhasspy"):
+        plan = resolve_wake_plan(_cfg(phrase=phrase), local_whisper_available=True)
+        assert plan.engine == "stt_match", phrase
+        assert plan.oww_model_path is None, phrase
+
+
+def test_jarvis_phrase_without_any_local_engine_is_hotkey_only() -> None:
+    """No bundled model means the jarvis phrase degrades like any other word."""
     plan = resolve_wake_plan(_cfg(), local_whisper_available=False)
-    assert plan.engine == "openwakeword"
-    assert plan.oww_keyword == "hey_jarvis"
-    assert plan.oww_model_path is not None
-    assert plan.oww_model_path.endswith("hey_jarvis_v0.1.onnx")
-    assert plan.needs_local_whisper is False
-    assert plan.degraded is False
-
-
-def test_known_pretrained_phrase_resolves_to_that_model(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _pretend_oww_models_exist(monkeypatch, "alexa")
-
-    plan = resolve_wake_plan(_cfg(phrase="Alexa"), local_whisper_available=False)
-    assert plan.engine == "openwakeword"
-    assert plan.oww_keyword == "alexa"
-    assert plan.oww_model_path is not None
-    assert plan.oww_model_path.endswith("alexa_v0.1.onnx")
-    assert plan.needs_local_whisper is False
-    assert plan.degraded is False
-
-
-def test_mycroft_and_rhasspy_resolve_to_pretrained_models(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _pretend_oww_models_exist(monkeypatch, "hey_mycroft")
-
-    p1 = resolve_wake_plan(_cfg(phrase="Hey Mycroft"), local_whisper_available=False)
-    assert p1.oww_keyword == "hey_mycroft"
-    p2 = resolve_wake_plan(_cfg(phrase="Rhasspy"), local_whisper_available=False)
-    assert p2.oww_keyword == "hey_rhasspy"
+    assert plan.wake_available is False
+    assert plan.engine == "none"
+    assert plan.oww_model_path is None
 
 
 def test_arbitrary_phrase_with_local_whisper_resolves_to_stt_match() -> None:
@@ -374,23 +348,21 @@ def test_blank_cfg_without_whisper_is_hotkey_only() -> None:
     assert plan.degraded is True
 
 
-def test_jarvis_stays_typeable_resolves_to_hey_jarvis_model() -> None:
-    # A user who explicitly types "Hey Jarvis" must still get the hey_jarvis
-    # OWW model (verify_prefix=True, not degraded).
-    plan = resolve_wake_plan(_cfg(phrase="Hey Jarvis"), local_whisper_available=False)
-    assert plan.engine == "openwakeword"
-    assert plan.oww_keyword == "hey_jarvis"
+def test_jarvis_stays_typeable_through_the_generic_chain() -> None:
+    # A user who explicitly types "Hey Jarvis" gets a working wake word via
+    # the generic chain — no bundled model, no special case (design 2026-07-07).
+    plan = resolve_wake_plan(_cfg(phrase="Hey Jarvis"), local_whisper_available=True)
+    assert plan.engine == "stt_match"
+    assert plan.oww_model_path is None
     assert plan.degraded is False
-    assert plan.verify_prefix is True
 
 
-def test_just_jarvis_stays_typeable_resolves_to_hey_jarvis_model() -> None:
-    # Bare "Jarvis" (no "Hey" prefix) also maps to the hey_jarvis model.
-    plan = resolve_wake_plan(_cfg(phrase="Jarvis"), local_whisper_available=False)
-    assert plan.engine == "openwakeword"
-    assert plan.oww_keyword == "hey_jarvis"
+def test_just_jarvis_stays_typeable_through_the_generic_chain() -> None:
+    # Bare "Jarvis" (no "Hey" prefix) is an ordinary single-word phrase now.
+    plan = resolve_wake_plan(_cfg(phrase="Jarvis"), local_whisper_available=True)
+    assert plan.engine == "stt_match"
+    assert plan.oww_model_path is None
     assert plan.degraded is False
-    assert plan.verify_prefix is True
 
 
 def test_sensitivity_to_poll_interval_makes_the_slider_control_speed() -> None:

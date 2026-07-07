@@ -12,12 +12,12 @@ docs/local-wakeword/CUSTOM-WAKE-WORD-DESIGN.md). Two public pieces:
 
 ``resolve_wake_plan(cfg, *, local_whisper_available)`` -> :class:`WakeWordPlan`
     Turns the user's ``[trigger.wake_word]`` config into a concrete engine
-    choice, honouring the cloud-first doctrine: a phrase with no pretrained
-    model needs local Whisper, and on a box without it we degrade gracefully to
-    the bundled "Hey Rhasspy" model with a clear English message — never a
-    silent dead listener. Users who type "Hey Jarvis" still get the hey_jarvis
-    offline model (it is in ``KNOWN_OWW_MODELS``); "Hey Rhasspy" is just the
-    neutral out-of-box shipped fallback.
+    choice through a fully GENERIC chain (design 2026-07-07 — the product
+    ships no named wake model and never resolves a phrase against one):
+    user-trained custom .onnx -> any-word Vosk keyword spotting ->
+    local-Whisper transcript match -> honest hotkey-only degrade
+    (``wake_available=False`` with a clear English message — never a silent
+    dead listener, never a substituted fallback word).
 """
 from __future__ import annotations
 
@@ -33,11 +33,9 @@ from jarvis.speech.wake_constants import (
     JARVIS_WAKE_PATTERN,
     WAKE_ENGINES,
     WAKE_PREFIXES,
-    match_known_oww_model,
     normalize_phrase_for_match,
     phrase_core,
     phrase_core_for_match,
-    resolve_oww_model_path,
     resolve_vosk_model_path,
     sound_fold,
 )
@@ -255,9 +253,6 @@ def compile_wake_matcher(phrase: str, *, fuzzy_ratio: float = 0.8) -> WakeMatche
 
 def _canonical_keyword(phrase: str) -> str:
     """A stable lower_snake keyword for a phrase (logging / yield value)."""
-    known = match_known_oww_model(phrase)
-    if known:
-        return known
     core = phrase_core(phrase)
     return "_".join(core) if core else "wake"
 
@@ -308,16 +303,11 @@ class WakeWordPlan:
     degraded: bool               # True if we could not honour the request
     message: str                 # English status string for logs + UI
     # Whether an OpenWakeWord hit needs the second-stage STT prefix check.
-    # True for the jarvis family (the hey_jarvis model also fires on bare
-    # "Jarvis" — BUG-009) AND for user-trained custom_onnx models (live
-    # forensic 2026-07-01: a few-shot/synthetic-data model scored breath,
-    # ambient noise and arbitrary speech up to 1.000 — several false
-    # activations per minute; the verify transcript, matched against the
-    # phrase's own sound-folded fuzzy matcher, is the real discriminator).
-    # False only for a specific PRETRAINED model (alexa/mycroft/rhasspy):
-    # those are trained on large curated datasets, ARE their own
-    # discriminator, and the STT would mis-transcribe the foreign brand word
-    # and wrongly reject valid hits. Also False for vosk_kws — its permissive
+    # True for user-trained custom_onnx models (live forensic 2026-07-01: a
+    # few-shot/synthetic-data model scored breath, ambient noise and arbitrary
+    # speech up to 1.000 — several false activations per minute; the verify
+    # transcript, matched against the phrase's own sound-folded fuzzy matcher,
+    # is the real discriminator). False for vosk_kws — its permissive
     # free-decode sound confirm is built into the provider itself.
     verify_prefix: bool
     # Product rule (2026-07-04): a wake word REQUIRES a local model that matches
@@ -325,7 +315,7 @@ class WakeWordPlan:
     # ONNX, no local Whisper) we do NOT silently substitute a branded fallback
     # model — we return wake_available=False so the app arms NO detector and the
     # honest alternative is hotkey / push-to-talk activation. True for every
-    # real engine (custom_onnx / openwakeword / vosk_kws / stt_match).
+    # real engine (custom_onnx / vosk_kws / stt_match).
     wake_available: bool = True
     # Extracted Vosk model directory for the vosk_kws engine (None otherwise).
     vosk_model_path: str | None = None
@@ -419,35 +409,19 @@ def resolve_wake_plan(
                 phrase,
             )
 
-    # 2. Known pretrained openWakeWord model (CPU, instant, offline).
-    known = match_known_oww_model(phrase)
-    if engine_pref in ("auto", "openwakeword") and known and (
-        not custom_path or custom_stale
-    ):
-        model_path = resolve_oww_model_path(known)
-        if model_path is not None:
-            return WakeWordPlan(
-                phrase=phrase,
-                engine="openwakeword",
-                oww_model_path=model_path,
-                oww_keyword=known,
-                threshold=threshold,
-                matcher=matcher,
-                needs_local_whisper=False,
-                degraded=False,
-                message=f"Pretrained openWakeWord model '{known}'.",
-                verify_prefix=matcher.is_jarvis_default,
-            )
-        log.warning("Pretrained model '%s' not found on disk.", known)
+    # (The former step 2 — "known pretrained openWakeWord model" — was removed
+    # 2026-07-07: the product ships no named wake model and never resolves a
+    # phrase against the openwakeword package's pretrained third-party models.
+    # engine="openwakeword" in an old config simply falls through this chain.)
 
-    # 3. Any-word Vosk grammar keyword spotting — the one-identical-system-
+    # 2. Any-word Vosk grammar keyword spotting — the one-identical-system-
     # everywhere engine (design spec 2026-07-05): per-language model, CPU-only,
     # no training, no cloud, no GPU; spike-measured 79-100 % recall at
     # 1/0/0 % false accepts where the transcription path is machine- and
-    # word-dependent. Chosen on "auto" for any phrase without a pretrained
-    # OWW model, or forced via engine="vosk_kws". Requires the vosk package
-    # (base dep) AND a per-language model directory; missing either falls
-    # through to the stt_match chain below (graceful, message says why).
+    # word-dependent. Chosen on "auto" for any phrase, or forced via
+    # engine="vosk_kws". Requires the vosk package (base dep) AND a
+    # per-language model directory; missing either falls through to the
+    # stt_match chain below (graceful, message says why).
     if phrase and engine_pref in ("auto", "vosk_kws"):
         if vosk_available is None:
             import importlib.util as _ilu
@@ -456,7 +430,9 @@ def resolve_wake_plan(
         vosk_model = resolve_vosk_model_path(language) if vosk_available else None
         if vosk_model is not None and (
             engine_pref == "vosk_kws"
-            or (not known and (not custom_path or custom_stale or custom_missing))
+            or not custom_path
+            or custom_stale
+            or custom_missing
         ):
             return WakeWordPlan(
                 phrase=phrase,
@@ -475,17 +451,17 @@ def resolve_wake_plan(
                 vosk_model_path=vosk_model,
             )
 
-    # 4. Arbitrary phrase via local-Whisper transcript match.
+    # 3. Arbitrary phrase via local-Whisper transcript match.
     want_stt = (
         engine_pref in ("auto", "stt_match", "vosk_kws")
         or bool(custom_path)                       # custom file missing -> best effort
-        or (engine_pref == "openwakeword" and not known)
+        or engine_pref == "openwakeword"           # legacy engine value, no model ships
     )
     if want_stt and local_whisper_available:
         # A STALE custom model (belongs to another phrase) is NOT a degrade:
         # the transcript match IS the regular path for the new phrase, and the
         # model stays configured for when the user switches back.
-        degraded = custom_missing or (engine_pref == "openwakeword" and not known)
+        degraded = custom_missing or engine_pref == "openwakeword"
         if custom_missing:
             message = (
                 f"Custom ONNX not found ({custom_path}); "
