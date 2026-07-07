@@ -279,10 +279,9 @@ class WakeWordPlan:
     """Concrete, resolved wake configuration the pipeline can act on.
 
     Note: in the graceful-degrade case (an arbitrary phrase on a box without
-    local Whisper) ``phrase`` keeps the user's *requested* word (e.g. "Computer")
-    while ``engine``/``oww_keyword``/``matcher`` are all "Hey Rhasspy" and
-    ``degraded`` is True — so ``phrase != oww_keyword`` is a valid, intentional
-    state. ``phrase`` is what to show the user; ``oww_keyword`` is what fires.
+    a usable local engine) ``phrase`` keeps the user's *requested* word
+    (e.g. "Computer") while ``engine`` is "none" and ``degraded`` is True.
+    ``phrase`` is what to show the user; ``oww_keyword`` is what fires.
     """
 
     phrase: str
@@ -483,9 +482,9 @@ def resolve_wake_plan(
             verify_prefix=False,
         )
 
-    # 5. No local model for the user's OWN word. The product rule (2026-07-04)
-    # forbids silently substituting a branded fallback (the old 'Hey Rhasspy'
-    # degrade made the app listen for a word the user never says). Instead we
+    # 4. No local model for the user's OWN word. The product rule (2026-07-04)
+    # forbids silently substituting a branded fallback (the retired degrade
+    # made the app listen for a word the user never says). Instead we
     # return wake_available=False: the app arms NO wake detector, and the honest
     # alternative is hotkey / push-to-talk activation. The user's requested phrase
     # is preserved; installing the local speech pack (works for ANY word) or
