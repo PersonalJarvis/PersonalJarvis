@@ -86,6 +86,7 @@ class AgentNode:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     children_trace_ids: list[str] = field(default_factory=list)
     error: str | None = None
+    error_class: str | None = None
     review_iterations: int = 0
     depth: int = 0
 
@@ -418,7 +419,8 @@ class JarvisAgentRegistry:
                 return
             node.status = "failed"
             node.completed_ns = ts_ns
-            node.error = f"killed: {payload.reason}"
+            node.error = payload.error_detail or f"killed: {payload.reason}"
+            node.error_class = payload.error_class
             return
 
         if isinstance(payload, CriticVerdictReady):
@@ -452,7 +454,8 @@ class JarvisAgentRegistry:
             node.status = "failed"
             node.completed_ns = ts_ns
             if isinstance(payload, MissionFailed):
-                node.error = payload.reason
+                node.error = payload.error_detail or payload.reason
+                node.error_class = payload.error_class
             elif isinstance(payload, MissionCancelled):
                 node.error = f"cancelled: {payload.reason}"
             else:

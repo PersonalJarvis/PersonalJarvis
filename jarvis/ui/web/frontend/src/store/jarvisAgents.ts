@@ -41,6 +41,7 @@ export interface SubAgentNode {
   tool_calls: ToolCallEntry[];
   children_trace_ids: string[];
   error?: string | null;
+  error_class?: string | null;
   review_iterations: number;
   depth: number;
   ui_appeared_at: number;

@@ -470,3 +470,213 @@ async def test_mission_bus_bridge_is_idempotent(
     # twice the upsert path would still result in one node, but the test
     # documents the contract: attach is idempotent.
     assert len(snap) == 1
+
+
+# --- error_class / human error_detail surfacing (Task 4) ---
+
+
+@pytest.mark.asyncio
+async def test_mission_failed_carries_error_detail_and_class(
+    registry: JarvisAgentRegistry,
+) -> None:
+    """node.error must show the human detail (the 401 text), not the raw
+    reason token; error_class rides along for the UI message map."""
+    from jarvis.missions.event_bus import MissionBus
+    from jarvis.missions.events import (
+        EventEnvelope,
+        MissionDispatched,
+        MissionFailed,
+        now_ms,
+    )
+
+    mbus = MissionBus()
+    registry.attach_mission_bus(mbus)
+
+    mission_id = "019e1800-0000-7000-8000-000000000004"
+    await mbus.publish(
+        EventEnvelope(
+            mission_id=mission_id,
+            source_actor="hauptjarvis",
+            ts_ms=now_ms(),
+            payload=MissionDispatched(prompt="boom", language="de"),
+        )
+    )
+    await mbus.publish(
+        EventEnvelope(
+            mission_id=mission_id,
+            source_actor="kontrollierer",
+            ts_ms=now_ms(),
+            payload=MissionFailed(
+                reason="task_error",
+                error_class="provider_auth",
+                last_state="CRITIC_REVIEW",
+                error_detail="Failed to authenticate. API Error: 401",
+            ),
+        )
+    )
+
+    node = registry.snapshot()[mission_id.replace("-", "")]
+    assert node.status == "failed"
+    assert node.error == "Failed to authenticate. API Error: 401"
+    assert node.error_class == "provider_auth"
+
+
+@pytest.mark.asyncio
+async def test_mission_failed_without_detail_keeps_reason_fallback(
+    registry: JarvisAgentRegistry,
+) -> None:
+    from jarvis.missions.event_bus import MissionBus
+    from jarvis.missions.events import (
+        EventEnvelope,
+        MissionDispatched,
+        MissionFailed,
+        now_ms,
+    )
+
+    mbus = MissionBus()
+    registry.attach_mission_bus(mbus)
+
+    mission_id = "019e1800-0000-7000-8000-000000000005"
+    await mbus.publish(
+        EventEnvelope(
+            mission_id=mission_id,
+            source_actor="hauptjarvis",
+            ts_ms=now_ms(),
+            payload=MissionDispatched(prompt="boom", language="de"),
+        )
+    )
+    await mbus.publish(
+        EventEnvelope(
+            mission_id=mission_id,
+            source_actor="kontrollierer",
+            ts_ms=now_ms(),
+            payload=MissionFailed(reason="task_error", last_state="CRITIC_REVIEW"),
+        )
+    )
+
+    node = registry.snapshot()[mission_id.replace("-", "")]
+    assert node.error == "task_error"
+    assert node.error_class is None
+
+
+@pytest.mark.asyncio
+async def test_worker_killed_carries_error_detail_and_class(
+    registry: JarvisAgentRegistry,
+) -> None:
+    """WorkerKilled.error_detail becomes node.error verbatim; error_class
+    rides along for the UI message map."""
+    from jarvis.missions.event_bus import MissionBus
+    from jarvis.missions.events import (
+        EventEnvelope,
+        MissionDispatched,
+        WorkerKilled,
+        WorkerSpawned,
+        now_ms,
+    )
+
+    mbus = MissionBus()
+    registry.attach_mission_bus(mbus)
+
+    mission_id = "019e1800-0000-7000-8000-000000000006"
+    worker_id = "019e1800-0000-7000-8000-0000000000a0"
+    await mbus.publish(
+        EventEnvelope(
+            mission_id=mission_id,
+            source_actor="hauptjarvis",
+            ts_ms=now_ms(),
+            payload=MissionDispatched(prompt="build it", language="de"),
+        )
+    )
+    await mbus.publish(
+        EventEnvelope(
+            mission_id=mission_id,
+            worker_id=worker_id,
+            source_actor="kontrollierer",
+            ts_ms=now_ms(),
+            payload=WorkerSpawned(
+                worker_id=worker_id,
+                step={"task": "build"},
+                pid=4242,
+                cli="claude",
+                model="sonnet",
+                worktree="C:/wt/agent-1",
+            ),
+        )
+    )
+    await mbus.publish(
+        EventEnvelope(
+            mission_id=mission_id,
+            worker_id=worker_id,
+            source_actor="kontrollierer",
+            ts_ms=now_ms(),
+            payload=WorkerKilled(
+                worker_id=worker_id,
+                reason="worker_error",
+                error_class="provider_auth",
+                error_detail="Failed to authenticate. API Error: 401",
+            ),
+        )
+    )
+
+    node = registry.snapshot()[worker_id.replace("-", "")]
+    assert node.status == "failed"
+    assert node.error == "Failed to authenticate. API Error: 401"
+    assert node.error_class == "provider_auth"
+
+
+@pytest.mark.asyncio
+async def test_worker_killed_without_detail_falls_back_to_reason(
+    registry: JarvisAgentRegistry,
+) -> None:
+    from jarvis.missions.event_bus import MissionBus
+    from jarvis.missions.events import (
+        EventEnvelope,
+        MissionDispatched,
+        WorkerKilled,
+        WorkerSpawned,
+        now_ms,
+    )
+
+    mbus = MissionBus()
+    registry.attach_mission_bus(mbus)
+
+    mission_id = "019e1800-0000-7000-8000-000000000007"
+    worker_id = "019e1800-0000-7000-8000-0000000000b0"
+    await mbus.publish(
+        EventEnvelope(
+            mission_id=mission_id,
+            source_actor="hauptjarvis",
+            ts_ms=now_ms(),
+            payload=MissionDispatched(prompt="build it", language="de"),
+        )
+    )
+    await mbus.publish(
+        EventEnvelope(
+            mission_id=mission_id,
+            worker_id=worker_id,
+            source_actor="kontrollierer",
+            ts_ms=now_ms(),
+            payload=WorkerSpawned(
+                worker_id=worker_id,
+                step={"task": "build"},
+                pid=4242,
+                cli="claude",
+                model="sonnet",
+                worktree="C:/wt/agent-1",
+            ),
+        )
+    )
+    await mbus.publish(
+        EventEnvelope(
+            mission_id=mission_id,
+            worker_id=worker_id,
+            source_actor="kontrollierer",
+            ts_ms=now_ms(),
+            payload=WorkerKilled(worker_id=worker_id, reason="timeout"),
+        )
+    )
+
+    node = registry.snapshot()[worker_id.replace("-", "")]
+    assert node.status == "failed"
+    assert node.error == "killed: timeout"
+    assert node.error_class is None
