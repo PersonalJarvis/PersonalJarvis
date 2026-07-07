@@ -1162,14 +1162,28 @@ class CriticRunner:
         )
 
         primary_provider, primary_model = _resolve_critic_provider_model()
+        # Auth-viability gate (2026-07-07, mission 019f3d18 / BUG-042 defect 5):
+        # this branch used to spawn `claude --print` UNCONDITIONALLY — with a
+        # dead Claude CLI auth both critic attempts exited 1, the mission died
+        # `critic_unavailable`, and the worker's delivered work (already graded
+        # onto disk via the cross-family walk) was thrown away. A non-viable
+        # Claude falls through to the codex / in-process API critic below.
+        claude_cli_viable = _claude_cli_critic_viable()
         if primary_provider == "claude-api":
-            return await self._invoke_via_claude_direct(
-                prompt=prompt_for_subprocess,
-                worktree=worktree,
-                env=env,
-                model=primary_model or model,
-                iteration=iteration,
-                adversarial_reframe=adversarial_reframe,
+            if claude_cli_viable:
+                return await self._invoke_via_claude_direct(
+                    prompt=prompt_for_subprocess,
+                    worktree=worktree,
+                    env=env,
+                    model=primary_model or model,
+                    iteration=iteration,
+                    adversarial_reframe=adversarial_reframe,
+                )
+            logger.warning(
+                "CriticRunner: the `claude` CLI critic is not auth-viable "
+                "(dead/expired login, no classic Anthropic key) — crossing to "
+                "the codex / API-key critic families. Run `claude /login` to "
+                "restore the Claude critic."
             )
         # Welle 6 (2026-05-18): ChatGPT subscription path via codex exec.
         # Same JSON-verdict contract -- codex exec --json runs the model
@@ -1177,8 +1191,13 @@ class CriticRunner:
         # critic spawns read-only because no file should change during
         # review.
         from jarvis.codex_auth_state import codex_needs_reauth
+        from jarvis.codex_quota_state import codex_in_quota_cooldown
 
-        if primary_provider in ("chatgpt", "openai-codex") and not codex_needs_reauth():
+        if (
+            primary_provider in ("chatgpt", "openai-codex")
+            and not codex_needs_reauth()
+            and not codex_in_quota_cooldown()
+        ):
             # NB: `model` here is the Anthropic-shaped slug from
             # `choose_critic_model` (e.g. "claude-sonnet-4-6"); codex
             # would reject it as "unknown model". `_normalize_model_for_codex`
@@ -1208,19 +1227,25 @@ class CriticRunner:
             # (2026-06-08 incident, mission 019ea8a5: claude worker, 7.8 KB diff,
             # codex critic → critic_unavailable). Run `codex login` to use the
             # codex critic again.
+            if claude_cli_viable:
+                logger.warning(
+                    "CriticRunner: codex critic produced no verdict — falling "
+                    "back to the claude critic (model=%r). Run `codex login` to "
+                    "restore the codex critic.",
+                    model,
+                )
+                return await self._invoke_via_claude_direct(
+                    prompt=prompt_for_subprocess,
+                    worktree=worktree,
+                    env=env,
+                    model=model,
+                    iteration=iteration,
+                    adversarial_reframe=adversarial_reframe,
+                )
             logger.warning(
-                "CriticRunner: codex critic produced no verdict — falling back "
-                "to the claude critic (model=%r). Run `codex login` to restore "
-                "the codex critic.",
-                model,
-            )
-            return await self._invoke_via_claude_direct(
-                prompt=prompt_for_subprocess,
-                worktree=worktree,
-                env=env,
-                model=model,
-                iteration=iteration,
-                adversarial_reframe=adversarial_reframe,
+                "CriticRunner: codex critic produced no verdict and the claude "
+                "critic is not auth-viable — crossing to the in-process API "
+                "critic families."
             )
 
         # Any other provider (grok / gemini / openrouter / unset) falls back to
@@ -1694,6 +1719,26 @@ class CriticRunner:
 # --- Helpers ---
 
 
+def _claude_cli_critic_viable() -> bool:
+    """True when the ``claude`` CLI can actually AUTHENTICATE for a critic spawn.
+
+    Binary presence alone is not viability (BUG-042, 2026-07-07): with the
+    OAuth token expired in place and no classic Anthropic key, every
+    ``claude --print`` critic exits 1 — two attempts per mission →
+    ``critic_unavailable`` kills a mission whose worker already delivered.
+    Reuses the worker factory's shared auth probe so worker and critic agree.
+    """
+    try:
+        from jarvis.missions.init import _claude_cli_auth_viable
+        from jarvis.missions.workers.claude_direct_worker import (
+            _resolve_claude_binary,
+        )
+
+        return _resolve_claude_binary() is not None and _claude_cli_auth_viable()
+    except Exception:  # noqa: BLE001 — unreadable probe => not viable
+        return False
+
+
 def _resolve_critic_provider_model() -> tuple[str | None, str | None]:
     """Returns ``(jarvis_slug, model)`` for the active Critic backend.
 
@@ -1750,7 +1795,10 @@ def _resolve_api_critic_provider(
     ``(None, None)`` when no API key is available → the caller keeps the legacy
     claude-direct critic as the last resort.
     """
-    from jarvis.core.config import get_provider_secret
+    # Viability-gated, not existence-gated (BUG-042 defect 3, critic edition):
+    # a stale sk-ant-oat claude-api credential or a family a worker just
+    # proved quota-depleted must be walked past here too.
+    from jarvis.missions.init import _api_key_family_viable
 
     order: list[str] = []
     if primary_provider in _API_CRITIC_PROVIDERS:
@@ -1758,7 +1806,7 @@ def _resolve_api_critic_provider(
     order += [p for p in _API_CRITIC_PROVIDERS if p not in order]
     for prov in order:
         try:
-            if get_provider_secret(prov):
+            if _api_key_family_viable(prov):
                 # Same provider as the worker → reuse its model. Cross-family →
                 # the user's PICK for that provider, never None (which would let
                 # the in-process critic fall to the plugin's hardcoded DEFAULT_MODEL
