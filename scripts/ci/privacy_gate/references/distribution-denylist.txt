@@ -85,6 +85,13 @@ scripts/drift-guard-task.xml
 # untracked progress.md, they have no downstream product value. boot-progress.md
 # was committed (so it is tracked) and would otherwise ship; withhold it.
 boot-progress.md
+# Root-level PDF: an internal German bug report with desktop screenshots the
+# maintainer keeps as a reference for another agent session (memory: intentional
+# in the WORKING repo). Screenshots can carry personal data and the binary is
+# opaque to the text scanners — it must never ship (2026-07-07 sub-agent
+# privacy-review finding). Glob covers the "(2)" suffix and any sibling copies.
+Unbenanntes*.pdf
+*.pdf
 
 # --- Internal dev-process docs: whole subtrees ------------------------------
 docs/superpowers/**
