@@ -142,11 +142,16 @@ class WakeWordConfig(BaseModel):
     engine: str = "auto"
     # Path to a user-supplied/trained .onnx wake model (engine="custom_onnx").
     custom_model_path: str = ""
-    # 0..1 wake responsiveness. openWakeWord path: mapped onto the activation
+    # 0.5..1 wake responsiveness. openWakeWord path: mapped onto the activation
     # threshold (0.5 == the data-driven PRODUCTION_WAKE_THRESHOLD, BUG-009 floor
     # preserved). stt_match (local-Whisper) path: drives the poll interval
     # (higher => polls more often => a spoken wake is picked up sooner), since
     # that path never scores against the threshold.
+    # FLOOR 0.5 (user mandate 2026-07-07): below the calibrated midpoint the
+    # detector becomes so strict that normal-volume speech practically never
+    # fires it — a live config at 0.0 read as "the wake word is broken", not
+    # as "less sensitive". Values below the floor are LIFTED to 0.5 on load so
+    # an old/hand-edited jarvis.toml can never boot into a deaf wake word.
     sensitivity: float = 0.5
     # STT transcript-match tolerance for transcription drift (engine="stt_match").
     fuzzy_match_ratio: float = 0.8
@@ -161,6 +166,17 @@ class WakeWordConfig(BaseModel):
     def _coerce_engine(cls, value: object) -> str:
         text = str(value or "").strip().lower()
         return text if text in WAKE_ENGINES else "auto"
+
+    @field_validator("sensitivity", mode="before")
+    @classmethod
+    def _floor_sensitivity(cls, value: object) -> float:
+        try:
+            number = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return 0.5
+        # Lift below-floor values instead of rejecting: a stale config must
+        # never fail validation (AP-16), and 0.5 restores a working wake.
+        return min(1.0, max(0.5, number))
 
 
 class TriggerConfig(BaseModel):

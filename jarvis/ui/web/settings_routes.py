@@ -484,6 +484,13 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
             detail=f"Unknown wake engine '{body.engine}'. Allowed: {', '.join(WAKE_ENGINES)}.",
         )
 
+    # Sensitivity floor 0.5 (user mandate 2026-07-07): below the calibrated
+    # midpoint the wake word is effectively deaf. Lift instead of reject —
+    # mirrors WakeWordConfig._floor_sensitivity so every write path agrees.
+    sensitivity = (
+        None if body.sensitivity is None else min(1.0, max(0.5, body.sensitivity))
+    )
+
     # Preview the resolved plan so the UI can tell the user immediately whether
     # the chosen phrase will work as-is or degrade (e.g. no local Whisper).
     _cfg_for_lang = _config(request)
@@ -493,7 +500,7 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
             phrase=body.phrase,
             engine=engine,
             custom_model_path=body.custom_model_path,
-            sensitivity=body.sensitivity,
+            sensitivity=sensitivity,
             fuzzy_match_ratio=body.fuzzy_match_ratio,
         ),
         local_whisper_available=_local_whisper_available(),
@@ -510,8 +517,8 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
         updates: dict[str, object] = {"phrase": body.phrase, "engine": engine}
         if body.custom_model_path is not None:
             updates["custom_model_path"] = body.custom_model_path
-        if body.sensitivity is not None:
-            updates["sensitivity"] = body.sensitivity
+        if sensitivity is not None:
+            updates["sensitivity"] = sensitivity
         if body.fuzzy_match_ratio is not None:
             updates["fuzzy_match_ratio"] = body.fuzzy_match_ratio
         for key, value in updates.items():
@@ -529,7 +536,7 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
                 body.phrase,
                 engine=engine,
                 custom_model_path=body.custom_model_path,
-                sensitivity=body.sensitivity,
+                sensitivity=sensitivity,
                 fuzzy_match_ratio=body.fuzzy_match_ratio,
             )
             persisted = True

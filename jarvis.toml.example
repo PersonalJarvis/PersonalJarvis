@@ -41,7 +41,7 @@ single_turn_mode = false     # false = conversation stays open until "hang up"/i
 # Leave blank to pick your word during onboarding.
 phrase = ""
 engine = "auto"              # auto | openwakeword | vosk_kws | stt_match | custom_onnx
-sensitivity = 0.5
+sensitivity = 0.5            # 0.5..1 (values below 0.5 are lifted — the wake would be deaf)
 
 # ── Speech-to-Text ──
 [stt]
