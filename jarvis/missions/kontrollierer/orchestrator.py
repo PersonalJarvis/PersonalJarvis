@@ -1397,15 +1397,21 @@ class Kontrollierer:
                 # (2026-07-06: expired Claude OAuth token killed every mission
                 # terminally while codex + OpenRouter were healthy — AP-22).
                 is_auth = _worker_error_is_auth(err_lower)
+                # Classify once, reuse below for both the recorded context and
+                # the WorkerKilled payload — avoids re-deriving error_detail
+                # from spawn_result.worker_error twice and re-fetching
+                # error_class back out of the dict we just wrote.
+                error_class = _classify_worker_error(
+                    spawn_result.worker_error,
+                    timed_out=spawn_result.worker_timed_out,
+                )
+                error_detail = spawn_result.worker_error[:300]
                 # Record the classified failure for the terminal MissionFailed
                 # event. Last write wins: the final iteration's cause is the
                 # one the mission actually died of.
                 self._mission_failure_context[mission_id] = {
-                    "error_class": _classify_worker_error(
-                        spawn_result.worker_error,
-                        timed_out=spawn_result.worker_timed_out,
-                    ),
-                    "error_detail": spawn_result.worker_error[:300],
+                    "error_class": error_class,
+                    "error_detail": error_detail,
                     "failed_provider": (
                         getattr(worker, "provider", None)
                         or getattr(worker, "cli", None)
@@ -1452,6 +1458,12 @@ class Kontrollierer:
                         "as task_error",
                         step.task_id, iteration, len(diff_text),
                     )
+                    # The critic is now the judge: if it rejects, the honest
+                    # cause is the critic verdict, not this (survived) worker
+                    # error — drop the recorded context so a later
+                    # _fail_mission cannot misattribute the failure (stale
+                    # cross-outcome context, AP-19 class).
+                    self._mission_failure_context.pop(mission_id, None)
                     # Deliberately fall through (no continue / no return): the
                     # WorkerDraftReady publish + critic call below grade the
                     # partial deliverable. We intentionally do NOT emit
@@ -1488,10 +1500,8 @@ class Kontrollierer:
                         mission_id=mission_id,
                         worker_id=spawn_result.worker_id,
                         reason=kill_reason,
-                        error_class=self._mission_failure_context.get(
-                            mission_id, {}
-                        ).get("error_class"),
-                        error_detail=spawn_result.worker_error[:300],
+                        error_class=error_class,
+                        error_detail=error_detail,
                     )
                     # A worker that ran out of time (wall-clock cap) on its
                     # final attempt is a TIMEOUT, not a crash. Surface the
@@ -2718,7 +2728,16 @@ class Kontrollierer:
         # terminal MissionFailed event names the real cause instead of the
         # bare mission-level reason (2026-07-06 incident: error_class was
         # always None and the UI/voice could not name a dead credential).
+        #
+        # Attach the recorded worker-failure context ONLY when the terminal
+        # reason is actually worker-caused. Any other reason (critic_*,
+        # budget_exceeded, worktree_setup_failed, ...) has its own honest
+        # cause — inheriting a leftover worker-error context would
+        # misattribute the failure (review finding, 2026-07-07). The pop is
+        # unconditional either way: terminal means the context is dead.
         failure_ctx = self._mission_failure_context.pop(mission_id, {})
+        if reason not in ("task_error", "attempts_timed_out"):
+            failure_ctx = {}
         # Only transition when not already terminal
         view = await self._manager.mission(mission_id)
         if view is None or view.state in (

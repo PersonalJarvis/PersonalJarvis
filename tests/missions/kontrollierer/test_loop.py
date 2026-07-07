@@ -1124,6 +1124,52 @@ async def test_mission_failed_carries_error_classification(
 
 
 @pytest.mark.asyncio
+async def test_critic_rejection_does_not_inherit_stale_worker_error_context(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    """Review finding 2026-07-07: a worker error that left a real diff falls
+    through to critic grading; if the critic then REJECTS, the mission's
+    failure cause is the critic verdict — it must NOT be stamped with the
+    survived worker error's error_class (stale-context misattribution)."""
+
+    class _AuthErrorWithDiffWorker:
+        cli = "claude"
+
+        def __init__(self) -> None:
+            self.last_pid = 555
+            self.spawn_calls: list[dict[str, Any]] = []
+
+        async def spawn(self, prompt, *, worktree, env, job, worker_id, log_dir, **kw):  # type: ignore[no-untyped-def]
+            self.spawn_calls.append(dict(kw))
+            log_dir.mkdir(parents=True, exist_ok=True)
+            (log_dir / "stream.jsonl").write_text("", encoding="utf-8")
+            # Leave a real file so the external-write augmentation produces a
+            # non-empty diff — mirroring "worker did real work, then 401'd".
+            yield _FakeAuthErrorEvent()
+
+    worker = _AuthErrorWithDiffWorker()
+    critic = FakeCriticRunner(_make_reject_verdict())
+    k = _make_kontrollierer(
+        manager=manager, tmp_path=tmp_path, critic=critic,
+        worker_factory_fn=lambda step: worker,
+    )
+    # Force the graded path: patch the diff capture so the worker error falls
+    # through to the critic instead of retrying (non-empty diff).
+    k._capture_diff = lambda wt: "diff --git a/x b/x\n+real work\n"  # type: ignore[method-assign]
+    mid = await manager.dispatch(prompt="work then die on auth")
+
+    end = await k.run_mission(mid)
+    assert end == MissionState.FAILED
+    events = await manager.store.events_for_mission(mid)
+    failed = [e.payload for e in events if e.payload.event_type == "MissionFailed"]
+    assert len(failed) == 1
+    assert failed[0].reason == "critic_rejected"
+    # The honest cause is the critic verdict — no stale provider_auth stamp.
+    assert failed[0].error_class is None
+    assert failed[0].failed_provider is None
+
+
+@pytest.mark.asyncio
 async def test_critic_timeout_retries_then_approves(
     manager: MissionManager, tmp_path: Path
 ) -> None:
