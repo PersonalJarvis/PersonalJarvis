@@ -91,15 +91,17 @@ Jarvis runs without it:
 | A provider **API key or subscription login** — Gemini, Claude, OpenAI, or OpenRouter | Actually talking to a brain. Bring your own; nothing is bundled. The app's one-time setup guide stores it in your OS credential manager. |
 | **Node.js** 18+ | The agent CLIs the worker delegates heavy tasks to (Claude Code, Codex) and a few Node-based marketplace integrations. |
 | **libportaudio** *(Linux only)* | Local microphone and speakers (`apt install libportaudio2`). Not needed for the headless / browser-audio path. |
-| A **GPU** + the `--with-voice-local` flag | Fully offline speech — local wake word, speech-to-text, and text-to-speech. Cloud speech needs none of this. |
+| A **GPU** | Faster fully-offline speech. The local voice models install by default and run on CPU everywhere; a GPU only speeds them up. Cloud speech needs none of this. |
 
 ## Install
 
 One command on **Windows, macOS, or Linux** — no Docker, no Python-version archaeology. It
-downloads everything (dependencies, voice models, the worker CLI), asks **nothing** in the
-terminal, and launches the app as its last step. The app then walks you through a one-time
-setup guide (language, wake word, API keys) — it never shows again, not even after updates.
-**Bring your own keys**; nothing is bundled.
+installs the **full profile**: everything in this repository (desktop app, telephony, chat
+channels, local voice models incl. the offline wake word and Whisper), skipping only what
+your OS cannot run. It asks **nothing** in the terminal and launches the app as its last
+step. The app then walks you through a one-time setup guide (language, wake word, API
+keys) — it never shows again, not even after updates. **Bring your own keys**; nothing is
+bundled.
 
 **Windows** — PowerShell
 
@@ -120,8 +122,7 @@ curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/
 
 | Install flag | Effect |
 |---|---|
-| `--headless` | API + WebSocket only — no desktop window or local voice (the VPS path) |
-| `--with-voice-local` | Also pull the local STT / TTS / wake models on install (~1.5 GB) |
+| `--headless` | Minimal server install (advanced): API + WebSocket only, torch-free base — the tiny-VPS path |
 | `--no-launch` | Install only; don't start the app |
 
 **Uninstall** — one command removes everything a plain folder-delete would miss: the

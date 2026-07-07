@@ -182,7 +182,10 @@ plugins (OAuth + MCP), AND credential STORAGE itself. Every one must:
   `requirements.txt` keeps its `--universal` marker, admits no
   `nvidia-*`/`torch`/CUDA/`faster-whisper` — those live only in the opt-in
   `[local-voice]` extra). Regenerate the lock only with
-  `uv pip compile --universal`, never plain `pip-compile`.
+  `uv pip compile --universal`, never plain `pip-compile`. **The ONE
+  advertised install path is the `[full]` profile** (incl. `[local-voice]`,
+  design 2026-07-07); the torch-free base remains the internal floor for CI
+  and tiny servers (`--headless`), never the headline path.
 - **Be recoverable IN-APP** — entering / switching / connecting a credential
   and recovering from a dead one happens inside the app, never by hand-editing
   `jarvis.toml`, exporting an ENV var, or spinning up a cloud instance.
