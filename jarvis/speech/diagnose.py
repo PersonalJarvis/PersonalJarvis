@@ -7,8 +7,9 @@ Shows:
   1. All audio devices (input + output)
   2. Live mic level (dBFS) over 10 seconds — so you can see whether your mic
      is picking anything up at all
-  3. Live wake-word score over 20 seconds — say "Hey Jarvis" / "Jarvis"
-     and see what openWakeWord measures
+  3. Live wake-word score over 20 seconds — say your configured wake word
+     and see what your custom openWakeWord model measures (skipped when no
+     custom model is configured)
   4. Whisper transcription test — say something for 3 sec, Jarvis shows
      what it understood
   5. Chime playback — short tone on the output device
@@ -131,12 +132,30 @@ async def step_wake_live(duration_s: float = 20.0) -> None:
     print("Say your wake word SEVERAL times — try different pronunciations.")
     print("Shows the highest wake score per second live.")
     print()
+    from jarvis.core.config import load_config
     from jarvis.plugins.wake.openwakeword_provider import (
         OWW_FRAME_SAMPLES,
         OpenWakeWordProvider,
     )
+    from jarvis.speech.wake_phrase import resolve_wake_plan
+
+    # This live-score step only applies to an openWakeWord MODEL — i.e. a
+    # user-trained custom .onnx from the configured wake plan. The product
+    # ships no named model (design 2026-07-07); vosk/whisper wake engines
+    # have their own confirm paths and no frame score to display.
+    ww = load_config().trigger.wake_word
+    plan = resolve_wake_plan(ww, local_whisper_available=False)
+    if plan.engine != "custom_onnx" or not plan.oww_model_path:
+        print(
+            "  (skipped) No custom wake model configured — this step scores a "
+            "custom .onnx model. Your wake engine is "
+            f"'{plan.engine}'; use the app's wake settings to test it."
+        )
+        return
+    keyword = plan.oww_keyword
     prov = OpenWakeWordProvider(
-        keywords=("hey_jarvis",),
+        keywords=(keyword,),
+        model_path=plan.oww_model_path,
         activation_threshold=0.15,
         score_log_threshold=1.1,  # disable inline logging, we show our own
     )
@@ -162,7 +181,8 @@ async def step_wake_live(duration_s: float = 20.0) -> None:
             residual = buf[n_full * OWW_FRAME_SAMPLES:]
             for frame in frames:
                 scores = await asyncio.to_thread(prov._model.predict, frame)
-                s = float(scores.get("hey_jarvis", 0.0))
+                # Exactly one model is loaded; it reports under its file stem.
+                s = float(max(scores.values())) if scores else 0.0
                 max_in_window = max(max_in_window, s)
                 max_score_global = max(max_score_global, s)
             now = time.time()

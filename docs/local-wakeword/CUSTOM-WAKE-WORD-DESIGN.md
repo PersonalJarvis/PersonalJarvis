@@ -1,5 +1,11 @@
 # Custom Wake-Word — Design & Implementation Report
 
+> **Superseded in part (2026-07-07):** the pretrained bundled models and every
+> "degrade to a branded fallback" behavior described below were removed — the
+> wake system is fully generic now. See
+> `docs/superpowers/specs/2026-07-07-one-full-install-generic-wake-design.md`.
+> Kept for historical context.
+
 **Date:** 2026-05-29
 **Status:** Design accepted → implementation in progress on branch `feat/jarvis-system-cursor`
 **Builds on:** [`RESEARCH-AND-DESIGN.md`](RESEARCH-AND-DESIGN.md) (the 2026-05-24 lightweight-wake research)

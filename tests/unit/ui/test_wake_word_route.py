@@ -7,8 +7,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jarvis.core.config import WakeWordConfig
-from jarvis.speech import wake_constants as wc
-from jarvis.speech import wake_phrase as wp
 from jarvis.ui.web.settings_routes import router
 
 
@@ -36,19 +34,6 @@ def _client(
     return TestClient(app)
 
 
-def _pretend_oww_models_exist(monkeypatch, *model_names: str) -> None:
-    models = set(model_names)
-    original_resolve = wc.resolve_oww_model_path
-
-    def fake_resolve(model_name: str) -> str | None:
-        if model_name in models:
-            return f"C:/fake-openwakeword/{model_name}_v0.1.onnx"
-        return original_resolve(model_name)
-
-    monkeypatch.setattr(wc, "resolve_oww_model_path", fake_resolve)
-    monkeypatch.setattr(wp, "resolve_oww_model_path", fake_resolve)
-
-
 def test_get_returns_current_and_options() -> None:
     body = _client().get("/api/settings/wake-word").json()
     assert body["phrase"] == ""
@@ -58,9 +43,10 @@ def test_get_returns_current_and_options() -> None:
     assert isinstance(body["local_whisper_available"], bool)
 
 
-def test_put_known_phrase_resolves_to_openwakeword(monkeypatch) -> None:
-    _pretend_oww_models_exist(monkeypatch, "alexa")
-
+def test_put_brand_phrase_never_resolves_to_a_pretrained_model() -> None:
+    # Design 2026-07-07: no bundled/pretrained brand models. A brand word is
+    # an ordinary phrase served by the generic chain (or an honest degrade on
+    # a box without a local engine) — never by a named openwakeword model.
     resp = _client().put(
         "/api/settings/wake-word",
         json={"phrase": "Alexa", "engine": "auto", "persist": False},
@@ -68,16 +54,14 @@ def test_put_known_phrase_resolves_to_openwakeword(monkeypatch) -> None:
     body = resp.json()
     assert resp.status_code == 200
     assert body["ok"] is True
-    assert body["resolved_engine"] == "openwakeword"
-    assert body["degraded"] is False
+    assert body["resolved_engine"] in ("stt_match", "vosk_kws", "none")
     assert body["restart_required"] is True
     assert body["persisted"] is False
 
 
-def test_put_live_applies_to_running_pipeline(monkeypatch) -> None:
+def test_put_live_applies_to_running_pipeline() -> None:
     # The fix for "only Hey Jarvis works": a save must reconfigure the live
     # pipeline (no restart) when one is running.
-    _pretend_oww_models_exist(monkeypatch, "alexa")
     pipe = _FakePipeline()
     resp = _client(pipeline=pipe).put(
         "/api/settings/wake-word",

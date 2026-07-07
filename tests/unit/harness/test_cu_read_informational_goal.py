@@ -3,11 +3,11 @@ SCROLL to the newest content, READ it, and only report done once the actual
 content is on screen -- not the instant the app window is open.
 
 Root cause (2026-06-19 12:27 live run, session 12:28): the voice goal "open my
-Discord and tell me exactly what's going on in the current BridgeMind channels"
+Discord and tell me exactly what's going on in the current exampleserver channels"
 drove an 8-step Computer-Use mission that opened Discord, navigated to the
-BridgeMind server / #general channel, closed a Nitro popup, and emitted ``done``
+exampleserver server / #general channel, closed a Nitro popup, and emitted ``done``
 -- with ZERO scroll actions. The generic single-frame verifier rubber-stamped
-"The Discord window is open, showing the 'BridgeMind' server and the '# general'"
+"The Discord window is open, showing the 'exampleserver' server and the '# general'"
 and the mission was spoken back as complete. The user never learned what the
 newest messages actually said: an INFORMATIONAL request can never be answered if
 the loop treats "app is visibly open" as the whole goal.
@@ -175,7 +175,7 @@ def _isolate_host(monkeypatch: pytest.MonkeyPatch) -> None:
 # The exact failing voice goal (transcribed 2026-06-19 12:27), lightly
 # normalised the way the dispatcher hands a prompt to the loop.
 _DISCORD_READ_GOAL = (
-    "open discord and tell me exactly what's going on in the bridgemind channels"
+    "open discord and tell me exactly what's going on in the exampleserver channels"
 )
 
 
@@ -186,12 +186,12 @@ _DISCORD_READ_GOAL = (
 
 def test_goal_needs_reading_detects_informational_goals() -> None:
     informational = [
-        "öffne discord und sag mir was in den bridgemind channels abgeht",
+        "öffne discord und sag mir was in den exampleserver channels abgeht",
         "open discord and tell me what's going on in the channels",
         "lies mir die neuesten nachrichten vor",
         "was steht in meinem discord",
-        "zeig mir die neuesten nachrichten auf dem bridgemind server",
-        "what's happening on the bridgemind discord",
+        "zeig mir die neuesten nachrichten auf dem exampleserver server",
+        "what's happening on the exampleserver discord",
         "fasse mir die letzten nachrichten zusammen",
         "check what's new in slack",
         "open discord and look for the newest news",

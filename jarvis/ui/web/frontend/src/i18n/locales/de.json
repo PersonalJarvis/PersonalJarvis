@@ -281,6 +281,14 @@
       "running": "fährt",
       "completed": "ankunft",
       "failed": "störung"
+    },
+    "health_degraded": "Subagent-Anbieter beeinträchtigt",
+    "health_error": "Kein Subagent-Anbieter erreichbar",
+    "error_class": {
+      "provider_auth": "Anbieter-Anmeldung ungültig oder abgelaufen — in der API-Keys-Ansicht neu verbinden.",
+      "provider_quota": "Anbieter-Kontingent erschöpft — Missionen weichen auf einen anderen Anbieter aus.",
+      "provider_unreachable": "Anbieter vorübergehend nicht erreichbar.",
+      "worker_timeout": "Der Worker hat das Zeitlimit überschritten."
     }
   },
   "tasks_view": {
@@ -971,6 +979,19 @@
       "saved_toast": "Lautstärke auf {0} gesetzt.",
       "restart_caption": "Gespeichert — wird beim nächsten Start aktiv."
     },
+    "audio_devices": {
+      "title": "Audiogeräte",
+      "description": "Lege fest, wo die Stimme von {name} herauskommt und mit welchem Mikrofon {name} zuhört. Automatisch wählt dein Headset für dich und passt sich an, wenn Geräte kommen und gehen.",
+      "output_label": "Sprachausgabe",
+      "input_label": "Mikrofon",
+      "auto_option": "Automatisch (empfohlen)",
+      "default_suffix": "(System-Standard)",
+      "rescan": "Geräte neu suchen",
+      "none_found": "Keine Audiogeräte auf diesem Rechner gefunden — {name} läuft ohne Ton weiter.",
+      "output_saved_toast": "Ausgabegerät gespeichert.",
+      "input_saved_toast": "Mikrofon gespeichert.",
+      "restart_caption": "Gespeichert — wird beim nächsten Start aktiv."
+    },
     "title": "Einstellungen",
     "subtitle": "Wake-Word, Hotkeys, Safety-Policies, Autostart.",
     "overlay_taskbar_group_title": "Leiste & Overlay",
@@ -1029,16 +1050,18 @@
       "phrase_placeholder": "z. B. Jonas",
       "engine_label": "Erkennungs-Engine",
       "sensitivity_label": "Empfindlichkeit",
+      "sensitivity_floor_note": "Minimum ist 0,5: Darunter wird die Erkennung so streng, dass normale Sprechlautstärke praktisch nie auslöst — das wirkt kaputt statt \"weniger empfindlich\". 0,5 ist der ausbalancierte Standard; höhere Werte lösen leichter aus.",
       "custom_model_path_label": "Pfad zum eigenen ONNX-Modell",
       "save": "Wake-Word speichern",
       "saved": "Wake-Word gespeichert",
       "restart_required": "Neustart erforderlich, damit die Änderung greift.",
       "degraded_warning": "Die gewählte Phrase wird von der ausgewählten Engine nicht unterstützt — sie fällt auf eine andere Engine zurück.",
-      "needs_whisper_hint": "Eine beliebige Phrase benötigt das lokale-Whisper-Extra. Ohne es fällt die Engine auf eine eingebaute Schnellphrase zurück.",
+      "needs_whisper_hint": "Diese Phrase benötigt eine lokale Engine. Installiere unten das lokale Sprachpaket — bis dahin bleibt das Wake-Word aus und du aktivierst per Hotkey / Push-to-talk.",
       "derived_name": "Dein Assistent heißt dann: {0}",
       "engine_options": {
         "auto": "Automatisch (empfohlen)",
         "openwakeword": "openWakeWord (eingebaute Phrasen)",
+        "vosk_kws": "Keyword-Spotting (beliebige Phrase, überall gleich)",
         "stt_match": "STT-Abgleich (beliebige Phrase, braucht lokales Whisper)",
         "custom_onnx": "Eigenes ONNX-Modell"
       },
@@ -1445,7 +1468,9 @@
       "body": "Sie kann deinen Computer steuern, Befehle ausführen, Apps öffnen, Nachrichten senden und Dateien in deinem Namen verändern — und sie kann Fehler machen. Sie kann ungewollte oder sogar zerstörerische Dinge tun.",
       "liability": "Die Nutzung erfolgt vollständig auf eigenes Risiko. Die Entwickler übernehmen keine Haftung für Schäden, Datenverlust oder andere Folgen. Fahre nur fort, wenn du das verstehst und akzeptierst.",
       "accept_label": "Ich verstehe die Risiken und akzeptiere, dass ich Personal Jarvis auf eigenes Risiko nutze.",
-      "proceed": "Verstanden — fortfahren"
+      "proceed": "Verstanden — fortfahren",
+      "view_terms": "Vollständige Nutzungsbedingungen anzeigen",
+      "terms_loading": "Bedingungen werden geladen…"
     },
     "intro": {
       "scene_1": "Triff deinen sprachgesteuerten Assistenten.",
@@ -1526,7 +1551,8 @@
       "body": "Dein Assistent ist startklar. Sag dein Aktivierungswort oder tippe einen Befehl, um zu beginnen.",
       "skipped_title": "Du hast übersprungen — jederzeit in den Einstellungen nachholbar:",
       "start_cta": "Loslegen",
-      "boot_notice": "Hinweis: Der erste Start dauert etwa 10 Sekunden, während dein Assistent hochfährt — das ist völlig normal."
+      "boot_notice": "Hinweis: Der erste Start dauert etwa 10 Sekunden, während dein Assistent hochfährt — das ist völlig normal.",
+      "autostart_label": "Jarvis beim Anmelden automatisch starten"
     }
   },
   "languages_view": {

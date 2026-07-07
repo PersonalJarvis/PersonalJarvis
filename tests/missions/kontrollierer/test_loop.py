@@ -1000,6 +1000,175 @@ async def test_worker_timeout_every_iteration_fails_with_timeout_reason(
     )
 
 
+# --- 2026-07-06 sub-agent auth-failure resilience (expired OAuth token) ---
+
+
+@dataclass
+class _FakeAuthErrorEvent:
+    """The verbatim terminal event of the 2026-07-06 incident: the claude CLI
+    ran on an expired OAuth token (injected without an expiresAt check) and
+    died before any work."""
+
+    result: str = (
+        "Failed to authenticate. API Error: 401 Invalid authentication "
+        "credentials"
+    )
+    type: str = "result"
+    is_error: bool = True
+    session_id: str | None = "auth-session"
+
+
+class _AuthErrorWorker:
+    """Models a worker whose provider auth is dead — every spawn 401s."""
+
+    cli = "claude"
+
+    def __init__(self) -> None:
+        self.last_pid = 444
+        self.spawn_calls: list[dict[str, Any]] = []
+
+    async def spawn(self, prompt, *, worktree, env, job, worker_id, log_dir, **kw):  # type: ignore[no-untyped-def]
+        self.spawn_calls.append(dict(kw))
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / "stream.jsonl").write_text("", encoding="utf-8")
+        yield _FakeAuthErrorEvent()
+
+
+@pytest.mark.asyncio
+async def test_worker_auth_error_retries_with_fresh_factory_pick(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    """An auth-failure (401) on iter0 must RETRY — the worker factory is
+    consulted again and (with the provider flagged auth-dead) picks a
+    DIFFERENT family, so the mission completes instead of failing terminally.
+    Regression for 2026-07-06: missions 019f36e5 + 019f38b1 died task_error
+    while a healthy codex login and OpenRouter key were available (AP-22)."""
+    dead_worker = _AuthErrorWorker()
+    healthy_worker = FakeWorker()
+    factory_calls: list[int] = []
+
+    def _factory(step):  # type: ignore[no-untyped-def]
+        factory_calls.append(1)
+        return dead_worker if len(factory_calls) == 1 else healthy_worker
+
+    critic = FakeCriticRunner(_make_approve_verdict())
+    k = _make_kontrollierer(
+        manager=manager, tmp_path=tmp_path, critic=critic,
+        worker_factory_fn=_factory,
+    )
+    mid = await manager.dispatch(prompt="build X across a dead provider")
+
+    end = await k.run_mission(mid)
+    assert end == MissionState.APPROVED
+    # iter0 401'd -> retried on a fresh factory pick; iter1 succeeded.
+    assert len(factory_calls) == 2
+    assert len(dead_worker.spawn_calls) == 1
+    assert len(healthy_worker.spawn_calls) == 1
+    # The critic only graded the iteration that actually produced output.
+    assert len(critic.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_worker_auth_error_every_iteration_fails_honestly(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    """If EVERY family 401s, the mission fails honestly after the retry cap —
+    never an infinite loop, and the kill reason stays worker_error."""
+    worker = _AuthErrorWorker()
+    critic = FakeCriticRunner(_make_approve_verdict())
+    k = _make_kontrollierer(
+        manager=manager, tmp_path=tmp_path, critic=critic,
+        worker_factory_fn=lambda step: worker,
+    )
+    mid = await manager.dispatch(prompt="task on an all-dead credential set")
+
+    end = await k.run_mission(mid)
+    assert end == MissionState.FAILED
+    assert len(worker.spawn_calls) == 3  # retried up to MAX_CRITIC_LOOPS
+    events = await manager.store.events_for_mission(mid)
+    killed = [e.payload for e in events if e.payload.event_type == "WorkerKilled"]
+    assert killed
+    assert killed[-1].reason == "worker_error"  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_mission_failed_carries_error_classification(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    """The 2026-07-06 gap: MissionFailed.error_class was always None, so the
+    UI/voice could not name the cause. An all-401 mission must now carry
+    error_class="provider_auth", the truncated upstream text, and the
+    provider slug of the worker that failed."""
+    worker = _AuthErrorWorker()
+    critic = FakeCriticRunner(_make_approve_verdict())
+    k = _make_kontrollierer(
+        manager=manager, tmp_path=tmp_path, critic=critic,
+        worker_factory_fn=lambda step: worker,
+    )
+    mid = await manager.dispatch(prompt="task on a dead credential")
+
+    end = await k.run_mission(mid)
+    assert end == MissionState.FAILED
+
+    events = await manager.store.events_for_mission(mid)
+    failed = [e.payload for e in events if e.payload.event_type == "MissionFailed"]
+    assert len(failed) == 1
+    assert failed[0].error_class == "provider_auth"
+    assert "401" in (failed[0].error_detail or "")
+    assert failed[0].failed_provider == "claude"
+
+    killed = [e.payload for e in events if e.payload.event_type == "WorkerKilled"]
+    assert killed
+    assert killed[-1].error_class == "provider_auth"
+    assert "401" in (killed[-1].error_detail or "")
+
+
+@pytest.mark.asyncio
+async def test_critic_rejection_does_not_inherit_stale_worker_error_context(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    """Review finding 2026-07-07: a worker error that left a real diff falls
+    through to critic grading; if the critic then REJECTS, the mission's
+    failure cause is the critic verdict — it must NOT be stamped with the
+    survived worker error's error_class (stale-context misattribution)."""
+
+    class _AuthErrorWithDiffWorker:
+        cli = "claude"
+
+        def __init__(self) -> None:
+            self.last_pid = 555
+            self.spawn_calls: list[dict[str, Any]] = []
+
+        async def spawn(self, prompt, *, worktree, env, job, worker_id, log_dir, **kw):  # type: ignore[no-untyped-def]
+            self.spawn_calls.append(dict(kw))
+            log_dir.mkdir(parents=True, exist_ok=True)
+            (log_dir / "stream.jsonl").write_text("", encoding="utf-8")
+            # Leave a real file so the external-write augmentation produces a
+            # non-empty diff — mirroring "worker did real work, then 401'd".
+            yield _FakeAuthErrorEvent()
+
+    worker = _AuthErrorWithDiffWorker()
+    critic = FakeCriticRunner(_make_reject_verdict())
+    k = _make_kontrollierer(
+        manager=manager, tmp_path=tmp_path, critic=critic,
+        worker_factory_fn=lambda step: worker,
+    )
+    # Force the graded path: patch the diff capture so the worker error falls
+    # through to the critic instead of retrying (non-empty diff).
+    k._capture_diff = lambda wt: "diff --git a/x b/x\n+real work\n"  # type: ignore[method-assign]
+    mid = await manager.dispatch(prompt="work then die on auth")
+
+    end = await k.run_mission(mid)
+    assert end == MissionState.FAILED
+    events = await manager.store.events_for_mission(mid)
+    failed = [e.payload for e in events if e.payload.event_type == "MissionFailed"]
+    assert len(failed) == 1
+    assert failed[0].reason == "critic_rejected"
+    # The honest cause is the critic verdict — no stale provider_auth stamp.
+    assert failed[0].error_class is None
+    assert failed[0].failed_provider is None
+
+
 @pytest.mark.asyncio
 async def test_critic_timeout_retries_then_approves(
     manager: MissionManager, tmp_path: Path

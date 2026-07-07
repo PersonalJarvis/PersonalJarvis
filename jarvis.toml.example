@@ -34,12 +34,14 @@ hotkey = "ctrl+right_alt+j"  # push-to-talk; safe combo on all OSes
 single_turn_mode = false     # false = conversation stays open until "hang up"/idle
 
 [trigger.wake_word]
-# Type any phrase you like. The bundled offline model is "Hey Rhasspy"; any
-# other phrase needs the [desktop] local-Whisper extra or a custom .onnx model.
-# Leave blank to use the bundled "Hey Rhasspy" fallback.
+# Type any phrase you like — no wake word ships with the product (design
+# 2026-07-07). "auto" resolves the best generic engine for your phrase:
+# your own trained .onnx -> any-word Vosk keyword spotting -> local-Whisper
+# transcript match -> honest hotkey-only mode with a clear message.
+# Leave blank to pick your word during onboarding.
 phrase = ""
-engine = "auto"              # auto | openwakeword | stt_match | custom_onnx
-sensitivity = 0.5
+engine = "auto"              # auto | openwakeword | vosk_kws | stt_match | custom_onnx
+sensitivity = 0.5            # 0.5..1 (values below 0.5 are lifted — the wake would be deaf)
 
 # ── Speech-to-Text ──
 [stt]

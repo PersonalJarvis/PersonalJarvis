@@ -1798,7 +1798,7 @@ def _goal_needs_plan(goal: str) -> bool:
 
 
 # Informational / READ goals (live bug 2026-06-19): "open Discord and tell me
-# what's in the BridgeMind channel" is NOT satisfied by opening the app -- the
+# what's in the exampleserver channel" is NOT satisfied by opening the app -- the
 # loop must scroll to the newest content and REPORT it. The two halves below
 # cover (1) explicit "report it to me" verbs in DE+EN and (2) a "newest/latest
 # <content-noun>" phrase. German dictation ("sag IHM/IHR ...") is excluded by
@@ -1847,7 +1847,7 @@ def _goal_needs_reading(goal: str) -> bool:
     Such a goal is NOT satisfied by opening the app: the loop must scroll the
     newest content into view and the verifier must see that content in the
     proof. Live bug 2026-06-19: "open my Discord and tell me what's going on in
-    the BridgeMind channels" reported done on a bare-open window, having never
+    the exampleserver channels" reported done on a bare-open window, having never
     scrolled or read a single message. A pure action goal ("open Discord",
     "play a song", "click send") is not a read goal."""
     return bool(_READ_GOAL_RE.search(goal or ""))

@@ -94,7 +94,7 @@ async def test_english_failure_readback_localized(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_bare_exit_code_never_reaches_readback(monkeypatch) -> None:
-    """Live bug (Discord/BridgeMind turn): the user HEARD "That didn't work on
+    """Live bug (Discord/exampleserver turn): the user HEARD "That didn't work on
     screen: exit 5" and asked "what is the exit file?". A bare ``exit N`` error
     must be mapped to a plain-language sentence — never spoken verbatim."""
     import re
@@ -125,7 +125,7 @@ async def test_harness_detail_reason_is_surfaced_over_exit_code(monkeypatch) -> 
         "harness": "screenshot",
         "exit_code": 5,
         "stdout": "",
-        "stderr": "[cu] fail at step-4: the BridgeMind server has no news channel",
+        "stderr": "[cu] fail at step-4: the exampleserver server has no news channel",
     }
     mgr = _make_manager(_CUExecutor(success=False, output=output, error="exit 5"), bus)
     await mgr._run_computer_use_background(
@@ -135,7 +135,7 @@ async def test_harness_detail_reason_is_surfaced_over_exit_code(monkeypatch) -> 
     )
     comp = _completion(bus)
     assert not re.search(r"\bexit\s*\d+\b", comp.text, re.IGNORECASE), comp.text
-    assert "BridgeMind server has no news channel" in comp.text
+    assert "exampleserver server has no news channel" in comp.text
 
 
 @pytest.mark.asyncio

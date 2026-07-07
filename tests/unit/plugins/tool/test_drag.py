@@ -88,3 +88,37 @@ def test_drag_tool_identity():
     assert t.name == "drag"
     assert t.risk_tier == "monitor"
     assert {"x1", "y1", "x2", "y2"} <= set(t.schema["required"])
+
+async def test_drag_reports_actuation_unavailable_verbatim(monkeypatch):
+    """Wayland/headless: the actionable capability-probe message must reach
+    the model verbatim (no generic 'failed' wrapper around it)."""
+    from jarvis.cu.actuate.base import ActuationUnavailable
+
+    def _unavailable(*_a, **_k):
+        raise ActuationUnavailable(
+            "Cannot control mouse/keyboard on a Wayland session: Wayland "
+            "blocks synthetic input for security."
+        )
+
+    monkeypatch.setattr(drag_mod, "_perform_drag", _unavailable)
+    res = await DragTool().execute(
+        {"x1": 0, "y1": 0, "x2": 10, "y2": 10}, SimpleNamespace()
+    )
+    assert res.success is False
+    assert (res.error or "").startswith("Cannot control mouse/keyboard")
+
+
+def test_perform_drag_posix_routes_through_capability_probe(monkeypatch):
+    """Non-Windows _perform_drag must use get_actuator(), not raw pyautogui."""
+    monkeypatch.setattr(drag_mod.os, "name", "posix")
+    drags: list[tuple] = []
+
+    class _FakeActuator:
+        def drag(self, x1, y1, x2, y2, *, duration_s=0.4):
+            drags.append((x1, y1, x2, y2, duration_s))
+
+    monkeypatch.setattr(
+        "jarvis.cu.actuate.base.get_actuator", lambda: _FakeActuator()
+    )
+    drag_mod._perform_drag(1, 2, 3, 4, 0.25)
+    assert drags == [(1, 2, 3, 4, 0.25)]

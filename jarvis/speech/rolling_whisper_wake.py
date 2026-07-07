@@ -38,13 +38,11 @@ from jarvis.audio.capture import pcm_bytes_to_np
 from jarvis.core.protocols import AudioChunk
 from jarvis.plugins.stt.fwhisper import FasterWhisperProvider, TranscribeBusy
 
-# The strict "hey/hi/hallo + jarv-stem" pattern now lives in wake_constants as
-# the single source of truth (the prefix verifier re-exports the same object),
-# so the two STT wake paths can never drift apart (BUG-008). Re-exported here
-# under the historical ``DEFAULT_PATTERN`` name so existing call sites and tests
-# keep working. ``pattern=`` also accepts a ``WakeMatcher`` (duck-types
-# ``.search().group(0)``) so a custom wake phrase can drive this backstop.
-from jarvis.speech.wake_constants import JARVIS_WAKE_PATTERN as DEFAULT_PATTERN
+# ``pattern=`` accepts a compiled regex or a ``WakeMatcher`` (duck-types
+# ``.search().group(0)``). There is NO default pattern: the product ships no
+# wake word (design 2026-07-07), so every caller passes the configured
+# phrase's matcher from the wake plan — the same object the prefix verifier
+# uses, so the two STT wake paths can never drift apart (BUG-008).
 from jarvis.speech.wake_constants import (
     STT_HALLUCINATION_RE,
     normalize_phrase_for_match,
@@ -181,8 +179,9 @@ class RollingWhisperWake:
         self,
         stt: FasterWhisperProvider,
         # Either a compiled regex or a WakeMatcher — both expose
-        # ``.search(text)`` returning an object with ``.group(0)``.
-        pattern: Any = DEFAULT_PATTERN,
+        # ``.search(text)`` returning an object with ``.group(0)``. REQUIRED:
+        # there is no shipped default wake pattern (design 2026-07-07).
+        pattern: Any,
         window_s: float = 1.8,        # shorter = less silence share = higher avg RMS
         # 2026-06-30 ("~0.5 s delay"): 0.3 -> 0.2 so a spoken custom wake reaches
         # the bar within one snappier poll. The gates skip silence cheaply, so the
@@ -533,6 +532,35 @@ class RollingWhisperWake:
 
         def _recover_wedged(reason: str) -> None:
             nonlocal busy_since, consecutive_fail, rewarm_owed
+            # GPU-upgrade backstop: the background hot-swap attaches the proven
+            # base/cpu provider to the turbo instance (``_wake_gpu_fallback``).
+            # A wedge on THAT model means the one-off GPU inference probe was
+            # wrong for this host, so rebuilding the same CUDA model would just
+            # wedge again (the AP-25 deaf cycle). Swap straight back to the
+            # still-warm base model and persist the bad verdict so every later
+            # build (and restart) stays on CPU until the ctranslate2 runtime
+            # changes. No re-warm owed — the fallback kept its loaded model.
+            fallback = getattr(self._stt, "_wake_gpu_fallback", None)
+            if fallback is not None:
+                log.error(
+                    "rolling-whisper: %s on the GPU wake model — swapping back "
+                    "to the base/cpu fallback and marking the GPU probe bad "
+                    "(self-heal, no restart).",
+                    reason,
+                )
+                try:
+                    from jarvis.plugins.stt import mark_wake_gpu_bad
+
+                    mark_wake_gpu_bad()
+                except Exception as exc:  # noqa: BLE001 — heal must never crash
+                    log.warning(
+                        "rolling-whisper: could not persist the bad GPU "
+                        "verdict: %s", exc,
+                    )
+                self._stt = fallback
+                busy_since = None
+                consecutive_fail = 0
+                return
             recover = getattr(self._stt, "recover", None)
             if callable(recover):
                 log.error(

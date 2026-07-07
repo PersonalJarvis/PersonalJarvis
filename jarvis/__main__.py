@@ -1,8 +1,10 @@
 """Jarvis entry point.
 
 Usage:
-    python -m jarvis                # Starts the wizard (first run) or tray app
-    python -m jarvis --wizard       # Re-run the setup wizard
+    python -m jarvis                # Starts the tray app (first-run setup
+                                    #   happens in the app's onboarding)
+    python -m jarvis --wizard       # Terminal setup wizard (explicit opt-in,
+                                    #   e.g. SSH-only hosts)
     python -m jarvis --check        # Show hardware analysis only
     python -m jarvis --plugins      # List the plugin registry
     python -m jarvis --uninstall    # Remove Jarvis from this machine (folder,
@@ -64,6 +66,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="reset_onboarding",
         help="Clear onboarding markers so the first-run guide shows again.",
+    )
+    parser.add_argument(
+        "--prefetch",
+        action="store_true",
+        help="Download all voice models the current config needs, then exit. "
+             "Used by the installer so the first launch has nothing left to fetch.",
     )
     parser.add_argument(
         "--uninstall",
@@ -323,12 +331,7 @@ def _cmd_reset_onboarding() -> int:
     from jarvis.setup import state as onb_state
 
     removed = onb_state.reset_onboarding(_ONBOARDING_STATE_PATH)
-    marker = cfg.DATA_DIR / ".setup-complete"
-    if marker.exists():
-        try:
-            marker.unlink()
-        except OSError as exc:
-            print(f"Could not remove {marker}: {exc}")
+    onb_state.remove_setup_complete_marker(_ONBOARDING_STATE_PATH)
     print(f"Onboarding reset. Cleared keys: {removed or 'none'}; removed .setup-complete.")
     print("Next launch will show the setup guide.")
     return 0
@@ -484,18 +487,27 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_uninstall(args)
     if args.reset_onboarding:
         return _cmd_reset_onboarding()
+    if args.prefetch:
+        from jarvis.setup.prefetch import prefetch_all
+
+        return prefetch_all()
     if args.command == "serve":
         # Headless web UI — the cloud-first path (no desktop/tray). Delegates to
         # the web launcher so `jarvis serve` == `python -m jarvis.ui.web.launcher --headless`.
         from jarvis.ui.web import launcher
 
         return launcher.main(["--headless"])
-    if args.wizard or cfg.is_first_run():
-        rc = _cmd_wizard()
-        if rc != 0 or args.wizard:
-            return rc
-        # after setup completion: start the tray app
+    if _should_run_wizard(args.wizard):
+        return _cmd_wizard()
     return asyncio.run(_run_tray_app(debug=args.debug))
+
+
+def _should_run_wizard(wizard_flag: bool) -> bool:
+    """Setup lives in the desktop/browser onboarding (first-launch guide);
+    the terminal wizard is an explicit opt-in for SSH-only setups. First-run
+    state deliberately does NOT factor in — a fresh install boots straight
+    into the app, which shows the one-time onboarding itself."""
+    return wizard_flag
 
 
 def _entrypoint() -> NoReturn:

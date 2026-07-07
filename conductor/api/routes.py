@@ -10,12 +10,11 @@ Without a store: 503.
 from __future__ import annotations
 
 import json
-import secrets
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
-from ..core.schema import Job
+from ..core.schema import Job, regenerate_weak_webhook_token
 
 router = APIRouter(prefix="/api/conductor", tags=["conductor"])
 
@@ -95,12 +94,9 @@ async def list_jobs(request: Request) -> dict[str, Any]:
 @router.post("/jobs", status_code=201)
 async def create_job(job: Job, request: Request) -> dict[str, Any]:
     store = _require_store(request)
-    # If the schedule is a webhook without a token: generate one.
-    if job.schedule.type == "webhook" and len(job.schedule.token) < 16:
-        new_token = secrets.token_urlsafe(24)
-        job = job.model_copy(
-            update={"schedule": job.schedule.model_copy(update={"token": new_token})}
-        )
+    # If the schedule is a webhook with a weak (too-short or known-shipped)
+    # token: generate a fresh one.
+    job = regenerate_weak_webhook_token(job)
     jid = await store.upsert_job(job)
     return {"id": jid}
 

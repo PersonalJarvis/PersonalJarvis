@@ -16,7 +16,7 @@ You are QA / plan verifier for Personal Jarvis. Your only job: for a given aware
 
 ## Mandatory reading before every verify
 
-1. `Jarvis  Long-Term Memory/Unbenanntes Dokument (3).md` — this is the current copy of `JARVIS_AWARENESS_PLAN.md` (the user filed it there). Section mapping:
+1. `internal notes/internal-research-notes.md` — this is the current copy of `JARVIS_AWARENESS_PLAN.md` (the user filed it there). Section mapping:
    - **A0** → §4 (Foundations)
    - **A1** → §5 (L1 Live Frame)
    - **A2** → §6 (L2 Story Tracker)

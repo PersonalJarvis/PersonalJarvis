@@ -14,6 +14,7 @@ import { LanguagesGroup } from "@/views/settings/LanguagesGroup";
 import { AppSettingsGroup } from "@/views/settings/AppSettingsGroup";
 import { SilenceWindowGroup } from "@/views/settings/SilenceWindowGroup";
 import { VolumeGroup } from "@/views/settings/VolumeGroup";
+import { AudioDevicesGroup } from "@/views/settings/AudioDevicesGroup";
 import { SystemPromptGroup } from "@/views/settings/SystemPromptGroup";
 import {
   useWakeWord,
@@ -73,6 +74,7 @@ export function SettingsView() {
         <WakeWordPanel />
         <SilenceWindowGroup />
         <VolumeGroup />
+        <AudioDevicesGroup />
         <KeybindsPanel />
 
         <ul className="mt-2 space-y-2">
@@ -137,7 +139,9 @@ function WakeWordPanel() {
     if (!config) return;
     setPhrase(config.phrase);
     setEngine(config.engine || "auto");
-    setSensitivity(config.sensitivity);
+    // Floor 0.5 (matches the backend clamp): an old config below the floor is
+    // shown lifted, never as a deaf sub-floor value.
+    setSensitivity(Math.max(0.5, config.sensitivity));
     setCustomModelPath(config.custom_model_path ?? "");
     // ?? false keeps the Switch controlled even if an older backend omits it.
     setEnabled(config.enabled ?? false);
@@ -290,7 +294,7 @@ function WakeWordPanel() {
           </label>
           <input
             type="range"
-            min={0}
+            min={0.5}
             max={1}
             step={0.05}
             value={sensitivity}
@@ -298,6 +302,11 @@ function WakeWordPanel() {
             disabled={loading}
             className="mt-1.5 w-full accent-primary disabled:opacity-50"
           />
+          {/* Fine print: why the slider bottoms out at 0.5 (user mandate
+              2026-07-07 — a sub-floor sensitivity reads as a broken wake). */}
+          <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+            {t("settings_view.wake_word.sensitivity_floor_note")}
+          </p>
 
           {/* Any-phrase enablement: install the local speech pack in-app so
               an arbitrary wake word works, instead of silently degrading. */}

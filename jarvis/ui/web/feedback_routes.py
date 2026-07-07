@@ -2,7 +2,8 @@
 
 Endpoint:
 
-    POST /api/feedback  →  {"ok": bool, "status": str, "detail": str}
+    POST /api/feedback  →  {"ok": bool, "status": str, "detail": str,
+                            "github_url": str | None}
 
 The endpoint validates the payload, enriches it with system context (app
 version, OS, Python, UTC timestamp), and forwards it to a Discord webhook as
@@ -16,10 +17,17 @@ Outcomes (``status`` field):
     ``"unreachable"``     — network / timeout error reaching Discord.
 
 The webhook URL is read exclusively via the secret store / ENV; it is never
-hardcoded in source.  Configure it via:
+hardcoded in source.  It is an OPERATOR-only credential (the project
+maintainer's own Discord server), never something an end user can configure:
 
     Credential Manager key : discord_feedback_webhook_url
     ENV fallback            : DISCORD_FEEDBACK_WEBHOOK_URL
+
+When it is not configured — the default on every fresh install — the endpoint
+degrades honestly toward the END USER instead of telling them to set an
+operator credential: the response's ``detail`` and ``github_url`` fields point
+at the project's public GitHub issues page so they still have somewhere to
+report the bug.
 """
 from __future__ import annotations
 
@@ -58,6 +66,11 @@ _SCREENSHOT_DECODED_MAX_BYTES = 8 * 1024 * 1024
 _SECRET_KEY = "discord_feedback_webhook_url"
 _ENV_KEY = "DISCORD_FEEDBACK_WEBHOOK_URL"
 
+# Public fallback for every downloader when the operator-only Discord webhook
+# is not configured (the default — that credential belongs to the project
+# maintainer, not to the end user running this install).
+_GITHUB_ISSUES_URL = "https://github.com/PersonalJarvis/PersonalJarvis/issues"
+
 
 # ----------------------------------------------------------------------
 # Request / response models
@@ -76,6 +89,9 @@ class FeedbackResult(BaseModel):
     ok: bool
     status: Literal["sent", "not_configured", "discord_error", "unreachable"]
     detail: str
+    # Populated only for status == "not_configured": a public URL the frontend
+    # can render as a "report it on GitHub" link/fallback. ``None`` otherwise.
+    github_url: str | None = None
 
 
 # ----------------------------------------------------------------------
@@ -130,14 +146,19 @@ async def submit_feedback(body: FeedbackPayload) -> FeedbackResult:
     """
     webhook_url = get_secret(_SECRET_KEY, env_fallback=_ENV_KEY)
     if not webhook_url:
+        # No operator webhook on this install (the common case for every
+        # downloader — that credential is the project maintainer's own, never
+        # something an end user can meaningfully set). Degrade honestly:
+        # point them at the public GitHub issues page instead of a message
+        # that tells them to configure a credential they have no use for.
         return FeedbackResult(
             ok=False,
             status="not_configured",
             detail=(
-                "No Discord webhook URL is configured. "
-                f"Set the credential '{_SECRET_KEY}' or "
-                f"the environment variable {_ENV_KEY}."
+                "This server has no feedback channel configured. "
+                f"Please report this directly on GitHub: {_GITHUB_ISSUES_URL}"
             ),
+            github_url=_GITHUB_ISSUES_URL,
         )
 
     # Gather server-side context so the client does not have to send it.

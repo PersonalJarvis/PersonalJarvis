@@ -60,14 +60,18 @@ class MoveMouseTool:
             except OSError as exc:
                 return ToolResult(success=False, output=None, error=str(exc))
 
+        # Non-Windows: resolve the input backend via the capability probe so
+        # Wayland/headless/missing-deps hosts fail with the actionable
+        # ActuationUnavailable message instead of a raw pyautogui error.
+        from jarvis.cu.actuate.base import ActuationUnavailable, get_actuator
+
         try:
-            import pyautogui
-            pyautogui.moveTo(x, y)
-            return ToolResult(success=True, output=f"Mouse (pyautogui) at ({x},{y})")
-        except ImportError as exc:
+            actuator = get_actuator()
+            await asyncio.to_thread(actuator.move, x, y)
             return ToolResult(
-                success=False, output=None,
-                error=f"Platform is not Windows and pyautogui is missing: {exc}",
+                success=True, output=f"Mouse ({actuator.name}) at ({x},{y})"
             )
+        except ActuationUnavailable as exc:
+            return ToolResult(success=False, output=None, error=str(exc))
         except Exception as exc:  # noqa: BLE001
             return ToolResult(success=False, output=None, error=str(exc))

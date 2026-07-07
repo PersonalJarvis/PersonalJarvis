@@ -339,7 +339,7 @@ two status sets.
 ## Migrating existing docs
 
 Current Jarvis docs (``docs/adr/0001-..0012-*.md``, ``docs/phase*-*.md``,
-``Latenz/*.md``, ``Jarvis Long-Term Memory/*.md``) follow heterogeneous
+``notes/*.md``, ``internal notes/*.md``) follow heterogeneous
 patterns. **A big-bang migration is an anti-pattern** — existing files
 stay as they are until they get touched anyway. From now on:
 

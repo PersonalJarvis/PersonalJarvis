@@ -181,10 +181,27 @@ def build_model(args: argparse.Namespace, phrase: str) -> Any:
         )
     from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
 
+    # --device cuda benchmarks the verified-GPU hot-swap config (the
+    # large-v3-turbo/cuda/int8_float16 combo build_wake_whisper swaps in);
+    # default stays the cpu/int8 floor. cpu_threads only applies on CPU.
+    device = getattr(args, "device", "cpu")
+    if device == "cuda":
+        # App parity: in the live process torch (Silero VAD) is loaded before
+        # the hot-swap and its import registers torch\lib as a DLL directory —
+        # on hosts without a system CUDA toolkit that is where CTranslate2
+        # finds cublas64_12.dll. The jarvis import shield keeps torch OUT of
+        # this bench process otherwise, so load it explicitly here.
+        try:
+            import torch  # noqa: F401
+        except Exception:  # noqa: BLE001 — bench then measures the bare state
+            pass
+    compute = getattr(args, "compute", "") or (
+        "int8_float16" if device == "cuda" else "int8"
+    )
     return FasterWhisperProvider(
-        model=args.model, device="cpu", compute_type="int8",
+        model=args.model, device=device, compute_type=compute,
         language=None, initial_prompt=bias_phrase,
-        beam_size=1, cpu_threads=args.threads,
+        beam_size=1, cpu_threads=args.threads if device == "cpu" else 0,
     )
 
 
@@ -449,8 +466,8 @@ async def run_stream_mode(args: argparse.Namespace) -> dict:
 # ---------------------------------------------------------------------------
 
 def _config_str(args: argparse.Namespace) -> str:
-    return (f"model={args.model} threads={args.threads} lang={args.language} "
-            f"bias={args.bias} production={args.production}")
+    return (f"model={args.model} device={args.device} threads={args.threads} "
+            f"lang={args.language} bias={args.bias} production={args.production}")
 
 
 def main() -> None:
@@ -462,6 +479,11 @@ def main() -> None:
     parser.add_argument("--core-variants", default=r"ni[ckh]?[ck]o|nikko|nicko|niko",
                         help="comma-separated regexes for the core word in filenames")
     parser.add_argument("--model", default="base")
+    parser.add_argument("--device", default="cpu", choices=("cpu", "cuda"),
+                        help="cuda benchmarks the verified-GPU hot-swap config")
+    parser.add_argument("--compute", default="",
+                        help="compute type (default: int8 on cpu, "
+                             "int8_float16 on cuda)")
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--language", default="de",
                         help='"de", "en", or "auto"/"none" for auto-detect')

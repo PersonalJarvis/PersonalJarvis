@@ -168,8 +168,8 @@ def _is_meta_debug_intent(utterance: str) -> bool:
 # text; ambiguous text keeps the historical German default.
 _ANTI_SILENCE_PHRASES: dict[str, str] = {
     "de": (
-        "Das kann ich gerade nicht ausfuehren — "  # i18n-allow: spoken German TTS
-        "mir fehlt dafuer das passende Werkzeug."  # i18n-allow: spoken German TTS
+        "Das kann ich gerade nicht ausführen — "  # i18n-allow: spoken German TTS
+        "mir fehlt dafür das passende Werkzeug."  # i18n-allow: spoken German TTS
     ),
     "en": "I can't do that right now — I'm missing the right tool for it.",
     "es": "Ahora mismo no puedo hacerlo — me falta la herramienta adecuada.",
@@ -309,6 +309,18 @@ _ARG_MAXLEN: dict[str, tuple[str, int]] = {
 }
 
 
+def _canonical_tool_name(name: str) -> str:
+    """Hyphen/underscore- and case-insensitive canonical form of a tool name.
+
+    The registered tool surface mixes naming conventions (``wiki-recall`` vs
+    ``run_shell``), so models cross-normalize and invent the OTHER spelling of a
+    real tool (live incident 2026-07-05: gemini called ``run-shell``). Both
+    spellings collapse to one canonical key so an unambiguous variant still
+    resolves to the registered tool instead of the missing-tool refusal.
+    """
+    return (name or "").strip().lower().replace("-", "_")
+
+
 def _is_stt_hallucinated(tool_name: str, args: Any) -> tuple[bool, str]:
     """Checks whether the tool args look like an STT hallucination.
 
@@ -351,11 +363,62 @@ class ToolUseLoop:
         self._brain = brain
         self._tools = tools
         self._executor = executor
+        # Canonical form → registered name, for hyphen/underscore-tolerant
+        # lookup. A canonical collision (two registered tools differing only in
+        # separator/case) maps to None: an inexact name must never guess
+        # between twins — only the exact spelling reaches either of them.
+        self._alias_map: dict[str, str | None] = {}
+        for registered in tools:
+            canon = _canonical_tool_name(registered)
+            self._alias_map[canon] = (
+                None if canon in self._alias_map else registered
+            )
         self._system_prompt = system_prompt
         self._budget = budget or IterationBudget()
         # Per-response output ceiling forwarded onto every BrainRequest this
         # loop issues. Safety ceiling, not a target (see BrainConfig.max_tokens).
         self._max_tokens = max_tokens
+
+    def _resolve_tool(self, requested: str) -> tuple[Tool | None, str]:
+        """Look up a model-requested tool name, tolerating separator/case drift.
+
+        Exact match wins. Otherwise the canonical (hyphen/underscore/case-
+        insensitive) form resolves — but only when it maps to exactly ONE
+        registered tool. Returns ``(tool, registered_name)``; unknown names
+        return ``(None, requested)`` so the anti-silence fallback still fires.
+        """
+        tool = self._tools.get(requested)
+        if tool is not None or not requested:
+            return tool, requested
+        alias = self._alias_map.get(_canonical_tool_name(requested))
+        if alias is None:
+            return None, requested
+        tool = self._tools.get(alias)
+        if tool is None:
+            return None, requested
+        log.info(
+            "tool_use_loop: model called tool %r — resolved to registered "
+            "tool %r via separator-insensitive alias", requested, alias,
+        )
+        return tool, alias
+
+    async def _publish_guard_denied(
+        self, tool_name: str, reason: str, tid: UUID,
+    ) -> None:
+        """Make a guard-blocked / unknown-name tool call visible on the bus.
+
+        The guard branches in ``run`` never reach ``ToolExecutor.execute``, so
+        no ActionProposed/ActionExecuted fires — the session timeline showed NO
+        trace of why a turn refused (2026-07-06 audit). Defensive: test fakes
+        and older executors may not have the publisher; skip silently then.
+        """
+        publisher = getattr(self._executor, "publish_guard_denied", None)
+        if publisher is None:
+            return
+        try:
+            await publisher(tool_name, reason, trace_id=tid)
+        except Exception:  # noqa: BLE001 — observability must never break the loop
+            log.debug("guard-denied publish failed", exc_info=True)
 
     def _tool_schemas(self) -> list[dict[str, Any]]:
         """Schemas in Anthropic-compatible format (providers normalise)."""
@@ -490,6 +553,10 @@ class ToolUseLoop:
                 ack_attempted = True
                 first_call = agg.tool_calls[0]
                 first_name = first_call.get("name", "") or ""
+                # Normalize to the registered name so the caller's skip-list /
+                # template selection (keyed on registered names) still matches
+                # when the model used the other separator spelling.
+                _, first_name = self._resolve_tool(first_name)
                 first_input = first_call.get("input", {}) or {}
                 if not isinstance(first_input, dict):
                     first_input = {}
@@ -527,7 +594,11 @@ class ToolUseLoop:
                 # check for image artifacts below.
                 result = None
 
-                tool = self._tools.get(tool_name)
+                # Separator-tolerant resolution: from here on ``tool_name`` is
+                # the REGISTERED name (guards, telemetry, executed_tool_names
+                # and the tool-result message all key on it); the raw model
+                # spelling stays in ``final_agg.tool_calls`` above.
+                tool, tool_name = self._resolve_tool(tool_name)
                 stt_blocked, stt_reason = (
                     _is_stt_hallucinated(tool_name, tool_args)
                     if tool is not None else (False, "")
@@ -540,6 +611,11 @@ class ToolUseLoop:
                     log.info(
                         "tool_use_loop: side-effect tool '%s' blocked for a how-to question",
                         tool_name,
+                    )
+                    await self._publish_guard_denied(
+                        tool_name,
+                        "guard: how-to question — side-effect tool not executed",
+                        tid,
                     )
                     tool_result_payload = {
                         "success": False,
@@ -559,6 +635,11 @@ class ToolUseLoop:
                     log.info(
                         "tool_use_loop: side-effect tool '%s' blocked for self-identification",
                         tool_name,
+                    )
+                    await self._publish_guard_denied(
+                        tool_name,
+                        "guard: self-identification turn — side-effect tool not executed",
+                        tid,
                     )
                     tool_result_payload = {
                         "success": False,
@@ -585,6 +666,12 @@ class ToolUseLoop:
                         "tool_use_loop: tool '%s' not in the router tool set — "
                         "anti-silence fallback instead of an empty response", tool_name,
                     )
+                    await self._publish_guard_denied(
+                        tool_name,
+                        "unknown tool name — not in this turn's tool set "
+                        "(model-invented or gated off this turn)",
+                        tid,
+                    )
                     tool_result_payload = {"error": f"Tool '{tool_name}' not available"}
                     suppress_output = _anti_silence_phrase(
                         user_utterance, reply_language
@@ -592,6 +679,11 @@ class ToolUseLoop:
                 elif tool_name == "spawn_worker" and _is_meta_debug_intent(user_utterance):
                     log.info(
                         "tool_use_loop: spawn_worker blocked for a meta/debug utterance"
+                    )
+                    await self._publish_guard_denied(
+                        tool_name,
+                        "guard: meta/debug utterance — spawn_worker not executed",
+                        tid,
                     )
                     # Asking the LLM to "answer directly and concretely" via a
                     # tool_result error message turned out to be unreliable —
@@ -629,6 +721,11 @@ class ToolUseLoop:
                         "tool_use_loop: STT-hallucination guard blocked %s — %s",
                         tool_name, stt_reason,
                     )
+                    await self._publish_guard_denied(
+                        tool_name,
+                        f"guard: STT-hallucination suspect args — {stt_reason}",
+                        tid,
+                    )
                     tool_result_payload = {
                         "success": False,
                         "output": None,
@@ -653,6 +750,11 @@ class ToolUseLoop:
                         "tool_use_loop: action tool '%s' blocked on research intent "
                         "(intent_level=%s) — LLM redirected to search_web",
                         tool_name, intent_level,
+                    )
+                    await self._publish_guard_denied(
+                        tool_name,
+                        "guard: research intent — action tool redirected to search_web",
+                        tid,
                     )
                     tool_result_payload = {
                         "success": False,

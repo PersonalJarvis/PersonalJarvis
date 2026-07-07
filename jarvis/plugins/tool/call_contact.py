@@ -71,21 +71,38 @@ def _default_call_config() -> dict[str, str] | None:
     Returns a dict with ``account_sid``/``auth_token``/``from_number``/
     ``public_base_url`` when fully configured, else ``None``. Fully defensive:
     any missing piece or import error yields ``None`` so the tool degrades to a
-    clean "configure the Telephony section" message. The token is read via
-    ``get_secret`` only (never from jarvis.toml — AP-2/AP-12).
+    clean "configure the Telephony section" message.
+
+    ``JarvisConfig`` has no top-level ``telephony`` field — Twilio lives at
+    ``integrations.twilio`` (``config.py`` ``IntegrationsConfig``), and its
+    field is ``phone_number``, not ``from_number`` (``config.py``
+    ``TwilioConfig``). This mirrors exactly what the working
+    ``/api/telephony`` routes read (``telephony_routes.py`` ``_twilio_cfg`` /
+    ``_config_payload``). The token is read via ``get_secret`` only (never
+    from jarvis.toml — AP-2/AP-12), under the real credential-manager key
+    ``twilio_auth_token`` (see ``TwilioConfig`` docstring +
+    ``telephony_routes.py`` ``_AUTH_TOKEN_KEY``) — not the ENV var name.
     """
     try:
         from jarvis.core import config as cfg
 
         loaded = cfg.load_config()
-        tcfg = getattr(loaded, "telephony", None)
+        integrations = getattr(loaded, "integrations", None)
+        tcfg = getattr(integrations, "twilio", None)
         if tcfg is None:
             return None
         account_sid = getattr(tcfg, "account_sid", None)
-        from_number = getattr(tcfg, "from_number", None)
+        from_number = getattr(tcfg, "phone_number", None)
         public_base_url = getattr(tcfg, "public_base_url", None)
-        auth_token = cfg.get_secret("TWILIO_AUTH_TOKEN", env_fallback="TWILIO_AUTH_TOKEN")
-        if not (account_sid and auth_token and from_number and public_base_url):
+        auth_token = cfg.get_secret("twilio_auth_token", env_fallback="TWILIO_AUTH_TOKEN")
+        # Honor the explicit Enabled switch (wizard step 5 / Telephony UI), just
+        # like the working ``/api/telephony/outbound`` route, which refuses with
+        # 409 "Telephony is disabled" when ``twilio.enabled`` is false
+        # (telephony_routes.py). A filled-but-disabled config is a deliberate
+        # "off" — resolve to None so "call X" honestly no-ops instead of placing
+        # a real outbound call gated only by the generic ask-tier confirmation.
+        enabled = getattr(tcfg, "enabled", False)
+        if not (enabled and account_sid and auth_token and from_number and public_base_url):
             return None
         return {
             "account_sid": str(account_sid),

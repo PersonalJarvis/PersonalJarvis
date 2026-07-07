@@ -1537,12 +1537,20 @@ class DesktopApp:
                 except ModuleNotFoundError as exc:
                     from loguru import logger as _overlay_logger
                     if exc.name == "overlay":
+                        # Genuinely headless: the optional overlay package
+                        # itself isn't installed (cloud/VPS base install).
                         _overlay_logger.debug(
                             "Overlay bootstrap skipped: optional overlay package not installed."
                         )
                     else:
+                        # AP-23 W2-C: some OTHER dependency in the overlay
+                        # import chain is missing (e.g. `python-ulid`) — a
+                        # real, fixable gap, not "no overlay package". Name
+                        # it explicitly instead of collapsing into the same
+                        # silent "headless" bucket.
                         _overlay_logger.opt(exception=exc).warning(
-                            "Overlay bootstrap failed."
+                            "Overlay bootstrap skipped: overlay dependency {!r} missing.",
+                            exc.name,
                         )
                 except Exception as exc:  # noqa: BLE001
                     from loguru import logger as _overlay_logger
@@ -2179,6 +2187,9 @@ class DesktopApp:
             wake_plan = resolve_wake_plan(
                 self.cfg.trigger.wake_word,
                 local_whisper_available=_local_whisper_available,
+                # Selects the per-language Vosk model for the any-word
+                # vosk_kws engine; "auto" falls back to the first installed.
+                language=self.cfg.stt.language,
             )
             from loguru import logger as _wlog
             if not wake_plan.wake_available:
@@ -2324,7 +2335,10 @@ class DesktopApp:
                 # the constructor default (1500) always won and the Settings
                 # slider could not change the boot value.
                 vad_silence_ms=self.cfg.speech.vad_silence_ms,
-                wake_keywords=("hey_jarvis",),
+                # No shipped wake model (design 2026-07-07): the wake plan is
+                # the only source of a detector; the legacy keyword default
+                # is empty.
+                wake_keywords=(),
                 # BUG-009 episode 5 (2026-05-24): the 0.06 over-correction from
                 # episode 4 made OWW fire on the entire ambient band (idle
                 # telemetry showed bare "Hallo"/room noise scoring 0.06-0.11 and
@@ -2358,10 +2372,12 @@ class DesktopApp:
                 #     False) -> arm NOTHING; hotkey / push-to-talk is the only
                 #     activation. The product rule (2026-07-04): a wake word needs
                 #     a local model, never a silent branded fallback.
+                # vosk_kws rides the same detector slot/loop as OWW (the
+                # provider is duck-compatible), so it enables the flag too.
                 enable_openwakeword=(
                     self.cfg.trigger.wake_word_enabled
                     and wake_plan.wake_available
-                    and wake_plan.engine in ("openwakeword", "custom_onnx")
+                    and wake_plan.engine in ("openwakeword", "custom_onnx", "vosk_kws")
                 ),
                 enable_whisper_wake=(
                     self.cfg.trigger.wake_word_enabled
@@ -2589,6 +2605,15 @@ class DesktopApp:
                             else turbo._ensure_model
                         )
                         if ww is not None:
+                            # Runtime backstop: keep the proven base/cpu model
+                            # reachable from the turbo instance. If the GPU
+                            # model ever wedges live (a hang the one-off probe
+                            # missed), the rolling wake's self-heal swaps back
+                            # to this fallback and persists the bad verdict
+                            # (mark_wake_gpu_bad) instead of rebuilding the
+                            # same hung CUDA model — bounded-time recovery to
+                            # the pre-upgrade state. ~80 MB RAM held on purpose.
+                            turbo._wake_gpu_fallback = ww._stt
                             # Atomic ref swap (GIL); the next transcribe uses turbo.
                             ww._stt = turbo
                             logger.info(

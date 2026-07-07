@@ -160,6 +160,147 @@ class _BigContextBrain:
         yield BrainDelta(finish_reason="stop")
 
 
+class _RunShellTool:
+    name = "run_shell"
+    schema: dict[str, Any] = {}
+
+
+class _WikiRecallTool:
+    name = "wiki-recall"
+    schema: dict[str, Any] = {}
+
+
+class _AliasCallingBrain:
+    """Live incident 2026-07-05 (session 3e27dd8e, 19:49:56): the tool surface
+    mixes hyphen names (wiki-recall) and underscore names (run_shell), so the
+    model cross-normalized and called 'run-shell'. The exact-match lookup missed
+    and the turn ended in the canned 'missing the right tool' refusal."""
+
+    def __init__(self, called_name: str) -> None:
+        self.requests: list[BrainRequest] = []
+        self._called_name = called_name
+
+    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        self.requests.append(req)
+        if len(self.requests) == 1:
+            yield BrainDelta(tool_call={
+                "id": "c1", "name": self._called_name, "input": {},
+            })
+            yield BrainDelta(finish_reason="tool_use")
+            return
+        yield BrainDelta(content="Hier ist das Ergebnis.")  # i18n-allow: German brain-output fixture under test
+        yield BrainDelta(finish_reason="stop")
+
+
+@pytest.mark.asyncio
+async def test_hyphenated_alias_resolves_to_underscore_tool() -> None:
+    """'run-shell' from the model must execute the registered 'run_shell'."""
+    brain = _AliasCallingBrain("run-shell")
+    executor = _ExecOK()
+    loop = ToolUseLoop(
+        brain,
+        {"run_shell": _RunShellTool(), "wiki-recall": _WikiRecallTool()},
+        executor,  # type: ignore[arg-type]
+    )
+
+    result = await loop.run([], user_utterance="zeig mir den letzten Commit")
+
+    assert executor.calls, "'run-shell' must resolve to the registered 'run_shell'"
+    assert executor.calls[0][0].name == "run_shell"
+    assert "Werkzeug" not in result.text, "must not speak the missing-tool refusal"
+    assert "run_shell" in result.executed_tool_names
+
+
+@pytest.mark.asyncio
+async def test_underscore_alias_resolves_to_hyphenated_tool() -> None:
+    """The reverse direction: 'wiki_recall' must execute 'wiki-recall'."""
+    brain = _AliasCallingBrain("wiki_recall")
+    executor = _ExecOK()
+    loop = ToolUseLoop(
+        brain,
+        {"run_shell": _RunShellTool(), "wiki-recall": _WikiRecallTool()},
+        executor,  # type: ignore[arg-type]
+    )
+
+    result = await loop.run([], user_utterance="such mal im Wiki nach dem Projekt")  # i18n-allow: German utterance fixture under test
+
+    assert executor.calls, "'wiki_recall' must resolve to the registered 'wiki-recall'"
+    assert executor.calls[0][0].name == "wiki-recall"
+    assert "wiki-recall" in result.executed_tool_names
+
+
+class _ExecWithDeniedLog(_ExecOK):
+    """Executor fake that records guard-denied publications (Task-3 contract)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.denied: list[tuple[str, str]] = []
+
+    async def publish_guard_denied(self, tool_name, reason, *, trace_id=None):
+        self.denied.append((tool_name, reason))
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_publishes_guard_denied_event() -> None:
+    """A model-invented tool name must leave a visible trace (2026-07-06
+    audit: the 'run-shell' incident produced ZERO events — the timeline
+    could not show why the turn refused)."""
+    brain = _AliasCallingBrain("totally_made_up_tool")
+    executor = _ExecWithDeniedLog()
+    loop = ToolUseLoop(
+        brain,
+        {"run_shell": _RunShellTool()},
+        executor,  # type: ignore[arg-type]
+    )
+
+    await loop.run([], user_utterance="zeig mir den letzten Commit")
+
+    assert executor.calls == []
+    assert executor.denied, "unknown tool must publish a guard-denied event"
+    assert executor.denied[0][0] == "totally_made_up_tool"
+    assert "unknown tool name" in executor.denied[0][1]
+
+
+@pytest.mark.asyncio
+async def test_howto_guard_publishes_guard_denied_event() -> None:
+    brain = _Brain()
+    executor = _ExecWithDeniedLog()
+    loop = ToolUseLoop(
+        brain,
+        {"dispatch_to_harness": _Tool()},
+        executor,  # type: ignore[arg-type]
+    )
+
+    await loop.run(
+        [],
+        user_utterance="Wie kann ich bei Windows reinzoomen?",  # i18n-allow: simulated German user utterance under test
+    )
+
+    assert executor.denied and "how-to" in executor.denied[0][1]
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_alias_is_not_guessed() -> None:
+    """If two registered tools collide on the normalized form, an inexact name
+    must NOT silently pick one of them — the unknown-tool fallback stays."""
+
+    class _HyphenTwin:
+        name = "run-shell"
+        schema: dict[str, Any] = {}
+
+    brain = _AliasCallingBrain("Run-Shell")
+    executor = _ExecOK()
+    loop = ToolUseLoop(
+        brain,
+        {"run_shell": _RunShellTool(), "run-shell": _HyphenTwin()},
+        executor,  # type: ignore[arg-type]
+    )
+
+    await loop.run([], user_utterance="zeig mir den letzten Commit")
+
+    assert executor.calls == [], "an ambiguous alias must not execute either twin"
+
+
 @pytest.mark.asyncio
 async def test_tool_executes_despite_huge_per_turn_input_tokens() -> None:
     """Regression (live bug 2026-06-01): in a long conversation a single turn's

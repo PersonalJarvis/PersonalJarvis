@@ -166,6 +166,117 @@ def _worker_error_is_transient(err: str) -> bool:
         )
     )
 
+
+def _worker_error_is_auth(err: str) -> bool:
+    """True when a worker's terminal error means its provider AUTH is dead.
+
+    Provider-agnostic by design (AP-21/AP-22): every worker kind surfaces its
+    credential failure through this one classifier — the claude CLI's
+    "Failed to authenticate. API Error: 401 Invalid authentication credentials"
+    (2026-07-06, expired Claude Max OAuth token), codex's "Failed to refresh
+    token. Please log in again." (2026-06-08), an API worker's
+    "invalid_api_key" / 401, a CLI's "Not logged in".
+
+    Why it matters: dead auth used to fall through to the fatal task_error
+    branch, killing the mission terminally even though the worker factory is
+    re-consulted on every iteration and — with the dead provider flagged by
+    the worker (claude_auth_dead / codex_needs_reauth) — would pick a HEALTHY
+    family on the retry. Classifying auth as retryable turns a one-provider
+    brick into a cross-family recovery for EVERY worker kind.
+    """
+    if not err:
+        return False
+    err_lower = err.lower()
+    return any(
+        m in err_lower
+        for m in (
+            "failed to authenticate",
+            "invalid authentication",
+            "authentication failed",
+            "authentication_error",
+            "unauthorized",
+            "401",
+            "invalid api key",
+            "invalid x-api-key",
+            "invalid_api_key",
+            "not logged in",
+            "please run /login",
+            "log in again",
+            "login again",
+            "token expired",
+            "expired token",
+            "oauth token has expired",
+        )
+    )
+
+
+def _classify_worker_error(err: str, *, timed_out: bool = False) -> str | None:
+    """Map a worker's terminal error onto MISSION_ERROR_CLASSES, or ``None``.
+
+    Pure + offline; the single place the orchestrator derives the
+    provider-failure class that flows to WorkerKilled/MissionFailed and from
+    there to the Sub-Agents view and the voice announcer. Order matters:
+    the structured timeout flag wins (it is the robust signal), then auth
+    (the most specific text class), then quota/billing, then the generic
+    transient bucket. Unclassifiable errors return ``None`` so consumers
+    fall back to the mission-level ``reason``.
+    """
+    if timed_out:
+        return "worker_timeout"
+    if not err:
+        return None
+    low = err.lower()
+    if _worker_error_is_auth(low):
+        return "provider_auth"
+    if any(
+        m in low
+        for m in (
+            "balance", "billing", "credit",
+            "session limit", "usage limit",
+            "rate limit", "rate_limit", "ratelimit",
+            "too many requests", "429",
+            "out of credits", "out_of_credits",
+        )
+    ):
+        return "provider_quota"
+    if "timeout" in low:
+        return "worker_timeout"
+    if _worker_error_is_transient(low):
+        return "provider_unreachable"
+    return None
+
+
+def _classify_worktree_setup_failure(exc: BaseException) -> str:
+    """Map a ``WorktreeManager.create()`` failure to an actionable reason code.
+
+    AP-23 wave-2 audit finding 1: a fresh, ZIP-downloaded, or PATH-broken
+    install used to make ``create()`` raise a raw ``FileNotFoundError`` (git
+    binary missing) that escaped the task loop entirely — every mission,
+    even a pure in-process API-worker task, crashed with no user-visible
+    reason because every task is wrapped in a worktree first. Distinguishes:
+
+    - ``git_missing``: no git executable on PATH at all
+      (``FileNotFoundError``/``OSError`` from the subprocess spawn itself).
+    - ``git_not_a_repository``: git IS present but ``repo_root`` has no
+      ``.git`` (the "Download ZIP" install facet) — ``git worktree add``
+      exits 128 with a "not a git repository" stderr.
+    - ``worktree_setup_failed``: the pre-existing generic fallback for
+      everything else (200-char path-length cap ``ValueError``, an
+      index-lock ``CalledProcessError``, etc.) — unchanged behaviour.
+
+    Pure + offline; never raises. Any exception type not explicitly handled
+    above falls through to the generic fallback so this is always safe to
+    call from an except clause.
+    """
+    if isinstance(exc, FileNotFoundError):
+        return "git_missing"
+    if isinstance(exc, subprocess.CalledProcessError):
+        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+        if exc.returncode == 128 and "not a git repository" in stderr.lower():
+            return "git_not_a_repository"
+    return "worktree_setup_failed"
+
+
 # Mission-level wall-clock safety net. Bounds TOTAL execution time across all
 # critic iterations + the critic subprocess + decomposition — the per-iteration
 # worker cap does not. Measured AFTER the concurrency semaphore is acquired
@@ -602,6 +713,10 @@ class TaskOutcome:
     # distinct outcome lets the failure-reason mapper surface
     # `worktree_setup_failed` ("Could not create a workspace.") so the
     # user hears an actionable cause instead of "The worker was aborted."
+    # AP-23 wave-2 finding 1 (2026-07-07): the same outcome now also covers
+    # a missing git binary and a ZIP/no-.git install — see
+    # `_classify_worktree_setup_failure` and `_setup_failure_reason`, which
+    # refine the surfaced reason to `git_missing` / `git_not_a_repository`.
     SETUP_FAILED = "setup_failed"
     # Live deep-dive 2026-06-07 (mission 019ea1da): a Computer-Use mission whose
     # final iteration hit the 630s wall-clock cap returned the generic ERROR,
@@ -683,6 +798,22 @@ class Kontrollierer:
         # when later iterations overwrite the worktree with a no-op.
         # See live forensic 2026-05-16 mission_019e3288.
         self._task_iter_diffs: dict[str, list[tuple[int, str]]] = {}
+        # Last classified worker-failure per mission (error_class,
+        # error_detail, failed_provider) — written by the worker_error branch
+        # in the critic loop, consumed once by _fail_mission so the terminal
+        # MissionFailed event can name the real cause (2026-07-06 incident).
+        # Popped on BOTH terminal paths (fail + approve) so a retried-then-
+        # approved mission never leaks a stale context into a later run.
+        self._mission_failure_context: dict[str, dict[str, str | None]] = {}
+        # Per-mission classified worktree-setup-failure reason (AP-23 wave-2
+        # finding 1) — written by the except clause in
+        # `_run_task_with_critic_loop` when `WorktreeManager.create()` raises,
+        # consumed once (popped) by the `SETUP_FAILED` aggregation branch in
+        # `run_mission` so the terminal reason names the real cause
+        # ("git_missing" / "git_not_a_repository") instead of the generic
+        # "worktree_setup_failed" fallback. Last write wins, same convention
+        # as `_mission_failure_context`.
+        self._setup_failure_reason: dict[str, str] = {}
         # Per-mission worker answers for read-only/informational tasks (empty
         # diff + tool evidence). Surfaced as MissionApproved.summary_de so the
         # voice readback speaks the actual answer instead of "Mission
@@ -931,10 +1062,17 @@ class Kontrollierer:
                 mission_id, "critic_loop_exhausted", partial_artifacts=partial
             )
         elif TaskOutcome.SETUP_FAILED in task_outcomes:
-            # Worktree-create failure (path cap / git index lock) — surface an
-            # actionable cause instead of the generic "worker aborted" (#8).
+            # Worktree-create failure (path cap / git index lock / missing git
+            # binary / no .git repo) — surface an actionable cause instead of
+            # the generic "worker aborted" (#8). AP-23 wave-2 finding 1: the
+            # classified reason (git_missing / git_not_a_repository) set by
+            # `_run_task_with_critic_loop`'s except clause takes priority over
+            # the pre-existing generic fallback.
+            setup_reason = self._setup_failure_reason.pop(
+                mission_id, "worktree_setup_failed"
+            )
             await self._fail_mission(
-                mission_id, "worktree_setup_failed", partial_artifacts=partial
+                mission_id, setup_reason, partial_artifacts=partial
             )
         elif TaskOutcome.TIMED_OUT in task_outcomes:
             # Final-attempt wall-clock timeout — honest "timeout" reason instead
@@ -991,8 +1129,19 @@ class Kontrollierer:
                     task_id=step.task_id,
                     needs_repo=step.needs_repo,
                 )
-            except (subprocess.CalledProcessError, ValueError) as exc:
+            except (subprocess.CalledProcessError, ValueError, OSError) as exc:
+                # OSError added (AP-23 wave-2 finding 1): a missing git binary
+                # raises FileNotFoundError (an OSError subclass), which used
+                # to escape uncaught here and crash every mission — even a
+                # pure in-process API-worker task, since every task is
+                # wrapped in a worktree first. Classify the cause so the
+                # aggregation branch in ``run_mission`` can surface an
+                # actionable reason instead of the generic
+                # "worktree_setup_failed" for every facet.
                 logger.exception("Task %s: worktree-create failed: %s", step.task_id, exc)
+                self._setup_failure_reason[mission_id] = (
+                    _classify_worktree_setup_failure(exc)
+                )
                 return TaskOutcome.SETUP_FAILED
 
             # BUG-021 fix: materialise AGENTS.md contract into the worktree so
@@ -1240,6 +1389,34 @@ class Kontrollierer:
                 # subscription throttles under load (2026-06-09 codex verify:
                 # task_error rounds were throttle, not a code fault).
                 is_transient = _worker_error_is_transient(err_lower)
+                # Dead provider AUTH (401 / not logged in / expired token) is
+                # retryable too — not because the credential heals, but because
+                # the worker factory is re-consulted on every iteration and the
+                # failing worker flagged its provider dead (claude_auth_dead /
+                # codex_needs_reauth), so the retry runs on a DIFFERENT family
+                # (2026-07-06: expired Claude OAuth token killed every mission
+                # terminally while codex + OpenRouter were healthy — AP-22).
+                is_auth = _worker_error_is_auth(err_lower)
+                # Classify once, reuse below for both the recorded context and
+                # the WorkerKilled payload — avoids re-deriving error_detail
+                # from spawn_result.worker_error twice and re-fetching
+                # error_class back out of the dict we just wrote.
+                error_class = _classify_worker_error(
+                    spawn_result.worker_error,
+                    timed_out=spawn_result.worker_timed_out,
+                )
+                error_detail = spawn_result.worker_error[:300]
+                # Record the classified failure for the terminal MissionFailed
+                # event. Last write wins: the final iteration's cause is the
+                # one the mission actually died of.
+                self._mission_failure_context[mission_id] = {
+                    "error_class": error_class,
+                    "error_detail": error_detail,
+                    "failed_provider": (
+                        getattr(worker, "provider", None)
+                        or getattr(worker, "cli", None)
+                    ),
+                }
                 kill_reason: Literal[
                     "timeout", "user", "budget", "parent_cancelled",
                     "injection_detected", "path_guard", "worker_error",
@@ -1271,13 +1448,22 @@ class Kontrollierer:
                 # diff means nothing was produced (a genuine zero-output hang,
                 # e.g. Claude Max OAuth contention), so keep the transient-retry
                 # / hard-fail behaviour for that case.
-                if (is_timeout or is_transient) and not _real_diff_is_empty(diff_text):
+                if (
+                    is_timeout or is_transient or is_auth
+                ) and not _real_diff_is_empty(diff_text):
                     logger.warning(
-                        "Task %s iter %d: worker hit a timeout/transient error but "
-                        "left a non-empty diff (%d bytes) — grading the partial "
-                        "work with the critic instead of failing as task_error",
+                        "Task %s iter %d: worker hit a timeout/transient/auth "
+                        "error but left a non-empty diff (%d bytes) — grading "
+                        "the partial work with the critic instead of failing "
+                        "as task_error",
                         step.task_id, iteration, len(diff_text),
                     )
+                    # The critic is now the judge: if it rejects, the honest
+                    # cause is the critic verdict, not this (survived) worker
+                    # error — drop the recorded context so a later
+                    # _fail_mission cannot misattribute the failure (stale
+                    # cross-outcome context, AP-19 class).
+                    self._mission_failure_context.pop(mission_id, None)
                     # Deliberately fall through (no continue / no return): the
                     # WorkerDraftReady publish + critic call below grade the
                     # partial deliverable. We intentionally do NOT emit
@@ -1293,12 +1479,20 @@ class Kontrollierer:
                 # the whole mission — the heavy-phase semaphore (_mission_sem,
                 # default 1) serialises the retry so it no longer competes with
                 # the spawn that just timed out. Budget/auth errors stay fatal.
-                elif (is_timeout or is_transient) and iteration < MAX_CRITIC_LOOPS - 1:
+                elif (
+                    is_timeout or is_transient or is_auth
+                ) and iteration < MAX_CRITIC_LOOPS - 1:
                     logger.warning(
                         "Task %s iter %d: worker %s with no usable output — "
-                        "retrying on a fresh spawn",
+                        "retrying on a fresh spawn%s",
                         step.task_id, iteration,
-                        "timed out" if is_timeout else "hit a transient/rate-limit error",
+                        "timed out" if is_timeout
+                        else "hit a transient/rate-limit error" if is_transient
+                        else "hit a dead-auth error (401/not logged in)",
+                        "" if not is_auth
+                        else "; the worker factory will pick a different "
+                        "provider family (the failing provider is flagged "
+                        "auth-dead)",
                     )
                     continue
                 else:
@@ -1306,6 +1500,8 @@ class Kontrollierer:
                         mission_id=mission_id,
                         worker_id=spawn_result.worker_id,
                         reason=kill_reason,
+                        error_class=error_class,
+                        error_detail=error_detail,
                     )
                     # A worker that ran out of time (wall-clock cap) on its
                     # final attempt is a TIMEOUT, not a crash. Surface the
@@ -1808,6 +2004,8 @@ class Kontrollierer:
         mission_id: str,
         worker_id: str,
         reason: str,
+        error_class: str | None = None,
+        error_detail: str | None = None,
     ) -> None:
         """Emits a WorkerKilled event on the bus + store."""
         # Reason is mapped onto the literal set in events.WorkerKilled.
@@ -1827,7 +2025,12 @@ class Kontrollierer:
             worker_id=worker_id,
             source_actor="kontrollierer",
             ts_ms=now_ms(),
-            payload=WorkerKilled(worker_id=worker_id, reason=mapped),  # type: ignore[arg-type]
+            payload=WorkerKilled(
+                worker_id=worker_id,
+                reason=mapped,  # type: ignore[arg-type]
+                error_class=error_class,
+                error_detail=error_detail,
+            ),
         )
         await self._manager.store.append_and_publish(env)
 
@@ -2408,6 +2611,9 @@ class Kontrollierer:
     async def _approve_mission(
         self, mission_id: str, plan: MissionPlan, *, prompt: str = ""
     ) -> None:
+        # Hygiene: a retried-then-approved mission must not leak a stale
+        # worker-failure context into a later run (mirror of _fail_mission).
+        self._mission_failure_context.pop(mission_id, None)
         await self._safe_transition(mission_id, MissionState.APPROVED, "all_tasks_approved")
         # Point `result_uri` at the real mission directory so the Outputs
         # view and any voice-readback consumer can resolve it to actual
@@ -2518,6 +2724,20 @@ class Kontrollierer:
         partial_artifacts: list[str] | None = None,
     ) -> None:
         self._task_answers.pop(mission_id, None)  # hygiene: drop captured answers
+        # Consume the classified worker-failure context (if any) so the
+        # terminal MissionFailed event names the real cause instead of the
+        # bare mission-level reason (2026-07-06 incident: error_class was
+        # always None and the UI/voice could not name a dead credential).
+        #
+        # Attach the recorded worker-failure context ONLY when the terminal
+        # reason is actually worker-caused. Any other reason (critic_*,
+        # budget_exceeded, worktree_setup_failed, ...) has its own honest
+        # cause — inheriting a leftover worker-error context would
+        # misattribute the failure (review finding, 2026-07-07). The pop is
+        # unconditional either way: terminal means the context is dead.
+        failure_ctx = self._mission_failure_context.pop(mission_id, {})
+        if reason not in ("task_error", "attempts_timed_out"):
+            failure_ctx = {}
         # Only transition when not already terminal
         view = await self._manager.mission(mission_id)
         if view is None or view.state in (
@@ -2534,6 +2754,9 @@ class Kontrollierer:
             ts_ms=now_ms(),
             payload=MissionFailed(
                 reason=reason,
+                error_class=failure_ctx.get("error_class"),
+                error_detail=failure_ctx.get("error_detail"),
+                failed_provider=failure_ctx.get("failed_provider"),
                 last_state=view.state.value,
                 partial_artifacts=partial_artifacts or [],
             ),

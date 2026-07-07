@@ -13,6 +13,18 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_vosk_model(monkeypatch):
+    """Isolate from any per-install Vosk model: this module pins the custom_onnx
+    vs stt_match/none chain. The vosk_kws chain has its own suite in
+    test_wake_plan_vosk.py."""
+    import jarvis.speech.wake_phrase as wp
+
+    monkeypatch.setattr(wp, "resolve_vosk_model_path", lambda *_: None)
+
 
 def _cfg(
     model_path: str,
@@ -129,9 +141,10 @@ def test_explicit_custom_engine_keeps_arbitrarily_named_model(tmp_path) -> None:
     assert plan.oww_model_path == str(model)
 
 
-def test_stale_custom_model_lets_pretrained_phrase_through(tmp_path) -> None:
-    # A stale custom model must not block the pretrained path either: with the
-    # phrase set (back) to "Hey Jarvis", the bundled hey_jarvis model wins.
+def test_stale_custom_model_lets_other_phrases_through_generically(tmp_path) -> None:
+    # A stale custom model must not block the generic chain either: with the
+    # phrase set to "Hey Jarvis", the generic engine serves it (design
+    # 2026-07-07: no bundled model wins anything).
     from jarvis.speech.wake_phrase import resolve_wake_plan
 
     model = tmp_path / "hey_nico.onnx"
@@ -140,8 +153,8 @@ def test_stale_custom_model_lets_pretrained_phrase_through(tmp_path) -> None:
         _cfg(str(model), phrase="Hey Jarvis", engine="auto"),
         local_whisper_available=True,
     )
-    assert plan.engine == "openwakeword"
-    assert plan.oww_keyword == "hey_jarvis"
+    assert plan.engine == "stt_match"
+    assert plan.oww_model_path is None
     assert plan.degraded is False
 
 

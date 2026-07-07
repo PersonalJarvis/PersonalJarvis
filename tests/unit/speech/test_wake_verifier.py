@@ -1,16 +1,17 @@
-"""Wake-prefix verifier — gates OpenWakeWord hits behind a strict "hey + jarv"
-transcript check.
+"""Wake-phrase verifier — gates OpenWakeWord hits behind a transcript check
+against the configured phrase's own matcher.
 
-Background: the openWakeWord ``hey_jarvis_v0.1`` ONNX model fires on bare
-"Jarvis" because the neural features overlap with the full "Hey Jarvis" phrase.
+Background: a neural wake model fires on near-misses of its phrase
+(historically a bare core word fired the full-phrase model — BUG-009).
 Lowering the threshold pendulums (BUG-009 — five episodes); raising it past
 the genuine-wake band suppresses real wakes. The clean fix is post-detection:
 when OWW fires, transcribe the last ~2 s of audio with the cloud STT already
-configured for utterance turns and require the strict pattern from
-``rolling_whisper_wake.DEFAULT_PATTERN``.
+configured for utterance turns and require the wake plan's matcher to confirm
+it. There is no default pattern (the product ships no wake word, design
+2026-07-07); calling without a matcher fails OPEN.
 
-These tests pin the contract for the pure regex helper and the STT-driven
-verification path.
+These tests pin the contract for the pure helper and the STT-driven
+verification path, using the generic matcher for the phrase "Hey Jarvis".
 """
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from jarvis.speech.wake_phrase import compile_wake_matcher
 from jarvis.speech.wake_verifier import (
     CUSTOM_WAKE_MIN_RMS,
     pcm_tail_rms,
@@ -27,8 +29,11 @@ from jarvis.speech.wake_verifier import (
     verify_wake_with_stt,
 )
 
+# The generic matcher for the phrase used throughout this module.
+_JARVIS = compile_wake_matcher("Hey Jarvis")
+
 # ---------------------------------------------------------------------------
-# Pure regex helper
+# Pure transcript helper
 # ---------------------------------------------------------------------------
 
 
@@ -43,13 +48,13 @@ from jarvis.speech.wake_verifier import (
         "hey jarvis was machst du",
         "hallo jarvis kannst du",
         "HEY JARVIS",
-        # The Whisper backstop also accepts the German-mishear variants.
-        "Hey Charvis",
-        "Hallo Tscharvis",
+        # One character of ASR drift on the core still matches (sound-folded
+        # fuzzy core with a length-aware bar).
+        "Hey Jarwis",
     ],
 )
 def test_transcripts_with_hey_prefix_match(text: str) -> None:
-    assert transcript_has_hey_prefix(text) is True
+    assert transcript_has_hey_prefix(text, matcher=_JARVIS) is True
 
 
 @pytest.mark.parametrize(
@@ -71,10 +76,21 @@ def test_transcripts_with_hey_prefix_match(text: str) -> None:
         # "Hey" alone, no Jarvis stem.
         "Hey du",
         "Hi there",
+        # Far German mishears were only covered by the retired jarvis-family
+        # regex; the generic fuzzy matcher bounds tolerance to ~one character
+        # of drift (design 2026-07-07 — no special-cased word ships).
+        "Hey Charvis",
+        "Hallo Tscharvis",
     ],
 )
 def test_transcripts_without_hey_prefix_do_not_match(text: str) -> None:
-    assert transcript_has_hey_prefix(text) is False
+    assert transcript_has_hey_prefix(text, matcher=_JARVIS) is False
+
+
+def test_no_matcher_fails_open_never_bricks_the_wake() -> None:
+    # A missing matcher is a wiring gap, not evidence against the wake.
+    assert transcript_has_hey_prefix("anything", matcher=None) is True
+    assert transcript_has_hey_prefix("", matcher=None) is False
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +130,7 @@ PCM_2S_16K = b"\x00\x00" * 16_000 * 2  # 2 s int16 silence
 async def test_verify_returns_true_when_transcript_has_hey_prefix() -> None:
     stt = _FakeSTT("Hey Jarvis, was läuft")  # i18n-allow
 
-    matched, transcript = await verify_wake_with_stt(stt, PCM_2S_16K)
+    matched, transcript = await verify_wake_with_stt(stt, PCM_2S_16K, matcher=_JARVIS)
 
     assert matched is True
     assert transcript == "Hey Jarvis, was läuft"  # i18n-allow
@@ -124,7 +140,7 @@ async def test_verify_returns_true_when_transcript_has_hey_prefix() -> None:
 async def test_verify_returns_false_when_transcript_is_bare_jarvis() -> None:
     stt = _FakeSTT("Jarvis")
 
-    matched, transcript = await verify_wake_with_stt(stt, PCM_2S_16K)
+    matched, transcript = await verify_wake_with_stt(stt, PCM_2S_16K, matcher=_JARVIS)
 
     assert matched is False
     assert transcript == "Jarvis"
@@ -133,7 +149,7 @@ async def test_verify_returns_false_when_transcript_is_bare_jarvis() -> None:
 async def test_verify_returns_false_when_transcript_is_empty() -> None:
     stt = _FakeSTT("")
 
-    matched, transcript = await verify_wake_with_stt(stt, PCM_2S_16K)
+    matched, transcript = await verify_wake_with_stt(stt, PCM_2S_16K, matcher=_JARVIS)
 
     assert matched is False
     # A SUCCESSFUL transcription that heard nothing is "", never None — the
@@ -146,7 +162,7 @@ async def test_verify_returns_false_when_pcm_is_empty() -> None:
     """No audio captured yet — must not call STT, must not match."""
     stt = _FakeSTT("Hey Jarvis")  # would match if called
 
-    matched, _ = await verify_wake_with_stt(stt, b"")
+    matched, _ = await verify_wake_with_stt(stt, b"", matcher=_JARVIS)
 
     assert matched is False
     assert stt.calls == [], "STT must not be called with empty PCM"
@@ -159,7 +175,7 @@ async def test_verify_returns_false_on_persistent_stt_exception() -> None:
     OWW hit so the loop re-arms."""
     stt = _FakeSTT("ignored", raises=RuntimeError("groq 503"))
 
-    matched, transcript = await verify_wake_with_stt(stt, PCM_2S_16K)
+    matched, transcript = await verify_wake_with_stt(stt, PCM_2S_16K, matcher=_JARVIS)
 
     assert matched is False
     # An STT OUTAGE reports transcript=None (not "") so the caller can degrade
@@ -196,7 +212,7 @@ async def test_verify_retries_transient_error_then_succeeds(monkeypatch) -> None
     monkeypatch.setattr(wv, "_WAKE_VERIFY_BACKOFF_S", 0.0, raising=False)
     stt = _FlakySTT("Hey Jarvis, was läuft", fail_times=1)  # i18n-allow
 
-    matched, transcript = await verify_wake_with_stt(stt, PCM_2S_16K)
+    matched, transcript = await verify_wake_with_stt(stt, PCM_2S_16K, matcher=_JARVIS)
 
     assert matched is True
     assert transcript == "Hey Jarvis, was läuft"  # i18n-allow
@@ -206,7 +222,7 @@ async def test_verify_retries_transient_error_then_succeeds(monkeypatch) -> None
 async def test_verify_passes_through_language_override() -> None:
     stt = _FakeSTT("Hey Jarvis")
 
-    await verify_wake_with_stt(stt, PCM_2S_16K, language="en")
+    await verify_wake_with_stt(stt, PCM_2S_16K, language="en", matcher=_JARVIS)
 
     assert stt.calls == [(len(PCM_2S_16K), 16_000, "en")]
 
@@ -283,7 +299,7 @@ async def test_verify_caps_a_hung_stt_call(monkeypatch) -> None:
 
     stt = _HangingSTT(hang_s=1.0)
     t0 = time.monotonic()
-    matched, _ = await verify_wake_with_stt(stt, PCM_2S_16K)
+    matched, _ = await verify_wake_with_stt(stt, PCM_2S_16K, matcher=_JARVIS)
     elapsed = time.monotonic() - t0
 
     assert matched is False, "a capped (hung) verify must fail closed, not match"

@@ -106,7 +106,7 @@ class TestCuFailureReadback:
     def test_real_reason_sentence_is_forwarded_verbatim(self) -> None:
         # When the harness provides the model's actual `fail` reason, FORWARD it
         # (it gets scrubbed downstream) — do not replace it with a generic phrase.
-        reason = "The BridgeMind server has no visible news channel."
+        reason = "The exampleserver server has no visible news channel."
         out = cu_failure_readback("en", error=reason, exit_code=5)
         assert reason in out
 
@@ -118,9 +118,9 @@ class TestCuFailureReadback:
     def test_harness_stderr_reason_is_extracted_from_cu_prefix(self) -> None:
         # The screenshot loop writes "[cu] fail at <tag>: <reason>" to stderr;
         # when that reaches us we surface the human reason, not "exit 5".
-        detail = "[cu] fail at step-3: BridgeMind has no news channel"
+        detail = "[cu] fail at step-3: exampleserver has no news channel"
         out = cu_failure_readback("en", error="exit 5", exit_code=5, detail=detail)
-        assert "BridgeMind has no news channel" in out
+        assert "exampleserver has no news channel" in out
         assert not _EXIT_TOKEN_RE.search(out), out
 
     def test_no_progress_guard_diagnostic_is_not_spoken(self) -> None:

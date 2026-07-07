@@ -660,10 +660,13 @@ class CodexDirectWorker:
                 terminal_kind = "success"
                 # codex ran successfully -> its ChatGPT login is alive; clear any
                 # stale needs_reauth flag so the session uses codex natively again
-                # (e.g. after the user ran `codex login`).
+                # (e.g. after the user ran `codex login`). Same for the quota
+                # cooldown: a success proves the cap reset.
                 from jarvis.codex_auth_state import clear_codex_needs_reauth
+                from jarvis.codex_quota_state import clear_codex_quota_cooldown
 
                 clear_codex_needs_reauth()
+                clear_codex_quota_cooldown()
                 usage = obj.get("usage", {}) or {}
                 if isinstance(usage, dict):
                     in_tok = usage.get("input_tokens") or 0
@@ -725,41 +728,76 @@ class CodexDirectWorker:
         # honestly instead of bouncing codex->claude->codex forever.
         if (_auth_dead or _usage_capped) and allow_backend_fallback:
             if _auth_dead:
-                logger.warning(
-                    "CodexDirectWorker[%s]: codex ChatGPT login expired (%r) — "
-                    "falling back to the Claude Max OAuth worker so the mission "
-                    "completes. Run `codex login` to use codex again.",
-                    worker_id, _err[:160],
-                )
                 from jarvis.codex_auth_state import mark_codex_needs_reauth
 
                 mark_codex_needs_reauth()
             else:
-                logger.warning(
-                    "CodexDirectWorker[%s]: codex usage/rate limit hit (%r) — "
-                    "falling back to the Claude Max OAuth worker so the mission "
-                    "completes. codex resumes automatically once the cap resets.",
-                    worker_id, _err[:160],
-                )
-            from .claude_direct_worker import ClaudeDirectWorker
+                # Proactive complement to this reactive fallback (2026-07-07,
+                # mission_019f3cd8-1dd4): remember the cap so the worker
+                # factory skips codex until the cooldown self-expires, instead
+                # of burning ~28 s per mission re-proving it. A codex success
+                # clears it immediately.
+                from jarvis.codex_quota_state import mark_codex_quota_cooldown
 
-            async for ev in ClaudeDirectWorker().spawn(
-                prompt,
-                worktree=worktree,
-                env=env,
-                job=job,
-                worker_id=worker_id,
-                log_dir=log_dir,
-                model="",  # let ClaudeDirectWorker resolve a valid claude model
-                allowed_tools=allowed_tools,
-                permission_mode="bypassPermissions",
-                max_turns=max_turns,
-                timeout_s=timeout_s,
-                mission_id=mission_id,
-                allow_backend_fallback=False,  # no codex->claude->codex loop
-            ):
-                yield ev
-            return
+                mark_codex_quota_cooldown()
+            # Viability gate on the nested Claude spawn (2026-07-07 incident):
+            # the fallback used to be HARDCODED to ClaudeDirectWorker, so a
+            # usage-capped codex + a dead Claude login looped codex->claude->
+            # fail on every iteration while a healthy API key sat unused
+            # (AP-22). Only fall back when Claude can actually authenticate;
+            # otherwise surface the honest codex error below — the orchestrator
+            # classifies it transient/auth and retries, and the factory (seeing
+            # the flags armed above) crosses to the user's API-key family.
+            from .claude_direct_worker import (
+                ClaudeDirectWorker,
+                _resolve_claude_binary,
+            )
+
+            _claude_viable = _resolve_claude_binary() is not None
+            if _claude_viable:
+                try:
+                    from jarvis.missions import init as _missions_init
+
+                    _claude_viable = _missions_init._claude_cli_auth_viable()
+                except Exception:  # noqa: BLE001 — unreadable probe => not viable
+                    _claude_viable = False
+            if _claude_viable:
+                logger.warning(
+                    "CodexDirectWorker[%s]: codex %s (%r) — falling back to the "
+                    "Claude Max OAuth worker so the mission completes. %s",
+                    worker_id,
+                    "ChatGPT login expired" if _auth_dead
+                    else "usage/rate limit hit",
+                    _err[:160],
+                    "Run `codex login` to use codex again." if _auth_dead
+                    else "codex resumes automatically once the cap resets.",
+                )
+                async for ev in ClaudeDirectWorker().spawn(
+                    prompt,
+                    worktree=worktree,
+                    env=env,
+                    job=job,
+                    worker_id=worker_id,
+                    log_dir=log_dir,
+                    model="",  # let ClaudeDirectWorker resolve a valid claude model
+                    allowed_tools=allowed_tools,
+                    permission_mode="bypassPermissions",
+                    max_turns=max_turns,
+                    timeout_s=timeout_s,
+                    mission_id=mission_id,
+                    allow_backend_fallback=False,  # no codex->claude->codex loop
+                ):
+                    yield ev
+                return
+            logger.error(
+                "CodexDirectWorker[%s]: codex %s (%r) and the Claude fallback "
+                "is not auth-viable — surfacing the error honestly; the worker "
+                "factory will cross to another provider family on the retry.",
+                worker_id,
+                "ChatGPT login expired" if _auth_dead
+                else "usage/rate limit hit",
+                _err[:160],
+            )
 
         final = ClaudeResult(
             subtype="success"

@@ -19,7 +19,7 @@ You write NO code; you prove or disprove.
 ## Mandatory reading before every verify
 
 1. `AGENTS.md` section 7 — the 6 Awareness anti-patterns AP-AW1..AW6 (watcher lifecycle, snapshot-LLM prohibition, lock-holding, PII filter, FTS5-in-the-critical-path, salience requirement).
-2. `Jarvis  Long-Term Memory/Unbenanntes Dokument (3).md` — plan-section mapping:
+2. `internal notes/internal-research-notes.md` — plan-section mapping:
    - **A3** → §7 (L3 Session Search via FTS5)
    - **A4** → §8 (Working Set / Multi-Context-LRU max 5 slots)
    - **A5** → §9 (Deep Probes — GitProbe + FileSystemProbe, MCP+LSP delivered after Phase 6)

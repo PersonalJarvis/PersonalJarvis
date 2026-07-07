@@ -272,7 +272,7 @@ async def test_content_goal_completes_when_plan_navigates_to_profile() -> None:
 # ---------------------------------------------------------------------------
 # Desktop-app preference + adaptive (non-straitjacket) planning
 #
-# Live failure (2026-06-16): "Open Discord and then go on the BridgeMind
+# Live failure (2026-06-16): "Open Discord and then go on the exampleserver
 # Discord and look for the newest news." CU opened Discord IN A BROWSER (web)
 # although a Discord DESKTOP app is installed, then wandered and gave up. Two
 # changes:
@@ -288,7 +288,7 @@ async def test_content_goal_completes_when_plan_navigates_to_profile() -> None:
 # A goal that names a desktop app (Discord) phrased the way a person actually
 # talks -- no step-by-step hand-holding.
 _DISCORD_GOAL = (
-    "open discord and then go on the bridgemind discord and "
+    "open discord and then go on the exampleserver discord and "
     "look for the newest news"
 )
 
@@ -298,8 +298,8 @@ _DISCORD_DESKTOP_PLAN = (
     '{"plan": ['
     '{"intent": "open the discord desktop app", '
     '"success": "the discord window is shown"},'
-    '{"intent": "open the bridgemind server", '
-    '"success": "the bridgemind server is selected"},'
+    '{"intent": "open the exampleserver server", '
+    '"success": "the exampleserver server is selected"},'
     '{"intent": "read the newest announcement", '
     '"success": "the latest post is visible"}'
     ']}'
@@ -352,7 +352,7 @@ async def test_desktop_app_goal_plans_open_app_not_browser() -> None:
             '{"action": "done"}',
         ],
         plan_script=[_DISCORD_DESKTOP_PLAN],
-        judge_script=['{"done": true, "proof": "bridgemind newest post visible"}'],
+        judge_script=['{"done": true, "proof": "exampleserver newest post visible"}'],
     )
     ctx = make_ctx(brain, verify=True)
     ctx.tool_executor = executor  # capture the exact tool calls

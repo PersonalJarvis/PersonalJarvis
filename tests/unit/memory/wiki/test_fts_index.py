@@ -23,6 +23,7 @@ import pytest
 from jarvis.memory.wiki.fts_index import (
     ensure_schema,
     index_vault,
+    rebuild_index,
     remove_page,
     upsert_page,
 )
@@ -122,6 +123,43 @@ def test_index_vault_idempotent(tmp_path: Path) -> None:
 
     assert count2 == 1
     assert _row_count(conn) == 1
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Test: rebuild_index clears the old vault's rows before reindexing
+# ---------------------------------------------------------------------------
+
+
+def test_rebuild_index_replaces_old_vault_rows(tmp_path: Path) -> None:
+    """rebuild_index must drop the previously indexed vault's rows and index
+    only the new vault — the vault-switch contract (spec A6)."""
+    vault_a = tmp_path / "vault_a"
+    _write_md(vault_a / "entities" / "alpha.md", "# Alpha\nOnly in vault A.\n")
+    _write_md(vault_a / "entities" / "beta.md", "# Beta\nAlso vault A.\n")
+
+    vault_b = tmp_path / "vault_b"
+    _write_md(vault_b / "entities" / "gamma.md", "# Gamma\nOnly in vault B.\n")
+
+    conn = _mem_conn()
+    index_vault(vault_a, conn)
+    assert _row_count(conn) == 2
+
+    count = rebuild_index(vault_b, conn)
+
+    assert count == 1
+    assert _row_count(conn) == 1
+    # Old vault-A rows are gone; the new vault-B page is present. Paths are
+    # stored posix-normalized (fts_index._relative_posix), so assert on the
+    # forward-slash form on every OS.
+    assert conn.execute(
+        "SELECT COUNT(*) FROM wiki_fts WHERE path = ?",
+        ("entities/alpha.md",),
+    ).fetchone()[0] == 0
+    assert conn.execute(
+        "SELECT COUNT(*) FROM wiki_fts WHERE path = ?",
+        ("entities/gamma.md",),
+    ).fetchone()[0] == 1
     conn.close()
 
 

@@ -101,6 +101,7 @@ async def refresh_due_tokens(
     *,
     threshold_seconds: int = 600,
     keep_alive_seconds: int | None = None,
+    on_refreshed: Callable[[str], None] | None = None,
 ) -> dict[str, str]:
     """Refresh every connected plugin whose token is due.
 
@@ -108,6 +109,12 @@ async def refresh_due_tokens(
     ``keep_alive_seconds`` is set) it has not been refreshed within that window —
     the keep-alive sweep that keeps refresh tokens warm so a connection survives
     forever, even for providers whose access token is long-lived / never expires.
+
+    ``on_refreshed``, when given, fires once per plugin id right after its fresh
+    token is saved — the hook the live MCP session uses to pick up the new token
+    instead of continuing to 401 with the stale one. A callback failure is
+    swallowed and logged; a UI-refresh hiccup must never break the token save
+    that already succeeded, nor take down the rest of the cycle.
 
     Returns a ``{plugin_id: outcome}`` map (outcomes from the module constants).
     Never raises — a single plugin's failure is isolated so one dead connection
@@ -165,6 +172,12 @@ async def refresh_due_tokens(
             dataclasses.replace(new_tokens, extra=merged_extra, needs_reauth=False),
         )
         outcomes[pid] = REFRESHED
+
+        if on_refreshed is not None:
+            try:
+                on_refreshed(pid)
+            except Exception as exc:  # noqa: BLE001 — a UI-refresh hiccup must not kill the loop
+                log.warning("refresh: on_refreshed callback failed for %s: %s", pid, exc)
     return outcomes
 
 
@@ -180,6 +193,7 @@ class RefreshScheduler:
         interval_seconds: float = 300.0,
         threshold_seconds: int = 600,
         keep_alive_seconds: int | None = 43_200,  # 12h — keep refresh tokens warm
+        on_refreshed: Callable[[str], None] | None = None,
     ) -> None:
         self._plugin_ids_fn = plugin_ids_fn
         self._store = store
@@ -187,6 +201,7 @@ class RefreshScheduler:
         self._interval = interval_seconds
         self._threshold = threshold_seconds
         self._keep_alive_seconds = keep_alive_seconds
+        self._on_refreshed = on_refreshed
         self._task: asyncio.Task[None] | None = None
 
     async def run_once(self) -> dict[str, str]:
@@ -196,6 +211,7 @@ class RefreshScheduler:
             self._build_handler,
             threshold_seconds=self._threshold,
             keep_alive_seconds=self._keep_alive_seconds,
+            on_refreshed=self._on_refreshed,
         )
 
     async def _loop(self) -> None:

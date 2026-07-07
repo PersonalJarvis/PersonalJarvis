@@ -21,8 +21,20 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
 from jarvis.speech.pipeline import PipelineState, SpeechPipeline
 from jarvis.speech.wake_phrase import resolve_wake_plan
+
+
+@pytest.fixture(autouse=True)
+def _no_vosk_model(monkeypatch):
+    """Isolate from any per-install Vosk model: this module pins the
+    stt_match/none dead-state contracts. vosk_kws has its own suite in
+    test_wake_plan_vosk.py."""
+    import jarvis.speech.wake_phrase as wp
+
+    monkeypatch.setattr(wp, "resolve_vosk_model_path", lambda *_: None)
 
 
 def _cfg(**kw: object) -> SimpleNamespace:

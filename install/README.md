@@ -15,12 +15,13 @@ irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install
 curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
 ```
 
-> **Not active for the first public release.** These URLs point at a
-> repository that stays private (they return 404 for anonymous users), and the
-> signed installer's Sigstore/SLSA identity is not yet wired to the public
-> flagship — so the one-liner is intentionally not advertised yet and is being
-> finished for a follow-up release. Until then the **manual git-clone install
-> (see the root README)** is the canonical, supported path.
+The installer is fully **non-interactive** and installs the **full profile**
+(design 2026-07-07): everything in the repository — desktop app, telephony,
+chat channels, local voice models — skipping only what the OS cannot run. It
+explains each step and launches the app as its last action. All setup
+questions live in the app's one-time first-launch onboarding. Re-running the
+one-liner updates in place and never re-runs setup. `--headless` keeps the
+minimal torch-free base (the tiny-VPS / advanced path).
 
 ## File layout
 
@@ -28,7 +29,7 @@ curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/
 |-------------------|-------|----------------|
 | `install.ps1`     | 1     | Windows bootstrap: Python+git preflight, clone, venv, install `rich`, exec `installer.py`. |
 | `install.sh`      | 1     | macOS/Linux bootstrap: same shape as `install.ps1`, POSIX bash. |
-| `installer.py`    | 2     | Python orchestrator: pip install, optional extras, wizard, launch. All cross-platform logic lives here. |
+| `installer.py`    | 2     | Python orchestrator: pip install, optional extras, model prefetch, worker CLI, launch (last). All cross-platform logic lives here. |
 | `README.md`       | docs  | This file. |
 
 ## Why two stages?
@@ -48,13 +49,15 @@ end of stage 1.
 All flags are forwarded from stage 1 to `installer.py`:
 
 ```powershell
-irm https://.../install.ps1 | iex                  # full install + wizard + launch
+irm https://.../install.ps1 | iex                  # full profile + launch (setup runs in-app)
 irm https://.../install.ps1 | iex -- --no-launch   # install only, no app start
-irm https://.../install.ps1 | iex -- --no-wizard   # install only, no wizard
-irm https://.../install.ps1 | iex -- --headless    # VPS mode (no GUI deps, no launch)
-irm https://.../install.ps1 | iex -- --with-voice-local   # also pull faster-whisper (~1.5 GB)
+irm https://.../install.ps1 | iex -- --headless    # minimal server mode (torch-free base, no launch)
 irm https://.../install.ps1 | iex -- --dry-run     # print plan, do nothing
 ```
+
+(`--no-wizard` and `--with-voice-local` are still accepted as deprecated
+no-ops — the installer never runs a terminal wizard anymore, and the full
+profile already includes the local voice extras.)
 
 The shell syntax for forwarding (`--` vs. no separator) depends on the
 shell and PowerShell version. The safest pattern for ad-hoc testing is to
@@ -75,7 +78,7 @@ python install/installer.py --dry-run
 | `JARVIS_INSTALL_REPO`     | Clone from a fork instead of the upstream repo. |
 | `JARVIS_INSTALL_REF`      | Use a branch/tag/SHA other than `main`. |
 | `JARVIS_INSTALL_DIR`      | Install to a directory other than `~/.personal-jarvis`. |
-| `JARVIS_INSTALL_NO_PIP`   | Skip the pip steps (re-run only the wizard / launch). |
+| `JARVIS_INSTALL_NO_PIP`   | Skip the pip steps (re-run only prefetch / launch). |
 
 ## Local development of the installer
 
@@ -88,8 +91,8 @@ pwsh -NoProfile -Command "Get-Content install/install.ps1 | Out-Null"
 ruff check install/installer.py
 python -m py_compile install/installer.py
 
-# Dry-run end-to-end (no pip, no wizard, no launch)
-python install/installer.py --dry-run --no-wizard --no-launch
+# Dry-run end-to-end (no pip, no launch)
+python install/installer.py --dry-run --no-launch
 ```
 
 ## Pre-public-release checklist
@@ -108,4 +111,3 @@ Before that flip:
 - CI smoke workflow `.github/workflows/install-test.yml` — fresh runner per platform, fakes API keys, asserts exit code 0.
 - `personal-jarvis update` console script — opencode parity.
 - Vercel shortener `jarvis-install.vercel.app` → raw.githubusercontent.com.
-- `pyproject.toml` extras split (base / `[desktop]` / `[local-voice]`) so the headless Linux path doesn't drag in `pywin32`.

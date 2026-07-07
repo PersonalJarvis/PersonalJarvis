@@ -11,9 +11,20 @@ to a few seconds.
 """
 from __future__ import annotations
 
+import pytest
+
+import jarvis.plugins.stt as stt_pkg
 from jarvis.core.config import STTConfig
 from jarvis.plugins.stt import build_wake_whisper
 from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
+
+
+@pytest.fixture(autouse=True)
+def _gpu_probe_verified(monkeypatch):
+    """Default the GPU inference probe to VERIFIED without touching a real
+    subprocess or the on-disk cache (both belong to integration, not here).
+    Tests for the probe-fail path override with ``lambda: False``."""
+    monkeypatch.setattr(stt_pkg, "_wake_gpu_inference_verified", lambda: True)
 
 
 def test_stt_config_wake_defaults_small_and_cpu() -> None:
@@ -42,28 +53,55 @@ def test_build_wake_whisper_uses_wake_fields_not_utterance_model() -> None:
     assert p._compute_type == "int8"
 
 
-def test_build_wake_whisper_custom_phrase_default_stays_base_cpu_on_cuda() -> None:
-    # DEFAULT is base/cpu even on a CUDA box (wake_high_accuracy defaults False).
-    # Live-log evidence 2026-06-30: on the maintainer's Blackwell GPU (sm_120)
-    # CTranslate2 ``model.transcribe`` HANGS on every live large-v3-turbo/cuda
-    # inference (8 s timeout -> self-heal drops the model -> cold rebuild hangs
-    # again -> vicious cycle, wake permanently deaf). So GPU turbo is OFF by
-    # default; the validated base/cpu + phrase-bias config is the default.
+def test_build_wake_whisper_custom_phrase_default_gets_turbo_when_probe_verifies() -> None:
+    # DEFAULT (wake_high_accuracy=True) + CUDA + a VERIFIED real inference probe
+    # -> a custom phrase upgrades to large-v3-turbo/cuda WITH bias. History: the
+    # default was False after the AP-25 Blackwell hang; re-measured 2026-07-05
+    # (ctranslate2 4.7.1, same GPU: 40/40 inferences, 0 hangs) the hang was
+    # constellation-specific, so the blind flag became the automated probe.
     p = build_wake_whisper(STTConfig(), wake_phrase="Hey Alex", cuda_available=True)
-    assert p._model_name == "base"
-    assert p._device == "cpu"
+    assert p._model_name == "large-v3-turbo"
+    assert p._device == "cuda"
     assert p._initial_prompt == "Hey Alex"  # bias KEPT — needed to hear the name
 
 
-def test_build_wake_whisper_custom_phrase_gpu_turbo_is_opt_in() -> None:
-    # wake_high_accuracy = True opts a custom phrase into large-v3-turbo/cuda WITH
-    # bias — for GPUs where CTranslate2 inference is stable (RTX 30xx/40xx). Kept
-    # as an escape hatch, NOT the default (it hangs on Blackwell).
-    cfg = STTConfig(wake_high_accuracy=True)
-    p = build_wake_whisper(cfg, wake_phrase="Hey Alex", cuda_available=True)
-    assert p._model_name == "large-v3-turbo"
-    assert p._device == "cuda"
+def test_build_wake_whisper_custom_phrase_stays_base_cpu_when_probe_fails(
+    monkeypatch,
+) -> None:
+    # An UNVERIFIED GPU (probe hang/failure — the AP-25 class) must keep the
+    # validated base/cpu + phrase-bias config even though CUDA is present.
+    monkeypatch.setattr(stt_pkg, "_wake_gpu_inference_verified", lambda: False)
+    p = build_wake_whisper(STTConfig(), wake_phrase="Hey Alex", cuda_available=True)
+    assert p._model_name == "base"
+    assert p._device == "cpu"
     assert p._initial_prompt == "Hey Alex"
+
+
+def test_build_wake_whisper_high_accuracy_false_is_a_hard_opt_out() -> None:
+    # wake_high_accuracy=False must force base/cpu even when the probe verifies
+    # the GPU — the user's explicit kill switch always wins.
+    cfg = STTConfig(wake_high_accuracy=False)
+    p = build_wake_whisper(cfg, wake_phrase="Hey Alex", cuda_available=True)
+    assert p._model_name == "base"
+    assert p._device == "cpu"
+    assert p._initial_prompt == "Hey Alex"
+
+
+def test_build_wake_whisper_fast_first_never_runs_the_gpu_probe(
+    monkeypatch,
+) -> None:
+    # The probe BLOCKS (subprocess, up to minutes on a cache miss). fast_first
+    # builds run on the boot / hear-ready path (AP-26) and on live settings
+    # switches, so they must never reach it.
+    def _boom() -> bool:
+        raise AssertionError("fast_first build must not run the GPU probe")
+
+    monkeypatch.setattr(stt_pkg, "_wake_gpu_inference_verified", _boom)
+    p = build_wake_whisper(
+        STTConfig(), wake_phrase="Hey Alex", cuda_available=True, fast_first=True
+    )
+    assert p._model_name == "base"
+    assert p._device == "cpu"
 
 
 def test_build_wake_whisper_custom_phrase_fast_first_stays_base_for_quick_boot() -> None:

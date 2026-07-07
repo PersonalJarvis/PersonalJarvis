@@ -17,6 +17,7 @@ gracefully with a clear message rather than raising.
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
@@ -28,11 +29,23 @@ _DEFAULT_DRAG_DURATION_MS = 400
 
 def _perform_drag(x1: int, y1: int, x2: int, y2: int, duration_s: float) -> None:
     """Press left at ``(x1, y1)``, drag to ``(x2, y2)``, release. Blocking;
-    callers run it via ``asyncio.to_thread``."""
-    import pyautogui  # noqa: PLC0415 — lazy: keeps non-desktop import clean
+    callers run it via ``asyncio.to_thread``.
 
-    pyautogui.moveTo(x1, y1)
-    pyautogui.dragTo(x2, y2, duration=max(0.0, duration_s), button="left")
+    Windows keeps the proven pyautogui path unchanged. Elsewhere the backend
+    is resolved via the capability probe so Wayland/headless/missing-deps
+    hosts raise ``ActuationUnavailable`` with the actionable message instead
+    of a raw pyautogui error.
+    """
+    if os.name == "nt":
+        import pyautogui  # noqa: PLC0415 — lazy: keeps non-desktop import clean
+
+        pyautogui.moveTo(x1, y1)
+        pyautogui.dragTo(x2, y2, duration=max(0.0, duration_s), button="left")
+        return
+
+    from jarvis.cu.actuate.base import get_actuator  # noqa: PLC0415
+
+    get_actuator().drag(x1, y1, x2, y2, duration_s=max(0.0, duration_s))
 
 
 class DragTool:
@@ -79,8 +92,12 @@ class DragTool:
                 success=False, output=None,
                 error="drag 'duration_ms' must be a number of milliseconds",
             )
+        from jarvis.cu.actuate.base import ActuationUnavailable  # noqa: PLC0415
+
         try:
             await asyncio.to_thread(_perform_drag, x1, y1, x2, y2, duration_s)
+        except ActuationUnavailable as exc:
+            return ToolResult(success=False, output=None, error=str(exc))
         except ImportError as exc:
             return ToolResult(
                 success=False, output=None,

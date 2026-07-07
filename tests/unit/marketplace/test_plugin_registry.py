@@ -26,6 +26,16 @@ class _FakeClient:
     async def list_tools(self): return list(self._tools)
 
 
+class _FailingClient:
+    """Stands in for a client whose connect-time list_tools() 401s (Bug 14)."""
+    def __init__(self, spec, env_overrides=None):
+        self.spec = spec
+    async def start(self) -> None:
+        raise RuntimeError("HTTP 401 unauthorized")
+    async def stop(self) -> None: ...
+    async def list_tools(self): return []
+
+
 class _RecordingBus:
     def __init__(self): self.events = []
     async def publish(self, ev): self.events.append(ev)
@@ -35,6 +45,17 @@ def _store_with_calendar() -> TokenStore:
     store = TokenStore(InMemoryBackend())
     store.save("google-calendar", Tokens(access="TOK"))
     return store
+
+
+@pytest.fixture
+def registry_with_failing_client():
+    """A registry + plugin whose client's start() raises HTTP 401 (Bug 14)."""
+    catalog = PluginCatalog(version=1, schema_version="1", plugins=[_calendar_plugin()])
+    reg = PluginToolRegistry(
+        catalog=catalog, token_store=_store_with_calendar(),
+        client_factory=_FailingClient, bus=_RecordingBus(),
+    )
+    return reg, catalog.plugins[0]
 
 
 @pytest.mark.asyncio
@@ -129,3 +150,11 @@ async def test_concurrent_bootstrap_and_refresh_no_corruption():
     names = [t.name for t in reg.active_tools()]
     assert names.count("google-calendar/list_events") == 1   # not doubled
     assert list(reg._clients) == ["google-calendar"]          # exactly one, not leaked
+
+
+@pytest.mark.asyncio
+async def test_connect_failure_is_recorded_and_tool_count_zero(registry_with_failing_client):
+    reg, plugin = registry_with_failing_client  # fake client whose start()/list_tools() raises 401
+    await reg._connect_plugin(plugin)
+    assert reg.live_tool_count(plugin.id) == 0
+    assert "401" in (reg.last_connect_error(plugin.id) or "")

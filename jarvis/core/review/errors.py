@@ -65,3 +65,17 @@ class WorkerSpawnError(ReviewPipelineError):
     Plan §7 table: NO retry — infrastructure problem, not a quality
     problem. The pipeline propagates upward.
     """
+
+
+class HarnessUnavailable(ReviewPipelineError):
+    """No registered harness backs the worker or reviewer spawn.
+
+    Raised by `WorkerSpawner`/`ReviewerSpawner` when neither the canonical
+    Jarvis-Agent worker-harness name nor its back-compat alias is a
+    registered `jarvis.harness` entry point on this install (true of every
+    install today — Welle-4 removed the old OpenClaw subprocess bridge and
+    no replacement has been registered yet). `DispatchWithReviewTool`
+    catches this and returns an honest "review gate unavailable"
+    `ToolResult` — never a raw `KeyError` naming the dead internal harness
+    (AP-23 wave-2 finding 5).
+    """

@@ -28,6 +28,11 @@ pydantic>=2.9,<3.0
 pydantic-settings>=2.6
 pyyaml>=6.0
 
+# Desktop overlay/mascot IPC wire IDs (jarvis/overlay + OS-Level/src/overlay
+# schema.py `from ulid import ULID`). Small pure-Python, platform-universal
+# package. See pyproject.toml note.
+python-ulid>=2.2
+
 # Logging
 structlog>=24.4
 loguru>=0.7
@@ -47,9 +52,14 @@ scipy>=1.14
 # are). See pyproject.toml note.
 openwakeword>=0.6
 onnxruntime>=1.17
-# Local VAD (silero-vad → torch), webrtcvad-wheels and the Porcupine wake engine
-# (pvporcupine) are NOT base deps: they live in the pyproject.toml [local-voice]
-# extra per the cloud-first doctrine (CLAUDE.md §3). torch must never land in the
+# Any-word wake keyword spotting (vosk_kws engine, 2026-07-05): torch-free,
+# Apache-2.0, universal CPU wheels; per-language model fetched at setup, not
+# bundled. See pyproject.toml note. CAP below 0.3.45: that release ships NO
+# macOS wheel, and the universal lock must stay installable on every OS (AP-23).
+vosk>=0.3.44,<0.3.45
+# Local VAD (silero-vad → torch), webrtcvad-wheels and faster-whisper are NOT
+# base deps: they live in the pyproject.toml [local-voice] extra per the
+# cloud-first doctrine (CLAUDE.md §3). torch must never land in the
 # base lockfile — it pulls a multi-GB, GPU-specific CUDA wheel stack (nvidia-*),
 # which is unresolvable on a plain PyPI install and bricks the installer for every
 # non-maintainer machine.

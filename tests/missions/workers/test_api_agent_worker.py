@@ -48,6 +48,18 @@ async def _drain(worker: ApiAgentWorker, **kw):  # noqa: ANN003
     return events
 
 
+@pytest.fixture(autouse=True)
+def _reset_family_cooldowns() -> None:
+    """The per-family cooldown is a process global — reset around every test."""
+    from jarvis.api_family_quota_state import clear_api_family_cooldown
+
+    for prov in ("openai", "openrouter", "gemini", "claude-api"):
+        clear_api_family_cooldown(prov)
+    yield
+    for prov in ("openai", "openrouter", "gemini", "claude-api"):
+        clear_api_family_cooldown(prov)
+
+
 def test_supports_api_agent_worker() -> None:
     assert supports_api_agent_worker("openai")
     assert supports_api_agent_worker("openrouter")
@@ -99,6 +111,137 @@ async def test_worker_writes_file_and_emits_critic_readable_stream(
     # stream.jsonl is Critic-readable: the write is credited
     stream_text = (log_dir / "stream.jsonl").read_text(encoding="utf-8")
     assert "out.txt" in extract_write_targets(stream_text)
+
+
+class _RaisingBrain:
+    """A brain whose complete() dies with a provider error (429/401/...)."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def can_call_tools(self) -> bool:
+        return True
+
+    async def complete(self, req):  # noqa: ANN001, ANN201
+        raise self._exc
+        yield  # pragma: no cover — makes this an async generator
+
+
+@pytest.mark.asyncio
+async def test_quota_depleted_error_arms_family_cooldown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Mission 019f3d0f (2026-07-07): gemini's prepaid credits were depleted
+    (429 RESOURCE_EXHAUSTED) and every retry re-picked gemini. A quota/auth
+    provider error must arm the per-family cooldown so the factory's family
+    walk skips this family on the retry and reaches the next healthy key."""
+    from jarvis.api_family_quota_state import api_family_in_cooldown
+
+    monkeypatch.setattr(
+        "jarvis.missions.workers.api_agent_worker._build_brain",
+        lambda provider, model: _RaisingBrain(
+            RuntimeError(
+                "429 Too Many Requests. Your prepayment credits are depleted. "
+                "RESOURCE_EXHAUSTED"
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "jarvis.core.config.get_provider_secret", lambda p: "DEAD-GEMINI-KEY"
+    )
+    worker = ApiAgentWorker("gemini")
+
+    events = await _drain(
+        worker, prompt="t", worktree=tmp_path, env={}, job=None,
+        worker_id="m::0", log_dir=tmp_path / "_logs", model="gemini-3.5-flash",
+    )
+
+    assert events[-1].is_error is True
+    from jarvis.claude_auth_state import credential_fingerprint
+
+    assert (
+        api_family_in_cooldown(
+            "gemini", current_fingerprint=credential_fingerprint("DEAD-GEMINI-KEY")
+        )
+        is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_dead_key_401_arms_family_cooldown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Mission 019f3d01: a stale claude-api credential 401'd on every retry.
+    An auth error is family-unusable just like a quota error — arm the cooldown."""
+    from jarvis.api_family_quota_state import api_family_in_cooldown
+
+    monkeypatch.setattr(
+        "jarvis.missions.workers.api_agent_worker._build_brain",
+        lambda provider, model: _RaisingBrain(
+            RuntimeError(
+                "Error code: 401 - {'type': 'error', 'error': {'type': "
+                "'authentication_error', 'message': 'invalid x-api-key'}}"
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "jarvis.core.config.get_provider_secret", lambda p: "STALE-KEY"
+    )
+    worker = ApiAgentWorker("claude-api")
+
+    events = await _drain(
+        worker, prompt="t", worktree=tmp_path, env={}, job=None,
+        worker_id="m::0", log_dir=tmp_path / "_logs", model="claude-opus-4-8",
+    )
+
+    assert events[-1].is_error is True
+    assert api_family_in_cooldown("claude-api") is True
+
+
+@pytest.mark.asyncio
+async def test_plain_worker_error_does_not_arm_cooldown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A non-quota, non-auth crash must NOT block the family — the key is fine."""
+    from jarvis.api_family_quota_state import api_family_in_cooldown
+
+    monkeypatch.setattr(
+        "jarvis.missions.workers.api_agent_worker._build_brain",
+        lambda provider, model: _RaisingBrain(RuntimeError("kaboom: flaky socket")),
+    )
+    worker = ApiAgentWorker("openrouter")
+
+    events = await _drain(
+        worker, prompt="t", worktree=tmp_path, env={}, job=None,
+        worker_id="m::0", log_dir=tmp_path / "_logs", model="m",
+    )
+
+    assert events[-1].is_error is True
+    assert api_family_in_cooldown("openrouter") is False
+
+
+@pytest.mark.asyncio
+async def test_success_clears_family_cooldown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A successful run proves the key works again — the cooldown must clear."""
+    from jarvis.api_family_quota_state import (
+        api_family_in_cooldown,
+        mark_api_family_cooldown,
+    )
+
+    mark_api_family_cooldown("openai")
+    turns = [[BrainDelta(content="done"), BrainDelta(finish_reason="end_turn")]]
+    _patch_brain(monkeypatch, FakeBrain(turns))
+    worker = ApiAgentWorker("openai")
+
+    events = await _drain(
+        worker, prompt="t", worktree=tmp_path, env={}, job=None,
+        worker_id="m::0", log_dir=tmp_path / "_logs", model="gpt-5.5",
+    )
+
+    assert events[-1].is_error is False
+    assert api_family_in_cooldown("openai") is False
 
 
 @pytest.mark.asyncio

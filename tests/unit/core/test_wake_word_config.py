@@ -54,3 +54,20 @@ def test_phrase_round_trips_arbitrary_value() -> None:
     assert c.phrase == "Computer"
     assert c.engine == "stt_match"
     assert c.fuzzy_match_ratio == 0.7
+
+
+def test_sensitivity_below_floor_is_lifted_not_rejected() -> None:
+    # User mandate 2026-07-07: below 0.5 the detector is effectively deaf (a
+    # live config at 0.0 read as "the wake word is broken"). Sub-floor values
+    # are LIFTED on load — never a validation error (AP-16 boot resilience).
+    assert WakeWordConfig(sensitivity=0.0).sensitivity == 0.5
+    assert WakeWordConfig(sensitivity=0.3).sensitivity == 0.5
+    assert WakeWordConfig(sensitivity=-1).sensitivity == 0.5
+    assert WakeWordConfig(sensitivity="garbage").sensitivity == 0.5
+
+
+def test_sensitivity_valid_range_round_trips() -> None:
+    assert WakeWordConfig(sensitivity=0.5).sensitivity == 0.5
+    assert WakeWordConfig(sensitivity=0.75).sensitivity == 0.75
+    assert WakeWordConfig(sensitivity=1.0).sensitivity == 1.0
+    assert WakeWordConfig(sensitivity=2.0).sensitivity == 1.0  # ceiling clamp

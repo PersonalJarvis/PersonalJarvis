@@ -57,7 +57,15 @@ export function OnboardingGate() {
       className="fixed inset-0 z-50 flex items-center justify-center bg-background/90 backdrop-blur-sm"
     >
       {!riskAck ? (
-        <RiskGate onAccept={() => setRiskAck(true)} />
+        <RiskGate
+          onAccept={() => {
+            // Persist the Terms record (fail-open: a warming/erroring backend
+            // must never block the gate; the fast-boot path usually answers
+            // immediately). The ack itself stays local-state-only by design.
+            void onb.acceptTerms().catch(() => undefined);
+            setRiskAck(true);
+          }}
+        />
       ) : showVideo ? (
         <IntroVideoScreen onContinue={() => setVideoSeen(true)} />
       ) : (

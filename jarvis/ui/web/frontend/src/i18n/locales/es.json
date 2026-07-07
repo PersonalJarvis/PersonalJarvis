@@ -281,6 +281,14 @@
       "running": "en marcha",
       "completed": "llegado",
       "failed": "fallo"
+    },
+    "health_degraded": "Proveedor de subagentes degradado",
+    "health_error": "Ningún proveedor de subagentes accesible",
+    "error_class": {
+      "provider_auth": "El inicio de sesión del proveedor no es válido o ha caducado; vuelve a conectarlo en la vista de claves API.",
+      "provider_quota": "Cuota del proveedor agotada; las misiones usan otro proveedor.",
+      "provider_unreachable": "Proveedor temporalmente inaccesible.",
+      "worker_timeout": "El worker alcanzó su límite de tiempo."
     }
   },
   "tasks_view": {
@@ -971,6 +979,19 @@
       "saved_toast": "Volumen fijado en {0}.",
       "restart_caption": "Guardado — se aplica en el próximo inicio."
     },
+    "audio_devices": {
+      "title": "Dispositivos de audio",
+      "description": "Elige por dónde sale la voz de {name} y con qué micrófono escucha {name}. Automático elige tu auricular por ti y se adapta cuando los dispositivos van y vienen.",
+      "output_label": "Salida de voz",
+      "input_label": "Micrófono",
+      "auto_option": "Automático (recomendado)",
+      "default_suffix": "(predeterminado del sistema)",
+      "rescan": "Volver a buscar dispositivos",
+      "none_found": "No se encontraron dispositivos de audio en este equipo — {name} sigue funcionando sin sonido.",
+      "output_saved_toast": "Dispositivo de salida guardado.",
+      "input_saved_toast": "Micrófono guardado.",
+      "restart_caption": "Guardado — se aplica en el próximo inicio."
+    },
     "title": "Ajustes",
     "subtitle": "Palabra de activación, atajos, políticas de seguridad, inicio automático.",
     "overlay_taskbar_group_title": "Barra y superposición",
@@ -1029,16 +1050,18 @@
       "phrase_placeholder": "p. ej. Jonas",
       "engine_label": "Motor de detección",
       "sensitivity_label": "Sensibilidad",
+      "sensitivity_floor_note": "El mínimo es 0,5: por debajo del punto medio calibrado, la detección se vuelve tan estricta que el habla normal casi nunca la activa — parece rota, no \"menos sensible\". 0,5 es el valor equilibrado por defecto; valores más altos se activan con más facilidad.",
       "custom_model_path_label": "Ruta del modelo ONNX personalizado",
       "save": "Guardar palabra de activación",
       "saved": "Palabra de activación guardada",
       "restart_required": "Es necesario reiniciar para que surta efecto.",
       "degraded_warning": "La frase elegida no es compatible con el motor seleccionado — recurrirá a otro motor.",
-      "needs_whisper_hint": "Una frase arbitraria requiere el extra de Whisper local. Sin él, el motor recurrirá a una frase rápida integrada.",
+      "needs_whisper_hint": "Esta frase necesita un motor local. Instala el paquete de voz local más abajo — hasta entonces la palabra de activación queda desactivada y se activa con el atajo de teclado.",
       "derived_name": "Tu asistente se llamará: {0}",
       "engine_options": {
         "auto": "Automático (recomendado)",
         "openwakeword": "openWakeWord (frases integradas)",
+        "vosk_kws": "Detección de palabras clave (cualquier frase, igual en todos los equipos)",
         "stt_match": "Coincidencia STT (cualquier frase, requiere Whisper local)",
         "custom_onnx": "Modelo ONNX personalizado"
       },
@@ -1445,7 +1468,9 @@
       "body": "Puede controlar tu ordenador, ejecutar comandos, abrir aplicaciones, enviar mensajes y modificar archivos en tu nombre, y puede cometer errores. Podría hacer cosas no deseadas o incluso destructivas.",
       "liability": "Lo usas completamente bajo tu propia responsabilidad. Los desarrolladores no aceptan responsabilidad alguna por daños, pérdida de datos u otras consecuencias. Continúa solo si lo entiendes y lo aceptas.",
       "accept_label": "Entiendo los riesgos y acepto que uso Personal Jarvis bajo mi propia responsabilidad.",
-      "proceed": "Lo entiendo — continuar"
+      "proceed": "Lo entiendo — continuar",
+      "view_terms": "Ver los Términos de uso completos",
+      "terms_loading": "Cargando los términos…"
     },
     "intro": {
       "scene_1": "Te presentamos a tu asistente de voz.",
@@ -1526,7 +1551,8 @@
       "body": "Tu asistente está listo. Di tu palabra de activación o escribe un comando para empezar.",
       "skipped_title": "Omitiste — configúralo cuando quieras en Ajustes:",
       "start_cta": "Empezar",
-      "boot_notice": "Nota: el primer inicio tarda unos 10 segundos mientras tu asistente se inicia — es completamente normal."
+      "boot_notice": "Nota: el primer inicio tarda unos 10 segundos mientras tu asistente se inicia — es completamente normal.",
+      "autostart_label": "Iniciar Jarvis automáticamente al iniciar sesión"
     }
   },
   "languages_view": {

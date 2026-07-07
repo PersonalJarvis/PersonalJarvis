@@ -22,6 +22,7 @@ from typing import Any, Literal
 
 from jarvis.core.protocols import HarnessTask
 from jarvis.core.review.errors import (
+    HarnessUnavailable,
     ReviewerUnavailable,
     VerdictParseError,
     WorkerSpawnError,
@@ -54,6 +55,46 @@ DEFAULT_REVIEWER_TOOLS: tuple[str, ...] = ("Read", "Grep", "Glob")
 # Plan-§AD-13 surrogate: cost cap as a stand-in for `--max-turns`.
 DEFAULT_WORKER_BUDGET_USD = 0.30
 DEFAULT_REVIEWER_BUDGET_USD = 0.05
+
+# ----------------------------------------------------------------------
+# Harness resolution (AP-23 wave-2 finding 5)
+# ----------------------------------------------------------------------
+#
+# Candidate names for the Jarvis-Agent worker harness, in preference order.
+# ``jarvis_agent`` is the canonical name (CLAUDE.md §4 rename); ``openclaw``
+# is the pre-rename back-compat alias, mirroring the
+# ``AliasChoices("jarvis_agent", "openclaw")`` pattern already used for the
+# ``[harness.jarvis_agent]`` config block (jarvis/core/config.py). Neither is
+# ever ASSUMED present (AP-21: gate on registration, not a hardcoded name) —
+# both spawners check ``HarnessManager.available()`` at spawn time. As of
+# 2026-07-07 NEITHER name is a registered ``jarvis.harness`` entry point on
+# any install (Welle-4 removed the old subprocess bridge and no replacement
+# has shipped yet), so this resolves to ``None`` and the spawners raise
+# ``HarnessUnavailable`` — never the raw ``KeyError`` that
+# ``HarnessManager.get()`` would otherwise throw for an unregistered name.
+# The day a real worker harness registers under either name, this starts
+# resolving it with no further code change required.
+_WORKER_HARNESS_CANDIDATES: tuple[str, ...] = ("jarvis_agent", "openclaw")
+
+
+def _harness_is_registered(manager: HarnessManager, name: str) -> bool:
+    """True if `name` is a live `jarvis.harness` entry point on `manager`.
+
+    Fails closed: a broken/minimal manager (e.g. a test double without
+    `available()`) is treated as "not registered", never crashes the caller.
+    """
+    try:
+        return name in set(manager.available())
+    except Exception:  # noqa: BLE001 — resolution must never crash the spawn
+        return False
+
+
+def _resolve_worker_harness_name(manager: HarnessManager) -> str | None:
+    """Returns the first registered candidate harness name, or `None`."""
+    for candidate in _WORKER_HARNESS_CANDIDATES:
+        if _harness_is_registered(manager, candidate):
+            return candidate
+    return None
 
 
 # ----------------------------------------------------------------------
@@ -98,7 +139,7 @@ async def _drain_dispatch(
 
 
 class WorkerSpawner:
-    """Spawns the worker subagent via the `openclaw` harness.
+    """Spawns the worker subagent via the registered Jarvis-Agent harness.
 
     Writes the worker stdout to `data/review/runs/<run_id>/iter-N/worker.out`
     and returns the content as a string. The pipeline uses the string for
@@ -113,7 +154,7 @@ class WorkerSpawner:
         harness_manager: HarnessManager,
         runs_root: Path,
         agent_name: str = "jarvis-worker",
-        harness_name: str = "openclaw",
+        harness_name: str | None = None,
         allowed_tools: tuple[str, ...] = DEFAULT_WORKER_TOOLS,
         max_budget_usd: float = DEFAULT_WORKER_BUDGET_USD,
         timeout_s: int = 600,
@@ -121,6 +162,10 @@ class WorkerSpawner:
         self._manager = harness_manager
         self._runs_root = runs_root
         self._agent_name = agent_name
+        # `None` (the default) means "auto-resolve at spawn time via
+        # `_resolve_worker_harness_name`" — never a hardcoded literal
+        # (AP-21/AP-23 wave-2 finding 5). An explicit override is still
+        # honored, but is re-validated against the registry at spawn time.
         self._harness_name = harness_name
         self._allowed_tools = allowed_tools
         self._max_budget_usd = max_budget_usd
@@ -130,6 +175,16 @@ class WorkerSpawner:
         """Executes the worker spawn, writes iter-N/worker.out, and
         returns the worker stdout as a string.
         """
+        harness_name = self._harness_name
+        if harness_name is None:
+            harness_name = _resolve_worker_harness_name(self._manager)
+        elif not _harness_is_registered(self._manager, harness_name):
+            harness_name = None
+        if harness_name is None:
+            raise HarnessUnavailable(
+                "no worker harness is registered on this install"
+            )
+
         run_dir = RunDirectory(self._runs_root, state.run_id).ensure()
         worker_output_path = run_dir.worker_output_path(iteration)
 
@@ -142,12 +197,12 @@ class WorkerSpawner:
         )
 
         stdout, stderr, exit_code, duration_ms, cost_usd = await _drain_dispatch(
-            self._manager, self._harness_name, task
+            self._manager, harness_name, task
         )
 
         if exit_code != 0:
             raise WorkerSpawnError(
-                f"Worker-Spawn ({self._harness_name}) exit_code={exit_code} "
+                f"Worker-Spawn ({harness_name}) exit_code={exit_code} "
                 f"stderr={stderr[:300]!r}"
             )
 
@@ -175,7 +230,7 @@ class WorkerSpawner:
 
 
 class ReviewerSpawner:
-    """Spawns the reviewer subagent via the `openclaw` harness.
+    """Spawns the reviewer subagent via the registered Jarvis-Agent harness.
 
     The reviewer receives the **path** to the worker output file, not the
     content — filesystem IPC (AD-9). Returns a parsed `ReviewVerdict`.
@@ -191,7 +246,7 @@ class ReviewerSpawner:
         runs_root: Path,
         verdict_schema_path: Path | None = None,
         agent_name: str = "jarvis-reviewer",
-        harness_name: str = "openclaw",
+        harness_name: str | None = None,
         allowed_tools: tuple[str, ...] = DEFAULT_REVIEWER_TOOLS,
         max_budget_usd: float = DEFAULT_REVIEWER_BUDGET_USD,
         effort: Literal["low", "medium", "high", "xhigh", "max"] = "low",  # AD-13
@@ -203,6 +258,10 @@ class ReviewerSpawner:
             verdict_schema_path or _DEFAULT_VERDICT_SCHEMA_PATH
         )
         self._agent_name = agent_name
+        # `None` (the default) means "auto-resolve at spawn time via
+        # `_resolve_worker_harness_name`" — never a hardcoded literal
+        # (AP-21/AP-23 wave-2 finding 5). An explicit override is still
+        # honored, but is re-validated against the registry at spawn time.
         self._harness_name = harness_name
         self._allowed_tools = allowed_tools
         self._max_budget_usd = max_budget_usd
@@ -219,6 +278,16 @@ class ReviewerSpawner:
         `iter-N/worker.out` and references it by path.
         """
         del worker_output  # unused, siehe Docstring
+        harness_name = self._harness_name
+        if harness_name is None:
+            harness_name = _resolve_worker_harness_name(self._manager)
+        elif not _harness_is_registered(self._manager, harness_name):
+            harness_name = None
+        if harness_name is None:
+            raise HarnessUnavailable(
+                "no reviewer harness is registered on this install"
+            )
+
         run_dir = RunDirectory(self._runs_root, state.run_id)
         worker_output_path = run_dir.worker_output_path(iteration)
 
@@ -234,7 +303,7 @@ class ReviewerSpawner:
         )
 
         stdout, stderr, exit_code, duration_ms, _cost = await _drain_dispatch(
-            self._manager, self._harness_name, task
+            self._manager, harness_name, task
         )
 
         if exit_code != 0:

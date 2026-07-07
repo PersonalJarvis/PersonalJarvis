@@ -39,6 +39,8 @@ import logging
 import os
 import subprocess
 import sys
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -92,25 +94,44 @@ def _read_json(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def _oauth_from_credentials(creds: dict[str, Any] | None) -> tuple[bool, str | None]:
-    """Return ``(connected, subscription_type)`` from a parsed credentials dict.
+def _oauth_from_credentials(
+    creds: dict[str, Any] | None, *, now_fn: Callable[[], float] = time.time
+) -> tuple[bool, str | None, bool]:
+    """Return ``(connected, subscription_type, expired)`` from a credentials dict.
 
     ``claude`` writes ``{"claudeAiOauth": {"accessToken": "sk-ant-oat...",
-    "subscriptionType": "max", ...}}``. A present ``sk-ant-oat`` bearer means the
-    Claude Max / Pro subscription login is live; the tier comes from
+    "subscriptionType": "max", "expiresAt": <epoch ms>, ...}}``. A present
+    ``sk-ant-oat`` bearer whose ``expiresAt`` has NOT passed means the Claude
+    Max / Pro subscription login is live; the tier comes from
     ``subscriptionType``. Tolerant by design — any shape it does not recognize
-    degrades to ``(False, None)`` rather than raising.
+    degrades to ``(False, None, False)`` rather than raising.
+
+    EXPIRY-aware since 2026-07-06: presence-only reporting said
+    "connected=True mode=subscription" for a token that had been dead since
+    02:53, so the UI showed green while every subagent spawn died with
+    "401 Invalid authentication credentials". A present-but-expired bearer now
+    reports ``connected=False, expired=True`` so ``status()`` can tell the user
+    to run ``claude /login``. A missing ``expiresAt`` stays fail-open (older
+    credential shapes keep reporting connected).
     """
     if not isinstance(creds, dict):
-        return False, None
+        return False, None, False
     oauth = creds.get("claudeAiOauth")
     if not isinstance(oauth, dict):
-        return False, None
+        return False, None, False
     token = oauth.get("accessToken")
-    connected = isinstance(token, str) and token.startswith("sk-ant-oat")
+    present = isinstance(token, str) and token.startswith("sk-ant-oat")
     sub_type = oauth.get("subscriptionType")
     sub_type = sub_type if isinstance(sub_type, str) and sub_type else None
-    return connected, sub_type
+    if not present:
+        return False, None, False
+    expires_at = oauth.get("expiresAt")
+    expired = False
+    if isinstance(expires_at, (int, float)) and expires_at > 0:
+        # `claude` writes epoch milliseconds; tolerate seconds defensively.
+        expires_s = expires_at / 1000.0 if expires_at > 1e12 else float(expires_at)
+        expired = expires_s <= now_fn()
+    return (not expired), sub_type, expired
 
 
 def _account_from_claude_json(
@@ -270,7 +291,7 @@ class ClaudeAuthService:
 
         version = self._probe_version(binary)
         creds = _read_json(self._credentials_path())
-        oauth_connected, sub_type = _oauth_from_credentials(creds)
+        oauth_connected, sub_type, oauth_expired = _oauth_from_credentials(creds)
 
         if oauth_connected:
             email, _name = _account_from_claude_json(
@@ -307,6 +328,28 @@ class ClaudeAuthService:
                 account_label="Anthropic API key",
                 binary_path=binary,
                 api_key_present=True,
+            )
+
+        if oauth_expired:
+            # Honest expired-state (2026-07-06): the bearer exists but died in
+            # place — presence-only reporting showed a green "Connected via
+            # Claude Max" card while every subagent spawn 401'd.
+            log.info(
+                "claude status: installed=True connected=False (subscription "
+                "login expired)"
+            )
+            return ClaudeAuthStatus(
+                installed=True,
+                connected=False,
+                mode="unknown",
+                message=(
+                    "Claude subscription login has expired — run 'claude /login' "
+                    "to sign in again, or add an Anthropic API key."
+                ),
+                version=version,
+                subscription_type=sub_type,
+                binary_path=binary,
+                api_key_present=self._api_key_present,
             )
 
         log.info("claude status: installed=True connected=False")

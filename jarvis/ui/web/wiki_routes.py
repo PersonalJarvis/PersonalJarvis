@@ -37,6 +37,7 @@ from jarvis.memory.wiki.protocols import WikiPage
 from jarvis.memory.wiki.search import VaultSearch
 from jarvis.memory.wiki.telemetry import telemetry as _telemetry
 from jarvis.memory.wiki.vault_index import VaultIndex
+from jarvis.memory.wiki.vault_root import resolve_vault_root
 from jarvis.memory.wiki.wikilink import _canonicalise as _canonicalise_link  # type: ignore[attr-defined]
 
 log = logging.getLogger(__name__)
@@ -64,6 +65,10 @@ _BACKLINK_SNIPPET_MAX = 200
 def _resolve_vault_root(request: Request) -> Path | None:
     """Return the configured vault root, or ``None`` when the app has no config.
 
+    Resolves through the canonical
+    :func:`jarvis.memory.wiki.vault_root.resolve_vault_root` (spec A7) — a
+    relative root anchors to the repo root, never the process CWD.
+
     The route handlers tolerate a missing root by returning an empty-but-valid
     response (per §3.1 edge cases). They do not raise.
     """
@@ -76,10 +81,7 @@ def _resolve_vault_root(request: Request) -> Path | None:
     raw = getattr(wiki_cfg, "vault_root", None)
     if raw is None:
         return None
-    path = Path(raw)
-    if not path.is_absolute():
-        path = (Path.cwd() / path).resolve()
-    return path
+    return resolve_vault_root(raw).path
 
 
 # ----------------------------------------------------------------------

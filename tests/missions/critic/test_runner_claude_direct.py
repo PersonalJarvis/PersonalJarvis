@@ -35,6 +35,19 @@ from jarvis.missions.critic.verdict import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _claude_cli_viable_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The claude-direct critic is auth-gated since 2026-07-07 (mission
+    019f3d18: a dead Claude CLI failed the critic twice → critic_unavailable
+    killed a mission whose worker HAD delivered). These legacy tests pin the
+    claude-direct path, so pin viability True; the gate itself is covered by
+    the dedicated tests below."""
+    monkeypatch.setattr(
+        "jarvis.missions.critic.runner._claude_cli_critic_viable",
+        lambda: True,
+    )
+
+
 def _valid_verdict_json(verdict: str = "approve") -> str:
     """A schema-valid CriticVerdict as the raw text claude --print prints.
 
@@ -903,3 +916,69 @@ async def test_do_task_codex_agent_message_claim_still_revised(
     )
 
     assert verdict.verdict == "revise"
+
+
+# --- 2026-07-07 (mission 019f3d18): dead Claude CLI must not kill the critic ---
+
+
+@pytest.mark.asyncio
+async def test_dead_claude_cli_critic_crosses_to_api_family(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """BUG-042 defect 5: with ``provider==claude-api`` and a dead Claude CLI
+    auth, the critic used to spawn ``claude --print`` unconditionally — two
+    returncode=1 runs → ``critic_unavailable`` → the mission FAILED even though
+    the worker (running on OpenRouter after the family walk) had delivered.
+    A non-viable Claude CLI must fall through to the in-process API critic."""
+    monkeypatch.setattr(
+        "jarvis.missions.critic.runner._resolve_critic_provider_model",
+        lambda: ("claude-api", "claude-sonnet-4-6"),
+    )
+    monkeypatch.setattr(
+        "jarvis.missions.critic.runner._claude_cli_critic_viable",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "jarvis.missions.critic.runner._resolve_api_critic_provider",
+        lambda *a, **k: ("openrouter", "google/gemini-3.5-flash"),
+    )
+
+    async def _fake_api_critic(self, **kwargs: Any):  # noqa: ANN001, ANN202
+        return _validate_verdict_tolerant(_valid_verdict_json("approve"))
+
+    monkeypatch.setattr(CriticRunner, "_invoke_via_api_critic", _fake_api_critic)
+
+    def _boom(*_a: Any, **_k: Any):
+        raise AssertionError(
+            "a dead Claude CLI must not be spawned as the critic"
+        )
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _boom)
+
+    verdict = await CriticRunner().run(
+        mission_prompt="Build X",
+        worker_diff="diff",
+        worker_log="log",
+        prior_reflections="",
+        iteration=0,
+        worktree=tmp_path,
+        env={},
+    )
+
+    assert verdict.verdict == "approve"
+
+
+def test_api_critic_resolver_skips_nonviable_families(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-042 defect 3, critic edition: the API-critic resolver used to gate
+    on key EXISTENCE — a stale sk-ant-oat claude-api credential was picked and
+    401'd. It must use the shared family-viability rule and walk on."""
+    from jarvis.missions.critic.runner import _resolve_api_critic_provider
+
+    monkeypatch.setattr(
+        "jarvis.missions.init._api_key_family_viable",
+        lambda p: p == "openrouter",
+    )
+    prov, _model = _resolve_api_critic_provider("claude-api", "claude-opus-4-8")
+    assert prov == "openrouter"

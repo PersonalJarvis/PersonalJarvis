@@ -2919,3 +2919,169 @@ integrations alike. "Open X and have it do Y" means: operate the desktop
 routing foundation for the planned "Jarvis drives CLI coding agents (Claude
 Code / OpenCode)" capability: those turns are Computer-Use tasks today, never
 "feature not available".
+
+## BUG-040: Real tool refused as "missing" — the model called the OTHER separator spelling of a registered tool (HIGH, 2026-07-06)
+
+**Symptom.** Voice session 2026-07-05 19:47 (session 3e27dd8e, screenshot from
+the maintainer): after four successful `cli_gh` calls the turn ended with the
+canned capability refusal ("Das kann ich gerade nicht ausfuehren — mir fehlt <!-- i18n-allow: forensic quote of the live German refusal -->
+dafuer das passende Werkzeug.") although every tool the model needed was <!-- i18n-allow: forensic quote of the live German refusal -->
+present and healthy. Stochastic: the same request sometimes works, sometimes
+refuses — the maintainer's long-standing "some tools just can't be called
+sometimes" complaint.
+
+**Forensics.** `data/jarvis_desktop.2026-07-05_*.log` 19:49:56:
+`tool_use_loop: tool 'run-shell' not in the router tool set`. The registered
+name is `run_shell`. The advertised tool surface mixes naming conventions —
+hyphen (`wiki-recall`, `run-skill`, `contact-lookup`), underscore
+(`run_shell`, `search_web`, `computer_use`) and plain (`click`, `gmail`) — so
+the model cross-normalizes and invents the OTHER spelling of a real tool.
+`ToolUseLoop` looked the name up with an exact dict `.get()`; a miss fed the
+AD-OE6 anti-silence refusal. The provider-side sanitizer
+(`_openai_base._sanitize_openai_function_name`) only rewrites INVALID
+characters (slash, dot) and keeps a reverse map for those — hyphens are valid,
+so separator drift sailed through untranslated.
+
+**Root cause.** Mixed separator conventions across the registered tool
+surface + an exact-match-only lookup at the single model-facing resolution
+site. (The CU engine and manager pre-fetch paths use hardcoded registered
+names — only `ToolUseLoop` resolves model-emitted names.)
+
+**Fix.** `jarvis/brain/tool_use_loop.py::_resolve_tool` — exact match first,
+then a canonical (hyphen/underscore/case-insensitive) alias resolves to the
+registered tool, but ONLY when unambiguous: two registered tools that collide
+on the canonical form stay exact-match-only (never guess between twins).
+The ack-emitter tool name is normalized the same way so skip-lists keyed on
+registered names keep matching. Unknown names still fire the anti-silence
+fallback.
+
+**Guards.** `tests/unit/brain/test_tool_use_loop.py::
+test_hyphenated_alias_resolves_to_underscore_tool`,
+`…::test_underscore_alias_resolves_to_hyphenated_tool`,
+`…::test_ambiguous_alias_is_not_guessed`.
+
+**Class rule.** Any site that resolves a MODEL-emitted identifier against a
+registry must tolerate separator/case drift (unambiguously) or normalize the
+advertised names to one convention. New tools should prefer underscore names
+(`snake_case`) — the majority convention — so the mixed-surface confusion
+shrinks over time.
+
+## BUG-041: Total silence after a mid-stream provider error on a tool turn (HIGH, 2026-07-06)
+
+**Symptom.** Voice session 2026-07-05 19:48 (session 3e27dd8e, turn 2): the
+turn executed 10+ tools (cli_gh, search_web, run_shell), then Jarvis said
+NOTHING — no answer, no error, no retry. The log signature is the empty
+streamed line: `🤖 Jarvis [de] (streamed): ` with nothing after it.
+
+**Forensics.** `voice_events`: `BrainTurnCompleted {finish_reason: "error",
+tokens_in: 223942, text_len: 0}` — OpenRouter returned HTTP 200 but sent
+`finish_reason="error"` in the SSE stream (upstream abort on the ~224k-token
+prompt the tool loop had accumulated). The providers pass that value through
+verbatim (`_openai_base.py` yields the raw finish_reason).
+
+**Root cause — a hole between two correct guards.** The manager's
+empty-response guard treats empty text as a soft-fail and tries the next
+provider, but is (correctly, since 2026-04-29) skipped when the turn has tool
+calls — otherwise fire-and-forget spawns would re-run on every provider. A
+turn that executed tools and THEN died mid-stream therefore counted as a
+SUCCESS with empty text. Downstream, `_handle_silent_brain_turn` only speaks
+for all-failed / desktop-action / beheaded-playback turns; the default branch
+returns silently (clarify feature off by default). Net effect: the harder the
+turn worked, the more silent its death.
+
+**Fix.** `jarvis/brain/manager.py`: after the guards, a turn with
+`finish_reason=="error"` + empty text + executed tool calls returns the
+localized honest notice (`_MID_ANSWER_ERROR_PHRASES`, de/en/es via
+`_resolve_turn_lang`) instead of empty text. Deliberately NO provider
+fall-through: the executed tools would re-run their side effects.
+
+**Guards.** `tests/unit/brain/test_stream_error_after_tools.py` (asserts a
+non-empty spoken notice, tool ran exactly once, fallback brain untouched).
+
+**Class rule.** Every path that can END a turn must terminate in either text
+or an explicitly-decided silence (AD-OE6). When adding a new finish_reason or
+guard interaction, trace where the empty turn lands in
+`_handle_silent_brain_turn` — the default branch is SILENT by design, so a
+new "empty but worked" shape needs its own honest phrase.
+
+## BUG-042: Every mission fails — usage-capped codex re-picked forever, fallback hardcoded to a dead Claude (HIGH, 2026-07-07)
+
+**Symptom.** Every Jarvis-Agent mission ends ERROR after ~80–95 s with zero
+files saved (Outputs view full of red ERROR badges). jarvis_desktop.log
+15:50–15:52, mission_019f3cd8-1dd4: three identical iterations of
+`CodexDirectWorker … codex usage/rate limit hit ("You've hit your usage
+limit … try again at Jul 31st") — falling back to the Claude Max OAuth
+worker` followed by `ClaudeDirectWorker … claude auth is dead ('Not logged
+in · Please run /login')`.
+
+**Forensics.** Two provider outages stacked: the codex ChatGPT plan was
+usage-capped until its billing reset (while `codex status` still reported
+`connected=True` — a login probe, not a quota probe), AND the Claude Max
+OAuth login was dead (nothing refreshes `~/.claude` on this host). A healthy
+OpenRouter key was configured the whole time — the Brain chatted over it
+happily — but no mission ever reached it.
+
+**Root cause — four AP-22 violations in the worker chain** (each next one
+only became visible once the previous was fixed and a live verify mission
+— 019f3d01, then 019f3d0f — walked one family further):
+1. *No memory of the codex cap.* `claude_quota_state` existed for the Claude
+   direction, but a usage-capped codex was deliberately NOT flagged ("the
+   next mission retries codex automatically"), so
+   `_cross_family_last_resort_worker` re-picked codex on every mission AND
+   every retry iteration — each spawn burning ~28 s to re-prove the cap.
+2. *Hardcoded cross-worker fallback.* `CodexDirectWorker`'s cap/auth fallback
+   spawned `ClaudeDirectWorker` unconditionally — a fallback chain built from
+   a provider NAME, not from viability. With Claude auth dead, that nested
+   spawn was a guaranteed "Not logged in" terminal error; the orchestrator's
+   per-iteration factory re-consult never got a chance to cross families
+   because the factory's picks (codex first) never changed.
+3. *Key existence counted as key viability.* The API-key family walk
+   (`claude-api → gemini → openrouter → openai`) gated each family on
+   `get_provider_secret(prov)` truthiness. The stored anthropic credential
+   was a stale `sk-ant-oat` OAuth bearer — a shape the worker env builder
+   deliberately DROPS (guaranteed 401) and `_claude_cli_auth_viable` refuses
+   — yet its mere existence made the walk pick
+   `ApiAgentWorker('claude-api')`, which 401'd ("invalid x-api-key") on
+   every retry while the healthy openrouter key sat ONE slot further in the
+   SAME loop.
+4. *No memory of a failing API family.* With defect 3 fixed, the walk
+   reached gemini — whose prepaid credits were DEPLETED (429
+   RESOURCE_EXHAUSTED, mission 019f3d0f). `ApiAgentWorker` recorded nothing
+   about the failure, so every retry deterministically re-picked gemini;
+   openrouter was never reached. The claude/codex directions had quota
+   cooldowns, the API families had none.
+
+**Fix.** `jarvis/codex_quota_state.py` (new, mirror of
+`claude_quota_state`): a time-based, self-expiring cooldown armed by a
+usage-capped codex worker and cleared by a codex success.
+`CodexDirectWorker` arms it and gates its nested Claude fallback on
+`_claude_cli_auth_viable()` — when Claude cannot authenticate it surfaces the
+honest cap error instead (transient ⇒ the orchestrator retries and the
+factory, seeing the cooldown, crosses to the user's API-key family).
+`init.py` (`_cross_family_last_resort_worker`, `reachable_worker_families`,
+the proactive claude-cooldown→codex route) and `ClaudeDirectWorker`'s two
+claude→codex fallbacks all skip codex while the cooldown is armed.
+`_api_key_family_viable` (init.py) replaces the bare
+`get_provider_secret(prov)` gate everywhere the factory walks API-key
+families: for `claude-api` an `sk-ant-oat` bearer never counts, and a
+classic key a worker fingerprint-flagged dead this session is skipped until
+it changes. `jarvis/api_family_quota_state.py` (new, generic per-provider
+mirror of the claude/codex cooldowns): `ApiAgentWorker` arms it when a run
+dies on a quota/auth provider error and clears it on success;
+`_api_key_family_viable` consults it. FINGERPRINT-bound: saving a new key in
+the API-Keys view lifts the block instantly (in-app recovery, §3), while the
+same dead key stays skipped until the cooldown self-expires.
+
+**Guards.** `tests/missions/workers/test_codex_quota_state.py`;
+`tests/missions/workers/test_codex_auth_fallback.py` (cap arms cooldown +
+falls back only to a VIABLE Claude; dead Claude ⇒ one spawn, honest error;
+success clears cooldown); `tests/missions/test_worker_cross_family_fallback.py::
+test_usage_capped_codex_crosses_to_api_key`;
+`tests/missions/test_reachable_worker_families.py::test_usage_capped_codex_is_not_listed`.
+
+**Class rule.** "Connected" is not "can run": a subscription CLI's status
+probe checks the LOGIN, never the QUOTA. Any worker that can hit a
+usage/rate cap needs a process-local, self-expiring cooldown its factory
+consults (mirror pair: `claude_quota_state` / `codex_quota_state`), and a
+cross-WORKER fallback must probe the target's viability before spawning it —
+never jump to a provider by name (AP-22).

@@ -189,20 +189,18 @@ class ClickElementTool:
                     error=f"Click on '{matched.name}' at ({cx},{cy}) failed: {exc}",
                 )
         else:
+            # Capability probe instead of a raw pyautogui import: Wayland /
+            # headless / missing-deps hosts get the actionable
+            # ActuationUnavailable message (§3 honest degradation).
+            from jarvis.cu.actuate.base import ActuationUnavailable, get_actuator
+
             try:
-                import pyautogui
-            except ImportError as exc:
-                return ToolResult(
-                    success=False,
-                    output=None,
-                    error=(
-                        f"Platform is not Windows ({os.name}) and pyautogui is "
-                        f"missing: {exc}. pip install pyautogui"
-                    ),
-                )
+                actuator = get_actuator()
+            except ActuationUnavailable as exc:
+                return ToolResult(success=False, output=None, error=str(exc))
             try:
-                pyautogui.click(
-                    x=cx, y=cy, clicks=2 if double else 1, button=button
+                await asyncio.to_thread(
+                    actuator.click, cx, cy, button=button, double=double
                 )
             except Exception as exc:  # noqa: BLE001
                 return ToolResult(success=False, output=None, error=str(exc))

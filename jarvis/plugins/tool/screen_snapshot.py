@@ -34,7 +34,10 @@ import io
 from typing import Any
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
-from jarvis.vision.screenshot import select_capture_monitor
+from jarvis.vision.screenshot import (
+    select_capture_monitor,
+    warn_if_screen_recording_denied,
+)
 
 _MAX_BYTES = 500_000
 _DEFAULT_JPEG_QUALITY = 85
@@ -118,6 +121,21 @@ class ScreenSnapshotTool:
                 success=False,
                 output=None,
                 error=f"Missing dependency: {exc.name or exc}",
+            )
+
+        # On macOS without the Screen-Recording grant, mss "succeeds" but
+        # captures only the desktop wallpaper — a success=True wallpaper JPEG
+        # would silently blind the model. Refuse honestly instead (§3:
+        # degrade with an actionable message, recoverable in-app).
+        if warn_if_screen_recording_denied():
+            return ToolResult(
+                success=False,
+                output=None,
+                error=(
+                    "Screen capture is blocked: macOS Screen Recording "
+                    "permission is not granted. Grant it in System Settings "
+                    "> Privacy & Security > Screen Recording, then retry."
+                ),
             )
 
         try:

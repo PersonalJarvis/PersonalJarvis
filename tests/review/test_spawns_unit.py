@@ -16,6 +16,7 @@ import pytest
 
 from jarvis.core.protocols import HarnessResult, HarnessTask
 from jarvis.core.review.errors import (
+    HarnessUnavailable,
     ReviewerUnavailable,
     VerdictParseError,
     WorkerSpawnError,
@@ -44,12 +45,27 @@ class FakeHarnessManager:
     Each call consumes one prepared `script` sequence entry; this lets
     a test script several consecutive dispatch() calls (worker
     + reviewer) with different outputs.
+
+    `registered` mirrors `HarnessManager.available()` — the spawners check
+    this before dispatching (AP-23 wave-2 finding 5), so tests exercising
+    the real spawn path must include the harness name they expect to be
+    picked. Default: `["jarvis_agent"]`, the canonical Jarvis-Agent worker
+    harness name (see spawns.py `_WORKER_HARNESS_CANDIDATES`).
     """
 
-    def __init__(self, scripts: list[dict[str, Any]] | None = None) -> None:
+    def __init__(
+        self,
+        scripts: list[dict[str, Any]] | None = None,
+        *,
+        registered: list[str] | None = None,
+    ) -> None:
         # script: {"stdout": "...", "stderr": "...", "exit_code": 0, "duration_ms": 42}
         self._scripts: list[dict[str, Any]] = list(scripts or [])
         self.calls: list[tuple[str, HarnessTask]] = []
+        self._registered = ["jarvis_agent"] if registered is None else list(registered)
+
+    def available(self) -> list[str]:
+        return list(self._registered)
 
     def dispatch(
         self, name: str, task: HarnessTask
@@ -95,10 +111,13 @@ def _valid_verdict_dict(*, status: str = "pass") -> dict:
 # ======================================================================
 
 
-def test_worker_spawner_calls_openclaw_harness(tmp_path: Path) -> None:
-    fake = FakeHarnessManager([
-        {"stdout": "wrote artifact.\n", "exit_code": 0, "duration_ms": 100}
-    ])
+def test_worker_spawner_calls_registered_jarvis_agent_harness(tmp_path: Path) -> None:
+    """Auto-resolves the canonical `jarvis_agent` harness name — never a
+    hardcoded literal (AP-21/AP-23 wave-2 finding 5)."""
+    fake = FakeHarnessManager(
+        [{"stdout": "wrote artifact.\n", "exit_code": 0, "duration_ms": 100}],
+        registered=["jarvis_agent"],
+    )
     spawner = WorkerSpawner(harness_manager=fake, runs_root=tmp_path / "runs")
     state = _make_state()
 
@@ -106,7 +125,7 @@ def test_worker_spawner_calls_openclaw_harness(tmp_path: Path) -> None:
 
     assert len(fake.calls) == 1
     name, task = fake.calls[0]
-    assert name == "openclaw"
+    assert name == "jarvis_agent"
     assert isinstance(task, HarnessTask)
     assert "Original task" in task.prompt
     assert state.task in task.prompt
@@ -114,6 +133,41 @@ def test_worker_spawner_calls_openclaw_harness(tmp_path: Path) -> None:
     assert "iter-1" in task.prompt and "worker.out" in task.prompt
 
     assert isinstance(result, str) and result.strip()
+
+
+def test_worker_spawner_falls_back_to_openclaw_alias_when_registered(
+    tmp_path: Path,
+) -> None:
+    """The pre-rename ``openclaw`` name is still accepted as a back-compat
+    alias IF it is actually a registered harness (never assumed)."""
+    fake = FakeHarnessManager(
+        [{"stdout": "wrote artifact.\n", "exit_code": 0}],
+        registered=["openclaw"],
+    )
+    spawner = WorkerSpawner(harness_manager=fake, runs_root=tmp_path / "runs")
+
+    asyncio.run(spawner.spawn(_make_state(), iteration=1))
+
+    name, _task = fake.calls[0]
+    assert name == "openclaw"
+
+
+def test_worker_spawner_raises_honest_unavailable_when_no_harness_registered(
+    tmp_path: Path,
+) -> None:
+    """The AP-23 wave-2 finding 5 regression test: when neither
+    ``jarvis_agent`` nor ``openclaw`` is registered (true of every install
+    today — Welle-4 removed the old subprocess bridge), the spawner must
+    raise the honest ``HarnessUnavailable`` — never a raw ``KeyError`` and
+    never a message containing the dead internal harness name."""
+    fake = FakeHarnessManager(registered=[])
+    spawner = WorkerSpawner(harness_manager=fake, runs_root=tmp_path / "runs")
+
+    with pytest.raises(HarnessUnavailable) as exc:
+        asyncio.run(spawner.spawn(_make_state(), iteration=1))
+
+    assert "openclaw" not in str(exc.value)
+    assert not fake.calls  # never reached dispatch() — no phantom subprocess spawn
 
 
 def test_worker_spawner_writes_iter_n_worker_out(tmp_path: Path) -> None:
@@ -204,9 +258,10 @@ def test_worker_spawner_includes_feedback_block_on_iter2(tmp_path: Path) -> None
 
 
 def test_reviewer_spawner_passes_schema_and_low_effort(tmp_path: Path) -> None:
-    fake = FakeHarnessManager([
-        {"stdout": json.dumps(_valid_verdict_dict()), "exit_code": 0}
-    ])
+    fake = FakeHarnessManager(
+        [{"stdout": json.dumps(_valid_verdict_dict()), "exit_code": 0}],
+        registered=["jarvis_agent"],
+    )
     runs_root = tmp_path / "runs"
     # worker.out must exist for the reviewer prompt path — it's written by
     # WorkerSpawner; in unit tests we mock this.
@@ -218,9 +273,26 @@ def test_reviewer_spawner_passes_schema_and_low_effort(tmp_path: Path) -> None:
     asyncio.run(spawner.spawn(state, "ignored", iteration=1))
 
     name, task = fake.calls[0]
-    assert name == "openclaw"
+    assert name == "jarvis_agent"
     assert task.timeout_s == 120
     assert "verdict_schema.json" in task.prompt
+
+
+def test_reviewer_spawner_raises_honest_unavailable_when_no_harness_registered(
+    tmp_path: Path,
+) -> None:
+    """AP-23 wave-2 finding 5, reviewer side: no registered harness must
+    degrade honestly, never a raw KeyError naming ``openclaw``."""
+    fake = FakeHarnessManager(registered=[])
+    runs_root = tmp_path / "runs"
+    RunDirectory(runs_root, "abc").ensure().write_worker_output(1, "x")
+    spawner = ReviewerSpawner(harness_manager=fake, runs_root=runs_root)
+
+    with pytest.raises(HarnessUnavailable) as exc:
+        asyncio.run(spawner.spawn(_make_state(run_id="abc"), "ignored", 1))
+
+    assert "openclaw" not in str(exc.value)
+    assert not fake.calls
 
 
 def test_reviewer_spawner_returns_parsed_verdict(tmp_path: Path) -> None:

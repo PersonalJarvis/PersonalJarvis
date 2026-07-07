@@ -75,6 +75,20 @@ def _refresh_plugin_in_live_registry(plugin_id: str) -> None:
         log.warning("live plugin refresh failed for %s", plugin_id, exc_info=True)
 
 
+def _live_plugin_registry() -> Any:
+    """The active ``PluginToolRegistry``, or ``None`` if unreachable.
+
+    Same lookup as ``_refresh_plugin_in_live_registry`` — returns ``None`` on
+    any failure (early boot, headless) so callers can fail open.
+    """
+    try:
+        from jarvis.marketplace.plugin_shared import get_active_plugin_registry
+
+        return get_active_plugin_registry()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
@@ -158,16 +172,37 @@ _validate_token = _make_validator()
 # ----------------------------------------------------------------------
 
 
-def _mcp_live(mcp: dict[str, Any]) -> tuple[bool, str | None]:
+def _mcp_live(
+    mcp: dict[str, Any], *, plugin_id: str = "", status: str = ""
+) -> tuple[bool, str | None]:
     """``(is_live, runtime_missing)`` for an MCP plugin's transport.
 
     M2 (honest status): a stdio plugin (GitHub=docker, Supabase=npx) is only LIVE if
     its launcher binary is on PATH — else connecting saves the token but the tools
-    never appear, so a green "Connected · Live" badge is a lie. http transports are
-    always live; ``runtime_missing`` is the absent launcher name for an honest UI hint.
+    never appear, so a green "Connected · Live" badge is a lie. ``runtime_missing``
+    is the absent launcher name for an honest UI hint.
+
+    Bug 14: an http plugin's connect-time ``list_tools()`` can 401 and be
+    swallowed, leaving status "connected" with ZERO live tools — a green
+    "Connected · Live" badge over a dead session. When a BOOTSTRAPPED live
+    registry is reachable AND the plugin is "connected" AND it reports zero
+    tools, the session is dead (expired token, 401 at list_tools) and the badge
+    goes honest. No registry reachable (headless), or a registry that is
+    published but still bootstrapping in the background (the boot window where
+    every count reads 0 although nothing is dead) -> fail open, exactly
+    today's behaviour.
     """
     transport = str(mcp.get("transport", "")).lower()
     if transport == "http":
+        if status == "connected":
+            reg = _live_plugin_registry()  # the same accessor refresh uses
+            if (
+                reg is not None
+                and reg.is_bootstrapped()
+                and reg.live_tool_count(plugin_id) == 0
+            ):
+                hint = reg.last_connect_error(plugin_id) or "no tools loaded — reconnect"
+                return False, hint
         return True, None
     if transport == "stdio":
         import shutil
@@ -199,7 +234,7 @@ async def list_plugins(response: Response) -> dict[str, Any]:
         item["expires_at"] = expires_at
         item["last_refreshed"] = last_refreshed
         mcp = spec.mcp_server or {}
-        mcp_live, runtime_missing = _mcp_live(mcp)
+        mcp_live, runtime_missing = _mcp_live(mcp, plugin_id=spec.id, status=status)
         if runtime_missing:
             item["runtime_missing"] = runtime_missing
         native_live = False
@@ -342,6 +377,17 @@ async def connect_start(plugin_id: str, background: BackgroundTasks) -> dict[str
     if isinstance(spec.auth, HostedMcpOAuthDcrAuth):
         handler = _build_dcr_handler(plugin_id, spec.auth)
     elif isinstance(spec.auth, OAuthDeviceFlowAuth):
+        from jarvis.marketplace.connect_helpers import is_placeholder_client_id
+
+        if is_placeholder_client_id(spec.auth.client_id):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"oauth client not configured for plugin {plugin_id!r}: "
+                    "placeholder client_id in the catalog. Supply your own "
+                    "OAuth client first."
+                ),
+            )
         handler = DeviceFlowHandler(
             DeviceFlowConfig(
                 plugin_id=plugin_id,
@@ -356,11 +402,26 @@ async def connect_start(plugin_id: str, background: BackgroundTasks) -> dict[str
         # Resolve the effective client from secrets so a reconnect uses the
         # operator's real Google client, not the catalog placeholder (the same
         # resolution the refresh scheduler uses — connect/refresh stay in sync).
-        from jarvis.marketplace.connect_helpers import resolve_pkce_client
+        from jarvis.marketplace.connect_helpers import (
+            is_placeholder_client_id,
+            resolve_pkce_client,
+        )
 
         _pkce_client_id, _pkce_client_secret = resolve_pkce_client(
             plugin_id, spec.auth.client_id, spec.auth.client_secret
         )
+        if is_placeholder_client_id(_pkce_client_id):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"oauth client not configured for plugin {plugin_id!r}: the "
+                    "shipped catalog carries a placeholder client_id and no "
+                    "<family>_oauth_client_id secret is set. Open the connect "
+                    "dialog's 'Use your own OAuth client' section (or follow "
+                    "the plugin's setup hint) and paste your own client id — "
+                    "then retry."
+                ),
+            )
         handler = PkceLoopbackHandler(
             PkceLoopbackConfig(
                 plugin_id=plugin_id,

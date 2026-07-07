@@ -228,14 +228,14 @@ async def test_on_announcement_forwards_detail_to_spoken() -> None:
             text="That didn't work on screen.",
             language="en",
             kind="completion",
-            detail="exit 5 · the BridgeMind server has no news channel",
+            detail="exit 5 · the exampleserver server has no news channel",
         )
     )
     await asyncio.sleep(0.05)
 
     assert len(captured) == 1, captured
     assert captured[0].spoken_kind == "completion"
-    assert captured[0].detail == "exit 5 · the BridgeMind server has no news channel"
+    assert captured[0].detail == "exit 5 · the exampleserver server has no news channel"
 
 
 @pytest.mark.asyncio

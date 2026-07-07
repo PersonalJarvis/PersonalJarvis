@@ -449,6 +449,120 @@ def _live_subagent_provider(boot_snapshot: str | None) -> str | None:
     return boot_snapshot
 
 
+def _claude_cli_auth_viable() -> bool:
+    """True when the ``claude`` CLI has a REACHABLE auth surface for a worker.
+
+    Binary presence alone is NOT viability (2026-07-06 incident): the worker
+    runs ``claude --print`` pinned to an isolated CLAUDE_CONFIG_DIR, so its
+    ONLY auth surface is the credential Jarvis injects — a live non-expired
+    OAuth bearer (``CLAUDE_CODE_OAUTH_TOKEN``) or a classic Anthropic API key.
+    An OAuth token that expired in place (nothing refreshes ``~/.claude`` on a
+    host whose interactive sessions use a different config dir) is a
+    deterministic 401 on every spawn, while ``claude status`` still says
+    connected (presence-only check).
+
+    Three gates, all cheap and offline:
+    1. the process-local ``claude_auth_dead`` flag (a worker PROVED the current
+       credential dead this session — fingerprinted, so a fresh login/key
+       re-enables Claude instantly);
+    2. a live, non-expired OAuth login in ``~/.claude/.credentials.json``;
+    3. failing that, a CLASSIC (non-``sk-ant-oat``) stored Anthropic API key —
+       a stored ``sk-ant-oat`` is a stale OAuth copy that would be routed to
+       the OAuth slot and 401.
+    """
+    from jarvis.claude_auth_state import claude_auth_dead, credential_fingerprint
+    from jarvis.missions.isolation.env import (
+        live_claude_oauth_status,
+        read_live_claude_oauth_token,
+    )
+
+    if live_claude_oauth_status() == "valid":
+        token = read_live_claude_oauth_token()
+        return not claude_auth_dead(
+            current_fingerprint=credential_fingerprint(token)
+        )
+    try:
+        from jarvis.core.config import get_secret
+
+        key = get_secret("anthropic_api_key", env_fallback="ANTHROPIC_API_KEY")
+    except Exception:  # noqa: BLE001 — unreadable secret store => not viable
+        return False
+    if not key or key.startswith("sk-ant-oat"):
+        return False
+    return not claude_auth_dead(current_fingerprint=credential_fingerprint(key))
+
+
+def _api_key_family_viable(provider: str) -> bool:
+    """True when *provider* has a USABLE API key for the in-process worker.
+
+    Key EXISTENCE is not key viability (2026-07-07, mission 019f3d01 — the
+    verify run of the codex-cooldown fix): the stored anthropic credential was
+    a stale ``sk-ant-oat`` OAuth bearer — the copy of a login that no longer
+    exists. The worker env builder deliberately DROPS that shape (guaranteed
+    401) and ``_claude_cli_auth_viable`` refuses it, but the cross-family walk
+    counted its mere existence as a claude-api key and dead-ended every retry
+    on ApiAgentWorker('claude-api') 401s while a healthy openrouter key sat
+    one slot further in the SAME loop (AP-22). Apply the one shared rule here
+    too: an ``sk-ant-oat`` bearer is not an API key, and a classic key a
+    worker already proved dead this session (fingerprinted) is skipped until
+    it changes.
+    """
+    from jarvis.core.config import get_provider_secret
+
+    key = get_provider_secret(provider)
+    if not key:
+        return False
+    # A family a worker just proved quota-depleted / auth-dead is skipped
+    # until its cooldown self-expires — fingerprinted, so saving a NEW key in
+    # the API-Keys view lifts the block instantly (mission 019f3d0f: gemini's
+    # depleted prepaid credits were re-picked on every retry, BUG-042).
+    from jarvis.api_family_quota_state import api_family_in_cooldown
+    from jarvis.claude_auth_state import claude_auth_dead, credential_fingerprint
+
+    if api_family_in_cooldown(
+        provider, current_fingerprint=credential_fingerprint(key)
+    ):
+        return False
+    if provider == "claude-api":
+        if key.startswith("sk-ant-oat"):
+            return False
+        return not claude_auth_dead(current_fingerprint=credential_fingerprint(key))
+    return True
+
+
+def reachable_worker_families() -> list[str]:
+    """Which worker families could run a heavy mission RIGHT NOW (cheap,
+    offline — file reads + process-local flags, never a network probe).
+
+    Same subscription-first order as ``_cross_family_last_resort_worker``:
+    Claude Max CLI (auth-viable), codex ChatGPT OAuth, then the API-key
+    families. Feeds the Sub-Agents section health so the app can warn
+    BEFORE a mission is dispatched (2026-07-06: the tab stayed green for
+    17 hours of guaranteed-dead spawns).
+    """
+    families: list[str] = []
+    from jarvis.missions.workers.claude_direct_worker import _resolve_claude_binary
+
+    if _resolve_claude_binary() is not None and _claude_cli_auth_viable():
+        families.append("claude")
+    from jarvis.codex_auth_state import codex_needs_reauth
+    from jarvis.codex_quota_state import codex_in_quota_cooldown
+    from jarvis.missions.workers.codex_direct_worker import _codex_oauth_available
+
+    if (
+        _codex_oauth_available()
+        and not codex_needs_reauth()
+        and not codex_in_quota_cooldown()
+    ):
+        families.append("codex")
+    from jarvis.missions.workers.api_agent_worker import supports_api_agent_worker
+
+    for prov in ("claude-api", "gemini", "openrouter", "openai"):
+        if supports_api_agent_worker(prov) and _api_key_family_viable(prov):
+            families.append(prov)
+    return families
+
+
 def _cross_family_last_resort_worker(task_text: str) -> Any | None:
     """The key-aware, cross-family LAST-resort heavy worker (open-source AP-22/23).
 
@@ -477,25 +591,48 @@ def _cross_family_last_resort_worker(task_text: str) -> Any | None:
     has no Claude at all (the §3 single-key downloader).
     """
     # 1. Claude Max OAuth CLI — subscription, no metered key, preferred floor.
+    #    Auth-aware since 2026-07-06: binary presence alone picked a claude CLI
+    #    whose OAuth token had expired in place, and every mission 401'd while
+    #    a healthy codex login + OpenRouter key sat unused (AP-22).
     from jarvis.missions.workers.claude_direct_worker import _resolve_claude_binary
 
     if _resolve_claude_binary() is not None:
-        return ClaudeDirectWorker(
-            mcp_servers=_assemble_worker_mcp_servers(task_text=task_text)
+        if _claude_cli_auth_viable():
+            return ClaudeDirectWorker(
+                mcp_servers=_assemble_worker_mcp_servers(task_text=task_text)
+            )
+        logger.warning(
+            "Mission worker: the `claude` CLI is installed but its auth is "
+            "dead/expired (no live OAuth login, no classic Anthropic key) — "
+            "skipping Claude and crossing provider families. Run "
+            "`claude /login` or save a fresh Anthropic key in the API-Keys "
+            "view to restore Claude."
         )
     # 2. ChatGPT subscription via the codex CLI OAuth login (no API key).
+    #    Quota-aware since 2026-07-07 (mission_019f3cd8-1dd4): a usage-capped
+    #    plan keeps `codex status` connected=True, so login presence alone
+    #    re-picked a codex that failed the cap check ~28 s into every mission
+    #    while a healthy API key sat unused (AP-22). The cooldown self-expires,
+    #    then codex is re-probed; a codex success clears it.
     from jarvis.codex_auth_state import codex_needs_reauth
+    from jarvis.codex_quota_state import codex_in_quota_cooldown
     from jarvis.missions.workers.codex_direct_worker import _codex_oauth_available
 
     if _codex_oauth_available() and not codex_needs_reauth():
-        return CodexDirectWorker()
+        if not codex_in_quota_cooldown():
+            return CodexDirectWorker()
+        logger.warning(
+            "Mission worker: the codex ChatGPT plan is in quota cooldown "
+            "(usage cap hit this session) — skipping codex and crossing "
+            "provider families until the cooldown expires."
+        )
     # 3. In-process API worker on whatever single key the user has, crossing
     #    families — the same cross-family set the Brain fallback chain uses.
-    from jarvis.core.config import get_provider_secret
+    #    Viability-gated (not existence-gated): see _api_key_family_viable.
     from jarvis.missions.workers.api_agent_worker import supports_api_agent_worker
 
     for prov in ("claude-api", "gemini", "openrouter", "openai"):
-        if supports_api_agent_worker(prov) and get_provider_secret(prov):
+        if supports_api_agent_worker(prov) and _api_key_family_viable(prov):
             logger.warning(
                 "Mission worker -> ApiAgentWorker(%r): no Claude CLI / Codex login "
                 "reachable, crossing to the configured API-key family so the heavy "
@@ -772,6 +909,15 @@ async def bootstrap_missions(
         live_oat = read_live_claude_oauth_token()
         if live_oat:
             anthropic_key = live_oat
+        elif anthropic_key and anthropic_key.startswith("sk-ant-oat"):
+            # 2026-07-06: no live (non-expired) OAuth login, and the stored
+            # credential is itself an OAuth bearer — i.e. a STALE copy of a
+            # login that no longer exists. Injecting it is a guaranteed 401
+            # ("Failed to authenticate. API Error: 401 Invalid authentication
+            # credentials", missions 019f36e5 + 019f38b1). Drop it so the
+            # worker either runs on a different family (the factory's
+            # viability gate) or fails with the honest "Not logged in".
+            anthropic_key = None
 
         return build_worker_env(
             run_dir=mission_dir,
@@ -843,11 +989,12 @@ async def bootstrap_missions(
             # CLI binary — run the heavy worker IN-PROCESS via ApiAgentWorker on the
             # API key instead of failing on the missing binary. The CLI stays
             # preferred (subscription-first) whenever the binary IS present.
-            from jarvis.core.config import get_provider_secret
             from jarvis.missions.workers.claude_direct_worker import (
                 _resolve_claude_binary,
             )
-            if _resolve_claude_binary() is None and get_provider_secret("claude-api"):
+            if _resolve_claude_binary() is None and _api_key_family_viable(
+                "claude-api"
+            ):
                 logger.info(
                     "Mission worker -> ApiAgentWorker('claude-api'): no `claude` CLI "
                     "binary, running in-process on the Anthropic API key."
@@ -864,11 +1011,16 @@ async def bootstrap_missions(
 
             if claude_in_quota_cooldown():
                 from jarvis.codex_auth_state import codex_needs_reauth
+                from jarvis.codex_quota_state import codex_in_quota_cooldown
                 from jarvis.missions.workers.codex_direct_worker import (
                     _codex_oauth_available,
                 )
 
-                if _codex_oauth_available() and not codex_needs_reauth():
+                if (
+                    _codex_oauth_available()
+                    and not codex_needs_reauth()
+                    and not codex_in_quota_cooldown()
+                ):
                     logger.warning(
                         "Mission worker -> CodexDirectWorker: Claude Max is in "
                         "quota cooldown this session — routing to codex until the "

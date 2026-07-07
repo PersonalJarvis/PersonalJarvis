@@ -23,9 +23,6 @@ from jarvis.speech.hangup import (
         "auf leg",
         "legen sie auf",
         "aufgelegt",
-        # Whisper mis-hearings of "auflegen"
-        "let's get up",
-        "just get up",
         "tschüss",  # i18n-allow
         "tschuess",
         "beenden",
@@ -93,6 +90,16 @@ def test_hangup_re_matches_auflegen_mishearings(phrase: str) -> None:
         "kannst du das nochmal machen",
         "geh mal auf die seite",  # i18n-allow
         "öffne die datei",  # i18n-allow
+        # Live 2026-07-07: Groq garbled the 448 ms wake-phrase tail right
+        # after a vosk wake into "Let's get up!" (English, conf 0.69) and the
+        # former "English mis-hearings of auflegen" aliases instantly hung up
+        # the freshly opened session ("the taskbar aborts right after the
+        # wake word"). Ordinary English phrases must NEVER be hang-up
+        # commands; a genuinely misheard "auflegen" is covered by the German
+        # mishear family and the brain's END_CALL_SIGNAL path.
+        "Let's get up!",
+        "let us get up",
+        "just get up",
     ],
 )
 def test_hangup_re_ignores_ambiguous_and_normal_speech(phrase: str) -> None:

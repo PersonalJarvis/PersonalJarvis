@@ -2,7 +2,7 @@
 
 5-phase plan based on the closing note of the research document
 (`docs/research/self-healing-architecture.md`, currently under
-`SubAgentenSt/Unbenanntes Dokument (4).md`) and ADR-0009.
+`internal-research/internal-research-notes.md`) and ADR-0009.
 
 **Branch:** `phase6-self-healing` — all prompts are executed on this branch.
 **Prerequisite:** ADR-0009 read, the 5 hard rules from `CLAUDE.md` §"Phase 6" internalized, `phase6-self-healing` checked out as branch.
@@ -17,7 +17,7 @@ Written by the user — typically:
 - Branch `phase6-self-healing` off `main`, create worktree.
 - Fill `docs/phase6-plan.md` with an AC table (phases 1-5, acceptance criteria per phase, smoke-test list).
 - Optional: first skeleton for `jarvis/missions/__init__.py` + `tests/missions/__init__.py`.
-- Final-version `docs/research/self-healing-architecture.md` from `SubAgentenSt/Unbenanntes Dokument (4).md` (move + commit).
+- Final-version `docs/research/self-healing-architecture.md` from `internal-research/internal-research-notes.md` (move + commit).
 
 ---
 

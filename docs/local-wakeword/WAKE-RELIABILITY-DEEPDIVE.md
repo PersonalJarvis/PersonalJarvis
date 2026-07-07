@@ -108,3 +108,96 @@ window for latency (`_ECHO_CONFIRM_SKIP_RMS`; a loud wake fires ~0.6 s vs
 ~1.1 s). The recall guard `test_loud_wake_fires_even_when_unbiased_pass_garbles_the_hard_word`
 must stay green. The clean endgame remains a trained neural KWS model
 (`custom_onnx`) that does not transcribe at all.
+
+## The GPU turbo returns, probe-gated (2026-07-05, AP-25 revisited)
+
+The 2026-06-30 GPU fix above was later disabled globally
+(`wake_high_accuracy=False`) after the AP-25 Blackwell hang — which silently
+put EVERY host back on the weak `base/cpu` model and re-created the
+machine-/word-dependent wake quality this document opened with (live log
+2026-07-05: heartbeat with 288 transcriptions and 0 matches in 26 min for
+"Hey Nova"; accepted wakes read `'Hey Hey Nova'` — the user literally
+repeating the phrase).
+
+Re-measured on the SAME Blackwell GPU (RTX 5070 Ti / sm_120, ctranslate2
+4.7.1 + torch 2.11-cu128), all in one session:
+
+- Standalone turbo/cuda: load 8.4 s, inference 0.58 s cold / 0.11–0.12 s warm.
+- Torch-coexistence (3 in-process torch-OpenMP burner threads — the live app
+  constellation): **40/40 inferences, zero hangs**, p50 117 ms, max 336 ms.
+- `wake_bench --mode window`: warm median 121 ms / p95 860 ms (turbo/cuda)
+  vs 767 ms / p95 2853 ms (base/cpu t2).
+- `wake_bench --mode stream` (13 real captured wake streams, end-to-end
+  through `RollingWhisperWake.detect()`): **11/13 first-try hits,
+  word-end→trigger median 225 ms / p95 462 ms** (turbo/cuda) vs 8/13 and
+  1097 ms / p95 4021 ms (base/cpu t2). Zero wedge-recovers on both.
+
+So the hang was **constellation-specific** (the then-current runtime combo),
+not a property of the architecture. The blanket default-off is replaced by a
+**capability probe** (AP-21): `build_wake_whisper`'s CUDA branches now also
+require `_wake_gpu_inference_verified()` — one real turbo/cuda transcribe in
+a killable subprocess (BUG-036: an in-process hang could never be cancelled),
+verdict = the `WAKE_GPU_PROBE_OK` stdout marker (never the exit code — the
+CUDA teardown can abort AFTER correct work, observed exit 127/0xC0000409),
+cached in `data/wake_gpu_probe.json` keyed by the ctranslate2 version so a
+runtime upgrade re-probes exactly once. The probe runs only on
+non-`fast_first` builds — i.e. inside the background hot-swap, never on the
+boot/hear-ready path (AP-26) and never on the live settings switch
+(`set_wake_plan` builds `fast_first`). Two hard-won details:
+
+1. **Import-order trap:** on hosts without a system CUDA toolkit,
+   `cublas64_12.dll` ships only inside `torch\lib` and becomes loadable when
+   torch's import registers its DLL directory. The live app always has torch
+   (Silero VAD) loaded long before the hot-swap; the probe mirrors that by
+   importing torch first (best effort). Probing without torch would fail with
+   "Library cublas64_12.dll is not found" on a host where the live upgrade
+   works fine — and would test the wrong coexistence constellation anyway.
+2. **Live backstop:** the hot-swap keeps the proven base/cpu provider
+   attached to the turbo instance (`_wake_gpu_fallback`). If the GPU model
+   ever wedges live, `_recover_wedged` swaps straight back (the fallback kept
+   its loaded model — instant) and persists the bad verdict via
+   `mark_wake_gpu_bad()`, so no later build re-runs the hanging inference.
+   Rebuilding the same CUDA model — the old behaviour — was the AP-25 deaf
+   cycle.
+
+`wake_high_accuracy` defaults to True again; False is the hard opt-out.
+CPU-only hosts, headless Linux and macOS are byte-identical to before (the
+probe is short-circuited behind `cuda_available`). Guards:
+`tests/unit/plugins/stt/test_wake_gpu_probe.py`,
+`tests/unit/plugins/stt/test_wake_whisper_build.py`,
+`tests/unit/speech/test_rolling_whisper_wake_gpu_backstop.py`.
+Bench: `scripts/wake_bench.py --device cuda`.
+
+## The any-word engine lands: vosk_kws (2026-07-06)
+
+The GPU-probe work above fixes the NVIDIA-host tier; the `vosk_kws` engine
+(design + spike: `docs/superpowers/specs/2026-07-05-universal-wake-kws-design.md`)
+is the **one-identical-system-everywhere** answer: a per-language Vosk model
+(Apache-2.0, torch-free, official CPU wheels win/mac/linux x86+ARM) streams
+audio through a grammar-constrained recognizer that only knows the configured
+phrase + `[unk]`. Any freely chosen word is pure configuration — no per-user
+training, no cloud, no GPU. Detection is two-stage and AP-27-safe: the
+grammar PARTIAL fires during the phrase; a candidate then waits 0.6 s so the
+phrase tail lands in the ring (E2E-measured: confirming mid-word truncates
+the utterance and halves recall), passes a word-agnostic RMS gate, and ONE
+free-decode pass must merely be SOUND-CLOSE to the phrase (never spell it —
+the free ear hears "hey room"/"herum" for a genuine German "Hey Alex";
+ambient "vielen dank" is nowhere near). <!-- i18n-allow: forensic quotes of German utterances under test -->
+
+End-to-end through the real `VoskKwsProvider.detect()` on real captured
+streams (neutral judge-approved positives): **Hey Alex 21/24 (88 %),
+Hey Luca 8/8 (100 %), false accepts 0/120** on judged ambient-speech streams
+— and **bit-identical numbers on Linux (WSL Ubuntu, py3.12)**; vosk also
+installs + imports clean on headless `python:3.11-slim`. Live on the
+maintainer's box the ready log arms `WAKE=['nova']` and the confirm visibly
+suppresses continuous room speech with zero false fires. Boot: model loads in
+0.7-6 s inside `_start_wake`; boot-budget gate green (voice TTU 8.9 s ≤ 20 s).
+
+Engine chain: custom_onnx (matching file) → pretrained OWW → **vosk_kws
+(any phrase, default)** → stt_match (fallback) → none/hotkey. Honest limits:
+(a) the ~45 MB per-language model is fetched once at setup (not bundled;
+missing model falls through to stt_match with a clear message), (b) fantasy
+words outside the model lexicon ride the free-decode fuzzy path — best
+effort, (c) the definitive sub-200 ms class remains a trained neural KWS.
+Guards: `tests/unit/plugins/wake/test_vosk_kws_provider.py`,
+`tests/unit/speech/test_wake_plan_vosk.py` (chain + live-arming regression).

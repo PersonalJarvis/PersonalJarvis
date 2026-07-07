@@ -392,7 +392,7 @@ async def test_open_app_compound_stands_down_plugin_skill(tmp_path: Path) -> Non
     m = _make_probe_manager()
     utterance = (
         "Kannst du bitte für mich Discord öffnen und den letzten Post "  # i18n-allow
-        "von BridgeMind raussuchen?"
+        "von exampleserver raussuchen?"
     )
     # Premise: the collision is real — the plugin skill DOES match.
     assert m._match_skill_for_turn(utterance) is not None
@@ -471,7 +471,7 @@ class _HarnessDispatchExecutor:
         self.harness_calls.append((getattr(tool, "name", "?"), args, user_utterance))
         return ToolResult(
             success=True,
-            output="Discord ist offen — der letzte BridgeMind-Post ist da.",  # i18n-allow
+            output="Discord ist offen — der letzte exampleserver-Post ist da.",  # i18n-allow
         )
 
 
@@ -499,7 +499,7 @@ async def test_open_discord_e2e_dispatches_computer_use_not_refusal(
     m._build_fallback_chain = lambda level: []  # type: ignore[assignment,method-assign]
     utterance = (
         "Kannst du bitte für mich Discord öffnen und den letzten Post "  # i18n-allow
-        "von BridgeMind raussuchen?"
+        "von exampleserver raussuchen?"
     )
     reply = await m.generate(utterance)
     # The Computer-Use harness runs as a background task — drain it.

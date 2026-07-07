@@ -84,19 +84,24 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Run the REAL installer end-to-end (headless, no wizard, no launch)
+      - name: Run the REAL installer end-to-end (headless, no launch)
         shell: bash
         run: |
           set -euo pipefail
           # Reproduce exactly what install.sh does after the git clone: a venv,
           # the bootstrap deps, then hand off to installer.py. --no-launch keeps
           # the runner from spawning a server we don't tear down here (a dedicated
-          # step below boots + probes it). --no-wizard = no interactive prompts.
+          # step below boots + probes it). The installer is non-interactive by
+          # design now — no wizard flag needed.
           python -m venv .venv
           . .venv/bin/activate
           python -m pip install --upgrade pip
           python -m pip install rich packaging
-          python install/installer.py --headless --no-launch --no-wizard
+          python install/installer.py --headless --no-launch | tee install.log
+          # The installer must never prompt: fail if anything interactive leaked in.
+          if grep -Eiq "input\(|\? \[y/n\]|press enter" install.log; then
+            echo "installer output contains an interactive prompt marker"; exit 8
+          fi
 
       - name: Import smoke (the package loads on a fresh machine)
         shell: bash
@@ -141,5 +146,87 @@ jobs:
           set -e
           echo "----- boot.log (last 40 lines) -----"
           tail -40 boot.log || true
+          if [ "$RC" -ne 0 ]; then
+            kill "$BOOTPID" 2>/dev/null || true
+            exit $RC
+          fi
+
+          # ---- First-boot onboarding contract (the desktop gate's API) ----
+          # 1) The state must answer 200 FAST (served by the fast-boot path even
+          #    while warming) and report completed=false on a fresh install.
+          # 2) Completing it must persist durably in the same store the real
+          #    app reads.
+          set +e
+          python - "$PORT" <<'PYEOF'
+          import sys, time, json, http.client
+          port = int(sys.argv[1])
+
+          def req(method, path):
+              c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+              c.request(method, path)
+              r = c.getresponse()
+              return r.status, r.read()
+
+          deadline = time.time() + 15
+          state = None
+          while time.time() < deadline:
+              try:
+                  status, body = req("GET", "/api/onboarding/state")
+                  if status == 200:
+                      state = json.loads(body)
+                      break
+              except Exception:
+                  pass
+              time.sleep(0.5)
+          assert state is not None, "onboarding state did not answer within 15 s of boot"
+          assert state["completed"] is False, f"fresh install must be incomplete: {state}"
+
+          status, _ = req("POST", "/api/onboarding/complete")
+          assert status == 200, f"complete failed: {status}"
+          status, body = req("GET", "/api/onboarding/state")
+          assert json.loads(body)["completed"] is True, "completed did not persist"
+          print("onboarding contract OK")
+          sys.exit(0)
+          PYEOF
+          RC=$?
+          set -e
           kill "$BOOTPID" 2>/dev/null || true
+          if [ "$RC" -ne 0 ]; then
+            echo "----- boot.log (last 40 lines) -----"
+            tail -40 boot.log || true
+            exit $RC
+          fi
+
+          # ---- Restart leg: onboarding must NOT re-arm on a second boot ----
+          sleep 2
+          python -m jarvis.ui.web.launcher --headless > boot2.log 2>&1 &
+          BOOTPID2=$!
+          set +e
+          python - "$PORT" <<'PYEOF'
+          import sys, time, json, http.client
+          port = int(sys.argv[1])
+          for _ in range(30):
+              try:
+                  c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+                  c.request("GET", "/api/onboarding/state")
+                  r = c.getresponse()
+                  if r.status == 200:
+                      assert json.loads(r.read())["completed"] is True, \
+                          "onboarding re-armed after restart!"
+                      print("restart contract OK"); sys.exit(0)
+              except AssertionError:
+                  raise
+              except Exception:
+                  pass
+              time.sleep(1)
+          print("second boot never answered the onboarding state")
+          sys.exit(7)
+          PYEOF
+          RC=$?
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            echo "----- boot2.log (last 40 lines) -----"
+            tail -40 boot2.log || true
+          fi
+          kill "$BOOTPID2" 2>/dev/null || true
           exit $RC

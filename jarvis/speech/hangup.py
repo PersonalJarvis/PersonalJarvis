@@ -96,10 +96,16 @@ _HANGUP_PATTERNS: Final[tuple[str, ...]] = (
     r"\bexit\b",
     r"\bquit\b",
     r"\bciao\b",
-    # English — Whisper mis-transcriptions of the German "auflegen"
-    r"\blet'?s\s+get\s+up\b",
-    r"\blet\s+us\s+get\s+up\b",
-    r"\bjust\s+get\s+up\b",
+    # REMOVED 2026-07-07: the "English mis-hearings of auflegen" aliases
+    # ("let's get up", "let us get up", "just get up"). Live incident: right
+    # after a vosk wake, Groq garbled the 448 ms wake-phrase tail into
+    # "Let's get up!" (English, conf 0.69) and the alias instantly hung up
+    # the freshly opened session — the wake word appeared "completely
+    # broken". Ordinary English phrases are far too easy to hallucinate; a
+    # genuinely misheard "auflegen" is still covered by the German mishear
+    # family above and by the brain's END_CALL_SIGNAL path (stay-on-when-
+    # unsure mandate: a missed hang-up costs one repeat, a false hang-up
+    # kills the session).
 )
 
 HANGUP_RE: Final[re.Pattern[str]] = re.compile("|".join(_HANGUP_PATTERNS), re.IGNORECASE)

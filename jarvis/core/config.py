@@ -130,23 +130,28 @@ class WakeWordConfig(BaseModel):
     # legacy key through a self-mod pre-validate round-trip (AP-16).
     model_config = ConfigDict(extra="allow")
 
-    # The human wake word the user wants — e.g. "Hey Jarvis", "Computer",
-    # "Athena". The single source of truth the UI/wizard edit.
+    # The human wake word the user wants — any phrase of their choice.
+    # The single source of truth the UI/wizard edit.
     phrase: str = DEFAULT_WAKE_PHRASE
-    # Detection engine. "auto" resolves the best path for the phrase:
-    #   pretrained openWakeWord model (jarvis/alexa/mycroft/rhasspy) -> else
-    #   local-Whisper transcript match for an arbitrary phrase -> else
-    #   graceful fallback to "Hey Jarvis" with a clear message.
+    # Detection engine. "auto" resolves the best generic path for the phrase:
+    #   user-trained custom .onnx -> any-word Vosk keyword spotting ->
+    #   local-Whisper transcript match -> honest hotkey-only degrade
+    #   (no bundled model, no branded fallback — design 2026-07-07).
     # Validated against wake_constants.WAKE_ENGINES; unknown coerces to "auto"
     # so a stale/hand-edited value cannot brick the boot (AP-16).
     engine: str = "auto"
     # Path to a user-supplied/trained .onnx wake model (engine="custom_onnx").
     custom_model_path: str = ""
-    # 0..1 wake responsiveness. openWakeWord path: mapped onto the activation
+    # 0.5..1 wake responsiveness. openWakeWord path: mapped onto the activation
     # threshold (0.5 == the data-driven PRODUCTION_WAKE_THRESHOLD, BUG-009 floor
     # preserved). stt_match (local-Whisper) path: drives the poll interval
     # (higher => polls more often => a spoken wake is picked up sooner), since
     # that path never scores against the threshold.
+    # FLOOR 0.5 (user mandate 2026-07-07): below the calibrated midpoint the
+    # detector becomes so strict that normal-volume speech practically never
+    # fires it — a live config at 0.0 read as "the wake word is broken", not
+    # as "less sensitive". Values below the floor are LIFTED to 0.5 on load so
+    # an old/hand-edited jarvis.toml can never boot into a deaf wake word.
     sensitivity: float = 0.5
     # STT transcript-match tolerance for transcription drift (engine="stt_match").
     fuzzy_match_ratio: float = 0.8
@@ -161,6 +166,17 @@ class WakeWordConfig(BaseModel):
     def _coerce_engine(cls, value: object) -> str:
         text = str(value or "").strip().lower()
         return text if text in WAKE_ENGINES else "auto"
+
+    @field_validator("sensitivity", mode="before")
+    @classmethod
+    def _floor_sensitivity(cls, value: object) -> float:
+        try:
+            number = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return 0.5
+        # Lift below-floor values instead of rejecting: a stale config must
+        # never fail validation (AP-16), and 0.5 restores a working wake.
+        return min(1.0, max(0.5, number))
 
 
 class TriggerConfig(BaseModel):
@@ -269,20 +285,25 @@ class STTConfig(BaseModel):
     wake_model: str = "base"
     wake_device: str = "cpu"
     wake_compute_type: str = "int8"
-    # When True AND a CUDA GPU is present, a CUSTOM wake phrase (the
-    # transcription-based ``stt_match`` path) runs the strong ``large-v3-turbo``
-    # model on the GPU instead of the small ``base`` model on the CPU.
-    # DEFAULT False (2026-06-30, live-log evidence): on the maintainer's Blackwell
-    # GPU (RTX 5070 Ti / sm_120) CTranslate2's ``model.transcribe`` HANGS on every
-    # live inference (an 8 s timeout every time -> the wake self-heal drops and
-    # rebuilds the model -> a fresh cold inference hangs again -> a vicious cycle
-    # that leaves the wake permanently deaf). Enabling GPU turbo there made the
-    # wake WORSE, not better. It is kept as an opt-in for GPUs where CTranslate2
-    # inference is stable (RTX 30xx/40xx), but the transcription wake fundamentally
-    # cannot reach "Hey Google" reliability — that needs a trained neural
-    # keyword-spotting model (the ``custom_onnx`` engine). Set True only on a GPU
-    # you have verified does not hang on repeated faster-whisper inference.
-    wake_high_accuracy: bool = False
+    # When True AND a real turbo/cuda inference has been VERIFIED on this host,
+    # a CUSTOM wake phrase (the transcription-based ``stt_match`` path) runs the
+    # strong ``large-v3-turbo`` model on the GPU instead of the small ``base``
+    # model on the CPU — far better proper-noun recall and ~120 ms/window vs
+    # ~700 ms. History: the default was flipped to False on 2026-06-30 because
+    # on the maintainer's Blackwell GPU (RTX 5070 Ti / sm_120) CTranslate2's
+    # ``model.transcribe`` hung on every live inference under the then-current
+    # runtime (AP-25). Re-measured 2026-07-05 on the same GPU (ctranslate2
+    # 4.7.1 + torch 2.11-cu128): 40/40 inferences under in-process torch-OpenMP
+    # load, zero hangs, p50 117 ms — the hang was constellation-specific, not
+    # "Blackwell forever". The gate is therefore no longer this blind flag but
+    # an automated out-of-process inference probe (one killable subprocess run,
+    # cached per ctranslate2 version — ``jarvis.plugins.stt.
+    # _wake_gpu_inference_verified``), plus a live backstop that drops back to
+    # base/cpu and persists the bad verdict if the swapped-in GPU model ever
+    # wedges. False remains the hard opt-out (never try the GPU). The
+    # transcription wake still cannot reach "Hey Google" reliability — that
+    # needs a trained neural keyword-spotting model (the ``custom_onnx`` engine).
+    wake_high_accuracy: bool = True
     language: str = "auto"
     # Vocabulary biasing passed to Whisper's ``prompt`` field — the same
     # mechanism dictation tools like Wispr Flow use to keep proper nouns and
@@ -2627,17 +2648,25 @@ def ensure_project_root_cwd() -> Path:
 
 
 def is_first_run() -> bool:
-    """Return True when the user has not yet completed the setup wizard."""
-    marker = DATA_DIR / ".setup-complete"
-    return not marker.exists()
+    """True when the LEGACY ``.setup-complete`` marker is absent.
+
+    This only reflects the terminal wizard / legacy marker — the in-app
+    onboarding records completion in ``setup_state.json`` instead (see
+    ``jarvis.setup.state.is_onboarding_complete``). Delegates to
+    ``jarvis.setup.state`` so the stdlib-only fast-boot onboarding path and
+    this heavy module can never disagree on the marker location.
+    """
+    from jarvis.setup.state import setup_complete_marker_exists
+
+    return not setup_complete_marker_exists()
 
 
 def mark_setup_complete() -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    (DATA_DIR / ".setup-complete").write_text(
-        f"Setup abgeschlossen auf Python {sys.version.split()[0]}\n",
-        encoding="utf-8",
-    )
+    # Read/write/delete of the marker all live in jarvis.setup.state so the
+    # location can never desync between callers.
+    from jarvis.setup.state import write_setup_complete_marker
+
+    write_setup_complete_marker(f"Setup completed on Python {sys.version.split()[0]}\n")
 
 
 # ----------------------------------------------------------------------

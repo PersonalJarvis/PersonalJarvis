@@ -70,6 +70,10 @@ class PluginToolRegistry:
         self._risk_tier = default_risk_tier
         self._clients: dict[str, Any] = {}
         self._tools: dict[str, MCPToolAdapter] = {}
+        # Last swallowed connect/list_tools error per plugin (honest liveness
+        # badge — see live_tool_count/last_connect_error below). Cleared on a
+        # subsequent successful connect.
+        self._last_errors: dict[str, str] = {}
         self._bootstrapped = False
         # Serialises bootstrap()/refresh_plugin()/stop(): all three mutate
         # self._clients/_tools across await points and are fired as independent
@@ -84,6 +88,15 @@ class PluginToolRegistry:
 
     def is_bootstrapped(self) -> bool:
         return self._bootstrapped
+
+    def live_tool_count(self, plugin_id: str) -> int:
+        """Number of live tool adapters currently registered for this plugin."""
+        prefix = f"{plugin_id}/"
+        return sum(1 for name in self._tools if name.startswith(prefix))
+
+    def last_connect_error(self, plugin_id: str) -> str | None:
+        """The swallowed connect/list_tools error of the last attempt, if any."""
+        return self._last_errors.get(plugin_id)
 
     async def bootstrap(self) -> None:
         # Idempotent: a second bootstrap() would leak the first run's MCP
@@ -150,8 +163,10 @@ class PluginToolRegistry:
             tool_defs = await client.list_tools()
         except Exception as exc:  # noqa: BLE001 — graceful per-plugin degrade
             log.warning("plugin-registry: %s connect failed: %s", plugin.id, exc)
+            self._last_errors[plugin.id] = str(exc)
             return
         self._clients[plugin.id] = client
+        self._last_errors.pop(plugin.id, None)
         for tool_def in tool_defs:
             adapter = MCPToolAdapter(client, tool_def, risk_tier=self._risk_tier)
             self._tools[adapter.name] = adapter

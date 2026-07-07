@@ -34,6 +34,9 @@ for the default path (design decision AD-T1).
 
 ## 1. Install the extra
 
+Already included if you used the official installer or `.[full]` (the one
+advertised profile ships telephony). For a minimal base install, add it:
+
 ```bash
 pip install -e .[telephony]
 pip install -e . --no-deps   # refresh entry points

@@ -16,9 +16,11 @@ import { selectTaskRows } from "./sub-agents/rows";
 import { useMissionWebSocket } from "@/components/missions/useMissionWebSocket";
 import { useMissionsStore } from "@/components/missions/store";
 import { useT } from "@/i18n";
+import { useSectionHealth } from "@/hooks/useProviders";
 
 export function JarvisAgentsView() {
   const t = useT();
+  const { health } = useSectionHealth();
   const subAgents = useSubAgentStore((s) => s.subAgents);
   const sweepExpired = useSubAgentStore((s) => s.sweepExpired);
   const hydrateSnapshot = useSubAgentStore((s) => s.hydrateSnapshot);
@@ -108,7 +110,11 @@ export function JarvisAgentsView() {
       </header>
 
       <div className="flex-1 relative overflow-hidden">
-        <DepartureBoard agents={nodesList} snapshotError={snapshotError} />
+        <DepartureBoard
+          agents={nodesList}
+          snapshotError={snapshotError}
+          health={health["subagents"] ?? null}
+        />
       </div>
     </div>
   );

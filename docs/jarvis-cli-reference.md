@@ -153,6 +153,7 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 
 ## system
 
+- `jarvis system audio-devices --output --input` — List audio devices, or pick where the voice plays / which mic listens.
 - `jarvis system restart --force --yes --dry-run` — Cleanly restart the desktop app (POST /api/settings/restart-app).
 - `jarvis system status` — Report server reachability + version (GET /api/control/auth/probe).
 
@@ -179,6 +180,7 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis wiki page <slug>` — Read a wiki page by vault path / slug.
 - `jarvis wiki recall <query>` — Full-text search the wiki.
 - `jarvis wiki tree` — Show the vault folder tree + stats.
+- `jarvis wiki vaults` — List the user's registered Obsidian vaults (connect picker, spec A6).
 
 ## workflows
 

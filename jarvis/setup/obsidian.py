@@ -5,7 +5,10 @@ Greenfield read-only detector for the Phase B9 Obsidian Setup Wizard.
 Scope of this module:
   * Detect whether Obsidian.exe is installed on this Windows machine
     (probes the three common install locations + Uninstall registry).
-  * Read the user-level ``%APPDATA%\\obsidian\\obsidian.json`` vault index
+  * Read the user-level vault index (platform-aware:
+    ``%APPDATA%\\obsidian\\obsidian.json`` on Windows,
+    ``~/Library/Application Support/obsidian/obsidian.json`` on macOS,
+    ``$XDG_CONFIG_HOME/obsidian/obsidian.json`` or ``~/.config/obsidian/obsidian.json`` on Linux)
     and return its registered vaults as typed Pydantic models.
   * Decide whether a given expected vault path is already registered
     (case-insensitive, trailing-slash tolerant — Windows-friendly).
@@ -33,6 +36,7 @@ import logging
 import os
 import secrets
 import shutil
+import sys
 import time
 from pathlib import Path
 from typing import Literal
@@ -203,17 +207,29 @@ def detect_obsidian() -> ObsidianDetection:
 # ---------------------------------------------------------------------------
 # Detection — obsidian.json vault index
 # ---------------------------------------------------------------------------
-def _default_obsidian_config_path() -> Path:
-    """Return the canonical ``%APPDATA%\\obsidian\\obsidian.json`` path.
+def _default_obsidian_config_path(platform: str | None = None) -> Path:
+    """Return the canonical ``obsidian.json`` path for this OS.
 
-    Falls back to ``Path.home() / "AppData" / "Roaming" / "obsidian" /
-    "obsidian.json"`` if ``%APPDATA%`` is not set (e.g., sandboxed test
-    runner) — purely defensive, real Windows always sets APPDATA.
+    Obsidian stores its vault index in the per-user config dir:
+    Windows ``%APPDATA%/obsidian``, macOS
+    ``~/Library/Application Support/obsidian``, Linux
+    ``$XDG_CONFIG_HOME/obsidian`` (fallback ``~/.config/obsidian``).
+    ``platform`` is injectable for tests; production callers omit it.
     """
-    appdata = os.environ.get("APPDATA")
-    if appdata:
-        return Path(appdata) / "obsidian" / "obsidian.json"
-    return Path.home() / "AppData" / "Roaming" / "obsidian" / "obsidian.json"
+    plat = platform if platform is not None else sys.platform
+    if plat == "win32":
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return Path(appdata) / "obsidian" / "obsidian.json"
+        return Path.home() / "AppData" / "Roaming" / "obsidian" / "obsidian.json"
+    if plat == "darwin":
+        return (
+            Path.home() / "Library" / "Application Support"
+            / "obsidian" / "obsidian.json"
+        )
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".config"
+    return base / "obsidian" / "obsidian.json"
 
 
 def read_obsidian_vaults(config_path: Path | None = None) -> ObsidianVaultsState:

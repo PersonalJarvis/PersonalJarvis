@@ -315,3 +315,36 @@ def test_is_vault_registered_trailing_slash_robust() -> None:
 def test_is_vault_registered_empty_vault_list() -> None:
     """An empty registry is trivially a no-match."""
     assert is_vault_registered([], Path(r"C:\anything")) is False
+
+
+# ---------------------------------------------------------------------------
+# _default_obsidian_config_path()
+# ---------------------------------------------------------------------------
+class TestDefaultConfigPathCrossPlatform:
+    """obsidian.json lives in a platform-specific config dir (spec A6)."""
+
+    def test_windows_uses_appdata(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("APPDATA", str(tmp_path))
+        from jarvis.setup.obsidian import _default_obsidian_config_path
+        p = _default_obsidian_config_path(platform="win32")
+        assert p == tmp_path / "obsidian" / "obsidian.json"
+
+    def test_macos_uses_application_support(self, monkeypatch):
+        from jarvis.setup.obsidian import _default_obsidian_config_path
+        p = _default_obsidian_config_path(platform="darwin")
+        assert p == (
+            Path.home() / "Library" / "Application Support"
+            / "obsidian" / "obsidian.json"
+        )
+
+    def test_linux_prefers_xdg_config_home(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        from jarvis.setup.obsidian import _default_obsidian_config_path
+        p = _default_obsidian_config_path(platform="linux")
+        assert p == tmp_path / "obsidian" / "obsidian.json"
+
+    def test_linux_falls_back_to_dot_config(self, monkeypatch):
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        from jarvis.setup.obsidian import _default_obsidian_config_path
+        p = _default_obsidian_config_path(platform="linux")
+        assert p == Path.home() / ".config" / "obsidian" / "obsidian.json"

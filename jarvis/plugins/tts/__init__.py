@@ -259,17 +259,24 @@ def _build_provider(tts_cfg: Any, provider: str) -> Any:
             from jarvis.plugins.tts.elevenlabs_tts import (
                 JARVIS_VOICE_DANIEL,
                 ElevenLabsTTS,
+                coerce_elevenlabs_model,
             )
         except ImportError as exc:
             raise RuntimeError(
                 f"TTS provider 'elevenlabs' configured, but the plugin is not "
                 f"importable: {exc}",
             ) from exc
-        # ElevenLabs uses voice IDs (cryptic hashes), no provider
-        # whitelist — we take the config value as-is.
+        # Cross-family config hygiene: [tts] shares ONE model + voice field
+        # across every TTS family. After switching FROM Cartesia/Gemini/Grok TO
+        # ElevenLabs, a stale foreign model ('sonic-2') or voice name ('Kore')
+        # can remain and 400s every ElevenLabs call — the provider then reads as
+        # "Not working — synthesized 0 bytes" while the fallback voice speaks, so
+        # it looks broken yet audible. Drop foreign values → ElevenLabs defaults.
+        # A genuine ElevenLabs voice id (cryptic hash) is preserved as-is.
+        eleven_cfg = _without_foreign_voice(tts_cfg, "elevenlabs")
         return ElevenLabsTTS(
-            model=tts_cfg.model or "eleven_flash_v2_5",
-            default_voice=tts_cfg.voice_de or JARVIS_VOICE_DANIEL,
+            model=coerce_elevenlabs_model(tts_cfg.model),
+            default_voice=eleven_cfg.voice_de or JARVIS_VOICE_DANIEL,
             language_code=tts_cfg.language_code or "de-DE",
             stability=tts_cfg.stability,
             similarity_boost=tts_cfg.similarity_boost,

@@ -35,6 +35,32 @@ it("loads state and posts a step", async () => {
   expect(JSON.parse(put![1]!.body as string).step).toBe("terms");
 });
 
+it("retries a warming 503 until the backend answers, then resolves state", async () => {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce({ ok: false, status: 503, json: () => Promise.resolve({}) })
+    .mockResolvedValueOnce({ ok: false, status: 503, json: () => Promise.resolve({}) })
+    .mockResolvedValue({ ok: true, json: () => Promise.resolve(STATE) });
+  vi.stubGlobal("fetch", fetchMock);
+
+  const { result } = renderHook(() => useOnboarding());
+  await waitFor(() => expect(result.current.state?.completed).toBe(false), {
+    timeout: 15000,
+  });
+  expect(result.current.error).toBeNull();
+  expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(3);
+}, 20000);
+
+it("gives up after the bounded retry window (fail-open preserved)", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockRejectedValue(new Error("net down")),
+  );
+  const { result } = renderHook(() => useOnboarding({ retryDelaysMs: [10, 20] }));
+  await waitFor(() => expect(result.current.error).not.toBeNull(), { timeout: 5000 });
+  expect(result.current.loading).toBe(false);
+});
+
 it("complete() surfaces a failed completion (throws, no event)", async () => {
   vi.stubGlobal(
     "fetch",

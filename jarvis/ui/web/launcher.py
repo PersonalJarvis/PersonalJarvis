@@ -632,7 +632,25 @@ async def _run_headless(args) -> int:
     # (stop_overlay, below) valid. start_overlay itself no-ops when disabled.
     try:
         from jarvis.overlay.integration import start_overlay, stop_overlay
-    except ModuleNotFoundError:
+    except ModuleNotFoundError as exc:
+        import logging as _overlay_logging
+
+        _overlay_log = _overlay_logging.getLogger(__name__)
+        if exc.name == "overlay":
+            # Genuinely headless: the optional overlay package itself isn't
+            # installed (cloud/VPS base install). Quiet — expected.
+            _overlay_log.debug(
+                "Overlay bootstrap skipped: optional overlay package not installed."
+            )
+        else:
+            # AP-23 W2-C: some OTHER import in the overlay chain is missing
+            # (e.g. `python-ulid`) — this is a real, fixable dependency gap,
+            # not "no overlay package". Log it honestly instead of silently
+            # collapsing into the same "headless" bucket.
+            _overlay_log.warning(
+                "Overlay bootstrap skipped: overlay dependency %r missing.",
+                exc.name,
+            )
 
         async def start_overlay(*_a: object, **_k: object) -> None:  # type: ignore[misc]
             return None
@@ -694,11 +712,19 @@ async def _run_headless(args) -> int:
         from jarvis.marketplace.refresh_scheduler import RefreshScheduler
         from jarvis.marketplace.token_store import TokenStore
 
+        def _refresh_live_session(plugin_id: str) -> None:
+            # Lazy import: keeps this off the boot-critical import path (AP-26) —
+            # it is only ever needed once a background refresh actually succeeds.
+            from jarvis.ui.web.marketplace_routes import _refresh_plugin_in_live_registry
+
+            _refresh_plugin_in_live_registry(plugin_id)
+
         _token_store = TokenStore()
         _refresh_scheduler = RefreshScheduler(
             plugin_ids_fn=lambda: connected_plugin_ids(_token_store),
             store=_token_store,
             build_handler=build_handler_from_catalog,
+            on_refreshed=_refresh_live_session,
         )
         _refresh_scheduler.start()
         server.app.state.refresh_scheduler = _refresh_scheduler

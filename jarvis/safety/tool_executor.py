@@ -118,6 +118,33 @@ class ToolExecutor:
             config=self._plausibility_config,
         )
 
+    async def publish_guard_denied(
+        self,
+        tool_name: str,
+        reason: str,
+        *,
+        trace_id: UUID | None = None,
+    ) -> None:
+        """Surface a tool call refused BEFORE reaching :meth:`execute`.
+
+        The tool-use loop's deterministic guards (how-to question, research
+        intent, STT hallucination, unknown tool name, …) block a call without
+        ever entering the executor — so no ActionProposed/ActionExecuted event
+        fires and the session timeline shows NO trace of why a turn refused
+        (2026-07-06 audit: the unknown-tool 'run-shell' incident left zero
+        events). Publishing the same ``ActionDenied`` the blacklist path uses
+        makes the refusal visible; the recorder already subscribes to it.
+        Best-effort: observability must never break tool execution.
+        """
+        try:
+            await self._bus.publish(ActionDenied(
+                trace_id=trace_id or uuid4(),
+                tool_name=tool_name,
+                reason=reason,
+            ))
+        except Exception:  # noqa: BLE001
+            log.debug("publish_guard_denied failed", exc_info=True)
+
     async def execute(
         self,
         tool: Tool,

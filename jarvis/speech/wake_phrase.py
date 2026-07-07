@@ -12,12 +12,12 @@ docs/local-wakeword/CUSTOM-WAKE-WORD-DESIGN.md). Two public pieces:
 
 ``resolve_wake_plan(cfg, *, local_whisper_available)`` -> :class:`WakeWordPlan`
     Turns the user's ``[trigger.wake_word]`` config into a concrete engine
-    choice, honouring the cloud-first doctrine: a phrase with no pretrained
-    model needs local Whisper, and on a box without it we degrade gracefully to
-    the bundled "Hey Rhasspy" model with a clear English message — never a
-    silent dead listener. Users who type "Hey Jarvis" still get the hey_jarvis
-    offline model (it is in ``KNOWN_OWW_MODELS``); "Hey Rhasspy" is just the
-    neutral out-of-box shipped fallback.
+    choice through a fully GENERIC chain (design 2026-07-07 — the product
+    ships no named wake model and never resolves a phrase against one):
+    user-trained custom .onnx -> any-word Vosk keyword spotting ->
+    local-Whisper transcript match -> honest hotkey-only degrade
+    (``wake_available=False`` with a clear English message — never a silent
+    dead listener, never a substituted fallback word).
 """
 from __future__ import annotations
 
@@ -30,14 +30,12 @@ from typing import Any
 from jarvis.plugins.wake.openwakeword_provider import PRODUCTION_WAKE_THRESHOLD
 from jarvis.speech.wake_constants import (
     DEFAULT_WAKE_PHRASE,
-    JARVIS_WAKE_PATTERN,
     WAKE_ENGINES,
     WAKE_PREFIXES,
-    match_known_oww_model,
     normalize_phrase_for_match,
     phrase_core,
     phrase_core_for_match,
-    resolve_oww_model_path,
+    resolve_vosk_model_path,
     sound_fold,
 )
 
@@ -110,9 +108,9 @@ class _FuzzyMatch:
 class WakeMatcher:
     """Phrase matcher that duck-types ``re.Pattern.search(text)``.
 
-    - jarvis-default: wraps the canonical :data:`JARVIS_WAKE_PATTERN`.
-    - arbitrary phrase: fuzzy token-window match against a normalised
-      transcript using ``difflib.SequenceMatcher``. When the configured phrase
+    Every phrase gets the same treatment (no special-cased word — design
+    2026-07-07): fuzzy token-window match against a normalised
+    transcript using ``difflib.SequenceMatcher``. When the configured phrase
       starts with a known wake prefix ("Hey Fable"), the matched window must be
       IMMEDIATELY preceded by a prefix token too (``require_known_prefix``) —
       the bare core word inside ordinary speech must NOT activate (user mandate
@@ -127,7 +125,6 @@ class WakeMatcher:
         pattern: Any | None = None,
         core_tokens: list[str] | None = None,
         fuzzy_ratio: float = 0.8,
-        is_jarvis_default: bool = False,
         require_known_prefix: bool = False,
     ) -> None:
         self._pattern = pattern
@@ -135,15 +132,10 @@ class WakeMatcher:
         # ("Nico" -> "Niko"/"Nicko"/"Nikko") compares equal (see ``sound_fold``).
         self._core = [sound_fold(c) for c in (core_tokens or [])]
         self._ratio = fuzzy_ratio
-        self._is_jarvis = is_jarvis_default
         self._require_prefix = require_known_prefix
         # Folded prefix family: the window before the core must fuzzy-match ANY
         # of these when the configured phrase itself carries a prefix.
         self._folded_prefixes = tuple({sound_fold(p) for p in WAKE_PREFIXES})
-
-    @property
-    def is_jarvis_default(self) -> bool:
-        return self._is_jarvis
 
     def _effective_ratio(self, core_token: str) -> float:
         """The match ratio required for one core token.
@@ -219,11 +211,12 @@ class WakeMatcher:
 def compile_wake_matcher(phrase: str, *, fuzzy_ratio: float = 0.8) -> WakeMatcher:
     """Build a :class:`WakeMatcher` for ``phrase``.
 
-    The default "Hey Jarvis" (and any jarvis-only phrase) is matched by the
-    strict legacy pattern. Every other phrase fuzzy-matches on its CORE tokens;
-    when the configured phrase itself starts with a known wake prefix ("Hey
-    Fable"), the prefix is REQUIRED immediately before the core (any known
-    prefix counts — "Hallo Fable" still wakes a "Hey Fable" config).
+    Every phrase — including "Hey Jarvis" — fuzzy-matches on its CORE tokens
+    (no special-cased word ships; design 2026-07-07). When the configured
+    phrase itself starts with a known wake prefix ("Hey Fable"), the prefix is
+    REQUIRED immediately before the core (any known prefix counts — "Hallo
+    Fable" still wakes a "Hey Fable" config), so the bare core word in
+    ordinary speech stays silent (BUG-009 for prefixed phrases).
 
     History: 2026-06-29 deliberately made the prefix OPTIONAL ("lieber leichter
     triggern als schwer") because the slow poll cadence (~1.7 s vs a 1.8 s
@@ -240,8 +233,6 @@ def compile_wake_matcher(phrase: str, *, fuzzy_ratio: float = 0.8) -> WakeMatche
     """
     tokens = normalize_phrase_for_match(phrase)
     core = phrase_core_for_match(phrase)
-    if core == ["jarvis"]:
-        return WakeMatcher(pattern=JARVIS_WAKE_PATTERN, is_jarvis_default=True)
     # A leading known prefix was stripped from the core -> the user's phrase
     # carries one -> demand it in the transcript too.
     has_prefix = len(core) < len(tokens)
@@ -254,9 +245,6 @@ def compile_wake_matcher(phrase: str, *, fuzzy_ratio: float = 0.8) -> WakeMatche
 
 def _canonical_keyword(phrase: str) -> str:
     """A stable lower_snake keyword for a phrase (logging / yield value)."""
-    known = match_known_oww_model(phrase)
-    if known:
-        return known
     core = phrase_core(phrase)
     return "_".join(core) if core else "wake"
 
@@ -291,10 +279,9 @@ class WakeWordPlan:
     """Concrete, resolved wake configuration the pipeline can act on.
 
     Note: in the graceful-degrade case (an arbitrary phrase on a box without
-    local Whisper) ``phrase`` keeps the user's *requested* word (e.g. "Computer")
-    while ``engine``/``oww_keyword``/``matcher`` are all "Hey Rhasspy" and
-    ``degraded`` is True — so ``phrase != oww_keyword`` is a valid, intentional
-    state. ``phrase`` is what to show the user; ``oww_keyword`` is what fires.
+    a usable local engine) ``phrase`` keeps the user's *requested* word
+    (e.g. "Computer") while ``engine`` is "none" and ``degraded`` is True.
+    ``phrase`` is what to show the user; ``oww_keyword`` is what fires.
     """
 
     phrase: str
@@ -307,24 +294,22 @@ class WakeWordPlan:
     degraded: bool               # True if we could not honour the request
     message: str                 # English status string for logs + UI
     # Whether an OpenWakeWord hit needs the second-stage STT prefix check.
-    # True for the jarvis family (the hey_jarvis model also fires on bare
-    # "Jarvis" — BUG-009) AND for user-trained custom_onnx models (live
-    # forensic 2026-07-01: a few-shot/synthetic-data model scored breath,
-    # ambient noise and arbitrary speech up to 1.000 — several false
-    # activations per minute; the verify transcript, matched against the
-    # phrase's own sound-folded fuzzy matcher, is the real discriminator).
-    # False only for a specific PRETRAINED model (alexa/mycroft/rhasspy):
-    # those are trained on large curated datasets, ARE their own
-    # discriminator, and the STT would mis-transcribe the foreign brand word
-    # and wrongly reject valid hits.
+    # True for user-trained custom_onnx models (live forensic 2026-07-01: a
+    # few-shot/synthetic-data model scored breath, ambient noise and arbitrary
+    # speech up to 1.000 — several false activations per minute; the verify
+    # transcript, matched against the phrase's own sound-folded fuzzy matcher,
+    # is the real discriminator). False for vosk_kws — its permissive
+    # free-decode sound confirm is built into the provider itself.
     verify_prefix: bool
     # Product rule (2026-07-04): a wake word REQUIRES a local model that matches
     # the user's OWN chosen word. When no such model is available (no custom
     # ONNX, no local Whisper) we do NOT silently substitute a branded fallback
     # model — we return wake_available=False so the app arms NO detector and the
     # honest alternative is hotkey / push-to-talk activation. True for every
-    # real engine (custom_onnx / openwakeword / stt_match).
+    # real engine (custom_onnx / vosk_kws / stt_match).
     wake_available: bool = True
+    # Extracted Vosk model directory for the vosk_kws engine (None otherwise).
+    vosk_model_path: str | None = None
 
 
 def _read(cfg: Any, name: str, default: Any) -> Any:
@@ -332,11 +317,22 @@ def _read(cfg: Any, name: str, default: Any) -> Any:
     return default if value is None else value
 
 
-def resolve_wake_plan(cfg: Any, *, local_whisper_available: bool) -> WakeWordPlan:
+def resolve_wake_plan(
+    cfg: Any,
+    *,
+    local_whisper_available: bool,
+    language: str | None = None,
+    vosk_available: bool | None = None,
+) -> WakeWordPlan:
     """Resolve a ``[trigger.wake_word]`` config into a :class:`WakeWordPlan`.
 
     ``cfg`` is duck-typed: any object exposing ``phrase``, ``engine``,
     ``custom_model_path``, ``sensitivity``, ``fuzzy_match_ratio``.
+
+    ``language`` selects the per-language Vosk model for the ``vosk_kws``
+    engine (falls back to the first installed model on ``auto``/None).
+    ``vosk_available`` overrides the vosk import probe (tests); None probes
+    ``importlib.util.find_spec("vosk")``.
     """
     phrase = str(_read(cfg, "phrase", DEFAULT_WAKE_PHRASE)).strip()
     engine_pref = str(_read(cfg, "engine", "auto")).strip().lower()
@@ -404,38 +400,59 @@ def resolve_wake_plan(cfg: Any, *, local_whisper_available: bool) -> WakeWordPla
                 phrase,
             )
 
-    # 2. Known pretrained openWakeWord model (CPU, instant, offline).
-    known = match_known_oww_model(phrase)
-    if engine_pref in ("auto", "openwakeword") and known and (
-        not custom_path or custom_stale
-    ):
-        model_path = resolve_oww_model_path(known)
-        if model_path is not None:
+    # (The former step 2 — "known pretrained openWakeWord model" — was removed
+    # 2026-07-07: the product ships no named wake model and never resolves a
+    # phrase against the openwakeword package's pretrained third-party models.
+    # engine="openwakeword" in an old config simply falls through this chain.)
+
+    # 2. Any-word Vosk grammar keyword spotting — the one-identical-system-
+    # everywhere engine (design spec 2026-07-05): per-language model, CPU-only,
+    # no training, no cloud, no GPU; spike-measured 79-100 % recall at
+    # 1/0/0 % false accepts where the transcription path is machine- and
+    # word-dependent. Chosen on "auto" for any phrase, or forced via
+    # engine="vosk_kws". Requires the vosk package (base dep) AND a
+    # per-language model directory; missing either falls through to the
+    # stt_match chain below (graceful, message says why).
+    if phrase and engine_pref in ("auto", "vosk_kws"):
+        if vosk_available is None:
+            import importlib.util as _ilu
+
+            vosk_available = _ilu.find_spec("vosk") is not None
+        vosk_model = resolve_vosk_model_path(language) if vosk_available else None
+        if vosk_model is not None and (
+            engine_pref == "vosk_kws"
+            or not custom_path
+            or custom_stale
+            or custom_missing
+        ):
             return WakeWordPlan(
                 phrase=phrase,
-                engine="openwakeword",
-                oww_model_path=model_path,
-                oww_keyword=known,
+                engine="vosk_kws",
+                oww_model_path=None,
+                oww_keyword=canonical,
                 threshold=threshold,
                 matcher=matcher,
                 needs_local_whisper=False,
                 degraded=False,
-                message=f"Pretrained openWakeWord model '{known}'.",
-                verify_prefix=matcher.is_jarvis_default,
+                message=(
+                    f"Any-word Vosk keyword spotting for '{phrase}' "
+                    f"(model: {vosk_model})."
+                ),
+                verify_prefix=False,  # the provider's sound confirm is built in
+                vosk_model_path=vosk_model,
             )
-        log.warning("Pretrained model '%s' not found on disk.", known)
 
     # 3. Arbitrary phrase via local-Whisper transcript match.
     want_stt = (
-        engine_pref in ("auto", "stt_match")
+        engine_pref in ("auto", "stt_match", "vosk_kws")
         or bool(custom_path)                       # custom file missing -> best effort
-        or (engine_pref == "openwakeword" and not known)
+        or engine_pref == "openwakeword"           # legacy engine value, no model ships
     )
     if want_stt and local_whisper_available:
         # A STALE custom model (belongs to another phrase) is NOT a degrade:
         # the transcript match IS the regular path for the new phrase, and the
         # model stays configured for when the user switches back.
-        degraded = custom_missing or (engine_pref == "openwakeword" and not known)
+        degraded = custom_missing or engine_pref == "openwakeword"
         if custom_missing:
             message = (
                 f"Custom ONNX not found ({custom_path}); "
@@ -459,12 +476,15 @@ def resolve_wake_plan(cfg: Any, *, local_whisper_available: bool) -> WakeWordPla
             needs_local_whisper=True,
             degraded=degraded,
             message=message,
-            verify_prefix=matcher.is_jarvis_default,
+            # The rolling-whisper path already matches the phrase itself; no
+            # second-stage prefix verification (that gate exists for weak
+            # custom_onnx models — see WakeWordPlan.verify_prefix).
+            verify_prefix=False,
         )
 
     # 4. No local model for the user's OWN word. The product rule (2026-07-04)
-    # forbids silently substituting a branded fallback (the old 'Hey Rhasspy'
-    # degrade made the app listen for a word the user never says). Instead we
+    # forbids silently substituting a branded fallback (the retired degrade
+    # made the app listen for a word the user never says). Instead we
     # return wake_available=False: the app arms NO wake detector, and the honest
     # alternative is hotkey / push-to-talk activation. The user's requested phrase
     # is preserved; installing the local speech pack (works for ANY word) or

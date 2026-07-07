@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "1.0.2"
+version = "1.0.0"
 description = "Voice-driven meta-orchestrator that turns one spoken request into a fleet of self-checking AI agents"
 requires-python = ">=3.11"
 readme = "README.md"
@@ -18,32 +18,48 @@ dependencies = [
     "pydantic>=2.9,<3.0",
     "pydantic-settings>=2.6",
     "pyyaml>=6.0",
+    # Desktop overlay/mascot IPC wire IDs (jarvis/overlay + OS-Level/src/overlay
+    # schema.py `from ulid import ULID`). Small pure-Python, platform-universal
+    # package — was previously declared ONLY in OS-Level's own egg-info, so a
+    # fresh clone without the maintainer's manual `pip install -e OS-Level`
+    # raised `ModuleNotFoundError: ulid` the first time any keyboard/mouse tool
+    # action ran (AP-23).
+    "python-ulid>=2.2",
     "structlog>=24.4",
     "loguru>=0.7",
     "keyring>=25.5",
     "sounddevice>=0.5",  # PortAudio binding; needs system libportaudio2 on Linux
     "numpy>=1.26,<2.2",
     "scipy>=1.14",
-    # Always-on neural wake word — BASE, not opt-in. The pretrained ONNX models
-    # (hey_jarvis, hey_rhasspy, melspectrogram, embedding) already ship in every
-    # wheel (jarvis/assets/wakeword/, ~3.9 MB), but the runtime that executes them
-    # used to live only in the [local-voice] extra, so a fresh download had a wake
-    # model and no engine to run it → the wake was silent on every non-maintainer
-    # machine. openwakeword + CPU onnxruntime are tiny (~15 MB), torch-free and
-    # platform-universal (onnxruntime ships CPU wheels for win/mac/manylinux; the
-    # lockfile guard bans only torch/ctranslate2/faster-whisper/onnxruntime-GPU, not
-    # CPU onnxruntime). This makes "Hey Jarvis" fire out-of-the-box everywhere,
-    # including a headless CPU VPS, with no download and no GPU. The VAD already
-    # runs Silero via onnxruntime (jarvis/audio/vad.py), so base carrying it is
-    # proven. Both are lazy-imported in openwakeword_provider.py.
+    # Wake-word runtime — BASE, not opt-in. The word-agnostic openWakeWord
+    # backbones (melspectrogram, embedding) ship in every wheel
+    # (jarvis/assets/wakeword/) so a user-trained custom wake model loads
+    # offline; NO named wake model ships (design 2026-07-07). openwakeword +
+    # CPU onnxruntime are tiny (~15 MB), torch-free and platform-universal
+    # (onnxruntime ships CPU wheels for win/mac/manylinux; the lockfile guard
+    # bans only torch/ctranslate2/faster-whisper/onnxruntime-GPU, not CPU
+    # onnxruntime). The VAD already runs Silero via onnxruntime
+    # (jarvis/audio/vad.py), so base carrying it is proven. Both are
+    # lazy-imported in openwakeword_provider.py.
     "openwakeword>=0.6",
     "onnxruntime>=1.17",  # CPU-only; pinned explicitly though openwakeword pulls it
-    # Local VAD (silero-vad, which pulls torch), webrtcvad, the Porcupine wake
-    # engine (pvporcupine) and the local-Whisper arbitrary-phrase path stay in the
-    # [local-voice] extra per the cloud-first doctrine (CLAUDE.md): the default
-    # VAD/STT paths are cloud, so torch must never land in the base install on a
-    # 1 GB VPS. All are lazy-imported in their providers, so the base
-    # `import jarvis` stays clean without them.
+    # Any-word wake keyword spotting (vosk_kws engine, design spec 2026-07-05):
+    # Vosk is Apache-2.0, torch-free, ~7 MB wheel with bundled libvosk, official
+    # CPU wheels for win/mac/manylinux x86+ARM — the identical-on-every-OS
+    # detector for a freely chosen wake phrase. The per-language model (~45 MB)
+    # is fetched once at setup into data/wake_models/vosk/<lang>/, NOT bundled.
+    # Lazy-imported in vosk_kws_provider.py; base `import jarvis` stays clean.
+    # CAP below 0.3.45: that release ships NO macOS wheel (linux/win only), so a
+    # floor above 0.3.44 bricks every Mac install (AP-23; caught by the CI
+    # fresh-install smoke's macOS leg 2026-07-07). 0.3.44 is the newest release
+    # with wheels for ALL supported OSes (macosx_10_6_universal2 + linux + win).
+    "vosk>=0.3.44,<0.3.45",
+    # Local VAD (silero-vad, which pulls torch), webrtcvad and the
+    # local-Whisper path (faster-whisper) stay in the [local-voice] extra per
+    # the cloud-first doctrine (CLAUDE.md): the default VAD/STT paths are
+    # cloud, so torch must never land in the base install on a 1 GB VPS. All
+    # are lazy-imported in their providers, so the base `import jarvis` stays
+    # clean without them.
     # Local STT removed 2026-05-18 — Groq Whisper API is the new default.
     "google-cloud-texttospeech>=2.21",
     "elevenlabs>=1.5",  # cloud TTS (pure-Python HTTP SDK) — safe in base
@@ -123,15 +139,14 @@ dev = [
     "mypy>=1.13",
     "pyinstaller>=6.11",
 ]
-# "Everything a normal power user wants" in one shot: the desktop app (tray /
-# overlay / hotkey / screen capture) + telephony (phone calls) + chat channels.
+# "Everything" in one shot — the ONE advertised install profile (design spec
+# 2026-07-07): desktop app + telephony + chat channels + local voice models.
 # Each sub-extra carries its own platform markers, so `pip install .[full]`
-# quietly skips what does not apply to the OS. Deliberately EXCLUDES the heavy
-# `local-voice` extra (torch + faster-whisper, multi-GB, GPU-oriented) — add that
-# explicitly with `.[local-voice]` for offline speech. The cloud-first BASE
-# install still needs none of this; `[full]` is the opposite end of the spectrum.
+# quietly skips what does not apply to the OS. The cloud-first BASE install
+# (plain `pip install .`) remains the internal torch-free floor for CI and
+# tiny headless servers; users are pointed at [full].
 full = [
-    "personal-jarvis[desktop,telephony,channels]",
+    "personal-jarvis[desktop,telephony,channels,local-voice]",
 ]
 # Twilio telephony voice agent (call Jarvis on a phone number). Optional extra
 # per the cloud-first doctrine: the base install must boot without it, and the
@@ -212,9 +227,10 @@ desktop-macos = [
     # CGWindowID); runtime-probed — an absent framework degrades to rect grabs.
     "pyobjc-framework-ScreenCaptureKit>=10; sys_platform == 'darwin'",
 ]
-# Local (offline) voice engines. Entirely optional per the cloud-first doctrine
+# Local (offline) voice engines. Optional per the cloud-first doctrine
 # (CLAUDE.md §3): the default VAD/STT/wake paths are cloud-reachable, so the base
-# install stays torch-free and this extra is opt-in (`--with-voice-local`). Every
+# install stays torch-free; this extra ships with the advertised [full] profile
+# (design 2026-07-07) and remains individually opt-in for base installs. Every
 # package here is lazy-imported in its provider, so the base `import jarvis` and
 # the headless server boot without them.
 #
@@ -233,15 +249,17 @@ desktop-macos = [
 # ~2.2 MB MIT asset under jarvis/assets/vad/ and run torch-free via onnxruntime, so
 # end-of-speech detection also works out-of-the-box — the `silero-vad` PACKAGE
 # below is now only an optional fallback for a partial checkout without the asset.
-# This extra therefore covers only heavier/alternate local paths: the torch-pulling
-# silero-vad package, WebRTC VAD, and the Porcupine wake engine. (faster-whisper —
-# the local-Whisper arbitrary-custom-phrase wake for phrases with no pretrained
-# model — is not in any extra; it is pulled on demand by the in-app "enable local
-# speech" installer, see jarvis/ui/web/settings_routes.py.)
+# This extra therefore covers only heavier/alternate local paths: the
+# torch-pulling silero-vad package, WebRTC VAD, and faster-whisper (the
+# local-Whisper wake/STT accuracy path — previously pulled on demand by the
+# in-app "enable local speech" installer, now preinstalled via [full] per the
+# 2026-07-07 one-full-install decision; the in-app installer remains as the
+# recovery path for base installs). pvporcupine was removed 2026-07-07: never
+# imported anywhere, proprietary-keyed, ships branded built-in keywords.
 local-voice = [
     "silero-vad>=5.1",
     "webrtcvad-wheels>=2.0",
-    "pvporcupine>=3.0",
+    "faster-whisper>=1.0",
 ]
 
 [project.scripts]
@@ -451,6 +469,39 @@ jarvis = [
     # Node bot scripts shipped alongside their Python bridge tools (e.g. the
     # google_calendar bot). Not Python, so packages.find won't pick them up.
     "plugins/tool/*.mjs",
+    # AP-23 wave-2 finding 6: runtime data files read via `Path(__file__)` at
+    # first use, missing from wheel installs — masked today only because
+    # every dev install is editable (source tree == package tree).
+    # SQLite bootstrap schemas + versioned migrations
+    # (board/memory/missions/sessions/tasks/workflows). Every `.sql` file
+    # under the package is a runtime schema/migration, never source config,
+    # so one broad glob is safe (audited 2026-07-07: 9 files total).
+    "**/*.sql",
+    # Voice persona (brain/persona_loader.py), skill-authoring import
+    # allowlist (skills/authoring/draft_writer.py), Jarvis-Agent critic
+    # verdict JSON-schema (core/review/spawns.py).
+    "brain/JARVIS_PERSONA.md",
+    "skills/safe_imports.txt",
+    "core/review/verdict_schema.json",
+    # Seed catalogs (CLI tools / skills / marketplace plugins) — named
+    # explicitly rather than a repo-wide "**/*.json" glob, which would also
+    # sweep in jarvis/ui/web/frontend's SOURCE config (package.json,
+    # tsconfig.json, .claude/settings.local.json — never meant to ship).
+    "clis/catalog/seed_catalog.json",
+    "skills/catalog/seed_catalog.json",
+    "marketplace/seed_catalog.json",
+    # Marketplace "how to use this plugin" cards shown in the UI
+    # (marketplace/usage_cards/loader.py).
+    "marketplace/usage_cards/*.md",
+    # Wiki bootstrap templates for a new vault (memory/wiki/__init__.py's
+    # TEMPLATES_DIR + integration.py's schema.md read).
+    "memory/wiki/templates/*.md",
+    # Built-in skills: SKILL.md plus their reference/asset/script support
+    # files (e.g. skill-creator ships references/, scripts/, agents/,
+    # assets/ alongside its SKILL.md). Extension-scoped rather than
+    # "skills/builtin/**/*" so a stray local __pycache__ never rides along.
+    "skills/builtin/**/*.md",
+    "skills/builtin/**/*.txt",
 ]
 
 [tool.ruff]
@@ -470,6 +521,10 @@ ignore = ["S101", "S603", "S607"]
 # bandit flags as hardcoded passwords. Both are false positives in a test
 # context; the production modules stay under the strict ruleset.
 "tests/unit/telephony/*.py" = ["S105", "S106", "S314"]
+# call-contact tests assert on fake Twilio auth-token fixture literals (e.g.
+# "tok_real_secret") that bandit flags as hardcoded passwords — a false
+# positive in a test context, same carve-out as the telephony tests above.
+"tests/unit/plugins/tool/test_call_contact.py" = ["S105", "S106"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

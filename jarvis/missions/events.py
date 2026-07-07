@@ -10,7 +10,7 @@ prefix (`MissionBudgetWarning`) — no import collision, no semantic ambiguity.
 from __future__ import annotations
 
 import time
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Final, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -91,6 +91,23 @@ class WorkerCorrectionRequired(_PayloadBase):
     next_model: str
 
 
+# Closed vocabulary for the provider-failure classification carried by
+# WorkerKilled.error_class / MissionFailed.error_class. Single source of
+# truth; mirrored in frontend/src/types/missions.ts (MissionErrorClass),
+# the voice phrase table (FAILURE_REASON_PHRASES), and the i18n locales —
+# guarded by tests/missions/test_mission_error_class_parity.py +
+# test_error_class_full_parity.py (AP-4/BUG-008 defense). The event field
+# stays `str | None`: the recovery sweep's legacy values
+# ("MissionInterrupted"/"OrchestratorCrash") remain valid, and None means
+# "unclassified — fall back to `reason`".
+MISSION_ERROR_CLASSES: Final[frozenset[str]] = frozenset({
+    "provider_auth",        # credential dead/invalid (401, not logged in)
+    "provider_quota",       # usage/session/rate limit or billing exhausted
+    "provider_unreachable",  # transient availability (5xx, overloaded)
+    "worker_timeout",       # wall-clock / first-output timeout
+})
+
+
 class WorkerKilled(_PayloadBase):
     event_type: Literal["WorkerKilled"] = "WorkerKilled"
     worker_id: str
@@ -107,6 +124,12 @@ class WorkerKilled(_PayloadBase):
         # tests/missions/test_worker_killed_reason_parity.py.
         "worker_error",
     ]
+    # Provider-failure classification (2026-07-06 incident): a token from
+    # MISSION_ERROR_CLASSES when the kill traces to a classified provider
+    # failure, plus the truncated upstream error text. Optional + defaulted
+    # so previously stored events keep validating.
+    error_class: str | None = None
+    error_detail: str | None = None
 
 
 class MissionApproved(_PayloadBase):
@@ -125,6 +148,12 @@ class MissionFailed(_PayloadBase):
     error_class: str | None = None
     last_state: str
     partial_artifacts: list[str] = Field(default_factory=list)
+    # Provider-failure surfacing (2026-07-06 incident): the truncated
+    # upstream error text and the provider slug of the worker that failed
+    # (e.g. "claude", "codex", "openrouter"). Optional + defaulted so
+    # previously stored events keep validating.
+    error_detail: str | None = None
+    failed_provider: str | None = None
 
 
 class MissionCancelled(_PayloadBase):

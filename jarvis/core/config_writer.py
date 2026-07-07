@@ -255,6 +255,23 @@ def set_tts_volume(volume: float, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
         log.warning("Could not sync tts.volume to config-soll.json: %s", exc)  # i18n-allow
 
 
+def set_audio_device(
+    kind: str, value: str, *, path: Path = DEFAULT_CONFIG_FILE
+) -> None:
+    """Set ``[audio] input_device`` / ``[audio] output_device``.
+
+    ``kind`` is ``"input"`` or ``"output"``; ``value`` is a device display
+    NAME (the identifier stable across reboots/hot-plugs) or the
+    ``"auto-headset"`` sentinel to restore automatic selection. The ``[audio]``
+    block is NOT drift-guard pinned, so the atomic TOML patch alone persists
+    it. The Settings route live-applies the change to the running pipeline;
+    this stores the boot default.
+    """
+    if kind not in ("input", "output"):
+        raise ValueError(f"kind must be 'input' or 'output', got {kind!r}")
+    _patch_table(path, "audio", f"{kind}_device", str(value))
+
+
 def set_stt_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Set the global STT model (``[stt] model``) across all THREE layers.
 
@@ -481,6 +498,21 @@ def set_autostart(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     next boot by ``reconcile_autostart``).
     """
     _patch_table(path, "autostart", "enabled", bool(enabled))
+
+
+def set_wiki_vault_root(vault_root: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[wiki_integration] vault_root`` in jarvis.toml (AP-7).
+
+    Written when the Obsidian setup wizard registers the "existing vault"
+    mode (spec A6): the wiki subsystem is repointed to ``<vault>/Jarvis``
+    so every wiki write stays contained inside the user's own vault.
+    TOML-only by design: ``wiki_integration`` is NOT tracked in
+    ``config-soll.json``, so the drift-guard never reverts it (same  # i18n-allow
+    rationale as :func:`set_overlay_style`). Takes effect on the next app
+    restart — the running curator/FTS index still targets the old vault
+    until then.
+    """
+    _patch_table(path, "wiki_integration", "vault_root", vault_root)
 
 
 def set_overlay_style(style: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:

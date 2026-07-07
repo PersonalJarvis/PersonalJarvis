@@ -24,6 +24,7 @@ from jarvis.core.review.checks import (
     output_not_empty,
     task_not_empty,
 )
+from jarvis.core.review.errors import HarnessUnavailable
 from jarvis.core.review.pipeline import ReviewPipeline
 from jarvis.core.review.spawns import ReviewerSpawner, WorkerSpawner
 from jarvis.core.review.state import PipelineOutcome, PipelineResult
@@ -213,6 +214,20 @@ class DispatchWithReviewTool:
                 task,
                 rubric_id=rubric_id,
                 max_iterations=int(max_iter_arg) if max_iter_arg else None,
+            )
+        except HarnessUnavailable:
+            # AP-23 wave-2 finding 5: no registered harness backs the
+            # worker/reviewer spawn on this install (e.g. every install
+            # today — Welle-4 removed the old OpenClaw subprocess bridge).
+            # Honest, install-neutral message — never the raw KeyError from
+            # HarnessManager.get(), never the dead internal "openclaw" name.
+            return ToolResult(
+                success=False,
+                output=None,
+                error=(
+                    "review gate unavailable: no worker harness is "
+                    "registered on this install"
+                ),
             )
         except Exception as exc:  # noqa: BLE001 — the tool must NEVER crash
             return ToolResult(

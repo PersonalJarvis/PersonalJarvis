@@ -122,6 +122,30 @@ def index_vault(vault_root: Path, conn: sqlite3.Connection) -> int:
     return count
 
 
+def rebuild_index(vault_root: Path, conn: sqlite3.Connection) -> int:
+    """Clear ``wiki_fts`` and re-index ``vault_root`` from scratch.
+
+    Used after a vault switch (spec A6 "connect to an existing vault") so
+    search never serves stale rows from the previously active vault.
+
+    Parameters
+    ----------
+    vault_root:
+        Absolute path to the (new) Obsidian vault root.
+    conn:
+        Open, writable ``sqlite3.Connection``.
+
+    Returns
+    -------
+    int
+        Number of pages indexed (same contract as :func:`index_vault`).
+    """
+    ensure_schema(conn)
+    conn.execute("DELETE FROM wiki_fts")
+    conn.commit()
+    return index_vault(vault_root, conn)
+
+
 def upsert_page(
     conn: sqlite3.Connection,
     vault_root: Path,
@@ -308,6 +332,7 @@ def _upsert_one(
 __all__ = [
     "ensure_schema",
     "index_vault",
+    "rebuild_index",
     "upsert_page",
     "remove_page",
 ]

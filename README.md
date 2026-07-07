@@ -88,16 +88,20 @@ Jarvis runs without it:
 
 | Optional | Unlocks |
 |---|---|
-| A provider **API key or subscription login** — Gemini, Claude, OpenAI, or OpenRouter | Actually talking to a brain. Bring your own; nothing is bundled. The first-run wizard sets it up and stores it in your OS credential manager. |
+| A provider **API key or subscription login** — Gemini, Claude, OpenAI, or OpenRouter | Actually talking to a brain. Bring your own; nothing is bundled. The app's one-time setup guide stores it in your OS credential manager. |
 | **Node.js** 18+ | The agent CLIs the worker delegates heavy tasks to (Claude Code, Codex) and a few Node-based marketplace integrations. |
 | **libportaudio** *(Linux only)* | Local microphone and speakers (`apt install libportaudio2`). Not needed for the headless / browser-audio path. |
-| A **GPU** + the `--with-voice-local` flag | Fully offline speech — local wake word, speech-to-text, and text-to-speech. Cloud speech needs none of this. |
+| A **GPU** | Faster fully-offline speech. The local voice models install by default and run on CPU everywhere; a GPU only speeds them up. Cloud speech needs none of this. |
 
 ## Install
 
 One command on **Windows, macOS, or Linux** — no Docker, no Python-version archaeology. It
-builds a Python virtual environment, installs every feature, and runs the first-run wizard.
-**Bring your own keys**; nothing is bundled.
+installs the **full profile**: everything in this repository (desktop app, telephony, chat
+channels, local voice models incl. the offline wake word and Whisper), skipping only what
+your OS cannot run. It asks **nothing** in the terminal and launches the app as its last
+step. The app then walks you through a one-time setup guide (language, wake word, API
+keys) — it never shows again, not even after updates. **Bring your own keys**; nothing is
+bundled.
 
 **Windows** — PowerShell
 
@@ -112,15 +116,14 @@ curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/
 ```
 
 > Open source — read the installer before you run it. It only creates a venv, installs
-> dependencies, and runs the first-run wizard (hardware detection, API keys stored in your OS
-> credential manager — never in the repo, microphone, wake word).
+> dependencies, prefetches the voice models, and launches the app. All setup (API keys —
+> stored in your OS credential manager, never in the repo — wake word, language) happens
+> in the app itself, once. Re-running the same one-liner updates in place and keeps your setup.
 
 | Install flag | Effect |
 |---|---|
-| `--headless` | API + WebSocket only — no desktop window or local voice (the VPS path) |
-| `--with-voice-local` | Also pull the local STT / TTS / wake models on install (~1.5 GB) |
+| `--headless` | Minimal server install (advanced): API + WebSocket only, torch-free base — the tiny-VPS path |
 | `--no-launch` | Install only; don't start the app |
-| `--no-wizard` | Skip the first-run key wizard |
 
 **Uninstall** — one command removes everything a plain folder-delete would miss: the
 install folder, the login-autostart entry, and the API keys saved in your OS keychain.
@@ -170,8 +173,8 @@ jarvis serve    # headless server: API + WebSocket + browser UI, no local audio 
 
 Then open **http://localhost:47821** — the full Router-Brain → Worker-Critic →
 Mission-Manager experience lives in the browser, including voice through the browser's
-microphone. For a headless deployment, set your provider key (e.g. `GEMINI_API_KEY`) in the
-environment or a `.env` file; the wizard detects the missing terminal and skips its prompts.
+microphone. On a headless deployment the same one-time setup guide runs in the browser; you
+can also set a provider key (e.g. `GEMINI_API_KEY`) in the environment or a `.env` file.
 
 <p align="center">
   <img src="assets/screenshots/app-home.png" alt="The Personal Jarvis desktop app" width="820" />
@@ -237,9 +240,9 @@ Inside `jarvis/`, the layout mirrors the 8-layer model above — `jarvis/brain/`
 - **Self-mod & skills** — Jarvis can adjust its own configuration safely and author new
   skills as reviewable drafts (never auto-activated).
 
-<p align="center">
-  <img src="assets/screenshots/view-wiki.png" alt="Knowledge Wiki" width="410" />
-</p>
+<!-- Wiki screenshot removed 2026-07-07: the previous capture showed a live
+     personal vault (privacy review finding). Re-add once a staged demo-vault
+     screenshot exists. -->
 
 ## Documentation
 

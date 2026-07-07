@@ -13,8 +13,11 @@ import {
 } from "lucide-react";
 
 import type { SubAgentNode, ToolCallEntry } from "@/store/jarvisAgents";
+import type { SectionHealth } from "@/hooks/useProviders";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
+import { useT } from "@/i18n";
+import { failureLabel } from "./failureLabel";
 
 const STATUS_COLOR: Record<SubAgentNode["status"], string> = {
   running: "text-primary",
@@ -68,8 +71,9 @@ function taskLabel(node: SubAgentNode): string {
   return node.utterance || node.context_hints.at(0) || node.prompts.at(0) || "-";
 }
 
-function resultLabel(node: SubAgentNode): string {
-  if (node.error) return node.error;
+function resultLabel(node: SubAgentNode, t: (key: string) => string): string {
+  const failure = failureLabel(node, t);
+  if (failure) return failure;
   const summary = [...node.prompts].reverse().find((p) => p.startsWith("[summary] "));
   if (summary) return summary.replace("[summary] ", "");
   if (node.status === "completed") return "Done";
@@ -80,9 +84,11 @@ function resultLabel(node: SubAgentNode): string {
 interface Props {
   agents?: SubAgentNode[];
   snapshotError?: string | null;
+  health?: SectionHealth | null;
 }
 
-export function DepartureBoard({ agents = [], snapshotError = null }: Props) {
+export function DepartureBoard({ agents = [], snapshotError = null, health = null }: Props) {
+  const t = useT();
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -149,6 +155,27 @@ export function DepartureBoard({ agents = [], snapshotError = null }: Props) {
           </div>
         </div>
 
+        {health && (health.status === "needs_setup" || health.status === "error") && (
+          <div
+            className={cn(
+              "mb-3 flex items-center gap-2 rounded-md border px-3 py-2 text-xs",
+              health.status === "error"
+                ? "border-destructive/30 bg-destructive/10 text-destructive"
+                : "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+            )}
+          >
+            <CircleAlert className="h-4 w-4 shrink-0" />
+            <span className="font-medium">
+              {t(
+                health.status === "error"
+                  ? "subagents_view.health_error"
+                  : "subagents_view.health_degraded",
+              )}
+            </span>
+            <span className="opacity-80">{health.detail}</span>
+          </div>
+        )}
+
         {snapshotError && (
           <div className="mb-3 flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             <CircleAlert className="h-4 w-4" />
@@ -170,6 +197,7 @@ export function DepartureBoard({ agents = [], snapshotError = null }: Props) {
                     nowMs={nowMs}
                     expanded={expanded.has(agent.trace_id)}
                     onToggle={() => toggle(agent.trace_id)}
+                    t={t}
                   />
                 ))}
               </div>
@@ -248,11 +276,13 @@ function AgentRow({
   nowMs,
   expanded,
   onToggle,
+  t,
 }: {
   agent: SubAgentNode;
   nowMs: number;
   expanded: boolean;
   onToggle: () => void;
+  t: (key: string) => string;
 }) {
   const hasDrilldown = agent.tool_calls.length > 0 || agent.error || agent.prompts.length > 0;
 
@@ -289,8 +319,8 @@ function AgentRow({
         </span>
         <span className="text-zinc-400">{agent.tool_calls.length}</span>
         <span className="text-zinc-400">{runtimeLabel(agent, nowMs)}</span>
-        <span className="truncate text-zinc-400" title={resultLabel(agent)}>
-          {resultLabel(agent)}
+        <span className="truncate text-zinc-400" title={resultLabel(agent, t)}>
+          {resultLabel(agent, t)}
         </span>
       </button>
 
@@ -328,7 +358,9 @@ function AgentRow({
                     ))}
                   </div>
                 )}
-                {agent.error && <div className="text-destructive">{agent.error}</div>}
+                {failureLabel(agent, t) && (
+                  <div className="text-destructive">{failureLabel(agent, t)}</div>
+                )}
                 <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-700">
                   trace {agent.trace_id.slice(0, 10)}
                 </div>

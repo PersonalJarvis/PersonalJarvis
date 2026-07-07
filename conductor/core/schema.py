@@ -16,6 +16,7 @@ Three central design decisions:
 """
 from __future__ import annotations
 
+import secrets
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
@@ -163,6 +164,34 @@ class Job(BaseModel):
     enabled: bool = True
     created_at_ns: int = 0
     tags: tuple[str, ...] = Field(default_factory=tuple)
+
+
+# The seed catalog (``conductor/seed/webhook_demo.yaml``) ships this exact
+# literal as a placeholder. It is 38 characters, so it passes
+# ``WebhookSchedule.token``'s ``min_length=16`` untouched — length alone
+# cannot flag it as weak, it must be matched by value.
+_KNOWN_WEAK_WEBHOOK_TOKENS = frozenset({
+    "demo_token_change_me_in_production_1234",
+})
+
+
+def regenerate_weak_webhook_token(job: Job) -> Job:
+    """Replaces a job's webhook token with a fresh random one if it is weak.
+
+    "Weak" covers both a too-short token and a token equal to a known,
+    publicly-shipped literal (which a length check alone would miss).
+    Non-webhook jobs are returned unchanged. Shared by the create-job API
+    route and the seed loader so both regenerate through the same path.
+    """
+    if job.schedule.type != "webhook":
+        return job
+    token = job.schedule.token
+    if len(token) >= 16 and token not in _KNOWN_WEAK_WEBHOOK_TOKENS:
+        return job
+    new_token = secrets.token_urlsafe(24)
+    return job.model_copy(
+        update={"schedule": job.schedule.model_copy(update={"token": new_token})}
+    )
 
 
 class Run(BaseModel):

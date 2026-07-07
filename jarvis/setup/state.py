@@ -67,6 +67,47 @@ def state_path(override: Path | None = None) -> Path:
     return override if override is not None else _DEFAULT_STATE_PATH
 
 
+def setup_complete_marker_path(path: Path | None = None) -> Path:
+    """Location of the legacy ``.setup-complete`` marker.
+
+    Lives next to the setup-state file (the ``data/`` dir) so the fast-boot
+    onboarding path and ``jarvis.core.config.is_first_run`` agree on ONE file
+    without importing the heavy config module. ``path`` is the state-file
+    override used by tests.
+    """
+    return state_path(path).parent / ".setup-complete"
+
+
+def setup_complete_marker_exists(path: Path | None = None) -> bool:
+    """True when the legacy wizard/setup completion marker is present."""
+    return setup_complete_marker_path(path).exists()
+
+
+def write_setup_complete_marker(content: str, path: Path | None = None) -> None:
+    """Write the legacy completion marker (read/write/delete all route through
+    this module so the location can never desync between callers)."""
+    target = setup_complete_marker_path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+
+
+def remove_setup_complete_marker(path: Path | None = None) -> bool:
+    """Delete the legacy completion marker. True iff it existed and was removed.
+
+    Never raises — a locked/undeletable marker is logged; the caller's message
+    stays honest via the return value.
+    """
+    target = setup_complete_marker_path(path)
+    if not target.exists():
+        return False
+    try:
+        target.unlink()
+        return True
+    except OSError as exc:
+        logger.warning("remove_setup_complete_marker: cannot remove %s: %s", target, exc)
+        return False
+
+
 def load_setup_state(path: Path | None = None) -> dict[str, Any]:
     """Read the setup-state file and return its dict view.
 
@@ -273,6 +314,10 @@ def reset_onboarding(path: Path | None = None) -> list[str]:
 
 __all__ = [
     "state_path",
+    "setup_complete_marker_path",
+    "setup_complete_marker_exists",
+    "write_setup_complete_marker",
+    "remove_setup_complete_marker",
     "load_setup_state",
     "has_seen_obsidian_setup",
     "mark_obsidian_seen",

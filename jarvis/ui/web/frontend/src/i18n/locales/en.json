@@ -281,6 +281,14 @@
       "running": "running",
       "completed": "arrived",
       "failed": "failed"
+    },
+    "health_degraded": "Subagent provider degraded",
+    "health_error": "No subagent provider reachable",
+    "error_class": {
+      "provider_auth": "Provider sign-in invalid or expired — reconnect it in the API-Keys view.",
+      "provider_quota": "Provider quota exhausted — missions retry on another provider.",
+      "provider_unreachable": "Provider temporarily unreachable.",
+      "worker_timeout": "The worker hit its time limit."
     }
   },
   "tasks_view": {
@@ -972,6 +980,19 @@
       "saved_toast": "Volume set to {0}.",
       "restart_caption": "Saved — applies on next start."
     },
+    "audio_devices": {
+      "title": "Audio devices",
+      "description": "Pick where {name}'s voice comes out and which microphone {name} listens with. Automatic picks your headset for you and adapts when devices come and go.",
+      "output_label": "Voice output",
+      "input_label": "Microphone",
+      "auto_option": "Automatic (recommended)",
+      "default_suffix": "(system default)",
+      "rescan": "Rescan devices",
+      "none_found": "No audio devices found on this machine — {name} keeps running without sound.",
+      "output_saved_toast": "Voice output device saved.",
+      "input_saved_toast": "Microphone saved.",
+      "restart_caption": "Saved — applies on next start."
+    },
     "title": "Settings",
     "subtitle": "Wake-word, hotkeys, safety policies, autostart.",
     "overlay_taskbar_group_title": "Bar & Overlay",
@@ -1030,16 +1051,18 @@
       "phrase_placeholder": "e.g. Jonas",
       "engine_label": "Detection engine",
       "sensitivity_label": "Sensitivity",
+      "sensitivity_floor_note": "Minimum is 0.5: below the calibrated midpoint the detector becomes so strict that normal speech practically never wakes it — that feels broken, not \"less sensitive\". 0.5 is the balanced default; higher values trigger more easily.",
       "custom_model_path_label": "Custom ONNX model path",
       "save": "Save wake word",
       "saved": "Wake word saved",
       "restart_required": "Restart required to take effect.",
       "degraded_warning": "The chosen phrase isn't supported by the selected engine — it will fall back to a different engine.",
-      "needs_whisper_hint": "An arbitrary phrase needs the local-Whisper extra. Without it the engine will degrade to a built-in quick phrase.",
+      "needs_whisper_hint": "This phrase needs a local engine. Install the local speech pack below — until then the wake word stays off and you activate via hotkey / push-to-talk.",
       "derived_name": "Your assistant will be called: {0}",
       "engine_options": {
         "auto": "Auto (recommended)",
         "openwakeword": "openWakeWord (built-in phrases)",
+        "vosk_kws": "Keyword spotting (any phrase, same on every device)",
         "stt_match": "STT match (any phrase, needs local Whisper)",
         "custom_onnx": "Custom ONNX model"
       },
@@ -1446,7 +1469,9 @@
       "body": "It can control your computer, run commands, open apps, send messages, and change files on your behalf — and it can make mistakes. It may do unintended or even destructive things.",
       "liability": "You use it entirely at your own risk. The developers accept no liability for any damage, data loss, or other consequences. Only continue if you understand and accept this.",
       "accept_label": "I understand the risks and accept that I use Personal Jarvis at my own risk.",
-      "proceed": "I understand — continue"
+      "proceed": "I understand — continue",
+      "view_terms": "View the full Terms of Use",
+      "terms_loading": "Loading terms…"
     },
     "intro": {
       "scene_1": "Meet your voice-first assistant.",
@@ -1527,7 +1552,8 @@
       "body": "Your assistant is ready. Try saying your wake word, or type a command to begin.",
       "skipped_title": "You skipped — set up anytime in Settings:",
       "start_cta": "Get started",
-      "boot_notice": "Heads up: the first launch takes about 10 seconds while your assistant warms up — that's completely normal."
+      "boot_notice": "Heads up: the first launch takes about 10 seconds while your assistant warms up — that's completely normal.",
+      "autostart_label": "Start Jarvis automatically at login"
     }
   },
   "languages_view": {

@@ -15,10 +15,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from jarvis.speech import wake_constants as wc
 from jarvis.speech import wake_phrase as wp
 from jarvis.speech.pipeline import SpeechPipeline
 from jarvis.speech.wake_phrase import resolve_wake_plan
+
+
+@pytest.fixture(autouse=True)
+def _no_vosk_model(monkeypatch):
+    """Isolate from any per-install Vosk model: this module pins the
+    stt_match/openwakeword live-apply contracts. vosk_kws has its own suite
+    in test_wake_plan_vosk.py."""
+    monkeypatch.setattr(wp, "resolve_vosk_model_path", lambda *_: None)
 
 
 @dataclass
@@ -54,21 +61,6 @@ def _cfg(**kw: object) -> SimpleNamespace:
     return SimpleNamespace(**base)
 
 
-def _pretend_oww_models_exist(
-    monkeypatch: pytest.MonkeyPatch, *model_names: str
-) -> None:
-    models = set(model_names)
-    original_resolve = wc.resolve_oww_model_path
-
-    def fake_resolve(model_name: str) -> str | None:
-        if model_name in models:
-            return f"C:/fake-openwakeword/{model_name}_v0.1.onnx"
-        return original_resolve(model_name)
-
-    monkeypatch.setattr(wc, "resolve_oww_model_path", fake_resolve)
-    monkeypatch.setattr(wp, "resolve_oww_model_path", fake_resolve)
-
-
 def _pipe() -> SpeechPipeline:
     return SpeechPipeline(
         tts=_FakeTTS(), bus=None,
@@ -78,17 +70,26 @@ def _pipe() -> SpeechPipeline:
 
 
 # --------------------------------------------------------------------------
-# WakeWordPlan.verify_prefix — only the jarvis family needs STT re-verification
+# WakeWordPlan.verify_prefix — only custom_onnx plans need STT re-verification
 # --------------------------------------------------------------------------
 
-def test_verify_prefix_true_for_jarvis_default() -> None:
-    plan = resolve_wake_plan(_cfg(phrase="Hey Jarvis"), local_whisper_available=False)
+def test_verify_prefix_true_for_custom_onnx(tmp_path) -> None:
+    onnx = tmp_path / "hey_fable.onnx"
+    onnx.write_bytes(b"stub")
+    plan = resolve_wake_plan(
+        _cfg(phrase="Hey Fable", engine="custom_onnx", custom_model_path=str(onnx)),
+        local_whisper_available=False,
+    )
+    assert plan.engine == "custom_onnx"
     assert plan.verify_prefix is True
 
 
-def test_verify_prefix_false_for_alexa_and_mycroft() -> None:
+def test_brand_phrases_resolve_generically_without_a_model() -> None:
+    # No bundled/pretrained models (design 2026-07-07): brand words are
+    # ordinary phrases; with no local engine they degrade honestly.
     for phrase in ("Alexa", "Hey Mycroft", "Rhasspy"):
         plan = resolve_wake_plan(_cfg(phrase=phrase), local_whisper_available=False)
+        assert plan.engine == "none", phrase
         assert plan.verify_prefix is False, phrase
 
 
@@ -123,13 +124,16 @@ async def test_verify_oww_hit_trusts_non_jarvis_model_without_stt() -> None:
     assert stt.calls == 0  # trusted the specific OWW model, no STT re-verify
 
 
-async def test_verify_oww_hit_still_verifies_jarvis() -> None:
+async def test_verify_oww_hit_still_rejects_bare_core_word() -> None:
+    from jarvis.speech.wake_phrase import compile_wake_matcher
+
     pipe = SpeechPipeline.__new__(SpeechPipeline)
     pipe._require_hey_prefix = True
-    stt = _FakeSTT("Jarvis")  # bare jarvis -> must be rejected
+    stt = _FakeSTT("Jarvis")  # bare core word -> must be rejected
     pipe._utterance_stt = stt
     pipe._wake_plan = SimpleNamespace(verify_prefix=True)
-    pipe._wake_matcher = None  # None -> default jarvis pattern in verifier
+    # The plan's own matcher drives the verify (no default pattern ships).
+    pipe._wake_matcher = compile_wake_matcher("Hey Jarvis")
 
     assert await pipe._verify_oww_hit(b"\x00\x00" * 100) is False
     assert stt.calls == 1
@@ -139,19 +143,21 @@ async def test_verify_oww_hit_still_verifies_jarvis() -> None:
 # set_wake_plan — live reconfiguration (no restart)
 # --------------------------------------------------------------------------
 
-def test_set_wake_plan_live_swaps_to_pretrained_model(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_set_wake_plan_live_swaps_to_custom_model(tmp_path) -> None:
     pipe = _pipe()
-    _pretend_oww_models_exist(monkeypatch, "alexa")
-    plan = resolve_wake_plan(_cfg(phrase="Alexa"), local_whisper_available=False)
+    onnx = tmp_path / "hey_fable.onnx"
+    onnx.write_bytes(b"stub")
+    plan = resolve_wake_plan(
+        _cfg(phrase="Hey Fable", engine="custom_onnx", custom_model_path=str(onnx)),
+        local_whisper_available=False,
+    )
     pipe.set_wake_plan(plan)
 
-    assert pipe._wake._keywords == ("alexa",)
+    assert pipe._wake._keywords == (plan.oww_keyword,)
     assert pipe._wake._model_path == plan.oww_model_path
     assert pipe._wake_matcher is plan.matcher
     assert pipe._openwakeword_enabled is True
-    assert pipe._wake_phrase_label == "Alexa"
+    assert pipe._wake_phrase_label == "Hey Fable"
     assert pipe._wake_reload_event.is_set()  # running wake loop will re-arm
 
 
@@ -167,13 +173,15 @@ def test_set_wake_plan_stt_match_enables_whisper_disables_oww() -> None:
     assert pipe._wake_reload_event.is_set()
 
 
-def test_set_wake_plan_switch_back_to_jarvis_reenables_oww() -> None:
+def test_set_wake_plan_switch_between_phrases_stays_on_stt_match(tmp_path) -> None:
+    # Both phrases run the generic stt_match path now — switching phrases
+    # re-arms the whisper wake and never re-enables a bundled OWW model.
     pipe = _pipe()
     pipe.set_wake_plan(resolve_wake_plan(_cfg(phrase="Computer"), local_whisper_available=True))
     pipe._wake_reload_event.clear()
     pipe.set_wake_plan(resolve_wake_plan(_cfg(phrase="Hey Jarvis"), local_whisper_available=True))
 
-    assert pipe._openwakeword_enabled is True
-    assert pipe._wake._keywords == ("hey_jarvis",)
-    assert pipe._whisper_wake_enabled is False
+    assert pipe._openwakeword_enabled is False
+    assert pipe._whisper_wake_enabled is True
+    assert pipe._wake_phrase_label == "Hey Jarvis"
     assert pipe._wake_reload_event.is_set()

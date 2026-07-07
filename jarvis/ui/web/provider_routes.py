@@ -673,12 +673,37 @@ def _worker_usable(provider: str) -> bool:
         return False
 
 
+def _worker_flagged_dead(provider: str) -> bool:
+    """True when the SELECTED worker provider is proven dead/cooling right
+    now — signals the presence-only ``_worker_usable`` cannot see (the
+    2026-07-06 gap: an expired-in-place OAuth token, a session-dead flag, a
+    quota cooldown). Cheap + offline; any probe failure degrades to False
+    (fall back to the presence check, never a false red).
+    """
+    p = (provider or "").lower()
+    try:
+        if p in {"claude-api", "claude"}:
+            from jarvis.claude_quota_state import claude_in_quota_cooldown
+            from jarvis.missions.init import _claude_cli_auth_viable
+
+            return claude_in_quota_cooldown() or not _claude_cli_auth_viable()
+        if p in _CODEX_SUBAGENT_SLUGS or p in {"codex", "openai-codex"}:
+            from jarvis.codex_auth_state import codex_needs_reauth
+            from jarvis.codex_quota_state import codex_in_quota_cooldown
+
+            return codex_needs_reauth() or codex_in_quota_cooldown()
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
 def _jarvis_agent_section_health(cfg: Any) -> SectionHealth:
     """Subagents tab: reflects whether the SELECTED heavy-task worker is usable.
 
     A real "does it answer" call for a CLI worker is heavy, so v1 reports the
-    connectedness signal — connected/keyed → ok, otherwise needs_setup. It never
-    flags ``error`` (a connected-but-failing CLI worker is out of scope here).
+    connectedness signal — connected/keyed → ok, otherwise needs_setup. Since
+    2026-07-07 it distinguishes degraded (fallback carries) from error
+    (nothing reachable).
     """
     brain = getattr(cfg, "brain", None) if cfg is not None else None
     if brain is None:
@@ -699,14 +724,35 @@ def _jarvis_agent_section_health(cfg: Any) -> SectionHealth:
         )
     spec = get_spec(provider)
     label = spec.label if spec is not None else provider
-    if _worker_usable(provider):
+    if _worker_usable(provider) and not _worker_flagged_dead(provider):
         return SectionHealth(
             status=_section_health.OK, reason="ok", detail=f"Subagent worker: {label}"
         )
+    # The selected worker cannot run right now. Distinguish "a fallback
+    # family carries the missions" (amber) from "nothing is reachable —
+    # the next mission WILL fail" (red).
+    try:
+        from jarvis.missions.init import reachable_worker_families
+
+        families = reachable_worker_families()
+    except Exception:  # noqa: BLE001
+        families = []
+    if families:
+        return SectionHealth(
+            status=_section_health.NEEDS_SETUP,
+            reason="degraded",
+            detail=(
+                f"Subagent worker '{label}' is unavailable — missions run on "
+                f"{families[0]} until it is reconnected"
+            ),
+        )
     return SectionHealth(
-        status=_section_health.NEEDS_SETUP,
-        reason="not_configured",
-        detail=f"Subagent worker '{label}' is not connected",
+        status=_section_health.ERROR,
+        reason="no_provider",
+        detail=(
+            f"No subagent provider is reachable — missions will fail. "
+            f"Reconnect '{label}' or add an API key."
+        ),
     )
 
 

@@ -22,10 +22,12 @@ Privacy rule (AP-7 / §5 overview):
     Query text is logged only at DEBUG level.  Hit count summary is
     INFO level.
 
-Vault-root fallback (§6 AGENT-B):
-    If ``cfg.wiki_integration.vault_root`` is unavailable at construction
-    time, the tool defaults to ``Path("wiki/obsidian-vault")`` relative
-    to the current working directory and logs a single WARNING.
+Vault-root resolution (§6 AGENT-B, spec A7):
+    ``cfg.wiki_integration.vault_root`` is resolved through the canonical
+    :func:`jarvis.memory.wiki.vault_root.resolve_vault_root` — a relative
+    root anchors to the repo root, never the process CWD. If the config
+    field is unavailable at construction time, the tool falls back to the
+    resolver's default vault location and logs a single WARNING.
 """
 from __future__ import annotations
 
@@ -142,12 +144,15 @@ class WikiRecallTool:
 def _build_search_instance() -> "VaultSearch":
     """Build a ``VaultSearch`` with the configured vault root.
 
-    Falls back to ``Path("wiki/obsidian-vault")`` (relative to cwd) when
-    the config field is absent.  Logs a single WARNING in that case.
+    Resolves through :func:`jarvis.memory.wiki.vault_root.resolve_vault_root`
+    (spec A7), so a relative root anchors to the repo root, never the
+    process CWD.  Falls back to the resolver's default vault location when
+    the config field is absent, logging a single WARNING in that case.
     """
     from jarvis.memory.wiki.search import VaultSearch
+    from jarvis.memory.wiki.vault_root import resolve_vault_root
 
-    vault_root: Path | None = None
+    raw: str | Path | None = None
     try:
         from jarvis.core import config as cfg
 
@@ -155,16 +160,16 @@ def _build_search_instance() -> "VaultSearch":
         # Agent A defines wiki_integration.vault_root; it may not exist yet.
         wiki_cfg = getattr(loaded, "wiki_integration", None)
         if wiki_cfg is not None:
-            vault_root = Path(wiki_cfg.vault_root)
+            raw = wiki_cfg.vault_root
     except Exception as exc:  # noqa: BLE001
         log.debug("wiki-recall: config load skipped: %s", exc)
 
-    if vault_root is None:
-        vault_root = Path("wiki/obsidian-vault")
+    resolved = resolve_vault_root(raw).path
+    if raw is None:
         log.warning(
             "wiki-recall: cfg.wiki_integration.vault_root not found; "
             "defaulting to %s",
-            vault_root.resolve(),
+            resolved,
         )
 
-    return VaultSearch(vault_root)
+    return VaultSearch(resolved)

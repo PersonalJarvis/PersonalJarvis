@@ -911,7 +911,9 @@ class SpeechPipeline:
         # ``cfg.trigger.hotkey`` when ``cfg.trigger.push_to_talk`` is True.
         ptt_hotkeys: tuple[str, ...] = (),
         hangup_hotkeys: tuple[str, ...] = ("f1+f2",),
-        wake_keywords: tuple[str, ...] = ("hey_jarvis",),
+        # Legacy keyword seed for the no-plan provider. Empty: no wake model
+        # ships (design 2026-07-07); only a wake plan arms a real detector.
+        wake_keywords: tuple[str, ...] = (),
         wake_threshold: float = 0.10,
         stt: FasterWhisperProvider | None = None,
         tts: GeminiFlashTTS | None = None,
@@ -1110,6 +1112,16 @@ class SpeechPipeline:
         self._hotkey_reload_event = asyncio.Event()
         if wake is not None:
             self._wake = wake
+        elif wake_plan is not None and getattr(wake_plan, "engine", "") == "vosk_kws":
+            # Any-word Vosk grammar KWS (design spec 2026-07-05): identical
+            # CPU-only detector on every OS, phrase is pure configuration.
+            from jarvis.plugins.wake.vosk_kws_provider import VoskKwsProvider
+
+            self._wake = VoskKwsProvider(
+                phrase=wake_plan.phrase,
+                model_path=wake_plan.vosk_model_path or "",
+                keyword=wake_plan.oww_keyword,
+            )
         elif wake_plan is not None:
             self._wake = OpenWakeWordProvider(
                 keywords=(wake_plan.oww_keyword,),
@@ -1126,27 +1138,28 @@ class SpeechPipeline:
             self._wake = OpenWakeWordProvider(
                 keywords=wake_keywords, activation_threshold=wake_threshold
             )
-        # Stays off whenever there is no local Whisper engine (lightweight
-        # path), so the heartbeat reports whisper=off instead of a phantom on.
-        self._whisper_wake_enabled = enable_whisper_wake and self._stt is not None
-        # Rolling-Window Whisper: transkribiert alle 500ms die letzten 2.5s
-        # Audio und matched das Wake-Pattern. Kein VAD-Endpoint-Dependency →
-        # robust auch bei leisem Mic. RollingWhisperWake needs a local Whisper
-        # engine; in the lightweight path (self._stt is None) it is always off.
-        # When a wake_plan is set, its matcher drives the phrase match so a
-        # custom phrase ("Computer") is detected instead of "jarvis".
-        if enable_whisper_wake and self._stt is not None:
-            _poll = self._wake_poll_interval()
-            if self._wake_matcher is not None:
-                self._whisper_wake = RollingWhisperWake(
-                    self._stt, pattern=self._wake_matcher, poll_interval_s=_poll
-                )
-            else:
-                self._whisper_wake = RollingWhisperWake(
-                    self._stt, poll_interval_s=_poll
-                )
+        # Rolling-window Whisper: transcribes the last ~2 s of audio on a poll
+        # cadence and matches the wake phrase. No VAD-endpoint dependency, so
+        # it stays robust on a quiet mic. It needs BOTH a local Whisper engine
+        # AND a phrase matcher: with no wake plan there is no phrase to listen
+        # for (no shipped default pattern — design 2026-07-07), so no rolling
+        # detector is armed; a later set_wake_plan() arms one live. The
+        # enabled flag stays in lockstep so the heartbeat reports whisper=off
+        # instead of a phantom on.
+        if (
+            enable_whisper_wake
+            and self._stt is not None
+            and self._wake_matcher is not None
+        ):
+            self._whisper_wake = RollingWhisperWake(
+                self._stt,
+                pattern=self._wake_matcher,
+                poll_interval_s=self._wake_poll_interval(),
+            )
+            self._whisper_wake_enabled = True
         else:
             self._whisper_wake = None
+            self._whisper_wake_enabled = False
         # require_hey_prefix may arrive either as an explicit kwarg or from
         # cfg.trigger.require_hey_prefix. The kwarg wins so tests can override.
         cfg_require = True
@@ -1440,6 +1453,19 @@ class SpeechPipeline:
         # docs/plans/voice-phrase-mismatch-2026-05-26/README.md and the
         # ``suppress_preamble_after_interrupt_ms`` knob on AckBrainConfig.
         self._last_interrupt_announcement_ts: float | None = None
+        # 2026-07-06 interim-ack redesign: (text, monotonic) of the last SPOKEN
+        # preamble/progress announcement. ``_on_announcement`` drops a new
+        # preamble/progress line with identical wording inside the
+        # ``preamble_dedup_window_s`` window — no emitter may repeat itself
+        # verbatim in quick succession (forensic 2026-07-05: the identical
+        # grounded ack spoke three times in one session).
+        self._last_preamble_spoken: tuple[str, float] | None = None
+        # v2 anti-loop backstop: monotonic timestamps of SPOKEN preamble/
+        # progress lines. ``_on_announcement`` drops anything beyond
+        # ``preamble_rate_limit_per_min`` in a rolling 60 s window so the
+        # historical "kept repeating forever" bug class dies at this shared
+        # chokepoint no matter which emitter misbehaves.
+        self._preamble_spoken_times: deque[float] = deque(maxlen=32)
         # AD-OE5/OE6: completion-class announcements that arrive while the user
         # holds the floor are parked here and flushed at the next turn-boundary
         # (when the turn-state returns to LISTENING/IDLE) instead of barging
@@ -1656,6 +1682,38 @@ class SpeechPipeline:
         if callable(setter):
             setter(float(volume))
 
+    def set_audio_devices(
+        self,
+        *,
+        input_device: str | None = None,
+        output_device: str | None = None,
+    ) -> None:
+        """Live-apply a Settings device pick — no app/pipeline restart.
+
+        ``None`` leaves a side unchanged; a device NAME pins it and the
+        ``"auto-headset"`` sentinel restores automatic selection (resolution
+        happens at stream-open time in the player/capture resolvers).
+
+        - Output: ``AudioPlayer.set_device`` re-resolves and tears down the
+          persistent stream, so the next utterance plays on the new device.
+        - Input: every mic open reads ``self._input_device`` (per-turn opens
+          pick it up naturally); the long-lived wake session is re-armed via
+          ``_wake_reload_event`` — the same live-reload contract as
+          ``set_wake_plan`` — so the always-on mic reopens on the new device
+          within a moment.
+        """
+        if output_device is not None:
+            self._output_device = output_device or None
+            player = getattr(self, "_player", None)
+            setter = getattr(player, "set_device", None)
+            if callable(setter):
+                setter(self._output_device)
+        if input_device is not None:
+            self._input_device = input_device or None
+            reload_event = getattr(self, "_wake_reload_event", None)
+            if reload_event is not None:
+                reload_event.set()
+
     def _wake_poll_interval(self) -> float:
         """The stt_match wake poll interval, derived from the user's Sensitivity
         slider (``[trigger.wake_word].sensitivity``). Higher sensitivity polls
@@ -1713,8 +1771,18 @@ class SpeechPipeline:
                 # is ~71 s; base/cpu ~0.45 s, measured). Seed the prompt with the
                 # custom phrase so the small model transcribes the (proper-noun)
                 # wake name instead of a common word — forensic 2026-06-22.
+                # fast_first: this runs on a live settings switch (often from
+                # the FastAPI handler), so it must stay non-blocking. The
+                # non-fast build now runs the one-time GPU inference probe
+                # (blocking up to minutes on a cache miss) — that belongs to
+                # the boot hot-swap only. Trade-off: after a LIVE wake-word
+                # switch the stt_match wake runs on base/cpu until the next
+                # app start, whose background hot-swap restores turbo/cuda.
                 self._stt = build_wake_whisper(
-                    stt_cfg, language=lang, wake_phrase=getattr(plan, "phrase", None)
+                    stt_cfg,
+                    language=lang,
+                    wake_phrase=getattr(plan, "phrase", None),
+                    fast_first=True,
                 )
                 if self._probe_stt is None:
                     try:
@@ -1748,6 +1816,21 @@ class SpeechPipeline:
                 "enable the wake word.",
                 self._wake_phrase_label,
             )
+        elif engine == "vosk_kws":
+            # Any-word Vosk grammar KWS (design spec 2026-07-05) — same
+            # detector on every OS; the phrase is pure configuration, so a
+            # live wake-word change is just a new provider instance.
+            from jarvis.plugins.wake.vosk_kws_provider import VoskKwsProvider
+
+            self._wake = VoskKwsProvider(
+                phrase=plan.phrase,
+                model_path=getattr(plan, "vosk_model_path", None) or "",
+                keyword=plan.oww_keyword,
+            )
+            self._openwakeword_enabled = True
+            if self._whisper_wake is not None and self._wake_matcher is not None:
+                self._whisper_wake._pattern = self._wake_matcher  # noqa: SLF001
+            self._whisper_wake_enabled = False
         elif engine in ("openwakeword", "custom_onnx"):
             self._wake = OpenWakeWordProvider(
                 keywords=(plan.oww_keyword,),
@@ -2730,6 +2813,35 @@ class SpeechPipeline:
                 event.text[:80],
             )
             return
+        # Usefulness gate (2026-07-06 interim-ack redesign): the grounded
+        # router ack publishes the instant a tool is SELECTED — too early to
+        # know whether the bridge is even needed. When the voice turn is
+        # currently PROCESSING, hold the ack for the commit grace and only
+        # speak it if the brain is STILL busy afterwards (same AD-OE5 helper
+        # the Flash-Brain streaming path uses); a turn that answers within
+        # the grace stays ack-free. Announcements arriving with no voice turn
+        # in flight (chat path) keep legacy behavior.
+        if (
+            is_preamble
+            and getattr(event, "source_layer", None) == "brain.router.ack"
+            and getattr(self, "_turn_state", TurnTakingState.IDLE)
+            is TurnTakingState.PROCESSING
+        ):
+            ack_cfg = getattr(getattr(self, "_config", None), "ack_brain", None)
+            commit_grace_ms = int(
+                getattr(ack_cfg, "grounded_ack_commit_grace_ms", 900) or 0
+            )
+            if commit_grace_ms > 0 and not await self._await_ack_turn_commit(
+                commit_grace_ms
+            ):
+                log.info(
+                    "Grounded ack dropped — turn left PROCESSING during the "
+                    "%d ms commit grace (state=%s): %r",
+                    commit_grace_ms,
+                    getattr(self._turn_state, "name", self._turn_state),
+                    event.text[:80],
+                )
+                return
         if event.priority == "interrupt":
             # Arm the quiet window BEFORE TTS so a synchronous publish of a
             # preamble immediately afterwards sees the up-to-date timestamp.
@@ -2765,6 +2877,57 @@ class SpeechPipeline:
         if not scrubbed.cleaned.strip():
             log.info("Announcement nach Filter leer — schweige.")
             return
+        # Duplicate-wording safety net (2026-07-06 interim-ack redesign): no
+        # emitter may speak the SAME preamble/progress line twice in quick
+        # succession, regardless of source (grounded ack, Flash-Brain, skill) —
+        # forensic 2026-07-05: one session spoke the identical grounded ack
+        # three times. Only the ephemeral kinds are deduped;
+        # completion/interrupt readbacks deliver owed answers and may repeat.
+        if is_preamble or is_progress:
+            dedup_cfg = getattr(getattr(self, "_config", None), "ack_brain", None)
+            dedup_window_s = float(
+                getattr(dedup_cfg, "preamble_dedup_window_s", 180) or 0
+            )
+            spoken_text = scrubbed.cleaned.strip()
+            last_spoken = getattr(self, "_last_preamble_spoken", None)
+            if (
+                dedup_window_s > 0
+                and last_spoken is not None
+                and last_spoken[0] == spoken_text
+                and (time.monotonic() - last_spoken[1]) < dedup_window_s
+            ):
+                log.info(
+                    "Preamble dropped — identical wording spoken %.0fs ago: %r",
+                    time.monotonic() - last_spoken[1],
+                    event.text[:80],
+                )
+                return
+            # v2 anti-loop backstop: hard cap on spoken preamble/progress
+            # lines per rolling 60 s window, ANY source. Kills the historical
+            # "kept saying it forever" bug class at the last shared
+            # chokepoint. Completion/interrupt readbacks never enter this
+            # branch (owed answers are exempt).
+            rate_limit = int(
+                getattr(dedup_cfg, "preamble_rate_limit_per_min", 3) or 0
+            )
+            spoken_times = getattr(self, "_preamble_spoken_times", None)
+            if spoken_times is None:
+                spoken_times = deque(maxlen=32)
+                self._preamble_spoken_times = spoken_times
+            now_monotonic = time.monotonic()
+            if rate_limit > 0:
+                recent_count = sum(
+                    1 for t in spoken_times if now_monotonic - t < 60.0
+                )
+                if recent_count >= rate_limit:
+                    log.warning(
+                        "Preamble dropped — rate-limit backstop (%d spoken in "
+                        "the last 60s, cap %d): %r",
+                        recent_count, rate_limit, event.text[:80],
+                    )
+                    return
+            self._last_preamble_spoken = (spoken_text, now_monotonic)
+            spoken_times.append(now_monotonic)
         # We are now committed to actually speaking this announcement (past every
         # suppression / defer / empty guard). Record it as voice activity so the
         # idle-timeout branch in ``_active_session`` re-arms a fresh window: an
@@ -4128,8 +4291,8 @@ class SpeechPipeline:
 
     async def _verify_oww_hit(self, pcm_snapshot: bytes) -> bool:
         """Second-stage gate: ask the utterance STT whether the few seconds
-        leading up to an OpenWakeWord hit actually contained "hey/hi/hallo +
-        jarv". Returns True if the strict prefix is in the transcript.
+        leading up to an OpenWakeWord hit actually contained the configured
+        wake phrase. Returns True if the phrase's matcher confirms it.
 
         STT-outage failure modes degrade OPEN (return True with a log line) so
         a misconfigured STT, a network blip, or a rate-limit cannot brick the
@@ -4138,23 +4301,21 @@ class SpeechPipeline:
         (genuine other speech) suppresses, preserving the bare-"Jarvis"
         BUG-009 guard. How a WORKING STT that heard no speech (empty
         transcript / silence-hallucination boilerplate) is treated depends on
-        the engine: the pretrained hey_jarvis path degrades open (forensic
-        2026-06-28 — short real wakes often mis-transcribe to nothing), while
-        a user-trained custom_onnx hit SUPPRESSES (live forensic 2026-07-01 —
-        such models false-fire on breath/noise, so "no speech heard" is
-        evidence of a false fire, not an STT problem).
+        the engine: a user-trained custom_onnx hit SUPPRESSES (live forensic
+        2026-07-01 — such models false-fire on breath/noise, so "no speech
+        heard" is evidence of a false fire, not an STT problem), while any
+        other OWW hit keeps the historical degrade-open behaviour (forensic
+        2026-06-28 — short real wakes often mis-transcribe to nothing).
         """
         if not self._require_hey_prefix:
             return True
-        # The STT re-verification runs for the jarvis family (the hey_jarvis
-        # model also fires on bare "Jarvis" — BUG-009) AND for user-trained
-        # custom_onnx models (live forensic 2026-07-01: a few-shot model scored
-        # breath/ambient/other speech up to 1.000 — a false-positive storm;
-        # the transcript matched against the phrase's own sound-folded fuzzy
-        # matcher is the real discriminator). Only a specific PRETRAINED model
-        # (alexa/mycroft/rhasspy) is exempt via verify_prefix=False: those are
-        # their own discriminator, and the STT would mis-transcribe the foreign
-        # brand word and wrongly reject valid hits.
+        # The STT re-verification runs for user-trained custom_onnx models
+        # (live forensic 2026-07-01: a few-shot model scored breath/ambient/
+        # other speech up to 1.000 — a false-positive storm; the transcript
+        # matched against the phrase's own sound-folded fuzzy matcher is the
+        # real discriminator). Since the product ships no pretrained model
+        # (design 2026-07-07), custom_onnx plans are the only source of OWW
+        # hits; vosk_kws is exempt via verify_prefix=False (its own confirm).
         plan = getattr(self, "_wake_plan", None)
         if plan is not None and not getattr(plan, "verify_prefix", True):
             return True
@@ -4202,15 +4363,15 @@ class SpeechPipeline:
             return True
         # For a custom-model hit, a WORKING STT that heard no wake phrase —
         # an empty transcript or a known silence-hallucination boilerplate —
-        # is evidence of a false fire and must SUPPRESS. The pretrained
-        # hey_jarvis path keeps its documented degrade-open behaviour (its
-        # false fires happen on real speech, so an empty transcript there
-        # really does mean the STT failed, forensic 2026-06-28).
+        # is evidence of a false fire and must SUPPRESS. Any other OWW hit
+        # keeps the documented degrade-open behaviour (historical forensic
+        # 2026-06-28: false fires happened on real speech, so an empty
+        # transcript there really does mean the STT failed).
         #
         # Persistent verify-STT failure (Groq 429/503/timeout after retries):
-        # - hey_jarvis: degrade OPEN. Candidates are rare, so an unreachable
-        #   STT is a provider problem, not evidence about what the user said;
-        #   accepting keeps the wake alive through an outage (AP-22).
+        # - non-custom hit: degrade OPEN. Candidates are rare, so an
+        #   unreachable STT is a provider problem, not evidence about what the
+        #   user said; accepting keeps the wake alive through an outage (AP-22).
         # - custom_onnx: FAIL CLOSED (live 2026-07-02, 3 ghost activations
         #   overnight). The fire flood of a weak model eventually hits an STT
         #   timeout, and degrade-open then activates Jarvis although nobody
@@ -4237,7 +4398,7 @@ class SpeechPipeline:
         # "Vielen Dank."). Whisper emits these on silence/noise buffers.
         # - custom_onnx: the buffer held silence/noise → the model false-fired
         #   on breath/ambient → suppress (fail-closed).
-        # - hey_jarvis: forensic 2026-06-28 showed short REAL "Hey Jarvis"
+        # - non-custom hit: forensic 2026-06-28 showed short REAL wake
         #   buffers hallucinate these for ~half of all valid wakes → accept
         #   (degrade-open), else the wake "stops working" intermittently.
         # An arbitrary non-matching transcript (genuine OTHER speech) still
@@ -4260,10 +4421,10 @@ class SpeechPipeline:
         # - custom_onnx: no speech in the buffer → breath/noise false fire →
         #   suppress. This is the "fires out of nowhere" half of the
         #   2026-07-01 storm.
-        # - hey_jarvis: an empty transcription on a strong hit is far more
-        #   likely a silence-mis-transcription of a short real wake than a
-        #   spontaneous model fire → accept (degrade-open, forensic
-        #   2026-06-28 "Hey Jarvis sometimes stops working entirely").
+        # - non-custom hit: an empty transcription on a strong hit is far
+        #   more likely a silence-mis-transcription of a short real wake than
+        #   a spontaneous model fire → accept (degrade-open, forensic
+        #   2026-06-28 "the wake sometimes stops working entirely").
         if not text:
             if custom_model_hit:
                 log.info(
@@ -8055,7 +8216,7 @@ async def _main() -> None:
             if config.trigger.hotkey_hangup.strip()
             else ()
         ),
-        wake_keywords=("hey_jarvis",),
+        wake_keywords=(),
         wake_threshold=0.15,
         stt=stt,
         tts=tts,

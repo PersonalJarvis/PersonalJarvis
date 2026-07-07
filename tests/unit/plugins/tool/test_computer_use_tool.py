@@ -18,8 +18,35 @@ import asyncio
 import uuid
 from collections.abc import AsyncIterator
 
+import pytest
+
 from jarvis.core.protocols import ExecutionContext, HarnessResult, HarnessTask
+from jarvis.harness.computer_use_context import (
+    ComputerUseContext,
+    set_computer_use_context,
+)
 from jarvis.plugins.tool.computer_use_tool import _ctx_output_language
+
+
+@pytest.fixture(autouse=True)
+def _wired_computer_use_context():
+    """Every test in this file below exercises dispatch/ack/background behaviour
+    through a FAKE ``HarnessManager`` — it never reaches the real ``computer-use``
+    harness plugin, so the actual CU dependencies (vision engine, brain manager,
+    tool executor) are irrelevant here; sentinels are enough. Wiring a context
+    keeps the fresh-machine honesty gate at the top of ``ComputerUseTool.execute``
+    (see ``test_execute_without_context_returns_honest_failure`` below) from
+    blocking every other test, which intentionally exercises the WIRED path. The
+    unwired path is tested in isolation by that one test, which overrides this
+    fixture's context with ``set_computer_use_context(None)`` for its own scope.
+    """
+    set_computer_use_context(
+        ComputerUseContext(
+            vision_engine=object(), brain_manager=object(), tool_executor=object(),
+        ),
+    )
+    yield
+    set_computer_use_context(None)
 
 
 def _lang_ctx(user_utterance: str, config: dict) -> ExecutionContext:
@@ -459,6 +486,35 @@ async def test_completion_carries_cu_tool_source_layer_for_history_mirror() -> N
         f"completion must be tagged for the history mirror; got "
         f"{completions[0].source_layer!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Fresh-machine honesty (2026-07-06). On a fresh install [computer_use].enabled
+# defaults to false, so the CU context is never wired — but computer_use stays
+# in ROUTER_TOOLS (ADR-0011). Before this fix every dispatch on such a machine
+# died deep inside the harness with "RuntimeError: ComputerUseHarness context
+# not set". The tool must instead recognize the unset context BEFORE dispatch
+# and answer with an honest, actionable ToolResult.
+# ---------------------------------------------------------------------------
+
+
+async def test_execute_without_context_returns_honest_failure() -> None:
+    """Fresh machine: [computer_use].enabled=false -> context never wired.
+    The tool must degrade to an actionable ToolResult, never raise."""
+    from jarvis.plugins.tool.computer_use_tool import ComputerUseTool
+
+    # Override the file's autouse "wired" fixture for this test's scope only.
+    set_computer_use_context(None)
+    try:
+        tool = ComputerUseTool(bus=None, manager=_FakeHarnessManager())
+        result = await tool.execute({"goal": "open the browser"}, _ctx())
+
+        assert result.success is False
+        assert "not active" in (result.error or "").lower()
+        assert "settings" in (result.error or "").lower()
+    finally:
+        # Global singleton — never leak a wired/unwired state into other tests.
+        set_computer_use_context(None)
 
 
 async def test_success_readback_falls_back_to_done_without_proof() -> None:

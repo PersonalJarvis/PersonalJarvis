@@ -44,6 +44,40 @@ from .stream_consumer import (
 
 logger = logging.getLogger(__name__)
 
+# Provider errors that mean the FAMILY's key is unusable right now — quota
+# depleted / rate-capped ("Your prepayment credits are depleted", 429
+# RESOURCE_EXHAUSTED) or auth-dead ("invalid x-api-key", 401). Either way,
+# retrying the same family is a guaranteed repeat; the per-family cooldown
+# tells the factory's family walk to cross to the next key (missions
+# 019f3d01 + 019f3d0f, 2026-07-07 / BUG-042).
+_FAMILY_UNUSABLE_MARKERS: tuple[str, ...] = (
+    # quota / rate / billing
+    "429",
+    "quota",
+    "rate limit",
+    "rate_limit",
+    "too many requests",
+    "resource_exhausted",
+    "depleted",
+    "credit",
+    "billing",
+    "insufficient",
+    # auth
+    "401",
+    "unauthorized",
+    "authentication",
+    "invalid x-api-key",
+    "invalid api key",
+    "invalid_api_key",
+)
+
+
+def _error_means_family_unusable(text: str) -> bool:
+    """True when a provider error proves the key itself cannot run right now."""
+    low = (text or "").lower()
+    return any(marker in low for marker in _FAMILY_UNUSABLE_MARKERS)
+
+
 # Provider slug -> (module, class). Lazy-imported so a worker for one provider
 # never imports another's SDK path. Slugs match jarvis provider ids.
 _BRAIN_BY_PROVIDER: dict[str, tuple[str, str]] = {
@@ -137,6 +171,25 @@ def _build_brain(provider: str, model: str) -> Any:
     return getattr(mod, cls_name)(model=model)
 
 
+def _tool_incapable_message(model: str, provider: str, *, detail: str = "") -> str:
+    """Shared honest-failure text for a worker model that cannot call tools.
+
+    Missions deliver ALL work through tool calls (Write/Edit/Bash/...); a
+    text-only reply produces an empty diff and the mission dies 3 critic
+    loops later with an inscrutable ``critic_loop_exhausted`` (forensics
+    Bug 10). Fail fast and actionably instead.
+    """
+    msg = (
+        f"worker model {model!r} (provider {provider!r}) cannot call tools, "
+        "and missions deliver work exclusively through tool calls. Pick a "
+        "tool-capable model under Settings -> Jarvis-Agents (brain.worker), "
+        "then retry the mission."
+    )
+    if detail:
+        msg = f"{msg} (provider error: {detail})"
+    return msg
+
+
 class ApiAgentWorker:
     """Phase-6 worker that drives an OpenAI-compatible API brain in a tool loop.
 
@@ -201,6 +254,25 @@ class ApiAgentWorker:
             yield res
             return
 
+        # AP-21: gate on CAPABILITY, and only on an explicit "no" — an absent
+        # probe or one that raises is UNKNOWN, and unknown must PROCEED (never
+        # brick a mission on a probe glitch). Only can_call_tools() returning
+        # False literally gates. Checked BEFORE the turn loop so a tool-less
+        # model fails in one line instead of 3 silent critic loops later.
+        try:
+            can_call_tools = bool(brain.can_call_tools())
+        except Exception:  # noqa: BLE001 — capability probe must never brick a mission
+            can_call_tools = True
+        if not can_call_tools:
+            res = ClaudeResult(
+                subtype="error_during_execution", is_error=True, session_id=session_id,
+                duration_ms=0,
+                result=_tool_incapable_message(resolved_model, self.provider),
+            )
+            _emit_line(res)
+            yield res
+            return
+
         logger.info(
             "ApiAgentWorker[%s] spawn in-process: provider=%s model=%s cwd=%s",
             worker_id, self.provider, resolved_model, worktree,
@@ -235,11 +307,43 @@ class ApiAgentWorker:
                 )
                 text_parts: list[str] = []
                 tool_calls: list[dict[str, Any]] = []
-                async for delta in brain.complete(req):
-                    if delta.content:
-                        text_parts.append(delta.content)
-                    if delta.tool_call:
-                        tool_calls.append(delta.tool_call)
+                try:
+                    async for delta in brain.complete(req):
+                        if delta.content:
+                            text_parts.append(delta.content)
+                        if delta.tool_call:
+                            tool_calls.append(delta.tool_call)
+                except Exception as exc:  # noqa: BLE001
+                    # The capability pre-gate (above) catches a model the brain
+                    # ALREADY knows is tool-incapable. Some providers (OpenRouter
+                    # routing to a tool-less upstream) only discover this on the
+                    # FIRST live round-trip, surfacing as a 404 "No endpoints
+                    # found that support tool use"-class error. Recognize that
+                    # shape on turn 0 and convert it to the SAME honest message
+                    # instead of letting the raw provider error propagate up as
+                    # an inscrutable worker failure. Matched tightly against
+                    # OpenRouter's actual copy so an unrelated turn-0 error that
+                    # merely mentions tools + support (e.g. "too many tools
+                    # defined, exceeds support limit") is NOT mislabeled.
+                    low = str(exc).lower()
+                    no_tool_endpoints = (
+                        ("no endpoints" in low and "tool" in low)
+                        or "support tool use" in low
+                        or ("404" in low and "tool" in low)
+                    )
+                    if turn == 0 and no_tool_endpoints:
+                        res = ClaudeResult(
+                            subtype="error_during_execution", is_error=True,
+                            session_id=session_id,
+                            duration_ms=int((time.perf_counter() - t0) * 1000),
+                            result=_tool_incapable_message(
+                                resolved_model, self.provider, detail=str(exc)
+                            ),
+                        )
+                        _emit_line(res)
+                        yield res
+                        return
+                    raise
 
                 assistant_text = "".join(text_parts).strip()
                 if assistant_text:
@@ -310,6 +414,10 @@ class ApiAgentWorker:
                 subtype="success", is_error=False, session_id=session_id,
                 num_turns=turns, duration_ms=wall_ms, result=summary[:4000],
             )
+            # This family's key works — lift any armed cooldown immediately.
+            from jarvis.api_family_quota_state import clear_api_family_cooldown
+
+            clear_api_family_cooldown(self.provider)
             _emit_line(res)
             yield res
         except asyncio.CancelledError:
@@ -317,6 +425,28 @@ class ApiAgentWorker:
         except Exception as exc:  # noqa: BLE001
             wall_ms = int((time.perf_counter() - t0) * 1000)
             logger.warning("ApiAgentWorker[%s] failed: %s", worker_id, exc, exc_info=True)
+            if _error_means_family_unusable(str(exc)):
+                # Remember that THIS key cannot run right now, fingerprinted so
+                # a freshly saved key lifts the block instantly. The factory's
+                # family walk skips the family on the retry and crosses to the
+                # user's next healthy key (AP-22, BUG-042).
+                from jarvis.api_family_quota_state import mark_api_family_cooldown
+                from jarvis.claude_auth_state import credential_fingerprint
+
+                fp: str | None = None
+                try:
+                    from jarvis.core.config import get_provider_secret
+
+                    fp = credential_fingerprint(get_provider_secret(self.provider))
+                except Exception:  # noqa: BLE001 — unreadable store => unbound cooldown
+                    fp = None
+                mark_api_family_cooldown(self.provider, fingerprint=fp)
+                logger.warning(
+                    "ApiAgentWorker[%s]: provider %r key is unusable (quota/auth) "
+                    "— arming the family cooldown so the worker factory crosses "
+                    "to the next reachable key family on the retry.",
+                    worker_id, self.provider,
+                )
             res = ClaudeResult(
                 subtype="error_during_execution", is_error=True, session_id=session_id,
                 num_turns=turns, duration_ms=wall_ms,

@@ -2,7 +2,7 @@
 
 Regression for the CU paste failure (2026-06-16, session 38134fab): the
 screenshot-only Computer-Use loop tried to paste Elon-Musk posts into the
-BridgeMind Discord and the model emitted the shortcut as a SINGLE token
+exampleserver Discord and the model emitted the shortcut as a SINGLE token
 ``"ctrl+v"`` instead of the documented list form ``["ctrl", "v"]``. The tool
 looked up a key literally named "ctrl+v", never found it, and failed three
 times in a row -> the mission circled into the guard-hit cap and died.

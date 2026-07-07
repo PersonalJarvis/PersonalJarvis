@@ -162,6 +162,42 @@ def test_list_windows_macos_parses_osascript(monkeypatch):
     assert "Safari — Apple" in titles
 
 
+def test_list_windows_linux_decodes_non_utf8_locale_titles(monkeypatch):
+    # AP-23 wave-2 finding 8: wmctrl output is parsed with text=True; without a
+    # pinned encoding="utf-8", errors="replace", a title byte sequence that the
+    # ambient locale can't decode raises UnicodeDecodeError instead of just
+    # degrading the one unparsable character. The fake below mimics that
+    # contract: it only returns cleanly when both kwargs are set exactly as the
+    # fix requires, so this test is RED on the pre-fix code and GREEN after.
+    monkeypatch.setattr(ws, "detect_platform", lambda: "linux")
+    monkeypatch.setattr(ws, "is_wayland", lambda: False)
+    monkeypatch.setattr(ws, "display_present", lambda: True)
+    monkeypatch.setattr("shutil.which", lambda n: f"/usr/bin/{n}")
+
+    def _fake_run(*args, **kwargs):
+        if kwargs.get("encoding") != "utf-8" or kwargs.get("errors") != "replace":
+            raise UnicodeDecodeError("cp1252", b"\xff\xfe", 0, 1, "invalid byte")
+        return _cp(0, stdout="0x01 0 host café — 日本語.txt\n")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    titles = [w.title for w in ws.list_windows()]
+    assert any("café" in t for t in titles)
+
+
+def test_list_windows_macos_decodes_non_utf8_locale_titles(monkeypatch):
+    monkeypatch.setattr(ws, "detect_platform", lambda: "darwin")
+    monkeypatch.setattr("shutil.which", lambda n: f"/usr/bin/{n}")
+
+    def _fake_run(*args, **kwargs):
+        if kwargs.get("encoding") != "utf-8" or kwargs.get("errors") != "replace":
+            raise UnicodeDecodeError("cp1252", b"\xff\xfe", 0, 1, "invalid byte")
+        return _cp(0, stdout="Safäri — 日本語\n")  # i18n-allow: non-ASCII title fixture (encoding under test)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    titles = [w.title for w in ws.list_windows()]
+    assert any("Safäri" in t for t in titles)  # i18n-allow: non-ASCII title fixture (encoding under test)
+
+
 def test_list_windows_headless_linux_is_empty(monkeypatch):
     monkeypatch.setattr(ws, "detect_platform", lambda: "linux")
     monkeypatch.setattr(ws, "is_wayland", lambda: False)
@@ -196,6 +232,36 @@ def test_get_foreground_title_macos_empty_without_tool(monkeypatch):
     monkeypatch.setattr(ws, "detect_platform", lambda: "darwin")
     monkeypatch.setattr("shutil.which", lambda n: None)
     assert ws.get_foreground_title() == ""
+
+
+def test_get_foreground_title_macos_decodes_non_utf8_locale_title(monkeypatch):
+    # Same finding-8 contract as the list_windows tests above, for the
+    # single-title foreground read path.
+    monkeypatch.setattr(ws, "detect_platform", lambda: "darwin")
+    monkeypatch.setattr("shutil.which", lambda n: f"/usr/bin/{n}")
+
+    def _fake_run(*args, **kwargs):
+        if kwargs.get("encoding") != "utf-8" or kwargs.get("errors") != "replace":
+            raise UnicodeDecodeError("cp1252", b"\xff\xfe", 0, 1, "invalid byte")
+        return _cp(0, stdout="Übersicht — Müller.txt")  # i18n-allow: umlaut title fixture (encoding under test)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    assert ws.get_foreground_title() == "Übersicht — Müller.txt"  # i18n-allow: umlaut title fixture (encoding under test)
+
+
+def test_get_foreground_title_linux_decodes_non_utf8_locale_title(monkeypatch):
+    monkeypatch.setattr(ws, "detect_platform", lambda: "linux")
+    monkeypatch.setattr(ws, "is_wayland", lambda: False)
+    monkeypatch.setattr(ws, "display_present", lambda: True)
+    monkeypatch.setattr("shutil.which", lambda n: f"/usr/bin/{n}")
+
+    def _fake_run(*args, **kwargs):
+        if kwargs.get("encoding") != "utf-8" or kwargs.get("errors") != "replace":
+            raise UnicodeDecodeError("cp1252", b"\xff\xfe", 0, 1, "invalid byte")
+        return _cp(0, stdout="Übersicht — Müller.txt")  # i18n-allow: umlaut title fixture (encoding under test)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    assert ws.get_foreground_title() == "Übersicht — Müller.txt"  # i18n-allow: umlaut title fixture (encoding under test)
 
 
 # --- raise_window (raise a known window via the hardened path) ---------------

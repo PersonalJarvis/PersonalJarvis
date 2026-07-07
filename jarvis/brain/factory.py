@@ -280,26 +280,24 @@ def _resolve_wiki_vault_root(config: Any) -> Path:
 
     Reads ``config.wiki_integration.vault_root`` — the SAME field every
     other wiki consumer uses (``wiki_recall._build_search_instance``,
-    ``wiki_routes._resolve_vault_root``). Falls back to the standard
-    ``<project>/wiki/obsidian-vault`` path only as a last resort when the
-    config has no ``wiki_integration`` section (older config) or its value
-    is empty.
+    ``wiki_routes._resolve_vault_root``) — and resolves it through the
+    canonical :func:`jarvis.memory.wiki.vault_root.resolve_vault_root`
+    (spec A7), so a relative root anchors to the repo root, never the
+    process CWD. Falls back to the resolver's standard
+    ``<project>/wiki/obsidian-vault`` default when the config has no
+    ``wiki_integration`` section (older config) or its value is empty.
 
     Historical bug: this previously read ``config.memory.vault_root``,
     a field that never existed on ``MemoryConfig`` — so it always
     resolved to ``None`` and a user's ``[wiki_integration].vault_root``
     was silently ignored on the voice path.
     """
-    from jarvis.core import config as cfg
+    from jarvis.memory.wiki.vault_root import resolve_vault_root
 
     raw = getattr(getattr(config, "wiki_integration", None), "vault_root", None)
-    if raw is None or str(raw).strip() == "":
-        # Last-resort default: the standard in-repo vault location.
-        return cfg.PROJECT_ROOT / "wiki" / "obsidian-vault"
-    path = Path(raw)
-    if not path.is_absolute():
-        path = (cfg.PROJECT_ROOT / path)
-    return path
+    if raw is not None and str(raw).strip() == "":
+        raw = None
+    return resolve_vault_root(raw).path
 
 
 def _load_tools_for_tier(
@@ -1063,7 +1061,16 @@ def _phase2_full_brain(
                     if _inst.name not in cu_tools:
                         cu_tools[_inst.name] = _inst
                 except Exception as _exc:  # noqa: BLE001
-                    log.debug("CU extra tool '%s' not loadable: %s", _ep.name, _exc)
+                    # WARNING, not debug: a CU tool that silently vanishes
+                    # here makes every plan that names it fail at execute
+                    # time with "tool not wired" — invisible at default log
+                    # level for months (2026-07-06 forensic: click/
+                    # click_element/move_mouse were dropped on every host
+                    # without the OS-Level editable install).
+                    log.warning(
+                        "CU tool '%s' failed to load and is DROPPED from the "
+                        "Computer-Use tool set: %s", _ep.name, _exc,
+                    )
             # The `drag` action has no entry-point plugin (it was historically
             # handled inline); inject it directly so the CU loop routes drag
             # through the ToolExecutor for risk-tier / blacklist / audit parity
@@ -1074,7 +1081,10 @@ def _phase2_full_brain(
 
                 cu_tools.setdefault("drag", DragTool())
             except Exception as _exc:  # noqa: BLE001
-                log.debug("CU drag tool not loadable: %s", _exc)
+                log.warning(
+                    "CU drag tool failed to load and is DROPPED from the "
+                    "Computer-Use tool set: %s", _exc,
+                )
             # Wave 3: optionally build the native Gemini computer_use engine.
             # Returns None unless [computer_use].prefer_native is on AND the
             # active provider is Gemini, so the default (hand-rolled) path is

@@ -20,6 +20,7 @@ from types import SimpleNamespace
 from jarvis.core.events import WakeCandidateDetected, WakeWordDetected
 from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
 from jarvis.speech.rolling_whisper_wake import RollingWhisperWake
+from jarvis.speech.wake_phrase import compile_wake_matcher
 from ui.orb.bus_bridge import OrbBusBridge
 
 # Instrumented ceiling for the reveal EVENT path (wake detected -> bar shown).
@@ -29,7 +30,9 @@ _REVEAL_BUDGET_MS = 100.0
 
 
 def test_rolling_whisper_poll_interval_is_snappy() -> None:
-    wake = RollingWhisperWake(FasterWhisperProvider())
+    wake = RollingWhisperWake(
+        FasterWhisperProvider(), pattern=compile_wake_matcher("Hey Nova")
+    )
     assert wake._poll_interval_s <= 0.2, (  # noqa: SLF001
         "the custom-wake detector must poll at least every 200 ms so a spoken "
         "wake reaches the bar quickly"

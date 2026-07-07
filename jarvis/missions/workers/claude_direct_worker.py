@@ -136,6 +136,39 @@ def _claude_error_is_model_unavailable(text: str) -> bool:
     return any(m in low for m in _MODEL_UNAVAILABLE_MARKERS)
 
 
+# Markers that mean the claude CLI's AUTH surface is dead — an expired/stale
+# OAuth bearer or an invalid API key. Distinct from the quota/usage markers
+# (the login is not exhausted, it is INVALID) and from model-unavailable.
+# Live shapes: "Failed to authenticate. API Error: 401 Invalid authentication
+# credentials" (2026-07-06, expired OAuth token injected into the isolated
+# worker), "Not logged in · Please run /login" (2026-05-29), "Invalid API key ·
+# Fix external API key" (2026-05-18).
+_CLAUDE_AUTH_FAILURE_MARKERS: tuple[str, ...] = (
+    "failed to authenticate",
+    "invalid authentication",
+    "authentication_error",
+    "invalid api key",
+    "invalid x-api-key",
+    "not logged in",
+    "please run /login",
+    "oauth token has expired",
+    "401",
+    "unauthorized",
+)
+
+
+def _claude_error_is_auth_failure(text: str) -> bool:
+    """True when a claude error string signals dead auth (401 / not logged in).
+
+    Dead auth does not reset on a clock (unlike a quota window) — retrying the
+    same credential is a guaranteed second 401. The caller marks
+    ``claude_auth_dead`` so the worker factory crosses provider families until
+    the user runs ``claude /login`` or saves a fresh key (AP-22).
+    """
+    low = (text or "").lower()
+    return any(m in low for m in _CLAUDE_AUTH_FAILURE_MARKERS)
+
+
 def _resolve_claude_model(primary: Any) -> str:
     """Resolve the claude-cli ``--model`` this worker actually runs.
 
@@ -639,11 +672,14 @@ class ClaudeDirectWorker:
         )
 
         # A healthy Claude run means the Max window is available again — clear
-        # any armed quota cooldown so the factory resumes routing to Claude.
+        # any armed quota cooldown AND any auth-dead flag so the factory
+        # resumes routing to Claude.
         if not final_result.is_error and not timed_out:
+            from jarvis.claude_auth_state import clear_claude_auth_dead
             from jarvis.claude_quota_state import clear_claude_quota_cooldown
 
             clear_claude_quota_cooldown()
+            clear_claude_auth_dead()
 
         # Model-unavailable recovery (live mission 019ec615, 2026-06-14): the
         # configured --model (claude-fable-5) is approved-access-only and the
@@ -697,6 +733,85 @@ class ClaudeDirectWorker:
                 yield ev
             return
 
+        # Auth-failure recovery (2026-07-06, missions 019f36e5 + 019f38b1 —
+        # the exact mirror of the codex-side 2026-06-08 incident): the Claude
+        # Max OAuth token expired in place (nothing refreshes ~/.claude on
+        # this host anymore) and every spawn died "Failed to authenticate.
+        # API Error: 401" while a healthy codex login + OpenRouter key were
+        # available. Dead auth is not a quota window — it never resets on a
+        # clock — so retrying the same credential is a guaranteed second 401:
+        # 1. ALWAYS mark claude_auth_dead (fingerprinting the credential that
+        #    401'd) so the worker factory routes the rest of the session
+        #    cross-family until the user re-authenticates (AP-22).
+        # 2. When codex is reachable, complete THIS mission on the codex
+        #    worker in place (subscription-first, same shape as the quota
+        #    fallback below). `allow_backend_fallback=False` on the nested
+        #    spawn prevents claude->codex->claude ping-pong.
+        if (
+            final_result.is_error
+            and not timed_out
+            and not any_tool_use
+            and _claude_error_is_auth_failure(
+                (final_result.result or "") + "\n" + stderr_text
+            )
+        ):
+            from jarvis.claude_auth_state import (
+                credential_fingerprint,
+                mark_claude_auth_dead,
+            )
+
+            mark_claude_auth_dead(
+                fingerprint=credential_fingerprint(
+                    env.get("CLAUDE_CODE_OAUTH_TOKEN")
+                    or env.get("ANTHROPIC_API_KEY")
+                )
+            )
+            if allow_backend_fallback:
+                from jarvis.codex_auth_state import codex_needs_reauth
+                from jarvis.codex_quota_state import codex_in_quota_cooldown
+
+                from .codex_direct_worker import (
+                    CodexDirectWorker,
+                    _codex_oauth_available,
+                )
+
+                if (
+                    _codex_oauth_available()
+                    and not codex_needs_reauth()
+                    and not codex_in_quota_cooldown()
+                ):
+                    logger.warning(
+                        "ClaudeDirectWorker[%s]: claude auth is dead (%r) with "
+                        "no work delivered — falling back to the codex "
+                        "(ChatGPT) worker so the mission completes. Run "
+                        "`claude /login` (or save a fresh Anthropic key in the "
+                        "API-Keys view) to use Claude again.",
+                        worker_id, (final_result.result or "")[:160],
+                    )
+                    async for ev in CodexDirectWorker().spawn(
+                        prompt,
+                        worktree=worktree,
+                        env=env,
+                        job=job,
+                        worker_id=worker_id,
+                        log_dir=log_dir,
+                        model="",  # codex picks its ChatGPT default
+                        allowed_tools=allowed_tools,
+                        max_turns=max_turns,
+                        timeout_s=timeout_s,
+                        mission_id=mission_id,
+                        allow_backend_fallback=False,
+                    ):
+                        yield ev
+                    return
+            logger.error(
+                "ClaudeDirectWorker[%s]: claude auth is dead (%r) and no codex "
+                "login is reachable — surfacing the auth error honestly; the "
+                "worker factory will cross to another provider family on the "
+                "retry. Run `claude /login` to restore Claude.",
+                worker_id, (final_result.result or "")[:160],
+            )
+
         # Claude Max quota fallback (mirror of the codex->claude direction).
         # Live mission 019eb2fd (2026-06-10 21:23): with the Claude Max
         # five-hour window exhausted ("You've hit your session limit · resets
@@ -713,6 +828,7 @@ class ClaudeDirectWorker:
             and not any_tool_use
         ):
             from jarvis.codex_auth_state import codex_needs_reauth
+            from jarvis.codex_quota_state import codex_in_quota_cooldown
 
             from .codex_direct_worker import (
                 CodexDirectWorker,
@@ -733,6 +849,7 @@ class ClaudeDirectWorker:
                 _codex_error_is_usage_limited(final_result.result or "")
                 and _codex_oauth_available()
                 and not codex_needs_reauth()
+                and not codex_in_quota_cooldown()
             ):
                 logger.warning(
                     "ClaudeDirectWorker[%s]: Claude Max quota limit hit (%r) "
