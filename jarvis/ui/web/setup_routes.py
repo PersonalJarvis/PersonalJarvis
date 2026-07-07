@@ -68,13 +68,48 @@ class ObsidianRegisterResponse(BaseModel):
     """Response payload for ``POST /api/setup/obsidian/register``.
 
     Mirrors :class:`jarvis.setup.obsidian.RegisterResult` 1:1 so the UI
-    can drive its toast / banner from one place.
+    can drive its toast / banner from one place. ``active_vault_root`` and
+    ``restart_required`` (spec A6) are populated for both ``mode``s so the
+    UI always has a stable field to show, regardless of which vault choice
+    the user made.
     """
 
     status: Literal["added", "already_registered", "config_missing", "rolled_back"]
     vault_uuid: str | None = None
     backup_path: str | None = None
     error: str | None = None
+    active_vault_root: str | None = None
+    restart_required: bool = False
+
+
+class ObsidianRegisterRequest(BaseModel):
+    """Request body for ``POST /api/setup/obsidian/register`` (spec A6).
+
+    ``mode="separate"`` (the default — an absent body means this too) is
+    today's behavior, unchanged: register the Jarvis-owned vault in
+    Obsidian's own vault index. ``mode="existing"`` instead writes INTO the
+    user's own already-registered vault: Jarvis's vault root is repointed
+    to ``<existing_vault_path>/Jarvis`` so every wiki write stays
+    contained inside that subtree (containment by construction).
+    """
+
+    mode: Literal["separate", "existing"] = "separate"
+    existing_vault_path: str | None = None
+
+
+class ObsidianVaultInfo(BaseModel):
+    """One entry in the vault picker list (spec A6)."""
+
+    path: str
+    name: str
+
+
+class ObsidianVaultListResponse(BaseModel):
+    """Response payload for ``GET /api/setup/obsidian/vaults``."""
+
+    ok: bool
+    config_exists: bool
+    vaults: list[ObsidianVaultInfo]
 
 
 class SetupStateResponse(BaseModel):
@@ -109,6 +144,20 @@ def _resolve_vault_path(request: Request) -> Path:
             raw = getattr(wiki_cfg, "vault_root", None)
 
     return resolve_vault_root(raw).path
+
+
+def _write_vault_root_config(values: dict) -> None:
+    """Persist ``[wiki_integration].vault_root`` atomically (AP-7).
+
+    Thin seam over :mod:`jarvis.core.config_writer` so tests can stub the
+    disk write without touching the real ``jarvis.toml``. ``values`` is
+    ``{"wiki_integration": {"vault_root": "<abs path>"}}`` — the shape the
+    "existing vault" register flow (spec A6) writes.
+    """
+    from jarvis.core import config_writer
+
+    vault_root = values["wiki_integration"]["vault_root"]
+    config_writer.set_wiki_vault_root(vault_root)
 
 
 # ---------------------------------------------------------------------------
@@ -158,22 +207,85 @@ def obsidian_status(request: Request) -> ObsidianStatusResponse:
     )
 
 
+@router.get("/obsidian/vaults", response_model=ObsidianVaultListResponse)
+def obsidian_vaults(request: Request) -> ObsidianVaultListResponse:
+    """List the user's registered Obsidian vaults for the connect picker (spec A6).
+
+    ``app.state.obsidian_config_path`` is an override hook for tests (and
+    any future multi-user host) — production requests leave it unset and
+    fall back to the platform default via :func:`read_obsidian_vaults`.
+    Never raises a 5xx — a corrupt ``obsidian.json`` degrades to an empty
+    list with ``ok=False`` so the picker UI stays responsive.
+    """
+    override = getattr(request.app.state, "obsidian_config_path", None)
+    try:
+        state = read_obsidian_vaults(override)
+    except ValueError as exc:
+        log.warning("obsidian_vaults: corrupt obsidian.json: %s", exc)
+        return ObsidianVaultListResponse(ok=False, config_exists=True, vaults=[])
+    return ObsidianVaultListResponse(
+        ok=True,
+        config_exists=state.config_exists,
+        vaults=[
+            ObsidianVaultInfo(path=str(v.path), name=v.path.name)
+            for v in state.vaults
+        ],
+    )
+
+
 @router.post("/obsidian/register", response_model=ObsidianRegisterResponse)
 def obsidian_register(
     request: Request,
+    body: ObsidianRegisterRequest | None = None,
     dry_run: bool = Query(default=False),
 ) -> ObsidianRegisterResponse:
-    """Register the Jarvis vault in ``obsidian.json``.
+    """Register a vault for Jarvis's wiki (spec A6: vault choice).
+
+    ``body`` is optional and backward compatible: no body (or an explicit
+    ``{"mode": "separate"}``) is today's unchanged behavior — register the
+    Jarvis-owned vault in Obsidian's own vault index.
+
+    ``mode="existing"`` instead writes INTO the user's own vault: creates
+    ``<existing_vault_path>/Jarvis`` and repoints
+    ``[wiki_integration].vault_root`` there via :func:`_write_vault_root_config`
+    (AP-7). Containment by construction — every subsequent wiki write is
+    physically confined to that subtree, no ``AtomicWriter`` change needed.
+    ``restart_required=True`` because the running curator/FTS index still
+    targets the old vault until ``POST /api/settings/restart-app``.
 
     Status mapping:
       * ``added``               -> HTTP 200
-      * ``already_registered``  -> HTTP 200
-      * ``config_missing``      -> HTTP 409 (Obsidian was never started)
+      * ``already_registered``  -> HTTP 200 (``separate`` mode only)
+      * ``config_missing``      -> HTTP 409 for ``separate`` (Obsidian was
+        never started); HTTP 200 for ``existing`` (the given path does not
+        exist — a user-input error the UI shows inline, not a server fault)
       * ``rolled_back``         -> HTTP 500 (write failure, restored)
 
     Unexpected exceptions are translated to HTTP 500 with a
     ``rolled_back`` payload so the UI shows a consistent error toast.
     """
+    req = body or ObsidianRegisterRequest()
+
+    if req.mode == "existing":
+        target_vault = Path(req.existing_vault_path or "")
+        if not target_vault.is_dir():
+            return ObsidianRegisterResponse(
+                status="config_missing",
+                error="existing vault path not found",
+                active_vault_root=str(_resolve_vault_path(request)),
+                restart_required=False,
+            )
+        jarvis_root = target_vault / "Jarvis"
+        jarvis_root.mkdir(parents=True, exist_ok=True)
+        _write_vault_root_config(
+            {"wiki_integration": {"vault_root": str(jarvis_root)}}
+        )
+        return ObsidianRegisterResponse(
+            status="added",
+            active_vault_root=str(jarvis_root),
+            restart_required=True,
+        )
+
     vault_path = _resolve_vault_path(request)
 
     try:
@@ -198,6 +310,8 @@ def obsidian_register(
             vault_uuid=result.vault_uuid,
             backup_path=backup_str,
             error=result.error,
+            active_vault_root=str(vault_path),
+            restart_required=False,
         )
 
     if result.status == "config_missing":
@@ -261,6 +375,9 @@ async def post_obsidian_seen(request: Request) -> dict[str, bool]:
 __all__ = [
     "router",
     "ObsidianStatusResponse",
+    "ObsidianRegisterRequest",
     "ObsidianRegisterResponse",
+    "ObsidianVaultInfo",
+    "ObsidianVaultListResponse",
     "SetupStateResponse",
 ]

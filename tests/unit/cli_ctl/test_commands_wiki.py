@@ -22,3 +22,8 @@ def test_page(capture_api):
 def test_tree(capture_api):
     runner.invoke(app, ["wiki", "tree"])
     assert capture_api["calls"][-1]["path"] == "/api/wiki/tree"
+
+
+def test_vaults(capture_api):
+    runner.invoke(app, ["wiki", "vaults"])
+    assert capture_api["calls"][-1]["path"] == "/api/setup/obsidian/vaults"

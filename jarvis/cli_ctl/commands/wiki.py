@@ -29,3 +29,9 @@ def page(slug: str = typer.Argument(..., help="Vault path / slug, e.g. people/ja
 def tree() -> None:
     """Show the vault folder tree + stats."""
     invoke.run("GET", "/api/wiki/tree")
+
+
+@app.command()
+def vaults() -> None:
+    """List the user's registered Obsidian vaults (connect picker, spec A6)."""
+    invoke.run("GET", "/api/setup/obsidian/vaults")
