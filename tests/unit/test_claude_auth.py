@@ -74,16 +74,19 @@ def test_oauth_from_credentials_rejects_api_key_token() -> None:
 def test_oauth_from_credentials_flags_expired_token() -> None:
     """2026-07-06 incident: the bearer is PRESENT but expiresAt has passed —
     every API call 401s, so reporting connected=True is a lie that hid the
-    root cause of the all-subagents-fail incident."""
+    root cause of the all-subagents-fail incident. Uses the incident's real
+    epoch-ms shape: token expired 02:53, status probed 20:30 the same day."""
+    expired_at_ms = 1_783_299_232_815  # 2026-07-06T02:53:52 (epoch ms)
+    probed_at_s = 1_783_362_600.0  # 2026-07-06T20:30:00 (epoch s)
     creds = {
         "claudeAiOauth": {
             "accessToken": "sk-ant-oat01-abc",
             "subscriptionType": "max",
-            "expiresAt": 1_000.0 * 1000.0,  # epoch ms, long past
+            "expiresAt": expired_at_ms,
         }
     }
     connected, sub, expired = _oauth_from_credentials(
-        creds, now_fn=lambda: 2_000.0
+        creds, now_fn=lambda: probed_at_s
     )
     assert connected is False
     assert expired is True
@@ -91,14 +94,15 @@ def test_oauth_from_credentials_flags_expired_token() -> None:
 
 
 def test_oauth_from_credentials_future_expiry_is_connected() -> None:
+    now_s = 1_783_362_600.0
     creds = {
         "claudeAiOauth": {
             "accessToken": "sk-ant-oat01-abc",
-            "expiresAt": 3_000.0 * 1000.0,
+            "expiresAt": (now_s + 4 * 3600.0) * 1000.0,  # epoch ms, hours ahead
         }
     }
     connected, _sub, expired = _oauth_from_credentials(
-        creds, now_fn=lambda: 2_000.0
+        creds, now_fn=lambda: now_s
     )
     assert connected is True
     assert expired is False
