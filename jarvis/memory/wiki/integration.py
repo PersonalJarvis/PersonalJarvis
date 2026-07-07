@@ -766,7 +766,9 @@ def kick_journal_backlog(journal: Any, scheduler: Any) -> None:
     try:
         if journal is None or scheduler is None:
             return
-        if journal.backlog_count() <= 0:
+        backlog = journal.backlog_count()
+        _record_backlog_health(backlog)
+        if backlog <= 0:
             return
         from jarvis.memory.wiki.scheduler import TriggerSource
 
@@ -785,12 +787,25 @@ def kick_journal_backlog(journal: Any, scheduler: Any) -> None:
         task.add_done_callback(_log_outcome)
         log.info(
             "wiki_integration: boot drain triggered for %d pending candidate(s)",
-            journal.backlog_count(),
+            backlog,
         )
     except RuntimeError:
         log.debug("wiki_integration: no event loop for the boot journal drain")
     except Exception as exc:  # noqa: BLE001
         log.warning("wiki_integration: boot journal drain skipped: %s", exc)
+
+
+def _record_backlog_health(count: int) -> None:
+    """Record the journal backlog on the health singleton (spec A5).
+
+    Recording must never raise into the boot/pressure-check path (AP-9).
+    """
+    try:
+        from jarvis.memory.wiki.health import health
+
+        health.record_backlog(count)
+    except Exception:  # noqa: BLE001 — health recording must never break the pipeline
+        log.debug("wiki_integration: health.record_backlog failed", exc_info=True)
 
 
 def _load_root_config() -> Any:

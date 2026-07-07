@@ -176,7 +176,16 @@ class ConversationFactExtractor:
         if self._scheduler is None:
             return
         try:
-            if self._journal.backlog_count() < self._consolidate_after:
+            backlog = self._journal.backlog_count()
+            try:
+                from jarvis.memory.wiki.health import health
+
+                health.record_backlog(backlog)
+            except Exception:  # noqa: BLE001 — health recording must never break extraction
+                log.debug(
+                    "ConversationFactExtractor: health.record_backlog failed", exc_info=True,
+                )
+            if backlog < self._consolidate_after:
                 return
             from jarvis.memory.wiki.scheduler import TriggerSource
 
