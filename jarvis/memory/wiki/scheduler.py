@@ -66,7 +66,7 @@ def fire_journal_trigger(
     *,
     name: str = "wiki-journal-trigger",
     log_context: str = "journal trigger",
-) -> "asyncio.Task[Any]":
+) -> asyncio.Task[Any]:
     """Fire ONE background ``JOURNAL`` trigger (fire-and-forget, AP-9).
 
     The single shared entry point for EVERY journal-pressure site so the
@@ -88,7 +88,7 @@ def fire_journal_trigger(
     """
     task = asyncio.create_task(scheduler.trigger(TriggerSource.JOURNAL), name=name)
 
-    def _log_outcome(t: "asyncio.Task[Any]") -> None:
+    def _log_outcome(t: asyncio.Task[Any]) -> None:
         # A lost trigger is retried on the next append/tick, so WARNING
         # (not ERROR) is the right severity.
         if t.cancelled():
