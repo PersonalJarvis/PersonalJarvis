@@ -191,11 +191,11 @@ def test_list_windows_macos_decodes_non_utf8_locale_titles(monkeypatch):
     def _fake_run(*args, **kwargs):
         if kwargs.get("encoding") != "utf-8" or kwargs.get("errors") != "replace":
             raise UnicodeDecodeError("cp1252", b"\xff\xfe", 0, 1, "invalid byte")
-        return _cp(0, stdout="Safäri — 日本語\n")
+        return _cp(0, stdout="Safäri — 日本語\n")  # i18n-allow: non-ASCII title fixture (encoding under test)
 
     monkeypatch.setattr(subprocess, "run", _fake_run)
     titles = [w.title for w in ws.list_windows()]
-    assert any("Safäri" in t for t in titles)
+    assert any("Safäri" in t for t in titles)  # i18n-allow: non-ASCII title fixture (encoding under test)
 
 
 def test_list_windows_headless_linux_is_empty(monkeypatch):
@@ -243,10 +243,10 @@ def test_get_foreground_title_macos_decodes_non_utf8_locale_title(monkeypatch):
     def _fake_run(*args, **kwargs):
         if kwargs.get("encoding") != "utf-8" or kwargs.get("errors") != "replace":
             raise UnicodeDecodeError("cp1252", b"\xff\xfe", 0, 1, "invalid byte")
-        return _cp(0, stdout="Übersicht — Müller.txt")
+        return _cp(0, stdout="Übersicht — Müller.txt")  # i18n-allow: umlaut title fixture (encoding under test)
 
     monkeypatch.setattr(subprocess, "run", _fake_run)
-    assert ws.get_foreground_title() == "Übersicht — Müller.txt"
+    assert ws.get_foreground_title() == "Übersicht — Müller.txt"  # i18n-allow: umlaut title fixture (encoding under test)
 
 
 def test_get_foreground_title_linux_decodes_non_utf8_locale_title(monkeypatch):
@@ -258,10 +258,10 @@ def test_get_foreground_title_linux_decodes_non_utf8_locale_title(monkeypatch):
     def _fake_run(*args, **kwargs):
         if kwargs.get("encoding") != "utf-8" or kwargs.get("errors") != "replace":
             raise UnicodeDecodeError("cp1252", b"\xff\xfe", 0, 1, "invalid byte")
-        return _cp(0, stdout="Übersicht — Müller.txt")
+        return _cp(0, stdout="Übersicht — Müller.txt")  # i18n-allow: umlaut title fixture (encoding under test)
 
     monkeypatch.setattr(subprocess, "run", _fake_run)
-    assert ws.get_foreground_title() == "Übersicht — Müller.txt"
+    assert ws.get_foreground_title() == "Übersicht — Müller.txt"  # i18n-allow: umlaut title fixture (encoding under test)
 
 
 # --- raise_window (raise a known window via the hardened path) ---------------
