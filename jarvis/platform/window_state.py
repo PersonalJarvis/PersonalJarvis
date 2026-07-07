@@ -291,6 +291,8 @@ def _find_and_focus_macos(title_contains: str) -> tuple[bool, str]:
         ["osascript", "-e", script],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=10,
         creationflags=NO_WINDOW_CREATIONFLAGS,
     )
@@ -327,6 +329,8 @@ def _list_windows_macos() -> list[WindowInfo]:
         ["osascript", "-e", script],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=10,
         creationflags=NO_WINDOW_CREATIONFLAGS,
     )
@@ -356,6 +360,8 @@ def _foreground_title_macos() -> str:
         ["osascript", "-e", script],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=10,
         creationflags=NO_WINDOW_CREATIONFLAGS,
     )
@@ -384,6 +390,8 @@ def _find_and_focus_linux(title_contains: str) -> tuple[bool, str]:
         ["wmctrl", "-l"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=10,
         creationflags=NO_WINDOW_CREATIONFLAGS,
     )
@@ -407,6 +415,8 @@ def _find_and_focus_linux(title_contains: str) -> tuple[bool, str]:
         ["wmctrl", "-i", "-a", win_id],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=10,
         creationflags=NO_WINDOW_CREATIONFLAGS,
     )
@@ -423,6 +433,8 @@ def _list_windows_linux() -> list[WindowInfo]:
         ["wmctrl", "-l"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=10,
         creationflags=NO_WINDOW_CREATIONFLAGS,
     )
@@ -444,6 +456,8 @@ def _foreground_title_linux() -> str:
         ["xdotool", "getactivewindow", "getwindowname"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=10,
         creationflags=NO_WINDOW_CREATIONFLAGS,
     )
@@ -767,6 +781,8 @@ def _foreground_window_linux() -> WindowInfo | None:
         ["xdotool", "getactivewindow"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=10,
         creationflags=NO_WINDOW_CREATIONFLAGS,
     )
@@ -782,6 +798,8 @@ def _foreground_window_linux() -> WindowInfo | None:
         ["xdotool", "getwindowname", str(win_id)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=10,
         creationflags=NO_WINDOW_CREATIONFLAGS,
     )
@@ -1017,6 +1035,8 @@ def _window_frame_rect_linux(win: WindowInfo) -> tuple[int, int, int, int] | Non
         ["xdotool", "getwindowgeometry", "--shell", str(int(win.handle))],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=10,
         creationflags=NO_WINDOW_CREATIONFLAGS,
     )
@@ -1111,7 +1131,9 @@ def maximize_window(win: WindowInfo) -> tuple[bool, str]:
             )
             proc = subprocess.run(
                 ["osascript", "-e", script],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True,
+                encoding="utf-8", errors="replace",
+                timeout=10,
                 creationflags=NO_WINDOW_CREATIONFLAGS,
             )
             if proc.returncode != 0:
