@@ -193,14 +193,6 @@ SECRETS: list[SecretSpec] = [
         section="stt",
     ),
     SecretSpec(
-        key="picovoice_access_key",
-        env_fallback="PICOVOICE_ACCESS_KEY",
-        label="Picovoice Access Key (Porcupine wake word)",
-        help_url="https://console.picovoice.ai/",
-        required_for="Wake-word detection (Porcupine)",
-        section="wake",
-    ),
-    SecretSpec(
         key="tavily_api_key",
         env_fallback="TAVILY_API_KEY",
         label="Tavily API Key (web search for agents)",
@@ -395,11 +387,6 @@ _SECTIONS: tuple[_Section, ...] = (
             "Optional. Pick one for a natural cloud voice; without any, a basic "
             "local/system voice is used."
         ),
-    ),
-    _Section(
-        id="wake",
-        title="Wake word",
-        blurb="Optional. Only needed for the Porcupine wake engine.",
     ),
     _Section(
         id="tools",

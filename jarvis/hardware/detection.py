@@ -187,7 +187,6 @@ def _detect_existing_installs() -> dict[str, str]:
         "faster-whisper",
         "torch",
         "sounddevice",
-        "pvporcupine",
         "keyring",
     ]
     found: dict[str, str] = {}

@@ -5,7 +5,7 @@ All plugin slots are declared in pyproject.toml under
 them lazily, and checks them against the matching Protocol.
 
 Important: `load()` only imports on actual invocation — this allows optional
-dependencies (e.g. Porcupine only loads when the user wants to use it).
+dependencies (e.g. discord.py only loads when the Discord channel is enabled).
 """
 from __future__ import annotations
 

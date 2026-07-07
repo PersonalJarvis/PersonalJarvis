@@ -141,15 +141,14 @@ dev = [
     "mypy>=1.13",
     "pyinstaller>=6.11",
 ]
-# "Everything a normal power user wants" in one shot: the desktop app (tray /
-# overlay / hotkey / screen capture) + telephony (phone calls) + chat channels.
+# "Everything" in one shot — the ONE advertised install profile (design spec
+# 2026-07-07): desktop app + telephony + chat channels + local voice models.
 # Each sub-extra carries its own platform markers, so `pip install .[full]`
-# quietly skips what does not apply to the OS. Deliberately EXCLUDES the heavy
-# `local-voice` extra (torch + faster-whisper, multi-GB, GPU-oriented) — add that
-# explicitly with `.[local-voice]` for offline speech. The cloud-first BASE
-# install still needs none of this; `[full]` is the opposite end of the spectrum.
+# quietly skips what does not apply to the OS. The cloud-first BASE install
+# (plain `pip install .`) remains the internal torch-free floor for CI and
+# tiny headless servers; users are pointed at [full].
 full = [
-    "personal-jarvis[desktop,telephony,channels]",
+    "personal-jarvis[desktop,telephony,channels,local-voice]",
 ]
 # Twilio telephony voice agent (call Jarvis on a phone number). Optional extra
 # per the cloud-first doctrine: the base install must boot without it, and the
@@ -230,9 +229,10 @@ desktop-macos = [
     # CGWindowID); runtime-probed — an absent framework degrades to rect grabs.
     "pyobjc-framework-ScreenCaptureKit>=10; sys_platform == 'darwin'",
 ]
-# Local (offline) voice engines. Entirely optional per the cloud-first doctrine
+# Local (offline) voice engines. Optional per the cloud-first doctrine
 # (CLAUDE.md §3): the default VAD/STT/wake paths are cloud-reachable, so the base
-# install stays torch-free and this extra is opt-in (`--with-voice-local`). Every
+# install stays torch-free; this extra ships with the advertised [full] profile
+# (design 2026-07-07) and remains individually opt-in for base installs. Every
 # package here is lazy-imported in its provider, so the base `import jarvis` and
 # the headless server boot without them.
 #
@@ -251,15 +251,17 @@ desktop-macos = [
 # ~2.2 MB MIT asset under jarvis/assets/vad/ and run torch-free via onnxruntime, so
 # end-of-speech detection also works out-of-the-box — the `silero-vad` PACKAGE
 # below is now only an optional fallback for a partial checkout without the asset.
-# This extra therefore covers only heavier/alternate local paths: the torch-pulling
-# silero-vad package, WebRTC VAD, and the Porcupine wake engine. (faster-whisper —
-# the local-Whisper arbitrary-custom-phrase wake for phrases with no pretrained
-# model — is not in any extra; it is pulled on demand by the in-app "enable local
-# speech" installer, see jarvis/ui/web/settings_routes.py.)
+# This extra therefore covers only heavier/alternate local paths: the
+# torch-pulling silero-vad package, WebRTC VAD, and faster-whisper (the
+# local-Whisper wake/STT accuracy path — previously pulled on demand by the
+# in-app "enable local speech" installer, now preinstalled via [full] per the
+# 2026-07-07 one-full-install decision; the in-app installer remains as the
+# recovery path for base installs). pvporcupine was removed 2026-07-07: never
+# imported anywhere, proprietary-keyed, ships branded built-in keywords.
 local-voice = [
     "silero-vad>=5.1",
     "webrtcvad-wheels>=2.0",
-    "pvporcupine>=3.0",
+    "faster-whisper>=1.0",
 ]
 
 [project.scripts]
