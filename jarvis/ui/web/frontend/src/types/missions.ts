@@ -120,6 +120,15 @@ export interface WorkerCorrectionRequired extends BasePayload {
   next_model: string;
 }
 
+/** Closed provider-failure vocabulary — mirrors MISSION_ERROR_CLASSES in
+ * jarvis/missions/events.py (parity-tested). `error_class` on the wire stays
+ * `string | null` because legacy recovery values also occur. */
+export type MissionErrorClass =
+  | "provider_auth"
+  | "provider_quota"
+  | "provider_unreachable"
+  | "worker_timeout";
+
 export type WorkerKilledReason =
   | "timeout"
   | "user"
@@ -133,6 +142,8 @@ export interface WorkerKilled extends BasePayload {
   event_type: "WorkerKilled";
   worker_id: string;
   reason: WorkerKilledReason;
+  error_class?: string | null;
+  error_detail?: string | null;
 }
 
 export interface MissionApproved extends BasePayload {
@@ -151,6 +162,8 @@ export interface MissionFailed extends BasePayload {
   error_class: string | null;
   last_state: string;
   partial_artifacts: string[];
+  error_detail?: string | null;
+  failed_provider?: string | null;
 }
 
 export interface MissionCancelled extends BasePayload {
