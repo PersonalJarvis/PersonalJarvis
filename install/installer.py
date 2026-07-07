@@ -56,6 +56,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 try:
     from rich.console import Console
+    from rich.markup import escape as rich_escape
     from rich.panel import Panel
     from rich.table import Table
     from rich.theme import Theme
@@ -224,16 +225,20 @@ def step_pip_install(*, with_desktop: bool, with_voice_local: bool, dry_run: boo
         runtime_step,
     ]
     if with_desktop:
-        plans.append(("desktop extras", pip + ["install", "-e", ".[desktop]"]))
-    if with_voice_local:
-        plans.append(("local-voice extras (Silero VAD, WebRTC VAD, Porcupine)",
-                      pip + ["install", "-e", ".[local-voice]"]))
+        # One official install profile (design 2026-07-07): desktop + telephony
+        # + channels + local voice in one shot. Platform markers skip whatever
+        # this OS cannot use. --headless keeps the torch-free base floor.
+        # ``with_voice_local`` is a deprecated no-op: [full] already carries it.
+        plans.append(("full profile extras (desktop, telephony, channels, local voice)",
+                      pip + ["install", "-e", ".[full]"]))
 
     note("this can take a minute — grabbing dependencies")
 
     if dry_run:
         for label, cmd in plans:
-            console.print(f"[muted]      (dry-run) {label}: {' '.join(cmd)}[/]")
+            # rich would swallow literal command text like ``.[full]`` as
+            # markup — escape so the dry-run shows the REAL command.
+            console.print(f"[muted]      (dry-run) {label}: {rich_escape(' '.join(cmd))}[/]")
         return
 
     for label, cmd in plans:
@@ -458,12 +463,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--with-desktop", action="store_true",
                         help="install [desktop] extras (default: auto-detect by platform)")
     parser.add_argument("--with-voice-local", action="store_true",
-                        help="install the heavier local voice extras (Silero/WebRTC VAD, "
-                             "Porcupine, ~1.5 GB). NOT needed for the always-on neural "
-                             "wake word — that ships in the base install.")
+                        help="deprecated no-op: the full profile already includes "
+                             "the local voice extras")
     parser.add_argument("--dry-run", action="store_true",
                         help="print what would be done; don't run pip/wizard/launch")
     args = parser.parse_args(argv)
+
+    if args.with_voice_local:
+        note("--with-voice-local is deprecated: the full profile already "
+             "includes local voice.")
 
     # Auto-pick desktop extras unless the user said --headless or we're on a
     # headless Linux VPS. (--with-desktop forces it on either way.)

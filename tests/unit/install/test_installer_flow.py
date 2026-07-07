@@ -30,6 +30,23 @@ def test_update_run_is_detected(monkeypatch, tmp_path) -> None:
     assert installer.is_update_run() is True
 
 
+def test_default_pip_plan_installs_full_extra(capsys) -> None:
+    """Design 2026-07-07: the one advertised install path installs .[full]."""
+    installer.step_pip_install(with_desktop=True, with_voice_local=False, dry_run=True)
+    out = capsys.readouterr().out
+    assert ".[full]" in out
+    assert ".[desktop]" not in out
+    assert ".[local-voice]" not in out
+
+
+def test_headless_pip_plan_stays_base_floor(capsys) -> None:
+    """--headless keeps the torch-free base floor: no extras at all."""
+    installer.step_pip_install(with_desktop=False, with_voice_local=False, dry_run=True)
+    out = capsys.readouterr().out
+    assert ".[full]" not in out
+    assert ".[desktop]" not in out
+
+
 def test_update_summary_promises_no_reonboarding(monkeypatch, capsys, tmp_path) -> None:
     (tmp_path / ".jarvis-managed-install").write_text("{}", encoding="utf-8")
     (tmp_path / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
