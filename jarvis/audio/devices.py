@@ -81,7 +81,7 @@ def _canon(s: str) -> str:
     """Canonical form for name comparison: NFC-normalized + casefolded.
 
     NFC guards against the same physical device enumerating under two
-    Unicode spellings of a diacritic (e.g. a composed vs. decomposed "ö" in
+    Unicode spellings of a diacritic (e.g. a composed vs. decomposed "é" in
     a localized name) between the time a name was persisted and a later
     stream-open lookup — without it the exact-match branch would miss and
     silently fall back to auto-headset.

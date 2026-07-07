@@ -188,7 +188,7 @@ class _AliasCallingBrain:
             })
             yield BrainDelta(finish_reason="tool_use")
             return
-        yield BrainDelta(content="Hier ist das Ergebnis.")
+        yield BrainDelta(content="Hier ist das Ergebnis.")  # i18n-allow: German brain-output fixture under test
         yield BrainDelta(finish_reason="stop")
 
 
@@ -222,7 +222,7 @@ async def test_underscore_alias_resolves_to_hyphenated_tool() -> None:
         executor,  # type: ignore[arg-type]
     )
 
-    result = await loop.run([], user_utterance="such mal im Wiki nach dem Projekt")
+    result = await loop.run([], user_utterance="such mal im Wiki nach dem Projekt")  # i18n-allow: German utterance fixture under test
 
     assert executor.calls, "'wiki_recall' must resolve to the registered 'wiki-recall'"
     assert executor.calls[0][0].name == "wiki-recall"
