@@ -230,6 +230,20 @@ class CandidateJournal:
             ).fetchone()
             return int(row[0])
 
+    def oldest_pending_ms(self) -> int | None:
+        """``created_ms`` of the oldest pending row, or ``None`` when none
+        pending (spec A4 — drives the age-based flush so a quiet fresh
+        install still produces pages below the count threshold)."""
+        with self._lock:
+            conn = self._connection()
+            if conn is None:
+                return None
+            row = conn.execute(
+                "SELECT MIN(created_ms) FROM wiki_candidate_journal "
+                "WHERE status = 'pending'"
+            ).fetchone()
+            return int(row[0]) if row and row[0] is not None else None
+
     def seen_turn(self, turn_hash: str) -> bool:
         """True when a turn with this hash was already journaled (dedupe)."""
         with self._lock:

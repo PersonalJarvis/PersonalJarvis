@@ -909,7 +909,11 @@ class SchedulerConfig(BaseModel):
     # Wave-2 journal pressure: once this many candidate facts sit pending
     # in the Stage-1 journal, a JOURNAL trigger asks the consolidator to
     # drain a batch (still subject to cooldown + lock).
-    consolidate_after_candidates: int = 8
+    consolidate_after_candidates: int = 3
+    # Age-based flush (spec A4): even below the count threshold, pending
+    # candidates older than this become a JOURNAL trigger so a quiet fresh
+    # install still produces visible pages. 0 disables the age flush.
+    flush_pending_max_age_minutes: int = 10
 
 
 class VoiceBridgeConfig(BaseModel):

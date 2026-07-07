@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -99,6 +100,10 @@ class WikiIntegrationHandle:
     _worker_stop: Callable[[], Awaitable[None]] | None
     _task: "asyncio.Task[Any] | None" = field(default=None)
     _telemetry_task: "asyncio.Task[Any] | None" = field(default=None)
+    # Spec A4: age-based journal flush loop. Same fire-and-forget
+    # conventions as the hourly telemetry loop (started off the boot
+    # critical path per AP-26, cancelled here on teardown).
+    _journal_age_flush_task: "asyncio.Task[Any] | None" = field(default=None)
     # The VoiceFactBridge attached during bootstrap. Declared as a field (not
     # monkey-patched) so shutdown() can stop it — otherwise its TranscriptFinal
     # / ResponseGenerated subscriptions leak on every teardown.
@@ -188,6 +193,15 @@ class WikiIntegrationHandle:
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
         self._telemetry_task = None
+
+        # Cancel the age-based journal flush loop if started (spec A4).
+        if self._journal_age_flush_task is not None and not self._journal_age_flush_task.done():
+            self._journal_age_flush_task.cancel()
+            try:
+                await self._journal_age_flush_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+        self._journal_age_flush_task = None
 
         # Clear the running-curator registry so a fresh bootstrap (e.g. in a
         # test that tears down and re-creates) does not see the stale one.
@@ -489,6 +503,17 @@ async def bootstrap_wiki_integration(
             # leftovers (< pressure threshold) consolidate without waiting
             # for new conversation.
             kick_journal_backlog(journal, scheduler)
+
+            # Spec A4: below-threshold backlogs on a quiet install would
+            # otherwise sit pending forever (not enough NEW conversation
+            # ever arrives to cross consolidate_after_candidates). Start a
+            # background age-check loop, same fire-and-forget conventions
+            # as the hourly telemetry loop started below (AP-9/AP-26).
+            handle._journal_age_flush_task = asyncio.create_task(  # noqa: SLF001
+                _journal_age_flush_loop(journal, scheduler, root_cfg.wiki_scheduler),
+                name="wiki-journal-age-flush",
+            )
+            log.info("wiki_integration: age-based journal flush loop started")
         except Exception as exc:  # noqa: BLE001
             log.warning(
                 "wiki_integration: Stage-2 consolidator unavailable (%s) — "
