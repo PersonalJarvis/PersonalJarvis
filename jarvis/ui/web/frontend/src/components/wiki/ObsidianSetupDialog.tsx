@@ -368,6 +368,11 @@ export function ObsidianSetupDialog({
       if (body.status === "added" || body.status === "already_registered") {
         setActiveVaultRoot(body.active_vault_root ?? null);
         setRestartRequired(Boolean(body.restart_required));
+        // The "existing" mode never registers a new Obsidian vault entry —
+        // it only repoints the wiki root into a subfolder of the vault the
+        // user picked. So step 3's "Open in Obsidian" button must target
+        // THAT vault's name, not the default separate-vault location.
+        setVaultPath(selectedVaultPath);
         advance(3);
       } else {
         setRegisterError(

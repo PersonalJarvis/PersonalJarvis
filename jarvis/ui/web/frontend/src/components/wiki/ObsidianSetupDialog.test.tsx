@@ -397,6 +397,66 @@ describe("ObsidianSetupDialog", () => {
       expect(screen.getByTestId("obsidian-setup-restart-hint")).toBeDefined();
     });
 
+    it("after choosing 'existing', 'Open in Obsidian' targets the picked vault, not the default one", async () => {
+      // Regression: the live-test button must target the vault the user
+      // actually picked (VAULTS[1] = "Work"), never the default
+      // separate-vault path from `initialStatus`.
+      const fetchImpl = makeVaultAwareFetch(VAULTS, {
+        status: "added",
+        active_vault_root: "C:/Users/Administrator/Work/Jarvis",
+        restart_required: true,
+      });
+      let lastHref: string | null = null;
+      const originalLocation = window.location;
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: {
+          ...originalLocation,
+          get href() {
+            return lastHref ?? "";
+          },
+          set href(value: string) {
+            lastHref = value;
+          },
+        },
+      });
+
+      try {
+        render(
+          <ObsidianSetupDialog
+            open
+            onClose={() => {}}
+            initialStatus={STATUS_NOT_REGISTERED}
+            fetchImpl={fetchImpl}
+          />,
+        );
+        await waitFor(() => {
+          expect(
+            screen.getByTestId("obsidian-setup-mode-existing").hasAttribute("disabled"),
+          ).toBe(false);
+        });
+        fireEvent.click(screen.getByTestId("obsidian-setup-mode-existing"));
+        fireEvent.change(
+          screen.getByTestId("obsidian-setup-vault-select") as HTMLSelectElement,
+          { target: { value: VAULTS[1].path } },
+        );
+        fireEvent.click(screen.getByTestId("obsidian-setup-register"));
+
+        await waitFor(() => {
+          expect(screen.getByTestId("obsidian-setup-step-3")).toBeDefined();
+        });
+        fireEvent.click(screen.getByTestId("obsidian-setup-launch"));
+        expect(lastHref).not.toBeNull();
+        expect(lastHref!).toContain(encodeURIComponent(VAULTS[1].name));
+        expect(lastHref!).not.toContain(encodeURIComponent("obsidian-vault"));
+      } finally {
+        Object.defineProperty(window, "location", {
+          configurable: true,
+          value: originalLocation,
+        });
+      }
+    });
+
     it("clicking 'Restart now' POSTs to the shared restart-app endpoint", async () => {
       const fetchImpl = makeVaultAwareFetch(VAULTS, {
         status: "added",
