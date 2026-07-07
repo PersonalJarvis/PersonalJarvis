@@ -225,6 +225,22 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     # shares with the (now TTS-only) xAI key remains.
     # Ollama-Provider 2026-04-21 entfernt — reine API-Provider-Chain.
     # ── TTS ───────────────────────────────────────────────────────────────
+    # Inworld is the recommended premium default (arena-#1 realtime, mid-2026),
+    # so it leads the Voice-Output card list.
+    ProviderSpec(
+        id="inworld",
+        label="Inworld (premium realtime)",
+        tier="tts",
+        auth_mode="api_key",
+        secret_keys=("inworld_api_key",),
+        dashboard_url="https://platform.inworld.ai/",
+        credential_help=(
+            "Inworld API key — copy it VERBATIM from platform.inworld.ai; it is "
+            "already base64, do not re-encode it. Premium multilingual realtime "
+            "voices (DE Josef/Johanna, EN Dennis/Ashley, ES Diego/Lupita). Billed "
+            "per character on your Inworld account."
+        ),
+    ),
     ProviderSpec(
         id="elevenlabs",
         label="ElevenLabs",
@@ -286,9 +302,9 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         dashboard_url="https://openrouter.ai/keys",
         credential_help=(
             "Same OpenRouter API key as the OpenRouter brain (starts with "
-            "sk-or-) — no extra key needed. One key reaches many text-to-speech "
-            "models (Gemini Flash TTS, Grok Voice, MAI-Voice, Voxtral, Kokoro). "
-            "The model picker shows ONLY speech models; each model has its own "
+            "sk-or-) — no extra key needed. One key reaches the vetted speech "
+            "models (Gemini Flash TTS, Grok Voice, MAI-Voice, Voxtral). "
+            "The model picker shows ONLY allowlisted speech models; each has its own "
             "voice list. Billed per token on your OpenRouter account."
         ),
     ),
