@@ -58,6 +58,12 @@ class ActionKind(str, Enum):
     BROWSER = "navigate"  # backward-compat alias for Phase-9.1 code
 
 
+# AP-23 W2-C: names of optional overlay dependencies we've already warned
+# about in this process, so a hot loop of keyboard/mouse calls on a host
+# missing the dependency logs once, not on every call.
+_missing_overlay_dep_logged: set[str] = set()
+
+
 def _get_bridge() -> Any:
     """Lazy lookup of the singleton to avoid circular imports.
 
@@ -67,8 +73,32 @@ def _get_bridge() -> Any:
 
     When None: the decorator falls back to a very lightweight no-op stub
     that simply runs the function.
+
+    Honest degrade (AP-23): resolving ``get_overlay`` pulls in the whole
+    overlay bridge chain (``.integration`` -> ``.bridge`` -> ``.schema`` ->
+    the OS-Level overlay package -> ``ulid``). On a host missing an optional
+    overlay dependency (e.g. a fresh clone without ``python-ulid``, or
+    without the OS-Level package at all), that import raises
+    ``ModuleNotFoundError``. Without this guard it escaped straight out of
+    the decorator into the caller's keyboard/mouse tool action — crashing a
+    real user action over a purely cosmetic overlay dependency. Degrade to
+    ``None`` instead: the decorator already treats ``bridge is None`` as
+    "run the function, skip the overlay visuals" (see
+    ``test_sync_decorator_no_bridge_is_no_op``).
     """
-    from jarvis.overlay import get_overlay  # spaet importieren
+    try:
+        from jarvis.overlay import get_overlay  # spaet importieren
+    except ModuleNotFoundError as exc:
+        missing = exc.name or "unknown"
+        if missing not in _missing_overlay_dep_logged:
+            _missing_overlay_dep_logged.add(missing)
+            logger.warning(
+                "Desktop overlay unavailable: dependency %r missing — "
+                "overlay/mascot visuals stay off, but the underlying "
+                "keyboard/mouse action still runs.",
+                missing,
+            )
+        return None
 
     return get_overlay()
 

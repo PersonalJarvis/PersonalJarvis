@@ -1537,12 +1537,20 @@ class DesktopApp:
                 except ModuleNotFoundError as exc:
                     from loguru import logger as _overlay_logger
                     if exc.name == "overlay":
+                        # Genuinely headless: the optional overlay package
+                        # itself isn't installed (cloud/VPS base install).
                         _overlay_logger.debug(
                             "Overlay bootstrap skipped: optional overlay package not installed."
                         )
                     else:
+                        # AP-23 W2-C: some OTHER dependency in the overlay
+                        # import chain is missing (e.g. `python-ulid`) — a
+                        # real, fixable gap, not "no overlay package". Name
+                        # it explicitly instead of collapsing into the same
+                        # silent "headless" bucket.
                         _overlay_logger.opt(exception=exc).warning(
-                            "Overlay bootstrap failed."
+                            "Overlay bootstrap skipped: overlay dependency {!r} missing.",
+                            exc.name,
                         )
                 except Exception as exc:  # noqa: BLE001
                     from loguru import logger as _overlay_logger

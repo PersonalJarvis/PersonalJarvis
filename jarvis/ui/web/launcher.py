@@ -632,7 +632,25 @@ async def _run_headless(args) -> int:
     # (stop_overlay, below) valid. start_overlay itself no-ops when disabled.
     try:
         from jarvis.overlay.integration import start_overlay, stop_overlay
-    except ModuleNotFoundError:
+    except ModuleNotFoundError as exc:
+        import logging as _overlay_logging
+
+        _overlay_log = _overlay_logging.getLogger(__name__)
+        if exc.name == "overlay":
+            # Genuinely headless: the optional overlay package itself isn't
+            # installed (cloud/VPS base install). Quiet — expected.
+            _overlay_log.debug(
+                "Overlay bootstrap skipped: optional overlay package not installed."
+            )
+        else:
+            # AP-23 W2-C: some OTHER import in the overlay chain is missing
+            # (e.g. `python-ulid`) — this is a real, fixable dependency gap,
+            # not "no overlay package". Log it honestly instead of silently
+            # collapsing into the same "headless" bucket.
+            _overlay_log.warning(
+                "Overlay bootstrap skipped: overlay dependency %r missing.",
+                exc.name,
+            )
 
         async def start_overlay(*_a: object, **_k: object) -> None:  # type: ignore[misc]
             return None

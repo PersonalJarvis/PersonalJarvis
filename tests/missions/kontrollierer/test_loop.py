@@ -1092,6 +1092,38 @@ async def test_worker_auth_error_every_iteration_fails_honestly(
 
 
 @pytest.mark.asyncio
+async def test_mission_failed_carries_error_classification(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    """The 2026-07-06 gap: MissionFailed.error_class was always None, so the
+    UI/voice could not name the cause. An all-401 mission must now carry
+    error_class="provider_auth", the truncated upstream text, and the
+    provider slug of the worker that failed."""
+    worker = _AuthErrorWorker()
+    critic = FakeCriticRunner(_make_approve_verdict())
+    k = _make_kontrollierer(
+        manager=manager, tmp_path=tmp_path, critic=critic,
+        worker_factory_fn=lambda step: worker,
+    )
+    mid = await manager.dispatch(prompt="task on a dead credential")
+
+    end = await k.run_mission(mid)
+    assert end == MissionState.FAILED
+
+    events = await manager.store.events_for_mission(mid)
+    failed = [e.payload for e in events if e.payload.event_type == "MissionFailed"]
+    assert len(failed) == 1
+    assert failed[0].error_class == "provider_auth"
+    assert "401" in (failed[0].error_detail or "")
+    assert failed[0].failed_provider == "claude"
+
+    killed = [e.payload for e in events if e.payload.event_type == "WorkerKilled"]
+    assert killed
+    assert killed[-1].error_class == "provider_auth"
+    assert "401" in (killed[-1].error_detail or "")
+
+
+@pytest.mark.asyncio
 async def test_critic_timeout_retries_then_approves(
     manager: MissionManager, tmp_path: Path
 ) -> None:

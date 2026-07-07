@@ -99,6 +99,62 @@ def test_sync_decorator_no_bridge_is_no_op() -> None:
     assert called == ["fn"]
 
 
+def test_get_bridge_degrades_to_none_when_optional_dep_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AP-23 W2-C: on a fresh clone without ``python-ulid`` installed, the
+    overlay import chain (``jarvis.overlay`` -> ``.integration`` ->
+    ``.bridge`` -> ``.schema`` -> ``ulid``) raises ``ModuleNotFoundError``.
+    ``_get_bridge`` must degrade honestly to ``None`` (the same no-op path
+    already exercised by ``test_sync_decorator_no_bridge_is_no_op``) instead
+    of letting the import error escape into a keyboard/mouse tool action.
+    """
+    import jarvis.overlay as overlay_pkg
+    from jarvis.overlay import triggers
+
+    # Force re-resolution through the PEP-562 lazy __getattr__ (a prior test
+    # in this session may already have cached the real ``get_overlay`` on
+    # the package's __dict__).
+    monkeypatch.delattr(overlay_pkg, "get_overlay", raising=False)
+
+    def _boom(name: str) -> Any:
+        if name == "get_overlay":
+            raise ModuleNotFoundError("No module named 'ulid'", name="ulid")
+        raise AttributeError(name)
+
+    monkeypatch.setattr(overlay_pkg, "__getattr__", _boom)
+
+    assert triggers._get_bridge() is None
+
+
+def test_sync_decorator_runs_fn_when_overlay_dep_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same missing-dependency scenario, exercised through the decorated
+    keyboard/mouse call path: the actual action must still run (matching
+    the AP-23 fix intent — the decorated tool action degrades to a clean
+    no-op for the overlay VISUAL, never a crash for the real action)."""
+    import jarvis.overlay as overlay_pkg
+
+    monkeypatch.delattr(overlay_pkg, "get_overlay", raising=False)
+
+    def _boom(name: str) -> Any:
+        if name == "get_overlay":
+            raise ModuleNotFoundError("No module named 'ulid'", name="ulid")
+        raise AttributeError(name)
+
+    monkeypatch.setattr(overlay_pkg, "__getattr__", _boom)
+
+    called = []
+
+    @overlay_action_sync(ActionKind.CLICK)
+    def doit() -> None:
+        called.append("fn")
+
+    doit()
+    assert called == ["fn"]
+
+
 # -------------------------------------------------------------------------
 # Async-Decorator
 # -------------------------------------------------------------------------
