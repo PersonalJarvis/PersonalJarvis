@@ -288,6 +288,7 @@ groq-api = "jarvis.plugins.stt.groq_api:GroqWhisperAPI"
 openrouter-stt = "jarvis.plugins.stt.openrouter_stt:OpenRouterSTT"
 
 [project.entry-points."jarvis.tts"]
+inworld = "jarvis.plugins.tts.inworld_tts:InworldTTS"
 elevenlabs = "jarvis.plugins.tts.elevenlabs_tts:ElevenLabsTTS"
 gemini-flash-tts = "jarvis.plugins.tts.gemini_flash_tts:GeminiFlashTTS"
 grok-voice = "jarvis.plugins.tts.grok_voice_tts:GrokVoiceTTS"
