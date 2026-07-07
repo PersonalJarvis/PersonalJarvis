@@ -70,3 +70,57 @@ class TestAggregate:
 def test_vocabulary_is_exactly_four() -> None:
     assert set(sh.SECTION_HEALTH_STATUSES) == {sh.OK, sh.NEEDS_SETUP, sh.ERROR, sh.UNKNOWN}
     assert len(sh.SECTION_HEALTH_STATUSES) == 4
+
+
+class TestSubagentSectionHealth:
+    """Live-honest Sub-Agents tab health (2026-07-06 incident: the tab stayed
+    green while every worker spawn 401'd on an expired OAuth token)."""
+
+    def _cfg(self, provider: str = "claude-api"):
+        class _Sub:  # minimal cfg.brain.worker stand-in
+            pass
+
+        sub = _Sub()
+        sub.provider = provider
+
+        class _Brain:
+            worker = sub
+            primary = "openrouter"
+
+        class _Cfg:
+            brain = _Brain()
+
+        return _Cfg()
+
+    def test_selected_usable_is_ok(self, monkeypatch) -> None:
+        from jarvis.ui.web import provider_routes as pr
+
+        monkeypatch.setattr(pr, "_worker_usable", lambda p: True)
+        monkeypatch.setattr(pr, "_worker_flagged_dead", lambda p: False)
+        health = pr._jarvis_agent_section_health(self._cfg())
+        assert health.status == sh.OK
+
+    def test_selected_dead_with_fallback_is_needs_setup(self, monkeypatch) -> None:
+        from jarvis.ui.web import provider_routes as pr
+
+        monkeypatch.setattr(pr, "_worker_usable", lambda p: True)
+        monkeypatch.setattr(pr, "_worker_flagged_dead", lambda p: True)
+        monkeypatch.setattr(
+            "jarvis.missions.init.reachable_worker_families", lambda: ["codex"]
+        )
+        health = pr._jarvis_agent_section_health(self._cfg())
+        assert health.status == sh.NEEDS_SETUP
+        assert health.reason == "degraded"
+        assert "codex" in health.detail
+
+    def test_nothing_reachable_is_error(self, monkeypatch) -> None:
+        from jarvis.ui.web import provider_routes as pr
+
+        monkeypatch.setattr(pr, "_worker_usable", lambda p: False)
+        monkeypatch.setattr(pr, "_worker_flagged_dead", lambda p: False)
+        monkeypatch.setattr(
+            "jarvis.missions.init.reachable_worker_families", lambda: []
+        )
+        health = pr._jarvis_agent_section_health(self._cfg())
+        assert health.status == sh.ERROR
+        assert health.reason == "no_provider"

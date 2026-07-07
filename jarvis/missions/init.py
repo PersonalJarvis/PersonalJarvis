@@ -492,6 +492,35 @@ def _claude_cli_auth_viable() -> bool:
     return not claude_auth_dead(current_fingerprint=credential_fingerprint(key))
 
 
+def reachable_worker_families() -> list[str]:
+    """Which worker families could run a heavy mission RIGHT NOW (cheap,
+    offline — file reads + process-local flags, never a network probe).
+
+    Same subscription-first order as ``_cross_family_last_resort_worker``:
+    Claude Max CLI (auth-viable), codex ChatGPT OAuth, then the API-key
+    families. Feeds the Sub-Agents section health so the app can warn
+    BEFORE a mission is dispatched (2026-07-06: the tab stayed green for
+    17 hours of guaranteed-dead spawns).
+    """
+    families: list[str] = []
+    from jarvis.missions.workers.claude_direct_worker import _resolve_claude_binary
+
+    if _resolve_claude_binary() is not None and _claude_cli_auth_viable():
+        families.append("claude")
+    from jarvis.codex_auth_state import codex_needs_reauth
+    from jarvis.missions.workers.codex_direct_worker import _codex_oauth_available
+
+    if _codex_oauth_available() and not codex_needs_reauth():
+        families.append("codex")
+    from jarvis.core.config import get_provider_secret
+    from jarvis.missions.workers.api_agent_worker import supports_api_agent_worker
+
+    for prov in ("claude-api", "gemini", "openrouter", "openai"):
+        if supports_api_agent_worker(prov) and get_provider_secret(prov):
+            families.append(prov)
+    return families
+
+
 def _cross_family_last_resort_worker(task_text: str) -> Any | None:
     """The key-aware, cross-family LAST-resort heavy worker (open-source AP-22/23).
 
