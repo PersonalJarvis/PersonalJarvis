@@ -498,8 +498,10 @@ jarvis = [
     "memory/wiki/templates/*.md",
     # Built-in skills: SKILL.md plus their reference/asset/script support
     # files (e.g. skill-creator ships references/, scripts/, agents/,
-    # assets/ alongside its SKILL.md).
-    "skills/builtin/**/*",
+    # assets/ alongside its SKILL.md). Extension-scoped rather than
+    # "skills/builtin/**/*" so a stray local __pycache__ never rides along.
+    "skills/builtin/**/*.md",
+    "skills/builtin/**/*.txt",
 ]
 
 [tool.ruff]

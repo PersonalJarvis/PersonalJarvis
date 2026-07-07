@@ -132,11 +132,12 @@ both; the TS store mirrors them.
 ## 6. Voice announcement
 
 `jarvis/missions/voice/announcer.py` (+ `readback.py`'s shared table): when
-`payload.error_class` matches a new `ERROR_CLASS_PHRASES` table, use that
+`payload.error_class` matches a key in `FAILURE_REASON_PHRASES`, use that
 phrase; otherwise keep the existing `FAILURE_REASON_PHRASES[reason]` path.
-The new table carries ALL supported output languages (`de`, `en`, `es`) and
-resolves through the same language pick the announcer already uses (runtime
-output-language rule §1 of CLAUDE.md). Example (`provider_auth`, en):
+The entries live in the EXISTING `FAILURE_REASON_PHRASES` table — keyed by
+the voice readback system's `Lang` literal, which is `de`/`en` — while the
+UI i18n locales carry `en`/`de`/`es`; extending the voice system itself to
+`es` is tracked as separate backlog. Example (`provider_auth`, en):
 "The mission failed: the AI provider sign-in is invalid or expired."
 
 ## 7. Prevention recap

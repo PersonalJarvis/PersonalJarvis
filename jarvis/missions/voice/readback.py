@@ -201,7 +201,9 @@ FAILURE_REASON_PHRASES: Final[dict[str, dict[str, str]]] = {
         # error_class keys (looked up BEFORE the reason key; see
         # failure_phrase_key). Same table so announcer + direct-TTS listener
         # cannot drift (2026-05-27 finding #7).
-        "provider_auth": "Die Anmeldung beim KI-Anbieter ist ungültig oder abgelaufen.",  # i18n-allow
+        "provider_auth": (
+            "Die Anmeldung beim KI-Anbieter ist ungültig oder abgelaufen."  # i18n-allow
+        ),
         "provider_quota": "Das Kontingent des KI-Anbieters ist erschöpft.",  # i18n-allow
         "provider_unreachable": "Der KI-Anbieter ist gerade nicht erreichbar.",  # i18n-allow
         "worker_timeout": "Der Worker hat das Zeitlimit überschritten.",  # i18n-allow
