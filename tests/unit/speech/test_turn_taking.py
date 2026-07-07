@@ -324,13 +324,16 @@ async def test_hangup_accepts_split_auf_leg_transcript() -> None:
 
 
 @pytest.mark.asyncio
-async def test_hangup_accepts_lets_get_up_mistranscript() -> None:
+async def test_lets_get_up_mistranscript_does_not_hang_up() -> None:
+    # REVERSED 2026-07-07 (live incident): right after a vosk wake, Groq
+    # garbled the 448 ms wake-phrase tail into "Let's get up!" and the former
+    # English-mishear hang-up alias instantly killed the fresh session. The
+    # alias is gone from HANGUP_RE; such a transcript is an ordinary turn.
     pipe = _make_pipeline(FakeSTT(text="Let's get up."))
 
     keep_session = await pipe._handle_utterance(b"\x01\x00" * 1024)
 
-    assert keep_session is False
-    assert pipe._spoken == []
+    assert keep_session is True
 
 
 @pytest.mark.xfail(
