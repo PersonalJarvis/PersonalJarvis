@@ -15,7 +15,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from jarvis.speech import wake_constants as wc
 from jarvis.speech import wake_phrase as wp
 from jarvis.speech.pipeline import SpeechPipeline
 from jarvis.speech.wake_phrase import resolve_wake_plan

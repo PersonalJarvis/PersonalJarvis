@@ -141,9 +141,10 @@ def test_explicit_custom_engine_keeps_arbitrarily_named_model(tmp_path) -> None:
     assert plan.oww_model_path == str(model)
 
 
-def test_stale_custom_model_lets_pretrained_phrase_through(tmp_path) -> None:
-    # A stale custom model must not block the pretrained path either: with the
-    # phrase set (back) to "Hey Jarvis", the bundled hey_jarvis model wins.
+def test_stale_custom_model_lets_other_phrases_through_generically(tmp_path) -> None:
+    # A stale custom model must not block the generic chain either: with the
+    # phrase set to "Hey Jarvis", the generic engine serves it (design
+    # 2026-07-07: no bundled model wins anything).
     from jarvis.speech.wake_phrase import resolve_wake_plan
 
     model = tmp_path / "hey_nico.onnx"
@@ -152,8 +153,8 @@ def test_stale_custom_model_lets_pretrained_phrase_through(tmp_path) -> None:
         _cfg(str(model), phrase="Hey Jarvis", engine="auto"),
         local_whisper_available=True,
     )
-    assert plan.engine == "openwakeword"
-    assert plan.oww_keyword == "hey_jarvis"
+    assert plan.engine == "stt_match"
+    assert plan.oww_model_path is None
     assert plan.degraded is False
 
 

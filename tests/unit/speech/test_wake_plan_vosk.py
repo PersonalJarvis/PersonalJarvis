@@ -56,15 +56,16 @@ def test_auto_picks_vosk_for_arbitrary_phrase(vosk_model_dir) -> None:
     assert plan.verify_prefix is False  # the provider's own confirm handles it
 
 
-def test_known_pretrained_phrase_keeps_openwakeword(vosk_model_dir) -> None:
-    # "Hey Jarvis" has a bundled instant OWW model — vosk must not hijack it.
+def test_jarvis_phrase_runs_on_vosk_like_any_other_word(vosk_model_dir) -> None:
+    # Design 2026-07-07: no bundled model exists — "Hey Jarvis" is served by
+    # the same any-word vosk engine as every other phrase.
     plan = resolve_wake_plan(
         _cfg(phrase="Hey Jarvis"),
         local_whisper_available=True,
         language="de",
         vosk_available=True,
     )
-    assert plan.engine == "openwakeword"
+    assert plan.engine == "vosk_kws"
 
 
 def test_explicit_vosk_engine_forces_vosk(vosk_model_dir) -> None:
