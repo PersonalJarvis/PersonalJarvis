@@ -1,14 +1,21 @@
 """FastAPI routes for the Phase B9 Obsidian Setup Wizard (Sub-Agent 3).
 
-Two endpoints power the Desktop App's "Obsidian" setup card:
+Endpoints powering the Desktop App's "Obsidian" setup card:
 
 * ``GET  /api/setup/obsidian/status``    — detect Obsidian install + check
   whether the Jarvis vault is registered. Never 5xx — UI must stay
   responsive even when ``obsidian.json`` is corrupt or pywin32 is missing.
-* ``POST /api/setup/obsidian/register``  — register the Jarvis vault in
-  ``obsidian.json``. Mirrors :class:`jarvis.setup.obsidian.RegisterResult`
-  semantics: ``added`` and ``already_registered`` => 200, ``config_missing``
-  => 409, ``rolled_back`` => 500.
+* ``GET  /api/setup/obsidian/vaults``    — list the user's already
+  registered Obsidian vaults, for the connect vault-choice picker
+  (spec A6).
+* ``POST /api/setup/obsidian/register``  — register a vault for Jarvis's
+  wiki. ``mode="separate"`` (default, backward compatible) registers the
+  Jarvis-owned vault in ``obsidian.json``, mirroring
+  :class:`jarvis.setup.obsidian.RegisterResult` semantics: ``added`` and
+  ``already_registered`` => 200, ``config_missing`` => 409,
+  ``rolled_back`` => 500. ``mode="existing"`` instead repoints
+  ``[wiki_integration].vault_root`` INTO ``<existing_vault>/Jarvis`` so
+  every wiki write stays contained inside the user's own vault.
 
 The vault root is read from ``app.state.config.wiki_integration.vault_root``
 (same surface as :mod:`jarvis.ui.web.wiki_routes`) and resolved through the
