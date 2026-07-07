@@ -24,6 +24,7 @@ import numpy as np
 
 from jarvis.core.protocols import AudioChunk, Transcript
 from jarvis.speech.rolling_whisper_wake import RollingWhisperWake
+from jarvis.speech.wake_phrase import compile_wake_matcher
 
 
 def _const_chunk(value: int, n: int = 1600) -> AudioChunk:
@@ -151,7 +152,7 @@ async def test_quiet_genuine_wake_below_legacy_confidence_floor_is_accepted() ->
 def test_default_gates_let_quiet_speech_through_but_still_guard_silence() -> None:
     from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
 
-    wake = RollingWhisperWake(FasterWhisperProvider())
+    wake = RollingWhisperWake(FasterWhisperProvider(), pattern=compile_wake_matcher("Hey Nova"))
     # Silence guard preserved (pinned independently by the hallucination guard).
     assert wake._min_rms >= 0.003           # noqa: SLF001
     # Peak gate lowered below the legacy 0.02 so a quiet mic is not deafened.
@@ -168,7 +169,9 @@ def test_default_gates_let_quiet_speech_through_but_still_guard_silence() -> Non
 def test_stats_start_at_zero() -> None:
     from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
 
-    s = RollingWhisperWake(FasterWhisperProvider()).stats()
+    s = RollingWhisperWake(
+        FasterWhisperProvider(), pattern=compile_wake_matcher("Hey Nova")
+    ).stats()
     assert s["windows_polled"] == 0
     assert s["transcribed"] == 0
     assert s["matched"] == 0

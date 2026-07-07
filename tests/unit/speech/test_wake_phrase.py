@@ -60,32 +60,33 @@ def test_matcher_has_search_returning_group_like_re_pattern() -> None:
 
 
 # --------------------------------------------------------------------------
-# Default "Hey Jarvis" reproduces the strict legacy pattern
+# "Hey Jarvis" is an ordinary phrase on the generic matcher (design 2026-07-07)
 # --------------------------------------------------------------------------
 
 @pytest.mark.parametrize("phrase", ["Hey Jarvis", "jarvis", "Jarvis", "hey jarvis"])
-def test_jarvis_family_matches_strict_prefix_phrases(phrase: str) -> None:
+def test_jarvis_phrase_matches_prefixed_transcripts(phrase: str) -> None:
     m = compile_wake_matcher(phrase)
     assert m.search("hey jarvis") is not None
     assert m.search("hi jarvis") is not None
     assert m.search("hallo jarvis") is not None
 
 
-@pytest.mark.parametrize("phrase", ["Hey Jarvis", "jarvis"])
-def test_jarvis_family_rejects_bare_word_and_hallucinations(phrase: str) -> None:
-    # BUG-009: bare "jarvis" without a hey/hi/hallo prefix must NOT trigger,
-    # and common Whisper hallucinations must not match.
-    m = compile_wake_matcher(phrase)
+def test_prefixed_jarvis_phrase_rejects_bare_word_and_hallucinations() -> None:
+    # BUG-009 on the GENERIC matcher: a phrase that carries a wake prefix
+    # ("Hey Jarvis") must NOT fire on the bare core word in ordinary speech,
+    # and common Whisper hallucinations must never match.
+    m = compile_wake_matcher("Hey Jarvis")
     assert m.search("jarvis") is None
     assert m.search("Thank you") is None
     assert m.search("Vielen Dank") is None
 
 
-def test_jarvis_matcher_is_backed_by_the_canonical_pattern() -> None:
-    # The jarvis family must delegate to the single-source pattern so it can
-    # never drift from rolling_whisper_wake.DEFAULT_PATTERN (BUG-008 territory).
-    m = compile_wake_matcher("Hey Jarvis")
-    assert m.is_jarvis_default is True
+def test_single_word_jarvis_phrase_behaves_like_any_single_word() -> None:
+    # A phrase WITHOUT a prefix is a one-word wake: the word itself fires
+    # anywhere — identical to "Computer" (no special-cased word ships).
+    m = compile_wake_matcher("jarvis")
+    assert m.search("jarvis") is not None
+    assert m.search("Thank you") is None
 
 
 # --------------------------------------------------------------------------

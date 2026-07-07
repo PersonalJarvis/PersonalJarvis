@@ -45,10 +45,10 @@ def test_double_letter_and_ph_folding() -> None:
     assert compile_wake_matcher("Sophie").search("Sofie") is not None  # ph -> f
 
 
-def test_jarvis_default_is_untouched_by_folding() -> None:
-    # The default jarvis phrase uses the strict legacy regex, not the fuzzy/folded
-    # path, so its exact behaviour is preserved.
-    m = compile_wake_matcher("Jarvis")
+def test_prefixed_jarvis_phrase_keeps_bare_word_guard_under_folding() -> None:
+    # "Hey Jarvis" runs the same fuzzy/folded path as every phrase (design
+    # 2026-07-07). The prefix requirement keeps the bare core word silent.
+    m = compile_wake_matcher("Hey Jarvis")
     assert m.search("hey jarvis") is not None
     assert m.search("jarvis") is None       # bare jarvis still rejected
     assert m.search("marco") is None

@@ -73,8 +73,13 @@ def _bare_pipeline(
     pipe._utterance_stt = utterance_stt
     if wake_plan is not None:
         pipe._wake_plan = wake_plan
-    if wake_matcher is not None:
-        pipe._wake_matcher = wake_matcher
+    # No default pattern ships (design 2026-07-07): the gate always runs on
+    # the wake plan's matcher — these tests use the "Hey Jarvis" phrase.
+    from jarvis.speech.wake_phrase import compile_wake_matcher
+
+    pipe._wake_matcher = (
+        wake_matcher if wake_matcher is not None else compile_wake_matcher("Hey Jarvis")
+    )
     return pipe
 
 

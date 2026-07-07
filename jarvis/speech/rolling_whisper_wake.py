@@ -38,13 +38,11 @@ from jarvis.audio.capture import pcm_bytes_to_np
 from jarvis.core.protocols import AudioChunk
 from jarvis.plugins.stt.fwhisper import FasterWhisperProvider, TranscribeBusy
 
-# The strict "hey/hi/hallo + jarv-stem" pattern now lives in wake_constants as
-# the single source of truth (the prefix verifier re-exports the same object),
-# so the two STT wake paths can never drift apart (BUG-008). Re-exported here
-# under the historical ``DEFAULT_PATTERN`` name so existing call sites and tests
-# keep working. ``pattern=`` also accepts a ``WakeMatcher`` (duck-types
-# ``.search().group(0)``) so a custom wake phrase can drive this backstop.
-from jarvis.speech.wake_constants import JARVIS_WAKE_PATTERN as DEFAULT_PATTERN
+# ``pattern=`` accepts a compiled regex or a ``WakeMatcher`` (duck-types
+# ``.search().group(0)``). There is NO default pattern: the product ships no
+# wake word (design 2026-07-07), so every caller passes the configured
+# phrase's matcher from the wake plan — the same object the prefix verifier
+# uses, so the two STT wake paths can never drift apart (BUG-008).
 from jarvis.speech.wake_constants import (
     STT_HALLUCINATION_RE,
     normalize_phrase_for_match,
@@ -181,8 +179,9 @@ class RollingWhisperWake:
         self,
         stt: FasterWhisperProvider,
         # Either a compiled regex or a WakeMatcher — both expose
-        # ``.search(text)`` returning an object with ``.group(0)``.
-        pattern: Any = DEFAULT_PATTERN,
+        # ``.search(text)`` returning an object with ``.group(0)``. REQUIRED:
+        # there is no shipped default wake pattern (design 2026-07-07).
+        pattern: Any,
         window_s: float = 1.8,        # shorter = less silence share = higher avg RMS
         # 2026-06-30 ("~0.5 s delay"): 0.3 -> 0.2 so a spoken custom wake reaches
         # the bar within one snappier poll. The gates skip silence cheaply, so the

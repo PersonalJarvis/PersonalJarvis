@@ -9,9 +9,6 @@ Why this module exists:
 - ``WAKE_ENGINES`` is the SoT for the five-layer enum (Python ↔ TOML ↔ Pydantic
   ↔ TS ↔ UI). The TS mirror (``frontend/src/constants/wakeEngines.ts``) is held
   in lockstep by ``tests/unit/speech/test_wake_engine_parity.py``.
-- ``JARVIS_WAKE_PATTERN`` is the strict legacy "hey/hi/hallo + jarv" regex,
-  moved here so ``rolling_whisper_wake.DEFAULT_PATTERN`` and the prefix verifier
-  re-export ONE definition instead of duplicating the literal (BUG-008 drift).
 - The product ships NO named wake model and never resolves a phrase against a
   pretrained one (design 2026-07-07): every phrase goes through the generic
   engine chain in ``wake_phrase.resolve_wake_plan`` (user-trained custom .onnx
@@ -40,14 +37,10 @@ WAKE_ENGINES: tuple[str, ...] = (
 
 DEFAULT_WAKE_PHRASE = ""  # empty = neutral pre-onboarding default; user must opt in
 
-# Strict legacy wake pattern (was rolling_whisper_wake.DEFAULT_PATTERN). Matches
-# "hey/hi/hallo" + a jarv-family stem; a bare "Jarvis" or a Whisper
-# hallucination must NOT match (BUG-009). This is the single definition; the
-# rolling-whisper backstop and the prefix verifier both re-export it.
-JARVIS_WAKE_PATTERN = re.compile(
-    r"\bh(ey|i|allo)\W+(jarv\w{1,5}|charv\w{1,5}|tscharv\w{1,5}|dschärw\w{1,5})\b",  # i18n-allow
-    re.IGNORECASE,
-)
+# (JARVIS_WAKE_PATTERN — the strict legacy "hey + jarv-stem" regex — was
+# removed 2026-07-07 with the last special-cased wake word. Every phrase now
+# compiles to the same generic fuzzy matcher; BUG-009's bare-core-word guard
+# lives in WakeMatcher.require_known_prefix for prefixed phrases.)
 
 # Known Whisper silence/noise hallucination boilerplate (YouTube end cards,
 # broadcaster subtitle credits, ad outros). Single definition here (leaf
@@ -231,7 +224,6 @@ def resolve_vosk_model_path(language: str | None) -> str | None:
 __all__ = [
     "WAKE_ENGINES",
     "DEFAULT_WAKE_PHRASE",
-    "JARVIS_WAKE_PATTERN",
     "WAKE_PREFIXES",
     "INSTANT_WAKE_PHRASES",
     "normalize_phrase",

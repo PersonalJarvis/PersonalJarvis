@@ -20,11 +20,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
-from jarvis.speech.rolling_whisper_wake import DEFAULT_PATTERN
-
 log = logging.getLogger("jarvis.wake.verifier")
-
-WAKE_PREFIX_PATTERN = DEFAULT_PATTERN
 
 # Silence gate for user-trained custom_onnx wake hits (live forensic
 # 2026-07-02): such models fire on breath/near-silence many times a minute,
@@ -95,16 +91,19 @@ def transcript_has_hey_prefix(text: str, matcher: Any | None = None) -> bool:
     Pure function — no I/O, no STT. The caller transcribes the audio buffer
     however it likes and passes the resulting text in here.
 
-    ``matcher`` is an optional :class:`~jarvis.speech.wake_phrase.WakeMatcher`
-    (or any object exposing ``.search(text)``). When ``None`` the strict legacy
-    "hey/hi/hallo + jarv" pattern is used so the default "Hey Jarvis" behaviour
-    is byte-identical. A custom wake phrase passes its own matcher here so the
-    OpenWakeWord prefix gate confirms the *configured* word, not "jarvis".
+    ``matcher`` is a :class:`~jarvis.speech.wake_phrase.WakeMatcher` (or any
+    object exposing ``.search(text)``) — the configured phrase's own matcher
+    from the wake plan. There is no default pattern (design 2026-07-07): with
+    ``None`` this check FAILS OPEN (returns True with a warning) because a
+    missing matcher is a wiring gap, not evidence against the wake — an
+    over-eager suppression here would silently brick the wake word.
     """
     if not text:
         return False
-    pattern = matcher if matcher is not None else WAKE_PREFIX_PATTERN
-    return pattern.search(text) is not None
+    if matcher is None:
+        log.warning("Wake verify called without a matcher — failing open.")
+        return True
+    return matcher.search(text) is not None
 
 
 async def verify_wake_with_stt(
@@ -114,10 +113,10 @@ async def verify_wake_with_stt(
     language: str | None = "de",
     matcher: Any | None = None,
 ) -> tuple[bool, str | None]:
-    """Transcribe ``pcm_bytes`` and check the strict wake prefix.
+    """Transcribe ``pcm_bytes`` and confirm the configured wake phrase.
 
     Returns ``(matched, transcript_text)``. ``matched`` is True only when the
-    transcript contains the full "hey/hi/hallo + jarv" pattern.
+    transcript satisfies the phrase's own matcher.
 
     The transcript distinguishes two non-matching cases the caller must treat
     differently: ``""`` means the STT WORKED and heard no speech (evidence of a

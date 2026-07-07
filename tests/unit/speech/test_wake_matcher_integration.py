@@ -1,16 +1,16 @@
-"""The prefix verifier and the rolling-whisper backstop accept a custom
-:class:`WakeMatcher`, and their jarvis defaults stay byte-identical.
+"""The prefix verifier and the rolling-whisper backstop run on the wake
+plan's :class:`WakeMatcher` — one matcher object drives both STT wake paths.
 
-Guards the generalisation step of the custom-wake-word feature: making the two
-STT-based wake paths phrase-aware without drifting from the canonical pattern
-(BUG-008) or weakening the default jarvis behaviour (BUG-009).
+Guards the generalisation of the custom-wake-word feature: both paths are
+phrase-aware and share ONE matcher (BUG-008 no-drift), a prefixed phrase
+still rejects its bare core word (BUG-009), and no default pattern exists —
+the product ships no wake word (design 2026-07-07).
 """
 from __future__ import annotations
 
 from types import SimpleNamespace
 
-from jarvis.speech import wake_constants
-from jarvis.speech.rolling_whisper_wake import DEFAULT_PATTERN, RollingWhisperWake
+from jarvis.speech.rolling_whisper_wake import RollingWhisperWake
 from jarvis.speech.wake_phrase import compile_wake_matcher
 from jarvis.speech.wake_verifier import (
     transcript_has_hey_prefix,
@@ -18,12 +18,8 @@ from jarvis.speech.wake_verifier import (
 )
 
 # --------------------------------------------------------------------------
-# Single source of truth: rolling-whisper re-exports the canonical pattern.
+# One matcher drives both paths; there is no default pattern.
 # --------------------------------------------------------------------------
-
-def test_rolling_default_pattern_is_the_canonical_pattern() -> None:
-    assert DEFAULT_PATTERN is wake_constants.JARVIS_WAKE_PATTERN
-
 
 def test_rolling_whisper_accepts_a_custom_matcher() -> None:
     matcher = compile_wake_matcher("Computer")
@@ -32,12 +28,20 @@ def test_rolling_whisper_accepts_a_custom_matcher() -> None:
 
 
 # --------------------------------------------------------------------------
-# Verifier default == jarvis; with a matcher == the custom phrase.
+# Verifier: a matcher confirms its own phrase; no matcher fails OPEN.
 # --------------------------------------------------------------------------
 
-def test_verifier_default_is_jarvis() -> None:
-    assert transcript_has_hey_prefix("hey jarvis") is True
-    assert transcript_has_hey_prefix("jarvis") is False
+def test_verifier_with_jarvis_matcher_keeps_bug009_guard() -> None:
+    matcher = compile_wake_matcher("Hey Jarvis")
+    assert transcript_has_hey_prefix("hey jarvis", matcher=matcher) is True
+    assert transcript_has_hey_prefix("jarvis", matcher=matcher) is False
+
+
+def test_verifier_without_matcher_fails_open() -> None:
+    # A missing matcher is a wiring gap, not evidence against the wake:
+    # suppressing here would silently brick the wake word.
+    assert transcript_has_hey_prefix("anything at all") is True
+    assert transcript_has_hey_prefix("") is False  # empty transcript still rejects
 
 
 def test_verifier_with_custom_matcher_matches_phrase() -> None:
@@ -67,8 +71,11 @@ async def test_verify_with_stt_honours_custom_matcher() -> None:
     assert "computer" in text.lower()
 
 
-async def test_verify_with_stt_default_matcher_still_jarvis() -> None:
-    matched, _ = await verify_wake_with_stt(_FakeSTT("Jarvis"), b"\x00\x00" * 100)
+async def test_verify_with_stt_jarvis_matcher_rejects_bare_word() -> None:
+    matcher = compile_wake_matcher("Hey Jarvis")
+    matched, _ = await verify_wake_with_stt(
+        _FakeSTT("Jarvis"), b"\x00\x00" * 100, matcher=matcher
+    )
     assert matched is False
 
 

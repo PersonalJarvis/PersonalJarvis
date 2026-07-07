@@ -1138,27 +1138,28 @@ class SpeechPipeline:
             self._wake = OpenWakeWordProvider(
                 keywords=wake_keywords, activation_threshold=wake_threshold
             )
-        # Stays off whenever there is no local Whisper engine (lightweight
-        # path), so the heartbeat reports whisper=off instead of a phantom on.
-        self._whisper_wake_enabled = enable_whisper_wake and self._stt is not None
-        # Rolling-Window Whisper: transkribiert alle 500ms die letzten 2.5s
-        # Audio und matched das Wake-Pattern. Kein VAD-Endpoint-Dependency →
-        # robust auch bei leisem Mic. RollingWhisperWake needs a local Whisper
-        # engine; in the lightweight path (self._stt is None) it is always off.
-        # When a wake_plan is set, its matcher drives the phrase match so a
-        # custom phrase ("Computer") is detected instead of "jarvis".
-        if enable_whisper_wake and self._stt is not None:
-            _poll = self._wake_poll_interval()
-            if self._wake_matcher is not None:
-                self._whisper_wake = RollingWhisperWake(
-                    self._stt, pattern=self._wake_matcher, poll_interval_s=_poll
-                )
-            else:
-                self._whisper_wake = RollingWhisperWake(
-                    self._stt, poll_interval_s=_poll
-                )
+        # Rolling-window Whisper: transcribes the last ~2 s of audio on a poll
+        # cadence and matches the wake phrase. No VAD-endpoint dependency, so
+        # it stays robust on a quiet mic. It needs BOTH a local Whisper engine
+        # AND a phrase matcher: with no wake plan there is no phrase to listen
+        # for (no shipped default pattern — design 2026-07-07), so no rolling
+        # detector is armed; a later set_wake_plan() arms one live. The
+        # enabled flag stays in lockstep so the heartbeat reports whisper=off
+        # instead of a phantom on.
+        if (
+            enable_whisper_wake
+            and self._stt is not None
+            and self._wake_matcher is not None
+        ):
+            self._whisper_wake = RollingWhisperWake(
+                self._stt,
+                pattern=self._wake_matcher,
+                poll_interval_s=self._wake_poll_interval(),
+            )
+            self._whisper_wake_enabled = True
         else:
             self._whisper_wake = None
+            self._whisper_wake_enabled = False
         # require_hey_prefix may arrive either as an explicit kwarg or from
         # cfg.trigger.require_hey_prefix. The kwarg wins so tests can override.
         cfg_require = True
@@ -4290,8 +4291,8 @@ class SpeechPipeline:
 
     async def _verify_oww_hit(self, pcm_snapshot: bytes) -> bool:
         """Second-stage gate: ask the utterance STT whether the few seconds
-        leading up to an OpenWakeWord hit actually contained "hey/hi/hallo +
-        jarv". Returns True if the strict prefix is in the transcript.
+        leading up to an OpenWakeWord hit actually contained the configured
+        wake phrase. Returns True if the phrase's matcher confirms it.
 
         STT-outage failure modes degrade OPEN (return True with a log line) so
         a misconfigured STT, a network blip, or a rate-limit cannot brick the

@@ -30,7 +30,6 @@ from typing import Any
 from jarvis.plugins.wake.openwakeword_provider import PRODUCTION_WAKE_THRESHOLD
 from jarvis.speech.wake_constants import (
     DEFAULT_WAKE_PHRASE,
-    JARVIS_WAKE_PATTERN,
     WAKE_ENGINES,
     WAKE_PREFIXES,
     normalize_phrase_for_match,
@@ -109,9 +108,9 @@ class _FuzzyMatch:
 class WakeMatcher:
     """Phrase matcher that duck-types ``re.Pattern.search(text)``.
 
-    - jarvis-default: wraps the canonical :data:`JARVIS_WAKE_PATTERN`.
-    - arbitrary phrase: fuzzy token-window match against a normalised
-      transcript using ``difflib.SequenceMatcher``. When the configured phrase
+    Every phrase gets the same treatment (no special-cased word — design
+    2026-07-07): fuzzy token-window match against a normalised
+    transcript using ``difflib.SequenceMatcher``. When the configured phrase
       starts with a known wake prefix ("Hey Fable"), the matched window must be
       IMMEDIATELY preceded by a prefix token too (``require_known_prefix``) —
       the bare core word inside ordinary speech must NOT activate (user mandate
@@ -126,7 +125,6 @@ class WakeMatcher:
         pattern: Any | None = None,
         core_tokens: list[str] | None = None,
         fuzzy_ratio: float = 0.8,
-        is_jarvis_default: bool = False,
         require_known_prefix: bool = False,
     ) -> None:
         self._pattern = pattern
@@ -134,15 +132,10 @@ class WakeMatcher:
         # ("Nico" -> "Niko"/"Nicko"/"Nikko") compares equal (see ``sound_fold``).
         self._core = [sound_fold(c) for c in (core_tokens or [])]
         self._ratio = fuzzy_ratio
-        self._is_jarvis = is_jarvis_default
         self._require_prefix = require_known_prefix
         # Folded prefix family: the window before the core must fuzzy-match ANY
         # of these when the configured phrase itself carries a prefix.
         self._folded_prefixes = tuple({sound_fold(p) for p in WAKE_PREFIXES})
-
-    @property
-    def is_jarvis_default(self) -> bool:
-        return self._is_jarvis
 
     def _effective_ratio(self, core_token: str) -> float:
         """The match ratio required for one core token.
@@ -218,11 +211,12 @@ class WakeMatcher:
 def compile_wake_matcher(phrase: str, *, fuzzy_ratio: float = 0.8) -> WakeMatcher:
     """Build a :class:`WakeMatcher` for ``phrase``.
 
-    The default "Hey Jarvis" (and any jarvis-only phrase) is matched by the
-    strict legacy pattern. Every other phrase fuzzy-matches on its CORE tokens;
-    when the configured phrase itself starts with a known wake prefix ("Hey
-    Fable"), the prefix is REQUIRED immediately before the core (any known
-    prefix counts — "Hallo Fable" still wakes a "Hey Fable" config).
+    Every phrase — including "Hey Jarvis" — fuzzy-matches on its CORE tokens
+    (no special-cased word ships; design 2026-07-07). When the configured
+    phrase itself starts with a known wake prefix ("Hey Fable"), the prefix is
+    REQUIRED immediately before the core (any known prefix counts — "Hallo
+    Fable" still wakes a "Hey Fable" config), so the bare core word in
+    ordinary speech stays silent (BUG-009 for prefixed phrases).
 
     History: 2026-06-29 deliberately made the prefix OPTIONAL ("lieber leichter
     triggern als schwer") because the slow poll cadence (~1.7 s vs a 1.8 s
@@ -239,8 +233,6 @@ def compile_wake_matcher(phrase: str, *, fuzzy_ratio: float = 0.8) -> WakeMatche
     """
     tokens = normalize_phrase_for_match(phrase)
     core = phrase_core_for_match(phrase)
-    if core == ["jarvis"]:
-        return WakeMatcher(pattern=JARVIS_WAKE_PATTERN, is_jarvis_default=True)
     # A leading known prefix was stripped from the core -> the user's phrase
     # carries one -> demand it in the transcript too.
     has_prefix = len(core) < len(tokens)
@@ -485,7 +477,10 @@ def resolve_wake_plan(
             needs_local_whisper=True,
             degraded=degraded,
             message=message,
-            verify_prefix=matcher.is_jarvis_default,
+            # The rolling-whisper path already matches the phrase itself; no
+            # second-stage prefix verification (that gate exists for weak
+            # custom_onnx models — see WakeWordPlan.verify_prefix).
+            verify_prefix=False,
         )
 
     # 5. No local model for the user's OWN word. The product rule (2026-07-04)

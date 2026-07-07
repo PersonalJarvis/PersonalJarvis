@@ -124,13 +124,16 @@ async def test_verify_oww_hit_trusts_non_jarvis_model_without_stt() -> None:
     assert stt.calls == 0  # trusted the specific OWW model, no STT re-verify
 
 
-async def test_verify_oww_hit_still_verifies_jarvis() -> None:
+async def test_verify_oww_hit_still_rejects_bare_core_word() -> None:
+    from jarvis.speech.wake_phrase import compile_wake_matcher
+
     pipe = SpeechPipeline.__new__(SpeechPipeline)
     pipe._require_hey_prefix = True
-    stt = _FakeSTT("Jarvis")  # bare jarvis -> must be rejected
+    stt = _FakeSTT("Jarvis")  # bare core word -> must be rejected
     pipe._utterance_stt = stt
     pipe._wake_plan = SimpleNamespace(verify_prefix=True)
-    pipe._wake_matcher = None  # None -> default jarvis pattern in verifier
+    # The plan's own matcher drives the verify (no default pattern ships).
+    pipe._wake_matcher = compile_wake_matcher("Hey Jarvis")
 
     assert await pipe._verify_oww_hit(b"\x00\x00" * 100) is False
     assert stt.calls == 1
