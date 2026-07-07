@@ -34,17 +34,33 @@ from jarvis.missions.workers.provider_chain import _FallbackStep
 
 @pytest.fixture(autouse=True)
 def _reset_codex_auth_marker():
-    """The codex needs_reauth + claude quota-cooldown flags are process globals
-    — reset both around every test so a fallback test doesn't pollute the rest
-    of the suite."""
+    """The codex needs_reauth + the claude/codex quota-cooldown flags are
+    process globals — reset all three around every test so a fallback test
+    doesn't pollute the rest of the suite."""
     from jarvis.claude_quota_state import clear_claude_quota_cooldown
     from jarvis.codex_auth_state import clear_codex_needs_reauth
+    from jarvis.codex_quota_state import clear_codex_quota_cooldown
 
     clear_codex_needs_reauth()
     clear_claude_quota_cooldown()
+    clear_codex_quota_cooldown()
     yield
     clear_codex_needs_reauth()
     clear_claude_quota_cooldown()
+    clear_codex_quota_cooldown()
+
+
+@pytest.fixture
+def _viable_claude_fallback(monkeypatch: pytest.MonkeyPatch):
+    """Pin the codex->claude fallback gate to 'Claude IS viable'.
+
+    The gate (2026-07-07 incident) consults binary presence + auth viability
+    before the nested Claude spawn; tests that exercise the fallback must not
+    depend on this machine's real ~/.claude state."""
+    from jarvis.missions import init as mi
+
+    monkeypatch.setattr(cdw_claude, "_resolve_claude_binary", lambda: "claude")
+    monkeypatch.setattr(mi, "_claude_cli_auth_viable", lambda: True)
 
 
 # --- pure-unit: the crash-proofing helpers --------------------------------
