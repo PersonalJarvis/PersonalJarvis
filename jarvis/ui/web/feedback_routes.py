@@ -2,7 +2,8 @@
 
 Endpoint:
 
-    POST /api/feedback  →  {"ok": bool, "status": str, "detail": str}
+    POST /api/feedback  →  {"ok": bool, "status": str, "detail": str,
+                            "github_url": str | None}
 
 The endpoint validates the payload, enriches it with system context (app
 version, OS, Python, UTC timestamp), and forwards it to a Discord webhook as

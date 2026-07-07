@@ -768,13 +768,18 @@ class ClaudeDirectWorker:
             )
             if allow_backend_fallback:
                 from jarvis.codex_auth_state import codex_needs_reauth
+                from jarvis.codex_quota_state import codex_in_quota_cooldown
 
                 from .codex_direct_worker import (
                     CodexDirectWorker,
                     _codex_oauth_available,
                 )
 
-                if _codex_oauth_available() and not codex_needs_reauth():
+                if (
+                    _codex_oauth_available()
+                    and not codex_needs_reauth()
+                    and not codex_in_quota_cooldown()
+                ):
                     logger.warning(
                         "ClaudeDirectWorker[%s]: claude auth is dead (%r) with "
                         "no work delivered — falling back to the codex "
@@ -823,6 +828,7 @@ class ClaudeDirectWorker:
             and not any_tool_use
         ):
             from jarvis.codex_auth_state import codex_needs_reauth
+            from jarvis.codex_quota_state import codex_in_quota_cooldown
 
             from .codex_direct_worker import (
                 CodexDirectWorker,
@@ -843,6 +849,7 @@ class ClaudeDirectWorker:
                 _codex_error_is_usage_limited(final_result.result or "")
                 and _codex_oauth_available()
                 and not codex_needs_reauth()
+                and not codex_in_quota_cooldown()
             ):
                 logger.warning(
                     "ClaudeDirectWorker[%s]: Claude Max quota limit hit (%r) "

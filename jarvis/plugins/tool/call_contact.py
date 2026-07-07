@@ -95,7 +95,14 @@ def _default_call_config() -> dict[str, str] | None:
         from_number = getattr(tcfg, "phone_number", None)
         public_base_url = getattr(tcfg, "public_base_url", None)
         auth_token = cfg.get_secret("twilio_auth_token", env_fallback="TWILIO_AUTH_TOKEN")
-        if not (account_sid and auth_token and from_number and public_base_url):
+        # Honor the explicit Enabled switch (wizard step 5 / Telephony UI), just
+        # like the working ``/api/telephony/outbound`` route, which refuses with
+        # 409 "Telephony is disabled" when ``twilio.enabled`` is false
+        # (telephony_routes.py). A filled-but-disabled config is a deliberate
+        # "off" — resolve to None so "call X" honestly no-ops instead of placing
+        # a real outbound call gated only by the generic ask-tier confirmation.
+        enabled = getattr(tcfg, "enabled", False)
+        if not (enabled and account_sid and auth_token and from_number and public_base_url):
             return None
         return {
             "account_sid": str(account_sid),

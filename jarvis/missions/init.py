@@ -508,9 +508,14 @@ def reachable_worker_families() -> list[str]:
     if _resolve_claude_binary() is not None and _claude_cli_auth_viable():
         families.append("claude")
     from jarvis.codex_auth_state import codex_needs_reauth
+    from jarvis.codex_quota_state import codex_in_quota_cooldown
     from jarvis.missions.workers.codex_direct_worker import _codex_oauth_available
 
-    if _codex_oauth_available() and not codex_needs_reauth():
+    if (
+        _codex_oauth_available()
+        and not codex_needs_reauth()
+        and not codex_in_quota_cooldown()
+    ):
         families.append("codex")
     from jarvis.core.config import get_provider_secret
     from jarvis.missions.workers.api_agent_worker import supports_api_agent_worker
@@ -567,11 +572,23 @@ def _cross_family_last_resort_worker(task_text: str) -> Any | None:
             "view to restore Claude."
         )
     # 2. ChatGPT subscription via the codex CLI OAuth login (no API key).
+    #    Quota-aware since 2026-07-07 (mission_019f3cd8-1dd4): a usage-capped
+    #    plan keeps `codex status` connected=True, so login presence alone
+    #    re-picked a codex that failed the cap check ~28 s into every mission
+    #    while a healthy API key sat unused (AP-22). The cooldown self-expires,
+    #    then codex is re-probed; a codex success clears it.
     from jarvis.codex_auth_state import codex_needs_reauth
+    from jarvis.codex_quota_state import codex_in_quota_cooldown
     from jarvis.missions.workers.codex_direct_worker import _codex_oauth_available
 
     if _codex_oauth_available() and not codex_needs_reauth():
-        return CodexDirectWorker()
+        if not codex_in_quota_cooldown():
+            return CodexDirectWorker()
+        logger.warning(
+            "Mission worker: the codex ChatGPT plan is in quota cooldown "
+            "(usage cap hit this session) — skipping codex and crossing "
+            "provider families until the cooldown expires."
+        )
     # 3. In-process API worker on whatever single key the user has, crossing
     #    families — the same cross-family set the Brain fallback chain uses.
     from jarvis.core.config import get_provider_secret
@@ -956,11 +973,16 @@ async def bootstrap_missions(
 
             if claude_in_quota_cooldown():
                 from jarvis.codex_auth_state import codex_needs_reauth
+                from jarvis.codex_quota_state import codex_in_quota_cooldown
                 from jarvis.missions.workers.codex_direct_worker import (
                     _codex_oauth_available,
                 )
 
-                if _codex_oauth_available() and not codex_needs_reauth():
+                if (
+                    _codex_oauth_available()
+                    and not codex_needs_reauth()
+                    and not codex_in_quota_cooldown()
+                ):
                     logger.warning(
                         "Mission worker -> CodexDirectWorker: Claude Max is in "
                         "quota cooldown this session — routing to codex until the "

@@ -321,3 +321,24 @@ def test_default_call_config_returns_none_when_twilio_genuinely_unconfigured(mon
     monkeypatch.setattr(real_cfg, "get_secret", lambda key, env_fallback=None: None)
 
     assert call_contact_mod._default_call_config() is None
+
+
+def test_default_call_config_returns_none_when_twilio_disabled(monkeypatch) -> None:
+    """A fully-filled Twilio config that is explicitly DISABLED (``enabled`` is
+    False — the wizard's own step-5 default) must resolve to ``None`` so "call
+    X" honestly no-ops. The working ``/api/telephony/outbound`` route refuses a
+    disabled integration with 409; the resolver must not be more permissive and
+    let a real call go out on an "off" switch, gated only by the ask-tier
+    confirm."""
+    import jarvis.core.config as real_cfg
+
+    fake_config = _FakeJarvisConfig()
+    fake_config.integrations.twilio.enabled = False  # everything else stays filled
+    monkeypatch.setattr(real_cfg, "load_config", lambda: fake_config)
+    monkeypatch.setattr(
+        real_cfg,
+        "get_secret",
+        lambda key, env_fallback=None: "tok_real_secret" if key == "twilio_auth_token" else None,
+    )
+
+    assert call_contact_mod._default_call_config() is None

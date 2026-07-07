@@ -490,6 +490,10 @@ ignore = ["S101", "S603", "S607"]
 # bandit flags as hardcoded passwords. Both are false positives in a test
 # context; the production modules stay under the strict ruleset.
 "tests/unit/telephony/*.py" = ["S105", "S106", "S314"]
+# call-contact tests assert on fake Twilio auth-token fixture literals (e.g.
+# "tok_real_secret") that bandit flags as hardcoded passwords — a false
+# positive in a test context, same carve-out as the telephony tests above.
+"tests/unit/plugins/tool/test_call_contact.py" = ["S105", "S106"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -15,6 +15,7 @@ def _patch_env(
     claude_auth_viable: bool = True,
     codex_oauth: bool = False,
     codex_reauth: bool = False,
+    codex_quota_capped: bool = False,
     keys: tuple[str, ...] = (),
 ) -> None:
     monkeypatch.setattr(
@@ -28,6 +29,10 @@ def _patch_env(
     )
     monkeypatch.setattr(
         "jarvis.codex_auth_state.codex_needs_reauth", lambda: codex_reauth
+    )
+    monkeypatch.setattr(
+        "jarvis.codex_quota_state.codex_in_quota_cooldown",
+        lambda **_k: codex_quota_capped,
     )
     keyset = {k.strip().lower() for k in keys}
     monkeypatch.setattr(
@@ -62,3 +67,17 @@ def test_dead_claude_is_not_listed(monkeypatch: pytest.MonkeyPatch) -> None:
     fams = mi.reachable_worker_families()
     assert "claude" not in fams
     assert fams == ["codex"]
+
+
+def test_usage_capped_codex_is_not_listed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The 2026-07-07 shape: codex login connected but the ChatGPT plan is
+    usage-capped -> codex absent, the healthy API-key family remains, so the
+    Sub-Agents section health warns honestly instead of staying green."""
+    _patch_env(
+        monkeypatch,
+        codex_oauth=True, codex_quota_capped=True,
+        keys=("openrouter",),
+    )
+    fams = mi.reachable_worker_families()
+    assert "codex" not in fams
+    assert fams == ["openrouter"]

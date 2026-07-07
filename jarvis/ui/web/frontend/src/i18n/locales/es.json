@@ -281,6 +281,14 @@
       "running": "en marcha",
       "completed": "llegado",
       "failed": "fallo"
+    },
+    "health_degraded": "Proveedor de subagentes degradado",
+    "health_error": "Ningún proveedor de subagentes accesible",
+    "error_class": {
+      "provider_auth": "El inicio de sesión del proveedor no es válido o ha caducado; vuelve a conectarlo en la vista de claves API.",
+      "provider_quota": "Cuota del proveedor agotada; las misiones usan otro proveedor.",
+      "provider_unreachable": "Proveedor temporalmente inaccesible.",
+      "worker_timeout": "El worker alcanzó su límite de tiempo."
     }
   },
   "tasks_view": {
