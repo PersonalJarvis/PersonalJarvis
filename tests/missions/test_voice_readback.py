@@ -124,6 +124,23 @@ def test_render_failed_maps_git_not_a_repository_to_zip_install_phrase() -> None
     assert "zip" in out_en.lower(), f"expected the ZIP-install hint, got {out_en!r}"
 
 
+def test_git_setup_reasons_carry_spanish() -> None:
+    """CLAUDE.md §1: Spanish is an equal supported product-surface language,
+    so the two new git-setup reason keys must carry an ``es`` phrase — the
+    exact lines this fix added must not perpetuate the de/en-only gap."""
+    from jarvis.missions.voice.readback import FAILURE_REASON_PHRASES
+
+    es = FAILURE_REASON_PHRASES.get("es", {})
+    assert "git_missing" in es, "git_missing missing from the es phrase map"
+    assert "git_not_a_repository" in es, (
+        "git_not_a_repository missing from the es phrase map"
+    )
+    # Natural Spanish, not a snake_case token or a de/en copy.
+    assert "git" in es["git_missing"].lower()
+    assert "git_missing" not in es["git_missing"]
+    assert "zip" in es["git_not_a_repository"].lower()
+
+
 def test_render_failed_maps_attempts_timed_out_to_honest_timeout_phrase() -> None:
     """Live deep-dive 2026-06-07 (mission 019ea1da): a Computer-Use mission
     whose final iteration hit the 630s wall-clock cap was failed with the

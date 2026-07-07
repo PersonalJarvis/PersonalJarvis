@@ -172,7 +172,15 @@ READBACK_TEMPLATES: Final[dict[TemplateKey, dict[Lang, list[str]]]] = {  # i18n-
 # readback paths (direct-TTS listener + announcer bridge) cannot drift apart
 # (2026-05-27 hardening finding #7). Keys are the reasons emitted by the
 # orchestrator / recovery sweep; the DE and EN sets must stay in parity.
-FAILURE_REASON_PHRASES: Final[dict[Lang, dict[str, str]]] = {
+# Keyed by language CODE (str), not the render-API ``Lang`` literal: ``es`` is
+# an equal supported product-surface language (CLAUDE.md §1) and MUST be able
+# to carry a phrase here even though the ``MissionReadback`` render methods
+# themselves still default to the de/en ``Lang`` surface (widening that whole
+# API to ``es`` is a separate, larger task). Lookups use ``.get(language, {})``
+# so a code without an entry falls back cleanly. The de/en parity gate
+# (``test_failure_reason_phrases_de_en_parity``) still guards those two; ``es``
+# here carries only the keys that have been translated so far.
+FAILURE_REASON_PHRASES: Final[dict[str, dict[str, str]]] = {
     "de": {
         "critic_loop_exhausted": "Drei Versuche haben nicht gereicht.",  # i18n-allow
         "critic_rejected": "Die Prüfung war nicht zufrieden.",  # i18n-allow
@@ -209,6 +217,17 @@ FAILURE_REASON_PHRASES: Final[dict[Lang, dict[str, str]]] = {
         "git_not_a_repository": (
             "Jarvis-Agents require a git checkout (install via the "
             "git-based installer, not a ZIP download)."
+        ),
+    },
+    # Spanish is an equal supported product-surface language (CLAUDE.md §1).
+    # Only the two git-setup reason keys added with this fix carry ``es`` for
+    # now — the rest of the table is de/en pending a broader translation pass;
+    # a missing key here falls back via ``.get(language, {})``.
+    "es": {
+        "git_missing": "Jarvis-Agents necesitan que git esté instalado y en el PATH.",  # i18n-allow: Spanish TTS product-surface phrase
+        "git_not_a_repository": (
+            "Jarvis-Agents necesitan una copia de git (instala con el "  # i18n-allow: Spanish TTS product-surface phrase
+            "instalador de git, no con una descarga ZIP)."  # i18n-allow: Spanish TTS product-surface phrase
         ),
     },
 }

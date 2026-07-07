@@ -1068,7 +1068,7 @@ class Kontrollierer:
             # classified reason (git_missing / git_not_a_repository) set by
             # `_run_task_with_critic_loop`'s except clause takes priority over
             # the pre-existing generic fallback.
-            setup_reason = self.__dict__.get("_setup_failure_reason", {}).pop(
+            setup_reason = self._setup_failure_reason.pop(
                 mission_id, "worktree_setup_failed"
             )
             await self._fail_mission(
@@ -1139,7 +1139,7 @@ class Kontrollierer:
                 # actionable reason instead of the generic
                 # "worktree_setup_failed" for every facet.
                 logger.exception("Task %s: worktree-create failed: %s", step.task_id, exc)
-                self.__dict__.setdefault("_setup_failure_reason", {})[mission_id] = (
+                self._setup_failure_reason[mission_id] = (
                     _classify_worktree_setup_failure(exc)
                 )
                 return TaskOutcome.SETUP_FAILED

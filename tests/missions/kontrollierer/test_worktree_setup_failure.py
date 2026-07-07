@@ -77,6 +77,7 @@ async def test_worktree_path_cap_failure_returns_setup_failed(
 ) -> None:
     k = object.__new__(Kontrollierer)
     k._budget = _NoopBudget()
+    k._setup_failure_reason = {}
     k._worktrees = _PathCapWorktrees()
 
     outcome = await k._run_task_with_critic_loop(
@@ -99,6 +100,7 @@ async def test_worktree_git_lock_failure_returns_setup_failed(
 ) -> None:
     k = object.__new__(Kontrollierer)
     k._budget = _NoopBudget()
+    k._setup_failure_reason = {}
     k._worktrees = _GitLockWorktrees()
 
     outcome = await k._run_task_with_critic_loop(
@@ -130,6 +132,7 @@ async def test_worktree_missing_git_binary_yields_honest_setup_failed_reason(
     API-worker tasks, since every task is wrapped in a worktree first)."""
     k = object.__new__(Kontrollierer)
     k._budget = _NoopBudget()
+    k._setup_failure_reason = {}
     k._worktrees = _GitMissingWorktrees()
 
     outcome = await k._run_task_with_critic_loop(
@@ -156,6 +159,7 @@ async def test_worktree_not_a_git_repository_yields_zip_install_reason(
     unhelpful generic "I could not create a workspace."."""
     k = object.__new__(Kontrollierer)
     k._budget = _NoopBudget()
+    k._setup_failure_reason = {}
     k._worktrees = _NotAGitRepositoryWorktrees()
 
     outcome = await k._run_task_with_critic_loop(
