@@ -215,6 +215,7 @@ async def test_codex_dict_error_does_not_crash(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("_viable_claude_fallback")
 async def test_codex_auth_expired_falls_back_to_claude(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

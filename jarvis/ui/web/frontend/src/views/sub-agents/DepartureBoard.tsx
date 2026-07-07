@@ -197,6 +197,7 @@ export function DepartureBoard({ agents = [], snapshotError = null, health = nul
                     nowMs={nowMs}
                     expanded={expanded.has(agent.trace_id)}
                     onToggle={() => toggle(agent.trace_id)}
+                    t={t}
                   />
                 ))}
               </div>
