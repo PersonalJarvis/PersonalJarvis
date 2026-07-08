@@ -970,6 +970,12 @@
     "cleared": "Computer-Use model reset to your main model",
     "vision_note": "Only models that can see images are listed - Computer-Use reads the screen from screenshots, so a text-only model cannot run it."
   },
+  "apikeys_realtime_cu": {
+    "title": "Computer-Use",
+    "description": "Realtime models can't see your screen. When a realtime conversation needs Computer-Use, Jarvis uses your active Brain provider: {0}.",
+    "description_generic": "Realtime models can't see your screen. Computer-Use needs an active Brain provider to fall back to.",
+    "no_active_brain_hint": "No active Brain provider is configured yet. Switch to Pipeline → Brain and activate one to enable Computer-Use during Realtime conversations."
+  },
   "settings_view": {
     "silence_window": {
       "title": "Thinking pause",

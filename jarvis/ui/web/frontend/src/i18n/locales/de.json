@@ -969,6 +969,12 @@
     "cleared": "Computer-Use-Modell auf dein Hauptmodell zurückgesetzt",
     "vision_note": "Es werden nur Modelle angezeigt, die Bilder verstehen - Computer-Use liest den Bildschirm über Screenshots, ein reines Text-Modell kann es nicht steuern."
   },
+  "apikeys_realtime_cu": {
+    "title": "Computer-Use",
+    "description": "Realtime-Modelle können deinen Bildschirm nicht sehen. Wenn ein Realtime-Gespräch Computer-Use braucht, nutzt Jarvis deinen aktiven Brain-Provider: {0}.",
+    "description_generic": "Realtime-Modelle können deinen Bildschirm nicht sehen. Computer-Use braucht einen aktiven Brain-Provider als Rückfalloption.",
+    "no_active_brain_hint": "Es ist noch kein aktiver Brain-Provider eingerichtet. Wechsle zu Pipeline → Brain und aktiviere einen, um Computer-Use in Realtime-Gesprächen zu ermöglichen."
+  },
   "settings_view": {
     "silence_window": {
       "title": "Denkpause",

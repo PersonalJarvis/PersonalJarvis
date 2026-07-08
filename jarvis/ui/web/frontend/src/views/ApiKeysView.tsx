@@ -8,6 +8,7 @@ import { OpenRouterTtsControls } from "@/components/OpenRouterTtsVoicePicker";
 import { CuModelSelector } from "@/components/CuModelSelector";
 import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
 import { JarvisAgentSection } from "@/components/JarvisAgentSection";
+import { RealtimeComputerUsePanel } from "@/components/RealtimeComputerUsePanel";
 import { TelephonyPanel } from "@/views/TelephonyView";
 import { WikiProviderCard } from "@/views/settings/WikiProviderCard";
 import { JarvisApiGroup } from "@/views/settings/JarvisApiGroup";
@@ -143,10 +144,7 @@ export function ApiKeysView() {
       <CategoryTabs active={active} onSelect={setActive} health={health} tabs={modeTabs} />
 
       <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
-        {(active === "brain" ||
-          active === "tts" ||
-          active === "stt" ||
-          active === "realtime") && (
+        {(active === "brain" || active === "tts" || active === "stt") && (
           <ProviderCategory
             meta={categories[active]}
             tier={active}
@@ -156,6 +154,17 @@ export function ApiKeysView() {
             onChanged={refetch}
             onActivateOptimistic={setActiveOptimistic}
             health={health[active]}
+          />
+        )}
+        {active === "realtime" && (
+          <RealtimeCategory
+            meta={categories.realtime}
+            providers={providers}
+            loading={loading}
+            error={error}
+            onChanged={refetch}
+            onActivateOptimistic={setActiveOptimistic}
+            health={health.realtime}
           />
         )}
         {active === "subagents" && <SubagentCategory />}
@@ -476,6 +485,49 @@ function ProviderCategory({
         />
       )}
     </div>
+  );
+}
+
+/**
+ * The Realtime category (Feature B): the two realtime provider cards, via the
+ * SAME `ProviderCategory` used for brain/tts/stt (unchanged), followed by the
+ * Computer-Use delegation panel. Realtime speech-to-speech models can't see
+ * the screen, so Computer-Use during a realtime turn falls back to the ACTIVE
+ * Brain provider — exactly what CU already runs on today. This wrapper mirrors
+ * `SubagentCategory` below: it owns nothing itself, it just composes the
+ * existing tier section with the new read-through panel.
+ */
+function RealtimeCategory({
+  meta,
+  providers,
+  loading,
+  error,
+  onChanged,
+  onActivateOptimistic,
+  health,
+}: {
+  meta: CategoryMeta;
+  providers: ProviderDescriptor[];
+  loading: boolean;
+  error: string | null;
+  onChanged: () => void;
+  onActivateOptimistic: (tier: ProviderTier, id: string) => void;
+  health?: SectionHealth;
+}) {
+  return (
+    <>
+      <ProviderCategory
+        meta={meta}
+        tier="realtime"
+        providers={providers}
+        loading={loading}
+        error={error}
+        onChanged={onChanged}
+        onActivateOptimistic={onActivateOptimistic}
+        health={health}
+      />
+      <RealtimeComputerUsePanel />
+    </>
   );
 }
 
