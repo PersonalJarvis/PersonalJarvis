@@ -200,6 +200,38 @@ class CuModelResponse(BaseModel):
     restart_required: bool = False
 
 
+# Realtime needs BOTH a model AND a voice per provider (unlike every other
+# picker, which serves ONE selection) — a small dedicated control + endpoint
+# rather than the search-heavy BrainModelSelector. Curated lists only
+# (jarvis.brain.model_catalog.REALTIME_MODELS/REALTIME_VOICES), no live fetch.
+class RealtimeOptionInfo(BaseModel):
+    id: str
+    label: str
+
+
+class RealtimeOptionsResponse(BaseModel):
+    provider: str
+    models: list[RealtimeOptionInfo]
+    voices: list[RealtimeOptionInfo]
+    current_model: str
+    current_voice: str
+
+
+class RealtimeOptionsBody(BaseModel):
+    # Omitted (None) -> leave unchanged; "" -> explicitly clear (provider
+    # default), mirroring CuModelBody's "" contract.
+    model: str | None = Field(default=None, max_length=200)
+    voice: str | None = Field(default=None, max_length=100)
+
+
+class RealtimeOptionsSaveResponse(BaseModel):
+    ok: bool = True
+    provider: str
+    model: str
+    voice: str
+    restart_required: bool = False
+
+
 # ----------------------------------------------------------------------
 # Helper
 # ----------------------------------------------------------------------
@@ -1365,6 +1397,130 @@ async def set_cu_model(
         effective_model=effective,
         uses_main=not bool(value),
         persisted=persisted,
+        restart_required=False,
+    )
+
+
+# ── GET/PUT /providers/{id}/realtime-options ───────────────────────────────
+# Selectable Realtime model + voice, per realtime provider (openai-realtime /
+# gemini-live). Realtime needs BOTH per provider, so this is a small dedicated
+# endpoint rather than reusing GET/PUT /providers/{id}/model.
+
+
+def _require_realtime_provider(provider_id: str) -> ProviderSpec:
+    """404 unknown id; 400 a non-realtime-tier id (mirrors /realtime/switch)."""
+    spec = get_spec(provider_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Unbekannter Provider: {provider_id}")
+    if spec.tier != "realtime":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Provider '{provider_id}' ist kein Realtime-Provider (tier={spec.tier})",
+        )
+    return spec
+
+
+def _current_realtime_selection(cfg: Any, provider_id: str) -> tuple[str, str]:
+    """The (model, voice) currently pinned for ``provider_id`` in
+    ``[brain.providers.<id>]`` ("" / "" when unset)."""
+    providers = getattr(getattr(cfg, "brain", None), "providers", None)
+    pc = providers.get(provider_id) if isinstance(providers, dict) else None
+    model = (getattr(pc, "model", None) or "") if pc is not None else ""
+    voice = (getattr(pc, "voice", None) or "") if pc is not None else ""
+    return model, voice
+
+
+@router.get("/providers/{provider_id}/realtime-options")
+async def get_realtime_options(provider_id: str, request: Request) -> RealtimeOptionsResponse:
+    """Return the curated model+voice catalog for a realtime provider, plus
+    the currently pinned selection.
+
+    Realtime needs BOTH a model AND a voice per provider (unlike the
+    single-selection ``/models`` endpoint), so this reads the two curated
+    dicts directly rather than going through ``catalog_spec``.
+    """
+    _require_realtime_provider(provider_id)
+    from jarvis.brain.model_catalog import REALTIME_MODELS, REALTIME_VOICES
+
+    cfg = _resolve_cfg(request)
+    current_model, current_voice = _current_realtime_selection(cfg, provider_id)
+    return RealtimeOptionsResponse(
+        provider=provider_id,
+        models=[
+            RealtimeOptionInfo(id=m.id, label=m.label)
+            for m in REALTIME_MODELS.get(provider_id, [])
+        ],
+        voices=[
+            RealtimeOptionInfo(id=v.id, label=v.label)
+            for v in REALTIME_VOICES.get(provider_id, [])
+        ],
+        current_model=current_model,
+        current_voice=current_voice,
+    )
+
+
+@router.put("/providers/{provider_id}/realtime-options")
+async def set_realtime_options(
+    provider_id: str, body: RealtimeOptionsBody, request: Request
+) -> RealtimeOptionsSaveResponse:
+    """Pin the model and/or voice for a realtime provider.
+
+    Persists to ``[brain.providers.<id>].model`` / ``.voice`` (+ drift-soll)
+    and updates the in-memory config so the next realtime session picks it up
+    with no process restart (``session.py::_open`` reads it fresh per
+    session). Only the fields present in the body are written — an omitted
+    field leaves its current value untouched.
+    """
+    spec = _require_realtime_provider(provider_id)
+    if not _is_credential_present(spec):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Provider '{provider_id}' hat keine Credentials — erst API-Key setzen.",
+        )
+    model = body.model.strip() if body.model is not None else None
+    voice = body.voice.strip() if body.voice is not None else None
+
+    if model is not None or voice is not None:
+        try:
+            from jarvis.core.config_writer import set_brain_provider_model
+
+            set_brain_provider_model(provider_id, model=model, voice=voice)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+            ) from exc
+
+    cfg = _resolve_cfg(request)
+    if cfg is not None and getattr(cfg, "brain", None) is not None:
+        try:
+            providers = cfg.brain.providers
+            pc = providers.get(provider_id)
+            if pc is None:
+                from jarvis.core.config import BrainProviderConfig
+
+                pc = BrainProviderConfig()
+                providers[provider_id] = pc
+            if model is not None:
+                pc.model = model
+            if voice is not None:
+                pc.voice = voice
+        except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
+            log.debug(
+                "In-memory realtime-options update skipped for %s: %s", provider_id, exc
+            )
+
+    await _emit(
+        request,
+        SecretConfigured(key=f"brain.providers.{provider_id}", action="set"),
+    )
+    current_model, current_voice = _current_realtime_selection(cfg, provider_id)
+    return RealtimeOptionsSaveResponse(
+        ok=True,
+        provider=provider_id,
+        model=current_model,
+        voice=current_voice,
         restart_required=False,
     )
 

@@ -91,7 +91,7 @@ class OpenAIRealtimeProvider:
         from openai import AsyncOpenAI  # lazy (AP-26)
 
         client = AsyncOpenAI(api_key=get_provider_secret("openai"))
-        conn = await client.realtime.connect(model=_MODEL).__aenter__()
+        conn = await client.realtime.connect(model=cfg.model or _MODEL).__aenter__()
         session_payload: dict[str, Any] = {
             "instructions": cfg.instructions,
             "output_modalities": list(cfg.modalities),

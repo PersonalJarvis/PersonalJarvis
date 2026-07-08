@@ -214,3 +214,163 @@ def test_set_realtime_provider_preserves_sibling_worker_table(tmp_path: Path):
     assert 'provider = "claude-api"' in content
     assert '[brain.realtime]' in content
     assert 'provider = "openai-realtime"' in content
+
+
+# ---------------------------------------------------------------------------
+# GET/PUT /api/providers/{id}/realtime-options
+# (selectable Realtime model + voice, per realtime provider)
+# ---------------------------------------------------------------------------
+
+
+def test_get_realtime_options_returns_curated_models_and_voices(monkeypatch):
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    client = TestClient(_app())
+    resp = client.get("/api/providers/openai-realtime/realtime-options")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["provider"] == "openai-realtime"
+    voice_ids = {v["id"] for v in body["voices"]}
+    assert voice_ids == {
+        "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse",
+    }
+    model_ids = [m["id"] for m in body["models"]]
+    assert model_ids[0] == "gpt-realtime"  # the hardcoded default leads
+    assert body["current_model"] == ""
+    assert body["current_voice"] == ""
+
+
+def test_get_realtime_options_gemini_live_voices(monkeypatch):
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *a, **kw: "AIza-test")
+    client = TestClient(_app())
+    resp = client.get("/api/providers/gemini-live/realtime-options")
+    assert resp.status_code == 200
+    body = resp.json()
+    voice_ids = {v["id"] for v in body["voices"]}
+    assert voice_ids == {
+        "Puck", "Charon", "Kore", "Fenrir", "Aoede", "Orus", "Leda", "Zephyr",
+    }
+    assert body["models"][0]["id"] == "gemini-3.1-flash-live-preview"
+
+
+def test_get_realtime_options_reflects_pinned_selection(monkeypatch):
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    app = _app()
+    from jarvis.core.config import BrainProviderConfig
+
+    app.state.config.brain.providers["openai-realtime"] = BrainProviderConfig(
+        model="gpt-realtime-2.1", voice="echo"
+    )
+    client = TestClient(app)
+    resp = client.get("/api/providers/openai-realtime/realtime-options")
+    body = resp.json()
+    assert body["current_model"] == "gpt-realtime-2.1"
+    assert body["current_voice"] == "echo"
+
+
+def test_get_realtime_options_unknown_provider_404(monkeypatch):
+    client = TestClient(_app())
+    resp = client.get("/api/providers/does-not-exist/realtime-options")
+    assert resp.status_code == 404
+
+
+def test_get_realtime_options_rejects_non_realtime_provider(monkeypatch):
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *a, **kw: "sk-test")
+    client = TestClient(_app())
+    resp = client.get("/api/providers/gemini/realtime-options")
+    assert resp.status_code == 400
+
+
+def test_put_realtime_options_persists_voice(monkeypatch):
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    writes: list[tuple[str, str | None, str | None]] = []
+    monkeypatch.setattr(
+        config_writer,
+        "set_brain_provider_model",
+        lambda provider, *, model=None, voice=None, **_k: writes.append(
+            (provider, model, voice)
+        ),
+    )
+    app = _app()
+    client = TestClient(app)
+    resp = client.put(
+        "/api/providers/openai-realtime/realtime-options", json={"voice": "echo"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["voice"] == "echo"
+    assert body["restart_required"] is False
+    assert ("openai-realtime", None, "echo") in writes
+    assert app.state.config.brain.providers["openai-realtime"].voice == "echo"
+
+
+def test_put_realtime_options_persists_model_and_voice(monkeypatch):
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    writes: list[tuple[str, str | None, str | None]] = []
+    monkeypatch.setattr(
+        config_writer,
+        "set_brain_provider_model",
+        lambda provider, *, model=None, voice=None, **_k: writes.append(
+            (provider, model, voice)
+        ),
+    )
+    app = _app()
+    client = TestClient(app)
+    resp = client.put(
+        "/api/providers/openai-realtime/realtime-options",
+        json={"model": "gpt-realtime-2.1", "voice": "echo"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["model"] == "gpt-realtime-2.1"
+    assert body["voice"] == "echo"
+    assert ("openai-realtime", "gpt-realtime-2.1", "echo") in writes
+    pc = app.state.config.brain.providers["openai-realtime"]
+    assert pc.model == "gpt-realtime-2.1"
+    assert pc.voice == "echo"
+
+
+def test_put_realtime_options_omitted_field_leaves_it_unwritten(monkeypatch):
+    """Only the field actually present in the body is persisted — mirrors the
+    model/cu_model endpoints' partial-update contract."""
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    writes: list[tuple[str, str | None, str | None]] = []
+    monkeypatch.setattr(
+        config_writer,
+        "set_brain_provider_model",
+        lambda provider, *, model=None, voice=None, **_k: writes.append(
+            (provider, model, voice)
+        ),
+    )
+    client = TestClient(_app())
+    resp = client.put(
+        "/api/providers/openai-realtime/realtime-options",
+        json={"model": "gpt-realtime-2.1"},
+    )
+    assert resp.status_code == 200
+    assert ("openai-realtime", "gpt-realtime-2.1", None) in writes
+
+
+def test_put_realtime_options_without_key_is_409(monkeypatch):
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *a, **kw: None)
+    client = TestClient(_app())
+    resp = client.put(
+        "/api/providers/openai-realtime/realtime-options", json={"voice": "echo"}
+    )
+    assert resp.status_code == 409
+
+
+def test_put_realtime_options_rejects_non_realtime_provider(monkeypatch):
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *a, **kw: "sk-test")
+    client = TestClient(_app())
+    resp = client.put("/api/providers/gemini/realtime-options", json={"voice": "x"})
+    assert resp.status_code == 400
+
+
+def test_put_realtime_options_unknown_provider_404(monkeypatch):
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *a, **kw: "sk-test")
+    client = TestClient(_app())
+    resp = client.put(
+        "/api/providers/does-not-exist/realtime-options", json={"voice": "x"}
+    )
+    assert resp.status_code == 404

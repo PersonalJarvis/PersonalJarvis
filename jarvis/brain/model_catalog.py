@@ -224,6 +224,67 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
     ])),
 }
 
+# Realtime catalogs — REALTIME_MODELS + REALTIME_VOICES, keyed by realtime
+# provider id (``openai-realtime`` / ``gemini-live``). Realtime needs BOTH a
+# model AND a voice selection per provider (unlike every other picker, which
+# serves ONE selection), so these two dicts are looked up directly by the
+# dedicated ``GET/PUT /providers/{id}/realtime-options`` endpoints rather than
+# being registered into ``PROVIDER_CATALOG``/``catalog_spec`` (that machinery
+# is built around a single ``selects: "model" | "voice"`` per provider).
+# Curated, not live-fetched: no realtime provider exposes a ``/v1/models``
+# endpoint reachable the same way as the text-brain catalogs, and a curated
+# list is realtime-only by construction (never leaks a non-realtime model into
+# the picker). The currently-hardcoded adapter default is always FIRST in each
+# model list — the safe fallback an unset pick resolves to.
+#
+# openai-realtime — verified 2026-07-08 against
+# developers.openai.com/api/docs/models/all (cross-checked against the
+# installed ``openai`` SDK's beta realtime session ``model`` Literal, which
+# lists the same gpt-realtime family). ``gpt-realtime`` is OpenAI's current GA
+# default (matches ``_MODEL`` in ``jarvis/plugins/realtime/openai_realtime.py``);
+# ``gpt-realtime-2.1``/``-2.1-mini`` are the newest reasoning-capable siblings
+# (released 2026-07-06); ``gpt-realtime-mini`` is the established cost-efficient
+# sibling. ``gpt-realtime-translate``/``gpt-realtime-whisper`` are deliberately
+# excluded — single-purpose speech-translation / transcription models, not
+# general duplex voice-agent models this adapter's protocol targets.
+REALTIME_MODELS: dict[str, list[ModelInfo]] = {
+    "openai-realtime": _curated([
+        ("gpt-realtime", "GPT Realtime (default)"),
+        ("gpt-realtime-2.1", "GPT Realtime 2.1"),
+        ("gpt-realtime-2.1-mini", "GPT Realtime 2.1 Mini"),
+        ("gpt-realtime-mini", "GPT Realtime Mini"),
+    ]),
+    # gemini-live — verified 2026-07-08 against ai.google.dev/gemini-api/docs/models
+    # (the Live API model list). ``gemini-3.1-flash-live-preview`` is the current
+    # flagship (matches ``_MODEL`` in ``jarvis/plugins/realtime/gemini_live.py``);
+    # ``gemini-2.5-flash-native-audio-preview-12-2025`` is the current 2.5-series
+    # native-audio sibling still listed on that page. The older
+    # ``gemini-2.0-flash-live-preview`` family is marked for shutdown — omitted.
+    "gemini-live": _curated([
+        ("gemini-3.1-flash-live-preview", "Gemini 3.1 Flash Live (default)"),
+        (
+            "gemini-2.5-flash-native-audio-preview-12-2025",
+            "Gemini 2.5 Flash Native Audio",
+        ),
+    ]),
+}
+
+# Realtime voice catalogs — stable prebuilt-voice names (curated, not live).
+# openai-realtime: verified 2026-07-08 against the installed ``openai`` SDK's
+# beta realtime session ``voice`` Literal — the 8 GA prebuilt voices.
+# gemini-live: verified 2026-07-08 — the 8 prebuilt voices exposed to
+# ``types.PrebuiltVoiceConfig.voice_name`` for the Live API's half-cascade /
+# native-audio models (a strict subset of the ~30-voice Gemini TTS catalog).
+REALTIME_VOICES: dict[str, list[ModelInfo]] = {
+    "openai-realtime": _ids([
+        "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse",
+    ]),
+    "gemini-live": _ids([
+        "Puck", "Charon", "Kore", "Fenrir", "Aoede", "Orus", "Leda", "Zephyr",
+    ]),
+}
+
+
 # STT model catalogs (the ``[stt] model`` is a single global value).
 STT_CATALOG: dict[str, list[ModelInfo]] = {
     "groq-api": _ids(["whisper-large-v3", "whisper-large-v3-turbo", "distil-whisper-large-v3-en"]),

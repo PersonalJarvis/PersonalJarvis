@@ -217,7 +217,7 @@ def test_writes_voice_to_toml_and_soll(  # i18n-allow
     sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch  # i18n-allow
 ) -> None:
     """The realtime voice picker persists like model/deep_model/cu_model —
-    same nested-table writer, same drift-soll sync (BUG-010 class)."""  # i18n-allow: internal config-soll identifier ref
+    same nested-table writer, same drift-soll sync."""  # i18n-allow: config-soll ref
     monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)  # i18n-allow
     monkeypatch.setattr(config_writer, "_set_user_env_var", lambda name, value: None)
 

@@ -45,21 +45,72 @@ class FakeProvider:
 
     def __init__(self, events):
         self._events = events
+        self.opened_with = None
 
     async def can_open_duplex_session(self):
         return True
 
     async def open_session(self, cfg):
+        self.opened_with = cfg
         self.session = FakeSession(self._events)
         return self.session
 
 
-def _cfg():
+def _cfg(*, providers=None):
     from types import SimpleNamespace
 
     return SimpleNamespace(
-        brain=SimpleNamespace(reply_language="en"), voice=SimpleNamespace(mode="realtime")
+        brain=SimpleNamespace(reply_language="en", providers=providers or {}),
+        voice=SimpleNamespace(mode="realtime"),
     )
+
+
+@pytest.mark.asyncio
+async def test_open_injects_active_providers_model_and_voice():
+    """_open must resolve the model/voice from [brain.providers.<active
+    provider's name>], not the dead cfg.voice.realtime_voice read."""
+    from types import SimpleNamespace
+
+    providers = {
+        "fake": SimpleNamespace(model="gpt-realtime-2.1", voice="echo"),
+        "other-provider": SimpleNamespace(model="should-not-be-used", voice="should-not-be-used"),
+    }
+    sess = RealtimeVoiceSession(
+        session_id="s-model-voice",
+        send_binary=lambda b: asyncio.sleep(0),
+        send_json=lambda m: asyncio.sleep(0),
+        provider=FakeProvider([]),
+        config=_cfg(providers=providers),
+        bus=None,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16000})
+    await asyncio.sleep(0.02)
+    await sess.end(reason="test")
+
+    opened_cfg = sess._provider.opened_with
+    assert opened_cfg.model == "gpt-realtime-2.1"
+    assert opened_cfg.voice == "echo"
+
+
+@pytest.mark.asyncio
+async def test_open_defaults_to_empty_model_and_voice_when_unset():
+    """No [brain.providers.<id>] entry -> "" / "" so the adapter falls back
+    to its own hardcoded default (today's behavior, no regression)."""
+    sess = RealtimeVoiceSession(
+        session_id="s-default",
+        send_binary=lambda b: asyncio.sleep(0),
+        send_json=lambda m: asyncio.sleep(0),
+        provider=FakeProvider([]),
+        config=_cfg(),
+        bus=None,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16000})
+    await asyncio.sleep(0.02)
+    await sess.end(reason="test")
+
+    opened_cfg = sess._provider.opened_with
+    assert opened_cfg.model == ""
+    assert opened_cfg.voice == ""
 
 
 @pytest.mark.asyncio

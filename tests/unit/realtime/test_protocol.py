@@ -20,3 +20,13 @@ def test_protocol_types_importable():
     # Protocols are runtime_checkable.
     assert hasattr(RealtimeProvider, "_is_runtime_protocol")
     assert hasattr(RealtimeSession, "_is_runtime_protocol")
+
+
+def test_session_config_has_selectable_model():
+    from jarvis.realtime.protocol import RealtimeSessionConfig
+
+    # Default "" -> the adapter's hardcoded fallback model (no regression).
+    assert RealtimeSessionConfig().model == ""
+    cfg = RealtimeSessionConfig(model="gpt-realtime-2.1", voice="echo")
+    assert cfg.model == "gpt-realtime-2.1"
+    assert cfg.voice == "echo"

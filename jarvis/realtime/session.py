@@ -76,11 +76,27 @@ class RealtimeVoiceSession:
         elif kind == "audio_stop":
             await self.end(reason="client_stop")
 
+    def _active_provider_selection(self) -> tuple[str, str]:
+        """The active realtime provider's pinned model+voice from
+        ``[brain.providers.<id>]`` ("" -> the adapter's own hardcoded default,
+        no regression). ``<id>`` is the provider this session was built for
+        (``self._provider.name``, e.g. "openai-realtime" / "gemini-live") —
+        NOT a global voice setting, since model+voice are pinned per realtime
+        provider (replaces the dead ``cfg.voice.realtime_voice`` read)."""
+        provider_id = getattr(self._provider, "name", "") or ""
+        providers = getattr(getattr(self._config, "brain", None), "providers", None)
+        pc = providers.get(provider_id) if isinstance(providers, dict) else None
+        model = (getattr(pc, "model", None) or "") if pc is not None else ""
+        voice = (getattr(pc, "voice", None) or "") if pc is not None else ""
+        return model, voice
+
     async def _open(self) -> None:
+        model, voice = self._active_provider_selection()
         cfg = RealtimeSessionConfig(
             instructions=_INSTRUCTIONS,
             language=self._language,
-            voice=getattr(getattr(self._config, "voice", None), "realtime_voice", "") or "",
+            model=model,
+            voice=voice,
         )
         self._session = await self._provider.open_session(cfg)
         self._pump_task = asyncio.create_task(self._pump(), name=f"rt-pump-{self.session_id}")

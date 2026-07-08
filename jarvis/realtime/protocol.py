@@ -43,6 +43,8 @@ class RealtimeSessionConfig:
 
     instructions: str = ""
     language: str = "en"                     # bare de/en/es (resolved once, upstream)
+    model: str = ""                          # provider model id ("" -> the adapter's
+                                              # hardcoded default; no regression)
     voice: str = ""
     input_sample_rate: int = 16000
     output_sample_rate: int = 24000

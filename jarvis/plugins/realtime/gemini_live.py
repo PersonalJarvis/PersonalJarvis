@@ -31,10 +31,17 @@ fields/methods used here are stable across all three, re-checked 2026-07-08):
   ``turn_complete`` (both transcription fields are ``Transcription`` objects
   with a ``.text`` field) — exactly the shape this module maps below.
 - ``types.LiveConnectConfig`` has ``response_modalities``,
-  ``system_instruction``, ``input_audio_transcription`` and
-  ``output_audio_transcription`` (both ``AudioTranscriptionConfig``) among
-  its fields — transcripts are OFF by default and MUST be requested via the
-  latter two, or ``server_content`` never carries a transcription.
+  ``system_instruction``, ``input_audio_transcription``,
+  ``output_audio_transcription`` (both ``AudioTranscriptionConfig``) and
+  ``speech_config`` (a ``types.SpeechConfig``) among its fields — transcripts
+  are OFF by default and MUST be requested via the two transcription fields,
+  or ``server_content`` never carries a transcription.
+- ``types.SpeechConfig.voice_config`` is a ``types.VoiceConfig`` whose
+  ``prebuilt_voice_config`` is a ``types.PrebuiltVoiceConfig(voice_name=...)``
+  — introspected against the installed 2.9.0 SDK 2026-07-08
+  (``types.PrebuiltVoiceConfig.model_fields`` == ``{"voice_name"}``); selects
+  one of the Live API's 8 prebuilt voices (Puck/Charon/Kore/Fenrir/Aoede/Orus/
+  Leda/Zephyr).
 
 Model id: ``gemini-3.1-flash-live-preview``, confirmed live on
 https://ai.google.dev/gemini-api/docs/live-api/get-started-sdk (fetched
@@ -146,8 +153,24 @@ class GeminiLiveProvider:
             system_instruction=cfg.instructions or None,
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
+            # A pinned voice picks one of the Live API's 8 prebuilt voices
+            # (Puck/Charon/Kore/...). Omitted entirely when unset so the
+            # provider keeps its own default (today's behavior, no regression).
+            **(
+                {
+                    "speech_config": types.SpeechConfig(
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name=cfg.voice
+                            )
+                        )
+                    )
+                }
+                if cfg.voice
+                else {}
+            ),
         )
-        cm = client.aio.live.connect(model=_MODEL, config=live_config)
+        cm = client.aio.live.connect(model=cfg.model or _MODEL, config=live_config)
         session = await cm.__aenter__()
         import uuid
 

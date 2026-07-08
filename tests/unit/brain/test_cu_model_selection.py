@@ -25,6 +25,18 @@ def test_brain_provider_config_cu_model_defaults_none():
     assert BrainProviderConfig().cu_model is None
 
 
+# --- config field: realtime voice (selectable Realtime model + voice) -------
+
+
+def test_brain_provider_config_has_voice_field():
+    c = BrainProviderConfig(model="gpt-realtime", voice="echo")
+    assert c.voice == "echo"
+
+
+def test_brain_provider_config_voice_defaults_empty():
+    assert BrainProviderConfig().voice == ""
+
+
 # --- BrainManager._cu_model precedence --------------------------------------
 
 
