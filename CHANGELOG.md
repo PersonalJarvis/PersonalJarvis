@@ -7,6 +7,22 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
+## [1.0.4] — 2026-07-08
+
+### Fixed
+
+- **Custom wake words work out of the box on a fresh install.** The per-language
+  Vosk keyword-spotting model is now provisioned automatically — installer
+  prefetch, an off-boot self-heal on first run, and an in-app "Download wake
+  model" button — so a freely chosen wake phrase resolves to the reliable
+  any-word engine instead of silently degrading to the transcribe-and-match
+  path that cannot recognize a hard proper noun. Works for every supported
+  language (`en` / `de` / `es`), with no training and no GPU, on any OS
+  including Apple Silicon. The word-agnostic openWakeWord backbones now ship in
+  the package, an unservable custom phrase degrades **loudly** (with a one-click
+  fix) instead of failing silently, and onboarding verifies the microphone
+  level and the spoken wake word before marking setup complete.
+
 ## [1.0.0] — 2026-07-03
 
 First **public** release of Personal Jarvis — a voice-driven meta-orchestrator
