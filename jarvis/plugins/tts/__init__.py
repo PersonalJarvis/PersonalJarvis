@@ -187,6 +187,48 @@ def _resolve_keyed_tts_provider(primary_name: str, tts_cfg: Any) -> tuple[str, A
     return primary_name, tts_cfg
 
 
+def resolve_keyed_fallback(
+    exclude_family: str,
+    *,
+    allow_sapi5: bool = False,
+    language_code: str | None = None,
+) -> Any | None:
+    """Build the first cross-family TTS provider (≠ ``exclude_family``) that has
+    a usable key on this host — so a plugin's INTERNAL runtime fallback never
+    lands on a keyless (mute) provider (AP-22).
+
+    The old plugins hardcoded ``GeminiFlashTTS`` as their stage-1 fallback, so a
+    user whose ONLY key is Cartesia/ElevenLabs/Grok fell, on a mid-session
+    quota/outage, onto a keyless Gemini → silence. This resolves the fallback
+    through the SAME key-aware cross-family order the factory uses (native
+    premium first, OpenRouter last), skipping the failed family and any keyless
+    one. Returns a built provider, or ``None`` when NO other family has a key
+    (the caller then degrades to the opt-in SAPI5 exit or an honest mute).
+    """
+    from jarvis.core.config import TTSConfig
+
+    exclude = _canonical_tts_name(exclude_family)
+    for cand in _TTS_CROSS_FAMILY_ORDER:
+        if cand == exclude:
+            continue
+        cfg_view = TTSConfig(
+            provider=cand,
+            language_code=language_code or "auto",
+            allow_sapi5_fallback=allow_sapi5,
+        )
+        if not _tts_has_credential(cand, cfg_view):
+            continue
+        try:
+            return _build_provider(cfg_view, cand)
+        except Exception as exc:  # noqa: BLE001 — a bad candidate must not abort the chain
+            log.warning(
+                "Keyed fallback candidate %r not buildable (%s) — trying next.",
+                cand, exc.__class__.__name__,
+            )
+            continue
+    return None
+
+
 def _resolve_voice_for_provider(
     requested: str, provider: str, default: str, allowed: frozenset[str]
 ) -> str:
