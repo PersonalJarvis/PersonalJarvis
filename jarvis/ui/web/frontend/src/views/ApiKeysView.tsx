@@ -1,5 +1,5 @@
 ﻿import { useState } from "react";
-import { AlertCircle, Bot, Brain, Check, Copy, KeyRound, Loader2, LogIn, LogOut, Mic, Phone, PlugZap, SlidersHorizontal, Terminal, Volume2, XCircle } from "lucide-react";
+import { AlertCircle, Bot, Brain, Check, Copy, KeyRound, Loader2, LogIn, LogOut, Mic, Phone, PlugZap, Radio, SlidersHorizontal, Terminal, Volume2, XCircle } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
@@ -24,6 +24,7 @@ import {
   type SectionHealth,
   startCodexLogin,
   switchBrainProvider,
+  switchRealtimeProvider,
   switchSttProvider,
   switchTtsProvider,
   testProvider,
@@ -34,11 +35,11 @@ import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
-// The view is organised around exactly four primary categories — Brain, Voice
-// Output (TTS), Voice Input (STT) and Subagents — surfaced as a segmented tab
-// bar. Everything else (Control-API key, team key proxy, telephony, Wiki) lives
-// in a clearly separated, de-emphasized "Advanced" tab so it never competes with
-// the four core categories.
+// The view is organised around exactly five primary categories — Brain, Voice
+// Output (TTS), Voice Input (STT), Realtime and Subagents — surfaced as a
+// segmented tab bar. Everything else (Control-API key, team key proxy,
+// telephony, Wiki) lives in a clearly separated, de-emphasized "Advanced" tab
+// so it never competes with the five core categories.
 type CategoryKey = ProviderTier | "subagents" | "advanced";
 
 type LucideIcon = typeof Brain;
@@ -77,6 +78,12 @@ function makeProviderCategories(
       description: t("apikeys_view.cat_stt_desc"),
       icon: Mic,
     },
+    realtime: {
+      tab: t("apikeys_view.tab_realtime"),
+      title: t("apikeys_view.tier_realtime"),
+      description: t("apikeys_view.cat_realtime_desc"),
+      icon: Radio,
+    },
   };
 }
 
@@ -100,7 +107,10 @@ export function ApiKeysView() {
       <CategoryTabs active={active} onSelect={setActive} health={health} />
 
       <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
-        {(active === "brain" || active === "tts" || active === "stt") && (
+        {(active === "brain" ||
+          active === "tts" ||
+          active === "stt" ||
+          active === "realtime") && (
           <ProviderCategory
             meta={categories[active]}
             tier={active}
@@ -140,6 +150,7 @@ function CategoryTabs({
     { key: "brain", label: t("apikeys_view.tab_brain"), icon: Brain },
     { key: "tts", label: t("apikeys_view.tab_tts"), icon: Volume2 },
     { key: "stt", label: t("apikeys_view.tab_stt"), icon: Mic },
+    { key: "realtime", label: t("apikeys_view.tab_realtime"), icon: Radio },
     { key: "subagents", label: t("apikeys_view.tab_subagents"), icon: Bot },
   ];
   return (
@@ -543,13 +554,20 @@ function ProviderCard({
           : "";
         pushToast("success", `Voice output → ${descriptor.label}${note}`);
         window.dispatchEvent(new CustomEvent("jarvis:tts-switched"));
-      } else {
+      } else if (descriptor.tier === "stt") {
         const result = await switchSttProvider(descriptor.id);
         const note = result.restart_required
           ? " (active from next voice start)"
           : "";
         pushToast("success", `Voice input → ${descriptor.label}${note}`);
         window.dispatchEvent(new CustomEvent("jarvis:stt-switched"));
+      } else {
+        const result = await switchRealtimeProvider(descriptor.id);
+        const note = result.restart_required
+          ? " (active from next voice start)"
+          : "";
+        pushToast("success", `Realtime → ${descriptor.label}${note}`);
+        window.dispatchEvent(new CustomEvent("jarvis:realtime-switched"));
       }
       onChanged();
     } catch (e) {

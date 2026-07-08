@@ -5,6 +5,7 @@ const {
   switchBrainProvider,
   switchTtsProvider,
   switchSttProvider,
+  switchRealtimeProvider,
   refetch,
   setActiveOptimistic,
   PROVIDERS,
@@ -29,6 +30,7 @@ const {
       switchBrainProvider: vi.fn().mockResolvedValue(undefined),
       switchTtsProvider: vi.fn().mockResolvedValue({}),
       switchSttProvider: vi.fn().mockResolvedValue({}),
+      switchRealtimeProvider: vi.fn().mockResolvedValue({}),
       refetch: vi.fn(),
       setActiveOptimistic: vi.fn(),
       PROVIDERS: [
@@ -63,6 +65,7 @@ vi.mock("@/hooks/useProviders", () => ({
   switchBrainProvider,
   switchTtsProvider,
   switchSttProvider,
+  switchRealtimeProvider,
 }));
 
 import { ApiKeysStep } from "./ApiKeysStep";

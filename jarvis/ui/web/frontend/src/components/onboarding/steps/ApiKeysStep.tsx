@@ -9,6 +9,7 @@ import { JarvisAgentSection } from "@/components/JarvisAgentSection";
 import {
   useProviders,
   switchBrainProvider,
+  switchRealtimeProvider,
   switchTtsProvider,
   switchSttProvider,
   type ProviderDescriptor,
@@ -31,10 +32,13 @@ const TIERS: { tier: ProviderTier; label: string; hint: string; icon: JSX.Elemen
 
 // Activate (select) a provider by its tier — mirrors the main Settings API-Keys
 // section so onboarding lets the user pick which provider is active per class.
+// Realtime has no onboarding step of its own (see TIERS above — it stays a
+// Settings-only tier for now), but the map must stay total over ProviderTier.
 const SWITCH: Record<ProviderTier, (id: string) => Promise<unknown>> = {
   brain: switchBrainProvider,
   tts: switchTtsProvider,
   stt: switchSttProvider,
+  realtime: switchRealtimeProvider,
 };
 
 export function ApiKeysStep({ goNext, skip }: StepProps) {

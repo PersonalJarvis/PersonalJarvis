@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 export type AuthMode = "api_key" | "codex" | "antigravity" | "none";
-export type ProviderTier = "brain" | "tts" | "stt";
+export type ProviderTier = "brain" | "tts" | "stt" | "realtime";
 /** How using a provider is billed — mirror of provider_spec.Billing. */
 export type Billing = "api" | "subscription" | "subscription_or_api" | "local";
 
@@ -166,15 +166,18 @@ export function useProviders() {
     const onBrain = () => void refetch();
     const onTts = () => void refetch();
     const onStt = () => void refetch();
+    const onRealtime = () => void refetch();
     window.addEventListener("jarvis:secret-configured", onSecret);
     window.addEventListener("jarvis:brain-switched", onBrain);
     window.addEventListener("jarvis:tts-switched", onTts);
     window.addEventListener("jarvis:stt-switched", onStt);
+    window.addEventListener("jarvis:realtime-switched", onRealtime);
     return () => {
       window.removeEventListener("jarvis:secret-configured", onSecret);
       window.removeEventListener("jarvis:brain-switched", onBrain);
       window.removeEventListener("jarvis:tts-switched", onTts);
       window.removeEventListener("jarvis:stt-switched", onStt);
+      window.removeEventListener("jarvis:realtime-switched", onRealtime);
     };
   }, [refetch]);
 
@@ -246,6 +249,7 @@ export function useSectionHealth() {
       "jarvis:brain-switched",
       "jarvis:tts-switched",
       "jarvis:stt-switched",
+      "jarvis:realtime-switched",
       "jarvis:subagent-switched",
       "jarvis:provider-tested",
     ];
@@ -423,6 +427,27 @@ export async function switchSttProvider(
   providerId: string,
 ): Promise<PipelineSwitchResult> {
   const res = await fetch("/api/stt/switch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider: providerId, persist: true }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as PipelineSwitchResult;
+}
+
+/**
+ * Switches the active full-duplex Realtime provider (speech-to-speech).
+ * Persists to jarvis.toml. Mirrors `switchSttProvider` — the pipeline is
+ * only (re)built on the next voice start, so the backend response sets
+ * `restart_required = true`.
+ */
+export async function switchRealtimeProvider(
+  providerId: string,
+): Promise<PipelineSwitchResult> {
+  const res = await fetch("/api/realtime/switch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ provider: providerId, persist: true }),
