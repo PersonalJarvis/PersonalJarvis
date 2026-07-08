@@ -70,6 +70,12 @@ models/
 # wake models, Whisper cache) stay ignored. NOTE: the bundled openWakeWord models
 # under jarvis/assets/wakeword/ are NOT tracked here — that is a separate decision.
 !jarvis/assets/vad/silero_vad.onnx
+# The word-agnostic openWakeWord feature backbones are deliberately BUNDLED and
+# shipped in-repo (jarvis/assets/__init__.py loads them for user-trained custom
+# wake models). Scoped to the exact files so nearby *.onnx (user-trained custom
+# wake models, Whisper cache) stay ignored. No branded hey_* model is tracked.
+!jarvis/assets/wakeword/melspectrogram.onnx
+!jarvis/assets/wakeword/embedding_model.onnx
 
 # Audio-Blobs + Flight-Recorder-Traces
 blobs/
