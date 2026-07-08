@@ -22,6 +22,7 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -92,28 +93,51 @@ def step_devices() -> None:
             print(f"  {marker} #{i:2d}  {d['name']}  (ch={d['max_output_channels']}, rate={int(d['default_samplerate'])})")
 
 
+async def measure_mic_dbfs(
+    duration_s: float = 3.0,
+    *,
+    on_frame: Callable[[float, float, int], None] | None = None,
+) -> float:
+    """Return the max dBFS heard over ``duration_s``; -120.0 if no samples / no
+    device / any error. Pure measurement (no printing) — reused by the
+    onboarding mic-level route (``GET /api/settings/wake-word/mic-level``) and
+    by ``step_mic_level``'s CLI bars via the optional ``on_frame`` hook
+    (called per chunk with ``(dbfs, running_max, n_samples)``). Never raises."""
+    max_dbfs = -120.0
+    try:
+        async with MicrophoneCapture() as mic:
+            t_end = time.time() + duration_s
+            async for chunk in mic.stream():
+                if time.time() >= t_end:
+                    break
+                arr = pcm_bytes_to_np(chunk.pcm)
+                rms = float(np.sqrt(np.mean(arr * arr)) + 1e-12)
+                dbfs = 20.0 * float(np.log10(rms))
+                max_dbfs = max(max_dbfs, dbfs)
+                if on_frame is not None:
+                    on_frame(dbfs, max_dbfs, len(arr))
+    except Exception:  # noqa: BLE001 — headless / no device / any error → honest floor
+        return -120.0
+    return max_dbfs
+
+
 async def step_mic_level(duration_s: float = 10.0) -> float:
     """Measures the live mic level — the user should speak loudly, max dBFS is recorded."""
     _print_header(2, f"Mic level test ({int(duration_s)} seconds — SPEAK NOW!)")
     print("Speak loudly — count to ten or sing a bit.")
     print("Max level should be in the range -20 to -5 dBFS.")
     print()
-    max_dbfs = -120.0
     samples_seen = 0
-    t_end = time.time() + duration_s
-    async with MicrophoneCapture() as mic:
-        async for chunk in mic.stream():
-            if time.time() >= t_end:
-                break
-            arr = pcm_bytes_to_np(chunk.pcm)
-            rms = float(np.sqrt(np.mean(arr * arr)) + 1e-12)
-            dbfs = 20.0 * np.log10(rms)
-            max_dbfs = max(max_dbfs, dbfs)
-            samples_seen += len(arr)
-            bar_len = max(0, int((dbfs + 60) / 2))  # scales [-60 .. 0] → [0 .. 30]
-            bar = "█" * min(bar_len, 30)
-            sys.stdout.write(f"\r  level: {dbfs:6.1f} dBFS  {bar:<30s}  (max: {max_dbfs:6.1f})")
-            sys.stdout.flush()
+
+    def _render_bar(dbfs: float, running_max: float, n_samples: int) -> None:
+        nonlocal samples_seen
+        samples_seen += n_samples
+        bar_len = max(0, int((dbfs + 60) / 2))  # scales [-60 .. 0] → [0 .. 30]
+        bar = "█" * min(bar_len, 30)
+        sys.stdout.write(f"\r  level: {dbfs:6.1f} dBFS  {bar:<30s}  (max: {running_max:6.1f})")
+        sys.stdout.flush()
+
+    max_dbfs = await measure_mic_dbfs(duration_s=duration_s, on_frame=_render_bar)
     print()
     print(f"→ Samples received: {samples_seen}   Max level: {max_dbfs:.1f} dBFS")
     if samples_seen == 0:

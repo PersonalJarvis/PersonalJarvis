@@ -693,6 +693,24 @@ async def download_wake_model(request: Request) -> dict[str, object]:
     }
 
 
+@router.get("/wake-word/mic-level")
+async def wake_mic_level() -> dict[str, object]:
+    """Live mic dBFS for the onboarding wake step (Task 7: mic + spoken-word
+    verification before ``acknowledgeWakeWord``). Never 500s — a headless/no-mic
+    host reports ``no_device=True`` rather than raising. Warn threshold −40 dBFS
+    matches ``jarvis.speech.diagnose`` (same measurement helper, so the CLI
+    diagnostics and this route can never disagree on what "too quiet" means).
+    """
+    from jarvis.speech.diagnose import measure_mic_dbfs
+
+    max_dbfs = await measure_mic_dbfs(duration_s=3.0)
+    return {
+        "max_dbfs": max_dbfs,
+        "no_device": max_dbfs <= -119.9,
+        "too_quiet": -119.9 < max_dbfs < -40.0,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Push-to-talk hotkey (editable). GET current + safe suggestions; PUT to change.
 # Persisted to jarvis.toml [trigger].hotkey; applies on the next voice bootstrap
