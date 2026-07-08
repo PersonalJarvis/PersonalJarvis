@@ -187,12 +187,15 @@ def test_provider_mapping_is_frozen() -> None:
 
 
 def test_ad6_table_is_complete() -> None:
-    """AD-6 Amendment lists exactly 4 providers — drift guard against accidental deletion.
+    """AD-6 table drift guard — the set of subagent-selectable brain providers.
 
     Grok was removed as a brain/worker provider, so its ``grok->xai`` row is
     gone from the table (only grok-voice TTS + the credential remain, neither of
-    which routes through this map)."""
-    expected_jarvis_slugs = {"gemini", "claude-api", "openai", "openrouter"}
+    which routes through this map). ``nvidia`` (NVIDIA NIM) was added: an
+    OpenAI-compatible API brain that, like ``openai``/``openrouter``, runs on the
+    in-process ApiAgentWorker (not the OpenClaw CLI harness); its row exists so it
+    is a selectable subagent in the API-Keys "Subagents" tab."""
+    expected_jarvis_slugs = {"gemini", "claude-api", "openai", "openrouter", "nvidia"}
     actual = {m.jarvis for m in MAPPINGS}
     assert actual == expected_jarvis_slugs, (
         "AD-6 Amendment table drifted — please keep docs/openclaw-bridge.md "

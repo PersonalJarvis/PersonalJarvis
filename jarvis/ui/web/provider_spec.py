@@ -169,6 +169,21 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "models; billed per token on your OpenRouter account."
         ),
     ),
+    ProviderSpec(
+        id="nvidia",
+        label="NVIDIA NIM",
+        tier="brain",
+        auth_mode="api_key",
+        secret_keys=("nvidia_api_key",),
+        dashboard_url="https://build.nvidia.com/settings/api-keys",
+        signup_url="https://build.nvidia.com",
+        credential_help=(
+            "NVIDIA API key (starts with nvapi-) from build.nvidia.com — use the "
+            "key from Settings > API Keys, NOT the NGC key. One key reaches many "
+            "NVIDIA-hosted models (Nemotron, Llama, DeepSeek, Qwen); free dev tier "
+            "available, then billed per token on your NVIDIA account."
+        ),
+    ),
     # ── Brain: Google subscription via the official Antigravity/Gemini CLI ──
     # OAuth-only (no API-key slot): we drive the official ``agy``/``gemini`` CLI
     # as a subprocess over the user's "Sign in with Google" login — billed

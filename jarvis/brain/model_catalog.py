@@ -49,6 +49,7 @@ CATALOG_PROVIDERS: tuple[str, ...] = (
     "openai",
     "gemini",
     "openrouter",
+    "nvidia",
 )
 
 # Endpoint + auth shape per provider. ``auth`` selects how the key is attached:
@@ -65,6 +66,11 @@ _ENDPOINTS: dict[str, tuple[str, str]] = {
         "query",
     ),
     "openrouter": ("https://openrouter.ai/api/v1/models", "bearer_opt"),
+    # NVIDIA NIM speaks the OpenAI-compatible ``data[].id`` shape. Its catalog is
+    # PUBLIC (verified 2026-07-08: an unauthenticated GET returns the full model
+    # list), so ``bearer_opt`` like OpenRouter — the picker fills in before a key
+    # is entered, and the key is attached when present.
+    "nvidia": ("https://integrate.api.nvidia.com/v1/models", "bearer_opt"),
 }
 
 
@@ -130,6 +136,17 @@ CURATED_MODELS: dict[str, list[ModelInfo]] = {
         ("openai/gpt-5.5", "GPT-5.5"),
         ("google/gemini-3-pro-preview", "Gemini 3 Pro"),
         ("x-ai/grok-4.3", "Grok 4.3"),
+    ]),
+    # NVIDIA NIM — the offline fallback when the live /v1/models catalog is
+    # unreachable. NVIDIA-hosted current families (Nemotron leads: it is NVIDIA's
+    # own). A valid key supersedes this with the live list, so a newly hosted
+    # model still shows up automatically.
+    "nvidia": _curated([
+        ("nvidia/llama-3.1-nemotron-ultra-253b-v1", "Nemotron Ultra 253B"),
+        ("nvidia/llama-3.3-nemotron-super-49b-v1", "Nemotron Super 49B"),
+        ("meta/llama-3.3-70b-instruct", "Llama 3.3 70B"),
+        ("deepseek-ai/deepseek-r1", "DeepSeek R1"),
+        ("qwen/qwen2.5-coder-32b-instruct", "Qwen2.5 Coder 32B"),
     ]),
 }
 

@@ -76,6 +76,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   "claude-api": "Anthropic Claude",
   openai: "OpenAI",
   openrouter: "OpenRouter",
+  nvidia: "NVIDIA NIM",
   // Codex is a direct worker (ChatGPT subscription / OpenAI key), not an
   // OpenClaw-routed provider — surfaced as its own selectable subagent row.
   "openai-codex": "OpenAI Codex",
@@ -444,6 +445,7 @@ const PROVIDER_ICON: Record<string, string> = {
   "claude-api": "claude",
   gemini: "gemini",
   openrouter: "openrouter",
+  nvidia: "nvidia",
   antigravity: "antigravity",
 };
 

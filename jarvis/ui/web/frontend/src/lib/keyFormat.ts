@@ -16,6 +16,7 @@ export type KeyFormatKind =
   | "anthropic"
   | "openai"
   | "openrouter"
+  | "nvidia"
   | "xai"
   | "cartesia"
   | "elevenlabs"
@@ -49,6 +50,7 @@ export function detectKeyFormat(value: string): KeyFormatHint | null {
   }
   if (/^sk-ant-/.test(v)) return { kind: "anthropic", label: "Anthropic API key" };
   if (/^sk-or-/.test(v)) return { kind: "openrouter", label: "OpenRouter API key" };
+  if (/^nvapi-/.test(v)) return { kind: "nvidia", label: "NVIDIA API key" };
   if (/^sk_car_/.test(v)) return { kind: "cartesia", label: "Cartesia API key" };
   // ElevenLabs keys start with `sk_` (tested AFTER the more specific `sk_car_`
   // so Cartesia wins its own prefix). Older 32-char hex keys fall through to
@@ -83,6 +85,8 @@ export function expectedKindForSecret(secretKey: string): KeyFormatKind | null {
       return "openai";
     case "openrouter_api_key":
       return "openrouter";
+    case "nvidia_api_key":
+      return "nvidia";
     case "grok_api_key":
       return "xai";
     case "cartesia_api_key":

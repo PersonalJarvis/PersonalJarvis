@@ -84,6 +84,9 @@ PROVIDER_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
         ("openai_api_key", "OPENAI_API_KEY"),
     ),
     "openrouter": (("openrouter_api_key", "OPENROUTER_API_KEY"),),
+    # NVIDIA NIM (OpenAI-compatible). Only the build.nvidia.com key (nvapi-),
+    # not the legacy NGC key. One key, many NVIDIA-hosted models.
+    "nvidia": (("nvidia_api_key", "NVIDIA_API_KEY"),),
     "gemini": (
         ("gemini_api_key", "GEMINI_API_KEY"),
         ("google_aistudio_api_key", "GOOGLE_AIStudio_API_KEY"),
@@ -382,6 +385,11 @@ class BrainProviderConfig(BaseModel):
     deep_model: str | None = None      # Optional: stronger reasoning model
     cu_model: str | None = None        # Optional: model the Computer-Use loop uses
                                        # (Phase 3). None -> use this provider's `model`.
+    # Realtime voice pick (selectable Realtime model + voice). Only meaningful
+    # for the two realtime-tier providers (openai-realtime / gemini-live); the
+    # realtime model reuses `model` above. "" -> the adapter's own hardcoded
+    # default voice (no regression for providers/tiers that never set this).
+    voice: str = ""
     auth_mode: str | None = None       # "oauth" | "api_key"
     base_url: str | None = None
     # Latency sprint 1 (2026-04-30): Gemini thinking budget per provider tier.

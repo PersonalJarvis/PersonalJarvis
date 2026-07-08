@@ -137,6 +137,14 @@ SECRETS: list[SecretSpec] = [
         section="brain",
     ),
     SecretSpec(
+        key="nvidia_api_key",
+        env_fallback="NVIDIA_API_KEY",
+        label="NVIDIA API Key (NIM — build.nvidia.com, nvapi-)",
+        help_url="https://build.nvidia.com/settings/api-keys",
+        required_for="Brain (NVIDIA NIM: Nemotron/Llama/DeepSeek) + Jarvis-Agent worker (nvidia)",
+        section="brain",
+    ),
+    SecretSpec(
         key="openai_api_key",
         env_fallback="OPENAI_API_KEY",
         label="OpenAI API Key",
