@@ -2383,6 +2383,7 @@ def load_config(
 # keyring stays the secure path whenever it is functional (the file backend is
 # installed ONLY when the current backend is the no-op fail.Keyring).
 _KEYRING_BACKEND_READY: bool = False
+_FILE_BACKEND_ACTIVE: bool = False
 
 
 class _FileCredStore:
@@ -2431,24 +2432,24 @@ class _FileCredStore:
         self._save(data)
 
 
-def _ensure_keyring_backend() -> None:
-    """Install the local-file credential store when the OS keyring is non-functional.
+def _install_file_cred_backend(reason: str) -> bool:
+    """Force the local 0600 file credential store as the active keyring backend.
 
-    Runs once. Installs the file backend ONLY when the current backend is the no-op
-    ``fail.Keyring`` (so a working Windows/macOS/Linux OS keyring is never replaced).
-    Any error is swallowed — a missing keyring must never break boot.
+    Used both when NO OS keyring exists at all (headless VPS → ``fail.Keyring``)
+    AND when a reachable-but-unusable OS keyring RAISES at runtime — e.g. a Linux
+    Secret Service that is present but whose collection is LOCKED, which
+    ``keyring.get_keyring()`` still reports as a viable backend, so the
+    ``fail.Keyring`` check alone never engages the fallback. Idempotent: safe to
+    call repeatedly (it just re-sets the same backend); the swap is logged once.
+    The OS keyring stays the secure path whenever it is functional — the file
+    backend is installed only when the real one is absent or provably broken.
+
+    Returns True iff the file backend is now active.
     """
-    global _KEYRING_BACKEND_READY
-    if _KEYRING_BACKEND_READY:
-        return
-    _KEYRING_BACKEND_READY = True
+    global _FILE_BACKEND_ACTIVE
     try:
         import keyring
         import keyring.backend
-        from keyring.backends import fail
-
-        if not isinstance(keyring.get_keyring(), fail.Keyring):
-            return
 
         _store = _FileCredStore()
 
@@ -2465,11 +2466,38 @@ def _ensure_keyring_backend() -> None:
                 _store.delete(service, username)
 
         keyring.set_keyring(_FileKeyringBackend())
-        logging.getLogger(__name__).warning(
-            "No OS credential store available (headless host) — API keys are stored "
-            "in a local 0600 file under %s. Configure a Secret Service / Keychain "
-            "for OS-encrypted storage.", DATA_DIR / "credentials.json",
-        )
+        if not _FILE_BACKEND_ACTIVE:
+            logging.getLogger(__name__).warning(
+                "OS credential store unusable (%s) — API keys are stored in a local "
+                "0600 file under %s. Configure a Secret Service / Keychain for "
+                "OS-encrypted storage.", reason, DATA_DIR / "credentials.json",
+            )
+        _FILE_BACKEND_ACTIVE = True
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _ensure_keyring_backend() -> None:
+    """Install the local-file credential store when the OS keyring is non-functional.
+
+    Runs once. Installs the file backend when the current backend is the no-op
+    ``fail.Keyring`` (no OS keyring at all — the headless VPS case). A
+    reachable-but-LOCKED keyring that only reveals itself by RAISING on a real
+    read/write is handled at runtime by ``get_secret``/``set_secret``/
+    ``delete_secret`` via ``_install_file_cred_backend``. Any error is swallowed —
+    a missing keyring must never break boot.
+    """
+    global _KEYRING_BACKEND_READY
+    if _KEYRING_BACKEND_READY:
+        return
+    _KEYRING_BACKEND_READY = True
+    try:
+        import keyring
+        from keyring.backends import fail
+
+        if isinstance(keyring.get_keyring(), fail.Keyring):
+            _install_file_cred_backend("no OS credential store available (headless host)")
     except Exception:  # noqa: BLE001
         pass
 
@@ -2498,8 +2526,19 @@ def get_secret(key: str, env_fallback: str | None = None) -> str | None:
         if val:
             return val
     except Exception:  # noqa: BLE001
-        # keyring failed — silent fallback to env
-        pass
+        # A reachable-but-locked OS keyring raises here even though
+        # _ensure_keyring_backend saw a viable backend. Degrade to the 0600 file
+        # store and retry once, so a key saved to the file fallback in a prior run
+        # is still visible instead of dead-ending on the locked keyring.
+        if _install_file_cred_backend("keyring read failed"):
+            try:
+                import keyring
+
+                val = keyring.get_password(KEYRING_SERVICE, key)
+                if val:
+                    return val
+            except Exception:  # noqa: BLE001
+                pass
 
     if env_fallback and (val := os.environ.get(env_fallback)):
         return val
@@ -2597,7 +2636,19 @@ def set_secret(key: str, value: str) -> bool:
 
         keyring.set_password(KEYRING_SERVICE, key, value)
         return True
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        # A reachable-but-unusable OS keyring (e.g. a locked Linux Secret Service)
+        # raises even though _ensure_keyring_backend saw a viable backend. Degrade
+        # to the 0600 file store and retry once, so in-app key save never 500s and
+        # the credential actually persists (CLAUDE.md §3, recoverable in-app).
+        if _install_file_cred_backend(f"keyring write failed: {exc!r}"):
+            try:
+                import keyring
+
+                keyring.set_password(KEYRING_SERVICE, key, value)
+                return True
+            except Exception:  # noqa: BLE001
+                return False
         return False
 
 
@@ -2610,6 +2661,16 @@ def delete_secret(key: str) -> bool:
         keyring.delete_password(KEYRING_SERVICE, key)
         return True
     except Exception:  # noqa: BLE001
+        # Locked/unusable OS keyring: degrade to the file store and retry, so a
+        # file-stored credential is actually removed rather than left stale.
+        if _install_file_cred_backend("keyring delete failed"):
+            try:
+                import keyring
+
+                keyring.delete_password(KEYRING_SERVICE, key)
+                return True
+            except Exception:  # noqa: BLE001
+                return False
         return False
 
 
