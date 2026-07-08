@@ -204,7 +204,9 @@ describe("ApiKeysView - Codex is subagent-only", () => {
     // Codex lives in the "Subagents" category tab now; open it first.
     fireEvent.click(screen.getByRole("tab", { name: /jarvis-agents/i }));
 
-    await waitFor(() => expect(screen.getByText("OpenAI Codex (Subscription)")).toBeTruthy());
+    // The redesign shortens the card title to just "OpenAI Codex"; the
+    // subscription-vs-API billing now lives in the billing badge, not the title.
+    await waitFor(() => expect(screen.getByText("OpenAI Codex")).toBeTruthy());
 
     expect(screen.queryByText("ChatGPT / Codex login")).toBeNull();
     expect(screen.getByText(/chatgpt-user@example\.com/)).toBeTruthy();

@@ -216,7 +216,9 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
     fireEvent.click(screen.getByRole("tab", { name: /jarvis-agents/i }));
 
     await waitFor(() =>
-      expect(screen.getByText("Antigravity (Subscription)")).toBeTruthy(),
+      // The redesign shortens the card title to just "Antigravity"; the
+      // subscription billing now lives in the billing badge, not the title.
+      expect(screen.getByText("Antigravity")).toBeTruthy(),
     );
 
     // The "Set active" control now lives ON the subscription card, so there is
