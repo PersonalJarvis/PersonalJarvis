@@ -34,8 +34,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 
 from jarvis.brain.manager import SUPPORTED_REPLY_LANGUAGES
-from jarvis.core.config import get_provider_secret
 from jarvis.memory.wiki.integration import get_running_curator
+from jarvis.realtime.factory import realtime_available_provider
 
 if TYPE_CHECKING:
     from jarvis.core.config import WikiCuratorConfig
@@ -129,11 +129,15 @@ class VoiceModeBody(BaseModel):
 async def get_voice_mode(request: Request) -> dict[str, object]:
     cfg = getattr(request.app.state, "config", None) or getattr(request.app.state, "cfg", None)
     mode = getattr(getattr(cfg, "voice", None), "mode", "pipeline")
-    available = bool(get_provider_secret("openai"))
+    # Cross-family (AP-22): resolved via the SAME ordering the realtime
+    # session factory uses, so this never disagrees with what a realtime
+    # session would actually build (Gemini-only users now get `true` too,
+    # not just OpenAI — Feature A2).
+    prov = realtime_available_provider(cfg)
     return {
         "mode": mode,
-        "realtime_available": available,
-        "active_provider": "openai-realtime" if available else None,
+        "realtime_available": prov is not None,
+        "active_provider": prov,
     }
 
 
@@ -143,6 +147,12 @@ async def put_voice_mode(body: VoiceModeBody, request: Request) -> dict[str, obj
         raise HTTPException(status_code=400, detail=f"mode must be one of {_VOICE_MODES}")
 
     cfg = getattr(request.app.state, "config", None) or getattr(request.app.state, "cfg", None)
+
+    # A3: never pin the boot default to an unreachable engine — selecting
+    # realtime with no key in ANY family is a 400, not a silent dead switch.
+    if body.mode == "realtime" and realtime_available_provider(cfg) is None:
+        raise HTTPException(status_code=400, detail="no realtime provider key configured")
+
     if cfg is not None and getattr(cfg, "voice", None) is not None:
         try:
             cfg.voice.mode = body.mode  # type: ignore[attr-defined]

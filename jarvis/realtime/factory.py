@@ -19,9 +19,11 @@ from jarvis.core.config import get_provider_secret
 log = logging.getLogger(__name__)
 
 
-def _resolve_realtime_provider(cfg: Any) -> Any:
-    """Return an instantiated realtime provider by key presence (cross-family,
-    AP-22), preferring [brain.realtime].provider; None when no realtime key."""
+def _ordered_families(cfg: Any) -> list[tuple[str, str, Any]]:
+    """Return the (id, secret-name, class) realtime family list, configured
+    provider first — the single shared ordering both resolvers below use, so
+    "which realtime provider is active" can never disagree between the
+    session builder and the availability check (AP-22)."""
     from jarvis.plugins.realtime.gemini_live import GeminiLiveProvider
     from jarvis.plugins.realtime.openai_realtime import OpenAIRealtimeProvider
 
@@ -34,10 +36,27 @@ def _resolve_realtime_provider(cfg: Any) -> Any:
         getattr(getattr(getattr(cfg, "brain", None), "realtime", None), "provider", "")
         or "openai-realtime"
     )
-    ordered = sorted(families, key=lambda f: f[0] != configured)  # configured first
-    for _id, secret, cls in ordered:
+    return sorted(families, key=lambda f: f[0] != configured)  # configured first
+
+
+def _resolve_realtime_provider(cfg: Any) -> Any:
+    """Return an instantiated realtime provider by key presence (cross-family,
+    AP-22), preferring [brain.realtime].provider; None when no realtime key."""
+    for _id, secret, cls in _ordered_families(cfg):
         if get_provider_secret(secret):
             return cls()
+    return None
+
+
+def realtime_available_provider(cfg: Any) -> str | None:
+    """Return the resolved realtime provider id (cross-family, AP-22) — id
+    counterpart of :func:`_resolve_realtime_provider`, sharing the exact same
+    ``_ordered_families`` ordering so the two can never drift. Used by the
+    voice-mode route to compute ``realtime_available`` / ``active_provider``
+    without instantiating a provider (and its SDK client) just to check."""
+    for provider_id, secret, _cls in _ordered_families(cfg):
+        if get_provider_secret(secret):
+            return provider_id
     return None
 
 

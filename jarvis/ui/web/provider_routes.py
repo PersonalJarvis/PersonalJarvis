@@ -1974,13 +1974,18 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
 
 @router.post("/realtime/switch")
 async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
-    """Wechselt den aktiven Realtime-Voice-Provider. Persistiert in jarvis.toml.
+    """Switches the active realtime-voice provider. Persists to jarvis.toml.
 
-    Mirrors ``stt_switch``: no live switch — the realtime engine is only
-    selected once the browser realtime client is actually wired in (Phase 2),
-    so the choice always needs a restart to take effect. Realtime is
-    OpenAI-only today (a single spec in ``PROVIDERS``), so this rejects any
-    non-realtime provider id up front.
+    Mirrors ``stt_switch``: no live audio switch — the realtime engine is
+    only selected once the browser realtime client is actually wired in
+    (Phase 2), so the choice always needs a restart to take effect. Realtime
+    is cross-family (OpenAI Realtime, Gemini Live, AP-22), so this only
+    rejects a non-realtime-tier provider id.
+
+    Activating a realtime provider also makes Realtime the ACTIVE voice mode
+    (``[voice].mode``) — the "Active" badge reads ``[voice].mode``, not
+    ``[brain.realtime].provider``, so without this the badge could never
+    follow an activation (Feature A4).
     """
     spec = get_spec(body.provider)
     if spec is None:
@@ -2009,6 +2014,12 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             raise HTTPException(
                 status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
             ) from exc
+        try:
+            from jarvis.core.config_writer import set_voice_mode
+
+            set_voice_mode("realtime")
+        except Exception as exc:  # noqa: BLE001 — best-effort, mirrors set_realtime_provider above
+            log.warning("voice-mode persist failed after realtime switch: %s", exc)
 
     cfg = _resolve_cfg(request)
     if cfg is not None and getattr(cfg, "brain", None) is not None:
@@ -2022,8 +2033,14 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 realtime_cfg.provider = body.provider
         except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
             log.debug("In-memory realtime.provider update skipped: %s", exc)
+    if cfg is not None and getattr(cfg, "voice", None) is not None:
+        try:
+            cfg.voice.mode = "realtime"  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
+            log.debug("In-memory voice.mode update skipped: %s", exc)
 
     await _emit(request, SecretConfigured(key="brain.realtime.provider", action="set"))
+    await _emit(request, SecretConfigured(key="voice.mode", action="set"))
 
     return {
         "ok": True,

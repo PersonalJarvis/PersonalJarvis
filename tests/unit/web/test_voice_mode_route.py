@@ -50,14 +50,38 @@ def _app(mode="pipeline", key="sk-x", monkeypatch=None):
 
 
 def test_get_voice_mode(monkeypatch):
-    import jarvis.ui.web.settings_routes as sr
-    monkeypatch.setattr(sr, "get_provider_secret", lambda _p: "sk-x")
+    import jarvis.realtime.factory as rf
+    monkeypatch.setattr(rf, "get_provider_secret", lambda _p: "sk-x")
     client = TestClient(_app(mode="realtime"))
     r = client.get("/api/settings/voice-mode")
     assert r.status_code == 200
     body = r.json()
     assert body["mode"] == "realtime"
     assert body["realtime_available"] is True
+    assert body["active_provider"] == "openai-realtime"
+
+
+def test_get_voice_mode_cross_family_gemini_only(monkeypatch):
+    """Feature A2: realtime_available must NOT be OpenAI-only — a user with
+    only a Gemini key gets realtime_available=true, active_provider=gemini-live."""
+    import jarvis.realtime.factory as rf
+    monkeypatch.setattr(rf, "get_provider_secret", lambda name: "sk-x" if name == "gemini" else None)
+    client = TestClient(_app(mode="pipeline"))
+    r = client.get("/api/settings/voice-mode")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["realtime_available"] is True
+    assert body["active_provider"] == "gemini-live"
+
+
+def test_get_voice_mode_no_realtime_key_anywhere(monkeypatch):
+    import jarvis.realtime.factory as rf
+    monkeypatch.setattr(rf, "get_provider_secret", lambda _name: None)
+    client = TestClient(_app(mode="pipeline"))
+    r = client.get("/api/settings/voice-mode")
+    body = r.json()
+    assert body["realtime_available"] is False
+    assert body["active_provider"] is None
 
 
 def test_put_voice_mode_invalid_is_400():
@@ -66,10 +90,20 @@ def test_put_voice_mode_invalid_is_400():
     assert r.status_code == 400
 
 
+def test_put_voice_mode_realtime_without_key_is_400(monkeypatch):
+    """A3: PUT-guard rejects selecting realtime when no family has a key —
+    prevents pinning the boot default to an unreachable engine."""
+    import jarvis.realtime.factory as rf
+    monkeypatch.setattr(rf, "get_provider_secret", lambda _name: None)
+    client = TestClient(_app())
+    r = client.put("/api/settings/voice-mode", json={"mode": "realtime", "persist": False})
+    assert r.status_code == 400
+
+
 def test_put_voice_mode_updates_live_and_persists(monkeypatch):
-    import jarvis.ui.web.settings_routes as sr
+    import jarvis.realtime.factory as rf
     persisted = {"called": False}
-    monkeypatch.setattr(sr, "get_provider_secret", lambda _p: "sk-x")
+    monkeypatch.setattr(rf, "get_provider_secret", lambda _p: "sk-x")
 
     def fake_set(mode, **kw):
         persisted["called"] = True

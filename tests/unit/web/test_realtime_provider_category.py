@@ -101,6 +101,28 @@ def test_realtime_switch_persists_with_key(monkeypatch):
     assert app.state.config.brain.realtime.provider == "openai-realtime"
 
 
+def test_realtime_switch_sets_voice_mode(monkeypatch):
+    """Feature A4: activating a realtime provider must flip [voice].mode to
+    "realtime" too — the "Active" badge reads [voice].mode, not
+    [brain.realtime].provider, so persisting only the provider can never move
+    it (the original bug this feature fixes)."""
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    monkeypatch.setattr(config_writer, "set_realtime_provider", lambda name, **kw: None)
+    voice_mode_writes: list[str] = []
+    monkeypatch.setattr(
+        config_writer, "set_voice_mode", lambda mode, **kw: voice_mode_writes.append(mode)
+    )
+
+    app = _app()
+    client = TestClient(app)
+    resp = client.post(
+        "/api/realtime/switch", json={"provider": "openai-realtime", "persist": True}
+    )
+    assert resp.status_code == 200
+    assert voice_mode_writes == ["realtime"]
+    assert app.state.config.voice.mode == "realtime"
+
+
 def test_realtime_switch_without_key_is_409(monkeypatch):
     monkeypatch.setattr(cfg_mod, "get_secret", lambda *a, **kw: None)
     client = TestClient(_app())

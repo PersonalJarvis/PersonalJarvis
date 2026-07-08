@@ -17,7 +17,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from jarvis.realtime.factory import _resolve_realtime_provider, build_realtime_session
+from jarvis.realtime.factory import (
+    _resolve_realtime_provider,
+    build_realtime_session,
+    realtime_available_provider,
+)
 
 
 def _cfg(mode: str = "realtime", provider: str = "openai-realtime") -> SimpleNamespace:
@@ -101,3 +105,52 @@ def test_build_realtime_session_returns_none_when_no_realtime_key_in_any_family(
         build_realtime_session(cfg=cfg, bus=None, session_id="s", send_binary=None, send_json=None)
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# realtime_available_provider — Feature A (id-string sibling of
+# _resolve_realtime_provider). MUST share the exact same ordering/selection so
+# the "realtime_available" badge and the actual session builder never
+# disagree about which family is reachable (AP-22).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "configured,keys,expect",
+    [
+        ("openai-realtime", {"openai"}, "openai-realtime"),
+        ("gemini-live", {"gemini"}, "gemini-live"),
+        ("openai-realtime", {"gemini"}, "gemini-live"),  # cross-family (AP-22)
+        ("gemini-live", {"openai"}, "openai-realtime"),  # cross-family (AP-22)
+        ("openai-realtime", {"openai", "gemini"}, "openai-realtime"),  # configured wins
+        ("openai-realtime", set(), None),  # neither key -> None (classic pipeline)
+    ],
+)
+def test_realtime_available_provider_key_aware_selection(monkeypatch, configured, keys, expect):
+    import jarvis.realtime.factory as f
+
+    monkeypatch.setattr(f, "get_provider_secret", lambda name: "k" if name in keys else "")
+    assert realtime_available_provider(_cfg(provider=configured)) == expect
+
+
+def test_realtime_available_provider_handles_missing_brain_config(monkeypatch):
+    """A bare cfg with no `.brain.realtime` (e.g. a fresh JarvisConfig headless
+    stub) must not crash — defaults to the openai-realtime family order."""
+    import jarvis.realtime.factory as f
+
+    monkeypatch.setattr(f, "get_provider_secret", lambda name: "k" if name == "gemini" else "")
+    cfg = SimpleNamespace(voice=SimpleNamespace(mode="realtime"))
+    assert realtime_available_provider(cfg) == "gemini-live"
+
+
+def test_realtime_available_provider_agrees_with_resolve_realtime_provider(monkeypatch):
+    """The id resolver and the instance resolver must never drift — same
+    shared ordering helper, same selection for the same inputs."""
+    import jarvis.realtime.factory as f
+
+    monkeypatch.setattr(f, "get_provider_secret", lambda name: "k" if name == "gemini" else "")
+    cfg = _cfg(provider="openai-realtime")
+    resolved_id = realtime_available_provider(cfg)
+    resolved_instance = _resolve_realtime_provider(cfg)
+    assert resolved_instance is not None
+    assert resolved_id == resolved_instance.name
