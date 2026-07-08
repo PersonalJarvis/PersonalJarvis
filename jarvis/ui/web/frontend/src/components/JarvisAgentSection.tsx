@@ -205,6 +205,13 @@ export function JarvisAgentSection({
       r.jarvis !== "antigravity" &&
       r.jarvis !== "claude-api",
   );
+  // Split the generic providers by access type so each lands in the right
+  // column. Practically these are all API-key providers (gemini/openai/…), but
+  // splitting on the backend `billing` field keeps a future subscription
+  // provider in the correct column instead of the wrong one (AP-21: gate on
+  // capability, never a provider name).
+  const subProviderRows = providerRows.filter((r) => r.billing !== "api");
+  const apiProviderRows = providerRows.filter((r) => r.billing === "api");
 
   return (
     <section className="space-y-4">
@@ -226,38 +233,61 @@ export function JarvisAgentSection({
         </span>
       </p>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        {codexRow && (
-          <CodexConnectionCard
-            status={codexStatus}
-            row={codexRow}
-            onChanged={reload}
+      {/* Two access-typed columns so the two ways to power an agent never mix:
+          subscription logins (violet) on the left, API-key providers (sky) on
+          the right. The colour matches each card's access badge + accent stripe. */}
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-3">
+          <ColumnHeader
+            icon={Sparkles}
+            title="Subscription logins"
+            hint="sign in with an account"
+            tone="violet"
           />
-        )}
-        {antigravityRow && (
-          <AntigravityConnectionCard
-            status={antigravityStatus}
-            row={antigravityRow}
-            onChanged={reload}
+          {codexRow && (
+            <CodexConnectionCard
+              status={codexStatus}
+              row={codexRow}
+              onChanged={reload}
+            />
+          )}
+          {antigravityRow && (
+            <AntigravityConnectionCard
+              status={antigravityStatus}
+              row={antigravityRow}
+              onChanged={reload}
+            />
+          )}
+          {claudeRow && (
+            <ClaudeConnectionCard
+              status={claudeStatus}
+              row={claudeRow}
+              onChanged={reload}
+            />
+          )}
+          {subProviderRows.map((row) => (
+            <SubagentProviderCard key={row.jarvis} row={row} onSwitched={reload} />
+          ))}
+        </div>
+
+        <div className="space-y-3">
+          <ColumnHeader
+            icon={CreditCard}
+            title="API keys"
+            hint="billed per token"
+            tone="sky"
           />
-        )}
-        {claudeRow && (
-          <ClaudeConnectionCard
-            status={claudeStatus}
-            row={claudeRow}
-            onChanged={reload}
-          />
-        )}
-        {claudeRow && (
-          <ClaudeApiCard
-            status={claudeStatus}
-            row={claudeRow}
-            onChanged={reload}
-          />
-        )}
-        {providerRows.map((row) => (
-          <SubagentProviderCard key={row.jarvis} row={row} onSwitched={reload} />
-        ))}
+          {claudeRow && (
+            <ClaudeApiCard
+              status={claudeStatus}
+              row={claudeRow}
+              onChanged={reload}
+            />
+          )}
+          {apiProviderRows.map((row) => (
+            <SubagentProviderCard key={row.jarvis} row={row} onSwitched={reload} />
+          ))}
+        </div>
       </div>
 
       <SubagentModelCard status={bridge} onSaved={reload} />
@@ -517,6 +547,34 @@ function AccessBadge({ billing }: { billing?: Billing }) {
       <Icon className="h-3 w-3" />
       {m.label}
     </span>
+  );
+}
+
+/**
+ * A colour-coded header for one of the two access columns — violet for the
+ * subscription-login column, sky for the API-key column — matching the per-card
+ * access badges and accent stripes so the split reads instantly.
+ */
+function ColumnHeader({
+  icon: Icon,
+  title,
+  hint,
+  tone,
+}: {
+  icon: LucideIcon;
+  title: string;
+  hint: string;
+  tone: "violet" | "sky";
+}) {
+  const toneCls = tone === "violet" ? "text-violet-400" : "text-sky-400";
+  return (
+    <div className="flex items-center gap-2 px-1 pb-0.5">
+      <Icon className={cn("h-4 w-4", toneCls)} />
+      <span className={cn("text-xs font-semibold uppercase tracking-wider", toneCls)}>
+        {title}
+      </span>
+      <span className="text-[11px] text-muted-foreground">· {hint}</span>
+    </div>
   );
 }
 
