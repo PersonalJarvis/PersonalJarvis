@@ -94,5 +94,9 @@
   },
   "brain.providers.nvidia": {
     "model": "z-ai/glm-5.2"
+  },
+  "brain.providers.gemini-live": {
+    "model": "gemini-3.1-flash-live-preview",
+    "voice": "Puck"
   }
 }
