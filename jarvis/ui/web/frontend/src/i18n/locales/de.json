@@ -1008,6 +1008,11 @@
       "save": "Team-Modus speichern"
     },
     "app_settings_group_title": "App-Einstellungen",
+    "realtime_voice": {
+      "title": "Echtzeit-Sprache (Browser)",
+      "description": "Vollduplex-Sprachdialog direkt im Browser (OpenAI). Standardmäßig aus.",
+      "unavailable": "Benötigt einen OpenAI-Schlüssel. Es wird die Standard-Sprachausgabe verwendet."
+    },
     "jarvis_api": {
       "title": "{name} API",
       "key_label": "API-Schlüssel",

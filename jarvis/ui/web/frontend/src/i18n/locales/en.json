@@ -1009,6 +1009,11 @@
       "save": "Save team mode"
     },
     "app_settings_group_title": "App settings",
+    "realtime_voice": {
+      "title": "Realtime voice (browser)",
+      "description": "Full-duplex speech-to-speech in the browser (OpenAI). Off by default.",
+      "unavailable": "Needs an OpenAI key. Using standard voice."
+    },
     "jarvis_api": {
       "title": "{name} API",
       "key_label": "API key",

@@ -1008,6 +1008,11 @@
       "save": "Guardar modo equipo"
     },
     "app_settings_group_title": "Ajustes de la app",
+    "realtime_voice": {
+      "title": "Voz en tiempo real (navegador)",
+      "description": "Conversación de voz dúplex completo directamente en el navegador (OpenAI). Desactivado de forma predeterminada.",
+      "unavailable": "Necesita una clave de OpenAI. Se usa la voz estándar."
+    },
     "jarvis_api": {
       "title": "{name} API",
       "key_label": "Clave de API",

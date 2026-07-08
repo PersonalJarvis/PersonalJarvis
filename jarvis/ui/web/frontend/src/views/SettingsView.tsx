@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { OverlayTaskbarGroup } from "@/views/settings/OverlayTaskbarGroup";
 import { LanguagesGroup } from "@/views/settings/LanguagesGroup";
 import { AppSettingsGroup } from "@/views/settings/AppSettingsGroup";
+import { RealtimeVoiceGroup } from "@/views/settings/RealtimeVoiceGroup";
 import { SilenceWindowGroup } from "@/views/settings/SilenceWindowGroup";
 import { VolumeGroup } from "@/views/settings/VolumeGroup";
 import { AudioDevicesGroup } from "@/views/settings/AudioDevicesGroup";
@@ -70,6 +71,7 @@ export function SettingsView() {
       <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
         <LanguagesGroup />
         <AppSettingsGroup />
+        <RealtimeVoiceGroup />
         <SystemPromptGroup />
         <WakeWordPanel />
         <SilenceWindowGroup />
