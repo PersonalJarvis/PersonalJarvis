@@ -16,16 +16,31 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Any
 
+import httpx
+
 from jarvis.core import config as cfg
 from jarvis.core.protocols import BrainDelta, BrainRequest
 
-from ._openai_base import CLIENT_TIMEOUT, stream_complete
+from ._openai_base import stream_complete
 
 # NVIDIA NIM's OpenAI-compatible endpoint. Only the ``nvapi-`` key from
 # build.nvidia.com works here (NOT the legacy NGC key). Passed as the vendor
 # default so an explicit ``[brain.providers.nvidia].base_url`` override or the
 # team proxy can still redirect it (resolve_provider_endpoint).
 BASE_URL = "https://integrate.api.nvidia.com/v1"
+
+# NIM-specific HTTP timeout. NVIDIA's hosted dev tier (build.nvidia.com) has a
+# high, variable time-to-first-byte — measured 13-30s+ on a cold/queued model
+# ("hi" @ max_tokens=8), well above the 2s TTFB of OpenAI/OpenRouter. The shared
+# ``_openai_base.CLIENT_TIMEOUT`` (read=30s, tuned for the voice fast-fail path)
+# therefore kills legitimate NIM calls with an APITimeoutError, which the
+# provider test then mislabels as an integration error / "unreachable". A NIM
+# call that connects but streams slowly is NOT a dead endpoint, so ``read`` is
+# widened to tolerate the queue/cold-start latency while ``connect`` stays at 5s
+# so a genuinely unreachable host still fast-fails and the fallback chain moves
+# on. On the voice hot path the brain-tier stall guard still bounds the turn and
+# crosses to a faster provider; this only lets the text/worker path finish.
+CLIENT_TIMEOUT = httpx.Timeout(connect=5.0, read=120.0, write=30.0, pool=30.0)
 
 # Last-resort default when the brain is built with NO model. A widely-hosted,
 # tool-capable NIM model so a model-less construction still answers and can call
