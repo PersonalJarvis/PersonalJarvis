@@ -671,6 +671,7 @@ function CodexConnectionCard({
   return (
     <AgentCardShell
       label="OpenAI Codex"
+      slug={row?.jarvis}
       title="OpenAI Codex"
       billing={row?.billing}
       active={isActive}
@@ -757,6 +758,7 @@ function AntigravityConnectionCard({
   return (
     <AgentCardShell
       label="Antigravity"
+      slug={row?.jarvis}
       title="Antigravity"
       billing={row?.billing}
       active={isActive}
@@ -855,6 +857,7 @@ function ClaudeConnectionCard({
   return (
     <AgentCardShell
       label="Anthropic Claude"
+      slug={row?.jarvis}
       title="Anthropic Claude"
       billing="subscription"
       active={isActive}
@@ -928,6 +931,7 @@ function ClaudeApiCard({
   return (
     <AgentCardShell
       label="Anthropic Claude"
+      slug={row?.jarvis}
       title="Anthropic Claude"
       billing="api"
       active={isActive}
@@ -1040,6 +1044,7 @@ function SubagentProviderCard({
   return (
     <AgentCardShell
       label={label}
+      slug={row.jarvis}
       title={label}
       billing={row.billing}
       active={row.is_active_brain}
