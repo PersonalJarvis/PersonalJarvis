@@ -97,7 +97,11 @@ class OpenAIRealtimeProvider:
             "output_modalities": list(cfg.modalities),
             "audio": {
                 "input": {
-                    "format": {"type": "audio/pcm", "rate": cfg.input_sample_rate},
+                    # Declare the rate we ACTUALLY send: send_audio upsamples the
+                    # mic PCM to _INPUT_RATE (24 kHz) before input_audio_buffer.append,
+                    # so the wire format must be 24 kHz — not cfg.input_sample_rate
+                    # (the 16 kHz mic rate), or the server mis-times the samples.
+                    "format": {"type": "audio/pcm", "rate": _INPUT_RATE},
                     "turn_detection": {"type": cfg.turn_detection},
                 },
                 "output": {
