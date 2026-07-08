@@ -865,16 +865,25 @@
     "tier_brain": "Brain-Provider",
     "tier_tts": "Voice-Output (TTS)",
     "tier_stt": "Voice-Input (STT)",
+    "tier_realtime": "Realtime-Sprache",
+    "tier_computer_use": "Computer-Use-Provider",
     "tier_subagent": "Jarvis-Agent (Heavy-Tasks)",
     "tier_telephony": "Telefonie",
     "tab_brain": "Brain",
     "tab_tts": "Sprachausgabe",
     "tab_stt": "Spracheingabe",
+    "tab_realtime": "Realtime",
+    "tab_computer_use": "Computer-Use",
     "tab_subagents": "Jarvis-Agents",
     "tab_advanced": "Erweitert",
+    "mode_pipeline": "Pipeline",
+    "mode_realtime": "Realtime",
+    "mode_active_badge": "Aktiv",
     "cat_brain_desc": "Das Modell, das Chat, Routing und Computer-Use antreibt.",
     "cat_tts_desc": "Die Stimme, mit der Jarvis spricht.",
     "cat_stt_desc": "Wie Jarvis deine Sprache in Text umwandelt.",
+    "cat_realtime_desc": "Die Vollduplex-Sprache-zu-Sprache-Engine (OpenAI Realtime). Nutzt deinen vorhandenen OpenAI-Key mit. Standardmäßig AUS, bis der Browser-Client angebunden ist (Phase 2).",
+    "cat_computer_use_desc": "Computer-Use liest deinen Bildschirm; wähle, welcher Provider das plant — unabhängig von deinem Chat-Brain. Realtime-Modelle können den Bildschirm nicht sehen, deshalb läuft es auch dort darüber.",
     "cat_subagents_title": "Jarvis-Agents",
     "cat_subagents_desc": "Wähle, welcher Provider schwere Hintergrund-Aufgaben übernimmt.",
     "advanced_title": "Zugang & Integrationen",
@@ -1008,6 +1017,11 @@
       "save": "Team-Modus speichern"
     },
     "app_settings_group_title": "App-Einstellungen",
+    "realtime_voice": {
+      "title": "Echtzeit-Sprache (Browser)",
+      "description": "Vollduplex-Sprachdialog direkt im Browser (OpenAI). Standardmäßig aus.",
+      "unavailable": "Benötigt einen OpenAI-Schlüssel. Es wird die Standard-Sprachausgabe verwendet."
+    },
     "jarvis_api": {
       "title": "{name} API",
       "key_label": "API-Schlüssel",
@@ -1071,7 +1085,12 @@
       "enable_local_error": "Installation fehlgeschlagen. Prüfe deine Internetverbindung und versuche es erneut.",
       "enable_local_retry": "Erneut versuchen",
       "enable_local_restart": "Jetzt neu starten",
-      "restarting": "Neustart…"
+      "restarting": "Neustart…",
+      "download_model_button": "Wake-Modell herunterladen",
+      "download_model_downloading": "Wake-Modell wird heruntergeladen…",
+      "download_model_done": "Wake-Modell heruntergeladen — Wake-Word wird neu gespeichert…",
+      "download_model_error": "Wake-Modell konnte nicht heruntergeladen werden. Prüfe deine Internetverbindung und versuche es erneut.",
+      "download_model_retry": "Erneut versuchen"
     },
     "onboarding": {
       "wake_word": {
@@ -1512,7 +1531,18 @@
       "cta": "Aktivierungswort speichern",
       "saving": "Speichern…",
       "derived_name": "Dein Assistent heißt dann: {0}",
-      "continue_anyway": "Trotzdem fortfahren"
+      "continue_anyway": "Trotzdem fortfahren",
+      "mic_check": {
+        "title": "Mikrofon-Check",
+        "test_button": "Mikrofon testen",
+        "say_once_button": "Aktivierungswort einmal sagen",
+        "checking": "Höre zu…",
+        "listening": "Höre zu — sprich jetzt…",
+        "good": "Klingt gut — dein Mikrofon hat deine Stimme klar aufgenommen.",
+        "too_quiet": "Das war sehr leise. Erhöhe die Mikrofonlautstärke oder rücke näher heran und versuche es erneut.",
+        "no_device": "Kein Mikrofon erkannt — du kannst die Einrichtung trotzdem abschließen und das später in den Einstellungen beheben.",
+        "error": "Das Mikrofon konnte gerade nicht geprüft werden."
+      }
     },
     "api_keys": {
       "title": "Verbinde deine KI-Dienste (optional)",

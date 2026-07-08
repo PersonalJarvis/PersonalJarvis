@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { OverlayTaskbarGroup } from "@/views/settings/OverlayTaskbarGroup";
 import { LanguagesGroup } from "@/views/settings/LanguagesGroup";
 import { AppSettingsGroup } from "@/views/settings/AppSettingsGroup";
+import { RealtimeVoiceGroup } from "@/views/settings/RealtimeVoiceGroup";
 import { SilenceWindowGroup } from "@/views/settings/SilenceWindowGroup";
 import { VolumeGroup } from "@/views/settings/VolumeGroup";
 import { AudioDevicesGroup } from "@/views/settings/AudioDevicesGroup";
@@ -70,6 +71,7 @@ export function SettingsView() {
       <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
         <LanguagesGroup />
         <AppSettingsGroup />
+        <RealtimeVoiceGroup />
         <SystemPromptGroup />
         <WakeWordPanel />
         <SilenceWindowGroup />
@@ -133,6 +135,14 @@ function WakeWordPanel() {
   // word (needs a local model for the user's word), off = hotkey / push-to-talk.
   const [enabled, setEnabled] = useState(false);
   const [togglingActivation, setTogglingActivation] = useState(false);
+  // In-app recovery for the degraded-wake-word scenario: downloads the Vosk
+  // model that wake_phrase.py's degrade message points at (Settings -> Wake
+  // word -> "Download wake model"). Mirrors the local-speech-install status
+  // shape above but drives a different, one-shot backend route.
+  const [wakeModelDownload, setWakeModelDownload] = useState<{
+    state: "idle" | "running" | "done" | "error";
+    message: string;
+  }>({ state: "idle", message: "" });
 
   // Hydrate the form once the GET resolves (and whenever the config changes).
   useEffect(() => {
@@ -172,6 +182,9 @@ function WakeWordPanel() {
     if (!trimmedPhrase) return;
     setSaving(true);
     setResult(null);
+    // A fresh save gets a fresh download control — stale done/error state from
+    // a previous degrade shouldn't bleed into the next result.
+    setWakeModelDownload({ state: "idle", message: "" });
     try {
       const res = await saveWakeWord({
         phrase: trimmedPhrase,
@@ -200,6 +213,44 @@ function WakeWordPanel() {
       pushToast("info", t("settings_view.wake_word.restarting"));
     } catch (e) {
       pushToast("error", (e as Error).message);
+    }
+  }
+
+  // Recovers the "stt_match only, unreliable" degrade in-app: provisions the
+  // per-language Vosk model via POST /api/settings/wake-word/download-model
+  // (jarvis/ui/web/settings_routes.py), then re-runs Save so the plan
+  // re-resolves to vosk_kws now that the model is present. Never throws — a
+  // failed fetch or a still-absent model surfaces an honest retry message.
+  async function onDownloadWakeModel() {
+    setWakeModelDownload({ state: "running", message: "" });
+    try {
+      const res = await fetch("/api/settings/wake-word/download-model", {
+        method: "POST",
+      });
+      const data: { ok?: boolean; present?: boolean; message?: string } = await res
+        .json()
+        .catch(() => ({}));
+      const backendMessage = typeof data.message === "string" ? data.message : "";
+      if (!res.ok) {
+        setWakeModelDownload({
+          state: "error",
+          message: backendMessage || `HTTP ${res.status}`,
+        });
+        return;
+      }
+      if (data.present) {
+        setWakeModelDownload({ state: "done", message: backendMessage });
+        // Model is present now — re-save with the same phrase/engine so the
+        // panel re-resolves to vosk_kws and drops out of the degraded state.
+        await onSave();
+      } else {
+        setWakeModelDownload({
+          state: "error",
+          message: backendMessage || t("settings_view.wake_word.download_model_error"),
+        });
+      }
+    } catch (e) {
+      setWakeModelDownload({ state: "error", message: (e as Error).message });
     }
   }
 
@@ -397,6 +448,53 @@ function WakeWordPanel() {
                 <p className="mt-1 text-muted-foreground">
                   {t("settings_view.wake_word.restart_required")}
                 </p>
+              )}
+
+              {/* In-app recovery for the degraded ("stt_match only") scenario:
+                  wires the backend's own suggestion (Settings -> Wake word ->
+                  "Download wake model") to a real button instead of a
+                  CLI/API-only route. */}
+              {result.degraded && (
+                <div className="mt-2">
+                  {wakeModelDownload.state === "idle" && (
+                    <Button
+                      size="sm"
+                      onClick={() => void onDownloadWakeModel()}
+                    >
+                      {t("settings_view.wake_word.download_model_button")}
+                    </Button>
+                  )}
+
+                  {wakeModelDownload.state === "running" && (
+                    <p className="flex items-center gap-2 text-foreground">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      {t("settings_view.wake_word.download_model_downloading")}
+                    </p>
+                  )}
+
+                  {wakeModelDownload.state === "done" && (
+                    <p className="text-foreground">
+                      {wakeModelDownload.message ||
+                        t("settings_view.wake_word.download_model_done")}
+                    </p>
+                  )}
+
+                  {wakeModelDownload.state === "error" && (
+                    <div className="text-destructive">
+                      <p>
+                        {wakeModelDownload.message ||
+                          t("settings_view.wake_word.download_model_error")}
+                      </p>
+                      <Button
+                        size="sm"
+                        className="mt-2"
+                        onClick={() => void onDownloadWakeModel()}
+                      >
+                        {t("settings_view.wake_word.download_model_retry")}
+                      </Button>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}

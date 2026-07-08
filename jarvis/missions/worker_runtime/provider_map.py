@@ -110,6 +110,12 @@ MAPPINGS: Final[tuple[ProviderMapping, ...]] = (
     ),
     ProviderMapping("openai", "openai", "OPENAI_API_KEY"),
     ProviderMapping("openrouter", "openrouter", "OPENROUTER_API_KEY"),
+    # NVIDIA NIM: an OpenAI-compatible API provider. Like openai/openrouter it
+    # runs through the in-process ApiAgentWorker (not the OpenClaw CLI harness),
+    # so ``worker_slug`` is only a placeholder — this row exists so nvidia is a
+    # selectable subagent in the API-Keys "Subagents" tab and env/slug lookups
+    # stay consistent.
+    ProviderMapping("nvidia", "nvidia", "NVIDIA_API_KEY"),
     # xAI Grok removed as a sub-agent/brain provider 2026-06-22 (TTS-only now).
 )
 

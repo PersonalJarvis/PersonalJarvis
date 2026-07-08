@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 AuthMode = Literal["api_key", "codex", "antigravity", "none"]
-Tier = Literal["brain", "tts", "stt"]
+Tier = Literal["brain", "tts", "stt", "realtime"]
 # How using a provider is billed. Derived from auth_mode (never branched on a
 # provider name — see provider_billing): an API key bills per token on an API
 # account; a subscription provider runs over an existing plan login; codex can
@@ -167,6 +167,21 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         credential_help=(
             "OpenRouter API key (starts with sk-or-). One key reaches many "
             "models; billed per token on your OpenRouter account."
+        ),
+    ),
+    ProviderSpec(
+        id="nvidia",
+        label="NVIDIA NIM",
+        tier="brain",
+        auth_mode="api_key",
+        secret_keys=("nvidia_api_key",),
+        dashboard_url="https://build.nvidia.com/settings/api-keys",
+        signup_url="https://build.nvidia.com",
+        credential_help=(
+            "NVIDIA API key (starts with nvapi-) from build.nvidia.com — use the "
+            "key from Settings > API Keys, NOT the NGC key. One key reaches many "
+            "NVIDIA-hosted models (Nemotron, Llama, DeepSeek, Qwen); free dev tier "
+            "available, then billed per token on your NVIDIA account."
         ),
     ),
     # ── Brain: Google subscription via the official Antigravity/Gemini CLI ──
@@ -357,6 +372,41 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     # (build_wake_whisper, reading [stt].wake_*), and build_stt_from_config keeps
     # a key-free local faster-whisper *fallback* (_build_local_fallback, AP-22)
     # as an invisible resilience floor for a user with no cloud STT key.
+    # ── Realtime ──────────────────────────────────────────────────────────
+    # Realtime voice spans two providers today
+    # (jarvis.plugins.realtime.openai_realtime, jarvis.realtime.protocol.
+    # RealtimeProvider). The Gemini Live adapter (jarvis.plugins.realtime.
+    # gemini_live) is added by a later task — this spec is registered ahead of
+    # it so the entry-point below stays inert until that module exists.
+    ProviderSpec(
+        id="openai-realtime",
+        label="OpenAI Realtime",
+        tier="realtime",
+        auth_mode="api_key",
+        secret_keys=("openai_api_key",),
+        dashboard_url="https://platform.openai.com/api-keys",
+        credential_help=(
+            "Uses your OpenAI API key (shared with the GPT brain / Whisper STT) "
+            "to power the realtime voice mode — one model that listens, thinks and "
+            "speaks over a single connection. Full-duplex browser voice; still "
+            "default-OFF until the realtime client is wired in (Phase 2)."
+        ),
+    ),
+    ProviderSpec(
+        id="gemini-live",
+        label="Gemini Live",
+        tier="realtime",
+        auth_mode="api_key",
+        secret_keys=("gemini_api_key",),
+        dashboard_url="https://aistudio.google.com/app/apikey",
+        credential_help=(
+            "Google AI Studio key (AIza/AQ.), shared with the Gemini brain, to "
+            "power Google's full-duplex Live realtime voice. Or use the Vertex AI "
+            "service-account path for higher quota. Default-OFF until the realtime "
+            "client is wired in (Phase 2)."
+        ),
+        alt_credential=_GEMINI_VERTEX,
+    ),
 )
 
 

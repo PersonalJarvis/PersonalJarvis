@@ -106,8 +106,8 @@ class TestProviderCatalog:
         assert any("nova" in m.id for m in result.models)
 
     def test_brain_catalog_providers_unchanged(self) -> None:
-        # The brain-only CATALOG_PROVIDERS tuple stays the 4 API brains.
-        for p in ("claude-api", "openai", "gemini", "openrouter"):
+        # The brain-only CATALOG_PROVIDERS tuple: the live-fetchable API brains.
+        for p in ("claude-api", "openai", "gemini", "openrouter", "nvidia"):
             assert p in CATALOG_PROVIDERS
         assert PROVIDER_CATALOG["claude-api"].tier == "brain"
 
@@ -579,12 +579,15 @@ class TestListModels:
             # Curated ids must survive the brain-model filter (no media/embeds).
             assert filter_brain_models(CURATED_MODELS[provider]) == CURATED_MODELS[provider]
 
-    def test_catalog_providers_are_the_four_api_brain_providers(self) -> None:
+    def test_catalog_providers_are_the_api_brain_providers(self) -> None:
+        # The live-fetchable API brains (each has a /v1/models endpoint). NVIDIA
+        # NIM joined as an OpenAI-compatible gateway alongside OpenRouter.
         assert set(CATALOG_PROVIDERS) == {
             "claude-api",
             "openai",
             "gemini",
             "openrouter",
+            "nvidia",
         }
 
 
@@ -645,3 +648,53 @@ class TestModelClassification:
         assert tags.frontier is False
         assert tags.value is False
         assert tags.starred is False
+
+
+# ----------------------------------------------------------------------
+# Realtime catalogs — REALTIME_MODELS / REALTIME_VOICES
+#
+# Realtime providers need BOTH a model AND a voice selection per provider
+# (unlike the single-selection brain/tts/stt catalog), so these two dicts are
+# looked up directly by the dedicated /realtime-options endpoint rather than
+# being registered into PROVIDER_CATALOG/catalog_spec.
+# ----------------------------------------------------------------------
+
+
+class TestRealtimeCatalog:
+    def test_openai_realtime_models_lead_with_the_hardcoded_default(self) -> None:
+        from jarvis.brain.model_catalog import REALTIME_MODELS
+
+        ids = [m.id for m in REALTIME_MODELS["openai-realtime"]]
+        # Matches _MODEL in jarvis/plugins/realtime/openai_realtime.py — the
+        # safe default must lead the list.
+        assert ids[0] == "gpt-realtime"
+        assert len(ids) == len(set(ids))  # no duplicates
+        assert all(m.label for m in REALTIME_MODELS["openai-realtime"])
+
+    def test_gemini_live_models_lead_with_the_hardcoded_default(self) -> None:
+        from jarvis.brain.model_catalog import REALTIME_MODELS
+
+        ids = [m.id for m in REALTIME_MODELS["gemini-live"]]
+        # Matches _MODEL in jarvis/plugins/realtime/gemini_live.py.
+        assert ids[0] == "gemini-3.1-flash-live-preview"
+        assert len(ids) == len(set(ids))
+
+    def test_openai_realtime_voices_match_the_ga_voice_set(self) -> None:
+        from jarvis.brain.model_catalog import REALTIME_VOICES
+
+        ids = [v.id for v in REALTIME_VOICES["openai-realtime"]]
+        assert ids == ["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse"]
+
+    def test_gemini_live_voices_match_the_prebuilt_voice_set(self) -> None:
+        from jarvis.brain.model_catalog import REALTIME_VOICES
+
+        ids = set(v.id for v in REALTIME_VOICES["gemini-live"])
+        assert ids == {"Puck", "Charon", "Kore", "Fenrir", "Aoede", "Orus", "Leda", "Zephyr"}
+
+    def test_realtime_catalogs_are_not_in_the_single_selection_catalog(self) -> None:
+        # Realtime is served by its own endpoint (GET/PUT /realtime-options),
+        # not the shared /models picker — so it must stay absent from
+        # PROVIDER_CATALOG (else /providers/{id}/models would 200 with a
+        # single-selection response that can't express model+voice together).
+        assert catalog_spec("openai-realtime") is None
+        assert catalog_spec("gemini-live") is None

@@ -388,6 +388,39 @@ def set_window_icon_for_pid(pid: int, ico_path: Path) -> bool:
     return _apply_icon_to_hwnd(best[0], ico_path)
 
 
+# The Linux window-class token the XDG ``.desktop`` pins via ``StartupWMClass``
+# (jarvis/autostart/linux.py). Keep the two in lock-step: the desktop maps a
+# running window to its launcher entry — and thus shows the entry's ``Icon=`` on
+# the taskbar/dock — only when the window's WM_CLASS matches ``StartupWMClass``.
+LINUX_WM_CLASS = "personal-jarvis"
+
+
+def pin_linux_wm_class(name: str = LINUX_WM_CLASS) -> bool:
+    """Pin the X11/Wayland window-class of subsequently-created windows.
+
+    Must run BEFORE the GUI toolkit creates its first window. Without it, a
+    ``python3 -m …`` launch leaves the window's WM_CLASS as ``python3`` — so the
+    Linux taskbar/dock shows the generic interpreter icon even when the
+    ``.desktop`` entry carries the Jarvis ``Icon=`` (they only bind when the
+    WM_CLASS matches ``StartupWMClass``). Sets GLib's program name, which GTK
+    (pywebview's default Linux backend) uses to derive WM_CLASS.
+
+    No-op on non-Linux and best-effort on Linux (a Qt backend or missing PyGObject
+    derives its class differently): never raises, so it can never block the
+    window. Returns ``True`` only when the program name was set.
+    """
+    if sys.platform != "linux":
+        return False
+    try:
+        from gi.repository import GLib  # type: ignore[import-not-found]
+
+        GLib.set_prgname(name)
+        return True
+    except Exception as exc:  # noqa: BLE001 — WM-class pin is a nicety, never load-bearing
+        logger.debug("Linux WM_CLASS could not be pinned: {}", exc)
+        return False
+
+
 def load_ico_as_pil_image(ico_path: Path, size: int = 64) -> Any | None:
     """Loads a ``.ico`` as a ``PIL.Image`` for the pystray tray icon.
 

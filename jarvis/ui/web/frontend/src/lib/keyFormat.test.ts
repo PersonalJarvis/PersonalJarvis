@@ -23,6 +23,10 @@ describe("detectKeyFormat", () => {
     expect(detectKeyFormat("sk-proj-abc123")?.kind).toBe("openai");
   });
 
+  it("recognizes an NVIDIA NIM key (nvapi-)", () => {
+    expect(detectKeyFormat("nvapi-abc123def456")?.kind).toBe("nvidia");
+  });
+
   it("recognizes xAI, Cartesia, ElevenLabs and Groq keys", () => {
     expect(detectKeyFormat("xai-abc123")?.kind).toBe("xai");
     expect(detectKeyFormat("sk_car_abc123")?.kind).toBe("cartesia");
@@ -42,6 +46,7 @@ describe("expectedKindForSecret", () => {
     expect(expectedKindForSecret("anthropic_api_key")).toBe("anthropic");
     expect(expectedKindForSecret("openai_api_key")).toBe("openai");
     expect(expectedKindForSecret("codex_openai_api_key")).toBe("openai");
+    expect(expectedKindForSecret("nvidia_api_key")).toBe("nvidia");
     expect(expectedKindForSecret("grok_api_key")).toBe("xai");
     expect(expectedKindForSecret("cartesia_api_key")).toBe("cartesia");
     expect(expectedKindForSecret("elevenlabs_api_key")).toBe("elevenlabs");

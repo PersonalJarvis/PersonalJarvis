@@ -63,6 +63,31 @@ def test_openrouter_default_without_override(monkeypatch):
     assert _FakeOpenAI.last_kwargs["base_url"] == "https://openrouter.ai/api/v1"
 
 
+# ── NVIDIA NIM (OpenAI-compatible) ──────────────────────────────────────────
+def test_nvidia_uses_override(monkeypatch):
+    import openai
+
+    monkeypatch.setattr(openai, "AsyncOpenAI", _FakeOpenAI)
+    _override("nvidia", "https://proxy/p/nvidia/v1", monkeypatch)
+    from jarvis.plugins.brain.nvidia import NvidiaBrain
+
+    NvidiaBrain()._ensure_client()
+    assert _FakeOpenAI.last_kwargs["base_url"] == "https://proxy/p/nvidia/v1"
+    assert _FakeOpenAI.last_kwargs["api_key"] == "sk-test"
+
+
+def test_nvidia_default_without_override(monkeypatch):
+    import openai
+
+    monkeypatch.setattr(openai, "AsyncOpenAI", _FakeOpenAI)
+    _no_override(monkeypatch)
+    from jarvis.plugins.brain.nvidia import NvidiaBrain
+
+    NvidiaBrain()._ensure_client()
+    # No override → the vendor default NIM endpoint (mirrors OpenRouter).
+    assert _FakeOpenAI.last_kwargs["base_url"] == "https://integrate.api.nvidia.com/v1"
+
+
 # ── OpenAI ────────────────────────────────────────────────────────────────
 def test_openai_uses_override(monkeypatch):
     import openai

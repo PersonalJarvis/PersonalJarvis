@@ -1745,6 +1745,28 @@ class DesktopApp:
                 loop.create_task(_bootstrap_workflows(), name="workflow-bootstrap")
                 loop.create_task(_bootstrap_conductor(), name="conductor-bootstrap")
 
+                # One-shot: provision the Vosk wake model if missing, off the boot
+                # path (AP-26). Runs behind the live wake listener (this whole
+                # function already waited on ``self._wake_model_loaded`` above), so
+                # a fresh install that skipped/failed the installer prefetch still
+                # self-heals without editing jarvis.toml. Never fatal — the wake
+                # word degrades honestly until the model lands.
+                async def _provision_wake_model() -> None:
+                    try:
+                        from jarvis.core.config import load_config
+                        from jarvis.speech import wake_model_fetch as _wmf
+
+                        lang = _wmf.resolve_wake_language(load_config())
+                        if not _wmf.vosk_model_present(lang):
+                            await asyncio.to_thread(_wmf.ensure_vosk_model, lang)
+                    except Exception:  # noqa: BLE001 — a background probe never crashes boot
+                        from loguru import logger as _wmf_log
+                        _wmf_log.opt(exception=True).debug(
+                            "Off-boot wake-model provision skipped."
+                        )
+
+                loop.create_task(_provision_wake_model(), name="wake-model-provision")
+
             loop.create_task(_heavy_backend_bg(), name="heavy-backend")
             loop.call_soon(self._start_virtual_cursor)
             loop.run_forever()
@@ -2941,6 +2963,16 @@ class DesktopApp:
 
         gui = "edgechromium" if sys.platform == "win32" else None
         debug = os.environ.get("JARVIS_WEBVIEW_DEBUG") == "1"
+
+        # Linux: pin the window's WM_CLASS to match the .desktop's StartupWMClass
+        # BEFORE the GTK window is created, so the taskbar/dock shows the Jarvis
+        # icon instead of the generic python3 interpreter icon. No-op elsewhere.
+        try:
+            from jarvis.ui.icon_utils import pin_linux_wm_class
+
+            pin_linux_wm_class()
+        except Exception:  # noqa: BLE001 — the WM-class pin is never load-bearing
+            pass
 
         # Native file drag-out: dragging a saved-download toast drops the REAL
         # file into any app (Explorer, a browser upload zone, a chat). Must be

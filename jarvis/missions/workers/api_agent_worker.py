@@ -83,6 +83,9 @@ def _error_means_family_unusable(text: str) -> bool:
 _BRAIN_BY_PROVIDER: dict[str, tuple[str, str]] = {
     "openai": ("jarvis.plugins.brain.openai", "OpenAIBrain"),
     "openrouter": ("jarvis.plugins.brain.openrouter", "OpenRouterBrain"),
+    # NVIDIA NIM is OpenAI-compatible with no vendor CLI — same in-process
+    # tool-loop path as openai/openrouter, running on the user's nvapi- key.
+    "nvidia": ("jarvis.plugins.brain.nvidia", "NvidiaBrain"),
     # B3/B4 (open-source AP-22): claude-api + gemini run the SAME in-process tool
     # loop, so an Anthropic- or Gemini-API-key-only user can run heavy missions
     # without the npm `claude`/`gemini` CLI binary. The CLI worker stays preferred
@@ -105,6 +108,8 @@ _DEFAULT_MODEL: dict[str, str] = {
     "openrouter": _OPENROUTER_FREE_DEFAULT,
     "claude-api": "claude-opus-4-8",
     "gemini": "gemini-3.1-pro-preview",
+    # NVIDIA's own reasoning flagship for heavy subagent work.
+    "nvidia": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
 }
 
 

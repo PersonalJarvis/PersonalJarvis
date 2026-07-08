@@ -7,6 +7,48 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
+## [1.0.4] — 2026-07-08
+
+A portability + reliability release. Personal Jarvis now runs consistently on any
+machine — Windows, macOS (including Apple Silicon), Linux, and headless servers —
+with the CPU as the guaranteed floor and the GPU used only when it is verified to
+actually work. Plus a new brain provider and a batch of first-run robustness
+fixes.
+
+### Added
+
+- **NVIDIA NIM brain provider.** Use NVIDIA's hosted models (Nemotron, Llama,
+  DeepSeek, Qwen) with an `nvapi-` key, added in the setup wizard like any other
+  provider.
+- **Custom wake words work out of the box on a fresh install.** The per-language
+  keyword-spotting model is provisioned automatically (installer prefetch, an
+  off-boot self-heal on first run, and an in-app "Download wake model" button), so
+  a freely chosen wake phrase resolves to the reliable any-word engine instead of
+  silently degrading. Works for every supported language (`en` / `de` / `es`),
+  with no training and no GPU, on any OS including Apple Silicon; an unservable
+  phrase now degrades loudly with a one-click fix, and onboarding verifies the
+  microphone level and the spoken wake word before marking setup complete.
+
+### Changed
+
+- **CPU-first device selection.** Local speech-to-text defaults to the CPU
+  everywhere and only moves to the GPU after a real on-device inference proves it
+  works. A configuration created on a GPU machine no longer breaks on a CPU-only
+  or Apple-Silicon machine — it quietly falls back to the CPU. (ADR-0024)
+- **Wake word follows your language.** The wake-word model resolves its language
+  from your speech / UI language setting instead of a fixed default.
+
+### Fixed
+
+- **Starts on minimal machines without git.** First boot no longer errors on a
+  host that has no `git` installed; the boot-time worktree housekeeping skips
+  cleanly instead of dumping a traceback.
+- **API-key saving survives a locked system keychain.** On a Linux host whose
+  keychain is present but locked, saving a key in the app falls back to a
+  protected local file instead of failing with an error.
+- **Install verifies the voice models on disk** and reports the per-model truth,
+  so a partial download is caught up front rather than at first use.
+
 ## [1.0.3] — 2026-07-08
 
 A voice + reliability release: a new premium text-to-speech voice, a friendlier

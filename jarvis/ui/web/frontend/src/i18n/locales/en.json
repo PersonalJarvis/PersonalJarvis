@@ -865,16 +865,25 @@
     "tier_brain": "Brain Provider",
     "tier_tts": "Voice Output (TTS)",
     "tier_stt": "Voice Input (STT)",
+    "tier_realtime": "Realtime voice",
+    "tier_computer_use": "Computer-Use provider",
     "tier_subagent": "Jarvis-Agent (heavy tasks)",
     "tier_telephony": "Telephony",
     "tab_brain": "Brain",
     "tab_tts": "Voice Output",
     "tab_stt": "Voice Input",
+    "tab_realtime": "Realtime",
+    "tab_computer_use": "Computer-Use",
     "tab_subagents": "Jarvis-Agents",
     "tab_advanced": "Advanced",
+    "mode_pipeline": "Pipeline",
+    "mode_realtime": "Realtime",
+    "mode_active_badge": "Active",
     "cat_brain_desc": "The model that powers chat, routing, and Computer-Use.",
     "cat_tts_desc": "The voice Jarvis speaks with.",
     "cat_stt_desc": "How Jarvis turns your speech into text.",
+    "cat_realtime_desc": "The full-duplex speech-to-speech engine (OpenAI Realtime). Reuses your OpenAI key. Default-OFF until the browser client is wired in (Phase 2).",
+    "cat_computer_use_desc": "Computer-Use reads your screen; pick which provider plans it — independent of your chat Brain. Realtime models can't see the screen, so this runs it there too.",
     "cat_subagents_title": "Jarvis-Agents",
     "cat_subagents_desc": "Choose which provider runs heavy background tasks.",
     "advanced_title": "Access & Integrations",
@@ -1009,6 +1018,11 @@
       "save": "Save team mode"
     },
     "app_settings_group_title": "App settings",
+    "realtime_voice": {
+      "title": "Realtime voice (browser)",
+      "description": "Full-duplex speech-to-speech in the browser (OpenAI). Off by default.",
+      "unavailable": "Needs an OpenAI key. Using standard voice."
+    },
     "jarvis_api": {
       "title": "{name} API",
       "key_label": "API key",
@@ -1072,7 +1086,12 @@
       "enable_local_error": "Install failed. Check your internet connection and try again.",
       "enable_local_retry": "Try again",
       "enable_local_restart": "Restart now",
-      "restarting": "Restarting…"
+      "restarting": "Restarting…",
+      "download_model_button": "Download wake model",
+      "download_model_downloading": "Downloading the wake model…",
+      "download_model_done": "Wake model downloaded — re-saving your wake word…",
+      "download_model_error": "Could not download the wake model. Check your connection and try again.",
+      "download_model_retry": "Try again"
     },
     "onboarding": {
       "wake_word": {
@@ -1513,7 +1532,18 @@
       "cta": "Save wake word",
       "saving": "Saving…",
       "derived_name": "Your assistant will be called: {0}",
-      "continue_anyway": "Continue anyway"
+      "continue_anyway": "Continue anyway",
+      "mic_check": {
+        "title": "Microphone check",
+        "test_button": "Test your microphone",
+        "say_once_button": "Say your wake word once",
+        "checking": "Listening…",
+        "listening": "Listening — speak now…",
+        "good": "Sounds good — your microphone picked up your voice clearly.",
+        "too_quiet": "That was very quiet. Turn up your microphone volume or move closer, then try again.",
+        "no_device": "No microphone detected — you can still finish setup and fix this later in Settings.",
+        "error": "Could not check the microphone right now."
+      }
     },
     "api_keys": {
       "title": "Connect your AI services (optional)",

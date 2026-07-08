@@ -44,6 +44,24 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
+def _realtime_available_provider(cfg: object) -> str | None:
+    """Reachable realtime provider name for ``cfg``, or ``None``.
+
+    The realtime voice engine (``jarvis.realtime``) is an optional module that is
+    stripped from public distribution snapshots (distribution-denylist) while it
+    is still internal. Import it lazily and treat its absence as "no realtime
+    available", so the settings router still IMPORTS (the server boots) and the
+    ``/voice-mode`` endpoint degrades honestly instead of taking the whole app
+    down. When the module is present (the full/local build) this delegates to it
+    unchanged.
+    """
+    try:
+        from jarvis.realtime.factory import realtime_available_provider
+    except ImportError:
+        return None
+    return realtime_available_provider(cfg)
+
+
 class ReplyLanguageBody(BaseModel):
     language: str = Field(..., min_length=1)
     persist: bool = Field(default=True, description="Persist as boot default in jarvis.toml")
@@ -104,6 +122,71 @@ async def put_reply_language(body: ReplyLanguageBody, request: Request) -> dict[
             log.warning("reply-language persist failed (live switch still applied): %s", exc)
 
     return {"ok": True, "language": lang, "persisted": persisted}
+
+
+# ---------------------------------------------------------------------------
+# Voice mode: pipeline (the classic STT→Brain→TTS pipeline) vs realtime (the
+# browser-based OpenAI/Gemini full-duplex realtime engine). GET current mode +
+# whether realtime is actually reachable (needs an OpenAI key); PUT to switch.
+# Persisted to jarvis.toml [voice].mode via config_writer.set_voice_mode
+# (Task 1); the persist is best-effort so a locked/read-only toml never blocks
+# the live in-memory switch that already succeeded. See
+# docs/realtime-voice/PLAN-phase-0-1.md Task 8.
+# ---------------------------------------------------------------------------
+
+_VOICE_MODES = ("pipeline", "realtime")
+
+
+class VoiceModeBody(BaseModel):
+    mode: str = Field(..., min_length=1)
+    persist: bool = Field(default=True, description="Persist as boot default in jarvis.toml")
+
+
+@router.get("/voice-mode")
+async def get_voice_mode(request: Request) -> dict[str, object]:
+    cfg = getattr(request.app.state, "config", None) or getattr(request.app.state, "cfg", None)
+    mode = getattr(getattr(cfg, "voice", None), "mode", "pipeline")
+    # Cross-family (AP-22): resolved via the SAME ordering the realtime
+    # session factory uses, so this never disagrees with what a realtime
+    # session would actually build (Gemini-only users now get `true` too,
+    # not just OpenAI — Feature A2).
+    prov = _realtime_available_provider(cfg)
+    return {
+        "mode": mode,
+        "realtime_available": prov is not None,
+        "active_provider": prov,
+    }
+
+
+@router.put("/voice-mode")
+async def put_voice_mode(body: VoiceModeBody, request: Request) -> dict[str, object]:
+    if body.mode not in _VOICE_MODES:
+        raise HTTPException(status_code=400, detail=f"mode must be one of {_VOICE_MODES}")
+
+    cfg = getattr(request.app.state, "config", None) or getattr(request.app.state, "cfg", None)
+
+    # A3: never pin the boot default to an unreachable engine — selecting
+    # realtime with no key in ANY family is a 400, not a silent dead switch.
+    if body.mode == "realtime" and _realtime_available_provider(cfg) is None:
+        raise HTTPException(status_code=400, detail="no realtime provider key configured")
+
+    if cfg is not None and getattr(cfg, "voice", None) is not None:
+        try:
+            cfg.voice.mode = body.mode  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — frozen model is not an error
+            log.debug("in-memory cfg.voice.mode update skipped: %s", exc)
+
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core import config_writer
+
+            config_writer.set_voice_mode(body.mode)
+            persisted = True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("voice-mode persist failed (live switch still applied): %s", exc)
+
+    return {"ok": True, "mode": body.mode, "persisted": persisted}
 
 
 # ----------------------------------------------------------------------
@@ -609,6 +692,53 @@ async def set_wake_activation(body: WakeActivationBody, request: Request) -> dic
         except Exception as exc:  # noqa: BLE001 — frozen model is not an error
             log.debug("in-memory wake_word_enabled update skipped: %s", exc)
     return {"ok": True, "enabled": bool(body.enabled), "restart_required": True}
+
+
+@router.post("/wake-word/download-model")
+async def download_wake_model(request: Request) -> dict[str, object]:
+    """Provision (or repair) the per-language Vosk wake model in-app.
+
+    Recoverable-in-app contract (CLAUDE.md §3): a user whose Vosk model is
+    absent/dead gets a working reliable wake engine without editing jarvis.toml.
+    Never 500s on a fetch failure — returns a clear message and the runtime lazy
+    net (``_heavy_backend_bg``'s one-shot provision) remains the backstop.
+    """
+    from jarvis.speech import wake_model_fetch as wmf
+
+    cfg = _config(request)
+    language = wmf.resolve_wake_language(cfg)
+    out = await asyncio.to_thread(wmf.ensure_vosk_model, language)
+    present = wmf.vosk_model_present(language)
+    return {
+        "ok": out is not None,
+        "present": present,
+        "message": (
+            "Wake model ready." if present
+            else "Could not download the wake model right now; it will retry "
+                 "automatically. The wake word uses the fallback path until then."
+        ),
+    }
+
+
+@router.get("/wake-word/mic-level")
+async def wake_mic_level() -> dict[str, object]:
+    """Live mic dBFS for the onboarding wake step (Task 7: mic + spoken-word
+    verification before ``acknowledgeWakeWord``). Never 500s — a headless/no-mic
+    host reports ``no_device=True`` rather than raising. Warn threshold −40 dBFS
+    matches ``jarvis.speech.diagnose`` (same measurement helper, so the CLI
+    diagnostics and this route can never disagree on what "too quiet" means).
+    """
+    from jarvis.speech.diagnose import measure_mic_dbfs
+
+    try:
+        max_dbfs = await measure_mic_dbfs(duration_s=3.0)
+    except Exception:  # noqa: BLE001 — defensive guard: if measurement fails, treat as no device
+        max_dbfs = -120.0
+    return {
+        "max_dbfs": max_dbfs,
+        "no_device": max_dbfs <= -119.9,
+        "too_quiet": -119.9 < max_dbfs < -40.0,
+    }
 
 
 # ---------------------------------------------------------------------------

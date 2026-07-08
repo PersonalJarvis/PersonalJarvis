@@ -385,6 +385,7 @@ PLUGIN_GROUPS: tuple[str, ...] = (
     "jarvis.harness",
     "jarvis.tool",
     "jarvis.channel",  # NEW
+    "jarvis.realtime",  # NEW — full-duplex speech-to-speech providers
 )
 
 

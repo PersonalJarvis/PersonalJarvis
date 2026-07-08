@@ -22,6 +22,30 @@ log = logging.getLogger(__name__)
 
 _ENTRY_NAME = "personal-jarvis.desktop"
 _APP_NAME = "Personal Jarvis"
+# The X11/Wayland window-class token the running window is pinned to (see
+# ``jarvis.ui.icon_utils.pin_linux_wm_class``). ``StartupWMClass`` must match it
+# for the desktop to map the running window to THIS .desktop entry — and thus
+# show its ``Icon=`` on the taskbar/dock instead of the generic python3 icon.
+_WM_CLASS = "personal-jarvis"
+
+
+def _icon_value() -> str | None:
+    """Absolute path to the bundled PNG for the ``Icon=`` key, or ``None``.
+
+    Linux desktops read the launcher/menu/taskbar icon from ``Icon=`` and mostly
+    cannot decode a Windows ``.ico`` — so we ship and point at ``jarvis.png``.
+    Resolved fresh from the installed package (so the baked absolute path is
+    correct on any layout); a partial checkout without the PNG simply omits the
+    key (the entry still works, just unbranded — never a crash).
+    """
+    try:
+        from jarvis.assets import bundled_app_icon_png
+
+        png = bundled_app_icon_png()
+        return str(png) if png is not None else None
+    except Exception as exc:  # noqa: BLE001 — a missing icon must never block autostart
+        log.debug("Linux autostart icon could not be resolved: %s", exc)
+        return None
 
 
 def _autostart_dir() -> Path:
@@ -39,6 +63,8 @@ def _exec_value(spec: LaunchSpec) -> str:
 
 
 def _render(spec: LaunchSpec) -> str:
+    icon = _icon_value()
+    icon_line = f"Icon={icon}\n" if icon else ""
     return (
         "[Desktop Entry]\n"
         "Type=Application\n"
@@ -47,6 +73,8 @@ def _render(spec: LaunchSpec) -> str:
         f"Exec={_exec_value(spec)}\n"
         f"Path={spec.working_dir}\n"
         "Terminal=false\n"
+        f"{icon_line}"
+        f"StartupWMClass={_WM_CLASS}\n"
         "X-GNOME-Autostart-enabled=true\n"
         "Hidden=false\n"
     )

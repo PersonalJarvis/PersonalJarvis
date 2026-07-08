@@ -16,6 +16,21 @@ import {
 
 import { ApiKeysView } from "@/views/ApiKeysView";
 
+// ApiKeysView now reads the live `[voice].mode` (for the Pipeline|Realtime
+// mode switch's "Active" badge only) via useVoiceMode, which needs a
+// QueryClientProvider. These tests render ApiKeysView standalone, so the
+// hook is mocked — the mode switch itself is exercised by
+// ApiKeysView.two-mode.test.tsx.
+vi.mock("@/hooks/useVoiceMode", () => ({
+  useVoiceMode: () => ({
+    mode: "pipeline",
+    realtimeAvailable: false,
+    setMode: vi.fn(),
+    isLoading: false,
+    isSaving: false,
+  }),
+}));
+
 interface RouteResult {
   status?: number;
   body: unknown;
@@ -204,7 +219,9 @@ describe("ApiKeysView - Codex is subagent-only", () => {
     // Codex lives in the "Subagents" category tab now; open it first.
     fireEvent.click(screen.getByRole("tab", { name: /jarvis-agents/i }));
 
-    await waitFor(() => expect(screen.getByText("OpenAI Codex (Subscription)")).toBeTruthy());
+    // The redesign shortens the card title to just "OpenAI Codex"; the
+    // subscription-vs-API billing now lives in the billing badge, not the title.
+    await waitFor(() => expect(screen.getByText("OpenAI Codex")).toBeTruthy());
 
     expect(screen.queryByText("ChatGPT / Codex login")).toBeNull();
     expect(screen.getByText(/chatgpt-user@example\.com/)).toBeTruthy();

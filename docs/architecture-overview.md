@@ -200,6 +200,7 @@ The six desktop power-user features that were historically Windows-only are now 
 
 - **Dependency reality (AD-14 — do not "fix" this):** `pynput` + `ptyprocess` live in the `[desktop]` extra (`ptyprocess` gated `sys_platform != 'win32'`); `pyobjc-framework-{Quartz,ApplicationServices,Accessibility}` in `[desktop-macos]` (`sys_platform == 'darwin'`). **Linux `pyatspi` is NOT on PyPI — never add it as a pip dependency.** It is GObject-Introspection, distro-packaged (`apt install python3-pyatspi gir1.2-atspi-2.0`), surfaced via the `capabilities.has_ax_tree` runtime probe.
 - **Doctrine intact:** the headless €5-VPS base install ships **none** of these desktop extras and still boots on a fresh `python:3.11-slim` Linux container — every port is extras-gated and degrades to a logged no-op (AD-6) when its capability is absent.
+- **CPU-first device selection (ADR-0024):** the default compute device is always `cpu`. A GPU is used only on an *explicit* config request (`device = "cuda"`) with a *verified* capability; `auto`/empty/unknown resolve to CPU, and a known-bad GPU degrades to CPU with a logged warning. One central policy — `jarvis/core/device.py::resolve_device` — expresses this; the capability verdict is injected so the always-on wake path keeps its strict out-of-process inference gate (AP-25) and the policy module adds no `torch`/`ctranslate2` import to any path (AP-26).
 
 ## Windows specifics (do not skip)
 

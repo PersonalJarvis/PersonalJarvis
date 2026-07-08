@@ -16,6 +16,21 @@ import {
 
 import { ApiKeysView } from "@/views/ApiKeysView";
 
+// ApiKeysView now reads the live `[voice].mode` (for the Pipeline|Realtime
+// mode switch's "Active" badge only) via useVoiceMode, which needs a
+// QueryClientProvider. These tests render ApiKeysView standalone, so the
+// hook is mocked — the mode switch itself is exercised by
+// ApiKeysView.two-mode.test.tsx.
+vi.mock("@/hooks/useVoiceMode", () => ({
+  useVoiceMode: () => ({
+    mode: "pipeline",
+    realtimeAvailable: false,
+    setMode: vi.fn(),
+    isLoading: false,
+    isSaving: false,
+  }),
+}));
+
 interface RouteResult {
   status?: number;
   body: unknown;
@@ -216,7 +231,9 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
     fireEvent.click(screen.getByRole("tab", { name: /jarvis-agents/i }));
 
     await waitFor(() =>
-      expect(screen.getByText("Antigravity (Subscription)")).toBeTruthy(),
+      // The redesign shortens the card title to just "Antigravity"; the
+      // subscription billing now lives in the billing badge, not the title.
+      expect(screen.getByText("Antigravity")).toBeTruthy(),
     );
 
     // The "Set active" control now lives ON the subscription card, so there is

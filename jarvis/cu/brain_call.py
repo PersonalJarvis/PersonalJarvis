@@ -204,6 +204,24 @@ async def call_vision_brain(
     if not chain:
         raise CUBrainCallError("BrainManager fallback chain is empty")
 
+    # Dedicated GLOBAL Computer-Use provider (decoupled from brain.primary).
+    # When the user has picked one ([brain.computer_use].provider), hoist it
+    # to the HEAD of the chain so it is tried first; everything downstream —
+    # the cu_model pin loop below, the speed tune, and the vision/health gate
+    # in ComputerUsePlannerSelector — still applies to it, so a blind/dead
+    # pick degrades through the rest of the chain instead of bricking CU
+    # (AP-21/22). CU-ONLY: never touches ``_build_fallback_chain`` itself,
+    # whose "fast" level is shared with normal voice/chat turns.
+    cu_provider_fn = getattr(manager, "_cu_provider", None)
+    if callable(cu_provider_fn):
+        try:
+            cu_provider = cu_provider_fn()
+        except Exception:  # noqa: BLE001 — resolver must never break dispatch
+            cu_provider = ""
+        if cu_provider:
+            chain = [(p, m) for p, m in chain if p != cu_provider]
+            chain.insert(0, (cu_provider, None))
+
     # Per-provider CU model override (Settings can pin a dedicated CU model).
     # A PIN is the user's explicit word and is never second-guessed; every
     # unpinned candidate is speed-tuned below. CRITICAL: pin detection reads

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "1.0.3"
+version = "1.0.4"
 description = "Voice-driven meta-orchestrator that turns one spoken request into a fleet of self-checking AI agents"
 requires-python = ">=3.11"
 readme = "README.md"
@@ -308,6 +308,7 @@ openrouter-tts = "jarvis.plugins.tts.openrouter_tts:OpenRouterTTS"
 [project.entry-points."jarvis.brain"]
 claude-api = "jarvis.plugins.brain.claude_api:ClaudeAPIBrain"
 openrouter = "jarvis.plugins.brain.openrouter:OpenRouterBrain"
+nvidia = "jarvis.plugins.brain.nvidia:NvidiaBrain"
 openai = "jarvis.plugins.brain.openai:OpenAIBrain"
 gemini = "jarvis.plugins.brain.gemini:GeminiBrain"
 codex = "jarvis.plugins.brain.codex:CodexBrain"
@@ -335,6 +336,13 @@ telegram = "jarvis.channels.telegram:TelegramChannel"
 # optional [channels] extra; token via Credential Manager (key "discord_bot_token"
 # / ENV DISCORD_BOT_TOKEN). Enable [Message Content Intent] in the bot settings.
 discord = "jarvis.channels.discord:DiscordChannel"
+
+[project.entry-points."jarvis.realtime"]
+# Full-duplex speech-to-speech providers (Phase realtime-voice). OpenAI GA
+# gpt-realtime is the first; Gemini Live is the second (adapter module lands
+# in a later task — until then this line is inert, entry-points load lazily).
+openai-realtime = "jarvis.plugins.realtime.openai_realtime:OpenAIRealtimeProvider"
+gemini-live = "jarvis.plugins.realtime.gemini_live:GeminiLiveProvider"
 
 [project.entry-points."jarvis.tool"]
 open-app = "jarvis.plugins.tool.open_app:OpenAppTool"

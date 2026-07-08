@@ -169,6 +169,49 @@ def _write_vault_root_config(values: dict) -> None:
     config_writer.set_wiki_vault_root(vault_root)
 
 
+def _reindex_vault_fts(request: Request, jarvis_root: Path) -> None:
+    """Rebuild the FTS search index against a newly-connected vault (spec A6).
+
+    Switching to an existing vault repoints ``vault_root`` into
+    ``<vault>/Jarvis`` and asks for a restart — but the boot-time index
+    (``server._init_wiki_boot_index``) only builds when the FTS table is
+    EMPTY, so on restart it would skip and ``wiki-recall`` / the pre-answer
+    injector would keep serving the PREVIOUS vault's stale rows. Reindexing
+    here makes search reflect the new vault immediately.
+
+    Best-effort and fail-open: a reindex failure must never 500 the register
+    call (the vault switch itself already succeeded), but it must not be
+    silent either — it is logged and recorded on the wiki health surface.
+    """
+    import sqlite3
+
+    from jarvis.memory.wiki.fts_index import rebuild_index
+
+    try:
+        config = getattr(request.app.state, "config", None)
+        data_dir = Path(getattr(getattr(config, "memory", None), "data_dir", "./data"))
+        db_path = data_dir / "jarvis.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        try:
+            indexed = rebuild_index(jarvis_root, conn)
+            log.info(
+                "obsidian_register: reindexed FTS for %d page(s) from %s",
+                indexed,
+                jarvis_root,
+            )
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 — reindex must never break the switch
+        log.warning("obsidian_register: FTS reindex after vault switch failed: %s", exc)
+        try:
+            from jarvis.memory.wiki.health import health
+
+            health.record_chain_failure(f"vault-switch reindex failed: {exc}")
+        except Exception:  # noqa: BLE001
+            log.debug("obsidian_register: health record of reindex failure failed")
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -297,6 +340,10 @@ def obsidian_register(
             _write_vault_root_config(
                 {"wiki_integration": {"vault_root": str(jarvis_root)}}
             )
+            # Reindex search against the new vault NOW so it never serves the
+            # previous vault's stale rows (spec A6); the restart realigns the
+            # curator/watcher. Best-effort — never fails the switch.
+            _reindex_vault_fts(request, jarvis_root)
         return ObsidianRegisterResponse(
             status="added",
             active_vault_root=str(jarvis_root),

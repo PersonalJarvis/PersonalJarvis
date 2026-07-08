@@ -77,7 +77,7 @@ def _spawn_boot_cleanup(coro: Any, *, name: str) -> asyncio.Task[Any]:
 # ApiAgentWorker (OpenAI-compatible chat API + tool-use loop), instead of the
 # legacy silent ClaudeDirectWorker fallback. Single source for the routing
 # decision so the UI "runs on Claude" badge can never drift from reality.
-_API_AGENT_SLUGS: frozenset[str] = frozenset({"openai", "openrouter"})
+_API_AGENT_SLUGS: frozenset[str] = frozenset({"openai", "openrouter", "nvidia"})
 
 
 # Type aliases
@@ -557,7 +557,7 @@ def reachable_worker_families() -> list[str]:
         families.append("codex")
     from jarvis.missions.workers.api_agent_worker import supports_api_agent_worker
 
-    for prov in ("claude-api", "gemini", "openrouter", "openai"):
+    for prov in ("claude-api", "gemini", "openrouter", "openai", "nvidia"):
         if supports_api_agent_worker(prov) and _api_key_family_viable(prov):
             families.append(prov)
     return families
@@ -631,7 +631,7 @@ def _cross_family_last_resort_worker(task_text: str) -> Any | None:
     #    Viability-gated (not existence-gated): see _api_key_family_viable.
     from jarvis.missions.workers.api_agent_worker import supports_api_agent_worker
 
-    for prov in ("claude-api", "gemini", "openrouter", "openai"):
+    for prov in ("claude-api", "gemini", "openrouter", "openai", "nvidia"):
         if supports_api_agent_worker(prov) and _api_key_family_viable(prov):
             logger.warning(
                 "Mission worker -> ApiAgentWorker(%r): no Claude CLI / Codex login "

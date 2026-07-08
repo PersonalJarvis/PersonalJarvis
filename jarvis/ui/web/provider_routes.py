@@ -7,7 +7,9 @@ Endpoints:
     POST   /api/brain/switch                 → aktiven Brain-Provider wechseln (+ persist)
     POST   /api/tts/switch                   → aktiven TTS-Provider wechseln (persist in jarvis.toml)
     POST   /api/stt/switch                   → aktiven STT-Provider wechseln (persist in jarvis.toml)
+    POST   /api/realtime/switch              → aktiven Realtime-Provider wechseln (persist)
     POST   /api/subagent/switch              → aktiven Subagent-Provider wechseln (3-layer persist)
+    POST   /api/computer-use/switch          → switch the Computer-Use provider (persist)
 
 Wird vom WebServer in `_build_app()` eingehängt:
     from .provider_routes import router as provider_router
@@ -198,6 +200,38 @@ class CuModelResponse(BaseModel):
     restart_required: bool = False
 
 
+# Realtime needs BOTH a model AND a voice per provider (unlike every other
+# picker, which serves ONE selection) — a small dedicated control + endpoint
+# rather than the search-heavy BrainModelSelector. Curated lists only
+# (jarvis.brain.model_catalog.REALTIME_MODELS/REALTIME_VOICES), no live fetch.
+class RealtimeOptionInfo(BaseModel):
+    id: str
+    label: str
+
+
+class RealtimeOptionsResponse(BaseModel):
+    provider: str
+    models: list[RealtimeOptionInfo]
+    voices: list[RealtimeOptionInfo]
+    current_model: str
+    current_voice: str
+
+
+class RealtimeOptionsBody(BaseModel):
+    # Omitted (None) -> leave unchanged; "" -> explicitly clear (provider
+    # default), mirroring CuModelBody's "" contract.
+    model: str | None = Field(default=None, max_length=200)
+    voice: str | None = Field(default=None, max_length=100)
+
+
+class RealtimeOptionsSaveResponse(BaseModel):
+    ok: bool = True
+    provider: str
+    model: str
+    voice: str
+    restart_required: bool = False
+
+
 # ----------------------------------------------------------------------
 # Helper
 # ----------------------------------------------------------------------
@@ -274,11 +308,15 @@ def _spec_to_payload(
     active_brain: str | None,
     active_tts: str | None,
     active_stt: str | None,
+    active_realtime: str | None = None,
+    active_computer_use: str | None = None,
 ) -> dict[str, Any]:
     if spec.tier == "brain":
         active = spec.id == active_brain
     elif spec.tier == "tts":
         active = spec.id == active_tts
+    elif spec.tier == "realtime":
+        active = spec.id == active_realtime
     else:
         active = spec.id == active_stt
 
@@ -336,6 +374,13 @@ def _spec_to_payload(
         ),
         "active": active,
         "cli_installed": _cli_installed(spec),
+        # Overlay, not a new tier (see the CU-own-provider plan): a brain
+        # provider can be BOTH the main Brain ("active") AND/OR the dedicated
+        # Computer-Use planner ("computer_use_active") — the two selections
+        # are independent, so this never touches "active" above.
+        "computer_use_active": (
+            spec.tier == "brain" and spec.id == active_computer_use
+        ),
     }
     if antigravity_status is not None:
         payload["antigravity_status"] = antigravity_status
@@ -407,6 +452,47 @@ def _active_stt(request: Request) -> str | None:
     except Exception as exc:  # noqa: BLE001 — the health panel must never 500
         log.debug("resolved-provider health probe failed (%s); using configured.", exc)
     return configured
+
+
+def _active_realtime(request: Request) -> str | None:
+    """The active realtime-voice provider.
+
+    Realtime is OpenAI-only today (a single spec in ``PROVIDERS``), so an unset
+    ``cfg.brain.realtime.provider`` still defaults to ``"openai-realtime"`` — the
+    sole card shows as active instead of a confusing "nothing selected" state.
+    Never raises: any resolver error falls back to the default id.
+    """
+    try:
+        cfg = _resolve_cfg(request)
+        realtime_cfg = getattr(getattr(cfg, "brain", None), "realtime", None)
+        provider = (getattr(realtime_cfg, "provider", None) or "").strip()
+        return provider or "openai-realtime"
+    except Exception as exc:  # noqa: BLE001 — the health panel must never 500
+        log.debug("active-realtime resolution failed (%s); using default.", exc)
+        return "openai-realtime"
+
+
+def _active_computer_use(request: Request) -> str | None:
+    """The active dedicated Computer-Use planner provider.
+
+    Falls back to ``brain.primary`` when no dedicated
+    ``[brain.computer_use].provider`` is configured yet — Computer-Use runs
+    on the main Brain until the user picks a dedicated CU provider (mirrors
+    ``BrainManager._cu_provider``'s empty-string-means-unset default, so the
+    "Active" badge and the actual dispatch chain always agree). Never raises:
+    any resolver error falls back to ``None``.
+    """
+    try:
+        cfg = _resolve_cfg(request)
+        brain_cfg = getattr(cfg, "brain", None)
+        cu_cfg = getattr(brain_cfg, "computer_use", None)
+        provider = (getattr(cu_cfg, "provider", None) or "").strip()
+        if provider:
+            return provider
+        return (getattr(brain_cfg, "primary", None) or "").strip() or None
+    except Exception as exc:  # noqa: BLE001 — the health panel must never 500
+        log.debug("active-computer-use resolution failed (%s); using None.", exc)
+        return None
 
 
 def _resolve_cfg(request: Request):
@@ -510,6 +596,8 @@ async def list_providers(request: Request) -> dict[str, Any]:
     active_brain = _active_brain(request)
     active_tts = _active_tts(request)
     active_stt = _active_stt(request)
+    active_realtime = _active_realtime(request)
+    active_computer_use = _active_computer_use(request)
 
     providers = [
         _spec_to_payload(
@@ -517,6 +605,8 @@ async def list_providers(request: Request) -> dict[str, Any]:
             active_brain=active_brain,
             active_tts=active_tts,
             active_stt=active_stt,
+            active_realtime=active_realtime,
+            active_computer_use=active_computer_use,
         )
         for spec in PROVIDERS
     ]
@@ -756,6 +846,34 @@ def _jarvis_agent_section_health(cfg: Any) -> SectionHealth:
     )
 
 
+def _realtime_section_health(request: Request) -> SectionHealth:
+    """Realtime tab: credential-presence ONLY — there is no realtime
+    provider-test yet (the client is not wired in, Phase 2), so this never
+    calls ``run_provider_test``. Mirrors the shape of ``_tier_section_health``
+    without the live connectivity probe.
+    """
+    spec = get_spec(_active_realtime(request) or "")
+    if spec is None:
+        return SectionHealth(
+            status=_section_health.NEEDS_SETUP,
+            reason="no_active",
+            detail="No active provider selected",
+        )
+    try:
+        configured = _is_credential_present(spec)
+    except Exception:  # noqa: BLE001 — a probe failure is "not set up", not a crash
+        configured = False
+    if configured:
+        return SectionHealth(
+            status=_section_health.OK, reason="ok", detail=f"{spec.label}: ready"
+        )
+    return SectionHealth(
+        status=_section_health.NEEDS_SETUP,
+        reason="not_configured",
+        detail=f"{spec.label}: no key set",
+    )
+
+
 def _advanced_section_health(request: Request) -> SectionHealth:
     """Advanced tab: every integration here is OPTIONAL, so it never reports
     ``needs_setup`` — only ``error`` when something the user actually configured
@@ -802,7 +920,7 @@ async def section_health(request: Request, refresh: bool = False) -> SectionHeal
     sections: dict[str, SectionHealth] = {}
 
     if cfg is None:
-        for key in ("brain", "tts", "stt", "subagents", "advanced"):
+        for key in ("brain", "tts", "stt", "realtime", "subagents", "advanced"):
             sections[key] = SectionHealth(
                 status=_section_health.UNKNOWN,
                 reason="unavailable",
@@ -817,6 +935,11 @@ async def section_health(request: Request, refresh: bool = False) -> SectionHeal
             _tier_section_health(cfg, tts_spec),
             _tier_section_health(cfg, stt_spec),
         )
+        try:
+            sections["realtime"] = _realtime_section_health(request)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("section-health realtime check failed: %s", exc)
+            sections["realtime"] = SectionHealth()
         try:
             sections["subagents"] = _jarvis_agent_section_health(cfg)
         except Exception as exc:  # noqa: BLE001
@@ -1274,6 +1397,130 @@ async def set_cu_model(
         effective_model=effective,
         uses_main=not bool(value),
         persisted=persisted,
+        restart_required=False,
+    )
+
+
+# ── GET/PUT /providers/{id}/realtime-options ───────────────────────────────
+# Selectable Realtime model + voice, per realtime provider (openai-realtime /
+# gemini-live). Realtime needs BOTH per provider, so this is a small dedicated
+# endpoint rather than reusing GET/PUT /providers/{id}/model.
+
+
+def _require_realtime_provider(provider_id: str) -> ProviderSpec:
+    """404 unknown id; 400 a non-realtime-tier id (mirrors /realtime/switch)."""
+    spec = get_spec(provider_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Unbekannter Provider: {provider_id}")
+    if spec.tier != "realtime":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Provider '{provider_id}' ist kein Realtime-Provider (tier={spec.tier})",
+        )
+    return spec
+
+
+def _current_realtime_selection(cfg: Any, provider_id: str) -> tuple[str, str]:
+    """The (model, voice) currently pinned for ``provider_id`` in
+    ``[brain.providers.<id>]`` ("" / "" when unset)."""
+    providers = getattr(getattr(cfg, "brain", None), "providers", None)
+    pc = providers.get(provider_id) if isinstance(providers, dict) else None
+    model = (getattr(pc, "model", None) or "") if pc is not None else ""
+    voice = (getattr(pc, "voice", None) or "") if pc is not None else ""
+    return model, voice
+
+
+@router.get("/providers/{provider_id}/realtime-options")
+async def get_realtime_options(provider_id: str, request: Request) -> RealtimeOptionsResponse:
+    """Return the curated model+voice catalog for a realtime provider, plus
+    the currently pinned selection.
+
+    Realtime needs BOTH a model AND a voice per provider (unlike the
+    single-selection ``/models`` endpoint), so this reads the two curated
+    dicts directly rather than going through ``catalog_spec``.
+    """
+    _require_realtime_provider(provider_id)
+    from jarvis.brain.model_catalog import REALTIME_MODELS, REALTIME_VOICES
+
+    cfg = _resolve_cfg(request)
+    current_model, current_voice = _current_realtime_selection(cfg, provider_id)
+    return RealtimeOptionsResponse(
+        provider=provider_id,
+        models=[
+            RealtimeOptionInfo(id=m.id, label=m.label)
+            for m in REALTIME_MODELS.get(provider_id, [])
+        ],
+        voices=[
+            RealtimeOptionInfo(id=v.id, label=v.label)
+            for v in REALTIME_VOICES.get(provider_id, [])
+        ],
+        current_model=current_model,
+        current_voice=current_voice,
+    )
+
+
+@router.put("/providers/{provider_id}/realtime-options")
+async def set_realtime_options(
+    provider_id: str, body: RealtimeOptionsBody, request: Request
+) -> RealtimeOptionsSaveResponse:
+    """Pin the model and/or voice for a realtime provider.
+
+    Persists to ``[brain.providers.<id>].model`` / ``.voice`` (+ drift-soll)
+    and updates the in-memory config so the next realtime session picks it up
+    with no process restart (``session.py::_open`` reads it fresh per
+    session). Only the fields present in the body are written — an omitted
+    field leaves its current value untouched.
+    """
+    spec = _require_realtime_provider(provider_id)
+    if not _is_credential_present(spec):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Provider '{provider_id}' hat keine Credentials — erst API-Key setzen.",
+        )
+    model = body.model.strip() if body.model is not None else None
+    voice = body.voice.strip() if body.voice is not None else None
+
+    if model is not None or voice is not None:
+        try:
+            from jarvis.core.config_writer import set_brain_provider_model
+
+            set_brain_provider_model(provider_id, model=model, voice=voice)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+            ) from exc
+
+    cfg = _resolve_cfg(request)
+    if cfg is not None and getattr(cfg, "brain", None) is not None:
+        try:
+            providers = cfg.brain.providers
+            pc = providers.get(provider_id)
+            if pc is None:
+                from jarvis.core.config import BrainProviderConfig
+
+                pc = BrainProviderConfig()
+                providers[provider_id] = pc
+            if model is not None:
+                pc.model = model
+            if voice is not None:
+                pc.voice = voice
+        except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
+            log.debug(
+                "In-memory realtime-options update skipped for %s: %s", provider_id, exc
+            )
+
+    await _emit(
+        request,
+        SecretConfigured(key=f"brain.providers.{provider_id}", action="set"),
+    )
+    current_model, current_voice = _current_realtime_selection(cfg, provider_id)
+    return RealtimeOptionsSaveResponse(
+        ok=True,
+        provider=provider_id,
+        model=current_model,
+        voice=current_voice,
         restart_required=False,
     )
 
@@ -1912,6 +2159,163 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         "active": body.provider,
         "persisted": body.persist,
         "restart_required": True,
+    }
+
+
+@router.post("/realtime/switch")
+async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
+    """Switches the active realtime-voice provider. Persists to jarvis.toml.
+
+    Mirrors ``stt_switch``: no live audio switch — the realtime engine is
+    only selected once the browser realtime client is actually wired in
+    (Phase 2), so the choice always needs a restart to take effect. Realtime
+    is cross-family (OpenAI Realtime, Gemini Live, AP-22), so this only
+    rejects a non-realtime-tier provider id.
+
+    Activating a realtime provider also makes Realtime the ACTIVE voice mode
+    (``[voice].mode``) — the "Active" badge reads ``[voice].mode``, not
+    ``[brain.realtime].provider``, so without this the badge could never
+    follow an activation (Feature A4).
+    """
+    spec = get_spec(body.provider)
+    if spec is None:
+        raise HTTPException(
+            status_code=404, detail=f"Unbekannter Provider: {body.provider}"
+        )
+    if spec.tier != "realtime":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Provider '{body.provider}' ist kein Realtime-Provider (tier={spec.tier})",
+        )
+    if not _is_credential_present(spec):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Provider '{body.provider}' hat keine Credentials — erst API-Key setzen.",
+        )
+
+    if body.persist:
+        try:
+            from jarvis.core.config_writer import set_realtime_provider
+
+            set_realtime_provider(body.provider)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+            ) from exc
+        try:
+            from jarvis.core.config_writer import set_voice_mode
+
+            set_voice_mode("realtime")
+        except Exception as exc:  # noqa: BLE001 — best-effort, mirrors set_realtime_provider above
+            log.warning("voice-mode persist failed after realtime switch: %s", exc)
+
+    cfg = _resolve_cfg(request)
+    if cfg is not None and getattr(cfg, "brain", None) is not None:
+        try:
+            realtime_cfg = getattr(cfg.brain, "realtime", None)
+            if realtime_cfg is None:
+                from jarvis.core.config import BrainTierConfig
+
+                cfg.brain.realtime = BrainTierConfig(provider=body.provider)
+            else:
+                realtime_cfg.provider = body.provider
+        except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
+            log.debug("In-memory realtime.provider update skipped: %s", exc)
+    if cfg is not None and getattr(cfg, "voice", None) is not None:
+        try:
+            cfg.voice.mode = "realtime"  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
+            log.debug("In-memory voice.mode update skipped: %s", exc)
+
+    await _emit(request, SecretConfigured(key="brain.realtime.provider", action="set"))
+    await _emit(request, SecretConfigured(key="voice.mode", action="set"))
+
+    return {
+        "ok": True,
+        "active": body.provider,
+        "persisted": body.persist,
+        "restart_required": True,
+    }
+
+
+@router.post("/computer-use/switch")
+async def computer_use_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
+    """Switches the dedicated GLOBAL Computer-Use planner provider.
+
+    Overlay over the brain-tier provider cards (Claude/OpenAI/OpenRouter/
+    Gemini), not a new provider tier — mirrors how ``[brain.worker]`` is a
+    separate selection over the same brain ids
+    (see ``jarvis_agent_switch``), but simpler: the CU planner can only be a
+    brain-switchable brain-tier provider (it must be able to receive
+    screenshots), so this reuses the generic ``/api/brain/switch``
+    validation style instead of the worker route's Codex-specific branch.
+
+    Persists via ``config_writer.set_computer_use_provider`` (3-layer,
+    drift-guarded — a TOML-only write would be reverted within minutes) and
+    updates ``cfg.brain.computer_use`` in-memory so the very next
+    Computer-Use dispatch (``BrainManager._cu_provider`` ->
+    ``jarvis.cu.brain_call.call_vision_brain``'s hoist) uses it live — no
+    restart required, unlike the worker/realtime switches.
+    """
+    spec = get_spec(body.provider)
+    if spec is None:
+        raise HTTPException(
+            status_code=404, detail=f"Unknown provider: {body.provider}"
+        )
+    if spec.tier != "brain" or not spec.brain_switchable:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Provider '{body.provider}' cannot be the Computer-Use planner "
+                f"— it must be a brain-switchable provider that can receive "
+                f"screenshots (tier={spec.tier})."
+            ),
+        )
+    if not _is_credential_present(spec):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{spec.label} has no saved API key. Save a key first, "
+                "then activate."
+            ),
+        )
+
+    if body.persist:
+        try:
+            from jarvis.core.config_writer import set_computer_use_provider
+
+            set_computer_use_provider(body.provider)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=500, detail=f"TOML write failed: {exc}"
+            ) from exc
+
+    cfg = _resolve_cfg(request)
+    if cfg is not None and getattr(cfg, "brain", None) is not None:
+        try:
+            cu_cfg = getattr(cfg.brain, "computer_use", None)
+            if cu_cfg is None:
+                from jarvis.core.config import BrainTierConfig
+
+                cfg.brain.computer_use = BrainTierConfig(provider=body.provider)
+            else:
+                cu_cfg.provider = body.provider
+        except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
+            log.debug("In-memory computer_use.provider update skipped: %s", exc)
+
+    await _emit(
+        request, SecretConfigured(key="brain.computer_use.provider", action="set")
+    )
+
+    return {
+        "ok": True,
+        "active": body.provider,
+        "persisted": body.persist,
+        "restart_required": False,
     }
 
 

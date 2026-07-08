@@ -7,6 +7,15 @@ import type { StepProps } from "../OnboardingFlow";
 
 type Mode = "choice" | "wake" | "shortcut";
 
+/** GET /api/settings/wake-word/mic-level response shape. */
+interface MicLevelResult {
+  max_dbfs: number;
+  no_device: boolean;
+  too_quiet: boolean;
+}
+
+type MicCheckState = "idle" | "checking" | "done";
+
 /**
  * Two honest activation paths — no branded default (Marvel owns "Jarvis" as a
  * trademark, so recommending "Hey Jarvis" out of the box is off the table):
@@ -32,6 +41,15 @@ export function WakeWordStep({ onb, goNext }: StepProps) {
   // user and offer the one-click local-speech install, or an honest opt-out.
   const [degraded, setDegraded] = useState(false);
   const { status: install, install: startInstall } = useLocalSpeechInstall();
+  // Mic verification (Task 7): a live dBFS read from the desktop app's own
+  // capture path (the same one the wake-word detector listens on) — never
+  // blocks the save/acknowledge below, it just surfaces an honest signal so a
+  // quiet mic or a headless/no-mic host is visible before the user commits.
+  const [micCheck, setMicCheck] = useState<{
+    state: MicCheckState;
+    result: MicLevelResult | null;
+    error: string | null;
+  }>({ state: "idle", result: null, error: null });
 
   const trimmed = word.trim();
   const canSave = trimmed.length >= 2 && ack && !busy;
@@ -43,6 +61,23 @@ export function WakeWordStep({ onb, goNext }: StepProps) {
     setWord(next);
     if (degraded) setDegraded(false);
     if (err) setErr(null);
+  }
+
+  // Shared by both the "Test your microphone" and "Say your wake word once"
+  // affordances — both hit the same live dBFS read; the second just prompts
+  // the user to say their word during the ~3s window instead of just any
+  // sound. Never throws: a fetch failure is shown as its own honest state,
+  // never blocks the save/acknowledge CTA below.
+  async function runMicCheck() {
+    setMicCheck({ state: "checking", result: null, error: null });
+    try {
+      const res = await fetch("/api/settings/wake-word/mic-level");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: MicLevelResult = await res.json();
+      setMicCheck({ state: "done", result: data, error: null });
+    } catch (e) {
+      setMicCheck({ state: "done", result: null, error: (e as Error).message });
+    }
   }
 
   async function onSaveWake() {
@@ -179,6 +214,47 @@ export function WakeWordStep({ onb, goNext }: StepProps) {
           {t("onboarding.wake_word.derived_name").replace("{0}", derivedName)}
         </p>
       ) : null}
+
+      <div className="flex flex-col gap-2 rounded-md border border-muted-foreground/25 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs font-medium">{t("onboarding.wake_word.mic_check.title")}</span>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={micCheck.state === "checking"}
+              onClick={() => void runMicCheck()}
+            >
+              {micCheck.state === "checking"
+                ? t("onboarding.wake_word.mic_check.checking")
+                : t("onboarding.wake_word.mic_check.test_button")}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={micCheck.state === "checking"}
+              onClick={() => void runMicCheck()}
+            >
+              {t("onboarding.wake_word.mic_check.say_once_button")}
+            </Button>
+          </div>
+        </div>
+        {micCheck.state === "checking" && (
+          <p className="text-xs text-muted-foreground">{t("onboarding.wake_word.mic_check.listening")}</p>
+        )}
+        {micCheck.state === "done" && micCheck.error && (
+          <p className="text-xs text-amber-500">{t("onboarding.wake_word.mic_check.error")}</p>
+        )}
+        {micCheck.state === "done" && micCheck.result && (
+          micCheck.result.no_device ? (
+            <p className="text-xs text-muted-foreground">{t("onboarding.wake_word.mic_check.no_device")}</p>
+          ) : micCheck.result.too_quiet ? (
+            <p className="text-xs text-amber-500">{t("onboarding.wake_word.mic_check.too_quiet")}</p>
+          ) : (
+            <p className="text-xs text-emerald-500">{t("onboarding.wake_word.mic_check.good")}</p>
+          )
+        )}
+      </div>
 
       <p className="text-xs text-muted-foreground">
         {t("onboarding.wake_word.notice")}{" "}

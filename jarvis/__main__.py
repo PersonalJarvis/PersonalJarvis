@@ -74,6 +74,14 @@ def _build_parser() -> argparse.ArgumentParser:
              "Used by the installer so the first launch has nothing left to fetch.",
     )
     parser.add_argument(
+        "--verify-models",
+        action="store_true",
+        dest="verify_models",
+        help="Check which voice models are actually on disk and print a per-model "
+             "report (wake word, end-of-speech, custom-wake, local speech), then "
+             "exit. Read-only; exits non-zero when a required model is missing.",
+    )
+    parser.add_argument(
         "--uninstall",
         action="store_true",
         help="Remove this Jarvis install from the machine: the install folder, "
@@ -491,6 +499,17 @@ def main(argv: list[str] | None = None) -> int:
         from jarvis.setup.prefetch import prefetch_all
 
         return prefetch_all()
+    if args.verify_models:
+        from jarvis.setup.model_report import (
+            format_report,
+            report_complete,
+            voice_model_report,
+        )
+
+        items = voice_model_report()
+        for line in format_report(items):
+            print(line)
+        return 0 if report_complete(items) else 3
     if args.command == "serve":
         # Headless web UI — the cloud-first path (no desktop/tray). Delegates to
         # the web launcher so `jarvis serve` == `python -m jarvis.ui.web.launcher --headless`.

@@ -172,13 +172,22 @@ def parse_task_query(stdout: str) -> _TaskInfo | None:
     return _TaskInfo(execute=fields[0], arguments=fields[1], working_dir=fields[2])
 
 
-def build_create_script(link: Path, spec: LaunchSpec) -> str:
+def build_create_script(link: Path, spec: LaunchSpec, *, icon: str | None = None) -> str:
     """Pure: the PowerShell script that creates/refreshes the fallback ``.lnk``.
 
     WindowStyle 7 = minimized (tray-friendly), 1 = normal/visible.
+
+    ``icon`` is the absolute path to ``jarvis.ico``. When given, the shortcut
+    carries ``IconLocation`` so the taskbar button is branded with the Jarvis
+    icon from the moment the app autostarts — instead of the bare ``pythonw.exe``
+    Python logo. Without it (the historical behaviour) an autostart launch on a
+    box where the elevated scheduled task was UAC-declined shows the Python logo,
+    because this fallback shortcut is then the only launch entry point and the
+    runtime class-icon setter is still racing (see the taskbar-icon bug report).
     """
     window_style = 7 if spec.minimized else 1
     args = " ".join(spec.args)
+    icon_line = f"$sc.IconLocation = '{icon},0'\n" if icon else ""
     return (
         "$ErrorActionPreference = 'Stop'\n"
         "$ws = New-Object -ComObject WScript.Shell\n"
@@ -187,6 +196,7 @@ def build_create_script(link: Path, spec: LaunchSpec) -> str:
         f"$sc.Arguments = '{args}'\n"
         f"$sc.WorkingDirectory = '{spec.working_dir}'\n"
         "$sc.Description = 'Personal Jarvis (Autostart)'\n"
+        f"{icon_line}"
         f"$sc.WindowStyle = {window_style}\n"
         "$sc.Save()\n"
     )
@@ -207,6 +217,55 @@ def build_read_script(link: Path) -> str:
 # --------------------------------------------------------------------------- #
 # PowerShell execution (live; the elevated path triggers UAC)                 #
 # --------------------------------------------------------------------------- #
+
+
+def _resolve_app_icon() -> str | None:
+    """Absolute ``jarvis.ico`` path for the shortcut, or ``None`` if unresolved.
+
+    Lazy import (never at module scope, HN-7): keeps this Windows-only module
+    free of a UI import on other OSes and off the boot critical path. Returns the
+    same install-layout-agnostic path every other Win32 icon surface uses.
+    """
+    try:
+        from jarvis.ui.icon_utils import project_icon_path
+
+        ico = project_icon_path()
+        return str(ico) if ico.is_file() else None
+    except Exception as exc:  # noqa: BLE001 — a missing icon must never block autostart
+        log.debug("autostart shortcut icon could not be resolved: %s", exc)
+        return None
+
+
+def _tag_shortcut_aumid(link: Path) -> bool:
+    """Best-effort: write the app AUMID into ``link``'s property store.
+
+    Mirrors ``scripts/install_shortcuts._set_shortcut_app_id`` (the proven path).
+    Lazy pywin32 import in a try/except: on a host without pywin32 this is a
+    silent no-op — the ``IconLocation`` set by :func:`build_create_script` is the
+    load-bearing fix, the AUMID is a reinforcement that keeps this shortcut from
+    diverging from the Start-Menu one. Never raises, never blocks autostart.
+    """
+    try:
+        import pywintypes  # type: ignore[import-not-found]
+        from win32com.propsys import propsys, pscon  # type: ignore[import-not-found]
+
+        from jarvis.ui.icon_utils import APP_USER_MODEL_ID
+
+        store = propsys.SHGetPropertyStoreFromParsingName(
+            str(link),
+            None,
+            2,  # GPS_READWRITE
+            pywintypes.IID("{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}"),  # IID_IPropertyStore
+        )
+        store.SetValue(
+            pscon.PKEY_AppUserModel_ID,
+            propsys.PROPVARIANTType(APP_USER_MODEL_ID),
+        )
+        store.Commit()
+        return True
+    except Exception as exc:  # noqa: BLE001 — pywin32 absent / COM failure → icon-only fallback
+        log.debug("autostart shortcut AUMID not tagged (non-fatal): %s", exc)
+        return False
 
 
 def _run_powershell(script: str) -> subprocess.CompletedProcess[str]:
@@ -435,7 +494,12 @@ class WindowsAutostart:
     def _default_write_shortcut(self, spec: LaunchSpec) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._remove_legacy()
-        _run_powershell(build_create_script(self._path, spec))
+        _run_powershell(build_create_script(self._path, spec, icon=_resolve_app_icon()))
+        # Tag the shortcut with the SAME AUMID as the Start-Menu shortcut so the
+        # two same-named .lnk files don't diverge and confuse the shell's taskbar
+        # button resolution (best-effort; a box without pywin32 still gets the
+        # icon above, which is the load-bearing visual fix).
+        _tag_shortcut_aumid(self._path)
         log.info("Windows autostart shortcut (fallback) written: %s", self._path)
 
     def _default_remove_shortcut(self) -> None:

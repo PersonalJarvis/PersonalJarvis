@@ -211,3 +211,65 @@ def test_cu_model_cleared_with_empty_string(
 
     toml_raw = sample_toml.read_text(encoding="utf-8")
     assert 'cu_model = ""' in toml_raw
+
+
+def test_writes_voice_to_toml_and_soll(  # i18n-allow
+    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch  # i18n-allow
+) -> None:
+    """The realtime voice picker persists like model/deep_model/cu_model —
+    same nested-table writer, same drift-soll sync (BUG-010 class)."""  # i18n-allow: internal config-soll identifier ref
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)  # i18n-allow
+    monkeypatch.setattr(config_writer, "_set_user_env_var", lambda name, value: None)
+
+    config_writer.set_brain_provider_model(
+        "openai-realtime", voice="echo", path=sample_toml,
+    )
+
+    toml_raw = sample_toml.read_text(encoding="utf-8")
+    assert 'voice = "echo"' in toml_raw
+
+    soll = json.loads(sample_soll.read_text(encoding="utf-8"))  # i18n-allow
+    assert soll["brain.providers.openai-realtime"]["voice"] == "echo"  # i18n-allow
+
+
+def test_voice_alone_is_not_a_noop(
+    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch  # i18n-allow
+) -> None:
+    """Passing ONLY voice (model/deep_model/cu_model all None) must still
+    write — the early-return idempotency guard has to include voice too."""
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)  # i18n-allow
+    monkeypatch.setattr(config_writer, "_set_user_env_var", lambda name, value: None)
+
+    config_writer.set_brain_provider_model("gemini-live", voice="Puck", path=sample_toml)
+
+    assert 'voice = "Puck"' in sample_toml.read_text(encoding="utf-8")
+
+
+def test_voice_cleared_with_empty_string(
+    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch  # i18n-allow
+) -> None:
+    """An empty voice writes "" (UI 'provider default') — distinct from None
+    which means 'leave unchanged', mirroring cu_model's contract."""
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)  # i18n-allow
+    monkeypatch.setattr(config_writer, "_set_user_env_var", lambda name, value: None)
+
+    config_writer.set_brain_provider_model("openai-realtime", voice="", path=sample_toml)
+
+    assert 'voice = ""' in sample_toml.read_text(encoding="utf-8")
+
+
+def test_voice_does_not_disturb_sibling_model_key(
+    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch  # i18n-allow
+) -> None:
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)  # i18n-allow
+    monkeypatch.setattr(config_writer, "_set_user_env_var", lambda name, value: None)
+
+    config_writer.set_brain_provider_model("gemini", voice="Puck", path=sample_toml)
+
+    toml_raw = sample_toml.read_text(encoding="utf-8")
+    assert 'voice = "Puck"' in toml_raw
+    assert 'model = "gemini-2.5-flash"' in toml_raw  # untouched sibling key
+
+    soll = json.loads(sample_soll.read_text(encoding="utf-8"))  # i18n-allow
+    assert soll["brain.providers.gemini"]["voice"] == "Puck"  # i18n-allow
+    assert soll["brain.providers.gemini"]["model"] == "gemini-2.5-flash"  # i18n-allow

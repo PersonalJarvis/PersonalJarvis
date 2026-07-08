@@ -473,10 +473,26 @@ class WorktreeManager:
         than a boot that crashes on housekeeping.
         """
         report = {"pruned": 0, "swept_run_dirs": 0, "errors": 0}
+        # A worktree can only be CREATED via git, so on a host with no git on
+        # PATH none can exist and there is nothing to sweep. Skip cleanly with
+        # one honest log line instead of letting ``git worktree prune`` raise
+        # FileNotFoundError and dump a traceback at every headless boot (observed
+        # live on a bare python:3.11-slim container, 2026-07-08). Missions that
+        # genuinely need worktree isolation still fail with an actionable message
+        # at create-time; this is the best-effort boot-time housekeeping path.
+        if shutil.which("git") is None:
+            logger.info(
+                "WorktreeManager.prune_and_sweep_leaked: git not on PATH — "
+                "worktree sweep skipped (no git means no worktrees can exist here)."
+            )
+            report["skipped_no_git"] = 1
+            return report
         try:
             self.prune_orphans()
             report["pruned"] = 1
-        except subprocess.CalledProcessError as exc:
+        # OSError (incl. FileNotFoundError if git vanishes mid-run) as well as a
+        # non-zero git exit must never escape this best-effort housekeeping path.
+        except (subprocess.CalledProcessError, OSError) as exc:
             logger.warning("prune_and_sweep_leaked: prune failed: %s", exc)
             report["errors"] += 1
 

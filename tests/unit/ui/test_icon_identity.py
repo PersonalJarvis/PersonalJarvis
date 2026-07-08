@@ -118,6 +118,20 @@ def test_bundled_icon_is_byte_identical_to_repo_root_copy() -> None:
     )
 
 
+def test_bundled_app_icon_png_exists_for_linux() -> None:
+    """Linux's .desktop Icon= needs a PNG (most desktops can't render .ico).
+
+    Platform-neutral on purpose: the bug is about file *presence*, which must hold
+    on every OS / CI runner. Without it the Linux autostart/menu entry — and the
+    running window's taskbar button — falls back to the generic python3 icon.
+    """
+    from jarvis.assets import bundled_app_icon_png
+
+    png = bundled_app_icon_png()
+    assert png is not None and png.is_file()
+    assert png.as_posix().endswith("jarvis/assets/icons/jarvis.png")
+
+
 def test_app_display_name_is_personal_jarvis() -> None:
     assert APP_DISPLAY_NAME == "Personal Jarvis"
     # The grouping key itself stays the stable PascalCase AUMID.

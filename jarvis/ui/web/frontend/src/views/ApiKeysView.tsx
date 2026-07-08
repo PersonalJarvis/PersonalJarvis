@@ -1,5 +1,5 @@
-﻿import { useState } from "react";
-import { AlertCircle, Bot, Brain, Check, Copy, KeyRound, Loader2, LogIn, LogOut, Mic, Phone, PlugZap, SlidersHorizontal, Terminal, Volume2, XCircle } from "lucide-react";
+﻿import { useEffect, useState } from "react";
+import { AlertCircle, Bot, Brain, Check, Copy, KeyRound, Loader2, LogIn, LogOut, Mic, Phone, PlugZap, Radio, SlidersHorizontal, Terminal, Volume2, XCircle } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
@@ -24,6 +24,8 @@ import {
   type SectionHealth,
   startCodexLogin,
   switchBrainProvider,
+  switchComputerUseProvider,
+  switchRealtimeProvider,
   switchSttProvider,
   switchTtsProvider,
   testProvider,
@@ -31,15 +33,39 @@ import {
   useSectionHealth,
 } from "@/hooks/useProviders";
 import { useEventStore } from "@/store/events";
+import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
-// The view is organised around exactly four primary categories — Brain, Voice
-// Output (TTS), Voice Input (STT) and Subagents — surfaced as a segmented tab
-// bar. Everything else (Control-API key, team key proxy, telephony, Wiki) lives
-// in a clearly separated, de-emphasized "Advanced" tab so it never competes with
-// the four core categories.
+// The view is organised around exactly five primary categories — Brain, Voice
+// Output (TTS), Voice Input (STT), Realtime and Subagents — surfaced as a
+// segmented tab bar. Everything else (Control-API key, team key proxy,
+// telephony, Wiki) lives in a clearly separated, de-emphasized "Advanced" tab
+// so it never competes with the five core categories.
 type CategoryKey = ProviderTier | "subagents" | "advanced";
+
+// The top-level engine mode. Feature A supersedes design D1 ("view-only"):
+// the switch now decides which tab set is shown AND persists `[voice].mode`
+// via `useVoiceMode().setMode` — Pipeline always (it's always reachable),
+// Realtime only when a realtime provider actually has a key
+// (`realtimeAvailable`), so the switch can never pin the boot default to an
+// unreachable engine. See `EngineModeSwitch` below for the exact rule.
+type VoiceEngineMode = "pipeline" | "realtime";
+
+// Realtime replaces STT+Brain+TTS with one full-duplex model, so those three
+// tiers don't apply in Realtime mode — that's the whole reason for the split.
+// "computer-use" is GLOBAL (not mode-specific — Computer-Use is one engine for
+// the whole app), so it appears right after the main chat-model tab in BOTH
+// tab sets.
+const PIPELINE_TABS: CategoryKey[] = [
+  "brain",
+  "computer-use",
+  "tts",
+  "stt",
+  "subagents",
+  "advanced",
+];
+const REALTIME_TABS: CategoryKey[] = ["realtime", "computer-use", "subagents", "advanced"];
 
 type LucideIcon = typeof Brain;
 
@@ -77,6 +103,18 @@ function makeProviderCategories(
       description: t("apikeys_view.cat_stt_desc"),
       icon: Mic,
     },
+    realtime: {
+      tab: t("apikeys_view.tab_realtime"),
+      title: t("apikeys_view.tier_realtime"),
+      description: t("apikeys_view.cat_realtime_desc"),
+      icon: Radio,
+    },
+    "computer-use": {
+      tab: t("apikeys_view.tab_computer_use"),
+      title: t("apikeys_view.tier_computer_use"),
+      description: t("apikeys_view.cat_computer_use_desc"),
+      icon: Terminal,
+    },
   };
 }
 
@@ -88,6 +126,20 @@ export function ApiKeysView() {
   const { health } = useSectionHealth();
   const categories = makeProviderCategories(t);
   const [active, setActive] = useState<CategoryKey>("brain");
+  const [engineMode, setEngineMode] = useState<VoiceEngineMode>("pipeline");
+  // The LIVE `[voice].mode` (+ cross-family availability) for the "Active"
+  // badge AND for gating the segment's own persistence (Feature A). See
+  // VoiceEngineMode / EngineModeSwitch above.
+  const { mode: liveMode, realtimeAvailable, setMode: setVoiceMode } = useVoiceMode();
+
+  // Reset the selected tab to the mode's first tab whenever the mode changes,
+  // so switching Pipeline→Realtime never leaves `active` pointing at a tab
+  // that no longer exists in the new mode (e.g. "tts").
+  useEffect(() => {
+    setActive(engineMode === "realtime" ? "realtime" : "brain");
+  }, [engineMode]);
+
+  const modeTabs = engineMode === "realtime" ? REALTIME_TABS : PIPELINE_TABS;
 
   return (
     <div className="flex h-full flex-col">
@@ -97,7 +149,15 @@ export function ApiKeysView() {
         subtitle={t("apikeys_view.subtitle")}
       />
 
-      <CategoryTabs active={active} onSelect={setActive} health={health} />
+      <EngineModeSwitch
+        mode={engineMode}
+        liveMode={liveMode}
+        realtimeAvailable={realtimeAvailable}
+        onSelect={setEngineMode}
+        onSetVoiceMode={setVoiceMode}
+      />
+
+      <CategoryTabs active={active} onSelect={setActive} health={health} tabs={modeTabs} />
 
       <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
         {(active === "brain" || active === "tts" || active === "stt") && (
@@ -112,8 +172,98 @@ export function ApiKeysView() {
             health={health[active]}
           />
         )}
+        {active === "realtime" && (
+          <RealtimeCategory
+            meta={categories.realtime}
+            providers={providers}
+            loading={loading}
+            error={error}
+            onChanged={refetch}
+            onActivateOptimistic={setActiveOptimistic}
+            health={health.realtime}
+          />
+        )}
+        {active === "computer-use" && (
+          <ComputerUseCategory
+            meta={categories["computer-use"]}
+            providers={providers}
+            loading={loading}
+            error={error}
+            onChanged={refetch}
+            onActivateOptimistic={setActiveOptimistic}
+            health={health["computer-use"]}
+          />
+        )}
         {active === "subagents" && <SubagentCategory />}
         {active === "advanced" && <AdvancedCategory />}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The Pipeline|Realtime segmented switch. Feature A (supersedes D1): clicking
+ * a segment still switches the local view (`onSelect`), and ALSO persists
+ * `[voice].mode` — Pipeline unconditionally (always reachable), Realtime only
+ * when `realtimeAvailable` (a key is present for some realtime family);
+ * otherwise the click just switches the view so the user can add a key from
+ * the Realtime tab without silently pinning the boot default to a dead
+ * engine. The segment whose value matches the LIVE `[voice].mode` (from
+ * `useVoiceMode`) shows a small "Active" badge.
+ */
+function EngineModeSwitch({
+  mode,
+  liveMode,
+  realtimeAvailable,
+  onSelect,
+  onSetVoiceMode,
+}: {
+  mode: VoiceEngineMode;
+  /** The live `[voice].mode` value, for the "Active" badge. */
+  liveMode: string;
+  /** Whether SOME realtime family (OpenAI/Gemini) has a key configured. */
+  realtimeAvailable: boolean;
+  onSelect: (mode: VoiceEngineMode) => void;
+  /** Persists `[voice].mode` — gated per the rule above. */
+  onSetVoiceMode: (mode: string) => void;
+}) {
+  const t = useT();
+  const segments: { key: VoiceEngineMode; label: string }[] = [
+    { key: "pipeline", label: t("apikeys_view.mode_pipeline") },
+    { key: "realtime", label: t("apikeys_view.mode_realtime") },
+  ];
+
+  function handleSelect(seg: VoiceEngineMode) {
+    onSelect(seg);
+    if (seg === "pipeline" || realtimeAvailable) {
+      onSetVoiceMode(seg);
+    }
+  }
+
+  return (
+    <div className="border-b border-border px-6 pt-4">
+      <div className="inline-flex items-center gap-1 rounded-xl border border-border bg-card/40 p-1">
+        {segments.map((seg) => (
+          <button
+            key={seg.key}
+            type="button"
+            onClick={() => handleSelect(seg.key)}
+            aria-pressed={mode === seg.key}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors",
+              mode === seg.key
+                ? "bg-primary/10 text-primary ring-1 ring-primary/30"
+                : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+            )}
+          >
+            {seg.label}
+            {liveMode === seg.key && (
+              <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
+                {t("apikeys_view.mode_active_badge")}
+              </span>
+            )}
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -129,46 +279,60 @@ function CategoryTabs({
   active,
   onSelect,
   health,
+  tabs,
 }: {
   active: CategoryKey;
   onSelect: (key: CategoryKey) => void;
   /** Per-tab health rollup keyed by category; absent keys render no dot. */
   health: Record<string, SectionHealth>;
+  /** The mode-derived tab list (PIPELINE_TABS / REALTIME_TABS) — "advanced",
+   *  if present, is rendered separately (de-emphasized, past a divider). */
+  tabs: CategoryKey[];
 }) {
   const t = useT();
-  const coreTabs: { key: CategoryKey; label: string; icon: LucideIcon }[] = [
-    { key: "brain", label: t("apikeys_view.tab_brain"), icon: Brain },
-    { key: "tts", label: t("apikeys_view.tab_tts"), icon: Volume2 },
-    { key: "stt", label: t("apikeys_view.tab_stt"), icon: Mic },
-    { key: "subagents", label: t("apikeys_view.tab_subagents"), icon: Bot },
-  ];
+  const tabMeta: Record<Exclude<CategoryKey, "advanced">, { label: string; icon: LucideIcon }> = {
+    brain: { label: t("apikeys_view.tab_brain"), icon: Brain },
+    tts: { label: t("apikeys_view.tab_tts"), icon: Volume2 },
+    stt: { label: t("apikeys_view.tab_stt"), icon: Mic },
+    realtime: { label: t("apikeys_view.tab_realtime"), icon: Radio },
+    "computer-use": { label: t("apikeys_view.tab_computer_use"), icon: Terminal },
+    subagents: { label: t("apikeys_view.tab_subagents"), icon: Bot },
+  };
+  const coreTabs = tabs.filter(
+    (key): key is Exclude<CategoryKey, "advanced"> => key !== "advanced",
+  );
+  const showAdvanced = tabs.includes("advanced");
   return (
     <div className="border-b border-border px-6 py-3">
       <div role="tablist" className="flex flex-wrap items-center gap-1.5">
         <div className="flex flex-wrap items-center gap-1 rounded-xl border border-border bg-card/40 p-1">
-          {coreTabs.map((tab) => (
+          {coreTabs.map((key) => (
             <TabButton
-              key={tab.key}
-              icon={tab.icon}
-              label={tab.label}
-              selected={active === tab.key}
-              onClick={() => onSelect(tab.key)}
-              health={health[tab.key]}
+              key={key}
+              icon={tabMeta[key].icon}
+              label={tabMeta[key].label}
+              selected={active === key}
+              onClick={() => onSelect(key)}
+              health={health[key]}
             />
           ))}
         </div>
-        <span
-          className="mx-1 hidden h-6 w-px bg-border/70 sm:block"
-          aria-hidden="true"
-        />
-        <TabButton
-          icon={SlidersHorizontal}
-          label={t("apikeys_view.tab_advanced")}
-          selected={active === "advanced"}
-          onClick={() => onSelect("advanced")}
-          health={health.advanced}
-          muted
-        />
+        {showAdvanced && (
+          <>
+            <span
+              className="mx-1 hidden h-6 w-px bg-border/70 sm:block"
+              aria-hidden="true"
+            />
+            <TabButton
+              icon={SlidersHorizontal}
+              label={t("apikeys_view.tab_advanced")}
+              selected={active === "advanced"}
+              onClick={() => onSelect("advanced")}
+              health={health.advanced}
+              muted
+            />
+          </>
+        )}
       </div>
     </div>
   );
@@ -349,6 +513,97 @@ function ProviderCategory({
         />
       )}
     </div>
+  );
+}
+
+/**
+ * The Realtime category (Feature B): the two realtime provider cards, via the
+ * SAME `ProviderCategory` used for brain/tts/stt (unchanged). Realtime
+ * speech-to-speech models can't see the screen, so Computer-Use during a
+ * realtime turn runs on the dedicated Computer-Use provider (or the active
+ * Brain provider, until one is picked) — now its own "Computer-Use" tab
+ * (see `ComputerUseCategory` below) rather than a panel embedded here. This
+ * wrapper mirrors `SubagentCategory` below: it owns nothing itself, it just
+ * composes the existing tier section.
+ */
+function RealtimeCategory({
+  meta,
+  providers,
+  loading,
+  error,
+  onChanged,
+  onActivateOptimistic,
+  health,
+}: {
+  meta: CategoryMeta;
+  providers: ProviderDescriptor[];
+  loading: boolean;
+  error: string | null;
+  onChanged: () => void;
+  onActivateOptimistic: (tier: ProviderTier, id: string) => void;
+  health?: SectionHealth;
+}) {
+  return (
+    <ProviderCategory
+      meta={meta}
+      tier="realtime"
+      providers={providers}
+      loading={loading}
+      error={error}
+      onChanged={onChanged}
+      onActivateOptimistic={onActivateOptimistic}
+      health={health}
+    />
+  );
+}
+
+/**
+ * The Computer-Use tab: an OVERLAY over the brain-tier provider cards
+ * (Claude/OpenAI/OpenRouter/Gemini), NOT a new provider tier. Reuses the SAME
+ * `ProviderCategory`/`TierSection`/`ProviderCard` machinery as Brain/TTS/STT
+ * by mapping every brain-switchable provider to a synthetic `"computer-use"`
+ * tier descriptor whose `active` mirrors `computer_use_active` — a SEPARATE
+ * selection from the Brain tab's `active`/`brain.primary`. The synthetic
+ * `tier` value forks the shared machinery cleanly: the radio group's
+ * `name="active-computer-use"` never collides with `name="active-brain"`,
+ * and `ProviderCard.activate()` routes to `switchComputerUseProvider` instead
+ * of `switchBrainProvider`. The CU provider is GLOBAL (one engine for the
+ * whole app), so this tab renders identically in Pipeline and Realtime mode —
+ * it replaces the old `RealtimeComputerUsePanel`, which only displayed the
+ * delegation without letting the user pick a provider.
+ */
+function ComputerUseCategory({
+  meta,
+  providers,
+  loading,
+  error,
+  onChanged,
+  onActivateOptimistic,
+  health,
+}: {
+  meta: CategoryMeta;
+  providers: ProviderDescriptor[];
+  loading: boolean;
+  error: string | null;
+  onChanged: () => void;
+  onActivateOptimistic: (tier: ProviderTier, id: string) => void;
+  health?: SectionHealth;
+}) {
+  const cuProviders: ProviderDescriptor[] = providers
+    .filter((p) => p.tier === "brain" && p.brain_switchable !== false)
+    .map((p) => ({ ...p, tier: "computer-use", active: !!p.computer_use_active }));
+
+  return (
+    <ProviderCategory
+      meta={meta}
+      tier="computer-use"
+      providers={cuProviders}
+      loading={loading}
+      error={error}
+      onChanged={onChanged}
+      onActivateOptimistic={onActivateOptimistic}
+      health={health}
+    />
   );
 }
 
@@ -543,13 +798,24 @@ function ProviderCard({
           : "";
         pushToast("success", `Voice output → ${descriptor.label}${note}`);
         window.dispatchEvent(new CustomEvent("jarvis:tts-switched"));
-      } else {
+      } else if (descriptor.tier === "stt") {
         const result = await switchSttProvider(descriptor.id);
         const note = result.restart_required
           ? " (active from next voice start)"
           : "";
         pushToast("success", `Voice input → ${descriptor.label}${note}`);
         window.dispatchEvent(new CustomEvent("jarvis:stt-switched"));
+      } else if (descriptor.tier === "computer-use") {
+        await switchComputerUseProvider(descriptor.id);
+        pushToast("success", `Computer-Use → ${descriptor.label}`);
+        window.dispatchEvent(new CustomEvent("jarvis:computer-use-switched"));
+      } else {
+        const result = await switchRealtimeProvider(descriptor.id);
+        const note = result.restart_required
+          ? " (active from next voice start)"
+          : "";
+        pushToast("success", `Realtime → ${descriptor.label}${note}`);
+        window.dispatchEvent(new CustomEvent("jarvis:realtime-switched"));
       }
       onChanged();
     } catch (e) {
@@ -746,13 +1012,18 @@ function ProviderCard({
         )}
 
       {/* Phase 3: a dedicated Computer-Use model, selectable per brain provider
-          (defaults to the provider's main model — no automatic escalation). */}
-      {descriptor.tier === "brain" && descriptor.configured && isBrainSwitchable && (
-        <CuModelSelector
-          providerId={descriptor.id}
-          recommendedModel={descriptor.recommended_model}
-        />
-      )}
+          (defaults to the provider's main model — no automatic escalation).
+          Also shown under the Computer-Use tab (synthetic "computer-use"
+          tier, same underlying brain id) — but never the plain
+          BrainModelSelector above, which stays Brain-tab-only. */}
+      {(descriptor.tier === "brain" || descriptor.tier === "computer-use") &&
+        descriptor.configured &&
+        isBrainSwitchable && (
+          <CuModelSelector
+            providerId={descriptor.id}
+            recommendedModel={descriptor.recommended_model}
+          />
+        )}
 
       <ProviderTestControl providerId={descriptor.id} />
     </div>

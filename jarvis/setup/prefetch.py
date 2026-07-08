@@ -40,6 +40,22 @@ def _load_config() -> Any:
     return load_config()
 
 
+def _ensure_vosk(language: str | None, **kw: Any) -> Any:
+    """Seam for tests — heavy import stays out of module import."""
+    from jarvis.speech.wake_model_fetch import ensure_vosk_model
+
+    return ensure_vosk_model(language, **kw)
+
+
+def _vosk_language() -> str | None:
+    try:
+        from jarvis.speech.wake_model_fetch import resolve_wake_language
+
+        return resolve_wake_language(_load_config())
+    except Exception:  # noqa: BLE001 — config read must never brick prefetch
+        return None
+
+
 def _whisper_models_needed() -> list[str]:
     """The faster-whisper model names the CURRENT config would load at runtime.
 
@@ -79,12 +95,23 @@ def prefetch_all(echo: Callable[[str], None] = print) -> int:
             "on first use"
         )
 
+    # Any-word wake model (vosk_kws): fetch the per-language model once so a
+    # custom wake word resolves to the reliable engine instead of stt_match.
+    lang = _vosk_language()
+    try:
+        out = _ensure_vosk(lang, echo=echo)
+        if out is None:
+            failed = True
+    except Exception as exc:  # noqa: BLE001 — honest note, never fatal
+        failed = True
+        echo(f"wake model: could not provision ({exc}); it will retry at first run")
+
     if not _faster_whisper_available():
         echo(
             "local Whisper models: skipped (faster-whisper not installed - "
             "cloud STT is the default)"
         )
-        return 0
+        return 1 if failed else 0
 
     for name in _whisper_models_needed():
         echo(f"downloading speech model '{name}' (one-time, cached for every later start)")

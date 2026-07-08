@@ -449,23 +449,46 @@ def resolve_wake_plan(
         or engine_pref == "openwakeword"           # legacy engine value, no model ships
     )
     if want_stt and local_whisper_available:
-        # A STALE custom model (belongs to another phrase) is NOT a degrade:
-        # the transcript match IS the regular path for the new phrase, and the
-        # model stays configured for when the user switches back.
-        degraded = custom_missing or engine_pref == "openwakeword"
         if custom_missing:
+            # A configured custom model file is gone. Best-effort fallback to
+            # transcript match, but this IS a degrade — the user's trained
+            # model no longer applies.
+            degraded = True
             message = (
                 f"Custom ONNX not found ({custom_path}); "
                 "using local-Whisper transcript match instead."
             )
         elif custom_stale:
+            # A STALE custom model (belongs to another phrase) is NOT a
+            # degrade: the transcript match IS the regular path for the new
+            # phrase, and the model stays configured for when the user
+            # switches back.
+            degraded = False
             message = (
                 f"Custom wake model '{Path(custom_path).name}' belongs to a "
                 f"different phrase; '{phrase}' uses the local-Whisper "
                 "transcript match."
             )
         else:
-            message = f"Custom phrase '{phrase}' via local-Whisper transcript match."
+            # A custom word served ONLY by the transcribe-and-match path is
+            # UNRELIABLE for hard proper nouns (AP-27): the base model garbles
+            # the name and matched stays 0. This is a LOUD degrade, not silent
+            # success — point the user at the reliable any-word engine.
+            degraded = True
+            _lang = language or "the configured language"
+            message = (
+                f"Custom phrase '{phrase}' is on the local-Whisper transcript "
+                f"match — this is UNRELIABLE for a hard name. Download the Vosk "
+                f"model for {_lang} to make it reliable (Settings -> Wake word -> "
+                "'Download wake model')."
+            )
+            log.warning(
+                "Wake word '%s' resolved to stt_match only (no Vosk model, no "
+                "custom ONNX) — recognition will be unreliable for a hard name. "
+                "Provision the Vosk model for %s.",
+                phrase,
+                _lang,
+            )
         return WakeWordPlan(
             phrase=phrase,
             engine="stt_match",

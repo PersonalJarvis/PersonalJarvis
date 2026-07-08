@@ -253,15 +253,23 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
 
 def _build_local_fallback(stt_cfg: Any, language: str | None) -> Any:
     """Construct the key-free local faster-whisper provider (the universal floor)."""
+    from jarvis.core.device import resolve_device
     from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
 
+    # Central CPU-first device resolution (ADR-0024). The utterance provider is
+    # latency-tolerant, so its capability verdict is left unverified (None): an
+    # explicit ``device = "cuda"`` in jarvis.toml is the user's opt-in and is
+    # honored, while ``auto`` / empty / unknown resolve to the cloud-first CPU
+    # floor — a stranger with no NVIDIA GPU is the baseline, not the maintainer's
+    # card. fwhisper's construction-time self-heal remains the runtime safety net.
+    device = resolve_device(
+        getattr(stt_cfg, "device", "cpu"),
+        cuda_usable=None,
+        purpose="stt-utterance",
+    ).device
     return FasterWhisperProvider(
-        # CPU-safe defaults: a stranger with no NVIDIA GPU is the baseline, not
-        # the maintainer's card. If a real STTConfig is passed its explicit
-        # device/compute_type win; the getattr defaults only bite duck-typed
-        # stubs, and they must presume no GPU (fwhisper still self-heals to CPU).
         model=getattr(stt_cfg, "model", "distil-large-v3"),
-        device=getattr(stt_cfg, "device", "cpu"),
+        device=device,
         compute_type=getattr(stt_cfg, "compute_type", "int8"),
         language=language,
     )
@@ -489,6 +497,42 @@ def _wake_gpu_inference_verified() -> bool:
     return ok
 
 
+def wake_gpu_probe_cached() -> bool | None:
+    """Return the PERSISTED GPU-inference verdict for this host, or ``None``.
+
+    Non-blocking companion to :func:`_wake_gpu_inference_verified` (which BLOCKS
+    on a cache miss to run one real turbo/cuda inference). Reads only the verdict
+    already written to disk by a prior probe or the live backstop; it NEVER
+    launches the probe subprocess. Returns:
+
+    - ``True`` / ``False`` when a verdict for the CURRENTLY installed ctranslate2
+      version is cached;
+    - ``None`` when no verdict exists here, the cache is unreadable, or the cached
+      verdict was written under a DIFFERENT ctranslate2 version (a runtime upgrade
+      can fix — or re-introduce — the AP-25 hang, so a stale verdict is untrusted).
+
+    Off-critical-path callers (the first-run hardware recommender) use this to gate
+    a GPU recommendation on a REAL, verified inference (AP-21/AP-25) instead of mere
+    CUDA presence, while paying nothing when the host has never probed. AP-26-safe:
+    a pure file read, never the blocking probe.
+    """
+    ct2_version = _ctranslate2_version()
+    try:
+        cached = json.loads(_wake_gpu_probe_cache_path().read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except Exception as exc:  # noqa: BLE001 — a corrupt cache must never break the caller
+        logger.debug("Wake-GPU probe cache unreadable ({}); treating as unprobed.", exc)
+        return None
+    if (
+        isinstance(cached, dict)
+        and isinstance(cached.get("ok"), bool)
+        and cached.get("ctranslate2") == ct2_version
+    ):
+        return cached["ok"]
+    return None
+
+
 def _persist_wake_gpu_probe(ok: bool, ct2_version: str | None = None) -> None:
     """Best-effort write of the probe verdict (shared by probe + bad-mark)."""
     cache_path = _wake_gpu_probe_cache_path()
@@ -570,7 +614,14 @@ def build_wake_whisper(
     ``FasterWhisperProvider.__init__`` does not apply to them. A blank phrase is
     treated as no bias.
     """
-    from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
+    from jarvis.plugins.stt.fwhisper import FasterWhisperProvider, _bound_ct2_threads
+
+    # Bound the ctranslate2/OpenMP CPU thread pool at the environment level
+    # BEFORE the wake FasterWhisperProvider is constructed, so it is set
+    # ahead of ctranslate2's first import on this path (AP-24/AP-25/BUG-036,
+    # defensive only — see _bound_ct2_threads docstring). Never clobbers an
+    # explicit user setting.
+    _bound_ct2_threads(default=2)
 
     model = getattr(stt_cfg, "wake_model", "base")
     device = getattr(stt_cfg, "wake_device", "cpu")
@@ -758,4 +809,5 @@ __all__ = [
     "build_wake_whisper",
     "mark_wake_gpu_bad",
     "start_wake_model_prefetch",
+    "wake_gpu_probe_cached",
 ]

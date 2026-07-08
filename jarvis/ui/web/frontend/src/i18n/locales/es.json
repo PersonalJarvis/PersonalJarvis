@@ -865,16 +865,25 @@
     "tier_brain": "Proveedor de IA",
     "tier_tts": "Salida de voz (TTS)",
     "tier_stt": "Entrada de voz (STT)",
+    "tier_realtime": "Voz en tiempo real",
+    "tier_computer_use": "Proveedor de Computer-Use",
     "tier_subagent": "Jarvis-Agent (tareas pesadas)",
     "tier_telephony": "Telefonía",
     "tab_brain": "IA",
     "tab_tts": "Salida de voz",
     "tab_stt": "Entrada de voz",
+    "tab_realtime": "Tiempo real",
+    "tab_computer_use": "Computer-Use",
     "tab_subagents": "Jarvis-Agents",
     "tab_advanced": "Avanzado",
+    "mode_pipeline": "Pipeline",
+    "mode_realtime": "Tiempo real",
+    "mode_active_badge": "Activo",
     "cat_brain_desc": "El modelo que impulsa el chat, el enrutamiento y Computer-Use.",
     "cat_tts_desc": "La voz con la que habla Jarvis.",
     "cat_stt_desc": "Cómo convierte Jarvis tu voz en texto.",
+    "cat_realtime_desc": "El motor de voz a voz en tiempo real (dúplex completo, OpenAI Realtime). Reutiliza tu clave de OpenAI. Desactivado por defecto hasta que el cliente de navegador esté conectado (Fase 2).",
+    "cat_computer_use_desc": "Computer-Use lee tu pantalla; elige qué proveedor lo planifica, independientemente de tu Brain de chat. Los modelos Realtime no pueden ver la pantalla, así que esto también se ejecuta ahí.",
     "cat_subagents_title": "Jarvis-Agents",
     "cat_subagents_desc": "Elige qué proveedor ejecuta las tareas pesadas en segundo plano.",
     "advanced_title": "Acceso e integraciones",
@@ -1008,6 +1017,11 @@
       "save": "Guardar modo equipo"
     },
     "app_settings_group_title": "Ajustes de la app",
+    "realtime_voice": {
+      "title": "Voz en tiempo real (navegador)",
+      "description": "Conversación de voz dúplex completo directamente en el navegador (OpenAI). Desactivado de forma predeterminada.",
+      "unavailable": "Necesita una clave de OpenAI. Se usa la voz estándar."
+    },
     "jarvis_api": {
       "title": "{name} API",
       "key_label": "Clave de API",
@@ -1071,7 +1085,12 @@
       "enable_local_error": "Error en la instalación. Comprueba tu conexión a Internet e inténtalo de nuevo.",
       "enable_local_retry": "Intentar de nuevo",
       "enable_local_restart": "Reiniciar ahora",
-      "restarting": "Reiniciando…"
+      "restarting": "Reiniciando…",
+      "download_model_button": "Descargar modelo de activación",
+      "download_model_downloading": "Descargando el modelo de activación…",
+      "download_model_done": "Modelo de activación descargado — guardando de nuevo tu palabra de activación…",
+      "download_model_error": "No se pudo descargar el modelo de activación. Comprueba tu conexión e inténtalo de nuevo.",
+      "download_model_retry": "Intentar de nuevo"
     },
     "onboarding": {
       "wake_word": {
@@ -1512,7 +1531,18 @@
       "cta": "Guardar palabra de activación",
       "saving": "Guardando…",
       "derived_name": "Tu asistente se llamará: {0}",
-      "continue_anyway": "Continuar de todos modos"
+      "continue_anyway": "Continuar de todos modos",
+      "mic_check": {
+        "title": "Comprobación del micrófono",
+        "test_button": "Probar micrófono",
+        "say_once_button": "Di tu palabra de activación una vez",
+        "checking": "Escuchando…",
+        "listening": "Escuchando — habla ahora…",
+        "good": "Suena bien — tu micrófono captó tu voz con claridad.",
+        "too_quiet": "Eso sonó muy bajo. Sube el volumen del micrófono o acércate y vuelve a intentarlo.",
+        "no_device": "No se detectó ningún micrófono — puedes terminar la configuración igualmente y solucionarlo más tarde en Ajustes.",
+        "error": "No se pudo comprobar el micrófono en este momento."
+      }
     },
     "api_keys": {
       "title": "Conecta tus servicios de IA (opcional)",
