@@ -61,6 +61,7 @@ class ScrubHoldGate:
         if self._cleared:
             out = self._pending + [chunk]
             self._pending = []
+            self._cleared = False
             return out
         self._pending.append(chunk)
         return []
@@ -71,7 +72,7 @@ class ScrubHoldGate:
             return []
         out = self._pending
         self._pending = []
-        self._cleared = True
+        self._cleared = False
         return out
 
     def drain(self) -> None:
