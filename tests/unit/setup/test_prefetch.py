@@ -6,6 +6,8 @@ def test_reports_bundled_wakeword(monkeypatch) -> None:
     lines: list[str] = []
     monkeypatch.setattr(prefetch, "_wakeword_bundle_present", lambda: True)
     monkeypatch.setattr(prefetch, "_faster_whisper_available", lambda: False)
+    # Hermetic: the vosk wake-model seam must not touch the real config or network.
+    monkeypatch.setattr(prefetch, "_ensure_vosk", lambda *_a, **_kw: object(), raising=False)
     rc = prefetch.prefetch_all(echo=lines.append)
     assert rc == 0
     assert any("wake-word models" in line for line in lines)
@@ -18,6 +20,7 @@ def test_downloads_wake_model_when_faster_whisper_present(monkeypatch) -> None:
     monkeypatch.setattr(prefetch, "_faster_whisper_available", lambda: True)
     monkeypatch.setattr(prefetch, "_download_whisper_model", downloaded.append)
     monkeypatch.setattr(prefetch, "_whisper_models_needed", lambda: ["base"])
+    monkeypatch.setattr(prefetch, "_ensure_vosk", lambda *_a, **_kw: object(), raising=False)
     rc = prefetch.prefetch_all(echo=lambda _line: None)
     assert rc == 0
     assert downloaded == ["base"]
@@ -31,6 +34,7 @@ def test_download_failure_is_nonfatal(monkeypatch) -> None:
     monkeypatch.setattr(prefetch, "_faster_whisper_available", lambda: True)
     monkeypatch.setattr(prefetch, "_download_whisper_model", _boom)
     monkeypatch.setattr(prefetch, "_whisper_models_needed", lambda: ["base"])
+    monkeypatch.setattr(prefetch, "_ensure_vosk", lambda *_a, **_kw: object(), raising=False)
     lines: list[str] = []
     rc = prefetch.prefetch_all(echo=lines.append)
     assert rc == 1
