@@ -875,7 +875,7 @@
     "tab_subagents": "Jarvis-Agents",
     "tab_advanced": "Avanzado",
     "mode_pipeline": "Pipeline",
-    "mode_realtime": "Realtime",
+    "mode_realtime": "Tiempo real",
     "mode_active_badge": "Activo",
     "cat_brain_desc": "El modelo que impulsa el chat, el enrutamiento y Computer-Use.",
     "cat_tts_desc": "La voz con la que habla Jarvis.",
