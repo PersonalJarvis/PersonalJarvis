@@ -26,7 +26,10 @@ function floatToInt16(float32: Float32Array): ArrayBuffer {
 class PcmCapture extends AudioWorkletProcessor {
   process(inputs: Float32Array[][]): boolean {
     const ch = inputs[0]?.[0];
-    if (ch && ch.length) this.port.postMessage(floatToInt16(ch), [floatToInt16(ch)]);
+    if (ch && ch.length) {
+      const buf = floatToInt16(ch);
+      this.port.postMessage(buf, [buf]);
+    }
     return true;
   }
 }

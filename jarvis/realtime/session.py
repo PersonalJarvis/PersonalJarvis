@@ -89,10 +89,14 @@ class RealtimeVoiceSession:
         if self._ended or self._session is None or not pcm_native:
             return
         try:
-            pcm16 = bytes(pcm_native) if self.browser_sample_rate == STT_SAMPLE_RATE else self._in_resampler.process(bytes(pcm_native))
+            if self.browser_sample_rate == STT_SAMPLE_RATE:
+                pcm16 = bytes(pcm_native)
+            else:
+                pcm16 = self._in_resampler.process(bytes(pcm_native))
         except Exception:  # noqa: BLE001 — malformed frame, drop it
             return
-        await self._session.send_audio(AudioChunk(pcm=pcm16, sample_rate=STT_SAMPLE_RATE, timestamp_ns=0))
+        chunk = AudioChunk(pcm=pcm16, sample_rate=STT_SAMPLE_RATE, timestamp_ns=0)
+        await self._session.send_audio(chunk)
 
     async def _pump(self) -> None:
         from jarvis.telemetry.latency import LatencyPhase, mark_phase
@@ -104,17 +108,23 @@ class RealtimeVoiceSession:
                     if new_lang != self._language:
                         self._language = new_lang
                         self._gate = ScrubHoldGate(new_lang)
-                        await self._session.update_session(instructions=_INSTRUCTIONS, language=new_lang)
+                        await self._session.update_session(
+                            instructions=_INSTRUCTIONS, language=new_lang
+                        )
                     mark_phase(LatencyPhase.REALTIME_INPUT_COMMITTED)
                 elif ev.type == "output_transcript_delta" and ev.text:
                     mark_phase(LatencyPhase.REALTIME_FIRST_TRANSCRIPT)
                     display = await self._gate.feed_transcript(ev.text)
                     if self._gate.hard_leak_pending():
                         await self._session.interrupt()
-                        await self._send_json({"type": "error_spoken", "text": self._gate.fallback_phrase()})
+                        await self._send_json(
+                            {"type": "error_spoken", "text": self._gate.fallback_phrase()}
+                        )
                         self._gate.drain()
                         continue
-                    await self._send_json({"type": "transcript", "text": display, "is_final": False})
+                    await self._send_json(
+                        {"type": "transcript", "text": display, "is_final": False}
+                    )
                     # Flush audio that this now-scrub-cleared transcript covers, so a
                     # LATER segment's first audio chunk is never released before its
                     # own transcript is scrubbed (closes the T4 one-chunk-boundary
@@ -144,16 +154,17 @@ class RealtimeVoiceSession:
 
             try:
                 await self._bus.publish(AudioOutFirst())
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110 — best-effort telemetry publish
                 pass
         self._ms_sent += len(chunk.pcm)
         await self._send_binary(chunk.pcm)
 
     async def _barge_in(self) -> None:
         self._gate.drain()
+        ms_played = self._ms_sent // (24000 * 2 // 1000) if self._ms_sent else 0
         try:
-            await self._session.truncate(audio_end_ms=self._ms_sent // (24000 * 2 // 1000) if self._ms_sent else 0)
-        except Exception:  # noqa: BLE001
+            await self._session.truncate(audio_end_ms=ms_played)
+        except Exception:  # noqa: BLE001, S110 — best-effort truncate on barge-in
             pass
         self._ms_sent = 0
         try:
@@ -170,6 +181,6 @@ class RealtimeVoiceSession:
         if self._session is not None:
             try:
                 await self._session.close()
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110 — best-effort close on teardown
                 pass
         log.info("realtime[%s] ended: reason=%s", self.session_id, reason)

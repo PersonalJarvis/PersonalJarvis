@@ -87,27 +87,29 @@ class OpenAIRealtimeProvider:
     async def can_open_duplex_session(self) -> bool:
         return bool(get_provider_secret("openai"))
 
-    async def open_session(self, cfg: RealtimeSessionConfig):
+    async def open_session(self, cfg: RealtimeSessionConfig) -> _OpenAIRealtimeSession:
         from openai import AsyncOpenAI  # lazy (AP-26)
 
         client = AsyncOpenAI(api_key=get_provider_secret("openai"))
         conn = await client.realtime.connect(model=_MODEL).__aenter__()
-        await conn.session.update(
-            session={
-                "instructions": cfg.instructions,
-                "output_modalities": list(cfg.modalities),
-                "audio": {
-                    "input": {
-                        "format": {"type": "audio/pcm", "rate": cfg.input_sample_rate},
-                        "turn_detection": {"type": cfg.turn_detection},
-                    },
-                    "output": {
-                        "format": {"type": "audio/pcm"},
-                        **({"voice": cfg.voice} if cfg.voice else {}),
-                    },
+        session_payload: dict[str, Any] = {
+            "instructions": cfg.instructions,
+            "output_modalities": list(cfg.modalities),
+            "audio": {
+                "input": {
+                    "format": {"type": "audio/pcm", "rate": cfg.input_sample_rate},
+                    "turn_detection": {"type": cfg.turn_detection},
                 },
-            }
-        )
+                "output": {
+                    "format": {"type": "audio/pcm"},
+                    **({"voice": cfg.voice} if cfg.voice else {}),
+                },
+            },
+        }
+        # The openai SDK's session.update() TypedDict shape is stricter than the
+        # GA over-the-wire schema we build here; a plain dict is what the API
+        # actually accepts.
+        await conn.session.update(session=session_payload)  # type: ignore[arg-type]
         import uuid
 
         return _OpenAIRealtimeSession(conn, cfg, session_id=str(uuid.uuid4()))

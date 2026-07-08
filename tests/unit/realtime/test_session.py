@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from jarvis.core.protocols import AudioChunk
-from jarvis.realtime.protocol import RealtimeEvent, RealtimeSessionConfig
+from jarvis.realtime.protocol import RealtimeEvent
 from jarvis.realtime.session import RealtimeVoiceSession
 
 
@@ -57,14 +57,19 @@ class FakeProvider:
 def _cfg():
     from types import SimpleNamespace
 
-    return SimpleNamespace(brain=SimpleNamespace(reply_language="en"), voice=SimpleNamespace(mode="realtime"))
+    return SimpleNamespace(
+        brain=SimpleNamespace(reply_language="en"), voice=SimpleNamespace(mode="realtime")
+    )
 
 
 @pytest.mark.asyncio
 async def test_clean_turn_streams_audio_and_transcript():
     events = [
         RealtimeEvent(type="output_transcript_delta", text="Hello there."),
-        RealtimeEvent(type="audio_delta", audio=AudioChunk(pcm=b"\x01\x02" * 8, sample_rate=24000, timestamp_ns=0)),
+        RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(pcm=b"\x01\x02" * 8, sample_rate=24000, timestamp_ns=0),
+        ),
         RealtimeEvent(type="turn_complete"),
     ]
     binaries, jsons = [], []
@@ -86,8 +91,14 @@ async def test_clean_turn_streams_audio_and_transcript():
 @pytest.mark.asyncio
 async def test_hard_leak_transcript_drops_audio():
     events = [
-        RealtimeEvent(type="audio_delta", audio=AudioChunk(pcm=b"\x01\x02" * 8, sample_rate=24000, timestamp_ns=0)),
-        RealtimeEvent(type="output_transcript_delta", text="Traceback (most recent call last):\n  File a\nValueError: b\n\n"),
+        RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(pcm=b"\x01\x02" * 8, sample_rate=24000, timestamp_ns=0),
+        ),
+        RealtimeEvent(
+            type="output_transcript_delta",
+            text="Traceback (most recent call last):\n  File a\nValueError: b\n\n",
+        ),
         RealtimeEvent(type="turn_complete"),
     ]
     binaries, jsons = [], []
@@ -117,9 +128,13 @@ async def test_later_segment_leak_audio_not_emitted():
     a1 = b"\x11\x22" * 8
     a2 = b"\x33\x44" * 8
     events = [
-        RealtimeEvent(type="audio_delta", audio=AudioChunk(pcm=a1, sample_rate=24000, timestamp_ns=0)),
+        RealtimeEvent(
+            type="audio_delta", audio=AudioChunk(pcm=a1, sample_rate=24000, timestamp_ns=0)
+        ),
         RealtimeEvent(type="output_transcript_delta", text="A clean first sentence."),
-        RealtimeEvent(type="audio_delta", audio=AudioChunk(pcm=a2, sample_rate=24000, timestamp_ns=0)),
+        RealtimeEvent(
+            type="audio_delta", audio=AudioChunk(pcm=a2, sample_rate=24000, timestamp_ns=0)
+        ),
         RealtimeEvent(
             type="output_transcript_delta",
             text="Traceback (most recent call last):\n  File x\nValueError: y\n\n",

@@ -22,10 +22,11 @@ def build_realtime_session(
     mode = getattr(getattr(cfg, "voice", None), "mode", "pipeline")
     if mode != "realtime":
         return None
-    if not get_provider_secret("openai"):
-        log.info("realtime: no OpenAI key — falling back to the classic path")
-        return None
     try:
+        if not get_provider_secret("openai"):
+            log.info("realtime: no OpenAI key — falling back to the classic path")
+            return None
+
         from jarvis.plugins.realtime.openai_realtime import OpenAIRealtimeProvider
         from jarvis.realtime.session import RealtimeVoiceSession
 
