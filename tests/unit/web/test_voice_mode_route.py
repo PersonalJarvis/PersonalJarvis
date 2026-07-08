@@ -65,7 +65,11 @@ def test_get_voice_mode_cross_family_gemini_only(monkeypatch):
     """Feature A2: realtime_available must NOT be OpenAI-only — a user with
     only a Gemini key gets realtime_available=true, active_provider=gemini-live."""
     import jarvis.realtime.factory as rf
-    monkeypatch.setattr(rf, "get_provider_secret", lambda name: "sk-x" if name == "gemini" else None)
+
+    def only_gemini(name: str) -> str | None:
+        return "sk-x" if name == "gemini" else None
+
+    monkeypatch.setattr(rf, "get_provider_secret", only_gemini)
     client = TestClient(_app(mode="pipeline"))
     r = client.get("/api/settings/voice-mode")
     assert r.status_code == 200

@@ -43,11 +43,12 @@ import { useT } from "@/i18n";
 // so it never competes with the five core categories.
 type CategoryKey = ProviderTier | "subagents" | "advanced";
 
-// The top-level engine mode. This is a VIEW-ONLY switch (D1, binding): it only
-// decides which tab set is shown, and NEVER writes `[voice].mode` or flips the
-// live voice engine — that stays a deliberate, separately-gated action. The
-// "Active" badge (seeded from the existing `useVoiceMode` hook) is the only
-// place the live engine state is read here, purely for display.
+// The top-level engine mode. Feature A supersedes design D1 ("view-only"):
+// the switch now decides which tab set is shown AND persists `[voice].mode`
+// via `useVoiceMode().setMode` — Pipeline always (it's always reachable),
+// Realtime only when a realtime provider actually has a key
+// (`realtimeAvailable`), so the switch can never pin the boot default to an
+// unreachable engine. See `EngineModeSwitch` below for the exact rule.
 type VoiceEngineMode = "pipeline" | "realtime";
 
 // Realtime replaces STT+Brain+TTS with one full-duplex model, so those three
@@ -109,9 +110,10 @@ export function ApiKeysView() {
   const categories = makeProviderCategories(t);
   const [active, setActive] = useState<CategoryKey>("brain");
   const [engineMode, setEngineMode] = useState<VoiceEngineMode>("pipeline");
-  // Read the LIVE `[voice].mode` for the "Active" badge only — never written
-  // back to from here. See VoiceEngineMode / EngineModeSwitch above.
-  const { mode: liveMode } = useVoiceMode();
+  // The LIVE `[voice].mode` (+ cross-family availability) for the "Active"
+  // badge AND for gating the segment's own persistence (Feature A). See
+  // VoiceEngineMode / EngineModeSwitch above.
+  const { mode: liveMode, realtimeAvailable, setMode: setVoiceMode } = useVoiceMode();
 
   // Reset the selected tab to the mode's first tab whenever the mode changes,
   // so switching Pipeline→Realtime never leaves `active` pointing at a tab
@@ -130,7 +132,13 @@ export function ApiKeysView() {
         subtitle={t("apikeys_view.subtitle")}
       />
 
-      <EngineModeSwitch mode={engineMode} liveMode={liveMode} onSelect={setEngineMode} />
+      <EngineModeSwitch
+        mode={engineMode}
+        liveMode={liveMode}
+        realtimeAvailable={realtimeAvailable}
+        onSelect={setEngineMode}
+        onSetVoiceMode={setVoiceMode}
+      />
 
       <CategoryTabs active={active} onSelect={setActive} health={health} tabs={modeTabs} />
 
@@ -158,28 +166,43 @@ export function ApiKeysView() {
 }
 
 /**
- * The Pipeline|Realtime segmented VIEW switch (D1, binding). Clicking a
- * segment ONLY calls `onSelect` (local view-state) — it must NEVER write
- * `[voice].mode` or call any voice-mode mutation. The segment whose value
- * matches the LIVE `[voice].mode` (from `useVoiceMode`, read-only here) shows
- * a small "Active" badge, so the user always sees which engine is actually
- * running without the switch itself being able to change it.
+ * The Pipeline|Realtime segmented switch. Feature A (supersedes D1): clicking
+ * a segment still switches the local view (`onSelect`), and ALSO persists
+ * `[voice].mode` — Pipeline unconditionally (always reachable), Realtime only
+ * when `realtimeAvailable` (a key is present for some realtime family);
+ * otherwise the click just switches the view so the user can add a key from
+ * the Realtime tab without silently pinning the boot default to a dead
+ * engine. The segment whose value matches the LIVE `[voice].mode` (from
+ * `useVoiceMode`) shows a small "Active" badge.
  */
 function EngineModeSwitch({
   mode,
   liveMode,
+  realtimeAvailable,
   onSelect,
+  onSetVoiceMode,
 }: {
   mode: VoiceEngineMode;
-  /** The live `[voice].mode` value, for the "Active" badge only. */
+  /** The live `[voice].mode` value, for the "Active" badge. */
   liveMode: string;
+  /** Whether SOME realtime family (OpenAI/Gemini) has a key configured. */
+  realtimeAvailable: boolean;
   onSelect: (mode: VoiceEngineMode) => void;
+  /** Persists `[voice].mode` — gated per the rule above. */
+  onSetVoiceMode: (mode: string) => void;
 }) {
   const t = useT();
   const segments: { key: VoiceEngineMode; label: string }[] = [
     { key: "pipeline", label: t("apikeys_view.mode_pipeline") },
     { key: "realtime", label: t("apikeys_view.mode_realtime") },
   ];
+
+  function handleSelect(seg: VoiceEngineMode) {
+    onSelect(seg);
+    if (seg === "pipeline" || realtimeAvailable) {
+      onSetVoiceMode(seg);
+    }
+  }
 
   return (
     <div className="border-b border-border px-6 pt-4">
@@ -188,7 +211,7 @@ function EngineModeSwitch({
           <button
             key={seg.key}
             type="button"
-            onClick={() => onSelect(seg.key)}
+            onClick={() => handleSelect(seg.key)}
             aria-pressed={mode === seg.key}
             className={cn(
               "inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors",

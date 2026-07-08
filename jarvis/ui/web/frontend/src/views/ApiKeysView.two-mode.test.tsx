@@ -1,11 +1,13 @@
 /**
- * Component tests for the Pipeline|Realtime segmented VIEW switch on the
+ * Component tests for the Pipeline|Realtime segmented switch on the
  * API-Keys screen.
  *
- * D1 (binding): the switch is VIEW-ONLY. It must never write `[voice].mode`
- * or call any voice-mode mutation — only the existing, separately-gated
- * activation path does that. These tests pin (1) the mode-derived tab sets
- * and (2) that clicking a segment never fires the `useVoiceMode` mutation.
+ * Feature A (supersedes D1): the segment is a real mode control. Clicking a
+ * segment still switches the local VIEW, but now ALSO persists
+ * `[voice].mode` via `useVoiceMode().setMode` — Pipeline always, Realtime
+ * only when `realtimeAvailable` is true (a key is actually configured for
+ * some realtime family). These tests pin (1) the mode-derived tab sets and
+ * (2) the setMode call pattern for both availability states.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -25,12 +27,16 @@ vi.mock("@/hooks/useProviders", () => ({
 
 // The real `useVoiceMode` hook (jarvis/ui/web/frontend/src/hooks/useVoiceMode.ts)
 // returns { mode, realtimeAvailable, setMode, isLoading, isSaving } — mock that
-// exact shape so the "Active" badge + the D1 no-mutation assertion are real.
+// exact shape so the "Active" badge + the setMode assertions below are real.
+// `mockRealtimeAvailable` is mutable per-test (declared via `let` above the
+// `vi.mock` call, matching this file's existing hoisting pattern) so the
+// "realtime unavailable" describe block below can flip it.
+let mockRealtimeAvailable = true;
 const putVoiceMode = vi.fn();
 vi.mock("@/hooks/useVoiceMode", () => ({
   useVoiceMode: () => ({
     mode: "pipeline",
-    realtimeAvailable: true,
+    realtimeAvailable: mockRealtimeAvailable,
     setMode: putVoiceMode,
     isLoading: false,
     isSaving: false,
@@ -42,6 +48,7 @@ import { ApiKeysView } from "@/views/ApiKeysView";
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  mockRealtimeAvailable = true;
 });
 
 describe("ApiKeysView two-mode", () => {
@@ -67,7 +74,7 @@ describe("ApiKeysView two-mode", () => {
     expect(realtimeSegment.textContent).not.toMatch(/active/i);
   });
 
-  it("switching to Realtime mode shows only Realtime/Subagents/Advanced and NEVER writes voice-mode", () => {
+  it("switching to Realtime mode shows only Realtime/Subagents/Advanced and persists voice-mode (available)", () => {
     render(<ApiKeysView />);
     fireEvent.click(screen.getByRole("button", { name: /^realtime$/i })); // the segment
 
@@ -78,18 +85,43 @@ describe("ApiKeysView two-mode", () => {
     expect(screen.queryByRole("tab", { name: /voice output/i })).toBeNull();
     expect(screen.queryByRole("tab", { name: /voice input/i })).toBeNull();
 
-    // D1 (binding): the segment switch is view-only — it must never mutate
-    // the live voice engine.
-    expect(putVoiceMode).not.toHaveBeenCalled();
+    // Feature A (supersedes D1): with a realtime provider actually reachable
+    // (mocked realtimeAvailable=true), the segment now persists the mode.
+    expect(putVoiceMode).toHaveBeenCalledWith("realtime");
   });
 
-  it("switching back to Pipeline restores the five pipeline tabs, still without mutating voice-mode", () => {
+  it("switching back to Pipeline restores the five pipeline tabs and always persists voice-mode", () => {
     render(<ApiKeysView />);
     fireEvent.click(screen.getByRole("button", { name: /^realtime$/i }));
+    putVoiceMode.mockClear();
     fireEvent.click(screen.getByRole("button", { name: /pipeline/i }));
 
     expect(screen.getByRole("tab", { name: /brain/i })).toBeTruthy();
     expect(screen.queryByRole("tab", { name: /realtime/i })).toBeNull();
+    // Pipeline always persists — it is always reachable (no key gate needed).
+    expect(putVoiceMode).toHaveBeenCalledWith("pipeline");
+  });
+});
+
+describe("ApiKeysView two-mode — realtime unavailable (no key in any family)", () => {
+  it("switching to Realtime still switches the view, but does NOT persist voice-mode", () => {
+    mockRealtimeAvailable = false;
+    render(<ApiKeysView />);
+    fireEvent.click(screen.getByRole("button", { name: /^realtime$/i }));
+
+    // The view still switches, so the user can add a key from the Realtime tab.
+    expect(screen.getByRole("tab", { name: /realtime/i })).toBeTruthy();
+    // But nothing is reachable yet — never pin [voice].mode to a dead engine.
     expect(putVoiceMode).not.toHaveBeenCalled();
+  });
+
+  it("switching back to Pipeline still persists voice-mode even when realtime is unavailable", () => {
+    mockRealtimeAvailable = false;
+    render(<ApiKeysView />);
+    fireEvent.click(screen.getByRole("button", { name: /^realtime$/i }));
+    putVoiceMode.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /pipeline/i }));
+
+    expect(putVoiceMode).toHaveBeenCalledWith("pipeline");
   });
 });
