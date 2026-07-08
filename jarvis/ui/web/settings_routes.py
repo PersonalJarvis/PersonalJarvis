@@ -667,6 +667,32 @@ async def set_wake_activation(body: WakeActivationBody, request: Request) -> dic
     return {"ok": True, "enabled": bool(body.enabled), "restart_required": True}
 
 
+@router.post("/wake-word/download-model")
+async def download_wake_model(request: Request) -> dict[str, object]:
+    """Provision (or repair) the per-language Vosk wake model in-app.
+
+    Recoverable-in-app contract (CLAUDE.md §3): a user whose Vosk model is
+    absent/dead gets a working reliable wake engine without editing jarvis.toml.
+    Never 500s on a fetch failure — returns a clear message and the runtime lazy
+    net (``_heavy_backend_bg``'s one-shot provision) remains the backstop.
+    """
+    from jarvis.speech import wake_model_fetch as wmf
+
+    cfg = _config(request)
+    language = getattr(getattr(cfg, "stt", None), "language", None)
+    out = await asyncio.to_thread(wmf.ensure_vosk_model, language)
+    present = wmf.vosk_model_present(language)
+    return {
+        "ok": out is not None,
+        "present": present,
+        "message": (
+            "Wake model ready." if present
+            else "Could not download the wake model right now; it will retry "
+                 "automatically. The wake word uses the fallback path until then."
+        ),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Push-to-talk hotkey (editable). GET current + safe suggestions; PUT to change.
 # Persisted to jarvis.toml [trigger].hotkey; applies on the next voice bootstrap
