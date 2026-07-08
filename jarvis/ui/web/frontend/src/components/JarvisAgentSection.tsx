@@ -404,23 +404,59 @@ function BridgeStatusStrip({ status }: { status: SubagentStatus }) {
   );
 }
 
+// Subagent worker slug → Simple Icons glyph name (the SAME brand-logo source the
+// marketplace/plugin cards already use; see TRADEMARK.md nominative-use notice).
+// A slug with no entry — or a glyph that fails to load (offline / unknown) —
+// falls back to the neutral letter monogram, so a new or logo-less provider
+// never renders broken.
+const PROVIDER_ICON: Record<string, string> = {
+  openai: "openai",
+  "openai-codex": "openai",
+  "claude-api": "claude",
+  gemini: "googlegemini",
+  openrouter: "openrouter",
+  // antigravity: no reliable brand glyph yet → monogram.
+};
+
 /**
- * A neutral monogram tile shown on the left of every provider card. Uses the
- * first letter of the label rather than a vendor logo — no brand assets to
- * source, and every card gets the same calm, consistent shape. Tints gold when
- * its card is the active worker.
+ * The tile on the left of every provider card. Shows the provider's real brand
+ * logo when we have a glyph for its slug, and falls back to a neutral letter
+ * monogram otherwise — including when the logo can't load (offline / unknown
+ * slug), so the tile is never blank. Tints gold when its card is the active
+ * worker. The logo is decorative (the card title carries the accessible label),
+ * so it is aria-hidden.
  */
-function ProviderMono({ label, active }: { label: string; active?: boolean }) {
+function ProviderLogo({
+  slug,
+  label,
+  active,
+}: {
+  slug?: string;
+  label: string;
+  active?: boolean;
+}) {
+  const icon = slug ? PROVIDER_ICON[slug] : undefined;
+  const [failed, setFailed] = useState(false);
   return (
     <div
       className={cn(
-        "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-sm font-semibold",
+        "flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border text-sm font-semibold",
         active
           ? "border-primary/40 bg-primary/15 text-primary"
           : "border-border bg-muted text-muted-foreground",
       )}
     >
-      {label.trim().slice(0, 1).toUpperCase() || "?"}
+      {icon && !failed ? (
+        <img
+          src={`https://cdn.simpleicons.org/${icon}/F4F4F5`}
+          alt=""
+          aria-hidden="true"
+          className="h-5 w-5"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        label.trim().slice(0, 1).toUpperCase() || "?"
+      )}
     </div>
   );
 }
@@ -434,6 +470,7 @@ function ProviderMono({ label, active }: { label: string; active?: boolean }) {
  */
 function AgentCardShell({
   label,
+  slug,
   title,
   billing,
   badge,
@@ -447,6 +484,8 @@ function AgentCardShell({
   ...rest
 }: {
   label: string;
+  /** Worker slug driving the brand-logo tile (falls back to the label monogram). */
+  slug?: string;
   title: React.ReactNode;
   billing?: Billing;
   badge?: React.ReactNode;
@@ -475,7 +514,7 @@ function AgentCardShell({
       {...rest}
     >
       <div className="flex items-start gap-3">
-        <ProviderMono label={label} active={active} />
+        <ProviderLogo label={label} slug={slug} active={active} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium">{title}</span>
