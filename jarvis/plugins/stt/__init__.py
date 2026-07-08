@@ -253,15 +253,23 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
 
 def _build_local_fallback(stt_cfg: Any, language: str | None) -> Any:
     """Construct the key-free local faster-whisper provider (the universal floor)."""
+    from jarvis.core.device import resolve_device
     from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
 
+    # Central CPU-first device resolution (ADR-0024). The utterance provider is
+    # latency-tolerant, so its capability verdict is left unverified (None): an
+    # explicit ``device = "cuda"`` in jarvis.toml is the user's opt-in and is
+    # honored, while ``auto`` / empty / unknown resolve to the cloud-first CPU
+    # floor — a stranger with no NVIDIA GPU is the baseline, not the maintainer's
+    # card. fwhisper's construction-time self-heal remains the runtime safety net.
+    device = resolve_device(
+        getattr(stt_cfg, "device", "cpu"),
+        cuda_usable=None,
+        purpose="stt-utterance",
+    ).device
     return FasterWhisperProvider(
-        # CPU-safe defaults: a stranger with no NVIDIA GPU is the baseline, not
-        # the maintainer's card. If a real STTConfig is passed its explicit
-        # device/compute_type win; the getattr defaults only bite duck-typed
-        # stubs, and they must presume no GPU (fwhisper still self-heals to CPU).
         model=getattr(stt_cfg, "model", "distil-large-v3"),
-        device=getattr(stt_cfg, "device", "cpu"),
+        device=device,
         compute_type=getattr(stt_cfg, "compute_type", "int8"),
         language=language,
     )

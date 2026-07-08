@@ -277,7 +277,11 @@ class FasterWhisperProvider:
     def __init__(
         self,
         model: str = "distil-large-v3",
-        device: str = "cuda",
+        # CPU-first default (ADR-0024): a bare construction with no explicit
+        # device must never assume the maintainer's GPU. Real callers pass the
+        # config device, resolved through ``jarvis.core.device.resolve_device``
+        # at the STT factory before it reaches here; the cloud-first floor is CPU.
+        device: str = "cpu",
         compute_type: str = "int8_float16",
         language: str | None = None,  # None = auto-detect (bilingual DE+EN)
         beam_size: int = 5,

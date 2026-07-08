@@ -61,6 +61,17 @@ def _looks_like_gpu(token: str) -> bool:
     return token.split(":", 1)[0] in _GPU_TOKENS
 
 
+def _canonical_cuda(token: str) -> str:
+    """Normalize an honored GPU request to a backend-valid CUDA spec.
+
+    CTranslate2 / faster-whisper accept ``"cuda"`` and ``"cuda:N"`` but not the
+    ``"gpu"`` alias, so the canonical head is always ``cuda`` while any device
+    index (``:1``) is preserved verbatim.
+    """
+    _, sep, index = token.partition(":")
+    return f"cuda{sep}{index}" if sep else "cuda"
+
+
 def resolve_device(
     requested: str | None,
     *,
@@ -105,10 +116,11 @@ def resolve_device(
         return DeviceResolution(CPU, raw, False, reason)
 
     if _looks_like_gpu(token):
+        cuda = _canonical_cuda(token)
         if cuda_usable is True:
-            reason = f"explicit GPU request honored (capability verified) -> {raw}"
+            reason = f"explicit GPU request honored (capability verified) -> {cuda}"
             logger.info("Device%s: %s", tag, reason)
-            return DeviceResolution(raw, raw, False, reason)
+            return DeviceResolution(cuda, raw, False, reason)
         if cuda_usable is False:
             reason = f"GPU requested ({raw!r}) but not usable on this host -> CPU fallback"
             logger.warning("Device%s: %s", tag, reason)
@@ -118,7 +130,7 @@ def resolve_device(
             "backend self-heals to CPU on failure"
         )
         logger.info("Device%s: %s", tag, reason)
-        return DeviceResolution(raw, raw, False, reason)
+        return DeviceResolution(cuda, raw, False, reason)
 
     reason = f"unrecognized device {raw!r} -> CPU (fail-closed to safe default)"
     logger.warning("Device%s: %s", tag, reason)
