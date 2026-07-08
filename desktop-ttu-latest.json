@@ -3,33 +3,33 @@
   "runs": 1,
   "python": "C:\\Program Files\\Python311\\python.exe",
   "vault_pages": 84,
-  "median_wall_ms": 1249.6,
-  "median_boot_ready_ms": 95.7,
-  "median_bind_wall_ms": 675.8,
-  "median_voice_ready_wall_ms": 4734.7,
+  "median_wall_ms": 1209.1,
+  "median_boot_ready_ms": 89.2,
+  "median_bind_wall_ms": 664.3,
+  "median_voice_ready_wall_ms": 5281.6,
   "voice_ready_wall_ms_runs": [
-    4734.7
+    5281.6
   ],
-  "median_voice_usable_wall_ms": 5423.4,
+  "median_voice_usable_wall_ms": 5939.2,
   "voice_usable_wall_ms_runs": [
-    5423.4
+    5939.2
   ],
-  "median_app_interactive_wall_ms": 5226.7,
+  "median_app_interactive_wall_ms": 5790.4,
   "app_interactive_wall_ms_runs": [
-    5226.7
+    5790.4
   ],
   "wall_ms_runs": [
-    1249.6
+    1209.1
   ],
   "boot_ready_ms_runs": [
-    95.7
+    89.2
   ],
   "phase_medians_ms": {
-    "db_app_interactive": 976.9,
-    "db_pre_webserver": 2520.3,
-    "db_webserver_ctor": 1149.3,
+    "db_app_interactive": 1401.2,
+    "db_pre_webserver": 2528.9,
+    "db_webserver_ctor": 1285.2,
     "flight_recorder": 0.5,
-    "mission_stack": 28.5,
+    "mission_stack": 30.2,
     "screenshot_retention": 0.6,
     "uvicorn_serve": 0.0
   },
