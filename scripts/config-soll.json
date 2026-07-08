@@ -33,7 +33,7 @@
     "allow_sapi5_fallback": false
   },
   "brain": {
-    "primary": "openrouter",
+    "primary": "nvidia",
     "fallback": "gemini",
     "deep_brain": "gemini",
     "routing_provider": "gemini",
