@@ -1651,6 +1651,20 @@ git commit -m "feat(brain): deterministic wiki-write fast path with confirm-afte
 
 ### Task 9: Tool-loop guidance — explicit store requests call wiki-ingest
 
+> **SKIPPED (2026-07-08, maintainer decision).** This task's premise did not
+> survive contact with the code. The referenced `tool_use_loop.py:106-108,
+> 225-228, 644-656` lines are the **self-identification classifier** (routing
+> "my name is …"-style identity facts to the background Curator / USER.md) —
+> not a wiki-storing bias; editing them would damage unrelated, correct
+> behavior.
+> The original "system prompt biases against manual storing" root-cause note
+> was a misattribution. Explicit store requests are already steered to
+> `wiki-ingest` today by the tool's own description, `contact_intent.py`'s
+> `WIKI_INGEST_DIRECTIVE`, and `manager.py`'s `resolve_save_mandate` — and,
+> since Tasks 7+8, they fire **model-independently** via the deterministic
+> fast path, so they no longer depend on the LLM choosing the tool at all.
+> A prompt carve-out here would add no real value (YAGNI). No code change.
+
 **Files:**
 - Modify: `jarvis/brain/tool_use_loop.py:106-108, 225-228, 644-656` (the
   storing-bias passages)
