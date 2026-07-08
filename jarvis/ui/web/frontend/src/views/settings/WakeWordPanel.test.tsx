@@ -5,7 +5,7 @@
  *   - Placeholder text is "e.g. Jonas" (from i18n key settings_view.wake_word.phrase_placeholder).
  *   - The phrase input starts empty when the backend returns phrase == "".
  */
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // ---------------------------------------------------------------------------
@@ -55,6 +55,12 @@ vi.mock("@/views/settings/AppSettingsGroup", () => ({
 }));
 vi.mock("@/views/settings/JarvisApiGroup", () => ({
   JarvisApiGroup: () => null,
+}));
+// RealtimeVoiceGroup uses react-query (useVoiceMode) and needs a
+// QueryClientProvider this test doesn't set up — silence it like the other
+// sibling groups above, unrelated to wake-word.
+vi.mock("@/views/settings/RealtimeVoiceGroup", () => ({
+  RealtimeVoiceGroup: () => null,
 }));
 
 // Silence the onboarding gate so it doesn't interfere with SettingsView tests.
@@ -142,5 +148,93 @@ describe("WakeWordPanel (via SettingsView)", () => {
     ) as HTMLInputElement | null;
     expect(input).not.toBeNull();
     expect(input!.value).toBe("");
+  });
+
+  it("shows the 'Download wake model' button on a degraded save result and POSTs the download-model route on click", async () => {
+    // A minimal request router: GET hydrates the form, PUT simulates the
+    // backend resolving the phrase to the unreliable stt_match-only path
+    // (jarvis/speech/wake_phrase.py's degrade branch), and the download route
+    // simulates the Vosk model becoming available in-app.
+    const calls: { url: string; method: string }[] = [];
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+
+      if (url === "/api/settings/wake-word" && method === "GET") {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(makeWakeWordGET("")),
+        });
+      }
+      if (url === "/api/settings/wake-word" && method === "PUT") {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              ok: true,
+              phrase: "Jonas",
+              engine: "auto",
+              resolved_engine: "stt_match",
+              degraded: true,
+              wake_available: true,
+              message:
+                "Custom phrase 'Jonas' is on the local-Whisper transcript " +
+                "match — this is UNRELIABLE for a hard name. Download the " +
+                "Vosk model for the configured language to make it reliable " +
+                "(Settings -> Wake word -> 'Download wake model').",
+              persisted: true,
+              restart_required: true,
+            }),
+        });
+      }
+      if (
+        url === "/api/settings/wake-word/download-model" &&
+        method === "POST"
+      ) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              ok: true,
+              present: true,
+              message: "Wake model ready.",
+            }),
+        });
+      }
+      // Anything else (assistant-name refresh, restart probes, …).
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<SettingsView />);
+
+    await waitFor(() => screen.getByText("Wake Word"));
+
+    const input = screen.getByPlaceholderText(
+      "e.g. Jonas",
+    ) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Jonas" } });
+
+    const saveButton = screen.getByRole("button", { name: "Save wake word" });
+    fireEvent.click(saveButton);
+
+    // Degraded result renders the download control (there is no such button
+    // for a non-degraded save).
+    const downloadButton = await screen.findByRole("button", {
+      name: "Download wake model",
+    });
+    expect(downloadButton).toBeDefined();
+
+    fireEvent.click(downloadButton);
+
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (c) =>
+            c.url === "/api/settings/wake-word/download-model" &&
+            c.method === "POST",
+        ),
+      ).toBe(true);
+    });
   });
 });

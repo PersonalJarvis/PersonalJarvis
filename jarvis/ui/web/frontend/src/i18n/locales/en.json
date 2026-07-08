@@ -1083,7 +1083,12 @@
       "enable_local_error": "Install failed. Check your internet connection and try again.",
       "enable_local_retry": "Try again",
       "enable_local_restart": "Restart now",
-      "restarting": "Restarting…"
+      "restarting": "Restarting…",
+      "download_model_button": "Download wake model",
+      "download_model_downloading": "Downloading the wake model…",
+      "download_model_done": "Wake model downloaded — re-saving your wake word…",
+      "download_model_error": "Could not download the wake model. Check your connection and try again.",
+      "download_model_retry": "Try again"
     },
     "onboarding": {
       "wake_word": {
