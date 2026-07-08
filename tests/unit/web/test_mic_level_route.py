@@ -69,12 +69,11 @@ def test_mic_level_reports_good_level(monkeypatch):
 
 def test_mic_level_never_500s_on_helper_error(monkeypatch):
     """Even if the underlying measurement blows up, the route stays honest --
-    though measure_mic_dbfs itself never raises, this guards the route
-    contract independently in case that invariant is ever broken upstream."""
+    the route's defensive guard catches any exception and treats it as no device."""
     import jarvis.speech.diagnose as d
 
     async def fake_measure(duration_s=3.0):
-        return -120.0  # the real helper's own honest floor on any error
+        raise RuntimeError("mic measurement failed")
 
     monkeypatch.setattr(d, "measure_mic_dbfs", fake_measure)
     app = FastAPI()
@@ -83,3 +82,6 @@ def test_mic_level_never_500s_on_helper_error(monkeypatch):
 
     r = client.get("/api/settings/wake-word/mic-level")
     assert r.status_code == 200
+    b = r.json()
+    assert b["no_device"] is True
+    assert b["too_quiet"] is False

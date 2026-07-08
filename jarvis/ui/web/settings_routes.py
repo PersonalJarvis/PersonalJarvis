@@ -703,7 +703,10 @@ async def wake_mic_level() -> dict[str, object]:
     """
     from jarvis.speech.diagnose import measure_mic_dbfs
 
-    max_dbfs = await measure_mic_dbfs(duration_s=3.0)
+    try:
+        max_dbfs = await measure_mic_dbfs(duration_s=3.0)
+    except Exception:  # noqa: BLE001 — defensive guard: if measurement fails, treat as no device
+        max_dbfs = -120.0
     return {
         "max_dbfs": max_dbfs,
         "no_device": max_dbfs <= -119.9,
