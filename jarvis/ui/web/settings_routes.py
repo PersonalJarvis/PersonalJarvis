@@ -34,6 +34,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 
 from jarvis.brain.manager import SUPPORTED_REPLY_LANGUAGES
+from jarvis.core.config import get_provider_secret
 from jarvis.memory.wiki.integration import get_running_curator
 
 if TYPE_CHECKING:
@@ -104,6 +105,61 @@ async def put_reply_language(body: ReplyLanguageBody, request: Request) -> dict[
             log.warning("reply-language persist failed (live switch still applied): %s", exc)
 
     return {"ok": True, "language": lang, "persisted": persisted}
+
+
+# ---------------------------------------------------------------------------
+# Voice mode: pipeline (the classic STT→Brain→TTS pipeline) vs realtime (the
+# browser-based OpenAI/Gemini full-duplex realtime engine). GET current mode +
+# whether realtime is actually reachable (needs an OpenAI key); PUT to switch.
+# Persisted to jarvis.toml [voice].mode via config_writer.set_voice_mode
+# (Task 1); the persist is best-effort so a locked/read-only toml never blocks
+# the live in-memory switch that already succeeded. See
+# docs/realtime-voice/PLAN-phase-0-1.md Task 8.
+# ---------------------------------------------------------------------------
+
+_VOICE_MODES = ("pipeline", "realtime")
+
+
+class VoiceModeBody(BaseModel):
+    mode: str = Field(..., min_length=1)
+    persist: bool = Field(default=True, description="Persist as boot default in jarvis.toml")
+
+
+@router.get("/voice-mode")
+async def get_voice_mode(request: Request) -> dict[str, object]:
+    cfg = getattr(request.app.state, "config", None) or getattr(request.app.state, "cfg", None)
+    mode = getattr(getattr(cfg, "voice", None), "mode", "pipeline")
+    available = bool(get_provider_secret("openai"))
+    return {
+        "mode": mode,
+        "realtime_available": available,
+        "active_provider": "openai-realtime" if available else None,
+    }
+
+
+@router.put("/voice-mode")
+async def put_voice_mode(body: VoiceModeBody, request: Request) -> dict[str, object]:
+    if body.mode not in _VOICE_MODES:
+        raise HTTPException(status_code=400, detail=f"mode must be one of {_VOICE_MODES}")
+
+    cfg = getattr(request.app.state, "config", None) or getattr(request.app.state, "cfg", None)
+    if cfg is not None and getattr(cfg, "voice", None) is not None:
+        try:
+            cfg.voice.mode = body.mode  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — frozen model is not an error
+            log.debug("in-memory cfg.voice.mode update skipped: %s", exc)
+
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core import config_writer
+
+            config_writer.set_voice_mode(body.mode)
+            persisted = True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("voice-mode persist failed (live switch still applied): %s", exc)
+
+    return {"ok": True, "mode": body.mode, "persisted": persisted}
 
 
 # ----------------------------------------------------------------------
