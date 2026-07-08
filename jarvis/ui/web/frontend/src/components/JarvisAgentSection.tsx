@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowUp, Bot, Lock, LogIn, LogOut, Terminal, type LucideIcon } from "lucide-react";
+import { ArrowUp, Bot, CreditCard, Laptop, Lock, LogIn, LogOut, Sparkles, Terminal, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
@@ -18,7 +18,6 @@ import {
   type CodexStatus,
 } from "@/hooks/useProviders";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
-import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
 
 /**
  * Subagent tier for the API-Keys view.
@@ -404,18 +403,18 @@ function BridgeStatusStrip({ status }: { status: SubagentStatus }) {
   );
 }
 
-// Subagent worker slug → Simple Icons glyph name (the SAME brand-logo source the
-// marketplace/plugin cards already use; see TRADEMARK.md nominative-use notice).
-// A slug with no entry — or a glyph that fails to load (offline / unknown) —
-// falls back to the neutral letter monogram, so a new or logo-less provider
-// never renders broken.
+// Subagent worker slug → local brand-logo file under public/provider-logos/
+// (monochrome white SVGs, so they work offline and never depend on a live CDN;
+// nominative-use brand marks, see TRADEMARK.md). A slug with no entry — or a
+// logo that fails to load — falls back to the neutral letter monogram, so a new
+// or logo-less provider never renders broken.
 const PROVIDER_ICON: Record<string, string> = {
   openai: "openai",
   "openai-codex": "openai",
   "claude-api": "claude",
-  gemini: "googlegemini",
+  gemini: "gemini",
   openrouter: "openrouter",
-  // antigravity: no reliable brand glyph yet → monogram.
+  // antigravity: no official brand logo exists → monogram.
 };
 
 /**
@@ -448,7 +447,7 @@ function ProviderLogo({
     >
       {icon && !failed ? (
         <img
-          src={`https://cdn.simpleicons.org/${icon}/F4F4F5`}
+          src={`/provider-logos/${icon}.svg`}
           alt=""
           aria-hidden="true"
           className="h-5 w-5"
@@ -462,11 +461,71 @@ function ProviderLogo({
 }
 
 /**
+ * Access-type metadata for a subagent card — deliberately more prominent than a
+ * plain billing badge so "subscription login vs API key" reads at a glance. That
+ * is exactly what tells the two same-named Anthropic Claude cards apart, and the
+ * left accent stripe colour-groups the whole section into subscription (violet)
+ * vs API-key (sky). Driven by the backend `billing` field, never a provider name.
+ */
+const ACCESS_META: Record<
+  Billing,
+  { label: string; icon: LucideIcon; badge: string; accent: string }
+> = {
+  subscription: {
+    label: "Subscription",
+    icon: Sparkles,
+    badge: "border-violet-500/40 bg-violet-500/15 text-violet-600 dark:text-violet-300",
+    accent: "bg-violet-500/70",
+  },
+  subscription_or_api: {
+    label: "Subscription or API key",
+    icon: Sparkles,
+    badge: "border-violet-500/40 bg-violet-500/15 text-violet-600 dark:text-violet-300",
+    accent: "bg-violet-500/70",
+  },
+  api: {
+    label: "API key",
+    icon: CreditCard,
+    badge: "border-sky-500/40 bg-sky-500/15 text-sky-600 dark:text-sky-300",
+    accent: "bg-sky-500/70",
+  },
+  local: {
+    label: "Local · no key",
+    icon: Laptop,
+    badge: "border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
+    accent: "bg-emerald-500/70",
+  },
+};
+
+/**
+ * The prominent access-type badge (subscription vs API key) shown next to a
+ * provider card title — larger and higher-contrast than the old billing badge,
+ * so the subscription/API split is obvious even when two cards share a name.
+ */
+function AccessBadge({ billing }: { billing?: Billing }) {
+  if (!billing) return null;
+  const m = ACCESS_META[billing];
+  if (!m) return null;
+  const Icon = m.icon;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold",
+        m.badge,
+      )}
+    >
+      <Icon className="h-3 w-3" />
+      {m.label}
+    </span>
+  );
+}
+
+/**
  * The one shared shell every provider card is built from — so the whole section
  * reads as a single system instead of seven hand-rolled cards. Owns the layout
- * (monogram · title + badges · subtitle · optional warning · footer actions) and
- * the active/interactive highlight; each card only supplies its content and its
- * own action controls in `footer`.
+ * (logo · title + access badge · subtitle · optional warning · footer actions),
+ * the active/interactive highlight, and the left access-accent stripe; each card
+ * only supplies its content and its own action controls in `footer`.
  */
 function AgentCardShell({
   label,
@@ -503,7 +562,7 @@ function AgentCardShell({
     <div
       title={tooltip}
       className={cn(
-        "flex h-full flex-col gap-3 rounded-2xl border bg-card/60 p-4 backdrop-blur transition-colors",
+        "relative flex h-full flex-col gap-3 rounded-2xl border bg-card/60 p-4 backdrop-blur transition-colors",
         active
           ? "border-primary/55 bg-primary/[0.06] shadow-[0_0_0_1px_rgba(255,214,10,0.25),0_0_34px_rgba(255,214,10,0.06)]"
           : interactive
@@ -513,13 +572,25 @@ function AgentCardShell({
       )}
       {...rest}
     >
+      {/* Left access-accent stripe: violet = subscription, sky = API key — so the
+          section colour-splits into the two access types at a glance. The active
+          card's gold frame takes over, so the stripe is hidden there. */}
+      {billing && !active && (
+        <span
+          aria-hidden="true"
+          className={cn(
+            "absolute bottom-4 left-0 top-4 w-[3px] rounded-r-full",
+            ACCESS_META[billing]?.accent,
+          )}
+        />
+      )}
       <div className="flex items-start gap-3">
         <ProviderLogo label={label} slug={slug} active={active} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium">{title}</span>
             {badge}
-            {billing && <ProviderBillingBadge billing={billing} />}
+            <AccessBadge billing={billing} />
           </div>
           {subtitle && (
             <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
