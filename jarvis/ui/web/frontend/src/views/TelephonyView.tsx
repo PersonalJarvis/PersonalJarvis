@@ -737,74 +737,89 @@ function CredentialsCard({
   }
 
   return (
-    <section className="card-outline space-y-4 p-4">
-      <div className="flex items-center gap-2">
-        <PlugZap className="h-4 w-4 text-primary" />
-        <h3 className="font-display text-sm font-semibold tracking-tight">
-          {t("telephony_view.creds.title")}
-        </h3>
-        <label className="ml-auto inline-flex items-center gap-2 text-xs text-muted-foreground">
+    <section className="space-y-4 rounded-2xl border border-border bg-card/60 p-5 backdrop-blur">
+      <div className="flex items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-primary">
+          <KeyRound className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-medium">
+            {t("telephony_view.creds.title")}
+          </h3>
+        </div>
+        <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
           {t("telephony_view.creds.enable")}
           <Switch checked={enabled} onCheckedChange={setEnabled} />
         </label>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2">
-        <Field label={t("telephony_view.creds.account_sid")}>
-          <TextInput
+      <div className="grid gap-4 sm:grid-cols-2">
+        <SettingsField label={t("telephony_view.creds.account_sid")}>
+          <input
+            type="text"
             value={accountSid}
-            onChange={setAccountSid}
+            onChange={(e) => setAccountSid(e.target.value)}
             placeholder="AC..."
+            className={cn(settingsInputCls, "font-mono")}
           />
-        </Field>
+        </SettingsField>
 
-        <Field label={t("telephony_view.creds.auth_token")}>
-          <TextInput
-            value={authToken}
-            onChange={setAuthToken}
+        <SettingsField label={t("telephony_view.creds.auth_token")}>
+          <input
             type="password"
+            value={authToken}
+            onChange={(e) => setAuthToken(e.target.value)}
             placeholder={
               status.auth_token_set
                 ? t("telephony_view.creds.auth_token_set")
                 : t("telephony_view.creds.auth_token_placeholder")
             }
+            className={cn(settingsInputCls, "font-mono")}
           />
-        </Field>
+        </SettingsField>
 
-        <Field label={t("telephony_view.creds.phone_number")}>
-          <TextInput
+        <SettingsField label={t("telephony_view.creds.phone_number")}>
+          <input
+            type="text"
             value={phoneNumber}
-            onChange={setPhoneNumber}
+            onChange={(e) => setPhoneNumber(e.target.value)}
             placeholder="+49301234567"
+            className={cn(settingsInputCls, "font-mono")}
           />
-        </Field>
+        </SettingsField>
 
-        <Field label={t("telephony_view.creds.public_url")}>
-          <TextInput
+        <SettingsField label={t("telephony_view.creds.public_url")}>
+          <input
+            type="text"
             value={publicBaseUrl}
-            onChange={setPublicBaseUrl}
+            onChange={(e) => setPublicBaseUrl(e.target.value)}
             placeholder="https://jarvis.example.com"
+            className={cn(settingsInputCls, "font-mono")}
           />
-        </Field>
+        </SettingsField>
 
-        <Field label={t("telephony_view.creds.language")}>
-          <TextInput
+        <SettingsField label={t("telephony_view.creds.language")}>
+          <input
+            type="text"
             value={languageCode}
-            onChange={setLanguageCode}
+            onChange={(e) => setLanguageCode(e.target.value)}
             placeholder="de-DE"
+            className={settingsInputCls}
           />
-        </Field>
+        </SettingsField>
 
-        <Field label={t("telephony_view.creds.greeting")}>
-          <TextInput
+        <SettingsField label={t("telephony_view.creds.greeting")}>
+          <input
+            type="text"
             value={greeting}
-            onChange={setGreeting}
+            onChange={(e) => setGreeting(e.target.value)}
             placeholder={t("telephony_view.creds.greeting_placeholder")}
+            className={settingsInputCls}
           />
-        </Field>
+        </SettingsField>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" onClick={() => void save()} disabled={saving}>
           {saving ? (
             <>
@@ -914,45 +929,6 @@ function CredentialsCard({
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="flex flex-col gap-1">
-      <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-        {label}
-      </span>
-      {children}
-    </label>
-  );
-}
-
-function TextInput({
-  value,
-  onChange,
-  placeholder,
-  type = "text",
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  type?: "text" | "password";
-}) {
-  return (
-    <input
-      type={type}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder={placeholder}
-      className="min-w-0 rounded-md border border-input bg-background px-3 py-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-primary"
-    />
-  );
-}
-
 // ----------------------------------------------------------------------
 // Card 3 — Setup scripts
 // ----------------------------------------------------------------------
@@ -1041,19 +1017,24 @@ function CallsCard({
 }) {
   const t = useT();
   return (
-    <section className="card-outline space-y-3 p-4">
-      <div className="flex items-center gap-2">
-        <PhoneCall className="h-4 w-4 text-primary" />
-        <h3 className="font-display text-sm font-semibold tracking-tight">
-          {t("telephony_view.calls.title")}
-        </h3>
-        <button
-          type="button"
+    <section className="space-y-4 rounded-2xl border border-border bg-card/60 p-5 backdrop-blur">
+      <div className="flex items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-primary">
+          <PhoneCall className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-medium">
+            {t("telephony_view.calls.title")}
+          </h3>
+        </div>
+        <Button
+          size="sm"
+          variant="ghost"
           onClick={onReload}
-          className="ml-auto text-[11px] text-muted-foreground underline hover:text-foreground"
+          className="shrink-0"
         >
           {t("common.retry")}
-        </button>
+        </Button>
       </div>
 
       {calls.length === 0 ? (
@@ -1061,35 +1042,28 @@ function CallsCard({
           {t("telephony_view.calls.empty")}
         </p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-border/60 text-[10px] uppercase tracking-wider text-muted-foreground">
-                <th className="py-1.5 pr-3 font-medium">{t("telephony_view.calls.from")}</th>
-                <th className="py-1.5 pr-3 font-medium">{t("telephony_view.calls.to")}</th>
-                <th className="py-1.5 pr-3 font-medium">{t("telephony_view.calls.started")}</th>
-                <th className="py-1.5 pr-3 font-medium">{t("telephony_view.calls.duration")}</th>
-                <th className="py-1.5 pr-3 font-medium">{t("telephony_view.calls.turns")}</th>
-                <th className="py-1.5 font-medium">{t("telephony_view.calls.status")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {calls.map((c) => (
-                <tr key={c.call_sid} className="border-b border-border/30 align-top">
-                  <td className="py-1.5 pr-3 font-mono break-all">{c.from || "—"}</td>
-                  <td className="py-1.5 pr-3 font-mono break-all">{c.to || "—"}</td>
-                  <td className="py-1.5 pr-3 break-words">{c.started_at || "—"}</td>
-                  <td className="py-1.5 pr-3">
-                    {c.duration_s != null ? `${c.duration_s}s` : "—"}
-                  </td>
-                  <td className="py-1.5 pr-3">{c.turns}</td>
-                  <td className="py-1.5">
-                    <CallStatusBadge status={c.status} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div>
+          {calls.map((c, i) => (
+            <div
+              key={c.call_sid}
+              className={cn(
+                "flex items-center gap-3 py-2.5 text-xs",
+                i > 0 && "border-t border-border",
+              )}
+            >
+              <span className="min-w-0 break-all font-medium text-foreground">
+                {c.from || "—"} → {c.to || "—"}
+              </span>
+              <CallStatusBadge status={c.status} />
+              <span className="shrink-0 text-muted-foreground">
+                {c.turns} {t("telephony_view.calls.turns")}
+              </span>
+              <span className="ml-auto shrink-0 whitespace-nowrap text-right text-muted-foreground">
+                {c.started_at || "—"}
+                {c.duration_s != null ? ` · ${c.duration_s}s` : ""}
+              </span>
+            </div>
+          ))}
         </div>
       )}
     </section>
