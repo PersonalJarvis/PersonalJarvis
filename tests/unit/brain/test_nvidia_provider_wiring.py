@@ -62,6 +62,16 @@ def test_nvidia_provider_spec_matches_openrouter_shape() -> None:
     assert nv.brain_switchable is True
 
 
+def test_nvidia_carries_a_not_recommended_caution() -> None:
+    """The free NIM tier is slow (10-30s TTFB), so the card warns the user before
+    they pick it. Presentation-only, the inverse of ``recommended`` — never gates
+    behavior (AP-21)."""
+    nv = get_spec("nvidia")
+    assert nv.caution, "nvidia should carry a caution about the slow free tier"
+    assert "slow" in nv.caution.lower()
+    assert nv.recommended is False  # a caution, not a recommendation
+
+
 def test_nvidia_has_a_live_model_catalog() -> None:
     spec = catalog_spec("nvidia")
     assert spec is not None

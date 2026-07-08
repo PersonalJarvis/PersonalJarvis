@@ -352,6 +352,9 @@ def _spec_to_payload(
         # points at. Presentation only — never gates behavior (AP-21).
         "recommended": spec.recommended,
         "recommended_model": spec.recommended_model,
+        # Inverse of recommended: a "Not recommended" caution badge + tooltip
+        # (e.g. NVIDIA NIM's slow free tier). Presentation only (AP-21).
+        "caution": spec.caution,
         # Gemini's AI-Studio-vs-Vertex split; None for single-path providers.
         "alt_credential": (
             {

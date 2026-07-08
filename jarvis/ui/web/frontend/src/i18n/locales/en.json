@@ -900,6 +900,7 @@
     "needs_key": "First save API key, then activate",
     "recommended": "Recommended",
     "recommended_tooltip": "Recommended model: {0}",
+    "not_recommended": "Not recommended",
     "health_needs_setup": "Setup needed",
     "health_error": "Not working",
     "health_ok": "Working",

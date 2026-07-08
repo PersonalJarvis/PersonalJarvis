@@ -900,6 +900,7 @@
     "needs_key": "Erst API-Key speichern, dann aktivierbar",
     "recommended": "Empfohlen",
     "recommended_tooltip": "Empfohlenes Modell: {0}",
+    "not_recommended": "Nicht empfohlen",
     "health_needs_setup": "Einrichtung nötig",
     "health_error": "Funktioniert nicht",
     "health_ok": "Funktioniert",

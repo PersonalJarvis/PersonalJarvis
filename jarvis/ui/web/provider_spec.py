@@ -72,6 +72,12 @@ class ProviderSpec:
     # surfaced as an "empfohlen" marker in the model picker. ``None`` = the badge
     # stands for the provider as a whole with no model preference.
     recommended_model: str | None = None
+    # The inverse of ``recommended``: a short caution shown as a "Not recommended"
+    # badge (with this text as its tooltip) so the user is warned BEFORE picking a
+    # provider that works but has a real drawback. Presentation-only, never gates
+    # behavior (AP-21). Set on NVIDIA NIM: the free dev tier's 10-30s+ TTFB makes
+    # it sluggish as a main/voice brain. ``None`` = no caution.
+    caution: str | None = None
 
 
 def provider_billing(spec: ProviderSpec) -> Billing:
@@ -183,6 +189,10 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "NVIDIA-hosted models (Nemotron, Llama, DeepSeek, Qwen); free dev tier "
             "available, then billed per token on your NVIDIA account."
         ),
+        caution=(
+            "The free NIM tier is slow — 10-30s to the first response. Fine for "
+            "background tasks, sluggish as your main or voice brain."
+        ),
     ),
     # ── Brain: Google subscription via the official Antigravity/Gemini CLI ──
     # OAuth-only (no API-key slot): we drive the official ``agy``/``gemini`` CLI
@@ -240,20 +250,24 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     # shares with the (now TTS-only) xAI key remains.
     # Ollama-Provider 2026-04-21 entfernt — reine API-Provider-Chain.
     # ── TTS ───────────────────────────────────────────────────────────────
-    # Inworld is the recommended premium default (arena-#1 realtime, mid-2026),
-    # so it leads the Voice-Output card list.
+    # Voice-Output cards render in this tuple order. OpenRouter leads (one key
+    # reaches many vetted speech models); Inworld sits last as a premium
+    # low-latency option. Inworld is a pipeline TTS voice, NOT a full-duplex
+    # realtime provider (that tier needs a RealtimeProvider adapter) — the label
+    # says "voice", never "realtime", so the two are not confused.
     ProviderSpec(
-        id="inworld",
-        label="Inworld (premium realtime)",
+        id="openrouter-tts",
+        label="OpenRouter (TTS)",
         tier="tts",
         auth_mode="api_key",
-        secret_keys=("inworld_api_key",),
-        dashboard_url="https://platform.inworld.ai/",
+        secret_keys=("openrouter_api_key",),
+        dashboard_url="https://openrouter.ai/keys",
         credential_help=(
-            "Inworld API key — copy it VERBATIM from platform.inworld.ai; it is "
-            "already base64, do not re-encode it. Premium multilingual realtime "
-            "voices (DE Josef/Johanna, EN Dennis/Ashley, ES Diego/Lupita). Billed "
-            "per character on your Inworld account."
+            "Same OpenRouter API key as the OpenRouter brain (starts with "
+            "sk-or-) — no extra key needed. One key reaches the vetted speech "
+            "models (Gemini Flash TTS, Grok Voice, MAI-Voice, Voxtral). "
+            "The model picker shows ONLY allowlisted speech models; each has its own "
+            "voice list. Billed per token on your OpenRouter account."
         ),
     ),
     ProviderSpec(
@@ -309,18 +323,17 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         ),
     ),
     ProviderSpec(
-        id="openrouter-tts",
-        label="OpenRouter (TTS)",
+        id="inworld",
+        label="Inworld (premium voice)",
         tier="tts",
         auth_mode="api_key",
-        secret_keys=("openrouter_api_key",),
-        dashboard_url="https://openrouter.ai/keys",
+        secret_keys=("inworld_api_key",),
+        dashboard_url="https://platform.inworld.ai/",
         credential_help=(
-            "Same OpenRouter API key as the OpenRouter brain (starts with "
-            "sk-or-) — no extra key needed. One key reaches the vetted speech "
-            "models (Gemini Flash TTS, Grok Voice, MAI-Voice, Voxtral). "
-            "The model picker shows ONLY allowlisted speech models; each has its own "
-            "voice list. Billed per token on your OpenRouter account."
+            "Inworld API key — copy it VERBATIM from platform.inworld.ai; it is "
+            "already base64, do not re-encode it. Premium multilingual "
+            "low-latency voices (DE Josef/Johanna, EN Dennis/Ashley, ES "
+            "Diego/Lupita). Billed per character on your Inworld account."
         ),
     ),
     # ── STT ───────────────────────────────────────────────────────────────

@@ -942,6 +942,14 @@ function ProviderCard({
                 {t("apikeys_view.recommended")}
               </span>
             )}
+            {descriptor.caution && (
+              <span
+                className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-amber-600 dark:text-amber-400"
+                title={descriptor.caution}
+              >
+                {t("apikeys_view.not_recommended")}
+              </span>
+            )}
           </div>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
             <code className="font-mono">{descriptor.id}</code>

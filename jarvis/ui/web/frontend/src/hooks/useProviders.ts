@@ -51,6 +51,10 @@ export interface ProviderDescriptor {
   /** The model the recommendation points at (e.g. "gemini-3.5-flash"), shown as
    *  an "empfohlen" marker in the model picker. null = provider-level only. */
   recommended_model?: string | null;
+  /** Inverse of `recommended`: a short caution that renders a "Not recommended"
+   *  badge with this text as its tooltip (e.g. NVIDIA NIM's slow free tier).
+   *  Presentation hint only. null/absent = no caution. */
+  caution?: string | null;
   /** Gemini's Vertex alternative; null for single-path providers. */
   alt_credential: AltCredential | null;
   /**

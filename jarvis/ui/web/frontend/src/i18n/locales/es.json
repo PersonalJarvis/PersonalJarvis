@@ -900,6 +900,7 @@
     "needs_key": "Primero guarda la clave API, luego se puede activar",
     "recommended": "Recomendado",
     "recommended_tooltip": "Modelo recomendado: {0}",
+    "not_recommended": "No recomendado",
     "health_needs_setup": "Falta configurar",
     "health_error": "No funciona",
     "health_ok": "Funciona",
