@@ -47,6 +47,14 @@ Consequences that shape the whole codebase:
 - **All five provider classes (Brain, STT, TTS, Vision, Wake) have a fully cloud-reachable
   default path.** No required local GPU, no required local model, no required Windows API,
   no required microphone, no required speaker.
+- **Compute-device selection is CPU-first (ADR-0024).** The default device is always
+  `cpu`; a GPU is used only when a component is *explicitly* asked for one via config
+  **and** a capability verdict confirms it is usable. One central policy —
+  `jarvis/core/device.py::resolve_device` — expresses this: `auto`/empty/unknown resolve
+  to CPU, an explicit `device = "cuda"` is the honored opt-in, and a known-bad GPU
+  degrades to CPU with a logged warning. The capability verdict is *injected*, so the
+  always-on wake path keeps its strict out-of-process inference gate (AP-25) while the
+  latency-tolerant utterance path relies on the backend's self-heal.
 - **The headless VPS + browser UI is a first-class runtime.** A user opening the
   FastAPI/WebSocket frontend in any browser — using the browser's mic and speakers, or a
   channel adapter (Telegram, Discord, SMS, webhook) — reaches the full
