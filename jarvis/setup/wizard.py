@@ -211,9 +211,9 @@ SECRETS: list[SecretSpec] = [
     SecretSpec(
         key="inworld_api_key",
         env_fallback="INWORLD_API_KEY",
-        label="Inworld API Key (premium realtime TTS, multilingual)",
+        label="Inworld API Key (premium low-latency TTS, multilingual)",
         help_url="https://platform.inworld.ai/",
-        required_for="TTS (Inworld — arena-#1 realtime, DE/EN/ES; the recommended default)",
+        required_for="TTS (Inworld — arena-#1 low-latency voice, DE/EN/ES; the recommended default)",
         section="tts",
     ),
     SecretSpec(

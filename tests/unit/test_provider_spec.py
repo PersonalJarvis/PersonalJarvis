@@ -192,10 +192,12 @@ def test_gemini_offers_both_aistudio_and_vertex() -> None:
 
 
 def test_non_gemini_providers_have_no_alt_credential() -> None:
-    """Only Gemini has the AI-Studio-vs-Vertex split today; every other provider
-    keeps a single credential path (alt_credential is None)."""
+    """Only the Gemini family carries the AI-Studio-vs-Vertex split today (the
+    brain, the Flash-TTS voice, and the Gemini Live realtime provider all bill
+    the same Google account); every other provider keeps a single credential
+    path (alt_credential is None)."""
     for spec in PROVIDERS:
-        if spec.id in ("gemini", "gemini-flash-tts"):
+        if spec.id in ("gemini", "gemini-flash-tts", "gemini-live"):
             continue
         assert spec.alt_credential is None, f"{spec.id}: unexpected alt_credential"
 
