@@ -265,12 +265,58 @@ def step_models(*, dry_run: bool) -> None:
     if dry_run:
         console.print(f"[muted]      (dry-run) {' '.join(cmd)}[/]")
         return
-    rc = run(cmd, cwd=repo_root(), check=False)
-    if rc == 0:
-        ok("all voice models are on disk")
+    # The download step's exit code alone is not proof: a skipped or cache-served
+    # model can still leave "done" looking complete. So don't stop at rc — VERIFY
+    # what actually landed on disk and print a per-model truth. Read-only +
+    # best-effort: this never bricks the install (CLAUDE.md section 3).
+    run(cmd, cwd=repo_root(), check=False)
+    verify_models()
+
+
+def verify_models() -> None:
+    """Print a per-model truth: what is on disk, what is pending, what is missing.
+
+    Runs the read-only report inside the venv's Python — the interpreter that
+    will actually run Jarvis — so it sees the real installed packages and model
+    caches. Exit 0 = every REQUIRED model present; non-zero = a required model is
+    missing. A probe failure degrades to an honest note, never a failed install.
+    """
+    probe = (
+        "from jarvis.setup.model_report import "
+        "voice_model_report, report_complete, format_report\n"
+        "items = voice_model_report()\n"
+        "print('\\n'.join(format_report(items)))\n"
+        "import sys; sys.exit(0 if report_complete(items) else 3)\n"
+    )
+    try:
+        result = subprocess.run(
+            [str(venv_python()), "-c", probe], cwd=repo_root(),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=180,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        note("could not verify the voice models - they will be checked on first launch")
+        return
+    produced = False
+    for raw in (result.stdout or "").splitlines():
+        line = raw.rstrip()
+        if not line:
+            continue
+        produced = True
+        # markup=False: the report text contains literal '[full]' / quotes that
+        # must NOT be parsed as rich markup.
+        style = "ok" if line.startswith("✓") else ("bad" if line.startswith("✗") else "muted")
+        console.print(f"      {line}", style=style, markup=False)
+    if not produced:
+        note("could not verify the voice models - they will be checked on first launch")
+        for tail in (result.stderr or "").strip().splitlines()[-5:]:
+            console.print(f"[muted]      {tail}[/]")
+        return
+    if result.returncode == 0:
+        ok("everything the default voice path needs is present")
     else:
-        console.print("[bad]      Some models could not be downloaded - the app "
-                      "will fetch them on first launch instead.[/]")
+        console.print("[bad]      Some required voice models are missing - re-run "
+                      "the installer or check your connection.[/]")
 
 
 def step_worker_cli(*, dry_run: bool) -> None:
