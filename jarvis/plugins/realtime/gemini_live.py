@@ -11,7 +11,9 @@ Live audio is 16 kHz PCM in / 24 kHz PCM out. The mic is already captured at
 16 kHz, so — unlike the OpenAI adapter, which upsamples 16 kHz -> 24 kHz
 before ``input_audio_buffer.append`` — no resample happens here.
 
-Verified against the INSTALLED SDK (google-genai==2.9.0, checked 2026-07-08):
+Verified against the google-genai Live surface (the test venv has 2.9.0; the
+live-app py3.11 interpreter has 1.67.0; the lockfile pins 2.10.0 — the Live
+fields/methods used here are stable across all three, re-checked 2026-07-08):
 - ``genai.Client(api_key=...).aio.live.connect(model=..., config=...)`` is an
   async context manager (``AsyncIterator[AsyncSession]``); call it to get the
   cm, then ``await cm.__aenter__()`` / ``await cm.__aexit__(None, None,
@@ -70,7 +72,14 @@ class _GeminiLiveSession:
     async def send_audio(self, chunk: AudioChunk) -> None:
         from google.genai import types  # lazy (AP-26)
 
-        pcm = chunk.pcm  # mic is 16 kHz == _INPUT_RATE; no resample needed
+        pcm = chunk.pcm  # mic is normally already 16 kHz == _INPUT_RATE
+        if chunk.sample_rate != _INPUT_RATE:
+            # Defensive parity with the OpenAI adapter: if the mic pipeline ever
+            # emits a different rate, resample to _INPUT_RATE so the declared
+            # mime rate matches the bytes we send (else Gemini mis-times them).
+            from jarvis.telephony.audio import resample_pcm16  # lazy
+
+            pcm = resample_pcm16(pcm, chunk.sample_rate, _INPUT_RATE)
         await self._session.send_realtime_input(
             audio=types.Blob(data=pcm, mime_type=f"audio/pcm;rate={_INPUT_RATE}")
         )
