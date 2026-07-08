@@ -240,6 +240,40 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "I couldn't start the background helper: {reason}",
         "es": "No pude iniciar el ayudante en segundo plano: {reason}",
     },
+    # Deterministic wiki-write fast path (spec A1-A3). The saving line is a
+    # PROGRESS ack — it must never claim the write already happened; the
+    # saved/failed lines are the post-write truth (confirm-after-write).
+    "wiki_saving": {
+        "de": "Ich schreibe das jetzt ins Wiki.",  # i18n-allow
+        "en": "Writing that to the wiki now.",
+        "es": "Lo estoy escribiendo en la wiki.",
+    },
+    "wiki_saved": {
+        "de": "Im Wiki gespeichert.",  # i18n-allow
+        "en": "Saved to the wiki.",
+        "es": "Guardado en la wiki.",
+    },
+    "wiki_saved_detail": {
+        "de": "Im Wiki gespeichert: {detail}.",  # i18n-allow
+        "en": "Saved to the wiki: {detail}.",
+        "es": "Guardado en la wiki: {detail}.",
+    },
+    "wiki_save_failed": {
+        "de": "Das Speichern im Wiki hat nicht geklappt.",  # i18n-allow
+        "en": "Saving to the wiki did not work.",
+        "es": "No se pudo guardar en la wiki.",
+    },
+    "wiki_save_failed_reason": {
+        "de": "Das Speichern im Wiki hat nicht geklappt: {reason}",  # i18n-allow
+        "en": "Saving to the wiki did not work: {reason}",
+        "es": "No se pudo guardar en la wiki: {reason}",
+    },
+    "wiki_nothing_to_save": {
+        "de": "Mir ist nicht klar, was ich ins Wiki schreiben soll. Sag es mir "  # i18n-allow
+              "bitte noch einmal mit Inhalt.",  # i18n-allow
+        "en": "I am not sure what to write to the wiki. Please say it again with the content.",
+        "es": "No tengo claro qué escribir en la wiki; dímelo otra vez con el contenido.",
+    },
 }
 
 
