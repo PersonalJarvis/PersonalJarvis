@@ -236,7 +236,7 @@ export function JarvisAgentSection({
       {/* Two access-typed columns so the two ways to power an agent never mix:
           subscription logins (violet) on the left, API-key providers (sky) on
           the right. The colour matches each card's access badge + accent stripe. */}
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2 md:items-start">
         <div className="space-y-3">
           <ColumnHeader
             icon={Sparkles}
@@ -620,7 +620,7 @@ function AgentCardShell({
     <div
       title={tooltip}
       className={cn(
-        "relative flex h-full flex-col gap-3 rounded-2xl border bg-card/60 p-4 backdrop-blur transition-colors",
+        "relative flex flex-col gap-3 rounded-2xl border bg-card/60 p-4 backdrop-blur transition-colors",
         active
           ? "border-primary/55 bg-primary/[0.06] shadow-[0_0_0_1px_rgba(255,214,10,0.25),0_0_34px_rgba(255,214,10,0.06)]"
           : interactive
