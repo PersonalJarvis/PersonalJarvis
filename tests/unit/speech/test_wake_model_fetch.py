@@ -132,10 +132,26 @@ def test_resolve_wake_language_falls_back_to_default_locale_when_both_auto():
     assert wmf.resolve_wake_language(cfg) == "en"
 
 
-def test_resolve_wake_language_falls_back_to_default_locale_when_absent(monkeypatch):
+def test_resolve_wake_language_falls_back_to_default_locale_when_absent():
     """No stt/ui sections at all (e.g. a stripped-down cfg) -> DEFAULT_LOCALE."""
     cfg = SimpleNamespace()
     assert wmf.resolve_wake_language(cfg) == "en"
+
+
+def test_resolve_wake_language_unsupported_concrete_stt_falls_through_to_ui():
+    """stt.language='fr' (unsupported concrete code) -> fall through to ui.language."""
+    cfg = SimpleNamespace(
+        stt=SimpleNamespace(language="fr"), ui=SimpleNamespace(language="de")
+    )
+    assert wmf.resolve_wake_language(cfg) == "de"
+
+
+def test_resolve_wake_language_never_raises_on_non_string_language():
+    """stt.language=123 (non-string) -> must not raise, fall through to ui.language."""
+    cfg = SimpleNamespace(
+        stt=SimpleNamespace(language=123), ui=SimpleNamespace(language="es")
+    )
+    assert wmf.resolve_wake_language(cfg) == "es"
 
 
 def test_resolve_wake_language_never_raises_on_bare_object():
