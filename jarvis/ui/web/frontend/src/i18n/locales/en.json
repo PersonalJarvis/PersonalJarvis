@@ -2140,6 +2140,21 @@
     "manual_b": "file into",
     "manual_c": "yourself at any time."
   },
+  "wiki_health": {
+    "checking": "Checking wiki health…",
+    "unavailable": "Wiki health check unavailable",
+    "vault_prefix": "Vault: {0}",
+    "vault_unknown": "Vault path unknown",
+    "last_write_ok": "Last write: {0} · ok",
+    "last_write_failed": "Last write failed: {0}",
+    "last_write_failed_unknown": "Last write failed",
+    "no_writes_yet": "No writes recorded yet",
+    "bootstrap_failed": "Bootstrap failed: {0}",
+    "bootstrap_failed_unknown": "Bootstrap failed",
+    "chain_failure": "Chain failure: {0}",
+    "backlog_count": "Journal backlog: {0}",
+    "legacy_conflict": "Legacy vault conflict detected"
+  },
   "skill_create_dialog": {
     "title": "Create skill",
     "subtitle": "Describe what the skill should do — draft it with AI or fill the form yourself.",

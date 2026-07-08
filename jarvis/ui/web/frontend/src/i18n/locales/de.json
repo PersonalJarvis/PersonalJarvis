@@ -2139,6 +2139,21 @@
     "manual_b": "-Datei in",
     "manual_c": "ablegen."
   },
+  "wiki_health": {
+    "checking": "Wiki-Zustand wird geprüft…",
+    "unavailable": "Wiki-Zustandsprüfung nicht verfügbar",
+    "vault_prefix": "Vault: {0}",
+    "vault_unknown": "Vault-Pfad unbekannt",
+    "last_write_ok": "Letzter Schreibvorgang: {0} · ok",
+    "last_write_failed": "Letzter Schreibvorgang fehlgeschlagen: {0}",
+    "last_write_failed_unknown": "Letzter Schreibvorgang fehlgeschlagen",
+    "no_writes_yet": "Noch keine Schreibvorgänge erfasst",
+    "bootstrap_failed": "Bootstrap fehlgeschlagen: {0}",
+    "bootstrap_failed_unknown": "Bootstrap fehlgeschlagen",
+    "chain_failure": "Kettenfehler: {0}",
+    "backlog_count": "Journal-Rückstand: {0}",
+    "legacy_conflict": "Konflikt mit Legacy-Vault erkannt"
+  },
   "skill_create_dialog": {
     "title": "Skill erstellen",
     "subtitle": "Beschreibe, was der Skill tun soll — per KI entwerfen oder das Formular selbst ausfüllen.",

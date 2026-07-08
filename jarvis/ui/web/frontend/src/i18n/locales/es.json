@@ -2139,6 +2139,21 @@
     "manual_b": "en",
     "manual_c": "tú mismo en cualquier momento."
   },
+  "wiki_health": {
+    "checking": "Comprobando el estado del wiki…",
+    "unavailable": "Comprobación del estado del wiki no disponible",
+    "vault_prefix": "Bóveda: {0}",
+    "vault_unknown": "Ruta de la bóveda desconocida",
+    "last_write_ok": "Última escritura: {0} · ok",
+    "last_write_failed": "Última escritura fallida: {0}",
+    "last_write_failed_unknown": "Última escritura fallida",
+    "no_writes_yet": "Aún no se han registrado escrituras",
+    "bootstrap_failed": "Bootstrap fallido: {0}",
+    "bootstrap_failed_unknown": "Bootstrap fallido",
+    "chain_failure": "Fallo en la cadena: {0}",
+    "backlog_count": "Retraso del journal: {0}",
+    "legacy_conflict": "Conflicto con la bóveda heredada detectado"
+  },
   "skill_create_dialog": {
     "title": "Crear habilidad",
     "subtitle": "Describe qué debe hacer la habilidad: créala con IA o rellena el formulario tú mismo.",

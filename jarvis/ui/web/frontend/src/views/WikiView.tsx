@@ -21,7 +21,11 @@ import { ViewHeader } from "@/views/ChatsView";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
-import { fetchWikiTree } from "@/lib/wikiApi";
+import {
+  fetchWikiHealth,
+  fetchWikiTree,
+  type WikiHealthSnapshot,
+} from "@/lib/wikiApi";
 
 import { TreeSidebar } from "@/components/wiki/TreeSidebar";
 import { PageRenderer } from "@/components/wiki/PageRenderer";
@@ -68,6 +72,15 @@ export function WikiView(): JSX.Element {
   const stats = treeQuery.data?.stats;
   const totalPages = stats?.total_pages ?? 0;
   const totalLinks = stats?.total_links ?? 0;
+
+  // Wiki subsystem health (spec A5): polled on mount + every 30 s so the
+  // "honest, not silent" status strip stays live without a manual refresh.
+  const healthQuery = useQuery({
+    queryKey: ["wiki", "health"],
+    queryFn: fetchWikiHealth,
+    refetchInterval: 30_000,
+    staleTime: 5_000,
+  });
 
   // When a slug is selected (via tree click, graph click, or wikilink),
   // automatically swap to the page tab.
@@ -168,6 +181,8 @@ export function WikiView(): JSX.Element {
           />
         </div>
       </div>
+
+      <WikiHealthStrip health={healthQuery.data} isLoading={healthQuery.isLoading} />
 
       {dialogOpen && setupHint && (
         <ObsidianSetupDialog
@@ -280,6 +295,164 @@ export function WikiView(): JSX.Element {
         >
           {toast.message}
         </div>
+      )}
+    </div>
+  );
+}
+
+type WikiHealthVisual = "green" | "amber" | "red" | "unknown";
+
+const HEALTH_DOT_STYLE: Record<WikiHealthVisual, string> = {
+  green: "bg-[#5bd4a4]",
+  amber: "bg-[#ffb84d]",
+  red: "bg-destructive",
+  unknown: "bg-muted-foreground/40",
+};
+
+function classifyWikiHealth(health: WikiHealthSnapshot): WikiHealthVisual {
+  if (
+    health.bootstrap_ok === false ||
+    health.last_write?.ok === false ||
+    health.last_chain_failure
+  ) {
+    return "red";
+  }
+  if (health.journal_backlog > 0 || health.vault_legacy_conflict) {
+    return "amber";
+  }
+  // At this point `last_write?.ok === false` and `last_chain_failure` are
+  // both already ruled out by the guard above, so the remaining green
+  // condition collapses to `bootstrap_ok` alone.
+  if (health.bootstrap_ok) {
+    return "green";
+  }
+  // bootstrap_ok is null (never run yet) and nothing else flagged a problem —
+  // neither a clean pass nor a known failure, so stay neutral rather than
+  // claim "green" for a state we haven't actually verified.
+  return "unknown";
+}
+
+function describeWikiWriteStatus(
+  health: WikiHealthSnapshot,
+  t: (key: string) => string,
+): string {
+  if (health.bootstrap_ok === false) {
+    return health.bootstrap_error
+      ? t("wiki_health.bootstrap_failed").replace("{0}", health.bootstrap_error)
+      : t("wiki_health.bootstrap_failed_unknown");
+  }
+  if (health.last_chain_failure) {
+    return t("wiki_health.chain_failure").replace(
+      "{0}",
+      health.last_chain_failure.detail,
+    );
+  }
+  if (health.last_write?.ok === false) {
+    return health.last_write.error
+      ? t("wiki_health.last_write_failed").replace("{0}", health.last_write.error)
+      : t("wiki_health.last_write_failed_unknown");
+  }
+  if (health.last_write?.ok) {
+    const page = health.last_write.pages.join(", ") || health.last_write.source;
+    return t("wiki_health.last_write_ok").replace("{0}", page);
+  }
+  return t("wiki_health.no_writes_yet");
+}
+
+/**
+ * Compact status strip at the top of the Wiki tab (spec A5). Polled by the
+ * caller on a timer; this component only renders whatever snapshot it was
+ * given. "Honest, not silent": a failed bootstrap, a failed write, or a
+ * growing journal backlog shows up here instead of failing quietly.
+ */
+function WikiHealthStrip({
+  health,
+  isLoading,
+}: {
+  health: WikiHealthSnapshot | null | undefined;
+  isLoading: boolean;
+}): JSX.Element {
+  const t = useT();
+
+  if (isLoading) {
+    return (
+      <div
+        className="flex items-center gap-2 border-b border-border bg-card/30 px-4 py-2 text-xs text-muted-foreground"
+        data-testid="wiki-health-strip"
+      >
+        <span
+          className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-muted-foreground/40"
+          data-testid="wiki-health-dot"
+          data-visual="loading"
+          aria-hidden
+        />
+        <span data-testid="wiki-health-checking">{t("wiki_health.checking")}</span>
+      </div>
+    );
+  }
+
+  if (!health) {
+    return (
+      <div
+        className="flex items-center gap-2 border-b border-border bg-card/30 px-4 py-2 text-xs text-muted-foreground"
+        data-testid="wiki-health-strip"
+      >
+        <span
+          className="h-2 w-2 shrink-0 rounded-full bg-muted-foreground/40"
+          data-testid="wiki-health-dot"
+          data-visual="unknown"
+          aria-hidden
+        />
+        <span data-testid="wiki-health-unavailable">{t("wiki_health.unavailable")}</span>
+      </div>
+    );
+  }
+
+  const visual = classifyWikiHealth(health);
+  const vaultText = health.vault_root
+    ? t("wiki_health.vault_prefix").replace("{0}", health.vault_root)
+    : t("wiki_health.vault_unknown");
+  const writeText = describeWikiWriteStatus(health, t);
+
+  return (
+    <div
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-card/30 px-4 py-2 text-xs text-muted-foreground"
+      data-testid="wiki-health-strip"
+    >
+      <span
+        className={cn("h-2 w-2 shrink-0 rounded-full", HEALTH_DOT_STYLE[visual])}
+        data-testid="wiki-health-dot"
+        data-visual={visual}
+        aria-hidden
+      />
+      <span data-testid="wiki-health-vault" className="truncate">
+        {vaultText}
+      </span>
+      <span aria-hidden>·</span>
+      <span
+        data-testid="wiki-health-write"
+        className={visual === "red" ? "text-destructive" : undefined}
+      >
+        {writeText}
+      </span>
+      {health.journal_backlog > 0 && (
+        <span
+          data-testid="wiki-health-backlog"
+          className="rounded-full border border-[#ffb84d]/40 bg-[#ffb84d]/10 px-1.5 py-0.5 text-[#ffb84d]"
+        >
+          {t("wiki_health.backlog_count").replace(
+            "{0}",
+            String(health.journal_backlog),
+          )}
+        </span>
+      )}
+      {health.vault_legacy_conflict && (
+        <span
+          data-testid="wiki-health-legacy-conflict"
+          className="rounded-full border border-[#ffb84d]/40 bg-[#ffb84d]/10 px-1.5 py-0.5 text-[#ffb84d]"
+        >
+          {t("wiki_health.legacy_conflict")}
+        </span>
       )}
     </div>
   );
