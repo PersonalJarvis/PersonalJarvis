@@ -439,7 +439,11 @@ async def bootstrap_wiki_integration(
                     getattr(
                         getattr(root_cfg, "wiki_scheduler", None),
                         "consolidate_after_candidates",
-                        8,
+                        # Fallback must match SchedulerConfig's own default (3,
+                        # spec A4). The old 8 here could resurrect the
+                        # pre-A4 threshold if the [wiki_scheduler] section were
+                        # ever absent, silently undermining ambient capture.
+                        3,
                     )
                 )
                 extractor.attach_scheduler(scheduler, consolidate_after=threshold)
