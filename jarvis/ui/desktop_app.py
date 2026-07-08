@@ -1756,7 +1756,7 @@ class DesktopApp:
                         from jarvis.core.config import load_config
                         from jarvis.speech import wake_model_fetch as _wmf
 
-                        lang = load_config().stt.language
+                        lang = _wmf.resolve_wake_language(load_config())
                         if not _wmf.vosk_model_present(lang):
                             await asyncio.to_thread(_wmf.ensure_vosk_model, lang)
                     except Exception:  # noqa: BLE001 — a background probe never crashes boot

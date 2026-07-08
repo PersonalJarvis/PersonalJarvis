@@ -679,7 +679,7 @@ async def download_wake_model(request: Request) -> dict[str, object]:
     from jarvis.speech import wake_model_fetch as wmf
 
     cfg = _config(request)
-    language = getattr(getattr(cfg, "stt", None), "language", None)
+    language = wmf.resolve_wake_language(cfg)
     out = await asyncio.to_thread(wmf.ensure_vosk_model, language)
     present = wmf.vosk_model_present(language)
     return {

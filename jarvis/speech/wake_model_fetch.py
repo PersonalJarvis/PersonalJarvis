@@ -22,6 +22,7 @@ import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 log = logging.getLogger("jarvis.wake.model_fetch")
 
@@ -61,6 +62,40 @@ def vosk_lang_for(language: str | None) -> str:
     """Normalize a config language ('de-DE', 'auto', None) to a supported key."""
     lang = (language or "").strip().lower().split("-")[0]
     return lang if lang in VOSK_MODELS else _DEFAULT_LANG
+
+
+def _normalized_membership_key(language: Any) -> str:
+    """First BCP-47 segment, lowercased -- '' when ``language`` isn't a usable str."""
+    try:
+        return (language or "").strip().lower().split("-")[0]
+    except Exception:  # noqa: BLE001 - a weird non-str value is just "no signal"
+        return ""
+
+
+def resolve_wake_language(cfg: Any) -> str:
+    """Best speech language for the wake model.
+
+    Cascade: ``cfg.stt.language`` when it names a concrete supported code (the
+    user explicitly forced a recognition language) -> ``cfg.ui.language`` (the
+    language the user actually chose in onboarding) -> ``DEFAULT_LOCALE``. Both
+    reads are duck-typed (``getattr`` chains) and this never raises, so a
+    missing/odd ``stt``/``ui``/``cfg`` just falls through to the next step.
+    """
+    try:
+        stt_lang = getattr(getattr(cfg, "stt", None), "language", None)
+    except Exception:  # noqa: BLE001 - duck-typed cfg read must never raise
+        stt_lang = None
+    if _normalized_membership_key(stt_lang) in VOSK_MODELS:
+        return vosk_lang_for(stt_lang)
+
+    try:
+        ui_lang = getattr(getattr(cfg, "ui", None), "language", None)
+    except Exception:  # noqa: BLE001 - duck-typed cfg read must never raise
+        ui_lang = None
+    if _normalized_membership_key(ui_lang) in VOSK_MODELS:
+        return vosk_lang_for(ui_lang)
+
+    return _DEFAULT_LANG
 
 
 def _models_root(data_dir: str | None) -> Path:
@@ -155,6 +190,7 @@ __all__ = [
     "VoskModelSpec",
     "VOSK_MODELS",
     "vosk_lang_for",
+    "resolve_wake_language",
     "vosk_model_present",
     "ensure_vosk_model",
 ]

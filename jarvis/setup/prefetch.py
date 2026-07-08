@@ -49,7 +49,9 @@ def _ensure_vosk(language: str | None, **kw: Any) -> Any:
 
 def _vosk_language() -> str | None:
     try:
-        return _load_config().stt.language
+        from jarvis.speech.wake_model_fetch import resolve_wake_language
+
+        return resolve_wake_language(_load_config())
     except Exception:  # noqa: BLE001 — config read must never brick prefetch
         return None
 

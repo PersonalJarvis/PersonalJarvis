@@ -4,6 +4,7 @@ import hashlib
 import io
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 from jarvis.speech import wake_model_fetch as wmf
 from jarvis.speech.wake_constants import resolve_vosk_model_path
@@ -101,3 +102,46 @@ def test_offline_failure_is_nonfatal(tmp_path):
 
     out = wmf.ensure_vosk_model("de", data_dir=str(tmp_path), http_get=boom)
     assert out is None
+
+
+# ---------------------------------------------------------------------------
+# resolve_wake_language: stt.language (if concrete) -> ui.language -> DEFAULT_LOCALE
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_wake_language_uses_concrete_stt_language():
+    """An explicit, supported stt.language always wins -- the user forced it."""
+    cfg = SimpleNamespace(
+        stt=SimpleNamespace(language="es"), ui=SimpleNamespace(language="de")
+    )
+    assert wmf.resolve_wake_language(cfg) == "es"
+
+
+def test_resolve_wake_language_falls_back_to_ui_language_when_stt_is_auto():
+    """stt.language left at 'auto' -> use the onboarding-chosen ui.language."""
+    cfg = SimpleNamespace(
+        stt=SimpleNamespace(language="auto"), ui=SimpleNamespace(language="de")
+    )
+    assert wmf.resolve_wake_language(cfg) == "de"
+
+
+def test_resolve_wake_language_falls_back_to_default_locale_when_both_auto():
+    cfg = SimpleNamespace(
+        stt=SimpleNamespace(language="auto"), ui=SimpleNamespace(language="auto")
+    )
+    assert wmf.resolve_wake_language(cfg) == "en"
+
+
+def test_resolve_wake_language_falls_back_to_default_locale_when_absent(monkeypatch):
+    """No stt/ui sections at all (e.g. a stripped-down cfg) -> DEFAULT_LOCALE."""
+    cfg = SimpleNamespace()
+    assert wmf.resolve_wake_language(cfg) == "en"
+
+
+def test_resolve_wake_language_never_raises_on_bare_object():
+    class Bare:
+        pass
+
+    assert wmf.resolve_wake_language(Bare()) == "en"
+    assert wmf.resolve_wake_language(None) == "en"
+    assert wmf.resolve_wake_language(object()) == "en"
