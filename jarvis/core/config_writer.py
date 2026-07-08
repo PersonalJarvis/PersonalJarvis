@@ -539,6 +539,18 @@ def set_computer_use_engine(engine: str, *, path: Path = DEFAULT_CONFIG_FILE) ->
     _patch_table(path, "computer_use", "engine", engine)
 
 
+def set_voice_mode(mode: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist the active voice engine to ``[voice] mode``.
+
+    ``mode`` is ``"pipeline"`` (classic STT->brain->TTS, the default) or
+    ``"realtime"`` (full-duplex speech-to-speech). TOML-only by design:
+    ``voice.mode`` is NOT in the drift-guard reference snapshot, so it is never
+    reverted (same rationale as :func:`set_computer_use_engine`). Read once per
+    voice session, so the switch applies on the next session / restart.
+    """
+    _patch_table(path, "voice", "mode", mode)
+
+
 def set_silence_window_ms(ms: int, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the voice silence window to ``[speech] vad_silence_ms`` in jarvis.toml.
 

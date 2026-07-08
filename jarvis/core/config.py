@@ -399,7 +399,6 @@ class BrainProviderConfig(BaseModel):
 
 class BrainPolicyConfig(BaseModel):
     use_routing_model_for_intent: bool = True
-    use_realtime_for_smalltalk: bool = False
     prompt_cache_heartbeat_seconds: int = 240
     voice_switch_patterns: list[str] = Field(
         default_factory=lambda: ["wechsel auf", "switch to", "wechsle zu"]
@@ -767,6 +766,10 @@ class BrainConfig(BaseModel):
         default=None,
         validation_alias=AliasChoices("worker", "sub_jarvis"),
     )
+    # Realtime-tier provider preference + cross-family fallback chain (AP-22).
+    # None until the user opts into realtime voice. Reuses BrainTierConfig so the
+    # fallback shape matches [brain.router]/[brain.worker].
+    realtime: BrainTierConfig | None = None
     # User-facing reply language pin (desktop "Languages" view → Reply Language).
     # "auto" mirrors the user's input language (DE/EN/ES); "de"/"en"/"es" force
     # that language as a hard rule for every Jarvis reply. Consumed by
@@ -1849,6 +1852,11 @@ class VoiceConfig(BaseModel):
     # Master switch for the completion classifier + waiting state. When false
     # the pipeline behaves exactly as before this feature landed.
     completion_detection_enabled: bool = True
+    # Voice engine selector. "pipeline" = the classic STT->brain->TTS chain
+    # (default, unchanged). "realtime" = the full-duplex speech-to-speech engine
+    # (browser, OpenAI Realtime; opt-in). Read once per voice session; a live
+    # change lands on the next session.
+    mode: str = "pipeline"
     # Per-gap budget after which a stale pending fragment is silently
     # discarded (user-mandated 2026-05-26 — was: flushed/spoken). NOT a total
     # budget — every continuation resets the timer. Bumped from 8 s to 15 s
