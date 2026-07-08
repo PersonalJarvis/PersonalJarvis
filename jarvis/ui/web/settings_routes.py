@@ -35,7 +35,6 @@ from pydantic import BaseModel, Field, model_validator
 
 from jarvis.brain.manager import SUPPORTED_REPLY_LANGUAGES
 from jarvis.memory.wiki.integration import get_running_curator
-from jarvis.realtime.factory import realtime_available_provider
 
 if TYPE_CHECKING:
     from jarvis.core.config import WikiCuratorConfig
@@ -43,6 +42,24 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+
+
+def _realtime_available_provider(cfg: object) -> str | None:
+    """Reachable realtime provider name for ``cfg``, or ``None``.
+
+    The realtime voice engine (``jarvis.realtime``) is an optional module that is
+    stripped from public distribution snapshots (distribution-denylist) while it
+    is still internal. Import it lazily and treat its absence as "no realtime
+    available", so the settings router still IMPORTS (the server boots) and the
+    ``/voice-mode`` endpoint degrades honestly instead of taking the whole app
+    down. When the module is present (the full/local build) this delegates to it
+    unchanged.
+    """
+    try:
+        from jarvis.realtime.factory import realtime_available_provider
+    except ImportError:
+        return None
+    return realtime_available_provider(cfg)
 
 
 class ReplyLanguageBody(BaseModel):
@@ -133,7 +150,7 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
     # session factory uses, so this never disagrees with what a realtime
     # session would actually build (Gemini-only users now get `true` too,
     # not just OpenAI — Feature A2).
-    prov = realtime_available_provider(cfg)
+    prov = _realtime_available_provider(cfg)
     return {
         "mode": mode,
         "realtime_available": prov is not None,

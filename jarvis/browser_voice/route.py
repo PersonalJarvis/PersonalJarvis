@@ -56,13 +56,20 @@ def _build_browser_session(
     """
     # Realtime mode branch (default OFF): only when [voice].mode == "realtime"
     # AND an OpenAI key exists. Otherwise fall through to the classic bridge.
-    from jarvis.realtime.factory import build_realtime_session
+    # The realtime engine is an optional, still-internal module stripped from
+    # public distribution snapshots (distribution-denylist), so its absence just
+    # means "no realtime" — fall through instead of crashing the voice session.
+    try:
+        from jarvis.realtime.factory import build_realtime_session
+    except ImportError:
+        build_realtime_session = None  # type: ignore[assignment]
 
-    rt = build_realtime_session(
-        cfg=cfg, bus=bus, session_id=session_id, send_binary=send_binary, send_json=send_json
-    )
-    if rt is not None:
-        return rt
+    if build_realtime_session is not None:
+        rt = build_realtime_session(
+            cfg=cfg, bus=bus, session_id=session_id, send_binary=send_binary, send_json=send_json
+        )
+        if rt is not None:
+            return rt
 
     factory = getattr(state, "browser_voice_session_factory", None)
     if factory is not None:
