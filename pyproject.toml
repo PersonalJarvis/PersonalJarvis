@@ -336,6 +336,11 @@ telegram = "jarvis.channels.telegram:TelegramChannel"
 # / ENV DISCORD_BOT_TOKEN). Enable [Message Content Intent] in the bot settings.
 discord = "jarvis.channels.discord:DiscordChannel"
 
+[project.entry-points."jarvis.realtime"]
+# Full-duplex speech-to-speech providers (Phase realtime-voice). OpenAI GA
+# gpt-realtime is the first; Gemini Live follows in Phase 4.
+openai-realtime = "jarvis.plugins.realtime.openai_realtime:OpenAIRealtimeProvider"
+
 [project.entry-points."jarvis.tool"]
 open-app = "jarvis.plugins.tool.open_app:OpenAppTool"
 type-text = "jarvis.plugins.tool.type_text:TypeTextTool"
