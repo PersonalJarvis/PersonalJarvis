@@ -167,7 +167,7 @@ async def put_voice_mode(body: VoiceModeBody, request: Request) -> dict[str, obj
 
     # A3: never pin the boot default to an unreachable engine — selecting
     # realtime with no key in ANY family is a 400, not a silent dead switch.
-    if body.mode == "realtime" and realtime_available_provider(cfg) is None:
+    if body.mode == "realtime" and _realtime_available_provider(cfg) is None:
         raise HTTPException(status_code=400, detail="no realtime provider key configured")
 
     if cfg is not None and getattr(cfg, "voice", None) is not None:
