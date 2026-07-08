@@ -239,3 +239,24 @@ marketing/**
 jarvis/speech/tts_eval/**
 **/tts_eval/**
 tests/unit/speech/tts_eval/**
+
+# --- Still-internal Realtime voice ENGINE (2026-07-08) -----------------------
+# jarvis/realtime/** + jarvis/plugins/realtime/** are the in-progress full-duplex
+# realtime voice engine (OpenAI Realtime / Gemini Live), default-OFF and not yet
+# finished. The maintainer chose to keep the engine internal until it ships as a
+# real feature. The TWO shipped references (settings_routes voice-mode,
+# browser_voice route) were made import-guarded + FUNCTION-LEVEL (try/except
+# ImportError -> "realtime not available"), so a snapshot with this module absent
+# still BOOTS and the verify gate only WARNs (never BLOCKs) on the indented
+# imports. Withhold the engine, its backend-importing tests, and its design docs.
+# NOTE (follow-up): the thin frontend settings shell (RealtimeVoiceGroup.tsx,
+# realtimeAudio.ts) is STATICALLY imported by SettingsView.tsx, so it still ships
+# (inert without this backend). Fully hiding it needs a frontend feature-flag cut
+# — the deliberately-deferred "später" part.
+jarvis/realtime/**
+jarvis/plugins/realtime/**
+tests/unit/realtime/**
+tests/integration/realtime/**
+tests/contract/test_realtime_provider_contract.py
+tests/unit/web/test_voice_mode_route.py
+docs/realtime-voice/**
