@@ -11,7 +11,17 @@ const ScrollArea = React.forwardRef<
     className={cn("relative overflow-hidden", className)}
     {...props}
   >
-    <ScrollAreaPrimitive.Viewport className="h-full w-full rounded-[inherit]">
+    {/*
+      Radix wraps the viewport's children in a `<div style="display:table;
+      min-width:100%">`. That table box grows to its content's MAX-content
+      width, so children with `truncate` (white-space:nowrap → huge max-content)
+      blow the wrapper past the viewport instead of shrinking via `min-w-0`.
+      The overflow is then clipped on the right, cutting off card borders and
+      right-side controls. Forcing the wrapper to `display:block` makes it honor
+      the viewport width again. Safe because no ScrollArea here scrolls
+      horizontally; `!block` beats Radix's inline `display:table`.
+    */}
+    <ScrollAreaPrimitive.Viewport className="h-full w-full rounded-[inherit] [&>div]:!block">
       {children}
     </ScrollAreaPrimitive.Viewport>
     <ScrollBar />
