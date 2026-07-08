@@ -29,7 +29,9 @@ class _FakeGenaiClient:
 
 
 def _override(provider_id: str, url: str, monkeypatch) -> None:
-    conf = JarvisConfig(brain=BrainConfig(providers={provider_id: BrainProviderConfig(base_url=url)}))
+    conf = JarvisConfig(
+        brain=BrainConfig(providers={provider_id: BrainProviderConfig(base_url=url)})
+    )
     monkeypatch.setattr(cfg, "load_config", lambda: conf)
     monkeypatch.setattr(cfg, "get_provider_secret", lambda pid: "sk-test")
 
@@ -86,6 +88,27 @@ def test_nvidia_default_without_override(monkeypatch):
     NvidiaBrain()._ensure_client()
     # No override → the vendor default NIM endpoint (mirrors OpenRouter).
     assert _FakeOpenAI.last_kwargs["base_url"] == "https://integrate.api.nvidia.com/v1"
+
+
+def test_nvidia_uses_a_generous_read_timeout_not_the_voice_path_one(monkeypatch):
+    """NIM's free dev tier has a 13-30s+ time-to-first-byte (queue/cold-start,
+    measured live 2026-07-08). The brain must NOT inherit the shared 30s
+    voice-path read timeout — that killed a slow-but-healthy call with an
+    APITimeoutError which the provider test mislabelled as an integration error.
+    ``connect`` stays short so a genuinely dead host still fast-fails."""
+    import openai
+
+    from jarvis.plugins.brain._openai_base import CLIENT_TIMEOUT as SHARED
+
+    monkeypatch.setattr(openai, "AsyncOpenAI", _FakeOpenAI)
+    _no_override(monkeypatch)
+    from jarvis.plugins.brain.nvidia import NvidiaBrain
+
+    NvidiaBrain()._ensure_client()
+    timeout = _FakeOpenAI.last_kwargs["timeout"]
+    assert timeout.read >= 90.0, f"nvidia read timeout {timeout.read}s too tight for NIM"
+    assert timeout.read > SHARED.read  # generous vs the shared voice-path ceiling
+    assert timeout.connect <= 10.0  # dead host still fast-fails
 
 
 # ── OpenAI ────────────────────────────────────────────────────────────────

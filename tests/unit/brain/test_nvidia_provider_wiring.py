@@ -101,3 +101,18 @@ def test_nvidia_is_a_selectable_subagent_mapping() -> None:
     # (its worker_slug is a placeholder — it runs via ApiAgentWorker, not the CLI).
     assert to_worker_slug("nvidia") == "nvidia"
     assert env_vars_for("nvidia") == ("NVIDIA_API_KEY",)
+
+
+# ── Regression: the provider-test must tolerate NIM's slow time-to-first-byte ──
+def test_provider_test_default_timeout_clears_nim_ttfb() -> None:
+    """The 'Test' button + section-health run through run_provider_test. Its
+    timeout ceiling must clear a slow-but-healthy provider's TTFB — NIM's free
+    dev tier was measured at 13-30s+ (live 2026-07-08). At the old 25s default a
+    legit NIM call timed out and was shown as an 'API Integration Error'; the
+    connect timeout (~5s) still catches a genuinely dead endpoint fast."""
+    import inspect
+
+    from jarvis.brain.provider_test import run_provider_test
+
+    default = inspect.signature(run_provider_test).parameters["timeout_s"].default
+    assert default >= 45.0, f"provider-test timeout {default}s too tight for NIM TTFB"
