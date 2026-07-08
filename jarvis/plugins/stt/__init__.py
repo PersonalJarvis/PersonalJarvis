@@ -570,7 +570,14 @@ def build_wake_whisper(
     ``FasterWhisperProvider.__init__`` does not apply to them. A blank phrase is
     treated as no bias.
     """
-    from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
+    from jarvis.plugins.stt.fwhisper import FasterWhisperProvider, _bound_ct2_threads
+
+    # Bound the ctranslate2/OpenMP CPU thread pool at the environment level
+    # BEFORE the wake FasterWhisperProvider is constructed, so it is set
+    # ahead of ctranslate2's first import on this path (AP-24/AP-25/BUG-036,
+    # defensive only — see _bound_ct2_threads docstring). Never clobbers an
+    # explicit user setting.
+    _bound_ct2_threads(default=2)
 
     model = getattr(stt_cfg, "wake_model", "base")
     device = getattr(stt_cfg, "wake_device", "cpu")

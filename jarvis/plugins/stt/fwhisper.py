@@ -70,6 +70,34 @@ def inference_only_import_shield() -> Iterator[None]:
                 sys.modules.pop(name, None)
 
 
+def _bound_ct2_threads(default: int = 2) -> None:
+    """Bound the ctranslate2/OpenMP CPU thread pool BEFORE ctranslate2 is imported.
+
+    Defensive hardening for the CPU stt_match wake path (AP-24/AP-25/BUG-036):
+    ctranslate2's auto thread-pool can deadlock against another OpenMP consumer
+    sharing the process (see ``_new_whisper_model`` / ``cpu_threads``). Setting
+    ``OMP_NUM_THREADS`` and ``CT2_FORCE_CPU_THREADS`` caps that pool at the
+    environment level, one layer below the per-instance ``cpu_threads=2``
+    constructor pin already in place.
+
+    Uses ``os.environ.setdefault`` so an operator's own explicit setting is
+    NEVER clobbered. This is DEFENSIVE ONLY: it does not claim to cure the
+    constellation-specific ctranslate2<->OpenMP deadlock documented in AP-25
+    — it only narrows the CPU thread-pool's blast radius. The real fix is the
+    vosk_kws engine bypassing this ctranslate2 path entirely.
+
+    Must be called before ctranslate2's first import on a given path (its
+    thread pool reads these env vars at that point), and NEVER at module
+    import time here — that would also throttle the utterance STT model,
+    which intentionally keeps auto threads (see ``FasterWhisperProvider``'s
+    default ``cpu_threads=0``).
+    """
+    import os
+
+    for var in ("OMP_NUM_THREADS", "CT2_FORCE_CPU_THREADS"):
+        os.environ.setdefault(var, str(default))
+
+
 def _normalize_model_name(model: str) -> str:
     """Map known-invalid OpenAI-style aliases to faster-whisper model ids.
 
