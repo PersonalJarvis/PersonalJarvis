@@ -7,6 +7,7 @@ Endpoints:
     POST   /api/brain/switch                 → aktiven Brain-Provider wechseln (+ persist)
     POST   /api/tts/switch                   → aktiven TTS-Provider wechseln (persist in jarvis.toml)
     POST   /api/stt/switch                   → aktiven STT-Provider wechseln (persist in jarvis.toml)
+    POST   /api/realtime/switch              → aktiven Realtime-Provider wechseln (persist in jarvis.toml)
     POST   /api/subagent/switch              → aktiven Subagent-Provider wechseln (3-layer persist)
 
 Wird vom WebServer in `_build_app()` eingehängt:

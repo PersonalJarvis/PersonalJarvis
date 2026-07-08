@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 AuthMode = Literal["api_key", "codex", "antigravity", "none"]
-Tier = Literal["brain", "tts", "stt"]
+Tier = Literal["brain", "tts", "stt", "realtime"]
 # How using a provider is billed. Derived from auth_mode (never branched on a
 # provider name — see provider_billing): an API key bills per token on an API
 # account; a subscription provider runs over an existing plan login; codex can
@@ -357,6 +357,24 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     # (build_wake_whisper, reading [stt].wake_*), and build_stt_from_config keeps
     # a key-free local faster-whisper *fallback* (_build_local_fallback, AP-22)
     # as an invisible resilience floor for a user with no cloud STT key.
+    # ── Realtime ──────────────────────────────────────────────────────────
+    # Realtime voice is OpenAI-ONLY today (jarvis.plugins.realtime.openai_realtime,
+    # jarvis.realtime.protocol.RealtimeProvider). Gemini Live is NOT implemented —
+    # do not add a gemini-live spec here, it would show a card that cannot work.
+    ProviderSpec(
+        id="openai-realtime",
+        label="OpenAI Realtime",
+        tier="realtime",
+        auth_mode="api_key",
+        secret_keys=("openai_api_key",),
+        dashboard_url="https://platform.openai.com/api-keys",
+        credential_help=(
+            "Uses your OpenAI API key (shared with the GPT brain / Whisper STT) "
+            "to power the realtime voice mode — one model that listens, thinks and "
+            "speaks over a single connection. Full-duplex browser voice; still "
+            "default-OFF until the realtime client is wired in (Phase 2)."
+        ),
+    ),
 )
 
 
