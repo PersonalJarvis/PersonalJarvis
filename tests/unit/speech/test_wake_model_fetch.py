@@ -54,15 +54,16 @@ def test_ensure_downloads_extracts_and_resolves(tmp_path, monkeypatch):
 
 def test_ensure_is_idempotent_noop_when_present(tmp_path, monkeypatch):
     calls = {"n": 0}
+    data = _fake_model_zip()
 
     def fake_get(url: str) -> bytes:
         calls["n"] += 1
-        return _fake_model_zip()
+        return data
 
     monkeypatch.setitem(
         wmf.VOSK_MODELS, "de",
         wmf.VoskModelSpec("vosk-model-small-de-0.15.zip",
-                          hashlib.sha256(_fake_model_zip()).hexdigest()),
+                          hashlib.sha256(data).hexdigest()),
     )
     wmf.ensure_vosk_model("de", data_dir=str(tmp_path), http_get=fake_get)
     wmf.ensure_vosk_model("de", data_dir=str(tmp_path), http_get=fake_get)
@@ -75,6 +76,23 @@ def test_hash_mismatch_rejects_and_is_nonfatal(tmp_path):
 
     out = wmf.ensure_vosk_model("de", data_dir=str(tmp_path), http_get=fake_get)
     assert out is None  # rejected, never installed, never raised
+
+
+def test_true_hash_mismatch_rejects_and_is_nonfatal(tmp_path, monkeypatch):
+    """Valid zip bytes with mismatched sha256 in spec — fail-closed guard."""
+    data = _fake_model_zip()
+
+    def fake_get(url: str) -> bytes:
+        return data
+
+    # Patch spec with a real-but-wrong hash (not empty, so fail-closed check triggers).
+    monkeypatch.setitem(
+        wmf.VOSK_MODELS, "de",
+        wmf.VoskModelSpec("vosk-model-small-de-0.15.zip", sha256="0" * 64),
+    )
+    out = wmf.ensure_vosk_model("de", data_dir=str(tmp_path), http_get=fake_get)
+    assert out is None, "valid zip with mismatched sha256 must be rejected"
+    assert not wmf.vosk_model_present("de", data_dir=str(tmp_path)), "model must not be installed"
 
 
 def test_offline_failure_is_nonfatal(tmp_path):
