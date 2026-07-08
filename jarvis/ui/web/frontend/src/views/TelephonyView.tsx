@@ -6,8 +6,7 @@ import {
   ArrowLeft,
   Copy,
   Check,
-  CheckCircle2,
-  XCircle,
+  KeyRound,
   ListChecks,
   PlugZap,
   PhoneCall,
@@ -18,6 +17,7 @@ import {
 import { ViewHeader } from "@/views/ChatsView";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { SettingsField, settingsInputCls } from "@/views/settings/SettingsBlock";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -490,36 +490,41 @@ function StatusCard({ status }: { status: TelephonyStatus }) {
       : t("telephony_view.status.unreachable");
 
   return (
-    <section className="card-outline space-y-4 p-4">
-      <div className="flex items-center gap-2">
-        <PhoneCall className="h-4 w-4 text-primary" />
-        <h3 className="font-display text-sm font-semibold tracking-tight">
-          {t("telephony_view.status.title")}
-        </h3>
+    <section className="space-y-4 rounded-2xl border border-border bg-card/60 p-5 backdrop-blur">
+      <div className="flex items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-primary">
+          <PhoneCall className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-medium">
+            {t("telephony_view.status.title")}
+          </h3>
+        </div>
         <StatusBadge ok={reachable} configured={status.configured} />
       </div>
 
-      <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-xs">
-        <dt className="text-muted-foreground">{t("telephony_view.status.twilio")}</dt>
-        <dd className="min-w-0 break-words">
-          {reachable ? (
-            <CheckCircle2 className="mr-1 inline h-3 w-3 text-emerald-500" />
-          ) : (
-            <XCircle className="mr-1 inline h-3 w-3 text-muted-foreground" />
+      <div className="flex items-start gap-2 text-xs">
+        <span
+          className={cn(
+            "mt-1 h-2 w-2 shrink-0 rounded-full",
+            reachable
+              ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.7)]"
+              : "bg-muted-foreground",
           )}
+        />
+        <span className="min-w-0 break-words text-foreground">
           {reachLabel}
           {status.twilio_error && (
             <span className="ml-1 break-words text-destructive">
               ({status.twilio_error})
             </span>
           )}
-        </dd>
+        </span>
+      </div>
 
-        <dt className="text-muted-foreground">{t("telephony_view.status.enabled")}</dt>
-        <dd>{status.enabled ? t("common.yes") : t("common.no")}</dd>
-
+      <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-xs">
         <dt className="text-muted-foreground">{t("telephony_view.status.account_sid")}</dt>
-        <dd className="min-w-0">
+        <dd className="min-w-0 text-foreground">
           <CopyValue
             value={status.account_sid_masked}
             label={t("telephony_view.status.account_sid")}
@@ -529,7 +534,7 @@ function StatusCard({ status }: { status: TelephonyStatus }) {
         </dd>
 
         <dt className="text-muted-foreground">{t("telephony_view.status.phone_number")}</dt>
-        <dd className="min-w-0">
+        <dd className="min-w-0 text-foreground">
           <CopyValue
             value={status.phone_number}
             label={t("telephony_view.status.phone_number")}
@@ -539,7 +544,7 @@ function StatusCard({ status }: { status: TelephonyStatus }) {
         </dd>
 
         <dt className="text-muted-foreground">{t("telephony_view.status.public_url")}</dt>
-        <dd className="min-w-0">
+        <dd className="min-w-0 text-foreground">
           <CopyValue
             value={status.public_base_url}
             label={t("telephony_view.status.public_url")}
@@ -549,7 +554,7 @@ function StatusCard({ status }: { status: TelephonyStatus }) {
         </dd>
 
         <dt className="text-muted-foreground">{t("telephony_view.status.webhook_url")}</dt>
-        <dd className="min-w-0">
+        <dd className="min-w-0 text-foreground">
           <CopyValue
             value={status.webhook_url}
             label={t("telephony_view.status.webhook_url")}
@@ -559,7 +564,7 @@ function StatusCard({ status }: { status: TelephonyStatus }) {
         </dd>
 
         <dt className="text-muted-foreground">{t("telephony_view.status.voice")}</dt>
-        <dd className="min-w-0 break-words">
+        <dd className="min-w-0 break-words text-foreground">
           <Volume2 className="mr-1 inline h-3 w-3 text-primary" />
           <span className="font-medium" data-testid="status-tts-voice">
             {status.tts_voice || "—"}
@@ -571,10 +576,15 @@ function StatusCard({ status }: { status: TelephonyStatus }) {
         </dd>
 
         <dt className="text-muted-foreground">{t("telephony_view.status.active_calls")}</dt>
-        <dd>{status.active_calls}</dd>
+        <dd className="text-foreground">{status.active_calls}</dd>
 
         <dt className="text-muted-foreground">{t("telephony_view.status.max_seconds")}</dt>
-        <dd>{status.max_call_seconds}s</dd>
+        <dd className="text-foreground">{status.max_call_seconds}s</dd>
+
+        <dt className="text-muted-foreground">{t("telephony_view.status.enabled")}</dt>
+        <dd className="text-foreground">
+          {status.enabled ? t("common.yes") : t("common.no")}
+        </dd>
       </dl>
     </section>
   );
@@ -584,20 +594,20 @@ function StatusBadge({ ok, configured }: { ok: boolean; configured: boolean }) {
   const t = useT();
   if (!configured) {
     return (
-      <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+      <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
         {t("telephony_view.status.badge_setup")}
       </span>
     );
   }
   if (ok) {
     return (
-      <span className="ml-auto rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
+      <span className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
         {t("telephony_view.status.badge_live")}
       </span>
     );
   }
   return (
-    <span className="ml-auto rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-destructive">
+    <span className="shrink-0 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-destructive">
       {t("telephony_view.status.badge_error")}
     </span>
   );

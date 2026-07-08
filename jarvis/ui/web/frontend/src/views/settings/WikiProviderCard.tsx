@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { BookOpen, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { saveWikiProvider, useWikiProvider } from "@/hooks/useWikiProvider";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
+import { SettingsBlock, SettingsField, settingsInputCls } from "@/views/settings/SettingsBlock";
 
 // Empty string = "follow brain.primary" (provider) / "cheap default" (model).
 // We render it as a named option so the user can deliberately pick "Same as
@@ -70,35 +72,28 @@ export function WikiProviderCard() {
   }
 
   return (
-    <section>
-      <h3 className="mb-3 inline-flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
-        <BookOpen className="h-3.5 w-3.5" /> {t("wiki_provider.tier_label")}
-      </h3>
+    <SettingsBlock
+      icon={BookOpen}
+      title={t("wiki_provider.tier_label")}
+      description={t("wiki_provider.description")}
+    >
+      {loading && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> {t("wiki_provider.loading")}
+        </div>
+      )}
 
-      <div className="card-outline space-y-3 p-4">
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          {t("wiki_provider.description")}
-        </p>
+      {error && <p className="text-xs text-destructive">{t("wiki_provider.load_error")}</p>}
 
-        {loading && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> {t("wiki_provider.loading")}
-          </div>
-        )}
-
-        {error && <p className="text-xs text-destructive">{t("wiki_provider.load_error")}</p>}
-
-        {!loading && data && (
-          <div className="space-y-3">
-            <label className="block">
-              <span className="mb-1 block text-xs uppercase tracking-wide text-muted-foreground">
-                {t("wiki_provider.provider_label")}
-              </span>
+      {!loading && data && (
+        <div className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <SettingsField label={t("wiki_provider.provider_label")}>
               <select
                 aria-label={t("wiki_provider.provider_label")}
                 value={providerValue}
                 onChange={(e) => handleProviderChange(e.target.value)}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                className={settingsInputCls}
               >
                 <option value={FOLLOW_PRIMARY}>{t("wiki_provider.follow_primary")}</option>
                 {data.available
@@ -109,17 +104,14 @@ export function WikiProviderCard() {
                     </option>
                   ))}
               </select>
-            </label>
+            </SettingsField>
 
-            <label className="block">
-              <span className="mb-1 block text-xs uppercase tracking-wide text-muted-foreground">
-                {t("wiki_provider.model_label")}
-              </span>
+            <SettingsField label={t("wiki_provider.model_label")}>
               <select
                 aria-label={t("wiki_provider.model_label")}
                 value={modelValue}
                 onChange={(e) => setModel(e.target.value)}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm"
+                className={cn(settingsInputCls, "font-mono")}
               >
                 <option value={FOLLOW_PRIMARY}>{t("wiki_provider.model_follow_primary")}</option>
                 {modelOptions.map((m) => (
@@ -128,17 +120,18 @@ export function WikiProviderCard() {
                   </option>
                 ))}
               </select>
-              <span className="mt-1 block text-[11px] text-muted-foreground">
-                {t("wiki_provider.model_hint")}
-              </span>
-            </label>
-
-            <Button onClick={handleApply} disabled={pending} className="w-full">
-              {pending ? t("wiki_provider.applying") : t("wiki_provider.apply")}
-            </Button>
+            </SettingsField>
           </div>
-        )}
-      </div>
-    </section>
+
+          <p className="text-[11px] text-muted-foreground">
+            {t("wiki_provider.model_hint")}
+          </p>
+
+          <Button onClick={handleApply} disabled={pending} size="sm">
+            {pending ? t("wiki_provider.applying") : t("wiki_provider.apply")}
+          </Button>
+        </div>
+      )}
+    </SettingsBlock>
   );
 }

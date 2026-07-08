@@ -2,6 +2,13 @@ import { useEffect, useState } from "react";
 import { Check, Loader2, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
+import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
+import {
+  SettingsBlock,
+  SettingsField,
+  settingsInputCls,
+} from "@/views/settings/SettingsBlock";
 
 const TEAM_PROXY_ENDPOINT = "/api/settings/team-proxy";
 const TOKEN_SECRET_ENDPOINT = "/api/secrets/team_proxy_token";
@@ -110,98 +117,95 @@ export function TeamProxyGroup() {
   };
 
   return (
-    <section className="space-y-4">
-      <h3 className="mb-3 inline-flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
-        <Users className="h-3.5 w-3.5" /> {t("settings_view.team_proxy.title")}
-      </h3>
-      <p className="text-xs text-muted-foreground">
-        {t("settings_view.team_proxy.hint")}
-      </p>
-
-      <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-card/60 px-4 py-3">
-        <input
-          type="checkbox"
+    <SettingsBlock
+      icon={Users}
+      title={t("settings_view.team_proxy.title")}
+      description={t("settings_view.team_proxy.hint")}
+      headerRight={
+        <Switch
           checked={enabled}
-          onChange={(e) => setEnabled(e.target.checked)}
-          className="h-4 w-4"
+          onCheckedChange={setEnabled}
+          aria-label={t("settings_view.team_proxy.enable_label")}
         />
-        <span className="text-sm font-medium">
-          {t("settings_view.team_proxy.enable_label")}
-        </span>
-      </label>
+      }
+    >
+      <div className="space-y-4">
+        {enabled && (
+          <div className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <SettingsField label={t("settings_view.team_proxy.url_label")}>
+                <input
+                  type="url"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="https://keys.example.dev"
+                  className={settingsInputCls}
+                />
+              </SettingsField>
 
-      {enabled && (
-        <div className="space-y-4 rounded-lg border border-border bg-card/40 p-4">
-          <div>
-            <label className="mb-1 block text-[10px] uppercase tracking-wider text-muted-foreground">
-              {t("settings_view.team_proxy.url_label")}
-            </label>
-            <input
-              type="url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://keys.example.dev"
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-[10px] uppercase tracking-wider text-muted-foreground">
-              {t("settings_view.team_proxy.token_label")}
-            </label>
-            <input
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder={
-                tokenConfigured
-                  ? t("settings_view.team_proxy.token_set_placeholder")
-                  : t("settings_view.team_proxy.token_placeholder")
-              }
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-            />
-          </div>
-
-          <div>
-            <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
-              {t("settings_view.team_proxy.local_label")}
+              <SettingsField label={t("settings_view.team_proxy.token_label")}>
+                <input
+                  type="password"
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  placeholder={
+                    tokenConfigured
+                      ? t("settings_view.team_proxy.token_set_placeholder")
+                      : t("settings_view.team_proxy.token_placeholder")
+                  }
+                  className={settingsInputCls}
+                />
+              </SettingsField>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              {PROXIABLE_PROVIDERS.map((p) => (
-                <label
-                  key={p}
-                  className="flex cursor-pointer items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-xs"
-                >
-                  <input
-                    type="checkbox"
-                    checked={local.has(p)}
-                    onChange={() => toggleLocal(p)}
-                    className="h-3.5 w-3.5"
-                  />
-                  <span>{p}</span>
-                </label>
-              ))}
+
+            <div>
+              <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+                {t("settings_view.team_proxy.local_label")}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {PROXIABLE_PROVIDERS.map((p) => {
+                  const on = local.has(p);
+                  return (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => toggleLocal(p)}
+                      aria-pressed={on}
+                      className={cn(
+                        "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition-colors",
+                        on
+                          ? "border-primary/50 bg-primary/10 text-primary"
+                          : "border-border text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "flex h-3.5 w-3.5 items-center justify-center rounded border",
+                          on
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-muted-foreground/50",
+                        )}
+                      >
+                        {on && <Check className="h-2.5 w-2.5" />}
+                      </span>
+                      {p}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
+        )}
+
+        <div className="flex items-center gap-3">
+          <Button size="sm" onClick={() => void save()} disabled={saving}>
+            {saving && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+            {saved && !saving && <Check className="mr-1 h-4 w-4" />}
+            {t("settings_view.team_proxy.save")}
+          </Button>
+          {error && <span className="text-xs text-destructive">{error}</span>}
         </div>
-      )}
-
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={() => void save()}
-          disabled={saving}
-          className={cn(
-            "inline-flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/10 px-4 py-2 text-sm font-medium transition-colors hover:bg-primary/20",
-            saving && "opacity-60",
-          )}
-        >
-          {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-          {saved && !saving && <Check className="h-4 w-4 text-primary" />}
-          {t("settings_view.team_proxy.save")}
-        </button>
-        {error && <span className="text-xs text-destructive">{error}</span>}
       </div>
-    </section>
+    </SettingsBlock>
   );
 }
