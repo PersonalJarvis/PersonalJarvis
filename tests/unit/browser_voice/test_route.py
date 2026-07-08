@@ -58,8 +58,13 @@ class _FakeWS:
 
 
 def _state(session, cfg=None):
+    # Default cfg explicitly opts into the classic bridge (Task 7 inverted the
+    # gate to default-OFF; these tests exercise the classic dispatch/session
+    # behavior, not the gate itself — see test_route_closes_when_disabled for
+    # that).
+    default_cfg = SimpleNamespace(browser_voice=SimpleNamespace(enabled=True))
     return SimpleNamespace(
-        config=cfg if cfg is not None else SimpleNamespace(),  # no browser_voice -> enabled
+        config=cfg if cfg is not None else default_cfg,
         bus=None,
         browser_voice_session_factory=lambda **kw: session,
     )
@@ -93,7 +98,9 @@ async def test_route_closes_when_disabled():
 
 async def test_route_closes_when_speech_stack_unavailable():
     state = SimpleNamespace(
-        config=SimpleNamespace(),
+        # Explicit opt-in (Task 7 default-OFF gate) so the socket reaches the
+        # session build instead of closing early on the disabled gate.
+        config=SimpleNamespace(browser_voice=SimpleNamespace(enabled=True)),
         bus=None,
         browser_voice_session_factory=lambda **kw: None,  # build failed (no key)
     )

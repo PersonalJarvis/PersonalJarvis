@@ -7,6 +7,7 @@ provider resolution (shared STT/TTS + a per-connection brain, with a test-factor
 seam) and the ``/ws`` AP-20 receive-loop discipline: a ``RuntimeError`` on an
 unclean disconnect is terminal — ``break``, never ``continue``.
 """
+
 from __future__ import annotations
 
 import json
@@ -27,11 +28,14 @@ _LANG_MAP = {"de": "de-DE", "en": "en-US", "es": "es-ES"}
 
 
 def _browser_voice_enabled(cfg: Any) -> bool:
-    """Default ON: a VPS browser user gets voice unless [browser_voice] disables it."""
-    bv = getattr(cfg, "browser_voice", None)
-    if bv is None:
+    """Default OFF. The socket is only served when the user has explicitly
+    enabled a browser voice surface: realtime mode ([voice].mode == "realtime")
+    or the classic browser bridge ([browser_voice].enabled == true).
+    """
+    if getattr(getattr(cfg, "voice", None), "mode", "pipeline") == "realtime":
         return True
-    return bool(getattr(bv, "enabled", True))
+    bv = getattr(cfg, "browser_voice", None)
+    return bool(getattr(bv, "enabled", False)) if bv is not None else False
 
 
 def _resolve_language(cfg: Any) -> str:
@@ -50,6 +54,16 @@ def _build_browser_session(
     key) — the caller then closes the socket cleanly. A test can inject
     ``state.browser_voice_session_factory`` to bypass the real provider build.
     """
+    # Realtime mode branch (default OFF): only when [voice].mode == "realtime"
+    # AND an OpenAI key exists. Otherwise fall through to the classic bridge.
+    from jarvis.realtime.factory import build_realtime_session
+
+    rt = build_realtime_session(
+        cfg=cfg, bus=bus, session_id=session_id, send_binary=send_binary, send_json=send_json
+    )
+    if rt is not None:
+        return rt
+
     factory = getattr(state, "browser_voice_session_factory", None)
     if factory is not None:
         return factory(session_id=session_id, send_binary=send_binary, send_json=send_json)
