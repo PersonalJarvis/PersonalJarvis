@@ -551,6 +551,18 @@ def set_voice_mode(mode: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "voice", "mode", mode)
 
 
+def set_realtime_provider(provider: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist the active realtime-voice provider to ``[brain.realtime] provider``.
+
+    ``provider`` is a realtime-tier id (e.g. ``"openai-realtime"``). TOML-only
+    by design: ``brain.realtime`` is NOT in the drift-guard's reference
+    snapshot, so it is never reverted (same rationale as :func:`set_voice_mode`).
+    Takes effect on the next voice session / restart — the realtime client is
+    not wired in yet (Phase 2).
+    """
+    _patch_realtime_provider_toml(path, provider)
+
+
 def set_silence_window_ms(ms: int, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the voice silence window to ``[speech] vad_silence_ms`` in jarvis.toml.
 
@@ -1254,6 +1266,41 @@ def _patch_worker_provider_toml(path: Path, name: str) -> None:
             sub = tomlkit.table()
             brain["worker"] = sub
         sub["provider"] = name
+
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+
+def _patch_realtime_provider_toml(path: Path, name: str) -> None:
+    """Set ``[brain.realtime] provider = name`` in the TOML.
+
+    Unlike :func:`_patch_table`, this walks the NESTED ``brain`` -> ``realtime``
+    path instead of treating ``"brain.realtime"`` as a flat top-level key
+    (``doc.get("brain.realtime")`` would create a literal dotted key, not the
+    ``[brain.realtime]`` section) — mirrors :func:`_patch_worker_provider_toml`.
+    Creates either level if missing. Preserves comments, sibling keys, and the
+    optional BOM.
+    """
+    path = _ensure_writable_config_path(path)
+
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+
+        brain = doc.get("brain")
+        if brain is None:
+            brain = tomlkit.table()
+            doc["brain"] = brain
+        realtime = brain.get("realtime")
+        if realtime is None:
+            realtime = tomlkit.table()
+            brain["realtime"] = realtime
+        realtime["provider"] = name
 
         out = tomlkit.dumps(doc)
         if had_bom:

@@ -164,7 +164,9 @@ def test_section_health_returns_all_tabs(
         resp = client.get("/api/providers/section-health")
         assert resp.status_code == 200
         body = resp.json()
-        assert set(body["sections"]) == {"brain", "tts", "stt", "subagents", "advanced"}
+        assert set(body["sections"]) == {
+            "brain", "tts", "stt", "realtime", "subagents", "advanced",
+        }
         valid = {"ok", "needs_setup", "error", "unknown"}
         for sec in body["sections"].values():
             assert sec["status"] in valid

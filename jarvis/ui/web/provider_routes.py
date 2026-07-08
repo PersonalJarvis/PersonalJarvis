@@ -7,7 +7,7 @@ Endpoints:
     POST   /api/brain/switch                 → aktiven Brain-Provider wechseln (+ persist)
     POST   /api/tts/switch                   → aktiven TTS-Provider wechseln (persist in jarvis.toml)
     POST   /api/stt/switch                   → aktiven STT-Provider wechseln (persist in jarvis.toml)
-    POST   /api/realtime/switch              → aktiven Realtime-Provider wechseln (persist in jarvis.toml)
+    POST   /api/realtime/switch              → aktiven Realtime-Provider wechseln (persist)
     POST   /api/subagent/switch              → aktiven Subagent-Provider wechseln (3-layer persist)
 
 Wird vom WebServer in `_build_app()` eingehängt:
@@ -275,11 +275,14 @@ def _spec_to_payload(
     active_brain: str | None,
     active_tts: str | None,
     active_stt: str | None,
+    active_realtime: str | None = None,
 ) -> dict[str, Any]:
     if spec.tier == "brain":
         active = spec.id == active_brain
     elif spec.tier == "tts":
         active = spec.id == active_tts
+    elif spec.tier == "realtime":
+        active = spec.id == active_realtime
     else:
         active = spec.id == active_stt
 
@@ -410,6 +413,24 @@ def _active_stt(request: Request) -> str | None:
     return configured
 
 
+def _active_realtime(request: Request) -> str | None:
+    """The active realtime-voice provider.
+
+    Realtime is OpenAI-only today (a single spec in ``PROVIDERS``), so an unset
+    ``cfg.brain.realtime.provider`` still defaults to ``"openai-realtime"`` — the
+    sole card shows as active instead of a confusing "nothing selected" state.
+    Never raises: any resolver error falls back to the default id.
+    """
+    try:
+        cfg = _resolve_cfg(request)
+        realtime_cfg = getattr(getattr(cfg, "brain", None), "realtime", None)
+        provider = (getattr(realtime_cfg, "provider", None) or "").strip()
+        return provider or "openai-realtime"
+    except Exception as exc:  # noqa: BLE001 — the health panel must never 500
+        log.debug("active-realtime resolution failed (%s); using default.", exc)
+        return "openai-realtime"
+
+
 def _resolve_cfg(request: Request):
     """Liefert die JarvisConfig.
 
@@ -511,6 +532,7 @@ async def list_providers(request: Request) -> dict[str, Any]:
     active_brain = _active_brain(request)
     active_tts = _active_tts(request)
     active_stt = _active_stt(request)
+    active_realtime = _active_realtime(request)
 
     providers = [
         _spec_to_payload(
@@ -518,6 +540,7 @@ async def list_providers(request: Request) -> dict[str, Any]:
             active_brain=active_brain,
             active_tts=active_tts,
             active_stt=active_stt,
+            active_realtime=active_realtime,
         )
         for spec in PROVIDERS
     ]
@@ -757,6 +780,34 @@ def _jarvis_agent_section_health(cfg: Any) -> SectionHealth:
     )
 
 
+def _realtime_section_health(request: Request) -> SectionHealth:
+    """Realtime tab: credential-presence ONLY — there is no realtime
+    provider-test yet (the client is not wired in, Phase 2), so this never
+    calls ``run_provider_test``. Mirrors the shape of ``_tier_section_health``
+    without the live connectivity probe.
+    """
+    spec = get_spec(_active_realtime(request) or "")
+    if spec is None:
+        return SectionHealth(
+            status=_section_health.NEEDS_SETUP,
+            reason="no_active",
+            detail="No active provider selected",
+        )
+    try:
+        configured = _is_credential_present(spec)
+    except Exception:  # noqa: BLE001 — a probe failure is "not set up", not a crash
+        configured = False
+    if configured:
+        return SectionHealth(
+            status=_section_health.OK, reason="ok", detail=f"{spec.label}: ready"
+        )
+    return SectionHealth(
+        status=_section_health.NEEDS_SETUP,
+        reason="not_configured",
+        detail=f"{spec.label}: no key set",
+    )
+
+
 def _advanced_section_health(request: Request) -> SectionHealth:
     """Advanced tab: every integration here is OPTIONAL, so it never reports
     ``needs_setup`` — only ``error`` when something the user actually configured
@@ -803,7 +854,7 @@ async def section_health(request: Request, refresh: bool = False) -> SectionHeal
     sections: dict[str, SectionHealth] = {}
 
     if cfg is None:
-        for key in ("brain", "tts", "stt", "subagents", "advanced"):
+        for key in ("brain", "tts", "stt", "realtime", "subagents", "advanced"):
             sections[key] = SectionHealth(
                 status=_section_health.UNKNOWN,
                 reason="unavailable",
@@ -818,6 +869,11 @@ async def section_health(request: Request, refresh: bool = False) -> SectionHeal
             _tier_section_health(cfg, tts_spec),
             _tier_section_health(cfg, stt_spec),
         )
+        try:
+            sections["realtime"] = _realtime_section_health(request)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("section-health realtime check failed: %s", exc)
+            sections["realtime"] = SectionHealth()
         try:
             sections["subagents"] = _jarvis_agent_section_health(cfg)
         except Exception as exc:  # noqa: BLE001
@@ -1907,6 +1963,67 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             pass
 
     await _emit(request, SecretConfigured(key="stt.provider", action="set"))
+
+    return {
+        "ok": True,
+        "active": body.provider,
+        "persisted": body.persist,
+        "restart_required": True,
+    }
+
+
+@router.post("/realtime/switch")
+async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
+    """Wechselt den aktiven Realtime-Voice-Provider. Persistiert in jarvis.toml.
+
+    Mirrors ``stt_switch``: no live switch — the realtime engine is only
+    selected once the browser realtime client is actually wired in (Phase 2),
+    so the choice always needs a restart to take effect. Realtime is
+    OpenAI-only today (a single spec in ``PROVIDERS``), so this rejects any
+    non-realtime provider id up front.
+    """
+    spec = get_spec(body.provider)
+    if spec is None:
+        raise HTTPException(
+            status_code=404, detail=f"Unbekannter Provider: {body.provider}"
+        )
+    if spec.tier != "realtime":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Provider '{body.provider}' ist kein Realtime-Provider (tier={spec.tier})",
+        )
+    if not _is_credential_present(spec):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Provider '{body.provider}' hat keine Credentials — erst API-Key setzen.",
+        )
+
+    if body.persist:
+        try:
+            from jarvis.core.config_writer import set_realtime_provider
+
+            set_realtime_provider(body.provider)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+            ) from exc
+
+    cfg = _resolve_cfg(request)
+    if cfg is not None and getattr(cfg, "brain", None) is not None:
+        try:
+            realtime_cfg = getattr(cfg.brain, "realtime", None)
+            if realtime_cfg is None:
+                from jarvis.core.config import BrainTierConfig
+
+                cfg.brain.realtime = BrainTierConfig(provider=body.provider)
+            else:
+                realtime_cfg.provider = body.provider
+        except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
+            log.debug("In-memory realtime.provider update skipped: %s", exc)
+
+    await _emit(request, SecretConfigured(key="brain.realtime.provider", action="set"))
 
     return {
         "ok": True,

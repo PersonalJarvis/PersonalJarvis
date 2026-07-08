@@ -2942,6 +2942,16 @@ class DesktopApp:
         gui = "edgechromium" if sys.platform == "win32" else None
         debug = os.environ.get("JARVIS_WEBVIEW_DEBUG") == "1"
 
+        # Linux: pin the window's WM_CLASS to match the .desktop's StartupWMClass
+        # BEFORE the GTK window is created, so the taskbar/dock shows the Jarvis
+        # icon instead of the generic python3 interpreter icon. No-op elsewhere.
+        try:
+            from jarvis.ui.icon_utils import pin_linux_wm_class
+
+            pin_linux_wm_class()
+        except Exception:  # noqa: BLE001 — the WM-class pin is never load-bearing
+            pass
+
         # Native file drag-out: dragging a saved-download toast drops the REAL
         # file into any app (Explorer, a browser upload zone, a chat). Must be
         # installed BEFORE webview.start() — it patches the WebView2 UI-thread

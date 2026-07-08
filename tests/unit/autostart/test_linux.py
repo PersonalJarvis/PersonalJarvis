@@ -35,6 +35,21 @@ def test_install_writes_desktop_entry(monkeypatch, tmp_path: Path) -> None:
     assert status.matches_spec is True
 
 
+def test_install_brands_entry_with_icon_and_wmclass(monkeypatch, tmp_path: Path) -> None:
+    """The .desktop must carry an Icon= (the bundled PNG) and a StartupWMClass so
+    the app menu / taskbar shows Jarvis, not the generic python3 interpreter icon."""
+    from jarvis.assets import bundled_app_icon_png
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    LinuxAutostart().install(_spec())
+    text = (tmp_path / "autostart" / "personal-jarvis.desktop").read_text(encoding="utf-8")
+
+    png = bundled_app_icon_png()
+    assert png is not None, "bundled jarvis.png must ship for the Linux Icon= key"
+    assert f"Icon={png}" in text
+    assert "StartupWMClass=personal-jarvis" in text
+
+
 def test_status_detects_path_drift(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     mgr = LinuxAutostart()

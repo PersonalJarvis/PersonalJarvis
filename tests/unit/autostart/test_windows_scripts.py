@@ -43,3 +43,17 @@ def test_read_script_emits_three_sentinel_lines() -> None:
     assert "$sc.TargetPath" in script
     assert "$sc.Arguments" in script
     assert "$sc.WorkingDirectory" in script
+
+
+def test_create_script_embeds_icon_when_given() -> None:
+    """The autostart .lnk must carry the Jarvis icon so the taskbar button is
+    branded from first paint — not the bare pythonw.exe Python logo."""
+    ico = r"C:\Users\u\Personal Jarvis\jarvis\assets\icons\jarvis.ico"
+    script = build_create_script(Path(r"C:\startup\Personal Jarvis.lnk"), _spec(), icon=ico)
+    assert f"$sc.IconLocation = '{ico},0'" in script
+
+
+def test_create_script_omits_icon_line_without_icon() -> None:
+    """Back-compat: no icon given → no IconLocation line (never an empty ',0')."""
+    script = build_create_script(Path(r"C:\startup\Personal Jarvis.lnk"), _spec())
+    assert "IconLocation" not in script
