@@ -228,3 +228,14 @@ reporttutorialpickupprompt*
 # and none of it is product content a downstream user needs. A fork writes its
 # own marketing. Withhold the whole subtree.
 marketing/**
+
+# --- Unfinished TTS-eval harness (2026-07-08) --------------------------------
+# jarvis/speech/tts_eval/* is an internal, in-progress TTS quality-eval tool
+# (corpus + metrics + harness), committed by a parallel session's auto-save. It
+# is not user-facing (nothing in jarvis/ imports it), and its German test-corpus
+# sentences are not yet on the English-artifact allowlist. Slated for the 1.0.4
+# cut once finished + translated/allowlisted. Withhold the module and its tests
+# from the 1.0.3 release.
+jarvis/speech/tts_eval/**
+**/tts_eval/**
+tests/unit/speech/tts_eval/**
