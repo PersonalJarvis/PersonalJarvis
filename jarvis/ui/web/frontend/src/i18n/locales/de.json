@@ -874,6 +874,9 @@
     "tab_realtime": "Realtime",
     "tab_subagents": "Jarvis-Agents",
     "tab_advanced": "Erweitert",
+    "mode_pipeline": "Pipeline",
+    "mode_realtime": "Realtime",
+    "mode_active_badge": "Aktiv",
     "cat_brain_desc": "Das Modell, das Chat, Routing und Computer-Use antreibt.",
     "cat_tts_desc": "Die Stimme, mit der Jarvis spricht.",
     "cat_stt_desc": "Wie Jarvis deine Sprache in Text umwandelt.",
@@ -1520,7 +1523,18 @@
       "cta": "Aktivierungswort speichern",
       "saving": "Speichern…",
       "derived_name": "Dein Assistent heißt dann: {0}",
-      "continue_anyway": "Trotzdem fortfahren"
+      "continue_anyway": "Trotzdem fortfahren",
+      "mic_check": {
+        "title": "Mikrofon-Check",
+        "test_button": "Mikrofon testen",
+        "say_once_button": "Aktivierungswort einmal sagen",
+        "checking": "Höre zu…",
+        "listening": "Höre zu — sprich jetzt…",
+        "good": "Klingt gut — dein Mikrofon hat deine Stimme klar aufgenommen.",
+        "too_quiet": "Das war sehr leise. Erhöhe die Mikrofonlautstärke oder rücke näher heran und versuche es erneut.",
+        "no_device": "Kein Mikrofon erkannt — du kannst die Einrichtung trotzdem abschließen und das später in den Einstellungen beheben.",
+        "error": "Das Mikrofon konnte gerade nicht geprüft werden."
+      }
     },
     "api_keys": {
       "title": "Verbinde deine KI-Dienste (optional)",

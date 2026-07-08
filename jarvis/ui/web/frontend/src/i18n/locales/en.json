@@ -874,6 +874,9 @@
     "tab_realtime": "Realtime",
     "tab_subagents": "Jarvis-Agents",
     "tab_advanced": "Advanced",
+    "mode_pipeline": "Pipeline",
+    "mode_realtime": "Realtime",
+    "mode_active_badge": "Active",
     "cat_brain_desc": "The model that powers chat, routing, and Computer-Use.",
     "cat_tts_desc": "The voice Jarvis speaks with.",
     "cat_stt_desc": "How Jarvis turns your speech into text.",
@@ -1521,7 +1524,18 @@
       "cta": "Save wake word",
       "saving": "Saving…",
       "derived_name": "Your assistant will be called: {0}",
-      "continue_anyway": "Continue anyway"
+      "continue_anyway": "Continue anyway",
+      "mic_check": {
+        "title": "Microphone check",
+        "test_button": "Test your microphone",
+        "say_once_button": "Say your wake word once",
+        "checking": "Listening…",
+        "listening": "Listening — speak now…",
+        "good": "Sounds good — your microphone picked up your voice clearly.",
+        "too_quiet": "That was very quiet. Turn up your microphone volume or move closer, then try again.",
+        "no_device": "No microphone detected — you can still finish setup and fix this later in Settings.",
+        "error": "Could not check the microphone right now."
+      }
     },
     "api_keys": {
       "title": "Connect your AI services (optional)",

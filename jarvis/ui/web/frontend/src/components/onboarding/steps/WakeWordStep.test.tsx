@@ -115,3 +115,68 @@ it("wake-word path: a degraded save does NOT advance and offers the local-speech
   await waitFor(() => expect(setWakeActivation).toHaveBeenCalledWith(true));
   expect(goNext).toHaveBeenCalled();
 });
+
+it("wake-word path: renders a mic-check control that reports a good level", async () => {
+  const fetchSpy = vi.fn(() =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ max_dbfs: -15.0, no_device: false, too_quiet: false }),
+    }),
+  );
+  vi.stubGlobal("fetch", fetchSpy);
+  renderStep();
+  selectWakeMode();
+
+  expect(screen.getByText("onboarding.wake_word.mic_check.title")).toBeDefined();
+  const testButton = screen.getByRole("button", { name: "onboarding.wake_word.mic_check.test_button" });
+  expect(screen.getByRole("button", { name: "onboarding.wake_word.mic_check.say_once_button" })).toBeDefined();
+
+  fireEvent.click(testButton);
+  await waitFor(() =>
+    expect(fetchSpy).toHaveBeenCalledWith("/api/settings/wake-word/mic-level"),
+  );
+  await waitFor(() => expect(screen.getByText("onboarding.wake_word.mic_check.good")).toBeDefined());
+});
+
+it("wake-word path: mic-check shows the amber too-quiet warning without blocking the save CTA", async () => {
+  const fetchSpy = vi.fn(() =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ max_dbfs: -55.0, no_device: false, too_quiet: true }),
+    }),
+  );
+  vi.stubGlobal("fetch", fetchSpy);
+  renderStep();
+  selectWakeMode();
+
+  fireEvent.click(screen.getByRole("button", { name: "onboarding.wake_word.mic_check.test_button" }));
+  const warning = await screen.findByText("onboarding.wake_word.mic_check.too_quiet");
+  expect(warning).toBeDefined();
+
+  // Acknowledgment must never be blocked by a failed/quiet mic check — the
+  // save CTA is only gated on word length + the ack checkbox.
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "Nova" } });
+  fireEvent.click(screen.getByRole("checkbox"));
+  const cta = screen.getByRole("button", { name: "onboarding.wake_word.cta" });
+  expect((cta as HTMLButtonElement).disabled).toBe(false);
+});
+
+it("wake-word path: mic-check reports a neutral no-device state on a headless host", async () => {
+  const fetchSpy = vi.fn(() =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ max_dbfs: -120.0, no_device: true, too_quiet: false }),
+    }),
+  );
+  vi.stubGlobal("fetch", fetchSpy);
+  renderStep();
+  selectWakeMode();
+
+  fireEvent.click(screen.getByRole("button", { name: "onboarding.wake_word.mic_check.say_once_button" }));
+  await waitFor(() =>
+    expect(screen.getByText("onboarding.wake_word.mic_check.no_device")).toBeDefined(),
+  );
+});
