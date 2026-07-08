@@ -578,6 +578,7 @@ class ScrubHoldGate:
         if self._cleared:
             out = self._pending + [chunk]
             self._pending = []
+            self._cleared = False  # one-shot: the next chunk re-buffers until its own transcript clears
             return out
         self._pending.append(chunk)
         return []
@@ -588,7 +589,7 @@ class ScrubHoldGate:
             return []
         out = self._pending
         self._pending = []
-        self._cleared = True
+        self._cleared = False  # released on timeout, not a clean transcript — go back to holding
         return out
 
     def drain(self) -> None:
