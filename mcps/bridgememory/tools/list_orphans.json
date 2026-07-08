@@ -1,0 +1,15 @@
+{
+  "name": "list_orphans",
+  "description": "List memories with no incoming or outgoing wikilinks — usually candidates for either deletion or fresh `[[link]]` insertion. Run after a batch of writes to find dead-ends.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "cwd": {
+        "type": "string",
+        "description": "Optional. Absolute path used to discover the hub by walking up for `.bridgememory/`. Defaults to the server's process cwd."
+      }
+    },
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

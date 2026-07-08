@@ -1,0 +1,17 @@
+{
+  "name": "firecrawl_check_crawl_status",
+  "description": "\nCheck the status of a crawl job.\n\n**Usage Example:**\n```json\n{\n  \"name\": \"firecrawl_check_crawl_status\",\n  \"arguments\": {\n    \"id\": \"550e8400-e29b-41d4-a716-446655440000\"\n  }\n}\n```\n**Returns:** Status and progress of the crawl job, including results if available.\n",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "additionalProperties": false
+  }
+}

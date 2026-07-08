@@ -1,0 +1,29 @@
+{
+  "name": "suggest_connections",
+  "description": "Suggest other memories that share distinctive keywords (length>=4, non-stopword) with a target memory but aren't already linked. Use to find candidate `[[wikilinks]]` to add.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "identifier": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The memory to find related notes for."
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 20,
+        "description": "Max suggestions (default 5)."
+      },
+      "cwd": {
+        "type": "string",
+        "description": "Optional. Absolute path used to discover the hub by walking up for `.bridgememory/`. Defaults to the server's process cwd."
+      }
+    },
+    "required": [
+      "identifier"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

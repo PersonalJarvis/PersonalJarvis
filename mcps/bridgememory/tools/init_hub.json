@@ -1,0 +1,19 @@
+{
+  "name": "init_hub",
+  "description": "Create a `.bridgememory/` folder at `rootPath` with an index.json and a welcome memory. Idempotent — safe to call on an existing hub. Use ONLY when the user has explicitly asked to set up BridgeMemory for a directory.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "rootPath": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Absolute path to the directory that should become a hub root. The .bridgememory/ folder will be created inside it."
+      }
+    },
+    "required": [
+      "rootPath"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

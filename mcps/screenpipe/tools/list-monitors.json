@@ -1,0 +1,8 @@
+{
+  "name": "list-monitors",
+  "description": "List available monitors/screens for capture.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {}
+  }
+}

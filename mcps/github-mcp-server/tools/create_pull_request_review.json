@@ -1,0 +1,101 @@
+{
+  "name": "create_pull_request_review",
+  "description": "Create a review on a pull request",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "owner": {
+        "type": "string",
+        "description": "Repository owner (username or organization)"
+      },
+      "repo": {
+        "type": "string",
+        "description": "Repository name"
+      },
+      "pull_number": {
+        "type": "number",
+        "description": "Pull request number"
+      },
+      "commit_id": {
+        "type": "string",
+        "description": "The SHA of the commit that needs a review"
+      },
+      "body": {
+        "type": "string",
+        "description": "The body text of the review"
+      },
+      "event": {
+        "type": "string",
+        "enum": [
+          "APPROVE",
+          "REQUEST_CHANGES",
+          "COMMENT"
+        ],
+        "description": "The review action to perform"
+      },
+      "comments": {
+        "type": "array",
+        "items": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "The relative path to the file being commented on"
+                },
+                "position": {
+                  "type": "number",
+                  "description": "The position in the diff where you want to add a review comment"
+                },
+                "body": {
+                  "type": "string",
+                  "description": "Text of the review comment"
+                }
+              },
+              "required": [
+                "path",
+                "position",
+                "body"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "The relative path to the file being commented on"
+                },
+                "line": {
+                  "type": "number",
+                  "description": "The line number in the file where you want to add a review comment"
+                },
+                "body": {
+                  "type": "string",
+                  "description": "Text of the review comment"
+                }
+              },
+              "required": [
+                "path",
+                "line",
+                "body"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "description": "Comments to post as part of the review (specify either position or line, not both)"
+      }
+    },
+    "required": [
+      "owner",
+      "repo",
+      "pull_number",
+      "body",
+      "event"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

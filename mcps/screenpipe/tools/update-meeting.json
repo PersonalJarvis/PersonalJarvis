@@ -1,0 +1,40 @@
+{
+  "name": "update-meeting",
+  "description": "Update a meeting's mutable fields (title, attendees, note, app, start/end). Partial: only the fields you pass are written, others stay as-is. Use this to save an AI-generated summary into the meeting note — read the current note first via get-meeting and pass the existing notes plus your additions so you don't overwrite the user's writing. Convention: append AI-generated summary text under a `## Summary` heading at the bottom of the existing note.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "integer",
+        "description": "Meeting ID"
+      },
+      "title": {
+        "type": "string",
+        "description": "Meeting title"
+      },
+      "attendees": {
+        "type": "string",
+        "description": "Comma-separated attendee names"
+      },
+      "note": {
+        "type": "string",
+        "description": "Full new note body. To preserve existing notes, fetch them first via get-meeting and concatenate before passing."
+      },
+      "meeting_app": {
+        "type": "string",
+        "description": "App / source name (e.g. 'meet.google.com', 'manual')"
+      },
+      "meeting_start": {
+        "type": "string",
+        "description": "ISO 8601 start time (rarely needed)"
+      },
+      "meeting_end": {
+        "type": "string",
+        "description": "ISO 8601 end time (rarely needed)"
+      }
+    },
+    "required": [
+      "id"
+    ]
+  }
+}

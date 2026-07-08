@@ -1,0 +1,32 @@
+{
+  "name": "get_file_contents",
+  "description": "Get the contents of a file or directory from a GitHub repository",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "owner": {
+        "type": "string",
+        "description": "Repository owner (username or organization)"
+      },
+      "repo": {
+        "type": "string",
+        "description": "Repository name"
+      },
+      "path": {
+        "type": "string",
+        "description": "Path to the file or directory"
+      },
+      "branch": {
+        "type": "string",
+        "description": "Branch to get contents from"
+      }
+    },
+    "required": [
+      "owner",
+      "repo",
+      "path"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

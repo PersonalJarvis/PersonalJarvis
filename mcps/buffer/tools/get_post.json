@@ -1,0 +1,22 @@
+{
+  "name": "get_post",
+  "description": "Retrieves detailed information about a specific post by ID. Returns comprehensive post data including status, content, author, channel references, tags, notes, assets (images, videos, documents), and allowed actions. The metadata field contains service-specific data (e.g., Instagram geolocation, Twitter threads, YouTube privacy settings, Pinterest boards). Posts with status \"error\" include an error field with the failure message. Set `includeMetrics: true` to additionally return per-post analytics (reactions, comments, impressions, etc.) and a `metricsUpdatedAt` freshness timestamp. Only set true when the user asks about post performance. Use list_posts to discover post IDs.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "postId": {
+        "type": "string",
+        "pattern": "^[a-f\\d]{24}$",
+        "description": "The ID of the post to retrieve. Use list_posts to discover post IDs."
+      },
+      "includeMetrics": {
+        "description": "Set true to also return per-post analytics (reactions, comments, impressions, etc.) and `metricsUpdatedAt` (freshness timestamp; metrics refresh daily, can lag up to ~24h). Default false — adds latency and response size. Only set true when the user asks about post performance.",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "postId"
+    ]
+  }
+}

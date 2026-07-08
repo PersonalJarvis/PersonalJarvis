@@ -1,0 +1,30 @@
+{
+  "name": "create_repository",
+  "description": "Create a new GitHub repository in your account",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Repository name"
+      },
+      "description": {
+        "type": "string",
+        "description": "Repository description"
+      },
+      "private": {
+        "type": "boolean",
+        "description": "Whether the repository should be private"
+      },
+      "autoInit": {
+        "type": "boolean",
+        "description": "Initialize with README.md"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

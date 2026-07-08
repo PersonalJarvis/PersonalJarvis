@@ -1,0 +1,47 @@
+{
+  "name": "firecrawl_research_search_papers",
+  "description": "Primary entry point for finding research papers by topic across AI/ML, computer science, math, physics, biomedical, life sciences, and clinical literature. Semantic (HyDE) search over indexed paper metadata and abstracts; returns ranked papers with paper id, title, authors, and abstract. The query should be a natural-language research topic or question. Run SEVERAL distinct framings of the question (sibling domains, rival methods, dataset or benchmark names, conditions, populations, interventions, or outcomes) rather than one query — recall improves markedly with diverse framings.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Natural-language research topic or question, including methods, systems, conditions, populations, interventions, or outcomes when relevant."
+      },
+      "k": {
+        "description": "Number of ranked papers to return (default 40).",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 500
+      },
+      "authors": {
+        "description": "Author substring filter(s); ALL must match (case-insensitive).",
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "categories": {
+        "description": "Paper category filter(s) (e.g. `cs.LG`); ALL provided values must match.",
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "from": {
+        "description": "Inclusive lower bound on created/updated date (`YYYY-MM-DD`).",
+        "type": "string"
+      },
+      "to": {
+        "description": "Inclusive upper bound on created/updated date (`YYYY-MM-DD`).",
+        "type": "string"
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "additionalProperties": false
+  }
+}

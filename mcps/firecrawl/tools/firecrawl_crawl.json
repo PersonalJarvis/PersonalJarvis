@@ -1,0 +1,318 @@
+{
+  "name": "firecrawl_crawl",
+  "description": "\n Starts a crawl job on a website, polls until it reaches a terminal state, and returns the final crawl status/data.\n \n **Best for:** Extracting content from multiple related pages, when you need comprehensive coverage.\n **Not recommended for:** Extracting content from a single page (use scrape); when token limits are a concern (use map + scrape for tighter control); when you need fast results (crawling can be slow).\n **Warning:** Crawl responses can be very large and may exceed token limits. Limit the crawl depth and number of pages, or use map + scrape for tighter control.\n **Common mistakes:** Setting limit or maxDiscoveryDepth too high (causes token overflow) or too low (causes missing pages); using crawl for a single page (use scrape instead). Using a /* wildcard is not recommended.\n **Prompt Example:** \"Get all blog posts from the first two levels of example.com/blog.\"\n **Usage Example:**\n ```json\n {\n   \"name\": \"firecrawl_crawl\",\n   \"arguments\": {\n     \"url\": \"https://example.com/blog/*\",\n     \"maxDiscoveryDepth\": 5,\n     \"limit\": 20,\n     \"allowExternalLinks\": false,\n     \"deduplicateSimilarURLs\": true,\n     \"sitemap\": \"include\"\n   }\n }\n ```\n **Returns:** Final crawl status and data after internal polling, including the crawl id. Use firecrawl_check_crawl_status only when you need to re-check an existing crawl ID later.\n \n ",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "excludePaths": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "includePaths": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "maxDiscoveryDepth": {
+        "type": "number"
+      },
+      "sitemap": {
+        "type": "string",
+        "enum": [
+          "skip",
+          "include",
+          "only"
+        ]
+      },
+      "limit": {
+        "type": "number"
+      },
+      "allowExternalLinks": {
+        "type": "boolean"
+      },
+      "allowSubdomains": {
+        "type": "boolean"
+      },
+      "crawlEntireDomain": {
+        "type": "boolean"
+      },
+      "delay": {
+        "type": "number"
+      },
+      "maxConcurrency": {
+        "type": "number"
+      },
+      "webhook": {
+        "type": "string"
+      },
+      "webhookHeaders": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": false
+      },
+      "deduplicateSimilarURLs": {
+        "type": "boolean"
+      },
+      "ignoreQueryParameters": {
+        "type": "boolean"
+      },
+      "scrapeOptions": {
+        "type": "object",
+        "properties": {
+          "formats": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "markdown",
+                "html",
+                "rawHtml",
+                "screenshot",
+                "links",
+                "summary",
+                "changeTracking",
+                "branding",
+                "json",
+                "query",
+                "audio"
+              ]
+            }
+          },
+          "jsonOptions": {
+            "type": "object",
+            "properties": {
+              "prompt": {
+                "type": "string"
+              },
+              "schema": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "queryOptions": {
+            "type": "object",
+            "properties": {
+              "prompt": {
+                "type": "string",
+                "maxLength": 10000
+              },
+              "mode": {
+                "default": "freeform",
+                "type": "string",
+                "enum": [
+                  "directQuote",
+                  "freeform"
+                ]
+              }
+            },
+            "required": [
+              "prompt"
+            ],
+            "additionalProperties": false
+          },
+          "screenshotOptions": {
+            "type": "object",
+            "properties": {
+              "fullPage": {
+                "type": "boolean"
+              },
+              "quality": {
+                "type": "number"
+              },
+              "viewport": {
+                "type": "object",
+                "properties": {
+                  "width": {
+                    "type": "number"
+                  },
+                  "height": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "width",
+                  "height"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "parsers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "pdf"
+              ]
+            }
+          },
+          "pdfOptions": {
+            "type": "object",
+            "properties": {
+              "maxPages": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10000
+              }
+            },
+            "additionalProperties": false
+          },
+          "onlyMainContent": {
+            "type": "boolean"
+          },
+          "redactPII": {
+            "type": "boolean"
+          },
+          "includeTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "excludeTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "waitFor": {
+            "type": "number"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "wait",
+                    "screenshot",
+                    "scroll",
+                    "scrape",
+                    "click",
+                    "write",
+                    "press",
+                    "executeJavascript",
+                    "generatePDF"
+                  ]
+                },
+                "selector": {
+                  "type": "string"
+                },
+                "milliseconds": {
+                  "type": "number"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string"
+                },
+                "direction": {
+                  "type": "string",
+                  "enum": [
+                    "up",
+                    "down"
+                  ]
+                },
+                "script": {
+                  "type": "string"
+                },
+                "fullPage": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "mobile": {
+            "type": "boolean"
+          },
+          "skipTlsVerification": {
+            "type": "boolean"
+          },
+          "removeBase64Images": {
+            "type": "boolean"
+          },
+          "location": {
+            "type": "object",
+            "properties": {
+              "country": {
+                "type": "string"
+              },
+              "languages": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "storeInCache": {
+            "type": "boolean"
+          },
+          "zeroDataRetention": {
+            "type": "boolean"
+          },
+          "maxAge": {
+            "type": "number"
+          },
+          "lockdown": {
+            "type": "boolean"
+          },
+          "proxy": {
+            "type": "string",
+            "enum": [
+              "basic",
+              "stealth",
+              "enhanced",
+              "auto"
+            ]
+          },
+          "profile": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "saveChanges": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "url"
+    ],
+    "additionalProperties": false
+  }
+}

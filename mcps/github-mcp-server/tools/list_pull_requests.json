@@ -1,0 +1,66 @@
+{
+  "name": "list_pull_requests",
+  "description": "List and filter repository pull requests",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "owner": {
+        "type": "string",
+        "description": "Repository owner (username or organization)"
+      },
+      "repo": {
+        "type": "string",
+        "description": "Repository name"
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "open",
+          "closed",
+          "all"
+        ],
+        "description": "State of the pull requests to return"
+      },
+      "head": {
+        "type": "string",
+        "description": "Filter by head user or head organization and branch name"
+      },
+      "base": {
+        "type": "string",
+        "description": "Filter by base branch name"
+      },
+      "sort": {
+        "type": "string",
+        "enum": [
+          "created",
+          "updated",
+          "popularity",
+          "long-running"
+        ],
+        "description": "What to sort results by"
+      },
+      "direction": {
+        "type": "string",
+        "enum": [
+          "asc",
+          "desc"
+        ],
+        "description": "The direction of the sort"
+      },
+      "per_page": {
+        "type": "number",
+        "description": "Results per page (max 100)"
+      },
+      "page": {
+        "type": "number",
+        "description": "Page number of the results"
+      }
+    },
+    "required": [
+      "owner",
+      "repo"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "firecrawl_map",
+  "description": "\nMap a website to discover all indexed URLs on the site.\n\n**Best for:** Discovering URLs on a website before deciding what to scrape; finding specific sections or pages within a large site; locating the correct page when scrape returns empty or incomplete results.\n**Not recommended for:** When you already know which specific URL you need (use scrape); when you need the content of the pages (use scrape after mapping).\n**Common mistakes:** Using crawl to discover URLs instead of map; jumping straight to firecrawl_agent when scrape fails instead of using map first to find the right page.\n\n**IMPORTANT - Use map before agent:** If `firecrawl_scrape` returns empty, minimal, or irrelevant content, use `firecrawl_map` with the `search` parameter to find the specific page URL containing your target content. This is faster and cheaper than using `firecrawl_agent`. Only use the agent as a last resort after map+scrape fails.\n\n**Prompt Example:** \"Find the webhook documentation page on this API docs site.\"\n**Usage Example (discover all URLs):**\n```json\n{\n  \"name\": \"firecrawl_map\",\n  \"arguments\": {\n    \"url\": \"https://example.com\"\n  }\n}\n```\n**Usage Example (search for specific content - RECOMMENDED when scrape fails):**\n```json\n{\n  \"name\": \"firecrawl_map\",\n  \"arguments\": {\n    \"url\": \"https://docs.example.com/api\",\n    \"search\": \"webhook events\"\n  }\n}\n```\n**Returns:** Array of URLs found on the site, filtered by search query if provided.\n",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string",
+        "format": "uri"
+      },
+      "search": {
+        "type": "string"
+      },
+      "sitemap": {
+        "type": "string",
+        "enum": [
+          "include",
+          "skip",
+          "only"
+        ]
+      },
+      "includeSubdomains": {
+        "type": "boolean"
+      },
+      "limit": {
+        "type": "number"
+      },
+      "ignoreQueryParameters": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "url"
+    ],
+    "additionalProperties": false
+  }
+}

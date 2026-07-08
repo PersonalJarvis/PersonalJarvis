@@ -1,0 +1,23 @@
+{
+  "name": "delete_memory",
+  "description": "Permanently delete a memory file. Irreversible. Only use when the user explicitly asks to forget something.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "identifier": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Memory title, filename, or absolute path."
+      },
+      "cwd": {
+        "type": "string",
+        "description": "Optional. Absolute path used to discover the hub by walking up for `.bridgememory/`. Defaults to the server's process cwd."
+      }
+    },
+    "required": [
+      "identifier"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

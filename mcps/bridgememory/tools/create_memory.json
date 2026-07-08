@@ -1,0 +1,28 @@
+{
+  "name": "create_memory",
+  "description": "Create a new memory in the hub. Title becomes the H1 and the slugified filename.\nFilename collisions auto-resolve with -2, -3, ... so two memories can share a title (though you should usually pick a unique one).\n\nUse this for durable cross-conversation context: decisions, project state, \"why-it-is-this-way\" facts, references to external systems. Do NOT use it as a scratchpad for the current task.\n\nConnect to other memories with `[[Other Title]]` or `[[Other Title|alias]]` inside the body.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "description": "H1 title for the memory. Will also become the slugified filename."
+      },
+      "body": {
+        "type": "string",
+        "description": "Optional initial markdown body. If omitted, starts as just \"# <title>\". Wikilinks should use [[Title]] form. Body should be a self-contained note that makes sense weeks later."
+      },
+      "cwd": {
+        "type": "string",
+        "description": "Optional. Absolute path used to discover the hub by walking up for `.bridgememory/`. Defaults to the server's process cwd."
+      }
+    },
+    "required": [
+      "title"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

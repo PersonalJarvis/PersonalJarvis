@@ -1,0 +1,70 @@
+{
+  "name": "get_aggregated_post_metrics",
+  "description": "Returns aggregate post analytics (sums and averages) for a Buffer organization over a date range. Use this when the user wants totals across many posts — e.g. \"total reach last month\", \"how did my LinkedIn posts perform in Q1\", \"engagement on posts tagged #launch\". The response always includes a baseline trio of metrics (postCount, reactions, comments); additional metrics (reach, impressions, engagement rate, etc.) are included only when every channel in the filter set supports them. The `metricsUpdatedAt` field carries the freshness of the aggregate — metrics refresh daily, so values can lag the source network by up to ~24h. It is null when no posts matched the filter. For per-post analytics on a single post, use get_post; for many posts, use list_posts. Call get_account first to obtain your organization ID; use list_channels to discover channel IDs.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "organizationId": {
+        "type": "string",
+        "pattern": "^[a-f\\d]{24}$",
+        "description": "The ID of the organization to aggregate metrics for. Use get_account to retrieve your organization IDs. Tell the user which organization (by name) you are querying."
+      },
+      "startDateTime": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+        "description": "Start of the aggregation window as an ISO 8601 date-time string (e.g., \"2026-01-01T00:00:00Z\"). Inclusive. The range from startDateTime to endDateTime is capped to 365 days."
+      },
+      "endDateTime": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+        "description": "End of the aggregation window as an ISO 8601 date-time string (e.g., \"2026-01-31T23:59:59Z\"). Inclusive. The range from startDateTime to endDateTime is capped to 365 days."
+      },
+      "channelIds": {
+        "description": "Channel IDs to include in the aggregate. Omit (or pass null) to aggregate across every channel the actor can see insights for. Passing an empty array filters out all channels and returns an empty result. Use list_channels to discover channel IDs.",
+        "anyOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-f\\d]{24}$",
+              "description": "A channel ID to include in the aggregate."
+            }
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "tags": {
+        "description": "Filter to posts with specific tags. Omit to include all posts regardless of tags.",
+        "type": "object",
+        "properties": {
+          "in": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-f\\d]{24}$",
+              "description": "A tag ID."
+            },
+            "description": "Tag IDs to include posts from (OR semantics — a post matches if any of its tags appear in this list)."
+          },
+          "isEmpty": {
+            "description": "If true, also include posts that have no tags assigned. Combinable with `in` for a union filter. Defaults to false.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "in"
+        ]
+      }
+    },
+    "required": [
+      "organizationId",
+      "startDateTime",
+      "endDateTime"
+    ]
+  }
+}

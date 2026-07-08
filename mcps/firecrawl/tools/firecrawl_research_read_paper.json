@@ -1,0 +1,30 @@
+{
+  "name": "firecrawl_research_read_paper",
+  "description": "Read the most relevant in-body (full-text) passages of ONE specific paper for a question. Use this to VERIFY whether a candidate actually satisfies a constraint before you include or reject it (e.g. 'does this paper actually use technique X / report a score on benchmark Y'). Returns the best-matching passages, or a notice if the paper's full text is unavailable.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "paperId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Canonical paperId or primaryId such as `arxiv:1706.03762`, `pmcid:PMC12530322`, `pmid:40953549`, or `doi:10.1016/j.neunet.2025.108095`."
+      },
+      "question": {
+        "type": "string",
+        "minLength": 1
+      },
+      "k": {
+        "description": "Number of passages to return (default 4).",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 50
+      }
+    },
+    "required": [
+      "paperId",
+      "question"
+    ],
+    "additionalProperties": false
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "firecrawl_agent_status",
+  "description": "\nCheck the status of an agent job and retrieve results when complete. Use this to poll for results after starting an agent with `firecrawl_agent`.\n\n**IMPORTANT - Be patient with polling:**\n- Poll every 15-30 seconds\n- **Keep polling for at least 2-3 minutes** before considering the request failed\n- Complex research can take 5+ minutes - do not give up early\n- Only stop polling when status is \"completed\" or \"failed\"\n\n**Usage Example:**\n```json\n{\n  \"name\": \"firecrawl_agent_status\",\n  \"arguments\": {\n    \"id\": \"550e8400-e29b-41d4-a716-446655440000\"\n  }\n}\n```\n**Possible statuses:**\n- processing: Agent is still researching - keep polling, do not give up\n- completed: Research finished - response includes the extracted data\n- failed: An error occurred (only stop polling on this status)\n\n**Returns:** Status, progress, and results (if completed) of the agent job.\n",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "additionalProperties": false
+  }
+}

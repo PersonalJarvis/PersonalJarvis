@@ -1,0 +1,37 @@
+{
+  "name": "search_memories",
+  "description": "Token-aware full-text search across titles and bodies.\n\nThe query is split into tokens on non-alphanumeric boundaries (so `russh CVE`\nbecomes [russh, CVE]). In default `mode: 'all'` (recommended) every token\nmust appear somewhere in the memory's title or body — this is the precision\nmode and the right default when you're trying to recall a specific thing.\n\nSwitch to `mode: 'any'` for broad exploratory queries when you'd rather see\nloosely related memories than risk a zero-hit reply.\n\nScoring: +5 per token found in title, +1 per body occurrence (capped at 5\nper token), +3 if the title contains the verbatim query as a substring.\nTies broken by recency. Snippet shows merged context windows around the\nmatched terms (max ~400 chars).",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Search terms. Tokenized on non-alphanumeric boundaries; multi-word queries are AND-matched by default."
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "description": "Max hits to return (default 20)."
+      },
+      "mode": {
+        "type": "string",
+        "enum": [
+          "all",
+          "any"
+        ],
+        "description": "'all' (default, precise) requires every token; 'any' (broad) returns memories matching any token."
+      },
+      "cwd": {
+        "type": "string",
+        "description": "Optional. Absolute path used to discover the hub by walking up for `.bridgememory/`. Defaults to the server's process cwd."
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

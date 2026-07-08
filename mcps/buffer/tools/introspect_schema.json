@@ -1,0 +1,9 @@
+{
+  "name": "introspect_schema",
+  "description": "Returns the complete GraphQL schema for Buffer API including all queries, mutations, types, and arguments. Call this ONLY when you need to use execute_query or execute_mutation for operations not covered by domain-specific tools (get_account, list_channels, get_channel). Do not call this for common operations — use the domain tools instead.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {}
+  }
+}

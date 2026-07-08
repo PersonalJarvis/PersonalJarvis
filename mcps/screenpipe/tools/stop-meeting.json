@@ -1,0 +1,8 @@
+{
+  "name": "stop-meeting",
+  "description": "Stop the current manual meeting recording session.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {}
+  }
+}

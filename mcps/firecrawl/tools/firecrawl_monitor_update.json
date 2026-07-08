@@ -1,0 +1,25 @@
+{
+  "name": "firecrawl_monitor_update",
+  "description": "\nUpdate a monitor. Pass any subset of fields to patch: `name`, `status` (\"active\" | \"paused\"), `schedule`, `targets`, `goal`, `judgeEnabled`, `webhook`, `notification`, `retentionDays`.\n\n**Usage Example:**\n```json\n{\n  \"name\": \"firecrawl_monitor_update\",\n  \"arguments\": {\n    \"id\": \"mon_abc123\",\n    \"body\": { \"status\": \"paused\" }\n  }\n}\n```\n",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "body": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "id",
+      "body"
+    ],
+    "additionalProperties": false
+  }
+}

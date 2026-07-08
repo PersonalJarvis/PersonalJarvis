@@ -1,0 +1,16 @@
+{
+  "name": "frame-context",
+  "description": "Get full accessibility text, parsed tree nodes, and URLs for a specific frame ID. Use after search-content to get detailed context for a specific moment.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "frame_id": {
+        "type": "integer",
+        "description": "Frame ID from search-content results (content.frame_id field)"
+      }
+    },
+    "required": [
+      "frame_id"
+    ]
+  }
+}

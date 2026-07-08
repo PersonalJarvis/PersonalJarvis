@@ -1,0 +1,16 @@
+{
+  "name": "get-frame-elements",
+  "description": "Get all UI elements for a specific frame. More targeted than search-elements when you already have a frame_id.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "frame_id": {
+        "type": "integer",
+        "description": "Frame ID"
+      }
+    },
+    "required": [
+      "frame_id"
+    ]
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "add-tags",
+  "description": "Add tags to a content item (vision frame or audio chunk) for organization and retrieval.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "content_type": {
+        "type": "string",
+        "enum": [
+          "vision",
+          "audio"
+        ],
+        "description": "Type of content to tag"
+      },
+      "id": {
+        "type": "integer",
+        "description": "Content item ID"
+      },
+      "tags": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Tags to add"
+      }
+    },
+    "required": [
+      "content_type",
+      "id",
+      "tags"
+    ]
+  }
+}

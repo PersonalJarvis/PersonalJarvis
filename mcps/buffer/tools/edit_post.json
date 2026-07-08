@@ -1,0 +1,1567 @@
+{
+  "name": "edit_post",
+  "description": "Edit an existing post in Buffer. Before calling edit_post, call get_post with the target post ID to retrieve the current schedulingType, shareMode, dueAt, text, assets, metadata, and allowedActions. Verify that updatePost is in allowedActions before proceeding. Pass schedulingType and mode unchanged from get_post unless the user explicitly requests rescheduling or a mode change. Both schedulingType and mode are required on every call.\n\nEvery edit is re-validated as a whole post against the same rules as creation; it is not merged with the stored post. Carry the current assets and metadata forward from get_post and change only what the user asked to change. Dropping an asset or metadata field the post requires will reject the edit.\n\nAsset behavior: omitting the assets field preserves stored media, but a post that requires media must still include it, so carrying assets forward is the safe default. Pass an empty array to clear all assets. Pass a non-empty array to replace them.\n\nReturns the updated post with id, status, and scheduling details.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "postId": {
+        "type": "string",
+        "pattern": "^[a-f\\d]{24}$",
+        "description": "The ID of the post to edit. Use list_posts or get_post to find post IDs."
+      },
+      "schedulingType": {
+        "type": "string",
+        "enum": [
+          "notification",
+          "automatic"
+        ],
+        "description": "Publishing method: notification (manual approval) or automatic (auto-publish). Pass the value returned by get_post unless the user explicitly wants to change it."
+      },
+      "mode": {
+        "type": "string",
+        "enum": [
+          "addToQueue",
+          "shareNow",
+          "shareNext",
+          "customScheduled"
+        ],
+        "description": "How to schedule: addToQueue (add to queue), shareNow (publish immediately), shareNext (publish at next scheduled slot), customScheduled (requires dueAt with an ISO 8601 datetime). Pass the value returned by get_post (as `shareMode`) unless the user explicitly requests rescheduling."
+      },
+      "text": {
+        "description": "Post text content.",
+        "type": "string"
+      },
+      "dueAt": {
+        "description": "Scheduled time in ISO 8601 format with timezone offset (e.g., \"2025-03-15T17:00:00-05:00\"). Required for customScheduled mode. Use the timezone from get_account to construct the correct offset for the user's local time. Anchor relative times (\"tomorrow\", \"in 2 hours\") on currentTime from get_account; dueAt must be after currentTime, never in the past.",
+        "type": "string"
+      },
+      "tagIds": {
+        "description": "Tag IDs for categorization.",
+        "type": "array",
+        "items": {
+          "type": "string",
+          "pattern": "^[a-f\\d]{24}$",
+          "description": "A tag ID for categorization."
+        }
+      },
+      "assets": {
+        "description": "Media attachments. To carry existing media forward from get_post, map each asset: use source as url and, for image assets only, thumbnail as thumbnailUrl. Never set thumbnailUrl on video assets - it is not supported; use the video metadata.thumbnailOffset to pick a thumbnail frame instead (Instagram, TikTok, and Pinterest only). Omit this field to preserve stored media; pass an empty array to clear all assets; pass a non-empty array to replace them.",
+        "type": "array",
+        "items": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "image": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "description": "Direct URL to the image file."
+                    },
+                    "thumbnailUrl": {
+                      "description": "Thumbnail URL.",
+                      "type": "string"
+                    },
+                    "metadata": {
+                      "description": "Image-specific metadata.",
+                      "type": "object",
+                      "properties": {
+                        "altText": {
+                          "type": "string",
+                          "description": "Alt text for accessibility (required)."
+                        },
+                        "animatedThumbnail": {
+                          "description": "Thumbnail URL for animated images.",
+                          "type": "string"
+                        },
+                        "userTags": {
+                          "description": "User tags for Instagram.",
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "handle": {
+                                "type": "string",
+                                "description": "The handle of the user."
+                              },
+                              "x": {
+                                "type": "number",
+                                "description": "The x coordinate of the user tag (0-1)."
+                              },
+                              "y": {
+                                "type": "number",
+                                "description": "The y coordinate of the user tag (0-1)."
+                              }
+                            },
+                            "required": [
+                              "handle",
+                              "x",
+                              "y"
+                            ]
+                          }
+                        },
+                        "dimensions": {
+                          "description": "Image dimensions (width and height).",
+                          "type": "object",
+                          "properties": {
+                            "width": {
+                              "type": "number",
+                              "description": "Image width in pixels."
+                            },
+                            "height": {
+                              "type": "number",
+                              "description": "Image height in pixels."
+                            }
+                          },
+                          "required": [
+                            "width",
+                            "height"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "altText"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "url"
+                  ]
+                }
+              },
+              "required": [
+                "image"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "video": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "description": "Direct URL to the video file."
+                    },
+                    "metadata": {
+                      "description": "Video-specific metadata.",
+                      "type": "object",
+                      "properties": {
+                        "thumbnailOffset": {
+                          "description": "Video thumbnail offset in milliseconds.",
+                          "type": "number"
+                        },
+                        "title": {
+                          "description": "Video title.",
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "required": [
+                    "url"
+                  ]
+                }
+              },
+              "required": [
+                "video"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "document": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "description": "Direct URL to the document file."
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "Document title."
+                    },
+                    "thumbnailUrl": {
+                      "type": "string",
+                      "description": "Document thumbnail URL."
+                    }
+                  },
+                  "required": [
+                    "url",
+                    "title",
+                    "thumbnailUrl"
+                  ]
+                }
+              },
+              "required": [
+                "document"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "link": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "description": "Link URL."
+                    },
+                    "title": {
+                      "description": "Link title.",
+                      "type": "string"
+                    },
+                    "description": {
+                      "description": "Link description.",
+                      "type": "string"
+                    },
+                    "thumbnailUrl": {
+                      "description": "Link thumbnail URL.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "url"
+                  ]
+                }
+              },
+              "required": [
+                "link"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "metadata": {
+        "description": "Service-specific options. Carry the existing metadata forward from get_post unless the user is changing it; dropping a required metadata field (such as an Instagram post's type) will reject the edit.",
+        "type": "object",
+        "properties": {
+          "instagram": {
+            "description": "Instagram-specific settings.",
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "story",
+                  "reel",
+                  "post"
+                ],
+                "description": "Instagram post type (required)."
+              },
+              "link": {
+                "description": "Link sticker URL for stories.",
+                "type": "string"
+              },
+              "geolocation": {
+                "description": "Location tag.",
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "description": "Location ID.",
+                    "type": "string"
+                  },
+                  "text": {
+                    "description": "Location name.",
+                    "type": "string"
+                  }
+                }
+              },
+              "shouldShareToFeed": {
+                "type": "boolean",
+                "description": "Share reel to feed (required, use true for reels)."
+              },
+              "stickerFields": {
+                "description": "Story stickers.",
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "description": "Text for the Story or Reel.",
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "required": [
+              "type",
+              "shouldShareToFeed"
+            ]
+          },
+          "facebook": {
+            "description": "Facebook-specific settings.",
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "post",
+                  "reel",
+                  "story"
+                ],
+                "description": "Facebook post type (required)."
+              },
+              "annotations": {
+                "description": "Text annotations (tags/mentions).",
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "content": {
+                      "type": "string",
+                      "description": "Annotation content (e.g., page ID)."
+                    },
+                    "indices": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "description": "Character indices [start, end] in text."
+                    },
+                    "text": {
+                      "type": "string",
+                      "description": "Display text of the annotation."
+                    },
+                    "url": {
+                      "type": "string",
+                      "description": "URL the annotation points to."
+                    }
+                  },
+                  "required": [
+                    "content",
+                    "indices",
+                    "text",
+                    "url"
+                  ]
+                }
+              },
+              "linkAttachment": {
+                "description": "Link attachment.",
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "description": "Link URL (required)."
+                  }
+                },
+                "required": [
+                  "url"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "linkedin": {
+            "description": "LinkedIn-specific settings.",
+            "type": "object",
+            "properties": {
+              "annotations": {
+                "description": "Text annotations (tags/mentions).",
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "Entity ID (e.g., 1521226)."
+                    },
+                    "link": {
+                      "type": "string",
+                      "description": "Link to entity (e.g., https://www.linkedin.com/company/...)."
+                    },
+                    "entity": {
+                      "type": "string",
+                      "description": "Entity URN (e.g., urn:li:organization:...)."
+                    },
+                    "vanityName": {
+                      "type": "string",
+                      "description": "Vanity name (e.g., bufferapp)."
+                    },
+                    "localizedName": {
+                      "type": "string",
+                      "description": "Localized name (e.g., Buffer)."
+                    },
+                    "start": {
+                      "type": "number",
+                      "description": "Start position in text."
+                    },
+                    "length": {
+                      "type": "number",
+                      "description": "Length of annotation."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "link",
+                    "entity",
+                    "vanityName",
+                    "localizedName",
+                    "start",
+                    "length"
+                  ]
+                }
+              },
+              "linkAttachment": {
+                "description": "Link attachment.",
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "description": "Link URL (required)."
+                  }
+                },
+                "required": [
+                  "url"
+                ]
+              }
+            }
+          },
+          "twitter": {
+            "description": "Twitter-specific settings.",
+            "type": "object",
+            "properties": {
+              "retweet": {
+                "description": "Retweet settings.",
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "Tweet ID to retweet."
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              },
+              "thread": {
+                "description": "Thread items array. IMPORTANT: For threaded posts, you must provide BOTH the outer text field AND this thread array. The outer text should match the first thread item's text. Include ALL thread items here.",
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "description": "Text content for this thread item.",
+                      "type": "string"
+                    },
+                    "assets": {
+                      "description": "Media assets for this thread item.",
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "image": {
+                                "type": "object",
+                                "properties": {
+                                  "url": {
+                                    "type": "string",
+                                    "description": "Direct URL to the image file."
+                                  },
+                                  "thumbnailUrl": {
+                                    "description": "Thumbnail URL.",
+                                    "type": "string"
+                                  },
+                                  "metadata": {
+                                    "description": "Image-specific metadata.",
+                                    "type": "object",
+                                    "properties": {
+                                      "altText": {
+                                        "type": "string",
+                                        "description": "Alt text for accessibility (required)."
+                                      },
+                                      "animatedThumbnail": {
+                                        "description": "Thumbnail URL for animated images.",
+                                        "type": "string"
+                                      },
+                                      "userTags": {
+                                        "description": "User tags for Instagram.",
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "handle": {
+                                              "type": "string",
+                                              "description": "The handle of the user."
+                                            },
+                                            "x": {
+                                              "type": "number",
+                                              "description": "The x coordinate of the user tag (0-1)."
+                                            },
+                                            "y": {
+                                              "type": "number",
+                                              "description": "The y coordinate of the user tag (0-1)."
+                                            }
+                                          },
+                                          "required": [
+                                            "handle",
+                                            "x",
+                                            "y"
+                                          ]
+                                        }
+                                      },
+                                      "dimensions": {
+                                        "description": "Image dimensions (width and height).",
+                                        "type": "object",
+                                        "properties": {
+                                          "width": {
+                                            "type": "number",
+                                            "description": "Image width in pixels."
+                                          },
+                                          "height": {
+                                            "type": "number",
+                                            "description": "Image height in pixels."
+                                          }
+                                        },
+                                        "required": [
+                                          "width",
+                                          "height"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "altText"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "url"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "image"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "video": {
+                                "type": "object",
+                                "properties": {
+                                  "url": {
+                                    "type": "string",
+                                    "description": "Direct URL to the video file."
+                                  },
+                                  "metadata": {
+                                    "description": "Video-specific metadata.",
+                                    "type": "object",
+                                    "properties": {
+                                      "thumbnailOffset": {
+                                        "description": "Video thumbnail offset in milliseconds.",
+                                        "type": "number"
+                                      },
+                                      "title": {
+                                        "description": "Video title.",
+                                        "type": "string"
+                                      }
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "url"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "video"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "document": {
+                                "type": "object",
+                                "properties": {
+                                  "url": {
+                                    "type": "string",
+                                    "description": "Direct URL to the document file."
+                                  },
+                                  "title": {
+                                    "type": "string",
+                                    "description": "Document title."
+                                  },
+                                  "thumbnailUrl": {
+                                    "type": "string",
+                                    "description": "Document thumbnail URL."
+                                  }
+                                },
+                                "required": [
+                                  "url",
+                                  "title",
+                                  "thumbnailUrl"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "document"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "link": {
+                                "type": "object",
+                                "properties": {
+                                  "url": {
+                                    "type": "string",
+                                    "description": "Link URL."
+                                  },
+                                  "title": {
+                                    "description": "Link title.",
+                                    "type": "string"
+                                  },
+                                  "description": {
+                                    "description": "Link description.",
+                                    "type": "string"
+                                  },
+                                  "thumbnailUrl": {
+                                    "description": "Link thumbnail URL.",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "url"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "link"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "pinterest": {
+            "description": "Pinterest-specific settings.",
+            "type": "object",
+            "properties": {
+              "title": {
+                "description": "Pin title.",
+                "type": "string"
+              },
+              "url": {
+                "description": "Pin destination URL.",
+                "type": "string"
+              },
+              "boardServiceId": {
+                "type": "string",
+                "description": "Board service ID (required). Get from get_channel metadata.boards[].serviceId"
+              }
+            },
+            "required": [
+              "boardServiceId"
+            ]
+          },
+          "google": {
+            "description": "Google Business-specific settings.",
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "event",
+                  "offer",
+                  "whats_new"
+                ],
+                "description": "Google Business post type (required)."
+              },
+              "title": {
+                "description": "Post title.",
+                "type": "string"
+              },
+              "detailsOffer": {
+                "description": "Offer details (when type=offer).",
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "description": "Offer title (required)."
+                  },
+                  "startDate": {
+                    "type": "string",
+                    "description": "Offer start date (ISO 8601, required)."
+                  },
+                  "endDate": {
+                    "type": "string",
+                    "description": "Offer end date (ISO 8601, required)."
+                  },
+                  "code": {
+                    "description": "Coupon code.",
+                    "type": "string"
+                  },
+                  "link": {
+                    "description": "Link to the offer.",
+                    "type": "string"
+                  },
+                  "terms": {
+                    "description": "Terms & conditions.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title",
+                  "startDate",
+                  "endDate"
+                ]
+              },
+              "detailsEvent": {
+                "description": "Event details (when type=event).",
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "description": "Event title (required)."
+                  },
+                  "startDate": {
+                    "type": "string",
+                    "description": "Event start date (ISO 8601, required)."
+                  },
+                  "endDate": {
+                    "type": "string",
+                    "description": "Event end date (ISO 8601, required)."
+                  },
+                  "isFullDayEvent": {
+                    "type": "boolean",
+                    "description": "Whether the event is a full day event (required)."
+                  },
+                  "button": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "book",
+                      "order",
+                      "shop",
+                      "learn_more",
+                      "signup",
+                      "call"
+                    ],
+                    "description": "Action button type (required)."
+                  },
+                  "link": {
+                    "description": "Link to the action.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title",
+                  "startDate",
+                  "endDate",
+                  "isFullDayEvent",
+                  "button"
+                ]
+              },
+              "detailsWhatsNew": {
+                "description": "What's New details (when type=whats_new).",
+                "type": "object",
+                "properties": {
+                  "button": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "book",
+                      "order",
+                      "shop",
+                      "learn_more",
+                      "signup",
+                      "call"
+                    ],
+                    "description": "Action button type (required)."
+                  },
+                  "link": {
+                    "description": "Link to the action.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "button"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "youtube": {
+            "description": "YouTube-specific settings.",
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "description": "Video title (required)."
+              },
+              "categoryId": {
+                "type": "string",
+                "description": "YouTube category ID (required)."
+              },
+              "privacy": {
+                "description": "Video privacy setting (default: public).",
+                "type": "string",
+                "enum": [
+                  "public",
+                  "private",
+                  "unlisted"
+                ]
+              },
+              "license": {
+                "description": "Video license.",
+                "type": "string",
+                "enum": [
+                  "youtube",
+                  "creativeCommon"
+                ]
+              },
+              "notifySubscribers": {
+                "description": "Notify subscribers (default: true).",
+                "type": "boolean"
+              },
+              "embeddable": {
+                "description": "Allow embedding (default: true).",
+                "type": "boolean"
+              },
+              "madeForKids": {
+                "description": "Made for kids flag.",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "title",
+              "categoryId"
+            ]
+          },
+          "mastodon": {
+            "description": "Mastodon-specific settings.",
+            "type": "object",
+            "properties": {
+              "thread": {
+                "description": "Thread items array. IMPORTANT: For threaded posts, you must provide BOTH the outer text field AND this thread array. The outer text should match the first thread item's text. Include ALL thread items here.",
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "description": "Text content for this thread item.",
+                      "type": "string"
+                    },
+                    "assets": {
+                      "description": "Media assets for this thread item.",
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "image": {
+                                "type": "object",
+                                "properties": {
+                                  "url": {
+                                    "type": "string",
+                                    "description": "Direct URL to the image file."
+                                  },
+                                  "thumbnailUrl": {
+                                    "description": "Thumbnail URL.",
+                                    "type": "string"
+                                  },
+                                  "metadata": {
+                                    "description": "Image-specific metadata.",
+                                    "type": "object",
+                                    "properties": {
+                                      "altText": {
+                                        "type": "string",
+                                        "description": "Alt text for accessibility (required)."
+                                      },
+                                      "animatedThumbnail": {
+                                        "description": "Thumbnail URL for animated images.",
+                                        "type": "string"
+                                      },
+                                      "userTags": {
+                                        "description": "User tags for Instagram.",
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "handle": {
+                                              "type": "string",
+                                              "description": "The handle of the user."
+                                            },
+                                            "x": {
+                                              "type": "number",
+                                              "description": "The x coordinate of the user tag (0-1)."
+                                            },
+                                            "y": {
+                                              "type": "number",
+                                              "description": "The y coordinate of the user tag (0-1)."
+                                            }
+                                          },
+                                          "required": [
+                                            "handle",
+                                            "x",
+                                            "y"
+                                          ]
+                                        }
+                                      },
+                                      "dimensions": {
+                                        "description": "Image dimensions (width and height).",
+                                        "type": "object",
+                                        "properties": {
+                                          "width": {
+                                            "type": "number",
+                                            "description": "Image width in pixels."
+                                          },
+                                          "height": {
+                                            "type": "number",
+                                            "description": "Image height in pixels."
+                                          }
+                                        },
+                                        "required": [
+                                          "width",
+                                          "height"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "altText"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "url"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "image"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "video": {
+                                "type": "object",
+                                "properties": {
+                                  "url": {
+                                    "type": "string",
+                                    "description": "Direct URL to the video file."
+                                  },
+                                  "metadata": {
+                                    "description": "Video-specific metadata.",
+                                    "type": "object",
+                                    "properties": {
+                                      "thumbnailOffset": {
+                                        "description": "Video thumbnail offset in milliseconds.",
+                                        "type": "number"
+                                      },
+                                      "title": {
+                                        "description": "Video title.",
+                                        "type": "string"
+                                      }
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "url"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "video"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "document": {
+                                "type": "object",
+                                "properties": {
+                                  "url": {
+                                    "type": "string",
+                                    "description": "Direct URL to the document file."
+                                  },
+                                  "title": {
+                                    "type": "string",
+                                    "description": "Document title."
+                                  },
+                                  "thumbnailUrl": {
+                                    "type": "string",
+                                    "description": "Document thumbnail URL."
+                                  }
+                                },
+                                "required": [
+                                  "url",
+                                  "title",
+                                  "thumbnailUrl"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "document"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "link": {
+                                "type": "object",
+                                "properties": {
+                                  "url": {
+                                    "type": "string",
+                                    "description": "Link URL."
+                                  },
+                                  "title": {
+                                    "description": "Link title.",
+                                    "type": "string"
+                                  },
+                                  "description": {
+                                    "description": "Link description.",
+                                    "type": "string"
+                                  },
+                                  "thumbnailUrl": {
+                                    "description": "Link thumbnail URL.",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "url"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "link"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              "spoilerText": {
+                "description": "Content warning text.",
+                "type": "string"
+              }
+            }
+          },
+          "threads": {
+            "description": "Threads-specific settings.",
+            "type": "object",
+            "properties": {
+              "type": {
+                "description": "Threads post type. Use `ghost_post` for a Ghost post (no link attachment, location, or topic). Threads does not support reels.",
+                "type": "string",
+                "enum": [
+                  "post",
+                  "ghost_post"
+                ]
+              },
+              "thread": {
+                "description": "Thread items array. IMPORTANT: For threaded posts, you must provide BOTH the outer text field AND this thread array. The outer text should match the first thread item's text. Include ALL thread items here.",
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "description": "Text content for this thread item.",
+                      "type": "string"
+                    },
+                    "assets": {
+                      "description": "Media assets for this thread item.",
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "image": {
+                                "type": "object",
+                                "properties": {
+                                  "url": {
+                                    "type": "string",
+                                    "description": "Direct URL to the image file."
+                                  },
+                                  "thumbnailUrl": {
+                                    "description": "Thumbnail URL.",
+                                    "type": "string"
+                                  },
+                                  "metadata": {
+                                    "description": "Image-specific metadata.",
+                                    "type": "object",
+                                    "properties": {
+                                      "altText": {
+                                        "type": "string",
+                                        "description": "Alt text for accessibility (required)."
+                                      },
+                                      "animatedThumbnail": {
+                                        "description": "Thumbnail URL for animated images.",
+                                        "type": "string"
+                                      },
+                                      "userTags": {
+                                        "description": "User tags for Instagram.",
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "handle": {
+                                              "type": "string",
+                                              "description": "The handle of the user."
+                                            },
+                                            "x": {
+                                              "type": "number",
+                                              "description": "The x coordinate of the user tag (0-1)."
+                                            },
+                                            "y": {
+                                              "type": "number",
+                                              "description": "The y coordinate of the user tag (0-1)."
+                                            }
+                                          },
+                                          "required": [
+                                            "handle",
+                                            "x",
+                                            "y"
+                                          ]
+                                        }
+                                      },
+                                      "dimensions": {
+                                        "description": "Image dimensions (width and height).",
+                                        "type": "object",
+                                        "properties": {
+                                          "width": {
+                                            "type": "number",
+                                            "description": "Image width in pixels."
+                                          },
+                                          "height": {
+                                            "type": "number",
+                                            "description": "Image height in pixels."
+                                          }
+                                        },
+                                        "required": [
+                                          "width",
+                                          "height"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "altText"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "url"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "image"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "video": {
+                                "type": "object",
+                                "properties": {
+                                  "url": {
+                                    "type": "string",
+                                    "description": "Direct URL to the video file."
+                                  },
+                                  "metadata": {
+                                    "description": "Video-specific metadata.",
+                                    "type": "object",
+                                    "properties": {
+                                      "thumbnailOffset": {
+                                        "description": "Video thumbnail offset in milliseconds.",
+                                        "type": "number"
+                                      },
+                                      "title": {
+                                        "description": "Video title.",
+                                        "type": "string"
+                                      }
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "url"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "video"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "document": {
+                                "type": "object",
+                                "properties": {
+                                  "url": {
+                                    "type": "string",
+                                    "description": "Direct URL to the document file."
+                                  },
+                                  "title": {
+                                    "type": "string",
+                                    "description": "Document title."
+                                  },
+                                  "thumbnailUrl": {
+                                    "type": "string",
+                                    "description": "Document thumbnail URL."
+                                  }
+                                },
+                                "required": [
+                                  "url",
+                                  "title",
+                                  "thumbnailUrl"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "document"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "link": {
+                                "type": "object",
+                                "properties": {
+                                  "url": {
+                                    "type": "string",
+                                    "description": "Link URL."
+                                  },
+                                  "title": {
+                                    "description": "Link title.",
+                                    "type": "string"
+                                  },
+                                  "description": {
+                                    "description": "Link description.",
+                                    "type": "string"
+                                  },
+                                  "thumbnailUrl": {
+                                    "description": "Link thumbnail URL.",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "url"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "link"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              "linkAttachment": {
+                "description": "Link attachment.",
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "description": "Link URL (required)."
+                  }
+                },
+                "required": [
+                  "url"
+                ]
+              },
+              "topic": {
+                "description": "Topic tag.",
+                "type": "string"
+              },
+              "locationId": {
+                "description": "Location ID.",
+                "type": "string"
+              },
+              "locationName": {
+                "description": "Location name.",
+                "type": "string"
+              }
+            }
+          },
+          "bluesky": {
+            "description": "Bluesky-specific settings.",
+            "type": "object",
+            "properties": {
+              "thread": {
+                "description": "Thread items array. IMPORTANT: For threaded posts, you must provide BOTH the outer text field AND this thread array. The outer text should match the first thread item's text. Include ALL thread items here.",
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "description": "Text content for this thread item.",
+                      "type": "string"
+                    },
+                    "assets": {
+                      "description": "Media assets for this thread item.",
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "image": {
+                                "type": "object",
+                                "properties": {
+                                  "url": {
+                                    "type": "string",
+                                    "description": "Direct URL to the image file."
+                                  },
+                                  "thumbnailUrl": {
+                                    "description": "Thumbnail URL.",
+                                    "type": "string"
+                                  },
+                                  "metadata": {
+                                    "description": "Image-specific metadata.",
+                                    "type": "object",
+                                    "properties": {
+                                      "altText": {
+                                        "type": "string",
+                                        "description": "Alt text for accessibility (required)."
+                                      },
+                                      "animatedThumbnail": {
+                                        "description": "Thumbnail URL for animated images.",
+                                        "type": "string"
+                                      },
+                                      "userTags": {
+                                        "description": "User tags for Instagram.",
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "handle": {
+                                              "type": "string",
+                                              "description": "The handle of the user."
+                                            },
+                                            "x": {
+                                              "type": "number",
+                                              "description": "The x coordinate of the user tag (0-1)."
+                                            },
+                                            "y": {
+                                              "type": "number",
+                                              "description": "The y coordinate of the user tag (0-1)."
+                                            }
+                                          },
+                                          "required": [
+                                            "handle",
+                                            "x",
+                                            "y"
+                                          ]
+                                        }
+                                      },
+                                      "dimensions": {
+                                        "description": "Image dimensions (width and height).",
+                                        "type": "object",
+                                        "properties": {
+                                          "width": {
+                                            "type": "number",
+                                            "description": "Image width in pixels."
+                                          },
+                                          "height": {
+                                            "type": "number",
+                                            "description": "Image height in pixels."
+                                          }
+                                        },
+                                        "required": [
+                                          "width",
+                                          "height"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "altText"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "url"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "image"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "video": {
+                                "type": "object",
+                                "properties": {
+                                  "url": {
+                                    "type": "string",
+                                    "description": "Direct URL to the video file."
+                                  },
+                                  "metadata": {
+                                    "description": "Video-specific metadata.",
+                                    "type": "object",
+                                    "properties": {
+                                      "thumbnailOffset": {
+                                        "description": "Video thumbnail offset in milliseconds.",
+                                        "type": "number"
+                                      },
+                                      "title": {
+                                        "description": "Video title.",
+                                        "type": "string"
+                                      }
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "url"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "video"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "document": {
+                                "type": "object",
+                                "properties": {
+                                  "url": {
+                                    "type": "string",
+                                    "description": "Direct URL to the document file."
+                                  },
+                                  "title": {
+                                    "type": "string",
+                                    "description": "Document title."
+                                  },
+                                  "thumbnailUrl": {
+                                    "type": "string",
+                                    "description": "Document thumbnail URL."
+                                  }
+                                },
+                                "required": [
+                                  "url",
+                                  "title",
+                                  "thumbnailUrl"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "document"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "link": {
+                                "type": "object",
+                                "properties": {
+                                  "url": {
+                                    "type": "string",
+                                    "description": "Link URL."
+                                  },
+                                  "title": {
+                                    "description": "Link title.",
+                                    "type": "string"
+                                  },
+                                  "description": {
+                                    "description": "Link description.",
+                                    "type": "string"
+                                  },
+                                  "thumbnailUrl": {
+                                    "description": "Link thumbnail URL.",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "url"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "link"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              "linkAttachment": {
+                "description": "Link attachment.",
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "description": "Link URL (required)."
+                  }
+                },
+                "required": [
+                  "url"
+                ]
+              }
+            }
+          },
+          "tiktok": {
+            "description": "TikTok-specific settings.",
+            "type": "object",
+            "properties": {
+              "title": {
+                "description": "Video title.",
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "saveToDraft": {
+        "description": "Save as draft instead of keeping it scheduled.",
+        "type": "boolean"
+      },
+      "ideaId": {
+        "type": "string",
+        "pattern": "^[a-f\\d]{24}$",
+        "description": "Source idea ID if converting from idea."
+      },
+      "draftId": {
+        "type": "string",
+        "pattern": "^[a-f\\d]{24}$",
+        "description": "Source draft ID if converting from draft."
+      }
+    },
+    "required": [
+      "postId",
+      "schedulingType",
+      "mode"
+    ]
+  }
+}

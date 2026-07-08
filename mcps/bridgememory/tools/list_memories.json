@@ -1,0 +1,15 @@
+{
+  "name": "list_memories",
+  "description": "List every memory in the active BridgeMemory hub, newest-first.\n\nReturns: array of { id, title, fileName, modified, size, outgoingLinks }.\nHub is auto-discovered by walking up from `cwd` (or process cwd) looking for `.bridgememory/`.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "cwd": {
+        "type": "string",
+        "description": "Optional. Absolute path used to discover the hub by walking up for `.bridgememory/`. Defaults to the server's process cwd."
+      }
+    },
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

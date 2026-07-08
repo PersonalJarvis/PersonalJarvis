@@ -1,0 +1,32 @@
+{
+  "name": "create_branch",
+  "description": "Create a new branch in a GitHub repository",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "owner": {
+        "type": "string",
+        "description": "Repository owner (username or organization)"
+      },
+      "repo": {
+        "type": "string",
+        "description": "Repository name"
+      },
+      "branch": {
+        "type": "string",
+        "description": "Name for the new branch"
+      },
+      "from_branch": {
+        "type": "string",
+        "description": "Optional: source branch to create from (defaults to the repository's default branch)"
+      }
+    },
+    "required": [
+      "owner",
+      "repo",
+      "branch"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

@@ -1,0 +1,135 @@
+{
+  "name": "firecrawl_parse",
+  "description": "\nParse a file using Firecrawl's /v2/parse endpoint.\n\nIn local/non-cloud MCP mode, this tool reads filePath from the MCP server filesystem and posts multipart data to the configured self-hosted FIRECRAWL_API_URL, preserving the existing direct-read behavior.\n\nIn hosted CLOUD_SERVICE mode, this tool is a two-call flow because hosted MCP cannot read your local filesystem:\n1. Call with filePath, contentType, parse options, and optional declaredSizeBytes. The hosted server mints a short-lived upload URL and returns a safe local curl PUT command plus nextToolCall.\n2. Run the returned curl command locally, then call firecrawl_parse again with uploadRef and the desired parse options. The hosted server calls /v2/parse server-side with your session credential.\n\n**Best for:** Extracting content from a local document (PDF, Word, Excel, HTML, etc.); pulling structured data out of a file with JSON format; converting binary documents into markdown for downstream reasoning.\n**Not recommended for:** Remote URLs (use firecrawl_scrape); multiple files at once (call parse multiple times); documents that require interactive actions, screenshots, or change tracking — those aren't supported by the parse endpoint.\n**Common mistakes:** In hosted mode, do not pass both filePath and uploadRef. Phase 1 uses filePath only to generate upload instructions; phase 2 uses uploadRef only to parse server-side.\n\n**Supported file types:** .html, .htm, .xhtml, .pdf, .docx, .doc, .odt, .rtf, .xlsx, .xls\n**Unsupported options:** actions, screenshot/branding/changeTracking formats, waitFor > 0, location, mobile, proxy values other than \"auto\" or \"basic\".\n**Privacy:** Set `redactPII: true` to return content with personally identifiable information redacted.\n\n**CRITICAL - Format Selection (same rules as firecrawl_scrape):**\nWhen the user asks for SPECIFIC data points from a document, you MUST use JSON format with a schema. Only use markdown when the user needs the ENTIRE document content.\n\n**Handling PDFs:**\nAdd `\"parsers\": [\"pdf\"]` (optionally with `pdfOptions.maxPages`) when parsing a PDF so the PDF engine is invoked explicitly. For very long documents, cap `maxPages` to keep the response within token limits.\n\n**Hosted phase 1 example:**\n```json\n{\n  \"name\": \"firecrawl_parse\",\n  \"arguments\": {\n    \"filePath\": \"/absolute/path/to/document.pdf\",\n    \"contentType\": \"application/pdf\",\n    \"formats\": [\"markdown\"],\n    \"parsers\": [\"pdf\"],\n    \"zeroDataRetention\": true\n  }\n}\n```\n\n**Hosted phase 2 example:**\n```json\n{\n  \"name\": \"firecrawl_parse\",\n  \"arguments\": {\n    \"uploadRef\": \"upload-ref-from-phase-1\",\n    \"formats\": [\"markdown\"],\n    \"parsers\": [\"pdf\"],\n    \"zeroDataRetention\": true\n  }\n}\n```\n\n**Returns:** Phase 1 hosted upload instructions or a parsed document with markdown, html, links, summary, json, or query results depending on the requested formats.\n",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "formats": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "markdown",
+            "html",
+            "rawHtml",
+            "links",
+            "summary",
+            "json",
+            "query"
+          ]
+        }
+      },
+      "jsonOptions": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string"
+          },
+          "schema": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "queryOptions": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "maxLength": 10000
+          },
+          "mode": {
+            "default": "freeform",
+            "type": "string",
+            "enum": [
+              "directQuote",
+              "freeform"
+            ]
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "additionalProperties": false
+      },
+      "parsers": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "pdf"
+          ]
+        }
+      },
+      "pdfOptions": {
+        "type": "object",
+        "properties": {
+          "maxPages": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000
+          }
+        },
+        "additionalProperties": false
+      },
+      "onlyMainContent": {
+        "type": "boolean"
+      },
+      "redactPII": {
+        "type": "boolean"
+      },
+      "includeTags": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "excludeTags": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "removeBase64Images": {
+        "type": "boolean"
+      },
+      "skipTlsVerification": {
+        "type": "boolean"
+      },
+      "storeInCache": {
+        "type": "boolean"
+      },
+      "zeroDataRetention": {
+        "type": "boolean"
+      },
+      "maxAge": {
+        "type": "number"
+      },
+      "proxy": {
+        "type": "string",
+        "enum": [
+          "basic",
+          "auto"
+        ]
+      },
+      "filePath": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Absolute or relative path to a local file to parse. Supported: .html, .htm, .pdf, .docx, .doc, .odt, .rtf, .xlsx, .xls"
+      },
+      "contentType": {
+        "description": "Optional MIME type override. If omitted, the server infers the file kind from the extension.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "filePath"
+    ],
+    "additionalProperties": false
+  }
+}

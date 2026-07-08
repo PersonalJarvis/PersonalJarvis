@@ -1,0 +1,32 @@
+{
+  "name": "update_pull_request_branch",
+  "description": "Update a pull request branch with the latest changes from the base branch",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "owner": {
+        "type": "string",
+        "description": "Repository owner (username or organization)"
+      },
+      "repo": {
+        "type": "string",
+        "description": "Repository name"
+      },
+      "pull_number": {
+        "type": "number",
+        "description": "Pull request number"
+      },
+      "expected_head_sha": {
+        "type": "string",
+        "description": "The expected SHA of the pull request's HEAD ref"
+      }
+    },
+    "required": [
+      "owner",
+      "repo",
+      "pull_number"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "update_memory",
+  "description": "Replace a memory's full body. Caller is responsible for keeping the H1 title intact (or accept that the title shifts to the new H1).\nFor incremental additions, prefer `append_to_memory` so you don't accidentally drop existing wikilinks.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "identifier": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Memory title, filename, or absolute path."
+      },
+      "body": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Full new markdown body. Replaces whatever was there."
+      },
+      "cwd": {
+        "type": "string",
+        "description": "Optional. Absolute path used to discover the hub by walking up for `.bridgememory/`. Defaults to the server's process cwd."
+      }
+    },
+    "required": [
+      "identifier",
+      "body"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "search_code",
+  "description": "Search for code across GitHub repositories",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "q": {
+        "type": "string"
+      },
+      "order": {
+        "type": "string",
+        "enum": [
+          "asc",
+          "desc"
+        ]
+      },
+      "page": {
+        "type": "number",
+        "minimum": 1
+      },
+      "per_page": {
+        "type": "number",
+        "minimum": 1,
+        "maximum": 100
+      }
+    },
+    "required": [
+      "q"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

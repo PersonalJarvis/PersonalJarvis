@@ -1,0 +1,9 @@
+{
+  "name": "get_account",
+  "description": "Retrieves the authenticated user account and organization details. Call this FIRST in any workflow to obtain your organization ID, which is required by most other tools. Returns account info (email, name, timezone), currentTime (the current time in the account timezone, with UTC offset), and organizations (id, name, plan limits, member count). If the user has multiple organizations, list them by name and confirm which one to use before proceeding with other operations.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {}
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "firecrawl_research_search_github",
+  "description": "Search GitHub issue/PR history and repository readmes. Returns ranked matches with repo, url, a short snippet, and (when available) the full matched content in markdown.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "minLength": 1
+      },
+      "k": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "additionalProperties": false
+  }
+}

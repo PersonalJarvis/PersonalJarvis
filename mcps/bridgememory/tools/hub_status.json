@@ -1,0 +1,15 @@
+{
+  "name": "hub_status",
+  "description": "Return the active hub's root path and name plus quick stats. Returns an explicit `hub: null` if no hub is reachable. Cheap — call this first when you're unsure whether BridgeMemory is set up here.\n\nResolution order: (1) walk up from `cwd` for `.bridgememory/`; (2) fall back to the hub the user has open in BridgeSpace's BridgeMemory UI.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "cwd": {
+        "type": "string",
+        "description": "Optional. Absolute path used to discover the hub by walking up for `.bridgememory/`. Defaults to the server's process cwd."
+      }
+    },
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "name": "list_ideas",
+  "description": "Lists content ideas from a Buffer organization, optionally filtered by tags. Ideas are drafts that capture concepts for future social media posts. Returns idea details including id, content (title, text, media, tags, target services, date), group, and timestamps. Supports pagination using Relay-style cursors. Call get_account first to obtain your organization ID. Use create_idea to capture a new idea.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "organizationId": {
+        "type": "string",
+        "pattern": "^[a-f\\d]{24}$",
+        "description": "The ID of the organization to list ideas for. Use get_account to retrieve your organization IDs. Tell the user which organization (by name) you are querying."
+      },
+      "tagIds": {
+        "description": "Filter ideas to those tagged with any of these tag IDs (union/OR).",
+        "type": "array",
+        "items": {
+          "type": "string",
+          "pattern": "^[a-f\\d]{24}$",
+          "description": "A tag ID to filter ideas by."
+        }
+      },
+      "includeUntagged": {
+        "description": "Set true to also include ideas that have no tags assigned. Can be combined with tagIds. Defaults to false.",
+        "type": "boolean"
+      },
+      "first": {
+        "description": "Number of ideas to return per page (default: 20, max: 100)",
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 100
+      },
+      "after": {
+        "description": "Cursor for pagination",
+        "type": "string"
+      }
+    },
+    "required": [
+      "organizationId"
+    ]
+  }
+}

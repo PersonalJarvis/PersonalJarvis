@@ -1,0 +1,8 @@
+{
+  "name": "health-check",
+  "description": "Check if screenpipe is running and healthy. Returns recording status, frame/audio stats, timestamps.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {}
+  }
+}

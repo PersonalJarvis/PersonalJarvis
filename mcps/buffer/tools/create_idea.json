@@ -1,0 +1,125 @@
+{
+  "name": "create_idea",
+  "description": "Create a new content idea in a Buffer organization. Ideas are drafts for future social media posts — use them to capture concepts, attach media, and tag with categories. Call get_account first to obtain your organization ID. Returns the created idea record. Do not use this tool to publish or schedule posts.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "organizationId": {
+        "type": "string",
+        "pattern": "^[a-f\\d]{24}$",
+        "description": "The ID of the organization to create the idea in. Use get_account to retrieve your organization IDs. Confirm with the user which organization (by name) you are creating the idea in."
+      },
+      "content": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "description": "Title or headline of the idea.",
+            "type": "string"
+          },
+          "text": {
+            "description": "Main body text or description.",
+            "type": "string"
+          },
+          "media": {
+            "description": "List of media items to attach to the idea.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "description": "Direct URL to the media file."
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "image",
+                    "gif",
+                    "video",
+                    "link",
+                    "document",
+                    "unsupported"
+                  ],
+                  "description": "The type of media. Note: 'video' is not supported via the public API."
+                },
+                "alt": {
+                  "description": "Alternative text description for accessibility.",
+                  "type": "string"
+                },
+                "thumbnailUrl": {
+                  "description": "URL to a smaller preview version of the media.",
+                  "type": "string"
+                },
+                "size": {
+                  "description": "File size in bytes.",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "url",
+                "type"
+              ]
+            }
+          },
+          "tags": {
+            "description": "Tags to categorize the idea.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Unique identifier of the tag."
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Display name of the tag."
+                },
+                "color": {
+                  "type": "string",
+                  "description": "Hex color code for the tag (e.g., \"#F523F1\")."
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "color"
+              ]
+            }
+          },
+          "services": {
+            "description": "Target social media platforms for the idea.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "instagram",
+                "facebook",
+                "twitter",
+                "linkedin",
+                "pinterest",
+                "tiktok",
+                "googlebusiness",
+                "startPage",
+                "mastodon",
+                "youtube",
+                "threads",
+                "bluesky"
+              ]
+            }
+          },
+          "date": {
+            "description": "Target date for the idea in ISO 8601 format (e.g., \"2025-03-15T10:00:00Z\").",
+            "type": "string"
+          }
+        },
+        "description": "Content and metadata for the new idea."
+      }
+    },
+    "required": [
+      "organizationId",
+      "content"
+    ]
+  }
+}

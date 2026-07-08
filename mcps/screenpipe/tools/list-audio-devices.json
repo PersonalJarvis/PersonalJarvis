@@ -1,0 +1,8 @@
+{
+  "name": "list-audio-devices",
+  "description": "List available audio input/output devices for recording.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {}
+  }
+}
