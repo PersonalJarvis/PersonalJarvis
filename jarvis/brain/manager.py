@@ -5577,6 +5577,33 @@ class BrainManager:
             in_progress=True,
         )
 
+    @staticmethod
+    def _short_wiki_failure_reason(diag: str | None) -> str:
+        """Distil a wiki-ingest failure diagnostic into a short spoken cause.
+
+        Keeps only the first line/sentence, strips a bare ``exit N``-style
+        opaque token (a raw exit code must never be spoken — mirror of
+        ``cu_failure_readback``'s guard), and caps the length so the failure
+        phrase stays one short clause. Returns ``""`` when nothing
+        presentable remains, in which case the caller falls back to the
+        reason-less ``wiki_save_failed`` phrase.
+        """
+        raw = (diag or "").strip()
+        if not raw:
+            return ""
+        # First line, then the first sentence within that line.
+        first_line = raw.splitlines()[0].strip()
+        m = re.match(r"^(.*?[.!?])(?:\s|$)", first_line)
+        reason = (m.group(1) if m else first_line).strip()
+        # Strip a bare "exit N" opaque token (optionally bracketed) — never
+        # speak a raw exit code.
+        reason = re.sub(
+            r"\(?\s*exit\s*\d+\s*\)?", "", reason, flags=re.IGNORECASE
+        ).strip(" .,:;-")
+        if len(reason) > 80:
+            reason = reason[:80].rstrip()
+        return reason
+
     async def _run_wiki_ingest_background(
         self,
         *,
@@ -5627,8 +5654,17 @@ class BrainManager:
                     latency_budget_ms=2500,
                 )
             else:
-                diag = str(getattr(result, "error", "") or "unknown")
-                canned_fail = action_phrase("wiki_save_failed", lang)
+                err = str(getattr(result, "error", "") or "").strip()
+                diag = err or "unknown"
+                # Keyless (canned) failure path is honest-with-cause: surface a
+                # short, speakable reason (mirrors wiki_saved_detail on success).
+                # The composer still gets the FULL diag via facts below.
+                short_reason = self._short_wiki_failure_reason(err)
+                canned_fail = (
+                    action_phrase("wiki_save_failed_reason", lang, reason=short_reason)
+                    if short_reason
+                    else action_phrase("wiki_save_failed", lang)
+                )
                 out = await render_readback(
                     getattr(self, "_readback_composer", None),
                     instruction=(
