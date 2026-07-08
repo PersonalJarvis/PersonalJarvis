@@ -251,7 +251,9 @@ def test_jarvis_phrase_resolves_generically_not_to_a_bundled_model() -> None:
     assert plan.engine == "stt_match"  # vosk is fenced off by the autouse fixture
     assert plan.oww_model_path is None
     assert plan.oww_keyword == "jarvis"
-    assert plan.degraded is False
+    # Task 5 (B3): an ordinary custom phrase served ONLY by stt_match is now a
+    # LOUD degrade (AP-27) — no Vosk model, no custom ONNX in this fixture.
+    assert plan.degraded is True
 
 
 def test_brand_phrase_never_loads_an_upstream_package_model() -> None:
@@ -275,7 +277,9 @@ def test_arbitrary_phrase_with_local_whisper_resolves_to_stt_match() -> None:
     assert plan.engine == "stt_match"
     assert plan.needs_local_whisper is True
     assert plan.oww_model_path is None
-    assert plan.degraded is False
+    # Task 5 (B3): stt_match-only for an ordinary custom phrase is a LOUD
+    # degrade (AP-27), not silent success.
+    assert plan.degraded is True
     assert plan.matcher.search("hey computer") is not None
 
 
@@ -355,7 +359,8 @@ def test_jarvis_stays_typeable_through_the_generic_chain() -> None:
     plan = resolve_wake_plan(_cfg(phrase="Hey Jarvis"), local_whisper_available=True)
     assert plan.engine == "stt_match"
     assert plan.oww_model_path is None
-    assert plan.degraded is False
+    # Task 5 (B3): stt_match-only is now a LOUD degrade (AP-27).
+    assert plan.degraded is True
 
 
 def test_just_jarvis_stays_typeable_through_the_generic_chain() -> None:
@@ -363,7 +368,8 @@ def test_just_jarvis_stays_typeable_through_the_generic_chain() -> None:
     plan = resolve_wake_plan(_cfg(phrase="Jarvis"), local_whisper_available=True)
     assert plan.engine == "stt_match"
     assert plan.oww_model_path is None
-    assert plan.degraded is False
+    # Task 5 (B3): stt_match-only is now a LOUD degrade (AP-27).
+    assert plan.degraded is True
 
 
 def test_sensitivity_to_poll_interval_makes_the_slider_control_speed() -> None:
