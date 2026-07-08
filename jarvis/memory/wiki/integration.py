@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -99,6 +100,10 @@ class WikiIntegrationHandle:
     _worker_stop: Callable[[], Awaitable[None]] | None
     _task: "asyncio.Task[Any] | None" = field(default=None)
     _telemetry_task: "asyncio.Task[Any] | None" = field(default=None)
+    # Spec A4: age-based journal flush loop. Same fire-and-forget
+    # conventions as the hourly telemetry loop (started off the boot
+    # critical path per AP-26, cancelled here on teardown).
+    _journal_age_flush_task: "asyncio.Task[Any] | None" = field(default=None)
     # The VoiceFactBridge attached during bootstrap. Declared as a field (not
     # monkey-patched) so shutdown() can stop it — otherwise its TranscriptFinal
     # / ResponseGenerated subscriptions leak on every teardown.
@@ -188,6 +193,15 @@ class WikiIntegrationHandle:
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
         self._telemetry_task = None
+
+        # Cancel the age-based journal flush loop if started (spec A4).
+        if self._journal_age_flush_task is not None and not self._journal_age_flush_task.done():
+            self._journal_age_flush_task.cancel()
+            try:
+                await self._journal_age_flush_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+        self._journal_age_flush_task = None
 
         # Clear the running-curator registry so a fresh bootstrap (e.g. in a
         # test that tears down and re-creates) does not see the stale one.
@@ -489,6 +503,17 @@ async def bootstrap_wiki_integration(
             # leftovers (< pressure threshold) consolidate without waiting
             # for new conversation.
             kick_journal_backlog(journal, scheduler)
+
+            # Spec A4: below-threshold backlogs on a quiet install would
+            # otherwise sit pending forever (not enough NEW conversation
+            # ever arrives to cross consolidate_after_candidates). Start a
+            # background age-check loop, same fire-and-forget conventions
+            # as the hourly telemetry loop started below (AP-9/AP-26).
+            handle._journal_age_flush_task = asyncio.create_task(  # noqa: SLF001
+                _journal_age_flush_loop(journal, scheduler, root_cfg.wiki_scheduler),
+                name="wiki-journal-age-flush",
+            )
+            log.info("wiki_integration: age-based journal flush loop started")
         except Exception as exc:  # noqa: BLE001
             log.warning(
                 "wiki_integration: Stage-2 consolidator unavailable (%s) — "
@@ -766,31 +791,86 @@ def kick_journal_backlog(journal: Any, scheduler: Any) -> None:
     try:
         if journal is None or scheduler is None:
             return
-        if journal.backlog_count() <= 0:
+        backlog = journal.backlog_count()
+        _record_backlog_health(backlog)
+        if backlog <= 0:
             return
-        from jarvis.memory.wiki.scheduler import TriggerSource
+        from jarvis.memory.wiki.scheduler import fire_journal_trigger
 
-        task = asyncio.create_task(
-            scheduler.trigger(TriggerSource.JOURNAL),
+        fire_journal_trigger(
+            scheduler,
             name="wiki-journal-boot-drain",
+            log_context="boot journal drain",
         )
-
-        def _log_outcome(t: "asyncio.Task[Any]") -> None:
-            if t.cancelled():
-                return
-            exc = t.exception()
-            if exc is not None:
-                log.warning("wiki_integration: boot journal drain failed: %s", exc)
-
-        task.add_done_callback(_log_outcome)
         log.info(
             "wiki_integration: boot drain triggered for %d pending candidate(s)",
-            journal.backlog_count(),
+            backlog,
         )
     except RuntimeError:
         log.debug("wiki_integration: no event loop for the boot journal drain")
     except Exception as exc:  # noqa: BLE001
         log.warning("wiki_integration: boot journal drain skipped: %s", exc)
+
+
+def _should_age_flush(oldest_ms: int | None, now_ms: int, max_age_min: int) -> bool:
+    """Pure decision for the age-based flush (spec A4).
+
+    ``True`` only when the age flush is enabled (``max_age_min > 0``),
+    something is pending (``oldest_ms is not None``), and the oldest pending
+    candidate is at least ``max_age_min`` minutes old. Extracted from the
+    loop so the age/enable/empty logic is unit-testable without a clock.
+    """
+    if max_age_min <= 0 or oldest_ms is None:
+        return False
+    age_min = (now_ms - oldest_ms) / 60_000
+    return age_min >= max_age_min
+
+
+async def _journal_age_flush_loop(journal: Any, scheduler: Any, sched_cfg: Any) -> None:
+    """Fire a JOURNAL trigger when the oldest pending candidate exceeds the
+    configured age (spec A4).
+
+    Below-threshold backlogs on a quiet install never cross
+    ``consolidate_after_candidates`` on their own — this loop is the
+    backstop that still gets them written, the below-threshold counterpart
+    to the extractor's count-gated trigger (both go through the shared
+    :func:`~jarvis.memory.wiki.scheduler.fire_journal_trigger`). Runs off
+    the voice hot path (AP-9) and was started off the boot critical path
+    (AP-26); cancelled in :meth:`WikiIntegrationHandle.shutdown` exactly
+    like the hourly telemetry loop. Never raises — a check failure is
+    logged and the loop keeps polling.
+    """
+    from jarvis.memory.wiki.scheduler import fire_journal_trigger
+
+    max_age_min = int(getattr(sched_cfg, "flush_pending_max_age_minutes", 10))
+    if max_age_min <= 0:
+        log.debug("wiki_integration: age-based journal flush disabled (max_age<=0)")
+        return
+    while True:
+        await asyncio.sleep(120)
+        try:
+            oldest = journal.oldest_pending_ms()
+            if _should_age_flush(oldest, int(time.time() * 1000), max_age_min):
+                fire_journal_trigger(
+                    scheduler,
+                    name="wiki-journal-age-flush-trigger",
+                    log_context="age-based journal flush",
+                )
+        except Exception:  # noqa: BLE001 — never kill the loop
+            log.debug("wiki_integration: journal age flush check failed", exc_info=True)
+
+
+def _record_backlog_health(count: int) -> None:
+    """Record the journal backlog on the health singleton (spec A5).
+
+    Recording must never raise into the boot/pressure-check path (AP-9).
+    """
+    try:
+        from jarvis.memory.wiki.health import health
+
+        health.record_backlog(count)
+    except Exception:  # noqa: BLE001 — health recording must never break the pipeline
+        log.debug("wiki_integration: health.record_backlog failed", exc_info=True)
 
 
 def _load_root_config() -> Any:

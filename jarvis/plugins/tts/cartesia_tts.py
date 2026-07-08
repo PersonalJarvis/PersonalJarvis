@@ -345,23 +345,34 @@ class CartesiaTTS:
         self, text: str, language_code: str | None
     ) -> AsyncIterator[AudioChunk]:
         log = logging.getLogger("jarvis.tts.cartesia")
-        try:
-            from jarvis.plugins.tts.gemini_flash_tts import GeminiFlashTTS
 
-            gemini = GeminiFlashTTS(
-                language_code=language_code or "de-DE",
-                allow_sapi5_fallback=self._allow_sapi5_fallback,
-            )
-            async for chunk in gemini.synthesize(
-                text, language_code=language_code
-            ):
-                yield chunk
-            return
-        except Exception as exc:  # noqa: BLE001
-            log.error(
-                "Gemini fallback after Cartesia error also failed (%s).",
-                exc.__class__.__name__, exc_info=True,
-            )
+        # Stage 1: cross to whatever TTS family the host actually has a key for
+        # (AP-22) — never a hardcoded keyless Gemini that would go silently mute
+        # for a Cartesia-only downloader.
+        from jarvis.plugins.tts import resolve_keyed_fallback
+
+        fb = resolve_keyed_fallback(
+            self.name,
+            allow_sapi5=self._allow_sapi5_fallback,
+            language_code=language_code,
+        )
+        if fb is not None:
+            produced = False
+            try:
+                async for chunk in fb.synthesize(text, language_code=language_code):
+                    produced = True
+                    yield chunk
+            except Exception as exc:  # noqa: BLE001
+                log.error(
+                    "Key-aware fallback after Cartesia error also failed (%s).",
+                    exc.__class__.__name__, exc_info=True,
+                )
+            finally:
+                aclose = getattr(fb, "aclose", None)
+                if aclose is not None:
+                    await aclose()
+            if produced:
+                return
 
         if not self._allow_sapi5_fallback:
             log.error(

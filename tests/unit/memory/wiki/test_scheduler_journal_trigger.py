@@ -76,7 +76,7 @@ async def test_journal_trigger_without_consolidator_skips(tmp_path: Path) -> Non
 
 
 def test_scheduler_config_has_journal_pressure_threshold() -> None:
-    assert SchedulerConfig().consolidate_after_candidates == 8
+    assert SchedulerConfig().consolidate_after_candidates == 3
 
 
 # ---------------------------------------------------------------------------

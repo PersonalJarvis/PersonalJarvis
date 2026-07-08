@@ -35,3 +35,9 @@ def tree() -> None:
 def vaults() -> None:
     """List the user's registered Obsidian vaults (connect picker, spec A6)."""
     invoke.run("GET", "/api/setup/obsidian/vaults")
+
+
+@app.command()
+def health() -> None:
+    """Show wiki subsystem health: bootstrap, last write, chain failures, backlog (spec A5)."""
+    invoke.run("GET", "/api/wiki/health")

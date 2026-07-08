@@ -5483,6 +5483,234 @@ class BrainManager:
         if len(history) > self._HISTORY_MAX:
             self._history = history[-self._HISTORY_MAX:]
 
+    def _last_exchange_text(self) -> str | None:
+        """Last user+assistant exchange as an ingest source ('write THAT').
+
+        ``_history`` entries are real :class:`BrainMessage` instances —
+        ``role`` is one of ``user``/``assistant``/``system``/``tool`` and
+        ``content`` is either a plain string or a list of multimodal blocks
+        (dropped images etc.). Only plain-string user/assistant turns are
+        usable ingest source text; anything else is skipped, never raises.
+        """
+        try:
+            items = list(self._history)[-4:]
+        except Exception:  # noqa: BLE001 — history shape is provider-owned
+            return None
+        parts: list[str] = []
+        for item in items:
+            role = getattr(item, "role", None)
+            text = getattr(item, "content", None)
+            if role in ("user", "assistant") and isinstance(text, str) and text.strip():
+                parts.append(f"{role}: {text.strip()}")
+        return "\n".join(parts[-2:]) or None
+
+    async def _run_wiki_ingest_fast_path(
+        self,
+        user_text: str,
+        *,
+        trace_id: UUID | None = None,
+    ) -> str | None:
+        """Deterministic explicit wiki-write path (spec A1-A3).
+
+        Explicit "write this to the wiki" commands must not depend on the
+        router LLM picking ``wiki-ingest`` (fresh-machine forensics Bug
+        12/18). Mirrors the Computer-Use offload: immediate localized
+        progress ack, background ingest, completion announcement AFTER the
+        write — the success phrase is generated from the tool result, so
+        it can never precede (or contradict) the file on disk.
+        """
+        from jarvis.memory.wiki.intent import match_wiki_intent
+
+        if self._tool_executor is None:
+            return None
+        match = match_wiki_intent(user_text)
+        if match is None:
+            return None
+        tool = self._tools.get("wiki-ingest")
+        if tool is None:
+            return None
+        lang = self._direct_ack_language(user_text)
+
+        content = match.content
+        if content is None:
+            content = self._last_exchange_text()
+        if not content or len(content.strip()) < 12:
+            return await render_readback(
+                getattr(self, "_readback_composer", None),
+                instruction=(
+                    "The user asked to write something to the wiki but no "
+                    "content could be determined; ask them to repeat it "
+                    "with the content."
+                ),
+                language=lang,
+                canned=lambda: action_phrase("wiki_nothing_to_save", lang),
+            )
+
+        tid = trace_id or uuid4()
+        bg_tasks = getattr(self, "_cu_background_tasks", None)
+        if bg_tasks is None:
+            bg_tasks = set()
+            self._cu_background_tasks = bg_tasks
+        task = asyncio.create_task(
+            self._run_wiki_ingest_background(
+                tool=tool,
+                text=content,
+                user_text=user_text,
+                trace_id=tid,
+                lang=lang,
+            ),
+            name="wiki-ingest-background",
+        )
+        # Keep a strong reference so the task is not garbage-collected
+        # mid-flight, and drop it on completion (same pattern as the
+        # Computer-Use offload above — one shared retention set).
+        bg_tasks.add(task)
+        task.add_done_callback(bg_tasks.discard)
+        return await render_readback(
+            getattr(self, "_readback_composer", None),
+            instruction=(
+                "Briefly acknowledge that you are writing this to the wiki "
+                "right now. Do NOT claim it is already saved."
+            ),
+            language=lang,
+            canned=lambda: action_phrase("wiki_saving", lang),
+            in_progress=True,
+        )
+
+    @staticmethod
+    def _short_wiki_failure_reason(diag: str | None) -> str:
+        """Distil a wiki-ingest failure diagnostic into a short spoken cause.
+
+        Keeps only the first line/sentence, strips a bare ``exit N``-style
+        opaque token (a raw exit code must never be spoken — mirror of
+        ``cu_failure_readback``'s guard), and caps the length so the failure
+        phrase stays one short clause. Returns ``""`` when nothing
+        presentable remains, in which case the caller falls back to the
+        reason-less ``wiki_save_failed`` phrase.
+        """
+        raw = (diag or "").strip()
+        if not raw:
+            return ""
+        # First line, then the first sentence within that line.
+        first_line = raw.splitlines()[0].strip()
+        m = re.match(r"^(.*?[.!?])(?:\s|$)", first_line)
+        reason = (m.group(1) if m else first_line).strip()
+        # Strip a bare "exit N" opaque token (optionally bracketed) — never
+        # speak a raw exit code.
+        reason = re.sub(
+            r"\(?\s*exit\s*\d+\s*\)?", "", reason, flags=re.IGNORECASE
+        ).strip(" .,:;-")
+        if len(reason) > 80:
+            reason = reason[:80].rstrip()
+        return reason
+
+    async def _run_wiki_ingest_background(
+        self,
+        *,
+        tool: Any,
+        text: str,
+        user_text: str,
+        trace_id: UUID,
+        lang: str,
+    ) -> None:
+        """Run wiki-ingest off the voice turn and announce the outcome.
+
+        Never raises; ALWAYS announces (zero silent drops) — mirrors
+        :meth:`_run_computer_use_background`. Nothing here is
+        user-cancellable, so there is no cancel branch.
+        """
+        out: str
+        diag: str | None = None
+        try:
+            result = await asyncio.wait_for(
+                self._tool_executor.execute(
+                    tool,
+                    {"text": text, "source": "voice:wiki-command"},
+                    user_utterance=user_text,
+                    trace_id=trace_id,
+                ),
+                timeout=90.0,
+            )
+            if result.success:
+                pages = ", ".join(
+                    line.strip(" -")
+                    for line in str(result.output or "").splitlines()
+                    if line.strip().startswith("- ") and line.strip().endswith(".md")
+                )
+                canned_ok = (
+                    action_phrase("wiki_saved_detail", lang, detail=pages)
+                    if pages else action_phrase("wiki_saved", lang)
+                )
+                out = await render_readback(
+                    getattr(self, "_readback_composer", None),
+                    instruction=(
+                        "The user's note was just written to their wiki; "
+                        "confirm naturally, keeping the page name if given."
+                    ),
+                    language=lang,
+                    canned=lambda: canned_ok,
+                    facts={"user_request": user_text, "result": canned_ok},
+                    honesty_bound=True,
+                    latency_budget_ms=2500,
+                )
+            else:
+                err = str(getattr(result, "error", "") or "").strip()
+                diag = err or "unknown"
+                # Keyless (canned) failure path is honest-with-cause: surface a
+                # short, speakable reason (mirrors wiki_saved_detail on success).
+                # The composer still gets the FULL diag via facts below.
+                short_reason = self._short_wiki_failure_reason(err)
+                canned_fail = (
+                    action_phrase("wiki_save_failed_reason", lang, reason=short_reason)
+                    if short_reason
+                    else action_phrase("wiki_save_failed", lang)
+                )
+                out = await render_readback(
+                    getattr(self, "_readback_composer", None),
+                    instruction=(
+                        "Writing the user's note to the wiki failed; tell "
+                        "them plainly, keep the reason simple, and mention "
+                        "they can check the wiki settings."
+                    ),
+                    language=lang,
+                    canned=lambda: canned_fail,
+                    facts={"user_request": user_text, "what_happened": diag},
+                    honesty_bound=False,
+                    latency_budget_ms=2500,
+                )
+        except TimeoutError:
+            diag = "wiki-ingest timeout after 90s"
+            out = await render_readback(
+                getattr(self, "_readback_composer", None),
+                instruction="Writing the note to the wiki took too long and was stopped.",
+                language=lang,
+                canned=lambda: action_phrase("wiki_save_failed", lang),
+                latency_budget_ms=2000,
+            )
+        except Exception as exc:  # noqa: BLE001 — background crash must not leak
+            log.error("wiki-ingest background task failed: %r", exc, exc_info=True)
+            diag = repr(exc)
+            out = await render_readback(
+                getattr(self, "_readback_composer", None),
+                instruction="Something went wrong while writing the note to the wiki.",
+                language=lang,
+                canned=lambda: action_phrase("wiki_save_failed", lang),
+                latency_budget_ms=2000,
+            )
+        self._append_cu_outcome_to_history(
+            user_request=user_text, outcome_text=out, diagnostic=diag,
+        )
+        try:
+            await self._bus.publish(AnnouncementRequested(
+                text=out,
+                priority="normal",
+                language=lang,
+                kind="completion",
+                detail=diag,
+            ))
+        except Exception:  # noqa: BLE001
+            log.debug("wiki-ingest completion announce failed", exc_info=True)
+
     async def _on_cu_tool_completion(self, event: Any) -> None:
         """Mirror a router-tier ``computer_use`` TOOL outcome into the history.
 
@@ -6447,6 +6675,25 @@ class BrainManager:
                     trace_id=turn_trace_id,
                 )
                 return local_action
+
+        # Wiki-write fast path (spec A1-A3): an explicit "write this to the
+        # wiki" command must not depend on the router LLM choosing the
+        # wiki-ingest tool (fresh-machine forensics Bug 12/18). Deterministic,
+        # model-independent, confirm-after-write — same shape as the
+        # local-action block above. Placed before navigation/capability gates
+        # so a skill match never shadows an explicit wiki command.
+        if self._skill_turn_match is None:
+            wiki_reply = await self._run_wiki_ingest_fast_path(
+                user_text, trace_id=turn_trace_id,
+            )
+            if wiki_reply is not None:
+                await self._record_response_side_effects(
+                    user_text=user_text,
+                    response_text=wiki_reply,
+                    use_history=use_history,
+                    trace_id=turn_trace_id,
+                )
+                return wiki_reply
 
         # Navigation fast-path: a clear "go to section X" command moves the UI
         # deterministically (a dumb action, AD-OE3). Placed BEFORE the capability

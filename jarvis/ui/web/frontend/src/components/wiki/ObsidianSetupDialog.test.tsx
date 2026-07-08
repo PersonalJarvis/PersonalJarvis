@@ -63,6 +63,32 @@ const STATUS_OK: ObsidianStatus = {
   recommended_action: "ok",
 };
 
+const VAULTS = [
+  { path: "<USER_HOME>/Notes", name: "Notes" },
+  { path: "<USER_HOME>/Work", name: "Work" },
+];
+
+/**
+ * Fetch stub that branches by URL: the vault-choice picker's ``GET
+ * .../vaults`` and the register flow's ``POST .../register`` need
+ * different bodies within the same test.
+ */
+function makeVaultAwareFetch(
+  vaults: typeof VAULTS,
+  registerBody: unknown,
+): typeof fetch {
+  return vi.fn(async (input: RequestInfo | URL) => {
+    const href = typeof input === "string" ? input : input.toString();
+    if (href.includes("/obsidian/vaults")) {
+      return jsonResponse({ ok: true, config_exists: true, vaults });
+    }
+    if (href.includes("/obsidian/register")) {
+      return jsonResponse(registerBody);
+    }
+    return jsonResponse({}, 404);
+  }) as unknown as typeof fetch;
+}
+
 describe("ObsidianSetupDialog", () => {
   it("renders step 1 active when installed=false", () => {
     render(
@@ -289,5 +315,228 @@ describe("ObsidianSetupDialog", () => {
     expect(screen.queryByTestId("obsidian-setup-step-2")).toBeNull();
     const marker3 = screen.getByTestId("obsidian-setup-step-marker-3");
     expect(marker3.getAttribute("data-state")).toBe("active");
+  });
+
+  describe("vault choice (spec A6)", () => {
+    it("interpolates the assistant name into the vault-choice strings (no literal {name})", () => {
+      // The vault-choice strings refer to the assistant by the `{name}`
+      // token (i18n/index.ts invariant), resolved through the same
+      // interpolation `useT()` applies to every sibling string. In tests the
+      // token resolves to the neutral default name ("Assistant"), so the
+      // rendered card must show that — never a raw "{name}" placeholder.
+      render(
+        <ObsidianSetupDialog
+          open
+          onClose={() => {}}
+          initialStatus={STATUS_NOT_REGISTERED}
+        />,
+      );
+      const separateBtn = screen.getByTestId("obsidian-setup-mode-separate");
+      expect(separateBtn.textContent).toContain("Assistant");
+      expect(separateBtn.textContent).not.toContain("{name}");
+    });
+
+    it("renders both vault-choice options, 'existing' enabled once the vault list loads", async () => {
+      const fetchImpl = makeVaultAwareFetch(VAULTS, {
+        status: "added",
+        active_vault_root: "<USER_HOME>/wiki/obsidian-vault",
+        restart_required: false,
+      });
+      render(
+        <ObsidianSetupDialog
+          open
+          onClose={() => {}}
+          initialStatus={STATUS_NOT_REGISTERED}
+          fetchImpl={fetchImpl}
+        />,
+      );
+      // "Separate" is the default and starts selected.
+      const separate = screen.getByTestId("obsidian-setup-mode-separate");
+      expect(separate.getAttribute("aria-checked")).toBe("true");
+
+      // "Existing" starts disabled (no vault list yet) and enables once the
+      // fetch resolves.
+      await waitFor(() => {
+        expect(
+          screen.getByTestId("obsidian-setup-mode-existing").hasAttribute("disabled"),
+        ).toBe(false);
+      });
+      expect(
+        screen.getByTestId("obsidian-setup-mode-existing").getAttribute("aria-checked"),
+      ).toBe("false");
+    });
+
+    it("choosing 'existing' + a vault registers with mode=existing and shows the target path", async () => {
+      const fetchImpl = makeVaultAwareFetch(VAULTS, {
+        status: "added",
+        active_vault_root: "<USER_HOME>/Work/Jarvis",
+        restart_required: true,
+      });
+      render(
+        <ObsidianSetupDialog
+          open
+          onClose={() => {}}
+          initialStatus={STATUS_NOT_REGISTERED}
+          fetchImpl={fetchImpl}
+        />,
+      );
+      await waitFor(() => {
+        expect(
+          screen.getByTestId("obsidian-setup-mode-existing").hasAttribute("disabled"),
+        ).toBe(false);
+      });
+      fireEvent.click(screen.getByTestId("obsidian-setup-mode-existing"));
+
+      const select = screen.getByTestId(
+        "obsidian-setup-vault-select",
+      ) as HTMLSelectElement;
+      fireEvent.change(select, { target: { value: VAULTS[1].path } });
+
+      fireEvent.click(screen.getByTestId("obsidian-setup-register"));
+
+      await waitFor(() => {
+        expect(fetchImpl).toHaveBeenCalledWith(
+          "/api/setup/obsidian/register",
+          expect.objectContaining({
+            method: "POST",
+            body: JSON.stringify({
+              mode: "existing",
+              existing_vault_path: VAULTS[1].path,
+            }),
+          }),
+        );
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("obsidian-setup-step-3")).toBeDefined();
+      });
+      const target = screen.getByTestId("obsidian-setup-active-vault-root");
+      expect(target.textContent).toContain("<USER_HOME>/Work/Jarvis");
+      expect(screen.getByTestId("obsidian-setup-restart-hint")).toBeDefined();
+    });
+
+    it("after choosing 'existing', 'Open in Obsidian' targets the picked vault, not the default one", async () => {
+      // Regression: the live-test button must target the vault the user
+      // actually picked (VAULTS[1] = "Work"), never the default
+      // separate-vault path from `initialStatus`.
+      const fetchImpl = makeVaultAwareFetch(VAULTS, {
+        status: "added",
+        active_vault_root: "<USER_HOME>/Work/Jarvis",
+        restart_required: true,
+      });
+      let lastHref: string | null = null;
+      const originalLocation = window.location;
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: {
+          ...originalLocation,
+          get href() {
+            return lastHref ?? "";
+          },
+          set href(value: string) {
+            lastHref = value;
+          },
+        },
+      });
+
+      try {
+        render(
+          <ObsidianSetupDialog
+            open
+            onClose={() => {}}
+            initialStatus={STATUS_NOT_REGISTERED}
+            fetchImpl={fetchImpl}
+          />,
+        );
+        await waitFor(() => {
+          expect(
+            screen.getByTestId("obsidian-setup-mode-existing").hasAttribute("disabled"),
+          ).toBe(false);
+        });
+        fireEvent.click(screen.getByTestId("obsidian-setup-mode-existing"));
+        fireEvent.change(
+          screen.getByTestId("obsidian-setup-vault-select") as HTMLSelectElement,
+          { target: { value: VAULTS[1].path } },
+        );
+        fireEvent.click(screen.getByTestId("obsidian-setup-register"));
+
+        await waitFor(() => {
+          expect(screen.getByTestId("obsidian-setup-step-3")).toBeDefined();
+        });
+        fireEvent.click(screen.getByTestId("obsidian-setup-launch"));
+        expect(lastHref).not.toBeNull();
+        expect(lastHref!).toContain(encodeURIComponent(VAULTS[1].name));
+        expect(lastHref!).not.toContain(encodeURIComponent("obsidian-vault"));
+      } finally {
+        Object.defineProperty(window, "location", {
+          configurable: true,
+          value: originalLocation,
+        });
+      }
+    });
+
+    it("clicking 'Restart now' POSTs to the shared restart-app endpoint", async () => {
+      const fetchImpl = makeVaultAwareFetch(VAULTS, {
+        status: "added",
+        active_vault_root: "<USER_HOME>/Notes/Jarvis",
+        restart_required: true,
+      });
+      render(
+        <ObsidianSetupDialog
+          open
+          onClose={() => {}}
+          initialStatus={STATUS_NOT_REGISTERED}
+          fetchImpl={fetchImpl}
+        />,
+      );
+      await waitFor(() => {
+        expect(
+          screen.getByTestId("obsidian-setup-mode-existing").hasAttribute("disabled"),
+        ).toBe(false);
+      });
+      fireEvent.click(screen.getByTestId("obsidian-setup-mode-existing"));
+      fireEvent.click(screen.getByTestId("obsidian-setup-register"));
+
+      const restartButton = await screen.findByTestId("obsidian-setup-restart-now");
+      fireEvent.click(restartButton);
+
+      await waitFor(() => {
+        expect(fetchImpl).toHaveBeenCalledWith(
+          "/api/settings/restart-app",
+          expect.objectContaining({ method: "POST" }),
+        );
+      });
+    });
+
+    it("choosing 'existing' with an unknown path shows an inline error and stays on step 2", async () => {
+      const fetchImpl = makeVaultAwareFetch(VAULTS, {
+        status: "config_missing",
+        error: "existing vault path not found",
+        active_vault_root: "<USER_HOME>/wiki/obsidian-vault",
+        restart_required: false,
+      });
+      render(
+        <ObsidianSetupDialog
+          open
+          onClose={() => {}}
+          initialStatus={STATUS_NOT_REGISTERED}
+          fetchImpl={fetchImpl}
+        />,
+      );
+      await waitFor(() => {
+        expect(
+          screen.getByTestId("obsidian-setup-mode-existing").hasAttribute("disabled"),
+        ).toBe(false);
+      });
+      fireEvent.click(screen.getByTestId("obsidian-setup-mode-existing"));
+      fireEvent.click(screen.getByTestId("obsidian-setup-register"));
+
+      await waitFor(() => {
+        expect(
+          screen.getByTestId("obsidian-setup-register-error").textContent,
+        ).toContain("existing vault path not found");
+      });
+      expect(screen.getByTestId("obsidian-setup-step-2")).toBeDefined();
+    });
   });
 });

@@ -53,6 +53,22 @@ _MIN_INGEST_CHARS: int = 12
 _MAX_INGEST_CHARS: int = 32_000
 
 
+def _record_write_health(
+    ok: bool, *, pages: list[str], error: str | None, source: str,
+) -> None:
+    """Record a wiki-ingest write outcome on the health singleton (spec A5).
+
+    Recording must never raise into the write path (AP-9) — a health-write
+    failure here would invert the honest-not-silent design.
+    """
+    try:
+        from jarvis.memory.wiki.health import health
+
+        health.record_write(ok, pages=pages, error=error, source=source)
+    except Exception:  # noqa: BLE001 — health recording must never break ingest
+        log.debug("wiki-ingest: health.record_write failed", exc_info=True)
+
+
 class WikiIngestTool:
     """Router-tier deterministic-ingest path into the long-term wiki vault."""
 
@@ -148,6 +164,12 @@ class WikiIngestTool:
         curator = self._resolve_curator()
         if curator is None:
             log.warning("wiki-ingest: no live WikiCurator registered (bootstrap not run?)")
+            _record_write_health(
+                False,
+                pages=[],
+                error="wiki integration not bootstrapped",
+                source="tool:wiki-ingest",
+            )
             return ToolResult(
                 success=False,
                 output="",
@@ -162,6 +184,12 @@ class WikiIngestTool:
             result = await curator.ingest(text, source)
         except Exception as exc:  # noqa: BLE001
             log.warning("wiki-ingest: curator.ingest raised %s", exc)
+            _record_write_health(
+                False,
+                pages=[],
+                error=f"curator ingest failed: {exc}",
+                source="tool:wiki-ingest",
+            )
             return ToolResult(
                 success=False,
                 output="",
@@ -171,6 +199,13 @@ class WikiIngestTool:
         applied = list(getattr(result, "applied", []) or [])
         skipped = list(getattr(result, "skipped_due_to_recent_edit", []) or [])
         failed = list(getattr(result, "failed_validation", []) or [])
+
+        _record_write_health(
+            bool(applied),
+            pages=[str(p) for p in applied],
+            error=None if applied else "no pages written",
+            source="tool:wiki-ingest",
+        )
 
         if not applied and not skipped and not failed:
             # Curator judged the content not salient. The old success=True here made

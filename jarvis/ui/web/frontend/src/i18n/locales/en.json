@@ -1790,7 +1790,18 @@
     "live_test_body": "Click the button — your browser opens the vault directly in Obsidian.",
     "open_in_obsidian": "Open in Obsidian",
     "did_not_work": "It didn't work",
-    "it_worked": "It worked — done"
+    "it_worked": "It worked — done",
+    "vault_choice_heading": "Where should {name} keep its wiki?",
+    "mode_separate_label": "Create a separate {name} vault",
+    "mode_separate_hint": "The default — {name} keeps its own vault, isolated from your other notes.",
+    "mode_existing_label": "Use my existing vault",
+    "mode_existing_hint": "{name} writes into a \"Jarvis\" subfolder inside the vault you pick.",
+    "mode_existing_disabled_hint": "No existing vaults found — register one in Obsidian first.",
+    "vault_select_label": "Existing vault",
+    "active_vault_label": "{name} writes to",
+    "restart_required_hint": "Restart {name} to start writing to the new location.",
+    "restart_now": "Restart now",
+    "restarting": "Restarting…"
   },
   "docs_sidebar": {
     "title": "Documentation",
@@ -2128,6 +2139,21 @@
     "manual_a": "You can also drop a",
     "manual_b": "file into",
     "manual_c": "yourself at any time."
+  },
+  "wiki_health": {
+    "checking": "Checking wiki health…",
+    "unavailable": "Wiki health check unavailable",
+    "vault_prefix": "Vault: {0}",
+    "vault_unknown": "Vault path unknown",
+    "last_write_ok": "Last write: {0} · ok",
+    "last_write_failed": "Last write failed: {0}",
+    "last_write_failed_unknown": "Last write failed",
+    "no_writes_yet": "No writes recorded yet",
+    "bootstrap_failed": "Bootstrap failed: {0}",
+    "bootstrap_failed_unknown": "Bootstrap failed",
+    "chain_failure": "Chain failure: {0}",
+    "backlog_count": "Journal backlog: {0}",
+    "legacy_conflict": "Legacy vault conflict detected"
   },
   "skill_create_dialog": {
     "title": "Create skill",

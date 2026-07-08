@@ -7,7 +7,16 @@
  *
  *   1. Install Obsidian (skipped when ``installed=true``).
  *   2. Register the Jarvis vault via ``POST /api/setup/obsidian/register``.
- *   3. Live-test the ``obsidian://open?vault=…`` URL scheme.
+ *      Offers a vault-choice pick first (spec A6): "create a separate
+ *      Jarvis vault" (default) or "use my existing vault", the latter fed
+ *      by ``GET /api/setup/obsidian/vaults`` and enabled only once that
+ *      list is non-empty.
+ *   3. Live-test the ``obsidian://open?vault=…`` URL scheme. Also shows the
+ *      ``active_vault_root`` returned by step 2 and, when the backend
+ *      reports ``restart_required`` (always true for the "existing" vault
+ *      choice — the running wiki index still targets the old vault root
+ *      until relaunch), a one-click restart wired to the same
+ *      ``POST /api/settings/restart-app`` relauncher the Settings panel uses.
  *
  * The component never talks to the global event store and never wires
  * itself into the chat/voice path. It is a self-contained dialog whose
@@ -24,6 +33,12 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import type { ObsidianStatus } from "@/types/setup";
+import {
+  fetchObsidianVaults,
+  registerObsidianVault,
+  type ObsidianVaultInfo,
+  type RegisterMode,
+} from "@/lib/obsidian";
 
 export interface ObsidianSetupDialogProps {
   /** Whether the dialog is visible. */
@@ -55,7 +70,11 @@ interface RegisterResponse {
   vault_uuid?: string | null;
   backup_path?: string | null;
   error?: string | null;
+  active_vault_root?: string | null;
+  restart_required?: boolean;
 }
+
+const RESTART_URL = "/api/settings/restart-app";
 
 /**
  * Extract the final segment of the vault path so the
@@ -183,11 +202,43 @@ export function ObsidianSetupDialog({
   const [registerHint, setRegisterHint] = useState<string | null>(null);
   const [registerError, setRegisterError] = useState<string | null>(null);
 
+  // Step 2 — vault choice (spec A6): "separate" (default, today's behavior)
+  // vs. "existing" (repoint into a vault the user already has in Obsidian).
+  const [registerMode, setRegisterMode] = useState<RegisterMode>("separate");
+  const [vaults, setVaults] = useState<ObsidianVaultInfo[]>([]);
+  const [selectedVaultPath, setSelectedVaultPath] = useState<string | null>(null);
+
+  // Result of a successful register, surfaced on step 3 regardless of mode.
+  const [activeVaultRoot, setActiveVaultRoot] = useState<string | null>(null);
+  const [restartRequired, setRestartRequired] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+
   // Stable fetch reference.
   const fetchRef = useRef<typeof fetch>(fetchImpl ?? window.fetch.bind(window));
   useEffect(() => {
     fetchRef.current = fetchImpl ?? window.fetch.bind(window);
   }, [fetchImpl]);
+
+  // Fetch the existing-vault picker list once when the dialog opens. Best
+  // effort — a failed fetch just leaves "use my existing vault" disabled,
+  // it never blocks the default "separate" path.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await fetchObsidianVaults(fetchRef.current);
+        if (cancelled) return;
+        setVaults(list);
+        setSelectedVaultPath((prev) => prev ?? list[0]?.path ?? null);
+      } catch {
+        // Keep the picker disabled — this list is a nice-to-have.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   // Escape closes the dialog.
   useEffect(() => {
@@ -255,6 +306,8 @@ export function ObsidianSetupDialog({
           body.status === "added" ||
           body.status === "already_registered"
         ) {
+          setActiveVaultRoot(body?.active_vault_root ?? null);
+          setRestartRequired(Boolean(body?.restart_required));
           advance(3);
         } else {
           // Defensive: 200 with an unexpected body — surface as error.
@@ -296,6 +349,66 @@ export function ObsidianSetupDialog({
       setRegistering(false);
     }
   }, [advance, t]);
+
+  // "Use my existing vault" (mode="existing") — unlike `handleRegister`
+  // above, the backend always answers HTTP 200 with a flat body for this
+  // mode (see `registerObsidianVault`'s docstring), so no status-code
+  // branching is needed here.
+  const handleRegisterExisting = useCallback(async () => {
+    if (!selectedVaultPath) return;
+    setRegisterHint(null);
+    setRegisterError(null);
+    setRegistering(true);
+    try {
+      const body = await registerObsidianVault(
+        "existing",
+        selectedVaultPath,
+        fetchRef.current,
+      );
+      if (body.status === "added" || body.status === "already_registered") {
+        setActiveVaultRoot(body.active_vault_root ?? null);
+        setRestartRequired(Boolean(body.restart_required));
+        // The "existing" mode never registers a new Obsidian vault entry —
+        // it only repoints the wiki root into a subfolder of the vault the
+        // user picked. So step 3's "Open in Obsidian" button must target
+        // THAT vault's name, not the default separate-vault location.
+        setVaultPath(selectedVaultPath);
+        advance(3);
+      } else {
+        setRegisterError(
+          `${t("obsidian_setup_dialog.register_failed")}: ${
+            body.error ?? t("obsidian_setup_dialog.unknown_status")
+          }`,
+        );
+      }
+    } catch (exc) {
+      const msg = exc instanceof Error ? exc.message : String(exc);
+      setRegisterError(`${t("obsidian_setup_dialog.register_failed")}: ${msg}`);
+    } finally {
+      setRegistering(false);
+    }
+  }, [advance, selectedVaultPath, t]);
+
+  const handleConfirmRegister = useCallback(() => {
+    if (registerMode === "existing") {
+      void handleRegisterExisting();
+    } else {
+      void handleRegister();
+    }
+  }, [registerMode, handleRegisterExisting, handleRegister]);
+
+  const handleRestartNow = useCallback(async () => {
+    setRestarting(true);
+    try {
+      await fetchRef.current(RESTART_URL, { method: "POST" });
+      // On success the app tears itself down and relaunches — leave
+      // `restarting` true so the button stays disabled until that happens.
+    } catch {
+      // Re-enable so the user can retry; the vault choice is already
+      // persisted either way.
+      setRestarting(false);
+    }
+  }, []);
 
   const vaultName = useMemo(() => deriveVaultName(vaultPath), [vaultPath]);
 
@@ -449,15 +562,86 @@ export function ObsidianSetupDialog({
               </code>{" "}
               {t("obsidian_setup_dialog.connect_body_3")}
             </p>
-            <p
-              className="rounded-md border border-border bg-background/40 px-3 py-2 text-xs text-muted-foreground"
-              data-testid="obsidian-setup-vault-path"
+
+            <div
+              role="radiogroup"
+              aria-label={t("obsidian_setup_dialog.vault_choice_heading")}
+              className="space-y-2"
+              data-testid="obsidian-setup-vault-choice"
             >
-              <span className="block text-[10px] uppercase tracking-wide text-muted-foreground/70">
-                {t("obsidian_setup_dialog.vault_path_label")}
-              </span>
-              <span className="font-mono text-foreground">{vaultPath}</span>
-            </p>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={registerMode === "separate"}
+                onClick={() => setRegisterMode("separate")}
+                data-testid="obsidian-setup-mode-separate"
+                className={cn(
+                  "w-full rounded-md border px-3 py-2 text-left transition-colors",
+                  registerMode === "separate"
+                    ? "border-primary bg-primary/5 ring-1 ring-primary/50"
+                    : "border-border bg-background/40 hover:border-primary/50",
+                )}
+              >
+                <span className="block text-sm font-medium text-foreground">
+                  {t("obsidian_setup_dialog.mode_separate_label")}
+                </span>
+                <span className="block text-xs text-muted-foreground">
+                  {t("obsidian_setup_dialog.mode_separate_hint")}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                role="radio"
+                aria-checked={registerMode === "existing"}
+                disabled={vaults.length === 0}
+                onClick={() => setRegisterMode("existing")}
+                data-testid="obsidian-setup-mode-existing"
+                className={cn(
+                  "w-full rounded-md border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+                  registerMode === "existing"
+                    ? "border-primary bg-primary/5 ring-1 ring-primary/50"
+                    : "border-border bg-background/40 hover:border-primary/50",
+                )}
+              >
+                <span className="block text-sm font-medium text-foreground">
+                  {t("obsidian_setup_dialog.mode_existing_label")}
+                </span>
+                <span className="block text-xs text-muted-foreground">
+                  {vaults.length === 0
+                    ? t("obsidian_setup_dialog.mode_existing_disabled_hint")
+                    : t("obsidian_setup_dialog.mode_existing_hint")}
+                </span>
+              </button>
+
+              {registerMode === "existing" && vaults.length > 0 && (
+                <select
+                  aria-label={t("obsidian_setup_dialog.vault_select_label")}
+                  value={selectedVaultPath ?? ""}
+                  onChange={(e) => setSelectedVaultPath(e.target.value)}
+                  data-testid="obsidian-setup-vault-select"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  {vaults.map((v) => (
+                    <option key={v.path} value={v.path} title={v.path}>
+                      {v.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {registerMode === "separate" && (
+              <p
+                className="rounded-md border border-border bg-background/40 px-3 py-2 text-xs text-muted-foreground"
+                data-testid="obsidian-setup-vault-path"
+              >
+                <span className="block text-[10px] uppercase tracking-wide text-muted-foreground/70">
+                  {t("obsidian_setup_dialog.vault_path_label")}
+                </span>
+                <span className="font-mono text-foreground">{vaultPath}</span>
+              </p>
+            )}
             {registerHint && (
               <p
                 className="rounded-md border border-[#ffb84d]/40 bg-[#ffb84d]/10 px-3 py-2 text-xs text-[#ffb84d]"
@@ -499,8 +683,11 @@ export function ObsidianSetupDialog({
               <Button
                 type="button"
                 size="sm"
-                onClick={() => void handleRegister()}
-                disabled={registering}
+                onClick={handleConfirmRegister}
+                disabled={
+                  registering ||
+                  (registerMode === "existing" && !selectedVaultPath)
+                }
                 data-testid="obsidian-setup-register"
               >
                 {registering ? (
@@ -534,6 +721,37 @@ export function ObsidianSetupDialog({
             <p className="text-sm text-muted-foreground">
               {t("obsidian_setup_dialog.live_test_body")}
             </p>
+            {activeVaultRoot && (
+              <p
+                className="rounded-md border border-border bg-background/40 px-3 py-2 text-xs text-muted-foreground"
+                data-testid="obsidian-setup-active-vault-root"
+              >
+                {t("obsidian_setup_dialog.active_vault_label")}:{" "}
+                <span className="font-mono text-foreground">{activeVaultRoot}</span>
+              </p>
+            )}
+            {restartRequired && (
+              <div
+                className="space-y-2 rounded-md border border-primary/40 bg-primary/5 p-3"
+                data-testid="obsidian-setup-restart-hint"
+              >
+                <p className="text-xs text-muted-foreground">
+                  {t("obsidian_setup_dialog.restart_required_hint")}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void handleRestartNow()}
+                  disabled={restarting}
+                  data-testid="obsidian-setup-restart-now"
+                >
+                  {restarting
+                    ? t("obsidian_setup_dialog.restarting")
+                    : t("obsidian_setup_dialog.restart_now")}
+                </Button>
+              </div>
+            )}
             <div className="flex items-center justify-start gap-2 pt-1">
               <Button
                 type="button"

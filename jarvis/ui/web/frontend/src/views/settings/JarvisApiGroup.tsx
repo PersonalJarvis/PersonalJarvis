@@ -5,6 +5,7 @@ import { useJarvisApi } from "@/hooks/useJarvisApi";
 import { robustCopy } from "@/lib/clipboard";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
+import { SettingsBlock } from "@/views/settings/SettingsBlock";
 
 /**
  * "Jarvis API" group inside the Settings view. Shows the per-user Control API
@@ -50,62 +51,50 @@ export function JarvisApiGroup() {
   }
 
   return (
-    <section className="space-y-3">
-      <h3 className="mb-3 inline-flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
-        <KeyRound className="h-3.5 w-3.5" /> {t("settings_view.jarvis_api.title")}
-      </h3>
-      <div className="rounded-lg border border-border bg-card/60 p-4">
-        <div className="flex items-start gap-3">
-          <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-          <div className="min-w-0 flex-1">
-            <h4 className="font-medium">{t("settings_view.jarvis_api.key_label")}</h4>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {t("settings_view.jarvis_api.description")}
-            </p>
-
-            <div className="mt-3 flex items-center gap-2">
-              <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 font-mono text-xs">
-                {display}
-              </code>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={loading || !key}
-                onClick={() => setRevealed((v) => !v)}
-              >
-                {revealed ? (
-                  <>
-                    <EyeOff className="mr-1 h-3.5 w-3.5" />
-                    {t("settings_view.jarvis_api.hide")}
-                  </>
-                ) : (
-                  <>
-                    <Eye className="mr-1 h-3.5 w-3.5" />
-                    {t("settings_view.jarvis_api.show")}
-                  </>
-                )}
-              </Button>
-              <Button size="sm" variant="outline" disabled={loading || !key} onClick={onCopy}>
-                <Copy className="mr-1 h-3.5 w-3.5" />
-                {t("settings_view.jarvis_api.copy_button")}
-              </Button>
-            </div>
-
-            <div className="mt-3 flex items-center gap-2">
-              <Button size="sm" variant="ghost" disabled={busy || loading} onClick={onRotate}>
-                <RefreshCw className="mr-1 h-3.5 w-3.5" />
-                {t("settings_view.jarvis_api.regenerate_button")}
-              </Button>
-            </div>
-
-            <p className="mt-3 text-xs text-muted-foreground">
-              {t("settings_view.jarvis_api.usage_hint")}
-            </p>
-
-            {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
-          </div>
+    <SettingsBlock
+      icon={KeyRound}
+      title={t("settings_view.jarvis_api.title")}
+      description={t("settings_view.jarvis_api.description")}
+    >
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <code className="min-w-0 flex-1 truncate rounded-lg bg-muted px-3 py-2 font-mono text-xs">
+            {display}
+          </code>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={loading || !key}
+            onClick={() => setRevealed((v) => !v)}
+          >
+            {revealed ? (
+              <>
+                <EyeOff className="mr-1 h-3.5 w-3.5" />
+                {t("settings_view.jarvis_api.hide")}
+              </>
+            ) : (
+              <>
+                <Eye className="mr-1 h-3.5 w-3.5" />
+                {t("settings_view.jarvis_api.show")}
+              </>
+            )}
+          </Button>
+          <Button size="sm" variant="outline" disabled={loading || !key} onClick={onCopy}>
+            <Copy className="mr-1 h-3.5 w-3.5" />
+            {t("settings_view.jarvis_api.copy_button")}
+          </Button>
+          <Button size="sm" variant="ghost" disabled={busy || loading} onClick={onRotate}>
+            <RefreshCw className="mr-1 h-3.5 w-3.5" />
+            {t("settings_view.jarvis_api.regenerate_button")}
+          </Button>
         </div>
+
+        <p className="text-xs text-muted-foreground">
+          {t("settings_view.jarvis_api.usage_hint")}
+        </p>
+
+        {error && <p className="text-xs text-destructive">{error}</p>}
       </div>
-    </section>
+    </SettingsBlock>
   );
 }

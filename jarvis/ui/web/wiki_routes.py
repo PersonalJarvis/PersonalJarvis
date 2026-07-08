@@ -8,6 +8,10 @@ Five read-only endpoints power the Desktop App's new "Wiki" sidebar tab:
 * ``GET /api/wiki/backlinks/{slug}``— reverse-link list with body snippets.
 * ``GET /api/wiki/search``          — keyword search via ``VaultSearch`` (B5).
 
+Two later additions follow the same style: ``GET /api/wiki/telemetry`` (B8.7,
+in-memory counter snapshot) and ``GET /api/wiki/health`` (spec A5, bootstrap /
+write / chain-failure / journal-backlog status).
+
 All endpoints follow the existing house style: HTTP 200 with the envelope
 ``{"ok": True, ...}`` on success and ``{"ok": False, "error": "..."}`` on
 logical errors. HTTP 404 stays reserved for unknown routes; HTTP 500 only
@@ -607,6 +611,21 @@ async def get_telemetry(_request: Request) -> dict[str, Any]:
         "ok": True,
         "counters": _telemetry.snapshot(),
     }
+
+
+@router.get("/health")
+async def wiki_health(_request: Request) -> dict[str, Any]:
+    """Wiki subsystem health for the Wiki tab status panel (spec A5).
+
+    The wiki subsystem is fire-and-forget by design (AP-9): failures never
+    interrupt a voice turn, but they must not vanish either. This surfaces
+    the process-wide :mod:`jarvis.memory.wiki.health` singleton so bootstrap
+    failures, write failures, chain exhaustion, and journal pressure become
+    visible instead of only ever appearing in the logs.
+    """
+    from jarvis.memory.wiki.health import health as _health
+
+    return {"ok": True, "health": _health.snapshot()}
 
 
 __all__ = ["router"]

@@ -21,7 +21,6 @@ background tasks; this module never runs on the voice critical path.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -55,21 +54,6 @@ _MAX_ASSISTANT_CONTEXT_CHARS = 500
 _KNOWN_KINDS = frozenset(
     {"identity", "preference", "person", "project", "decision", "event", "other"}
 )
-
-def _log_trigger_outcome(task: "asyncio.Task[Any]") -> None:
-    """Done-callback for the fire-and-forget journal-pressure trigger.
-
-    Retrieves the exception (silences the never-retrieved warning) but —
-    unlike a bare ``t.exception()`` lambda — actually logs real failures.
-    A lost trigger is retried on the next append, so WARNING suffices.
-    """
-    if task.cancelled():
-        return
-    exc = task.exception()
-    if exc is not None:
-        log.warning(
-            "ConversationFactExtractor: journal-pressure trigger failed: %s", exc,
-        )
 
 
 _SYSTEM_PROMPT = """\
@@ -176,15 +160,24 @@ class ConversationFactExtractor:
         if self._scheduler is None:
             return
         try:
-            if self._journal.backlog_count() < self._consolidate_after:
-                return
-            from jarvis.memory.wiki.scheduler import TriggerSource
+            backlog = self._journal.backlog_count()
+            try:
+                from jarvis.memory.wiki.health import health
 
-            task = asyncio.create_task(
-                self._scheduler.trigger(TriggerSource.JOURNAL),
+                health.record_backlog(backlog)
+            except Exception:  # noqa: BLE001 — health recording must never break extraction
+                log.debug(
+                    "ConversationFactExtractor: health.record_backlog failed", exc_info=True,
+                )
+            if backlog < self._consolidate_after:
+                return
+            from jarvis.memory.wiki.scheduler import fire_journal_trigger
+
+            fire_journal_trigger(
+                self._scheduler,
                 name="wiki-journal-pressure-trigger",
+                log_context="journal-pressure trigger",
             )
-            task.add_done_callback(_log_trigger_outcome)
         except RuntimeError:
             # No running event loop (sync test context) — next append from
             # an async context will retry.

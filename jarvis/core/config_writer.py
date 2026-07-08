@@ -539,6 +539,18 @@ def set_computer_use_engine(engine: str, *, path: Path = DEFAULT_CONFIG_FILE) ->
     _patch_table(path, "computer_use", "engine", engine)
 
 
+def set_voice_mode(mode: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist the active voice engine to ``[voice] mode``.
+
+    ``mode`` is ``"pipeline"`` (classic STT->brain->TTS, the default) or
+    ``"realtime"`` (full-duplex speech-to-speech). TOML-only by design:
+    ``voice.mode`` is NOT in the drift-guard reference snapshot, so it is never
+    reverted (same rationale as :func:`set_computer_use_engine`). Read once per
+    voice session, so the switch applies on the next session / restart.
+    """
+    _patch_table(path, "voice", "mode", mode)
+
+
 def set_silence_window_ms(ms: int, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the voice silence window to ``[speech] vad_silence_ms`` in jarvis.toml.
 
@@ -875,6 +887,19 @@ def set_brain_provider_defaults(
 # Without an entry, set_tts_provider() would pass an empty defaults dict and
 # leave a stale model/voice from the previous provider in jarvis.toml.
 _TTS_DEFAULTS: dict[str, dict[str, str]] = {
+    "inworld": {
+        # Inworld reads its per-language voices from the [tts.inworld] subtable
+        # (voice_de/voice_en/voice_es), NOT [tts].voice_de — same pattern as
+        # Cartesia. The scalar voice_de/voice_en are placeholders never consumed
+        # by the Inworld factory path. [tts].model is ignored too (the model
+        # comes from [tts.inworld].model or the plugin default inworld-tts-2), so
+        # model="" is skipped by _patch_tts_block's falsy gate. language_code=
+        # "auto" lets Inworld auto-detect the spoken language per turn.
+        "model": "",
+        "voice_de": "Charon",  # placeholder; Inworld reads [tts.inworld].voice_de
+        "voice_en": "Charon",  # placeholder; Inworld reads [tts.inworld].voice_en
+        "language_code": "auto",
+    },
     "gemini-flash-tts": {
         # model from jarvis/plugins/tts/gemini_flash_tts.py (factory line:
         #   tts_cfg.model or "gemini-3.1-flash-tts-preview")

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowUp, Bot, CheckCircle2, Lock, LogIn, LogOut, Terminal, XCircle } from "lucide-react";
+import { ArrowUp, Bot, Lock, LogIn, LogOut, Terminal, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
@@ -208,71 +208,60 @@ export function JarvisAgentSection({
   );
 
   return (
-    <section>
+    <section className="space-y-4">
       {!hideHeader && <SectionHeader label={t("apikeys_view.tier_subagent")} />}
+
+      <BridgeStatusStrip status={bridge} />
+
       {/* The coupling is non-obvious: subagent providers have no key field of
-          their own — they reuse the Brain-provider keys set above. Spell it out
-          so users know where to add the key instead of looking for an input
-          that isn't here. */}
-      <p className="mb-3 flex items-start gap-2 rounded-md border border-primary/25 bg-primary/[0.04] px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
-        <ArrowUp className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+          their own — they reuse the Brain-provider keys set above. A dim one-line
+          hint instead of a loud banner: it informs without competing with the
+          cards below. */}
+      <p className="flex items-start gap-2 px-1 text-[11px] leading-relaxed text-muted-foreground">
+        <ArrowUp className="mt-0.5 h-3 w-3 shrink-0 text-primary" />
         <span>
-          Most subagents reuse the API keys from the{" "}
-          <strong className="text-foreground">Brain</strong> section above.
-          Codex uses the ChatGPT login here, and Antigravity uses the Google
-          login here. Connect the provider first, then pick which one runs heavy
-          background tasks.
+          Agents reuse the keys from the{" "}
+          <strong className="text-foreground">Brain</strong> tab. Codex uses the
+          ChatGPT login, Antigravity the Google login — connect there, then pick
+          which provider runs heavy background tasks.
         </span>
       </p>
-      <ul className="space-y-3">
-        <li>
-          <BridgeCard status={bridge} />
-        </li>
-        <li>
-          <SubagentModelCard status={bridge} onSaved={reload} />
-        </li>
+
+      <div className="grid gap-3 sm:grid-cols-2">
         {codexRow && (
-          <li>
-            <CodexConnectionCard
-              status={codexStatus}
-              row={codexRow}
-              onChanged={reload}
-            />
-          </li>
+          <CodexConnectionCard
+            status={codexStatus}
+            row={codexRow}
+            onChanged={reload}
+          />
         )}
         {antigravityRow && (
-          <li>
-            <AntigravityConnectionCard
-              status={antigravityStatus}
-              row={antigravityRow}
-              onChanged={reload}
-            />
-          </li>
+          <AntigravityConnectionCard
+            status={antigravityStatus}
+            row={antigravityRow}
+            onChanged={reload}
+          />
         )}
         {claudeRow && (
-          <li>
-            <ClaudeConnectionCard
-              status={claudeStatus}
-              row={claudeRow}
-              onChanged={reload}
-            />
-          </li>
+          <ClaudeConnectionCard
+            status={claudeStatus}
+            row={claudeRow}
+            onChanged={reload}
+          />
         )}
         {claudeRow && (
-          <li>
-            <ClaudeApiCard
-              status={claudeStatus}
-              row={claudeRow}
-              onChanged={reload}
-            />
-          </li>
+          <ClaudeApiCard
+            status={claudeStatus}
+            row={claudeRow}
+            onChanged={reload}
+          />
         )}
         {providerRows.map((row) => (
-          <li key={row.jarvis}>
-            <SubagentProviderCard row={row} onSwitched={reload} />
-          </li>
+          <SubagentProviderCard key={row.jarvis} row={row} onSwitched={reload} />
         ))}
-      </ul>
+      </div>
+
+      <SubagentModelCard status={bridge} onSaved={reload} />
     </section>
   );
 }
@@ -345,92 +334,240 @@ function SectionHeader({ label }: { label: string }) {
   );
 }
 
+/** A small meta pill for the bridge status strip. */
+function BridgeMeta({
+  children,
+  mono = false,
+}: {
+  children: React.ReactNode;
+  mono?: boolean;
+}) {
+  return (
+    <span
+      className={cn(
+        "rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground",
+        mono && "font-mono",
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
 /**
- * The subagent bridge meta-card — read-only configuration (engine state, pin,
- * active worker, model, time-cap). Shares the active-card highlight with
- * the provider cards so the section reads as one system. Engine internals
- * (binary path etc.) are reduced to an "installed"/"not installed"
- * status — the concrete path is developer noise and is not surfaced.
+ * The bridge status — a calm one-line strip instead of a debug key/value table.
+ * A status dot + plain-language state on the left, the read-only worker / model
+ * / limits as dim meta pills on the right. Engine internals (binary path etc.)
+ * are reduced to "installed" / "not installed"; the concrete path is developer
+ * noise and is not surfaced.
  */
-function BridgeCard({ status }: { status: SubagentStatus }) {
+function BridgeStatusStrip({ status }: { status: SubagentStatus }) {
   const installed = Boolean(status.binary_detected);
   const live = status.enabled && installed;
-  const stateLabel = !status.configured
-    ? "not configured"
-    : !installed
-      ? "engine not installed"
-      : status.enabled
-        ? "enabled"
-        : "disabled (enabled = false)";
-
-  const modelLabel =
-    status.model_resolved ??
-    (status.provider_slug ? "(follows brain.primary, no model resolvable)" : "—");
+  const worker = PROVIDER_LABELS[status.brain_primary] ?? status.brain_primary;
+  const model = status.model_resolved ?? status.sub_model_override ?? null;
 
   return (
-    <div className="card-outline space-y-3 p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">Jarvis-Agent bridge</span>
-            {live ? (
-              <span className="chip-yellow">active</span>
-            ) : (
-              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                inactive
-              </span>
-            )}
-          </div>
-          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-            External Jarvis-Agent for heavy tasks (read a repo, build a feature,
-            reproduce a bug). It reuses the same brain-provider keys you set
-            above &mdash; no separate input field needed. Every registered MCP
-            server is handed to the Jarvis-Agent at pre-boot with a mission-isolated
-            state directory.
-          </p>
-        </div>
-      </div>
-
-      <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">
-        <dt className="text-muted-foreground">Bridge</dt>
-        <dd className="font-mono">
-          {live ? (
-            <CheckCircle2 className="mr-1 inline h-3 w-3 text-emerald-500" />
-          ) : (
-            <XCircle className="mr-1 inline h-3 w-3 text-muted-foreground" />
-          )}
-          {stateLabel}
-        </dd>
-
-        <dt className="text-muted-foreground">Engine</dt>
-        <dd className="font-mono">{installed ? "installed" : "not installed"}</dd>
-
-        <dt className="text-muted-foreground">Pin version</dt>
-        <dd className="font-mono">{status.version_pin ?? "—"}</dd>
-
-        <dt className="text-muted-foreground">Active worker</dt>
-        <dd className="font-mono">
-          <strong>{PROVIDER_LABELS[status.brain_primary] ?? status.brain_primary}</strong>
-        </dd>
-
-        <dt className="text-muted-foreground">Model</dt>
-        <dd className="break-all font-mono">
-          {modelLabel}
-          {status.model_override && (
-            <span className="ml-2 text-muted-foreground">(override from config)</span>
-          )}
-        </dd>
-
-        {status.time_cap_min !== null && (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border border-border bg-card/60 px-4 py-3 backdrop-blur">
+      <span
+        className={cn(
+          "h-2 w-2 shrink-0 rounded-full",
+          live
+            ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.7)]"
+            : "bg-muted-foreground",
+        )}
+      />
+      <span className="text-sm font-medium">
+        {live ? "Agent bridge active" : "Agent bridge inactive"}
+      </span>
+      <span className="text-[11px] text-muted-foreground">
+        {installed ? "Engine installed" : "Engine not installed"}
+        {status.version_pin && (
           <>
-            <dt className="text-muted-foreground">Time cap</dt>
-            <dd className="font-mono">
-              {status.time_cap_min} min · max. {status.concurrency} parallel
-            </dd>
+            {" · pin "}
+            <span className="font-mono text-foreground">{status.version_pin}</span>
           </>
         )}
-      </dl>
+      </span>
+      <div className="ml-auto flex flex-wrap items-center gap-2">
+        <BridgeMeta>
+          worker <strong className="font-semibold text-foreground">{worker}</strong>
+        </BridgeMeta>
+        {model && <BridgeMeta mono>{model}</BridgeMeta>}
+        {status.time_cap_min !== null && (
+          <BridgeMeta>
+            {status.time_cap_min} min · max {status.concurrency} parallel
+          </BridgeMeta>
+        )}
+      </div>
     </div>
+  );
+}
+
+/**
+ * A neutral monogram tile shown on the left of every provider card. Uses the
+ * first letter of the label rather than a vendor logo — no brand assets to
+ * source, and every card gets the same calm, consistent shape. Tints gold when
+ * its card is the active worker.
+ */
+function ProviderMono({ label, active }: { label: string; active?: boolean }) {
+  return (
+    <div
+      className={cn(
+        "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-sm font-semibold",
+        active
+          ? "border-primary/40 bg-primary/15 text-primary"
+          : "border-border bg-muted text-muted-foreground",
+      )}
+    >
+      {label.trim().slice(0, 1).toUpperCase() || "?"}
+    </div>
+  );
+}
+
+/**
+ * The one shared shell every provider card is built from — so the whole section
+ * reads as a single system instead of seven hand-rolled cards. Owns the layout
+ * (monogram · title + badges · subtitle · optional warning · footer actions) and
+ * the active/interactive highlight; each card only supplies its content and its
+ * own action controls in `footer`.
+ */
+function AgentCardShell({
+  label,
+  title,
+  billing,
+  badge,
+  subtitle,
+  warning,
+  footer,
+  active = false,
+  interactive = false,
+  tooltip,
+  className,
+  ...rest
+}: {
+  label: string;
+  title: React.ReactNode;
+  billing?: Billing;
+  badge?: React.ReactNode;
+  subtitle?: React.ReactNode;
+  warning?: React.ReactNode;
+  footer?: React.ReactNode;
+  active?: boolean;
+  interactive?: boolean;
+  /** Native hover tooltip for the whole card (kept separate from `title`,
+   * which is the visible card heading). */
+  tooltip?: string;
+  className?: string;
+} & Omit<React.HTMLAttributes<HTMLDivElement>, "title">) {
+  return (
+    <div
+      title={tooltip}
+      className={cn(
+        "flex h-full flex-col gap-3 rounded-2xl border bg-card/60 p-4 backdrop-blur transition-colors",
+        active
+          ? "border-primary/55 bg-primary/[0.06] shadow-[0_0_0_1px_rgba(255,214,10,0.25),0_0_34px_rgba(255,214,10,0.06)]"
+          : interactive
+            ? "cursor-pointer border-border hover:border-primary/40 hover:bg-primary/[0.02]"
+            : "border-border",
+        className,
+      )}
+      {...rest}
+    >
+      <div className="flex items-start gap-3">
+        <ProviderMono label={label} active={active} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium">{title}</span>
+            {badge}
+            {billing && <ProviderBillingBadge billing={billing} />}
+          </div>
+          {subtitle && (
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+              {subtitle}
+            </p>
+          )}
+        </div>
+      </div>
+      {warning}
+      {footer && (
+        <div className="mt-auto flex flex-wrap items-center gap-2 pt-1">{footer}</div>
+      )}
+    </div>
+  );
+}
+
+/** The active / ready / open status pill shared by every provider card. */
+function StatusPill({ state }: { state: "active" | "ready" | "open" }) {
+  if (state === "active") return <span className="chip-yellow">active</span>;
+  if (state === "ready")
+    return (
+      <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
+        ready
+      </span>
+    );
+  return (
+    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+      open
+    </span>
+  );
+}
+
+/** A small amber hint line (install / locked) shown inside a provider card. */
+function CardHint({
+  icon: Icon,
+  children,
+}: {
+  icon: LucideIcon;
+  children: React.ReactNode;
+}) {
+  return (
+    <p className="flex items-start gap-1.5 text-[11px] text-amber-600">
+      <Icon className="mt-0.5 h-3 w-3 shrink-0" />
+      <span>{children}</span>
+    </p>
+  );
+}
+
+/** Connect (gold) action shared by the OAuth-login cards. */
+function ConnectButton({
+  onClick,
+  disabled,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+    >
+      <LogIn className="h-3.5 w-3.5" />
+      Connect
+    </button>
+  );
+}
+
+/** Disconnect (ghost) action shared by the OAuth-login cards. */
+function DisconnectButton({
+  onClick,
+  disabled,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+    >
+      <LogOut className="h-3.5 w-3.5" />
+      Disconnect
+    </button>
   );
 }
 
@@ -493,40 +630,18 @@ function CodexConnectionCard({
   }
 
   return (
-    <div
-      className={cn(
-        "card-outline space-y-3 p-4 transition-colors",
-        isActive && "border-primary bg-primary/[0.06] ring-1 ring-primary/30",
-      )}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">OpenAI Codex (Subscription)</span>
-            {isActive ? (
-              <span className="chip-yellow">active</span>
-            ) : connected ? (
-              <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
-                ready
-              </span>
-            ) : (
-              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                open
-              </span>
-            )}
-            {row && <ProviderBillingBadge billing={row.billing} />}
-          </div>
-          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-            {detail}
-          </p>
-          {!installed && (
-            <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-600">
-              <Terminal className="h-3 w-3 shrink-0" />
-              <span>Install Codex before connecting.</span>
-            </p>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-3">
+    <AgentCardShell
+      label="OpenAI Codex"
+      title="OpenAI Codex"
+      billing={row?.billing}
+      active={isActive}
+      badge={<StatusPill state={isActive ? "active" : connected ? "ready" : "open"} />}
+      subtitle={detail}
+      warning={
+        !installed && <CardHint icon={Terminal}>Install Codex before connecting.</CardHint>
+      }
+      footer={
+        <>
           {/* When connected, the same "Set active" control as the other
               provider cards — so this subscription login is selectable right
               here, not only via a duplicate card further down. */}
@@ -538,29 +653,13 @@ function CodexConnectionCard({
             />
           )}
           {connected ? (
-            <button
-              type="button"
-              onClick={disconnect}
-              disabled={pending}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
-            >
-              <LogOut className="h-3.5 w-3.5" />
-              Disconnect
-            </button>
+            <DisconnectButton onClick={disconnect} disabled={pending} />
           ) : (
-            <button
-              type="button"
-              onClick={connect}
-              disabled={pending || !installed}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
-            >
-              <LogIn className="h-3.5 w-3.5" />
-              Connect
-            </button>
+            <ConnectButton onClick={connect} disabled={pending || !installed} />
           )}
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    />
   );
 }
 
@@ -617,40 +716,22 @@ function AntigravityConnectionCard({
   }
 
   return (
-    <div
-      className={cn(
-        "card-outline space-y-3 p-4 transition-colors",
-        isActive && "border-primary bg-primary/[0.06] ring-1 ring-primary/30",
-      )}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">Antigravity (Subscription)</span>
-            {isActive ? (
-              <span className="chip-yellow">active</span>
-            ) : connected ? (
-              <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
-                ready
-              </span>
-            ) : (
-              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                open
-              </span>
-            )}
-            {row && <ProviderBillingBadge billing={row.billing} />}
-          </div>
-          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-            {detail}
-          </p>
-          {!installed && (
-            <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-600">
-              <Terminal className="h-3 w-3 shrink-0" />
-              <span>Install Antigravity or the Gemini CLI before connecting.</span>
-            </p>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-3">
+    <AgentCardShell
+      label="Antigravity"
+      title="Antigravity"
+      billing={row?.billing}
+      active={isActive}
+      badge={<StatusPill state={isActive ? "active" : connected ? "ready" : "open"} />}
+      subtitle={detail}
+      warning={
+        !installed && (
+          <CardHint icon={Terminal}>
+            Install Antigravity or the Gemini CLI before connecting.
+          </CardHint>
+        )
+      }
+      footer={
+        <>
           {connected && row && (
             <SubagentActiveControl
               row={row}
@@ -659,29 +740,13 @@ function AntigravityConnectionCard({
             />
           )}
           {connected ? (
-            <button
-              type="button"
-              onClick={disconnect}
-              disabled={pending}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
-            >
-              <LogOut className="h-3.5 w-3.5" />
-              Disconnect
-            </button>
+            <DisconnectButton onClick={disconnect} disabled={pending} />
           ) : (
-            <button
-              type="button"
-              onClick={connect}
-              disabled={pending || !installed}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
-            >
-              <LogIn className="h-3.5 w-3.5" />
-              Connect
-            </button>
+            <ConnectButton onClick={connect} disabled={pending || !installed} />
           )}
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    />
   );
 }
 
@@ -749,41 +814,20 @@ function ClaudeConnectionCard({
   }
 
   return (
-    <div
-      className={cn(
-        "card-outline space-y-3 p-4 transition-colors",
-        isActive && "border-primary bg-primary/[0.06] ring-1 ring-primary/30",
-      )}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">Anthropic Claude (Subscription)</span>
-            {isActive ? (
-              <span className="chip-yellow">active</span>
-            ) : connected ? (
-              <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
-                ready
-              </span>
-            ) : (
-              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                open
-              </span>
-            )}
-            {/* Split card: this one is the subscription login only. */}
-            <ProviderBillingBadge billing="subscription" />
-          </div>
-          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-            {detail}
-          </p>
-          {!installed && (
-            <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-600">
-              <Terminal className="h-3 w-3 shrink-0" />
-              <span>Install the Claude CLI before connecting.</span>
-            </p>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-3">
+    <AgentCardShell
+      label="Anthropic Claude"
+      title="Anthropic Claude"
+      billing="subscription"
+      active={isActive}
+      badge={<StatusPill state={isActive ? "active" : connected ? "ready" : "open"} />}
+      subtitle={detail}
+      warning={
+        !installed && (
+          <CardHint icon={Terminal}>Install the Claude CLI before connecting.</CardHint>
+        )
+      }
+      footer={
+        <>
           {connected && row && (
             <SubagentActiveControl
               row={row}
@@ -793,29 +837,13 @@ function ClaudeConnectionCard({
             />
           )}
           {connected ? (
-            <button
-              type="button"
-              onClick={disconnect}
-              disabled={pending}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
-            >
-              <LogOut className="h-3.5 w-3.5" />
-              Disconnect
-            </button>
+            <DisconnectButton onClick={disconnect} disabled={pending} />
           ) : (
-            <button
-              type="button"
-              onClick={connect}
-              disabled={pending || !installed}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
-            >
-              <LogIn className="h-3.5 w-3.5" />
-              Connect
-            </button>
+            <ConnectButton onClick={connect} disabled={pending || !installed} />
           )}
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    />
   );
 }
 
@@ -859,76 +887,42 @@ function ClaudeApiCard({
   }
 
   return (
-    <div
+    <AgentCardShell
+      label="Anthropic Claude"
+      title="Anthropic Claude"
+      billing="api"
+      active={isActive}
+      interactive={keySet && !isActive}
       onClick={handleCardActivate}
       onDoubleClick={handleCardActivate}
-      title={
+      tooltip={
         isActive
           ? "This Jarvis-Agent provider is active"
           : keySet
             ? "Activate this Jarvis-Agent provider"
             : "Add the Claude API key in the Brain section first"
       }
-      className={cn(
-        "card-outline space-y-2 p-4 transition-colors",
-        isActive
-          ? "border-primary bg-primary/[0.06] ring-1 ring-primary/30"
-          : keySet
-            ? "cursor-pointer hover:border-primary/40 hover:bg-primary/[0.02]"
-            : "opacity-95",
-      )}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">Anthropic Claude (API)</span>
-            {isActive ? (
-              <span className="chip-yellow">active</span>
-            ) : keySet ? (
-              <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
-                ready
-              </span>
-            ) : (
-              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                open
-              </span>
-            )}
-            <ProviderBillingBadge billing="api" />
-          </div>
-          {row && (
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
-              <code className="font-mono">
-                {row.jarvis} → {row.worker_slug}
-              </code>
-              {" · "}
-              <span className="font-mono">
-                {row.env_var}
-                {row.env_fallback && ` / ${row.env_fallback}`}
-              </span>
-            </p>
-          )}
-        </div>
-
-        {row && (
+      badge={<StatusPill state={isActive ? "active" : keySet ? "ready" : "open"} />}
+      subtitle="API key · billed per token"
+      warning={
+        !keySet && (
+          <CardHint icon={Lock}>
+            Locked &mdash; add the <strong>Claude (API-Key)</strong> key in the
+            Brain tab to unlock it.
+          </CardHint>
+        )
+      }
+      footer={
+        row && (
           <SubagentActiveControl
             row={row}
             active={isActive}
             activating={activating}
             onActivate={activate}
           />
-        )}
-      </div>
-
-      {!keySet && (
-        <p className="flex items-center gap-1.5 text-[11px] text-amber-600">
-          <Lock className="h-3 w-3 shrink-0" />
-          <span>
-            Locked &mdash; add the <strong>Claude (API-Key)</strong> key in the
-            Brain section above to unlock it.
-          </span>
-        </p>
-      )}
-    </div>
+        )
+      }
+    />
   );
 }
 
@@ -1005,55 +999,30 @@ function SubagentProviderCard({
   }
 
   return (
-    <div
+    <AgentCardShell
+      label={label}
+      title={label}
+      billing={row.billing}
+      active={row.is_active_brain}
+      interactive={row.key_set && !row.is_active_brain}
       onClick={handleCardActivate}
       onDoubleClick={handleCardActivate}
-      title={
+      tooltip={
         row.is_active_brain
           ? "This Jarvis-Agent provider is active"
           : row.key_set
             ? "Activate this Jarvis-Agent provider"
             : "Set an API key first"
       }
-      className={cn(
-        "card-outline space-y-2 p-4 transition-colors",
-        row.is_active_brain
-          ? "border-primary bg-primary/[0.06] ring-1 ring-primary/30"
-          : row.key_set
-            ? "cursor-pointer hover:border-primary/40 hover:bg-primary/[0.02]"
-            : "opacity-95",
-      )}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">{label}</span>
-            <SubagentStatusBadge row={row} />
-            <ProviderBillingBadge billing={row.billing} />
-          </div>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">
-            <code className="font-mono">
-              {row.jarvis} → {row.worker_slug}
-            </code>
-            {" · "}
-            <span className="font-mono">
-              {row.env_var}
-              {row.env_fallback && ` / ${row.env_fallback}`}
-            </span>
-          </p>
-        </div>
-
-        <SubagentActiveControl
-          row={row}
-          activating={activating}
-          onActivate={activate}
+      badge={
+        <StatusPill
+          state={row.is_active_brain ? "active" : row.key_set ? "ready" : "open"}
         />
-      </div>
-
-      {!row.key_set && (
-        <p className="flex items-center gap-1.5 text-[11px] text-amber-600">
-          <Lock className="h-3 w-3 shrink-0" />
-          <span>
+      }
+      subtitle="Reuses the matching key from the Brain tab"
+      warning={
+        !row.key_set && (
+          <CardHint icon={Lock}>
             {row.jarvis === "openai-codex" ? (
               <>
                 Locked &mdash; connect <strong>{label}</strong> with ChatGPT above
@@ -1067,13 +1036,20 @@ function SubagentProviderCard({
             ) : (
               <>
                 Locked &mdash; add the <strong>{label}</strong> key in the Brain
-                section above to unlock it.
+                tab to unlock it.
               </>
             )}
-          </span>
-        </p>
-      )}
-    </div>
+          </CardHint>
+        )
+      }
+      footer={
+        <SubagentActiveControl
+          row={row}
+          activating={activating}
+          onActivate={activate}
+        />
+      }
+    />
   );
 }
 
@@ -1137,23 +1113,3 @@ function SubagentActiveControl({
   );
 }
 
-/**
- * Mirrors the three StatusBadge variants from `ApiKeysView` (chip-yellow
- * "active" / emerald "ready" / muted "open") so the subagent cards are
- * visually indistinguishable from the API-key cards above.
- */
-function SubagentStatusBadge({ row }: { row: SubagentMappingRow }) {
-  if (row.is_active_brain) return <span className="chip-yellow">active</span>;
-  if (row.key_set) {
-    return (
-      <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
-        ready
-      </span>
-    );
-  }
-  return (
-    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-      open
-    </span>
-  );
-}

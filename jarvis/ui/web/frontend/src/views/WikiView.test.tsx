@@ -16,6 +16,7 @@ import type {
   WikiPageResponse,
   WikiTreeResponse,
   WikiBacklinksResponse,
+  WikiHealthSnapshot,
 } from "@/lib/wikiApi";
 
 function freshClient(): QueryClient {
@@ -197,6 +198,80 @@ describe("WikiView — populated tree", () => {
       expect(screen.getByTestId("wiki-page-renderer")).toBeDefined();
     });
     expect(screen.getByTestId("wiki-page-title").textContent).toBe("Sam");
+  });
+});
+
+describe("WikiView — health strip", () => {
+  const HEALTHY_HEALTH: WikiHealthSnapshot = {
+    bootstrap_ok: true,
+    bootstrap_error: null,
+    vault_root: "wiki/obsidian-vault",
+    vault_root_source: "config",
+    vault_legacy_conflict: false,
+    last_write: {
+      ts: 1750000000,
+      ok: true,
+      pages: ["alex"],
+      error: null,
+      source: "curator",
+    },
+    last_chain_failure: null,
+    journal_backlog: 0,
+  };
+
+  const FAILED_HEALTH: WikiHealthSnapshot = {
+    bootstrap_ok: true,
+    bootstrap_error: null,
+    vault_root: "wiki/obsidian-vault",
+    vault_root_source: "config",
+    vault_legacy_conflict: false,
+    last_write: {
+      ts: 1750000000,
+      ok: false,
+      pages: [],
+      error: "Permission denied writing entities/alex.md",
+      source: "curator",
+    },
+    last_chain_failure: null,
+    journal_backlog: 3,
+  };
+
+  it("renders the vault path for a healthy snapshot", async () => {
+    installFetchMock({
+      "/api/wiki/tree": () => EMPTY_TREE,
+      "/api/wiki/health": () => ({ ok: true, health: HEALTHY_HEALTH }),
+    });
+    renderWithClient(<WikiView />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("wiki-health-strip")).toBeDefined();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("wiki-health-vault").textContent).toContain(
+        "wiki/obsidian-vault",
+      );
+    });
+    expect(
+      screen.getByTestId("wiki-health-dot").getAttribute("data-visual"),
+    ).toBe("green");
+  });
+
+  it("renders the error text for a failed last write, and the backlog count", async () => {
+    installFetchMock({
+      "/api/wiki/tree": () => EMPTY_TREE,
+      "/api/wiki/health": () => ({ ok: true, health: FAILED_HEALTH }),
+    });
+    renderWithClient(<WikiView />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("wiki-health-write").textContent).toContain(
+        "Permission denied writing entities/alex.md",
+      );
+    });
+    expect(
+      screen.getByTestId("wiki-health-dot").getAttribute("data-visual"),
+    ).toBe("red");
+    expect(screen.getByTestId("wiki-health-backlog").textContent).toContain("3");
   });
 });
 

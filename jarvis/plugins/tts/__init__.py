@@ -39,6 +39,9 @@ _GEMINI_TTS_ALIASES = frozenset({"gemini-flash-tts", "gemini-flash", "gemini"})
 _OPENROUTER_TTS_ALIASES = frozenset({
     "openrouter", "openrouter-tts", "openrouter_tts", "open-router-tts",
 })
+_INWORLD_ALIASES = frozenset({
+    "inworld", "inworld-tts", "inworld_tts", "inworld-tts-2",
+})
 
 # Credential candidates per TTS family — the (keyring_key, env_var) pairs that
 # hold a usable key, matching what each plugin's own key lookup reads. A fresh
@@ -47,6 +50,7 @@ _OPENROUTER_TTS_ALIASES = frozenset({
 # instead of building a keyless provider that goes silently mute (open-source
 # single-provider resilience, AP-22). Families absent here are left untouched.
 _TTS_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
+    "inworld": (("inworld_api_key", "INWORLD_API_KEY"),),
     "gemini-flash-tts": (
         ("gemini_api_key", "GEMINI_API_KEY"),
         ("google_api_key", "GOOGLE_API_KEY"),
@@ -66,17 +70,21 @@ _TTS_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
     "openrouter": (("openrouter_api_key", "OPENROUTER_API_KEY"),),
 }
 
-# Cross-family probe order when the configured provider has no key: the family
-# the maintainer ships first, then the common BYO-key alternatives. Only a family
-# that actually has a key is ever chosen.
+# Cross-family probe order when the configured provider has no key: native
+# premium families first (Inworld leads — the arena-#1 realtime default), then
+# the common BYO-key alternatives, with OpenRouter LAST as the last-resort
+# gateway (design 2026-07-07). Only a family that actually has a key is chosen.
 _TTS_CROSS_FAMILY_ORDER: tuple[str, ...] = (
-    "gemini-flash-tts", "elevenlabs", "cartesia", "grok-voice", "openrouter",
+    "inworld", "gemini-flash-tts", "elevenlabs", "cartesia", "grok-voice",
+    "openrouter",
 )
 
 
 def _canonical_tts_name(name: str) -> str:
     """Map any accepted TTS provider spelling to its canonical family name."""
     n = (name or "").strip().lower()
+    if n in _INWORLD_ALIASES:
+        return "inworld"
     if n in _ELEVEN_ALIASES:
         return "elevenlabs"
     if n in _CARTESIA_ALIASES:
@@ -179,6 +187,48 @@ def _resolve_keyed_tts_provider(primary_name: str, tts_cfg: Any) -> tuple[str, A
     return primary_name, tts_cfg
 
 
+def resolve_keyed_fallback(
+    exclude_family: str,
+    *,
+    allow_sapi5: bool = False,
+    language_code: str | None = None,
+) -> Any | None:
+    """Build the first cross-family TTS provider (≠ ``exclude_family``) that has
+    a usable key on this host — so a plugin's INTERNAL runtime fallback never
+    lands on a keyless (mute) provider (AP-22).
+
+    The old plugins hardcoded ``GeminiFlashTTS`` as their stage-1 fallback, so a
+    user whose ONLY key is Cartesia/ElevenLabs/Grok fell, on a mid-session
+    quota/outage, onto a keyless Gemini → silence. This resolves the fallback
+    through the SAME key-aware cross-family order the factory uses (native
+    premium first, OpenRouter last), skipping the failed family and any keyless
+    one. Returns a built provider, or ``None`` when NO other family has a key
+    (the caller then degrades to the opt-in SAPI5 exit or an honest mute).
+    """
+    from jarvis.core.config import TTSConfig
+
+    exclude = _canonical_tts_name(exclude_family)
+    for cand in _TTS_CROSS_FAMILY_ORDER:
+        if cand == exclude:
+            continue
+        cfg_view = TTSConfig(
+            provider=cand,
+            language_code=language_code or "auto",
+            allow_sapi5_fallback=allow_sapi5,
+        )
+        if not _tts_has_credential(cand, cfg_view):
+            continue
+        try:
+            return _build_provider(cfg_view, cand)
+        except Exception as exc:  # noqa: BLE001 — a bad candidate must not abort the chain
+            log.warning(
+                "Keyed fallback candidate %r not buildable (%s) — trying next.",
+                cand, exc.__class__.__name__,
+            )
+            continue
+    return None
+
+
 def _resolve_voice_for_provider(
     requested: str, provider: str, default: str, allowed: frozenset[str]
 ) -> str:
@@ -232,7 +282,13 @@ def build_tts_from_config(tts_cfg: Any) -> Any:
     primary = _build_provider(primary_cfg, primary_name)
 
     fallback_name = (getattr(tts_cfg, "fallback", "") or "").strip().lower()
-    if not fallback_name or fallback_name == primary_name:
+    # Compare CANONICAL families, not raw strings: a provider="gemini" +
+    # fallback="gemini-flash-tts" pair (or any alias pair) resolves to the SAME
+    # family and must NOT build a FallbackTTS(gemini, gemini) single-family brick
+    # (AP-22). primary_name is already the resolved (possibly crossed) provider.
+    if not fallback_name or _canonical_tts_name(fallback_name) == _canonical_tts_name(
+        primary_name
+    ):
         return primary
 
     try:
@@ -253,6 +309,42 @@ def build_tts_from_config(tts_cfg: Any) -> Any:
 def _build_provider(tts_cfg: Any, provider: str) -> Any:
     """Build a single TTS provider instance for ``provider`` (no fallback wrap)."""
     allow_sapi5 = bool(getattr(tts_cfg, "allow_sapi5_fallback", False))
+
+    if provider in _INWORLD_ALIASES:
+        try:
+            from jarvis.plugins.tts.inworld_tts import (
+                DEFAULT_MODEL as INWORLD_DEFAULT_MODEL,
+            )
+            from jarvis.plugins.tts.inworld_tts import (
+                DEFAULT_VOICE_DE,
+                DEFAULT_VOICE_EN,
+                DEFAULT_VOICE_ES,
+                InworldTTS,
+            )
+        except ImportError as exc:
+            raise RuntimeError(
+                f"TTS provider 'inworld' configured, but the plugin is not "
+                f"importable: {exc}. Check that "
+                f"jarvis/plugins/tts/inworld_tts.py exists and httpx is installed.",
+            ) from exc
+        # Per-language voices live in the [tts.inworld] sub-table (extra="allow"),
+        # NOT [tts].voice_de — that field may hold a foreign Gemini voice name
+        # ("Charon") which is not a valid Inworld voice. Falls back to the
+        # plugin's native defaults (Josef/Dennis/Diego). The shared [tts].model
+        # is ignored here (it may hold another family's id); the model comes from
+        # the sub-table or the plugin default.
+        extras = getattr(tts_cfg, "model_extra", None) or {}
+        iw = extras.get("inworld") if isinstance(extras, dict) else None
+        iw = iw if isinstance(iw, dict) else {}
+        return InworldTTS(
+            default_voice_de=iw.get("voice_de") or DEFAULT_VOICE_DE,
+            default_voice_en=iw.get("voice_en") or DEFAULT_VOICE_EN,
+            default_voice_es=iw.get("voice_es") or DEFAULT_VOICE_ES,
+            model=iw.get("model") or INWORLD_DEFAULT_MODEL,
+            language=tts_cfg.language_code or "auto",
+            speed=float(iw.get("speed", getattr(tts_cfg, "speed", 1.0))),
+            allow_sapi5_fallback=allow_sapi5,
+        )
 
     if provider in ("elevenlabs", "eleven-labs", "eleven_labs", "11labs"):
         try:

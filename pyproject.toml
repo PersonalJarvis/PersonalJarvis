@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "1.0.0"
+version = "1.0.3"
 description = "Voice-driven meta-orchestrator that turns one spoken request into a fleet of self-checking AI agents"
 requires-python = ">=3.11"
 readme = "README.md"
@@ -261,6 +261,14 @@ local-voice = [
     "webrtcvad-wheels>=2.0",
     "faster-whisper>=1.0",
 ]
+# Objective TTS evaluation suite (jarvis/speech/tts_eval): round-trip ASR WER via
+# faster-whisper (CPU). onnxruntime + numpy are already in base; the DNSMOS MOS
+# and speaker-drift backends attach their own models at runtime. Opt-in dev/CI
+# tooling — never on the voice hot path, never in the base install (faster-whisper
+# pulls ctranslate2, which the lockfile guard bans from base).
+tts-eval = [
+    "faster-whisper>=1.0",
+]
 
 [project.scripts]
 jarvis = "jarvis.__main__:main"
@@ -288,6 +296,7 @@ groq-api = "jarvis.plugins.stt.groq_api:GroqWhisperAPI"
 openrouter-stt = "jarvis.plugins.stt.openrouter_stt:OpenRouterSTT"
 
 [project.entry-points."jarvis.tts"]
+inworld = "jarvis.plugins.tts.inworld_tts:InworldTTS"
 elevenlabs = "jarvis.plugins.tts.elevenlabs_tts:ElevenLabsTTS"
 gemini-flash-tts = "jarvis.plugins.tts.gemini_flash_tts:GeminiFlashTTS"
 grok-voice = "jarvis.plugins.tts.grok_voice_tts:GrokVoiceTTS"

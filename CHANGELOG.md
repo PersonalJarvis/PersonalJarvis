@@ -7,6 +7,44 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
+## [1.0.3] — 2026-07-08
+
+A voice + reliability release: a new premium text-to-speech voice, a friendlier
+voice picker, and a batch of robustness fixes to the wiki/journal, the wake
+word, and multi-provider fallback.
+
+### Added
+
+- **New premium voice — Inworld TTS.** A top-ranked realtime text-to-speech
+  provider is now selectable as the premium default, alongside the existing
+  cloud voices. Add your key in the setup wizard and pick it like any other
+  provider.
+- **Cross-provider voice picker with preview.** The voice chooser now spans all
+  configured providers (no longer OpenRouter-only) and lets you preview a voice
+  before selecting it, filtered through a curated, quality-checked voice
+  catalog.
+
+### Fixed
+
+- **Wiki / journal reliability.** The journal now flushes consistently across
+  all trigger points, and the Obsidian vault is resolved against the real vault
+  root — including correct auto-discovery on macOS and Linux — so notes land
+  where they should instead of silently doing nothing.
+- **Wake word no longer dies on a mis-hear.** Removed English mis-hearing
+  hang-up aliases that could kill a fresh wake session, and floored the
+  sensitivity slider at a safe minimum with an in-line explanation.
+- **Multi-provider fallback crosses a dead key.** When a configured API key is
+  depleted, rate-limited, or unauthorized, missions now walk to a different
+  provider family based on real key viability instead of stalling — so one
+  exhausted provider no longer bricks the run.
+- **Localization.** The assistant's name is now correctly tokenized in the
+  vault-choice strings across languages.
+
+### Changed
+
+- The setup wizard registers the new Inworld provider spec and its secret so it
+  is reachable end-to-end from a fresh install.
+
 ## [1.0.0] — 2026-07-03
 
 First **public** release of Personal Jarvis — a voice-driven meta-orchestrator

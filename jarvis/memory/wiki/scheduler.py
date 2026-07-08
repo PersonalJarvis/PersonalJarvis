@@ -34,6 +34,7 @@ Example
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -58,6 +59,46 @@ class TriggerSource(str, Enum):
     # Wave-2: Stage-1 journal pressure — drain a candidate batch through
     # the Stage-2 consolidator (honours cooldown + lock like SESSION_END).
     JOURNAL = "journal"
+
+
+def fire_journal_trigger(
+    scheduler: Any,
+    *,
+    name: str = "wiki-journal-trigger",
+    log_context: str = "journal trigger",
+) -> asyncio.Task[Any]:
+    """Fire ONE background ``JOURNAL`` trigger (fire-and-forget, AP-9).
+
+    The single shared entry point for EVERY journal-pressure site so the
+    ``scheduler.trigger(TriggerSource.JOURNAL)`` call and its done-callback
+    logging cannot drift apart between them:
+
+    * the per-turn count-threshold trigger
+      (``extractor.ConversationFactExtractor._maybe_trigger_consolidation``),
+    * the boot-time backlog drain (``integration.kick_journal_backlog``), and
+    * the below-threshold age-based flush
+      (``integration._journal_age_flush_loop``).
+
+    Lives here (a runtime-stdlib-only leaf, next to ``TriggerSource``) so
+    ``extractor`` and ``integration`` can both import it without an import
+    cycle. Callers own their own preconditions (scheduler present, backlog
+    over the count threshold / over the age / non-empty) and any
+    ``RuntimeError`` guard for "no running event loop". Returns the created
+    task so a caller may await or track it.
+    """
+    task = asyncio.create_task(scheduler.trigger(TriggerSource.JOURNAL), name=name)
+
+    def _log_outcome(t: asyncio.Task[Any]) -> None:
+        # A lost trigger is retried on the next append/tick, so WARNING
+        # (not ERROR) is the right severity.
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc is not None:
+            log.warning("wiki journal trigger (%s) failed: %s", log_context, exc)
+
+    task.add_done_callback(_log_outcome)
+    return task
 
 
 @dataclass(frozen=True, slots=True)

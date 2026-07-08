@@ -387,7 +387,7 @@ function AdvancedCategory() {
         title={t("apikeys_view.advanced_title")}
         description={t("apikeys_view.advanced_desc")}
       />
-      <div className="space-y-8">
+      <div className="space-y-4">
         {/* Jarvis access — the local Control-API key (lets local coding agents
             drive Jarvis over HTTP) and the optional Team key proxy. Both are
             credential / key-routing management, so they live with the provider

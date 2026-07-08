@@ -962,6 +962,14 @@ class LatencyPhase(StrEnum):
     TTS_REQUEST_SENT = "tts_request_sent"  # noqa: S105
     TTS_FIRST_CHUNK = "tts_first_chunk"
     TTS_STREAM_DONE = "tts_stream_done"
+    # Realtime duplex voice mode (browser/OpenAI). REALTIME_INPUT_COMMITTED is
+    # the per-turn anchor + stall-guard reset point; FIRST_TRANSCRIPT is the
+    # BrainTTFT-equivalent; FIRST_AUDIO is the first provider audio delta
+    # received (pre scrub-hold). AudioOutFirst still marks the first audible,
+    # post-hold sample.
+    REALTIME_INPUT_COMMITTED = "realtime_input_committed"
+    REALTIME_FIRST_TRANSCRIPT = "realtime_first_transcript"
+    REALTIME_FIRST_AUDIO = "realtime_first_audio"
 
 
 _LATENCY_PHASE_VALUES: frozenset[str] = frozenset(p.value for p in LatencyPhase)

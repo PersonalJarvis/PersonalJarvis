@@ -160,6 +160,17 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
     # "use custom" row lets a user paste their OWN voice id (e.g. a cloned
     # voice) instead of a curated one — kept in sync with DEFAULT_VOICES in
     # jarvis/plugins/tts/elevenlabs_tts.py.
+    # Inworld — the new premium default (arena-#1 realtime, mid-2026). Voices are
+    # multilingual; these native masculine de/en/es voices are the curated pick,
+    # kept in sync with DEFAULT_VOICE_* in jarvis/plugins/tts/inworld_tts.py.
+    "inworld": ("voice", _curated([
+        ("Josef", "Josef — German, calm assistant (default)"),
+        ("Johanna", "Johanna — German, warm"),
+        ("Dennis", "Dennis — English, deep narrator"),
+        ("Ashley", "Ashley — English, bright"),
+        ("Diego", "Diego — Spanish, formal"),
+        ("Lupita", "Lupita — Spanish, warm"),
+    ])),
     "elevenlabs": ("voice", _curated([
         ("onwK4e9ZLuTAKqWW03F9", "Daniel — British, authoritative (default)"),
         ("JBFqnCBsd6RMkjVDRZzb", "George — British, deep narrator"),
@@ -181,22 +192,18 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
         "de-DE-Neural2-B", "de-DE-Neural2-C", "de-DE-Neural2-D", "de-DE-Neural2-F",
     ])),
     "cartesia": ("model", _ids(["sonic-3.5", "sonic-2", "sonic-turbo"])),
-    # OpenRouter TTS — the model picker offers ONLY speech-synthesis models.
-    # This curated snapshot mirrors the live `?output_modalities=speech` list
-    # (verified 2026-07-02); music (Lyria) and audio-chat models are excluded.
-    # The user picks a MODEL here; the per-model voice list comes from the built
-    # provider's list_voices() (each model ships its own supported_voices). The
-    # default model (google/gemini-3.1-flash-tts-preview) is listed first.
+    # OpenRouter TTS (the last-resort gateway) — the model picker offers ONLY the
+    # four allowlisted, production-grade speech models. The five open-source slop
+    # models (Kokoro, Orpheus, CSM-1B, both Zonos) are UNLISTED per the hard
+    # allowlist (jarvis/plugins/tts/curated_catalog.py) — they fail the premium
+    # multilingual bar on de/es coverage, beta stability, or GPU dependence. Every
+    # id here must satisfy curated_catalog.is_allowed("openrouter", id) — guarded
+    # by tests/unit/plugins/tts/test_openrouter_curation.py.
     "openrouter-tts": ("model", _ids([
         "google/gemini-3.1-flash-tts-preview",
-        "hexgrad/kokoro-82m",
         "x-ai/grok-voice-tts-1.0",
-        "mistralai/voxtral-mini-tts-2603",
         "microsoft/mai-voice-2",
-        "sesame/csm-1b",
-        "canopylabs/orpheus-3b-0.1-ft",
-        "zyphra/zonos-v0.1-transformer",
-        "zyphra/zonos-v0.1-hybrid",
+        "mistralai/voxtral-mini-tts-2603",
     ])),
 }
 

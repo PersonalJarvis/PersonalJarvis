@@ -103,6 +103,30 @@ export interface WikiSearchResponse {
   error?: string;
 }
 
+export interface WikiHealthLastWrite {
+  ts: number;
+  ok: boolean;
+  pages: string[];
+  error: string | null;
+  source: string;
+}
+
+export interface WikiHealthLastChainFailure {
+  ts: number;
+  detail: string;
+}
+
+export interface WikiHealthSnapshot {
+  bootstrap_ok: boolean | null;
+  bootstrap_error: string | null;
+  vault_root: string | null;
+  vault_root_source: string | null;
+  vault_legacy_conflict: boolean;
+  last_write: WikiHealthLastWrite | null;
+  last_chain_failure: WikiHealthLastChainFailure | null;
+  journal_backlog: number;
+}
+
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
   if (!res.ok) {
@@ -136,4 +160,27 @@ export async function fetchWikiSearch(
 ): Promise<WikiSearchResponse> {
   const params = new URLSearchParams({ q: query, k: String(k) });
   return getJson<WikiSearchResponse>(`/api/wiki/search?${params.toString()}`);
+}
+
+/**
+ * Fetch the wiki subsystem's own health snapshot (bootstrap state, last
+ * write outcome, journal backlog). Unlike the other fetchers here, this one
+ * swallows both HTTP-level and network-level failures and returns `null`
+ * instead of throwing — it is polled on a timer by `WikiHealthStrip`
+ * (`WikiView.tsx`), and a transient network blip during polling must not
+ * surface as an unhandled rejection. Callers treat `null` as "unknown", the
+ * same way the status strip treats a not-yet-resolved health check.
+ */
+export async function fetchWikiHealth(): Promise<WikiHealthSnapshot | null> {
+  try {
+    const res = await fetch("/api/wiki/health");
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      ok: boolean;
+      health?: WikiHealthSnapshot;
+    };
+    return body.ok && body.health ? body.health : null;
+  } catch {
+    return null;
+  }
 }

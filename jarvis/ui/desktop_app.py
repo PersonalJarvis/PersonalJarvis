@@ -343,6 +343,93 @@ def _bring_window_to_front_by_title(title: str) -> bool:
         return False
 
 
+# ---------------------------------------------------------------------------
+# Accidental-console suppression (Windows)
+# ---------------------------------------------------------------------------
+
+
+def _console_owned_exclusively(console_hwnd: int, attached_process_count: int) -> bool:
+    """Pure decision: should we hide this console window?
+
+    Hide it ONLY when a console window exists (``console_hwnd`` is non-zero) and
+    this process is the *sole* process attached to it
+    (``attached_process_count == 1``).
+
+    A sole-owner console was allocated *for this app*: a scheduled task, an
+    Explorer double-click, or a shortcut whose target resolved to the
+    console-subsystem ``python.exe`` instead of the windowless ``pythonw.exe``.
+    That is the black terminal that fills with loguru's stderr output and
+    confuses users (forensic 2026-07-08: a test laptop's autostart launched
+    ``python.exe``).
+
+    A console shared with another process (count >= 2) belongs to the *user* — a
+    developer who ran us from their terminal, or ``run.bat --debug`` where
+    ``cmd.exe`` stays attached — and must never be hidden.
+    """
+    return bool(console_hwnd) and attached_process_count == 1
+
+
+def _win32_get_console_window() -> int:
+    import ctypes
+
+    return int(ctypes.windll.kernel32.GetConsoleWindow())
+
+
+def _win32_count_attached_processes() -> int:
+    import ctypes
+
+    # GetConsoleProcessList fills the buffer with the attached PIDs and returns
+    # their TOTAL count (even when it exceeds the buffer), so a small fixed
+    # buffer is enough to answer "is it just us?".
+    buf = (ctypes.c_uint * 8)()
+    return int(ctypes.windll.kernel32.GetConsoleProcessList(buf, 8))
+
+
+def _win32_hide_window(hwnd: int) -> None:
+    import ctypes
+
+    SW_HIDE = 0
+    ctypes.windll.user32.ShowWindow(hwnd, SW_HIDE)
+
+
+def hide_accidental_console(
+    *,
+    _get_console_window: Callable[[], int] | None = None,
+    _count_attached_processes: Callable[[], int] | None = None,
+    _hide_window: Callable[[int], None] | None = None,
+) -> bool:
+    """Hide a console window this GUI app accidentally, exclusively owns.
+
+    Returns ``True`` iff a console was hidden. Windows-only; a clean no-op on
+    macOS/Linux (no console-subsystem split exists there — a GUI app launched
+    from Finder/dock has no controlling terminal, and one launched from a real
+    terminal is *meant* to log there) and whenever the app already runs
+    windowless under ``pythonw.exe`` (``GetConsoleWindow`` returns 0).
+
+    ``SW_HIDE`` (not ``FreeConsole``) is deliberate: it hides the window while
+    keeping ``stdout``/``stderr`` valid, so nothing that later writes to them
+    raises. The rotating file sink (``jarvis_desktop.log``) keeps every log line
+    regardless. The win32 probes are injectable so the orchestration is
+    unit-testable off-Windows.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        get_console_window = _get_console_window or _win32_get_console_window
+        count_attached = _count_attached_processes or _win32_count_attached_processes
+        hide_window = _hide_window or _win32_hide_window
+
+        hwnd = get_console_window()
+        if not hwnd:
+            return False  # pythonw / no console — nothing to hide
+        if not _console_owned_exclusively(hwnd, count_attached()):
+            return False  # a shell shares it (dev terminal / --debug) — leave it
+        hide_window(hwnd)
+        return True
+    except Exception:  # noqa: BLE001 — console cosmetics must never break boot
+        return False
+
+
 def _is_brain_diagnostic(text: str) -> bool:
     """True for backend diagnostics that don't count as a Jarvis reply."""
     t = text.lower()
@@ -2789,6 +2876,23 @@ class DesktopApp:
     def run_window_only(self) -> int:
         """The main-thread pywebview window. Assumes the backend thread is
         already running (started by :meth:`run` or the fast-boot launcher)."""
+        # Hide an *accidental* console. When the app is launched by the
+        # console-subsystem ``python.exe`` (a scheduled task / shortcut / double
+        # click that resolved to python.exe instead of the windowless
+        # pythonw.exe), Windows hands us a black terminal that fills with
+        # loguru's stderr output and confuses users. If we EXCLUSIVELY own that
+        # console we hide it here — the sole-owner check leaves a developer's own
+        # terminal and ``run.bat --debug`` (cmd.exe still attached) visible.
+        # This is the single chokepoint every window path (classic + fast-boot)
+        # funnels through, so it fixes every launch path at once. No-op under
+        # pythonw and on macOS/Linux.
+        if hide_accidental_console():
+            from loguru import logger as _console_logger
+
+            _console_logger.debug(
+                "Hid an accidentally-attached console window (the app was "
+                "launched via python.exe instead of pythonw.exe)."
+            )
         # Claim PER_MONITOR_AWARE before pywebview can downgrade the process to
         # SYSTEM-aware (webview.start does at runtime) — the downgrade
         # virtualizes window rects on mixed-DPI monitors and made Computer-Use

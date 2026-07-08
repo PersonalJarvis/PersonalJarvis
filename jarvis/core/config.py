@@ -399,7 +399,6 @@ class BrainProviderConfig(BaseModel):
 
 class BrainPolicyConfig(BaseModel):
     use_routing_model_for_intent: bool = True
-    use_realtime_for_smalltalk: bool = False
     prompt_cache_heartbeat_seconds: int = 240
     voice_switch_patterns: list[str] = Field(
         default_factory=lambda: ["wechsel auf", "switch to", "wechsle zu"]
@@ -767,6 +766,10 @@ class BrainConfig(BaseModel):
         default=None,
         validation_alias=AliasChoices("worker", "sub_jarvis"),
     )
+    # Realtime-tier provider preference + cross-family fallback chain (AP-22).
+    # None until the user opts into realtime voice. Reuses BrainTierConfig so the
+    # fallback shape matches [brain.router]/[brain.worker].
+    realtime: BrainTierConfig | None = None
     # User-facing reply language pin (desktop "Languages" view → Reply Language).
     # "auto" mirrors the user's input language (DE/EN/ES); "de"/"en"/"es" force
     # that language as a hard rule for every Jarvis reply. Consumed by
@@ -909,7 +912,11 @@ class SchedulerConfig(BaseModel):
     # Wave-2 journal pressure: once this many candidate facts sit pending
     # in the Stage-1 journal, a JOURNAL trigger asks the consolidator to
     # drain a batch (still subject to cooldown + lock).
-    consolidate_after_candidates: int = 8
+    consolidate_after_candidates: int = 3
+    # Age-based flush (spec A4): even below the count threshold, pending
+    # candidates older than this become a JOURNAL trigger so a quiet fresh
+    # install still produces visible pages. 0 disables the age flush.
+    flush_pending_max_age_minutes: int = 10
 
 
 class VoiceBridgeConfig(BaseModel):
@@ -1845,6 +1852,11 @@ class VoiceConfig(BaseModel):
     # Master switch for the completion classifier + waiting state. When false
     # the pipeline behaves exactly as before this feature landed.
     completion_detection_enabled: bool = True
+    # Voice engine selector. "pipeline" = the classic STT->brain->TTS chain
+    # (default, unchanged). "realtime" = the full-duplex speech-to-speech engine
+    # (browser, OpenAI Realtime; opt-in). Read once per voice session; a live
+    # change lands on the next session.
+    mode: str = "pipeline"
     # Per-gap budget after which a stale pending fragment is silently
     # discarded (user-mandated 2026-05-26 — was: flushed/spoken). NOT a total
     # budget — every continuation resets the timer. Bumped from 8 s to 15 s

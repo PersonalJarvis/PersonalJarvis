@@ -394,3 +394,34 @@ def test_page_without_config_returns_error_envelope() -> None:
     body = r.json()
     assert body["ok"] is False
     assert "not configured" in body["error"]
+
+
+# ----------------------------------------------------------------------
+# /health (spec A5)
+# ----------------------------------------------------------------------
+
+
+def test_health_returns_200_with_fresh_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh ``WikiHealth`` singleton reports the all-unknown baseline shape.
+
+    The singleton is process-wide, so other tests in the same run may have
+    mutated it — replace it with a brand-new instance for this assertion
+    rather than relying on run order for isolation.
+    """
+    from jarvis.memory.wiki.health import WikiHealth
+
+    monkeypatch.setattr("jarvis.memory.wiki.health.health", WikiHealth())
+
+    app = FastAPI()
+    app.include_router(wiki_router)
+    with TestClient(app) as client:
+        r = client.get("/api/wiki/health")
+    body = r.json()
+    assert r.status_code == 200
+    assert body["ok"] is True
+    assert body["health"]["journal_backlog"] == 0
+    assert body["health"]["bootstrap_ok"] is None
+    assert body["health"]["last_write"] is None
+    assert body["health"]["last_chain_failure"] is None

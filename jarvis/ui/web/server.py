@@ -1729,6 +1729,12 @@ class WebServer:
             logger.opt(exception=exc).warning(
                 "WikiIntegration init failed — wiki write-wiring inactive"
             )
+            try:
+                from jarvis.memory.wiki.health import health as _wiki_health
+
+                _wiki_health.record_bootstrap(False, error=str(exc))
+            except Exception:  # noqa: BLE001 — health recording must never break boot
+                logger.debug("wiki health.record_bootstrap(False) failed", exc_info=True)
         _boot_mark("wiki_integration")
 
         # Build the FTS5 search index once if it is empty so a pre-existing
@@ -2180,6 +2186,12 @@ class WebServer:
         wiki_cfg = self.cfg.wiki_integration
         if not wiki_cfg.enabled:
             logger.info("wiki_integration: disabled — skipping bootstrap")
+            try:
+                from jarvis.memory.wiki.health import health as _wiki_health
+
+                _wiki_health.record_bootstrap(False, error="disabled in config")
+            except Exception:  # noqa: BLE001 — health recording must never break boot
+                logger.debug("wiki health.record_bootstrap(disabled) failed", exc_info=True)
             return
 
         repo = MarkdownPageRepository()
@@ -2220,6 +2232,12 @@ class WebServer:
         )
         self._wiki_integration_handle = handle
         logger.info("wiki_integration: bootstrap_wiki_integration succeeded")
+        try:
+            from jarvis.memory.wiki.health import health as _wiki_health
+
+            _wiki_health.record_bootstrap(True)
+        except Exception:  # noqa: BLE001 — health recording must never break boot
+            logger.debug("wiki health.record_bootstrap(True) failed", exc_info=True)
 
     def _init_wiki_boot_index(self) -> None:
         """One-shot FTS5 index build at boot for a pre-existing/restored vault.
