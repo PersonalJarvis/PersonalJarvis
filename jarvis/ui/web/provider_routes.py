@@ -9,7 +9,7 @@ Endpoints:
     POST   /api/stt/switch                   → aktiven STT-Provider wechseln (persist in jarvis.toml)
     POST   /api/realtime/switch              → aktiven Realtime-Provider wechseln (persist)
     POST   /api/subagent/switch              → aktiven Subagent-Provider wechseln (3-layer persist)
-    POST   /api/computer-use/switch          → switch the dedicated GLOBAL Computer-Use planner provider (3-layer persist)
+    POST   /api/computer-use/switch          → switch the Computer-Use provider (persist)
 
 Wird vom WebServer in `_build_app()` eingehängt:
     from .provider_routes import router as provider_router

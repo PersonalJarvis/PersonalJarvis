@@ -1793,7 +1793,7 @@ def _update_config_soll_computer_use_provider(name: str) -> None:  # i18n-allow
     """
     soll_path = _config_soll_path()  # i18n-allow
     if not soll_path.exists():  # i18n-allow
-        log.debug("config-soll.json absent (%s) — skipping drift-soll sync", soll_path)  # i18n-allow
+        log.debug("config-soll.json absent (%s) — skip drift-soll sync", soll_path)  # i18n-allow
         return
 
     with _WRITE_LOCK:
