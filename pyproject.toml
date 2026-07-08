@@ -338,8 +338,10 @@ discord = "jarvis.channels.discord:DiscordChannel"
 
 [project.entry-points."jarvis.realtime"]
 # Full-duplex speech-to-speech providers (Phase realtime-voice). OpenAI GA
-# gpt-realtime is the first; Gemini Live follows in Phase 4.
+# gpt-realtime is the first; Gemini Live is the second (adapter module lands
+# in a later task — until then this line is inert, entry-points load lazily).
 openai-realtime = "jarvis.plugins.realtime.openai_realtime:OpenAIRealtimeProvider"
+gemini-live = "jarvis.plugins.realtime.gemini_live:GeminiLiveProvider"
 
 [project.entry-points."jarvis.tool"]
 open-app = "jarvis.plugins.tool.open_app:OpenAppTool"

@@ -1,7 +1,8 @@
 """Realtime provider tier — backend for the API-Keys & Providers "Realtime" tab.
 
-Mirrors the brain/tts/stt tier plumbing: a ProviderSpec (``openai-realtime``,
-the only realtime provider today — Gemini Live is not implemented), the
+Mirrors the brain/tts/stt tier plumbing: the realtime ProviderSpecs
+(``openai-realtime`` and ``gemini-live`` — the Gemini Live adapter module
+itself lands in a later task, this only covers the declarative spec), the
 ``active_realtime`` resolution in ``list_providers``, the credential-presence
 section-health check, and the ``POST /realtime/switch`` route. Style follows
 ``tests/unit/web/test_voice_mode_route.py`` (a lightweight FastAPI app with
@@ -36,6 +37,13 @@ def test_openai_realtime_spec_is_realtime_tier_with_openai_key():
     assert spec is not None
     assert spec.tier == "realtime"
     assert "openai_api_key" in spec.secret_keys
+
+
+def test_gemini_live_spec_present():
+    spec = get_spec("gemini-live")
+    assert spec is not None
+    assert spec.tier == "realtime"
+    assert spec.secret_keys == ("gemini_api_key",)
 
 
 # ---------------------------------------------------------------------------

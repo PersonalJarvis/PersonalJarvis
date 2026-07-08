@@ -358,9 +358,11 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     # a key-free local faster-whisper *fallback* (_build_local_fallback, AP-22)
     # as an invisible resilience floor for a user with no cloud STT key.
     # ── Realtime ──────────────────────────────────────────────────────────
-    # Realtime voice is OpenAI-ONLY today (jarvis.plugins.realtime.openai_realtime,
-    # jarvis.realtime.protocol.RealtimeProvider). Gemini Live is NOT implemented —
-    # do not add a gemini-live spec here, it would show a card that cannot work.
+    # Realtime voice spans two providers today
+    # (jarvis.plugins.realtime.openai_realtime, jarvis.realtime.protocol.
+    # RealtimeProvider). The Gemini Live adapter (jarvis.plugins.realtime.
+    # gemini_live) is added by a later task — this spec is registered ahead of
+    # it so the entry-point below stays inert until that module exists.
     ProviderSpec(
         id="openai-realtime",
         label="OpenAI Realtime",
@@ -374,6 +376,21 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "speaks over a single connection. Full-duplex browser voice; still "
             "default-OFF until the realtime client is wired in (Phase 2)."
         ),
+    ),
+    ProviderSpec(
+        id="gemini-live",
+        label="Gemini Live",
+        tier="realtime",
+        auth_mode="api_key",
+        secret_keys=("gemini_api_key",),
+        dashboard_url="https://aistudio.google.com/app/apikey",
+        credential_help=(
+            "Google AI Studio key (AIza/AQ.), shared with the Gemini brain, to "
+            "power Google's full-duplex Live realtime voice. Or use the Vertex AI "
+            "service-account path for higher quota. Default-OFF until the realtime "
+            "client is wired in (Phase 2)."
+        ),
+        alt_credential=_GEMINI_VERTEX,
     ),
 )
 
