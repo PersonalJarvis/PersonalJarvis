@@ -6,9 +6,23 @@ file, or the pipeline fails honestly (no file, no false "stored").
 This is the SAME real stack as ``test_curator_ingest_e2e.py`` /
 ``test_curator_concurrent_edit.py`` (a real ``WikiCurator`` +
 ``AtomicWriter`` + ``LogWriter`` + ``VaultIndex`` + ``MarkdownPageRepository``
-against a tmp on-disk vault); only the curator-LLM is swapped for a
-deterministic in-test fake (house rule: fakes, not ``unittest.mock``)
-standing in for the ONE provider a fresh install actually has.
+against a tmp on-disk vault). The two cases differ in HOW the intelligence
+layer is faked:
+
+* Success: the curator-LLM is a tiny in-test ``_FakeCuratorLLM`` (house
+  rule: fakes, not ``unittest.mock``) that deterministically proposes ONE
+  page update -- standing in for the ONE weak/free provider a fresh
+  install actually has.
+* Failure twin (spec §7 "all providers dead -> honest failure, no file,
+  no success phrase"): a REAL ``WikiCuratorLLM`` whose provider fallback
+  chain is EXHAUSTED -- every family raises through the real
+  ``provider_chain.complete_with_fallback`` code, which returns ``None``,
+  so ``propose_updates`` collapses to ``[]``. This drives the genuine
+  dead-chain path (a regression in ``provider_chain.py`` would break this
+  test), not just the "curator found nothing salient" no-op branch. The
+  fake Brain/registry construction is copied from
+  ``tests/unit/memory/wiki/test_curator_llm.py``
+  (``test_propose_updates_brain_exception_returns_empty``).
 
 Deviation from the task brief's sketch: the brief checks
 ``vault_root.rglob("*.md")`` truthiness directly. On a REAL vault that is
@@ -23,13 +37,24 @@ was added by the ingest call under test.
 """
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 import pytest_asyncio
 
+from jarvis.core.config import (
+    BrainConfig,
+    BrainProviderConfig,
+    JarvisConfig,
+    MemoryConfig,
+    WikiCuratorConfig,
+    WikiMemoryConfig,
+)
+from jarvis.core.protocols import BrainDelta, BrainRequest
 from jarvis.memory.wiki.atomic_writer import AtomicWriter
 from jarvis.memory.wiki.curator import WikiCurator
+from jarvis.memory.wiki.curator_llm import WikiCuratorLLM
 from jarvis.memory.wiki.intent import match_wiki_intent
 from jarvis.memory.wiki.log_writer import LogWriter
 from jarvis.memory.wiki.page import MarkdownPageRepository
@@ -41,16 +66,9 @@ from jarvis.plugins.tool.wiki_ingest import WikiIngestTool
 class _FakeCuratorLLM:
     """Deterministic proposing-LLM double satisfying the ``CuratorLLM``
     protocol -- stands in for the ONE weak/free provider a fresh install
-    actually has.
-
-    Success case: returns exactly the ``PageUpdate`` list handed to the
-    constructor. Failure twin ("dead/exhausted provider chain"): returns
-    ``[]``. That is not a shortcut -- it is exactly what the REAL
-    ``WikiCuratorLLM.propose_updates`` returns once every provider in its
-    fallback chain fails; its own docstring is explicit that it "Always
-    returns a list. Never raises." (``jarvis/memory/wiki/curator_llm.py``).
-    So an empty list IS the honest on-disk shape of "the chain is
-    exhausted" here, not a stand-in for an exception.
+    actually has. Returns exactly the ``PageUpdate`` list handed to the
+    constructor and records every call so the test can assert the write
+    path genuinely ran.
     """
 
     def __init__(self, updates: list[PageUpdate] | None = None) -> None:
@@ -67,6 +85,46 @@ class _FakeCuratorLLM:
     ) -> list[PageUpdate]:
         self.calls.append((source_content, source_label))
         return list(self._updates)
+
+
+class _DeadBrain:
+    """A Brain whose every ``complete`` raises -- stands in for a provider
+    that is unreachable (401 / 429 / 403 / network dead). Copied in spirit
+    from ``test_curator_llm.py``'s ``FakeBrain(raise_exc=...)``: the async
+    generator raises before yielding, so ``streaming.aggregate`` propagates
+    the error and ``complete_with_fallback`` crosses to the next family.
+    """
+
+    name = "dead-brain"
+    context_window = 100_000
+    supports_tools = False
+    supports_vision = False
+
+    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        raise RuntimeError("provider unreachable (dead-chain fresh-machine)")
+        # The unreachable yield makes this an async generator (matches the
+        # Brain.complete contract) even though it raises first.
+        yield BrainDelta(content="")  # pragma: no cover
+
+    def estimate_cost(self, req: BrainRequest) -> float:  # pragma: no cover
+        return 0.0
+
+
+class _DeadRegistry:
+    """Stand-in for ``BrainProviderRegistry`` that hands back a ``_DeadBrain``
+    for EVERY provider, so no family in the fallback chain can succeed.
+    Copied from ``test_curator_llm.py``'s ``FakeRegistry``.
+    """
+
+    def __init__(self, brain: Any, *, available: set[str]) -> None:
+        self._brain = brain
+        self._available = set(available)
+
+    def available(self) -> set[str]:
+        return set(self._available)
+
+    def instantiate(self, name: str, **kwargs: Any) -> Any:
+        return self._brain
 
 
 def _entity_body(slug: str, summary_line: str) -> str:
@@ -120,7 +178,7 @@ def _build_vault(tmp_path: Path) -> Path:
 
 
 async def _build_curator(
-    vault_root: Path, tmp_path: Path, llm: _FakeCuratorLLM,
+    vault_root: Path, tmp_path: Path, llm: Any,
 ) -> WikiCurator:
     repo = MarkdownPageRepository()
     vault = VaultIndex(repo=repo)
@@ -156,13 +214,37 @@ async def tmp_vault_curator(tmp_path: Path):
 
 @pytest_asyncio.fixture
 async def tmp_vault_dead_curator(tmp_path: Path):
-    """Same real stack, but the fake provider chain is exhausted -- every
-    provider raised/timed out and the real
-    ``WikiCuratorLLM.propose_updates`` already swallows that into ``[]``
-    (see ``_FakeCuratorLLM``'s docstring). Yields ``(curator, vault_root)``."""
+    """Same real stack, but with a REAL ``WikiCuratorLLM`` whose provider
+    fallback chain is EXHAUSTED: every family in the chain resolves to a
+    ``_DeadBrain`` that raises, so the real
+    ``provider_chain.complete_with_fallback`` returns ``None`` and
+    ``propose_updates`` collapses to ``[]``. This drives the genuine
+    dead-chain path, not the salience no-op branch. Yields
+    ``(curator, vault_root)``."""
     vault_root = _build_vault(tmp_path)
-    llm = _FakeCuratorLLM(updates=[])
-    curator = await _build_curator(vault_root, tmp_path, llm)
+    cfg = JarvisConfig(
+        brain=BrainConfig(
+            primary="gemini",
+            providers={"gemini": BrainProviderConfig(model="gemini-3-flash-preview")},
+        ),
+        memory=MemoryConfig(
+            wiki=WikiMemoryConfig(
+                curator=WikiCuratorConfig(provider="", model="", timeout_s=5.0),
+            ),
+        ),
+    )
+    dead_llm = WikiCuratorLLM(
+        config=cfg,
+        schema_path=vault_root / "schema.md",
+        log_path=vault_root / "log.md",
+        registry=_DeadRegistry(
+            _DeadBrain(),
+            # Every family the wiki chain may cross to is "available" yet dead,
+            # so the chain is tried in full and then honestly exhausted.
+            available={"gemini", "claude-api", "openrouter", "openai"},
+        ),
+    )
+    curator = await _build_curator(vault_root, tmp_path, dead_llm)
     return curator, vault_root
 
 
@@ -185,11 +267,17 @@ async def test_explicit_command_produces_a_real_file(tmp_vault_curator):
     assert new_pages, "an explicit wiki command MUST produce a visible page"
     assert any(p.name == "joy.md" for p in new_pages)
 
+    # The write path genuinely ran through the curator LLM exactly once, and
+    # the ingested content carried the fact from the utterance.
+    assert len(curator._llm.calls) == 1  # noqa: SLF001 -- test double introspection
+    ingested_text, _label = curator._llm.calls[0]  # noqa: SLF001
+    assert "geburtstag" in ingested_text.lower()  # i18n-allow: fact fragment under test
+
 
 async def test_dead_provider_chain_fails_honestly(tmp_vault_dead_curator):
-    """``tmp_vault_dead_curator``: same construction, but the fake provider
-    chain is exhausted (every provider fails, so ``propose_updates``
-    returns ``[]`` -- the real component's own documented failure mode)."""
+    """``tmp_vault_dead_curator``: a REAL curator-LLM whose provider chain is
+    exhausted -- every family raises through the real fallback code, so the
+    ingest produces no updates and the tool reports honest failure."""
     curator, vault_root = tmp_vault_dead_curator
     pages_before = {p.resolve() for p in vault_root.rglob("*.md")}
 
