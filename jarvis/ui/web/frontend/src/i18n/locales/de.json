@@ -866,12 +866,14 @@
     "tier_tts": "Voice-Output (TTS)",
     "tier_stt": "Voice-Input (STT)",
     "tier_realtime": "Realtime-Sprache",
+    "tier_computer_use": "Computer-Use-Provider",
     "tier_subagent": "Jarvis-Agent (Heavy-Tasks)",
     "tier_telephony": "Telefonie",
     "tab_brain": "Brain",
     "tab_tts": "Sprachausgabe",
     "tab_stt": "Spracheingabe",
     "tab_realtime": "Realtime",
+    "tab_computer_use": "Computer-Use",
     "tab_subagents": "Jarvis-Agents",
     "tab_advanced": "Erweitert",
     "mode_pipeline": "Pipeline",
@@ -881,6 +883,7 @@
     "cat_tts_desc": "Die Stimme, mit der Jarvis spricht.",
     "cat_stt_desc": "Wie Jarvis deine Sprache in Text umwandelt.",
     "cat_realtime_desc": "Die Vollduplex-Sprache-zu-Sprache-Engine (OpenAI Realtime). Nutzt deinen vorhandenen OpenAI-Key mit. Standardmäßig AUS, bis der Browser-Client angebunden ist (Phase 2).",
+    "cat_computer_use_desc": "Computer-Use liest deinen Bildschirm; wähle, welcher Provider das plant — unabhängig von deinem Chat-Brain. Realtime-Modelle können den Bildschirm nicht sehen, deshalb läuft es auch dort darüber.",
     "cat_subagents_title": "Jarvis-Agents",
     "cat_subagents_desc": "Wähle, welcher Provider schwere Hintergrund-Aufgaben übernimmt.",
     "advanced_title": "Zugang & Integrationen",
@@ -968,12 +971,6 @@
     "effective": "Computer-Use nutzt",
     "cleared": "Computer-Use-Modell auf dein Hauptmodell zurückgesetzt",
     "vision_note": "Es werden nur Modelle angezeigt, die Bilder verstehen - Computer-Use liest den Bildschirm über Screenshots, ein reines Text-Modell kann es nicht steuern."
-  },
-  "apikeys_realtime_cu": {
-    "title": "Computer-Use",
-    "description": "Realtime-Modelle können deinen Bildschirm nicht sehen. Wenn ein Realtime-Gespräch Computer-Use braucht, nutzt Jarvis deinen aktiven Brain-Provider: {0}.",
-    "description_generic": "Realtime-Modelle können deinen Bildschirm nicht sehen. Computer-Use braucht einen aktiven Brain-Provider als Rückfalloption.",
-    "no_active_brain_hint": "Es ist noch kein aktiver Brain-Provider eingerichtet. Wechsle zu Pipeline → Brain und aktiviere einen, um Computer-Use in Realtime-Gesprächen zu ermöglichen."
   },
   "settings_view": {
     "silence_window": {

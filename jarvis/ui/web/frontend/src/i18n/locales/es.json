@@ -866,12 +866,14 @@
     "tier_tts": "Salida de voz (TTS)",
     "tier_stt": "Entrada de voz (STT)",
     "tier_realtime": "Voz en tiempo real",
+    "tier_computer_use": "Proveedor de Computer-Use",
     "tier_subagent": "Jarvis-Agent (tareas pesadas)",
     "tier_telephony": "Telefonía",
     "tab_brain": "IA",
     "tab_tts": "Salida de voz",
     "tab_stt": "Entrada de voz",
     "tab_realtime": "Tiempo real",
+    "tab_computer_use": "Computer-Use",
     "tab_subagents": "Jarvis-Agents",
     "tab_advanced": "Avanzado",
     "mode_pipeline": "Pipeline",
@@ -881,6 +883,7 @@
     "cat_tts_desc": "La voz con la que habla Jarvis.",
     "cat_stt_desc": "Cómo convierte Jarvis tu voz en texto.",
     "cat_realtime_desc": "El motor de voz a voz en tiempo real (dúplex completo, OpenAI Realtime). Reutiliza tu clave de OpenAI. Desactivado por defecto hasta que el cliente de navegador esté conectado (Fase 2).",
+    "cat_computer_use_desc": "Computer-Use lee tu pantalla; elige qué proveedor lo planifica, independientemente de tu Brain de chat. Los modelos Realtime no pueden ver la pantalla, así que esto también se ejecuta ahí.",
     "cat_subagents_title": "Jarvis-Agents",
     "cat_subagents_desc": "Elige qué proveedor ejecuta las tareas pesadas en segundo plano.",
     "advanced_title": "Acceso e integraciones",
@@ -968,12 +971,6 @@
     "effective": "Computer-Use usa",
     "cleared": "Modelo de Computer-Use restablecido a tu modelo principal",
     "vision_note": "Solo se muestran modelos que entienden imágenes: Computer-Use lee la pantalla mediante capturas, un modelo de solo texto no puede controlarlo."
-  },
-  "apikeys_realtime_cu": {
-    "title": "Computer-Use",
-    "description": "Los modelos Realtime no pueden ver tu pantalla. Cuando una conversación Realtime necesita Computer-Use, Jarvis usa tu proveedor Brain activo: {0}.",
-    "description_generic": "Los modelos Realtime no pueden ver tu pantalla. Computer-Use necesita un proveedor Brain activo como alternativa.",
-    "no_active_brain_hint": "Todavía no hay un proveedor Brain activo configurado. Cambia a Pipeline → Brain y activa uno para habilitar Computer-Use en las conversaciones Realtime."
   },
   "settings_view": {
     "silence_window": {

@@ -8,7 +8,6 @@ import { OpenRouterTtsControls } from "@/components/OpenRouterTtsVoicePicker";
 import { CuModelSelector } from "@/components/CuModelSelector";
 import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
 import { JarvisAgentSection } from "@/components/JarvisAgentSection";
-import { RealtimeComputerUsePanel } from "@/components/RealtimeComputerUsePanel";
 import { TelephonyPanel } from "@/views/TelephonyView";
 import { WikiProviderCard } from "@/views/settings/WikiProviderCard";
 import { JarvisApiGroup } from "@/views/settings/JarvisApiGroup";
@@ -25,6 +24,7 @@ import {
   type SectionHealth,
   startCodexLogin,
   switchBrainProvider,
+  switchComputerUseProvider,
   switchRealtimeProvider,
   switchSttProvider,
   switchTtsProvider,
@@ -54,8 +54,18 @@ type VoiceEngineMode = "pipeline" | "realtime";
 
 // Realtime replaces STT+Brain+TTS with one full-duplex model, so those three
 // tiers don't apply in Realtime mode — that's the whole reason for the split.
-const PIPELINE_TABS: CategoryKey[] = ["brain", "tts", "stt", "subagents", "advanced"];
-const REALTIME_TABS: CategoryKey[] = ["realtime", "subagents", "advanced"];
+// "computer-use" is GLOBAL (not mode-specific — Computer-Use is one engine for
+// the whole app), so it appears right after the main chat-model tab in BOTH
+// tab sets.
+const PIPELINE_TABS: CategoryKey[] = [
+  "brain",
+  "computer-use",
+  "tts",
+  "stt",
+  "subagents",
+  "advanced",
+];
+const REALTIME_TABS: CategoryKey[] = ["realtime", "computer-use", "subagents", "advanced"];
 
 type LucideIcon = typeof Brain;
 
@@ -98,6 +108,12 @@ function makeProviderCategories(
       title: t("apikeys_view.tier_realtime"),
       description: t("apikeys_view.cat_realtime_desc"),
       icon: Radio,
+    },
+    "computer-use": {
+      tab: t("apikeys_view.tab_computer_use"),
+      title: t("apikeys_view.tier_computer_use"),
+      description: t("apikeys_view.cat_computer_use_desc"),
+      icon: Terminal,
     },
   };
 }
@@ -165,6 +181,17 @@ export function ApiKeysView() {
             onChanged={refetch}
             onActivateOptimistic={setActiveOptimistic}
             health={health.realtime}
+          />
+        )}
+        {active === "computer-use" && (
+          <ComputerUseCategory
+            meta={categories["computer-use"]}
+            providers={providers}
+            loading={loading}
+            error={error}
+            onChanged={refetch}
+            onActivateOptimistic={setActiveOptimistic}
+            health={health["computer-use"]}
           />
         )}
         {active === "subagents" && <SubagentCategory />}
@@ -268,6 +295,7 @@ function CategoryTabs({
     tts: { label: t("apikeys_view.tab_tts"), icon: Volume2 },
     stt: { label: t("apikeys_view.tab_stt"), icon: Mic },
     realtime: { label: t("apikeys_view.tab_realtime"), icon: Radio },
+    "computer-use": { label: t("apikeys_view.tab_computer_use"), icon: Terminal },
     subagents: { label: t("apikeys_view.tab_subagents"), icon: Bot },
   };
   const coreTabs = tabs.filter(
@@ -490,12 +518,13 @@ function ProviderCategory({
 
 /**
  * The Realtime category (Feature B): the two realtime provider cards, via the
- * SAME `ProviderCategory` used for brain/tts/stt (unchanged), followed by the
- * Computer-Use delegation panel. Realtime speech-to-speech models can't see
- * the screen, so Computer-Use during a realtime turn falls back to the ACTIVE
- * Brain provider — exactly what CU already runs on today. This wrapper mirrors
- * `SubagentCategory` below: it owns nothing itself, it just composes the
- * existing tier section with the new read-through panel.
+ * SAME `ProviderCategory` used for brain/tts/stt (unchanged). Realtime
+ * speech-to-speech models can't see the screen, so Computer-Use during a
+ * realtime turn runs on the dedicated Computer-Use provider (or the active
+ * Brain provider, until one is picked) — now its own "Computer-Use" tab
+ * (see `ComputerUseCategory` below) rather than a panel embedded here. This
+ * wrapper mirrors `SubagentCategory` below: it owns nothing itself, it just
+ * composes the existing tier section.
  */
 function RealtimeCategory({
   meta,
@@ -515,19 +544,66 @@ function RealtimeCategory({
   health?: SectionHealth;
 }) {
   return (
-    <>
-      <ProviderCategory
-        meta={meta}
-        tier="realtime"
-        providers={providers}
-        loading={loading}
-        error={error}
-        onChanged={onChanged}
-        onActivateOptimistic={onActivateOptimistic}
-        health={health}
-      />
-      <RealtimeComputerUsePanel />
-    </>
+    <ProviderCategory
+      meta={meta}
+      tier="realtime"
+      providers={providers}
+      loading={loading}
+      error={error}
+      onChanged={onChanged}
+      onActivateOptimistic={onActivateOptimistic}
+      health={health}
+    />
+  );
+}
+
+/**
+ * The Computer-Use tab: an OVERLAY over the brain-tier provider cards
+ * (Claude/OpenAI/OpenRouter/Gemini), NOT a new provider tier. Reuses the SAME
+ * `ProviderCategory`/`TierSection`/`ProviderCard` machinery as Brain/TTS/STT
+ * by mapping every brain-switchable provider to a synthetic `"computer-use"`
+ * tier descriptor whose `active` mirrors `computer_use_active` — a SEPARATE
+ * selection from the Brain tab's `active`/`brain.primary`. The synthetic
+ * `tier` value forks the shared machinery cleanly: the radio group's
+ * `name="active-computer-use"` never collides with `name="active-brain"`,
+ * and `ProviderCard.activate()` routes to `switchComputerUseProvider` instead
+ * of `switchBrainProvider`. The CU provider is GLOBAL (one engine for the
+ * whole app), so this tab renders identically in Pipeline and Realtime mode —
+ * it replaces the old `RealtimeComputerUsePanel`, which only displayed the
+ * delegation without letting the user pick a provider.
+ */
+function ComputerUseCategory({
+  meta,
+  providers,
+  loading,
+  error,
+  onChanged,
+  onActivateOptimistic,
+  health,
+}: {
+  meta: CategoryMeta;
+  providers: ProviderDescriptor[];
+  loading: boolean;
+  error: string | null;
+  onChanged: () => void;
+  onActivateOptimistic: (tier: ProviderTier, id: string) => void;
+  health?: SectionHealth;
+}) {
+  const cuProviders: ProviderDescriptor[] = providers
+    .filter((p) => p.tier === "brain" && p.brain_switchable !== false)
+    .map((p) => ({ ...p, tier: "computer-use", active: !!p.computer_use_active }));
+
+  return (
+    <ProviderCategory
+      meta={meta}
+      tier="computer-use"
+      providers={cuProviders}
+      loading={loading}
+      error={error}
+      onChanged={onChanged}
+      onActivateOptimistic={onActivateOptimistic}
+      health={health}
+    />
   );
 }
 
@@ -729,6 +805,10 @@ function ProviderCard({
           : "";
         pushToast("success", `Voice input → ${descriptor.label}${note}`);
         window.dispatchEvent(new CustomEvent("jarvis:stt-switched"));
+      } else if (descriptor.tier === "computer-use") {
+        await switchComputerUseProvider(descriptor.id);
+        pushToast("success", `Computer-Use → ${descriptor.label}`);
+        window.dispatchEvent(new CustomEvent("jarvis:computer-use-switched"));
       } else {
         const result = await switchRealtimeProvider(descriptor.id);
         const note = result.restart_required
@@ -932,13 +1012,18 @@ function ProviderCard({
         )}
 
       {/* Phase 3: a dedicated Computer-Use model, selectable per brain provider
-          (defaults to the provider's main model — no automatic escalation). */}
-      {descriptor.tier === "brain" && descriptor.configured && isBrainSwitchable && (
-        <CuModelSelector
-          providerId={descriptor.id}
-          recommendedModel={descriptor.recommended_model}
-        />
-      )}
+          (defaults to the provider's main model — no automatic escalation).
+          Also shown under the Computer-Use tab (synthetic "computer-use"
+          tier, same underlying brain id) — but never the plain
+          BrainModelSelector above, which stays Brain-tab-only. */}
+      {(descriptor.tier === "brain" || descriptor.tier === "computer-use") &&
+        descriptor.configured &&
+        isBrainSwitchable && (
+          <CuModelSelector
+            providerId={descriptor.id}
+            recommendedModel={descriptor.recommended_model}
+          />
+        )}
 
       <ProviderTestControl providerId={descriptor.id} />
     </div>

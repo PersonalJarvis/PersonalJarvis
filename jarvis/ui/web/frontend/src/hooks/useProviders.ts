@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 export type AuthMode = "api_key" | "codex" | "antigravity" | "none";
-export type ProviderTier = "brain" | "tts" | "stt" | "realtime";
+export type ProviderTier = "brain" | "tts" | "stt" | "realtime" | "computer-use";
 /** How using a provider is billed — mirror of provider_spec.Billing. */
 export type Billing = "api" | "subscription" | "subscription_or_api" | "local";
 
@@ -31,6 +31,12 @@ export interface ProviderDescriptor {
   credential_path_hint: string | null;
   configured: boolean;
   active: boolean;
+  /**
+   * Whether this brain provider is the dedicated Computer-Use planner
+   * (`[brain.computer_use].provider`) — an OVERLAY selection, independent of
+   * `active`/`brain.primary` above. Only ever true for `tier === "brain"`.
+   */
+  computer_use_active?: boolean;
   brain_switchable?: boolean;
   cli_installed: boolean | null;
   /** Plain-English "which key / subscription, and what for". */
@@ -167,17 +173,20 @@ export function useProviders() {
     const onTts = () => void refetch();
     const onStt = () => void refetch();
     const onRealtime = () => void refetch();
+    const onComputerUse = () => void refetch();
     window.addEventListener("jarvis:secret-configured", onSecret);
     window.addEventListener("jarvis:brain-switched", onBrain);
     window.addEventListener("jarvis:tts-switched", onTts);
     window.addEventListener("jarvis:stt-switched", onStt);
     window.addEventListener("jarvis:realtime-switched", onRealtime);
+    window.addEventListener("jarvis:computer-use-switched", onComputerUse);
     return () => {
       window.removeEventListener("jarvis:secret-configured", onSecret);
       window.removeEventListener("jarvis:brain-switched", onBrain);
       window.removeEventListener("jarvis:tts-switched", onTts);
       window.removeEventListener("jarvis:stt-switched", onStt);
       window.removeEventListener("jarvis:realtime-switched", onRealtime);
+      window.removeEventListener("jarvis:computer-use-switched", onComputerUse);
     };
   }, [refetch]);
 
@@ -250,6 +259,7 @@ export function useSectionHealth() {
       "jarvis:tts-switched",
       "jarvis:stt-switched",
       "jarvis:realtime-switched",
+      "jarvis:computer-use-switched",
       "jarvis:subagent-switched",
       "jarvis:provider-tested",
     ];
@@ -448,6 +458,29 @@ export async function switchRealtimeProvider(
   providerId: string,
 ): Promise<PipelineSwitchResult> {
   const res = await fetch("/api/realtime/switch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider: providerId, persist: true }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as PipelineSwitchResult;
+}
+
+/**
+ * Switches the dedicated GLOBAL Computer-Use planner provider
+ * (`[brain.computer_use].provider`). An OVERLAY over the brain-tier provider
+ * ids — decoupled from `brain.primary` — so the same CU provider applies in
+ * both Pipeline and Realtime mode. Persists to jarvis.toml (3-layer,
+ * drift-guarded) and takes effect immediately on the server, so
+ * `restart_required` is always false here (unlike TTS/STT/Realtime/worker).
+ */
+export async function switchComputerUseProvider(
+  providerId: string,
+): Promise<PipelineSwitchResult> {
+  const res = await fetch("/api/computer-use/switch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ provider: providerId, persist: true }),
