@@ -37,14 +37,23 @@ class VoskModelSpec:
     sha256: str  # empty = not yet pinned (accepted unverified); fill in as a follow-up
 
 
-# SHA-256 values are intentionally empty here (not yet pinned) — see the module
-# docstring. `ensure_vosk_model` treats an empty spec.sha256 as "unverified,
-# accept"; a follow-up change pins the real digests once the models have been
-# downloaded once and hashed.
+# SHA-256 values pinned 2026-07-08 by downloading each zip from _BASE_URL and
+# hashing it (see the module docstring for the empty-hash fallback semantics
+# this replaces). Re-pin here if alphacephei.com ever republishes a zip_name
+# with different bytes.
 VOSK_MODELS: dict[str, VoskModelSpec] = {
-    "en": VoskModelSpec("vosk-model-small-en-us-0.15.zip", ""),
-    "de": VoskModelSpec("vosk-model-small-de-0.15.zip", ""),
-    "es": VoskModelSpec("vosk-model-small-es-0.42.zip", ""),
+    "en": VoskModelSpec(
+        "vosk-model-small-en-us-0.15.zip",
+        "30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498",
+    ),
+    "de": VoskModelSpec(
+        "vosk-model-small-de-0.15.zip",
+        "b7e53c90b1f0a38456f4cd62b366ecd58803cd97cd42b06438e2c131713d5e43",
+    ),
+    "es": VoskModelSpec(
+        "vosk-model-small-es-0.42.zip",
+        "09b239888f633ef2f0b4e09736e3d9936acfd810bc65d53fad45261762c6511f",
+    ),
 }
 
 
