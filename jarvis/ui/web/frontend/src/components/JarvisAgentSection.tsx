@@ -444,7 +444,7 @@ const PROVIDER_ICON: Record<string, string> = {
   "claude-api": "claude",
   gemini: "gemini",
   openrouter: "openrouter",
-  // antigravity: no official brand logo exists → monogram.
+  antigravity: "antigravity",
 };
 
 /**
