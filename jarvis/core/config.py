@@ -770,6 +770,13 @@ class BrainConfig(BaseModel):
     # None until the user opts into realtime voice. Reuses BrainTierConfig so the
     # fallback shape matches [brain.router]/[brain.worker].
     realtime: BrainTierConfig | None = None
+    # Dedicated GLOBAL Computer-Use planner provider — decoupled from
+    # ``primary`` (see docs plan "dedicated Computer-Use provider"). None
+    # until the user picks one; ``BrainManager._cu_provider`` then returns
+    # "" and Computer-Use keeps dispatching through the normal fallback
+    # chain (``primary`` first), so this is fully backward-compatible.
+    # Reuses BrainTierConfig, same shape as [brain.worker]/[brain.realtime].
+    computer_use: BrainTierConfig | None = None
     # User-facing reply language pin (desktop "Languages" view → Reply Language).
     # "auto" mirrors the user's input language (DE/EN/ES); "de"/"en"/"es" force
     # that language as a hard rule for every Jarvis reply. Consumed by

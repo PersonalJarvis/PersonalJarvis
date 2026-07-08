@@ -52,6 +52,11 @@ _WORKER_MODEL_ENV = "JARVIS__BRAIN__WORKER__MODEL"
 _SUB_JARVIS_PROVIDER_ENV = _WORKER_PROVIDER_ENV  # back-compat alias (pre-rename)
 _SUB_JARVIS_MODEL_ENV = _WORKER_MODEL_ENV        # back-compat alias (pre-rename)
 
+# Canonical User-scope ENV var that overrides ``[brain.computer_use] provider``
+# at boot — the dedicated GLOBAL Computer-Use planner provider, decoupled
+# from ``[brain] primary``. Same shape as ``_WORKER_PROVIDER_ENV``.
+_CU_PROVIDER_ENV = "JARVIS__BRAIN__COMPUTER_USE__PROVIDER"
+
 # Canonical User-scope ENV vars that override ``[tts] provider`` / ``[stt]
 # provider`` at boot. Both section + key are single words, so
 # ``_apply_env_overrides`` maps them cleanly to ``tts.provider`` / ``stt.provider``.
@@ -124,6 +129,41 @@ def set_worker_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
 
 # Back-compat alias — callers that imported set_sub_jarvis_provider still work.
 set_sub_jarvis_provider = set_worker_provider
+
+
+def set_computer_use_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Set ``[brain.computer_use] provider`` (the dedicated GLOBAL
+    Computer-Use planner provider) across all persistence layers.
+
+    This is the AUTHORITATIVE writer for the user's Computer-Use-provider
+    choice and the write-side counterpart to the read-side resolution in
+    ``jarvis.brain.manager.BrainManager._cu_provider`` (consumed by
+    ``jarvis.cu.brain_call.call_vision_brain``'s dispatch hoist). The CU
+    provider is GLOBAL — one engine for both Realtime and Pipeline voice —
+    and is decoupled from ``[brain] primary`` (a new tier field, same shape
+    as ``[brain.worker]``/``[brain.realtime]``).
+
+    Mirrors :func:`set_worker_provider` exactly (same 3-layer + drift-guard
+    rationale — a TOML-only write would be reverted by the drift-guard
+    within minutes):
+
+      1. ``jarvis.toml`` ``[brain.computer_use] provider``               (TOML)
+      2. ``scripts/config-soll.json`` ``brain.computer_use.provider``    (drift-soll)  # i18n-allow
+      3. ``JARVIS__BRAIN__COMPUTER_USE__PROVIDER`` User-scope ENV var    (boot override)
+
+    Raises ``FileNotFoundError`` if the TOML config file does not exist. Layers
+    2 + 3 are best-effort cloud-first enhancements: graceful no-op on a
+    headless Linux VPS and never raise out of this function nor break the
+    TOML write.
+
+    NB: this writes only ``provider``. The fallback chain
+    (``fallback_provider`` etc.) is left untouched, mirroring
+    :func:`set_worker_provider`.
+    """
+    # Layer 1 — universal, runs on every platform. May raise FileNotFoundError.
+    _patch_computer_use_provider_toml(path, name)
+    # Layers 2 + 3 — best-effort, never raise.
+    _sync_computer_use_provider_drift_soll(name)  # i18n-allow
 
 
 def set_worker_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -1308,6 +1348,40 @@ def _patch_realtime_provider_toml(path: Path, name: str) -> None:
         _atomic_write(path, out)
 
 
+def _patch_computer_use_provider_toml(path: Path, name: str) -> None:
+    """Set ``[brain.computer_use] provider = name`` in the TOML.
+
+    Walks the NESTED ``brain`` -> ``computer_use`` path (like
+    :func:`_patch_worker_provider_toml` / :func:`_patch_realtime_provider_toml`)
+    instead of treating ``"brain.computer_use"`` as a flat top-level key.
+    Creates either level if missing. Preserves comments, sibling keys, and
+    the optional BOM.
+    """
+    path = _ensure_writable_config_path(path)
+
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+
+        brain = doc.get("brain")
+        if brain is None:
+            brain = tomlkit.table()
+            doc["brain"] = brain
+        cu = brain.get("computer_use")
+        if cu is None:
+            cu = tomlkit.table()
+            brain["computer_use"] = cu
+        cu["provider"] = name
+
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+
 def _patch_worker_key_toml(path: Path, key: str, value: object) -> None:
     """Set one key under the nested ``[brain.worker]`` table.
 
@@ -1500,6 +1574,30 @@ def _sync_worker_provider_drift_soll(name: str) -> None:  # i18n-allow
         )
 
 
+def _sync_computer_use_provider_drift_soll(name: str) -> None:  # i18n-allow
+    """Best-effort sync of ``brain.computer_use.provider`` into config-soll +  # i18n-allow
+    ENV.
+
+    NEVER raises and NEVER breaks the (already-completed) TOML write. Same
+    two-step shape as :func:`_sync_worker_provider_drift_soll`.
+    """
+    try:
+        _update_config_soll_computer_use_provider(name)  # i18n-allow
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning(
+            "Could not sync computer_use provider to config-soll.json: %s", exc  # i18n-allow
+        )
+
+    try:
+        _set_user_env_var(_CU_PROVIDER_ENV, name)
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning(
+            "Could not sync %s to the User environment: %s",
+            _CU_PROVIDER_ENV,
+            exc,
+        )
+
+
 def _sync_worker_model_drift_soll(model: str) -> None:  # i18n-allow
     """Best-effort sync of ``brain.worker.model`` into config-soll + ENV.  # i18n-allow
 
@@ -1676,6 +1774,35 @@ def _update_config_soll_worker_provider(name: str) -> None:  # i18n-allow
         if not isinstance(block, dict):
             block = {}
             data["brain.worker"] = block
+        if block.get("provider") == name:
+            return  # already in sync — avoid a needless rewrite
+        block["provider"] = name
+
+        out = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+        _atomic_write_text(soll_path, out)  # i18n-allow
+
+
+def _update_config_soll_computer_use_provider(name: str) -> None:  # i18n-allow
+    """Atomically set ``data["brain.computer_use"]["provider"] = name`` in
+    config-soll.json.  # i18n-allow
+
+    Note the FLAT dotted key ``"brain.computer_use"`` — same layout as
+    ``"brain.worker"`` (see :func:`_update_config_soll_worker_provider`), NOT
+    a nested ``data["brain"]["computer_use"]``. Preserves all other keys.
+    Graceful no-op when the file is absent.
+    """
+    soll_path = _config_soll_path()  # i18n-allow
+    if not soll_path.exists():  # i18n-allow
+        log.debug("config-soll.json absent (%s) — skipping drift-soll sync", soll_path)  # i18n-allow
+        return
+
+    with _WRITE_LOCK:
+        raw = soll_path.read_text(encoding="utf-8")  # i18n-allow
+        data = json.loads(raw)
+        block = data.get("brain.computer_use")
+        if not isinstance(block, dict):
+            block = {}
+            data["brain.computer_use"] = block
         if block.get("provider") == name:
             return  # already in sync — avoid a needless rewrite
         block["provider"] = name

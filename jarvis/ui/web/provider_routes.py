@@ -9,6 +9,7 @@ Endpoints:
     POST   /api/stt/switch                   → aktiven STT-Provider wechseln (persist in jarvis.toml)
     POST   /api/realtime/switch              → aktiven Realtime-Provider wechseln (persist)
     POST   /api/subagent/switch              → aktiven Subagent-Provider wechseln (3-layer persist)
+    POST   /api/computer-use/switch          → switch the dedicated GLOBAL Computer-Use planner provider (3-layer persist)
 
 Wird vom WebServer in `_build_app()` eingehängt:
     from .provider_routes import router as provider_router
@@ -276,6 +277,7 @@ def _spec_to_payload(
     active_tts: str | None,
     active_stt: str | None,
     active_realtime: str | None = None,
+    active_computer_use: str | None = None,
 ) -> dict[str, Any]:
     if spec.tier == "brain":
         active = spec.id == active_brain
@@ -340,6 +342,13 @@ def _spec_to_payload(
         ),
         "active": active,
         "cli_installed": _cli_installed(spec),
+        # Overlay, not a new tier (see the CU-own-provider plan): a brain
+        # provider can be BOTH the main Brain ("active") AND/OR the dedicated
+        # Computer-Use planner ("computer_use_active") — the two selections
+        # are independent, so this never touches "active" above.
+        "computer_use_active": (
+            spec.tier == "brain" and spec.id == active_computer_use
+        ),
     }
     if antigravity_status is not None:
         payload["antigravity_status"] = antigravity_status
@@ -429,6 +438,29 @@ def _active_realtime(request: Request) -> str | None:
     except Exception as exc:  # noqa: BLE001 — the health panel must never 500
         log.debug("active-realtime resolution failed (%s); using default.", exc)
         return "openai-realtime"
+
+
+def _active_computer_use(request: Request) -> str | None:
+    """The active dedicated Computer-Use planner provider.
+
+    Falls back to ``brain.primary`` when no dedicated
+    ``[brain.computer_use].provider`` is configured yet — Computer-Use runs
+    on the main Brain until the user picks a dedicated CU provider (mirrors
+    ``BrainManager._cu_provider``'s empty-string-means-unset default, so the
+    "Active" badge and the actual dispatch chain always agree). Never raises:
+    any resolver error falls back to ``None``.
+    """
+    try:
+        cfg = _resolve_cfg(request)
+        brain_cfg = getattr(cfg, "brain", None)
+        cu_cfg = getattr(brain_cfg, "computer_use", None)
+        provider = (getattr(cu_cfg, "provider", None) or "").strip()
+        if provider:
+            return provider
+        return (getattr(brain_cfg, "primary", None) or "").strip() or None
+    except Exception as exc:  # noqa: BLE001 — the health panel must never 500
+        log.debug("active-computer-use resolution failed (%s); using None.", exc)
+        return None
 
 
 def _resolve_cfg(request: Request):
@@ -533,6 +565,7 @@ async def list_providers(request: Request) -> dict[str, Any]:
     active_tts = _active_tts(request)
     active_stt = _active_stt(request)
     active_realtime = _active_realtime(request)
+    active_computer_use = _active_computer_use(request)
 
     providers = [
         _spec_to_payload(
@@ -541,6 +574,7 @@ async def list_providers(request: Request) -> dict[str, Any]:
             active_tts=active_tts,
             active_stt=active_stt,
             active_realtime=active_realtime,
+            active_computer_use=active_computer_use,
         )
         for spec in PROVIDERS
     ]
@@ -2047,6 +2081,85 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         "active": body.provider,
         "persisted": body.persist,
         "restart_required": True,
+    }
+
+
+@router.post("/computer-use/switch")
+async def computer_use_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
+    """Switches the dedicated GLOBAL Computer-Use planner provider.
+
+    Overlay over the brain-tier provider cards (Claude/OpenAI/OpenRouter/
+    Gemini), not a new provider tier — mirrors how ``[brain.worker]`` is a
+    separate selection over the same brain ids
+    (see ``jarvis_agent_switch``), but simpler: the CU planner can only be a
+    brain-switchable brain-tier provider (it must be able to receive
+    screenshots), so this reuses the generic ``/api/brain/switch``
+    validation style instead of the worker route's Codex-specific branch.
+
+    Persists via ``config_writer.set_computer_use_provider`` (3-layer,
+    drift-guarded — a TOML-only write would be reverted within minutes) and
+    updates ``cfg.brain.computer_use`` in-memory so the very next
+    Computer-Use dispatch (``BrainManager._cu_provider`` ->
+    ``jarvis.cu.brain_call.call_vision_brain``'s hoist) uses it live — no
+    restart required, unlike the worker/realtime switches.
+    """
+    spec = get_spec(body.provider)
+    if spec is None:
+        raise HTTPException(
+            status_code=404, detail=f"Unknown provider: {body.provider}"
+        )
+    if spec.tier != "brain" or not spec.brain_switchable:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Provider '{body.provider}' cannot be the Computer-Use planner "
+                f"— it must be a brain-switchable provider that can receive "
+                f"screenshots (tier={spec.tier})."
+            ),
+        )
+    if not _is_credential_present(spec):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{spec.label} has no saved API key. Save a key first, "
+                "then activate."
+            ),
+        )
+
+    if body.persist:
+        try:
+            from jarvis.core.config_writer import set_computer_use_provider
+
+            set_computer_use_provider(body.provider)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=500, detail=f"TOML write failed: {exc}"
+            ) from exc
+
+    cfg = _resolve_cfg(request)
+    if cfg is not None and getattr(cfg, "brain", None) is not None:
+        try:
+            cu_cfg = getattr(cfg.brain, "computer_use", None)
+            if cu_cfg is None:
+                from jarvis.core.config import BrainTierConfig
+
+                cfg.brain.computer_use = BrainTierConfig(provider=body.provider)
+            else:
+                cu_cfg.provider = body.provider
+        except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
+            log.debug("In-memory computer_use.provider update skipped: %s", exc)
+
+    await _emit(
+        request, SecretConfigured(key="brain.computer_use.provider", action="set")
+    )
+
+    return {
+        "ok": True,
+        "active": body.provider,
+        "persisted": body.persist,
+        "restart_required": False,
     }
 
 

@@ -2237,6 +2237,24 @@ class BrainManager:
             or get_tier_default_model("router", name)
         )
 
+    def _cu_provider(self) -> str:
+        """The dedicated GLOBAL Computer-Use planner provider, or ``""``.
+
+        Reads ``[brain.computer_use].provider`` FRESH per call (like
+        ``_cu_model``), so an in-memory switch (``/api/computer-use/switch``)
+        takes effect on the very next CU dispatch. ``""`` means "not
+        configured" — the CU-only dispatch hoist in
+        ``jarvis.cu.brain_call.call_vision_brain`` then leaves the fallback
+        chain untouched (CU keeps running on ``brain.primary``, current
+        behavior). Never raises (getattr-chain safe): a config hiccup must
+        not break Computer-Use dispatch (AP-21/22).
+        """
+        try:
+            cu_cfg = getattr(self._config.brain, "computer_use", None)
+            return (getattr(cu_cfg, "provider", None) or "").strip()
+        except Exception:  # noqa: BLE001 — config hiccup must not block dispatch
+            return ""
+
     def _get_brain(self, name: str, model: str | None = None) -> Brain:
         """Retrieves a Brain instance from the cache, or builds a new one."""
         key = (name, model)
