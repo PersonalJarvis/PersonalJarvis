@@ -1,0 +1,20 @@
+{
+  "name": "poll_rodin_job_status",
+  "description": "\n    Check if the Hyper3D Rodin generation task is completed.\n\n    For Hyper3D Rodin mode MAIN_SITE:\n        Parameters:\n        - subscription_key: The subscription_key given in the generate model step.\n\n        Returns a list of status. The task is done if all status are \"Done\".\n        If \"Failed\" showed up, the generating process failed.\n        This is a polling API, so only proceed if the status are finally determined (\"Done\" or \"Canceled\").\n\n    For Hyper3D Rodin mode FAL_AI:\n        Parameters:\n        - request_id: The request_id given in the generate model step.\n\n        Returns the generation task status. The task is done if status is \"COMPLETED\".\n        The task is in progress if status is \"IN_PROGRESS\".\n        If status other than \"COMPLETED\", \"IN_PROGRESS\", \"IN_QUEUE\" showed up, the generating process might be failed.\n        This is a polling API, so only proceed if the status are finally determined (\"COMPLETED\" or some failed state).\n    ",
+  "inputSchema": {
+    "properties": {
+      "subscription_key": {
+        "default": null,
+        "title": "Subscription Key",
+        "type": "string"
+      },
+      "request_id": {
+        "default": null,
+        "title": "Request Id",
+        "type": "string"
+      }
+    },
+    "title": "poll_rodin_job_statusArguments",
+    "type": "object"
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "name": "chat_completion",
+  "description": "OpenAI-compatible chat completion API",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "model": {
+        "type": "string",
+        "description": "Name of the Ollama model to use"
+      },
+      "messages": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "enum": [
+                "system",
+                "user",
+                "assistant"
+              ]
+            },
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "role",
+            "content"
+          ]
+        },
+        "description": "Array of messages in the conversation"
+      },
+      "temperature": {
+        "type": "number",
+        "description": "Sampling temperature (0-2)",
+        "minimum": 0,
+        "maximum": 2
+      },
+      "timeout": {
+        "type": "number",
+        "description": "Timeout in milliseconds (default: 60000)",
+        "minimum": 1000
+      }
+    },
+    "required": [
+      "model",
+      "messages"
+    ],
+    "additionalProperties": false
+  }
+}

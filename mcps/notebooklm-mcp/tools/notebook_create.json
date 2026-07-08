@@ -1,0 +1,14 @@
+{
+  "name": "notebook_create",
+  "description": "Create a new notebook.\n\nArgs:\n    title: Optional title for the notebook",
+  "inputSchema": {
+    "properties": {
+      "title": {
+        "default": "",
+        "title": "Title",
+        "type": "string"
+      }
+    },
+    "type": "object"
+  }
+}

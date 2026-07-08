@@ -1,0 +1,21 @@
+{
+  "name": "notebook_rename",
+  "description": "Rename a notebook.\n\nArgs:\n    notebook_id: Notebook UUID\n    new_title: New title",
+  "inputSchema": {
+    "properties": {
+      "notebook_id": {
+        "title": "Notebook Id",
+        "type": "string"
+      },
+      "new_title": {
+        "title": "New Title",
+        "type": "string"
+      }
+    },
+    "required": [
+      "notebook_id",
+      "new_title"
+    ],
+    "type": "object"
+  }
+}

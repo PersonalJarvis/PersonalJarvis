@@ -1,0 +1,22 @@
+{
+  "name": "cp",
+  "description": "Copy a model",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "source": {
+        "type": "string",
+        "description": "Source model name"
+      },
+      "destination": {
+        "type": "string",
+        "description": "Destination model name"
+      }
+    },
+    "required": [
+      "source",
+      "destination"
+    ],
+    "additionalProperties": false
+  }
+}

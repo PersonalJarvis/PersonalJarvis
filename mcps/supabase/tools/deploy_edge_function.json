@@ -1,0 +1,59 @@
+{
+  "name": "deploy_edge_function",
+  "description": "Deploys an Edge Function to a Supabase project. If the function already exists, this will create a new version. Example:\n\nimport \"jsr:@supabase/functions-js/edge-runtime.d.ts\";\n\nDeno.serve(async (req: Request) => {\n  const data = {\n    message: \"Hello there!\"\n  };\n  \n  return new Response(JSON.stringify(data), {\n    headers: {\n      'Content-Type': 'application/json',\n      'Connection': 'keep-alive'\n    }\n  });\n});",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "project_id": {
+        "type": "string"
+      },
+      "name": {
+        "description": "The name of the function",
+        "type": "string"
+      },
+      "entrypoint_path": {
+        "description": "The entrypoint of the function",
+        "default": "index.ts",
+        "type": "string"
+      },
+      "import_map_path": {
+        "description": "The import map for the function.",
+        "type": "string"
+      },
+      "verify_jwt": {
+        "description": "Whether to require a valid JWT in the Authorization header. You SHOULD ALWAYS enable this to ensure authorized access. ONLY disable if the function previously had it disabled OR you've confirmed the function body implements custom authentication (e.g., API keys, webhooks) OR the user explicitly requested it be disabled.",
+        "default": true,
+        "type": "boolean"
+      },
+      "files": {
+        "description": "The files to upload. This should include the entrypoint, deno.json, and any relative dependencies. Include the deno.json and deno.jsonc files to configure the Deno runtime (e.g., compiler options, imports) if they exist.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "content"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "project_id",
+      "name",
+      "entrypoint_path",
+      "verify_jwt",
+      "files"
+    ],
+    "additionalProperties": false
+  }
+}

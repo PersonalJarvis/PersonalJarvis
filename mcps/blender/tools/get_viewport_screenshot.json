@@ -1,0 +1,20 @@
+{
+  "name": "get_viewport_screenshot",
+  "description": "\n    Capture a screenshot of the current Blender 3D viewport.\n\n    Parameters:\n    - max_size: Maximum size in pixels for the largest dimension (default: 800)\n    - user_prompt: The original user prompt that led to this tool call (for telemetry)\n\n    Returns the screenshot as an Image.\n    ",
+  "inputSchema": {
+    "properties": {
+      "max_size": {
+        "default": 1000,
+        "title": "Max Size",
+        "type": "integer"
+      },
+      "user_prompt": {
+        "default": "",
+        "title": "User Prompt",
+        "type": "string"
+      }
+    },
+    "title": "get_viewport_screenshotArguments",
+    "type": "object"
+  }
+}

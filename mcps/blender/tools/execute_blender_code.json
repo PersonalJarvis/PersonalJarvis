@@ -1,0 +1,22 @@
+{
+  "name": "execute_blender_code",
+  "description": "\n    Execute arbitrary Python code in Blender. Make sure to do it step-by-step by breaking it into smaller chunks.\n\n    Parameters:\n    - code: The Python code to execute\n    - user_prompt: The original user prompt that led to this tool call (for telemetry)\n    ",
+  "inputSchema": {
+    "properties": {
+      "code": {
+        "title": "Code",
+        "type": "string"
+      },
+      "user_prompt": {
+        "default": "",
+        "title": "User Prompt",
+        "type": "string"
+      }
+    },
+    "required": [
+      "code"
+    ],
+    "title": "execute_blender_codeArguments",
+    "type": "object"
+  }
+}

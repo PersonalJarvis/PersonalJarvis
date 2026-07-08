@@ -1,0 +1,50 @@
+{
+  "name": "create_project",
+  "description": "Creates a new Supabase project. Always ask the user which organization to create the project in. The project can take a few minutes to initialize - use `get_project` to check the status.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "name": {
+        "description": "The name of the project",
+        "type": "string"
+      },
+      "region": {
+        "description": "The region to create the project in.",
+        "type": "string",
+        "enum": [
+          "us-west-1",
+          "us-east-1",
+          "us-east-2",
+          "ca-central-1",
+          "eu-west-1",
+          "eu-west-2",
+          "eu-west-3",
+          "eu-central-1",
+          "eu-central-2",
+          "eu-north-1",
+          "ap-south-1",
+          "ap-southeast-1",
+          "ap-northeast-1",
+          "ap-northeast-2",
+          "ap-southeast-2",
+          "sa-east-1"
+        ]
+      },
+      "organization_id": {
+        "type": "string"
+      },
+      "confirm_cost_id": {
+        "description": "The cost confirmation ID. Call `confirm_cost` first.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "region",
+      "organization_id",
+      "confirm_cost_id"
+    ],
+    "additionalProperties": false
+  }
+}

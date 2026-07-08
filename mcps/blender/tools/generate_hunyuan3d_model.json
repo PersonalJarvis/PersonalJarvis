@@ -1,0 +1,25 @@
+{
+  "name": "generate_hunyuan3d_model",
+  "description": "\n    Generate 3D asset using Hunyuan3D by providing either text description, image reference, \n    or both for the desired asset, and import the asset into Blender.\n    The 3D asset has built-in materials.\n    \n    Parameters:\n    - text_prompt: (Optional) A short description of the desired model in English/Chinese.\n    - input_image_url: (Optional) The local or remote url of the input image. Accepts None if only using text prompt.\n\n    Returns: \n    - When successful, returns a JSON with job_id (format: \"job_xxx\") indicating the task is in progress\n    - When the job completes, the status will change to \"DONE\" indicating the model has been imported\n    - Returns error message if the operation fails\n    ",
+  "inputSchema": {
+    "properties": {
+      "text_prompt": {
+        "default": null,
+        "title": "Text Prompt",
+        "type": "string"
+      },
+      "input_image_url": {
+        "default": null,
+        "title": "Input Image Url",
+        "type": "string"
+      },
+      "user_prompt": {
+        "default": "",
+        "title": "User Prompt",
+        "type": "string"
+      }
+    },
+    "title": "generate_hunyuan3d_modelArguments",
+    "type": "object"
+  }
+}

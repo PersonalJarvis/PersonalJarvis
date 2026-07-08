@@ -1,0 +1,17 @@
+{
+  "name": "pull",
+  "description": "Pull a model from a registry",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Name of the model to pull"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "additionalProperties": false
+  }
+}

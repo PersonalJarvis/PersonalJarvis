@@ -1,0 +1,27 @@
+{
+  "name": "set_texture",
+  "description": "\n    Apply a previously downloaded Polyhaven texture to an object.\n    \n    Parameters:\n    - object_name: Name of the object to apply the texture to\n    - texture_id: ID of the Polyhaven texture to apply (must be downloaded first)\n    \n    Returns a message indicating success or failure.\n    ",
+  "inputSchema": {
+    "properties": {
+      "object_name": {
+        "title": "Object Name",
+        "type": "string"
+      },
+      "texture_id": {
+        "title": "Texture Id",
+        "type": "string"
+      },
+      "user_prompt": {
+        "default": "",
+        "title": "User Prompt",
+        "type": "string"
+      }
+    },
+    "required": [
+      "object_name",
+      "texture_id"
+    ],
+    "title": "set_textureArguments",
+    "type": "object"
+  }
+}

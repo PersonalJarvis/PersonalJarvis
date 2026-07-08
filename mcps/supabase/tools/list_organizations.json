@@ -1,0 +1,10 @@
+{
+  "name": "list_organizations",
+  "description": "Lists all organizations that the user is a member of.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

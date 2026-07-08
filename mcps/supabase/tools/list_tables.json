@@ -1,0 +1,34 @@
+{
+  "name": "list_tables",
+  "description": "Lists all tables in one or more schemas. By default returns a compact summary. Set verbose to true to include column details, primary keys, and foreign key constraints.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "project_id": {
+        "type": "string"
+      },
+      "schemas": {
+        "default": [
+          "public"
+        ],
+        "description": "List of schemas to include. Defaults to all schemas.",
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "verbose": {
+        "default": false,
+        "description": "When true, includes column details, primary keys, and foreign key constraints. Defaults to false for a compact summary.",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "project_id",
+      "schemas",
+      "verbose"
+    ],
+    "additionalProperties": false
+  }
+}

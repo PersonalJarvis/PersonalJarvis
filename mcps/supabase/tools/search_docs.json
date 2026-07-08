@@ -1,0 +1,18 @@
+{
+  "name": "search_docs",
+  "description": "Search the Supabase documentation using GraphQL. Must be a valid GraphQL query.\nYou should default to calling this even if you think you already know the answer, since the documentation is always being updated.\n\nBelow is the GraphQL schema for this tool:\n\nschema{query:RootQueryType}type Guide implements SearchResult{title:String href:String content:String subsections:SubsectionCollection}interface SearchResult{title:String href:String content:String}type SubsectionCollection{edges:[SubsectionEdge!]! nodes:[Subsection!]! totalCount:Int!}type SubsectionEdge{node:Subsection!}type Subsection{title:String href:String content:String}type CLICommandReference implements SearchResult{title:String href:String content:String}type ManagementApiReference implements SearchResult{title:String href:String content:String}type ClientLibraryFunctionReference implements SearchResult{title:String href:String content:String language:Language! methodName:String}enum Language{JAVASCRIPT SWIFT DART CSHARP KOTLIN PYTHON}type TroubleshootingGuide implements SearchResult{title:String href:String content:String}type RootQueryType{schema:String! searchDocs(query:String!,limit:Int):SearchResultCollection error(code:String!,service:Service!):Error errors(first:Int after:String last:Int before:String service:Service code:String):ErrorCollection}type SearchResultCollection{edges:[SearchResultEdge!]! nodes:[SearchResult!]! totalCount:Int!}type SearchResultEdge{node:SearchResult!}type Error{code:String! service:Service! httpStatusCode:Int message:String}enum Service{AUTH REALTIME STORAGE}type ErrorCollection{edges:[ErrorEdge!]! nodes:[Error!]! pageInfo:PageInfo! totalCount:Int!}type ErrorEdge{node:Error! cursor:String!}type PageInfo{hasNextPage:Boolean! hasPreviousPage:Boolean! startCursor:String endCursor:String}",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "graphql_query": {
+        "description": "GraphQL query string",
+        "type": "string"
+      }
+    },
+    "required": [
+      "graphql_query"
+    ],
+    "additionalProperties": false
+  }
+}

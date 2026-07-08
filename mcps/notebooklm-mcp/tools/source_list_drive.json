@@ -1,0 +1,16 @@
+{
+  "name": "source_list_drive",
+  "description": "List sources with types and Drive freshness status.\n\nUse before source_sync_drive to identify stale sources.\n\nArgs:\n    notebook_id: Notebook UUID",
+  "inputSchema": {
+    "properties": {
+      "notebook_id": {
+        "title": "Notebook Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "notebook_id"
+    ],
+    "type": "object"
+  }
+}

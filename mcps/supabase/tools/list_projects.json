@@ -1,0 +1,10 @@
+{
+  "name": "list_projects",
+  "description": "Lists all Supabase projects for the user. Use this to help discover the project ID of the project that the user is working on.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

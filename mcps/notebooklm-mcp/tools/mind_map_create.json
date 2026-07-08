@@ -1,0 +1,41 @@
+{
+  "name": "mind_map_create",
+  "description": "Generate and save mind map. Requires confirm=True after user approval.\n\nArgs:\n    notebook_id: Notebook UUID\n    source_ids: Source IDs (default: all)\n    title: Display title\n    confirm: Must be True after user approval",
+  "inputSchema": {
+    "properties": {
+      "notebook_id": {
+        "title": "Notebook Id",
+        "type": "string"
+      },
+      "source_ids": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Source Ids"
+      },
+      "title": {
+        "default": "Mind Map",
+        "title": "Title",
+        "type": "string"
+      },
+      "confirm": {
+        "default": false,
+        "title": "Confirm",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "notebook_id"
+    ],
+    "type": "object"
+  }
+}

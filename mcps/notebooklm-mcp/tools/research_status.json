@@ -1,0 +1,43 @@
+{
+  "name": "research_status",
+  "description": "Poll research progress. Blocks until complete or timeout.\n\nArgs:\n    notebook_id: Notebook UUID\n    poll_interval: Seconds between polls (default: 30)\n    max_wait: Max seconds to wait (default: 300, 0=single poll)\n    compact: If True (default), truncate report and limit sources shown to save tokens.\n            Use compact=False to get full details.\n    task_id: Optional Task ID to poll for a specific research task.",
+  "inputSchema": {
+    "properties": {
+      "notebook_id": {
+        "title": "Notebook Id",
+        "type": "string"
+      },
+      "poll_interval": {
+        "default": 30,
+        "title": "Poll Interval",
+        "type": "integer"
+      },
+      "max_wait": {
+        "default": 300,
+        "title": "Max Wait",
+        "type": "integer"
+      },
+      "compact": {
+        "default": true,
+        "title": "Compact",
+        "type": "boolean"
+      },
+      "task_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Task Id"
+      }
+    },
+    "required": [
+      "notebook_id"
+    ],
+    "type": "object"
+  }
+}

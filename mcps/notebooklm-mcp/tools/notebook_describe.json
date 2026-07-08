@@ -1,0 +1,16 @@
+{
+  "name": "notebook_describe",
+  "description": "Get AI-generated notebook summary with suggested topics.\n\nArgs:\n    notebook_id: Notebook UUID\n\nReturns: summary (markdown), suggested_topics list",
+  "inputSchema": {
+    "properties": {
+      "notebook_id": {
+        "title": "Notebook Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "notebook_id"
+    ],
+    "type": "object"
+  }
+}

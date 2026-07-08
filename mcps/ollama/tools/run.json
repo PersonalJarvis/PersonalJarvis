@@ -1,0 +1,27 @@
+{
+  "name": "run",
+  "description": "Run a model",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Name of the model"
+      },
+      "prompt": {
+        "type": "string",
+        "description": "Prompt to send to the model"
+      },
+      "timeout": {
+        "type": "number",
+        "description": "Timeout in milliseconds (default: 60000)",
+        "minimum": 1000
+      }
+    },
+    "required": [
+      "name",
+      "prompt"
+    ],
+    "additionalProperties": false
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "name": "generate_hyper3d_model_via_images",
+  "description": "\n    Generate 3D asset using Hyper3D by giving images of the wanted asset, and import the generated asset into Blender.\n    The 3D asset has built-in materials.\n    The generated model has a normalized size, so re-scaling after generation can be useful.\n    \n    Parameters:\n    - input_image_paths: The **absolute** paths of input images. Even if only one image is provided, wrap it into a list. Required if Hyper3D Rodin in MAIN_SITE mode.\n    - input_image_urls: The URLs of input images. Even if only one image is provided, wrap it into a list. Required if Hyper3D Rodin in FAL_AI mode.\n    - bbox_condition: Optional. If given, it has to be a list of ints of length 3. Controls the ratio between [Length, Width, Height] of the model.\n\n    Only one of {input_image_paths, input_image_urls} should be given at a time, depending on the Hyper3D Rodin's current mode.\n    Returns a message indicating success or failure.\n    ",
+  "inputSchema": {
+    "properties": {
+      "input_image_paths": {
+        "default": null,
+        "items": {
+          "type": "string"
+        },
+        "title": "Input Image Paths",
+        "type": "array"
+      },
+      "input_image_urls": {
+        "default": null,
+        "items": {
+          "type": "string"
+        },
+        "title": "Input Image Urls",
+        "type": "array"
+      },
+      "bbox_condition": {
+        "default": null,
+        "items": {
+          "type": "number"
+        },
+        "title": "Bbox Condition",
+        "type": "array"
+      },
+      "user_prompt": {
+        "default": "",
+        "title": "User Prompt",
+        "type": "string"
+      }
+    },
+    "title": "generate_hyper3d_model_via_imagesArguments",
+    "type": "object"
+  }
+}

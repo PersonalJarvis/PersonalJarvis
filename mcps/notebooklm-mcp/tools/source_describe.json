@@ -1,0 +1,16 @@
+{
+  "name": "source_describe",
+  "description": "Get AI-generated source summary with keyword chips.\n\nArgs:\n    source_id: Source UUID\n\nReturns: summary (markdown with **bold** keywords), keywords list",
+  "inputSchema": {
+    "properties": {
+      "source_id": {
+        "title": "Source Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "source_id"
+    ],
+    "type": "object"
+  }
+}

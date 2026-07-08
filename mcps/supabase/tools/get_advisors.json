@@ -1,0 +1,26 @@
+{
+  "name": "get_advisors",
+  "description": "Gets a list of advisory notices for the Supabase project. Use this to check for security vulnerabilities or performance improvements. Include the remediation URL as a clickable link so that the user can reference the issue themselves. It's recommended to run this tool regularly, especially after making DDL changes to the database since it will catch things like missing RLS policies.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "project_id": {
+        "type": "string"
+      },
+      "type": {
+        "description": "The type of advisors to fetch",
+        "type": "string",
+        "enum": [
+          "security",
+          "performance"
+        ]
+      }
+    },
+    "required": [
+      "project_id",
+      "type"
+    ],
+    "additionalProperties": false
+  }
+}

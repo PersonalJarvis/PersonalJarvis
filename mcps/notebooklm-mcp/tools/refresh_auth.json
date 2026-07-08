@@ -1,0 +1,8 @@
+{
+  "name": "refresh_auth",
+  "description": "Reload auth tokens from disk or run headless re-authentication.\n\nCall this after running notebooklm-mcp-auth to pick up new tokens,\nor to attempt automatic re-authentication if Chrome profile has saved login.\n\nReturns status indicating if tokens were refreshed successfully.",
+  "inputSchema": {
+    "properties": {},
+    "type": "object"
+  }
+}

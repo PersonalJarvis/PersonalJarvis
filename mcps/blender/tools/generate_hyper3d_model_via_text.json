@@ -1,0 +1,30 @@
+{
+  "name": "generate_hyper3d_model_via_text",
+  "description": "\n    Generate 3D asset using Hyper3D by giving description of the desired asset, and import the asset into Blender.\n    The 3D asset has built-in materials.\n    The generated model has a normalized size, so re-scaling after generation can be useful.\n\n    Parameters:\n    - text_prompt: A short description of the desired model in **English**.\n    - bbox_condition: Optional. If given, it has to be a list of floats of length 3. Controls the ratio between [Length, Width, Height] of the model.\n\n    Returns a message indicating success or failure.\n    ",
+  "inputSchema": {
+    "properties": {
+      "text_prompt": {
+        "title": "Text Prompt",
+        "type": "string"
+      },
+      "bbox_condition": {
+        "default": null,
+        "items": {
+          "type": "number"
+        },
+        "title": "Bbox Condition",
+        "type": "array"
+      },
+      "user_prompt": {
+        "default": "",
+        "title": "User Prompt",
+        "type": "string"
+      }
+    },
+    "required": [
+      "text_prompt"
+    ],
+    "title": "generate_hyper3d_model_via_textArguments",
+    "type": "object"
+  }
+}
