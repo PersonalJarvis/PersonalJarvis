@@ -449,7 +449,12 @@ def step_hardware_check() -> detection.HardwareReport:
     _println(" Step 1 / 8 — Hardware analysis")
     _println("=" * 60)
     report = detection.analyze()
-    rec = detection.recommend_whisper(report)
+    # Capability-verified, not presence-based (AP-21/AP-25): only recommend a GPU
+    # config when a real GPU inference has been verified on this host. Non-blocking
+    # — reads the verdict a prior background probe cached, never runs one here.
+    rec = detection.recommend_whisper(
+        report, gpu_inference_verified=detection.cuda_inference_verified()
+    )
     _println(detection._format_report(report, rec))
 
     if report.ffmpeg_version is None:

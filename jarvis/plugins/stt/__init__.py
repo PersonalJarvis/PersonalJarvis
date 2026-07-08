@@ -489,6 +489,42 @@ def _wake_gpu_inference_verified() -> bool:
     return ok
 
 
+def wake_gpu_probe_cached() -> bool | None:
+    """Return the PERSISTED GPU-inference verdict for this host, or ``None``.
+
+    Non-blocking companion to :func:`_wake_gpu_inference_verified` (which BLOCKS
+    on a cache miss to run one real turbo/cuda inference). Reads only the verdict
+    already written to disk by a prior probe or the live backstop; it NEVER
+    launches the probe subprocess. Returns:
+
+    - ``True`` / ``False`` when a verdict for the CURRENTLY installed ctranslate2
+      version is cached;
+    - ``None`` when no verdict exists here, the cache is unreadable, or the cached
+      verdict was written under a DIFFERENT ctranslate2 version (a runtime upgrade
+      can fix — or re-introduce — the AP-25 hang, so a stale verdict is untrusted).
+
+    Off-critical-path callers (the first-run hardware recommender) use this to gate
+    a GPU recommendation on a REAL, verified inference (AP-21/AP-25) instead of mere
+    CUDA presence, while paying nothing when the host has never probed. AP-26-safe:
+    a pure file read, never the blocking probe.
+    """
+    ct2_version = _ctranslate2_version()
+    try:
+        cached = json.loads(_wake_gpu_probe_cache_path().read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except Exception as exc:  # noqa: BLE001 — a corrupt cache must never break the caller
+        logger.debug("Wake-GPU probe cache unreadable ({}); treating as unprobed.", exc)
+        return None
+    if (
+        isinstance(cached, dict)
+        and isinstance(cached.get("ok"), bool)
+        and cached.get("ctranslate2") == ct2_version
+    ):
+        return cached["ok"]
+    return None
+
+
 def _persist_wake_gpu_probe(ok: bool, ct2_version: str | None = None) -> None:
     """Best-effort write of the probe verdict (shared by probe + bad-mark)."""
     cache_path = _wake_gpu_probe_cache_path()
@@ -765,4 +801,5 @@ __all__ = [
     "build_wake_whisper",
     "mark_wake_gpu_bad",
     "start_wake_model_prefetch",
+    "wake_gpu_probe_cached",
 ]

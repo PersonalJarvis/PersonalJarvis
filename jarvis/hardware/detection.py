@@ -227,32 +227,59 @@ def analyze() -> HardwareReport:
     )
 
 
-def recommend_whisper(report: HardwareReport) -> WhisperRecommendation:
+def recommend_whisper(
+    report: HardwareReport,
+    gpu_inference_verified: bool | None = None,
+) -> WhisperRecommendation:
     """Maps a HardwareReport to the recommended Whisper configuration.
 
     Heuristic:
-    - NVIDIA GPU with >= 4 GB VRAM → large-v3-turbo (fast, MULTILINGUAL)
-    - NVIDIA GPU with < 4 GB VRAM  → base (multilingual)
-    - No CUDA but plenty of RAM    → CPU faster-whisper tiny/base
-    - Otherwise                    → OpenAI Whisper API
+    - VERIFIED NVIDIA GPU with >= 4 GB VRAM → large-v3-turbo (fast, MULTILINGUAL)
+    - VERIFIED NVIDIA GPU with < 4 GB VRAM  → base (multilingual)
+    - No/unverified GPU but plenty of RAM   → CPU faster-whisper base
+    - Otherwise                             → OpenAI Whisper API
+
+    ``gpu_inference_verified`` is the CAPABILITY gate (AP-21/AP-25). A GPU
+    recommendation is handed out ONLY when a real GPU inference has VERIFIABLY
+    completed on this host (``True``). CUDA *presence* is necessary but not
+    sufficient: a driver/runtime mismatch — or the Blackwell hang that once left
+    every CTranslate2 inference wedged while ``torch.cuda.is_available()`` reported
+    ``True`` — must never persist a ``device="cuda"`` the host cannot actually run.
+    ``None`` (never probed) and ``False`` (probe failed / wedged) both fall back to
+    the CPU-first floor. This keeps the path vendor-neutral: an Apple-Silicon Mac
+    (no NVIDIA, no CUDA — CTranslate2 has no Metal backend) lands on CPU int8, the
+    correct choice there. A verified GPU is still adopted at runtime by the
+    background wake probe; this governs only the FIRST-RUN persisted recommendation.
 
     Never recommends a Distil-Whisper model: all distil-* checkpoints are
     English-only and mangle German/Spanish (the runtime force-upgrades them to
     large-v3-turbo anyway).
     """
-    if not report.has_nvidia_gpu or not report.torch_cuda_available:
+    gpu_usable = (
+        report.has_nvidia_gpu
+        and report.torch_cuda_available
+        and gpu_inference_verified is True
+    )
+    if not gpu_usable:
+        cuda_present_unverified = report.has_nvidia_gpu and report.torch_cuda_available
         if report.ram_total_mb >= 8192:
+            rationale = (
+                "CUDA GPU present but its inference is not verified on this host — "
+                "recommending CPU 'base' until the runtime GPU probe passes (it is "
+                "verified and adopted automatically once voice boots). This avoids "
+                "persisting a 'cuda' choice a driver/runtime mismatch cannot run."
+                if cuda_present_unverified
+                else "No CUDA-capable GPU detected. CPU mode with 'base' delivers "
+                "acceptable quality at ~1s latency for 5s audio. "
+                "For better latency, configure the OpenAI Whisper API as a fallback."
+            )
             return WhisperRecommendation(
                 provider="faster-whisper",
                 model="base",
                 device="cpu",
                 compute_type="int8",
                 expected_latency_ms=1200,
-                rationale=(
-                    "No CUDA-capable GPU detected. CPU mode with 'base' delivers "
-                    "acceptable quality at ~1s latency for 5s audio. "
-                    "For better latency, configure the OpenAI Whisper API as a fallback."
-                ),
+                rationale=rationale,
             )
         return WhisperRecommendation(
             provider="openai-api",
@@ -361,9 +388,27 @@ def _format_report(report: HardwareReport, rec: WhisperRecommendation) -> str:
     return "\n".join(lines)
 
 
+def cuda_inference_verified() -> bool | None:
+    """Cached GPU-inference verdict for this host (non-blocking), or ``None``.
+
+    Thin, lazy indirection to ``jarvis.plugins.stt.wake_gpu_probe_cached`` so this
+    setup-path module never imports the STT / ctranslate2 stack eagerly. Feeds
+    ``recommend_whisper``'s capability gate (AP-21/AP-25): the verdict is the one a
+    prior background probe already wrote to disk — never a fresh blocking probe on
+    this report path (AP-26). Any import/read error → ``None`` (treated as
+    unverified → CPU-first).
+    """
+    try:
+        from jarvis.plugins.stt import wake_gpu_probe_cached
+
+        return wake_gpu_probe_cached()
+    except Exception:  # noqa: BLE001 — the recommender must stay CPU-first on any error
+        return None
+
+
 def main() -> int:
     report = analyze()
-    rec = recommend_whisper(report)
+    rec = recommend_whisper(report, gpu_inference_verified=cuda_inference_verified())
     print(_format_report(report, rec))
     return 0
 
