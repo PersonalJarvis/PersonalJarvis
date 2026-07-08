@@ -18,8 +18,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-# i18n-allow: German-umlaut transliteration table (input normalization)
-_UMLAUTS = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
+# German-umlaut transliteration table (input normalization).
+_UMLAUTS = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})  # i18n-allow
 
 # Write verbs (normalized, de/en/es).  # i18n-allow: input vocabulary
 _VERBS = (
@@ -40,8 +40,8 @@ _PREFIX = r"^(?:hey\s+)?(?:jarvis[,\s]+)?"
 
 # Question openers that mean recall/general questions, never a write command.
 _QUESTION_RE = re.compile(
-    r"^(?:was|wer|wie|wo|wann|warum|what|who|how|where|when|why|que|qu|quien|"
-    r"como|donde|cuando)\b",
+    r"^(?:was|wer|wie|wo|wann|warum|what|who|how|where|when|why|que|qu|quien|"  # i18n-allow
+    r"como|donde|cuando)\b",  # i18n-allow
 )
 
 # Anaphoric objects: the command refers to prior conversation content.
@@ -52,8 +52,8 @@ _ANAPHORA = frozenset({
 })
 
 # Standalone filler particles (single tokens from _FILLER_RE's alternation)
-# that carry no content on their own — e.g. "schreib das BITTE ins wiki" is
-# still anaphoric even though "bitte" trails the anaphor instead of leading
+# that carry no content on their own — e.g. "schreib das BITTE ins wiki" is  # i18n-allow
+# still anaphoric even though "bitte" trails the anaphor instead of leading  # i18n-allow
 # the fragment, so the prefix-anchored _FILLER_RE strip alone misses it.
 _FILLER_WORDS = frozenset({
     "bitte", "mal", "doch", "kurz", "please", "por", "favor", "que", "dass",  # i18n-allow
@@ -105,11 +105,23 @@ def match_wiki_intent(user_text: str) -> WikiIntentMatch | None:
     m = _COMMAND_RE.match(norm)
     if m is None:
         return None
+    # Precision gate: a legitimate command puts the write verb DIRECTLY on
+    # the wiki-object, so ``pre`` (whatever sits between them) is either
+    # empty (the content follows the object) or a bare anaphor (the
+    # "write THAT to the wiki" shape). Any real word in ``pre`` means the
+    # wiki reference sits in a subordinate/recall clause (a recall question
+    # that merely opens with a write verb), not a write target — so defer to
+    # the LLM tool path. A false negative is acceptable; a false positive
+    # writes noise to the vault.
     pre = _strip_filler(m.group("pre") or "")
+    pre_words = [w for w in re.split(r"\s+", pre) if w]
+    if any(w not in _ANAPHORA and w not in _FILLER_WORDS for w in pre_words):
+        return None
+    # Anaphoric-vs-inline is decided on ``post``: real content there is an
+    # inline write; nothing meaningful means an anaphoric command whose
+    # source is the prior conversation exchange.
     post = _strip_filler(m.group("post") or "")
-    content = " ".join(part for part in (pre, post) if part).strip()
-    words = [w for w in re.split(r"\s+", content) if w]
-    meaningful = [w for w in words if w not in _ANAPHORA and w not in _FILLER_WORDS]
-    if not meaningful:
+    post_words = [w for w in re.split(r"\s+", post) if w]
+    if not any(w not in _ANAPHORA and w not in _FILLER_WORDS for w in post_words):
         return WikiIntentMatch(content=None, matched=norm)
-    return WikiIntentMatch(content=content, matched=norm)
+    return WikiIntentMatch(content=post, matched=norm)

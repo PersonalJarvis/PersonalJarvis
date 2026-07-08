@@ -48,6 +48,13 @@ def test_inline_content_is_extracted(text, expected_fragment):
     "remember that for later",
     "Ich habe gestern einen Wiki-Artikel gelesen",  # mention     # i18n-allow
     "open the wiki tab",
+    # Verb at the start + "wiki" in a SUBORDINATE/recall clause: the span
+    # between the verb and the wiki-object carries a real word, so this is a
+    # recall/conditional utterance, not a write command (precision gate).
+    "Notiere mal, was im Wiki über die Serverkonfiguration steht",  # i18n-allow
+    "Save me the trouble and tell me what's in the wiki about the server",
+    "Schreib mir, wenn du fertig bist, damit ich es ins Wiki eintragen kann",  # i18n-allow
+    "note down what the wiki says about the deploy key",
 ])
 def test_non_write_utterances_do_not_match(text):
     assert match_wiki_intent(text) is None
