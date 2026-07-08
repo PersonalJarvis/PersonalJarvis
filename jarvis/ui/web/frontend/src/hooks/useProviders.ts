@@ -802,3 +802,72 @@ export async function saveCuModel(
   };
 }
 
+// ── Realtime model + voice picker (per realtime provider) ──────────────────
+// Realtime needs BOTH a model AND a voice per provider (unlike every other
+// picker above, which serves ONE selection) — mirrors
+// jarvis/ui/web/provider_routes.py::RealtimeOptionsResponse /
+// RealtimeOptionsSaveResponse. Curated lists only (no live catalog fetch);
+// an empty current_model/current_voice means "use the provider default".
+
+export interface RealtimeOptionInfo {
+  id: string;
+  label: string;
+}
+
+export interface RealtimeOptionsResult {
+  provider: string;
+  models: RealtimeOptionInfo[];
+  voices: RealtimeOptionInfo[];
+  current_model: string;
+  current_voice: string;
+}
+
+/**
+ * Lists a realtime provider's curated model + voice catalog, plus the
+ * currently pinned selection. 400s for a non-realtime-tier id.
+ */
+export async function getRealtimeOptions(
+  providerId: string,
+): Promise<RealtimeOptionsResult> {
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(providerId)}/realtime-options`,
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as RealtimeOptionsResult;
+}
+
+export interface RealtimeOptionsSaveResult {
+  ok: boolean;
+  provider: string;
+  model: string;
+  voice: string;
+  restart_required: boolean;
+}
+
+/**
+ * Pins the model and/or voice for a realtime provider. An omitted field
+ * leaves it unchanged server-side; `""` explicitly resets it to the provider
+ * default. 409 without a stored credential.
+ */
+export async function saveRealtimeOptions(
+  providerId: string,
+  opts: { model?: string; voice?: string },
+): Promise<RealtimeOptionsSaveResult> {
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(providerId)}/realtime-options`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(opts),
+    },
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as RealtimeOptionsSaveResult;
+}
+

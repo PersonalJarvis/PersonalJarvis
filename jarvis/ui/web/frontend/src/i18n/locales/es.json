@@ -900,7 +900,10 @@
     "health_needs_setup": "Falta configurar",
     "health_error": "No funciona",
     "health_ok": "Funciona",
-    "security_notice": ""
+    "security_notice": "",
+    "realtime_model_label": "Modelo en tiempo real",
+    "realtime_voice_label": "Voz",
+    "realtime_provider_default": "Predeterminado del proveedor"
   },
   "apikeys_test": {
     "button": "Probar",

@@ -901,7 +901,10 @@
     "health_error": "Not working",
     "health_ok": "Working",
     "security_notice": "",
-    "trademark_notice": "Provider and service names and logos are trademarks of their respective owners, shown only to identify the integrations you can connect. No affiliation or endorsement is implied."
+    "trademark_notice": "Provider and service names and logos are trademarks of their respective owners, shown only to identify the integrations you can connect. No affiliation or endorsement is implied.",
+    "realtime_model_label": "Realtime model",
+    "realtime_voice_label": "Voice",
+    "realtime_provider_default": "Provider default"
   },
   "apikeys_test": {
     "button": "Test",

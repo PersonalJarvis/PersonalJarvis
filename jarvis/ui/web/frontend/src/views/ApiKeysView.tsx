@@ -6,6 +6,7 @@ import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
 import { OpenRouterTtsControls } from "@/components/OpenRouterTtsVoicePicker";
 import { CuModelSelector } from "@/components/CuModelSelector";
+import { RealtimeOptionsControl } from "@/components/RealtimeOptionsControl";
 import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
 import { JarvisAgentSection } from "@/components/JarvisAgentSection";
 import { TelephonyPanel } from "@/views/TelephonyView";
@@ -1024,6 +1025,14 @@ function ProviderCard({
             recommendedModel={descriptor.recommended_model}
           />
         )}
+
+      {/* Realtime needs BOTH a model AND a voice pinned per provider — a
+          dedicated compact control (two dropdowns), gated on the card
+          already having a stored credential like the other tiers' pickers
+          above. */}
+      {descriptor.tier === "realtime" && descriptor.configured && (
+        <RealtimeOptionsControl providerId={descriptor.id} />
+      )}
 
       <ProviderTestControl providerId={descriptor.id} />
     </div>
