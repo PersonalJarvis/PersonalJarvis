@@ -261,6 +261,14 @@ local-voice = [
     "webrtcvad-wheels>=2.0",
     "faster-whisper>=1.0",
 ]
+# Objective TTS evaluation suite (jarvis/speech/tts_eval): round-trip ASR WER via
+# faster-whisper (CPU). onnxruntime + numpy are already in base; the DNSMOS MOS
+# and speaker-drift backends attach their own models at runtime. Opt-in dev/CI
+# tooling — never on the voice hot path, never in the base install (faster-whisper
+# pulls ctranslate2, which the lockfile guard bans from base).
+tts-eval = [
+    "faster-whisper>=1.0",
+]
 
 [project.scripts]
 jarvis = "jarvis.__main__:main"

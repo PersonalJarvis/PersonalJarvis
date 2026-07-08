@@ -40,7 +40,7 @@ HARD_CORPUS: tuple[EvalItem, ...] = (
     ),
     EvalItem(
         "en-code", "en",
-        "Call build_tts_from_config with tts_cfg, then await synthesize() and check the AudioChunk.",
+        "Call build_tts_from_config with tts_cfg, then await synthesize and read the AudioChunk.",
         ("code",),
     ),
     EvalItem(
