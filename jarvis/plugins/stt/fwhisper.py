@@ -76,9 +76,8 @@ def _bound_ct2_threads(default: int = 2) -> None:
     Defensive hardening for the CPU stt_match wake path (AP-24/AP-25/BUG-036):
     ctranslate2's auto thread-pool can deadlock against another OpenMP consumer
     sharing the process (see ``_new_whisper_model`` / ``cpu_threads``). Setting
-    ``OMP_NUM_THREADS`` and ``CT2_FORCE_CPU_THREADS`` caps that pool at the
-    environment level, one layer below the per-instance ``cpu_threads=2``
-    constructor pin already in place.
+    ``OMP_NUM_THREADS`` caps that pool at the environment level, one layer below
+    the per-instance ``cpu_threads=2`` constructor pin already in place.
 
     Uses ``os.environ.setdefault`` so an operator's own explicit setting is
     NEVER clobbered. This is DEFENSIVE ONLY: it does not claim to cure the
@@ -94,8 +93,7 @@ def _bound_ct2_threads(default: int = 2) -> None:
     """
     import os
 
-    for var in ("OMP_NUM_THREADS", "CT2_FORCE_CPU_THREADS"):
-        os.environ.setdefault(var, str(default))
+    os.environ.setdefault("OMP_NUM_THREADS", str(default))
 
 
 def _normalize_model_name(model: str) -> str:

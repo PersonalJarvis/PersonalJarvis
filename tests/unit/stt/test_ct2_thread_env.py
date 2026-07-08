@@ -12,23 +12,19 @@ import os
 
 def test_bound_ct2_threads_sets_env_when_unset(monkeypatch):
     monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
-    monkeypatch.delenv("CT2_FORCE_CPU_THREADS", raising=False)
 
     from jarvis.plugins.stt.fwhisper import _bound_ct2_threads
 
     _bound_ct2_threads(default=2)
 
     assert os.environ["OMP_NUM_THREADS"] == "2"
-    assert os.environ["CT2_FORCE_CPU_THREADS"] == "2"
 
 
 def test_bound_ct2_threads_respects_user_override(monkeypatch):
     monkeypatch.setenv("OMP_NUM_THREADS", "8")
-    monkeypatch.delenv("CT2_FORCE_CPU_THREADS", raising=False)
 
     from jarvis.plugins.stt.fwhisper import _bound_ct2_threads
 
     _bound_ct2_threads(default=2)
 
     assert os.environ["OMP_NUM_THREADS"] == "8"  # never clobber an explicit setting
-    assert os.environ["CT2_FORCE_CPU_THREADS"] == "2"
