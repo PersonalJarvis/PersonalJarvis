@@ -13,11 +13,11 @@ These tests pin the pure decision (the sole-owner rule) and the orchestration
 (probe → decide → hide) without needing a real Windows console — the win32
 probes are injectable.
 """
+
 from __future__ import annotations
 
 from jarvis.ui import desktop_app
 from jarvis.ui.desktop_app import _console_owned_exclusively, hide_accidental_console
-
 
 # --- the pure sole-owner decision (cross-platform) -------------------------
 
