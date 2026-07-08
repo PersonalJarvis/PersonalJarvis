@@ -84,6 +84,9 @@ def test_realtime_switch_persists_with_key(monkeypatch):
     monkeypatch.setattr(
         config_writer, "set_realtime_provider", lambda name, **kw: writes.append(name)
     )
+    # Feature A4 also flips [voice].mode inside this route; mock it too so the
+    # test never touches the real jarvis.toml (isolation defect otherwise).
+    monkeypatch.setattr(config_writer, "set_voice_mode", lambda mode, **kw: None)
 
     app = _app()
     client = TestClient(app)
