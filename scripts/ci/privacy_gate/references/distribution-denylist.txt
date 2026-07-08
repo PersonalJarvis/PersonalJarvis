@@ -92,6 +92,12 @@ boot-progress.md
 # privacy-review finding). Glob covers the "(2)" suffix and any sibling copies.
 Unbenanntes*.pdf
 *.pdf
+# Same class as the PDF above but the Markdown siblings ("Unbenanntes Dokument
+# (7).md" / "(8).md"): internal German bug-report / handoff notes to another
+# agent session, tracked by accident (auto-save hook). They carry German prose +
+# wake-word/pipeline logs and have no downstream product value (2026-07-08 scan
+# BLOCK). Withhold every such root-level scratch doc at any extension.
+Unbenanntes*
 # Internal WSL verification scratch (2026-07-07 sub-agent privacy review):
 # carries the maintainer's personal home path + a Claude session UUID and
 # references non-shipped data/ captures. Dev scratch, no downstream value.

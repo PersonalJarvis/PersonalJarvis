@@ -1134,17 +1134,19 @@ def set_brain_provider_model(
     model: str | None = None,
     deep_model: str | None = None,
     cu_model: str | None = None,
+    voice: str | None = None,
     path: Path = DEFAULT_CONFIG_FILE,
 ) -> None:
-    """Patch ``[brain.providers.<provider>]`` ``model`` / ``deep_model`` in
-    the TOML file.
+    """Patch ``[brain.providers.<provider>]`` ``model`` / ``deep_model`` /
+    ``voice`` in the TOML file.
 
-    Used by the per-provider model picker (``PUT /api/providers/{id}/model``)
-    and the frontier auto-switch (Phase F.3) so a model change is persisted in
-    jarvis.toml — otherwise the switch is lost on the next ``cfg.load_config()``.
+    Used by the per-provider model picker (``PUT /api/providers/{id}/model``),
+    the frontier auto-switch (Phase F.3), and the Realtime model+voice picker
+    (``PUT /api/providers/{id}/realtime-options``) so a change is persisted in
+    jarvis.toml — otherwise it is lost on the next ``cfg.load_config()``.
 
     Three-layer persist (like ``set_brain_primary`` / ``set_sub_jarvis_provider``):
-    ``brain.providers.<p>.model`` / ``deep_model`` are pinned in
+    ``brain.providers.<p>.model`` / ``deep_model`` / ``voice`` are pinned in
     ``config-soll.json``, so a TOML-only write would be reverted by the  # i18n-allow
     drift-guard within 5 minutes (BUG-010 class) — exactly the "I picked a model
     and it flipped back" symptom. We therefore sync config-soll.json too. No ENV  # i18n-allow
@@ -1159,7 +1161,7 @@ def set_brain_provider_model(
     nothing.
     """
     path = _ensure_writable_config_path(path)
-    if model is None and deep_model is None and cu_model is None:
+    if model is None and deep_model is None and cu_model is None and voice is None:
         return
 
     with _WRITE_LOCK:
@@ -1191,6 +1193,10 @@ def set_brain_provider_model(
             # "" is a meaningful value (UI "use my main model") distinct from
             # None ("leave unchanged"), so write whatever non-None was given.
             block["cu_model"] = cu_model
+        if voice is not None:
+            # "" is a meaningful value (UI "provider default") distinct from
+            # None ("leave unchanged"), mirroring cu_model's contract above.
+            block["voice"] = voice
 
         out = tomlkit.dumps(doc)
         if had_bom:
@@ -1201,7 +1207,7 @@ def set_brain_provider_model(
     # TOML write). Only the keys actually written are synced so the guard sees
     # zero drift across the block.
     _sync_brain_provider_model_drift_soll(  # i18n-allow
-        provider, model=model, deep_model=deep_model, cu_model=cu_model
+        provider, model=model, deep_model=deep_model, cu_model=cu_model, voice=voice
     )
 
 
@@ -1579,7 +1585,7 @@ def _sync_computer_use_provider_drift_soll(name: str) -> None:  # i18n-allow
     ENV.
 
     NEVER raises and NEVER breaks the (already-completed) TOML write. Same
-    two-step shape as :func:`_sync_worker_provider_drift_soll`.
+    two-step shape as :func:`_sync_worker_provider_drift_soll`.  # i18n-allow: internal config-soll identifier ref
     """
     try:
         _update_config_soll_computer_use_provider(name)  # i18n-allow
@@ -1661,7 +1667,12 @@ def _sync_stt_provider_drift_soll(name: str) -> None:  # i18n-allow
 
 
 def _sync_brain_provider_model_drift_soll(  # i18n-allow
-    provider: str, *, model: str | None, deep_model: str | None, cu_model: str | None = None
+    provider: str,
+    *,
+    model: str | None,
+    deep_model: str | None,
+    cu_model: str | None = None,
+    voice: str | None = None,
 ) -> None:
     """Best-effort sync of ``brain.providers.<p>`` model keys into the drift-soll.  # i18n-allow
 
@@ -1679,6 +1690,8 @@ def _sync_brain_provider_model_drift_soll(  # i18n-allow
         values["deep_model"] = deep_model
     if cu_model is not None:
         values["cu_model"] = cu_model
+    if voice is not None:
+        values["voice"] = voice
     if not values:
         return
     try:
@@ -1787,7 +1800,7 @@ def _update_config_soll_computer_use_provider(name: str) -> None:  # i18n-allow
     config-soll.json.  # i18n-allow
 
     Note the FLAT dotted key ``"brain.computer_use"`` — same layout as
-    ``"brain.worker"`` (see :func:`_update_config_soll_worker_provider`), NOT
+    ``"brain.worker"`` (see :func:`_update_config_soll_worker_provider`), NOT  # i18n-allow: internal config-soll identifier ref
     a nested ``data["brain"]["computer_use"]``. Preserves all other keys.
     Graceful no-op when the file is absent.
     """
