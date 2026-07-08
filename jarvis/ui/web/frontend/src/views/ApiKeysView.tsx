@@ -209,8 +209,17 @@ export function ApiKeysView() {
  * when `realtimeAvailable` (a key is present for some realtime family);
  * otherwise the click just switches the view so the user can add a key from
  * the Realtime tab without silently pinning the boot default to a dead
- * engine. The segment whose value matches the LIVE `[voice].mode` (from
- * `useVoiceMode`) shows a small "Active" badge.
+ * engine.
+ *
+ * Visual system (one system, two legible states — replaces the old
+ * two-color gold-ring + emerald-badge combo):
+ * - The segment matching the LIVE `[voice].mode` is the filled solid
+ *   segment (`bg-primary`) with a leading "●" — unmistakably "this is on".
+ * - The segment currently being VIEWED but not live gets a subtle outline
+ *   only (no fill) — it's a transient look, not "on".
+ * - Realtime with no key configured anywhere (`!realtimeAvailable`) reads
+ *   muted with an inline "add a key" hint; it stays clickable (opens the
+ *   Realtime tab so the user can add one) but never gets the fill.
  */
 function EngineModeSwitch({
   mode,
@@ -220,7 +229,7 @@ function EngineModeSwitch({
   onSetVoiceMode,
 }: {
   mode: VoiceEngineMode;
-  /** The live `[voice].mode` value, for the "Active" badge. */
+  /** The live `[voice].mode` value — determines the filled/active segment. */
   liveMode: string;
   /** Whether SOME realtime family (OpenAI/Gemini) has a key configured. */
   realtimeAvailable: boolean;
@@ -242,29 +251,49 @@ function EngineModeSwitch({
   }
 
   return (
-    <div className="border-b border-border px-6 pt-4">
+    <div className="border-b border-border px-6 pt-4 pb-4">
+      <div className="mb-2.5">
+        <h2 className="text-sm font-semibold text-foreground">{t("apikeys_view.voice_engine_label")}</h2>
+        <p className="text-xs text-muted-foreground">{t("apikeys_view.voice_engine_desc")}</p>
+      </div>
       <div className="inline-flex items-center gap-1 rounded-xl border border-border bg-card/40 p-1">
-        {segments.map((seg) => (
-          <button
-            key={seg.key}
-            type="button"
-            onClick={() => handleSelect(seg.key)}
-            aria-pressed={mode === seg.key}
-            className={cn(
-              "inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors",
-              mode === seg.key
-                ? "bg-primary/10 text-primary ring-1 ring-primary/30"
-                : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
-            )}
-          >
-            {seg.label}
-            {liveMode === seg.key && (
-              <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
-                {t("apikeys_view.mode_active_badge")}
-              </span>
-            )}
-          </button>
-        ))}
+        {segments.map((seg) => {
+          const isLive = liveMode === seg.key;
+          const isViewedOnly = mode === seg.key && !isLive;
+          const needsKey = seg.key === "realtime" && !realtimeAvailable;
+          return (
+            <div key={seg.key} className="inline-flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => handleSelect(seg.key)}
+                aria-pressed={mode === seg.key}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors",
+                  isLive
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : isViewedOnly
+                      ? "text-foreground ring-1 ring-border"
+                      : needsKey
+                        ? "text-muted-foreground/60 hover:bg-secondary/40 hover:text-muted-foreground"
+                        : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                )}
+              >
+                {isLive && (
+                  <span aria-hidden="true" className="text-[10px] leading-none">
+                    ●
+                  </span>
+                )}
+                {seg.label}
+                {isLive && <span className="sr-only">{t("apikeys_view.mode_active_badge")}</span>}
+              </button>
+              {needsKey && (
+                <span className="pr-2 text-[10px] text-muted-foreground/70">
+                  {t("apikeys_view.mode_needs_key")}
+                </span>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
