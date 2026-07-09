@@ -53,6 +53,19 @@ _LAUNCHER_MODULE = "jarvis.ui.web.launcher"
 # IID_IPropertyStore — the COM interface for reading/writing a .lnk's AUMID.
 _IID_IPROPERTYSTORE = "{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}"
 
+# A per-install copy of ``pythonw.exe`` next to the interpreter, carrying the
+# Jarvis mascot as its EMBEDDED executable icon. On Windows the taskbar button of
+# a running app takes the icon of the LAUNCHING EXECUTABLE — not the window icon,
+# class icon, AUMID, Start-Menu shortcut, registry, or icon cache (all verified
+# to have no effect on the button). A bare ``pythonw.exe`` launch therefore shows
+# the Python logo on the taskbar no matter how much window-icon work we do; the
+# ONLY fix is to launch from an exe whose embedded icon is the mascot. See
+# ``ensure_branded_launcher_exe`` + ``maybe_reexec_through_branded_launcher``.
+BRANDED_LAUNCHER_EXE_NAME = "PersonalJarvis.exe"
+# Set in the child's env when we re-exec through the branded exe, so the child
+# does not re-exec again (loop guard).
+_BRANDED_LAUNCH_ENV = "JARVIS_BRANDED_LAUNCH"
+
 
 def register_windows_app_user_model_id(
     app_id: str = APP_USER_MODEL_ID,
@@ -113,11 +126,287 @@ def _pythonw_executable() -> Path | None:
     return exe if exe.exists() else None
 
 
+def _replace_exe_icon(exe_path: Path, ico_path: Path) -> bool:
+    """Overwrite ``exe_path``'s embedded application icon with ``ico_path``.
+
+    Rewrites the ``RT_ICON`` images + the primary ``RT_GROUP_ICON`` (id 1, the
+    group Explorer uses as the app icon for ``pythonw.exe``) via the Win32
+    ``*UpdateResource`` API — no external tool (rcedit/PyInstaller) needed. The
+    file must not be running. Returns ``True`` on success.
+    """
+    import ctypes
+    import struct
+    from ctypes import wintypes
+
+    try:
+        data = ico_path.read_bytes()
+        _reserved, _itype, count = struct.unpack("<HHH", data[:6])
+        entries = []
+        off = 6
+        for _ in range(count):
+            w, h, cc, _r, planes, bc, size, imgoff = struct.unpack(
+                "<BBBBHHII", data[off : off + 16]
+            )
+            entries.append(
+                {
+                    "w": w, "h": h, "cc": cc, "planes": planes, "bc": bc,
+                    "img": data[imgoff : imgoff + size], "size": size,
+                }
+            )
+            off += 16
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("could not parse .ico for exe branding: {}", exc)
+        return False
+
+    RT_ICON, RT_GROUP_ICON, LANG = 3, 14, 0x0409
+    k = ctypes.windll.kernel32
+    k.BeginUpdateResourceW.restype = wintypes.HANDLE
+    k.BeginUpdateResourceW.argtypes = [wintypes.LPCWSTR, wintypes.BOOL]
+    k.UpdateResourceW.argtypes = [
+        wintypes.HANDLE, wintypes.LPCWSTR, wintypes.LPCWSTR,
+        wintypes.WORD, wintypes.LPVOID, wintypes.DWORD,
+    ]
+    k.EndUpdateResourceW.argtypes = [wintypes.HANDLE, wintypes.BOOL]
+
+    def _res_id(i: int):  # MAKEINTRESOURCE
+        return ctypes.cast(ctypes.c_void_p(i), wintypes.LPCWSTR)
+
+    handle = k.BeginUpdateResourceW(str(exe_path), False)
+    if not handle:
+        logger.debug("BeginUpdateResource failed for {}", exe_path)
+        return False
+    try:
+        for i, e in enumerate(entries):
+            buf = ctypes.create_string_buffer(e["img"], len(e["img"]))
+            if not k.UpdateResourceW(
+                handle, _res_id(RT_ICON), _res_id(1 + i), LANG, buf, len(e["img"])
+            ):
+                logger.debug("UpdateResource RT_ICON {} failed", i)
+        grp = struct.pack("<HHH", 0, 1, len(entries))
+        for i, e in enumerate(entries):
+            grp += struct.pack(
+                "<BBBBHHIH", e["w"] & 0xFF, e["h"] & 0xFF, e["cc"], 0,
+                e["planes"] or 1, e["bc"] or 32, e["size"], 1 + i,
+            )
+        gbuf = ctypes.create_string_buffer(grp, len(grp))
+        if not k.UpdateResourceW(
+            handle, _res_id(RT_GROUP_ICON), _res_id(1), LANG, gbuf, len(grp)
+        ):
+            logger.debug("UpdateResource RT_GROUP_ICON failed")
+        return bool(k.EndUpdateResourceW(handle, False))
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("exe icon resource update failed: {}", exc)
+        try:
+            k.EndUpdateResourceW(handle, True)  # discard
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
+
+def _base_pythonw_executable() -> Path | None:
+    """The BASE interpreter's ``pythonw.exe`` (``sys.base_prefix``), or ``None``.
+
+    This — not the venv ``pythonw.exe`` — is the process that actually OWNS the
+    window: a venv launcher is a thin redirector that re-spawns the base
+    interpreter, and Windows takes the taskbar-button icon from that final
+    window-owning exe. So the mascot must be branded onto a copy of the *base*
+    pythonw, not the venv stub.
+    """
+    base = Path(sys.base_prefix)
+    cand = base / "pythonw.exe"
+    if cand.exists():
+        return cand
+    alt = base / "python.exe"
+    return alt if alt.exists() else None
+
+
+def _branded_launcher_path() -> Path | None:
+    """Where the mascot-branded base-``pythonw`` copy lives (in the base dir).
+
+    Placed NEXT TO the base interpreter so it finds ``pythonXX.dll`` + the stdlib
+    landmark; the venv is re-attached at launch via ``__PYVENV_LAUNCHER__``.
+    """
+    base = _base_pythonw_executable()
+    if base is None:
+        return None
+    return base.with_name(BRANDED_LAUNCHER_EXE_NAME)
+
+
+def ensure_branded_launcher_exe() -> Path | None:
+    """Create/refresh a mascot-icon copy of the BASE ``pythonw`` and return it.
+
+    The taskbar button takes its icon from the window-owning executable, which is
+    the *base* interpreter (the venv ``pythonw`` only redirects to it). So we copy
+    ``<base_prefix>/pythonw.exe`` to ``<base_prefix>/PersonalJarvis.exe`` (same
+    dir ⇒ it finds ``pythonXX.dll`` + the stdlib) and stamp the Jarvis ``.ico`` as
+    its embedded icon. The venv is re-attached at launch via ``__PYVENV_LAUNCHER__``
+    (see ``maybe_reexec_through_branded_launcher``), so the branded base copy runs
+    the app with the venv's packages while OWNING the window ⇒ mascot on the
+    taskbar.
+
+    Idempotent + self-healing (rebuilds only when missing or older than the
+    icon/source exe). Returns ``None`` — caller falls back to bare ``pythonw``,
+    taskbar keeps the Python logo — when branding is impossible:
+
+    * **MS Store Python**: its base exe is a 0-byte app-execution alias in a
+      read-only ``WindowsApps`` package that cannot be copied or branded. Source
+      runs there keep the Python icon; the shipped PyInstaller build is the
+      supported branded path on such machines.
+    * a read-only base dir (a system-wide ``Program Files`` install without write
+      access), or any copy/resource-write failure.
+    """
+    if sys.platform != "win32":
+        return None
+    src = _base_pythonw_executable()
+    target = _branded_launcher_path()
+    if src is None or target is None:
+        return None
+    ico = project_icon_path()
+    if not ico.is_file():
+        return None
+    try:
+        # MS Store base exe is a 0-byte alias → unbrandable.
+        if src.stat().st_size == 0:
+            logger.debug("base pythonw is a 0-byte alias (MS Store); cannot brand")
+            return None
+        fresh = (
+            target.is_file()
+            and target.stat().st_mtime
+            >= max(ico.stat().st_mtime, src.stat().st_mtime)
+        )
+        if fresh:
+            return target
+        # Do not clobber a running copy (best-effort self-heal, not load-bearing).
+        base_exe = getattr(sys, "_base_executable", "") or ""
+        if target.is_file() and Path(base_exe).name.lower() == target.name.lower():
+            return target
+        import shutil
+
+        shutil.copy2(src, target)
+        if not _replace_exe_icon(target, ico):
+            # A copy without the branded icon is pointless (still shows Python);
+            # remove it so the caller cleanly falls back to bare pythonw.
+            try:
+                target.unlink()
+            except Exception:  # noqa: BLE001
+                pass
+            return None
+        logger.debug("Branded launcher exe ready: {}", target)
+        return target
+    except PermissionError as exc:
+        logger.debug("base dir not writable; cannot brand launcher: {}", exc)
+        return None
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("branded launcher exe could not be built: {}", exc)
+        return target if target.is_file() else None
+
+
+def maybe_reexec_through_branded_launcher(argv: list[str]) -> int | None:
+    """Re-exec the launcher through the mascot-branded exe; return an exit code.
+
+    The taskbar button icon is the launching exe's embedded icon, so a bare
+    ``pythonw.exe`` start shows the Python logo regardless of every window-icon /
+    AUMID / shortcut effort. Relaunching the SAME launcher module through
+    ``PersonalJarvis.exe`` (a pythonw copy carrying the mascot icon) is the only
+    thing that brands the taskbar button — and it covers every entry point at one
+    chokepoint (``run.bat``, the Start-Menu/pinned shortcut, the autostart task,
+    the tray self-restart), because they all funnel through ``main()``.
+
+    Returns an exit code when it re-exec'd (the caller must return it and let this
+    process exit), or ``None`` to continue booting in-process (already branded,
+    non-Windows, a console/debug run, or branding unavailable — graceful
+    fallback: the app still runs, the taskbar just keeps the Python logo).
+    """
+    if sys.platform != "win32":
+        return None
+    # Loop guard: the env marker (set on the re-exec child) is authoritative —
+    # under ``__PYVENV_LAUNCHER__`` ``sys.executable`` is the venv pythonw, so the
+    # real running image is ``sys._base_executable`` (our branded copy).
+    if os.environ.get(_BRANDED_LAUNCH_ENV) == "1":
+        return None
+    base_exe = getattr(sys, "_base_executable", "") or ""
+    if Path(base_exe).name.lower() == BRANDED_LAUNCHER_EXE_NAME.lower():
+        return None
+    # A visible-console/debug run wants python.exe's console; re-exec'ing through
+    # a windowless pythonw copy would swallow it. Leave those alone.
+    if os.environ.get("JARVIS_DEBUG") == "1":
+        return None
+    branded = ensure_branded_launcher_exe()
+    if branded is None:
+        return None
+    try:
+        import subprocess
+
+        env = dict(os.environ)
+        env[_BRANDED_LAUNCH_ENV] = "1"
+        # Re-attach THIS venv inside the base-python-copy branded exe, so it runs
+        # the app with the venv's packages while owning the window itself. This is
+        # exactly the mechanism a venv launcher uses to redirect into the venv.
+        venv_pythonw = Path(sys.executable).with_name("pythonw.exe")
+        if venv_pythonw.is_file():
+            env["__PYVENV_LAUNCHER__"] = str(venv_pythonw)
+        # DETACHED_PROCESS | CREATE_NO_WINDOW — same idiom as jarvis.ui.relauncher:
+        # cut the child loose from the parent's console/process group and keep
+        # pythonw from flashing a console. Redirect all three std streams to
+        # DEVNULL: DETACHED_PROCESS leaves them as INVALID handles otherwise, and
+        # a boot-time write to stdout/stderr then crashes the child before its
+        # window ever appears (observed: the re-exec'd app silently never came up
+        # until stdio was given valid handles). The app logs to its own file sink.
+        detached = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+        no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        subprocess.Popen(  # noqa: S603 — fixed argv, no shell, our own exe
+            [str(branded), "-m", _LAUNCHER_MODULE, *argv],
+            env=env,
+            close_fds=True,
+            creationflags=detached | no_window,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        logger.debug("Re-exec'd launcher through branded exe: {}", branded)
+        return 0
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("branded re-exec failed, continuing in-process: {}", exc)
+        return None
+
+
 def _default_start_menu_programs_dir() -> Path | None:
     appdata = os.environ.get("APPDATA")
     if not appdata:
         return None
     return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+
+
+def _shortcut_paths_are_live(lnk: Path) -> bool:
+    """True only if the ``.lnk``'s icon file AND target file both exist on disk.
+
+    The taskbar renders an AUMID-grouped button from its Start-Menu shortcut's
+    icon; a dangling ``IconLocation`` (install moved/renamed) silently degrades
+    to the target's icon (``pythonw.exe`` -> Python logo). An empty
+    ``IconLocation`` means "use the target's icon", which is exactly the Python
+    fallback, so that counts as NOT live. Best-effort: any read failure returns
+    ``False`` so the caller rewrites rather than trusting a shortcut it cannot
+    verify. Windows-only helper (``WScript.Shell`` is a shell COM object).
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        from win32com.client import Dispatch
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("pywin32 unavailable; cannot verify shortcut paths: {}", exc)
+        return False
+    try:
+        sc = Dispatch("WScript.Shell").CreateShortcut(str(lnk))
+        # IconLocation is "<path>,<index>"; an empty path == inherit the target
+        # icon == the pythonw.exe fallback, so treat it as not-live.
+        icon_path = (sc.IconLocation or "").rsplit(",", 1)[0].strip().strip('"')
+        target = (sc.TargetPath or "").strip().strip('"')
+        icon_ok = bool(icon_path) and Path(icon_path).is_file()
+        target_ok = bool(target) and Path(target).is_file()
+        return icon_ok and target_ok
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("could not read shortcut target/icon, treating as stale: {}", exc)
+        return False
 
 
 def ensure_start_menu_shortcut(
@@ -165,15 +454,28 @@ def ensure_start_menu_shortcut(
     lnk = programs / START_MENU_SHORTCUT_NAME
     iid = pywintypes.IID(_IID_IPROPERTYSTORE)
 
-    # Idempotent: an existing shortcut already tagged with this AUMID is enough.
+    # Idempotent BUT self-healing: leave an existing shortcut alone ONLY if it
+    # still carries this AUMID *and* its icon + target resolve to real files.
+    #
+    # A plain "AUMID matches -> return" check was a latent Python-logo bug: a
+    # shortcut written against an earlier install location (a moved/renamed repo,
+    # a throwaway ``.venv``) keeps a **dangling** ``IconLocation``. Windows then
+    # renders the whole AUMID-grouped taskbar button from the shortcut's target
+    # icon (``pythonw.exe`` -> the Python logo) even though the live window's
+    # class icon is the mascot — the button icon is resolved from the shortcut,
+    # not the window. Re-validating the paths repairs it on the next launch, so
+    # the fix reaches every machine whose install moved (why it "works on one
+    # machine, not another"). Verifying the target too keeps a fresh relaunch
+    # click pointed at a real interpreter.
     if lnk.is_file():
         try:
             ro_store = propsys.SHGetPropertyStoreFromParsingName(
                 str(lnk), None, 0, iid  # GPS_DEFAULT
             )
             existing = ro_store.GetValue(pscon.PKEY_AppUserModel_ID).GetValue()
-            if existing == aumid:
+            if existing == aumid and _shortcut_paths_are_live(lnk):
                 return True
+            logger.debug("stale/broken Start-Menu shortcut, rewriting: {}", lnk)
         except Exception as exc:  # noqa: BLE001
             logger.debug("could not read existing shortcut AUMID, rewriting: {}", exc)
 
@@ -181,6 +483,10 @@ def ensure_start_menu_shortcut(
         programs.mkdir(parents=True, exist_ok=True)
         shell = Dispatch("WScript.Shell")
         sc = shell.CreateShortcut(str(lnk))
+        # Target the venv pythonw (which re-execs through the branded base copy in
+        # main()); the branded exe itself needs __PYVENV_LAUNCHER__ to find the
+        # venv, so it is not a valid direct shortcut target. IconLocation below
+        # still brands the pinned/Start-Menu icon itself.
         sc.TargetPath = str(pythonw)
         sc.Arguments = f"-m {_LAUNCHER_MODULE}"
         sc.WorkingDirectory = str(Path.home())
