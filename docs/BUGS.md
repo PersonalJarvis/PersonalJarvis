@@ -1288,6 +1288,61 @@ jarvis.ui.web.launcher` now re-execs to `PersonalJarvis.exe`, which OWNS the
 "Personal Jarvis" window, and the live taskbar button is the Gigi ghost (captured
 screenshot), not the Python logo.
 
+### Follow-up 2026-07-09 (part 3): v1.0.5 reinstall STILL showed Python — the per-window Relaunch properties are the actual universal fix
+
+**Part 2 shipped in v1.0.5 and the maintainer's reinstall still showed the Python
+logo.** Root cause of the recurrence: the reinstall rebuilt the venv against the
+**MS Store Python** — exactly the environment where the branded-exe re-exec
+degrades to a no-op (the Store base exe cannot be copied/branded), which part 2
+explicitly accepted as a cosmetic loss. That acceptance was wrong: it left every
+Store-Python install (and any install where the base dir is not writable) showing
+the Python logo forever. "Works on the maintainer's setup, breaks on the next
+machine" — the exact §3 defect class.
+
+**The mechanism part 2 missed** (and the reason its "the button follows the exe
+icon and NOTHING else" conclusion was incomplete): the taskbar button follows the
+window-owning exe's icon **only when the window carries no explicit identity of
+its own**. Windows exposes a per-window property store —
+`SHGetPropertyStoreForWindow` — with `System.AppUserModel.RelaunchIconResource` /
+`RelaunchDisplayNameResource` / `RelaunchCommand` / `ID`, documented precisely
+for apps hosted by a shared interpreter exe. Stamping
+`RelaunchIconResource = "<jarvis.ico>,0"` flips the LIVE button to the mascot
+instantly — no restart, no exe copy, no admin, works on MS-Store Python.
+
+**Fix:** `jarvis/ui/icon_utils.py::set_window_relaunch_properties(hwnd)` —
+stamps AUMID + icon + display name + relaunch command on the window's property
+store (session-cached per HWND, COM-initialized for the poll thread,
+best-effort). Called from `_apply_icon_to_hwnd`, the one chokepoint every icon
+path already funnels through (the desktop icon-setter poll by title/PID, Tk
+surfaces via `apply_tk_window_icon`), so every present and future window gets it
+for free. The part-2 branded-exe re-exec stays (correct exe identity on
+python.org installs); the relaunch properties are the layer that makes the
+button correct EVERYWHERE. Guard: `tests/unit/ui/test_relaunch_properties.py`
+(wiring + a real-window stamp/read-back test).
+
+**Verified on the Store-Python box that reproduced the report:** cold boot via
+bare `pythonw -m jarvis.ui.web.launcher` → taskbar button is the Gigi ghost;
+`SHGetPropertyStoreForWindow` read-back on the live window confirms AUMID +
+icon + name.
+
+**Collateral regression, same report:** after the v1.0.5 reinstall, Windows
+search no longer found "Personal Jarvis" — the Start-Menu shortcut
+(`%APPDATA%\...\Start Menu\Programs\Personal Jarvis.lnk`) was missing. The
+uninstall/reinstall removed it and the session kept running without it (boot-time
+re-ensure only runs at import). Two watchdog-instrumented reboots could NOT
+reproduce an active deleter in the app — every fresh boot recreates the shortcut
+correctly. Hardening anyway: the desktop icon-setter now re-ensures the shortcut
+once the window is up (`_start_icon_setter_thread`), so a shortcut deleted
+mid-session heals within the same session instead of at the next boot. (Windows
+search indexing may still lag a few minutes after recreation.)
+
+**Lesson:** "the taskbar follows the exe icon" was verified by *changing* the
+exe icon and watching the button follow — a true positive that masked the
+cheaper, more general mechanism sitting one API away. When a shell surface
+misbehaves, enumerate the *documented identity layers* for that surface first
+(window property store > shortcut > exe resource), and test the highest-level
+one before shipping workarounds at a lower level.
+
 ---
 
 ## Bug-008 Episode 2: Transcription view empty (HangupReason drift, regressed after restore) — 2026-05-05
