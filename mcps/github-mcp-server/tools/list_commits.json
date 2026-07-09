@@ -1,0 +1,30 @@
+{
+  "name": "list_commits",
+  "description": "Get list of commits of a branch in a GitHub repository",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "owner": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "sha": {
+        "type": "string"
+      },
+      "page": {
+        "type": "number"
+      },
+      "perPage": {
+        "type": "number"
+      }
+    },
+    "required": [
+      "owner",
+      "repo"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

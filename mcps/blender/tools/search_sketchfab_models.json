@@ -1,0 +1,37 @@
+{
+  "name": "search_sketchfab_models",
+  "description": "\n    Search for models on Sketchfab with optional filtering.\n\n    Parameters:\n    - query: Text to search for\n    - categories: Optional comma-separated list of categories\n    - count: Maximum number of results to return (default 20)\n    - downloadable: Whether to include only downloadable models (default True)\n\n    Returns a formatted list of matching models.\n    ",
+  "inputSchema": {
+    "properties": {
+      "query": {
+        "title": "Query",
+        "type": "string"
+      },
+      "categories": {
+        "default": null,
+        "title": "Categories",
+        "type": "string"
+      },
+      "count": {
+        "default": 20,
+        "title": "Count",
+        "type": "integer"
+      },
+      "downloadable": {
+        "default": true,
+        "title": "Downloadable",
+        "type": "boolean"
+      },
+      "user_prompt": {
+        "default": "",
+        "title": "User Prompt",
+        "type": "string"
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "title": "search_sketchfab_modelsArguments",
+    "type": "object"
+  }
+}

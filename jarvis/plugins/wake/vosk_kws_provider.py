@@ -47,7 +47,11 @@ from typing import Any
 import numpy as np
 
 from jarvis.core.protocols import AudioChunk
-from jarvis.speech.wake_constants import normalize_phrase_for_match, sound_fold
+from jarvis.speech.wake_constants import (
+    normalize_phrase_for_match,
+    phrase_core_for_match,
+    sound_fold,
+)
 
 log = logging.getLogger("jarvis.wake.vosk")
 
@@ -427,4 +431,49 @@ class VoskKwsProvider:
             rec = self._new_grammar_rec()
 
 
-__all__ = ["VoskKwsProvider", "sound_confirm"]
+def vosk_model_supports_phrase(model_path: str, phrase: str) -> bool:
+    """True when every core word of ``phrase`` exists in the model lexicon.
+
+    Vosk drops out-of-vocabulary grammar words with a stderr warning and then
+    silently builds a grammar WITHOUT them (live 2026-07-08: 'Hey Billionar'
+    → "Ignoring word missing in vocabulary: 'billionar'" → the phrase could
+    never be heard, and ``SetLogLevel(-1)`` hid the warning). The small models
+    ship no readable word list, so the warning is the only signal — capture it
+    at the OS fd level (portable on Windows and POSIX) around a throwaway
+    recognizer build. NEVER raises: any failure means "cannot prove it's
+    unsupported" → returns True (fail-open, never eat a usable wake word). This
+    is DELIBERATELY off the boot path (it loads the model, ~1.5 s) — call it
+    from a user action (self-test) or a background task, never in ``_run_backend``.
+    """
+    core = phrase_core_for_match(phrase)
+    if not core:
+        return False
+    import contextlib
+    import os
+    import tempfile
+
+    try:
+        from vosk import KaldiRecognizer, Model, SetLogLevel
+    except Exception:  # noqa: BLE001 — no vosk → cannot disprove support
+        return True
+    tmp = None
+    old = None
+    try:
+        SetLogLevel(0)  # surface the OOV warning the app normally hides
+        tmp = tempfile.TemporaryFile(mode="w+")
+        old = os.dup(2)
+        os.dup2(tmp.fileno(), 2)
+        KaldiRecognizer(Model(model_path), 16_000, json.dumps([phrase.lower(), "[unk]"]))
+    except Exception:  # noqa: BLE001 — probe failure must not reject a real word
+        return True
+    finally:
+        if old is not None:
+            with contextlib.suppress(Exception):
+                os.dup2(old, 2)
+                os.close(old)
+        SetLogLevel(-1)  # restore the app's quiet default
+    tmp.seek(0)
+    return "missing in vocabulary" not in tmp.read().lower()
+
+
+__all__ = ["VoskKwsProvider", "sound_confirm", "vosk_model_supports_phrase"]

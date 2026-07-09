@@ -255,13 +255,20 @@ async def run_provider_test(
     make_stt: Callable[[Any, str], Any] | None = None,
     codex_status: Callable[[], Any] | None = None,
     antigravity_status: Callable[[], Any] | None = None,
-    timeout_s: float = 25.0,
+    timeout_s: float = 60.0,
 ) -> ProviderTestResult:
     """Run a REAL minimal call against ``spec``'s provider and classify it.
 
     The network-touching seams (``brain_probe`` / ``make_tts`` / ``make_stt`` /
     ``codex_status``) default to the production wiring and are injectable so the
     dispatch logic is unit-testable without hitting a live provider.
+
+    ``timeout_s`` bounds the wait for the FIRST byte/delta, not a dead endpoint
+    (the SDK ``connect`` timeout, ~5s, catches those). It must clear the slowest
+    LEGITIMATE provider's time-to-first-byte, else a slow-but-healthy provider is
+    mislabelled ``unreachable``/integration-error: NVIDIA NIM's free dev tier was
+    measured at 13-30s+ TTFB (queue/cold-start), far above OpenAI/OpenRouter's
+    ~2s, so the ceiling is generous rather than voice-path-tight.
     """
     provider = spec.id
 

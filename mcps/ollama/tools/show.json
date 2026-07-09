@@ -1,0 +1,17 @@
+{
+  "name": "show",
+  "description": "Show information for a model",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Name of the model"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "additionalProperties": false
+  }
+}

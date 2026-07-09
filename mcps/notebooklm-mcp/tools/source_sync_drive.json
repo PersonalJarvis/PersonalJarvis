@@ -1,0 +1,24 @@
+{
+  "name": "source_sync_drive",
+  "description": "Sync Drive sources with latest content. Requires confirm=True.\n\nCall source_list_drive first to identify stale sources.\n\nArgs:\n    source_ids: Source UUIDs to sync\n    confirm: Must be True after user approval",
+  "inputSchema": {
+    "properties": {
+      "source_ids": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Source Ids",
+        "type": "array"
+      },
+      "confirm": {
+        "default": false,
+        "title": "Confirm",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "source_ids"
+    ],
+    "type": "object"
+  }
+}

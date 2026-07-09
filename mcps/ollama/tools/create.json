@@ -1,0 +1,22 @@
+{
+  "name": "create",
+  "description": "Create a model from a Modelfile",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Name for the model"
+      },
+      "modelfile": {
+        "type": "string",
+        "description": "Path to Modelfile"
+      }
+    },
+    "required": [
+      "name",
+      "modelfile"
+    ],
+    "additionalProperties": false
+  }
+}

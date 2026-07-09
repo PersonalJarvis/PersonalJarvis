@@ -7,9 +7,10 @@
 # This bootstrap is intentionally small. It:
 #   1. Verifies Python 3.11+ is available.
 #   2. Verifies git is available.
-#   3. Clones (or updates) personal-jarvis into ~/.personal-jarvis.
-#   4. Creates a Python venv, installs `rich` + `packaging`.
-#   5. Hands control to install/installer.py (the Stage 2 orchestrator).
+#   3. Verifies Node.js 18+ is available (skipped on --headless).
+#   4. Clones (or updates) personal-jarvis into ~/.personal-jarvis.
+#   5. Creates a Python venv, installs `rich` + `packaging`.
+#   6. Hands control to install/installer.py (the Stage 2 orchestrator).
 #
 # All heavy logic lives in installer.py so it can be unit-tested and
 # kept cross-platform.
@@ -90,6 +91,34 @@ if ! command -v git >/dev/null 2>&1; then
     exit 1
 fi
 ok 'git'
+
+# Node.js 18+ — required for the Jarvis-Agent worker CLIs (Claude Code / Codex)
+# the worker delegates heavy missions to, plus the Node-based marketplace
+# integrations. Skipped on the headless / tiny-VPS path (--headless): a
+# cloud-only base install that never spawns a local CLI worker, so Node adds no
+# capability there.
+skip_node=0
+for arg in "$@"; do
+    if [ "$arg" = "--headless" ]; then skip_node=1; break; fi
+done
+if [ "$skip_node" -eq 1 ]; then
+    note 'Node.js check skipped (--headless): the cloud-only base install does not use it.'
+else
+    node_ok=0
+    if command -v node >/dev/null 2>&1; then
+        node_major=$(node --version 2>/dev/null | sed -E 's/^v?([0-9]+).*/\1/')
+        if [ -n "$node_major" ] && [ "$node_major" -ge 18 ] 2>/dev/null; then
+            node_ok=1
+        fi
+    fi
+    if [ "$node_ok" -eq 0 ]; then
+        err 'Node.js 18+ not found.'
+        note '  - macOS:  "brew install node" or https://nodejs.org/'
+        note '  - Linux:  your distro package (apt install nodejs, ...) or https://nodejs.org/'
+        exit 1
+    fi
+    ok "Node.js $(node --version)"
+fi
 
 # -------------------------------------------------------------- clone / update
 step 'Fetching Personal Jarvis'

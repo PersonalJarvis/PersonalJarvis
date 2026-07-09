@@ -1,0 +1,47 @@
+{
+  "name": "create_or_update_file",
+  "description": "Create or update a single file in a GitHub repository",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "owner": {
+        "type": "string",
+        "description": "Repository owner (username or organization)"
+      },
+      "repo": {
+        "type": "string",
+        "description": "Repository name"
+      },
+      "path": {
+        "type": "string",
+        "description": "Path where to create/update the file"
+      },
+      "content": {
+        "type": "string",
+        "description": "Content of the file"
+      },
+      "message": {
+        "type": "string",
+        "description": "Commit message"
+      },
+      "branch": {
+        "type": "string",
+        "description": "Branch to create/update the file in"
+      },
+      "sha": {
+        "type": "string",
+        "description": "SHA of the file being replaced (required when updating existing files)"
+      }
+    },
+    "required": [
+      "owner",
+      "repo",
+      "path",
+      "content",
+      "message",
+      "branch"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

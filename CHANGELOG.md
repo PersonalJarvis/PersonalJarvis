@@ -7,85 +7,45 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
+## [1.0.5] — 2026-07-09
+
+### Fixed
+
+- **The wake word now works for non-English speakers.** Wake detection routes to
+  a model that matches the language you actually speak — the right-language local
+  keyword model, or multilingual Whisper as a fallback — instead of silently
+  going deaf on an English-only model. The missing language model is fetched
+  automatically on a language switch or boot, wake stays pinned to the CPU, and a
+  new **language selector** (with a "Test wake word" readiness check) lets you set
+  the spoken language directly in Settings.
+- **The Windows taskbar button shows the Jarvis mascot** instead of the generic
+  Python logo. The app re-launches through a mascot-branded executable that owns
+  its window, and it self-heals a stale Start-Menu shortcut. Best-effort and
+  fully guarded: on a read-only or Store-Python install it degrades cleanly with
+  no change in behavior.
+
+### Changed
+
+- **Clearer API-keys screen.** NVIDIA NIM is now flagged with a "not recommended"
+  caution badge (its free tier is slow), Inworld TTS is no longer mislabeled as a
+  realtime provider, and the Pipeline / Realtime voice-engine switch was
+  redesigned for clarity.
+
 ## [1.0.4] — 2026-07-08
 
-A portability + reliability release. Personal Jarvis now runs consistently on any
-machine — Windows, macOS (including Apple Silicon), Linux, and headless servers —
-with the CPU as the guaranteed floor and the GPU used only when it is verified to
-actually work. Plus a new brain provider and a batch of first-run robustness
-fixes.
+### Fixed
 
-### Added
-
-- **NVIDIA NIM brain provider.** Use NVIDIA's hosted models (Nemotron, Llama,
-  DeepSeek, Qwen) with an `nvapi-` key, added in the setup wizard like any other
-  provider.
 - **Custom wake words work out of the box on a fresh install.** The per-language
-  keyword-spotting model is provisioned automatically (installer prefetch, an
-  off-boot self-heal on first run, and an in-app "Download wake model" button), so
-  a freely chosen wake phrase resolves to the reliable any-word engine instead of
-  silently degrading. Works for every supported language (`en` / `de` / `es`),
-  with no training and no GPU, on any OS including Apple Silicon; an unservable
-  phrase now degrades loudly with a one-click fix, and onboarding verifies the
-  microphone level and the spoken wake word before marking setup complete.
-
-### Changed
-
-- **CPU-first device selection.** Local speech-to-text defaults to the CPU
-  everywhere and only moves to the GPU after a real on-device inference proves it
-  works. A configuration created on a GPU machine no longer breaks on a CPU-only
-  or Apple-Silicon machine — it quietly falls back to the CPU. (ADR-0024)
-- **Wake word follows your language.** The wake-word model resolves its language
-  from your speech / UI language setting instead of a fixed default.
-
-### Fixed
-
-- **Starts on minimal machines without git.** First boot no longer errors on a
-  host that has no `git` installed; the boot-time worktree housekeeping skips
-  cleanly instead of dumping a traceback.
-- **API-key saving survives a locked system keychain.** On a Linux host whose
-  keychain is present but locked, saving a key in the app falls back to a
-  protected local file instead of failing with an error.
-- **Install verifies the voice models on disk** and reports the per-model truth,
-  so a partial download is caught up front rather than at first use.
-
-## [1.0.3] — 2026-07-08
-
-A voice + reliability release: a new premium text-to-speech voice, a friendlier
-voice picker, and a batch of robustness fixes to the wiki/journal, the wake
-word, and multi-provider fallback.
-
-### Added
-
-- **New premium voice — Inworld TTS.** A top-ranked realtime text-to-speech
-  provider is now selectable as the premium default, alongside the existing
-  cloud voices. Add your key in the setup wizard and pick it like any other
-  provider.
-- **Cross-provider voice picker with preview.** The voice chooser now spans all
-  configured providers (no longer OpenRouter-only) and lets you preview a voice
-  before selecting it, filtered through a curated, quality-checked voice
-  catalog.
-
-### Fixed
-
-- **Wiki / journal reliability.** The journal now flushes consistently across
-  all trigger points, and the Obsidian vault is resolved against the real vault
-  root — including correct auto-discovery on macOS and Linux — so notes land
-  where they should instead of silently doing nothing.
-- **Wake word no longer dies on a mis-hear.** Removed English mis-hearing
-  hang-up aliases that could kill a fresh wake session, and floored the
-  sensitivity slider at a safe minimum with an in-line explanation.
-- **Multi-provider fallback crosses a dead key.** When a configured API key is
-  depleted, rate-limited, or unauthorized, missions now walk to a different
-  provider family based on real key viability instead of stalling — so one
-  exhausted provider no longer bricks the run.
-- **Localization.** The assistant's name is now correctly tokenized in the
-  vault-choice strings across languages.
-
-### Changed
-
-- The setup wizard registers the new Inworld provider spec and its secret so it
-  is reachable end-to-end from a fresh install.
+  Vosk keyword-spotting model is now provisioned automatically — installer
+  prefetch, an off-boot self-heal on first run, and an in-app "Download wake
+  model" button — so a freely chosen wake phrase resolves to the reliable
+  any-word engine instead of silently degrading to the transcribe-and-match
+  path that cannot recognize a hard proper noun. Works for every supported
+  language (`en` / `de` / `es`), with no training and no GPU, on any OS
+  including Apple Silicon. The word-agnostic openWakeWord backbones now ship in
+  the package, an unservable custom phrase degrades **loudly** (with a one-click
+  fix) instead of failing silently, and onboarding verifies the microphone
+  level and the spoken wake word before marking setup complete.
 
 ## [1.0.0] — 2026-07-03
 

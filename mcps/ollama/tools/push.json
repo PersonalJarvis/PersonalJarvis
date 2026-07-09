@@ -1,0 +1,17 @@
+{
+  "name": "push",
+  "description": "Push a model to a registry",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Name of the model to push"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "additionalProperties": false
+  }
+}

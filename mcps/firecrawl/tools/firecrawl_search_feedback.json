@@ -1,0 +1,74 @@
+{
+  "name": "firecrawl_search_feedback",
+  "description": "\nSend structured feedback on a previous `firecrawl_search` result. **Call this immediately after a search where you used the results** so we can improve search quality and refund 1 credit (search costs 2).\n\nPass the `searchId` returned by `firecrawl_search` (the `id` field on the response) and tell us:\n\n- **rating** — overall result quality: `good`, `partial`, or `bad`.\n- **valuableSources** — which result URLs were actually useful, and a short reason why.\n- **missingContent** — **the most important field.** An ARRAY of specific pieces of content you expected to find but didn't. One entry per missing piece, each with a short `topic` and an optional longer `description`. Examples: `{\"topic\":\"enterprise pricing\",\"description\":\"no pricing tier table for the Enterprise plan was returned\"}`, `{\"topic\":\"API rate limits\"}`, `{\"topic\":\"comparison vs competitors\"}`. **Be specific** — these aggregate across teams and tell us what to index next. Do not pack multiple topics into one entry.\n- **querySuggestions** — how the query or response shape could be improved (e.g. \"would have liked official docs first\", \"should boost github.com\").\n\n**Substantive-feedback requirement** (zero-effort feedback is rejected with HTTP 400):\n- `good` — must include at least one `valuableSources` entry\n- `partial` — must include `valuableSources` or at least one `missingContent` entry\n- `bad` — must include at least one `missingContent` entry or `querySuggestions`\n\n**Time window:** Feedback must be submitted within ~2 minutes of the search. Beyond that, the call returns HTTP 409 with `feedbackErrorCode: \"FEEDBACK_WINDOW_EXPIRED\"` — do not retry, just move on. Same goes for any 4xx response: do not retry-loop.\n\n**Behaviors:**\n- Idempotent per `searchId`. Re-submitting for the same id returns `alreadySubmitted: true` with `creditsRefunded: 0`.\n- Refund only applies to billable searches; preview teams are blocked.\n- Failed searches cannot receive feedback (the search itself already returned an error you can act on).\n- **Daily refund cap (per team, per UTC day, default 100 credits).** Once a team's `creditsRefundedToday` reaches `dailyRefundCap`, the response returns `dailyCapReached: true` with `creditsRefunded: 0`. The feedback is still recorded for search-quality improvement — only the credit refund is gated. **Stop calling this tool for the rest of the UTC day** when you see `dailyCapReached: true`.\n\n**When to call:** Right after processing a search result. If the result didn't help, send rating `bad` with a clear `missingContent` — that is just as valuable as a `good` rating.\n\n**Usage Example (good rating with valuable sources + missing content):**\n```json\n{\n  \"name\": \"firecrawl_search_feedback\",\n  \"arguments\": {\n    \"searchId\": \"0193f6c5-1234-7890-abcd-1234567890ab\",\n    \"rating\": \"good\",\n    \"valuableSources\": [\n      { \"url\": \"https://docs.firecrawl.dev/features/search\", \"reason\": \"Most up-to-date description of /search.\" }\n    ],\n    \"missingContent\": [\n      { \"topic\": \"Pricing for the search endpoint\", \"description\": \"No pricing tier table for /search specifically.\" },\n      { \"topic\": \"Rate limits\", \"description\": \"Per-team RPS for /search not documented.\" }\n    ],\n    \"querySuggestions\": \"Boost docs.firecrawl.dev for queries that mention 'firecrawl'\"\n  }\n}\n```\n\n**Usage Example (bad rating, what was missing):**\n```json\n{\n  \"name\": \"firecrawl_search_feedback\",\n  \"arguments\": {\n    \"searchId\": \"0193f6c5-1234-7890-abcd-1234567890ab\",\n    \"rating\": \"bad\",\n    \"missingContent\": [\n      { \"topic\": \"Recent benchmarks\", \"description\": \"All results were >12 months old.\" },\n      { \"topic\": \"Comparison vs Algolia\" }\n    ]\n  }\n}\n```\n\n**Returns:** `{ success, feedbackId, creditsRefunded, creditsRefundedToday, dailyRefundCap, dailyCapReached?, alreadySubmitted?, warning? }` JSON.\n",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "searchId": {
+        "type": "string",
+        "format": "uuid",
+        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+      },
+      "rating": {
+        "type": "string",
+        "enum": [
+          "good",
+          "bad",
+          "partial"
+        ]
+      },
+      "valuableSources": {
+        "maxItems": 50,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "reason": {
+              "type": "string",
+              "maxLength": 1000
+            }
+          },
+          "required": [
+            "url"
+          ]
+        }
+      },
+      "missingContent": {
+        "description": "Array of specific pieces of content the agent expected to find but did not. One entry per distinct topic. Each entry has a short `topic` and optional longer `description`.",
+        "maxItems": 20,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "topic": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          "required": [
+            "topic"
+          ]
+        }
+      },
+      "querySuggestions": {
+        "type": "string",
+        "maxLength": 2000
+      }
+    },
+    "required": [
+      "searchId",
+      "rating"
+    ],
+    "additionalProperties": false
+  }
+}

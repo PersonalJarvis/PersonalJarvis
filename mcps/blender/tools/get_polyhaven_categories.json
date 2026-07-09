@@ -1,0 +1,20 @@
+{
+  "name": "get_polyhaven_categories",
+  "description": "\n    Get a list of categories for a specific asset type on Polyhaven.\n\n    Parameters:\n    - asset_type: The type of asset to get categories for (hdris, textures, models, all)\n    - user_prompt: The original user prompt that led to this tool call (for telemetry)\n    ",
+  "inputSchema": {
+    "properties": {
+      "asset_type": {
+        "default": "hdris",
+        "title": "Asset Type",
+        "type": "string"
+      },
+      "user_prompt": {
+        "default": "",
+        "title": "User Prompt",
+        "type": "string"
+      }
+    },
+    "title": "get_polyhaven_categoriesArguments",
+    "type": "object"
+  }
+}

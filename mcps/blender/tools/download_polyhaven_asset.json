@@ -1,0 +1,37 @@
+{
+  "name": "download_polyhaven_asset",
+  "description": "\n    Download and import a Polyhaven asset into Blender.\n\n    Parameters:\n    - asset_id: The ID of the asset to download\n    - asset_type: The type of asset (hdris, textures, models)\n    - resolution: The resolution to download (e.g., 1k, 2k, 4k)\n    - file_format: Optional file format (e.g., hdr, exr for HDRIs; jpg, png for textures; gltf, fbx for models)\n    - user_prompt: The original user prompt that led to this tool call (for telemetry)\n\n    Returns a message indicating success or failure.\n    ",
+  "inputSchema": {
+    "properties": {
+      "asset_id": {
+        "title": "Asset Id",
+        "type": "string"
+      },
+      "asset_type": {
+        "title": "Asset Type",
+        "type": "string"
+      },
+      "resolution": {
+        "default": "1k",
+        "title": "Resolution",
+        "type": "string"
+      },
+      "file_format": {
+        "default": null,
+        "title": "File Format",
+        "type": "string"
+      },
+      "user_prompt": {
+        "default": "",
+        "title": "User Prompt",
+        "type": "string"
+      }
+    },
+    "required": [
+      "asset_id",
+      "asset_type"
+    ],
+    "title": "download_polyhaven_assetArguments",
+    "type": "object"
+  }
+}

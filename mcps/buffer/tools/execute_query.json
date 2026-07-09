@@ -1,0 +1,35 @@
+{
+  "name": "execute_query",
+  "description": "Executes a read-only GraphQL query to fetch data from Buffer. PREREQUISITE: Call introspect_schema first to learn available queries and fields. Use this only for operations not covered by domain tools (get_account, list_channels, get_channel). Do not guess query or field names — use only names from the schema.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "summary": {
+        "type": "string",
+        "minLength": 1,
+        "description": "A brief, non-technical description of what this operation does and why. This is shown to users in permission prompts to help them understand the action."
+      },
+      "query": {
+        "type": "string",
+        "description": "The GraphQL query to execute. Field and type names MUST match the schema returned by introspect_schema."
+      },
+      "variables": {
+        "description": "Variables for the query as a JSON object.",
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      },
+      "operationName": {
+        "description": "Name of the specific query to run if multiple are defined.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "summary",
+      "query"
+    ]
+  }
+}

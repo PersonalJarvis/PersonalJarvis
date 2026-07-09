@@ -1,0 +1,31 @@
+{
+  "name": "get_logs",
+  "description": "Gets logs for a Supabase project by service type. Use this to help debug problems with your app. This will return logs within the last 24 hours.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "project_id": {
+        "type": "string"
+      },
+      "service": {
+        "description": "The service to fetch logs for",
+        "type": "string",
+        "enum": [
+          "api",
+          "branch-action",
+          "postgres",
+          "edge-function",
+          "auth",
+          "storage",
+          "realtime"
+        ]
+      }
+    },
+    "required": [
+      "project_id",
+      "service"
+    ],
+    "additionalProperties": false
+  }
+}

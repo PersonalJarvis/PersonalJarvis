@@ -399,14 +399,59 @@ async def put_stt_language(body: SttLanguageBody, request: Request) -> dict[str,
         except Exception as exc:  # noqa: BLE001 — frozen model is not an error
             log.debug("in-memory cfg.stt.language update skipped: %s", exc)
 
-    # The STT provider is built once at voice bootstrap, so a live turn keeps the
-    # old language until the next voice restart. ``restart_required`` tells the UI
-    # to surface that hint.
+    # Make "switch language -> it works" TRUE without a restart: re-resolve the
+    # wake word against the NEW language and live-apply it to the running voice
+    # pipeline (a Vosk model is acoustically language-specific, so the language is
+    # what decides whether the wake fires at all). If the matching-language model
+    # is not on disk yet, apply the best available plan now (multilingual
+    # stt_match) and provision the model in the background, then re-apply so it
+    # upgrades to the fast vosk_kws path. Best-effort throughout; a headless/down
+    # pipeline just applies on the next voice start.
+    applied_live = False
+    try:
+        from jarvis.speech import wake_model_fetch as _wmf
+        from jarvis.speech.wake_phrase import resolve_wake_plan
+
+        live_cfg = _config(request)
+        wake_lang = _wmf.resolve_wake_language(live_cfg)
+
+        def _resolve_plan() -> object:
+            return resolve_wake_plan(
+                live_cfg.trigger.wake_word,
+                local_whisper_available=_local_whisper_available(),
+                language=wake_lang,
+            )
+
+        def _apply_plan(plan: object) -> bool:
+            pipeline = getattr(request.app.state, "speech_pipeline", None)
+            if pipeline is not None and hasattr(pipeline, "set_wake_plan"):
+                pipeline.set_wake_plan(plan)
+                return True
+            return False
+
+        applied_live = _apply_plan(_resolve_plan())
+
+        if not _wmf.vosk_model_present(wake_lang):
+
+            async def _provision_then_reapply() -> None:
+                try:
+                    landed = await asyncio.to_thread(_wmf.ensure_vosk_model, wake_lang)
+                    if landed is not None:
+                        _apply_plan(_resolve_plan())
+                except Exception as exc:  # noqa: BLE001 — background best-effort
+                    log.debug("stt-language background provision skipped: %s", exc)
+
+            asyncio.create_task(_provision_then_reapply())
+    except Exception as exc:  # noqa: BLE001 — never fail the language save on a live hiccup
+        log.warning("stt-language wake live-apply skipped: %s", exc)
+
     return {
         "ok": True,
         "language": lang,
         "persisted": persisted,
-        "restart_required": True,
+        "applied_live": applied_live,
+        # Only ask for a restart when we could NOT live-apply (no running pipeline).
+        "restart_required": not applied_live,
     }
 
 
@@ -576,8 +621,14 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
 
     # Preview the resolved plan so the UI can tell the user immediately whether
     # the chosen phrase will work as-is or degrade (e.g. no local Whisper).
+    # Use the SAME concrete language resolver the runtime wake plan and the model
+    # download use (stt.language → ui.language → default), never raw "auto" — a
+    # Vosk model is acoustically language-specific, so selection and provisioning
+    # must agree on the language.
+    from jarvis.speech.wake_model_fetch import resolve_wake_language
+
     _cfg_for_lang = _config(request)
-    _stt_lang = getattr(getattr(_cfg_for_lang, "stt", None), "language", None)
+    _wake_lang = resolve_wake_language(_cfg_for_lang)
     plan = resolve_wake_plan(
         SimpleNamespace(
             phrase=body.phrase,
@@ -587,8 +638,7 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
             fuzzy_match_ratio=body.fuzzy_match_ratio,
         ),
         local_whisper_available=_local_whisper_available(),
-        # Per-language Vosk model lookup for the any-word vosk_kws engine.
-        language=_stt_lang,
+        language=_wake_lang,
     )
 
     # Best-effort in-memory cfg update so a later cfg read agrees pre-restart.
@@ -717,6 +767,95 @@ async def download_wake_model(request: Request) -> dict[str, object]:
             else "Could not download the wake model right now; it will retry "
                  "automatically. The wake word uses the fallback path until then."
         ),
+    }
+
+
+@router.post("/wake-word/self-test")
+async def wake_word_self_test(request: Request) -> dict[str, object]:
+    """Readiness check for the configured wake word — the "Test wake word" button.
+
+    Answers, honestly and without a second mic stream (which would fight the
+    running pipeline), the three questions that decide whether a spoken wake will
+    actually fire: (1) is the right-LANGUAGE local model armed, (2) is the word in
+    that model's vocabulary (the silent out-of-vocabulary drop, live 'Hey
+    Billionar'), and (3) is the mic delivering signal. Each is a reused building
+    block (``resolve_wake_plan`` preview, ``vosk_model_supports_phrase``,
+    ``measure_mic_dbfs``), so this route can never disagree with the runtime.
+    Never 500s. A green result plus a language-matched model is a real guarantee
+    the word will wake — the acoustic mismatch that a wrong-language model causes
+    is exactly what (1) surfaces.
+    """
+    from jarvis.speech.diagnose import measure_mic_dbfs
+    from jarvis.speech.wake_constants import resolve_vosk_model_path
+    from jarvis.speech.wake_model_fetch import resolve_wake_language
+    from jarvis.speech.wake_phrase import resolve_wake_plan
+
+    cfg = _config(request)
+    ww = getattr(cfg.trigger, "wake_word", None)
+    phrase = str(getattr(ww, "phrase", "") or "").strip()
+    language = resolve_wake_language(cfg)
+    plan = resolve_wake_plan(
+        ww,
+        local_whisper_available=_local_whisper_available(),
+        language=language,
+    )
+
+    # Vocabulary check only makes sense for the grammar (vosk_kws) engine.
+    phrase_in_vocab: bool | None = None
+    if plan.engine == "vosk_kws":
+        model_path = resolve_vosk_model_path(language)
+        if model_path:
+            try:
+                from jarvis.plugins.wake.vosk_kws_provider import (
+                    vosk_model_supports_phrase,
+                )
+
+                phrase_in_vocab = await asyncio.to_thread(
+                    vosk_model_supports_phrase, model_path, phrase
+                )
+            except Exception:  # noqa: BLE001 — never fail the check on a probe hiccup
+                phrase_in_vocab = None
+
+    try:
+        max_dbfs = await measure_mic_dbfs(duration_s=2.0)
+    except Exception:  # noqa: BLE001 — treat a failed measurement as no device
+        max_dbfs = -120.0
+    mic_ok = max_dbfs > -40.0
+    no_device = max_dbfs <= -119.9
+
+    # Human-readable verdict + the single most useful next step.
+    ok = bool(plan.wake_available) and phrase_in_vocab is not False and mic_ok
+    if not phrase:
+        message, hint = "No wake word set.", "Type a wake phrase first."
+    elif not plan.wake_available:
+        message, hint = plan.message, "Download the local model or use the hotkey."
+    elif phrase_in_vocab is False:
+        message = f"'{phrase}' is not in the {language} model's vocabulary."
+        hint = "Pick a real word of your language, or use a different phrase."
+    elif no_device:
+        message, hint = "No microphone detected.", "Connect/enable a mic."
+    elif not mic_ok:
+        message, hint = "Mic signal is very quiet.", "Speak louder or raise input gain."
+    else:
+        message = (
+            f"Ready: '{phrase}' on engine '{plan.engine}' "
+            f"(language '{language}'). Say it to wake."
+        )
+        hint = ""
+
+    return {
+        "ok": ok,
+        "phrase": phrase,
+        "engine": plan.engine,
+        "language": language,
+        "wake_available": bool(plan.wake_available),
+        "degraded": bool(plan.degraded),
+        "phrase_in_vocab": phrase_in_vocab,
+        "max_dbfs": max_dbfs,
+        "mic_ok": mic_ok,
+        "no_device": no_device,
+        "message": message,
+        "hint": hint,
     }
 
 

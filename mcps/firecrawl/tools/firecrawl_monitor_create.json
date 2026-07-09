@@ -1,0 +1,82 @@
+{
+  "name": "firecrawl_monitor_create",
+  "description": "\nCreate a Firecrawl monitor — a recurring scrape, crawl, or search that diffs each result against the last retained snapshot.\n\nPrefer the simple path: pass `page` or `pages` plus `goal` to monitor specific URLs, OR pass `queries` plus `goal` to monitor web search results for new/changed hits. The tool will create the monitor with a 30-minute schedule and meaningful-change judging enabled by the API. Use `body` only for advanced requests such as crawl targets, JSON change tracking, custom retention, or manual `judgeEnabled` control.\n\nMeaningful-change judge: set `goal` to a plain-language description of what the user actually cares about. `judgeEnabled` defaults to true when `goal` is set, so providing `goal` is enough. Page webhooks expose `isMeaningful` and `judgment` on `monitor.page` events.\n\nSimple fields:\n- `page`: one page URL to monitor.\n- `pages`: multiple page URLs to monitor.\n- `queries`: one or more search queries (1-12) to monitor instead of fixed URLs. Each check runs the searches and diffs the result set, so you get alerted when new or changed results appear. Mutually exclusive with `page`/`pages` in the simple path.\n- `searchWindow`: optional recency window for search targets — one of `5m`, `15m`, `1h`, `6h`, `24h`, `7d` (default `24h`).\n- `maxResults`: optional max results per search, 1-50 (default 10).\n- `includeDomains` / `excludeDomains`: optional domain allow/deny lists for search targets.\n- `goal`: plain-English instruction for what changes matter. Required for the simple path (and always required when `queries` are set — web monitors must have a goal).\n- `scheduleText`: optional natural-language schedule, default `every 30 minutes`.\n- `email`: optional email recipient for summaries.\n- `webhookUrl`: optional webhook URL. Configures `monitor.page` and `monitor.check.completed`.\n\n**Search-mode example:**\n\n```json\n{\n  \"name\": \"firecrawl_monitor_create\",\n  \"arguments\": {\n    \"queries\": [\"new LLM release\", \"frontier model launch\"],\n    \"goal\": \"Notify me about major new LLM model releases.\",\n    \"searchWindow\": \"24h\",\n    \"maxResults\": 10\n  }\n}\n```\n\nGoal guidance:\n- Expand the user's one-line monitoring intent into a concise 2-3 sentence monitor goal.\n- State what should trigger an alert, restate any scope the user gave, and include intent-specific exclusions only when obvious from the user's request.\n- Generic noise such as whitespace, formatting-only changes, request IDs, tracking params, generic metadata, and unrelated page chrome is already handled by the judge; do not repeat it in every goal.\n- If the user is vague, keep the goal broad rather than guessing exclusions. If the user asks for broad monitoring or \"any change\", preserve that and do not add exclusions that hide changes.\n- If the user says they do not care about something, include that explicitly. It is okay to ask whether they want to ignore specific noise when it is likely to matter.\n- Do not invent page-specific sections, thresholds, entities, or business rules unless the user mentioned them.\n\nQuery guidance (web monitors): `queries` control recall (what search retrieves) and `goal` controls precision (which results alert) — tune both.\n- Write keywords, not sentences: `OpenAI new model release`, not `tell me when OpenAI releases a new model`.\n- Quote multi-word entities (`\"Llama 4\"`); group synonyms with `OR` (`launch OR release OR announcement`).\n- Keep each query tight (~2-6 terms). One broad query usually beats several narrow ones — extra queries split the `maxResults` budget. Use one query per distinct entity; do not emit one per facet of a single subject.\n- Keep `site:` operators out of queries — use `includeDomains` / `excludeDomains`.\n- A healthy web monitor mostly returns `new: 0` and alerts only on genuinely new, on-goal results. Many `ignored` results ⇒ queries too broad (tighten them); nothing for long stretches ⇒ queries too narrow or window too tight (broaden); dismissed alerts ⇒ goal too broad (add an intent-specific Ignore). Aim for high precision with enough recall.\n\nFull `body` requests require: `name`, `schedule` (with `cron` or `text`), and `targets` (one or more `{ type: 'scrape', urls: [...] }`, `{ type: 'crawl', url: '...' }`, or `{ type: 'search', queries: [...], searchWindow?, maxResults?, includeDomains?, excludeDomains? }`). Optional: `goal` (required when any search target is present), `judgeEnabled`, `webhook`, `notification`, `retentionDays`.\n\n**Markdown-mode (default):** Each check produces a unified text diff of the page's markdown. No extra configuration needed.\n\n```json\n{\n  \"name\": \"firecrawl_monitor_create\",\n  \"arguments\": {\n    \"page\": \"https://example.com/blog\",\n    \"goal\": \"Alert when a new blog post is published or an existing headline changes.\",\n    \"email\": \"alerts@example.com\"\n  }\n}\n```\n\n**Multiple pages:**\n\n```json\n{\n  \"name\": \"firecrawl_monitor_create\",\n  \"arguments\": {\n    \"pages\": [\"https://example.com/pricing\", \"https://example.com/changelog\"],\n    \"goal\": \"Alert when pricing, packaging, or launch messaging changes.\",\n    \"webhookUrl\": \"https://example.com/webhooks/firecrawl\"\n  }\n}\n```\n\n**JSON-mode change tracking:** To detect changes in **specific structured fields** (price, headline, in-stock flag, list items) instead of the whole page, add a `changeTracking` format with `modes: [\"json\"]` and a JSON schema to the target's `scrapeOptions.formats`. The check response will then carry a per-field diff (keyed by JSON path, e.g. `plans[0].price`) and a `snapshot.json` with the full current extraction. See `firecrawl_monitor_check` for the response shape.\n\n```json\n{\n  \"name\": \"firecrawl_monitor_create\",\n  \"arguments\": {\n    \"body\": {\n      \"name\": \"Pricing watch\",\n      \"schedule\": { \"text\": \"hourly\", \"timezone\": \"UTC\" },\n      \"goal\": \"Alert when a pricing tier, price, billing period, limit, or headline feature changes. Ignore unrelated marketing copy unless it changes the pricing offer.\",\n      \"targets\": [{\n        \"type\": \"scrape\",\n        \"urls\": [\"https://example.com/pricing\"],\n        \"scrapeOptions\": {\n          \"formats\": [{\n            \"type\": \"changeTracking\",\n            \"modes\": [\"json\"],\n            \"prompt\": \"Extract pricing tiers and headline features for each plan.\",\n            \"schema\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"plans\": {\n                  \"type\": \"array\",\n                  \"items\": {\n                    \"type\": \"object\",\n                    \"properties\": {\n                      \"name\":     { \"type\": \"string\" },\n                      \"price\":    { \"type\": \"string\" },\n                      \"features\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } }\n                    }\n                  }\n                }\n              }\n            }\n          }]\n        }\n      }]\n    }\n  }\n}\n```\n\n**Mixed mode (JSON + git-diff):** Use `modes: [\"json\", \"git-diff\"]` to get both per-field diffs and a markdown sidecar. The page is marked `changed` whenever either surface changed.\n",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "body": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": false
+      },
+      "page": {
+        "type": "string"
+      },
+      "pages": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "queries": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "searchWindow": {
+        "type": "string",
+        "enum": [
+          "5m",
+          "15m",
+          "1h",
+          "6h",
+          "24h",
+          "7d"
+        ]
+      },
+      "maxResults": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 50
+      },
+      "includeDomains": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "excludeDomains": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "goal": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "scheduleText": {
+        "type": "string"
+      },
+      "timezone": {
+        "type": "string"
+      },
+      "email": {
+        "type": "string"
+      },
+      "includeDiffs": {
+        "type": "boolean"
+      },
+      "webhookUrl": {
+        "type": "string"
+      }
+    },
+    "additionalProperties": false
+  }
+}

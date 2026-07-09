@@ -1,0 +1,15 @@
+{
+  "name": "get_hyper3d_status",
+  "description": "\n    Check if Hyper3D Rodin integration is enabled in Blender.\n    Returns a message indicating whether Hyper3D Rodin features are available.\n    ",
+  "inputSchema": {
+    "properties": {
+      "user_prompt": {
+        "default": "",
+        "title": "User Prompt",
+        "type": "string"
+      }
+    },
+    "title": "get_hyper3d_statusArguments",
+    "type": "object"
+  }
+}

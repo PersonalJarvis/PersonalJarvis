@@ -1,0 +1,36 @@
+{
+  "name": "update-memory",
+  "description": "Create, update, or delete a persistent memory (facts, preferences, decisions the user wants to remember). To retrieve memories, use search-content with content_type='memory'. To create: provide content + tags. To update: provide id + fields to change. To delete: provide id + delete=true.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "integer",
+        "description": "Memory ID — omit to create new, provide to update/delete"
+      },
+      "content": {
+        "type": "string",
+        "description": "Memory text (required for creation)"
+      },
+      "tags": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Categorization tags (e.g. ['work', 'project-x'])"
+      },
+      "importance": {
+        "type": "number",
+        "description": "0.0 (trivial) to 1.0 (critical). Default 0.5."
+      },
+      "source_context": {
+        "type": "object",
+        "description": "Optional metadata linking to source (app, timestamp, etc.)"
+      },
+      "delete": {
+        "type": "boolean",
+        "description": "Set true to delete the memory identified by id"
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "search-speakers",
+  "description": "Search for speakers by name prefix. Returns speaker ID, name, and metadata.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Speaker name prefix to search for (case-insensitive)"
+      }
+    }
+  }
+}

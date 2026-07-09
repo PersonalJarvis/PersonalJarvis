@@ -1,0 +1,77 @@
+{
+  "name": "search-content",
+  "description": "Search screen text, audio transcriptions, input events, and memories. Returns timestamped results with app context. IMPORTANT: prefer activity-summary for broad questions ('what was I doing?'). Use search-content only when you need specific text/content. Start with limit=5, increase only if needed. Results can be large — use max_content_length=500 to truncate.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "q": {
+        "type": "string",
+        "description": "Full-text search query. Omit to return all content in time range. Avoid for audio — transcriptions are noisy, q filters too aggressively."
+      },
+      "content_type": {
+        "type": "string",
+        "enum": [
+          "all",
+          "ocr",
+          "audio",
+          "input",
+          "accessibility",
+          "memory"
+        ],
+        "description": "Filter by content type. 'accessibility' is preferred for screen text (OS-native). 'ocr' is fallback for apps without accessibility support. Default: 'all'.",
+        "default": "all"
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max results (default 10, max 20). Start with 5 for exploration.",
+        "default": 10
+      },
+      "offset": {
+        "type": "integer",
+        "description": "Pagination offset. Use when results say 'use offset=N for more'.",
+        "default": 0
+      },
+      "start_time": {
+        "type": "string",
+        "description": "ISO 8601 UTC or relative (e.g. '2h ago', '1d ago'). Always provide to avoid scanning entire history."
+      },
+      "end_time": {
+        "type": "string",
+        "description": "ISO 8601 UTC or relative (e.g. 'now'). Defaults to now."
+      },
+      "app_name": {
+        "type": "string",
+        "description": "Filter by app name (e.g. 'Google Chrome', 'Slack', 'zoom.us'). Case-sensitive."
+      },
+      "window_name": {
+        "type": "string",
+        "description": "Filter by window title substring"
+      },
+      "min_length": {
+        "type": "integer",
+        "description": "Min content length in characters"
+      },
+      "max_length": {
+        "type": "integer",
+        "description": "Max content length in characters"
+      },
+      "include_frames": {
+        "type": "boolean",
+        "description": "Include base64 screenshots (OCR only). Warning: large response.",
+        "default": false
+      },
+      "speaker_ids": {
+        "type": "string",
+        "description": "Comma-separated speaker IDs to filter audio"
+      },
+      "speaker_name": {
+        "type": "string",
+        "description": "Filter audio by speaker name (case-insensitive partial match)"
+      },
+      "max_content_length": {
+        "type": "integer",
+        "description": "Truncate each result's text via middle-truncation. Use 200-500 to keep responses compact."
+      }
+    }
+  }
+}

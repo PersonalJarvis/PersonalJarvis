@@ -1,0 +1,27 @@
+{
+  "name": "apply_migration",
+  "description": "Applies a migration to the database. Use this when executing DDL operations. Do not hardcode references to generated IDs in data migrations.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "project_id": {
+        "type": "string"
+      },
+      "name": {
+        "description": "The name of the migration in snake_case",
+        "type": "string"
+      },
+      "query": {
+        "description": "The SQL query to apply",
+        "type": "string"
+      }
+    },
+    "required": [
+      "project_id",
+      "name",
+      "query"
+    ],
+    "additionalProperties": false
+  }
+}

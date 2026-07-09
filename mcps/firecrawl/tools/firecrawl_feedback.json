@@ -1,0 +1,127 @@
+{
+  "name": "firecrawl_feedback",
+  "description": "\nSend structured feedback for a completed Firecrawl v2 job. Use this for endpoint-level feedback on `scrape`, `parse`, `map`, or `search` jobs when the job result was useful, partially useful, or failed to meet expectations.\n\nFor search-result quality specifically, prefer `firecrawl_search_feedback` when available because it has search-focused guidance. This generic tool posts to `/v2/feedback` and accepts endpoint-wide signals:\n\n- **endpoint** — one of `search`, `scrape`, `parse`, or `map`.\n- **jobId** — the id returned by that endpoint.\n- **rating** — overall result quality: `good`, `partial`, or `bad`.\n- **issues** — stable lowercase issue codes such as `missing_markdown`, `bad_pdf_parse`, or `wrong_links`.\n- **tags** — optional lowercase tags for grouping feedback.\n- **note** — short human-readable context. Do not include huge page contents or raw scrape results.\n- **url**, **pageNumbers**, and **metadata** — small contextual fields that identify what the feedback refers to.\n\nDo not store multi-MB outputs in feedback. Use concise notes, issue codes, URLs, and page numbers.\n\n**Returns:** `{ success, feedbackId, creditsRefunded, creditsRefundedToday?, dailyRefundCap?, dailyCapReached?, alreadySubmitted?, warning? }` JSON.\n",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "endpoint": {
+        "type": "string",
+        "enum": [
+          "search",
+          "scrape",
+          "parse",
+          "map"
+        ]
+      },
+      "jobId": {
+        "type": "string",
+        "format": "uuid",
+        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+      },
+      "rating": {
+        "type": "string",
+        "enum": [
+          "good",
+          "bad",
+          "partial"
+        ]
+      },
+      "issues": {
+        "maxItems": 20,
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_-]*$"
+        }
+      },
+      "tags": {
+        "maxItems": 20,
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_-]*$"
+        }
+      },
+      "note": {
+        "type": "string",
+        "maxLength": 4000
+      },
+      "valuableSources": {
+        "maxItems": 50,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "reason": {
+              "type": "string",
+              "maxLength": 1000
+            }
+          },
+          "required": [
+            "url"
+          ]
+        }
+      },
+      "missingContent": {
+        "maxItems": 50,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "topic": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          "required": [
+            "topic"
+          ]
+        }
+      },
+      "querySuggestions": {
+        "type": "string",
+        "maxLength": 2000
+      },
+      "url": {
+        "type": "string",
+        "format": "uri"
+      },
+      "pageNumbers": {
+        "maxItems": 100,
+        "type": "array",
+        "items": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "metadata": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "endpoint",
+      "jobId",
+      "rating"
+    ],
+    "additionalProperties": false
+  }
+}

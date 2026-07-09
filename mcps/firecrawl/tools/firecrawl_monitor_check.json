@@ -1,0 +1,41 @@
+{
+  "name": "firecrawl_monitor_check",
+  "description": "\nGet a single check with page-level diff results. Filter `pageStatus` to surface only the pages that changed (or were new, removed, etc.).\n\nEach entry in `data.pages[]` has `url`, `status` (`same` | `new` | `changed` | `removed` | `error`), optional `judgment` when goal-based judging ran, and — when changed — a `diff` and possibly a `snapshot`. The shape of `diff` depends on the monitor's `formats` configuration:\n\n- **Markdown mode (default).** `diff.text` is the unified markdown diff; `diff.json` is a parse-diff AST (`{ files: [...] }`). No `snapshot`.\n- **JSON mode** (`changeTracking` with `modes: [\"json\"]`). `diff.json` is a per-field map keyed by JSON path into the extraction, e.g. `plans[0].price`, with each value being `{ previous, current }`. `snapshot.json` is the full current extraction. No `diff.text`.\n- **Mixed mode** (`modes: [\"json\", \"git-diff\"]`). Both `diff.text` (markdown sidecar) AND `diff.json` (per-field map) are present, plus `snapshot.json`.\n\n**Example JSON-mode response `pages[]` entry:**\n\n```json\n{\n  \"url\": \"https://example.com/pricing\",\n  \"status\": \"changed\",\n  \"diff\": {\n    \"json\": {\n      \"plans[0].price\":       { \"previous\": \"$19/mo\",        \"current\": \"$24/mo\" },\n      \"plans[1].features[2]\": { \"previous\": \"10 GB storage\", \"current\": \"25 GB storage\" }\n    }\n  },\n  \"snapshot\": { \"json\": { \"plans\": [/* current full extraction matching the monitor's schema */] } },\n  \"judgment\": {\n    \"meaningful\": true,\n    \"confidence\": \"high\",\n    \"reason\": \"The pricing changed, which matches the monitor goal.\",\n    \"meaningfulChanges\": [\n      {\n        \"type\": \"changed\",\n        \"before\": \"$19/mo\",\n        \"after\": \"$24/mo\",\n        \"reason\": \"The tracked plan price changed.\"\n      }\n    ]\n  }\n}\n```\n\nWhen summarizing a check for the user, prefer `diff.json` paths (e.g. \"plans[0].price changed from $19/mo to $24/mo\") over re-printing the markdown diff — it's more concise and grounded in the schema fields they asked for.\n\nWhen `judgment` is present, use it to decide what to surface. `judgment.meaningful: false` means the change was classified as noise for the monitor's goal. When `judgment.meaningfulChanges` is present, prefer those goal-relevant changes over raw diff hunks; each item includes `type`, `before`, `after`, and `reason`.\n\nThe endpoint paginates via a top-level `next` URL; this tool returns one page at a time. Increase `limit` (max 100) to fetch fewer pages.\n\n**Usage Example:**\n```json\n{\n  \"name\": \"firecrawl_monitor_check\",\n  \"arguments\": {\n    \"id\": \"mon_abc123\",\n    \"checkId\": \"chk_xyz\",\n    \"pageStatus\": \"changed\"\n  }\n}\n```\n",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "checkId": {
+        "type": "string"
+      },
+      "limit": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      },
+      "skip": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "pageStatus": {
+        "type": "string",
+        "enum": [
+          "same",
+          "new",
+          "changed",
+          "removed",
+          "error"
+        ]
+      }
+    },
+    "required": [
+      "id",
+      "checkId"
+    ],
+    "additionalProperties": false
+  }
+}

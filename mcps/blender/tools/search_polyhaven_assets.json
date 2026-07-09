@@ -1,0 +1,25 @@
+{
+  "name": "search_polyhaven_assets",
+  "description": "\n    Search for assets on Polyhaven with optional filtering.\n\n    Parameters:\n    - asset_type: Type of assets to search for (hdris, textures, models, all)\n    - categories: Optional comma-separated list of categories to filter by\n    - user_prompt: The original user prompt that led to this tool call (for telemetry)\n\n    Returns a list of matching assets with basic information.\n    ",
+  "inputSchema": {
+    "properties": {
+      "asset_type": {
+        "default": "all",
+        "title": "Asset Type",
+        "type": "string"
+      },
+      "categories": {
+        "default": null,
+        "title": "Categories",
+        "type": "string"
+      },
+      "user_prompt": {
+        "default": "",
+        "title": "User Prompt",
+        "type": "string"
+      }
+    },
+    "title": "search_polyhaven_assetsArguments",
+    "type": "object"
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "name": "data_table_create",
+  "description": "Generate data table. Requires confirm=True after user approval.\n\nArgs:\n    notebook_id: Notebook UUID\n    description: Description of the data table to create\n    source_ids: Source IDs (default: all)\n    language: Language code (default: \"en\")\n    confirm: Must be True after user approval",
+  "inputSchema": {
+    "properties": {
+      "notebook_id": {
+        "title": "Notebook Id",
+        "type": "string"
+      },
+      "description": {
+        "title": "Description",
+        "type": "string"
+      },
+      "source_ids": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Source Ids"
+      },
+      "language": {
+        "default": "en",
+        "title": "Language",
+        "type": "string"
+      },
+      "confirm": {
+        "default": false,
+        "title": "Confirm",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "notebook_id",
+      "description"
+    ],
+    "type": "object"
+  }
+}

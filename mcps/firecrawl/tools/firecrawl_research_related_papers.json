@@ -1,0 +1,44 @@
+{
+  "name": "firecrawl_research_related_papers",
+  "description": "Expand from anchor papers you have already found, via the citation graph, ranked and filtered to a natural-language `intent`. Pass arXiv ids of your strongest hits as `seed_ids`. Modes: `similar` (cocitation/coupling — papers in the same niche; the default), `citers` (papers that cite the anchors), `references` (papers the anchors cite). This reaches relevant papers that plain search misses, so use it on your best hits before finishing. A `similar` call already runs a DEEP multi-round expansion internally (re-seeding from each round’s best finds), so one call reaches the wider neighborhood — no need to chain many. Returns the candidates plus the pool size.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "seed_ids": {
+        "minItems": 1,
+        "maxItems": 10,
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "intent": {
+        "type": "string",
+        "minLength": 1
+      },
+      "mode": {
+        "type": "string",
+        "enum": [
+          "similar",
+          "citers",
+          "references"
+        ]
+      },
+      "k": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 500
+      },
+      "rerank": {
+        "description": "Apply an additional rerank over the fused candidates.",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "seed_ids",
+      "intent"
+    ],
+    "additionalProperties": false
+  }
+}

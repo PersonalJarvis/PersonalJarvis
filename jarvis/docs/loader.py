@@ -81,7 +81,14 @@ def _split_frontmatter(text: str) -> tuple[dict, str]:
     """
     if _HAVE_FRONTMATTER:
         post = _frontmatter.loads(text)  # type: ignore[union-attr]
-        return dict(post.metadata), post.content
+        meta = dict(post.metadata)
+        # python-frontmatter strips a trailing newline from ``.content``; when a
+        # doc has NO frontmatter, return the body unchanged so this path agrees
+        # with the manual fallback below and the round-trip contract (a bare-body
+        # doc must not silently lose its trailing newline).
+        if not meta:
+            return {}, text
+        return meta, post.content
 
     if not _HAVE_YAML:
         # No YAML library available — cannot parse frontmatter, but we do not

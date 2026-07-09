@@ -1,0 +1,38 @@
+{
+  "name": "chat_configure",
+  "description": "Configure notebook chat settings.\n\nArgs:\n    notebook_id: Notebook UUID\n    goal: default|learning_guide|custom\n    custom_prompt: Required when goal=custom (max 10000 chars)\n    response_length: default|longer|shorter",
+  "inputSchema": {
+    "properties": {
+      "notebook_id": {
+        "title": "Notebook Id",
+        "type": "string"
+      },
+      "goal": {
+        "default": "default",
+        "title": "Goal",
+        "type": "string"
+      },
+      "custom_prompt": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Custom Prompt"
+      },
+      "response_length": {
+        "default": "default",
+        "title": "Response Length",
+        "type": "string"
+      }
+    },
+    "required": [
+      "notebook_id"
+    ],
+    "type": "object"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "control-recording",
+  "description": "Start or stop audio/screen recording. Use to pause/resume capture.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": [
+          "start-audio",
+          "stop-audio"
+        ],
+        "description": "Recording action"
+      }
+    },
+    "required": [
+      "action"
+    ]
+  }
+}

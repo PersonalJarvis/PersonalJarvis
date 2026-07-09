@@ -1,0 +1,17 @@
+{
+  "name": "firecrawl_monitor_run",
+  "description": "\nTrigger a monitor check immediately, outside its normal schedule. Returns the queued check.\n\n**Usage Example:**\n```json\n{ \"name\": \"firecrawl_monitor_run\", \"arguments\": { \"id\": \"mon_abc123\" } }\n```\n",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "additionalProperties": false
+  }
+}

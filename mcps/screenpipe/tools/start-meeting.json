@@ -1,0 +1,22 @@
+{
+  "name": "start-meeting",
+  "description": "Manually start a meeting recording session.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "app": {
+        "type": "string",
+        "description": "App name (default 'manual')",
+        "default": "manual"
+      },
+      "title": {
+        "type": "string",
+        "description": "Meeting title"
+      },
+      "attendees": {
+        "type": "string",
+        "description": "Comma-separated attendee names"
+      }
+    }
+  }
+}

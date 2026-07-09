@@ -1,0 +1,39 @@
+{
+  "name": "firecrawl_extract",
+  "description": "\nExtract structured information from web pages using LLM capabilities. Supports both cloud AI and self-hosted LLM extraction.\n\n**Best for:** Extracting specific structured data like prices, names, details from web pages.\n**Not recommended for:** When you need the full content of a page (use scrape); when you're not looking for specific structured data.\n**Arguments:**\n- urls: Array of URLs to extract information from\n- prompt: Custom prompt for the LLM extraction\n- schema: JSON schema for structured data extraction\n- allowExternalLinks: Allow extraction from external links\n- enableWebSearch: Enable web search for additional context\n- includeSubdomains: Include subdomains in extraction\n**Prompt Example:** \"Extract the product name, price, and description from these product pages.\"\n**Usage Example:**\n```json\n{\n  \"name\": \"firecrawl_extract\",\n  \"arguments\": {\n    \"urls\": [\"https://example.com/page1\", \"https://example.com/page2\"],\n    \"prompt\": \"Extract product information including name, price, and description\",\n    \"schema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"name\": { \"type\": \"string\" },\n        \"price\": { \"type\": \"number\" },\n        \"description\": { \"type\": \"string\" }\n      },\n      \"required\": [\"name\", \"price\"]\n    },\n    \"allowExternalLinks\": false,\n    \"enableWebSearch\": false,\n    \"includeSubdomains\": false\n  }\n}\n```\n**Returns:** Extracted structured data as defined by your schema.\n",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "urls": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "schema": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": false
+      },
+      "allowExternalLinks": {
+        "type": "boolean"
+      },
+      "enableWebSearch": {
+        "type": "boolean"
+      },
+      "includeSubdomains": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "urls"
+    ],
+    "additionalProperties": false
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "name": "search_users",
+  "description": "Search for users on GitHub",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "q": {
+        "type": "string"
+      },
+      "order": {
+        "type": "string",
+        "enum": [
+          "asc",
+          "desc"
+        ]
+      },
+      "page": {
+        "type": "number",
+        "minimum": 1
+      },
+      "per_page": {
+        "type": "number",
+        "minimum": 1,
+        "maximum": 100
+      },
+      "sort": {
+        "type": "string",
+        "enum": [
+          "followers",
+          "repositories",
+          "joined"
+        ]
+      }
+    },
+    "required": [
+      "q"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

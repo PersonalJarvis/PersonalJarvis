@@ -1,0 +1,56 @@
+{
+  "name": "video_overview_create",
+  "description": "Generate video overview. Requires confirm=True after user approval.\n\nArgs:\n    notebook_id: Notebook UUID\n    source_ids: Source IDs (default: all)\n    format: explainer|brief\n    visual_style: auto_select|classic|whiteboard|kawaii|anime|watercolor|retro_print|heritage|paper_craft\n    language: BCP-47 code (en, es, fr, de, ja)\n    focus_prompt: Optional focus text\n    confirm: Must be True after user approval",
+  "inputSchema": {
+    "properties": {
+      "notebook_id": {
+        "title": "Notebook Id",
+        "type": "string"
+      },
+      "source_ids": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Source Ids"
+      },
+      "format": {
+        "default": "explainer",
+        "title": "Format",
+        "type": "string"
+      },
+      "visual_style": {
+        "default": "auto_select",
+        "title": "Visual Style",
+        "type": "string"
+      },
+      "language": {
+        "default": "en",
+        "title": "Language",
+        "type": "string"
+      },
+      "focus_prompt": {
+        "default": "",
+        "title": "Focus Prompt",
+        "type": "string"
+      },
+      "confirm": {
+        "default": false,
+        "title": "Confirm",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "notebook_id"
+    ],
+    "type": "object"
+  }
+}

@@ -409,16 +409,45 @@ def resolve_wake_plan(
     # everywhere engine (design spec 2026-07-05): per-language model, CPU-only,
     # no training, no cloud, no GPU; spike-measured 79-100 % recall at
     # 1/0/0 % false accepts where the transcription path is machine- and
-    # word-dependent. Chosen on "auto" for any phrase, or forced via
-    # engine="vosk_kws". Requires the vosk package (base dep) AND a
-    # per-language model directory; missing either falls through to the
-    # stt_match chain below (graceful, message says why).
+    # word-dependent. Requires the vosk package (base dep) AND a per-language
+    # model directory; missing either falls through to the stt_match chain
+    # below (graceful, message says why).
+    #
+    # LANGUAGE-AWARE (2026-07-09): a Vosk model is acoustically language-SPECIFIC
+    # — an English model cannot hear a German-spoken name even when the word is
+    # in its lexicon (live: 'Hey Alex' spoken de on the en model free-decoded to
+    # 'hey of whom' and EVERY verify suppressed → a silent dead listener). So
+    # vosk_kws is trusted only when its language provably matches the speaker:
+    # (a) engine explicitly forced, or (b) a CONCRETE language is resolved and a
+    # model for THAT language exists. Under an ambiguous "auto" language we do NOT
+    # gamble on the first-installed model — we prefer the multilingual,
+    # open-vocabulary stt_match path whenever local Whisper is available (it
+    # transcribes ANY word in ANY language). Callers pass a concrete language via
+    # wake_model_fetch.resolve_wake_language(cfg); "auto"/None only survives here
+    # from legacy call sites, and then vosk is a best-effort last resort on a box
+    # with no local Whisper.
+    lang_norm = (language or "auto").strip().lower().split("-")[0]
+    lang_is_concrete = bool(lang_norm) and lang_norm != "auto"
+    vosk_model = None
     if phrase and engine_pref in ("auto", "vosk_kws"):
         if vosk_available is None:
             import importlib.util as _ilu
 
             vosk_available = _ilu.find_spec("vosk") is not None
-        vosk_model = resolve_vosk_model_path(language) if vosk_available else None
+        if vosk_available:
+            if engine_pref == "vosk_kws":
+                # Explicit force: honour the user's choice, any installed model.
+                vosk_model = resolve_vosk_model_path(language)
+            elif lang_is_concrete:
+                # auto engine + a concrete language: trust vosk only for a model
+                # in exactly that language (never a mismatched fallback).
+                vosk_model = resolve_vosk_model_path(lang_norm)
+            elif not local_whisper_available:
+                # auto engine + ambiguous language + NO multilingual Whisper:
+                # vosk (first-installed) is the only local option — best effort.
+                vosk_model = resolve_vosk_model_path(language)
+            # else: auto + ambiguous language + Whisper present → fall through to
+            # the multilingual stt_match path below (the universal answer).
         if vosk_model is not None and (
             engine_pref == "vosk_kws"
             or not custom_path

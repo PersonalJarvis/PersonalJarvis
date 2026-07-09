@@ -1,0 +1,50 @@
+{
+  "name": "research_start",
+  "description": "Deep research / fast research: Search web or Google Drive to FIND NEW sources.\n\nUse this for: \"deep research on X\", \"find sources about Y\", \"search web for Z\", \"search Drive\".\nWorkflow: research_start -> poll research_status -> research_import.\n\nArgs:\n    query: What to search for (e.g. \"quantum computing advances\")\n    source: web|drive (where to search)\n    mode: fast (~30s, ~10 sources) | deep (~5min, ~40 sources, web only)\n    notebook_id: Existing notebook (creates new if not provided)\n    title: Title for new notebook",
+  "inputSchema": {
+    "properties": {
+      "query": {
+        "title": "Query",
+        "type": "string"
+      },
+      "source": {
+        "default": "web",
+        "title": "Source",
+        "type": "string"
+      },
+      "mode": {
+        "default": "fast",
+        "title": "Mode",
+        "type": "string"
+      },
+      "notebook_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Notebook Id"
+      },
+      "title": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Title"
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "type": "object"
+  }
+}

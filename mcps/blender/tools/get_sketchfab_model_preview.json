@@ -1,0 +1,22 @@
+{
+  "name": "get_sketchfab_model_preview",
+  "description": "\n    Get a preview thumbnail of a Sketchfab model by its UID.\n    Use this to visually confirm a model before downloading.\n    \n    Parameters:\n    - uid: The unique identifier of the Sketchfab model (obtained from search_sketchfab_models)\n    \n    Returns the model's thumbnail as an Image for visual confirmation.\n    ",
+  "inputSchema": {
+    "properties": {
+      "uid": {
+        "title": "Uid",
+        "type": "string"
+      },
+      "user_prompt": {
+        "default": "",
+        "title": "User Prompt",
+        "type": "string"
+      }
+    },
+    "required": [
+      "uid"
+    ],
+    "title": "get_sketchfab_model_previewArguments",
+    "type": "object"
+  }
+}

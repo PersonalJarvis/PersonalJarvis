@@ -1,0 +1,26 @@
+{
+  "name": "export-video",
+  "description": "Export an MP4 video of screen recordings for a time range. Returns the file path. Can take a few minutes for long ranges.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "start_time": {
+        "type": "string",
+        "description": "ISO 8601 UTC or relative"
+      },
+      "end_time": {
+        "type": "string",
+        "description": "ISO 8601 UTC or relative"
+      },
+      "fps": {
+        "type": "number",
+        "description": "Output FPS (default 1.0). Higher = smoother but larger file.",
+        "default": 1
+      }
+    },
+    "required": [
+      "start_time",
+      "end_time"
+    ]
+  }
+}

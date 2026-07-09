@@ -1,0 +1,17 @@
+{
+  "name": "rm",
+  "description": "Remove a model",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Name of the model to remove"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "additionalProperties": false
+  }
+}

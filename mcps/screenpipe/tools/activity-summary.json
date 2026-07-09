@@ -1,0 +1,25 @@
+{
+  "name": "activity-summary",
+  "description": "Rich activity overview: app usage, window/tab titles with URLs and time spent, key text per context, audio transcriptions. USE THIS FIRST for broad questions: 'what was I doing?', 'how long on X?', 'which apps?'. The 'windows' field shows exactly what the user worked on (e.g. 'Debug crash issue — 20 min', 'Stripe pricing page — 5 min'). Usually sufficient without further searches.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "start_time": {
+        "type": "string",
+        "description": "ISO 8601 UTC or relative (e.g. '3h ago')"
+      },
+      "end_time": {
+        "type": "string",
+        "description": "ISO 8601 UTC or relative (e.g. 'now')"
+      },
+      "app_name": {
+        "type": "string",
+        "description": "Optional app name filter to focus on one app"
+      }
+    },
+    "required": [
+      "start_time",
+      "end_time"
+    ]
+  }
+}

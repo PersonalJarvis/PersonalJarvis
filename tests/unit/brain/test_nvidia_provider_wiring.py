@@ -62,6 +62,16 @@ def test_nvidia_provider_spec_matches_openrouter_shape() -> None:
     assert nv.brain_switchable is True
 
 
+def test_nvidia_carries_a_not_recommended_caution() -> None:
+    """The free NIM tier is slow (10-30s TTFB), so the card warns the user before
+    they pick it. Presentation-only, the inverse of ``recommended`` — never gates
+    behavior (AP-21)."""
+    nv = get_spec("nvidia")
+    assert nv.caution, "nvidia should carry a caution about the slow free tier"
+    assert "slow" in nv.caution.lower()
+    assert nv.recommended is False  # a caution, not a recommendation
+
+
 def test_nvidia_has_a_live_model_catalog() -> None:
     spec = catalog_spec("nvidia")
     assert spec is not None
@@ -101,3 +111,18 @@ def test_nvidia_is_a_selectable_subagent_mapping() -> None:
     # (its worker_slug is a placeholder — it runs via ApiAgentWorker, not the CLI).
     assert to_worker_slug("nvidia") == "nvidia"
     assert env_vars_for("nvidia") == ("NVIDIA_API_KEY",)
+
+
+# ── Regression: the provider-test must tolerate NIM's slow time-to-first-byte ──
+def test_provider_test_default_timeout_clears_nim_ttfb() -> None:
+    """The 'Test' button + section-health run through run_provider_test. Its
+    timeout ceiling must clear a slow-but-healthy provider's TTFB — NIM's free
+    dev tier was measured at 13-30s+ (live 2026-07-08). At the old 25s default a
+    legit NIM call timed out and was shown as an 'API Integration Error'; the
+    connect timeout (~5s) still catches a genuinely dead endpoint fast."""
+    import inspect
+
+    from jarvis.brain.provider_test import run_provider_test
+
+    default = inspect.signature(run_provider_test).parameters["timeout_s"].default
+    assert default >= 45.0, f"provider-test timeout {default}s too tight for NIM TTFB"

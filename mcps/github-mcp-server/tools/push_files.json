@@ -1,0 +1,54 @@
+{
+  "name": "push_files",
+  "description": "Push multiple files to a GitHub repository in a single commit",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "owner": {
+        "type": "string",
+        "description": "Repository owner (username or organization)"
+      },
+      "repo": {
+        "type": "string",
+        "description": "Repository name"
+      },
+      "branch": {
+        "type": "string",
+        "description": "Branch to push to (e.g., 'main' or 'master')"
+      },
+      "files": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "content"
+          ],
+          "additionalProperties": false
+        },
+        "description": "Array of files to push"
+      },
+      "message": {
+        "type": "string",
+        "description": "Commit message"
+      }
+    },
+    "required": [
+      "owner",
+      "repo",
+      "branch",
+      "files",
+      "message"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

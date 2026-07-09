@@ -1,0 +1,25 @@
+{
+  "name": "get_issue",
+  "description": "Get details of a specific issue in a GitHub repository.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "owner": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "issue_number": {
+        "type": "number"
+      }
+    },
+    "required": [
+      "owner",
+      "repo",
+      "issue_number"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

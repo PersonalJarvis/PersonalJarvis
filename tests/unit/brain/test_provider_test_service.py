@@ -70,10 +70,14 @@ def test_brain_probe_bad_key_is_bad_key() -> None:
 
 
 def test_local_provider_none_auth_is_ok_without_network() -> None:
-    # faster-whisper has auth_mode "none" — a successful local build means "ok".
+    # A local STT provider with auth_mode "none" needs no credential and no
+    # network: a successful local build IS the "ok" signal. The former
+    # faster-whisper spec was removed in v1.0.1, so synthesize the spec shape
+    # here rather than resolve a live registry entry (which now returns None).
+    spec = SimpleNamespace(id="local-stt", auth_mode="none", tier="stt")
     res = _run(
         run_provider_test(
-            get_spec("faster-whisper"), _cfg(), present=True,
+            spec, _cfg(), present=True,
             make_stt=lambda _cfg, _prov: SimpleNamespace(name="fw"),
         )
     )

@@ -4,6 +4,9 @@ import {
   Mic,
   Keyboard,
   Loader2,
+  Languages,
+  ChevronDown,
+  Check,
   X,
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
@@ -39,7 +42,32 @@ import { detectKeyboardPlatform } from "@/views/settings/keyboardLayout";
 import { deriveAssistantName } from "@/lib/deriveAssistantName";
 import { WAKE_ENGINES, WAKE_ENGINE_I18N_KEY } from "@/constants/wakeEngines";
 import { useEventStore } from "@/store/events";
-import { useT } from "@/i18n";
+import {
+  useT,
+  useSttLanguage,
+  setSttLanguage,
+  hydrateSttLanguage,
+  type SttLanguage,
+} from "@/i18n";
+
+// Concrete spoken languages only — "auto" is deliberately NOT offered here: the
+// wake word must be pinned to the language the user actually speaks (an
+// ambiguous "auto" silently defaults to the interface language, the exact trap
+// that left German speakers deaf). A user on "auto" sees a "choose your
+// language" placeholder until they pick.
+const WAKE_STT_LANGUAGES: SttLanguage[] = ["en", "de", "es"];
+
+interface WakeSelfTestResult {
+  ok: boolean;
+  phrase: string;
+  engine: string;
+  language: string;
+  wake_available: boolean;
+  phrase_in_vocab: boolean | null;
+  mic_ok: boolean;
+  message: string;
+  hint: string;
+}
 
 interface SettingRow {
   icon: React.ComponentType<{ className?: string }>;
@@ -117,6 +145,101 @@ function SettingRow({ row }: { row: SettingRow }) {
  * No quick-pick chips: the user must type their own phrase. The onboarding gate
  * (WakeWordOnboardingGate) handles the mandatory first-run flow.
  */
+/**
+ * Branded language dropdown (GTC black/yellow) — a native <select> cannot style
+ * its option list (the OS renders it), which clashed with the theme. This is a
+ * self-contained button + positioned listbox: dark card surface, primary-yellow
+ * accent on the active/hover row, closes on outside-click and Escape. Shows a
+ * placeholder when the value is not one of the offered concrete languages (e.g.
+ * a fresh "auto" config), nudging the user to make an explicit choice.
+ */
+function LanguageDropdown({
+  value,
+  options,
+  placeholder,
+  labelFor,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  options: SttLanguage[];
+  placeholder: string;
+  labelFor: (code: SttLanguage) => string;
+  onChange: (code: SttLanguage) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const selected = (options as string[]).includes(value)
+    ? labelFor(value as SttLanguage)
+    : null;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="flex w-full items-center justify-between rounded-md border border-primary/40 bg-background px-3 py-2 text-sm transition-colors hover:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+      >
+        <span className={selected ? "text-foreground" : "text-muted-foreground"}>
+          {selected ?? placeholder}
+        </span>
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-primary transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      {open && (
+        <ul
+          role="listbox"
+          className="absolute z-50 mt-1 w-full overflow-hidden rounded-md border border-primary/40 bg-card shadow-lg shadow-black/50"
+        >
+          {options.map((code) => {
+            const active = code === value;
+            return (
+              <li key={code} role="option" aria-selected={active}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChange(code);
+                    setOpen(false);
+                  }}
+                  className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm transition-colors ${
+                    active
+                      ? "bg-primary/15 font-medium text-primary"
+                      : "text-foreground hover:bg-primary/10 hover:text-primary"
+                  }`}
+                >
+                  {labelFor(code)}
+                  {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function WakeWordPanel() {
   const t = useT();
   const { config, loading, error, saveWakeWord, refetch, setWakeActivation } = useWakeWord();
@@ -125,12 +248,23 @@ function WakeWordPanel() {
   // wake phrase. Refetch the wake config on success so the hint clears.
   const { status: installStatus, install } = useLocalSpeechInstall(refetch);
 
+  // The voice-recognition language IS the wake language: a Vosk model is
+  // acoustically language-specific, so the model must match the language the
+  // user speaks their wake word in. Reuses the existing STT-language machinery
+  // (same backend field the runtime wake plan resolves against) — surfaced here
+  // so the user can fix the #1 cause of a dead wake word without leaving the
+  // panel.
+  const sttLang = useSttLanguage();
   const [phrase, setPhrase] = useState("");
   const [engine, setEngine] = useState<string>("auto");
   const [sensitivity, setSensitivity] = useState(0.5);
   const [customModelPath, setCustomModelPath] = useState("");
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<WakeWordSaveResult | null>(null);
+  const [selfTest, setSelfTest] = useState<{
+    state: "idle" | "running" | "done";
+    data: WakeSelfTestResult | null;
+  }>({ state: "idle", data: null });
   // The activation master switch (product rule 2026-07-04): on = always-on wake
   // word (needs a local model for the user's word), off = hotkey / push-to-talk.
   const [enabled, setEnabled] = useState(false);
@@ -156,6 +290,11 @@ function WakeWordPanel() {
     // ?? false keeps the Switch controlled even if an older backend omits it.
     setEnabled(config.enabled ?? false);
   }, [config]);
+
+  // Reflect the backend's persisted STT/wake language on open.
+  useEffect(() => {
+    void hydrateSttLanguage();
+  }, []);
 
   async function onToggleActivation(next: boolean) {
     setTogglingActivation(true);
@@ -254,6 +393,35 @@ function WakeWordPanel() {
     }
   }
 
+  // Readiness check for the "Test wake word" button — asks the backend whether
+  // the configured word will actually fire (right-language model armed, word in
+  // vocabulary, mic delivering signal) without a second mic stream. Never throws.
+  async function onSelfTest() {
+    setSelfTest({ state: "running", data: null });
+    try {
+      const res = await fetch("/api/settings/wake-word/self-test", {
+        method: "POST",
+      });
+      const data = (await res.json().catch(() => null)) as WakeSelfTestResult | null;
+      setSelfTest({ state: "done", data });
+    } catch (e) {
+      setSelfTest({
+        state: "done",
+        data: {
+          ok: false,
+          phrase,
+          engine,
+          language: sttLang,
+          wake_available: false,
+          phrase_in_vocab: null,
+          mic_ok: false,
+          message: (e as Error).message,
+          hint: "",
+        },
+      });
+    }
+  }
+
   return (
     <div className="rounded-lg border border-border bg-card/60 p-4">
       <div className="flex items-start gap-3">
@@ -302,6 +470,38 @@ function WakeWordPanel() {
               {t("settings_view.wake_word.derived_name").replace("{0}", derivedName)}
             </p>
           ) : null}
+
+          {/* LANGUAGE — deliberately prominent + over-explained. Picking the
+              wrong language here is the #1 cause of a silently dead wake word,
+              and the trap is unintuitive: it is about the language the user
+              SPEAKS (their accent/pronunciation), NOT the origin of the word
+              ("Alex" is heard by the German model because the user speaks it
+              in German, not because the name is German). Bound to the shared
+              STT-language machinery so it agrees with the runtime wake plan. */}
+          <div className="mt-4 rounded-md border border-primary/50 bg-primary/5 p-3">
+            <div className="flex items-center gap-2">
+              <Languages className="h-4 w-4 shrink-0 text-primary" />
+              <span className="text-xs font-semibold">
+                {t("settings_view.wake_word.language_label")}
+              </span>
+            </div>
+            <p className="mt-1.5 text-xs font-semibold text-primary">
+              {t("settings_view.wake_word.language_callout_title")}
+            </p>
+            <div className="mt-2">
+              <LanguageDropdown
+                value={sttLang}
+                options={WAKE_STT_LANGUAGES}
+                placeholder={t("settings_view.wake_word.language_placeholder")}
+                labelFor={(code) => t(`languages_view.options.${code}.label`)}
+                onChange={(code) => void setSttLanguage(code)}
+                disabled={loading}
+              />
+            </div>
+            <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+              {t("settings_view.wake_word.language_hint")}
+            </p>
+          </div>
 
           {/* Engine select */}
           <label className="mt-4 block text-xs font-medium text-muted-foreground">
@@ -411,7 +611,7 @@ function WakeWordPanel() {
             </div>
           )}
 
-          {/* Save button */}
+          {/* Save + Test buttons */}
           <div className="mt-4 flex items-center gap-3">
             <Button
               size="sm"
@@ -422,7 +622,44 @@ function WakeWordPanel() {
                 ? t("settings_view.saving")
                 : t("settings_view.wake_word.save")}
             </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void onSelfTest()}
+              disabled={selfTest.state === "running" || loading || !trimmedPhrase}
+            >
+              {selfTest.state === "running" ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  {t("settings_view.wake_word.self_test_running")}
+                </span>
+              ) : (
+                t("settings_view.wake_word.self_test_button")
+              )}
+            </Button>
           </div>
+
+          {/* Self-test result — honest readiness verdict (engine + language +
+              vocabulary + mic), the fast way to see WHY a word won't wake. */}
+          {selfTest.state === "done" && selfTest.data && (
+            <div
+              className={`mt-3 rounded-md border p-3 text-xs ${
+                selfTest.data.ok
+                  ? "border-primary/40 bg-primary/10 text-foreground"
+                  : "border-amber-500/40 bg-amber-500/10 text-amber-500"
+              }`}
+            >
+              <p>{selfTest.data.message}</p>
+              {selfTest.data.hint && (
+                <p className="mt-1 text-muted-foreground">{selfTest.data.hint}</p>
+              )}
+              <p className="mt-1 font-mono text-muted-foreground">
+                engine: {selfTest.data.engine} · language: {selfTest.data.language}
+                {selfTest.data.phrase_in_vocab === false ? " · not in vocabulary" : ""}
+                {selfTest.data.mic_ok ? "" : " · mic quiet"}
+              </p>
+            </div>
+          )}
 
           {/* Save result */}
           {result && (

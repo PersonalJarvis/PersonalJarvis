@@ -1,0 +1,33 @@
+{
+  "name": "firecrawl_agent",
+  "description": "\nAutonomous web research agent. This is a separate AI agent layer that independently browses the internet, searches for information, navigates through pages, and extracts structured data based on your query. You describe what you need, and the agent figures out where to find it.\n\n**How it works:** The agent performs web searches, follows links, reads pages, and gathers data autonomously. This runs **asynchronously** - it returns a job ID immediately, and you poll `firecrawl_agent_status` to check when complete and retrieve results.\n\n**IMPORTANT - Async workflow with patient polling:**\n1. Call `firecrawl_agent` with your prompt/schema → returns job ID immediately\n2. Poll `firecrawl_agent_status` with the job ID to check progress\n3. **Keep polling for at least 2-3 minutes** - agent research typically takes 1-5 minutes for complex queries\n4. Poll every 15-30 seconds until status is \"completed\" or \"failed\"\n5. Do NOT give up after just a few polling attempts - the agent needs time to research\n\n**Expected wait times:**\n- Simple queries with provided URLs: 30 seconds - 1 minute\n- Complex research across multiple sites: 2-5 minutes\n- Deep research tasks: 5+ minutes\n\n**Best for:** Complex research tasks where you don't know the exact URLs; multi-source data gathering; finding information scattered across the web; extracting data from JavaScript-heavy SPAs that fail with regular scrape.\n**Not recommended for:**\n- Single-page extraction when you have a URL (use firecrawl_scrape, faster and cheaper)\n- Web search (use firecrawl_search first)\n- Interactive page tasks like clicking, filling forms, login, or navigating JS-heavy SPAs (use firecrawl_scrape + firecrawl_interact)\n- Extracting specific data from a known page (use firecrawl_scrape with JSON format)\n\n**Arguments:**\n- prompt: Natural language description of the data you want (required, max 10,000 characters)\n- urls: Optional array of URLs to focus the agent on specific pages\n- schema: Optional JSON schema for structured output\n\n**Prompt Example:** \"Find the founders of Firecrawl and their backgrounds\"\n**Usage Example (start agent, then poll patiently for results):**\n```json\n{\n  \"name\": \"firecrawl_agent\",\n  \"arguments\": {\n    \"prompt\": \"Find the top 5 AI startups founded in 2024 and their funding amounts\",\n    \"schema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"startups\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"object\",\n            \"properties\": {\n              \"name\": { \"type\": \"string\" },\n              \"funding\": { \"type\": \"string\" },\n              \"founded\": { \"type\": \"string\" }\n            }\n          }\n        }\n      }\n    }\n  }\n}\n```\nThen poll with `firecrawl_agent_status` every 15-30 seconds for at least 2-3 minutes.\n\n**Usage Example (with URLs - agent focuses on specific pages):**\n```json\n{\n  \"name\": \"firecrawl_agent\",\n  \"arguments\": {\n    \"urls\": [\"https://docs.firecrawl.dev\", \"https://firecrawl.dev/pricing\"],\n    \"prompt\": \"Compare the features and pricing information from these pages\"\n  }\n}\n```\n**Returns:** Job ID for status checking. Use `firecrawl_agent_status` to poll for results.\n",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 10000
+      },
+      "urls": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "format": "uri"
+        }
+      },
+      "schema": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "prompt"
+    ],
+    "additionalProperties": false
+  }
+}

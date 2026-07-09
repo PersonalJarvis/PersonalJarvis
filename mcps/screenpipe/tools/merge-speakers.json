@@ -1,0 +1,21 @@
+{
+  "name": "merge-speakers",
+  "description": "Merge two speakers into one (e.g. when the same person was detected as different speakers).",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "speaker_to_keep_id": {
+        "type": "integer",
+        "description": "Speaker ID to keep"
+      },
+      "speaker_to_merge_id": {
+        "type": "integer",
+        "description": "Speaker ID to merge into the kept one"
+      }
+    },
+    "required": [
+      "speaker_to_keep_id",
+      "speaker_to_merge_id"
+    ]
+  }
+}

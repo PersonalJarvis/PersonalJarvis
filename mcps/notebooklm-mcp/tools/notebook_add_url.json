@@ -1,0 +1,21 @@
+{
+  "name": "notebook_add_url",
+  "description": "Add URL (website or YouTube) as source.\n\nArgs:\n    notebook_id: Notebook UUID\n    url: URL to add",
+  "inputSchema": {
+    "properties": {
+      "notebook_id": {
+        "title": "Notebook Id",
+        "type": "string"
+      },
+      "url": {
+        "title": "Url",
+        "type": "string"
+      }
+    },
+    "required": [
+      "notebook_id",
+      "url"
+    ],
+    "type": "object"
+  }
+}

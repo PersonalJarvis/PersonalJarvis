@@ -1,0 +1,41 @@
+{
+  "name": "flashcards_create",
+  "description": "Generate flashcards. Requires confirm=True after user approval.\n\nArgs:\n    notebook_id: Notebook UUID\n    source_ids: Source IDs (default: all)\n    difficulty: easy|medium|hard\n    confirm: Must be True after user approval",
+  "inputSchema": {
+    "properties": {
+      "notebook_id": {
+        "title": "Notebook Id",
+        "type": "string"
+      },
+      "source_ids": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Source Ids"
+      },
+      "difficulty": {
+        "default": "medium",
+        "title": "Difficulty",
+        "type": "string"
+      },
+      "confirm": {
+        "default": false,
+        "title": "Confirm",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "notebook_id"
+    ],
+    "type": "object"
+  }
+}

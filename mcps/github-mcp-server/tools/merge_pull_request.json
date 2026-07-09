@@ -1,0 +1,45 @@
+{
+  "name": "merge_pull_request",
+  "description": "Merge a pull request",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "owner": {
+        "type": "string",
+        "description": "Repository owner (username or organization)"
+      },
+      "repo": {
+        "type": "string",
+        "description": "Repository name"
+      },
+      "pull_number": {
+        "type": "number",
+        "description": "Pull request number"
+      },
+      "commit_title": {
+        "type": "string",
+        "description": "Title for the automatic commit message"
+      },
+      "commit_message": {
+        "type": "string",
+        "description": "Extra detail to append to automatic commit message"
+      },
+      "merge_method": {
+        "type": "string",
+        "enum": [
+          "merge",
+          "squash",
+          "rebase"
+        ],
+        "description": "Merge method to use"
+      }
+    },
+    "required": [
+      "owner",
+      "repo",
+      "pull_number"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

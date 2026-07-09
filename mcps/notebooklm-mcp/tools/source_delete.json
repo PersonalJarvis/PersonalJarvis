@@ -1,0 +1,21 @@
+{
+  "name": "source_delete",
+  "description": "Delete source permanently. IRREVERSIBLE. Requires confirm=True.\n\nArgs:\n    source_id: Source UUID to delete\n    confirm: Must be True after user approval",
+  "inputSchema": {
+    "properties": {
+      "source_id": {
+        "title": "Source Id",
+        "type": "string"
+      },
+      "confirm": {
+        "default": false,
+        "title": "Confirm",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "source_id"
+    ],
+    "type": "object"
+  }
+}

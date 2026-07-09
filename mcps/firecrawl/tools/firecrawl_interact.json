@@ -1,0 +1,281 @@
+{
+  "name": "firecrawl_interact",
+  "description": "\nInteract with a page in a live browser session: click buttons, fill forms, extract dynamic content, or navigate deeper.\n\n**Best for:** Multi-step workflows on a single page — searching a site, clicking through results, filling forms, extracting data that requires interaction.\n**Two ways to target a page:**\n- Pass a `url` to interact directly. The session is opened for you in one call (use this for a fresh page).\n- Pass a `scrapeId` from a previous firecrawl_scrape to reuse that already-loaded page (cheaper when you just scraped it).\n\n**Arguments:**\n- url: Page to interact with; opens a session for you (use this OR scrapeId)\n- scrapeId: Scrape job ID from a previous scrape, found in its metadata (use this OR url)\n- prompt: Natural language instruction describing the action to take (use this OR code)\n- code: Code to execute in the browser session (use this OR prompt)\n- language: \"bash\", \"python\", or \"node\" (optional, defaults to \"node\", only used with code)\n- timeout: Interact execution timeout in seconds, 1-300 (optional, defaults to 30)\n- scrapeOptions: Optional scrape controls used only with url mode, such as waitFor, maxAge, proxy, or zeroDataRetention\n\n**Usage Example (prompt, direct via url):**\n```json\n{\n  \"name\": \"firecrawl_interact\",\n  \"arguments\": {\n    \"url\": \"https://example.com/products\",\n    \"prompt\": \"Click on the first product and tell me its price\"\n  }\n}\n```\n\n**Usage Example (code):**\n```json\n{\n  \"name\": \"firecrawl_interact\",\n  \"arguments\": {\n    \"scrapeId\": \"scrape-id-from-previous-scrape\",\n    \"code\": \"agent-browser click @e5\",\n    \"language\": \"bash\"\n  }\n}\n```\n**Returns:** Execution result including output, stdout, stderr, exit code, and live view URLs.\n",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "scrapeId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "url": {
+        "type": "string",
+        "format": "uri"
+      },
+      "prompt": {
+        "type": "string",
+        "minLength": 1
+      },
+      "code": {
+        "type": "string",
+        "minLength": 1
+      },
+      "language": {
+        "type": "string",
+        "enum": [
+          "bash",
+          "python",
+          "node"
+        ]
+      },
+      "timeout": {
+        "type": "number",
+        "minimum": 1,
+        "maximum": 300
+      },
+      "scrapeOptions": {
+        "type": "object",
+        "properties": {
+          "formats": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "markdown",
+                "html",
+                "rawHtml",
+                "screenshot",
+                "links",
+                "summary",
+                "changeTracking",
+                "branding",
+                "json",
+                "query",
+                "audio"
+              ]
+            }
+          },
+          "jsonOptions": {
+            "type": "object",
+            "properties": {
+              "prompt": {
+                "type": "string"
+              },
+              "schema": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "queryOptions": {
+            "type": "object",
+            "properties": {
+              "prompt": {
+                "type": "string",
+                "maxLength": 10000
+              },
+              "mode": {
+                "default": "freeform",
+                "type": "string",
+                "enum": [
+                  "directQuote",
+                  "freeform"
+                ]
+              }
+            },
+            "required": [
+              "prompt"
+            ],
+            "additionalProperties": false
+          },
+          "screenshotOptions": {
+            "type": "object",
+            "properties": {
+              "fullPage": {
+                "type": "boolean"
+              },
+              "quality": {
+                "type": "number"
+              },
+              "viewport": {
+                "type": "object",
+                "properties": {
+                  "width": {
+                    "type": "number"
+                  },
+                  "height": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "width",
+                  "height"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "parsers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "pdf"
+              ]
+            }
+          },
+          "pdfOptions": {
+            "type": "object",
+            "properties": {
+              "maxPages": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10000
+              }
+            },
+            "additionalProperties": false
+          },
+          "onlyMainContent": {
+            "type": "boolean"
+          },
+          "redactPII": {
+            "type": "boolean"
+          },
+          "includeTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "excludeTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "waitFor": {
+            "type": "number"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "wait",
+                    "screenshot",
+                    "scroll",
+                    "scrape",
+                    "click",
+                    "write",
+                    "press",
+                    "executeJavascript",
+                    "generatePDF"
+                  ]
+                },
+                "selector": {
+                  "type": "string"
+                },
+                "milliseconds": {
+                  "type": "number"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string"
+                },
+                "direction": {
+                  "type": "string",
+                  "enum": [
+                    "up",
+                    "down"
+                  ]
+                },
+                "script": {
+                  "type": "string"
+                },
+                "fullPage": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "mobile": {
+            "type": "boolean"
+          },
+          "skipTlsVerification": {
+            "type": "boolean"
+          },
+          "removeBase64Images": {
+            "type": "boolean"
+          },
+          "location": {
+            "type": "object",
+            "properties": {
+              "country": {
+                "type": "string"
+              },
+              "languages": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "storeInCache": {
+            "type": "boolean"
+          },
+          "zeroDataRetention": {
+            "type": "boolean"
+          },
+          "maxAge": {
+            "type": "number"
+          },
+          "lockdown": {
+            "type": "boolean"
+          },
+          "proxy": {
+            "type": "string",
+            "enum": [
+              "basic",
+              "stealth",
+              "enhanced",
+              "auto"
+            ]
+          },
+          "profile": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "saveChanges": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": false
+  }
+}

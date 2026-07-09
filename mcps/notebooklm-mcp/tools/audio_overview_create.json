@@ -1,0 +1,56 @@
+{
+  "name": "audio_overview_create",
+  "description": "Generate audio overview. Requires confirm=True after user approval.\n\nArgs:\n    notebook_id: Notebook UUID\n    source_ids: Source IDs (default: all)\n    format: deep_dive|brief|critique|debate\n    length: short|default|long\n    language: BCP-47 code (en, es, fr, de, ja)\n    focus_prompt: Optional focus text\n    confirm: Must be True after user approval",
+  "inputSchema": {
+    "properties": {
+      "notebook_id": {
+        "title": "Notebook Id",
+        "type": "string"
+      },
+      "source_ids": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Source Ids"
+      },
+      "format": {
+        "default": "deep_dive",
+        "title": "Format",
+        "type": "string"
+      },
+      "length": {
+        "default": "default",
+        "title": "Length",
+        "type": "string"
+      },
+      "language": {
+        "default": "en",
+        "title": "Language",
+        "type": "string"
+      },
+      "focus_prompt": {
+        "default": "",
+        "title": "Focus Prompt",
+        "type": "string"
+      },
+      "confirm": {
+        "default": false,
+        "title": "Confirm",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "notebook_id"
+    ],
+    "type": "object"
+  }
+}

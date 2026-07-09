@@ -1,0 +1,51 @@
+{
+  "name": "report_create",
+  "description": "Generate report. Requires confirm=True after user approval.\n\nArgs:\n    notebook_id: Notebook UUID\n    source_ids: Source IDs (default: all)\n    report_format: \"Briefing Doc\"|\"Study Guide\"|\"Blog Post\"|\"Create Your Own\"\n    custom_prompt: Required for \"Create Your Own\"\n    language: BCP-47 code (en, es, fr, de, ja)\n    confirm: Must be True after user approval",
+  "inputSchema": {
+    "properties": {
+      "notebook_id": {
+        "title": "Notebook Id",
+        "type": "string"
+      },
+      "source_ids": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Source Ids"
+      },
+      "report_format": {
+        "default": "Briefing Doc",
+        "title": "Report Format",
+        "type": "string"
+      },
+      "custom_prompt": {
+        "default": "",
+        "title": "Custom Prompt",
+        "type": "string"
+      },
+      "language": {
+        "default": "en",
+        "title": "Language",
+        "type": "string"
+      },
+      "confirm": {
+        "default": false,
+        "title": "Confirm",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "notebook_id"
+    ],
+    "type": "object"
+  }
+}

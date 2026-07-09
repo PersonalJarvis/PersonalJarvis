@@ -1,0 +1,16 @@
+{
+  "name": "get-meeting",
+  "description": "Get details of a specific meeting by ID, including transcription and attendees.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "integer",
+        "description": "Meeting ID"
+      }
+    },
+    "required": [
+      "id"
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "save_auth_tokens",
+  "description": "Save NotebookLM cookies (FALLBACK method - try notebooklm-mcp-auth first!).\n\nIMPORTANT FOR AI ASSISTANTS:\n- First, run `notebooklm-mcp-auth` via Bash/terminal (automated, preferred)\n- Only use this tool if the automated CLI fails\n\nArgs:\n    cookies: Cookie header from Chrome DevTools (only needed if CLI fails)\n    csrf_token: Deprecated - auto-extracted\n    session_id: Deprecated - auto-extracted\n    request_body: Optional - contains CSRF if extracting manually\n    request_url: Optional - contains session ID if extracting manually",
+  "inputSchema": {
+    "properties": {
+      "cookies": {
+        "title": "Cookies",
+        "type": "string"
+      },
+      "csrf_token": {
+        "default": "",
+        "title": "Csrf Token",
+        "type": "string"
+      },
+      "session_id": {
+        "default": "",
+        "title": "Session Id",
+        "type": "string"
+      },
+      "request_body": {
+        "default": "",
+        "title": "Request Body",
+        "type": "string"
+      },
+      "request_url": {
+        "default": "",
+        "title": "Request Url",
+        "type": "string"
+      }
+    },
+    "required": [
+      "cookies"
+    ],
+    "type": "object"
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "name": "create_issue",
+  "description": "Create a new issue in a GitHub repository",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "owner": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      },
+      "body": {
+        "type": "string"
+      },
+      "assignees": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "milestone": {
+        "type": "number"
+      },
+      "labels": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [
+      "owner",
+      "repo",
+      "title"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

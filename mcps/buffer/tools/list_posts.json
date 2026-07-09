@@ -1,0 +1,122 @@
+{
+  "name": "list_posts",
+  "description": "Lists posts from a Buffer organization with filters for channels, status, tags, and dates. Returns post details including id, status, via, text, scheduled/sent times, channel info, tags, assets, and errors. Supports pagination using Relay-style cursors. Set `includeMetrics: true` to additionally return per-post analytics on each post — only do so when the user asks about post performance, as it materially increases response size. For totals/sums across many posts, prefer `get_aggregated_post_metrics`. Call get_account first to obtain your organization ID, and list_channels to discover channel IDs.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "organizationId": {
+        "type": "string",
+        "pattern": "^[a-f\\d]{24}$",
+        "description": "The ID of the organization to list posts for. Use get_account to retrieve your organization IDs. Tell the user which organization (by name) you are querying."
+      },
+      "channelIds": {
+        "description": "Filter posts by specific channel IDs. Use list_channels to discover available channel IDs.",
+        "type": "array",
+        "items": {
+          "type": "string",
+          "pattern": "^[a-f\\d]{24}$",
+          "description": "A channel ID to filter posts by."
+        }
+      },
+      "status": {
+        "description": "Filter posts by status (draft, needs_approval, scheduled, sending, sent, error)",
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "draft",
+            "needs_approval",
+            "scheduled",
+            "sending",
+            "sent",
+            "error"
+          ]
+        }
+      },
+      "tagIds": {
+        "description": "Filter posts by tag IDs",
+        "type": "array",
+        "items": {
+          "type": "string",
+          "pattern": "^[a-f\\d]{24}$",
+          "description": "A tag ID to filter posts by."
+        }
+      },
+      "dueAt": {
+        "description": "Filter posts by their scheduled posting date",
+        "type": "object",
+        "properties": {
+          "start": {
+            "description": "Include results with dates on or after this ISO 8601 date-time (e.g., \"2025-01-01T00:00:00Z\")",
+            "type": "string"
+          },
+          "end": {
+            "description": "Include results with dates on or before this ISO 8601 date-time (e.g., \"2025-12-31T23:59:59Z\")",
+            "type": "string"
+          }
+        }
+      },
+      "createdAt": {
+        "description": "Filter posts by the date they were created",
+        "type": "object",
+        "properties": {
+          "start": {
+            "description": "Include results with dates on or after this ISO 8601 date-time (e.g., \"2025-01-01T00:00:00Z\")",
+            "type": "string"
+          },
+          "end": {
+            "description": "Include results with dates on or before this ISO 8601 date-time (e.g., \"2025-12-31T23:59:59Z\")",
+            "type": "string"
+          }
+        }
+      },
+      "sort": {
+        "description": "Sort order for results (e.g., [{field: \"dueAt\", direction: \"asc\"}])",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "field": {
+              "type": "string",
+              "enum": [
+                "dueAt",
+                "createdAt"
+              ],
+              "description": "The field to sort by (dueAt or createdAt)"
+            },
+            "direction": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "description": "Sort direction (asc or desc)"
+            }
+          },
+          "required": [
+            "field",
+            "direction"
+          ]
+        }
+      },
+      "first": {
+        "description": "Number of posts to return per page (default: 20, max: 100)",
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 100
+      },
+      "after": {
+        "description": "Cursor for pagination",
+        "type": "string"
+      },
+      "includeMetrics": {
+        "description": "Set true to also return per-post analytics (reactions, comments, impressions, etc.) and `metricsUpdatedAt` on each post. Default false — adds latency and response size; with up to 100 posts per page, the cost adds up. Only set true when the user asks about post performance. For totals across many posts, prefer `get_aggregated_post_metrics`.",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "organizationId"
+    ]
+  }
+}

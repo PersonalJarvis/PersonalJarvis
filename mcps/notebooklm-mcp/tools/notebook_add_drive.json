@@ -1,0 +1,31 @@
+{
+  "name": "notebook_add_drive",
+  "description": "Add Google Drive document as source.\n\nArgs:\n    notebook_id: Notebook UUID\n    document_id: Drive document ID (from URL)\n    title: Display title\n    doc_type: doc|slides|sheets|pdf",
+  "inputSchema": {
+    "properties": {
+      "notebook_id": {
+        "title": "Notebook Id",
+        "type": "string"
+      },
+      "document_id": {
+        "title": "Document Id",
+        "type": "string"
+      },
+      "title": {
+        "title": "Title",
+        "type": "string"
+      },
+      "doc_type": {
+        "default": "doc",
+        "title": "Doc Type",
+        "type": "string"
+      }
+    },
+    "required": [
+      "notebook_id",
+      "document_id",
+      "title"
+    ],
+    "type": "object"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "read_memory",
+  "description": "Read a memory's full markdown body.\n\n`identifier` matches case-insensitive H1 title first, then filename, then absolute path. Use `list_memories` first to discover identifiers.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "identifier": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Memory title (preferred), filename like \"my-note.md\", or absolute path returned by list_memories."
+      },
+      "cwd": {
+        "type": "string",
+        "description": "Optional. Absolute path used to discover the hub by walking up for `.bridgememory/`. Defaults to the server's process cwd."
+      }
+    },
+    "required": [
+      "identifier"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

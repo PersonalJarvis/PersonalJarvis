@@ -1,0 +1,15 @@
+{
+  "name": "poll_hunyuan_job_status",
+  "description": "\n    Check if the Hunyuan3D generation task is completed.\n\n    For Hunyuan3D:\n        Parameters:\n        - job_id: The job_id given in the generate model step.\n\n        Returns the generation task status. The task is done if status is \"DONE\".\n        The task is in progress if status is \"RUN\".\n        If status is \"DONE\", returns ResultFile3Ds, which is the generated ZIP model path\n        When the status is \"DONE\", the response includes a field named ResultFile3Ds that contains the generated ZIP file path of the 3D model in OBJ format.\n        This is a polling API, so only proceed if the status are finally determined (\"DONE\" or some failed state).\n    ",
+  "inputSchema": {
+    "properties": {
+      "job_id": {
+        "default": null,
+        "title": "Job Id",
+        "type": "string"
+      }
+    },
+    "title": "poll_hunyuan_job_statusArguments",
+    "type": "object"
+  }
+}

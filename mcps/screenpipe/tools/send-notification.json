@@ -1,0 +1,78 @@
+{
+  "name": "send-notification",
+  "description": "Send a notification to the screenpipe desktop UI. Use to alert the user about findings, completed tasks, or actions needing attention.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string",
+        "description": "Notification title (short, descriptive)"
+      },
+      "body": {
+        "type": "string",
+        "description": "Notification body (markdown supported)"
+      },
+      "pipe_name": {
+        "type": "string",
+        "description": "Name of the pipe/tool sending this notification"
+      },
+      "timeout_secs": {
+        "type": "integer",
+        "description": "Auto-dismiss after N seconds (default 20). Use 0 for persistent.",
+        "default": 20
+      },
+      "actions": {
+        "type": "array",
+        "description": "Up to 5 action buttons. Each needs id, label, type ('pipe'|'api'|'deeplink'|'dismiss').",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Unique action ID"
+            },
+            "label": {
+              "type": "string",
+              "description": "Button label"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "pipe",
+                "api",
+                "deeplink",
+                "dismiss"
+              ],
+              "description": "Action type"
+            },
+            "pipe": {
+              "type": "string",
+              "description": "Pipe name to run (type=pipe)"
+            },
+            "context": {
+              "type": "object",
+              "description": "Context passed to pipe (type=pipe)"
+            },
+            "open_in_chat": {
+              "type": "boolean",
+              "description": "Open pipe run in chat UI instead of background (type=pipe)"
+            },
+            "url": {
+              "type": "string",
+              "description": "URL for api/deeplink actions"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "type"
+          ]
+        }
+      }
+    },
+    "required": [
+      "title",
+      "pipe_name"
+    ]
+  }
+}

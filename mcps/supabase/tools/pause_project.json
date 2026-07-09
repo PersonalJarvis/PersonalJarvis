@@ -1,0 +1,17 @@
+{
+  "name": "pause_project",
+  "description": "Pauses a Supabase project.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "project_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "project_id"
+    ],
+    "additionalProperties": false
+  }
+}

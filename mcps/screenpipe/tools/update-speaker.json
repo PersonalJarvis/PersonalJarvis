@@ -1,0 +1,24 @@
+{
+  "name": "update-speaker",
+  "description": "Rename a speaker or update their metadata.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "integer",
+        "description": "Speaker ID"
+      },
+      "name": {
+        "type": "string",
+        "description": "New speaker name"
+      },
+      "metadata": {
+        "type": "string",
+        "description": "JSON metadata string"
+      }
+    },
+    "required": [
+      "id"
+    ]
+  }
+}

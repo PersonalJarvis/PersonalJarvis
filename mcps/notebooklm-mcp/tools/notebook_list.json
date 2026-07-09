@@ -1,0 +1,14 @@
+{
+  "name": "notebook_list",
+  "description": "List all notebooks.\n\nArgs:\n    max_results: Maximum number of notebooks to return (default: 100)",
+  "inputSchema": {
+    "properties": {
+      "max_results": {
+        "default": 100,
+        "title": "Max Results",
+        "type": "integer"
+      }
+    },
+    "type": "object"
+  }
+}

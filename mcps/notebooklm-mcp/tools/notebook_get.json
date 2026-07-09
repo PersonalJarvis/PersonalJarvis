@@ -1,0 +1,16 @@
+{
+  "name": "notebook_get",
+  "description": "Get notebook details with sources.\n\nArgs:\n    notebook_id: Notebook UUID",
+  "inputSchema": {
+    "properties": {
+      "notebook_id": {
+        "title": "Notebook Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "notebook_id"
+    ],
+    "type": "object"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "firecrawl_research_inspect_paper",
+  "description": "Fetch canonical metadata for one paper by primaryId or canonical paperId. Use this after search/related results when you need the full title, abstract, authors, categories, source ids, and dates rendered as markdown.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "paperId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Canonical paperId or primaryId such as `arxiv:1706.03762`, `pmcid:PMC12530322`, `pmid:40953549`, or `doi:10.1016/j.neunet.2025.108095`."
+      }
+    },
+    "required": [
+      "paperId"
+    ],
+    "additionalProperties": false
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "delete_branch",
+  "description": "Deletes a development branch.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "branch_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "branch_id"
+    ],
+    "additionalProperties": false
+  }
+}

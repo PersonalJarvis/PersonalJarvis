@@ -29,6 +29,11 @@ class TestTierDefaultsCatalog:
                 continue  # deliberate free-model default; not a fast-tier slug
             if provider == "gemini":
                 continue  # has no fast mode
+            if provider == "nvidia":
+                # NVIDIA NIM is a deliberate "not recommended"/slow provider
+                # (free dev tier, 13-30s TTFB); its fastest catalogued router
+                # model (llama-3.3-70b) is not a fast-tier slug.
+                continue
             if provider == "openai" and model in {"gpt-5.5", "gpt-5"}:
                 continue  # frontier main model without -mini suffix
             assert any(tag in model.lower() for tag in ("haiku", "flash", "mini", "fast", "chat", "small")), \
@@ -39,7 +44,8 @@ class TestTierDefaultsCatalog:
             if provider == "openrouter":
                 continue  # deliberate free-model default; not a frontier slug
             assert any(tag in model.lower() for tag in
-                       ("fable", "opus", "pro", "large", "reasoner", "gpt-4", "gpt-5")), \
+                       ("fable", "opus", "pro", "large", "reasoner", "gpt-4", "gpt-5",
+                        "nemotron", "ultra")), \
                 f"{provider}: {model} does not look like a frontier tier"
 
     def test_claude_deep_tier_is_reachable_opus_never_fable(self):

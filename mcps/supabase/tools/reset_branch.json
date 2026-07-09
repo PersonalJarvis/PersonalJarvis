@@ -1,0 +1,21 @@
+{
+  "name": "reset_branch",
+  "description": "Resets migrations of a development branch. Any untracked data or schema changes will be lost.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "branch_id": {
+        "type": "string"
+      },
+      "migration_version": {
+        "description": "Reset your development branch to a specific migration version.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "branch_id"
+    ],
+    "additionalProperties": false
+  }
+}
