@@ -64,6 +64,10 @@ def test_latency_phase_is_a_string_enum_source_of_truth() -> None:
         "tts_request_sent",
         "tts_first_chunk",
         "tts_stream_done",
+        # Realtime voice mode (OpenAI Realtime / Gemini Live) milestones.
+        "realtime_input_committed",
+        "realtime_first_transcript",
+        "realtime_first_audio",
     }
     assert {p.value for p in LatencyPhase} == expected
 

@@ -328,6 +328,9 @@ async def test_graph_connectivity_postprocesses_links(worker_stack):
     )
     worker._registry.instantiate = MagicMock(return_value=ghost_brain)    # noqa: SLF001
     worker._brain = None    # noqa: SLF001
+    # The deterministic user-hub footer link only fires when a user entity is
+    # configured (default is ""); this case exercises that footer, so pin it.
+    worker._cfg = worker._cfg.model_copy(update={"user_entity_slug": "ruben"})  # noqa: SLF001
 
     base = clock_holder[0]
     worker._session_start_ns = base - 90 * NS_PER_MIN    # noqa: SLF001
