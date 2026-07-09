@@ -1072,7 +1072,7 @@
       "phrase_placeholder": "e.g. Jonas",
       "language_label": "Which language do you speak?",
       "language_callout_title": "Choose the language you SPEAK — not where the word comes from.",
-      "language_hint": "Jarvis matches your pronunciation, not the word itself. If you speak German, choose German — even for a name like \"Ruben\" or an English word. Pick the wrong language and Jarvis silently never hears you.",
+      "language_hint": "Jarvis matches your pronunciation, not the word itself. If you speak German, choose German — even for a name like \"Alex\" or an English word. Pick the wrong language and Jarvis silently never hears you.",
       "language_placeholder": "Select the language you speak…",
       "self_test_button": "Test wake word",
       "self_test_running": "Checking…",
