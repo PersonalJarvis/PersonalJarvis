@@ -256,9 +256,12 @@ if [ -t 1 ]; then
     BOLD=$(printf '\033[1m'); CYAN=$(printf '\033[36m')
     YELLOW=$(printf '\033[33m'); GREEN=$(printf '\033[32m')
     RED=$(printf '\033[31m'); RESET=$(printf '\033[0m')
-    GOLD=$(printf '\033[38;2;231;196;110m'); DIM=$(printf '\033[38;2;140;140;140m')
+    # Brand palette (docs/BRAND.md): forged-gold gradient, matching install.sh.
+    GOLD_HI=$(printf '\033[38;2;255;229;82m'); GOLD=$(printf '\033[38;2;255;214;10m')
+    GOLD_DEEP=$(printf '\033[38;2;184;150;10m'); DIM=$(printf '\033[38;2;143;143;143m')
 else
-    BOLD=""; CYAN=""; YELLOW=""; GREEN=""; RED=""; RESET=""; GOLD=""; DIM=""
+    BOLD=""; CYAN=""; YELLOW=""; GREEN=""; RED=""; RESET=""
+    GOLD_HI=""; GOLD=""; GOLD_DEEP=""; DIM=""
 fi
 
 log()  { printf '%s\n' "$*"; }
@@ -270,13 +273,14 @@ err()  { printf '%s%s%s\n' "${RED}"    "$*" "${RESET}" >&2; }
 # that is how the historical "Harvis" typo crept in.
 cat <<EOF
 
-${GOLD}   P  E  R  S  O  N  A  L
-     ██╗ █████╗ ██████╗ ██╗   ██╗██╗███████╗
-     ██║██╔══██╗██╔══██╗██║   ██║██║██╔════╝
-     ██║███████║██████╔╝██║   ██║██║███████╗
-██   ██║██╔══██║██╔══██╗╚██╗ ██╔╝██║╚════██║
-╚█████╔╝██║  ██║██║  ██║ ╚████╔╝ ██║███████║
- ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝${RESET}
+${GOLD_HI}     ██╗ █████╗ ██████╗ ██╗   ██╗██╗███████╗${RESET}
+${GOLD_HI}     ██║██╔══██╗██╔══██╗██║   ██║██║██╔════╝${RESET}
+${GOLD}     ██║███████║██████╔╝██║   ██║██║███████╗${RESET}
+${GOLD}██   ██║██╔══██║██╔══██╗╚██╗ ██╔╝██║╚════██║${RESET}
+${GOLD_DEEP}╚█████╔╝██║  ██║██║  ██║ ╚████╔╝ ██║███████║${RESET}
+${GOLD_DEEP} ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝${RESET}
+
+${DIM}     P E R S O N A L  J A R V I S   ·   talk to your computer${RESET}
 
 ${GOLD}  ●${RESET} ${BOLD}Verifying installer · macOS / Linux${RESET}
 ${DIM}  Sigstore + offline ceremony + SLSA L3 + ML-DSA-65 (Wave 3)${RESET}

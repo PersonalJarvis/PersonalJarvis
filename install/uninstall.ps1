@@ -23,8 +23,8 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 $e     = [char]27
-$Gold  = "${e}[38;2;231;196;110m"; $Green = "${e}[38;2;122;200;140m"
-$Dim   = "${e}[38;2;140;140;140m"; $Red   = "${e}[38;2;224;122;110m"
+$Gold  = "${e}[38;2;255;214;10m"; $Green = "${e}[38;2;122;200;140m"
+$Dim   = "${e}[38;2;143;143;143m"; $Red   = "${e}[38;2;224;122;110m"
 $Bold  = "${e}[1m"; $Rst = "${e}[0m"
 $Dot = [char]0x25CF; $Chk = [char]0x2713; $Crs = [char]0x2717
 
