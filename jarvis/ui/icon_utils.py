@@ -298,6 +298,85 @@ def set_window_icon_by_hwnd(hwnd: int, ico_path: Path) -> bool:
     return _apply_icon_to_hwnd(hwnd, ico_path)
 
 
+def apply_tk_window_icon(root: Any) -> None:
+    """Give a Tkinter root/Toplevel the Jarvis mascot icon on **every** OS.
+
+    Tkinter registers its window class *without* a class-icon slot, so a
+    ``python -m …`` launch leaves every Tk window inheriting the interpreter's
+    process icon: on Windows the taskbar/titlebar falls back to
+    ``pythonw.exe`` → the blue/yellow Python logo, on Linux to the generic
+    ``python3`` interpreter icon. Both are the same "shows Python, not Jarvis"
+    symptom (BUG #UI-Pin-2026-05-05). Any Tk surface — the JarvisBar, the orb,
+    any future Tk dialog — must call this once, right after creating its root,
+    or it will visibly regress to the Python logo.
+
+    Two OS-specific paths, because the toolkits read different surfaces:
+
+    **Windows** — the taskbar renders the window *class* icon, and the
+    highest-fidelity source is the multi-resolution ``jarvis.ico``:
+
+      1. ``ensure_windows_app_identity`` — group this process under the Jarvis
+         taskbar button (idempotent across processes).
+      2. ``iconbitmap(default=.ico)`` — Tk-level icon for all toplevels.
+      3. ``WM_SETICON`` + ``SetClassLongPtrW`` — the Win32 class-icon override,
+         the only surface the taskbar actually reads.
+
+    ``iconphoto`` (the PNG path) is deliberately NOT used on Windows: Tk
+    re-asserts a ``PhotoImage``-derived class icon on later map/update cycles,
+    which races and overwrites our ``SetClassLongPtrW`` — the live window ended
+    up with a blank/greyed class icon. The ``.ico`` + Win32 path is the proven
+    one (BUG #UI-Pin-2026-05-05).
+
+    **Linux / macOS** — Tk exposes no class-icon slot to Win32, but its portable
+    ``root.iconphoto`` sets ``_NET_WM_ICON``, which is exactly what the
+    dock/taskbar reads. It needs a PNG (most Linux desktops and Tk cannot decode
+    a Windows ``.ico``). The ``PhotoImage`` is stashed on the root because Tk
+    keeps no reference — without it Python garbage-collects the image and the
+    icon silently reverts to the generic ``python3`` interpreter icon.
+
+    Every step is wrapped: the bar/orb are cosmetic and must never crash — or
+    block their Tk mainloop — on an icon hiccup. Must run on the Tk thread that
+    owns ``root`` (``winfo_id`` / ``PhotoImage`` are thread-affine).
+    """
+    if sys.platform == "win32":
+        ensure_windows_app_identity()
+        ico_path = project_icon_path()
+        if not ico_path.is_file():
+            return
+        try:
+            root.iconbitmap(default=str(ico_path))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Tk iconbitmap could not be applied: {}", exc)
+        try:
+            hwnd = int(root.winfo_id())
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Tk winfo_id() unavailable; class icon not set: {}", exc)
+            return
+        set_window_icon_by_hwnd(hwnd, ico_path)
+        return
+
+    # Linux / macOS — portable Tk icon via the PNG (_NET_WM_ICON).
+    try:
+        from jarvis.assets import bundled_app_icon_png
+
+        png = bundled_app_icon_png()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("bundled PNG icon lookup failed: {}", exc)
+        png = None
+    if png is None or not png.is_file():
+        return
+    try:
+        import tkinter as tk
+
+        photo = tk.PhotoImage(file=str(png), master=root)
+        root.iconphoto(True, photo)
+        # Tk holds no reference to the image; pin it to the root so it is not
+        # garbage-collected out from under the window icon.
+        root._jarvis_icon_photo = photo  # noqa: SLF001
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Tk iconphoto could not be applied: {}", exc)
+
+
 def set_window_icon_by_title(
     title: str, ico_path: Path, *, quiet: bool = False
 ) -> bool:

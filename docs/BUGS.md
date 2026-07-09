@@ -1188,6 +1188,51 @@ leftovers survive this fix and are *not* the app's identity: the stale pinned
 unpin/re-pin to clear) and the mic-privacy flyout (`NVIDIA Broadcast / Python`),
 which lists the raw *process* name and cannot be renamed without a signed host.
 
+### Follow-up 2026-07-09: the Python logo came back — via the JarvisBar (drift regression)
+
+A user on a **fresh test machine** saw the blue/yellow Python logo again. The
+main pywebview window was healthy (verified live: its class icon is the mascot),
+and so was the OLD orb (`ui/orb/overlay.py`, which still carried
+`_apply_jarvis_icon_to_tk_root`). The culprit was the **JarvisBar**
+(`jarvis/ui/jarvisbar/overlay.py`) — the newer Tk surface that is now the
+**DEFAULT** `orb_style` (`jarvis_bar`). It created its `tk.Tk()` root with **no
+icon work at all**, so it inherited the process icon (`pythonw.exe` → Python
+logo). Enumerating the live process confirmed it: two top-level windows under one
+PID — `WindowsForms10` "Personal Jarvis" wearing the mascot, `TkTopLevel`
+"JarvisBar" wearing Python. The frameless bar is normally `WS_EX_TOOLWINDOW`
+(off the taskbar), but that trick is best-effort on Win11; any leak surfaces the
+Python logo, exactly as root cause #1 predicted.
+
+**Root cause: drift.** The icon fix lived only in the orb; the JarvisBar was
+added later and never got it — the two Tk surfaces had diverged. **Fix:** one
+canonical, cross-platform helper `jarvis.ui.icon_utils.apply_tk_window_icon(root)`
+that BOTH the JarvisBar and the orb now call (the orb is now a thin wrapper), so
+they cannot drift again:
+
+- **Windows** — `ensure_windows_app_identity()` + `iconbitmap(default=.ico)` +
+  the Win32 `WM_SETICON`/`SetClassLongPtrW` class-icon override. `iconphoto` is
+  deliberately NOT used on Windows: Tk re-asserts a `PhotoImage`-derived class
+  icon on later map/update cycles and raced/overwrote the `SetClassLongPtrW`
+  handle, leaving the live window a **blank/greyed** class icon (observed on the
+  running app before the path was split). The `.ico` + Win32 path is the proven
+  one.
+- **Linux / macOS** — `root.iconphoto(True, PhotoImage(jarvis.png))`, which sets
+  `_NET_WM_ICON` (what the dock/taskbar reads); the PNG is stashed on the root so
+  Python does not GC it. This is the Linux face of the same "shows python3, not
+  Jarvis" symptom.
+
+**Verified end-to-end on the live app:** restarted the running desktop app
+(editable install picks up the edit) and re-extracted the actual "JarvisBar"
+window's class icon via `GetClassLongPtrW + DrawIconEx + GetDIBits` → the mascot,
+not Python (and not blank). Guard: `tests/unit/ui/test_tk_icon_applied.py`
+(importable helper + source-wiring assertions that fail if either Tk surface
+stops calling it + a real-window Windows check).
+
+**Lesson — the anti-drift rule generalizes:** every NEW window-spawning surface
+(Tk toplevel, Qt window, subprocess) must route through the ONE
+`apply_tk_window_icon` / `ensure_windows_app_identity` call site. A second copy of
+the icon dance is a latent Python-logo regression waiting for the next surface.
+
 ---
 
 ## Bug-008 Episode 2: Transcription view empty (HangupReason drift, regressed after restore) — 2026-05-05
