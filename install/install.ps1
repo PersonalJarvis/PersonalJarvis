@@ -6,9 +6,10 @@
 # This bootstrap is intentionally small. It:
 #   1. Verifies Python 3.11+ is available.
 #   2. Verifies git is available.
-#   3. Clones (or updates) personal-jarvis into ~\.personal-jarvis.
-#   4. Creates a Python venv, installs `rich` + `packaging`.
-#   5. Hands control to install/installer.py (the Stage 2 orchestrator).
+#   3. Verifies Node.js 18+ is available (skipped on --headless).
+#   4. Clones (or updates) personal-jarvis into ~\.personal-jarvis.
+#   5. Creates a Python venv, installs `rich` + `packaging`.
+#   6. Hands control to install/installer.py (the Stage 2 orchestrator).
 #
 # All heavy logic lives in installer.py so it can be unit-tested and
 # kept cross-platform. This file is meant to be read top-to-bottom in
@@ -134,6 +135,28 @@ if (-not $gitCheck.Found) {
     exit 1
 }
 Write-Ok 'git'
+
+# Node.js 18+ — required for the Jarvis-Agent worker CLIs (Claude Code / Codex)
+# the worker delegates heavy missions to, plus the Node-based marketplace
+# integrations. Skipped on the headless / tiny-VPS path (--headless): a
+# cloud-only base install that never spawns a local CLI worker, so Node adds no
+# capability there.
+if ($ExtraArgs -contains '--headless') {
+    Write-Note 'Node.js check skipped (--headless): the cloud-only base install does not use it.'
+} else {
+    $nodeOk = $false
+    $nodeCheck = Test-Tool 'node'
+    if ($nodeCheck.Found -and $nodeCheck.Version -match 'v?(\d+)\.\d+\.\d+') {
+        $nodeOk = ([int]$Matches[1] -ge 18)
+    }
+    if (-not $nodeOk) {
+        Write-Err 'Node.js 18+ not found.'
+        Write-Note 'Install the LTS build from https://nodejs.org/ then re-run this command.'
+        Write-Note '(After install, open a NEW PowerShell window so PATH refreshes.)'
+        exit 1
+    }
+    Write-Ok "Node.js $($nodeCheck.Version)"
+}
 
 # ----------------------------------------------------------------- clone / update
 Write-Step 'Fetching Personal Jarvis'

@@ -75,13 +75,14 @@ it. A few things it can do today:
 
 ## Requirements
 
-You need exactly **two** things on your machine before you install. The installer checks for
-both up front and stops with a download link if either is missing — nothing else is mandatory.
+You need exactly **three** things on your machine before you install. The installer checks for
+all three up front and stops with a download link if any is missing — nothing else is mandatory.
 
 | Required | Version | Why it's needed |
 |---|---|---|
 | **Python** | 3.11 or newer | The application runs on Python. |
 | **Git** | any recent release | Fetches the project and runs background missions in isolated worktrees. |
+| **Node.js** | 18 or newer | Runs the agent CLIs the worker delegates heavy missions to (Claude Code, Codex) and a few Node-based integrations. *(Not needed on the `--headless` cloud-only server path.)* |
 
 Everything below is **optional** — each item only unlocks a specific feature, and Personal
 Jarvis runs without it:
@@ -89,7 +90,6 @@ Jarvis runs without it:
 | Optional | Unlocks |
 |---|---|
 | A provider **API key or subscription login** — Gemini, Claude, OpenAI, or OpenRouter | Actually talking to a brain. Bring your own; nothing is bundled. The app's one-time setup guide stores it in your OS credential manager. |
-| **Node.js** 18+ | The agent CLIs the worker delegates heavy tasks to (Claude Code, Codex) and a few Node-based marketplace integrations. |
 | **libportaudio** *(Linux only)* | Local microphone and speakers (`apt install libportaudio2`). Not needed for the headless / browser-audio path. |
 | A **GPU** | Faster fully-offline speech. The local voice models install by default and run on CPU everywhere; a GPU only speeds them up. Cloud speech needs none of this. |
 
@@ -122,7 +122,7 @@ curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/
 
 | Install flag | Effect |
 |---|---|
-| `--headless` | Minimal server install (advanced): API + WebSocket only, torch-free base — the tiny-VPS path |
+| `--headless` | Minimal server install (advanced): API + WebSocket only, torch-free base, no Node.js required — the tiny-VPS path |
 | `--no-launch` | Install only; don't start the app |
 
 **Uninstall** — one command removes everything a plain folder-delete would miss: the
