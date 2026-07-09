@@ -667,6 +667,7 @@ def build_wake_whisper(
         and model == "base"
         and device == "cpu"
         and cuda_available
+        and bool(getattr(stt_cfg, "wake_high_accuracy", False))
         and _wake_gpu_inference_verified()
     ):
         model, device, compute = "large-v3-turbo", "cuda", "int8_float16"
@@ -681,7 +682,7 @@ def build_wake_whisper(
         and model == "base"
         and device == "cpu"
         and cuda_available
-        and bool(getattr(stt_cfg, "wake_high_accuracy", True))
+        and bool(getattr(stt_cfg, "wake_high_accuracy", False))
         and _wake_gpu_inference_verified()
     ):
         # CUSTOM WAKE PHRASE on a CUDA box: upgrade to the strong turbo model on
