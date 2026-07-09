@@ -5,6 +5,8 @@ import {
   Keyboard,
   Loader2,
   Languages,
+  ChevronDown,
+  Check,
   X,
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
@@ -48,7 +50,12 @@ import {
   type SttLanguage,
 } from "@/i18n";
 
-const WAKE_STT_LANGUAGES: SttLanguage[] = ["auto", "en", "de", "es"];
+// Concrete spoken languages only — "auto" is deliberately NOT offered here: the
+// wake word must be pinned to the language the user actually speaks (an
+// ambiguous "auto" silently defaults to the interface language, the exact trap
+// that left German speakers deaf). A user on "auto" sees a "choose your
+// language" placeholder until they pick.
+const WAKE_STT_LANGUAGES: SttLanguage[] = ["en", "de", "es"];
 
 interface WakeSelfTestResult {
   ok: boolean;
@@ -138,6 +145,101 @@ function SettingRow({ row }: { row: SettingRow }) {
  * No quick-pick chips: the user must type their own phrase. The onboarding gate
  * (WakeWordOnboardingGate) handles the mandatory first-run flow.
  */
+/**
+ * Branded language dropdown (GTC black/yellow) — a native <select> cannot style
+ * its option list (the OS renders it), which clashed with the theme. This is a
+ * self-contained button + positioned listbox: dark card surface, primary-yellow
+ * accent on the active/hover row, closes on outside-click and Escape. Shows a
+ * placeholder when the value is not one of the offered concrete languages (e.g.
+ * a fresh "auto" config), nudging the user to make an explicit choice.
+ */
+function LanguageDropdown({
+  value,
+  options,
+  placeholder,
+  labelFor,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  options: SttLanguage[];
+  placeholder: string;
+  labelFor: (code: SttLanguage) => string;
+  onChange: (code: SttLanguage) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const selected = (options as string[]).includes(value)
+    ? labelFor(value as SttLanguage)
+    : null;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="flex w-full items-center justify-between rounded-md border border-primary/40 bg-background px-3 py-2 text-sm transition-colors hover:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+      >
+        <span className={selected ? "text-foreground" : "text-muted-foreground"}>
+          {selected ?? placeholder}
+        </span>
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-primary transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      {open && (
+        <ul
+          role="listbox"
+          className="absolute z-50 mt-1 w-full overflow-hidden rounded-md border border-primary/40 bg-card shadow-lg shadow-black/50"
+        >
+          {options.map((code) => {
+            const active = code === value;
+            return (
+              <li key={code} role="option" aria-selected={active}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChange(code);
+                    setOpen(false);
+                  }}
+                  className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm transition-colors ${
+                    active
+                      ? "bg-primary/15 font-medium text-primary"
+                      : "text-foreground hover:bg-primary/10 hover:text-primary"
+                  }`}
+                >
+                  {labelFor(code)}
+                  {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function WakeWordPanel() {
   const t = useT();
   const { config, loading, error, saveWakeWord, refetch, setWakeActivation } = useWakeWord();
@@ -386,18 +488,16 @@ function WakeWordPanel() {
             <p className="mt-1.5 text-xs font-semibold text-primary">
               {t("settings_view.wake_word.language_callout_title")}
             </p>
-            <select
-              value={sttLang}
-              onChange={(e) => void setSttLanguage(e.target.value as SttLanguage)}
-              disabled={loading}
-              className="mt-2 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
-            >
-              {WAKE_STT_LANGUAGES.map((code) => (
-                <option key={code} value={code}>
-                  {t(`languages_view.options.${code}.label`)}
-                </option>
-              ))}
-            </select>
+            <div className="mt-2">
+              <LanguageDropdown
+                value={sttLang}
+                options={WAKE_STT_LANGUAGES}
+                placeholder={t("settings_view.wake_word.language_placeholder")}
+                labelFor={(code) => t(`languages_view.options.${code}.label`)}
+                onChange={(code) => void setSttLanguage(code)}
+                disabled={loading}
+              />
+            </div>
             <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
               {t("settings_view.wake_word.language_hint")}
             </p>
