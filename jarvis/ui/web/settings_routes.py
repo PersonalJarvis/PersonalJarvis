@@ -399,14 +399,59 @@ async def put_stt_language(body: SttLanguageBody, request: Request) -> dict[str,
         except Exception as exc:  # noqa: BLE001 — frozen model is not an error
             log.debug("in-memory cfg.stt.language update skipped: %s", exc)
 
-    # The STT provider is built once at voice bootstrap, so a live turn keeps the
-    # old language until the next voice restart. ``restart_required`` tells the UI
-    # to surface that hint.
+    # Make "switch language -> it works" TRUE without a restart: re-resolve the
+    # wake word against the NEW language and live-apply it to the running voice
+    # pipeline (a Vosk model is acoustically language-specific, so the language is
+    # what decides whether the wake fires at all). If the matching-language model
+    # is not on disk yet, apply the best available plan now (multilingual
+    # stt_match) and provision the model in the background, then re-apply so it
+    # upgrades to the fast vosk_kws path. Best-effort throughout; a headless/down
+    # pipeline just applies on the next voice start.
+    applied_live = False
+    try:
+        from jarvis.speech import wake_model_fetch as _wmf
+        from jarvis.speech.wake_phrase import resolve_wake_plan
+
+        live_cfg = _config(request)
+        wake_lang = _wmf.resolve_wake_language(live_cfg)
+
+        def _resolve_plan() -> object:
+            return resolve_wake_plan(
+                live_cfg.trigger.wake_word,
+                local_whisper_available=_local_whisper_available(),
+                language=wake_lang,
+            )
+
+        def _apply_plan(plan: object) -> bool:
+            pipeline = getattr(request.app.state, "speech_pipeline", None)
+            if pipeline is not None and hasattr(pipeline, "set_wake_plan"):
+                pipeline.set_wake_plan(plan)
+                return True
+            return False
+
+        applied_live = _apply_plan(_resolve_plan())
+
+        if not _wmf.vosk_model_present(wake_lang):
+
+            async def _provision_then_reapply() -> None:
+                try:
+                    landed = await asyncio.to_thread(_wmf.ensure_vosk_model, wake_lang)
+                    if landed is not None:
+                        _apply_plan(_resolve_plan())
+                except Exception as exc:  # noqa: BLE001 — background best-effort
+                    log.debug("stt-language background provision skipped: %s", exc)
+
+            asyncio.create_task(_provision_then_reapply())
+    except Exception as exc:  # noqa: BLE001 — never fail the language save on a live hiccup
+        log.warning("stt-language wake live-apply skipped: %s", exc)
+
     return {
         "ok": True,
         "language": lang,
         "persisted": persisted,
-        "restart_required": True,
+        "applied_live": applied_live,
+        # Only ask for a restart when we could NOT live-apply (no running pipeline).
+        "restart_required": not applied_live,
     }
 
 
