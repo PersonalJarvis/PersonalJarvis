@@ -4,6 +4,7 @@ import {
   Mic,
   Keyboard,
   Loader2,
+  Languages,
   X,
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
@@ -368,27 +369,39 @@ function WakeWordPanel() {
             </p>
           ) : null}
 
-          {/* Voice-recognition language — the wake model must match the spoken
-              language (the #1 cause of a dead wake word). Bound to the shared
-              STT-language machinery, so it agrees with the runtime wake plan. */}
-          <label className="mt-4 block text-xs font-medium text-muted-foreground">
-            {t("settings_view.wake_word.language_label")}
-          </label>
-          <select
-            value={sttLang}
-            onChange={(e) => void setSttLanguage(e.target.value as SttLanguage)}
-            disabled={loading}
-            className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
-          >
-            {WAKE_STT_LANGUAGES.map((code) => (
-              <option key={code} value={code}>
-                {t(`languages_view.options.${code}.label`)}
-              </option>
-            ))}
-          </select>
-          <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
-            {t("settings_view.wake_word.language_hint")}
-          </p>
+          {/* LANGUAGE — deliberately prominent + over-explained. Picking the
+              wrong language here is the #1 cause of a silently dead wake word,
+              and the trap is unintuitive: it is about the language the user
+              SPEAKS (their accent/pronunciation), NOT the origin of the word
+              ("Ruben" is heard by the German model because the user speaks it
+              in German, not because the name is German). Bound to the shared
+              STT-language machinery so it agrees with the runtime wake plan. */}
+          <div className="mt-4 rounded-md border border-primary/50 bg-primary/5 p-3">
+            <div className="flex items-center gap-2">
+              <Languages className="h-4 w-4 shrink-0 text-primary" />
+              <span className="text-xs font-semibold">
+                {t("settings_view.wake_word.language_label")}
+              </span>
+            </div>
+            <p className="mt-1.5 text-xs font-semibold text-primary">
+              {t("settings_view.wake_word.language_callout_title")}
+            </p>
+            <select
+              value={sttLang}
+              onChange={(e) => void setSttLanguage(e.target.value as SttLanguage)}
+              disabled={loading}
+              className="mt-2 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+            >
+              {WAKE_STT_LANGUAGES.map((code) => (
+                <option key={code} value={code}>
+                  {t(`languages_view.options.${code}.label`)}
+                </option>
+              ))}
+            </select>
+            <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+              {t("settings_view.wake_word.language_hint")}
+            </p>
+          </div>
 
           {/* Engine select */}
           <label className="mt-4 block text-xs font-medium text-muted-foreground">
