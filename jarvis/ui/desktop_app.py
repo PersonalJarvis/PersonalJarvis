@@ -1756,9 +1756,41 @@ class DesktopApp:
                         from jarvis.core.config import load_config
                         from jarvis.speech import wake_model_fetch as _wmf
 
-                        lang = _wmf.resolve_wake_language(load_config())
-                        if not _wmf.vosk_model_present(lang):
-                            await asyncio.to_thread(_wmf.ensure_vosk_model, lang)
+                        cfg = load_config()
+                        lang = _wmf.resolve_wake_language(cfg)
+                        if _wmf.vosk_model_present(lang):
+                            return
+                        landed = await asyncio.to_thread(_wmf.ensure_vosk_model, lang)
+                        if landed is None:
+                            return
+                        # The matching-language model just landed. Re-resolve the
+                        # wake plan and live-switch the running detector to
+                        # vosk_kws so the user's word works immediately — no
+                        # restart (mirrors the settings PUT live-apply). A
+                        # headless/absent pipeline just means it applies on the
+                        # next voice start.
+                        import importlib.util as _ilu
+
+                        from jarvis.core.runtime_refs import get_speech_pipeline
+                        from jarvis.speech.wake_phrase import resolve_wake_plan
+
+                        pipeline = get_speech_pipeline()
+                        if pipeline is not None and hasattr(pipeline, "set_wake_plan"):
+                            plan = resolve_wake_plan(
+                                cfg.trigger.wake_word,
+                                local_whisper_available=(
+                                    _ilu.find_spec("faster_whisper") is not None
+                                ),
+                                language=lang,
+                            )
+                            if plan.engine == "vosk_kws":
+                                pipeline.set_wake_plan(plan)
+                                from loguru import logger as _wmf_ok
+                                _wmf_ok.info(
+                                    "Wake model for '{}' provisioned off-boot; "
+                                    "live-switched detector to vosk_kws.",
+                                    lang,
+                                )
                     except Exception:  # noqa: BLE001 — a background probe never crashes boot
                         from loguru import logger as _wmf_log
                         _wmf_log.opt(exception=True).debug(
@@ -2290,15 +2322,21 @@ class DesktopApp:
             # See docs/local-wakeword/CUSTOM-WAKE-WORD-DESIGN.md.
             import importlib.util as _ilu
 
+            from jarvis.speech.wake_model_fetch import resolve_wake_language
             from jarvis.speech.wake_phrase import resolve_wake_plan
 
             _local_whisper_available = _ilu.find_spec("faster_whisper") is not None
+            # CONCRETE wake language (stt.language → ui.language → default), never
+            # raw "auto": a Vosk model is acoustically language-specific, so the
+            # any-word vosk_kws engine must resolve against the language the user
+            # actually speaks — not the first-installed model. The same resolver
+            # drives the model DOWNLOAD (wake_model_fetch) so selection and
+            # provisioning can never disagree.
+            _wake_language = resolve_wake_language(self.cfg)
             wake_plan = resolve_wake_plan(
                 self.cfg.trigger.wake_word,
                 local_whisper_available=_local_whisper_available,
-                # Selects the per-language Vosk model for the any-word
-                # vosk_kws engine; "auto" falls back to the first installed.
-                language=self.cfg.stt.language,
+                language=_wake_language,
             )
             from loguru import logger as _wlog
             if not wake_plan.wake_available:
@@ -2665,7 +2703,15 @@ class DesktopApp:
             # inference, so a custom phrase comes up fast AND stays accurate. No-op
             # on a CPU-only host (the build returns base again). Any failure leaves
             # the working base/cpu model in place — wake never breaks.
-            if _wake_progressive_upgrade:
+            # CPU-first default (2026-07-09): the background turbo/cuda hot-swap
+            # only runs when the user explicitly opted into GPU wake
+            # (``[stt].wake_high_accuracy = true``). With the CPU default the
+            # rebuild below would just return base and no-op, so skip it entirely
+            # — that also avoids the sticky wake_cuda/gpu_probe caches that made a
+            # once-fast GPU wake go permanently deaf after a restart.
+            if _wake_progressive_upgrade and bool(
+                getattr(self.cfg.stt, "wake_high_accuracy", False)
+            ):
                 _wake_phrase_for_upgrade = wake_phrase
                 _stt_lang_for_upgrade = stt_language
 

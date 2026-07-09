@@ -303,10 +303,22 @@ class STTConfig(BaseModel):
     # cached per ctranslate2 version — ``jarvis.plugins.stt.
     # _wake_gpu_inference_verified``), plus a live backstop that drops back to
     # base/cpu and persists the bad verdict if the swapped-in GPU model ever
-    # wedges. False remains the hard opt-out (never try the GPU). The
-    # transcription wake still cannot reach "Hey Google" reliability — that
-    # needs a trained neural keyword-spotting model (the ``custom_onnx`` engine).
-    wake_high_accuracy: bool = True
+    # wedges. The transcription wake still cannot reach "Hey Google" reliability
+    # — that needs a trained neural keyword-spotting model (``custom_onnx``).
+    #
+    # DEFAULT FLIPPED TO CPU (2026-07-09): the GPU hot-swap is now OFF by
+    # default and this flag is the COMPLETE CPU↔GPU switch for the wake path
+    # (it gates BOTH the plain and the custom-phrase turbo/cuda branch in
+    # build_wake_whisper AND the background hot-swap). Rationale: the GPU wake
+    # relied on two sticky, never-re-probed caches (data/wake_cuda_probe.json,
+    # data/wake_gpu_probe.json) — a single transient first-probe failure latched
+    # the wake to the wedge-prone base/cpu model across EVERY future restart with
+    # no log explaining why ("worked fast, then dead after a reboot"). A
+    # CPU-first wake is the universal, reproducible floor (matches §3's
+    # torch-/GPU-free base). Power users can still opt in with
+    # ``wake_high_accuracy = true`` (the automated inference probe + live backstop
+    # still guard it). The always-on vosk_kws engine is CPU-only regardless.
+    wake_high_accuracy: bool = False
     language: str = "auto"
     # Vocabulary biasing passed to Whisper's ``prompt`` field — the same
     # mechanism dictation tools like Wispr Flow use to keep proper nouns and
