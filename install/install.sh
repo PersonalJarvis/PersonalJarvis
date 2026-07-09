@@ -7,7 +7,7 @@
 # This bootstrap is intentionally small. It:
 #   1. Verifies Python 3.11+ is available.
 #   2. Verifies git is available.
-#   3. Verifies Node.js 18+ is available (skipped on --headless).
+#   3. Checks for Node.js 18+ (optional - a missing Node never blocks the install).
 #   4. Clones (or updates) personal-jarvis into ~/.personal-jarvis.
 #   5. Creates a Python venv, installs `rich` + `packaging`.
 #   6. Hands control to install/installer.py (the Stage 2 orchestrator).
@@ -98,11 +98,13 @@ if ! command -v git >/dev/null 2>&1; then
 fi
 ok 'git'
 
-# Node.js 18+ — required for the Jarvis-Agent worker CLIs (Claude Code / Codex)
-# the worker delegates heavy missions to, plus the Node-based marketplace
-# integrations. Skipped on the headless / tiny-VPS path (--headless): a
-# cloud-only base install that never spawns a local CLI worker, so Node adds no
-# capability there.
+# Node.js 18+ — powers only the OPTIONAL Jarvis-Agent worker CLIs (Claude Code
+# / Codex) that heavy missions delegate to, plus the Node-based marketplace
+# integrations. Everything else in Jarvis runs without it, so a missing Node
+# must NEVER turn a new user away at the door: we note it and continue — the
+# worker CLI can be added later in-app once Node is installed. Skipped
+# entirely on the headless / tiny-VPS path (--headless): a cloud-only base
+# install that never spawns a local CLI worker.
 skip_node=0
 for arg in "$@"; do
     if [ "$arg" = "--headless" ]; then skip_node=1; break; fi
@@ -117,13 +119,14 @@ else
             node_ok=1
         fi
     fi
-    if [ "$node_ok" -eq 0 ]; then
-        err 'Node.js 18+ not found.'
-        note '  - macOS:  "brew install node" or https://nodejs.org/'
-        note '  - Linux:  your distro package (apt install nodejs, ...) or https://nodejs.org/'
-        exit 1
+    if [ "$node_ok" -eq 1 ]; then
+        ok "Node.js $(node --version)"
+    else
+        note 'Node.js 18+ not found - continuing, Jarvis runs fine without it.'
+        note 'It only powers the optional coding-agent worker (Claude Code / Codex).'
+        note 'Install it any time ("brew install node" / https://nodejs.org/) and'
+        note 'add the worker later in-app.'
     fi
-    ok "Node.js $(node --version)"
 fi
 
 # -------------------------------------------------------------- clone / update

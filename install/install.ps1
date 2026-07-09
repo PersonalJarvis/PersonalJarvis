@@ -6,7 +6,7 @@
 # This bootstrap is intentionally small. It:
 #   1. Verifies Python 3.11+ is available.
 #   2. Verifies git is available.
-#   3. Verifies Node.js 18+ is available (skipped on --headless).
+#   3. Checks for Node.js 18+ (optional - a missing Node never blocks the install).
 #   4. Clones (or updates) personal-jarvis into ~\.personal-jarvis.
 #   5. Creates a Python venv, installs `rich` + `packaging`.
 #   6. Hands control to install/installer.py (the Stage 2 orchestrator).
@@ -142,11 +142,13 @@ if (-not $gitCheck.Found) {
 }
 Write-Ok 'git'
 
-# Node.js 18+ — required for the Jarvis-Agent worker CLIs (Claude Code / Codex)
-# the worker delegates heavy missions to, plus the Node-based marketplace
-# integrations. Skipped on the headless / tiny-VPS path (--headless): a
-# cloud-only base install that never spawns a local CLI worker, so Node adds no
-# capability there.
+# Node.js 18+ -- powers only the OPTIONAL Jarvis-Agent worker CLIs (Claude
+# Code / Codex) that heavy missions delegate to, plus the Node-based
+# marketplace integrations. Everything else in Jarvis runs without it, so a
+# missing Node must NEVER turn a new user away at the door: we note it and
+# continue -- the worker CLI can be added later in-app once Node is installed.
+# Skipped entirely on the headless / tiny-VPS path (--headless): a cloud-only
+# base install that never spawns a local CLI worker.
 if ($ExtraArgs -contains '--headless') {
     Write-Note 'Node.js check skipped (--headless): the cloud-only base install does not use it.'
 } else {
@@ -155,13 +157,14 @@ if ($ExtraArgs -contains '--headless') {
     if ($nodeCheck.Found -and $nodeCheck.Version -match 'v?(\d+)\.\d+\.\d+') {
         $nodeOk = ([int]$Matches[1] -ge 18)
     }
-    if (-not $nodeOk) {
-        Write-Err 'Node.js 18+ not found.'
-        Write-Note 'Install the LTS build from https://nodejs.org/ then re-run this command.'
-        Write-Note '(After install, open a NEW PowerShell window so PATH refreshes.)'
-        exit 1
+    if ($nodeOk) {
+        Write-Ok "Node.js $($nodeCheck.Version)"
+    } else {
+        Write-Note 'Node.js 18+ not found - continuing, Jarvis runs fine without it.'
+        Write-Note 'It only powers the optional coding-agent worker (Claude Code / Codex).'
+        Write-Note 'Install the LTS build any time from https://nodejs.org/ and add the'
+        Write-Note 'worker later in-app.'
     }
-    Write-Ok "Node.js $($nodeCheck.Version)"
 }
 
 # ----------------------------------------------------------------- clone / update
