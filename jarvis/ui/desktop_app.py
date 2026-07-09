@@ -3111,6 +3111,24 @@ class DesktopApp:
                         logger.debug(
                             "Taskbar icon set; re-arming against WebView2 override."
                         )
+                        # Late shortcut self-heal: the import-time ensure runs
+                        # before anything else — if the Start-Menu shortcut got
+                        # deleted after that (an uninstall/reinstall race, a
+                        # cleanup tool), Windows search loses "Personal Jarvis"
+                        # for the whole session. Re-ensure once now that the
+                        # window is up; idempotent + best-effort off the boot
+                        # path (regression: search found no app, 2026-07-09).
+                        try:
+                            from jarvis.ui.icon_utils import (
+                                ensure_start_menu_shortcut,
+                            )
+
+                            ensure_start_menu_shortcut()
+                        except Exception:  # noqa: BLE001 — never kill the poll
+                            logger.debug(
+                                "late Start-Menu shortcut re-ensure failed",
+                                exc_info=True,
+                            )
                     elif time.monotonic() - first_set_at > 8.0:
                         return
                 time.sleep(0.3)

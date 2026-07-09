@@ -546,6 +546,90 @@ def ensure_windows_app_identity(app_id: str = APP_USER_MODEL_ID) -> bool:
         return False
 
 
+# System.AppUserModel.* property keys (fmtid + pid) for the per-WINDOW property
+# store. ``RelaunchIconResource`` is THE documented mechanism for an app hosted
+# by a shared interpreter exe (pythonw) to give its taskbar button its own icon.
+_APPUSERMODEL_FMTID = "{9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3}"
+_PID_RELAUNCH_COMMAND = 2
+_PID_RELAUNCH_ICON = 3
+_PID_RELAUNCH_NAME = 4
+_PID_AUMID = 5
+
+# HWNDs already stamped with relaunch properties this session — the icon-setter
+# thread re-polls every 300 ms and the COM property-store dance is not free.
+_RELAUNCH_STAMPED: set[int] = set()
+
+
+def set_window_relaunch_properties(
+    hwnd: int,
+    *,
+    ico_path: Path | None = None,
+    aumid: str = APP_USER_MODEL_ID,
+    display_name: str = APP_DISPLAY_NAME,
+) -> bool:
+    """Stamp per-window AppUserModel Relaunch* properties → taskbar shows OUR icon.
+
+    THE universal taskbar-icon fix, and the one that finally covers every install
+    (verified live on an MS-Store-Python machine, where exe branding is
+    impossible): without explicit window properties, the Windows taskbar renders
+    a button with the icon of the window-owning EXECUTABLE — for a source run
+    that is ``pythonw.exe`` → the Python logo, no matter what ``WM_SETICON`` /
+    class icon / AUMID / Start-Menu shortcut say (all verified ineffective on the
+    button). ``SHGetPropertyStoreForWindow`` +
+    ``System.AppUserModel.RelaunchIconResource`` exists precisely for
+    interpreter-hosted apps: it tells the shell, per window, which icon (and
+    name/relaunch command, used when the button is pinned) the button carries.
+    Takes effect immediately on a live window — no restart, no exe copy.
+
+    Idempotent per HWND (session-cached), Windows-only, best-effort: any COM /
+    pywin32 hiccup returns ``False`` and the window keeps whatever the other
+    layers achieved. Returns ``True`` when the properties were committed.
+    """
+    if sys.platform != "win32" or not hwnd:
+        return False
+    if hwnd in _RELAUNCH_STAMPED:
+        return True
+    try:
+        import pywintypes
+        from win32com.propsys import propsys
+
+        try:
+            # The icon-setter poll runs on a plain daemon thread with no COM
+            # apartment; initialize one (idempotent, "already init" is fine).
+            import pythoncom
+
+            pythoncom.CoInitialize()
+        except Exception:  # noqa: BLE001 — already initialized / free-threaded
+            pass
+
+        ico = ico_path or project_icon_path()
+        fmtid = pywintypes.IID(_APPUSERMODEL_FMTID)
+        store = propsys.SHGetPropertyStoreForWindow(
+            hwnd, propsys.IID_IPropertyStore
+        )
+        store.SetValue((fmtid, _PID_AUMID), propsys.PROPVARIANTType(aumid))
+        if ico.is_file():
+            store.SetValue(
+                (fmtid, _PID_RELAUNCH_ICON), propsys.PROPVARIANTType(f"{ico},0")
+            )
+        store.SetValue(
+            (fmtid, _PID_RELAUNCH_NAME), propsys.PROPVARIANTType(display_name)
+        )
+        pythonw = _pythonw_executable()
+        if pythonw is not None:
+            store.SetValue(
+                (fmtid, _PID_RELAUNCH_COMMAND),
+                propsys.PROPVARIANTType(f'"{pythonw}" -m {_LAUNCHER_MODULE}'),
+            )
+        store.Commit()
+        _RELAUNCH_STAMPED.add(hwnd)
+        logger.debug("Relaunch properties stamped on hwnd={}", hwnd)
+        return True
+    except Exception as exc:  # noqa: BLE001 — cosmetic layer, never load-bearing
+        logger.debug("relaunch properties could not be stamped: {}", exc)
+        return False
+
+
 def _apply_icon_to_hwnd(hwnd: int, ico_path: Path) -> bool:
     """Set window + class icon on a known HWND. Returns True on success."""
     if sys.platform != "win32":
@@ -555,6 +639,12 @@ def _apply_icon_to_hwnd(hwnd: int, ico_path: Path) -> bool:
     if not ico_path.is_file():
         logger.warning("Icon file missing: {}", ico_path)
         return False
+
+    # Per-window relaunch properties FIRST — the only layer the taskbar button
+    # honours on every install (incl. MS-Store Python, where the branded-exe
+    # re-exec cannot run). The class/WM_SETICON work below still covers the
+    # titlebar + Alt-Tab surfaces.
+    set_window_relaunch_properties(hwnd, ico_path=ico_path)
 
     try:
         import ctypes
