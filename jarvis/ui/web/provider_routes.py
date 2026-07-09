@@ -50,14 +50,9 @@ router = APIRouter(prefix="/api", tags=["providers"])
 # Setup-Wizard deklarierten Slots.
 ALLOWED_SECRET_KEYS: frozenset[str] = frozenset(s.key for s in WIZARD_SECRETS)
 
-# Local providers allowed to stay active in the airgapped privacy profile.
-# Empty since v1.0.1: Ollama was removed 2026-04-21, and the local
-# "faster-whisper" STT dictation provider was removed from the user-selectable
-# catalog (see provider_spec.py). With no local brain/STT provider left, the
-# airgapped profile admits no provider switch — an honest state, not a
-# regression: airgapped means "local only", and there is currently no local
-# provider to switch TO. (Wake still runs its own local Whisper off this list.)
-LOCAL_PROVIDERS: frozenset[str] = frozenset()
+# The airgapped local-provider allowlist (LOCAL_PROVIDERS) moved to
+# jarvis.brain.app_control: the lock is enforced inside apply_provider_switch
+# so voice, REST, CLI, and brain tools all share it.
 
 # Codex subagent slugs (_CODEX_SUBAGENT_SLUGS / _CODEX_SUBAGENT_CANONICAL) are
 # imported from jarvis.missions.worker_runtime.provider_map — the single source
@@ -235,24 +230,6 @@ class RealtimeOptionsSaveResponse(BaseModel):
 # ----------------------------------------------------------------------
 # Helper
 # ----------------------------------------------------------------------
-
-
-def _persist_brain_primary_fallback(provider: str) -> bool:
-    """Persist ``brain.primary`` directly when the manager's switch signature
-    is too old to accept ``persist=`` (TypeError fallback path).
-
-    Returns ``True`` iff the disk write succeeded. This exists so the legacy
-    fallback never silently drops persistence: even when ``switch`` cannot
-    persist, we still attempt the write here and report the honest outcome.
-    """
-    try:
-        from jarvis.core import config_writer
-
-        config_writer.set_brain_primary(provider)
-        return True
-    except Exception as exc:  # noqa: BLE001
-        log.error("Fallback persist of brain.primary=%r failed: %s", provider, exc)
-        return False
 
 
 def _is_credential_present(spec: ProviderSpec, binary_path: str | None = None) -> bool:
@@ -1623,8 +1600,32 @@ async def delete_secret_value(key: str, request: Request) -> dict[str, Any]:
     return {"ok": True, "key": key}
 
 
+# Maps apply_provider_switch error kinds to HTTP statuses. Route-level concern:
+# the shared switch logic in jarvis.brain.app_control stays transport-agnostic.
+_SWITCH_ERROR_STATUS: dict[str, int] = {
+    "unknown_tier": 400,
+    "unknown_provider": 404,
+    "wrong_tier": 400,
+    "subagent_only": 409,
+    "missing_credential": 409,
+    "airgapped_locked": 403,
+    "switch_failed": 500,
+    "switch_not_applied": 500,
+}
+
+
 @router.post("/brain/switch")
 async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
+    """Switch the active main-brain provider.
+
+    Validation and the switch itself are delegated to the ONE shared
+    implementation (``app_control.apply_provider_switch``) that the voice
+    gate and the brain tools also use — the route only keeps checks that are
+    genuinely transport-specific (503 while the brain is still building, the
+    live plugin-registry 404, and the defensive Codex/Antigravity branches).
+    Previously the route carried its own parallel validation, which could
+    drift from the voice path's.
+    """
     brain = getattr(request.app.state, "brain", None)
     if brain is None or not hasattr(brain, "switch"):
         # The brain is built on a background task after boot, so a very early
@@ -1641,27 +1642,8 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             ),
         )
 
-    spec = get_spec(body.provider)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Unbekannter Provider: {body.provider}")
-    if spec.tier == "brain" and not spec.brain_switchable:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"{spec.label} is subagent-only in Jarvis. It cannot be used as "
-                "the main Brain provider because it cannot see Computer-Use "
-                "screenshots. Activate it in the Subagent section instead."
-            ),
-        )
-
-    cfg = _resolve_cfg(request)
-    profile_name = getattr(getattr(cfg, "profile", None), "name", "default")
-    if profile_name == "airgapped" and body.provider not in LOCAL_PROVIDERS:
-        raise HTTPException(
-            status_code=403,
-            detail="Privacy-Mode aktiv — nur lokale Provider erlaubt.",
-        )
-
+    # Fast, specific 404 while the live registry is at hand — the shared logic
+    # would only surface an unloadable provider later as switch_not_applied.
     available = []
     if hasattr(brain, "available_providers"):
         try:
@@ -1671,21 +1653,18 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     if available and body.provider not in available:
         raise HTTPException(
             status_code=404,
-            detail=f"Provider '{body.provider}' ist nicht im Plugin-Registry verfügbar",
+            detail=f"Provider '{body.provider}' is not available in the plugin registry",
         )
 
-    # Akzeptanzkriterium: Provider ohne gespeicherten Key duerfen nicht aktiviert
-    # werden. Analog zu tts_switch/stt_switch — der Switch wuerde sonst
-    # nominell gelingen, aber der erste Turn faellt mit "missing_key" und der
-    # Provider landet in _dead_providers. Sauberer 409 statt stiller Fehler.
-    # Reihenfolge: 404 (Provider unbekannt/nicht im Registry) kommt VOR
-    # 409 (Provider bekannt, aber Credentials fehlen) — Identifiability vor
-    # Konfiguration.
-    #
-    # Defensive legacy branch: Codex/Antigravity are rejected above as
-    # ``brain_switchable=False``. If that guard is ever relaxed, keep credential
-    # checks explicit instead of letting a switch succeed and fail on first turn.
-    if spec.id == "codex":
+    # Defensive legacy branches: Codex/Antigravity are ``brain_switchable=False``
+    # and rejected by the shared validation below (as "subagent-only", which
+    # must stay the primary message). These credential checks are DORMANT until
+    # that guard is ever relaxed — then they keep a switch from succeeding
+    # nominally and failing on the first turn. Hence the brain_switchable gate.
+    spec = get_spec(body.provider)
+    if spec is not None and not getattr(spec, "brain_switchable", True):
+        pass  # shared validation rejects with the canonical subagent-only 409
+    elif spec is not None and spec.id == "codex":
         if not _codex_brain_usable():
             raise HTTPException(
                 status_code=409,
@@ -1694,7 +1673,7 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                     "run 'codex login' (ChatGPT subscription, slower CLI path)."
                 ),
             )
-    elif spec.id == "antigravity":
+    elif spec is not None and spec.id == "antigravity":
         # OAuth-only: no API key. Gate on the Google CLI login being present,
         # mirroring the codex branch (the CLI bills the Google subscription).
         from jarvis.google_cli.auth_service import GoogleCliAuthService
@@ -1707,66 +1686,34 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                     "agy or the Gemini CLI and log in), then activate."
                 ),
             )
-    elif not _is_credential_present(spec):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"{spec.label} hat keinen gespeicherten API-Key. "
-                "Erst Key in der Karte speichern, dann aktivieren."
-            ),
-        )
 
-    # ``persisted`` reflects the ACTUAL disk outcome, not the echoed request
-    # flag — a failed write must surface as persisted=false so the UI knows the
-    # choice will not survive a restart (anti-silent-drop, AD-OE6). We start
-    # pessimistic and only flip to True when the manager confirms the write.
-    persisted = False
-    try:
-        await brain.switch(body.provider, persist=body.persist)
-    except TypeError:
-        # Genuinely old switch signature without the persist kwarg. We must NOT
-        # silently drop persistence: attempt the disk write directly here, and
-        # if even that path is unavailable, report persisted=false so the UI is
-        # honest about the outcome.
-        await brain.switch(body.provider)
-        if body.persist:
-            persisted = _persist_brain_primary_fallback(body.provider)
-    except Exception as exc:  # noqa: BLE001
-        log.exception("Brain-Switch zu '%s' fehlgeschlagen", body.provider)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Switch fehlgeschlagen: {type(exc).__name__}: {exc}",
-        ) from exc
-    else:
-        # Normal path: read the real persist outcome the manager recorded.
-        if body.persist:
-            persisted = bool(getattr(brain, "last_persist_ok", False))
+    from jarvis.brain.app_control import apply_provider_switch
 
-    # Switch-Validierung: BrainManager.switch() returnt silent bei einem
-    # KeyError im Plugin-Registry. Wir lesen den Live-State zurueck und
-    # propagieren einen Fehler, falls der Wechsel nicht angekommen ist —
-    # sonst sieht das Frontend "200 OK" trotz No-Op und der User wundert
-    # sich, warum die UI bei alt bleibt.
-    actual = getattr(brain, "active_provider", None)
-    if actual != body.provider:
-        log.warning(
-            "Brain-Switch silent failure: requested=%s, actual=%s",
-            body.provider, actual,
-        )
+    result = await apply_provider_switch(
+        "brain",
+        body.provider,
+        cfg=_resolve_cfg(request),
+        persist=body.persist,
+        manager=brain,
+    )
+    if not result.get("ok"):
         raise HTTPException(
-            status_code=500,
-            detail=(
-                f"Switch zu '{body.provider}' nicht angewendet "
-                f"(aktuell: {actual!r}). Provider eventuell nicht ladbar."
-            ),
+            status_code=_SWITCH_ERROR_STATUS.get(str(result.get("error_kind")), 500),
+            detail=result.get("error") or "Switch failed.",
         )
-    if body.persist and not persisted:
+    if body.persist and not result.get("persisted"):
         log.warning(
-            "Brain-Switch to '%s' applied live but persistence to disk FAILED — "
+            "Brain switch to '%s' applied live but persistence to disk FAILED — "
             "the choice will not survive a restart.",
             body.provider,
         )
-    return {"ok": True, "active": body.provider, "persisted": persisted}
+    return {
+        "ok": True,
+        "active": result.get("new_provider", body.provider),
+        "persisted": bool(result.get("persisted")),
+        "old_provider": result.get("old_provider"),
+        "requires_restart": bool(result.get("requires_restart")),
+    }
 
 
 @router.post("/tts/switch")

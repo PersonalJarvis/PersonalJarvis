@@ -64,6 +64,16 @@ def get_spec(provider_id: str) -> Any:
 # restart to take effect.
 SWITCHABLE_TIERS: frozenset[str] = frozenset({"brain", "tts", "stt", "subagent"})
 
+# Local providers allowed to stay active in the airgapped privacy profile.
+# Empty since v1.0.1: Ollama was removed 2026-04-21, and the local
+# "faster-whisper" STT dictation provider was removed from the user-selectable
+# catalog (see provider_spec.py). With no local provider left, the airgapped
+# profile admits no provider switch — an honest state, not a regression:
+# airgapped means "local only", and there is currently no local provider to
+# switch TO. (Wake still runs its own local Whisper off this list.) Lives HERE
+# (not in provider_routes) so every switch path shares the one lock.
+LOCAL_PROVIDERS: frozenset[str] = frozenset()
+
 # Maps a provider id to the credential-manager *provider slot* used by
 # ``cfg.get_provider_secret`` — needed where one key backs several provider ids
 # (e.g. gemini + gemini-flash-tts share ``gemini_api_key``). Kept in sync with
@@ -363,6 +373,7 @@ async def apply_provider_switch(
     *,
     cfg: Any,
     persist: bool = True,
+    manager: Any | None = None,
 ) -> dict[str, Any]:
     """Switch the active provider for ``tier`` to ``provider``.
 
@@ -372,6 +383,9 @@ async def apply_provider_switch(
 
     Never sets a raw key — only flips which provider is active. The target
     provider must already have a stored credential (checked up-front).
+
+    ``manager`` optionally pins the live BrainManager to switch (the REST
+    route passes its ``app.state.brain``); default is the runtime_refs lookup.
     """
     tier = (tier or "").strip().lower()
     provider = (provider or "").strip()
@@ -383,6 +397,21 @@ async def apply_provider_switch(
             "error": (
                 f"Unknown tier {tier!r}. Use one of: "
                 f"{', '.join(sorted(SWITCHABLE_TIERS))}."
+            ),
+        }
+
+    # Airgapped privacy profile admits only local providers. Enforced HERE so
+    # every switch path (voice gate, REST route, CLI, brain tool) hits the one
+    # lock — it used to live only in the REST route, so a voice-initiated
+    # switch could activate a cloud provider in privacy mode.
+    profile_name = getattr(getattr(cfg, "profile", None), "name", "default")
+    if profile_name == "airgapped" and provider not in LOCAL_PROVIDERS:
+        return {
+            "ok": False,
+            "error_kind": "airgapped_locked",
+            "error": (
+                "Privacy mode (airgapped profile) is active — only local "
+                "providers can be activated."
             ),
         }
 
@@ -429,16 +458,20 @@ async def apply_provider_switch(
         }
 
     if tier == "brain":
-        return await _switch_brain(provider, cfg=cfg, persist=persist, old=old_provider)
+        return await _switch_brain(
+            provider, cfg=cfg, persist=persist, old=old_provider, manager=manager
+        )
     if tier == "tts":
         return _switch_tts(provider, cfg=cfg, persist=persist, old=old_provider)
     return _switch_stt(provider, cfg=cfg, persist=persist, old=old_provider)
 
 
 async def _switch_brain(
-    provider: str, *, cfg: Any, persist: bool, old: str | None
+    provider: str, *, cfg: Any, persist: bool, old: str | None,
+    manager: Any | None = None,
 ) -> dict[str, Any]:
-    manager = runtime_refs.get_brain_manager()
+    if manager is None:
+        manager = runtime_refs.get_brain_manager()
     persisted = False
     applied_live = False
 

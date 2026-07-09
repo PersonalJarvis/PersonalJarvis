@@ -390,7 +390,8 @@ def test_brain_switch_rejects_provider_without_key(
     with TestClient(server_with_brain.app) as client:
         resp = client.post("/api/brain/switch", json={"provider": "openrouter"})
         assert resp.status_code == 409
-        assert "API-Key" in resp.json()["detail"]
+        # Shared app_control wording (one implementation for UI + voice + CLI).
+        assert "API key" in resp.json()["detail"]
     # BrainManager.switch() must NOT have been called.
     assert fake.calls == []
 
