@@ -30,7 +30,6 @@ RESERVED_CONTROL_NAMES: frozenset[str] = frozenset(
         "config",
         "wiki",
         "sessions",
-        "chats",
         "skills",
         "outputs",
         "board",

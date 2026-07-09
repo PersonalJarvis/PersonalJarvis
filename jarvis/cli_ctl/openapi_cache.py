@@ -63,12 +63,11 @@ def load_spec(
 ) -> dict[str, Any] | None:
     spec, meta = _read_cache()
     # Freshness is TTL-only -- see the module docstring for why there is no
-    # version/ETag-based revalidation.
-    fresh = (
-        spec is not None
-        and meta
-        and (time.time() - float(meta.get("fetched_at", 0))) < ttl_seconds
-    )
+    # version/ETag-based revalidation. A negative age means the wall clock
+    # moved backwards (VM restore, container clock drift); treat that as
+    # stale rather than "fresh forever".
+    age = time.time() - float(meta.get("fetched_at", 0)) if meta else None
+    fresh = spec is not None and age is not None and 0 <= age < ttl_seconds
     if fresh:
         return spec
     # Stale or missing: try to (re)fetch the full document.
