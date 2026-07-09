@@ -7,6 +7,40 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **A missing Node.js no longer blocks the one-line installer.** Node only
+  powers the optional coding-agent worker (Claude Code / Codex) and a few
+  Node-based integrations; the installer now notes its absence and continues,
+  pointing to the in-app path for adding the worker later — instead of turning
+  new users away at the door.
+
+## [1.0.5] — 2026-07-09
+
+### Fixed
+
+- **The wake word now works for non-English speakers.** Wake detection routes to
+  a model that matches the language you actually speak — the right-language local
+  keyword model, or multilingual Whisper as a fallback — instead of silently
+  going deaf on an English-only model. The missing language model is fetched
+  automatically on a language switch or boot, wake stays pinned to the CPU, and a
+  new **language selector** (with a "Test wake word" readiness check) lets you set
+  the spoken language directly in Settings.
+- **The Windows taskbar button shows the Jarvis mascot** instead of the generic
+  Python logo. The app re-launches through a mascot-branded executable that owns
+  its window, and it self-heals a stale Start-Menu shortcut. Best-effort and
+  fully guarded: on a read-only or Store-Python install it degrades cleanly with
+  no change in behavior.
+
+### Changed
+
+- **Clearer API-keys screen.** NVIDIA NIM is now flagged with a "not recommended"
+  caution badge (its free tier is slow), Inworld TTS is no longer mislabeled as a
+  realtime provider, and the Pipeline / Realtime voice-engine switch was
+  redesigned for clarity.
+
 ## [1.0.4] — 2026-07-08
 
 ### Fixed
