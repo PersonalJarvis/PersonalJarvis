@@ -227,6 +227,7 @@ class WebServer:
         )
         from .chats_routes import router as chats_router
         from .cli_routes import router as cli_router
+        from .commands_routes import router as commands_router
         from .drop_routes import router as drop_router
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
@@ -300,6 +301,9 @@ class WebServer:
         app.include_router(skills_router)
         app.include_router(docs_router)
         app.include_router(cli_router)
+        # Command Registry — the one machine-readable catalog of app commands
+        # (consumed by the app-command brain tool, the UI, CLI, and docs gen).
+        app.include_router(commands_router)
         app.include_router(friends_router)
         app.include_router(marketplace_router)
         app.state.friend_registry = None
