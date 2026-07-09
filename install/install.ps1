@@ -31,48 +31,54 @@ $PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'
 # modern PowerShell hosts.
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
-# 24-bit brand palette (Charcoal + Gold). Embedded as ANSI escapes so the
-# whole line is one gold sweep. NB: brace the var -- "$e[..." would parse as
-# an array index.
-$e     = [char]27
-$Gold  = "${e}[38;2;231;196;110m"
-$Green = "${e}[38;2;122;200;140m"
-$Dim   = "${e}[38;2;140;140;140m"
-$Red   = "${e}[38;2;224;122;110m"
-$Bold  = "${e}[1m"
-$Rst   = "${e}[0m"
+# 24-bit brand palette (docs/BRAND.md): Signal Yellow on matte black, with the
+# forged-gold wordmark gradient #FFE552 -> #FFD60A -> #B8960A. Embedded as ANSI
+# escapes so the whole line is one gold sweep. NB: brace the var -- "$e[..."
+# would parse as an array index.
+$e        = [char]27
+$GoldHi   = "${e}[38;2;255;229;82m"
+$Gold     = "${e}[38;2;255;214;10m"
+$GoldDeep = "${e}[38;2;184;150;10m"
+$Green    = "${e}[38;2;122;200;140m"
+$Dim      = "${e}[38;2;143;143;143m"
+$Red      = "${e}[38;2;224;122;110m"
+$Bold     = "${e}[1m"
+$Rst      = "${e}[0m"
 
 # Status glyphs from code points (keeps the source ASCII; see encoding rule).
-$Dot = [char]0x25CF   # round bullet
 $Chk = [char]0x2713   # check mark
 $Crs = [char]0x2717   # cross mark
 
 # ----------------------------------------------------------------- helpers
-function Write-Banner([string]$Subtitle) {
+function Write-Banner {
     # Banner glyphs are machine-generated (figlet ANSI Shadow) and live inside
     # this here-string, where non-ASCII is syntactically inert. Do not
-    # hand-edit -- that is how the historical Harvis typo crept in.
+    # hand-edit -- that is how the historical Harvis typo crept in. Rows are
+    # colored as a vertical gradient (hi -> brand -> deep) to match the
+    # forged-gold wordmark.
     $art = @"
 
-$Gold   P  E  R  S  O  N  A  L$Rst
-$Gold     ██╗ █████╗ ██████╗ ██╗   ██╗██╗███████╗
-$Gold     ██║██╔══██╗██╔══██╗██║   ██║██║██╔════╝
-$Gold     ██║███████║██████╔╝██║   ██║██║███████╗
-$Gold██   ██║██╔══██║██╔══██╗╚██╗ ██╔╝██║╚════██║
-$Gold╚█████╔╝██║  ██║██║  ██║ ╚████╔╝ ██║███████║
-$Gold ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝$Rst
+$GoldHi     ██╗ █████╗ ██████╗ ██╗   ██╗██╗███████╗$Rst
+$GoldHi     ██║██╔══██╗██╔══██╗██║   ██║██║██╔════╝$Rst
+$Gold     ██║███████║██████╔╝██║   ██║██║███████╗$Rst
+$Gold██   ██║██╔══██║██╔══██╗╚██╗ ██╔╝██║╚════██║$Rst
+$GoldDeep╚█████╔╝██║  ██║██║  ██║ ╚████╔╝ ██║███████║$Rst
+$GoldDeep ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝$Rst
 
-$Gold  $Dot$Rst $Bold$Subtitle$Rst
+$Dim     P E R S O N A L  J A R V I S   ·   talk to your computer$Rst
+$Dim     Installs the full profile · asks nothing · launches when done$Rst
 "@
     Write-Host $art
 }
 
-function Write-Step([string]$Text)  { Write-Host ""; Write-Host "$Gold  $Dot$Rst $Bold$Text$Rst" }
+# One six-phase journey spans BOTH installer stages: this shell owns phases
+# 1-3, installer.py continues with 4-6 -- keep the numbering in sync there.
+function Write-Phase([string]$Num, [string]$Text) { Write-Host ""; Write-Host "$Gold  $Num$Rst $Bold$Text$Rst" }
 function Write-Ok([string]$Text)     { Write-Host "$Green    $Chk$Rst $Dim$Text$Rst" }
 function Write-Note([string]$Text)   { Write-Host "$Dim      $Text$Rst" }
 function Write-Err([string]$Text)    { Write-Host "$Red    $Crs $Text$Rst" }
 
-Write-Banner 'Quick install - Windows'
+Write-Banner
 
 # ----------------------------------------------------------------- config
 $RepoUrl    = if ($env:JARVIS_INSTALL_REPO) { $env:JARVIS_INSTALL_REPO } else { 'https://github.com/PersonalJarvis/PersonalJarvis.git' }
@@ -106,7 +112,7 @@ function Test-PythonVersion {
 }
 
 # ----------------------------------------------------------------- preflight
-Write-Step 'Checking prerequisites'
+Write-Phase '1/6' 'Prerequisites'
 
 # Python: try `python` first, then `py -3.11`, then `py -3`.
 $pythonExe = $null
@@ -159,7 +165,7 @@ if ($ExtraArgs -contains '--headless') {
 }
 
 # ----------------------------------------------------------------- clone / update
-Write-Step 'Fetching Personal Jarvis'
+Write-Phase '2/6' 'Fetching Personal Jarvis'
 Write-Note $InstallDir
 
 if (Test-Path (Join-Path $InstallDir '.git')) {
@@ -227,8 +233,8 @@ if ($env:JARVIS_PAYLOAD_COMMIT) {
     }
 }
 
-# ----------------------------------------------------------------- venv
-Write-Step 'Creating Python environment'
+# ----------------------------------------------------------------- venv + bootstrap deps
+Write-Phase '3/6' 'Python environment'
 
 $VenvPath = Join-Path $InstallDir '.venv'
 $VenvPython = Join-Path $VenvPath 'Scripts\python.exe'
@@ -239,13 +245,11 @@ if (-not (Test-Path $VenvPython)) {
 }
 Write-Ok 'virtual environment ready'
 
-# ----------------------------------------------------------------- bootstrap deps
-Write-Step 'Installing bootstrap dependencies'
-Write-Note 'rich, packaging'
+Write-Note 'installing bootstrap dependencies (rich, packaging)'
 & $VenvPython -m pip install --quiet --upgrade pip
 & $VenvPython -m pip install --quiet rich packaging
 if ($LASTEXITCODE -ne 0) { Write-Err 'bootstrap pip install failed.'; exit 1 }
-Write-Ok 'done'
+Write-Ok 'bootstrap dependencies ready'
 
 # ----------------------------------------------------------------- hand off
 $InstallerPy = Join-Path $InstallDir 'install\installer.py'
@@ -255,7 +259,7 @@ if (-not (Test-Path $InstallerPy)) {
     exit 1
 }
 
-Write-Step 'Launching the guided installer'
+Write-Note 'handing over to the Python installer (phases 4-6)'
 
 Push-Location $InstallDir
 try {

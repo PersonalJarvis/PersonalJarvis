@@ -21,42 +21,48 @@ REPO_URL="${JARVIS_INSTALL_REPO:-https://github.com/PersonalJarvis/PersonalJarvi
 BRANCH="${JARVIS_INSTALL_REF:-main}"
 INSTALL_DIR="${JARVIS_INSTALL_DIR:-$HOME/.personal-jarvis}"
 
-# 24-bit brand palette (Charcoal + Gold), best-effort. On a real terminal we
-# emit ANSI escapes so the banner sweeps gold and the ✓ ticks render; on a
+# 24-bit brand palette (docs/BRAND.md): Signal Yellow on matte black, with the
+# forged-gold wordmark gradient #FFE552 → #FFD60A → #B8960A. On a real terminal
+# we emit ANSI escapes so the banner sweeps gold and the ✓ ticks render; on a
 # dumb terminal / pipe we omit them entirely.
 if [ -t 1 ]; then
-    GOLD=$(printf '\033[38;2;231;196;110m')
+    GOLD_HI=$(printf '\033[38;2;255;229;82m')
+    GOLD=$(printf '\033[38;2;255;214;10m')
+    GOLD_DEEP=$(printf '\033[38;2;184;150;10m')
     GREEN=$(printf '\033[38;2;122;200;140m')
-    DIM=$(printf '\033[38;2;140;140;140m')
+    DIM=$(printf '\033[38;2;143;143;143m')
     RED=$(printf '\033[38;2;224;122;110m')
     BOLD=$(printf '\033[1m')
     RST=$(printf '\033[0m')
 else
-    GOLD=""; GREEN=""; DIM=""; RED=""; BOLD=""; RST=""
+    GOLD_HI=""; GOLD=""; GOLD_DEEP=""; GREEN=""; DIM=""; RED=""; BOLD=""; RST=""
 fi
 
-step() { printf '\n%s  ●%s %s%s%s\n' "$GOLD" "$RST" "$BOLD" "$1" "$RST"; }
+# One six-phase journey spans BOTH installer stages: this shell owns phases
+# 1-3, installer.py continues with 4-6 — keep the numbering in sync there.
+phase() { printf '\n%s  %s%s %s%s%s\n' "$GOLD" "$1" "$RST" "$BOLD" "$2" "$RST"; }
 ok()   { printf '%s    ✓%s %s%s%s\n' "$GREEN" "$RST" "$DIM" "$1" "$RST"; }
 note() { printf '%s      %s%s\n' "$DIM" "$1" "$RST"; }
 err()  { printf '%s    ✗ %s%s\n' "$RED" "$1" "$RST"; }
 
 # Banner glyphs are machine-generated (figlet "ANSI Shadow"); do not hand-edit
-# — that is how the historical "Harvis" typo crept in.
+# — that is how the historical "Harvis" typo crept in. Rows are colored as a
+# vertical gradient (hi → brand → deep) to match the forged-gold wordmark.
 cat <<EOF
 
-${GOLD}   P  E  R  S  O  N  A  L
-     ██╗ █████╗ ██████╗ ██╗   ██╗██╗███████╗
-     ██║██╔══██╗██╔══██╗██║   ██║██║██╔════╝
-     ██║███████║██████╔╝██║   ██║██║███████╗
-██   ██║██╔══██║██╔══██╗╚██╗ ██╔╝██║╚════██║
-╚█████╔╝██║  ██║██║  ██║ ╚████╔╝ ██║███████║
- ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝${RST}
+${GOLD_HI}     ██╗ █████╗ ██████╗ ██╗   ██╗██╗███████╗${RST}
+${GOLD_HI}     ██║██╔══██╗██╔══██╗██║   ██║██║██╔════╝${RST}
+${GOLD}     ██║███████║██████╔╝██║   ██║██║███████╗${RST}
+${GOLD}██   ██║██╔══██║██╔══██╗╚██╗ ██╔╝██║╚════██║${RST}
+${GOLD_DEEP}╚█████╔╝██║  ██║██║  ██║ ╚████╔╝ ██║███████║${RST}
+${GOLD_DEEP} ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝${RST}
 
-${GOLD}  ●${RST} ${BOLD}Quick install · macOS / Linux${RST}
+${DIM}     P E R S O N A L  J A R V I S   ·   talk to your computer${RST}
+${DIM}     Installs the full profile · asks nothing · launches when done${RST}
 EOF
 
 # -------------------------------------------------------------- preflight
-step 'Checking prerequisites'
+phase '1/6' 'Prerequisites'
 
 find_python() {
     for candidate in python3.13 python3.12 python3.11 python3 python; do
@@ -121,7 +127,7 @@ else
 fi
 
 # -------------------------------------------------------------- clone / update
-step 'Fetching Personal Jarvis'
+phase '2/6' 'Fetching Personal Jarvis'
 note "$INSTALL_DIR"
 
 if [ -d "$INSTALL_DIR/.git" ]; then
@@ -173,8 +179,8 @@ if [ -n "${JARVIS_PAYLOAD_COMMIT:-}" ]; then
     ok "pinned to signed commit ${JARVIS_PAYLOAD_COMMIT:0:12}…"
 fi
 
-# -------------------------------------------------------------- venv
-step 'Creating Python environment'
+# -------------------------------------------------------------- venv + bootstrap deps
+phase '3/6' 'Python environment'
 
 VENV_PATH="$INSTALL_DIR/.venv"
 VENV_PYTHON="$VENV_PATH/bin/python"
@@ -184,12 +190,10 @@ if [ ! -x "$VENV_PYTHON" ]; then
 fi
 ok 'virtual environment ready'
 
-# -------------------------------------------------------------- bootstrap deps
-step 'Installing bootstrap dependencies'
-note 'rich, packaging'
+note 'installing bootstrap dependencies (rich, packaging)'
 "$VENV_PYTHON" -m pip install --quiet --upgrade pip
 "$VENV_PYTHON" -m pip install --quiet rich packaging
-ok 'done'
+ok 'bootstrap dependencies ready'
 
 # -------------------------------------------------------------- hand off
 INSTALLER_PY="$INSTALL_DIR/install/installer.py"
@@ -199,7 +203,7 @@ if [ ! -f "$INSTALLER_PY" ]; then
     exit 1
 fi
 
-step 'Launching the guided installer…'
+note 'handing over to the Python installer (phases 4-6)'
 
 cd "$INSTALL_DIR"
 exec "$VENV_PYTHON" "$INSTALLER_PY" "$@"

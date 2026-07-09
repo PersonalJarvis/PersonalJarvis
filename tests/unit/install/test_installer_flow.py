@@ -18,9 +18,36 @@ def test_dry_run_order_launch_last(monkeypatch, capsys) -> None:
     rc = installer.main(["--dry-run", "--headless"])
     out = capsys.readouterr().out
     assert rc == 0
-    # The launch step must come after every prepare step AND after the summary.
-    assert out.rindex("Launch") > out.rindex("Voice models")
-    assert out.rindex("Launch") > out.rindex("Done")
+    # The launch line must come after every prepare phase AND after the summary.
+    assert out.rindex("Launching") > out.rindex("Voice models")
+    assert out.rindex("Launching") > out.rindex("Personal Jarvis is ready")
+
+
+def test_dry_run_prints_the_numbered_journey(monkeypatch, capsys) -> None:
+    """Design 2026-07-09: one six-phase journey; this stage owns 4/6..6/6 in order."""
+    monkeypatch.setattr(installer, "write_managed_marker", lambda: None)
+    rc = installer.main(["--dry-run", "--headless"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert out.index("4/6") < out.index("5/6") < out.index("6/6")
+    assert "Dependencies" in out
+    assert "Voice models" in out
+    assert "Finish & launch" in out
+
+
+def test_installer_never_prompts() -> None:
+    """Design 2026-07-09: the install is 100% prompt-free — every consent
+    question lives in the app's onboarding. A terminal prompt anywhere in the
+    install path is a regression; this static guard turns it red."""
+    sh = (REPO / "install" / "install.sh").read_text(encoding="utf-8")
+    ps1 = (REPO / "install" / "install.ps1").read_text(encoding="utf-8")
+    py = (REPO / "install" / "installer.py").read_text(encoding="utf-8")
+    for forbidden in ("read -p", "read -r"):
+        assert forbidden not in sh
+    for forbidden in ("Read-Host", "$Host.UI.Prompt"):
+        assert forbidden not in ps1
+    for forbidden in ("input(", "Confirm.ask", "Prompt.ask", "getpass"):
+        assert forbidden not in py
 
 
 def test_update_run_is_detected(monkeypatch, tmp_path) -> None:

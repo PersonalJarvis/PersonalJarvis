@@ -9,24 +9,20 @@ explains each step in one line, and launches the app as its LAST action. All
 setup questions (language, wake word, API keys, Terms) live in the app's
 one-time first-launch onboarding — never in this terminal.
 
-Steps:
-    1. Detect platform + Python version (sanity check; Stage 1 already
-       gate-keeps this, but we re-assert so manual invocations stay safe).
-    2. Install Personal Jarvis editable + runtime deps via pip.
-    3. Optionally install the ``[desktop]`` extras (Windows + macOS GUI
-       users; skipped on headless Linux servers unless ``--with-desktop``).
-    4. Optionally install ``[local-voice]`` extras (Silero VAD, WebRTC VAD,
-       Porcupine). Off by default — ~1.5 GB (Silero pulls torch). The always-on
-       neural wake word (openWakeWord) is a BASE dependency and does NOT need
-       this; only an arbitrary custom wake phrase does (via the separate in-app
-       local-Whisper install).
-    5. Prefetch every voice model the config needs (``python -m jarvis
-       --prefetch``) so the first launch has nothing left to download.
-    6. Best-effort: install the Jarvis-Agent worker CLI (npm) and, on Windows,
-       the Start-Menu shortcut that names the taskbar button.
-    7. Verify the shipped UI build is present + intact.
-    8. Print the summary, then launch the Desktop App / headless server as the
-       last action unless ``--no-launch``.
+The user-visible journey is ONE six-phase sequence spanning both stages: the
+Stage-1 shell prints phases 1-3 (prerequisites, fetch, venv), this script
+continues with 4-6. Keep the numbering in sync with install.sh / install.ps1.
+
+Phases owned here:
+    4/6 Dependencies — editable install + runtime deps via pip. Desktop hosts
+        (Windows/macOS, or ``--with-desktop``) also get the ``[full]`` extras;
+        headless keeps the torch-free base floor.
+    5/6 Voice models — prefetch everything the config needs (``python -m
+        jarvis --prefetch``) + verify what actually landed on disk.
+    6/6 Finish & launch — best-effort worker CLI (npm) + Windows Start-Menu
+        shortcut + UI-bundle integrity check, then the flat summary, then
+        launch the Desktop App / headless server as the LAST action unless
+        ``--no-launch``.
 
 Environment variables (any can be set before re-invoking the installer):
     JARVIS_INSTALL_DIR      override install location
@@ -57,8 +53,7 @@ if hasattr(sys.stdout, "reconfigure"):
 try:
     from rich.console import Console
     from rich.markup import escape as rich_escape
-    from rich.panel import Panel
-    from rich.table import Table
+    from rich.rule import Rule
     from rich.theme import Theme
 except ImportError:  # pragma: no cover - Stage 1 installs rich; failure here is a bug
     print("ERROR: rich is not installed. The Stage-1 bootstrap should have done this.")
@@ -66,14 +61,17 @@ except ImportError:  # pragma: no cover - Stage 1 installs rich; failure here is
     sys.exit(1)
 
 
-# Brand palette (Charcoal + Gold) — matches the Stage-1 shell banner so the
-# two stages read as one continuous install experience.
+# Brand palette (docs/BRAND.md): Signal Yellow on matte black, deep gold for
+# the finale rules — matches the Stage-1 shell banner gradient so the two
+# stages read as one continuous install experience.
 THEME = Theme(
     {
-        "brand": "#e7c46e",
-        "brand.bold": "bold #e7c46e",
+        "brand": "#FFD60A",
+        "brand.bold": "bold #FFD60A",
+        "brand.deep": "#B8960A",
         "ok": "#7ac88c",
-        "muted": "#8c8c8c",
+        "ok.bold": "bold #7ac88c",
+        "muted": "#8F8F8F",
         "bad": "#e07a6e",
     }
 )
@@ -97,10 +95,15 @@ def venv_python() -> Path:
 
 
 # ---------------------------------------------------------------- presentation
-def step(title: str) -> None:
-    """A top-level phase marker (gold ●), matching the Stage-1 shell."""
+def phase(num: str, title: str) -> None:
+    """A numbered phase marker (gold ``N/6``), continuing the Stage-1 journey.
+
+    One six-phase journey spans BOTH installer stages: the Stage-1 shell owns
+    phases 1-3 (prerequisites, fetch, venv), this script owns 4-6 — keep the
+    numbering in sync with install.sh / install.ps1.
+    """
     console.print()
-    console.print(f"[brand]  ●[/] [brand.bold]{title}[/]")
+    console.print(f"[brand]  {num}[/] [brand.bold]{title}[/]")
 
 
 def ok(text: str) -> None:
@@ -153,15 +156,15 @@ def is_headless_linux() -> bool:
 
 # ---------------------------------------------------------------- steps
 def step_preflight() -> None:
-    step("Environment")
-    table = Table.grid(padding=(0, 2))
-    table.add_column(style="muted")
-    table.add_column(style="brand")
-    table.add_row("      platform", f"{platform.system()} {platform.release()} ({platform.machine()})")
-    table.add_row("      python", f"{sys.version.split()[0]}")
-    table.add_row("      repo", str(repo_root()))
-    table.add_row("      headless", "yes" if is_headless_linux() else "no")
-    console.print(table)
+    """Sanity re-assert (Stage 1 already gate-keeps) + a quiet environment line."""
+    console.print()
+    note(
+        f"{platform.system()} {platform.release()} ({platform.machine()})"
+        f" · Python {sys.version.split()[0]}"
+        f" · {repo_root()}"
+    )
+    if is_headless_linux():
+        note("headless Linux detected — installing the server profile")
 
     if sys.version_info < (3, 11):
         console.print("[bad]      Python 3.11+ required.[/]")
@@ -196,7 +199,7 @@ def write_managed_marker() -> None:
 
 
 def step_pip_install(*, with_desktop: bool, with_voice_local: bool, dry_run: bool) -> None:
-    step("Installing Personal Jarvis")
+    phase("4/6", "Dependencies")
     pip = [str(venv_python()), "-m", "pip"]
 
     # ``requirements.txt`` is the Wave 6 hash-pinned, PLATFORM-UNIVERSAL lockfile
@@ -258,7 +261,7 @@ def is_update_run() -> bool:
 
 
 def step_models(*, dry_run: bool) -> None:
-    step("Voice models")
+    phase("5/6", "Voice models")
     note("downloading everything the voice pipeline needs, so the first")
     note("launch is ready immediately - nothing is fetched at startup")
     cmd = [str(venv_python()), "-m", "jarvis", "--prefetch"]
@@ -320,8 +323,7 @@ def verify_models() -> None:
 
 
 def step_worker_cli(*, dry_run: bool) -> None:
-    step("Jarvis-Agent worker CLI")
-    note("the coding-agent worker Jarvis delegates missions to (needs Node.js)")
+    """Finish & launch sub-step: the coding-agent worker CLI (needs Node.js)."""
     if dry_run:
         console.print("[muted]      (dry-run) npm i -g @anthropic-ai/claude-code[/]")
         return
@@ -346,20 +348,19 @@ def step_worker_cli(*, dry_run: bool) -> None:
     except (OSError, subprocess.TimeoutExpired):
         verdict = "failed"
     if verdict == "present":
-        ok("worker CLI already installed")
+        ok("Jarvis-Agent worker CLI already installed")
     elif verdict == "installed":
-        ok("worker CLI installed (npm)")
+        ok("Jarvis-Agent worker CLI installed (npm)")
     elif verdict == "no-npm":
-        note("Node.js/npm not found - the Jarvis-Agent worker can be added later in-app")
+        note("Node.js/npm not found - the Jarvis-Agent worker CLI can be added later in-app")
     else:
-        note("worker CLI install failed - it can be added later in-app")
+        note("Jarvis-Agent worker CLI install failed - it can be added later in-app")
 
 
 def step_shortcut(*, dry_run: bool) -> None:
+    """Finish & launch sub-step (Windows): Start-Menu shortcut = taskbar identity."""
     if sys.platform != "win32":
         return
-    step("Start Menu & taskbar identity")
-    note("so the very first launch shows the Jarvis name + icon, not a generic Python entry")
     if dry_run:
         console.print("[muted]      (dry-run) ensure_start_menu_shortcut()[/]")
         return
@@ -377,9 +378,9 @@ def step_shortcut(*, dry_run: bool) -> None:
     except (OSError, subprocess.TimeoutExpired):
         outcome = ""
     if outcome.endswith("ok"):
-        ok("shortcut in place")
+        ok("Start-Menu shortcut in place (taskbar shows the Jarvis name + icon)")
     else:
-        note("could not create the shortcut - the app will retry on first launch")
+        note("could not create the Start-Menu shortcut - the app will retry on first launch")
 
 
 def step_ui_bundle_check() -> None:
@@ -389,7 +390,6 @@ def step_ui_bundle_check() -> None:
     may not have one. Missing or torn builds are the 'old/broken app' symptom,
     so say it out loud instead of letting the first launch look broken.
     """
-    step("UI bundle")
     dist = repo_root() / "jarvis" / "ui" / "web" / "dist"
     index = dist / "index.html"
     if not index.is_file():
@@ -433,18 +433,17 @@ def _resolved_admin_port() -> int:
 
 
 def step_launch(*, headless: bool, dry_run: bool) -> None:
-    step("Launch")
     if headless or is_headless_linux():
         cmd = [str(venv_python()), "-m", "jarvis.ui.web.launcher", "--headless"]
-        msg = f"headless server on http://localhost:{_resolved_admin_port()}"
+        msg = f"the headless server on http://localhost:{_resolved_admin_port()}"
     elif sys.platform == "win32":
         cmd = [str(repo_root() / "run.bat")]
-        msg = "Desktop App via run.bat"
+        msg = "the Desktop App"
     else:
         cmd = [str(venv_python()), "-m", "jarvis.ui.web.launcher"]
-        msg = "Desktop App"
+        msg = "the Desktop App"
 
-    note(f"starting {msg}")
+    console.print(f"  [muted]Launching {msg} — the app takes over from here…[/]")
     if dry_run:
         console.print(f"[muted]      (dry-run) {' '.join(cmd)}[/]")
         return
@@ -459,38 +458,46 @@ def step_launch(*, headless: bool, dry_run: bool) -> None:
 
 
 def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
+    """The flat finale: two deep-gold rules around a short, calm summary.
+
+    Deliberately NOT a rich ``Panel`` — the boxed panel is the signature look
+    of generated projects (design 2026-07-09); modern installers end flat.
+    """
     console.print()
+    console.print(Rule(style="brand.deep"))
+    console.print(f"  [ok.bold]✓ Personal Jarvis is {'updated' if update else 'ready'}.[/]")
+    console.print(f"    [muted]Installed to[/]  {repo_root()}")
+    if sys.platform == "win32":
+        console.print("    [muted]Start again[/]   [brand]run.bat[/] [muted](in the install folder)[/]")
+    else:
+        console.print("    [muted]Start again[/]   [brand]python -m jarvis.ui.web.launcher[/]")
+    console.print(
+        "    [muted]Update[/]        [muted]re-run the same install one-liner - "
+        "it updates in place[/]"
+    )
     if update:
-        next_line = "Your setup and settings are kept - no re-onboarding."
+        console.print(
+            "    [muted]Next[/]          [muted]your setup and settings are kept - "
+            "no re-onboarding[/]"
+        )
     elif headless or is_headless_linux():
-        next_line = (
-            "Open the printed server address in your browser - a one-time\n"
-            "  setup guide (language, wake word, API keys) runs there.\n"
-            "  It never shows again after that."
+        console.print(
+            f"    [muted]Next[/]          [muted]open http://localhost:{_resolved_admin_port()} "
+            "in your browser - a one-time[/]"
+        )
+        console.print(
+            "    [muted]              setup guide (language, wake word, API keys) runs "
+            "there, once[/]"
         )
     else:
-        next_line = (
-            "The app opens with a one-time setup guide (language, wake word,\n"
-            "  API keys). It never shows again after that."
+        console.print(
+            "    [muted]Next[/]          [muted]the app opens with a one-time setup guide "
+            "(language,[/]"
         )
-    console.print(Panel.fit(
-        "[ok]Personal Jarvis is " + ("updated" if update else "installed") + ".[/]\n\n"
-        f"[muted]Repo[/]   {repo_root()}\n"
-        f"[muted]Venv[/]   {venv_python().parent.parent}\n\n"
-        f"[brand.bold]{'Update' if update else 'What happens next'}[/]\n"
-        f"  {next_line}\n\n"
-        "[brand.bold]Re-run anytime[/]\n"
-        "  • Windows:  [brand]run.bat[/]\n"
-        "  • macOS/Linux:  [brand]python -m jarvis.ui.web.launcher[/]\n\n"
-        "[brand.bold]Update later[/]\n"
-        "  Re-run the same install one-liner - it updates in place and keeps\n"
-        "  your setup.",
-        border_style="brand",
-        title="[brand.bold]✓ Done[/]",
-        title_align="left",
-    ))
-    if not no_launch:
-        console.print("\n[muted]Launching now…[/]")
+        console.print(
+            "    [muted]              wake word, API keys) - it never shows again[/]"
+        )
+    console.print(Rule(style="brand.deep"))
 
 
 # ---------------------------------------------------------------- entry
@@ -544,6 +551,8 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     step_models(dry_run=args.dry_run)
+
+    phase("6/6", "Finish & launch")
     step_worker_cli(dry_run=args.dry_run)
     step_shortcut(dry_run=args.dry_run)
     step_ui_bundle_check()
