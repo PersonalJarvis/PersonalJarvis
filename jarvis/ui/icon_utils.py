@@ -53,8 +53,9 @@ _LAUNCHER_MODULE = "jarvis.ui.web.launcher"
 # IID_IPropertyStore — the COM interface for reading/writing a .lnk's AUMID.
 _IID_IPROPERTYSTORE = "{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}"
 
-# A per-install copy of ``pythonw.exe`` next to the interpreter, carrying the
-# Jarvis mascot as its EMBEDDED executable icon. On Windows the taskbar button of
+# A per-install copy of ``pythonw.exe`` (next to the interpreter, or in the
+# per-user ``%LOCALAPPDATA%\PersonalJarvis\bin`` when the base dir is read-only),
+# carrying the Jarvis mascot as its EMBEDDED icon. On Windows the taskbar button of
 # a running app takes the icon of the LAUNCHING EXECUTABLE — not the window icon,
 # class icon, AUMID, Start-Menu shortcut, registry, or icon cache (all verified
 # to have no effect on the button). A bare ``pythonw.exe`` launch therefore shows
@@ -220,16 +221,87 @@ def _base_pythonw_executable() -> Path | None:
     return alt if alt.exists() else None
 
 
-def _branded_launcher_path() -> Path | None:
-    """Where the mascot-branded base-``pythonw`` copy lives (in the base dir).
+def _user_launcher_dir() -> Path | None:
+    """Per-user home for the branded exe when the base dir is not writable.
 
-    Placed NEXT TO the base interpreter so it finds ``pythonXX.dll`` + the stdlib
-    landmark; the venv is re-attached at launch via ``__PYVENV_LAUNCHER__``.
+    ``%LOCALAPPDATA%\\PersonalJarvis\\bin`` is writable for every account — the
+    base interpreter dir is NOT on most machines (an all-users install lands in
+    ``Program Files``; only an elevated/admin session can write there, which is
+    why base-dir-only branding worked on the maintainer's box and silently kept
+    the Python logo everywhere else).
+    """
+    local = os.environ.get("LOCALAPPDATA")
+    if not local:
+        return None
+    return Path(local) / "PersonalJarvis" / "bin"
+
+
+def _branded_launcher_candidates() -> list[Path]:
+    """Target paths for the branded copy, best first.
+
+    1. NEXT TO the base interpreter — it finds ``pythonXX.dll`` without any
+       extra file, but needs a writable base dir (admin-only under
+       ``Program Files``).
+    2. The per-user dir — always writable, but the interpreter runtime DLLs
+       must be copied beside the exe (see ``_interpreter_runtime_dlls``).
+
+    In both homes the venv/base is re-attached at launch via
+    ``__PYVENV_LAUNCHER__``, so path resolution inside the child is identical.
     """
     base = _base_pythonw_executable()
     if base is None:
-        return None
-    return base.with_name(BRANDED_LAUNCHER_EXE_NAME)
+        return []
+    candidates = [base.with_name(BRANDED_LAUNCHER_EXE_NAME)]
+    user_dir = _user_launcher_dir()
+    if user_dir is not None:
+        candidates.append(user_dir / BRANDED_LAUNCHER_EXE_NAME)
+    return candidates
+
+
+def _interpreter_runtime_dlls(src_dir: Path) -> list[Path]:
+    """The DLLs a *relocated* ``pythonw`` copy needs beside it to start.
+
+    ``pythonw.exe`` imports ``python3XX.dll`` (and stable-ABI extensions import
+    ``python3.dll``), which the loader resolves from the exe's own directory —
+    a copy outside the base dir dies at process start without them.
+    ``vcruntime140*.dll`` is python3XX.dll's own dependency and not guaranteed
+    to be in ``System32``. Everything else (stdlib, ``DLLs/*.pyd``) is resolved
+    through ``__PYVENV_LAUNCHER__`` path bootstrapping, not the exe location.
+    """
+    return sorted({*src_dir.glob("python3*.dll"), *src_dir.glob("vcruntime140*.dll")})
+
+
+def _branded_copy_boots(exe: Path) -> bool:
+    """One out-of-process start of a freshly built *relocated* branded copy.
+
+    A relocated copy that cannot load its runtime DLLs dies before any window
+    exists — and the re-exec parent has already exited, so a broken copy would
+    mean NO app at all (observed during development). Verified once at build
+    time with the same ``__PYVENV_LAUNCHER__`` re-attach as the real launch;
+    on failure the caller deletes the copy and falls back to bare ``pythonw``.
+    """
+    try:
+        import subprocess
+
+        from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+
+        env = dict(os.environ)
+        venv_pythonw = Path(sys.executable).with_name("pythonw.exe")
+        if venv_pythonw.is_file():
+            env["__PYVENV_LAUNCHER__"] = str(venv_pythonw)
+        proc = subprocess.run(  # noqa: S603 — our own freshly built exe
+            [str(exe), "-c", "import sys; sys.exit(0)"],
+            env=env,
+            timeout=30,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return proc.returncode == 0
+    except Exception as exc:  # noqa: BLE001 — an unverifiable copy is a bad copy
+        logger.debug("branded copy smoke check failed for {}: {}", exe, exc)
+        return False
 
 
 def ensure_branded_launcher_exe() -> Path | None:
@@ -237,29 +309,31 @@ def ensure_branded_launcher_exe() -> Path | None:
 
     The taskbar button takes its icon from the window-owning executable, which is
     the *base* interpreter (the venv ``pythonw`` only redirects to it). So we copy
-    ``<base_prefix>/pythonw.exe`` to ``<base_prefix>/PersonalJarvis.exe`` (same
-    dir ⇒ it finds ``pythonXX.dll`` + the stdlib) and stamp the Jarvis ``.ico`` as
-    its embedded icon. The venv is re-attached at launch via ``__PYVENV_LAUNCHER__``
-    (see ``maybe_reexec_through_branded_launcher``), so the branded base copy runs
-    the app with the venv's packages while OWNING the window ⇒ mascot on the
-    taskbar.
+    the base ``pythonw.exe`` to ``PersonalJarvis.exe`` and stamp the Jarvis
+    ``.ico`` as its embedded icon. The venv is re-attached at launch via
+    ``__PYVENV_LAUNCHER__`` (see ``maybe_reexec_through_branded_launcher``), so
+    the branded copy runs the app with the venv's packages while OWNING the
+    window ⇒ mascot on the taskbar.
+
+    Two candidate homes, tried in order (``_branded_launcher_candidates``):
+
+    1. next to the base interpreter — zero extra files, but the base dir is
+       writable only for elevated accounts when Python lives under
+       ``Program Files`` (the common all-users install);
+    2. ``%LOCALAPPDATA%\\PersonalJarvis\\bin`` — writable for EVERY account;
+       the interpreter runtime DLLs are copied beside the exe and the fresh
+       copy is smoke-started once before it is trusted.
 
     Idempotent + self-healing (rebuilds only when missing or older than the
     icon/source exe). Returns ``None`` — caller falls back to bare ``pythonw``,
-    taskbar keeps the Python logo — when branding is impossible:
-
-    * **MS Store Python**: its base exe is a 0-byte app-execution alias in a
-      read-only ``WindowsApps`` package that cannot be copied or branded. Source
-      runs there keep the Python icon; the shipped PyInstaller build is the
-      supported branded path on such machines.
-    * a read-only base dir (a system-wide ``Program Files`` install without write
-      access), or any copy/resource-write failure.
+    taskbar keeps the Python logo — only when NO candidate works, e.g. the
+    **MS Store Python** base exe (a 0-byte app-execution alias that cannot be
+    copied; the shipped PyInstaller build is the branded path there).
     """
     if sys.platform != "win32":
         return None
     src = _base_pythonw_executable()
-    target = _branded_launcher_path()
-    if src is None or target is None:
+    if src is None:
         return None
     ico = project_icon_path()
     if not ico.is_file():
@@ -269,11 +343,31 @@ def ensure_branded_launcher_exe() -> Path | None:
         if src.stat().st_size == 0:
             logger.debug("base pythonw is a 0-byte alias (MS Store); cannot brand")
             return None
-        fresh = (
-            target.is_file()
-            and target.stat().st_mtime
-            >= max(ico.stat().st_mtime, src.stat().st_mtime)
-        )
+    except OSError as exc:
+        logger.debug("base pythonw not statable; cannot brand: {}", exc)
+        return None
+    for target in _branded_launcher_candidates():
+        built = _ensure_branded_copy_at(src, target, ico)
+        if built is not None:
+            return built
+    return None
+
+
+def _ensure_branded_copy_at(src: Path, target: Path, ico: Path) -> Path | None:
+    """Build/refresh ONE branded-copy candidate; ``None`` → try the next home.
+
+    A relocated copy (target dir ≠ base dir) additionally gets the interpreter
+    runtime DLLs and must pass a one-time smoke start — a copy that cannot load
+    ``python3XX.dll`` would exit before any window and leave the user with no
+    app at all (the re-exec parent has already quit by then).
+    """
+    relocated = target.parent != src.parent
+    try:
+        dlls = _interpreter_runtime_dlls(src.parent) if relocated else []
+        newest_input = max(ico.stat().st_mtime, src.stat().st_mtime)
+        fresh = target.is_file() and target.stat().st_mtime >= newest_input
+        if fresh and relocated:
+            fresh = all((target.parent / d.name).is_file() for d in dlls)
         if fresh:
             return target
         # Do not clobber a running copy (best-effort self-heal, not load-bearing).
@@ -282,23 +376,39 @@ def ensure_branded_launcher_exe() -> Path | None:
             return target
         import shutil
 
+        target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, target)
+        for dll in dlls:
+            shutil.copy2(dll, target.parent / dll.name)
         if not _replace_exe_icon(target, ico):
             # A copy without the branded icon is pointless (still shows Python);
-            # remove it so the caller cleanly falls back to bare pythonw.
-            try:
-                target.unlink()
-            except Exception:  # noqa: BLE001
-                pass
+            # remove it so the caller falls through to the next home / bare pythonw.
+            _unlink_quietly(target)
+            return None
+        if relocated and not _branded_copy_boots(target):
+            logger.debug("relocated branded copy does not boot, discarding: {}", target)
+            _unlink_quietly(target)
             return None
         logger.debug("Branded launcher exe ready: {}", target)
         return target
     except PermissionError as exc:
-        logger.debug("base dir not writable; cannot brand launcher: {}", exc)
+        logger.debug("branded home not writable ({}): {}", target.parent, exc)
         return None
     except Exception as exc:  # noqa: BLE001
-        logger.debug("branded launcher exe could not be built: {}", exc)
-        return target if target.is_file() else None
+        logger.debug("branded copy could not be built at {}: {}", target, exc)
+        # A pre-existing SAME-DIR copy is still trustworthy (e.g. the copy step
+        # failed because the file is held open by a running instance). A
+        # relocated leftover is not — its DLL set may be incomplete.
+        if not relocated and target.is_file():
+            return target
+        return None
+
+
+def _unlink_quietly(path: Path) -> None:
+    try:
+        path.unlink()
+    except Exception:  # noqa: BLE001 — best-effort cleanup
+        pass
 
 
 def maybe_reexec_through_branded_launcher(argv: list[str]) -> int | None:
@@ -803,6 +913,114 @@ def pin_linux_wm_class(name: str = LINUX_WM_CLASS) -> bool:
         return True
     except Exception as exc:  # noqa: BLE001 — WM-class pin is a nicety, never load-bearing
         logger.debug("Linux WM_CLASS could not be pinned: {}", exc)
+        return False
+
+
+# The applications-menu .desktop entry (the Linux analog of the AUMID-tagged
+# Start-Menu shortcut on Windows): desktop shells map a running window to a
+# launcher entry — and render THAT entry's ``Icon=`` on the dock/taskbar — by
+# matching the window's WM_CLASS against ``StartupWMClass`` in
+# ``$XDG_DATA_HOME/applications``. The autostart entry under
+# ``~/.config/autostart`` is a different surface (login launch only) and is
+# NOT consulted for icon binding or app search.
+LINUX_DESKTOP_ENTRY_NAME = "personal-jarvis.desktop"
+
+
+def _default_linux_applications_dir() -> Path:
+    xdg = os.environ.get("XDG_DATA_HOME", "").strip()
+    base = Path(xdg) if xdg else Path.home() / ".local" / "share"
+    return base / "applications"
+
+
+def ensure_linux_desktop_entry(applications_dir: Path | None = None) -> bool:
+    """Install/refresh the applications-menu ``.desktop`` entry (Linux only).
+
+    This is what makes (a) "Personal Jarvis" findable in the desktop's app
+    search/menu and (b) the dock/taskbar show the Jarvis icon for the RUNNING
+    window: ``pin_linux_wm_class`` pins the window's WM_CLASS, and this entry's
+    ``StartupWMClass`` is the other half of that handshake. Without it the dock
+    falls back to the generic python3 interpreter icon — the Linux twin of the
+    Windows "taskbar shows Python" symptom.
+
+    Pure ``pathlib`` text I/O, idempotent (rewritten only when the rendered
+    content changed), best-effort — never raises, never blocks the window.
+    ``applications_dir`` is a test seam; without it, non-Linux is a no-op.
+    """
+    if applications_dir is None:
+        if sys.platform != "linux":
+            return False
+        applications_dir = _default_linux_applications_dir()
+    try:
+        from jarvis.assets import bundled_app_icon_png
+        from jarvis.core.config import PROJECT_ROOT
+
+        png = bundled_app_icon_png()
+        icon_line = f"Icon={png}\n" if png is not None and png.is_file() else ""
+        program = sys.executable
+        exec_value = f'"{program}"' if " " in program else program
+        content = (
+            "[Desktop Entry]\n"
+            "Type=Application\n"
+            f"Name={APP_DISPLAY_NAME}\n"
+            "Comment=Voice-driven meta-orchestrator\n"
+            f"Exec={exec_value} -m {_LAUNCHER_MODULE}\n"
+            f"Path={PROJECT_ROOT}\n"
+            "Terminal=false\n"
+            f"{icon_line}"
+            f"StartupWMClass={LINUX_WM_CLASS}\n"
+            "Categories=Utility;\n"
+        )
+        entry = applications_dir / LINUX_DESKTOP_ENTRY_NAME
+        try:
+            if entry.read_text(encoding="utf-8") == content:
+                return True
+        except OSError:
+            pass
+        applications_dir.mkdir(parents=True, exist_ok=True)
+        # Atomic-ish (same idiom as the autostart entry): never leave a
+        # half-written .desktop the desktop environment would choke on.
+        tmp = entry.with_suffix(".desktop.tmp")
+        tmp.write_text(content, encoding="utf-8")
+        tmp.replace(entry)
+        logger.debug("Linux applications .desktop entry written: {}", entry)
+        return True
+    except Exception as exc:  # noqa: BLE001 — menu entry is a nicety, never load-bearing
+        logger.debug("Linux applications .desktop entry not written: {}", exc)
+        return False
+
+
+def apply_macos_dock_icon() -> bool:
+    """Give the running app the Jarvis mascot in the macOS Dock.
+
+    A ``python -m …`` launch on macOS shows the Python rocket in the Dock —
+    the process is the interpreter, and only a packaged ``.app`` bundle carries
+    its own ``CFBundleIconFile``. For source/pip runs the supported override is
+    ``NSApplication.setApplicationIconImage_``, set at runtime before the first
+    window (pywebview's Cocoa backend uses the same shared NSApplication, so
+    the icon sticks). Uses the bundled PNG; AppKit (pyobjc, a pywebview macOS
+    dependency) is probed as a capability, so this is a quiet no-op on any
+    machine without it. Must run on the main thread. Never raises.
+    """
+    if sys.platform != "darwin":
+        return False
+    try:
+        from AppKit import NSApplication, NSImage  # type: ignore[import-not-found]
+    except Exception as exc:  # noqa: BLE001 — no pyobjc → unbranded Dock, never a crash
+        logger.debug("AppKit unavailable; Dock icon not set: {}", exc)
+        return False
+    try:
+        from jarvis.assets import bundled_app_icon_png
+
+        png = bundled_app_icon_png()
+        if png is None or not png.is_file():
+            return False
+        image = NSImage.alloc().initWithContentsOfFile_(str(png))
+        if image is None:
+            return False
+        NSApplication.sharedApplication().setApplicationIconImage_(image)
+        return True
+    except Exception as exc:  # noqa: BLE001 — Dock icon is a nicety, never load-bearing
+        logger.debug("macOS Dock icon could not be applied: {}", exc)
         return False
 
 

@@ -3011,13 +3011,23 @@ class DesktopApp:
         debug = os.environ.get("JARVIS_WEBVIEW_DEBUG") == "1"
 
         # Linux: pin the window's WM_CLASS to match the .desktop's StartupWMClass
-        # BEFORE the GTK window is created, so the taskbar/dock shows the Jarvis
-        # icon instead of the generic python3 interpreter icon. No-op elsewhere.
+        # BEFORE the GTK window is created, and install the applications-menu
+        # .desktop entry that carries the icon those two bind to — together they
+        # make the taskbar/dock show the Jarvis icon instead of the generic
+        # python3 interpreter icon. macOS: set the Dock icon on the shared
+        # NSApplication (a bare interpreter run otherwise shows the Python
+        # rocket). Each is a no-op on the other platforms.
         try:
-            from jarvis.ui.icon_utils import pin_linux_wm_class
+            from jarvis.ui.icon_utils import (
+                apply_macos_dock_icon,
+                ensure_linux_desktop_entry,
+                pin_linux_wm_class,
+            )
 
             pin_linux_wm_class()
-        except Exception:  # noqa: BLE001 — the WM-class pin is never load-bearing
+            ensure_linux_desktop_entry()
+            apply_macos_dock_icon()
+        except Exception:  # noqa: BLE001 — icon/identity pins are never load-bearing
             pass
 
         # Native file drag-out: dragging a saved-download toast drops the REAL
