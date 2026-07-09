@@ -8,8 +8,8 @@
 
 2. **Session file** (`%LOCALAPPDATA%\\Jarvis\\session.json`) — stores the port +
    token of the running primary instance, so a secondary can ping it on
-   ``/internal/activate``. Token-protected, roughly 0600
-   (user ACL).
+   ``/internal/activate``. Token-protected: owner-only 0600 on POSIX
+   (explicit), per-user profile ACL on Windows.
 
 Flow when a secondary starts:
 
@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -126,7 +127,17 @@ class SingleInstance:
 
     def write_session(self, *, port: int, token: str) -> None:
         data = {"port": port, "token": token, "pid": os.getpid()}
-        self.session_file.write_text(json.dumps(data), encoding="utf-8")
+        path = self.session_file
+        # The token authorizes the full control API, so the file must be
+        # owner-only. O_CREAT's mode keeps a NEW file at 0600 from the first
+        # byte; the explicit chmod repairs a pre-existing file from older
+        # builds that wrote with the default umask. Windows relies on the
+        # per-user profile ACL instead of POSIX bits.
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(data))
+        if os.name != "nt":
+            os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
 
     def read_session(self) -> dict[str, Any] | None:
         try:
