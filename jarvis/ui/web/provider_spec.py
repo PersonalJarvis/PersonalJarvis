@@ -121,7 +121,74 @@ _GEMINI_VERTEX = AltCredential(
 
 
 PROVIDERS: tuple[ProviderSpec, ...] = (
-    # ── Brain: Klassischer API-Key ────────────────────────────────────────
+    # ── Brain: providers (Brain-tab card render order) ────────────────────
+    # The Brain tab renders switchable providers in this tuple order; Gemini
+    # leads as the maintainer-recommended default, then OpenRouter, Claude,
+    # OpenAI, NVIDIA. The OAuth-subscription siblings (antigravity/codex,
+    # brain_switchable=False) sit next to their API-key kin and surface only in
+    # the Jarvis-Agents section, never this tab.
+    ProviderSpec(
+        id="gemini",
+        label="Google Gemini",
+        tier="brain",
+        auth_mode="api_key",
+        secret_keys=("gemini_api_key",),
+        dashboard_url="https://aistudio.google.com/app/apikey",
+        credential_help=(
+            "Google AI Studio API key (starts with AIza or AQ.). Pay-as-you-go "
+            "on your AI Studio project. For higher quota, use the Vertex AI "
+            "service-account path instead — it bills a different account."
+        ),
+        alt_credential=_GEMINI_VERTEX,
+        # Maintainer-recommended brain (2026-06-22): best real-world experience.
+        # Badge on the brain card; the model picker highlights gemini-3.5-flash.
+        recommended=True,
+        recommended_model="gemini-3.5-flash",
+    ),
+    # ── Brain: Google subscription via the official Antigravity/Gemini CLI ──
+    # OAuth-only (no API-key slot): we drive the official ``agy``/``gemini`` CLI
+    # as a subprocess over the user's "Sign in with Google" login — billed
+    # against the Google subscription, no Gemini API key. Mirror of the Codex
+    # ChatGPT-login path. The UI renders an OAuth connect widget (auth_mode).
+    ProviderSpec(
+        id="antigravity",
+        label="Antigravity (Google subscription)",
+        tier="brain",
+        auth_mode="antigravity",
+        # Dual billing, mirror of Codex: the Google subscription login OR a
+        # Gemini API key (the Google Cloud credential). The key slot reuses the
+        # shared ``gemini_api_key`` — the same key the Gemini provider uses — so
+        # a user who already set it gets per-token Antigravity billing for free.
+        # Carrying a secret_key flips provider_billing → subscription_or_api.
+        secret_keys=("gemini_api_key",),
+        dashboard_url="https://antigravity.google",
+        # agy has NO `login` subcommand (verified 2026-06-21) — the bare binary
+        # drops into the interactive "Sign in with Google" flow. The Connect
+        # button drives POST /api/antigravity/login (start_login → bare run).
+        login_cli=("agy",),
+        install_hint="Install Antigravity (agy) or sign in with the Gemini CLI",
+        credential_path_hint="~/.gemini/oauth_creds.json",
+        brain_switchable=False,
+        signup_url="https://antigravity.google",
+        credential_help=(
+            "Sign in with your Google account to run heavy subagent tasks over "
+            "your Google subscription via the Antigravity/Gemini CLI — no API "
+            "key, billed to your subscription. Or set a Gemini API key to bill "
+            "per token instead."
+        ),
+    ),
+    ProviderSpec(
+        id="openrouter",
+        label="OpenRouter",
+        tier="brain",
+        auth_mode="api_key",
+        secret_keys=("openrouter_api_key",),
+        dashboard_url="https://openrouter.ai/keys",
+        credential_help=(
+            "OpenRouter API key (starts with sk-or-). One key reaches many "
+            "models; billed per token on your OpenRouter account."
+        ),
+    ),
     ProviderSpec(
         id="claude-api",
         label="Claude (API-Key)",
@@ -164,18 +231,6 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         ),
     ),
     ProviderSpec(
-        id="openrouter",
-        label="OpenRouter",
-        tier="brain",
-        auth_mode="api_key",
-        secret_keys=("openrouter_api_key",),
-        dashboard_url="https://openrouter.ai/keys",
-        credential_help=(
-            "OpenRouter API key (starts with sk-or-). One key reaches many "
-            "models; billed per token on your OpenRouter account."
-        ),
-    ),
-    ProviderSpec(
         id="nvidia",
         label="NVIDIA NIM",
         tier="brain",
@@ -194,61 +249,11 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "background tasks, sluggish as your main or voice brain."
         ),
     ),
-    # ── Brain: Google subscription via the official Antigravity/Gemini CLI ──
-    # OAuth-only (no API-key slot): we drive the official ``agy``/``gemini`` CLI
-    # as a subprocess over the user's "Sign in with Google" login — billed
-    # against the Google subscription, no Gemini API key. Mirror of the Codex
-    # ChatGPT-login path. The UI renders an OAuth connect widget (auth_mode).
-    ProviderSpec(
-        id="antigravity",
-        label="Antigravity (Google subscription)",
-        tier="brain",
-        auth_mode="antigravity",
-        # Dual billing, mirror of Codex: the Google subscription login OR a
-        # Gemini API key (the Google Cloud credential). The key slot reuses the
-        # shared ``gemini_api_key`` — the same key the Gemini provider uses — so
-        # a user who already set it gets per-token Antigravity billing for free.
-        # Carrying a secret_key flips provider_billing → subscription_or_api.
-        secret_keys=("gemini_api_key",),
-        dashboard_url="https://antigravity.google",
-        # agy has NO `login` subcommand (verified 2026-06-21) — the bare binary
-        # drops into the interactive "Sign in with Google" flow. The Connect
-        # button drives POST /api/antigravity/login (start_login → bare run).
-        login_cli=("agy",),
-        install_hint="Install Antigravity (agy) or sign in with the Gemini CLI",
-        credential_path_hint="~/.gemini/oauth_creds.json",
-        brain_switchable=False,
-        signup_url="https://antigravity.google",
-        credential_help=(
-            "Sign in with your Google account to run heavy subagent tasks over "
-            "your Google subscription via the Antigravity/Gemini CLI — no API "
-            "key, billed to your subscription. Or set a Gemini API key to bill "
-            "per token instead."
-        ),
-    ),
-    ProviderSpec(
-        id="gemini",
-        label="Google Gemini",
-        tier="brain",
-        auth_mode="api_key",
-        secret_keys=("gemini_api_key",),
-        dashboard_url="https://aistudio.google.com/app/apikey",
-        credential_help=(
-            "Google AI Studio API key (starts with AIza or AQ.). Pay-as-you-go "
-            "on your AI Studio project. For higher quota, use the Vertex AI "
-            "service-account path instead — it bills a different account."
-        ),
-        alt_credential=_GEMINI_VERTEX,
-        # Maintainer-recommended brain (2026-06-22): best real-world experience.
-        # Badge on the brain card; the model picker highlights gemini-3.5-flash.
-        recommended=True,
-        recommended_model="gemini-3.5-flash",
-    ),
     # xAI Grok was removed as a BRAIN and SUB-AGENT provider on 2026-06-22
     # (maintainer decision: Grok stays only as a TTS voice). The `grok-voice`
     # TTS spec below is intentionally kept, and the `grok_api_key` credential it
     # shares with the (now TTS-only) xAI key remains.
-    # Ollama-Provider 2026-04-21 entfernt — reine API-Provider-Chain.
+    # Ollama provider removed 2026-04-21 — pure API-provider chain.
     # ── TTS ───────────────────────────────────────────────────────────────
     # Voice-Output cards render in this tuple order. OpenRouter leads (one key
     # reaches many vetted speech models); Inworld sits last as a premium

@@ -115,7 +115,7 @@ async def get_task(task_id: str, request: Request) -> dict[str, Any]:
     return task_out
 
 
-@router.post("/{task_id}/cancel")
+@router.post("/{task_id}/cancel", openapi_extra={"x-jarvis-dangerous": True})
 async def cancel_task(task_id: str, request: Request) -> dict[str, Any]:
     """Soft cancel: removes the task from the heap/event index and sets
     its state to ``cancelled``. Does **not** abort a hard CU loop — that's

@@ -1509,7 +1509,7 @@ async def _run_off_pool(fn: Callable[[], object]) -> object:
     return await fut
 
 
-@router.post("/restart-app")
+@router.post("/restart-app", openapi_extra={"x-jarvis-dangerous": True})
 async def restart_app(request: Request, force: bool = False) -> dict[str, object]:
     """Cleanly self-restart the desktop app.
 

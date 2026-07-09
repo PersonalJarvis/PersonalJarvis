@@ -50,6 +50,37 @@ def test_release_smoothing_decays_after_speech_stops():
     mic_level.reset_for_tests()
 
 
+def test_quiet_laptop_mic_speech_is_clearly_visible():
+    """Fresh-machine forensics Bug 17: on a quiet laptop input path (hiss
+    ~0.0005, speech ~0.004 rms) STT/wake work fine but the bars sat at zero —
+    the meter's absolute floors (_MIN_NOISE_FLOOR/_MIN_PEAK) were calibrated
+    on a louder mic. After floor adaptation, quiet-mic speech must render a
+    clearly visible level, not a dead meter."""
+    mic_level.reset_for_tests()
+    got: list[float] = []
+    mic_level.subscribe(got.append)
+
+    for _ in range(80):
+        mic_level.feed(0.0005)  # quiet laptop hiss — floor settles here
+    for _ in range(15):
+        mic_level.feed(0.004)   # normal speech on that mic
+
+    assert got[-1] > 0.25, f"speech on a quiet mic reads near-dead: {got[-1]:.3f}"
+    mic_level.reset_for_tests()
+
+
+def test_muted_mic_stays_dark():
+    """Runaway-gain guard: digital near-silence (muted mic) must NOT produce
+    dancing bars even with the lowered floors."""
+    mic_level.reset_for_tests()
+    got: list[float] = []
+    mic_level.subscribe(got.append)
+    for _ in range(120):
+        mic_level.feed(0.00003)
+    assert got[-1] < 0.05, f"muted mic shows a level: {got[-1]:.3f}"
+    mic_level.reset_for_tests()
+
+
 def test_failing_subscriber_is_swallowed():
     mic_level.reset_for_tests()
 

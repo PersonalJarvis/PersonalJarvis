@@ -95,6 +95,12 @@ def _build_command(
             )
         )
 
+    # Server-declared danger metadata (route `openapi_extra`): the authoritative
+    # signal for the safety gate. `None` (absent) falls back to the method+path
+    # heuristic in safety.is_dangerous — the flag can only ADD strictness here,
+    # never clear it (fail-closed).
+    flagged_dangerous: bool | None = True if op.get("x-jarvis-dangerous") else None
+
     def callback(**kwargs: Any) -> None:
         assume_yes = bool(kwargs.pop("yes", False))
         dry_run = bool(kwargs.pop("dry_run", False))
@@ -119,7 +125,8 @@ def _build_command(
         json_out = as_json()
         if not safety.gate_request(
             method, url_path, body=body,
-            assume_yes=assume_yes, dry_run=dry_run, as_json=json_out,
+            assume_yes=assume_yes, dry_run=dry_run,
+            dangerous=flagged_dangerous, as_json=json_out,
         ):
             return  # dry run: preview already printed, nothing sent
         result = runner(method, url_path, query, body)

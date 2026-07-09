@@ -216,7 +216,7 @@ async def get_mission(mission_id: str, request: Request) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/dispatch", status_code=201)
+@router.post("/dispatch", status_code=201, openapi_extra={"x-jarvis-dangerous": True})
 async def dispatch_mission(
     body: DispatchBody,
     request: Request,
@@ -273,7 +273,7 @@ async def dispatch_mission(
     return {"mission_id": mission_id, "started": str(started).lower()}
 
 
-@router.post("/{mission_id}/cancel")
+@router.post("/{mission_id}/cancel", openapi_extra={"x-jarvis-dangerous": True})
 async def cancel_mission(mission_id: str, request: Request) -> dict[str, Any]:
     """Cancel a mission: terminal state transition + kill the in-flight run.
 
@@ -359,7 +359,7 @@ _TERMINAL_STATE_VALUES: frozenset[str] = frozenset(
 )
 
 
-@router.post("/{mission_id}/rerun")
+@router.post("/{mission_id}/rerun", openapi_extra={"x-jarvis-dangerous": True})
 async def rerun_mission(
     mission_id: str,
     body: RerunBody,
@@ -512,7 +512,7 @@ async def rerun_mission(
     }
 
 
-@router.post("/kill/{worker_id}")
+@router.post("/kill/{worker_id}", openapi_extra={"x-jarvis-dangerous": True})
 async def kill_worker(worker_id: str, request: Request) -> dict[str, Any]:
     """Best-effort worker kill (stub for the Phase-4 MVP).
 

@@ -491,7 +491,7 @@ class OutboundCall(BaseModel):
     opening: str = ""
 
 
-@router.post("/outbound")
+@router.post("/outbound", openapi_extra={"x-jarvis-dangerous": True})
 async def post_outbound(request: Request, body: OutboundCall) -> JSONResponse:
     """Place a real outbound call to a raw E.164 number; speak ``opening`` first.
 

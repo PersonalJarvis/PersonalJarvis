@@ -1577,7 +1577,7 @@ _RESTART_REQUIRED_SECRET_KEYS: frozenset[str] = frozenset({
 })
 
 
-@router.post("/secrets/{key}")
+@router.post("/secrets/{key}", openapi_extra={"x-jarvis-dangerous": True})
 async def set_secret_value(key: str, body: SecretBody, request: Request) -> dict[str, Any]:
     if key not in ALLOWED_SECRET_KEYS:
         raise HTTPException(status_code=404, detail=f"Unbekannter Secret-Key: {key}")

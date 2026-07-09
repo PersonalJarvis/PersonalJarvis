@@ -208,6 +208,12 @@ jobs:
         # pre-push hook so a contributor without the hook can't bypass it.
         run: python scripts/ci/check_cli_coverage.py
 
+      - name: Danger-metadata gate (destructive routes declare x-jarvis-dangerous)
+        # Static + stdlib-only: a mutating route whose path matches a
+        # destructive marker must carry openapi_extra x-jarvis-dangerous so the
+        # CLI dynamic layer + Command Registry gate it. Mirrors pre-push.
+        run: python scripts/ci/check_danger_metadata.py
+
       - name: CLI reference drift gate (docs in sync with command tree)
         # Fails if a curated command was added/changed without regenerating
         # docs/jarvis-cli-reference.md. Mirrors the pre-push docgen gate.
