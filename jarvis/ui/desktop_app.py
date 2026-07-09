@@ -2127,6 +2127,39 @@ class DesktopApp:
         )
         return True
 
+    def request_quit(self) -> bool:
+        """Cleanly quit the app WITHOUT relaunching (Terms declined).
+
+        Same quit sequence as ``request_restart`` — mark the quit, destroy the
+        window, hard-exit if shutdown stalls — but no relauncher is spawned,
+        so the process simply ends. Used by the onboarding Terms gate
+        (design 2026-07-09): declining the Terms must not leave a half-running
+        assistant behind. Returns ``True`` if the quit was scheduled,
+        ``False`` on a headless host (no window to close).
+        """
+        from loguru import logger
+
+        from jarvis.ui.relauncher import run_restart_quit_sequence
+
+        window = getattr(self, "_window", None)
+        if window is None:
+            return False
+
+        def _mark_quit() -> None:
+            self._user_requested_quit = True
+
+        def _quit_soon() -> None:
+            run_restart_quit_sequence(
+                set_quit=_mark_quit,
+                destroy_window=window.destroy,
+            )
+
+        threading.Thread(
+            target=_quit_soon, name="jarvis-decline-quit", daemon=True
+        ).start()
+        logger.info("Quit scheduled (Terms declined; hard-exit fallback armed).")
+        return True
+
     async def _start_speech_and_orb(
         self,
         loop: asyncio.AbstractEventLoop,

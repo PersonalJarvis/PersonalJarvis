@@ -1501,6 +1501,9 @@
       "liability": "Die Nutzung erfolgt vollständig auf eigenes Risiko. Die Entwickler übernehmen keine Haftung für Schäden, Datenverlust oder andere Folgen. Fahre nur fort, wenn du das verstehst und akzeptierst.",
       "accept_label": "Ich verstehe die Risiken und akzeptiere, dass ich Personal Jarvis auf eigenes Risiko nutze.",
       "proceed": "Verstanden — fortfahren",
+      "decline": "Ablehnen & beenden",
+      "declined_title": "Jarvis wird beendet",
+      "declined_body": "Du hast die Bedingungen abgelehnt, deshalb wird Personal Jarvis jetzt geschlossen — es wurde nichts eingerichtet und nichts gespeichert. Starte die App jederzeit erneut, wenn du es dir anders überlegst; diese Frage erscheint dann wieder.",
       "view_terms": "Vollständige Nutzungsbedingungen anzeigen",
       "terms_loading": "Bedingungen werden geladen…"
     },

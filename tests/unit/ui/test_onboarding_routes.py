@@ -81,6 +81,75 @@ def test_router_registers_all_paths():
         "/api/onboarding/terms",
         "/api/onboarding/step",
         "/api/onboarding/accept-terms",
+        "/api/onboarding/decline-terms",
         "/api/onboarding/acknowledge-wake-word",
         "/api/onboarding/complete",
     }
+
+
+# ---------------------------------------------------------------- decline-terms
+# Design 2026-07-09: the install one-liner never asks anything, so the Terms
+# gate is the ONE consent moment — declining it quits the whole app.
+
+
+def test_decline_terms_quits_before_acceptance(client, monkeypatch):
+    calls: list[int] = []
+    monkeypatch.setattr(
+        onboarding_routes, "_schedule_app_shutdown", lambda req: calls.append(1)
+    )
+    r = client.post("/api/onboarding/decline-terms")
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "quitting": True}
+    assert calls == [1]
+    # Nothing is persisted on decline — the next start shows the gate again.
+    assert client.get("/api/onboarding/state").json()["terms"]["accepted"] is False
+
+
+def test_decline_terms_409_after_acceptance(client, monkeypatch):
+    calls: list[int] = []
+    monkeypatch.setattr(
+        onboarding_routes, "_schedule_app_shutdown", lambda req: calls.append(1)
+    )
+    client.post("/api/onboarding/accept-terms")
+    r = client.post("/api/onboarding/decline-terms")
+    assert r.status_code == 409
+    assert calls == []
+
+
+def test_schedule_shutdown_prefers_desktop_quit(monkeypatch):
+    from types import SimpleNamespace
+
+    timers: list[object] = []
+
+    class FakeTimer:
+        def __init__(self, *args, **kwargs):
+            timers.append(self)
+
+        def start(self):  # pragma: no cover - must never run in this test
+            raise AssertionError("hard-exit timer must not start on a desktop host")
+
+    monkeypatch.setattr(onboarding_routes.threading, "Timer", FakeTimer)
+    quit_calls: list[int] = []
+    desktop = SimpleNamespace(request_quit=lambda: quit_calls.append(1) or True)
+    req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(desktop_app=desktop)))
+    onboarding_routes._schedule_app_shutdown(req)
+    assert quit_calls == [1]
+    assert timers == []
+
+
+def test_schedule_shutdown_headless_falls_back_to_hard_exit(monkeypatch):
+    from types import SimpleNamespace
+
+    started: list[tuple] = []
+
+    class FakeTimer:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+
+        def start(self):
+            started.append(self.args)
+
+    monkeypatch.setattr(onboarding_routes.threading, "Timer", FakeTimer)
+    req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
+    onboarding_routes._schedule_app_shutdown(req)
+    assert len(started) == 1  # armed exactly one delayed exit, nothing immediate

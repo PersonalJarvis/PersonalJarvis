@@ -1502,6 +1502,9 @@
       "liability": "You use it entirely at your own risk. The developers accept no liability for any damage, data loss, or other consequences. Only continue if you understand and accept this.",
       "accept_label": "I understand the risks and accept that I use Personal Jarvis at my own risk.",
       "proceed": "I understand — continue",
+      "decline": "Decline & quit",
+      "declined_title": "Jarvis is shutting down",
+      "declined_body": "You declined the Terms, so Personal Jarvis is closing now — nothing was set up and nothing was saved. Start the app again anytime if you change your mind; this screen will ask again.",
       "view_terms": "View the full Terms of Use",
       "terms_loading": "Loading terms…"
     },
