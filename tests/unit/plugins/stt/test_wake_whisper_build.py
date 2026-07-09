@@ -32,6 +32,8 @@ def test_stt_config_wake_defaults_small_and_cpu() -> None:
     assert cfg.wake_model == "base"
     assert cfg.wake_device == "cpu"
     assert cfg.wake_compute_type == "int8"
+    # ADR-0024: CPU-first wake — the GPU turbo upgrade is an explicit opt-in.
+    assert cfg.wake_high_accuracy is False
 
 
 def test_build_wake_whisper_uses_wake_fields_not_utterance_model() -> None:
@@ -53,16 +55,28 @@ def test_build_wake_whisper_uses_wake_fields_not_utterance_model() -> None:
     assert p._compute_type == "int8"
 
 
-def test_build_wake_whisper_custom_phrase_default_gets_turbo_when_probe_verifies() -> None:
-    # DEFAULT (wake_high_accuracy=True) + CUDA + a VERIFIED real inference probe
+def test_build_wake_whisper_custom_phrase_opt_in_gets_turbo_when_probe_verifies() -> None:
+    # OPT-IN (wake_high_accuracy=True) + CUDA + a VERIFIED real inference probe
     # -> a custom phrase upgrades to large-v3-turbo/cuda WITH bias. History: the
-    # default was False after the AP-25 Blackwell hang; re-measured 2026-07-05
-    # (ctranslate2 4.7.1, same GPU: 40/40 inferences, 0 hangs) the hang was
-    # constellation-specific, so the blind flag became the automated probe.
-    p = build_wake_whisper(STTConfig(), wake_phrase="Hey Ruben", cuda_available=True)
+    # default was False after the AP-25 Blackwell hang, flipped to True after the
+    # 2026-07-05 re-measure, then back to False on 2026-07-09 (ADR-0024 CPU-first:
+    # sticky probe caches latched a once-fast wake to base/cpu forever). The
+    # turbo path itself must keep working for users who opt in.
+    cfg = STTConfig(wake_high_accuracy=True)
+    p = build_wake_whisper(cfg, wake_phrase="Hey Ruben", cuda_available=True)
     assert p._model_name == "large-v3-turbo"
     assert p._device == "cuda"
     assert p._initial_prompt == "Hey Ruben"  # bias KEPT — needed to hear the name
+
+
+def test_build_wake_whisper_default_stays_base_cpu_even_on_verified_cuda() -> None:
+    # ADR-0024 guard: with the DEFAULT config (wake_high_accuracy=False) the
+    # wake must stay on the reproducible base/cpu floor even when CUDA is
+    # present AND the inference probe verifies — GPU wake is opt-in only.
+    p = build_wake_whisper(STTConfig(), wake_phrase="Hey Ruben", cuda_available=True)
+    assert p._model_name == "base"
+    assert p._device == "cpu"
+    assert p._initial_prompt == "Hey Ruben"
 
 
 def test_build_wake_whisper_custom_phrase_stays_base_cpu_when_probe_fails(
@@ -116,9 +130,10 @@ def test_build_wake_whisper_custom_phrase_fast_first_stays_base_for_quick_boot()
 
 def test_build_wake_whisper_default_phrase_gets_turbo_no_bias_on_cuda() -> None:
     # The default "Hey Jarvis" / OWW path carries NO custom bias, so on a CUDA
-    # box it still gets the fast turbo upgrade (no bias means nothing to
-    # hallucinate the wake onto silence).
-    p = build_wake_whisper(STTConfig(), wake_phrase=None, cuda_available=True)
+    # box with the high-accuracy OPT-IN it still gets the fast turbo upgrade
+    # (no bias means nothing to hallucinate the wake onto silence).
+    cfg = STTConfig(wake_high_accuracy=True)
+    p = build_wake_whisper(cfg, wake_phrase=None, cuda_available=True)
     assert p._model_name == "large-v3-turbo"
     assert p._device == "cuda"
     assert p._initial_prompt is None  # bias OFF on turbo (no custom phrase)
