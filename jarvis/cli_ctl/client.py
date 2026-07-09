@@ -25,13 +25,17 @@ class JarvisClient:
         control_key: str | None,
         *,
         timeout: float = 30.0,
+        connect_timeout: float = 2.0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         headers = {}
         if control_key:
             headers["Authorization"] = f"Bearer {control_key}"
+        # Split timeouts: a down/absent server must fail in ~2 s (connect),
+        # while a legitimately slow endpoint may still stream for `timeout`.
         self._client = httpx.Client(
-            base_url=base_url, headers=headers, timeout=timeout,
+            base_url=base_url, headers=headers,
+            timeout=httpx.Timeout(timeout, connect=min(connect_timeout, timeout)),
             transport=transport,
         )
         self.base_url = base_url
@@ -49,6 +53,13 @@ class JarvisClient:
             resp = self._client.request(
                 method.upper(), path, params=params, json=json
             )
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            raise ApiError(
+                f"Jarvis at {self.base_url} is unreachable — is the app "
+                "running? Start the desktop app (or `run.bat --headless` on a "
+                "server), or pass --url/--key to target a remote instance.",
+                None,
+            ) from exc
         except httpx.TransportError as exc:
             raise ApiError(
                 f"Jarvis at {self.base_url} is unreachable: {exc}", None
