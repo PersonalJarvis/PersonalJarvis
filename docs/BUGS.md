@@ -1233,6 +1233,61 @@ stops calling it + a real-window Windows check).
 `apply_tk_window_icon` / `ensure_windows_app_identity` call site. A second copy of
 the icon dance is a latent Python-logo regression waiting for the next surface.
 
+### Follow-up 2026-07-09 (part 2): the REAL taskbar root cause — the launching EXE's icon
+
+The JarvisBar fix above was necessary but NOT what the reporter saw. On the test
+box the **main** WebView2 window's taskbar button stayed the Python logo even
+though its window + class icon extracted as the mascot. A full empirical sweep
+settled it: **the Windows 11 taskbar button takes its icon from the executable
+that OWNS the window — and NOTHING else.** Verified to have ZERO effect on the
+button (each set to the mascot, taskbar stayed Python): `WM_SETICON` (big+small),
+`SetClassLongPtrW` (GCLP_HICON/HICONSM), an explicit AUMID, a fresh never-poisoned
+AUMID, the AUMID-tagged Start-Menu shortcut (mascot icon + valid target + AUMID,
+confirmed via `SHGetFileInfo`), the HKCU AUMID `IconResource`, an Explorer restart,
+a full `IconCache.db` wipe, `SHChangeNotify(ASSOCCHANGED)`, and setting the icon
+before first show. The proof of the mechanism: a window launched from a **copy of
+`pythonw.exe` with the mascot stamped as its embedded icon** → mascot taskbar
+button. So the whole class-icon machinery only brands the **titlebar + Alt-Tab**;
+the taskbar button was never actually verified before (only the window's class
+icon was, and the taskbar was ASSUMED to follow it).
+
+**Why one machine and not another (the reporter's exact question).** The taskbar
+button = the window-owning exe's icon, so it depends on *which exe owns the
+window*:
+
+- **Shipped build (the maintainer's main box):** the PyInstaller `Jarvis.exe`
+  embeds the mascot and owns its own window → mascot. Always correct.
+- **Source run on a normal python.org install:** the window-owner is the base
+  interpreter's `pythonw.exe`, a normal writable file we can copy + brand.
+- **Source run on the Microsoft Store Python (the test box):** the venv
+  `pythonw.exe` is a thin redirector that re-spawns the **base** Store
+  `pythonw3.13.exe`, and THAT process owns the window. The Store base exe is a
+  0-byte app-execution alias inside a read-only `WindowsApps` package — it cannot
+  be copied, renamed, or branded. So no in-repo code can brand the taskbar button
+  under the Store Python; that install must run the shipped build, or use a
+  python.org interpreter.
+
+**Fix (works on every brandable install; graceful no-op otherwise).** At the ONE
+launcher chokepoint (`main()`, which every entry point funnels through) re-exec
+the launcher through `PersonalJarvis.exe` — a copy of the **base** `pythonw`
+(`sys.base_prefix`, the true window-owner) placed beside it (so it finds
+`pythonXX.dll` + the stdlib) with the mascot `.ico` stamped in via the Win32
+`*UpdateResource` API. The venv is re-attached in the child via
+`__PYVENV_LAUNCHER__=<venv pythonw>`, so the branded base copy runs the app with
+the venv's packages while OWNING the window → mascot on the taskbar. Guarded
+(env marker → no relaunch loop; skipped for `--headless`/`JARVIS_DEBUG`), and
+best-effort: a 0-byte Store base exe or a read-only base dir returns `None` and
+the app boots in-process exactly as before (taskbar keeps the Python logo, no
+crash). `jarvis/ui/icon_utils.py`: `ensure_branded_launcher_exe` +
+`maybe_reexec_through_branded_launcher` + `_replace_exe_icon`. Guard:
+`tests/unit/ui/test_branded_launcher.py`.
+
+**Verified end-to-end on the Store-Python test box** by installing python.org
+3.13 + rebuilding the venv against it: launching via bare `pythonw -m
+jarvis.ui.web.launcher` now re-execs to `PersonalJarvis.exe`, which OWNS the
+"Personal Jarvis" window, and the live taskbar button is the Gigi ghost (captured
+screenshot), not the Python logo.
+
 ---
 
 ## Bug-008 Episode 2: Transcription view empty (HangupReason drift, regressed after restore) — 2026-05-05

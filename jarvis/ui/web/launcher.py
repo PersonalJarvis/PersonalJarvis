@@ -1052,7 +1052,26 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[BOOT_PROFILE] m_{_name}={(_now - _m_last) * 1000.0:.1f}", flush=True)
         _m_last = _now
 
-    args = _parse_args(argv if argv is not None else sys.argv[1:])
+    _raw_argv = argv if argv is not None else sys.argv[1:]
+    args = _parse_args(_raw_argv)
+
+    # Windows taskbar branding: the taskbar button icon is the LAUNCHING EXE's
+    # embedded icon, which no window-icon / class-icon / AUMID / Start-Menu /
+    # registry / icon-cache work can override (all verified to have no effect on
+    # the button). Under a bare ``pythonw.exe`` that icon is the Python logo. Re-
+    # exec the SAME launcher through ``PersonalJarvis.exe`` — a pythonw copy
+    # carrying the mascot icon — so the taskbar shows the Jarvis ghost. Desktop
+    # only (headless has no taskbar), once (env-guarded), and fully best-effort:
+    # if branding is unavailable it returns None and we boot in-process as before.
+    if not args.headless:
+        try:
+            from jarvis.ui.icon_utils import maybe_reexec_through_branded_launcher
+
+            _reexec = maybe_reexec_through_branded_launcher(list(_raw_argv))
+            if _reexec is not None:
+                return _reexec
+        except Exception:  # noqa: BLE001 — never let branding block boot
+            pass
 
     # Fast-boot headless path: bind the port and start serving a minimal
     # bootstrap server FIRST, then build config + the full FastAPI app + every
