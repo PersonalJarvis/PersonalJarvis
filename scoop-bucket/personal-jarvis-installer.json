@@ -1,17 +1,16 @@
 {
-    "version": "0.5.1-supplychain-wave5-audit-fixes",
-    "description": "Supply-chain hardened installer for Personal Jarvis (cosign + offline Ed25519 + SLSA L3 + ML-DSA-65 + Wave-5 tag-binding + payload-commit pin + content-anchor rename). Scoop distribution makes the package manager's own signing chain the bootstrap-trust root, independent of github.com TLS.",
+    "version": "1.0.5",
+    "description": "Supply-chain hardened installer for Personal Jarvis (cosign + offline Ed25519 + SLSA L3 + ML-DSA-65 + payload-commit pin). Scoop distribution makes the package manager's own signing chain the bootstrap-trust root, independent of github.com TLS.",
     "homepage": "https://github.com/PersonalJarvis/PersonalJarvis",
     "license": "MIT",
     "notes": [
-        "After install, run: personal-jarvis-installer.ps1",
-        "The installer runs a 13-stage classical verifier (Wave 1 cosign + Wave 2 offline Ed25519 + Wave 3 SLSA L3) + Wave 4 ML-DSA-65 + Wave 5 axis E (payload-commit pin) before handing off to the second-stage installer.",
-        "Wave 5 fixes from the supply-chain audit: tag-binding cross-check in SAN extraction (no more downgrade-replay), payload-commit pin (cloned tree now bound to a signed commit instead of HEAD-of-main), and content-anchor rename (in-toto overclaim removed)."
+        "After install, run: personal-jarvis-installer",
+        "The installer runs a multi-stage supply-chain verifier (Wave 1 cosign + Wave 2 offline Ed25519 + Wave 3 SLSA L3 + Wave 4 ML-DSA-65 + Wave 5 payload-commit pin) before handing off to the second-stage installer."
     ],
     "architecture": {
         "64bit": {
-            "url": "https://github.com/PersonalJarvis/PersonalJarvis/releases/download/v0.5.1-supplychain-wave5-audit-fixes/install-verify.ps1",
-            "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+            "url": "https://github.com/PersonalJarvis/PersonalJarvis/releases/download/v1.0.5/install-verify.ps1",
+            "hash": "sha256:5d5cb9d9f853d72b268ab099186de880c1b961ad60f82db327f04d6fd1791e34"
         }
     },
     "bin": [
@@ -22,16 +21,16 @@
     ],
     "checkver": {
         "github": "https://github.com/PersonalJarvis/PersonalJarvis",
-        "regex": "releases/tag/(v[\\d.]+-supplychain-wave\\d+)"
+        "regex": "releases/tag/v([\\d.]+)"
     },
     "autoupdate": {
         "architecture": {
             "64bit": {
-                "url": "https://github.com/PersonalJarvis/PersonalJarvis/releases/download/$version/install-verify.ps1"
+                "url": "https://github.com/PersonalJarvis/PersonalJarvis/releases/download/v$version/install-verify.ps1"
             }
         },
         "hash": {
-            "url": "https://github.com/PersonalJarvis/PersonalJarvis/releases/download/$version/checksums.txt",
+            "url": "https://github.com/PersonalJarvis/PersonalJarvis/releases/download/v$version/checksums.txt",
             "regex": "(?<sha256>[a-fA-F0-9]{64})\\s+\\*?install-verify\\.ps1"
         }
     }

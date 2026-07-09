@@ -3,11 +3,7 @@ class PersonalJarvisInstaller < Formula
   homepage "https://github.com/PersonalJarvis/PersonalJarvis"
   license "MIT"
 
-  # PINNED to the v0.5.1-supplychain-wave5-audit-fixes release.
-  #
-  # Wave-5 audit fixes (this bump): tag-binding, payload-commit pin,
-  # content-anchor rename, dependabot. See
-  # docs/supply-chain/wave5-audit-fixes-validation.md.
+  # PINNED to the v1.0.5 release.
   #
   # When the next release lands, bump `url`, `version`, and `sha256` to
   # the new release. The url MUST point at a single release asset (not a
@@ -18,17 +14,12 @@ class PersonalJarvisInstaller < Formula
   # package manager's signing chain is only meaningful if the pinned
   # artifact is immutable).
   #
-  # SHA-256 SOURCE OF TRUTH: read it from the published checksums.txt
-  # AFTER the v0.5.1 release pipeline completes:
-  #   curl -fsSL https://github.com/PersonalJarvis/PersonalJarvis/releases/download/v0.5.1-supplychain-wave5-audit-fixes/checksums.txt \
+  # SHA-256 SOURCE OF TRUTH: the pinned release's published checksums.txt:
+  #   curl -fsSL https://github.com/PersonalJarvis/PersonalJarvis/releases/download/v1.0.5/checksums.txt \
   #     | awk '/install-verify\.sh$/ {print $1}'
-  # That value MUST be pasted into `sha256` below before the tap is
-  # committed to homebrew-jarvis. Until the release pipeline produces
-  # checksums.txt the sha256 below is a placeholder zero-string and the
-  # tap will refuse to install (Homebrew rejects all-zero sha256).
-  url "https://github.com/PersonalJarvis/PersonalJarvis/releases/download/v0.5.1-supplychain-wave5-audit-fixes/install-verify.sh"
-  version "0.5.1-supplychain-wave5-audit-fixes"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  url "https://github.com/PersonalJarvis/PersonalJarvis/releases/download/v1.0.5/install-verify.sh"
+  version "1.0.5"
+  sha256 "a0dc47933dc1930288b177ebd63924bffd4b35521802c82841d838bcf67eeb09"
 
   def install
     # The downloaded file is a single executable shell script (not an
