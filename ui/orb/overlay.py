@@ -203,60 +203,21 @@ def _resolve_mascot_path(path_str: str | None) -> Path | None:
 def _apply_jarvis_icon_to_tk_root(root: tk.Tk) -> None:
     """Set the Jarvis taskbar/titlebar icon on this Tk root.
 
-    Tkinter on Windows registers a window class without a class icon slot, so
-    Windows falls back to the process icon (``pythonw.exe`` → Python logo).
-    We override on three levels:
-      1. ``SetCurrentProcessExplicitAppUserModelID`` — gives this process a
-         stable taskbar grouping identity (idempotent across processes).
-      2. ``Tk.iconbitmap(default=...)`` — Tk's own way to set an icon for all
-         windows in this interpreter.
-      3. ``WM_SETICON`` + ``SetClassLongPtrW`` — the only reliable override
-         for the taskbar icon, because the taskbar reads the *class* icon.
-
-    Each step is best-effort; any failure is silent (the orb is cosmetic).
+    Thin wrapper over the canonical, cross-platform
+    :func:`jarvis.ui.icon_utils.apply_tk_window_icon` so the orb and the
+    JarvisBar share ONE implementation — the two used to drift apart, which is
+    how the JarvisBar regressed to the Python logo (BUG #UI-Pin-2026-05-05).
+    Best-effort; any failure is silent (the orb is cosmetic).
     """
-    if sys.platform != "win32":
-        return
     try:
-        from jarvis.ui.icon_utils import (
-            ensure_windows_app_identity,
-            project_icon_path,
-            set_window_icon_by_hwnd,
-        )
-    except Exception:  # noqa: BLE001
-        return
+        from jarvis.ui.icon_utils import apply_tk_window_icon
 
-    ensure_windows_app_identity()
-
-    ico_path = project_icon_path()
-    if not ico_path.is_file():
-        return
-
-    # Step 2: Tk-level. ``default=`` applies to all current and future
-    # windows of this interpreter (including hidden toplevels Tk creates
-    # internally), preventing the brief Python-logo flash on first show.
-    try:
-        root.iconbitmap(default=str(ico_path))
+        apply_tk_window_icon(root)
     except Exception:  # noqa: BLE001
         import logging
 
         logging.getLogger("jarvis.orb").debug(
-            "Tk iconbitmap setup failed; continuing without it.",
-            exc_info=True,
-        )
-
-    # Step 3: Win32-level. winfo_id() returns the HWND of the Tk root.
-    try:
-        hwnd = int(root.winfo_id())
-    except Exception:  # noqa: BLE001
-        return
-    try:
-        set_window_icon_by_hwnd(hwnd, ico_path)
-    except Exception:  # noqa: BLE001
-        import logging
-
-        logging.getLogger("jarvis.orb").debug(
-            "Win32 Tk icon setup failed; continuing without it.",
+            "Tk icon setup failed; continuing without it.",
             exc_info=True,
         )
 

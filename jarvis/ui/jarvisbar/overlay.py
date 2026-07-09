@@ -274,6 +274,17 @@ class JarvisBarOverlay:
         root = tk.Tk()
         self._root = root
         root.title("JarvisBar")
+        # Give the bar the Jarvis mascot icon on every OS. Tk otherwise inherits
+        # the interpreter's process icon (pythonw.exe → Python logo on Windows,
+        # python3 on Linux); if this frameless window ever surfaces on the
+        # taskbar/dock it would advertise itself as plain Python
+        # (BUG #UI-Pin-2026-05-05). Best-effort — never blocks the bar.
+        try:
+            from jarvis.ui.icon_utils import apply_tk_window_icon
+
+            apply_tk_window_icon(root)
+        except Exception:  # noqa: BLE001 — the bar is cosmetic; never crash on it
+            log.debug("jarvisbar icon setup skipped", exc_info=True)
         root.overrideredirect(True)
         root.wm_attributes("-topmost", True)
         try:
