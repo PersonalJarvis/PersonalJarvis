@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import { AlertCircle, Bot, Brain, Check, Copy, KeyRound, Loader2, LogIn, LogOut, Mic, Phone, PlugZap, Radio, SlidersHorizontal, Sparkles, Terminal, Volume2, Waypoints, XCircle } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
@@ -131,7 +131,12 @@ export function ApiKeysView() {
   // The LIVE `[voice].mode` (+ cross-family availability) for the "Active"
   // badge AND for gating the segment's own persistence (Feature A). See
   // VoiceEngineMode / EngineModeSwitch above.
-  const { mode: liveMode, realtimeAvailable, setMode: setVoiceMode } = useVoiceMode();
+  const {
+    mode: liveMode,
+    realtimeAvailable,
+    setMode: setVoiceMode,
+    isLoading: liveModeLoading,
+  } = useVoiceMode();
 
   // Reset the selected tab to the mode's first tab whenever the mode changes,
   // so switching Pipeline→Realtime never leaves `active` pointing at a tab
@@ -139,6 +144,16 @@ export function ApiKeysView() {
   useEffect(() => {
     setActive(engineMode === "realtime" ? "realtime" : "brain");
   }, [engineMode]);
+
+  // Open the view on the engine that is actually LIVE (once, when the mode
+  // query resolves) — a user whose voice runs on Realtime should not land on
+  // the Pipeline tab set. Later live-mode changes never yank the view.
+  const viewSyncedToLive = useRef(false);
+  useEffect(() => {
+    if (viewSyncedToLive.current || liveModeLoading) return;
+    viewSyncedToLive.current = true;
+    setEngineMode(liveMode === "realtime" ? "realtime" : "pipeline");
+  }, [liveMode, liveModeLoading]);
 
   const modeTabs = engineMode === "realtime" ? REALTIME_TABS : PIPELINE_TABS;
 
