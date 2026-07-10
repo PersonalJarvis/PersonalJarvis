@@ -1,79 +1,82 @@
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
 import pytest
 
+from jarvis.plugins.realtime.gemini_live import GeminiLiveProvider
+from jarvis.plugins.realtime.openai_realtime import OpenAIRealtimeProvider
 from jarvis.realtime.protocol import RealtimeProvider
 
 
-def _load_provider_class():
-    from jarvis.plugins.realtime.openai_realtime import OpenAIRealtimeProvider
-    return OpenAIRealtimeProvider
-
-
-def _load_gemini_provider_class():
-    from jarvis.plugins.realtime.gemini_live import GeminiLiveProvider
-    return GeminiLiveProvider
-
-
-def test_provider_is_structurally_conformant():
-    cls = _load_provider_class()
-    inst = cls()
-    assert isinstance(inst, RealtimeProvider)
-    assert inst.supports_realtime is True
-    assert inst.name == "openai-realtime"
-
-
-def test_gemini_live_provider_is_structurally_conformant():
-    cls = _load_gemini_provider_class()
-    inst = cls()
-    assert isinstance(inst, RealtimeProvider)
-    assert inst.supports_realtime is True
-    assert inst.name == "gemini-live"
+@pytest.mark.parametrize(
+    ("provider_cls", "provider_id", "input_rate"),
+    [
+        (OpenAIRealtimeProvider, "openai-realtime", 24_000),
+        (GeminiLiveProvider, "gemini-live", 16_000),
+    ],
+)
+def test_provider_is_structurally_conformant(provider_cls, provider_id, input_rate):
+    provider = provider_cls()
+    assert isinstance(provider, RealtimeProvider)
+    assert provider.supports_realtime is True
+    assert provider.name == provider_id
+    assert provider.input_sample_rate == input_rate
+    assert provider.output_sample_rate == 24_000
+    assert provider.credential_candidates
 
 
 @pytest.mark.asyncio
-async def test_can_open_duplex_session_returns_bool_when_keyless(monkeypatch):
-    import jarvis.plugins.realtime.openai_realtime as mod
-
-    monkeypatch.setattr(mod, "get_provider_secret", lambda _p: None)
-    inst = _load_provider_class()()
-    assert await inst.can_open_duplex_session() is False
+@pytest.mark.parametrize("provider_cls", [OpenAIRealtimeProvider, GeminiLiveProvider])
+async def test_keyless_capability_probe_is_false(provider_cls):
+    assert await provider_cls().can_open_duplex_session() is False
 
 
-@pytest.mark.asyncio
-async def test_gemini_live_can_open_duplex_session_returns_bool_when_keyless(monkeypatch):
-    import jarvis.plugins.realtime.gemini_live as mod
+@pytest.mark.parametrize(
+    "path",
+    [
+        Path("jarvis/plugins/realtime/openai_realtime.py"),
+        Path("jarvis/plugins/realtime/gemini_live.py"),
+    ],
+)
+def test_plugin_module_imports_no_jarvis_modules(path: Path):
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    imports = [
+        node.module or ""
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+    ]
+    direct_imports = [
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    ]
+    assert not any(name == "jarvis" or name.startswith("jarvis.") for name in imports)
+    assert not any(
+        name == "jarvis" or name.startswith("jarvis.") for name in direct_imports
+    )
 
-    monkeypatch.setattr(mod, "get_provider_secret", lambda _p: None)
-    inst = _load_gemini_provider_class()()
-    assert await inst.can_open_duplex_session() is False
 
-
-def test_module_does_not_import_openai_at_top_level():
-    # AP-26: the SDK import is lazy inside methods, not at module import.
-    import ast
-    import pathlib
-
-    src = pathlib.Path("jarvis/plugins/realtime/openai_realtime.py").read_text("utf-8")
-    tree = ast.parse(src)
-    top_imports = [
-        n
+@pytest.mark.parametrize(
+    ("path", "sdk_root"),
+    [
+        (Path("jarvis/plugins/realtime/openai_realtime.py"), "openai"),
+        (Path("jarvis/plugins/realtime/gemini_live.py"), "google"),
+    ],
+)
+def test_provider_sdk_import_is_lazy(path: Path, sdk_root: str):
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    top_level = [
+        node
         for node in tree.body
         if isinstance(node, (ast.Import, ast.ImportFrom))
-        for n in (getattr(node, "names", []) or [])
     ]
-    assert not any("openai" in (a.name or "") for a in top_imports)
-
-
-def test_gemini_live_module_does_not_import_google_genai_at_top_level():
-    # AP-26: the SDK import is lazy inside methods, not at module import.
-    import ast
-    import pathlib
-
-    src = pathlib.Path("jarvis/plugins/realtime/gemini_live.py").read_text("utf-8")
-    tree = ast.parse(src)
-    top_imports = [
-        n
-        for node in tree.body
-        if isinstance(node, (ast.Import, ast.ImportFrom))
-        for n in (getattr(node, "names", []) or [])
+    names = [
+        alias.name
+        for node in top_level
+        for alias in (getattr(node, "names", []) or [])
     ]
-    assert not any("google" in (a.name or "") for a in top_imports)
+    modules = [getattr(node, "module", "") or "" for node in top_level]
+    assert not any(name.startswith(sdk_root) for name in [*names, *modules])

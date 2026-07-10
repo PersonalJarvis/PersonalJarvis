@@ -48,7 +48,9 @@ class RealtimeSessionConfig:
     voice: str = ""
     input_sample_rate: int = 16000
     output_sample_rate: int = 24000
-    modalities: tuple[str, ...] = ("audio", "text")
+    # Native audio responses already carry a transcript side-channel. OpenAI's
+    # GA Realtime schema rejects requesting text and audio simultaneously.
+    modalities: tuple[str, ...] = ("audio",)
     turn_detection: str = "server_vad"       # "server_vad" | "semantic_vad"
 
 
@@ -78,6 +80,7 @@ class RealtimeProvider(Protocol):
     supports_realtime: bool
     input_sample_rate: int
     output_sample_rate: int
+    credential_candidates: tuple[tuple[str, str | None], ...]
 
     async def can_open_duplex_session(self) -> bool: ...
     async def open_session(self, cfg: RealtimeSessionConfig) -> RealtimeSession: ...
