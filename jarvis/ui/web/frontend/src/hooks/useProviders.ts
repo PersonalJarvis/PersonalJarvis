@@ -266,6 +266,10 @@ export function useSectionHealth() {
     } catch (error) {
       if ((error as Error).name === "AbortError") return;
       // best-effort — keep whatever we last had rather than clearing to nothing
+    } finally {
+      if (requestController.current === controller) {
+        requestController.current = null;
+      }
     }
   }, []);
 
