@@ -168,6 +168,11 @@ export function useProviders() {
     setProviders((prev) =>
       prev.map((p) => (p.tier === tier ? { ...p, active: p.id === id } : p)),
     );
+    window.dispatchEvent(
+      new CustomEvent("jarvis:provider-selection-pending", {
+        detail: { section: tier, provider: id },
+      }),
+    );
   }, []);
 
   useEffect(() => {
@@ -279,8 +284,40 @@ export function useSectionHealth() {
     // (switch + refetch + test). Each refresh runs REAL connectivity tests
     // server-side, so bursts are collapsed into a single trailing reload.
     let timer: number | undefined;
-    const onChange = () => {
+    const clearSection = (section?: string) => {
+      setHealth((previous) => {
+        if (!section) return {};
+        if (!(section in previous)) return previous;
+        const next = { ...previous };
+        delete next[section];
+        return next;
+      });
+    };
+    const onChange = (event: Event) => {
+      ++requestVersion.current;
+      requestController.current?.abort();
+
+      const detail = (event as CustomEvent<ProviderHealthEventDetail>).detail;
+      const section = detail?.section ?? SECTION_HEALTH_EVENT_SECTIONS[event.type];
+      if (
+        event.type === "jarvis:provider-tested" &&
+        detail?.active &&
+        detail.result &&
+        section
+      ) {
+        setHealth((previous) => ({
+          ...previous,
+          [section]: sectionHealthFromProviderTest(
+            detail.result as ProviderTestResult,
+            detail.provider_label ?? detail.result.provider,
+          ),
+        }));
+      } else {
+        clearSection(section);
+      }
+
       window.clearTimeout(timer);
+      if (event.type === "jarvis:provider-selection-pending") return;
       timer = window.setTimeout(() => void reload(true), 400);
     };
     const events = [
@@ -291,16 +328,65 @@ export function useSectionHealth() {
       "jarvis:realtime-switched",
       "jarvis:computer-use-switched",
       "jarvis:subagent-switched",
+      "jarvis:agent-switched",
       "jarvis:provider-tested",
+      "jarvis:provider-selection-pending",
+      "jarvis:provider-switch-failed",
     ];
     events.forEach((e) => window.addEventListener(e, onChange));
     return () => {
+      ++requestVersion.current;
+      requestController.current?.abort();
       window.clearTimeout(timer);
       events.forEach((e) => window.removeEventListener(e, onChange));
     };
   }, [reload]);
 
   return { health, reload };
+}
+
+interface ProviderHealthEventDetail {
+  section?: string;
+  provider?: string;
+  provider_label?: string;
+  active?: boolean;
+  result?: ProviderTestResult;
+}
+
+const SECTION_HEALTH_EVENT_SECTIONS: Record<string, string> = {
+  "jarvis:brain-switched": "brain",
+  "jarvis:tts-switched": "tts",
+  "jarvis:stt-switched": "stt",
+  "jarvis:realtime-switched": "realtime",
+  "jarvis:computer-use-switched": "computer-use",
+  "jarvis:subagent-switched": "subagents",
+  "jarvis:agent-switched": "subagents",
+};
+
+export function sectionHealthForSubject(
+  health: SectionHealth | undefined,
+  subjectId: string | null | undefined,
+): SectionHealth | undefined {
+  if (!subjectId || health?.subject_id !== subjectId) return undefined;
+  return health;
+}
+
+export function sectionHealthFromProviderTest(
+  result: ProviderTestResult,
+  providerLabel: string,
+): SectionHealth {
+  const status: SectionHealthStatus =
+    result.status === "ok"
+      ? "ok"
+      : result.status === "not_configured"
+        ? "needs_setup"
+        : "error";
+  return {
+    status,
+    reason: result.status,
+    detail: `${providerLabel}: ${result.detail || result.status}`,
+    subject_id: result.provider,
+  };
 }
 
 export async function postSecret(key: string, value: string): Promise<void> {
