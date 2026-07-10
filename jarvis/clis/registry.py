@@ -16,6 +16,14 @@ from jarvis.clis.usage_log import UsageLog
 
 log = logging.getLogger(__name__)
 
+# Defence-in-depth ceiling around ``probe_all`` (Prober already bounds each
+# individual probe, see jarvis/clis/prober.py CHECK_TIMEOUT_S/AUTH_TIMEOUT_S/
+# KILL_WAIT_TIMEOUT_S). This is a second, coarser backstop: bootstrap() is
+# awaited synchronously by the headless CLI path
+# (``asyncio.run(registry.bootstrap())`` in jarvis/clis/loader.py) and must
+# never hang the whole process even if a probe somehow still wedges.
+_BOOTSTRAP_CEILING_S = 30.0
+
 
 class CliToolRegistry:
     def __init__(
@@ -40,7 +48,19 @@ class CliToolRegistry:
 
     async def bootstrap(self) -> None:
         specs = list(self._catalog.all().values())
-        self._status_cache = await self._prober.probe_all(specs)
+        try:
+            self._status_cache = await asyncio.wait_for(
+                self._prober.probe_all(specs), timeout=_BOOTSTRAP_CEILING_S
+            )
+        except TimeoutError:
+            log.warning(
+                "cli-registry: probe_all exceeded the %.0fs bootstrap ceiling — "
+                "keeping %d CLI(s) at 'unknown' status instead of hanging boot.",
+                _BOOTSTRAP_CEILING_S, len(specs),
+            )
+            self._status_cache = {
+                spec.name: CliStatus(error="probe_all timed out") for spec in specs
+            }
         self._tools = {}
         for spec in specs:
             status = self._status_cache.get(spec.name)

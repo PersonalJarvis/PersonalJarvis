@@ -28,6 +28,13 @@ log = logging.getLogger(__name__)
 
 CHECK_TIMEOUT_S = 10.0
 AUTH_TIMEOUT_S = 15.0
+# After a timed-out probe is kill()ed, how long to wait for the OS to reap it
+# before giving up. A .cmd/.bat shim's actual child process can survive
+# kill() (the shim exits, the grandchild lives on) — an unbounded
+# ``await proc.wait()`` here would then hang the probe (and the synchronous
+# bootstrap path that awaits it, see jarvis/clis/loader.py) forever. A leaked
+# zombie process beats an infinite hang.
+KILL_WAIT_TIMEOUT_S = 2.0
 
 
 class CliStatusProber:
@@ -81,7 +88,13 @@ class CliStatusProber:
                 out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=CHECK_TIMEOUT_S)
             except TimeoutError:
                 proc.kill()
-                await proc.wait()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=KILL_WAIT_TIMEOUT_S)
+                except TimeoutError:
+                    log.warning(
+                        "probe-binary(%s): child survived kill() — leaking the "
+                        "zombie instead of hanging the probe.", spec.name,
+                    )
                 return True, None, path
         except FileNotFoundError:
             return False, None, None
@@ -120,7 +133,13 @@ class CliStatusProber:
                 out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=AUTH_TIMEOUT_S)
             except TimeoutError:
                 proc.kill()
-                await proc.wait()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=KILL_WAIT_TIMEOUT_S)
+                except TimeoutError:
+                    log.warning(
+                        "probe-auth(%s): child survived kill() — leaking the "
+                        "zombie instead of hanging the probe.", spec.name,
+                    )
                 return "unknown"
             exit_code = proc.returncode or 0
         except FileNotFoundError:
