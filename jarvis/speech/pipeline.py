@@ -5181,6 +5181,9 @@ class SpeechPipeline:
                 speaking = False
                 await playback.cancel()
                 await self._set_turn_state(TurnTakingState.LISTENING)
+            elif kind == "hangup":
+                speaking = False
+                await playback.cancel()
             elif kind == "turn_complete":
                 await playback.finish_turn()
                 speaking = False
@@ -5240,6 +5243,15 @@ class SpeechPipeline:
                 if hangup_task in done and self._hangup_event.is_set():
                     reason = HANGUP_HOTKEY
                     return HANGUP_HOTKEY
+                # Voice hang-up ("auflegen" / end_call): the session ends its
+                # own pump and reports the reason — end the call for real
+                # instead of unwinding into the classic pipeline. Checked
+                # before turn_complete: in single-turn mode both fire, and
+                # voice_pattern is the more specific cause.
+                session_hangup = str(getattr(session, "hangup_reason", "") or "")
+                if session_hangup:
+                    reason = session_hangup
+                    return session_hangup
                 if turn_complete.is_set():
                     reason = HANGUP_TURN_COMPLETE
                     return HANGUP_TURN_COMPLETE

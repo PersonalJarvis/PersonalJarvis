@@ -245,4 +245,7 @@ async def browser_voice_ws(ws: WebSocket) -> None:
                         if not await _switch_to_classic(str(exc)):
                             break
     finally:
-        await session.end(reason="ws_closed")
+        # A voice hang-up ends the session with its own reason; only a plain
+        # socket teardown reports ws_closed.
+        end_reason = str(getattr(session, "hangup_reason", "") or "") or "ws_closed"
+        await session.end(reason=end_reason)

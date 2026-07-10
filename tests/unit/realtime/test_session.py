@@ -570,7 +570,10 @@ async def test_tool_call_waits_for_final_input_transcript_and_uses_bridge():
     await sess.wait_finished()
     await sess.end(reason="test")
 
-    assert provider.opened_with.tools == bridge.declarations
+    # Bridge tools are declared unchanged; the session appends its own
+    # end_call lifecycle declaration last.
+    assert provider.opened_with.tools[: len(bridge.declarations)] == bridge.declarations
+    assert provider.opened_with.tools[-1]["name"] == "end_call"
     assert bridge.transcripts == ["Open Calculator"]
     assert bridge.calls == [("open_app", {"app_name": "Calculator"})]
     assert provider.session.tool_results == [
@@ -648,3 +651,173 @@ async def test_untranscribed_tool_call_times_out_and_unblocks_provider(monkeypat
     assert bridge.calls == []
     assert provider.session.tool_results[0][0] == "call-timeout"
     assert provider.session.tool_results[0][2]["success"] is False
+
+
+# --- Voice hang-up parity (regex + end_call tool) --------------------------
+
+
+def _hangup_jsons(jsons):
+    return [m for m in jsons if m.get("type") == "hangup"]
+
+
+@pytest.mark.asyncio
+async def test_hangup_phrase_finishes_session_with_voice_pattern():
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="bitte auflegen",  # i18n-allow: German hang-up phrase under test
+                is_final=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="hangup-regex",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason=sess.hangup_reason)
+
+    assert sess.hangup_reason == "voice_pattern"
+    assert _hangup_jsons(jsons)
+    # The explicit closing command ends the call BEFORE any model response,
+    # exactly like the classic pre-brain HANGUP_RE path.
+    assert provider.session.response_requests == 0
+
+
+@pytest.mark.asyncio
+async def test_gemini_fragmented_final_chunks_accumulate_to_hangup():
+    provider = FakeProvider(
+        [
+            RealtimeEvent(type="input_transcript", text="auf", is_final=True),  # i18n-allow
+            RealtimeEvent(type="input_transcript", text="legen", is_final=True),  # i18n-allow
+        ]
+    )
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="hangup-fragments",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason=sess.hangup_reason)
+
+    assert sess.hangup_reason == "voice_pattern"
+    assert _hangup_jsons(jsons)
+
+
+@pytest.mark.asyncio
+async def test_hangup_accumulator_resets_at_turn_boundary():
+    provider = FakeProvider(
+        [
+            RealtimeEvent(type="input_transcript", text="auf", is_final=True),  # i18n-allow
+            RealtimeEvent(type="turn_complete"),
+            RealtimeEvent(
+                type="input_transcript",
+                text="legen wir los",  # i18n-allow: must NOT join across turns
+                is_final=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="hangup-turn-boundary",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert sess.hangup_reason == ""
+    assert _hangup_jsons(jsons) == []
+
+
+@pytest.mark.asyncio
+async def test_end_call_tool_finishes_after_turn_complete():
+    bridge = FakeToolBridge()
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="danke das war alles",  # i18n-allow: polite closing under test
+                is_final=True,
+            ),
+            RealtimeEvent(type="tool_call", call_id="c-end", tool_name="end_call"),
+            RealtimeEvent(type="output_transcript_delta", text="Goodbye!"),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="hangup-end-call",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+        tool_bridge=bridge,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason=sess.hangup_reason)
+
+    # end_call is session lifecycle: acknowledged to the model, never routed
+    # through the tool bridge, and the hang-up waits for the goodbye turn.
+    assert ("c-end", "end_call", {"success": True}) in provider.session.tool_results
+    assert bridge.calls == []
+    assert sess.hangup_reason == "voice_pattern"
+    hangups = _hangup_jsons(jsons)
+    assert hangups
+    turn_completes = [m for m in jsons if m.get("type") == "turn_complete"]
+    assert turn_completes, "the model finishes its goodbye before the hang-up"
+
+
+@pytest.mark.asyncio
+async def test_ordinary_speech_does_not_hang_up():
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="wie ist das wetter heute",  # i18n-allow: ordinary speech guard
+                is_final=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="hangup-guard",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert sess.hangup_reason == ""
+    assert _hangup_jsons(jsons) == []
+    assert provider.session.response_requests == 1

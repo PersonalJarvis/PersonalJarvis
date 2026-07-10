@@ -250,6 +250,48 @@ def test_runtime_status_never_confuses_configured_and_effective_mode() -> None:
     assert status["active_session_provider"] == ""
 
 
+@pytest.mark.asyncio
+async def test_desktop_loop_returns_voice_pattern_on_session_hangup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A voice hang-up ends the call for real — no classic-pipeline fallback."""
+
+    class _HangupSession(_FakeRealtimeSession):
+        hangup_reason = "voice_pattern"
+
+        async def handle_control(self, message) -> None:
+            self.controls.append(message)
+            await self._send_json(
+                {
+                    "type": "audio_ready",
+                    "provider": "fake-live",
+                    "input_sample_rate": 16_000,
+                    "output_sample_rate": 24_000,
+                }
+            )
+
+        async def wait_finished(self) -> None:
+            return None
+
+    pipe = _pipe()
+    built: dict[str, object] = {}
+
+    def _build(**kwargs):
+        session = _HangupSession(kwargs["send_binary"], kwargs["send_json"])
+        built["session"] = session
+        return session
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    monkeypatch.setattr(
+        pipeline_mod, "MicrophoneCapture", lambda **_kwargs: _SilentMic()
+    )
+
+    reason = await asyncio.wait_for(pipe._active_realtime_session(), timeout=2.0)
+
+    assert reason == "voice_pattern"
+    assert built["session"].end_reason == "voice_pattern"
+
+
 async def _collect_stream(pipe: SpeechPipeline, chunks: list) -> list:
     async def _source():
         for chunk in chunks:

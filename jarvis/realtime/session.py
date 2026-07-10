@@ -19,11 +19,30 @@ from jarvis.core.turn_language import resolve_output_language
 from jarvis.realtime.audio import StreamingPcm16Resampler
 from jarvis.realtime.protocol import RealtimeSessionConfig
 from jarvis.realtime.scrub_gate import ScrubHoldGate
+from jarvis.sessions.constants import HANGUP_VOICE_PATTERN
+from jarvis.speech.hangup import HANGUP_RE
 
 log = logging.getLogger(__name__)
 
 _TRANSCRIPT_LOOKAHEAD_S = 0.250
 _TOOL_TRANSCRIPT_WAIT_S = 3.0
+# Grace window for the model to finish its goodbye after an end_call tool
+# call; if the provider never sends turn_complete, hang up anyway.
+_END_CALL_GRACE_S = 10.0
+# Gemini emits is_final per transcript CHUNK, so hang-up matching runs on a
+# per-turn accumulator; the tail-trim bounds it without losing recent words.
+_HANGUP_BUFFER_MAX_CHARS = 300
+# Declared to the realtime model alongside the bridge tools, but handled by
+# the session itself: ending the call is surface lifecycle (like the hotkey),
+# not a risk-tiered Jarvis tool, and must work even without a tool bridge.
+_END_CALL_DECLARATION: dict[str, Any] = {
+    "name": "end_call",
+    "description": (
+        "End the voice call. Call ONLY when the user explicitly says goodbye "
+        "or clearly asks to end the conversation."
+    ),
+    "parameters": {"type": "object", "properties": {}},
+}
 _REALTIME_SAFETY_APPENDIX = (
     "This is a realtime spoken conversation. Never read tool JSON, function-call "
     "arguments, source code, stack traces, file paths, base64, or raw URLs aloud. "
@@ -148,6 +167,10 @@ class RealtimeVoiceSession:
         self._pending_tool_events: list[Any] = []
         self._tool_transcript_task: asyncio.Task[None] | None = None
         self._response_requested_for_turn = False
+        self._hangup_reason = ""
+        self._turn_final_text = ""
+        self._end_after_turn = False
+        self._end_call_timer: asyncio.Task[None] | None = None
 
     def _resolve_lang(self, *, text: str) -> str:
         brain = getattr(self._config, "brain", None)
@@ -229,9 +252,12 @@ class RealtimeVoiceSession:
                 output_sample_rate=output_rate,
                 modalities=("audio",),
                 tools=(
-                    self._tool_bridge.declarations
-                    if self._tool_bridge is not None
-                    else ()
+                    *(
+                        self._tool_bridge.declarations
+                        if self._tool_bridge is not None
+                        else ()
+                    ),
+                    _END_CALL_DECLARATION,
                 ),
             )
             try:
@@ -353,6 +379,22 @@ class RealtimeVoiceSession:
                             message,
                             recoverable=True,
                         )
+                    if transcript and event.is_final:
+                        # Per-turn accumulator: Gemini emits is_final per
+                        # transcript chunk, so "auflegen" may arrive split
+                        # across finals. The space-join reconstructs the
+                        # spoken sequence; turn_complete resets the buffer so
+                        # words never match across turn boundaries.
+                        self._turn_final_text = (
+                            f"{self._turn_final_text} {transcript}".strip()
+                        )[-_HANGUP_BUFFER_MAX_CHARS:]
+                        if HANGUP_RE.search(self._turn_final_text):
+                            log.info(
+                                "realtime[%s] voice hang-up phrase matched",
+                                self.session_id,
+                            )
+                            await self._finish_with_hangup()
+                            break
                     if event.is_final and self._pending_tool_events:
                         self._cancel_tool_transcript_wait()
                         pending = self._pending_tool_events
@@ -404,7 +446,12 @@ class RealtimeVoiceSession:
                 elif event.type in {"speech_started", "interrupted"}:
                     await self._barge_in()
                 elif event.type == "tool_call":
-                    if not self._last_user_text:
+                    if str(getattr(event, "tool_name", "") or "") == "end_call":
+                        # Session lifecycle, not a bridge tool: works without
+                        # a tool bridge and must not be held back by the
+                        # missing-transcript guard below.
+                        await self._handle_end_call(event)
+                    elif not self._last_user_text:
                         self._pending_tool_events.append(event)
                         if self._tool_transcript_task is None:
                             self._tool_transcript_task = asyncio.create_task(
@@ -429,6 +476,12 @@ class RealtimeVoiceSession:
                     self._output_active = False
                     self._output_samples_sent = 0
                     self._response_requested_for_turn = False
+                    self._turn_final_text = ""
+                    if self._end_after_turn:
+                        # end_call was acknowledged; the model has now spoken
+                        # its goodbye to the end — hang up.
+                        await self._finish_with_hangup()
+                        break
                 elif event.type == "error":
                     message = safe_preview(
                         event.error or "provider error", max_chars=800
@@ -642,6 +695,55 @@ class RealtimeVoiceSession:
             self._executed_tool_names.add(original_name)
         await self._session.send_tool_result(call_id, wire_name, result)
 
+    async def _handle_end_call(self, event: Any) -> None:
+        if self._session is not None:
+            try:
+                await self._session.send_tool_result(
+                    str(getattr(event, "call_id", "") or ""),
+                    "end_call",
+                    {"success": True},
+                )
+            except Exception:  # noqa: BLE001 — still hang up on a dead wire
+                log.debug("end_call tool result send failed", exc_info=True)
+        self._end_after_turn = True
+        if self._end_call_timer is None or self._end_call_timer.done():
+            self._end_call_timer = asyncio.create_task(
+                self._finish_hangup_after_grace(),
+                name=f"rt-end-call-{self.session_id}",
+            )
+
+    async def _finish_with_hangup(self) -> None:
+        """Mark this session as ended by voice and notify the surface.
+
+        The pump caller breaks right after; the surface (desktop loop or
+        browser client) reads ``hangup_reason`` to end the call instead of
+        falling back into the classic pipeline.
+        """
+        self._hangup_reason = HANGUP_VOICE_PATTERN
+        try:
+            await self._send_json(
+                {"type": "hangup", "reason": HANGUP_VOICE_PATTERN}
+            )
+        except Exception:  # noqa: BLE001, S110 — surface notify is best-effort
+            pass
+
+    async def _finish_hangup_after_grace(self) -> None:
+        try:
+            await asyncio.sleep(_END_CALL_GRACE_S)
+            if self._ended or self._hangup_reason:
+                return
+            log.info(
+                "realtime[%s] end_call grace expired without turn_complete",
+                self.session_id,
+            )
+            await self._finish_with_hangup()
+            if self._pump_task is not None and not self._pump_task.done():
+                self._pump_task.cancel()
+        except asyncio.CancelledError:
+            raise
+        finally:
+            self._end_call_timer = None
+
     async def _reject_untranscribed_tool_call(self, event: Any) -> None:
         if self._session is None:
             return
@@ -717,6 +819,9 @@ class RealtimeVoiceSession:
         self._ended = True
         self._cancel_release_task()
         self._cancel_tool_transcript_wait()
+        if self._end_call_timer is not None and not self._end_call_timer.done():
+            self._end_call_timer.cancel()
+        self._end_call_timer = None
         if self._pump_task is not None and not self._pump_task.done():
             self._pump_task.cancel()
             try:
@@ -752,6 +857,11 @@ class RealtimeVoiceSession:
     @property
     def active_provider(self) -> str:
         return str(getattr(self._provider, "name", "") or "")
+
+    @property
+    def hangup_reason(self) -> str:
+        """Non-empty once the user ended the call by voice (regex or end_call)."""
+        return self._hangup_reason
 
     @property
     def failed(self) -> bool:
