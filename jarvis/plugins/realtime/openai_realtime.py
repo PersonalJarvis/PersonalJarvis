@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -36,6 +37,9 @@ class _ProviderEvent:
     is_final: bool = False
     ms_played: int | None = None
     error: str | None = None
+    call_id: str | None = None
+    tool_name: str | None = None
+    tool_args: dict[str, Any] | None = None
 
 
 def _error_message(event: Any) -> str:
@@ -70,7 +74,7 @@ def _session_payload(cfg: Any) -> dict[str, Any]:
     if voice:
         output["voice"] = voice
 
-    return {
+    payload: dict[str, Any] = {
         "type": "realtime",
         "instructions": str(getattr(cfg, "instructions", "") or ""),
         "output_modalities": ["audio"],
@@ -87,6 +91,20 @@ def _session_payload(cfg: Any) -> dict[str, Any]:
             "output": output,
         },
     }
+    tools = tuple(getattr(cfg, "tools", ()) or ())
+    if tools:
+        payload["tools"] = [
+            {
+                "type": "function",
+                "name": str(tool.get("name", "")),
+                "description": str(tool.get("description", "")),
+                "parameters": tool.get("parameters") or {"type": "object"},
+            }
+            for tool in tools
+            if isinstance(tool, dict) and tool.get("name")
+        ]
+        payload["tool_choice"] = "auto"
+    return payload
 
 
 class _OpenAIRealtimeSession:
@@ -158,6 +176,20 @@ class _OpenAIRealtimeSession:
                 )
             elif event_type == "input_audio_buffer.speech_started":
                 yield _ProviderEvent(type="speech_started")
+            elif event_type == "response.function_call_arguments.done":
+                raw_arguments = str(getattr(event, "arguments", "") or "{}")
+                try:
+                    arguments = json.loads(raw_arguments)
+                except (TypeError, ValueError):
+                    arguments = {}
+                if not isinstance(arguments, dict):
+                    arguments = {}
+                yield _ProviderEvent(
+                    type="tool_call",
+                    call_id=str(getattr(event, "call_id", "") or ""),
+                    tool_name=str(getattr(event, "name", "") or ""),
+                    tool_args=arguments,
+                )
             elif event_type == "response.done":
                 yield _ProviderEvent(type="turn_complete")
             elif event_type == "error":
@@ -182,6 +214,19 @@ class _OpenAIRealtimeSession:
 
     async def interrupt(self) -> None:
         await self._conn.response.cancel()
+
+    async def send_tool_result(
+        self, call_id: str, name: str, result: dict[str, Any]
+    ) -> None:
+        del name
+        await self._conn.conversation.item.create(
+            item={
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": json.dumps(result, ensure_ascii=False, default=str),
+            }
+        )
+        await self._conn.response.create()
 
     async def close(self) -> None:
         if self._closed:

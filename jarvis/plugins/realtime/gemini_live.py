@@ -36,6 +36,9 @@ class _ProviderEvent:
     is_final: bool = False
     ms_played: int | None = None
     error: str | None = None
+    call_id: str | None = None
+    tool_name: str | None = None
+    tool_args: dict[str, Any] | None = None
 
 
 class _GeminiLiveSession:
@@ -103,6 +106,22 @@ class _GeminiLiveSession:
                 if bool(getattr(content, "turn_complete", False)):
                     yield _ProviderEvent(type="turn_complete")
 
+            tool_call = getattr(message, "tool_call", None)
+            for function_call in getattr(tool_call, "function_calls", None) or ():
+                raw_args = getattr(function_call, "args", None) or {}
+                if hasattr(raw_args, "model_dump"):
+                    raw_args = raw_args.model_dump()
+                try:
+                    args = dict(raw_args)
+                except (TypeError, ValueError):
+                    args = {}
+                yield _ProviderEvent(
+                    type="tool_call",
+                    call_id=str(getattr(function_call, "id", "") or ""),
+                    tool_name=str(getattr(function_call, "name", "") or ""),
+                    tool_args=args,
+                )
+
             go_away = getattr(message, "go_away", None)
             if go_away is not None:
                 retry_ms = getattr(go_away, "time_left", None)
@@ -124,6 +143,21 @@ class _GeminiLiveSession:
     async def interrupt(self) -> None:
         # The Live API has no separate response-cancel call for this flow.
         return None
+
+    async def send_tool_result(
+        self, call_id: str, name: str, result: dict[str, Any]
+    ) -> None:
+        from google.genai import types  # lazy (AP-26)
+
+        await self._session.send_tool_response(
+            function_responses=[
+                types.FunctionResponse(
+                    id=call_id,
+                    name=name,
+                    response=result,
+                )
+            ]
+        )
 
     async def close(self) -> None:
         if self._closed:
@@ -177,6 +211,19 @@ class GeminiLiveProvider:
             system_instruction=str(getattr(cfg, "instructions", "") or "") or None,
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
+            **(
+                {
+                    "tools": [
+                        {
+                            "function_declarations": list(
+                                tuple(getattr(cfg, "tools", ()) or ())
+                            )
+                        }
+                    ]
+                }
+                if tuple(getattr(cfg, "tools", ()) or ())
+                else {}
+            ),
             **(
                 {
                     "speech_config": types.SpeechConfig(

@@ -252,52 +252,51 @@ async def test_cooldown_suppresses_immediate_refire(fake_vosk) -> None:
 # --- latency: concurrent grammar re-score + free decode ------------------------
 
 
-class _SlowFakeRecognizer:
-    """Recognizer whose ``FinalResult()`` sleeps, to prove the grammar
-    re-score and the free decode run CONCURRENTLY rather than sequentially.
-
-    Grammar mode re-hears the phrase with a passing confidence; free mode
-    returns a sound-close transcript at the same span, so
-    ``_verify_candidate`` legitimately CONFIRMS — this test only cares about
-    the WALL-CLOCK time the call took, not the decision content (that is
-    covered by the tests above).
-    """
-
-    SLEEP_S = 0.12
-
-    def __init__(self, model, rate, grammar=None):  # noqa: ANN001
-        self._model = model
-        self._grammar = grammar
-
-    def SetWords(self, flag):  # noqa: ANN001, N802
-        pass
-
-    def AcceptWaveform(self, pcm):  # noqa: ANN001, N802
-        return False
-
-    def PartialResult(self):  # noqa: N802
-        return json.dumps({"partial": ""})
-
-    def Result(self):  # noqa: N802
-        return json.dumps({"text": ""})
-
-    def FinalResult(self):  # noqa: N802
-        # time.sleep releases the GIL — this stands in for a real vosk decode
-        # call, which likewise releases the GIL during its C++ work.
-        time.sleep(self.SLEEP_S)
-        if self._grammar is not None:
-            phrase = self._model.phrase.lower()
-            return json.dumps({
-                "text": phrase,
-                "result": _timed_words(phrase, self._model.grammar_conf),
-            })
-        return json.dumps({
-            "text": self._model.free_text,
-            "result": _timed_words(self._model.free_text, 0.9),
-        })
-
-
 def test_verify_candidate_runs_grammar_and_free_decode_concurrently(monkeypatch) -> None:
+    """Deterministic concurrency proof via a 2-party barrier — NOT a
+    wall-clock margin (those flake under CI/system load; measured directly
+    during this mission's benchmarking).
+
+    Each fake recognizer's ``FinalResult()`` blocks on a barrier that only
+    releases once BOTH the grammar-rescore call and the free-decode call have
+    reached it. If ``_verify_candidate`` ran them sequentially, the first
+    call would block forever waiting for a second party that can only arrive
+    after the first one already returned — a deadlock, which the barrier
+    turns into a hard, fast-failing ``BrokenBarrierError`` instead of a
+    flaky timing assertion.
+    """
+    barrier = threading.Barrier(2, timeout=2.0)
+
+    class _BarrierRecognizer:
+        def __init__(self, model, rate, grammar=None):  # noqa: ANN001
+            self._model = model
+            self._grammar = grammar
+
+        def SetWords(self, flag):  # noqa: ANN001, N802
+            pass
+
+        def AcceptWaveform(self, pcm):  # noqa: ANN001, N802
+            return False
+
+        def PartialResult(self):  # noqa: N802
+            return json.dumps({"partial": ""})
+
+        def Result(self):  # noqa: N802
+            return json.dumps({"text": ""})
+
+        def FinalResult(self):  # noqa: N802
+            barrier.wait()
+            if self._grammar is not None:
+                phrase = self._model.phrase.lower()
+                return json.dumps({
+                    "text": phrase,
+                    "result": _timed_words(phrase, self._model.grammar_conf),
+                })
+            return json.dumps({
+                "text": self._model.free_text,
+                "result": _timed_words(self._model.free_text, 0.9),
+            })
+
     mod = types.ModuleType("vosk")
     state = {"model": None}
 
@@ -306,7 +305,7 @@ def test_verify_candidate_runs_grammar_and_free_decode_concurrently(monkeypatch)
         return state["model"]
 
     mod.Model = _model_factory
-    mod.KaldiRecognizer = _SlowFakeRecognizer
+    mod.KaldiRecognizer = _BarrierRecognizer
     mod.SetLogLevel = lambda *_a: None
     monkeypatch.setitem(sys.modules, "vosk", mod)
 
@@ -314,15 +313,7 @@ def test_verify_candidate_runs_grammar_and_free_decode_concurrently(monkeypatch)
     p._ensure_model()  # noqa: SLF001
     window = np.full(48000, 0.2, dtype=np.float32)
 
-    t0 = time.perf_counter()
+    # Would raise threading.BrokenBarrierError (via the executor future) if
+    # the two passes ran sequentially instead of concurrently.
     result = p._verify_candidate(window)  # noqa: SLF001
-    elapsed = time.perf_counter() - t0
-
     assert result is True
-    # Sequential execution would cost >= 2 * SLEEP_S (~0.24 s). A generous
-    # margin (1.7x one sleep) leaves headroom for scheduler jitter while
-    # still failing hard on a regression back to sequential calls.
-    assert elapsed < _SlowFakeRecognizer.SLEEP_S * 1.7, (
-        f"_verify_candidate took {elapsed:.3f}s — looks SEQUENTIAL "
-        f"(~2x{_SlowFakeRecognizer.SLEEP_S}s), not concurrent"
-    )
