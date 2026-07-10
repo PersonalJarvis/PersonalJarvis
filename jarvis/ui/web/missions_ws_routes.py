@@ -177,6 +177,49 @@ class ConnectionManager:
 # ---------------------------------------------------------------------------
 
 
+async def _drain_client_frames(ws: WebSocket) -> None:
+    """Reads and discards inbound client frames until the socket closes.
+
+    Reserved for future control frames (pause/resume etc.); today only a
+    ``{"type": "ping"}`` frame is recognized and silently ignored — the
+    server needs no reply since uvicorn handles WS pings itself.
+
+    Module-level (not a closure) so it is unit-testable against a fake
+    ``ws`` duck-typing only ``receive_json()``.
+    """
+    while True:
+        try:
+            msg = await ws.receive_json()
+        except WebSocketDisconnect:
+            return
+        except RuntimeError as exc:
+            # AP-20: an unclean client disconnect raises RuntimeError
+            # ("WebSocket is not connected ...") instead of
+            # WebSocketDisconnect. `continue` here would re-poll the dead
+            # socket forever — treat it as terminal.
+            logger.debug(
+                "missions_ws: reader socket error (%s) — closing", exc
+            )
+            return
+        except ValueError as exc:
+            # Malformed JSON (json.JSONDecodeError is a ValueError) on an
+            # otherwise-live socket — skip the bad frame, keep reading.
+            logger.debug(
+                "missions_ws: client frame decode error (%s) — ignoring",
+                exc,
+            )
+            continue
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "missions_ws: reader unexpected error (%s) — closing", exc
+            )
+            return
+        # Reserved for future control frames (pause/resume etc.).
+        if isinstance(msg, dict) and msg.get("type") == "ping":
+            # Silent pong skip — bus pings are enough.
+            continue
+
+
 def _resolve_manager(ws: WebSocket) -> tuple[ConnectionManager, "MissionManager"] | None:
     """Looks up ``missions_ws_manager`` + ``mission_manager`` in app.state."""
     app = ws.scope["app"]
@@ -232,41 +275,8 @@ async def missions_ws(ws: WebSocket) -> None:
     queue = await conn_mgr.connect(client_id, last_seq, mission_manager.store)
 
     # 2. Reader task (drains client frames without interpreting them).
-    async def _reader() -> None:
-        while True:
-            try:
-                msg = await ws.receive_json()
-            except WebSocketDisconnect:
-                return
-            except RuntimeError as exc:
-                # AP-20: an unclean client disconnect raises RuntimeError
-                # ("WebSocket is not connected ...") instead of
-                # WebSocketDisconnect. `continue` here would re-poll the dead
-                # socket forever — treat it as terminal.
-                logger.debug(
-                    "missions_ws: reader socket error (%s) — closing", exc
-                )
-                return
-            except ValueError as exc:
-                # Malformed JSON (json.JSONDecodeError is a ValueError) on an
-                # otherwise-live socket — skip the bad frame, keep reading.
-                logger.debug(
-                    "missions_ws: client frame decode error (%s) — ignoring",
-                    exc,
-                )
-                continue
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "missions_ws: reader unexpected error (%s) — closing", exc
-                )
-                return
-            # Reserved for future control frames (pause/resume etc.).
-            if isinstance(msg, dict) and msg.get("type") == "ping":
-                # Silent pong skip — bus pings are enough.
-                continue
-
     reader_task = asyncio.create_task(
-        _reader(), name=f"missions_ws-reader-{client_id[:8]}"
+        _drain_client_frames(ws), name=f"missions_ws-reader-{client_id[:8]}"
     )
 
     # 3. Writer loop. Stop on WS disconnect.
