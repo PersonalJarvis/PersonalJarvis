@@ -79,3 +79,18 @@ def test_delete_secret_degrades_to_file_store_on_locked_keyring(locked_os_keyrin
     # Old behaviour: keyring.delete_password raises -> returns False, value stays.
     assert c.delete_secret("del_prior") is True
     assert c.get_secret("del_prior") is None
+
+
+def test_delete_secret_removes_stale_file_value_when_os_delete_succeeds(
+    monkeypatch, tmp_path
+) -> None:
+    """A later process must not resurrect a value from the fallback file."""
+    monkeypatch.setattr(c, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(c, "_KEYRING_BACKEND_READY", True)
+    monkeypatch.setattr(c, "_FILE_BACKEND_ACTIVE", False)
+    monkeypatch.setattr(keyring, "delete_password", lambda *_args: None)
+    store = c._FileCredStore()
+    store.set(c.KEYRING_SERVICE, "stale_key", "stale-value")
+
+    assert c.delete_secret("stale_key") is True
+    assert store.get(c.KEYRING_SERVICE, "stale_key") is None

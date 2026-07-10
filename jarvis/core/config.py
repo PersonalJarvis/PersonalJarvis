@@ -2523,7 +2523,13 @@ def _ensure_keyring_backend() -> None:
 
 
 def get_secret(key: str, env_fallback: str | None = None) -> str | None:
-    """Retrieve a secret value. Priority: keyring → ENV fallback → .env.
+    """Retrieve a secret value from every portable credential source.
+
+    Priority is OS keyring → ENV → ``.env`` → local-file fallback.
+    The final read-through is required even when a nominally working OS
+    keyring returns ``None``: a previous in-app save may have fallen back to
+    ``data/credentials.json`` while that keyring was temporarily unavailable.
+    Without the read-through the saved key becomes invisible after restart.
 
     Args:
         key: Secret name in the Credential Manager (e.g. "anthropic_api_key").
@@ -2563,7 +2569,7 @@ def get_secret(key: str, env_fallback: str | None = None) -> str | None:
     if env_fallback and (val := os.environ.get(env_fallback)):
         return val
 
-    # Last fallback: .env file (dev only)
+    # Development fallback: .env file.
     env_file = PROJECT_ROOT / ".env"
     if env_file.exists() and env_fallback:
         for line in env_file.read_text(encoding="utf-8").splitlines():
@@ -2573,6 +2579,16 @@ def get_secret(key: str, env_fallback: str | None = None) -> str | None:
             k, _, v = line.partition("=")
             if k.strip() == env_fallback:
                 return v.strip().strip('"').strip("'")
+
+    # Portable read-through. Do not replace a healthy OS backend merely because
+    # it returned no value: consult the file store directly so a key written
+    # during an earlier keyring outage remains recoverable after restart.
+    try:
+        val = _FileCredStore().get(KEYRING_SERVICE, key)
+        if val:
+            return val
+    except Exception:  # noqa: BLE001, S110 — unreadable fallback is absent
+        pass
 
     return None
 
@@ -2655,6 +2671,16 @@ def set_secret(key: str, value: str) -> bool:
         import keyring
 
         keyring.set_password(KEYRING_SERVICE, key, value)
+        # A successful OS-keyring write supersedes any stale file fallback.
+        # When the installed backend IS the file fallback, deleting here would
+        # erase the value that was just written.
+        if not _FILE_BACKEND_ACTIVE:
+            try:
+                store = _FileCredStore()
+                if store.get(KEYRING_SERVICE, key) is not None:
+                    store.delete(KEYRING_SERVICE, key)
+            except Exception:  # noqa: BLE001, S110 — secure write already succeeded
+                pass
         return True
     except Exception as exc:  # noqa: BLE001
         # A reachable-but-unusable OS keyring (e.g. a locked Linux Secret Service)
@@ -2673,13 +2699,19 @@ def set_secret(key: str, value: str) -> bool:
 
 
 def delete_secret(key: str) -> bool:
-    """Remove a secret from the OS keyring (or the headless file fallback)."""
+    """Remove a secret from both the OS keyring and local-file fallback.
+
+    Deleting only the currently active backend can resurrect a stale fallback
+    value on the next process start. The operation is intentionally idempotent:
+    an already-absent key is a successful deletion.
+    """
     _ensure_keyring_backend()
+    keyring_ok = False
     try:
         import keyring
 
         keyring.delete_password(KEYRING_SERVICE, key)
-        return True
+        keyring_ok = True
     except Exception:  # noqa: BLE001
         # Locked/unusable OS keyring: degrade to the file store and retry, so a
         # file-stored credential is actually removed rather than left stale.
@@ -2688,10 +2720,19 @@ def delete_secret(key: str) -> bool:
                 import keyring
 
                 keyring.delete_password(KEYRING_SERVICE, key)
-                return True
-            except Exception:  # noqa: BLE001
-                return False
-        return False
+                keyring_ok = True
+            except Exception:  # noqa: BLE001, S110
+                pass
+
+    file_ok = False
+    try:
+        store = _FileCredStore()
+        if store.get(KEYRING_SERVICE, key) is not None:
+            store.delete(KEYRING_SERVICE, key)
+        file_ok = True
+    except Exception:  # noqa: BLE001, S110
+        pass
+    return keyring_ok or file_ok
 
 
 # ----------------------------------------------------------------------

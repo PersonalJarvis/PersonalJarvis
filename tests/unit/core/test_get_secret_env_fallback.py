@@ -36,3 +36,30 @@ def test_absent_everywhere_returns_none(monkeypatch):
     monkeypatch.setattr(keyring, "get_password", lambda *a, **k: None)
     monkeypatch.delenv("TOTALLY_UNSET_SLOT", raising=False)
     assert get_secret("totally_unset_slot") is None
+
+
+def test_file_fallback_is_read_when_working_keyring_returns_none(monkeypatch, tmp_path):
+    """A prior fallback save remains visible after the OS keyring recovers."""
+    from jarvis.core import config
+
+    monkeypatch.setattr(keyring, "get_password", lambda *a, **k: None)
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    config._FileCredStore().set(
+        config.KEYRING_SERVICE, "openai_api_key", "file-saved-value"
+    )
+
+    assert get_secret("openai_api_key", "OPENAI_API_KEY") == "file-saved-value"
+
+
+def test_environment_still_precedes_file_fallback(monkeypatch, tmp_path):
+    from jarvis.core import config
+
+    monkeypatch.setattr(keyring, "get_password", lambda *a, **k: None)
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "environment-value")
+    config._FileCredStore().set(
+        config.KEYRING_SERVICE, "openai_api_key", "file-saved-value"
+    )
+
+    assert get_secret("openai_api_key", "OPENAI_API_KEY") == "environment-value"
