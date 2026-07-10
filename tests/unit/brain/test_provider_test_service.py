@@ -172,41 +172,52 @@ def test_tts_synthesis_bytes_is_ok() -> None:
     assert res.status == "ok"
 
 
-def test_realtime_probes_same_family_brain_not_stt() -> None:
-    """A realtime card's test probes the text brain sharing its key slot.
+def test_realtime_test_opens_the_exact_duplex_provider() -> None:
+    probed: list[str] = []
 
-    The realtime tier used to fall through to the STT branch, building an
-    unrelated STT provider — the "Testing…" spinner then hung or lied. The fix
-    routes it to a 1-token probe of the same-credential-family brain (resolved
-    by shared secret slots, never a provider-name pin).
-    """
-    probed: list[tuple[str, str]] = []
-
-    async def probe(p, m):
-        probed.append((p, m))
-        return HealthResult(provider=p, model=m, ok=True, duration_ms=42.0)
+    async def probe(spec, _cfg):
+        probed.append(spec.id)
+        return 42.0
 
     res = _run(
         run_provider_test(
-            get_spec("openai-realtime"), _cfg(), present=True, brain_probe=probe,
+            get_spec("openai-realtime"),
+            _cfg(),
+            present=True,
+            realtime_probe=probe,
         )
     )
     assert res.status == "ok"
-    # openai-realtime shares openai_api_key with the "openai" brain provider.
-    assert probed and probed[0][0] == "openai"
-    assert "openai" in res.detail
+    assert probed == ["openai-realtime"]
+    assert res.latency_ms == pytest.approx(42.0)
+    assert "handshake accepted" in res.detail.lower()
 
 
-def test_realtime_bad_key_classified_from_family_probe() -> None:
-    async def probe(_p, _m):
-        return HealthResult(
-            provider="gemini", model="m", ok=False,
-            error="ClientError: Error code: 401 - API key not valid",
-        )
+def test_realtime_bad_key_is_classified_from_duplex_handshake() -> None:
+    async def probe(_spec, _cfg):
+        raise RuntimeError("ClientError: Error code: 401 - API key not valid")
 
     res = _run(
         run_provider_test(
-            get_spec("gemini-live"), _cfg(), present=True, brain_probe=probe,
+            get_spec("gemini-live"),
+            _cfg(),
+            present=True,
+            realtime_probe=probe,
         )
     )
     assert res.status == "bad_key"
+
+
+def test_realtime_depleted_credits_are_an_account_error() -> None:
+    async def probe(_spec, _cfg):
+        raise RuntimeError("Your prepayment credits are depleted")
+
+    res = _run(
+        run_provider_test(
+            get_spec("gemini-live"),
+            _cfg(),
+            present=True,
+            realtime_probe=probe,
+        )
+    )
+    assert res.status == "no_credits"

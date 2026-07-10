@@ -202,26 +202,51 @@ def _resolve_brain_model(cfg: Any, provider: str) -> str:
         return ""
 
 
-def _same_family_brain_id(spec: Any) -> str | None:
-    """The brain-tier provider sharing ``spec``'s credential slots, if any.
+def _resolve_provider_option(cfg: Any, provider: str, field: str) -> str:
+    """Read a per-provider model or voice override without assuming its family."""
+    try:
+        providers = getattr(getattr(cfg, "brain", None), "providers", None)
+        provider_config = providers.get(provider) if isinstance(providers, dict) else None
+        return str(getattr(provider_config, field, "") or "")
+    except Exception:  # noqa: BLE001
+        return ""
 
-    Resolved via the SHARED SECRET SLOTS (e.g. OpenAI Realtime reuses
-    ``openai_api_key``), never a provider-name mapping (AP-21) — a new realtime
-    provider that declares its key slot gets a working test with no code change.
+
+async def _default_realtime_probe(spec: Any, cfg: Any, *, timeout_s: float) -> float:
+    """Open and close the exact selected realtime provider.
+
+    A sibling text-model call cannot validate the duplex endpoint, model id,
+    session schema, audio formats, or SDK event contract. The provider adapter's
+    ``open_session`` returns only after its handshake is accepted, so this is a
+    small but authoritative connectivity check with no audio sent.
     """
-    keys = set(getattr(spec, "secret_keys", ()) or ())
-    if not keys:
-        return None
-    # Lazy import — same pattern as app_control._provider_spec(): the catalog
-    # lives in the UI layer, importing it at call time avoids an import cycle.
-    from jarvis.ui.web.provider_spec import PROVIDERS
+    from jarvis.core.config import get_secret_any
+    from jarvis.core.registry import load
+    from jarvis.realtime.protocol import RealtimeProvider, RealtimeSessionConfig
 
-    for cand in PROVIDERS:
-        if getattr(cand, "tier", None) != "brain":
-            continue
-        if keys & set(getattr(cand, "secret_keys", ()) or ()):
-            return cand.id
-    return None
+    provider_cls = load("jarvis.realtime", spec.id, protocol=RealtimeProvider)
+    credentials = tuple(getattr(provider_cls, "credential_candidates", ()) or ())
+    api_key = get_secret_any(credentials)
+    if not api_key:
+        raise RuntimeError("No API key configured for the realtime provider")
+    provider = provider_cls(api_key=api_key)
+    session_config = RealtimeSessionConfig(
+        instructions="Connection validation only. Do not respond until audio arrives.",
+        language="en",
+        model=_resolve_provider_option(cfg, spec.id, "model"),
+        voice=_resolve_provider_option(cfg, spec.id, "voice"),
+        input_sample_rate=int(getattr(provider, "input_sample_rate", 16_000)),
+        output_sample_rate=int(getattr(provider, "output_sample_rate", 24_000)),
+        modalities=("audio",),
+    )
+    started = perf_counter()
+    session = await asyncio.wait_for(
+        provider.open_session(session_config), timeout=timeout_s
+    )
+    try:
+        return (perf_counter() - started) * 1000.0
+    finally:
+        await session.close()
 
 
 def _default_make_tts(cfg: Any, provider: str) -> Any:
@@ -275,6 +300,7 @@ async def run_provider_test(
     brain_probe: Callable[[str, str], Awaitable[Any]] | None = None,
     make_tts: Callable[[Any, str], Any] | None = None,
     make_stt: Callable[[Any, str], Any] | None = None,
+    realtime_probe: Callable[[Any, Any], Awaitable[float]] | None = None,
     codex_status: Callable[[], Any] | None = None,
     antigravity_status: Callable[[], Any] | None = None,
     timeout_s: float = 60.0,
@@ -338,36 +364,46 @@ async def run_provider_test(
             checker = BrainHealthChecker(BrainProviderRegistry())
             return await checker.probe(p, m, timeout_s=timeout_s)
 
+    if spec.tier == "realtime":
+        started = perf_counter()
+        try:
+            if realtime_probe is None:
+                latency_ms = await _default_realtime_probe(
+                    spec, cfg, timeout_s=min(timeout_s, 20.0)
+                )
+            else:
+                latency_ms = await asyncio.wait_for(
+                    realtime_probe(spec, cfg), timeout=min(timeout_s, 20.0)
+                )
+            return ProviderTestResult(
+                provider,
+                OK,
+                "Realtime session handshake accepted.",
+                latency_ms,
+            )
+        except TimeoutError:
+            latency_ms = (perf_counter() - started) * 1000.0
+            return ProviderTestResult(
+                provider,
+                UNREACHABLE,
+                "Realtime session handshake timed out.",
+                latency_ms,
+            )
+        except Exception as exc:  # noqa: BLE001
+            latency_ms = (perf_counter() - started) * 1000.0
+            detail = f"{type(exc).__name__}: {exc}"
+            return ProviderTestResult(
+                provider,
+                classify_provider_error(detail),
+                detail,
+                latency_ms,
+            )
+
     if spec.tier == "brain":
         model = _resolve_brain_model(cfg, provider)
         hr = await brain_probe(provider, model)
         if getattr(hr, "ok", False):
             return ProviderTestResult(provider, OK, "", getattr(hr, "duration_ms", 0.0))
-        err = getattr(hr, "error", None)
-        return ProviderTestResult(
-            provider, classify_provider_error(err), err or "", getattr(hr, "duration_ms", 0.0),
-        )
-
-    if spec.tier == "realtime":
-        # A realtime tier used to fall through to the STT branch below — the test
-        # button on a realtime card built an unrelated STT provider and hung or
-        # lied. Opening a REAL duplex session here would be heavy and billed; the
-        # honest minimal call is a 1-token probe through the text brain of the
-        # SAME credential family (resolved by shared secret slots, AP-21), which
-        # verifies key + reachability end-to-end.
-        sibling = _same_family_brain_id(spec)
-        if sibling is None:
-            return ProviderTestResult(
-                provider, OK, "Credential stored; no live probe for this provider."
-            )
-        hr = await brain_probe(sibling, _resolve_brain_model(cfg, sibling))
-        if getattr(hr, "ok", False):
-            return ProviderTestResult(
-                provider,
-                OK,
-                f"Key verified via {sibling}.",
-                getattr(hr, "duration_ms", 0.0),
-            )
         err = getattr(hr, "error", None)
         return ProviderTestResult(
             provider, classify_provider_error(err), err or "", getattr(hr, "duration_ms", 0.0),

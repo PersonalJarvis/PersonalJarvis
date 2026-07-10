@@ -879,32 +879,15 @@ def _jarvis_agent_section_health(cfg: Any) -> SectionHealth:
     )
 
 
-def _realtime_section_health(request: Request) -> SectionHealth:
-    """Realtime tab: credential-presence ONLY — there is no realtime
-    provider-test yet (the client is not wired in, Phase 2), so this never
-    calls ``run_provider_test``. Mirrors the shape of ``_tier_section_health``
-    without the live connectivity probe.
+async def _realtime_section_health(request: Request) -> SectionHealth:
+    """Test the active provider's actual duplex handshake.
+
+    Credential presence alone previously painted a depleted or schema-broken
+    provider green. Reuse the standard tier health mapping so the Realtime tab
+    reports the same honest account/integration states as every other tier.
     """
-    spec = get_spec(_active_realtime(request) or "")
-    if spec is None:
-        return SectionHealth(
-            status=_section_health.NEEDS_SETUP,
-            reason="no_active",
-            detail="No active provider selected",
-        )
-    try:
-        configured = _is_credential_present(spec)
-    except Exception:  # noqa: BLE001 — a probe failure is "not set up", not a crash
-        configured = False
-    if configured:
-        return SectionHealth(
-            status=_section_health.OK, reason="ok", detail=f"{spec.label}: ready"
-        )
-    return SectionHealth(
-        status=_section_health.NEEDS_SETUP,
-        reason="not_configured",
-        detail=f"{spec.label}: no key set",
-    )
+    cfg = _resolve_cfg(request)
+    return await _tier_section_health(cfg, get_spec(_active_realtime(request) or ""))
 
 
 def _advanced_section_health(request: Request) -> SectionHealth:
@@ -996,11 +979,10 @@ async def _compute_section_health(request: Request, now: float) -> SectionHealth
             _tier_section_health(cfg, tts_spec),
             _tier_section_health(cfg, stt_spec),
         )
-        # These three helpers are synchronous (keyring reads, CLI status
-        # subprocesses) — run them in a worker thread so the sweep never blocks
-        # the event loop for every other request in flight.
+        # Realtime performs an async duplex handshake. The remaining helpers are
+        # synchronous (keyring reads, CLI status subprocesses) and stay off-loop.
         try:
-            sections["realtime"] = await asyncio.to_thread(_realtime_section_health, request)
+            sections["realtime"] = await _realtime_section_health(request)
         except Exception as exc:  # noqa: BLE001
             log.warning("section-health realtime check failed: %s", exc)
             sections["realtime"] = SectionHealth()
@@ -2588,4 +2570,3 @@ async def jarvis_agent_model(body: SubagentModelBody, request: Request) -> dict[
         "persisted": persisted,
         "restart_required": True,
     }
-
