@@ -2592,6 +2592,53 @@ def _ensure_keyring_backend() -> None:
         pass
 
 
+def _try_restore_platform_keyring_backend() -> bool:
+    """Restore a recovered OS keyring before an explicit credential save.
+
+    A transient OS-keyring read/write failure switches this process to the
+    portable file backend.  Without a recovery attempt, every later in-app save
+    keeps writing only that file while an older OS-keyring value survives and
+    shadows it after the next restart.  Explicit user saves are the safe recovery
+    boundary: re-detect the platform backend, capability-probe it with a
+    non-existent slot, and retain the file backend when the platform store is
+    still unavailable (the normal headless-host path).
+
+    This never runs on boot or a normal read, so a locked Secret Service cannot
+    add startup latency or prompts.  Returns ``True`` when the platform backend
+    is active, including when no fallback swap had occurred.
+    """
+    global _FILE_BACKEND_ACTIVE
+    if not _FILE_BACKEND_ACTIVE:
+        return True
+
+    keyring_mod = None
+    previous_backend = None
+    try:
+        import keyring as keyring_mod
+        from keyring.core import init_backend
+
+        previous_backend = keyring_mod.get_keyring()
+        init_backend()
+        candidate = keyring_mod.get_keyring()
+        # Capability probe, never an isinstance check against third-party
+        # internals. A real backend returns None for this absent slot; fail or
+        # locked backends raise and are rejected below.
+        candidate.get_password(KEYRING_SERVICE, "__jarvis_backend_probe__")
+    except Exception:  # noqa: BLE001 -- unavailable OS keyring is expected headlessly
+        if keyring_mod is not None and previous_backend is not None:
+            try:
+                keyring_mod.set_keyring(previous_backend)
+            except Exception:  # noqa: BLE001, S110 -- keep best-effort fallback active
+                pass
+        return False
+
+    _FILE_BACKEND_ACTIVE = False
+    logging.getLogger(__name__).info(
+        "OS credential store recovered; future credential saves use the platform keyring."
+    )
+    return True
+
+
 def get_secret(key: str, env_fallback: str | None = None) -> str | None:
     """Retrieve a secret value from every portable credential source.
 
@@ -2737,6 +2784,11 @@ def set_secret(key: str, value: str) -> bool:
     so the headless file fallback is what makes a fresh VPS user able to save a key.
     """
     _ensure_keyring_backend()
+    # A prior transient failure may have swapped this process to the file
+    # backend. Re-detect the OS backend on the user's explicit save so the new
+    # value cannot be shadowed by a stale platform entry after restart.
+    if _FILE_BACKEND_ACTIVE:
+        _try_restore_platform_keyring_backend()
     try:
         import keyring
 

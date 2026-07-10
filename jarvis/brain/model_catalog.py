@@ -1081,6 +1081,18 @@ class ModelCatalog:
         client = await self._client()
         async with client:
             resp = await client.get(url, headers=headers, params=params)
+            # ``bearer_opt`` endpoints are public. A stale/revoked optional key
+            # must not hide the live model roster from the picker: retry once
+            # anonymously on an authentication/permission rejection. Inference
+            # still uses and validates the credential normally; this fallback is
+            # scoped only to public catalog discovery.
+            if auth == "bearer_opt" and headers and resp.status_code in (401, 403):
+                log.info(
+                    "Optional credential rejected by the public %s model catalog; "
+                    "retrying anonymously.",
+                    provider,
+                )
+                resp = await client.get(url, params=params)
             resp.raise_for_status()
             return parse_models_response(provider, resp.json())
 
