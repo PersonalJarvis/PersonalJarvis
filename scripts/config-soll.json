@@ -98,5 +98,8 @@
   "brain.providers.gemini-live": {
     "model": "gemini-3.1-flash-live-preview",
     "voice": "Puck"
+  },
+  "brain.providers.openai-realtime": {
+    "model": "gpt-realtime-2.1"
   }
 }
