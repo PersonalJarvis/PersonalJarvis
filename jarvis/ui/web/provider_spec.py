@@ -69,7 +69,7 @@ class ProviderSpec:
     # provider name (AP-21), and only the *brain* tier carries it today.
     recommended: bool = False
     # The specific model the recommendation points at (e.g. ``gemini-3.5-flash``),
-    # surfaced as an "empfohlen" marker in the model picker. ``None`` = the badge
+    # surfaced as a "recommended" marker in the model picker. ``None`` = the badge
     # stands for the provider as a whole with no model preference.
     recommended_model: str | None = None
     # The inverse of ``recommended``: a short caution shown as a "Not recommended"
@@ -305,14 +305,15 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     ),
     ProviderSpec(
         id="grok-voice",
-        label="xAI Grok Voice (leo/rex/sal/ara/eve)",
+        label="xAI Text to Speech",
         tier="tts",
         auth_mode="api_key",
         secret_keys=("grok_api_key",),
         dashboard_url="https://console.x.ai/",
         credential_help=(
-            "xAI API key (starts with xai-) for Grok Voice. Voices: leo, rex, "
-            "sal, ara, eve."
+            "xAI API key (starts with xai-) for text to speech. The voice picker "
+            "contains the current public built-in roster and preserves Leo as "
+            "the Jarvis default."
         ),
     ),
     ProviderSpec(

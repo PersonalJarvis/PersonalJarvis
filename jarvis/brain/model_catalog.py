@@ -20,7 +20,9 @@ Design goals (maintainer mandate 2026-06-20):
 
 Cache: ``data/model_catalog_cache.json``, default TTL 6 h (shorter than the
 frontier resolver's 24 h — fresher is better for a list the user browses), with
-``force_refresh`` to bypass it on an explicit "refresh" click.
+``force_refresh`` to bypass it on an explicit "refresh" click. OpenRouter is a
+special case: its public catalog changes daily, so its cache lifetime is capped
+at five minutes even when the general TTL is longer.
 """
 from __future__ import annotations
 
@@ -39,6 +41,15 @@ from jarvis.core import config as cfg
 log = logging.getLogger(__name__)
 
 DEFAULT_TTL_HOURS = 6
+
+# OpenRouter publishes model drops much more frequently than the direct
+# providers. A six-hour cache made a valid new model look absent even though the
+# public ``/models`` response already contained it. Cap only this volatile,
+# unauthenticated catalog; callers can still use ``force_refresh`` for an
+# immediate fetch, and an explicitly shorter global TTL continues to win.
+_PROVIDER_TTL_CAP_SECONDS: dict[str, float] = {
+    "openrouter": 5 * 60,
+}
 
 # The API-key brain providers whose catalogs we can enumerate. Codex is excluded
 # on purpose: it authenticates via the ChatGPT login / a generic OpenAI key and
@@ -118,24 +129,41 @@ CURATED_MODELS: dict[str, list[ModelInfo]] = {
         ("claude-haiku-4-5-20251001", "Claude Haiku 4.5"),
     ]),
     "openai": _curated([
+        ("gpt-5.6-sol", "GPT-5.6 Sol (preview)"),
+        ("gpt-5.6-terra", "GPT-5.6 Terra (preview)"),
+        ("gpt-5.6-luna", "GPT-5.6 Luna (preview)"),
+        ("gpt-5.6", "GPT-5.6 (Sol alias, preview)"),
         ("gpt-5.5", "GPT-5.5"),
         ("gpt-5.5-pro", "GPT-5.5 Pro"),
-        ("gpt-5.5-mini", "GPT-5.5 Mini"),
+        ("gpt-5.4", "GPT-5.4"),
+        ("gpt-5.4-pro", "GPT-5.4 Pro"),
+        ("gpt-5.4-mini", "GPT-5.4 Mini"),
+        ("gpt-5.4-nano", "GPT-5.4 Nano"),
     ]),
     "gemini": _curated([
-        ("gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
-        ("gemini-3-pro", "Gemini 3 Pro"),
-        ("gemini-3-flash-preview", "Gemini 3 Flash"),
         ("gemini-3.5-flash", "Gemini 3.5 Flash"),
+        ("gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
+        ("gemini-3-flash-preview", "Gemini 3 Flash"),
+        ("gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite"),
+        ("gemini-2.5-pro", "Gemini 2.5 Pro"),
+        ("gemini-2.5-flash", "Gemini 2.5 Flash"),
         ("gemini-flash-lite-latest", "Gemini Flash Lite"),
     ]),
     "openrouter": _curated([
+        ("anthropic/claude-fable-5", "Claude Fable 5"),
         ("anthropic/claude-opus-4.8", "Claude Opus 4.8"),
-        ("anthropic/claude-sonnet-4.6", "Claude Sonnet 4.6"),
+        ("anthropic/claude-sonnet-5", "Claude Sonnet 5"),
         ("anthropic/claude-haiku-4.5", "Claude Haiku 4.5"),
-        ("openai/gpt-5.5", "GPT-5.5"),
-        ("google/gemini-3-pro-preview", "Gemini 3 Pro"),
-        ("x-ai/grok-4.3", "Grok 4.3"),
+        ("openai/gpt-5.6-sol-pro", "GPT-5.6 Sol Pro"),
+        ("openai/gpt-5.6-sol", "GPT-5.6 Sol"),
+        ("openai/gpt-5.6-terra-pro", "GPT-5.6 Terra Pro"),
+        ("openai/gpt-5.6-terra", "GPT-5.6 Terra"),
+        ("openai/gpt-5.6-luna-pro", "GPT-5.6 Luna Pro"),
+        ("openai/gpt-5.6-luna", "GPT-5.6 Luna"),
+        ("google/gemini-3.5-flash", "Gemini 3.5 Flash"),
+        ("google/gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
+        ("x-ai/grok-4.20", "Grok 4.20"),
+        ("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro"),
     ]),
     # NVIDIA NIM — the offline fallback when the live /v1/models catalog is
     # unreachable. NVIDIA-hosted current families (Nemotron leads: it is NVIDIA's
@@ -143,10 +171,14 @@ CURATED_MODELS: dict[str, list[ModelInfo]] = {
     # model still shows up automatically.
     "nvidia": _curated([
         ("nvidia/llama-3.1-nemotron-ultra-253b-v1", "Nemotron Ultra 253B"),
-        ("nvidia/llama-3.3-nemotron-super-49b-v1", "Nemotron Super 49B"),
-        ("meta/llama-3.3-70b-instruct", "Llama 3.3 70B"),
-        ("deepseek-ai/deepseek-r1", "DeepSeek R1"),
-        ("qwen/qwen2.5-coder-32b-instruct", "Qwen2.5 Coder 32B"),
+        ("nvidia/llama-3.3-nemotron-super-49b-v1.5", "Nemotron Super 49B v1.5"),
+        ("deepseek-ai/deepseek-v4-pro", "DeepSeek V4 Pro"),
+        ("deepseek-ai/deepseek-v4-flash", "DeepSeek V4 Flash"),
+        ("moonshotai/kimi-k2.6", "Kimi K2.6"),
+        ("z-ai/glm-5.2", "GLM-5.2"),
+        ("qwen/qwen3.5-397b-a17b", "Qwen3.5 397B A17B"),
+        ("meta/llama-4-maverick-17b-128e-instruct", "Llama 4 Maverick"),
+        ("mistralai/mistral-large-3-675b-instruct-2512", "Mistral Large 3"),
     ]),
 }
 
@@ -196,19 +228,32 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
         ("pNInz6obpgDQGcFmaJgB", "Adam — American, classic AI voice"),
     ])),
     "gemini-flash-tts": ("voice", _ids([
-        "Charon", "Kore", "Aoede", "Orus", "Iapetus",
-        "Rasalgethi", "Algenib", "Algieba", "Fenrir",
+        "Charon", "Kore", "Orus", "Iapetus", "Rasalgethi", "Algenib",
+        "Algieba", "Fenrir", "Aoede", "Zephyr", "Puck", "Leda",
+        "Callirrhoe", "Autonoe", "Enceladus", "Umbriel", "Despina",
+        "Erinome", "Laomedeia", "Achernar", "Alnilam", "Schedar",
+        "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi", "Vindemiatrix",
+        "Sadachbia", "Sadaltager", "Sulafat",
     ])),
-    "grok-voice": ("voice", _ids(["leo", "rex", "sal", "ara", "eve"])),
+    "grok-voice": ("voice", _ids([
+        "leo", "rex", "sal", "ara", "eve", "carina", "zagan", "helix",
+        "orion", "luna", "iris", "altair", "zenith", "perseus", "helios",
+        "lux", "kepler", "rigel", "cosmo", "celeste", "ursa", "sirius",
+        "lumen", "castor", "naksh", "atlas",
+    ])),
     "openai-tts": ("voice", _ids([
         "alloy", "ash", "ballad", "coral", "echo",
-        "fable", "onyx", "nova", "sage", "shimmer",
+        "fable", "onyx", "nova", "sage", "shimmer", "verse", "marin", "cedar",
     ])),
     "google-neural2": ("voice", _ids([
         "en-US-Neural2-A", "en-US-Neural2-C", "en-US-Neural2-D", "en-US-Neural2-F",
         "de-DE-Neural2-B", "de-DE-Neural2-C", "de-DE-Neural2-D", "de-DE-Neural2-F",
     ])),
-    "cartesia": ("model", _ids(["sonic-3.5", "sonic-2", "sonic-turbo"])),
+    "cartesia": ("model", _curated([
+        ("sonic-3.5", "Sonic 3.5 (stable)"),
+        ("sonic-3", "Sonic 3"),
+        ("sonic-3-latest", "Sonic 3 latest (preview track)"),
+    ])),
     # OpenRouter TTS (the last-resort gateway) — the model picker offers ONLY the
     # four allowlisted, production-grade speech models. The five open-source slop
     # models (Kokoro, Orpheus, CSM-1B, both Zonos) are UNLISTED per the hard
@@ -237,24 +282,23 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
 # the picker). The currently-hardcoded adapter default is always FIRST in each
 # model list — the safe fallback an unset pick resolves to.
 #
-# openai-realtime — verified 2026-07-08 against
-# developers.openai.com/api/docs/models/all (cross-checked against the
-# installed ``openai`` SDK's beta realtime session ``model`` Literal, which
-# lists the same gpt-realtime family). ``gpt-realtime`` is OpenAI's current GA
-# default (matches ``_MODEL`` in ``jarvis/plugins/realtime/openai_realtime.py``);
-# ``gpt-realtime-2.1``/``-2.1-mini`` are the newest reasoning-capable siblings
-# (released 2026-07-06); ``gpt-realtime-mini`` is the established cost-efficient
-# sibling. ``gpt-realtime-translate``/``gpt-realtime-whisper`` are deliberately
-# excluded — single-purpose speech-translation / transcription models, not
-# general duplex voice-agent models this adapter's protocol targets.
+# openai-realtime — verified 2026-07-10 against the official Realtime model
+# guide and endpoint-support table. ``gpt-realtime`` remains the adapter default
+# (matches ``_MODEL`` in ``jarvis/plugins/realtime/openai_realtime.py``), while
+# 2.1/2.1-mini, 2, 1.5, and mini remain selectable general voice-agent models.
+# ``gpt-realtime-translate``/``gpt-realtime-whisper`` are deliberately excluded:
+# they target dedicated translation/transcription sessions, not the general
+# duplex voice-agent protocol implemented by this adapter.
 REALTIME_MODELS: dict[str, list[ModelInfo]] = {
     "openai-realtime": _curated([
         ("gpt-realtime", "GPT Realtime (default)"),
         ("gpt-realtime-2.1", "GPT Realtime 2.1"),
         ("gpt-realtime-2.1-mini", "GPT Realtime 2.1 Mini"),
+        ("gpt-realtime-2", "GPT Realtime 2"),
+        ("gpt-realtime-1.5", "GPT Realtime 1.5"),
         ("gpt-realtime-mini", "GPT Realtime Mini"),
     ]),
-    # gemini-live — verified 2026-07-08 against ai.google.dev/gemini-api/docs/models
+    # gemini-live — verified 2026-07-10 against ai.google.dev/gemini-api/docs/models
     # (the Live API model list). ``gemini-3.1-flash-live-preview`` is the current
     # flagship (matches ``_MODEL`` in ``jarvis/plugins/realtime/gemini_live.py``);
     # ``gemini-2.5-flash-native-audio-preview-12-2025`` is the current 2.5-series
@@ -263,6 +307,10 @@ REALTIME_MODELS: dict[str, list[ModelInfo]] = {
     "gemini-live": _curated([
         ("gemini-3.1-flash-live-preview", "Gemini 3.1 Flash Live (default)"),
         (
+            "gemini-2.5-flash-native-audio-latest",
+            "Gemini 2.5 Flash Native Audio (latest alias)",
+        ),
+        (
             "gemini-2.5-flash-native-audio-preview-12-2025",
             "Gemini 2.5 Flash Native Audio",
         ),
@@ -270,29 +318,39 @@ REALTIME_MODELS: dict[str, list[ModelInfo]] = {
 }
 
 # Realtime voice catalogs — stable prebuilt-voice names (curated, not live).
-# openai-realtime: verified 2026-07-08 against the installed ``openai`` SDK's
-# beta realtime session ``voice`` Literal — the 8 GA prebuilt voices.
-# gemini-live: verified 2026-07-08 — the 8 prebuilt voices exposed to
-# ``types.PrebuiltVoiceConfig.voice_name`` for the Live API's half-cascade /
-# native-audio models (a strict subset of the ~30-voice Gemini TTS catalog).
+# openai-realtime: verified 2026-07-10 against the official Realtime
+# conversations guide — ten current voices, including Marin and Cedar.
+# gemini-live: verified 2026-07-10 against the Live API capabilities guide,
+# which now permits the complete 30-voice Gemini prebuilt roster.
 REALTIME_VOICES: dict[str, list[ModelInfo]] = {
     "openai-realtime": _ids([
         "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse",
+        "marin", "cedar",
     ]),
     "gemini-live": _ids([
         "Puck", "Charon", "Kore", "Fenrir", "Aoede", "Orus", "Leda", "Zephyr",
+        "Callirrhoe", "Autonoe", "Enceladus", "Iapetus", "Umbriel", "Algieba",
+        "Despina", "Erinome", "Algenib", "Rasalgethi", "Laomedeia", "Achernar",
+        "Alnilam", "Schedar", "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi",
+        "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat",
     ]),
 }
 
 
 # STT model catalogs (the ``[stt] model`` is a single global value).
 STT_CATALOG: dict[str, list[ModelInfo]] = {
-    "groq-api": _ids(["whisper-large-v3", "whisper-large-v3-turbo", "distil-whisper-large-v3-en"]),
+    "groq-api": _ids(["whisper-large-v3", "whisper-large-v3-turbo"]),
     # "faster-whisper" (local) was removed as a user-selectable STT provider in
     # v1.0.1 — see the note in provider_spec.py. The wake-word local Whisper and
     # the key-free STT fallback do NOT use this catalog (they read [stt].wake_*
     # / construct FasterWhisperProvider directly), so no wake/fallback breakage.
-    "openai-api": _ids(["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"]),
+    "openai-api": _ids([
+        "gpt-4o-transcribe",
+        "gpt-4o-mini-transcribe",
+        "gpt-4o-mini-transcribe-2025-12-15",
+        "gpt-4o-transcribe-diarize",
+        "whisper-1",
+    ]),
     "deepgram": _ids(["nova-3", "nova-2", "nova-2-general", "enhanced", "base"]),
     # OpenRouter STT — the model picker offers ONLY transcription models. This
     # curated snapshot mirrors the live `?output_modalities=transcription` list
@@ -330,13 +388,17 @@ def _build_provider_catalog() -> dict[str, CatalogSpec]:
     # added below as curated-only — no /v1/models over their OAuth logins.
     for p in CATALOG_PROVIDERS:
         cat[p] = CatalogSpec("brain", "model", tuple(CURATED_MODELS.get(p, ())), live=True)
-    # Codex — subagent model catalog for the ChatGPT-login worker; no /v1/models
-    # over OAuth, so curated only. Its model is the OpenAI/codex gpt-5.5 family.
+    # Codex — Jarvis-Agent model catalog for the ChatGPT-login worker; no
+    # /v1/models over OAuth, so curated only. The concrete GPT-5.6 choices are
+    # the current Codex lineup; the still-supported GPT-5.5/5.4 choices remain
+    # available for users who intentionally prefer their established behavior.
     cat["codex"] = CatalogSpec("brain", "model", tuple(_curated([
+        ("gpt-5.6-sol", "GPT-5.6 Sol"),
+        ("gpt-5.6-terra", "GPT-5.6 Terra"),
+        ("gpt-5.6-luna", "GPT-5.6 Luna"),
         ("gpt-5.5", "GPT-5.5"),
-        ("gpt-5.5-pro", "GPT-5.5 Pro"),
-        ("gpt-5.5-codex", "GPT-5.5 Codex"),
-        ("gpt-5.5-mini", "GPT-5.5 Mini"),
+        ("gpt-5.4", "GPT-5.4"),
+        ("gpt-5.4-mini", "GPT-5.4 Mini"),
     ])), live=False)
     # Antigravity — subagent model catalog for the official agy/gemini CLI
     # (OAuth login); no /v1/models over OAuth, so curated only. Flash first =
@@ -599,7 +661,7 @@ def _output_modalities(entry: dict) -> tuple[str, ...] | None:
 _NON_BRAIN_MARKERS: tuple[str, ...] = (
     "veo", "imagen", "lyria", "nano-banana", "dall-e", "dalle", "sora",
     "whisper", "transcrib", "speech", "tts", "-audio", "audio-",
-    "embed", "image", "moderation", "rerank", "-live", "guard",
+    "embed", "image", "moderation", "rerank", "realtime", "-live", "guard",
 )
 
 
@@ -744,6 +806,8 @@ def _squash(text: str) -> str:
 STARRED_MODELS: frozenset[str] = frozenset({
     _squash("claude-opus-4.8"),       # Opus 4.8
     _squash("claude-opus-4.8-fast"),  # Opus 4.8 (Fast)
+    _squash("gpt-5.6"),               # GPT-5.6 alias (direct OpenAI)
+    _squash("gpt-5.6-sol"),           # GPT-5.6 flagship (OpenAI/OpenRouter)
     _squash("gpt-5.5"),               # GPT-5.5
     _squash("gemini-3.5-flash"),      # Gemini 3.5 Flash
     _squash("claude-fable-5"),        # Fable 5
@@ -985,8 +1049,12 @@ class ModelCatalog:
             json.dumps(data, indent=2), encoding="utf-8",
         )
 
-    def _is_fresh(self, fetched_at: float) -> bool:
-        return (time.time() - fetched_at) < self._ttl_seconds
+    def _is_fresh(self, provider: str, fetched_at: float) -> bool:
+        ttl_seconds = min(
+            self._ttl_seconds,
+            _PROVIDER_TTL_CAP_SECONDS.get(provider, self._ttl_seconds),
+        )
+        return (time.time() - fetched_at) < ttl_seconds
 
     @staticmethod
     def _present(provider: str, models: list[ModelInfo]) -> tuple[ModelInfo, ...]:
@@ -1024,7 +1092,7 @@ class ModelCatalog:
 
         async with self._lock:
             cached = self._cache.get(provider)
-            if cached and not force_refresh and self._is_fresh(cached[0]):
+            if cached and not force_refresh and self._is_fresh(provider, cached[0]):
                 return CatalogResult(
                     provider, self._present(provider, cached[1]), "cache", cached[0], "model",
                 )

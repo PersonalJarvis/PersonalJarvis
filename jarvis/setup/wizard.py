@@ -173,7 +173,7 @@ SECRETS: list[SecretSpec] = [
         env_fallback="GROK_API_KEY",
         label="xAI Grok Voice API Key (TTS)",
         help_url="https://console.x.ai/",
-        required_for="TTS (Grok Voice — leo/rex/sal/ara/eve)",
+        required_for="TTS (xAI built-in and custom voices)",
         section="tts",
     ),
     SecretSpec(

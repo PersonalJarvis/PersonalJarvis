@@ -138,6 +138,31 @@ def test_realtime_switch_sets_voice_mode(monkeypatch):
     assert app.state.config.voice.mode == "realtime"
 
 
+def test_realtime_switch_reconnects_the_active_voice_session(monkeypatch):
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    monkeypatch.setattr(config_writer, "set_realtime_provider", lambda _name: None)
+    monkeypatch.setattr(config_writer, "set_voice_mode", lambda _mode: None)
+    reasons: list[str] = []
+
+    class LivePipeline:
+        def reconnect_realtime_session(self, *, reason: str) -> bool:
+            reasons.append(reason)
+            return True
+
+    app = _app()
+    app.state.speech_pipeline = LivePipeline()
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/realtime/switch",
+        json={"provider": "openai-realtime", "persist": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["session_restarted"] is True
+    assert reasons == ["realtime_provider:openai-realtime"]
+
+
 def test_realtime_switch_reports_voice_mode_not_persisted_on_write_failure(monkeypatch):
     """Bug: the [voice].mode write failure was only logged, but the response
     still reported persisted=True unconditionally — the UI showed "saved"
@@ -268,6 +293,7 @@ def test_get_realtime_options_returns_curated_models_and_voices(monkeypatch):
     voice_ids = {v["id"] for v in body["voices"]}
     assert voice_ids == {
         "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse",
+        "marin", "cedar",
     }
     model_ids = [m["id"] for m in body["models"]]
     assert model_ids[0] == "gpt-realtime"  # the hardcoded default leads
@@ -284,6 +310,10 @@ def test_get_realtime_options_gemini_live_voices(monkeypatch):
     voice_ids = {v["id"] for v in body["voices"]}
     assert voice_ids == {
         "Puck", "Charon", "Kore", "Fenrir", "Aoede", "Orus", "Leda", "Zephyr",
+        "Callirrhoe", "Autonoe", "Enceladus", "Iapetus", "Umbriel", "Algieba",
+        "Despina", "Erinome", "Algenib", "Rasalgethi", "Laomedeia", "Achernar",
+        "Alnilam", "Schedar", "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi",
+        "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat",
     }
     assert body["models"][0]["id"] == "gemini-3.1-flash-live-preview"
 
