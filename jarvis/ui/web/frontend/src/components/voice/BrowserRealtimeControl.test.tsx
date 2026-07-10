@@ -62,8 +62,10 @@ describe("BrowserRealtimeControl", () => {
 
     await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
     expect(
-      screen.getByRole("button", { name: "sidebar.realtime_stop" }),
-    ).toHaveAttribute("aria-pressed", "true");
+      screen.getByRole("button", { name: "sidebar.realtime_stop" }).getAttribute(
+        "aria-pressed",
+      ),
+    ).toBe("true");
   });
 
   it("explains that a key is required instead of opening the microphone", () => {
@@ -71,7 +73,7 @@ describe("BrowserRealtimeControl", () => {
     render(<BrowserRealtimeControl />);
 
     const button = screen.getByRole("button", { name: "sidebar.realtime_unavailable" });
-    expect(button).toBeDisabled();
+    expect((button as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(button);
     expect(fakes.connect).not.toHaveBeenCalled();
   });

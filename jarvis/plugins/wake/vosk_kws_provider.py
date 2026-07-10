@@ -41,6 +41,7 @@ import logging
 import time
 from collections import deque
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 from typing import Any
 
@@ -211,9 +212,36 @@ class VoskKwsProvider:
         rec.SetWords(True)
         return rec
 
+    def _warmup_decode(self) -> None:
+        """Run ONE throwaway grammar + free decode pass so the FIRST real
+        candidate's verify does not also pay Kaldi's cold-start cost
+        (recognizer graph build, ivector/CMVN buffer allocation — separate
+        from the ``Model()`` load itself). Mirrors
+        ``OpenWakeWordProvider._warmup_model``'s parity fix for the same
+        class of "first inference after load is slow" cost. Fail-closed: a
+        warm-up error must never break boot or arm a broken detector — the
+        real detect loop still builds fresh recognizers on the first genuine
+        candidate regardless of whether this succeeded.
+        """
+        try:
+            from vosk import KaldiRecognizer
+
+            silence = np.zeros(int(0.3 * self._sample_rate), dtype=np.int16).tobytes()
+            g = self._new_grammar_rec()
+            g.AcceptWaveform(silence)
+            g.FinalResult()
+            f = KaldiRecognizer(self._ensure_model(), self._sample_rate)
+            f.SetWords(True)
+            f.AcceptWaveform(silence)
+            f.FinalResult()
+        except Exception as exc:  # noqa: BLE001 — warm-up must never break boot
+            log.debug("vosk-kws warm-up decode skipped: %s", exc)
+
     async def start(self) -> None:
-        """Pre-load the model off the event loop (never on the boot path)."""
+        """Pre-load AND warm the model — moves Kaldi's cold-start decode cost
+        off the first real wake candidate and onto boot warm-up instead."""
         await asyncio.to_thread(self._ensure_model)
+        await asyncio.to_thread(self._warmup_decode)
 
     async def stop(self) -> None:
         self._model = None
@@ -288,6 +316,23 @@ class VoskKwsProvider:
 
         Fail-OPEN only on infrastructure errors (a broken confirm must never
         eat a real wake); a clean "the phrase is not there" is a rejection.
+
+        Latency (spawn-latency mission, 2026-07-10): the grammar re-score and
+        the free decode are independent Kaldi passes over the SAME audio —
+        the free decode does not consume the re-score's output, only the
+        LATER span-filtering step does. Measured on the real German small
+        model (data/wake_models/vosk/de/vosk-model-small-de-0.15): the free
+        pass costs 3-5x the grammar pass (e.g. 235ms vs 70ms over a 3 s
+        window), so running them sequentially pays their SUM even though the
+        wall-clock floor is only their MAX. They run concurrently in two
+        worker threads against ONE shared, read-only ``Model`` — Vosk's
+        documented multi-client pattern (one Model, many independent
+        KaldiRecognizer sessions decoding concurrently), not the AP-24 hazard
+        (that guards a single recognizer's mutable per-call state shared
+        across concurrent callers; here each thread owns its own fresh
+        recognizer). This changes only wall-clock time, never the decision:
+        both passes decode the identical ``pcm`` and every downstream
+        threshold/comparison is untouched.
         """
         try:
             from vosk import KaldiRecognizer
@@ -299,14 +344,30 @@ class VoskKwsProvider:
                 )
             pcm = (window * 32767.0).astype(np.int16).tobytes()
 
-            # 1) grammar re-score: real confidence + time span for the phrase.
-            # One attempt over the full ring, deliberately: a second try over
-            # a shorter cut measurably HELPED room speech more than genuine
-            # calls (FA matrix 3 -> 7 with a last-1.8 s retry), because the
-            # grammar happily forces any short speech snippet onto the phrase.
-            g = self._new_grammar_rec()
-            g.AcceptWaveform(pcm)
-            gres = json.loads(g.FinalResult())
+            # 1) grammar re-score (real confidence + time span) and
+            # 3) free decode (unconstrained) run CONCURRENTLY — see the
+            # latency note above. One attempt each over the full ring,
+            # deliberately: a second grammar try over a shorter cut
+            # measurably HELPED room speech more than genuine calls (FA
+            # matrix 3 -> 7 with a last-1.8 s retry), because the grammar
+            # happily forces any short speech snippet onto the phrase.
+            def _grammar_pass() -> dict:
+                g = self._new_grammar_rec()
+                g.AcceptWaveform(pcm)
+                return json.loads(g.FinalResult())
+
+            def _free_pass() -> dict:
+                f = KaldiRecognizer(self._ensure_model(), self._sample_rate)
+                f.SetWords(True)
+                f.AcceptWaveform(pcm)
+                return json.loads(f.FinalResult())
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                grammar_future = pool.submit(_grammar_pass)
+                free_future = pool.submit(_free_pass)
+                gres = grammar_future.result()
+                fres = free_future.result()
+
             gwords = [
                 w for w in gres.get("result", [])
                 if w.get("word") in self._grammar_words
@@ -343,11 +404,7 @@ class VoskKwsProvider:
                 )
                 return False
 
-            # 3) free decode, localised to the phrase span
-            f = KaldiRecognizer(self._ensure_model(), self._sample_rate)
-            f.SetWords(True)
-            f.AcceptWaveform(pcm)
-            fres = json.loads(f.FinalResult())
+            # localise the (already-decoded) free words to the phrase span
             local = [
                 w.get("word", "") for w in fres.get("result", [])
                 if w.get("end", 0.0) >= span_a and w.get("start", 0.0) <= span_b

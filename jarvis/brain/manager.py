@@ -1638,6 +1638,26 @@ _SELF_CONTROL_NOUN_RE = re.compile(
     r"|worker)\b",
     re.IGNORECASE,
 )
+# Always-on compact self-control truth (forensic 2026-07-10): the LONG
+# directive below is injected only when _SELF_CONTROL_PATTERN matches, but a
+# keyword-free phrasing ("ich will dich ab jetzt Edith rufen koennen") sails  # i18n-allow: quoted German utterance under test
+# past the regex — the router LLM then answered in prose and CLAIMED the
+# change without any tool call. Broadening the keyword list would be
+# whack-a-mole (the AP-27 tightening class); instead this short line rides in
+# EVERY substantive prompt so the model always knows it has the power and
+# that claiming without calling is forbidden. The keyworded directive stays
+# as the detailed intensifier.
+_SELF_CONTROL_STANDING = (
+    "SELF-CONTROL (always in effect): When the user asks you to change "
+    "anything about Jarvis itself — name/wake phrase, voice, volume, "
+    "providers, languages, settings, restart, missions/tasks — you CAN do it "
+    "yourself: prefer the `app-command` tool (validated registry commands), "
+    "`set_config_value` for a plain config key, `cli_jarvisctl` as fallback. "
+    "NEVER state or imply that a change or action happened unless a tool "
+    "call actually returned success in THIS turn; without such a result, say "
+    "honestly that you have not done it yet."
+)
+
 _SELF_CONTROL_DIRECTIVE = (
     "SELF-CONTROL: The user is asking to change or control Jarvis's OWN settings, "
     "configuration, providers, voice, language, or behavior. You have full "
@@ -2984,6 +3004,11 @@ class BrainManager:
             "Bildschirm/Apps bedienen: computer_use."
         )
         parts.append(base)
+
+        # Always-on self-control truth (see _SELF_CONTROL_STANDING rationale):
+        # keyword-free self-control phrasings must still find the tool path,
+        # and "claimed it, did nothing" is forbidden in every turn.
+        parts.append(_SELF_CONTROL_STANDING)
 
         # Tool selection rules — prevents the LLM from wildly firing
         # ``cli_supabase`` for "recherchiere zu Supabase" instead of using

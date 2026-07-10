@@ -156,6 +156,38 @@ async def browser_voice_ws(ws: WebSocket) -> None:
         await ws.close(code=1011, reason="speech stack unavailable")
         return
 
+    audio_start_control: dict[str, Any] | None = None
+
+    async def _switch_to_classic(reason: str) -> bool:
+        nonlocal session
+        if not bool(getattr(session, "is_realtime", False)):
+            return False
+        log.warning(
+            "browser_voice: realtime session unavailable; using classic pipeline: %s",
+            reason,
+        )
+        await session.end(reason="realtime_fallback")
+        fallback = _build_classic_browser_session(
+            state=state,
+            cfg=cfg,
+            bus=bus,
+            session_id=session_id,
+            send_binary=_send_binary,
+            send_json=_send_json,
+        )
+        if fallback is None:
+            await ws.close(code=1011, reason="speech stack unavailable")
+            return False
+        session = fallback
+        await _send_json({"type": "mode_fallback", "mode": "pipeline"})
+        if audio_start_control is not None:
+            try:
+                await session.handle_control(audio_start_control)
+            except Exception as exc:  # noqa: BLE001 — fallback is terminal
+                log.warning("browser_voice: classic fallback failed: %s", exc)
+                return False
+        return True
+
     try:
         while True:
             try:
@@ -170,7 +202,24 @@ async def browser_voice_ws(ws: WebSocket) -> None:
                 break
             data = msg.get("bytes")
             if data is not None:
-                await session.handle_audio_frame(data)
+                if bool(getattr(session, "failed", False)):
+                    detail = str(getattr(session, "failure_detail", "") or "stream ended")
+                    if not await _switch_to_classic(detail):
+                        break
+                try:
+                    await session.handle_audio_frame(data)
+                except Exception as exc:  # noqa: BLE001 — terminal or family fallback
+                    if not await _switch_to_classic(str(exc)):
+                        log.warning("browser_voice: audio handling failed: %s", exc)
+                        break
+                    try:
+                        await session.handle_audio_frame(data)
+                    except Exception as fallback_exc:  # noqa: BLE001 — terminal
+                        log.warning(
+                            "browser_voice: classic audio fallback failed: %s",
+                            fallback_exc,
+                        )
+                        break
                 continue
             text = msg.get("text")
             if text is not None:
@@ -180,6 +229,8 @@ async def browser_voice_ws(ws: WebSocket) -> None:
                     log.debug("browser_voice: dropping malformed control frame")
                     continue
                 if isinstance(control, dict):
+                    if control.get("type") == "audio_start":
+                        audio_start_control = dict(control)
                     try:
                         await session.handle_control(control)
                     except Exception as exc:  # noqa: BLE001 — AP-20: terminal or fallback
@@ -190,31 +241,7 @@ async def browser_voice_ws(ws: WebSocket) -> None:
                         if not can_fallback:
                             log.warning("browser_voice: control handling failed: %s", exc)
                             break
-                        log.warning(
-                            "browser_voice: realtime handshake failed; using classic pipeline: %s",
-                            exc,
-                        )
-                        await session.end(reason="handshake_failed")
-                        fallback = _build_classic_browser_session(
-                            state=state,
-                            cfg=cfg,
-                            bus=bus,
-                            session_id=session_id,
-                            send_binary=_send_binary,
-                            send_json=_send_json,
-                        )
-                        if fallback is None:
-                            await ws.close(code=1011, reason="speech stack unavailable")
-                            break
-                        session = fallback
-                        await _send_json({"type": "mode_fallback", "mode": "pipeline"})
-                        try:
-                            await session.handle_control(control)
-                        except Exception as fallback_exc:  # noqa: BLE001 — terminal
-                            log.warning(
-                                "browser_voice: classic fallback failed: %s",
-                                fallback_exc,
-                            )
+                        if not await _switch_to_classic(str(exc)):
                             break
     finally:
         await session.end(reason="ws_closed")

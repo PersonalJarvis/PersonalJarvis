@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export type AuthMode = "api_key" | "codex" | "antigravity" | "none";
 export type ProviderTier = "brain" | "tts" | "stt" | "realtime" | "computer-use";
@@ -212,6 +212,8 @@ export interface SectionHealth {
   reason: string;
   /** Plain-English one-liner for the hover tooltip. */
   detail: string;
+  /** Exact provider/integration checked by the backend. */
+  subject_id: string | null;
 }
 
 export interface SectionHealthResponse {
@@ -225,9 +227,13 @@ export interface SectionHealthResponse {
  * TTL cache — used right after a key save / provider switch so the dot reflects
  * the change immediately instead of a stale cached result.
  */
-export async function getSectionHealth(refresh = false): Promise<SectionHealthResponse> {
+export async function getSectionHealth(
+  refresh = false,
+  signal?: AbortSignal,
+): Promise<SectionHealthResponse> {
   const res = await fetch(
     `/api/providers/section-health${refresh ? "?refresh=true" : ""}`,
+    { signal, cache: "no-store" },
   );
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()) as SectionHealthResponse;
@@ -244,12 +250,21 @@ export async function getSectionHealth(refresh = false): Promise<SectionHealthRe
  */
 export function useSectionHealth() {
   const [health, setHealth] = useState<Record<string, SectionHealth>>({});
+  const requestVersion = useRef(0);
+  const requestController = useRef<AbortController | null>(null);
 
   const reload = useCallback(async (refresh = false) => {
+    const version = ++requestVersion.current;
+    requestController.current?.abort();
+    const controller = new AbortController();
+    requestController.current = controller;
     try {
-      const data = await getSectionHealth(refresh);
-      setHealth(data.sections ?? {});
-    } catch {
+      const data = await getSectionHealth(refresh, controller.signal);
+      if (version === requestVersion.current) {
+        setHealth(data.sections ?? {});
+      }
+    } catch (error) {
+      if ((error as Error).name === "AbortError") return;
       // best-effort — keep whatever we last had rather than clearing to nothing
     }
   }, []);

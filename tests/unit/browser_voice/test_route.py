@@ -156,3 +156,35 @@ async def test_realtime_handshake_failure_crosses_to_classic_browser_pipeline(
     assert classic.controls == [{"type": "audio_start", "sample_rate": 48_000}]
     assert classic.ended
     assert {"type": "mode_fallback", "mode": "pipeline"} in ws.sent_json
+
+
+async def test_dead_realtime_stream_crosses_to_classic_on_next_audio_frame(monkeypatch):
+    classic = _RecSession()
+
+    class _DeadRealtime(_RecSession):
+        is_realtime = True
+        failed = True
+        failure_detail = "provider stream ended"
+
+    dead = _DeadRealtime()
+    state = _state(classic)
+    state.config.voice = SimpleNamespace(mode="realtime")
+    monkeypatch.setattr(route_mod, "_build_browser_session", lambda **_kwargs: dead)
+    ws = _FakeWS(
+        [
+            {
+                "type": "websocket.receive",
+                "text": '{"type":"audio_start","sample_rate":48000}',
+            },
+            {"type": "websocket.receive", "bytes": b"\x01\x00\x02\x00"},
+            {"type": "websocket.disconnect", "code": 1000},
+        ],
+        state=state,
+    )
+
+    await browser_voice_ws(ws)
+
+    assert dead.ended
+    assert classic.controls == [{"type": "audio_start", "sample_rate": 48_000}]
+    assert classic.audio == [b"\x01\x00\x02\x00"]
+    assert {"type": "mode_fallback", "mode": "pipeline"} in ws.sent_json

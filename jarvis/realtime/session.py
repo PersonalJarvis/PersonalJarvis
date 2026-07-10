@@ -90,6 +90,8 @@ class RealtimeVoiceSession:
         self._output_samples_sent = 0
         self._ended = False
         self._provider_errors: list[str] = []
+        self._failed = asyncio.Event()
+        self._failure_detail = ""
         self._active_model = ""
         self._turn_id = ""
         self._turn_index = 0
@@ -302,6 +304,8 @@ class RealtimeVoiceSession:
                     self._output_samples_sent = 0
                 elif event.type == "error":
                     message = str(event.error or "provider error")
+                    self._failure_detail = message
+                    self._failed.set()
                     log.warning("realtime[%s] provider error: %s", self.session_id, message)
                     await self._publish_error(
                         "RealtimeProviderError", message, recoverable=True
@@ -310,6 +314,8 @@ class RealtimeVoiceSession:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — AP-20: pump error is terminal
+            self._failure_detail = str(exc) or "Realtime receive loop ended"
+            self._failed.set()
             log.warning("realtime[%s] pump ended", self.session_id, exc_info=True)
             await self._publish_error(
                 type(exc).__name__,
@@ -538,6 +544,15 @@ class RealtimeVoiceSession:
     @property
     def active_provider(self) -> str:
         return str(getattr(self._provider, "name", "") or "")
+
+    @property
+    def failed(self) -> bool:
+        """Whether the accepted duplex stream became unusable mid-session."""
+        return self._failed.is_set()
+
+    @property
+    def failure_detail(self) -> str:
+        return self._failure_detail
 
     async def wait_finished(self) -> None:
         task = self._pump_task
