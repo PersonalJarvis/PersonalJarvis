@@ -541,8 +541,9 @@ class JarvisBarOverlay:
         # ("JarvisBar stopped moving" forensic). The render body is now wrapped so
         # one bad frame is dropped, logged, and the next tick is still armed in
         # `finally`. The loop can no longer be killed by any one exception.
+        tick_started = time.perf_counter()
         try:
-            now = time.perf_counter()
+            now = tick_started
             t = now - self._t0
             # Sound-driven look: bars while audio is present (mic OR TTS), wave
             # while silent. The coarse self._mode only decides active-vs-idle; the
@@ -559,22 +560,46 @@ class JarvisBarOverlay:
                 hold_s=AUDIBLE_HOLD_S,
                 playback_active=playing,
             )
-            # The level is fed live per ~60 ms TTS sub-block (player._write_samples),
-            # so the equalizer reacts to Jarvis's actual loudness — thin and lively,
-            # exactly like it reacts to your mic. No synthetic floor (that made the
-            # bars look uniformly blocky).
-            img = self._renderer.render(
-                t, effective_mode, self._ext_level,
-                hovered=self._hovered, muted=self._muted,
-            )
-            # PhotoImage must be retained on self, else Tk GCs it before drawing.
-            self._photo = ImageTk.PhotoImage(img)
-            if self._image_id is None:
-                self._image_id = self._canvas.create_image(
-                    0, 0, anchor="nw", image=self._photo
-                )
+
+            # Idle-static skip (see _IDLE_SETTLE_TICKS docstring above): once the
+            # resting pill has been idle/not-hovered/not-muted for enough
+            # consecutive ticks that its eased size has fully settled, every
+            # further tick would repaint the exact same pixels — skip the
+            # render/PhotoImage/itemconfig work entirely. Any change in mode,
+            # hover, or mute resets the counter, so a real transition always
+            # renders immediately.
+            tick_key = (effective_mode, self._hovered, self._muted)
+            if tick_key != self._static_tick_key:
+                self._static_tick_key = tick_key
+                self._static_tick_count = 0
             else:
-                self._canvas.itemconfig(self._image_id, image=self._photo)
+                self._static_tick_count += 1
+            is_settled_idle = (
+                effective_mode == "idle"
+                and not self._hovered
+                and not self._muted
+                and self._static_tick_count >= _IDLE_SETTLE_TICKS
+            )
+
+            if not is_settled_idle:
+                # The level is fed live per ~60 ms TTS sub-block
+                # (player._write_samples), so the equalizer reacts to Jarvis's
+                # actual loudness — thin and lively, exactly like it reacts to
+                # your mic. No synthetic floor (that made the bars look
+                # uniformly blocky).
+                img = self._renderer.render(
+                    t, effective_mode, self._ext_level,
+                    hovered=self._hovered, muted=self._muted,
+                )
+                # PhotoImage must be retained on self, else Tk GCs it before
+                # drawing.
+                self._photo = ImageTk.PhotoImage(img)
+                if self._image_id is None:
+                    self._image_id = self._canvas.create_image(
+                        0, 0, anchor="nw", image=self._photo
+                    )
+                else:
+                    self._canvas.itemconfig(self._image_id, image=self._photo)
         except Exception:  # noqa: BLE001 — one bad frame must never freeze the bar
             log.exception("JarvisBar frame render failed — dropping one frame")
         finally:
@@ -582,12 +607,20 @@ class JarvisBarOverlay:
             # so we stamp even on the failure path. The watchdog reads this to
             # tell alive from silently-dead.
             self._last_frame_ns = time.monotonic_ns()
+            # Adaptive pacing: derive the next delay from how long THIS tick
+            # actually took instead of always adding a flat 16ms on top. In the
+            # common case (tick cost << target) this is indistinguishable from
+            # the old fixed delay; it only shortens the next wait after an
+            # unusually slow tick, so a single slow render can't compound into
+            # an even longer visible gap (see TARGET_FRAME_MS docstring above).
+            elapsed_ms = (time.perf_counter() - tick_started) * 1000.0
+            next_delay_ms = max(MIN_FRAME_DELAY_MS, round(TARGET_FRAME_MS - elapsed_ms))
             # Re-arm unconditionally so the loop is self-healing. Guard the after()
             # call itself: if the root was torn down mid-frame, swallow the
             # TclError and stop re-arming (the window is gone — correct to stop).
             if self._running and self._root is not None:
                 try:
-                    self._root.after(16, self._schedule_frame)  # ~60 FPS
+                    self._root.after(next_delay_ms, self._schedule_frame)
                 except Exception:  # noqa: BLE001
                     log.warning(
                         "JarvisBar frame re-arm skipped — watchdog will revive",
