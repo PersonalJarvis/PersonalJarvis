@@ -15,6 +15,10 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 // Mock the data hooks so the view renders deterministically, without a
 // network round-trip.
 vi.mock("@/hooks/useProviders", () => ({
+  sectionHealthForSubject: (
+    health: { subject_id?: string } | undefined,
+    subjectId?: string,
+  ) => (subjectId && health?.subject_id === subjectId ? health : undefined),
   useProviders: () => ({
     providers: [],
     loading: false,

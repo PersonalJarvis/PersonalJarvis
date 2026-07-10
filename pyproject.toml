@@ -338,9 +338,8 @@ telegram = "jarvis.channels.telegram:TelegramChannel"
 discord = "jarvis.channels.discord:DiscordChannel"
 
 [project.entry-points."jarvis.realtime"]
-# Full-duplex speech-to-speech providers (Phase realtime-voice). OpenAI GA
-# gpt-realtime is the first; Gemini Live is the second (adapter module lands
-# in a later task — until then this line is inert, entry-points load lazily).
+# Provider-neutral speech-to-speech plugins. Both adapters load lazily; the
+# orchestrator chooses a credential-ready family and crosses families on failure.
 openai-realtime = "jarvis.plugins.realtime.openai_realtime:OpenAIRealtimeProvider"
 gemini-live = "jarvis.plugins.realtime.gemini_live:GeminiLiveProvider"
 

@@ -43,6 +43,7 @@ def test_gemini_live_spec_present():
     assert spec is not None
     assert spec.tier == "realtime"
     assert spec.secret_keys == ("gemini_api_key",)
+    assert spec.alt_credential is None
 
 
 # ---------------------------------------------------------------------------
