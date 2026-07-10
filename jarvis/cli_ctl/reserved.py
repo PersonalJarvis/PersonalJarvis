@@ -27,6 +27,7 @@ RESERVED_CONTROL_NAMES: frozenset[str] = frozenset(
         "tasks",
         "missions",
         "brain",
+        "commands",
         "config",
         "wiki",
         "sessions",

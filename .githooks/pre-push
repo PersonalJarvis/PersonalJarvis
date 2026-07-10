@@ -132,6 +132,19 @@ if [ -f "$docgen_gate" ]; then
     fi
 fi
 
+# --- 4b) COMMANDS DOCGEN drift gate (FAIL-CLOSED) -------------------------------
+# docs/commands-reference.md is generated from the Command Registry; this fails
+# the push if a registry command was added/changed without regenerating it.
+# Run `python scripts/ci/gen_commands_reference.py` to fix a drift.
+cmddocs_gate="scripts/ci/gen_commands_reference.py"
+if [ -f "$cmddocs_gate" ]; then
+    "$PY" "$cmddocs_gate" --check </dev/null
+    if [ "$?" -ne 0 ]; then
+        status=1
+        cmddocs_hit=1
+    fi
+fi
+
 # --- 5) DOCS PRIVACY gate (FAIL-CLOSED) ---------------------------------------
 # Personal data must never leave the machine inside a documentation file:
 # the maintainer's real name, private email/handle, personal Windows paths,
@@ -241,6 +254,10 @@ if [ "$status" -ne 0 ]; then
     if [ "${docgen_hit:-0}" -ne 0 ]; then
         echo "pre-push BLOCKED: CLI DOCGEN drift (jarvis-cli-reference.md out of date)."
         echo "  Run: python scripts/ci/gen_cli_reference.py  and commit the result."
+    fi
+    if [ "${cmddocs_hit:-0}" -ne 0 ]; then
+        echo "pre-push BLOCKED: COMMANDS DOCGEN drift (commands-reference.md out of date)."
+        echo "  Run: python scripts/ci/gen_commands_reference.py  and commit the result."
     fi
     if [ "${docs_privacy_hit:-0}" -ne 0 ]; then
         echo "pre-push BLOCKED: DOCS PRIVACY gate (personal data in docs/)."

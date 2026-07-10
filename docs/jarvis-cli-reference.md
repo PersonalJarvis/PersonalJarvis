@@ -38,6 +38,11 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis clis usage <name>` — Show a CLI's recent usage history.
 - `jarvis clis usage-stats <name>` — Show a CLI's aggregated usage stats (success rate, avg duration, top commands).
 
+## commands
+
+- `jarvis commands list` — List every registry command (id, endpoint, params, danger, UI section).
+- `jarvis commands show <command_id>` — Show one command's full definition (params schema, voice aliases).
+
 ## conductor
 
 - `jarvis conductor add --def --yes --dry-run` — Add a job from a Job JSON document.

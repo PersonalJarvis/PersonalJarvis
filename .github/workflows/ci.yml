@@ -219,6 +219,11 @@ jobs:
         # docs/jarvis-cli-reference.md. Mirrors the pre-push docgen gate.
         run: python scripts/ci/gen_cli_reference.py --check
 
+      - name: Commands reference drift gate (docs in sync with the registry)
+        # Fails if a Command-Registry entry was added/changed without
+        # regenerating docs/commands-reference.md. Mirrors the pre-push gate.
+        run: python scripts/ci/gen_commands_reference.py --check
+
       - name: Install base runtime deps for the test suite (robust; no hand-list)
         shell: bash
         # The cli_ctl unit tests import deeper jarvis modules that transitively
