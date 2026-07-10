@@ -64,31 +64,104 @@ EOF
 # -------------------------------------------------------------- preflight
 phase '1/6' 'Prerequisites'
 
-find_python() {
-    for candidate in python3.13 python3.12 python3.11 python3 python; do
-        if command -v "$candidate" >/dev/null 2>&1; then
-            ver=$("$candidate" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "")
-            if [ -n "$ver" ]; then
-                major=${ver%.*}; minor=${ver#*.}
-                if [ "$major" -gt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -ge 11 ]; }; then
-                    echo "$candidate"
-                    return 0
-                fi
-            fi
-        fi
-    done
+# --- python-detection begin -------------------------------------------------
+# Covered by tests/unit/install/test_install_sh_python_detection.py.
+#
+# A bare PATH lookup is NOT enough on macOS: in a `curl | bash` session the
+# profile files that put python.org / Homebrew interpreters on PATH are often
+# never sourced, and Homebrew's versioned python@3.x kegs are keg-only (never
+# linked onto PATH at all) — so we also probe the well-known install prefixes
+# directly. We additionally remember the first too-old interpreter we saw, so
+# a failure can say what WAS found: a field report read a bare "not found" as
+# a false negative because `python3 --version` printed 3.8.2 (which reads
+# "bigger" than 3.11 unless you know Python's version ordering).
+#
+# Escape hatches:
+#   JARVIS_PYTHON              explicit interpreter; authoritative when set
+#   JARVIS_PYTHON_SEARCH_DIRS  colon-separated dirs REPLACING the built-in
+#                              off-PATH probe list (used by the tests)
+PY_MIN_MINOR=11
+PYTHON_EXE=""
+FOUND_TOO_OLD=""
+
+_py_try() {
+    # Accept $1 if it runs and is Python >= 3.PY_MIN_MINOR: store its resolved
+    # path in PYTHON_EXE and return 0. Otherwise remember the first too-old
+    # version for the failure message and return 1.
+    _exe="$1"
+    _ver=$("$_exe" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null) || return 1
+    case "$_ver" in ''|*[!0-9.]*) return 1 ;; esac
+    _major=${_ver%%.*}
+    _minor=${_ver#*.}; _minor=${_minor%%.*}
+    if [ "$_major" -gt 3 ] || { [ "$_major" -eq 3 ] && [ "$_minor" -ge "$PY_MIN_MINOR" ]; }; then
+        PYTHON_EXE=$(command -v "$_exe" 2>/dev/null || printf '%s' "$_exe")
+        return 0
+    fi
+    if [ -z "$FOUND_TOO_OLD" ]; then
+        _path=$(command -v "$_exe" 2>/dev/null || printf '%s' "$_exe")
+        FOUND_TOO_OLD="Python $_ver at $_path"
+    fi
     return 1
 }
 
-if ! PYTHON_EXE=$(find_python); then
+find_python() {
+    if [ -n "${JARVIS_PYTHON:-}" ]; then
+        # An explicit pin is authoritative: never silently substitute another
+        # interpreter for the one the user asked for.
+        _py_try "$JARVIS_PYTHON"
+        return $?
+    fi
+    for candidate in python3.14 python3.13 python3.12 python3.11 python3 python; do
+        command -v "$candidate" >/dev/null 2>&1 || continue
+        if _py_try "$candidate"; then return 0; fi
+    done
+    # Off-PATH probe: python.org framework installs and Homebrew prefixes
+    # (Apple Silicon + Intel), including keg-only python@3.x kegs. Unmatched
+    # globs stay literal and are filtered by the -x test; on Linux these
+    # directories simply don't exist and the loop is a no-op.
+    if [ -n "${JARVIS_PYTHON_SEARCH_DIRS:-}" ]; then
+        # Colon-split without `read` (the never-prompts guard bans that token).
+        _old_ifs=$IFS
+        IFS=':'
+        # shellcheck disable=SC2086 -- colon-splitting the override is the point
+        set -- $JARVIS_PYTHON_SEARCH_DIRS
+        IFS=$_old_ifs
+        _probe_dirs=("$@")
+    else
+        _probe_dirs=(
+            /opt/homebrew/bin
+            /usr/local/bin
+            /opt/homebrew/opt/python@3.*/bin
+            /usr/local/opt/python@3.*/bin
+            /Library/Frameworks/Python.framework/Versions/3.*/bin
+        )
+    fi
+    for _dir in "${_probe_dirs[@]:-}"; do
+        for _cand in "$_dir"/python3.1[1-9] "$_dir"/python3 "$_dir"/python; do
+            [ -x "$_cand" ] || continue
+            if _py_try "$_cand"; then return 0; fi
+        done
+    done
+    return 1
+}
+# --- python-detection end ---------------------------------------------------
+
+if ! find_python; then
     err 'Python 3.11+ not found.'
+    if [ -n "$FOUND_TOO_OLD" ]; then
+        note "Closest match: $FOUND_TOO_OLD - too old: Jarvis needs 3.11+,"
+        note 'and Python versions count 3.8 < 3.9 < 3.10 < 3.11.'
+    fi
     note 'Install it from:'
-    note '  - macOS:  https://www.python.org/downloads/ or "brew install python@3.12"'
+    note '  - macOS:  https://www.python.org/downloads/ or "brew install python"'
     note '  - Linux:  your distro package (apt install python3.12, dnf install python3.12, ...)'
+    note 'Then open a NEW terminal window and re-run this command.'
+    note 'Python installed somewhere unusual? Pin it explicitly:'
+    note '  curl -fsSL <this url> | JARVIS_PYTHON=/path/to/python3.12 bash'
     exit 1
 fi
 PY_VER=$("$PYTHON_EXE" -c 'import sys; print("Python %d.%d.%d" % sys.version_info[:3])' 2>/dev/null || echo "$PYTHON_EXE")
-ok "$PY_VER"
+ok "$PY_VER ($PYTHON_EXE)"
 
 if ! command -v git >/dev/null 2>&1; then
     err 'git not found.'

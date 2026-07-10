@@ -127,6 +127,18 @@ foreach ($candidate in @('python', 'py')) {
 }
 if (-not $pythonExe) {
     Write-Err 'Python 3.11+ not found.'
+    # Honesty over a bare "not found": name any too-old interpreter we saw, so
+    # a user staring at a working `python --version` understands the verdict
+    # (3.8 reads "bigger" than 3.11 unless you know Python's version ordering).
+    $reported = @{}
+    foreach ($candidate in @('python', 'py')) {
+        $info = Test-Tool $candidate
+        if ($info.Found -and $info.Version -match 'Python\s+(\d+\.\d+\.\d+)' -and -not $reported[$Matches[1]]) {
+            $reported[$Matches[1]] = $true
+            Write-Note "Closest match: Python $($Matches[1]) (via '$candidate') - too old: Jarvis needs 3.11+,"
+            Write-Note 'and Python versions count 3.8 < 3.9 < 3.10 < 3.11.'
+        }
+    }
     Write-Note 'Install it from https://www.python.org/downloads/ then re-run this command.'
     Write-Note '(After install, open a NEW PowerShell window so PATH refreshes.)'
     exit 1
