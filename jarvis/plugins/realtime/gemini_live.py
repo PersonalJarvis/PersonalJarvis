@@ -1,177 +1,212 @@
-"""Gemini Live realtime provider (google-genai Live API) for jarvis.realtime.
+"""Gemini Live provider plugin using the Google Gen AI SDK.
 
-Structural mirror of ``openai_realtime.py``: same class shape, same lazy-import
-discipline (AP-26 — ``from google import genai`` / ``from google.genai import
-types`` only inside methods, never at module top), same ``RealtimeEvent``
-mapping style. This module must not import ``jarvis.*`` beyond the config
-secret helper, ``jarvis.core.protocols.AudioChunk`` and
-``jarvis.realtime.protocol`` (both stdlib-light, no heavy side effects).
-
-Live audio is 16 kHz PCM in / 24 kHz PCM out. The mic is already captured at
-16 kHz, so — unlike the OpenAI adapter, which upsamples 16 kHz -> 24 kHz
-before ``input_audio_buffer.append`` — no resample happens here.
-
-Verified against the google-genai Live surface (the test venv has 2.9.0; the
-live-app py3.11 interpreter has 1.67.0; the lockfile pins 2.10.0 — the Live
-fields/methods used here are stable across all three, re-checked 2026-07-08):
-- ``genai.Client(api_key=...).aio.live.connect(model=..., config=...)`` is an
-  async context manager (``AsyncIterator[AsyncSession]``); call it to get the
-  cm, then ``await cm.__aenter__()`` / ``await cm.__aexit__(None, None,
-  None)`` (mirrors the plan's usage; ``genai.live.AsyncLive.connect``).
-- ``AsyncSession`` exposes: ``close``, ``receive``, ``send``,
-  ``send_client_content``, ``send_realtime_input``, ``send_tool_response``,
-  ``start_stream``. Audio in goes through
-  ``send_realtime_input(audio=types.Blob(data=..., mime_type=...))``
-  (``Blob`` fields: ``data``, ``display_name``, ``mime_type``).
-- ``receive()`` yields ``types.LiveServerMessage``, which has a ``.data``
-  *property* (not a model field — concatenates inline audio parts from
-  ``server_content.model_turn``, ``None`` when there is none) plus a
-  ``server_content`` field of type ``LiveServerContent`` with fields
-  ``input_transcription``, ``output_transcription``, ``interrupted``,
-  ``turn_complete`` (both transcription fields are ``Transcription`` objects
-  with a ``.text`` field) — exactly the shape this module maps below.
-- ``types.LiveConnectConfig`` has ``response_modalities``,
-  ``system_instruction``, ``input_audio_transcription``,
-  ``output_audio_transcription`` (both ``AudioTranscriptionConfig``) and
-  ``speech_config`` (a ``types.SpeechConfig``) among its fields — transcripts
-  are OFF by default and MUST be requested via the two transcription fields,
-  or ``server_content`` never carries a transcription.
-- ``types.SpeechConfig.voice_config`` is a ``types.VoiceConfig`` whose
-  ``prebuilt_voice_config`` is a ``types.PrebuiltVoiceConfig(voice_name=...)``
-  — introspected against the installed 2.9.0 SDK 2026-07-08
-  (``types.PrebuiltVoiceConfig.model_fields`` == ``{"voice_name"}``); selects
-  one of the Live API's 8 prebuilt voices (Puck/Charon/Kore/Fenrir/Aoede/Orus/
-  Leda/Zephyr).
-
-Model id: ``gemini-3.1-flash-live-preview``, confirmed live on
-https://ai.google.dev/gemini-api/docs/live-api/get-started-sdk (fetched
-2026-07-08) as the model used in that page's ``client.aio.live.connect()``
-Python/JS examples — i.e. reachable with a plain Google AI Studio API key
-(no Vertex AI service account needed). The older ``gemini-2.0-flash-live-001``
-id from the initial task brief no longer appears in current docs; use the
-verified id above. Re-verify if AI Studio deprecates this preview model.
+The module imports no ``jarvis.*`` modules. Credentials and configuration are
+injected by the realtime orchestrator, and the Google SDK remains a lazy import
+inside the live methods (AP-26). Gemini Live consumes raw 16-bit little-endian
+mono PCM at 16 kHz and emits the same format at 24 kHz.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
-
-from jarvis.core.config import get_provider_secret
-from jarvis.core.protocols import AudioChunk
-from jarvis.realtime.protocol import RealtimeEvent, RealtimeSessionConfig
+from uuid import uuid4
 
 log = logging.getLogger(__name__)
 
 _MODEL = "gemini-3.1-flash-live-preview"
-_INPUT_RATE = 16000  # mic is already 16 kHz -- no resample before send
-_OUTPUT_RATE = 24000
+_INPUT_RATE = 16_000
+_OUTPUT_RATE = 24_000
+
+
+@dataclass(frozen=True, slots=True)
+class _PcmChunk:
+    pcm: bytes
+    sample_rate: int
+    timestamp_ns: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _ProviderEvent:
+    type: str
+    audio: _PcmChunk | None = None
+    text: str | None = None
+    is_final: bool = False
+    ms_played: int | None = None
+    error: str | None = None
 
 
 class _GeminiLiveSession:
-    def __init__(self, session: Any, cm: Any, cfg: RealtimeSessionConfig, session_id: str) -> None:
-        self._session = session  # the live AsyncSession
-        self._cm = cm  # the async context manager `connect()` returned, for close()
-        self._cfg = cfg
+    def __init__(
+        self,
+        *,
+        session: Any,
+        connection_cm: Any,
+        client: Any,
+        session_id: str,
+    ) -> None:
+        self._session = session
+        self._connection_cm = connection_cm
+        self._client = client
         self.session_id = session_id
+        self._closed = False
 
-    async def send_audio(self, chunk: AudioChunk) -> None:
+    async def send_audio(self, chunk: Any) -> None:
         from google.genai import types  # lazy (AP-26)
 
-        pcm = chunk.pcm  # mic is normally already 16 kHz == _INPUT_RATE
-        if chunk.sample_rate != _INPUT_RATE:
-            # Defensive parity with the OpenAI adapter: if the mic pipeline ever
-            # emits a different rate, resample to _INPUT_RATE so the declared
-            # mime rate matches the bytes we send (else Gemini mis-times them).
-            from jarvis.telephony.audio import resample_pcm16  # lazy
-
-            pcm = resample_pcm16(pcm, chunk.sample_rate, _INPUT_RATE)
+        sample_rate = int(getattr(chunk, "sample_rate", 0) or 0)
+        if sample_rate != _INPUT_RATE:
+            raise ValueError(
+                f"Gemini Live requires {_INPUT_RATE} Hz PCM; received {sample_rate} Hz"
+            )
+        pcm = bytes(getattr(chunk, "pcm", b"") or b"")
+        if not pcm:
+            return
         await self._session.send_realtime_input(
-            audio=types.Blob(data=pcm, mime_type=f"audio/pcm;rate={_INPUT_RATE}")
+            audio=types.Blob(
+                data=pcm,
+                mime_type=f"audio/pcm;rate={_INPUT_RATE}",
+            )
         )
 
-    async def receive(self) -> AsyncIterator[RealtimeEvent]:
-        async for msg in self._session.receive():
-            data = getattr(msg, "data", None)
+    async def receive(self) -> AsyncIterator[_ProviderEvent]:
+        async for message in self._session.receive():
+            # ``LiveServerMessage.data`` concatenates every inline audio part,
+            # including Gemini 3.1 events that carry multiple parts at once.
+            data = getattr(message, "data", None)
             if data:
-                yield RealtimeEvent(
+                yield _ProviderEvent(
                     type="audio_delta",
-                    audio=AudioChunk(pcm=data, sample_rate=_OUTPUT_RATE, timestamp_ns=0),
+                    audio=_PcmChunk(pcm=bytes(data), sample_rate=_OUTPUT_RATE),
                 )
-            sc = getattr(msg, "server_content", None)
-            if sc is not None:
-                ot = getattr(sc, "output_transcription", None)
-                if ot and getattr(ot, "text", None):
-                    yield RealtimeEvent(type="output_transcript_delta", text=ot.text)
-                it = getattr(sc, "input_transcription", None)
-                if it and getattr(it, "text", None):
-                    yield RealtimeEvent(type="input_transcript", text=it.text, is_final=True)
-                if getattr(sc, "interrupted", False):
-                    yield RealtimeEvent(type="speech_started")
-                if getattr(sc, "turn_complete", False):
-                    yield RealtimeEvent(type="turn_complete")
+
+            content = getattr(message, "server_content", None)
+            if content is not None:
+                output_transcription = getattr(content, "output_transcription", None)
+                output_text = str(getattr(output_transcription, "text", "") or "")
+                if output_text:
+                    yield _ProviderEvent(
+                        type="output_transcript_delta", text=output_text
+                    )
+
+                input_transcription = getattr(content, "input_transcription", None)
+                input_text = str(getattr(input_transcription, "text", "") or "")
+                if input_text:
+                    yield _ProviderEvent(
+                        type="input_transcript", text=input_text, is_final=True
+                    )
+
+                if bool(getattr(content, "interrupted", False)):
+                    yield _ProviderEvent(type="interrupted")
+                if bool(getattr(content, "turn_complete", False)):
+                    yield _ProviderEvent(type="turn_complete")
+
+            go_away = getattr(message, "go_away", None)
+            if go_away is not None:
+                retry_ms = getattr(go_away, "time_left", None)
+                suffix = f" (time_left={retry_ms})" if retry_ms is not None else ""
+                yield _ProviderEvent(
+                    type="error", error=f"Gemini Live requested reconnect{suffix}"
+                )
 
     async def update_session(
         self, *, instructions: str | None = None, language: str | None = None
     ) -> None:
-        # Gemini Live sets system_instruction only at connect time; there is no
-        # mid-session update call on AsyncSession. An honest no-op.
-        return None
+        # Gemini fixes system instructions at connect time. The orchestrator
+        # reconnects on a substantive language change in a later session.
+        del instructions, language
 
     async def truncate(self, audio_end_ms: int) -> None:
-        return None  # server-side context trim not exposed; barge-in handled by send flow
+        del audio_end_ms  # Gemini interrupts generation when new audio arrives.
 
     async def interrupt(self) -> None:
-        return None  # interruption is driven by new input audio (server VAD)
+        # The Live API has no separate response-cancel call for this flow.
+        return None
 
     async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         try:
-            await self._cm.__aexit__(None, None, None)
+            await self._connection_cm.__aexit__(None, None, None)
         except Exception:  # noqa: BLE001
-            log.debug("gemini-live: session close raised, ignoring", exc_info=True)
+            log.debug("gemini-live: session close raised", exc_info=True)
+        finally:
+            close = getattr(self._client, "close", None)
+            if close is not None:
+                try:
+                    result = close()
+                    if hasattr(result, "__await__"):
+                        await result
+                except Exception:  # noqa: BLE001
+                    log.debug("gemini-live: client close raised", exc_info=True)
 
 
 class GeminiLiveProvider:
+    """Structural provider entry point for the Gemini Live family."""
+
     name = "gemini-live"
     supports_realtime = True
     input_sample_rate = _INPUT_RATE
     output_sample_rate = _OUTPUT_RATE
+    credential_candidates = (
+        ("gemini_api_key", "GEMINI_API_KEY"),
+        ("google_aistudio_api_key", "GOOGLE_AIStudio_API_KEY"),
+        ("google_api_key", "GOOGLE_API_KEY"),
+    )
+
+    def __init__(self, *, api_key: str | None = None) -> None:
+        self._api_key = (api_key or "").strip()
 
     async def can_open_duplex_session(self) -> bool:
-        return bool(get_provider_secret("gemini"))
+        return bool(self._api_key)
 
-    async def open_session(self, cfg: RealtimeSessionConfig) -> _GeminiLiveSession:
+    async def open_session(self, cfg: Any) -> _GeminiLiveSession:
+        if not self._api_key:
+            raise RuntimeError("Gemini Live API key is not configured")
+
         from google import genai  # lazy (AP-26)
         from google.genai import types
 
-        client = genai.Client(api_key=get_provider_secret("gemini"))
+        client = genai.Client(api_key=self._api_key)
+        voice = str(getattr(cfg, "voice", "") or "").strip()
         live_config = types.LiveConnectConfig(
-            # types.Modality is a str-Enum ("AUDIO" == Modality.AUDIO at runtime);
-            # the enum member (not a bare string) satisfies the SDK's static type.
             response_modalities=[types.Modality.AUDIO],
-            system_instruction=cfg.instructions or None,
+            system_instruction=str(getattr(cfg, "instructions", "") or "") or None,
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
-            # A pinned voice picks one of the Live API's 8 prebuilt voices
-            # (Puck/Charon/Kore/...). Omitted entirely when unset so the
-            # provider keeps its own default (today's behavior, no regression).
             **(
                 {
                     "speech_config": types.SpeechConfig(
                         voice_config=types.VoiceConfig(
                             prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                voice_name=cfg.voice
+                                voice_name=voice
                             )
                         )
                     )
                 }
-                if cfg.voice
+                if voice
                 else {}
             ),
         )
-        cm = client.aio.live.connect(model=cfg.model or _MODEL, config=live_config)
-        session = await cm.__aenter__()
-        import uuid
-
-        return _GeminiLiveSession(session, cm, cfg, session_id=str(uuid.uuid4()))
+        connection_cm = client.aio.live.connect(
+            model=str(getattr(cfg, "model", "") or _MODEL),
+            config=live_config,
+        )
+        try:
+            session = await connection_cm.__aenter__()
+        except BaseException:
+            close = getattr(client, "close", None)
+            if close is not None:
+                result = close()
+                if hasattr(result, "__await__"):
+                    await result
+            raise
+        return _GeminiLiveSession(
+            session=session,
+            connection_cm=connection_cm,
+            client=client,
+            session_id=str(uuid4()),
+        )

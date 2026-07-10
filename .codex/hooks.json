@@ -1,0 +1,54 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [[ \"$CLAUDE_FILE_PATH\" == *jarvis/missions/* ]]; then ruff check \"$CLAUDE_FILE_PATH\" && mypy \"$CLAUDE_FILE_PATH\" 2>&1 | head -20; fi"
+          },
+          {
+            "type": "command",
+            "command": "case \"$CLAUDE_FILE_PATH\" in *CLAUDE.md|*AGENTS.md) PY=\"/c/Program Files/Python311/python.exe\"; [ -x \"$PY\" ] || PY=\"$(command -v python3 2>/dev/null || command -v python 2>/dev/null)\"; [ -n \"$PY\" ] && \"$PY\" \"${CLAUDE_PROJECT_DIR:-.}/scripts/ci/sync_agents_md.py\" --quiet ;; esac"
+          },
+          {
+            "type": "command",
+            "command": "case \"$CLAUDE_FILE_PATH\" in */docs/*|docs/*) PY=\"/c/Program Files/Python311/python.exe\"; [ -x \"$PY\" ] || PY=\"$(command -v python3 2>/dev/null || command -v python 2>/dev/null)\"; [ -n \"$PY\" ] && \"$PY\" \"${CLAUDE_PROJECT_DIR:-.}/scripts/ci/docs_privacy_scan.py\" \"$CLAUDE_FILE_PATH\" ;; esac"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/Users/Administrator/.bridgespace/bin/bs-claude-hook.cjs\" session-start"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/Users/Administrator/.bridgespace/bin/bs-claude-hook.cjs\" user-prompt-submit"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/Users/Administrator/.bridgespace/bin/bs-claude-hook.cjs\" stop idle \"Finished working\""
+          }
+        ]
+      }
+    ]
+  }
+}

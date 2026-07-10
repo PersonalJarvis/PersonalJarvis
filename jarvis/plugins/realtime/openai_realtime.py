@@ -1,119 +1,238 @@
-"""OpenAI GA realtime provider (gpt-realtime) for the jarvis.realtime group.
+"""OpenAI Realtime provider plugin.
 
-Uses the RELEASED interface AsyncOpenAI().realtime.connect(...) (NOT the removed
-client.beta.realtime). The openai SDK import is lazy inside connect() (AP-26).
-This module must not import jarvis.* beyond the config secret helper and the
-protocol types (both stdlib-light, no heavy side effects).
+The module is structurally compatible with the realtime protocol but imports
+no ``jarvis.*`` modules. Credentials and configuration are injected by the
+orchestrator. The OpenAI SDK stays lazy and is imported only when a session is
+opened, keeping the provider off the startup path (AP-26).
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
-
-from jarvis.core.config import get_provider_secret
-from jarvis.core.protocols import AudioChunk
-from jarvis.realtime.protocol import RealtimeEvent, RealtimeSessionConfig
+from uuid import uuid4
 
 _MODEL = "gpt-realtime"
-_OUTPUT_RATE = 24000
-_INPUT_RATE = 24000  # we upsample our 16 kHz mic to 24 kHz before append
+_INPUT_RATE = 24_000
+_OUTPUT_RATE = 24_000
+_HANDSHAKE_TIMEOUT_S = 12.0
+
+
+@dataclass(frozen=True, slots=True)
+class _PcmChunk:
+    pcm: bytes
+    sample_rate: int
+    timestamp_ns: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _ProviderEvent:
+    type: str
+    audio: _PcmChunk | None = None
+    text: str | None = None
+    is_final: bool = False
+    ms_played: int | None = None
+    error: str | None = None
+
+
+def _error_message(event: Any) -> str:
+    error = getattr(event, "error", None)
+    code = str(getattr(error, "code", "") or "").strip()
+    message = str(getattr(error, "message", "") or "").strip()
+    if code and message:
+        return f"{code}: {message}"[:800]
+    return (message or code or "OpenAI Realtime session error")[:800]
+
+
+def _session_payload(cfg: Any) -> dict[str, Any]:
+    """Build the current GA ``session.update`` payload.
+
+    Audio output already includes a transcript side-channel, so the Realtime
+    API accepts ``[\"audio\"]`` only; requesting text and audio together is
+    invalid. PCM input and output are both explicitly declared as 24 kHz.
+    """
+    language = str(getattr(cfg, "language", "") or "").strip().lower()
+    transcription: dict[str, Any] = {"model": "gpt-4o-mini-transcribe"}
+    if language and language != "auto":
+        transcription["language"] = language.split("-", 1)[0]
+
+    turn_detection = str(getattr(cfg, "turn_detection", "server_vad") or "server_vad")
+    if turn_detection not in {"server_vad", "semantic_vad"}:
+        turn_detection = "server_vad"
+
+    output: dict[str, Any] = {
+        "format": {"type": "audio/pcm", "rate": _OUTPUT_RATE},
+    }
+    voice = str(getattr(cfg, "voice", "") or "").strip()
+    if voice:
+        output["voice"] = voice
+
+    return {
+        "type": "realtime",
+        "instructions": str(getattr(cfg, "instructions", "") or ""),
+        "output_modalities": ["audio"],
+        "audio": {
+            "input": {
+                "format": {"type": "audio/pcm", "rate": _INPUT_RATE},
+                "transcription": transcription,
+                "turn_detection": {
+                    "type": turn_detection,
+                    "create_response": True,
+                    "interrupt_response": True,
+                },
+            },
+            "output": output,
+        },
+    }
 
 
 class _OpenAIRealtimeSession:
-    def __init__(self, conn: Any, cfg: RealtimeSessionConfig, session_id: str) -> None:
-        self._conn = conn
-        self._cfg = cfg
+    def __init__(
+        self,
+        *,
+        connection: Any,
+        connection_cm: Any,
+        client: Any,
+        session_id: str,
+    ) -> None:
+        self._conn = connection
+        self._connection_cm = connection_cm
+        self._client = client
+        self._events = connection.__aiter__()
         self.session_id = session_id
         self._last_item_id = ""
+        self._closed = False
 
-    async def send_audio(self, chunk: AudioChunk) -> None:
-        from jarvis.telephony.audio import resample_pcm16
+    async def wait_until_ready(self) -> None:
+        """Reject a connection unless the server confirms our effective schema."""
 
-        pcm = chunk.pcm
-        if chunk.sample_rate != _INPUT_RATE:
-            pcm = resample_pcm16(pcm, chunk.sample_rate, _INPUT_RATE)
-        await self._conn.input_audio_buffer.append(audio=base64.b64encode(pcm).decode("ascii"))
+        async def _wait() -> None:
+            while True:
+                event = await anext(self._events)
+                event_type = str(getattr(event, "type", "") or "")
+                if event_type == "session.updated":
+                    return
+                if event_type == "error":
+                    raise RuntimeError(_error_message(event))
 
-    async def receive(self) -> AsyncIterator[RealtimeEvent]:
-        async for event in self._conn:
-            etype = getattr(event, "type", "")
-            if etype == "response.output_audio.delta":
-                pcm = base64.b64decode(event.delta)
-                yield RealtimeEvent(
+        await asyncio.wait_for(_wait(), timeout=_HANDSHAKE_TIMEOUT_S)
+
+    async def send_audio(self, chunk: Any) -> None:
+        sample_rate = int(getattr(chunk, "sample_rate", 0) or 0)
+        if sample_rate != _INPUT_RATE:
+            raise ValueError(
+                f"OpenAI Realtime requires {_INPUT_RATE} Hz PCM; received {sample_rate} Hz"
+            )
+        pcm = bytes(getattr(chunk, "pcm", b"") or b"")
+        if not pcm:
+            return
+        await self._conn.input_audio_buffer.append(
+            audio=base64.b64encode(pcm).decode("ascii")
+        )
+
+    async def receive(self) -> AsyncIterator[_ProviderEvent]:
+        async for event in self._events:
+            event_type = str(getattr(event, "type", "") or "")
+            if event_type == "response.output_audio.delta":
+                self._last_item_id = str(getattr(event, "item_id", "") or "")
+                yield _ProviderEvent(
                     type="audio_delta",
-                    audio=AudioChunk(pcm=pcm, sample_rate=_OUTPUT_RATE, timestamp_ns=0),
+                    audio=_PcmChunk(
+                        pcm=base64.b64decode(getattr(event, "delta", "")),
+                        sample_rate=_OUTPUT_RATE,
+                    ),
                 )
-            elif etype == "response.output_audio_transcript.delta":
-                yield RealtimeEvent(type="output_transcript_delta", text=event.delta)
-            elif etype == "conversation.item.input_audio_transcription.completed":
-                yield RealtimeEvent(type="input_transcript", text=event.transcript, is_final=True)
-            elif etype == "input_audio_buffer.speech_started":
-                yield RealtimeEvent(type="speech_started")
-            elif etype == "response.done":
-                yield RealtimeEvent(type="turn_complete")
-            elif etype == "error":
-                yield RealtimeEvent(type="error", error=str(getattr(event, "error", event)))
+            elif event_type == "response.output_audio_transcript.delta":
+                yield _ProviderEvent(
+                    type="output_transcript_delta",
+                    text=str(getattr(event, "delta", "") or ""),
+                )
+            elif event_type == "conversation.item.input_audio_transcription.completed":
+                yield _ProviderEvent(
+                    type="input_transcript",
+                    text=str(getattr(event, "transcript", "") or ""),
+                    is_final=True,
+                )
+            elif event_type == "input_audio_buffer.speech_started":
+                yield _ProviderEvent(type="speech_started")
+            elif event_type == "response.done":
+                yield _ProviderEvent(type="turn_complete")
+            elif event_type == "error":
+                yield _ProviderEvent(type="error", error=_error_message(event))
 
     async def update_session(
         self, *, instructions: str | None = None, language: str | None = None
     ) -> None:
-        payload: dict[str, Any] = {}
+        del language  # Input-transcription language is fixed for the live session.
         if instructions is not None:
-            payload["instructions"] = instructions
-        if payload:
-            await self._conn.session.update(session=payload)
+            await self._conn.session.update(
+                session={"type": "realtime", "instructions": instructions}
+            )
 
     async def truncate(self, audio_end_ms: int) -> None:
         if self._last_item_id:
             await self._conn.conversation.item.truncate(
-                item_id=self._last_item_id, content_index=0, audio_end_ms=audio_end_ms
+                item_id=self._last_item_id,
+                content_index=0,
+                audio_end_ms=max(0, int(audio_end_ms)),
             )
 
     async def interrupt(self) -> None:
         await self._conn.response.cancel()
 
     async def close(self) -> None:
-        await self._conn.close()
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            await self._connection_cm.__aexit__(None, None, None)
+        finally:
+            close = getattr(self._client, "close", None)
+            if close is not None:
+                result = close()
+                if hasattr(result, "__await__"):
+                    await result
 
 
 class OpenAIRealtimeProvider:
+    """Structural provider entry point for the OpenAI Realtime family."""
+
     name = "openai-realtime"
     supports_realtime = True
     input_sample_rate = _INPUT_RATE
     output_sample_rate = _OUTPUT_RATE
+    credential_candidates = (("openai_api_key", "OPENAI_API_KEY"),)
+
+    def __init__(self, *, api_key: str | None = None) -> None:
+        self._api_key = (api_key or "").strip()
 
     async def can_open_duplex_session(self) -> bool:
-        return bool(get_provider_secret("openai"))
+        return bool(self._api_key)
 
-    async def open_session(self, cfg: RealtimeSessionConfig) -> _OpenAIRealtimeSession:
+    async def open_session(self, cfg: Any) -> _OpenAIRealtimeSession:
+        if not self._api_key:
+            raise RuntimeError("OpenAI Realtime API key is not configured")
+
         from openai import AsyncOpenAI  # lazy (AP-26)
 
-        client = AsyncOpenAI(api_key=get_provider_secret("openai"))
-        conn = await client.realtime.connect(model=cfg.model or _MODEL).__aenter__()
-        session_payload: dict[str, Any] = {
-            "instructions": cfg.instructions,
-            "output_modalities": list(cfg.modalities),
-            "audio": {
-                "input": {
-                    # Declare the rate we ACTUALLY send: send_audio upsamples the
-                    # mic PCM to _INPUT_RATE (24 kHz) before input_audio_buffer.append,
-                    # so the wire format must be 24 kHz — not cfg.input_sample_rate
-                    # (the 16 kHz mic rate), or the server mis-times the samples.
-                    "format": {"type": "audio/pcm", "rate": _INPUT_RATE},
-                    "turn_detection": {"type": cfg.turn_detection},
-                },
-                "output": {
-                    "format": {"type": "audio/pcm"},
-                    **({"voice": cfg.voice} if cfg.voice else {}),
-                },
-            },
-        }
-        # The openai SDK's session.update() TypedDict shape is stricter than the
-        # GA over-the-wire schema we build here; a plain dict is what the API
-        # actually accepts.
-        await conn.session.update(session=session_payload)  # type: ignore[arg-type]
-        import uuid
-
-        return _OpenAIRealtimeSession(conn, cfg, session_id=str(uuid.uuid4()))
+        client = AsyncOpenAI(api_key=self._api_key)
+        connection_cm = client.realtime.connect(
+            model=str(getattr(cfg, "model", "") or _MODEL)
+        )
+        connection = await connection_cm.__aenter__()
+        session = _OpenAIRealtimeSession(
+            connection=connection,
+            connection_cm=connection_cm,
+            client=client,
+            session_id=str(uuid4()),
+        )
+        try:
+            await connection.session.update(session=_session_payload(cfg))
+            await session.wait_until_ready()
+        except BaseException:
+            await session.close()
+            raise
+        return session

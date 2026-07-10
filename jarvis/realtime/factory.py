@@ -1,12 +1,9 @@
-# jarvis/realtime/factory.py
-"""Build a RealtimeVoiceSession for the browser /ws/audio path.
+"""Capability- and credential-aware realtime provider resolution.
 
-Returns None (=> caller runs the classic path) when realtime is not selected
-or no realtime key is present in ANY supported family. The realtime provider
-is resolved key-aware and cross-family (OpenAI Realtime <-> Gemini Live,
-AP-22): the configured ``[brain.realtime].provider`` wins when it is keyed,
-otherwise the factory crosses to whichever family actually has a key, and
-only degrades to the classic pipeline when neither family is reachable.
+Realtime plugins are discovered through the ``jarvis.realtime`` entry-point
+group. The configured provider and its explicit fallbacks are tried first,
+then every other installed provider with a usable credential. No provider name
+or model id controls whether the feature is available (AP-21/AP-22).
 """
 
 from __future__ import annotations
@@ -14,62 +11,93 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from jarvis.core.config import get_provider_secret
+from jarvis.core.config import get_secret_any
+from jarvis.core.registry import list_plugins, load
+from jarvis.realtime.protocol import RealtimeProvider
 
 log = logging.getLogger(__name__)
 
+_GROUP = "jarvis.realtime"
 
-def _ordered_families(cfg: Any) -> list[tuple[str, str, Any]]:
-    """Return the (id, secret-name, class) realtime family list, configured
-    provider first — the single shared ordering both resolvers below use, so
-    "which realtime provider is active" can never disagree between the
-    session builder and the availability check (AP-22)."""
-    from jarvis.plugins.realtime.gemini_live import GeminiLiveProvider
-    from jarvis.plugins.realtime.openai_realtime import OpenAIRealtimeProvider
 
-    # (id, secret-name, class) — capability/key-gated, never name-pinned behavior
-    families = [
-        ("openai-realtime", "openai", OpenAIRealtimeProvider),
-        ("gemini-live", "gemini", GeminiLiveProvider),
+def _configured_provider_ids(cfg: Any) -> list[str]:
+    tier = getattr(getattr(getattr(cfg, "brain", None), "realtime", None), "provider", None)
+    realtime = getattr(getattr(cfg, "brain", None), "realtime", None)
+    preferred = [
+        tier,
+        getattr(realtime, "fallback_provider", None),
+        getattr(realtime, "fallback_provider_2", None),
     ]
-    configured = (
-        getattr(getattr(getattr(cfg, "brain", None), "realtime", None), "provider", "")
-        or "openai-realtime"
-    )
-    return sorted(families, key=lambda f: f[0] != configured)  # configured first
+    installed = list_plugins(_GROUP)
+    ordered: list[str] = []
+    for provider_id in [*preferred, *installed]:
+        value = str(provider_id or "").strip()
+        if value and value in installed and value not in ordered:
+            ordered.append(value)
+    return ordered
+
+
+def _provider_candidates(cfg: Any) -> list[Any]:
+    """Instantiate every keyed realtime plugin in effective fallback order."""
+    candidates: list[Any] = []
+    for provider_id in _configured_provider_ids(cfg):
+        try:
+            provider_cls = load(_GROUP, provider_id, protocol=RealtimeProvider)
+            if not bool(getattr(provider_cls, "supports_realtime", False)):
+                continue
+            credential_candidates = tuple(
+                getattr(provider_cls, "credential_candidates", ()) or ()
+            )
+            api_key = get_secret_any(credential_candidates)
+            if not api_key:
+                continue
+            provider = provider_cls(api_key=api_key)
+            if not isinstance(provider, RealtimeProvider):
+                log.warning(
+                    "Realtime plugin %s does not satisfy the provider contract.",
+                    provider_id,
+                )
+                continue
+            candidates.append(provider)
+        except Exception as exc:  # noqa: BLE001 — one plugin must not brick others
+            log.warning("Realtime plugin %s is unavailable: %s", provider_id, exc)
+    return candidates
 
 
 def _resolve_realtime_provider(cfg: Any) -> Any:
-    """Return an instantiated realtime provider by key presence (cross-family,
-    AP-22), preferring [brain.realtime].provider; None when no realtime key."""
-    for _id, secret, cls in _ordered_families(cfg):
-        if get_provider_secret(secret):
-            return cls()
-    return None
+    """Compatibility helper returning the first credential-ready provider."""
+    candidates = _provider_candidates(cfg)
+    return candidates[0] if candidates else None
 
 
 def realtime_available_provider(cfg: Any) -> str | None:
-    """Return the resolved realtime provider id (cross-family, AP-22) — id
-    counterpart of :func:`_resolve_realtime_provider`, sharing the exact same
-    ``_ordered_families`` ordering so the two can never drift. Used by the
-    voice-mode route to compute ``realtime_available`` / ``active_provider``
-    without instantiating a provider (and its SDK client) just to check."""
-    for provider_id, secret, _cls in _ordered_families(cfg):
-        if get_provider_secret(secret):
-            return provider_id
-    return None
+    """Return the first credential-ready provider id without opening a socket."""
+    provider = _resolve_realtime_provider(cfg)
+    return str(getattr(provider, "name", "") or "") or None
 
 
 def build_realtime_session(
-    *, cfg: Any, bus: Any, session_id: str, send_binary: Any, send_json: Any
+    *,
+    cfg: Any,
+    bus: Any,
+    session_id: str,
+    send_binary: Any,
+    send_json: Any,
+    half_duplex: bool = False,
 ):
+    """Build a transport-neutral realtime session wrapper.
+
+    Returning ``None`` is an honest request for the caller to use the classic
+    pipeline. Actual socket handshakes happen lazily on ``audio_start`` and the
+    wrapper tries every candidate in order before failing.
+    """
     mode = getattr(getattr(cfg, "voice", None), "mode", "pipeline")
     if mode != "realtime":
         return None
     try:
-        provider = _resolve_realtime_provider(cfg)
-        if provider is None:
-            log.info("realtime: no realtime key in any family — classic path")
+        providers = _provider_candidates(cfg)
+        if not providers:
+            log.info("Realtime voice has no credential-ready provider; using pipeline mode.")
             return None
 
         from jarvis.realtime.session import RealtimeVoiceSession
@@ -78,10 +106,17 @@ def build_realtime_session(
             session_id=session_id,
             send_binary=send_binary,
             send_json=send_json,
-            provider=provider,
+            providers=providers,
             config=cfg,
             bus=bus,
+            half_duplex=half_duplex,
         )
     except Exception as exc:  # noqa: BLE001 — unbuildable stack => classic path
-        log.warning("realtime: session build failed: %s", exc)
+        log.warning("Realtime session build failed: %s", exc)
         return None
+
+
+__all__ = [
+    "build_realtime_session",
+    "realtime_available_provider",
+]
