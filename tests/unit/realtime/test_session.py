@@ -56,6 +56,13 @@ class FakeProvider:
         return self.session
 
 
+class FailingProvider(FakeProvider):
+    name = "failing-family"
+
+    async def open_session(self, cfg):
+        raise RuntimeError("simulated depleted credits")
+
+
 def _cfg(*, providers=None):
     from types import SimpleNamespace
 
@@ -111,6 +118,54 @@ async def test_open_defaults_to_empty_model_and_voice_when_unset():
     opened_cfg = sess._provider.opened_with
     assert opened_cfg.model == ""
     assert opened_cfg.voice == ""
+
+
+@pytest.mark.asyncio
+async def test_handshake_failure_crosses_to_next_provider_family():
+    fallback = FakeProvider([])
+    fallback.name = "working-family"
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="s-fallback",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        providers=[FailingProvider([]), fallback],
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.end(reason="test")
+
+    assert sess.active_provider == "working-family"
+    assert any(message.get("type") == "provider_fallback" for message in jsons)
+    assert any(
+        message.get("type") == "audio_ready"
+        and message.get("provider") == "working-family"
+        for message in jsons
+    )
+
+
+@pytest.mark.asyncio
+async def test_input_is_resampled_to_active_provider_rate():
+    provider = FakeProvider([])
+    provider.input_sample_rate = 24_000
+    sess = RealtimeVoiceSession(
+        session_id="s-resample",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.handle_audio_frame(b"\x01\x00" * 1_600)
+    await sess.end(reason="test")
+
+    assert provider.session.sent_audio
+    sent = provider.session.sent_audio[0]
+    assert sent.sample_rate == 24_000
+    assert abs(len(sent.pcm) // 2 - 2_400) <= 2
 
 
 @pytest.mark.asyncio
