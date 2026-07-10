@@ -61,11 +61,13 @@ function installFetchMock(routes: Record<string, () => RouteResult>) {
 
 const SECTION_HEALTH = {
   sections: {
-    brain: { status: "needs_setup", reason: "not_configured", detail: "OpenRouter: no key set" },
-    tts: { status: "ok", reason: "ok", detail: "Gemini Flash: ok" },
-    stt: { status: "error", reason: "bad_key", detail: "Groq STT: key invalid" },
-    subagents: { status: "unknown", reason: "unknown", detail: "" },
-    advanced: { status: "unknown", reason: "unknown", detail: "" },
+    brain: { status: "needs_setup", reason: "not_configured", detail: "OpenRouter: no key set", subject_id: "openrouter" },
+    "computer-use": { status: "ok", reason: "ok", detail: "OpenRouter: ok", subject_id: "openrouter" },
+    tts: { status: "ok", reason: "ok", detail: "Gemini Flash: ok", subject_id: "gemini-flash-tts" },
+    stt: { status: "error", reason: "bad_key", detail: "Groq STT: key invalid", subject_id: "groq-api" },
+    realtime: { status: "unknown", reason: "unknown", detail: "", subject_id: null },
+    subagents: { status: "unknown", reason: "unknown", detail: "", subject_id: null },
+    advanced: { status: "unknown", reason: "unknown", detail: "", subject_id: null },
   },
   checked_at: 0,
   cached: false,
@@ -74,7 +76,15 @@ const SECTION_HEALTH = {
 function baseRoutes(overrides: Record<string, () => RouteResult> = {}) {
   return {
     "/api/providers/section-health": () => ({ body: SECTION_HEALTH }),
-    "/api/providers": () => ({ body: { providers: [] } }),
+    "/api/providers/openrouter/models": () => ({
+      body: { provider: "openrouter", current_model: "", models: [], source: "static", fetched_at: 0, selects: "model" },
+    }),
+    "/api/providers/openrouter/cu-model": () => ({
+      body: { provider: "openrouter", cu_model: "", effective_model: "auto", uses_main: true },
+    }),
+    "/api/providers": () => ({
+      body: { providers: [BROKEN_BRAIN_PROVIDER, ACTIVE_TTS_PROVIDER, ACTIVE_STT_PROVIDER] },
+    }),
     "/api/openclaw/status": () => ({ body: { mapping: [], brain_primary: "" } }),
     ...overrides,
   };
@@ -108,13 +118,29 @@ const BROKEN_BRAIN_PROVIDER = {
   alt_credential: null,
 };
 
+const ACTIVE_TTS_PROVIDER = {
+  ...BROKEN_BRAIN_PROVIDER,
+  id: "gemini-flash-tts",
+  label: "Gemini Flash TTS",
+  tier: "tts",
+};
+
+const ACTIVE_STT_PROVIDER = {
+  ...BROKEN_BRAIN_PROVIDER,
+  id: "groq-api",
+  label: "Groq STT",
+  tier: "stt",
+};
+
 const SECTION_HEALTH_BRAIN_ERROR = {
   sections: {
-    brain: { status: "error", reason: "rate_limited", detail: "OpenRouter: rate limited" },
-    tts: { status: "ok", reason: "ok", detail: "Gemini Flash: ok" },
-    stt: { status: "ok", reason: "ok", detail: "faster-whisper: local" },
-    subagents: { status: "unknown", reason: "unknown", detail: "" },
-    advanced: { status: "unknown", reason: "unknown", detail: "" },
+    brain: { status: "error", reason: "rate_limited", detail: "OpenRouter: rate limited", subject_id: "openrouter" },
+    "computer-use": { status: "ok", reason: "ok", detail: "OpenRouter: ok", subject_id: "openrouter" },
+    tts: { status: "ok", reason: "ok", detail: "Gemini Flash: ok", subject_id: "gemini-flash-tts" },
+    stt: { status: "ok", reason: "ok", detail: "faster-whisper: local", subject_id: "groq-api" },
+    realtime: { status: "unknown", reason: "unknown", detail: "", subject_id: null },
+    subagents: { status: "unknown", reason: "unknown", detail: "", subject_id: null },
+    advanced: { status: "unknown", reason: "unknown", detail: "", subject_id: null },
   },
   checked_at: 0,
   cached: false,
@@ -122,9 +148,9 @@ const SECTION_HEALTH_BRAIN_ERROR = {
 
 // Routes for a fully-rendered brain card: the active card mounts the model + CU
 // pickers, which fetch their own catalogs on mount.
-function cardRoutes() {
+function cardRoutes(sectionHealth: unknown = SECTION_HEALTH_BRAIN_ERROR) {
   return baseRoutes({
-    "/api/providers/section-health": () => ({ body: SECTION_HEALTH_BRAIN_ERROR }),
+    "/api/providers/section-health": () => ({ body: sectionHealth }),
     "/api/providers/openrouter/models": () => ({
       body: { provider: "openrouter", current_model: "", models: [], source: "static", fetched_at: 0, selects: "model" },
     }),
@@ -190,6 +216,28 @@ describe("ApiKeysView — section-health tab indicators", () => {
     );
     render(<ApiKeysView />);
     await waitFor(() => screen.getByRole("tab", { name: /Brain/i }));
+    expect(screen.queryByTestId("provider-health-error-openrouter")).toBeNull();
+  });
+
+  it("never attributes an obsolete NVIDIA timeout to active OpenRouter", async () => {
+    installFetchMock(
+      cardRoutes({
+        ...SECTION_HEALTH_BRAIN_ERROR,
+        sections: {
+          ...SECTION_HEALTH_BRAIN_ERROR.sections,
+          brain: {
+            status: "error",
+            reason: "timeout",
+            detail: "NVIDIA NIM: timeout after 60.0s",
+            subject_id: "nvidia",
+          },
+        },
+      }),
+    );
+    render(<ApiKeysView />);
+
+    const brainTab = await waitFor(() => screen.getByRole("tab", { name: /^Brain$/i }));
+    expect(brainTab.getAttribute("title")).toBeNull();
     expect(screen.queryByTestId("provider-health-error-openrouter")).toBeNull();
   });
 });

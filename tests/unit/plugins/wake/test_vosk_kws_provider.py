@@ -313,7 +313,14 @@ def test_verify_candidate_runs_grammar_and_free_decode_concurrently(monkeypatch)
     p._ensure_model()  # noqa: SLF001
     window = np.full(48000, 0.2, dtype=np.float32)
 
-    # Would raise threading.BrokenBarrierError (via the executor future) if
-    # the two passes ran sequentially instead of concurrently.
     result = p._verify_candidate(window)  # noqa: SLF001
+    # A sequential regression breaks the barrier (only one party ever
+    # arrives at a time -> BrokenBarrierError after the 2 s timeout), which
+    # ``_verify_candidate``'s fail-open exception handler would otherwise
+    # silently turn into a passing ``True`` too — so the barrier's own
+    # broken-state is the real assertion, not just the return value.
+    assert barrier.broken is False, (
+        "the barrier never filled — grammar re-score and free decode ran "
+        "SEQUENTIALLY, not concurrently"
+    )
     assert result is True

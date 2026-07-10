@@ -18,12 +18,26 @@ real Tk display, so they run on every OS including a headless CI box.
 """
 from __future__ import annotations
 
+import pytest
+
 from jarvis.ui.jarvisbar.overlay import (
     MIN_FRAME_DELAY_MS,
     TARGET_FRAME_MS,
     _IDLE_SETTLE_TICKS,
     JarvisBarOverlay,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_real_tk_photoimage(monkeypatch):
+    """``_schedule_frame`` does a local ``from PIL import ImageTk`` and calls
+    ``ImageTk.PhotoImage(img)``, which needs a live Tk default root. These
+    tests run fully headless (fake root/canvas, no real Tk window), so
+    ``PhotoImage`` is replaced with a passthrough — the tests care about
+    render()/re-arm CALL COUNTS, not actual Tk image objects. Patching the
+    real ``PIL.ImageTk`` module attribute (not ``overlay``'s local name)
+    because the import is re-resolved fresh inside the function body."""
+    monkeypatch.setattr("PIL.ImageTk.PhotoImage", lambda img: img)
 
 
 class _FakeRoot:
