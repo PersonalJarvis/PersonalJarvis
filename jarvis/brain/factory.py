@@ -1637,9 +1637,11 @@ def _build_flash_provider(jcfg: Any, ack_cfg: Any) -> Any:
     "follow_brain" meta-value: resolve to whatever ``brain.primary``
     currently points at, so the user does not have to keep two provider
     settings in sync. If the main brain is on a provider the Flash-Brain
-    has no adapter for (openrouter, claude_api), fall back to "gemini" —
-    the historical default. Mutates ``ack_cfg.provider`` to the resolved
-    name so telemetry labels show the concrete provider.
+    has no adapter for (openrouter, claude_api), fall back to the first
+    REGISTRY family with a usable credential (AP-22 — a hardcoded literal
+    fallback would brick this tier for every downloader whose only key is
+    e.g. OpenAI). Mutates ``ack_cfg.provider`` to the resolved name so
+    telemetry labels show the concrete provider.
     """
     from jarvis.brain.ack_brain.providers import REGISTRY
 
@@ -1654,12 +1656,21 @@ def _build_flash_provider(jcfg: Any, ack_cfg: Any) -> Any:
             )
             provider_name = primary
         else:
+            fallback = _pick_keyed_flash_fallback(ack_cfg)
+            if fallback is None:
+                log.warning(
+                    "Flash-Brain: brain.primary=%r has no Flash adapter "
+                    "(REGISTRY=%s) and no REGISTRY provider has a usable "
+                    "credential; disabling Flash-Brain.",
+                    primary, sorted(REGISTRY.keys()),
+                )
+                return None
             log.warning(
                 "Flash-Brain: brain.primary=%r has no Flash adapter "
-                "(REGISTRY=%s); falling back to gemini.",
-                primary, sorted(REGISTRY.keys()),
+                "(REGISTRY=%s); falling back to keyed provider %r.",
+                primary, sorted(REGISTRY.keys()), fallback,
             )
-            provider_name = "gemini"
+            provider_name = fallback
         ack_cfg.provider = provider_name
     provider_cls = REGISTRY.get(provider_name)
     if provider_cls is None:
@@ -1671,6 +1682,29 @@ def _build_flash_provider(jcfg: Any, ack_cfg: Any) -> Any:
         return None
     provider_cfg = getattr(ack_cfg.providers, provider_name)
     return provider_cls(provider_cfg)
+
+
+def _pick_keyed_flash_fallback(ack_cfg: Any) -> str | None:
+    """First REGISTRY provider family with a usable credential, or ``None``.
+
+    AP-21/AP-22: never hardcode a literal provider name as the fallback — a
+    downloader whose only key is e.g. OpenAI must resolve to "openai", not a
+    keyless "gemini". Iterates ``REGISTRY`` in its declared order (gemini,
+    openai, ollama, ...) as the tie-break so an all-keyed setup keeps the
+    historical default. A provider config with no ``api_key_secret`` field
+    (local Ollama) needs no credential and is always considered usable.
+    """
+    from jarvis.brain.ack_brain.providers import REGISTRY
+    from jarvis.core.config import get_secret
+
+    for name in REGISTRY:
+        provider_cfg = getattr(ack_cfg.providers, name, None)
+        if provider_cfg is None:
+            continue
+        secret_name = getattr(provider_cfg, "api_key_secret", None)
+        if secret_name is None or get_secret(secret_name):
+            return name
+    return None
 
 
 def _build_ack_fallback(ack_cfg: Any, preferences_provider: Any = None) -> Any:
