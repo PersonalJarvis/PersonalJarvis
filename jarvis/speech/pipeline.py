@@ -5611,7 +5611,7 @@ class SpeechPipeline:
     async def _session_input_stream(
         self, chunks: AsyncIterator[AudioChunk]
     ) -> AsyncIterator[AudioChunk]:
-        """Filtert Mic-Frames, die waehrend/nach Jarvis-TTS aufgenommen wurden."""
+        """Filter mic frames captured during/after Jarvis TTS output."""
         dropped = 0
         async for chunk in chunks:
             # Input mute (Jarvis-scoped): while muted, drop the user's audio at
@@ -5626,8 +5626,16 @@ class SpeechPipeline:
                 dropped += 1
                 continue
             if dropped:
-                log.info("TTS-Echo-Sperre: %d Mic-Chunk(s) verworfen.", dropped)
+                log.info("TTS echo guard: dropped %d mic chunk(s).", dropped)
                 dropped = 0
+            # Realtime sessions bypass the VAD, where mic_level.feed normally
+            # lives, so feed the live loudness here — after the mute and echo
+            # filters, so suppressed audio honestly shows dark bars. Same
+            # normalized RMS as the VAD/PTT sites; zero-cost without overlay.
+            if mic_level.has_subscribers():
+                samples = pcm_bytes_to_np(chunk.pcm)
+                if samples.size:
+                    mic_level.feed(float(np.sqrt(np.mean(np.square(samples)))))
             yield chunk
 
     def _should_drop_session_input(self, chunk: AudioChunk) -> bool:
