@@ -7138,6 +7138,12 @@ class BrainManager:
             # saves an avoidable subprocess/network call.
             if prov_name in self._dead_providers:
                 continue
+            # Model-scoped dead-list: this exact (provider, model) took a
+            # billing rejection earlier THIS turn but the provider itself
+            # was kept alive because another model was still untried — see
+            # `_dead_provider_models`.
+            if (prov_name, model) in self._dead_provider_models:
+                continue
             # Circuit breaker: skip rate-limited providers during cooldown
             if not self._rate_tracker.is_available(prov_name, model):
                 log.debug("Skip rate-limited: %s(%s)", prov_name, model)
