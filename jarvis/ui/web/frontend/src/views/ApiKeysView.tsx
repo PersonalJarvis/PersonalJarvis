@@ -156,6 +156,11 @@ export function ApiKeysView() {
   const {
     mode: liveMode,
     realtimeAvailable,
+    sessionActive,
+    activeSessionMode,
+    activeSessionProvider,
+    activeSessionModel,
+    transitioning,
     setMode: setVoiceMode,
     isLoading: liveModeLoading,
   } = useVoiceMode();
@@ -191,6 +196,11 @@ export function ApiKeysView() {
         mode={engineMode}
         liveMode={liveMode}
         realtimeAvailable={realtimeAvailable}
+        sessionActive={sessionActive}
+        activeSessionMode={activeSessionMode}
+        activeSessionProvider={activeSessionProvider}
+        activeSessionModel={activeSessionModel}
+        transitioning={transitioning}
         onSelect={setEngineMode}
         onSetVoiceMode={setVoiceMode}
       />
@@ -271,6 +281,11 @@ function EngineModeSwitch({
   mode,
   liveMode,
   realtimeAvailable,
+  sessionActive,
+  activeSessionMode,
+  activeSessionProvider,
+  activeSessionModel,
+  transitioning,
   onSelect,
   onSetVoiceMode,
 }: {
@@ -279,6 +294,12 @@ function EngineModeSwitch({
   liveMode: string;
   /** Whether SOME realtime family (OpenAI/Gemini) has a key configured. */
   realtimeAvailable: boolean;
+  /** What the currently open voice session actually uses. */
+  sessionActive: boolean;
+  activeSessionMode: "pipeline" | "realtime" | null;
+  activeSessionProvider: string;
+  activeSessionModel: string;
+  transitioning: boolean;
   onSelect: (mode: VoiceEngineMode) => void;
   /** Persists `[voice].mode` — gated per the rule above. */
   onSetVoiceMode: (mode: string) => void;
@@ -289,6 +310,20 @@ function EngineModeSwitch({
     { key: "realtime", label: t("apikeys_view.mode_realtime"), icon: Radio },
   ];
   const liveIndex = liveMode === "realtime" ? 1 : 0;
+  const runtimeDetail = [activeSessionProvider, activeSessionModel]
+    .filter(Boolean)
+    .join(" · ");
+  const runtimeText = transitioning
+    ? t("apikeys_view.runtime_switching")
+    : sessionActive && activeSessionMode === "realtime"
+      ? `${t("apikeys_view.runtime_realtime")}${runtimeDetail ? ` · ${runtimeDetail}` : ""}`
+      : sessionActive && activeSessionMode === "pipeline" && liveMode === "realtime"
+        ? t("apikeys_view.runtime_fallback_pipeline")
+        : sessionActive && activeSessionMode === "pipeline"
+          ? t("apikeys_view.runtime_pipeline")
+          : t("apikeys_view.runtime_idle");
+  const runtimeMatchesSelection =
+    !sessionActive || activeSessionMode === null || activeSessionMode === liveMode;
 
   function handleSelect(seg: VoiceEngineMode) {
     onSelect(seg);
@@ -357,6 +392,32 @@ function EngineModeSwitch({
                 ? t("apikeys_view.mode_desc_realtime")
                 : t("apikeys_view.mode_desc_pipeline")}
           </p>
+          <div
+            className="mt-2 flex max-w-64 items-start justify-end gap-1.5 text-right text-[11px] leading-snug"
+            aria-live="polite"
+            data-testid="voice-engine-runtime-status"
+          >
+            <span
+              aria-hidden="true"
+              className={cn(
+                "mt-1 h-1.5 w-1.5 shrink-0 rounded-full",
+                transitioning
+                  ? "animate-pulse bg-amber-400 motion-reduce:animate-none"
+                  : runtimeMatchesSelection
+                    ? "bg-emerald-400"
+                    : "bg-amber-400",
+              )}
+            />
+            <span
+              className={cn(
+                runtimeMatchesSelection && !transitioning
+                  ? "text-muted-foreground"
+                  : "text-amber-300",
+              )}
+            >
+              {runtimeText}
+            </span>
+          </div>
         </div>
       </div>
     </div>

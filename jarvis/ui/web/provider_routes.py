@@ -225,6 +225,7 @@ class RealtimeOptionsSaveResponse(BaseModel):
     model: str
     voice: str
     restart_required: bool = False
+    session_restarted: bool = False
 
 
 # ----------------------------------------------------------------------
@@ -1702,10 +1703,11 @@ async def set_realtime_options(
     """Pin the model and/or voice for a realtime provider.
 
     Persists to ``[brain.providers.<id>].model`` / ``.voice`` (+ drift-soll)
-    and updates the in-memory config so the next realtime session picks it up
-    with no process restart (``session.py::_open`` reads it fresh per
-    session). Only the fields present in the body are written — an omitted
-    field leaves its current value untouched.
+    and updates the in-memory config. If this provider owns the active realtime
+    call, that call is closed and reopened immediately; otherwise the selection
+    applies to the next session. No process restart is required. Only fields
+    present in the body are written — an omitted field leaves its current value
+    untouched.
     """
     spec = _require_realtime_provider(provider_id)
     if not _is_credential_present(spec):
@@ -1752,6 +1754,17 @@ async def set_realtime_options(
         SecretConfigured(key=f"brain.providers.{provider_id}", action="set"),
     )
     current_model, current_voice = _current_realtime_selection(cfg, provider_id)
+    selected_provider = str(
+        getattr(getattr(getattr(cfg, "brain", None), "realtime", None), "provider", "")
+        or ""
+    )
+    session_restarted = False
+    if selected_provider == provider_id:
+        from jarvis.ui.web.voice_runtime import reconnect_realtime
+
+        session_restarted = reconnect_realtime(
+            request, reason=f"realtime_options:{provider_id}"
+        )
     _invalidate_section_health_state(request)
     return RealtimeOptionsSaveResponse(
         ok=True,
@@ -1759,6 +1772,7 @@ async def set_realtime_options(
         model=current_model,
         voice=current_voice,
         restart_required=False,
+        session_restarted=session_restarted,
     )
 
 
@@ -2379,11 +2393,11 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
 
 @router.post("/realtime/switch")
 async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
-    """Switch the active realtime provider for the next voice session.
+    """Switch the active realtime provider.
 
     The desktop and browser runtimes resolve ``voice.mode`` plus the selected
-    provider when each new voice session opens. An already-open duplex stream
-    keeps its negotiated provider, but no application restart is required.
+    provider whenever a voice session opens. An active desktop call is closed
+    and reopened against the new selection; no application restart is required.
     Realtime is cross-family (AP-22), so validation is registry/tier based.
 
     Activating a realtime provider also makes Realtime the ACTIVE voice mode
@@ -2454,6 +2468,12 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     await _emit(request, SecretConfigured(key="brain.realtime.provider", action="set"))
     await _emit(request, SecretConfigured(key="voice.mode", action="set"))
 
+    from jarvis.ui.web.voice_runtime import reconnect_realtime
+
+    session_restarted = reconnect_realtime(
+        request, reason=f"realtime_provider:{body.provider}"
+    )
+
     _invalidate_section_health_state(request)
     return {
         "ok": True,
@@ -2466,6 +2486,7 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         "persisted": body.persist and voice_mode_write_ok,
         "voice_mode_persisted": voice_mode_write_ok,
         "restart_required": False,
+        "session_restarted": session_restarted,
     }
 
 

@@ -32,7 +32,9 @@ _REALTIME_SAFETY_APPENDIX = (
 _LANGUAGE_NAMES = {"de": "German", "en": "English", "es": "Spanish"}
 
 
-def _session_instructions(language: str) -> str:
+def _session_instructions(
+    language: str, *, provider: str = "", model: str = ""
+) -> str:
     from jarvis.brain.persona_loader import load_effective_persona_prompt
 
     persona = load_effective_persona_prompt().strip()
@@ -40,6 +42,14 @@ def _session_instructions(language: str) -> str:
     parts = [
         persona,
         _REALTIME_SAFETY_APPENDIX,
+        (
+            "Runtime identity: this voice session is using the Realtime engine"
+            + (f", provider {provider}" if provider else "")
+            + (f", model {model}" if model else "")
+            + ". If the user asks which engine, provider, or model is active, "
+            "answer from this runtime identity exactly; do not describe the "
+            "classic text brain configuration."
+        ),
         f"Reply only in {language_name} for this turn.",
     ]
     return "\n\n".join(part for part in parts if part)
@@ -140,6 +150,7 @@ class RealtimeVoiceSession:
                 {
                     "type": "audio_ready",
                     "provider": self.active_provider,
+                    "model": self._active_model,
                     "input_sample_rate": self._input_sample_rate,
                     "output_sample_rate": int(
                         getattr(self._provider, "output_sample_rate", 24_000) or 24_000
@@ -177,7 +188,11 @@ class RealtimeVoiceSession:
             input_rate = int(getattr(provider, "input_sample_rate", 16_000) or 16_000)
             output_rate = int(getattr(provider, "output_sample_rate", 24_000) or 24_000)
             session_config = RealtimeSessionConfig(
-                instructions=_session_instructions(self._language),
+                instructions=_session_instructions(
+                    self._language,
+                    provider=str(getattr(provider, "name", "") or ""),
+                    model=model,
+                ),
                 language=self._language,
                 model=model,
                 voice=voice,
@@ -261,7 +276,11 @@ class RealtimeVoiceSession:
                         self._language = new_language
                         self._gate = ScrubHoldGate(new_language)
                         await self._session.update_session(
-                            instructions=_session_instructions(new_language),
+                            instructions=_session_instructions(
+                                new_language,
+                                provider=self.active_provider,
+                                model=self._active_model,
+                            ),
                             language=new_language,
                         )
                         if self._tool_bridge is not None:

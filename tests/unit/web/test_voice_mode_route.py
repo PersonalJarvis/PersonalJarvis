@@ -64,6 +64,8 @@ def test_get_voice_mode(monkeypatch):
     assert body["mode"] == "realtime"
     assert body["realtime_available"] is True
     assert body["active_provider"] == "openai-realtime"
+    assert body["session_active"] is False
+    assert body["active_session_mode"] is None
 
 
 def test_get_voice_mode_cross_family_gemini_only(monkeypatch):
@@ -124,6 +126,66 @@ def test_put_voice_mode_updates_live_and_persists(monkeypatch):
     client = TestClient(app)
     r = client.put("/api/settings/voice-mode", json={"mode": "realtime", "persist": True})
     assert r.status_code == 200
-    assert r.json() == {"ok": True, "mode": "realtime", "persisted": True}
+    assert r.json() == {
+        "ok": True,
+        "mode": "realtime",
+        "persisted": True,
+        "session_restarted": False,
+    }
     assert app.state.config.voice.mode == "realtime"
     assert persisted["called"] is True
+
+
+def test_put_voice_mode_restarts_an_incompatible_active_session(monkeypatch):
+    import jarvis.realtime.factory as rf
+
+    monkeypatch.setattr(rf, "get_secret_any", lambda _candidates: "sk-x")
+    import jarvis.core.config_writer as cw
+
+    monkeypatch.setattr(cw, "set_voice_mode", lambda _mode, **_kw: None)
+
+    applied: list[str] = []
+
+    class LivePipeline:
+        def apply_voice_mode(self, mode: str) -> bool:
+            applied.append(mode)
+            return True
+
+    app = _app(mode="pipeline")
+    app.state.speech_pipeline = LivePipeline()
+    client = TestClient(app)
+
+    response = client.put(
+        "/api/settings/voice-mode",
+        json={"mode": "realtime", "persist": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["session_restarted"] is True
+    assert applied == ["realtime"]
+
+
+def test_get_voice_mode_reports_effective_active_engine(monkeypatch):
+    import jarvis.realtime.factory as rf
+
+    monkeypatch.setattr(rf, "get_secret_any", lambda _candidates: "sk-x")
+    app = _app(mode="realtime")
+    app.state.speech_pipeline = SimpleNamespace(
+        voice_engine_status=lambda: {
+            "session_active": True,
+            "active_session_mode": "realtime",
+            "active_session_provider": "openai-realtime",
+            "active_session_model": "gpt-realtime-2.1",
+            "transitioning": False,
+        }
+    )
+    client = TestClient(app)
+
+    body = client.get("/api/settings/voice-mode").json()
+
+    assert body["mode"] == "realtime"
+    assert body["session_active"] is True
+    assert body["active_session_mode"] == "realtime"
+    assert body["active_session_provider"] == "openai-realtime"
+    assert body["active_session_model"] == "gpt-realtime-2.1"
+    assert body["transitioning"] is False

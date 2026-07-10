@@ -151,10 +151,20 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
     # session would actually build (Gemini-only users now get `true` too,
     # not just OpenAI — Feature A2).
     prov = _realtime_available_provider(cfg)
+    from jarvis.ui.web.voice_runtime import voice_engine_status
+
+    runtime = voice_engine_status(request)
     return {
         "mode": mode,
         "realtime_available": prov is not None,
         "active_provider": prov,
+        "session_active": bool(runtime.get("session_active", False)),
+        "active_session_mode": runtime.get("active_session_mode"),
+        "active_session_provider": str(
+            runtime.get("active_session_provider", "") or ""
+        ),
+        "active_session_model": str(runtime.get("active_session_model", "") or ""),
+        "transitioning": bool(runtime.get("transitioning", False)),
     }
 
 
@@ -176,6 +186,10 @@ async def put_voice_mode(body: VoiceModeBody, request: Request) -> dict[str, obj
         except Exception as exc:  # noqa: BLE001 — frozen model is not an error
             log.debug("in-memory cfg.voice.mode update skipped: %s", exc)
 
+    from jarvis.ui.web.voice_runtime import apply_voice_mode
+
+    session_restarted = apply_voice_mode(request, body.mode)
+
     persisted = False
     if body.persist:
         try:
@@ -186,7 +200,12 @@ async def put_voice_mode(body: VoiceModeBody, request: Request) -> dict[str, obj
         except Exception as exc:  # noqa: BLE001
             log.warning("voice-mode persist failed (live switch still applied): %s", exc)
 
-    return {"ok": True, "mode": body.mode, "persisted": persisted}
+    return {
+        "ok": True,
+        "mode": body.mode,
+        "persisted": persisted,
+        "session_restarted": session_restarted,
+    }
 
 
 # ----------------------------------------------------------------------

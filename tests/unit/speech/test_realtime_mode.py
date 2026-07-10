@@ -99,6 +99,13 @@ def _pipe(mode: str = "realtime") -> SpeechPipeline:
     pipe._hangup_event = asyncio.Event()
     pipe._continue_listening_after_response = False
     pipe._current_voice_session_id = "desktop-session"
+    pipe._active_voice_mode = mode
+    pipe._active_realtime_provider = ""
+    pipe._active_realtime_model = ""
+    pipe._voice_engine_transitioning = False
+    pipe._reopen_after_engine_change = False
+    pipe._engine_change_reason = ""
+    pipe._state = pipeline_mod.PipelineState.IDLE
     pipe._muted = False
     pipe._input_suppressed_until_ns = 0
     pipe._ptt_mode = False
@@ -211,3 +218,33 @@ async def test_pipeline_mode_never_enters_realtime_branch(
     monkeypatch.setattr(pipeline_mod, "MicrophoneCapture", lambda **_kwargs: _SilentMic())
 
     assert await asyncio.wait_for(pipe._active_session(), timeout=2.0) == HANGUP_SHUTDOWN
+
+
+def test_live_mode_change_schedules_active_call_for_reopen() -> None:
+    pipe = _pipe(mode="pipeline")
+    pipe._state = pipeline_mod.PipelineState.ACTIVE
+    pipe._active_voice_mode = "pipeline"
+    hangups: list[bool] = []
+    pipe._trigger_voice_hangup = lambda: hangups.append(True)  # type: ignore[method-assign]
+
+    restarted = pipe.apply_voice_mode("realtime")
+
+    assert restarted is True
+    assert pipe._config.voice.mode == "realtime"
+    assert pipe._reopen_after_engine_change is True
+    assert pipe._voice_engine_transitioning is True
+    assert hangups == [True]
+
+
+def test_runtime_status_never_confuses_configured_and_effective_mode() -> None:
+    pipe = _pipe(mode="realtime")
+    pipe._state = pipeline_mod.PipelineState.ACTIVE
+    pipe._active_voice_mode = "pipeline"
+    pipe._current_voice_session_id = "classic-call"
+
+    status = pipe.voice_engine_status()
+
+    assert status["configured_mode"] == "realtime"
+    assert status["active_session_mode"] == "pipeline"
+    assert status["session_active"] is True
+    assert status["active_session_provider"] == ""

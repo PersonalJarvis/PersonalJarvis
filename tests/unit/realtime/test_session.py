@@ -134,10 +134,11 @@ async def test_open_injects_active_providers_model_and_voice():
         "fake": SimpleNamespace(model="gpt-realtime-2.1", voice="echo"),
         "other-provider": SimpleNamespace(model="should-not-be-used", voice="should-not-be-used"),
     }
+    messages = []
     sess = RealtimeVoiceSession(
         session_id="s-model-voice",
         send_binary=lambda b: asyncio.sleep(0),
-        send_json=lambda m: asyncio.sleep(0),
+        send_json=lambda message: messages.append(message) or asyncio.sleep(0),
         provider=FakeProvider([]),
         config=_cfg(providers=providers),
         bus=None,
@@ -149,6 +150,10 @@ async def test_open_injects_active_providers_model_and_voice():
     opened_cfg = sess._provider.opened_with
     assert opened_cfg.model == "gpt-realtime-2.1"
     assert opened_cfg.voice == "echo"
+    assert "Realtime engine, provider fake, model gpt-realtime-2.1" in opened_cfg.instructions
+    ready = next(message for message in messages if message["type"] == "audio_ready")
+    assert ready["provider"] == "fake"
+    assert ready["model"] == "gpt-realtime-2.1"
 
 
 @pytest.mark.asyncio

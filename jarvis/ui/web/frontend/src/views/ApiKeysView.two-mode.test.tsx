@@ -36,11 +36,20 @@ vi.mock("@/hooks/useProviders", () => ({
 // `vi.mock` call, matching this file's existing hoisting pattern) so the
 // "realtime unavailable" describe block below can flip it.
 let mockRealtimeAvailable = true;
+let mockVoiceMode = "pipeline";
+let mockSessionActive = false;
+let mockActiveSessionMode: "pipeline" | "realtime" | null = null;
+let mockTransitioning = false;
 const putVoiceMode = vi.fn();
 vi.mock("@/hooks/useVoiceMode", () => ({
   useVoiceMode: () => ({
-    mode: "pipeline",
+    mode: mockVoiceMode,
     realtimeAvailable: mockRealtimeAvailable,
+    sessionActive: mockSessionActive,
+    activeSessionMode: mockActiveSessionMode,
+    activeSessionProvider: "",
+    activeSessionModel: "",
+    transitioning: mockTransitioning,
     setMode: putVoiceMode,
     isLoading: false,
     isSaving: false,
@@ -53,6 +62,10 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   mockRealtimeAvailable = true;
+  mockVoiceMode = "pipeline";
+  mockSessionActive = false;
+  mockActiveSessionMode = null;
+  mockTransitioning = false;
 });
 
 describe("ApiKeysView two-mode", () => {
@@ -76,6 +89,18 @@ describe("ApiKeysView two-mode", () => {
     // only the Pipeline segment carries the "Active" badge.
     expect(pipelineSegment.textContent).toMatch(/active/i);
     expect(realtimeSegment.textContent).not.toMatch(/active/i);
+  });
+
+  it("shows when the selected Realtime mode is still served by Pipeline", () => {
+    mockVoiceMode = "realtime";
+    mockSessionActive = true;
+    mockActiveSessionMode = "pipeline";
+
+    render(<ApiKeysView />);
+
+    expect(screen.getByTestId("voice-engine-runtime-status").textContent).toMatch(
+      /fell back to Pipeline/i,
+    );
   });
 
   it("switching to Realtime mode shows only Realtime/Subagents/Advanced and persists voice-mode (available)", () => {

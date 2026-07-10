@@ -16,8 +16,31 @@ import { useT } from "@/i18n";
  */
 export function RealtimeVoiceGroup() {
   const t = useT();
-  const { mode, realtimeAvailable, setMode, isLoading, isSaving } = useVoiceMode();
+  const {
+    mode,
+    realtimeAvailable,
+    sessionActive,
+    activeSessionMode,
+    activeSessionProvider,
+    activeSessionModel,
+    transitioning,
+    setMode,
+    isLoading,
+    isSaving,
+  } = useVoiceMode();
   const on = mode === "realtime";
+  const runtimeDetail = [activeSessionProvider, activeSessionModel]
+    .filter(Boolean)
+    .join(" · ");
+  const runtimeText = transitioning
+    ? t("apikeys_view.runtime_switching")
+    : sessionActive && activeSessionMode === "realtime"
+      ? `${t("apikeys_view.runtime_realtime")}${runtimeDetail ? ` · ${runtimeDetail}` : ""}`
+      : sessionActive && activeSessionMode === "pipeline" && on
+        ? t("apikeys_view.runtime_fallback_pipeline")
+        : sessionActive
+          ? t("apikeys_view.runtime_pipeline")
+          : t("apikeys_view.runtime_idle");
   return (
     <div className="mt-2 rounded-lg border border-border bg-card/60 p-4">
       <div className="flex items-start gap-3">
@@ -35,6 +58,9 @@ export function RealtimeVoiceGroup() {
             {realtimeAvailable
               ? t("settings_view.realtime_voice.description")
               : t("settings_view.realtime_voice.unavailable")}
+          </p>
+          <p className="mt-1.5 text-[11px] text-muted-foreground" aria-live="polite">
+            {runtimeText}
           </p>
         </div>
       </div>

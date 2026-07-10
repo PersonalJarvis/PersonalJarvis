@@ -1438,6 +1438,16 @@ class SpeechPipeline:
         self._call_event = asyncio.Event()
         self._hangup_event = asyncio.Event()
         self._current_voice_session_id: str | None = None
+        # Configured voice mode and effective in-flight engine are deliberately
+        # separate. A settings write can happen while a call is already open;
+        # without this runtime state the UI used to report "Realtime" while the
+        # existing call continued through classic STT -> Brain -> TTS.
+        self._active_voice_mode: str | None = None
+        self._active_realtime_provider: str = ""
+        self._active_realtime_model: str = ""
+        self._voice_engine_transitioning: bool = False
+        self._reopen_after_engine_change: bool = False
+        self._engine_change_reason: str = ""
         # Optionale Event-Bus-Integration — wenn None, sind alle
         # _transition/_emit-Calls no-ops (Rueckwaertskompatibilitaet)
         self._bus = bus
@@ -4092,6 +4102,88 @@ class SpeechPipeline:
         self._call_event.set()
         return True
 
+    def _configured_voice_mode(self) -> str:
+        """Return the normalized configured engine for the next session."""
+        mode = str(
+            getattr(
+                getattr(getattr(self, "_config", None), "voice", None),
+                "mode",
+                "pipeline",
+            )
+            or "pipeline"
+        ).strip().lower()
+        return "realtime" if mode == "realtime" else "pipeline"
+
+    def voice_engine_status(self) -> dict[str, Any]:
+        """Snapshot configured and effective voice-engine state for the UI.
+
+        ``configured_mode`` is the user's selection for new calls.
+        ``active_session_mode`` is what the currently open call actually uses.
+        They may differ while a controlled reconnect is in progress or when
+        every realtime provider failed and classic fallback was entered.
+        """
+        active_mode = getattr(self, "_active_voice_mode", None)
+        session_id = getattr(self, "_current_voice_session_id", None)
+        return {
+            "configured_mode": self._configured_voice_mode(),
+            "session_active": bool(session_id),
+            "session_id": str(session_id or ""),
+            "active_session_mode": active_mode,
+            "active_session_provider": (
+                getattr(self, "_active_realtime_provider", "")
+                if active_mode == "realtime"
+                else ""
+            ),
+            "active_session_model": (
+                getattr(self, "_active_realtime_model", "")
+                if active_mode == "realtime"
+                else ""
+            ),
+            "transitioning": bool(
+                getattr(self, "_voice_engine_transitioning", False)
+                or getattr(self, "_reopen_after_engine_change", False)
+            ),
+        }
+
+    def apply_voice_mode(self, mode: str) -> bool:
+        """Apply a mode selection and reconnect an incompatible active call.
+
+        Returns ``True`` when the current session was scheduled for a controlled
+        close-and-reopen. An idle pipeline simply uses the new value on its next
+        activation.
+        """
+        normalized = str(mode or "").strip().lower()
+        if normalized not in {"pipeline", "realtime"}:
+            raise ValueError(f"Unsupported voice mode: {mode!r}")
+        voice = getattr(getattr(self, "_config", None), "voice", None)
+        if voice is not None:
+            voice.mode = normalized
+        active_mode = getattr(self, "_active_voice_mode", None)
+        if self._state != PipelineState.IDLE and active_mode != normalized:
+            return self._schedule_engine_reopen(f"mode:{normalized}")
+        return False
+
+    def reconnect_realtime_session(self, *, reason: str) -> bool:
+        """Reconnect an active realtime call after provider/model changes."""
+        if self._configured_voice_mode() != "realtime":
+            return False
+        if self._state == PipelineState.IDLE:
+            return False
+        return self._schedule_engine_reopen(reason)
+
+    def _schedule_engine_reopen(self, reason: str) -> bool:
+        if self._state == PipelineState.IDLE:
+            return False
+        self._reopen_after_engine_change = True
+        self._engine_change_reason = str(reason or "configuration_change")
+        self._voice_engine_transitioning = True
+        log.info(
+            "Voice engine changed during an active session; reconnecting (%s).",
+            self._engine_change_reason,
+        )
+        self._trigger_voice_hangup()
+        return True
+
     def _post_hangup_lock_seconds(self) -> float:
         """Wake-lock duration for the session that just ended (one-shot).
 
@@ -4727,6 +4819,10 @@ class SpeechPipeline:
             self._session_has_assistant_spoken = False
             session_id = str(uuid4())
             self._current_voice_session_id = session_id
+            self._active_voice_mode = self._configured_voice_mode()
+            self._active_realtime_provider = ""
+            self._active_realtime_model = ""
+            self._voice_engine_transitioning = self._active_voice_mode == "realtime"
             session_started_at = time.time()
             wake_keyword = (
                 "push_to_talk"
@@ -4743,16 +4839,28 @@ class SpeechPipeline:
                 )
             )
             hangup_reason = HANGUP_ERROR
-            log.info("📞 ANRUF angenommen")
-            # Orb einblenden & Mic-Pulsieren aktivieren
+            log.info("Voice session accepted (configured engine=%s).", self._active_voice_mode)
+            # Reveal the voice surface and enable microphone feedback.
             await self._set_turn_state(TurnTakingState.LISTENING)
             try:
                 await self._play_ack(ptt=self._ptt_mode)
                 hangup_reason = await self._active_session()
             except Exception as exc:  # noqa: BLE001
-                log.exception("Session-Fehler: %s", exc)
+                log.exception("Voice session failed: %s", exc)
             finally:
+                reopen_after_engine_change = bool(
+                    getattr(self, "_reopen_after_engine_change", False)
+                )
+                engine_change_reason = str(
+                    getattr(self, "_engine_change_reason", "")
+                )
+                self._reopen_after_engine_change = False
+                self._engine_change_reason = ""
                 self._current_voice_session_id = None
+                self._active_voice_mode = None
+                self._active_realtime_provider = ""
+                self._active_realtime_model = ""
+                self._voice_engine_transitioning = False
                 # PTT is one-shot per hold — disarm before the next session so a
                 # stale flag can never reroute a later wake-word session into
                 # the raw-recording path.
@@ -4779,15 +4887,29 @@ class SpeechPipeline:
                     )
                 )
                 self._state = PipelineState.IDLE
-                # Supervisor zurueck auf IDLE — Orb verschwindet
+                # Return the supervisor to IDLE and hide the active surface.
                 await self._set_turn_state(TurnTakingState.IDLE)
-                # Disconnect-Sound als hörbares Hangup-Signal (earcon — gated
-                # by the global "Sound effects" switch).
-                await self._play_earcon(DISCONNECT_PCM)
-                # Cooldown setzen damit Speaker-Echo nicht sofort re-triggert.
-                lock_s = self._post_hangup_lock_seconds()
-                self._wake_lock_until = time.time() + lock_s
-                log.info("📵 AUFGELEGT — zurück zu IDLE (Wake-Lock %.1fs).", lock_s)
+                if reopen_after_engine_change and self._activation_allowed():
+                    # An internal engine reconnect has no response tail to
+                    # protect against. Re-arm immediately with the latest
+                    # config; a disconnect earcon would leak into the new mic.
+                    self._explicit_hard_hangup = False
+                    self._wake_lock_until = 0.0
+                    self._last_wake_keyword = "engine_switch"
+                    self._call_event.set()
+                    log.info(
+                        "Voice session re-armed after engine change (%s).",
+                        engine_change_reason or "configuration_change",
+                    )
+                else:
+                    # Normal disconnect earcon followed by speaker-echo lock.
+                    await self._play_earcon(DISCONNECT_PCM)
+                    lock_s = self._post_hangup_lock_seconds()
+                    self._wake_lock_until = time.time() + lock_s
+                    log.info(
+                        "Voice session ended; returning to idle (wake lock %.1fs).",
+                        lock_s,
+                    )
 
     def _earcons_enabled(self) -> bool:
         """Whether synthesized UI earcons may play.
@@ -4854,20 +4976,23 @@ class SpeechPipeline:
             # edge is its endpoint and the duplex protocols do not expose one
             # provider-neutral commit primitive. Normal wake/hotkey sessions
             # use Realtime when selected.
+            self._active_voice_mode = "pipeline"
+            self._active_realtime_provider = ""
+            self._active_realtime_model = ""
+            self._voice_engine_transitioning = False
             return await self._ptt_session()
-        requested_mode = str(
-            getattr(
-                getattr(getattr(self, "_config", None), "voice", None),
-                "mode",
-                "pipeline",
-            )
-            or "pipeline"
-        ).strip().lower()
+        requested_mode = self._configured_voice_mode()
+        self._active_voice_mode = requested_mode
+        self._voice_engine_transitioning = requested_mode == "realtime"
         if requested_mode == "realtime":
             realtime_reason = await self._active_realtime_session()
             if realtime_reason is not None:
                 return realtime_reason
             await self._speak_realtime_unavailable()
+        self._active_voice_mode = "pipeline"
+        self._active_realtime_provider = ""
+        self._active_realtime_model = ""
+        self._voice_engine_transitioning = False
         async with MicrophoneCapture(
             device=self._input_device,
             max_queue_chunks=REALTIME_QUEUE_CHUNKS,
@@ -5035,9 +5160,16 @@ class SpeechPipeline:
                 playback.set_sample_rate(
                     int(message.get("output_sample_rate", 24_000) or 24_000)
                 )
+                self._active_voice_mode = "realtime"
+                self._active_realtime_provider = str(
+                    message.get("provider", "") or ""
+                )
+                self._active_realtime_model = str(message.get("model", "") or "")
+                self._voice_engine_transitioning = False
                 log.info(
-                    "Realtime desktop session ready: provider=%s input=%sHz output=%sHz",
+                    "Realtime desktop session ready: provider=%s model=%s input=%sHz output=%sHz",
                     message.get("provider", "unknown"),
+                    message.get("model", "unknown"),
                     message.get("input_sample_rate", "unknown"),
                     message.get("output_sample_rate", "unknown"),
                 )
