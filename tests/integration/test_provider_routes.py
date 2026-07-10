@@ -18,7 +18,6 @@ from jarvis.core.config import JarvisConfig
 from jarvis.core.events import SecretConfigured
 from jarvis.ui.web.server import WebServer
 
-
 # ----------------------------------------------------------------------
 # Fakes
 # ----------------------------------------------------------------------

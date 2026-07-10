@@ -141,6 +141,9 @@ def test_health_fingerprint_covers_every_model_selection_surface() -> None:
         assert pr._section_health_fingerprint(request, cfg, subjects) != baseline
         setattr(owner, field, original)
 
+    cfg.tts.model_extra = {"cartesia": {"model_id": "sonic-new"}}
+    assert pr._section_health_fingerprint(request, cfg, subjects) != baseline
+
 
 class TestSubagentSectionHealth:
     """Live-honest Sub-Agents tab health (2026-07-06 incident: the tab stayed

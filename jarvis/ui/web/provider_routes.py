@@ -986,12 +986,16 @@ def _section_health_fingerprint(
     tts = getattr(cfg, "tts", None) if cfg is not None else None
     stt = getattr(cfg, "stt", None) if cfg is not None else None
     worker = getattr(brain, "worker", None) if brain is not None else None
+    tts_extra = getattr(tts, "model_extra", None)
+    cartesia = tts_extra.get("cartesia") if isinstance(tts_extra, dict) else None
+    cartesia_model = cartesia.get("model_id") if isinstance(cartesia, dict) else None
     configuration = (
         ("brain-model", _provider_value("brain", "model")),
         ("computer-use-model", _provider_value("computer-use", "cu_model")),
         ("tts-model", str(getattr(tts, "model", None) or "")),
         ("tts-voice-de", str(getattr(tts, "voice_de", None) or "")),
         ("tts-voice-en", str(getattr(tts, "voice_en", None) or "")),
+        ("tts-cartesia-model", str(cartesia_model or "")),
         ("stt-model", str(getattr(stt, "model", None) or "")),
         ("realtime-model", _provider_value("realtime", "model")),
         ("realtime-voice", _provider_value("realtime", "voice")),

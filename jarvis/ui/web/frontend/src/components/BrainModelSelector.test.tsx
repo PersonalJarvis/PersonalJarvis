@@ -257,6 +257,41 @@ describe("BrainModelSelector", () => {
     });
   });
 
+  it("hides obsolete health while probing and publishes the exact model result", async () => {
+    const pending = vi.fn();
+    const tested = vi.fn();
+    window.addEventListener("jarvis:provider-selection-pending", pending);
+    window.addEventListener("jarvis:provider-tested", tested);
+    vi.stubGlobal("fetch", mockFetch());
+    try {
+      render(
+        <BrainModelSelector
+          providerId="gemini"
+          currentModel=""
+          healthSection="brain"
+          healthActive
+        />,
+      );
+      await openDropdown();
+      fireEvent.click(await screen.findByText("gemini-3.1-pro-preview"));
+
+      await waitFor(() => expect(tested).toHaveBeenCalledTimes(1));
+      expect((pending.mock.calls[0][0] as CustomEvent).detail).toEqual({
+        section: "brain",
+        provider: "gemini",
+      });
+      expect((tested.mock.calls[0][0] as CustomEvent).detail).toMatchObject({
+        section: "brain",
+        provider: "gemini",
+        active: true,
+        result: { provider: "gemini", status: "ok" },
+      });
+    } finally {
+      window.removeEventListener("jarvis:provider-selection-pending", pending);
+      window.removeEventListener("jarvis:provider-tested", tested);
+    }
+  });
+
   it("saves a custom model id that is not in the list", async () => {
     const fetchMock = mockFetch();
     vi.stubGlobal("fetch", fetchMock);

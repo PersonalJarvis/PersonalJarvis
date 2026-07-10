@@ -23,6 +23,16 @@ vi.mock("@/hooks/useVoiceReadiness", () => ({
   }),
 }));
 
+vi.mock("@/hooks/useVoiceMode", () => ({
+  useVoiceMode: () => ({
+    mode: "pipeline",
+    realtimeAvailable: false,
+    setMode: vi.fn(),
+    isLoading: false,
+    isSaving: false,
+  }),
+}));
+
 vi.mock("@/hooks/useProviders", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/hooks/useProviders")>();
   return {

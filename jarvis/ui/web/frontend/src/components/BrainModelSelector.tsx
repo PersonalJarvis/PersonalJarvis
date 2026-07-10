@@ -128,7 +128,13 @@ export function BrainModelSelector({
   onSave?: (model: string) => Promise<BrainModelSaveResult>;
   /** Health section affected by this selection. When the provider is active,
    * its obsolete result is hidden while the save/probe is in flight. */
-  healthSection?: "brain" | "tts" | "stt" | "computer-use" | "subagents";
+  healthSection?:
+    | "brain"
+    | "tts"
+    | "stt"
+    | "realtime"
+    | "computer-use"
+    | "subagents";
   /** Whether this picker belongs to the provider currently powering that section. */
   healthActive?: boolean;
   /**
