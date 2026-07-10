@@ -55,7 +55,15 @@ def run(
         try:
             out = client.request(method, path, params=params, json=body)
         except ApiError as exc:
-            render.error(exc.message)
+            if exc.status_code is None:
+                # Transport failure: replace the terse core message with the
+                # cause-specific diagnosis (booting / crashed / not started /
+                # remote target), phrased with a little variety.
+                from jarvis.cli_ctl import doctor
+
+                render.error(doctor.unreachable_message(exc.base_url))
+            else:
+                render.error(exc.message)
             raise typer.Exit(code=1) from exc
         render.emit(out, as_json=json_out)
     finally:

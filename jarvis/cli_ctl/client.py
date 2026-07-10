@@ -8,14 +8,19 @@ import httpx
 
 
 class ApiError(Exception):
-    """A request failed. `status_code` is None for transport-level failures."""
+    """A request failed. `status_code` is None for transport-level failures.
+
+    ``base_url`` is set on transport failures so callers can run the
+    cause-specific unreachable diagnosis (`jarvis.cli_ctl.doctor`).
+    """
 
     def __init__(self, message: str, status_code: int | None = None,
-                 payload: Any = None) -> None:
+                 payload: Any = None, base_url: str | None = None) -> None:
         super().__init__(message)
         self.message = message
         self.status_code = status_code
         self.payload = payload
+        self.base_url = base_url
 
 
 class JarvisClient:
@@ -54,15 +59,18 @@ class JarvisClient:
                 method.upper(), path, params=params, json=json
             )
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            # Deliberately terse: the CLI layers replace this with the
+            # cause-specific doctor.unreachable_message (running-but-booting /
+            # crashed-stale-session / not-started / remote-target all get
+            # DIFFERENT advice — one canned "start the app" is often wrong).
             raise ApiError(
-                f"Jarvis at {self.base_url} is unreachable — is the app "
-                "running? Start the desktop app (or `run.bat --headless` on a "
-                "server), or pass --url/--key to target a remote instance.",
-                None,
+                f"Jarvis at {self.base_url} is unreachable.",
+                None, base_url=self.base_url,
             ) from exc
         except httpx.TransportError as exc:
             raise ApiError(
-                f"Jarvis at {self.base_url} is unreachable: {exc}", None
+                f"Jarvis at {self.base_url} is unreachable: {exc}",
+                None, base_url=self.base_url,
             ) from exc
 
         if resp.status_code >= 400:

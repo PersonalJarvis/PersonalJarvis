@@ -184,11 +184,13 @@ def build_root_command(argv: list[str] | None = None) -> click.Group:
             root.add_command(build_api_group(spec, _dynamic_runner))
         elif wants_api:
             # `jarvis api ...` would otherwise die with Click's bare
-            # "No such command 'api'" — say what actually went wrong.
+            # "No such command 'api'" — say what actually went wrong, with
+            # the cause-specific unreachable diagnosis (not one canned line).
+            from jarvis.cli_ctl import doctor
+
             click.echo(
-                "The dynamic `api` command group is unavailable: no cached "
-                "schema and the Jarvis server could not be reached. Start "
-                "the app (or pass --url), then retry.",
+                "The dynamic `api` command group is unavailable (no cached "
+                "schema yet). " + doctor.unreachable_message(None),
                 err=True,
             )
     except Exception as exc:  # noqa: S110 - static surface must work if dynamic build fails

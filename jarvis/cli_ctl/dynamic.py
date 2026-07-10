@@ -129,7 +129,21 @@ def _build_command(
             dangerous=flagged_dangerous, as_json=json_out,
         ):
             return  # dry run: preview already printed, nothing sent
-        result = runner(method, url_path, query, body)
+        from jarvis.cli_ctl.client import ApiError
+
+        try:
+            result = runner(method, url_path, query, body)
+        except ApiError as exc:
+            # Same clean failure contract as the curated commands (invoke.run):
+            # no raw traceback; transport failures get the cause-specific
+            # unreachable diagnosis instead of one canned line.
+            if exc.status_code is None:
+                from jarvis.cli_ctl import doctor
+
+                render.error(doctor.unreachable_message(exc.base_url))
+            else:
+                render.error(exc.message)
+            raise click.exceptions.Exit(1) from exc
         render.emit(result, as_json=json_out)
 
     return click.Command(
