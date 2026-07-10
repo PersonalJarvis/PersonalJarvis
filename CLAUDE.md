@@ -6,7 +6,7 @@ change. Architecture and product detail live in
 
 ---
 
-## 0. CLAUDE.md ≡ AGENTS.md (mirror rule — BINDING)
+## 0. CLAUDE.md ≡ AGENTS.md and .claude/ ≡ .agents/ (mirror rule — BINDING)
 
 `CLAUDE.md` and `AGENTS.md` are **byte-identical twins**: `CLAUDE.md` is
 canonical, `AGENTS.md` is the cross-tool standard name other agents read.
@@ -14,6 +14,19 @@ Never let them drift. Sync engine: `scripts/ci/sync_agents_md.py` (live
 `PostToolUse` hook + `.githooks/pre-commit --stage` + a `--check` CI gate).
 After editing either file, run the sync (or copy one onto the other) before
 you commit.
+
+**The same mirror rule covers the versioned agent-knowledge trees.**
+`.claude/agents/`, `.claude/commands/` and `.claude/skills/` are twins of
+`.agents/agents/`, `.agents/commands/` and `.agents/skills/`: `.claude/` is
+canonical, `.agents/` is the tool-neutral standard directory every other
+coding agent (Codex, Gemini CLI, ...) reads. Everything in these trees —
+subagent definitions, slash commands, skills — is addressed to **every**
+coding agent generally, never to Claude Code alone; write it accordingly.
+Sync engine: `scripts/ci/sync_agents_dir.py` (same three layers: live
+`PostToolUse` hook + `.githooks/pre-commit --stage` + `--check`). Edit either
+side and the other follows; deletions propagate too. Gitignored/private
+entries (e.g. `.claude/skills/security-github/`) are excluded from the mirror
+and must stay that way on both sides.
 
 ---
 

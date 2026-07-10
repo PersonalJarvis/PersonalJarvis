@@ -46,6 +46,24 @@ if [ "$rc" -eq 2 ]; then
     exit 1
 fi
 
+# --- .claude/ <-> .agents/ tree sync (same twin rule, one level up) -----------
+# The versioned team knowledge under .claude/{agents,commands,skills} and its
+# tool-neutral twin .agents/{agents,commands,skills} must carry the same
+# content on every commit, so every coding agent (not just Claude Code) reads
+# the same material. Engine: scripts/ci/sync_agents_dir.py (same semantics as
+# the MD engine; rc 2 = the same pair edited on both sides -> block).
+syncdir="scripts/ci/sync_agents_dir.py"
+if [ -f "$syncdir" ]; then
+    "$PY" "$syncdir" --stage --quiet </dev/null
+    if [ "$?" -eq 2 ]; then
+        echo ""
+        echo "pre-commit BLOCKED: .claude/ and .agents/ were both edited and now differ."
+        echo "  The two trees must stay in sync. Reconcile the pair(s) listed above by"
+        echo "  hand, re-stage, retry.  Bypass once with:  git commit --no-verify"
+        exit 1
+    fi
+fi
+
 # --- LANGUAGE gate (FAIL-CLOSED on confirmed German) --------------------------
 # English-only artifacts (CLAUDE.md rule 1). Checks the STAGED changes so new
 # German is caught at COMMIT time — the real write path (incl. the auto-save

@@ -320,6 +320,8 @@ tests/eval/review_quality/queries.json
 scripts/config-soll.json
 # German maintainer trigger phrases in YAML folded-scalar frontmatter (bucket 3-analog)
 .claude/skills/publish-new-version/SKILL.md
+# twin of the entry above — .agents/ mirrors .claude/ pair-for-pair (sync_agents_dir.py)
+.agents/skills/publish-new-version/SKILL.md
 # glob pattern references the German-named config-soll.json (matching data)
 scripts/ci/privacy_gate/references/distribution-denylist.txt
 # verbatim German brain-output leak quoted as forensic evidence in a code block (bucket 4)
