@@ -248,3 +248,57 @@ def test_runtime_status_never_confuses_configured_and_effective_mode() -> None:
     assert status["active_session_mode"] == "pipeline"
     assert status["session_active"] is True
     assert status["active_session_provider"] == ""
+
+
+async def _collect_stream(pipe: SpeechPipeline, chunks: list) -> list:
+    async def _source():
+        for chunk in chunks:
+            yield chunk
+
+    return [chunk async for chunk in pipe._session_input_stream(_source())]
+
+
+@pytest.mark.asyncio
+async def test_session_input_stream_feeds_mic_level() -> None:
+    from jarvis.audio import mic_level
+    from jarvis.audio.capture import AudioChunk
+
+    mic_level.reset_for_tests()
+    levels: list[float] = []
+    unsubscribe = mic_level.subscribe(levels.append)
+    try:
+        pipe = _pipe()
+        loud = AudioChunk(pcm=b"\x00\x40" * 256, sample_rate=16_000, timestamp_ns=1)
+        quiet = AudioChunk(pcm=b"\x10\x00" * 256, sample_rate=16_000, timestamp_ns=2)
+
+        passed = await _collect_stream(pipe, [loud, quiet])
+
+        assert passed == [loud, quiet]
+        assert len(levels) == 2
+        assert all(0.0 <= level <= 1.0 for level in levels)
+        assert levels[0] > 0.0
+    finally:
+        unsubscribe()
+        mic_level.reset_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_session_input_stream_muted_feeds_no_level() -> None:
+    from jarvis.audio import mic_level
+    from jarvis.audio.capture import AudioChunk
+
+    mic_level.reset_for_tests()
+    levels: list[float] = []
+    unsubscribe = mic_level.subscribe(levels.append)
+    try:
+        pipe = _pipe()
+        pipe._muted = True
+        chunk = AudioChunk(pcm=b"\x00\x40" * 256, sample_rate=16_000, timestamp_ns=1)
+
+        passed = await _collect_stream(pipe, [chunk])
+
+        assert passed == []
+        assert levels == []
+    finally:
+        unsubscribe()
+        mic_level.reset_for_tests()
