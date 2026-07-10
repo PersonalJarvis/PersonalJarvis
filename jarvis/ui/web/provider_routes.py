@@ -579,18 +579,25 @@ async def list_providers(request: Request) -> dict[str, Any]:
     active_realtime = _active_realtime(request)
     active_computer_use = _active_computer_use(request)
 
-    providers = [
-        _spec_to_payload(
-            spec,
-            active_brain=active_brain,
-            active_tts=active_tts,
-            active_stt=active_stt,
-            active_realtime=active_realtime,
-            active_computer_use=active_computer_use,
-        )
-        for spec in PROVIDERS
-    ]
-    return {"providers": providers}
+    # Off the event loop: building the payload reads every secret slot from the
+    # OS keyring and probes the Codex/Google CLI status — all synchronous. On the
+    # loop it stalled EVERY concurrent request for seconds each time the UI
+    # refetched after a key save / switch / test (the "whole screen feels stuck"
+    # complaint); in a worker thread the loop stays responsive.
+    def _build() -> list[dict[str, Any]]:
+        return [
+            _spec_to_payload(
+                spec,
+                active_brain=active_brain,
+                active_tts=active_tts,
+                active_stt=active_stt,
+                active_realtime=active_realtime,
+                active_computer_use=active_computer_use,
+            )
+            for spec in PROVIDERS
+        ]
+
+    return {"providers": await asyncio.to_thread(_build)}
 
 
 # Belt-and-suspenders ceiling for the whole /test call. run_provider_test's own
@@ -989,18 +996,21 @@ async def _compute_section_health(request: Request, now: float) -> SectionHealth
             _tier_section_health(cfg, tts_spec),
             _tier_section_health(cfg, stt_spec),
         )
+        # These three helpers are synchronous (keyring reads, CLI status
+        # subprocesses) — run them in a worker thread so the sweep never blocks
+        # the event loop for every other request in flight.
         try:
-            sections["realtime"] = _realtime_section_health(request)
+            sections["realtime"] = await asyncio.to_thread(_realtime_section_health, request)
         except Exception as exc:  # noqa: BLE001
             log.warning("section-health realtime check failed: %s", exc)
             sections["realtime"] = SectionHealth()
         try:
-            sections["subagents"] = _jarvis_agent_section_health(cfg)
+            sections["subagents"] = await asyncio.to_thread(_jarvis_agent_section_health, cfg)
         except Exception as exc:  # noqa: BLE001
             log.warning("section-health subagent check failed: %s", exc)
             sections["subagents"] = SectionHealth()
         try:
-            sections["advanced"] = _advanced_section_health(request)
+            sections["advanced"] = await asyncio.to_thread(_advanced_section_health, request)
         except Exception as exc:  # noqa: BLE001
             log.warning("section-health advanced check failed: %s", exc)
             sections["advanced"] = SectionHealth()
