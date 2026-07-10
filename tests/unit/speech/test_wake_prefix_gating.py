@@ -320,13 +320,14 @@ async def test_gate_custom_model_fails_closed_on_stt_outage(monkeypatch) -> None
 
 
 # ---------------------------------------------------------------------------
-# Optimistic overlay reveal: suppressed for custom_onnx candidates.
+# Optimistic overlay reveal: only safe for precise pretrained candidates.
 #
 # The optimistic bar exists so a genuine "Hey Jarvis" feels instant on the
 # precise pretrained model (false candidates are rare — a reject costs one
 # brief flash). A custom model fires many times a minute, so the same
 # optimism made the bar pop open/closed on auto-repeat (user GIF 2026-07-02).
-# For custom_onnx the bar appears only AFTER the verify confirms the wake.
+# Custom ONNX and Vosk grammar candidates can be noisy, so their bar appears
+# only AFTER verification confirms the full configured wake phrase.
 # ---------------------------------------------------------------------------
 
 
@@ -354,18 +355,8 @@ def test_optimistic_candidate_hidden_when_not_idle() -> None:
     assert pipe._should_show_optimistic_candidate() is False
 
 
-def test_optimistic_candidate_still_true_for_vosk_kws_when_idle() -> None:
-    """Spawn-latency mission 2026-07-10: ``_should_show_optimistic_candidate``
-    itself stays UNCHANGED for vosk_kws (still True) — the lock/not-activatable
-    retract safety-net in ``_run_parallel_wake`` reads this SAME flag to decide
-    whether to retract the EARLIER, provider-sourced candidate signal (see
-    ``VoskKwsProvider.on_candidate`` / ``_on_vosk_wake_candidate``) if a
-    confirmed vosk wake later gets discarded. Only the REDUNDANT duplicate
-    "active=True" publish at the OWW-result site is skipped for this engine
-    (that publish now runs too late to help — vosk's own confirm already
-    completed by the time this OWW-result path even sees the result), not
-    this gate itself.
-    """
+def test_optimistic_candidate_hidden_for_vosk_kws_when_idle() -> None:
+    """Vosk stage-one grammar hits are unverified and frequently match speech."""
     from jarvis.speech.pipeline import PipelineState
 
     pipe = _bare_pipeline(
@@ -374,7 +365,7 @@ def test_optimistic_candidate_still_true_for_vosk_kws_when_idle() -> None:
         wake_plan=SimpleNamespace(engine="vosk_kws", verify_prefix=False),
     )
     pipe._state = PipelineState.IDLE
-    assert pipe._should_show_optimistic_candidate() is True
+    assert pipe._should_show_optimistic_candidate() is False
 
 
 # ---------------------------------------------------------------------------

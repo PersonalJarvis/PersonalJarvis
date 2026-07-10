@@ -8,6 +8,7 @@ up. What is pinned here:
   room" for "Hey Ruben") passes, unrelated speech ("vielen dank") and an
   empty free transcript are rejected.  # i18n-allow: German utterance under test
 - A grammar partial hit fires the keyword only after the free-decode confirm.
+- Unverified grammar candidates stay internal and have no UI callback.
 - Near-silent candidates are rejected on raw ENERGY (never transcript).
 - A confirm infrastructure error fails OPEN (never eats a real wake).
 - The wake detector yields the canonical keyword, never transcript text.
@@ -206,107 +207,19 @@ async def test_near_silent_candidate_is_gated_on_energy(fake_vosk) -> None:
     assert p.stats()["gated_rms"] >= 1
 
 
-# --- optimistic on_candidate signal (spawn-latency mission 2026-07-10) ---------
+# --- unverified-candidate boundary -------------------------------------------
 
 
-async def test_on_candidate_fires_true_before_confirm_and_is_not_retracted_on_success(
-    fake_vosk,
-) -> None:
-    """The optimistic candidate fires BEFORE the confirm_tail_s wait + verify
-    pass, and is never retracted when that same candidate goes on to confirm
-    -- only a REJECTED candidate gets a matching ``False`` (see the next
-    test)."""
-    events: list[bool] = []
+def test_provider_has_no_unverified_candidate_callback() -> None:
+    """Stage-one grammar hits are intentionally noisy and must remain internal.
 
-    async def _on_candidate(active: bool) -> None:
-        events.append(active)
+    Only the confirmed keyword yielded by ``detect`` may cross into the speech
+    pipeline. Exposing a pre-confirm callback previously made the JarvisBar
+    flash for ordinary speech even though the verifier rejected every hit.
+    """
+    import inspect
 
-    p = VoskKwsProvider(
-        "Hey Nova", model_path="fake", keyword="nova", on_candidate=_on_candidate
-    )
-    fired = await _run_detect(p, [_chunk() for _ in range(12)])
-    assert fired == ["nova"]
-    assert events == [True]
-
-
-async def test_on_candidate_retracts_on_confirm_rejection(fake_vosk) -> None:
-    events: list[bool] = []
-
-    async def _on_candidate(active: bool) -> None:
-        events.append(active)
-
-    p = VoskKwsProvider(
-        "Hey Nova", model_path="fake", keyword="nova", on_candidate=_on_candidate
-    )
-    fake_vosk_model_free_text = "das ist etwas ganz anderes"  # i18n-allow: utterance under test
-    fired: list[str] = []
-
-    async def _late_set() -> None:
-        for _ in range(50):
-            if fake_vosk["model"] is not None:
-                fake_vosk["model"].free_text = fake_vosk_model_free_text
-                return
-            await asyncio.sleep(0.01)
-
-    async def _drive() -> None:
-        async def _iter() -> AsyncIterator[AudioChunk]:
-            for _ in range(12):
-                await asyncio.sleep(0.005)
-                yield _chunk()
-
-        async for kw in p.detect(_iter()):
-            fired.append(kw)
-
-    await asyncio.wait_for(asyncio.gather(_late_set(), _drive()), timeout=5.0)
-    assert fired == []
-    # Optimistic reveal, then a matching retraction once the confirm rejects.
-    # A third dangling True follows: the fake grammar re-fires exactly at the
-    # chunk stream's end (fire_after=3 chunks after the re-armed recognizer,
-    # which lines up with this test's chunk count) — a candidate whose
-    # tail-wait never completes because the stream simply ends, same as a
-    # real mic stream closing mid-candidate. That is expected, not a bug:
-    # there is no matching False because verify_candidate never runs.
-    assert events == [True, False, True]
-
-
-async def test_on_candidate_never_fires_on_near_silent_audio(fake_vosk) -> None:
-    """AP-27: the optimistic pre-gate is raw ENERGY over the actual ring
-    audio, never transcript content -- even though the fake grammar "hears"
-    the phrase regardless of loudness, near-silent real PCM must never pop
-    the bar."""
-    events: list[bool] = []
-
-    async def _on_candidate(active: bool) -> None:
-        events.append(active)
-
-    p = VoskKwsProvider(
-        "Hey Nova", model_path="fake", keyword="nova", on_candidate=_on_candidate
-    )
-    fired = await _run_detect(p, [_silent_chunk() for _ in range(12)])
-    assert fired == []
-    assert events == []
-
-
-async def test_on_candidate_none_hook_is_a_safe_no_op(fake_vosk) -> None:
-    """The default ``on_candidate=None`` must not raise or change behaviour
-    (every existing test above already relies on this implicitly)."""
-    p = VoskKwsProvider("Hey Nova", model_path="fake", keyword="nova")
-    fired = await _run_detect(p, [_chunk() for _ in range(12)])
-    assert fired == ["nova"]
-
-
-async def test_on_candidate_broken_hook_does_not_break_detection(fake_vosk) -> None:
-    """A raising ``on_candidate`` hook must fail open — never eat a real
-    wake (mirrors every other callback boundary in this provider)."""
-
-    async def _boom(active: bool) -> None:  # noqa: ARG001
-        raise RuntimeError("UI hook exploded")
-
-    p = VoskKwsProvider(
-        "Hey Nova", model_path="fake", keyword="nova", on_candidate=_boom
-    )
-    fired = await _run_detect(p, [_chunk() for _ in range(12)])
-    assert fired == ["nova"]
+    assert "on_candidate" not in inspect.signature(VoskKwsProvider).parameters
 
 
 def test_confirm_infrastructure_error_fails_open(fake_vosk, monkeypatch) -> None:

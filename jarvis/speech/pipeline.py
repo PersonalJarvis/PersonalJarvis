@@ -1140,7 +1140,6 @@ class SpeechPipeline:
                 phrase=wake_plan.phrase,
                 model_path=wake_plan.vosk_model_path or "",
                 keyword=wake_plan.oww_keyword,
-                on_candidate=self._on_vosk_wake_candidate,
             )
         elif wake_plan is not None:
             self._wake = OpenWakeWordProvider(
@@ -1840,7 +1839,6 @@ class SpeechPipeline:
                 phrase=plan.phrase,
                 model_path=getattr(plan, "vosk_model_path", None) or "",
                 keyword=plan.oww_keyword,
-                on_candidate=self._on_vosk_wake_candidate,
             )
             self._openwakeword_enabled = True
             if self._whisper_wake is not None and self._wake_matcher is not None:
@@ -4288,57 +4286,21 @@ class SpeechPipeline:
                 log.exception("Wake-Loop Fehler: %s", exc)
                 await asyncio.sleep(0.5)
 
-    async def _on_vosk_wake_candidate(self, active: bool) -> None:
-        """Optimistic, visual-only bar reveal for the vosk_kws engine
-        (spawn-latency mission 2026-07-10).
-
-        Unlike OpenWakeWord, ``VoskKwsProvider.detect()`` does not yield
-        anything until AFTER its own internal confirm (grammar re-score +
-        energy gate + free-decode sound confirm) already completed — so the
-        OWW-result-timed optimistic publish further down in
-        ``_run_parallel_wake`` runs too late to help this engine (it would
-        fire right before the authoritative ``WakeWordDetected`` anyway).
-        The provider instead calls back HERE the moment a grammar candidate
-        clears its own cheap RMS pre-gate — well before its confirm_tail_s
-        wait and verify pass — so the visual reveal lands in roughly one
-        poll cadence. ``active=False`` retracts if that candidate is later
-        rejected. Visual only: never opens a session, mirrors
-        ``_on_wake_candidate`` on the orb-bridge side (ui/orb/bus_bridge.py).
-
-        The ``active=True`` publish is gated on the SAME
-        ``_should_show_optimistic_candidate()`` check the OWW branch uses —
-        chiefly its ``PipelineState.IDLE`` guard, since ``detect()`` can in
-        principle still be mid-candidate when a hotkey/PTT session starts the
-        state elsewhere. ``active=False`` is published unconditionally: the
-        bridge's retract handler is idempotent/no-op-safe against a retract
-        with no matching prior show (``ui/orb/bus_bridge.py::_on_wake_candidate``
-        — a real active session is left alone, an idle bar is simply
-        re-asserted idle), so it does not need the same gate.
-        """
-        if active and not self._should_show_optimistic_candidate():
-            return
-        try:
-            await self._publish_event(
-                WakeCandidateDetected(source_layer="speech", active=active)
-            )
-        except Exception as exc:  # noqa: BLE001 — a broken publish must not kill wake
-            log.warning("vosk wake-candidate publish failed: %s", exc)
-
     def _should_show_optimistic_candidate(self) -> bool:
         """Whether an unverified OWW hit may pop the overlay bar immediately.
 
         The optimistic reveal exists so a genuine "Hey Jarvis" feels instant on
         the precise pretrained model, where false candidates are rare and a
-        reject costs one brief bar flash. A user-trained custom_onnx model
-        fires on breath/ambient speech many times a minute (user GIF
-        2026-07-02: the bar popped open/closed on auto-repeat), so for that
-        engine the bar appears only AFTER the STT verify confirms the wake —
-        a ~1 s later reveal instead of a constant flicker.
+        reject costs one brief bar flash. Custom ONNX and Vosk grammar stage-one
+        candidates both match ordinary speech frequently, so those engines wait
+        for the authoritative ``WakeWordDetected`` event after full verification.
         """
         if self._state != PipelineState.IDLE:
             return False
         plan = getattr(self, "_wake_plan", None)
-        return not (plan is not None and getattr(plan, "engine", "") == "custom_onnx")
+        if plan is None:
+            return True
+        return getattr(plan, "engine", "") == "openwakeword"
 
     async def _verify_oww_hit(self, pcm_snapshot: bytes) -> bool:
         """Second-stage gate: ask the utterance STT whether the few seconds
@@ -4649,23 +4611,7 @@ class SpeechPipeline:
                             # Custom-model candidates never reveal optimistically
                             # (constant flicker, see the helper's docstring).
                             show_candidate = self._should_show_optimistic_candidate()
-                            # vosk_kws already published its OWN, earlier
-                            # candidate signal directly from the provider
-                            # (see _on_vosk_wake_candidate) — timed BEFORE its
-                            # internal confirm_tail_s wait, unlike this
-                            # OWW-result-timed publish which only runs AFTER
-                            # vosk's full internal verify already completed.
-                            # Publishing True again here would be a redundant,
-                            # mistimed duplicate landing almost simultaneously
-                            # with WakeWordDetected. `show_candidate` itself
-                            # stays UNCHANGED so the lock/not-activatable
-                            # retract path further below still correctly
-                            # retracts the EARLIER provider-side show if this
-                            # wake gets discarded.
-                            engine = getattr(
-                                getattr(self, "_wake_plan", None), "engine", ""
-                            )
-                            if show_candidate and engine != "vosk_kws":
+                            if show_candidate:
                                 await self._publish_event(
                                     WakeCandidateDetected(
                                         source_layer="speech", active=True

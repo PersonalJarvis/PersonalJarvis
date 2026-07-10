@@ -147,13 +147,10 @@ def test_no_vosk_no_whisper_is_honest_wake_off(vosk_model_dir) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_set_wake_plan_vosk_wires_the_optimistic_candidate_callback(
+def test_set_wake_plan_vosk_keeps_unverified_candidates_internal(
     vosk_model_dir,
 ) -> None:
-    """Spawn-latency mission 2026-07-10: VoskKwsProvider gets a callback that
-    lets it publish an optimistic WakeCandidateDetected from INSIDE its own
-    detect loop, well before its confirm_tail_s wait + verify pass complete
-    -- this is the lever that beats that wait without shortening it."""
+    """Live-apply must not expose noisy grammar hits to the visible overlay."""
     from jarvis.core.bus import EventBus
     from jarvis.plugins.wake.vosk_kws_provider import VoskKwsProvider
     from jarvis.speech.pipeline import SpeechPipeline
@@ -170,17 +167,13 @@ def test_set_wake_plan_vosk_wires_the_optimistic_candidate_callback(
     pipe.set_wake_plan(plan)
 
     assert isinstance(pipe._wake, VoskKwsProvider)
-    # Bound methods compare equal (same __self__/__func__) even though two
-    # separate attribute reads create distinct bound-method objects (`is`
-    # would flake here).
-    assert pipe._wake._on_candidate == pipe._on_vosk_wake_candidate  # noqa: SLF001
+    assert not hasattr(pipe._wake, "_on_candidate")
 
 
-def test_constructor_wake_plan_also_wires_the_candidate_callback(
+def test_constructor_wake_plan_keeps_unverified_candidates_internal(
     vosk_model_dir,
 ) -> None:
-    """Same wiring, but through the INITIAL constructor path (a wake_plan
-    passed at construction) rather than the live-apply ``set_wake_plan``."""
+    """The initial construction path has the same confirmed-wake boundary."""
     from jarvis.core.bus import EventBus
     from jarvis.plugins.wake.vosk_kws_provider import VoskKwsProvider
     from jarvis.speech.pipeline import SpeechPipeline
@@ -198,69 +191,7 @@ def test_constructor_wake_plan_also_wires_the_candidate_callback(
     )
 
     assert isinstance(pipe._wake, VoskKwsProvider)
-    assert pipe._wake._on_candidate == pipe._on_vosk_wake_candidate  # noqa: SLF001
-
-
-async def test_on_vosk_wake_candidate_publishes_active_true_and_false(
-    vosk_model_dir,
-) -> None:
-    from jarvis.core.bus import EventBus
-    from jarvis.core.events import WakeCandidateDetected
-    from jarvis.speech.pipeline import SpeechPipeline
-
-    bus = EventBus()
-    received: list[WakeCandidateDetected] = []
-
-    async def _collect(event: WakeCandidateDetected) -> None:
-        received.append(event)
-
-    bus.subscribe(WakeCandidateDetected, _collect)
-
-    pipe = SpeechPipeline(
-        tts=_FakeTTS(), bus=bus,
-        enable_openwakeword=False, enable_whisper_wake=False,
-        enable_local_whisper=False, config=None,
-    )
-
-    await pipe._on_vosk_wake_candidate(True)  # noqa: SLF001
-    await pipe._on_vosk_wake_candidate(False)  # noqa: SLF001
-
-    assert [e.active for e in received] == [True, False]
-    assert all(e.source_layer == "speech" for e in received)
-
-
-async def test_on_vosk_wake_candidate_true_is_suppressed_when_not_idle(
-    vosk_model_dir,
-) -> None:
-    """The ``active=True`` publish shares ``_should_show_optimistic_candidate``
-    with the OWW branch — chiefly its PipelineState.IDLE guard, since
-    ``detect()`` can in principle still be mid-candidate right as a
-    hotkey/PTT session starts elsewhere. ``active=False`` stays unconditional
-    (the bridge's retract handler is safely idempotent against an unmatched
-    retract)."""
-    from jarvis.core.bus import EventBus
-    from jarvis.core.events import WakeCandidateDetected
-    from jarvis.speech.pipeline import PipelineState, SpeechPipeline
-
-    bus = EventBus()
-    received: list[WakeCandidateDetected] = []
-
-    async def _collect(event: WakeCandidateDetected) -> None:
-        received.append(event)
-
-    bus.subscribe(WakeCandidateDetected, _collect)
-
-    pipe = SpeechPipeline(
-        tts=_FakeTTS(), bus=bus,
-        enable_openwakeword=False, enable_whisper_wake=False,
-        enable_local_whisper=False, config=None,
-    )
-    pipe._state = PipelineState.ACTIVE
-
-    await pipe._on_vosk_wake_candidate(True)  # noqa: SLF001
-    await pipe._on_vosk_wake_candidate(False)  # noqa: SLF001
-
-    assert [e.active for e in received] == [False]
+    assert not hasattr(pipe._wake, "_on_candidate")
 
 
 def test_set_wake_plan_vosk_arms_the_provider(vosk_model_dir) -> None:

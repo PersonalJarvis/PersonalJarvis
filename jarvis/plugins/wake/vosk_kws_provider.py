@@ -40,7 +40,7 @@ import json
 import logging
 import time
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 from typing import Any
@@ -92,16 +92,6 @@ _COOLDOWN_S = 5.0
 # short core word; final candidates skip the wait (the endpoint already
 # passed).
 _CONFIRM_TAIL_S = 0.6
-
-# How much of the RECENT ring to check for the optimistic candidate signal's
-# cheap pre-gate (spawn-latency mission 2026-07-10). This is deliberately a
-# SEPARATE, cheaper check from the authoritative span-localised RMS gate in
-# ``_verify_candidate`` — it only exists to stop the optimistic, visual-only
-# ``on_candidate(True)`` from firing on a grammar hit pulled onto near-silence
-# (word-agnostic, AP-27-conform: energy only, never transcript content). The
-# authoritative confirm below is unchanged and remains the real gate.
-_CANDIDATE_RMS_TAIL_S = 0.4
-
 
 def _folded(text: str) -> str:
     return " ".join(sound_fold(t) for t in normalize_phrase_for_match(text))
@@ -155,18 +145,6 @@ class VoskKwsProvider:
         # -3 dBFS (gain capped at 40 dB) exactly like the other wake paths.
         target_peak: float = 0.7079,
         max_gain: float = 100.0,
-        # Optimistic, visual-only candidate signal (spawn-latency mission
-        # 2026-07-10): awaited with True the moment a grammar candidate
-        # passes the cheap RMS pre-gate — BEFORE the confirm_tail_s wait and
-        # the (now-parallelised, but still real) verify pass — and with
-        # False if that candidate is later rejected. Mirrors the OWW
-        # candidate/retract semantics the pipeline already publishes as
-        # ``WakeCandidateDetected``, just sourced from inside this provider
-        # (unlike OWW, this provider's own ``detect()`` does not yield until
-        # AFTER its full internal confirm, so the pipeline has no other way
-        # to learn about a candidate this early). None = no signal (tests /
-        # callers that do not care).
-        on_candidate: Callable[[bool], Awaitable[None]] | None = None,
     ) -> None:
         self._phrase = phrase.strip()
         self._keyword = keyword or "_".join(normalize_phrase_for_match(phrase)) or "wake"
@@ -190,7 +168,6 @@ class VoskKwsProvider:
             self._confirm_ratio = max(self._confirm_ratio, 0.62)
         self._target_peak = float(target_peak)
         self._max_gain = float(max_gain)
-        self._on_candidate = on_candidate
         self._model: Any = None
         self._grammar_words = [w for w in self._phrase.lower().split() if w]
         # Duck-typing parity with OpenWakeWordProvider: the pipeline's ready
@@ -294,23 +271,6 @@ class VoskKwsProvider:
             return np.empty(0, dtype=np.float32)
         raw = b"".join(self._ring)
         return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-
-    def _recent_rms(self, tail_s: float) -> float:
-        """Cheap RMS over the last ``tail_s`` seconds of ring audio.
-
-        Used ONLY as the fast pre-gate for the optimistic ``on_candidate``
-        signal (word-agnostic, AP-27-conform) — the authoritative,
-        span-localised RMS check in ``_verify_candidate`` is unchanged and
-        stays the real gate for whether the wake actually fires.
-        """
-        if not self._ring:
-            return 0.0
-        n_bytes = int(tail_s * self._sample_rate) * 2
-        raw = b"".join(self._ring)[-n_bytes:] if n_bytes > 0 else b""
-        if not raw:
-            return 0.0
-        arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-        return float(np.sqrt(np.mean(arr * arr) + 1e-12)) if len(arr) else 0.0
 
     def _grammar_hit(self, rec: Any, pcm: bytes) -> tuple[bool, float] | None:
         """Feed one chunk; return (is_final, min_conf) on a phrase hit else None."""
@@ -465,17 +425,6 @@ class VoskKwsProvider:
 
     # -- detection loop --------------------------------------------------------
 
-    async def _signal_candidate(self, active: bool) -> None:
-        """Best-effort ``on_candidate`` notification — a broken/absent hook
-        must never break wake detection itself (fail-open, matches every
-        other callback boundary in this provider)."""
-        if self._on_candidate is None:
-            return
-        try:
-            await self._on_candidate(active)
-        except Exception:  # noqa: BLE001
-            log.debug("vosk-kws on_candidate(%s) callback failed", active, exc_info=True)
-
     async def detect(self, chunks: AsyncIterator[AudioChunk]) -> AsyncIterator[str]:
         """Consume audio chunks, yield the keyword on a confirmed hit.
 
@@ -483,17 +432,10 @@ class VoskKwsProvider:
         realtime — a 100 ms chunk costs ~2 ms, safe inline). The confirm pass
         (~0.1-0.2 s) runs in a worker thread only on candidates.
 
-        Spawn-latency mission (2026-07-10): this loop's own confirm_tail_s
-        wait + verify pass is the dominant cost between "the user finishes
-        the phrase" and "the wake is authoritatively confirmed" — deliberately
-        NOT shortened here (recall-calibrated, see the constants above). What
-        CAN move earlier is the visual-only bar reveal: ``on_candidate(True)``
-        fires the moment a grammar hit clears cooldown + the cheap RMS
-        pre-gate, i.e. BEFORE confirm_tail_s and the verify pass, so the UI
-        can react in roughly one poll cadence. ``on_candidate(False)`` fires
-        if that same candidate is later rejected, so a false grammar hit only
-        costs a brief visual flash, never a phantom session (the actual
-        session only ever opens on a real ``yield`` below).
+        The stage-one grammar is intentionally noisy (it forces speech onto
+        the configured phrase), so candidates remain private to this method.
+        Only the keyword yielded after the full verify pass may cross into the
+        pipeline or become visible in the overlay.
         """
         await asyncio.to_thread(self._ensure_model)
         rec = self._new_grammar_rec()
@@ -504,10 +446,6 @@ class VoskKwsProvider:
         # the wait — their endpoint already passed.
         pending: tuple[bool, float] | None = None
         pending_tail = 0
-        # True while an optimistic on_candidate(True) is outstanding for the
-        # candidate currently being confirmed — tracks whether a matching
-        # on_candidate(False) retraction is owed on rejection.
-        signalled_candidate = False
         async for chunk in chunks:
             self._stat_chunks += 1
             pcm = chunk.pcm
@@ -532,13 +470,6 @@ class VoskKwsProvider:
                 if is_final and conf < self._min_final_conf:
                     rec = self._new_grammar_rec()
                     continue
-                # Optimistic, visual-only reveal (see the docstring above).
-                # Gated on raw RMS over the recent ring — word-agnostic,
-                # AP-27-conform — so a grammar hit pulled onto near-silence
-                # never pops the bar.
-                if self._recent_rms(_CANDIDATE_RMS_TAIL_S) >= self._match_min_rms:
-                    signalled_candidate = True
-                    await self._signal_candidate(True)
                 if not is_final and self._confirm_tail_bytes > 0:
                     pending = (is_final, conf)
                     pending_tail = 0
@@ -548,14 +479,10 @@ class VoskKwsProvider:
             confirmed = await asyncio.to_thread(self._verify_candidate, window)
             if not confirmed:
                 self._stat_suppressed_confirm += 1
-                if signalled_candidate:
-                    await self._signal_candidate(False)
-                signalled_candidate = False
                 rec = self._new_grammar_rec()
                 continue
             self._stat_fired += 1
             last_fire_t = now
-            signalled_candidate = False
             log.info(
                 "vosk-kws: WAKE fired for %r (%s candidate)",
                 self._phrase,
