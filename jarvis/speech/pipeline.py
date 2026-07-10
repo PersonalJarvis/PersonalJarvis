@@ -4311,7 +4311,19 @@ class SpeechPipeline:
         poll cadence. ``active=False`` retracts if that candidate is later
         rejected. Visual only: never opens a session, mirrors
         ``_on_wake_candidate`` on the orb-bridge side (ui/orb/bus_bridge.py).
+
+        The ``active=True`` publish is gated on the SAME
+        ``_should_show_optimistic_candidate()`` check the OWW branch uses —
+        chiefly its ``PipelineState.IDLE`` guard, since ``detect()`` can in
+        principle still be mid-candidate when a hotkey/PTT session starts the
+        state elsewhere. ``active=False`` is published unconditionally: the
+        bridge's retract handler is idempotent/no-op-safe against a retract
+        with no matching prior show (``ui/orb/bus_bridge.py::_on_wake_candidate``
+        — a real active session is left alone, an idle bar is simply
+        re-asserted idle), so it does not need the same gate.
         """
+        if active and not self._should_show_optimistic_candidate():
+            return
         try:
             await self._publish_event(
                 WakeCandidateDetected(source_layer="speech", active=active)

@@ -354,6 +354,29 @@ def test_optimistic_candidate_hidden_when_not_idle() -> None:
     assert pipe._should_show_optimistic_candidate() is False
 
 
+def test_optimistic_candidate_still_true_for_vosk_kws_when_idle() -> None:
+    """Spawn-latency mission 2026-07-10: ``_should_show_optimistic_candidate``
+    itself stays UNCHANGED for vosk_kws (still True) — the lock/not-activatable
+    retract safety-net in ``_run_parallel_wake`` reads this SAME flag to decide
+    whether to retract the EARLIER, provider-sourced candidate signal (see
+    ``VoskKwsProvider.on_candidate`` / ``_on_vosk_wake_candidate``) if a
+    confirmed vosk wake later gets discarded. Only the REDUNDANT duplicate
+    "active=True" publish at the OWW-result site is skipped for this engine
+    (that publish now runs too late to help — vosk's own confirm already
+    completed by the time this OWW-result path even sees the result), not
+    this gate itself.
+    """
+    from jarvis.speech.pipeline import PipelineState
+
+    pipe = _bare_pipeline(
+        require_hey_prefix=True,
+        utterance_stt=None,
+        wake_plan=SimpleNamespace(engine="vosk_kws", verify_prefix=False),
+    )
+    pipe._state = PipelineState.IDLE
+    assert pipe._should_show_optimistic_candidate() is True
+
+
 # ---------------------------------------------------------------------------
 # Real construction: require_hey_prefix flows from config into the pipeline.
 # ---------------------------------------------------------------------------
