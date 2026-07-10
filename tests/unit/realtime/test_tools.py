@@ -139,3 +139,23 @@ async def test_clear_no_cancels_and_blocks_same_turn_retry():
     assert result["success"] is False
     assert "declined" in result["error"]
     assert len(executor.execute_calls) == 1
+
+
+def test_bridge_declarations_keep_the_full_json_schema() -> None:
+    """Sanitizing is Gemini's wire-format concern: the provider-neutral
+    bridge declarations (and thus the OpenAI path) keep the full schema,
+    including additionalProperties."""
+    tool = FakeTool("strict_tool")
+    tool.schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {"value": {"type": "string"}},
+    }
+    executor = FakeExecutor()
+    bridge = RealtimeToolBridge(
+        tools={"strict_tool": tool}, executor=executor, language="en"
+    )
+
+    declaration = bridge.declarations[0]
+
+    assert declaration["parameters"]["additionalProperties"] is False

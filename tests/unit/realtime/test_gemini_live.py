@@ -274,3 +274,135 @@ async def test_tool_call_suppresses_intermediate_turn_complete() -> None:
     events = [event async for event in session.receive()]
 
     assert [event.type for event in events] == ["tool_call", "turn_complete"]
+
+
+# --- function_declarations schema sanitizing --------------------------------
+
+
+def _sanitize(schema):
+    from jarvis.plugins.realtime.gemini_live import _sanitize_schema_for_gemini
+
+    return _sanitize_schema_for_gemini(schema)
+
+
+def test_sanitizer_strips_additional_properties_recursively() -> None:
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "nested": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {"leaf": {"type": "string"}},
+            },
+            "listed": {
+                "type": "array",
+                "items": {"type": "object", "additionalProperties": False},
+            },
+        },
+    }
+
+    result = _sanitize(schema)
+
+    assert "additionalProperties" not in result
+    assert "additionalProperties" not in result["properties"]["nested"]
+    assert "additionalProperties" not in result["properties"]["listed"]["items"]
+
+
+def test_sanitizer_preserves_supported_keys() -> None:
+    schema = {
+        "type": "object",
+        "description": "A tool input.",
+        "properties": {
+            "mode": {"type": "string", "enum": ["fast", "slow"], "default": "fast"},
+            "count": {"type": "integer", "minimum": 1, "maximum": 10},
+        },
+        "required": ["mode"],
+    }
+
+    assert _sanitize(schema) == schema
+
+
+def test_sanitizer_drops_ref_and_combinators_keeping_siblings() -> None:
+    schema = {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$defs": {"x": {"type": "string"}},
+        "oneOf": [{"type": "string"}],
+        "properties": {
+            "value": {"$ref": "#/$defs/x", "description": "kept sibling"}
+        },
+    }
+
+    result = _sanitize(schema)
+
+    assert set(result) == {"type", "properties"}
+    assert result["properties"]["value"] == {"description": "kept sibling"}
+
+
+def test_sanitizer_is_idempotent() -> None:
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {"name": {"type": "string", "format": "uri"}},
+    }
+
+    once = _sanitize(schema)
+
+    assert _sanitize(once) == once
+
+
+@pytest.mark.parametrize(
+    "module_name, class_name",
+    [
+        ("jarvis.plugins.tool.describe_app_settings", "DescribeAppSettingsTool"),
+        ("jarvis.plugins.tool.dispatch_with_review", "DispatchWithReviewTool"),
+        ("jarvis.plugins.tool.manage_mcp_server", "ManageMcpServerTool"),
+        ("jarvis.plugins.tool.reveal_key_preview", "RevealKeyPreviewTool"),
+        ("jarvis.plugins.tool.switch_provider", "SwitchProviderTool"),
+    ],
+)
+def test_real_router_tool_schemas_survive_sanitizing(
+    module_name: str, class_name: str
+) -> None:
+    """The known additionalProperties carriers must come out Gemini-safe."""
+    import importlib
+
+    module = importlib.import_module(module_name)
+    tool_cls = getattr(module, class_name)
+    schema = getattr(tool_cls, "schema", None)
+    if not isinstance(schema, dict):
+        instance = tool_cls.__new__(tool_cls)
+        schema = getattr(instance, "schema", None)
+    assert isinstance(schema, dict), f"{class_name} exposes no dict schema"
+
+    forbidden = {
+        "additionalProperties",
+        "$schema",
+        "$defs",
+        "definitions",
+        "$ref",
+        "oneOf",
+        "anyOf",
+        "allOf",
+        "format",
+        "pattern",
+        "minLength",
+        "maxLength",
+    }
+
+    def _assert_clean(node) -> None:
+        if isinstance(node, dict):
+            assert not (set(node) & forbidden), f"forbidden keys survive: {node}"
+            for value in node.values():
+                _assert_clean(value)
+        elif isinstance(node, list):
+            for value in node:
+                _assert_clean(value)
+
+    result = _sanitize(schema)
+
+    _assert_clean(result)
+    assert result.get("type") == schema.get("type")
+    if "properties" in schema:
+        assert set(result["properties"]) == set(schema["properties"])

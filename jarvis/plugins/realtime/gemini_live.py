@@ -185,6 +185,69 @@ class _GeminiLiveSession:
                     log.debug("gemini-live: client close raised", exc_info=True)
 
 
+# Gemini function_declarations accept only an OpenAPI-style schema subset.
+# Standard JSON-schema keys like additionalProperties, $ref/$defs, or
+# oneOf/anyOf/allOf make the handshake fail — which silently drops the whole
+# provider to the fallback family. Sanitizing is this adapter's wire-format
+# translation; the bridge declarations (and the OpenAI path) keep the full
+# schema.
+_GEMINI_SCHEMA_KEYS = frozenset(
+    {
+        "type",
+        "description",
+        "enum",
+        "properties",
+        "required",
+        "items",
+        "nullable",
+        "minimum",
+        "maximum",
+        "default",
+    }
+)
+
+
+def _sanitize_schema_for_gemini(schema: Any, *, tool_name: str = "") -> Any:
+    if not isinstance(schema, dict):
+        return schema
+    sanitized: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key not in _GEMINI_SCHEMA_KEYS:
+            # Drop unsupported keys but keep their siblings: the tool stays
+            # usable with a permissive schema instead of bricking the session.
+            log.debug(
+                "gemini-live: dropping unsupported schema key %r (tool=%s)",
+                key,
+                tool_name or "unknown",
+            )
+            continue
+        if key == "properties" and isinstance(value, dict):
+            sanitized[key] = {
+                name: _sanitize_schema_for_gemini(sub, tool_name=tool_name)
+                for name, sub in value.items()
+            }
+        elif key == "items":
+            sanitized[key] = _sanitize_schema_for_gemini(value, tool_name=tool_name)
+        else:
+            sanitized[key] = value
+    return sanitized
+
+
+def _sanitize_declarations(tools: tuple[Any, ...]) -> list[dict[str, Any]]:
+    sanitized: list[dict[str, Any]] = []
+    for declaration in tools:
+        if not isinstance(declaration, dict):
+            continue
+        entry = dict(declaration)
+        name = str(entry.get("name", "") or "")
+        if isinstance(entry.get("parameters"), dict):
+            entry["parameters"] = _sanitize_schema_for_gemini(
+                entry["parameters"], tool_name=name
+            )
+        sanitized.append(entry)
+    return sanitized
+
+
 class GeminiLiveProvider:
     """Structural provider entry point for the Gemini Live family."""
 
@@ -236,7 +299,7 @@ class GeminiLiveProvider:
                 {
                     "tools": [
                         {
-                            "function_declarations": list(
+                            "function_declarations": _sanitize_declarations(
                                 tuple(getattr(cfg, "tools", ()) or ())
                             )
                         }
