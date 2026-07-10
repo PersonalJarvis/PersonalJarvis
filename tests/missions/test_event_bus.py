@@ -113,6 +113,36 @@ async def test_wildcard_handler_error_does_not_break_publish() -> None:
     assert len(received_good) == 1
 
 
+async def test_wedged_wildcard_handler_does_not_block_publish(monkeypatch) -> None:
+    """Regression: a never-returning wildcard handler must not wedge `publish`
+    forever — the publishing mission's concurrency-limiting semaphore slot
+    would never be freed. Mirrors `jarvis.core.bus.EventBus`'s
+    `_WILDCARD_HANDLER_TIMEOUT_S` guard (AP-18, BUG-CU-STALL)."""
+    import jarvis.missions.event_bus as event_bus_mod
+
+    monkeypatch.setattr(event_bus_mod, "_WILDCARD_HANDLER_TIMEOUT_S", 0.05)
+    bus = MissionBus()
+
+    wedged_started = asyncio.Event()
+    other_seen: list[EventEnvelope] = []
+
+    async def wedged(_env: EventEnvelope) -> None:
+        wedged_started.set()
+        await asyncio.sleep(3600)  # simulate a stalled subscriber
+
+    async def healthy(env: EventEnvelope) -> None:
+        other_seen.append(env)
+
+    bus.subscribe_all(wedged)
+    bus.subscribe_all(healthy)
+
+    # Must complete well within the wedge duration — bounded by the timeout.
+    await asyncio.wait_for(bus.publish(_envelope("x")), timeout=1.0)
+
+    assert wedged_started.is_set(), "the wedged handler must still have started"
+    assert len(other_seen) == 1, "other wildcard handlers still get the event"
+
+
 async def test_subscription_removed_on_context_exit() -> None:
     bus = MissionBus()
     assert bus.active_subs == 0
