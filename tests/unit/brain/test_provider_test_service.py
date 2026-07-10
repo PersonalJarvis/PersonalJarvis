@@ -170,3 +170,43 @@ def test_tts_synthesis_bytes_is_ok() -> None:
         )
     )
     assert res.status == "ok"
+
+
+def test_realtime_probes_same_family_brain_not_stt() -> None:
+    """A realtime card's test probes the text brain sharing its key slot.
+
+    The realtime tier used to fall through to the STT branch, building an
+    unrelated STT provider — the "Testing…" spinner then hung or lied. The fix
+    routes it to a 1-token probe of the same-credential-family brain (resolved
+    by shared secret slots, never a provider-name pin).
+    """
+    probed: list[tuple[str, str]] = []
+
+    async def probe(p, m):
+        probed.append((p, m))
+        return HealthResult(provider=p, model=m, ok=True, duration_ms=42.0)
+
+    res = _run(
+        run_provider_test(
+            get_spec("openai-realtime"), _cfg(), present=True, brain_probe=probe,
+        )
+    )
+    assert res.status == "ok"
+    # openai-realtime shares openai_api_key with the "openai" brain provider.
+    assert probed and probed[0][0] == "openai"
+    assert "openai" in res.detail
+
+
+def test_realtime_bad_key_classified_from_family_probe() -> None:
+    async def probe(_p, _m):
+        return HealthResult(
+            provider="gemini", model="m", ok=False,
+            error="ClientError: Error code: 401 - API key not valid",
+        )
+
+    res = _run(
+        run_provider_test(
+            get_spec("gemini-live"), _cfg(), present=True, brain_probe=probe,
+        )
+    )
+    assert res.status == "bad_key"

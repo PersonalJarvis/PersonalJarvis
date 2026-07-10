@@ -202,6 +202,28 @@ def _resolve_brain_model(cfg: Any, provider: str) -> str:
         return ""
 
 
+def _same_family_brain_id(spec: Any) -> str | None:
+    """The brain-tier provider sharing ``spec``'s credential slots, if any.
+
+    Resolved via the SHARED SECRET SLOTS (e.g. OpenAI Realtime reuses
+    ``openai_api_key``), never a provider-name mapping (AP-21) — a new realtime
+    provider that declares its key slot gets a working test with no code change.
+    """
+    keys = set(getattr(spec, "secret_keys", ()) or ())
+    if not keys:
+        return None
+    # Lazy import — same pattern as app_control._provider_spec(): the catalog
+    # lives in the UI layer, importing it at call time avoids an import cycle.
+    from jarvis.ui.web.provider_spec import PROVIDERS
+
+    for cand in PROVIDERS:
+        if getattr(cand, "tier", None) != "brain":
+            continue
+        if keys & set(getattr(cand, "secret_keys", ()) or ()):
+            return cand.id
+    return None
+
+
 def _default_make_tts(cfg: Any, provider: str) -> Any:
     from jarvis.plugins.tts import _build_provider
 
@@ -307,19 +329,45 @@ async def run_provider_test(
         if not is_present:
             return ProviderTestResult(provider, NOT_CONFIGURED, "No credential stored.")
 
+    # Default 1-token probe, shared by the brain tier AND the realtime tier below.
+    if brain_probe is None:
+        async def brain_probe(p: str, m: str) -> Any:  # type: ignore[misc]
+            from jarvis.brain.healthcheck import BrainHealthChecker
+            from jarvis.brain.provider_registry import BrainProviderRegistry
+
+            checker = BrainHealthChecker(BrainProviderRegistry())
+            return await checker.probe(p, m, timeout_s=timeout_s)
+
     if spec.tier == "brain":
-        if brain_probe is None:
-            async def brain_probe(p: str, m: str) -> Any:  # type: ignore[misc]
-                from jarvis.brain.healthcheck import BrainHealthChecker
-                from jarvis.brain.provider_registry import BrainProviderRegistry
-
-                checker = BrainHealthChecker(BrainProviderRegistry())
-                return await checker.probe(p, m, timeout_s=timeout_s)
-
         model = _resolve_brain_model(cfg, provider)
         hr = await brain_probe(provider, model)
         if getattr(hr, "ok", False):
             return ProviderTestResult(provider, OK, "", getattr(hr, "duration_ms", 0.0))
+        err = getattr(hr, "error", None)
+        return ProviderTestResult(
+            provider, classify_provider_error(err), err or "", getattr(hr, "duration_ms", 0.0),
+        )
+
+    if spec.tier == "realtime":
+        # A realtime tier used to fall through to the STT branch below — the test
+        # button on a realtime card built an unrelated STT provider and hung or
+        # lied. Opening a REAL duplex session here would be heavy and billed; the
+        # honest minimal call is a 1-token probe through the text brain of the
+        # SAME credential family (resolved by shared secret slots, AP-21), which
+        # verifies key + reachability end-to-end.
+        sibling = _same_family_brain_id(spec)
+        if sibling is None:
+            return ProviderTestResult(
+                provider, OK, "Credential stored; no live probe for this provider."
+            )
+        hr = await brain_probe(sibling, _resolve_brain_model(cfg, sibling))
+        if getattr(hr, "ok", False):
+            return ProviderTestResult(
+                provider,
+                OK,
+                f"Key verified via {sibling}.",
+                getattr(hr, "duration_ms", 0.0),
+            )
         err = getattr(hr, "error", None)
         return ProviderTestResult(
             provider, classify_provider_error(err), err or "", getattr(hr, "duration_ms", 0.0),
@@ -332,17 +380,28 @@ async def run_provider_test(
         except Exception as exc:  # noqa: BLE001
             detail = f"{type(exc).__name__}: {exc}"
             return ProviderTestResult(provider, classify_provider_error(detail), str(exc))
-        start = perf_counter()
-        try:
+
+        async def _first_audio_bytes() -> int:
             total = 0
             async for chunk in inst.synthesize("Test."):
                 total += len(getattr(chunk, "pcm", b"") or b"")
                 if total > 0:
                     break
+            return total
+
+        start = perf_counter()
+        try:
+            # Bounded like the STT branch below: an unresponsive TTS stream must
+            # surface as an honest "unreachable" instead of hanging the request
+            # (and the UI's "Testing…" spinner) forever.
+            total = await asyncio.wait_for(_first_audio_bytes(), timeout=timeout_s)
             dur = (perf_counter() - start) * 1000.0
             if total > 0:
                 return ProviderTestResult(provider, OK, f"{total} audio bytes", dur)
             return ProviderTestResult(provider, ERROR, "synthesized 0 bytes", dur)
+        except TimeoutError:
+            dur = (perf_counter() - start) * 1000.0
+            return ProviderTestResult(provider, UNREACHABLE, f"timeout after {timeout_s:.0f}s", dur)
         except Exception as exc:  # noqa: BLE001
             dur = (perf_counter() - start) * 1000.0
             detail = f"{type(exc).__name__}: {exc}"
@@ -351,7 +410,10 @@ async def run_provider_test(
     # stt
     builder = make_stt or _default_make_stt
     try:
-        inst = builder(cfg, provider)
+        # Built off the event loop: the local faster-whisper build LOADS the model
+        # synchronously (seconds), which would otherwise freeze every other request
+        # (and the whole API-Keys screen) while a test/section-health check runs.
+        inst = await asyncio.to_thread(builder, cfg, provider)
     except (ImportError, ModuleNotFoundError):
         # M5: the local faster-whisper STT needs the [desktop] extra. On a headless
         # base install the import raises — that is "not installed", an actionable

@@ -593,6 +593,12 @@ async def list_providers(request: Request) -> dict[str, Any]:
     return {"providers": providers}
 
 
+# Belt-and-suspenders ceiling for the whole /test call. run_provider_test's own
+# timeout_s (60 s, generous for NVIDIA NIM's 13-30 s cold-start TTFB) bounds the
+# individual probe; this outer bound guarantees the HTTP response itself.
+_PROVIDER_TEST_HARD_TIMEOUT_S = 75.0
+
+
 @router.post("/providers/{provider_id}/test")
 async def test_provider_connection(
     provider_id: str, request: Request
@@ -616,7 +622,25 @@ async def test_provider_connection(
             status_code=503, detail="Konfiguration nicht verfügbar (Headless-Mode?)"
         )
 
-    result = await _provider_test.run_provider_test(spec, cfg)
+    # Hard ceiling ABOVE run_provider_test's own per-call timeout (60 s): the
+    # route must always answer, else the UI's "Testing…" spinner never resolves.
+    # Any async path that slips past the inner bounds is cut here and reported
+    # as an honest "unreachable" instead of a hung HTTP request.
+    try:
+        result = await asyncio.wait_for(
+            _provider_test.run_provider_test(spec, cfg),
+            timeout=_PROVIDER_TEST_HARD_TIMEOUT_S,
+        )
+    except TimeoutError:
+        result = _provider_test.ProviderTestResult(
+            provider=spec.id,
+            status=_provider_test.UNREACHABLE,
+            detail=(
+                f"Test timed out after {_PROVIDER_TEST_HARD_TIMEOUT_S:.0f}s — "
+                "the provider did not answer."
+            ),
+            latency_ms=_PROVIDER_TEST_HARD_TIMEOUT_S * 1000.0,
+        )
     return ProviderTestResponse(
         provider=result.provider,
         status=result.status,
@@ -767,6 +791,26 @@ def _worker_flagged_dead(provider: str) -> bool:
     return False
 
 
+def _claude_worker_display_label(*, default: str) -> str:
+    """Honest display name for the Claude worker slot in health messages.
+
+    The ``claude-api`` spec label says "(API-Key)", but the SAME slot runs on
+    the Claude subscription OAuth login whenever one exists — a degraded
+    banner blaming the "API-Key" then reads as nonsense to a subscription
+    user (2026-07-10 report: "I selected the subscription, the key is
+    irrelevant"). Presence of ANY OAuth bearer, live or expired-in-place,
+    means the user is on the subscription path. Offline + cheap; any probe
+    failure keeps the spec label rather than breaking the health check.
+    """
+    try:
+        from jarvis.claude_credentials import freshest_claude_oauth
+
+        oauth_status = freshest_claude_oauth().status
+    except Exception:  # noqa: BLE001
+        oauth_status = "absent"
+    return "Claude (subscription)" if oauth_status != "absent" else default
+
+
 def _jarvis_agent_section_health(cfg: Any) -> SectionHealth:
     """Subagents tab: reflects whether the SELECTED heavy-task worker is usable.
 
@@ -794,6 +838,8 @@ def _jarvis_agent_section_health(cfg: Any) -> SectionHealth:
         )
     spec = get_spec(provider)
     label = spec.label if spec is not None else provider
+    if (provider or "").lower() in {"claude-api", "claude"}:
+        label = _claude_worker_display_label(default=label)
     if _worker_usable(provider) and not _worker_flagged_dead(provider):
         return SectionHealth(
             status=_section_health.OK, reason="ok", detail=f"Subagent worker: {label}"
@@ -896,6 +942,34 @@ async def section_health(request: Request, refresh: bool = False) -> SectionHeal
             sections=cache["payload"], checked_at=cache["checked_at"], cached=True
         )
 
+    # Coalesce concurrent (re)checks: a provider switch fires several UI events in
+    # a burst, each of which used to launch its OWN full sweep of REAL provider
+    # tests — a multi-second storm that made the whole screen feel broken. Requests
+    # arriving while one sweep runs wait for it and reuse its result — a waiting
+    # ?refresh=true only reuses a sweep that FINISHED while it waited (so an
+    # explicit refresh still always reflects a check started after the request,
+    # the contract the UI relies on after a key save / provider switch).
+    entered = time.time()
+    lock = getattr(request.app.state, "_section_health_refresh_lock", None)
+    if lock is None:
+        lock = asyncio.Lock()
+        request.app.state._section_health_refresh_lock = lock
+    async with lock:
+        cache = getattr(request.app.state, "_section_health_cache", None)
+        checked_at = cache.get("checked_at", 0.0) if isinstance(cache, dict) else 0.0
+        now = time.time()
+        fresh_enough = (
+            checked_at >= entered if refresh else now - checked_at < _SECTION_HEALTH_TTL_S
+        )
+        if isinstance(cache, dict) and fresh_enough:
+            return SectionHealthResponse(
+                sections=cache["payload"], checked_at=checked_at, cached=True
+            )
+        return await _compute_section_health(request, now)
+
+
+async def _compute_section_health(request: Request, now: float) -> SectionHealthResponse:
+    """One full sweep of the per-tab health checks (called under the refresh lock)."""
     cfg = _resolve_cfg(request)
     sections: dict[str, SectionHealth] = {}
 

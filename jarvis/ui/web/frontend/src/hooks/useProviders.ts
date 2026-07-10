@@ -256,7 +256,14 @@ export function useSectionHealth() {
 
   useEffect(() => {
     void reload(false);
-    const onChange = () => void reload(true);
+    // Debounced: one action can fire several of these events back-to-back
+    // (switch + refetch + test). Each refresh runs REAL connectivity tests
+    // server-side, so bursts are collapsed into a single trailing reload.
+    let timer: number | undefined;
+    const onChange = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => void reload(true), 400);
+    };
     const events = [
       "jarvis:secret-configured",
       "jarvis:brain-switched",
@@ -268,7 +275,10 @@ export function useSectionHealth() {
       "jarvis:provider-tested",
     ];
     events.forEach((e) => window.addEventListener(e, onChange));
-    return () => events.forEach((e) => window.removeEventListener(e, onChange));
+    return () => {
+      window.clearTimeout(timer);
+      events.forEach((e) => window.removeEventListener(e, onChange));
+    };
   }, [reload]);
 
   return { health, reload };
@@ -565,20 +575,47 @@ export interface ProviderTestResult {
   integration_ok: boolean;
 }
 
+// The backend caps a test at 75 s (route-level wait_for); this client-side
+// ceiling sits above it so a wedged backend can never leave the "Testing…"
+// spinner running forever — the ONE state a test control must never reach.
+const PROVIDER_TEST_CLIENT_TIMEOUT_MS = 80_000;
+
 /**
  * Runs a REAL minimal call against the provider (1-token brain completion, a
  * tiny TTS synthesis, an STT transcription, or the Codex OAuth status) and
  * reports the honest outcome — not just whether a key string is stored.
+ *
+ * Never hangs: aborts client-side after `PROVIDER_TEST_CLIENT_TIMEOUT_MS` and
+ * resolves to an honest "unreachable" result instead of rejecting, so the UI
+ * always gets a renderable outcome.
  */
 export async function testProvider(providerId: string): Promise<ProviderTestResult> {
-  const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/test`, {
-    method: "POST",
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), PROVIDER_TEST_CLIENT_TIMEOUT_MS);
+  try {
+    const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/test`, {
+      method: "POST",
+      signal: controller.signal,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(body.detail ?? `HTTP ${res.status}`);
+    }
+    return body as ProviderTestResult;
+  } catch (e) {
+    if ((e as Error).name === "AbortError") {
+      return {
+        provider: providerId,
+        status: "unreachable",
+        detail: "No answer from the app after 80s — the backend may be busy or stuck.",
+        latency_ms: PROVIDER_TEST_CLIENT_TIMEOUT_MS,
+        integration_ok: false,
+      };
+    }
+    throw e;
+  } finally {
+    window.clearTimeout(timer);
   }
-  return body as ProviderTestResult;
 }
 
 // ── Per-provider model picker ───────────────────────────────────────────────
