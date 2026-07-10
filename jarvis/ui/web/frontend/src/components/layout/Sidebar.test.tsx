@@ -25,7 +25,10 @@ vi.mock("@/hooks/useOverlayStyle", () => ({
 // plugin reconnect dot is driven by the test, not a fetch.
 const pluginAttentionMock = vi.hoisted(() => ({ needsReconnect: false }));
 vi.mock("@/hooks/usePluginAttention", () => ({
-  usePluginAttention: () => pluginAttentionMock.needsReconnect,
+  usePluginAttention: () =>
+    pluginAttentionMock.needsReconnect
+      ? { count: 1, names: ["Cloudflare"] }
+      : { count: 0, names: [] },
 }));
 
 describe("Sidebar voice header", () => {
