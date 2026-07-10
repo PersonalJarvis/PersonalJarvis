@@ -224,8 +224,16 @@ def _looks_like_desktop_control(text: str) -> bool:
 # (``_normalize``: lowercased + umlauts transliterated, so "öffnest" -> "oeffnest"),
 # so ``oeffn\w*`` catches öffne/öffnest/öffnet/öffnen alike. ``start\w*`` catches
 # starte/startest/start; "mach … auf" is the separable verb handled separately.
+# NB: the English open verb is pinned to its real conjugations — a bare
+# ``open\w*`` also swallowed PRODUCT NAMES starting with "open" (forensic
+# 2026-07-10: "…meinen OpenRouter-Zugang checkst und…" counted as an
+# open-verb, the "und" made it a compound open-and-operate command, and a
+# plain provider-check request was deterministically shipped to the
+# computer-use loop — clicking through the browser instead of calling the
+# provider-test endpoint). openrouter/openai/openwakeword must never count
+# as "open".
 _OPEN_VERB_RE = re.compile(
-    r"\b(?:oeffn\w*|aufmach\w*|aufzumach\w*|start\w*|open\w*|launch\w*)\b",
+    r"\b(?:oeffn\w*|aufmach\w*|aufzumach\w*|start\w*|open(?:s|ed|ing)?|launch\w*)\b",
     re.IGNORECASE,
 )
 # Separable verb "mach … auf" (particle trails the object): "mach mir Spotify auf".

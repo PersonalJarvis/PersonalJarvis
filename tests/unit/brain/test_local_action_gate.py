@@ -1082,3 +1082,42 @@ def test_booking_transactions_require_external_integration(text: str) -> None:
 )
 def test_travel_mentions_without_dispatch_verb_stay_generic(text: str) -> None:
     assert requires_external_integration(text) is False
+
+
+# ---------------------------------------------------------------------------
+# Product names starting with "open" are NOT open-verbs (forensic 2026-07-10,
+# data/jarvis_desktop.log 19:41): "…dass du mir meinen OpenRouter-Zugang
+# checkst und mein Google Gemini-Zugang auch noch checkst" — ``open\w*``
+# swallowed "OpenRouter", the "und" made it a compound open-and-operate
+# command, and a plain provider-check request was deterministically shipped
+# to the computer-use loop (browser clicking) instead of reaching the LLM's
+# app-command/provider-test path. The verb match is now pinned to real
+# conjugations (open/opens/opened/opening).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Ich möchte, dass du bitte für mich einmal mir dabei hilfst. Und zwar "
+        "möchte ich, dass du mir meinen OpenRouter-Zugang checkst und mein "
+        "Google Gemini-Zugang auch noch checkst. Mache das bitte.",
+        "Prüf meinen OpenAI-Zugang und den OpenRouter-Key.",
+        "Ist OpenRouter down und liegt es an meinem Konto?",
+    ],
+)
+def test_open_prefixed_product_names_do_not_hijack_the_cu_gate(utterance) -> None:
+    """Mentioning openrouter/openai + an 'und' must NOT read as 'open X and Y'."""
+    assert match_local_action(utterance) is None
+
+
+@pytest.mark.parametrize(
+    ("utterance", "mode"),
+    [
+        ("Open Spotify and play some music", LocalActionMode.COMPUTER_USE),
+        ("Öffne Chrome", LocalActionMode.DIRECT),
+    ],
+)
+def test_real_english_open_verbs_still_route(utterance, mode) -> None:
+    plan = match_local_action(utterance)
+    assert plan is not None and plan.mode is mode
