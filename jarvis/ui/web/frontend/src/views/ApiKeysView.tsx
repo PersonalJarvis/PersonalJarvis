@@ -24,6 +24,7 @@ import {
   type ProviderTestStatus,
   type ProviderTier,
   type SectionHealth,
+  sectionHealthForSubject,
   startCodexLogin,
   switchBrainProvider,
   switchComputerUseProvider,
@@ -125,7 +126,27 @@ export function ApiKeysView() {
   const { providers, loading, error, refetch, setActiveOptimistic } = useProviders();
   // Per-tab health (amber = the active provider isn't set up, red = it's set up
   // but failing a live check). Best-effort and off the render-blocking path.
-  const { health } = useSectionHealth();
+  const { health: rawHealth } = useSectionHealth();
+  const health = useMemo(() => {
+    const visible = { ...rawHealth };
+    const activeSubjects: Record<string, string | undefined> = {
+      brain: providers.find((provider) => provider.tier === "brain" && provider.active)?.id,
+      tts: providers.find((provider) => provider.tier === "tts" && provider.active)?.id,
+      stt: providers.find((provider) => provider.tier === "stt" && provider.active)?.id,
+      realtime: providers.find(
+        (provider) => provider.tier === "realtime" && provider.active,
+      )?.id,
+      "computer-use": providers.find(
+        (provider) => provider.tier === "brain" && provider.computer_use_active,
+      )?.id,
+    };
+    for (const [section, subjectId] of Object.entries(activeSubjects)) {
+      const matching = sectionHealthForSubject(rawHealth[section], subjectId);
+      if (matching) visible[section] = matching;
+      else delete visible[section];
+    }
+    return visible;
+  }, [providers, rawHealth]);
   const categories = makeProviderCategories(t);
   const [active, setActive] = useState<CategoryKey>("brain");
   const [engineMode, setEngineMode] = useState<VoiceEngineMode>("pipeline");
@@ -835,7 +856,7 @@ function TierSection({
             onChanged={onChanged}
             onActivateOptimistic={onActivateOptimistic}
             autoActivateOnSave={!tierHasActive}
-            health={p.active ? health : undefined}
+            health={p.active ? sectionHealthForSubject(health, p.id) : undefined}
           />
         </li>
       ))}
