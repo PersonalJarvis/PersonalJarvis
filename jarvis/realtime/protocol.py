@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from jarvis.core.protocols import AudioChunk
 
@@ -18,6 +18,7 @@ RealtimeEventType = Literal[
     "audio_delta",
     "output_transcript_delta",
     "input_transcript",
+    "tool_call",
     "speech_started",
     "interrupted",
     "turn_complete",
@@ -35,6 +36,9 @@ class RealtimeEvent:
     is_final: bool = False
     ms_played: int | None = None             # speech_started: ms of our audio already heard
     error: str | None = None
+    call_id: str | None = None
+    tool_name: str | None = None
+    tool_args: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +56,7 @@ class RealtimeSessionConfig:
     # GA Realtime schema rejects requesting text and audio simultaneously.
     modalities: tuple[str, ...] = ("audio",)
     turn_detection: str = "server_vad"       # "server_vad" | "semantic_vad"
+    tools: tuple[dict[str, Any], ...] = ()
 
 
 @runtime_checkable
@@ -69,6 +74,9 @@ class RealtimeSession(Protocol):
 
     async def truncate(self, audio_end_ms: int) -> None: ...
     async def interrupt(self) -> None: ...
+    async def send_tool_result(
+        self, call_id: str, name: str, result: dict[str, Any]
+    ) -> None: ...
     async def close(self) -> None: ...
 
 
