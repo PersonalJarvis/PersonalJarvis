@@ -196,7 +196,7 @@ async def test_clean_turn_streams_audio_and_transcript():
         bus=None,
     )
     await sess.handle_control({"type": "audio_start", "sample_rate": 16000})
-    await asyncio.sleep(0.05)  # let the receive pump drain the fake events
+    await sess.wait_finished()
     await sess.end(reason="test")
     assert any(m.get("type") == "transcript" for m in jsons)
     assert binaries  # audio was released after the clean transcript
@@ -225,7 +225,7 @@ async def test_hard_leak_transcript_drops_audio():
         bus=None,
     )
     await sess.handle_control({"type": "audio_start", "sample_rate": 16000})
-    await asyncio.sleep(0.05)
+    await sess.wait_finished()
     await sess.end(reason="test")
     # The pre-leak audio was buffered, then dropped when the leak transcript arrived.
     assert binaries == []
@@ -265,7 +265,7 @@ async def test_later_segment_leak_audio_not_emitted():
         bus=None,
     )
     await sess.handle_control({"type": "audio_start", "sample_rate": 16000})
-    await asyncio.sleep(0.05)
+    await sess.wait_finished()
     await sess.end(reason="test")
     assert a1 in binaries
     assert a2 not in binaries

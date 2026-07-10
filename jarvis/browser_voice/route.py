@@ -54,11 +54,10 @@ def _build_browser_session(
     key) — the caller then closes the socket cleanly. A test can inject
     ``state.browser_voice_session_factory`` to bypass the real provider build.
     """
-    # Realtime mode branch (default OFF): only when [voice].mode == "realtime"
-    # AND an OpenAI key exists. Otherwise fall through to the classic bridge.
-    # The realtime engine is an optional, still-internal module stripped from
-    # public distribution snapshots (distribution-denylist), so its absence just
-    # means "no realtime" — fall through instead of crashing the voice session.
+    # Default-off Realtime branch. The registry-backed factory selects every
+    # credential-ready duplex family in configured order; no provider name is
+    # load-bearing. An installation without that optional module or without a
+    # usable duplex credential falls through to the classic browser bridge.
     try:
         from jarvis.realtime.factory import build_realtime_session
     except ImportError:
@@ -76,6 +75,20 @@ def _build_browser_session(
         if rt is not None:
             return rt
 
+    return _build_classic_browser_session(
+        state=state,
+        cfg=cfg,
+        bus=bus,
+        session_id=session_id,
+        send_binary=send_binary,
+        send_json=send_json,
+    )
+
+
+def _build_classic_browser_session(
+    *, state: Any, cfg: Any, bus: Any, session_id: str, send_binary: Any, send_json: Any
+) -> Any:
+    """Build the key-aware STT -> brain -> TTS browser fallback lazily."""
     factory = getattr(state, "browser_voice_session_factory", None)
     if factory is not None:
         return factory(session_id=session_id, send_binary=send_binary, send_json=send_json)
@@ -167,6 +180,41 @@ async def browser_voice_ws(ws: WebSocket) -> None:
                     log.debug("browser_voice: dropping malformed control frame")
                     continue
                 if isinstance(control, dict):
-                    await session.handle_control(control)
+                    try:
+                        await session.handle_control(control)
+                    except Exception as exc:  # noqa: BLE001 — AP-20: terminal or fallback
+                        can_fallback = (
+                            control.get("type") == "audio_start"
+                            and bool(getattr(session, "is_realtime", False))
+                        )
+                        if not can_fallback:
+                            log.warning("browser_voice: control handling failed: %s", exc)
+                            break
+                        log.warning(
+                            "browser_voice: realtime handshake failed; using classic pipeline: %s",
+                            exc,
+                        )
+                        await session.end(reason="handshake_failed")
+                        fallback = _build_classic_browser_session(
+                            state=state,
+                            cfg=cfg,
+                            bus=bus,
+                            session_id=session_id,
+                            send_binary=_send_binary,
+                            send_json=_send_json,
+                        )
+                        if fallback is None:
+                            await ws.close(code=1011, reason="speech stack unavailable")
+                            break
+                        session = fallback
+                        await _send_json({"type": "mode_fallback", "mode": "pipeline"})
+                        try:
+                            await session.handle_control(control)
+                        except Exception as fallback_exc:  # noqa: BLE001 — terminal
+                            log.warning(
+                                "browser_voice: classic fallback failed: %s",
+                                fallback_exc,
+                            )
+                            break
     finally:
         await session.end(reason="ws_closed")

@@ -208,7 +208,16 @@
     "brain_label": "Brain",
     "brain_tooltip": "Brain-Provider wechseln",
     "apikeys_alert": "Ein Anbieter ist eingerichtet, funktioniert aber nicht — zum Beheben API Keys öffnen",
-    "plugins_reconnect_alert": "Eine Plugin-Verbindung ist abgelaufen — zum Neuverbinden Skills & Tools öffnen"
+    "plugins_reconnect_alert": "Eine Plugin-Verbindung ist abgelaufen — zum Neuverbinden Skills & Tools öffnen",
+    "realtime_start": "Realtime-Sprache starten",
+    "realtime_stop": "Realtime-Sprache beenden",
+    "realtime_retry": "Realtime-Sprache erneut versuchen",
+    "realtime_connecting": "Verbindung wird hergestellt…",
+    "realtime_connected": "Verbunden über",
+    "realtime_browser_hint": "Auf diesem Gerät verwendet dein Browser das Mikrofon.",
+    "realtime_pipeline_fallback": "Klassische Pipeline als Fallback",
+    "realtime_unavailable": "Realtime-API-Key einrichten",
+    "realtime_error": "Die Sprachverbindung konnte nicht gestartet werden. Teste den aktiven Realtime-Anbieter unter API Keys und versuche es erneut."
   },
   "chats_view": {
     "title": "Chat",

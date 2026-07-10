@@ -208,7 +208,16 @@
     "brain_label": "Brain",
     "brain_tooltip": "Switch brain provider",
     "apikeys_alert": "A provider is set up but not working — open API Keys to fix it",
-    "plugins_reconnect_alert": "A plugin connection expired — open Skills & Tools to reconnect it"
+    "plugins_reconnect_alert": "A plugin connection expired — open Skills & Tools to reconnect it",
+    "realtime_start": "Start Realtime Voice",
+    "realtime_stop": "Stop Realtime Voice",
+    "realtime_retry": "Retry Realtime Voice",
+    "realtime_connecting": "Connecting…",
+    "realtime_connected": "Connected via",
+    "realtime_browser_hint": "Your browser owns the microphone on this device.",
+    "realtime_pipeline_fallback": "Classic pipeline fallback",
+    "realtime_unavailable": "Configure a Realtime API Key",
+    "realtime_error": "Couldn’t start voice. Test the active Realtime provider under API Keys, then retry."
   },
   "chats_view": {
     "title": "Chat",

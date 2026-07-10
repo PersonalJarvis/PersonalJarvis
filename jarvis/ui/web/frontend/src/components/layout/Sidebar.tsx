@@ -29,6 +29,7 @@ import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { cn } from "@/lib/utils";
 import { useMemo } from "react";
 import { useT } from "@/i18n";
+import { BrowserRealtimeControl } from "@/components/voice/BrowserRealtimeControl";
 
 interface NavItem {
   id: SectionId;
@@ -241,6 +242,7 @@ export function Sidebar() {
             <span className="text-muted-foreground/50">{t("sidebar.wake_hint")}</span>
           )}
         </div>
+        <BrowserRealtimeControl />
       </div>
 
       <nav className="flex-1 overflow-y-auto scrollbar-jarvis p-2">

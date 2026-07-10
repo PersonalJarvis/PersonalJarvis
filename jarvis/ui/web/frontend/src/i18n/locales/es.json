@@ -208,7 +208,16 @@
     "brain_label": "Cerebro",
     "brain_tooltip": "Cambiar proveedor de IA",
     "apikeys_alert": "Un proveedor está configurado pero no funciona — abre API Keys para solucionarlo",
-    "plugins_reconnect_alert": "Una conexión de plugin expiró — abre Skills & Tools para volver a conectarla"
+    "plugins_reconnect_alert": "Una conexión de plugin expiró — abre Skills & Tools para volver a conectarla",
+    "realtime_start": "Iniciar Voz en Tiempo Real",
+    "realtime_stop": "Detener Voz en Tiempo Real",
+    "realtime_retry": "Reintentar Voz en Tiempo Real",
+    "realtime_connecting": "Conectando…",
+    "realtime_connected": "Conectado mediante",
+    "realtime_browser_hint": "Tu navegador controla el micrófono en este dispositivo.",
+    "realtime_pipeline_fallback": "Sistema de voz clásico como alternativa",
+    "realtime_unavailable": "Configura una clave API de tiempo real",
+    "realtime_error": "No se pudo iniciar la voz. Prueba el proveedor activo en API Keys y vuelve a intentarlo."
   },
   "chats_view": {
     "title": "Chat",

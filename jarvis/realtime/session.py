@@ -46,6 +46,8 @@ def _session_instructions(language: str) -> str:
 class RealtimeVoiceSession:
     """One duplex conversation shared by browser and desktop surfaces."""
 
+    is_realtime = True
+
     def __init__(
         self,
         *,

@@ -7,10 +7,13 @@ we only pin the rules so the tab indicator can never silently change meaning.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from jarvis.brain import provider_test
 from jarvis.brain import section_health as sh
+from jarvis.ui.web.provider_spec import PROVIDERS
 
 
 class TestSectionStatusForTest:
@@ -72,6 +75,27 @@ def test_vocabulary_is_exactly_four() -> None:
     assert len(sh.SECTION_HEALTH_STATUSES) == 4
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spec", PROVIDERS, ids=lambda spec: spec.id)
+async def test_every_catalog_provider_health_is_bound_to_its_exact_id(
+    spec, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The generic guard covers every Brain, TTS, STT, and Realtime card."""
+    from jarvis.ui.web import provider_routes
+
+    monkeypatch.setattr(provider_routes, "_is_credential_present", lambda *args: True)
+
+    async def _probe(selected, cfg):
+        return SimpleNamespace(status="ok", detail="")
+
+    monkeypatch.setattr(provider_test, "run_provider_test", _probe)
+
+    result = await provider_routes._tier_section_health(SimpleNamespace(), spec)
+
+    assert result.status == sh.OK
+    assert result.subject_id == spec.id
+
+
 class TestSubagentSectionHealth:
     """Live-honest Sub-Agents tab health (2026-07-06 incident: the tab stayed
     green while every worker spawn 401'd on an expired OAuth token)."""
@@ -99,6 +123,7 @@ class TestSubagentSectionHealth:
         monkeypatch.setattr(pr, "_worker_flagged_dead", lambda p: False)
         health = pr._jarvis_agent_section_health(self._cfg())
         assert health.status == sh.OK
+        assert health.subject_id == "claude-api"
 
     def test_selected_dead_with_fallback_is_needs_setup(self, monkeypatch) -> None:
         from jarvis.ui.web import provider_routes as pr
@@ -144,6 +169,7 @@ class TestSubagentSectionHealth:
         health = pr._jarvis_agent_section_health(self._cfg())
         assert health.status == sh.ERROR
         assert health.reason == "no_provider"
+        assert health.subject_id == "claude-api"
 
     def test_degraded_label_says_subscription_for_oauth_user(
         self, monkeypatch, tmp_path

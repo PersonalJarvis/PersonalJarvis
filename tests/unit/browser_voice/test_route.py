@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 from fastapi import WebSocketDisconnect
 
+import jarvis.browser_voice.route as route_mod
 from jarvis.browser_voice.route import browser_voice_ws
 
 
@@ -121,3 +122,37 @@ async def test_route_breaks_on_runtimeerror():
     ws = _RaisingWS([], state=_state(rec))
     await browser_voice_ws(ws)
     assert rec.ended
+
+
+async def test_realtime_handshake_failure_crosses_to_classic_browser_pipeline(
+    monkeypatch,
+):
+    classic = _RecSession()
+
+    class _FailedRealtime(_RecSession):
+        is_realtime = True
+
+        async def handle_control(self, msg: dict) -> None:
+            raise RuntimeError("simulated duplex handshake failure")
+
+    failed = _FailedRealtime()
+    state = _state(classic)
+    state.config.voice = SimpleNamespace(mode="realtime")
+    monkeypatch.setattr(route_mod, "_build_browser_session", lambda **_kwargs: failed)
+    ws = _FakeWS(
+        [
+            {
+                "type": "websocket.receive",
+                "text": '{"type":"audio_start","sample_rate":48000}',
+            },
+            {"type": "websocket.disconnect", "code": 1000},
+        ],
+        state=state,
+    )
+
+    await browser_voice_ws(ws)
+
+    assert failed.ended
+    assert classic.controls == [{"type": "audio_start", "sample_rate": 48_000}]
+    assert classic.ended
+    assert {"type": "mode_fallback", "mode": "pipeline"} in ws.sent_json

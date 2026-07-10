@@ -648,6 +648,9 @@ async def test_provider_connection(
             ),
             latency_ms=_PROVIDER_TEST_HARD_TIMEOUT_S * 1000.0,
         )
+    # This exact result is newer than any overlapping section sweep. Cancel the
+    # older snapshot so the UI refresh cannot resurrect a pre-test status.
+    _invalidate_section_health_state(request)
     return ProviderTestResponse(
         provider=result.provider,
         status=result.status,
@@ -674,6 +677,15 @@ assert set(get_args(SectionHealthStatusLiteral)) == set(
 # re-run the REAL connectivity tests on every render. ``?refresh=true`` (used by
 # the UI after a key save / provider switch) bypasses it.
 _SECTION_HEALTH_TTL_S = 45.0
+_SECTION_HEALTH_KEYS = (
+    "brain",
+    "computer-use",
+    "tts",
+    "stt",
+    "realtime",
+    "subagents",
+    "advanced",
+)
 
 
 class SectionHealth(BaseModel):
@@ -687,6 +699,10 @@ class SectionHealth(BaseModel):
     reason: str = "unknown"
     # Plain-English one-liner for the hover tooltip (provider label + detail).
     detail: str = ""
+    # Exact provider/integration this result belongs to. The frontend must never
+    # attach a result to a different active card, even while a slow probe from the
+    # previous selection is still completing.
+    subject_id: str | None = None
 
 
 class SectionHealthResponse(BaseModel):
@@ -707,6 +723,7 @@ async def _tier_section_health(cfg: Any, spec: ProviderSpec | None) -> SectionHe
             status=_section_health.NEEDS_SETUP,
             reason="no_active",
             detail="No active provider selected",
+            subject_id=None,
         )
     # Local providers (faster-whisper, SAPI) have no key to be invalid; if one is
     # the active provider it is usable. Skip the real test — it could force a heavy
@@ -716,6 +733,7 @@ async def _tier_section_health(cfg: Any, spec: ProviderSpec | None) -> SectionHe
             status=_section_health.OK,
             reason="local",
             detail=f"{spec.label}: local, no key needed",
+            subject_id=spec.id,
         )
     try:
         configured = _is_credential_present(
@@ -728,19 +746,24 @@ async def _tier_section_health(cfg: Any, spec: ProviderSpec | None) -> SectionHe
             status=_section_health.NEEDS_SETUP,
             reason="not_configured",
             detail=f"{spec.label}: no key set",
+            subject_id=spec.id,
         )
     try:
         result = await _provider_test.run_provider_test(spec, cfg)
     except Exception as exc:  # noqa: BLE001
         log.warning("section-health test for %s failed: %s", spec.id, exc)
         return SectionHealth(
-            status=_section_health.UNKNOWN, reason="error", detail=f"{spec.label}: check failed"
+            status=_section_health.UNKNOWN,
+            reason="error",
+            detail=f"{spec.label}: check failed",
+            subject_id=spec.id,
         )
     status = _section_health.section_status_for_test(result.status, configured=True)
     return SectionHealth(
         status=status,
         reason=result.status,
         detail=f"{spec.label}: {result.detail or result.status}",
+        subject_id=spec.id,
     )
 
 
@@ -818,30 +841,33 @@ def _claude_worker_display_label(*, default: str) -> str:
     return "Claude (subscription)" if oauth_status != "absent" else default
 
 
+def _selected_jarvis_agent_provider(cfg: Any) -> str | None:
+    """Return the exact provider selected for Jarvis-Agent work."""
+    brain = getattr(cfg, "brain", None) if cfg is not None else None
+    if brain is None:
+        return None
+    worker = getattr(brain, "worker", None)
+    provider = (getattr(worker, "provider", None) if worker else None) or getattr(
+        brain, "primary", None
+    )
+    return (provider or "").strip() or None
+
+
 def _jarvis_agent_section_health(cfg: Any) -> SectionHealth:
-    """Subagents tab: reflects whether the SELECTED heavy-task worker is usable.
+    """Jarvis-Agents tab: report whether the selected worker is usable.
 
     A real "does it answer" call for a CLI worker is heavy, so v1 reports the
     connectedness signal — connected/keyed → ok, otherwise needs_setup. Since
     2026-07-07 it distinguishes degraded (fallback carries) from error
     (nothing reachable).
     """
-    brain = getattr(cfg, "brain", None) if cfg is not None else None
-    if brain is None:
+    provider = _selected_jarvis_agent_provider(cfg)
+    if provider is None:
         return SectionHealth(
             status=_section_health.NEEDS_SETUP,
             reason="no_active",
-            detail="No subagent worker selected",
-        )
-    sub = getattr(brain, "worker", None)
-    provider = (getattr(sub, "provider", None) if sub else None) or getattr(
-        brain, "primary", None
-    )
-    if not provider:
-        return SectionHealth(
-            status=_section_health.NEEDS_SETUP,
-            reason="no_active",
-            detail="No subagent worker selected",
+            detail="No Jarvis-Agent worker selected",
+            subject_id=None,
         )
     spec = get_spec(provider)
     label = spec.label if spec is not None else provider
@@ -849,7 +875,10 @@ def _jarvis_agent_section_health(cfg: Any) -> SectionHealth:
         label = _claude_worker_display_label(default=label)
     if _worker_usable(provider) and not _worker_flagged_dead(provider):
         return SectionHealth(
-            status=_section_health.OK, reason="ok", detail=f"Subagent worker: {label}"
+            status=_section_health.OK,
+            reason="ok",
+            detail=f"Jarvis-Agent worker: {label}",
+            subject_id=provider,
         )
     # The selected worker cannot run right now. Distinguish "a fallback
     # family carries the missions" (amber) from "nothing is reachable —
@@ -865,29 +894,30 @@ def _jarvis_agent_section_health(cfg: Any) -> SectionHealth:
             status=_section_health.NEEDS_SETUP,
             reason="degraded",
             detail=(
-                f"Subagent worker '{label}' is unavailable — missions run on "
+                f"Jarvis-Agent worker '{label}' is unavailable — missions run on "
                 f"{families[0]} until it is reconnected"
             ),
+            subject_id=provider,
         )
     return SectionHealth(
         status=_section_health.ERROR,
         reason="no_provider",
         detail=(
-            f"No subagent provider is reachable — missions will fail. "
+            f"No Jarvis-Agent provider is reachable — missions will fail. "
             f"Reconnect '{label}' or add an API key."
         ),
+        subject_id=provider,
     )
 
 
-async def _realtime_section_health(request: Request) -> SectionHealth:
+async def _realtime_section_health(cfg: Any, spec: ProviderSpec | None) -> SectionHealth:
     """Test the active provider's actual duplex handshake.
 
     Credential presence alone previously painted a depleted or schema-broken
     provider green. Reuse the standard tier health mapping so the Realtime tab
     reports the same honest account/integration states as every other tier.
     """
-    cfg = _resolve_cfg(request)
-    return await _tier_section_health(cfg, get_spec(_active_realtime(request) or ""))
+    return await _tier_section_health(cfg, spec)
 
 
 def _advanced_section_health(request: Request) -> SectionHealth:
@@ -899,6 +929,7 @@ def _advanced_section_health(request: Request) -> SectionHealth:
     detail = ""
     reason = "unknown"
     tm = getattr(request.app.state, "telephony_manager", None)
+    subject_id = "telephony" if tm is not None else None
     if tm is not None and getattr(tm, "reachable", None) is False:
         err = getattr(tm, "reachable_error", None)
         if err:
@@ -906,99 +937,191 @@ def _advanced_section_health(request: Request) -> SectionHealth:
             detail = f"Telephony unreachable: {err}"
             reason = "telephony"
     return SectionHealth(
-        status=_section_health.aggregate(contributions), reason=reason, detail=detail
+        status=_section_health.aggregate(contributions),
+        reason=reason,
+        detail=detail,
+        subject_id=subject_id,
     )
+
+
+def _section_health_subjects(request: Request, cfg: Any) -> dict[str, str | None]:
+    """Capture the exact runtime selection behind every health section."""
+    telephony = getattr(request.app.state, "telephony_manager", None)
+    return {
+        "brain": _active_brain(request),
+        "computer-use": _active_computer_use(request),
+        "tts": _active_tts(request),
+        "stt": _active_stt(request),
+        "realtime": _active_realtime(request),
+        "subagents": _selected_jarvis_agent_provider(cfg),
+        "advanced": "telephony" if telephony is not None else None,
+    }
+
+
+def _section_health_fingerprint(
+    request: Request, subjects: dict[str, str | None]
+) -> tuple[tuple[str, str], ...]:
+    """Return a secret-free cache key for the full health selection snapshot."""
+    telephony = getattr(request.app.state, "telephony_manager", None)
+    reachable = getattr(telephony, "reachable", None) if telephony is not None else None
+    return tuple((key, subjects.get(key) or "") for key in _SECTION_HEALTH_KEYS) + (
+        ("advanced-reachable", repr(reachable)),
+    )
+
+
+def _invalidate_section_health_state(request: Request) -> None:
+    """Discard cached and in-flight health work after a configuration change."""
+    request.app.state._section_health_cache = None
+    tasks = getattr(request.app.state, "_section_health_tasks", None)
+    if not isinstance(tasks, dict):
+        return
+    for task in tuple(tasks.values()):
+        if isinstance(task, asyncio.Task) and not task.done():
+            task.cancel()
+    tasks.clear()
 
 
 @router.get("/providers/section-health")
 async def section_health(request: Request, refresh: bool = False) -> SectionHealthResponse:
     """Per-tab health for the API-Keys segmented tabs ("is this part working?").
 
-    The brain/tts/stt tiers get a REAL connectivity test of their active provider
-    (run in parallel), the Subagents tab reflects whether the selected worker is
-    connected, and the Advanced tab only flags a configured optional integration
-    that is actually failing. The result is cached for a few seconds so opening the
-    page / switching tabs does not re-run the real calls each render;
-    ``?refresh=true`` forces a fresh check after a key save or provider switch.
+    Every selectable provider surface is checked against one immutable selection
+    snapshot. Cache entries and in-flight tasks carry that snapshot fingerprint,
+    so a slow result from a previous provider can never be reused for the current
+    one. Checks for a superseded snapshot are cancelled without blocking the new
+    provider's check.
     """
-    cache = getattr(request.app.state, "_section_health_cache", None)
-    now = time.time()
-    if (
-        not refresh
-        and isinstance(cache, dict)
-        and now - cache.get("checked_at", 0.0) < _SECTION_HEALTH_TTL_S
-    ):
-        return SectionHealthResponse(
-            sections=cache["payload"], checked_at=cache["checked_at"], cached=True
-        )
-
-    # Coalesce concurrent (re)checks: a provider switch fires several UI events in
-    # a burst, each of which used to launch its OWN full sweep of REAL provider
-    # tests — a multi-second storm that made the whole screen feel broken. Requests
-    # arriving while one sweep runs wait for it and reuse its result — a waiting
-    # ?refresh=true only reuses a sweep that FINISHED while it waited (so an
-    # explicit refresh still always reflects a check started after the request,
-    # the contract the UI relies on after a key save / provider switch).
-    entered = time.time()
-    lock = getattr(request.app.state, "_section_health_refresh_lock", None)
-    if lock is None:
-        lock = asyncio.Lock()
-        request.app.state._section_health_refresh_lock = lock
-    async with lock:
+    while True:
+        cfg = _resolve_cfg(request)
+        subjects = _section_health_subjects(request, cfg)
+        fingerprint = _section_health_fingerprint(request, subjects)
         cache = getattr(request.app.state, "_section_health_cache", None)
-        checked_at = cache.get("checked_at", 0.0) if isinstance(cache, dict) else 0.0
         now = time.time()
-        fresh_enough = (
-            checked_at >= entered if refresh else now - checked_at < _SECTION_HEALTH_TTL_S
-        )
-        if isinstance(cache, dict) and fresh_enough:
+        if (
+            not refresh
+            and isinstance(cache, dict)
+            and cache.get("fingerprint") == fingerprint
+            and now - cache.get("checked_at", 0.0) < _SECTION_HEALTH_TTL_S
+        ):
             return SectionHealthResponse(
-                sections=cache["payload"], checked_at=checked_at, cached=True
+                sections=cache["payload"],
+                checked_at=cache["checked_at"],
+                cached=True,
             )
-        return await _compute_section_health(request, now)
+
+        lock = getattr(request.app.state, "_section_health_task_lock", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            request.app.state._section_health_task_lock = lock
+
+        async with lock:
+            tasks = getattr(request.app.state, "_section_health_tasks", None)
+            if not isinstance(tasks, dict):
+                tasks = {}
+                request.app.state._section_health_tasks = tasks
+
+            # A globally selected provider changed. Its previous task is obsolete
+            # and must not hold the new provider behind a 60-second timeout.
+            for old_fingerprint, old_task in tuple(tasks.items()):
+                if old_fingerprint == fingerprint:
+                    continue
+                if isinstance(old_task, asyncio.Task) and not old_task.done():
+                    old_task.cancel()
+                tasks.pop(old_fingerprint, None)
+
+            task = tasks.get(fingerprint)
+            if not isinstance(task, asyncio.Task) or task.done():
+                task = asyncio.create_task(
+                    _compute_section_health(request, cfg, subjects),
+                    name="section-health-snapshot",
+                )
+                tasks[fingerprint] = task
+
+        try:
+            sections = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # ``shield`` distinguishes an obsolete shared task from cancellation
+            # of this HTTP request. Retry only the former against the new snapshot.
+            if task.cancelled():
+                refresh = True
+                continue
+            raise
+
+        current_cfg = _resolve_cfg(request)
+        current_subjects = _section_health_subjects(request, current_cfg)
+        current_fingerprint = _section_health_fingerprint(request, current_subjects)
+        if current_fingerprint != fingerprint:
+            refresh = True
+            continue
+
+        checked_at = time.time()
+        request.app.state._section_health_cache = {
+            "checked_at": checked_at,
+            "fingerprint": fingerprint,
+            "payload": sections,
+        }
+        async with lock:
+            tasks = getattr(request.app.state, "_section_health_tasks", None)
+            if isinstance(tasks, dict) and tasks.get(fingerprint) is task:
+                tasks.pop(fingerprint, None)
+        return SectionHealthResponse(
+            sections=sections,
+            checked_at=checked_at,
+            cached=False,
+        )
 
 
-async def _compute_section_health(request: Request, now: float) -> SectionHealthResponse:
-    """One full sweep of the per-tab health checks (called under the refresh lock)."""
-    cfg = _resolve_cfg(request)
+async def _compute_section_health(
+    request: Request,
+    cfg: Any,
+    subjects: dict[str, str | None],
+) -> dict[str, SectionHealth]:
+    """Compute one immutable, provider-bound health snapshot."""
     sections: dict[str, SectionHealth] = {}
 
     if cfg is None:
-        for key in ("brain", "tts", "stt", "realtime", "subagents", "advanced"):
+        for key in _SECTION_HEALTH_KEYS:
             sections[key] = SectionHealth(
                 status=_section_health.UNKNOWN,
                 reason="unavailable",
                 detail="Configuration unavailable",
+                subject_id=subjects.get(key),
             )
-    else:
-        brain_spec = get_spec(_active_brain(request) or "")
-        tts_spec = get_spec(_active_tts(request) or "")
-        stt_spec = get_spec(_active_stt(request) or "")
-        sections["brain"], sections["tts"], sections["stt"] = await asyncio.gather(
-            _tier_section_health(cfg, brain_spec),
-            _tier_section_health(cfg, tts_spec),
-            _tier_section_health(cfg, stt_spec),
-        )
-        # Realtime performs an async duplex handshake. The remaining helpers are
-        # synchronous (keyring reads, CLI status subprocesses) and stay off-loop.
-        try:
-            sections["realtime"] = await _realtime_section_health(request)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("section-health realtime check failed: %s", exc)
-            sections["realtime"] = SectionHealth()
-        try:
-            sections["subagents"] = await asyncio.to_thread(_jarvis_agent_section_health, cfg)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("section-health subagent check failed: %s", exc)
-            sections["subagents"] = SectionHealth()
-        try:
-            sections["advanced"] = await asyncio.to_thread(_advanced_section_health, request)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("section-health advanced check failed: %s", exc)
-            sections["advanced"] = SectionHealth()
+        return sections
 
-    request.app.state._section_health_cache = {"checked_at": now, "payload": sections}
-    return SectionHealthResponse(sections=sections, checked_at=now, cached=False)
+    async def _safe_check(
+        section: str,
+        check: Any,
+    ) -> SectionHealth:
+        try:
+            return await check
+        except Exception as exc:  # noqa: BLE001
+            log.warning("section-health %s check failed: %s", section, exc)
+            return SectionHealth(
+                status=_section_health.UNKNOWN,
+                reason="error",
+                detail="Health check failed",
+                subject_id=subjects.get(section),
+            )
+
+    checks = {
+        "brain": _tier_section_health(cfg, get_spec(subjects["brain"] or "")),
+        "computer-use": _tier_section_health(
+            cfg, get_spec(subjects["computer-use"] or "")
+        ),
+        "tts": _tier_section_health(cfg, get_spec(subjects["tts"] or "")),
+        "stt": _tier_section_health(cfg, get_spec(subjects["stt"] or "")),
+        "realtime": _realtime_section_health(
+            cfg, get_spec(subjects["realtime"] or "")
+        ),
+        "subagents": asyncio.to_thread(_jarvis_agent_section_health, cfg),
+        "advanced": asyncio.to_thread(_advanced_section_health, request),
+    }
+    results = await asyncio.gather(
+        *(_safe_check(section, check) for section, check in checks.items())
+    )
+    sections.update(zip(checks, results, strict=True))
+    return sections
 
 
 # ----------------------------------------------------------------------
@@ -1242,6 +1365,7 @@ async def _apply_brain_model(
         request,
         SecretConfigured(key=f"brain.providers.{provider_id}.model", action="set"),
     )
+    _invalidate_section_health_state(request)
     return BrainModelSaveResponse(
         ok=True, provider=provider_id, model=model, persisted=persisted,
         applied_live=applied_live, restart_required=restart_required, probe=probe_payload,
@@ -1308,6 +1432,7 @@ def _apply_tts_selection(
         except Exception as exc:  # noqa: BLE001
             log.error("TTS live re-apply for %s failed: %s", provider_id, exc, exc_info=True)
 
+    _invalidate_section_health_state(request)
     return BrainModelSaveResponse(
         ok=True, provider=provider_id, model=value, persisted=persisted,
         applied_live=applied_live, restart_required=not applied_live, probe=None,
@@ -1339,6 +1464,7 @@ def _apply_stt_model(
         except Exception as exc:  # noqa: BLE001
             log.debug("In-memory stt model update skipped: %s", exc)
 
+    _invalidate_section_health_state(request)
     return BrainModelSaveResponse(
         ok=True, provider=provider_id, model=value, persisted=persisted,
         applied_live=False, restart_required=True, probe=None,
@@ -1436,6 +1562,7 @@ async def set_cu_model(
         SecretConfigured(key=f"brain.providers.{provider_id}.cu_model", action="set"),
     )
     effective = value or _current_brain_model(cfg, provider_id)
+    _invalidate_section_health_state(request)
     return CuModelResponse(
         ok=True,
         provider=provider_id,
@@ -1562,6 +1689,7 @@ async def set_realtime_options(
         SecretConfigured(key=f"brain.providers.{provider_id}", action="set"),
     )
     current_model, current_voice = _current_realtime_selection(cfg, provider_id)
+    _invalidate_section_health_state(request)
     return RealtimeOptionsSaveResponse(
         ok=True,
         provider=provider_id,
@@ -1650,6 +1778,7 @@ async def set_secret_value(key: str, body: SecretBody, request: Request) -> dict
     if not cfg_mod.set_secret(key, body.value):
         raise HTTPException(status_code=500, detail="Keyring-Write fehlgeschlagen")
     await _emit(request, SecretConfigured(key=key, action="set"))
+    _invalidate_section_health_state(request)
     return {
         "ok": True,
         "key": key,
@@ -1663,6 +1792,7 @@ async def delete_secret_value(key: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"Unbekannter Secret-Key: {key}")
     cfg_mod.delete_secret(key)  # idempotent — wirft nicht wenn nicht vorhanden
     await _emit(request, SecretConfigured(key=key, action="delete"))
+    _invalidate_section_health_state(request)
     return {"ok": True, "key": key}
 
 
@@ -1773,6 +1903,7 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             "the choice will not survive a restart.",
             body.provider,
         )
+    _invalidate_section_health_state(request)
     return {
         "ok": True,
         "active": result.get("new_provider", body.provider),
@@ -1868,6 +1999,7 @@ async def tts_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
 
     await _emit(request, SecretConfigured(key="tts.provider", action="set"))
 
+    _invalidate_section_health_state(request)
     return {
         "ok": True,
         "active": body.provider,
@@ -2170,6 +2302,7 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
 
     await _emit(request, SecretConfigured(key="stt.provider", action="set"))
 
+    _invalidate_section_health_state(request)
     return {
         "ok": True,
         "active": body.provider,
@@ -2248,6 +2381,7 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     await _emit(request, SecretConfigured(key="brain.realtime.provider", action="set"))
     await _emit(request, SecretConfigured(key="voice.mode", action="set"))
 
+    _invalidate_section_health_state(request)
     return {
         "ok": True,
         "active": body.provider,
@@ -2327,6 +2461,7 @@ async def computer_use_switch(body: SwitchBody, request: Request) -> dict[str, A
         request, SecretConfigured(key="brain.computer_use.provider", action="set")
     )
 
+    _invalidate_section_health_state(request)
     return {
         "ok": True,
         "active": body.provider,
@@ -2402,6 +2537,7 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
                 ) from exc
         _apply_worker_in_memory(request, _CODEX_SUBAGENT_CANONICAL)
         await _emit(request, SecretConfigured(key="brain.worker.provider", action="set"))
+        _invalidate_section_health_state(request)
         return {
             "ok": True,
             "active": _CODEX_SUBAGENT_CANONICAL,
@@ -2450,6 +2586,7 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
                 ) from exc
         _apply_worker_in_memory(request, ANTIGRAVITY_SUBAGENT_CANONICAL)
         await _emit(request, SecretConfigured(key="brain.worker.provider", action="set"))
+        _invalidate_section_health_state(request)
         return {
             "ok": True,
             "active": ANTIGRAVITY_SUBAGENT_CANONICAL,
@@ -2510,6 +2647,7 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
 
     await _emit(request, SecretConfigured(key="brain.worker.provider", action="set"))
 
+    _invalidate_section_health_state(request)
     return {
         "ok": True,
         "active": provider,
@@ -2564,6 +2702,7 @@ async def jarvis_agent_model(body: SubagentModelBody, request: Request) -> dict[
 
     await _emit(request, SecretConfigured(key="brain.worker.model", action="set"))
 
+    _invalidate_section_health_state(request)
     return {
         "ok": True,
         "model": model,
