@@ -299,13 +299,16 @@ class RealtimeVoiceSession:
 
         try:
             async for event in self._session.receive():
-                if event.type == "input_transcript" and event.text:
-                    new_language = self._resolve_lang(text=event.text)
-                    if new_language != self._language:
-                        self._language = new_language
-                        self._gate = ScrubHoldGate(new_language)
-                        if self._tool_bridge is not None:
-                            self._tool_bridge.set_language(new_language)
+                if event.type == "input_transcript":
+                    transcript = str(event.text or "").strip()
+                    new_language = self._language
+                    if transcript:
+                        new_language = self._resolve_lang(text=transcript)
+                        if new_language != self._language:
+                            self._language = new_language
+                            self._gate = ScrubHoldGate(new_language)
+                            if self._tool_bridge is not None:
+                                self._tool_bridge.set_language(new_language)
                     if event.is_final:
                         await self._session.update_session(
                             instructions=_session_instructions(
@@ -316,29 +319,51 @@ class RealtimeVoiceSession:
                             ),
                             language=new_language,
                         )
-                    mark_phase(LatencyPhase.REALTIME_INPUT_COMMITTED)
-                    self._last_user_text = event.text
-                    if self._tool_bridge is not None and event.is_final:
-                        await self._tool_bridge.handle_user_transcript(event.text)
-                    if not self._turn_id:
+                    if transcript or event.is_final:
+                        mark_phase(LatencyPhase.REALTIME_INPUT_COMMITTED)
+                    if transcript:
+                        self._last_user_text = transcript
+                    if self._tool_bridge is not None and event.is_final and transcript:
+                        await self._tool_bridge.handle_user_transcript(transcript)
+                    if (transcript or event.is_final) and not self._turn_id:
                         self._turn_id = str(uuid4())
                         self._turn_index += 1
                         await self._publish_turn_started()
-                    await self._publish_transcription(event.text, bool(event.is_final))
-                    await self._send_json(
-                        {
-                            "type": "transcript",
-                            "role": "user",
-                            "text": event.text,
-                            "is_final": bool(event.is_final),
-                        }
-                    )
+                    if transcript:
+                        await self._publish_transcription(
+                            transcript, bool(event.is_final)
+                        )
+                        await self._send_json(
+                            {
+                                "type": "transcript",
+                                "role": "user",
+                                "text": transcript,
+                                "is_final": bool(event.is_final),
+                            }
+                        )
+                    elif event.is_final and event.error:
+                        message = safe_preview(event.error, max_chars=800)
+                        log.warning(
+                            "realtime[%s] input transcription unavailable: %s",
+                            self.session_id,
+                            message,
+                        )
+                        await self._publish_error(
+                            "RealtimeTranscriptionError",
+                            message,
+                            recoverable=True,
+                        )
                     if event.is_final and self._pending_tool_events:
                         self._cancel_tool_transcript_wait()
                         pending = self._pending_tool_events
                         self._pending_tool_events = []
                         for pending_event in pending:
-                            await self._handle_tool_call(pending_event)
+                            if transcript:
+                                await self._handle_tool_call(pending_event)
+                            else:
+                                await self._reject_untranscribed_tool_call(
+                                    pending_event
+                                )
                     if event.is_final and not self._response_requested_for_turn:
                         await self._session.request_response()
                         self._response_requested_for_turn = True

@@ -182,6 +182,37 @@ async def test_keyless_provider_is_unavailable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_transcription_failure_is_a_final_input_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="conversation.item.input_audio_transcription.failed",
+                error=SimpleNamespace(
+                    code="transcription_failed",
+                    message="Input transcription was unavailable",
+                ),
+            )
+        ]
+    )
+    session._events = conn.__aiter__()
+
+    event = await anext(session.receive())
+
+    assert event.type == "input_transcript"
+    assert event.text == ""
+    assert event.is_final is True
+    assert "transcription_failed" in event.error
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_tools_are_declared_mapped_and_answered(monkeypatch: pytest.MonkeyPatch):
     holder = _patch_openai_client(monkeypatch)
     declaration = {

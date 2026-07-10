@@ -354,6 +354,47 @@ async def test_final_transcript_sets_turn_language_before_requesting_response():
 
 
 @pytest.mark.asyncio
+async def test_missing_final_transcript_still_requests_a_response_without_tools():
+    bridge = FakeToolBridge()
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="tool_call",
+                call_id="unsafe-without-transcript",
+                tool_name="open_app",
+                tool_args={"app_name": "Calculator"},
+            ),
+            RealtimeEvent(
+                type="input_transcript",
+                text="",
+                is_final=True,
+                error="transcription failed",
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = RealtimeVoiceSession(
+        session_id="missing-transcript",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(reply_language="auto", stt_language="de"),
+        bus=None,
+        tool_bridge=bridge,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert provider.session.session_updates[-1]["language"] == "de"
+    assert provider.session.response_requests == 1
+    assert bridge.calls == []
+    assert provider.session.tool_results[0][0] == "unsafe-without-transcript"
+    assert provider.session.tool_results[0][2]["success"] is False
+
+
+@pytest.mark.asyncio
 async def test_hard_leak_transcript_drops_audio():
     events = [
         RealtimeEvent(

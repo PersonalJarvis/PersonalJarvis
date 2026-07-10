@@ -176,6 +176,16 @@ class _OpenAIRealtimeSession:
                     text=str(getattr(event, "transcript", "") or ""),
                     is_final=True,
                 )
+            elif event_type == "conversation.item.input_audio_transcription.failed":
+                # The model still has the committed audio in conversation
+                # context. Let the orchestrator fail open to a spoken response,
+                # while withholding tools because no auditable text exists.
+                yield _ProviderEvent(
+                    type="input_transcript",
+                    text="",
+                    is_final=True,
+                    error=_error_message(event),
+                )
             elif event_type == "input_audio_buffer.speech_started":
                 yield _ProviderEvent(type="speech_started")
             elif event_type == "response.function_call_arguments.done":
