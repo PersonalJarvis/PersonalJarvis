@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,6 +54,54 @@ DEFAULT_CONFIG_FILE = PROJECT_ROOT / "jarvis.toml"
 PROFILES_DIR = PROJECT_ROOT / "profiles"
 DATA_DIR = PROJECT_ROOT / "data"
 ASSETS_DIR = PROJECT_ROOT / "assets"
+
+# Guards _resolve_writable_data_dir()'s lazy writability probe below. Named
+# separately from config_writer's _WRITE_LOCK — this protects the (rare,
+# once-per-process) directory-resolution probe, not a jarvis.toml write.
+_data_dir_lock = threading.Lock()
+_data_dir_cache: tuple[Path, Path] | None = None  # (DATA_DIR seen, resolved dir)
+
+
+def _resolve_writable_data_dir() -> Path:
+    """Return the directory to use for local credential-store persistence.
+
+    Honors ``JARVIS_DATA_DIR`` when set (headless hosts / read-only
+    site-packages installs where ``PROJECT_ROOT/data`` cannot be created).
+    Otherwise defaults to :data:`DATA_DIR`, falling back to the per-user
+    app-data directory when that path turns out not to be writable. The
+    writability probe is cheap but still touches the filesystem, so it runs
+    once — lazily, on first use, never at import time — and the result is
+    cached until ``DATA_DIR`` itself changes (tests monkeypatch it directly).
+
+    Scoped to the local-file credential fallback only; every other consumer
+    of :data:`DATA_DIR` in this codebase keeps reading that constant
+    directly and is unaffected.
+    """
+    global _data_dir_cache
+    env_dir = os.environ.get("JARVIS_DATA_DIR")
+    if env_dir and env_dir.strip():
+        return Path(env_dir.strip())
+    with _data_dir_lock:
+        if _data_dir_cache is not None and _data_dir_cache[0] == DATA_DIR:
+            return _data_dir_cache[1]
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            probe = DATA_DIR / f".write_probe_{os.getpid()}"
+            probe.write_text("", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            resolved = DATA_DIR
+        except OSError:
+            from jarvis.core.paths import user_data_dir
+
+            resolved = user_data_dir()
+            logging.getLogger(__name__).info(
+                "project data directory %s is not writable — using %s for "
+                "local credential storage instead",
+                DATA_DIR,
+                resolved,
+            )
+        _data_dir_cache = (DATA_DIR, resolved)
+        return resolved
 
 
 def resolve_config_path() -> Path:
@@ -2406,6 +2455,14 @@ _KEYRING_BACKEND_READY: bool = False
 _FILE_BACKEND_ACTIVE: bool = False
 
 
+# Serializes _FileCredStore's load-mutate-save cycle so two in-process
+# writers (e.g. a plugin connect + a concurrent API-key save) cannot race and
+# silently drop one of the two updates. Matches the config_writer lock
+# pattern. Cross-PROCESS locking is a separate, deferred concern — this only
+# protects concurrent callers within one Jarvis process.
+_FILE_CRED_STORE_LOCK = threading.Lock()
+
+
 class _FileCredStore:
     """Minimal 0600 JSON credential store keyed by ``(service, username)``."""
 
@@ -2413,7 +2470,11 @@ class _FileCredStore:
         self._explicit = path
 
     def _file(self) -> Path:
-        p = self._explicit if self._explicit is not None else (DATA_DIR / "credentials.json")
+        p = (
+            self._explicit
+            if self._explicit is not None
+            else (_resolve_writable_data_dir() / "credentials.json")
+        )
         p.parent.mkdir(parents=True, exist_ok=True)
         return p
 
@@ -2426,13 +2487,20 @@ class _FileCredStore:
 
     def _save(self, data: dict[str, str]) -> None:
         f = self._file()
-        tmp = f.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data), encoding="utf-8")
+        # Per-process-unique temp name: two processes racing a write (no
+        # cross-process lock yet) must not clobber each other's in-flight tmp
+        # file before either reaches its atomic os.replace.
+        tmp = f.with_name(f"{f.name}.tmp.{os.getpid()}")
         try:
-            os.chmod(tmp, 0o600)
-        except Exception:  # noqa: BLE001 — chmod is a no-op on Windows
-            pass
-        os.replace(tmp, f)
+            tmp.write_text(json.dumps(data), encoding="utf-8")
+            try:
+                os.chmod(tmp, 0o600)
+            except Exception:  # noqa: BLE001 — chmod is a no-op on Windows
+                pass
+            os.replace(tmp, f)
+        except OSError as exc:
+            tmp.unlink(missing_ok=True)
+            raise RuntimeError(f"failed to write credential store {f}: {exc}") from exc
 
     @staticmethod
     def _k(service: str, username: str) -> str:
@@ -2442,14 +2510,16 @@ class _FileCredStore:
         return self._load().get(self._k(service, username))
 
     def set(self, service: str, username: str, password: str) -> None:
-        data = self._load()
-        data[self._k(service, username)] = password
-        self._save(data)
+        with _FILE_CRED_STORE_LOCK:
+            data = self._load()
+            data[self._k(service, username)] = password
+            self._save(data)
 
     def delete(self, service: str, username: str) -> None:
-        data = self._load()
-        data.pop(self._k(service, username), None)
-        self._save(data)
+        with _FILE_CRED_STORE_LOCK:
+            data = self._load()
+            data.pop(self._k(service, username), None)
+            self._save(data)
 
 
 def _install_file_cred_backend(reason: str) -> bool:
@@ -2701,28 +2771,41 @@ def set_secret(key: str, value: str) -> bool:
 def delete_secret(key: str) -> bool:
     """Remove a secret from both the OS keyring and local-file fallback.
 
-    Deleting only the currently active backend can resurrect a stale fallback
-    value on the next process start. The operation is intentionally idempotent:
-    an already-absent key is a successful deletion.
+    Success requires that NO backend still holds the value — deleting only
+    the currently active backend can resurrect a stale fallback value on the
+    next process start. The operation is intentionally idempotent: an
+    already-absent key counts as a successful deletion.
+
+    Unlike ``get_secret``/``set_secret``, a failed OS-keyring delete does NOT
+    swap the process-global keyring backend to the file store. That retry
+    used to let a transient/locked-keyring failure masquerade as a
+    successful delete: the file copy (if any) was removed and ``True`` came
+    back, while the real OS-keyring entry survived untouched and reappeared
+    on the next boot. The ENV layer is read-only here and is never touched.
     """
     _ensure_keyring_backend()
     keyring_ok = False
     try:
         import keyring
+        from keyring.errors import PasswordDeleteError
 
-        keyring.delete_password(KEYRING_SERVICE, key)
-        keyring_ok = True
+        try:
+            keyring.delete_password(KEYRING_SERVICE, key)
+            keyring_ok = True
+        except PasswordDeleteError:
+            # Every backend we rely on raises this specifically when the
+            # entry is already absent (e.g. the Windows Credential Manager
+            # backend; the file-fallback backend's delete is idempotent and
+            # never raises at all) — "nothing to delete" is itself a success.
+            keyring_ok = True
     except Exception:  # noqa: BLE001
-        # Locked/unusable OS keyring: degrade to the file store and retry, so a
-        # file-stored credential is actually removed rather than left stale.
-        if _install_file_cred_backend("keyring delete failed"):
-            try:
-                import keyring
-
-                keyring.delete_password(KEYRING_SERVICE, key)
-                keyring_ok = True
-            except Exception:  # noqa: BLE001, S110
-                pass
+        # A genuine backend failure (locked Secret Service, transport
+        # error, ...). Deliberately do not retry via
+        # _install_file_cred_backend here: swapping the process-global
+        # keyring backend just because one delete failed would silently
+        # degrade every other credential read/write in this process while
+        # the real OS-keyring entry survives untouched.
+        keyring_ok = False
 
     file_ok = False
     try:
@@ -2732,7 +2815,7 @@ def delete_secret(key: str) -> bool:
         file_ok = True
     except Exception:  # noqa: BLE001, S110
         pass
-    return keyring_ok or file_ok
+    return keyring_ok and file_ok
 
 
 # ----------------------------------------------------------------------

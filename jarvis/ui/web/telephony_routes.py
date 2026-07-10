@@ -26,10 +26,11 @@ are missing.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
-from typing import cast
+from typing import Any, cast
 
 from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
@@ -122,6 +123,30 @@ def _tts_info(request: Request) -> tuple[str, str]:
     provider = getattr(tts, "provider", "gemini-flash-tts") or "gemini-flash-tts"
     voice = getattr(tts, "voice_de", "Charon") or "Charon"
     return provider, voice
+
+
+def _apply_live_twilio_updates(request: Request, updates: dict[str, object]) -> None:
+    """Mutate the SHARED live config's twilio block in place.
+
+    ``post_config``/``post_credentials`` persist to ``jarvis.toml`` on disk,
+    but ``request.app.state.config`` (the same object ``WebServer`` holds as
+    ``self.cfg``, assigned once at boot) was never updated to match — so the
+    live voice webhook and media-socket handlers, which read
+    ``request.app.state.config`` directly, kept serving the STALE values
+    until a full app restart even though the write to disk succeeded.
+
+    Deliberately mutates fields on the EXISTING ``TwilioConfig`` instance
+    rather than reassigning ``request.app.state.config`` to a freshly loaded
+    one: ``WebServer`` holds its own reference to that same object, and
+    swapping it here would only create a NEW split brain between the two.
+    """
+    cfg = _resolve_cfg(request)
+    twilio = getattr(getattr(cfg, "integrations", None), "twilio", None)
+    if twilio is None:
+        return
+    for field, value in updates.items():
+        if hasattr(twilio, field):
+            setattr(twilio, field, value)
 
 
 def _config_payload(twilio, *, auth_token_set: bool) -> dict[str, object]:
@@ -231,6 +256,10 @@ async def post_config(request: Request, body: ConfigUpdate) -> JSONResponse:
         except Exception as exc:  # noqa: BLE001
             log.warning("telephony config write failed: %s", exc)
             return JSONResponse({"error": f"config write failed: {exc}"}, status_code=409)
+        # The disk write succeeded — mirror it onto the live shared config so
+        # the webhook / media-socket handlers see it immediately (Bug: config
+        # split-brain, see _apply_live_twilio_updates).
+        _apply_live_twilio_updates(request, updates)
 
     # Re-read so the response reflects the freshly persisted values.
     try:
@@ -248,23 +277,49 @@ class CredentialsUpdate(BaseModel):
 
 @router.post("/credentials")
 async def post_credentials(request: Request, body: CredentialsUpdate) -> JSONResponse:
+    # Tracked so a partial commit (one half saved, the other failed) can be
+    # reported honestly instead of a bare 409 that hides the half that DID
+    # succeed. None = "not requested in this call".
+    token_saved: bool | None = None
+    sid_saved: bool | None = None
+
     if body.auth_token is not None and body.auth_token.strip():
-        ok = set_secret(_AUTH_TOKEN_KEY, body.auth_token.strip())
-        if not ok:
+        token_saved = set_secret(_AUTH_TOKEN_KEY, body.auth_token.strip())
+        if not token_saved:
             return JSONResponse(
-                {"error": "could not store auth token in the credential manager"},
+                {
+                    "error": "could not store auth token in the credential manager",
+                    "token_saved": False,
+                    "sid_saved": sid_saved,
+                },
                 status_code=409,
             )
     if body.account_sid is not None and body.account_sid.strip():
         sid = body.account_sid.strip()
         if not sid.startswith("AC"):
-            return JSONResponse({"error": "account_sid must start with 'AC'"}, status_code=422)
+            return JSONResponse(
+                {
+                    "error": "account_sid must start with 'AC'",
+                    "token_saved": token_saved,
+                    "sid_saved": False,
+                },
+                status_code=422,
+            )
         try:
             from jarvis.core.config_writer import set_telephony_config
 
             set_telephony_config({"account_sid": sid})
         except Exception as exc:  # noqa: BLE001
-            return JSONResponse({"error": f"config write failed: {exc}"}, status_code=409)
+            return JSONResponse(
+                {
+                    "error": f"config write failed: {exc}",
+                    "token_saved": token_saved,
+                    "sid_saved": False,
+                },
+                status_code=409,
+            )
+        sid_saved = True
+        _apply_live_twilio_updates(request, {"account_sid": sid})
 
     twilio = _twilio_cfg(request)
     try:
@@ -275,7 +330,14 @@ async def post_credentials(request: Request, body: CredentialsUpdate) -> JSONRes
         sid_now = getattr(twilio, "account_sid", "")
         phone_now = getattr(twilio, "phone_number", "")
     configured = bool(sid_now and phone_now and _auth_token())
-    return JSONResponse({"ok": True, "configured": configured})
+    return JSONResponse(
+        {
+            "ok": True,
+            "configured": configured,
+            "token_saved": token_saved,
+            "sid_saved": sid_saved,
+        }
+    )
 
 
 @router.post("/test")
@@ -672,6 +734,15 @@ async def media_socket(ws: WebSocket) -> None:
                 data = await ws.receive_json()
             except WebSocketDisconnect:
                 break
+            except RuntimeError:
+                # The socket is gone — e.g. starlette raises
+                # RuntimeError('WebSocket is not connected ...') after an
+                # unclean client disconnect instead of WebSocketDisconnect.
+                # `continue` here would re-call receive_json on the dead
+                # socket forever (AP-20 log-storm); treat it as a disconnect
+                # and leave the loop. Cleanup below is unconditional (finally).
+                log.warning("telephony: media socket receive aborted for %s", call_sid)
+                break
             event = data.get("event")
 
             if event == "connected":
@@ -879,20 +950,33 @@ def _build_session(
     )
 
 
+# bus.publish() is async (jarvis/core/bus.py); a bare un-awaited call just
+# creates-and-drops a coroutine without ever running it. Fire-and-forget via
+# asyncio.create_task instead, keeping a strong reference here so the event
+# loop can't garbage-collect the task mid-flight (each self-discards on
+# completion) — the same pattern used for FileSaved publishes in
+# jarvis/awareness/probes/filesystem.py.
+_PENDING_PUBLISH_TASKS: set[asyncio.Task[Any]] = set()
+
+
 def _publish_start(bus, call_sid, from_number, to_number, stream_sid) -> None:
     if bus is None:
         return
     try:
         from jarvis.telephony.events import TelephonyCallStarted
 
-        bus.publish(
-            TelephonyCallStarted(
-                call_sid=call_sid,
-                from_number=from_number,
-                to_number=to_number,
-                stream_sid=stream_sid,
+        task = asyncio.create_task(
+            bus.publish(
+                TelephonyCallStarted(
+                    call_sid=call_sid,
+                    from_number=from_number,
+                    to_number=to_number,
+                    stream_sid=stream_sid,
+                )
             )
         )
+        _PENDING_PUBLISH_TASKS.add(task)
+        task.add_done_callback(_PENDING_PUBLISH_TASKS.discard)
     except Exception:  # noqa: BLE001, S110 - bus publish is best-effort
         pass
 

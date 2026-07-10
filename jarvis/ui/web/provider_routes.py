@@ -1937,7 +1937,10 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         # mirroring the codex branch (the CLI bills the Google subscription).
         from jarvis.google_cli.auth_service import GoogleCliAuthService
 
-        if not GoogleCliAuthService().status().connected:
+        def _antigravity_connected() -> bool:
+            return GoogleCliAuthService().status().connected
+
+        if not await asyncio.to_thread(_antigravity_connected):
             raise HTTPException(
                 status_code=409,
                 detail=(
@@ -2410,6 +2413,7 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             ),
         )
 
+    voice_mode_write_ok = True
     if body.persist:
         try:
             from jarvis.core.config_writer import set_realtime_provider
@@ -2426,6 +2430,7 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
 
             set_voice_mode("realtime")
         except Exception as exc:  # noqa: BLE001 — best-effort, mirrors set_realtime_provider above
+            voice_mode_write_ok = False
             log.warning("voice-mode persist failed after realtime switch: %s", exc)
 
     cfg = _resolve_cfg(request)
@@ -2453,7 +2458,13 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     return {
         "ok": True,
         "active": body.provider,
-        "persisted": body.persist,
+        # True only when persist was requested AND both writes (provider +
+        # voice mode) actually landed — previously this reported
+        # body.persist unconditionally even when the voice-mode write above
+        # failed and was only logged, so the UI showed "persisted" for a
+        # switch that silently left [voice].mode stale on disk.
+        "persisted": body.persist and voice_mode_write_ok,
+        "voice_mode_persisted": voice_mode_write_ok,
         "restart_required": False,
     }
 
@@ -2577,7 +2588,10 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
     # it is not in JARVIS_TO_WORKER_SLUG. Handle it explicitly: it can be backed by
     # the ChatGPT subscription (OAuth, ``codex login``) OR an OpenAI API key.
     if provider in _CODEX_SUBAGENT_SLUGS:
-        codex_connected = CodexAuthService(_codex_binary_path(request)).status().connected
+        def _codex_connected() -> bool:
+            return CodexAuthService(_codex_binary_path(request)).status().connected
+
+        codex_connected = await asyncio.to_thread(_codex_connected)
         has_key = bool(
             cfg_mod.get_secret("codex_openai_api_key")
             or cfg_mod.get_provider_secret("codex")
@@ -2626,7 +2640,10 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
 
         # Dual billing (mirror of codex): the Google subscription OAuth login OR
         # a Gemini API key (per token). Either is enough to run the worker.
-        antigravity_connected = GoogleCliAuthService().status().connected
+        def _antigravity_connected() -> bool:
+            return GoogleCliAuthService().status().connected
+
+        antigravity_connected = await asyncio.to_thread(_antigravity_connected)
         antigravity_key = bool(
             cfg_mod.get_secret("gemini_api_key", env_fallback="GEMINI_API_KEY")
         )

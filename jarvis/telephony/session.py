@@ -163,6 +163,11 @@ class TelephonyCallSession:
         # Handle for the running discard timer task (if any).
         self._pending_discard_task: asyncio.Task[None] | None = None
 
+        # Strong references for fire-and-forget bus.publish() tasks (see
+        # _publish_turn/_publish_end) so the event loop can't garbage-collect
+        # one mid-flight; each self-discards on completion.
+        self._pending_publish_tasks: set[asyncio.Task[None]] = set()
+
     # -- public properties -------------------------------------------------
 
     @property
@@ -612,14 +617,24 @@ class TelephonyCallSession:
         try:
             from .events import TelephonyCallTurn
 
-            self._bus.publish(
-                TelephonyCallTurn(
-                    call_sid=self.call_sid,
-                    transcript=transcript,
-                    response_text=response,
-                    outbound_frames=frames,
+            # bus.publish() is async — a bare un-awaited call just creates
+            # and drops the coroutine without ever running it. The turn loop
+            # is latency-sensitive and typed EventBus handlers are awaited
+            # uncapped, so fire-and-forget via create_task rather than
+            # inline-await; the task ref is kept so the loop can't GC it
+            # mid-flight.
+            task = asyncio.create_task(
+                self._bus.publish(
+                    TelephonyCallTurn(
+                        call_sid=self.call_sid,
+                        transcript=transcript,
+                        response_text=response,
+                        outbound_frames=frames,
+                    )
                 )
             )
+            self._pending_publish_tasks.add(task)
+            task.add_done_callback(self._pending_publish_tasks.discard)
         except Exception:  # noqa: BLE001, S110 - bus errors never break a call
             pass
 
@@ -629,15 +644,19 @@ class TelephonyCallSession:
         try:
             from .events import TelephonyCallEnded
 
-            self._bus.publish(
-                TelephonyCallEnded(
-                    call_sid=self.call_sid,
-                    status=self.status,
-                    duration_s=self.duration_s,
-                    turns=self._turns,
-                    reason=self._end_reason,
+            task = asyncio.create_task(
+                self._bus.publish(
+                    TelephonyCallEnded(
+                        call_sid=self.call_sid,
+                        status=self.status,
+                        duration_s=self.duration_s,
+                        turns=self._turns,
+                        reason=self._end_reason,
+                    )
                 )
             )
+            self._pending_publish_tasks.add(task)
+            task.add_done_callback(self._pending_publish_tasks.discard)
         except Exception:  # noqa: BLE001, S110 - bus errors never break a call
             pass
 

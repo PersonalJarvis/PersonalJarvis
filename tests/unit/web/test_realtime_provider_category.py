@@ -138,6 +138,30 @@ def test_realtime_switch_sets_voice_mode(monkeypatch):
     assert app.state.config.voice.mode == "realtime"
 
 
+def test_realtime_switch_reports_voice_mode_not_persisted_on_write_failure(monkeypatch):
+    """Bug: the [voice].mode write failure was only logged, but the response
+    still reported persisted=True unconditionally — the UI showed "saved"
+    for a switch that silently left [voice].mode stale on disk."""
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    monkeypatch.setattr(config_writer, "set_realtime_provider", lambda name, **kw: None)
+
+    def _boom(mode, **kw):
+        raise RuntimeError("disk full (simulated)")
+
+    monkeypatch.setattr(config_writer, "set_voice_mode", _boom)
+
+    app = _app()
+    client = TestClient(app)
+    resp = client.post(
+        "/api/realtime/switch", json={"provider": "openai-realtime", "persist": True}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["persisted"] is False
+    assert body["voice_mode_persisted"] is False
+
+
 def test_realtime_switch_without_key_is_409(monkeypatch):
     monkeypatch.setattr(cfg_mod, "get_secret", lambda *a, **kw: None)
     client = TestClient(_app())
