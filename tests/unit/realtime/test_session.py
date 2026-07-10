@@ -63,6 +63,14 @@ class FailingProvider(FakeProvider):
         raise RuntimeError("simulated depleted credits")
 
 
+class FakeBus:
+    def __init__(self):
+        self.events = []
+
+    async def publish(self, event):
+        self.events.append(event)
+
+
 def _cfg(*, providers=None):
     from types import SimpleNamespace
 
@@ -261,3 +269,77 @@ async def test_later_segment_leak_audio_not_emitted():
     await sess.end(reason="test")
     assert a1 in binaries
     assert a2 not in binaries
+
+
+@pytest.mark.asyncio
+async def test_desktop_session_publishes_effective_provider_and_completed_turn():
+    events = [
+        RealtimeEvent(type="input_transcript", text="Hello", is_final=True),
+        RealtimeEvent(type="output_transcript_delta", text="Hi there."),
+        RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(pcm=b"\x01\x02" * 8, sample_rate=24_000, timestamp_ns=0),
+        ),
+        RealtimeEvent(type="turn_complete"),
+    ]
+    bus = FakeBus()
+    provider = FakeProvider(events)
+    provider.name = "working-family"
+    sess = RealtimeVoiceSession(
+        session_id="desktop-telemetry",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(
+            providers={
+                "working-family": type(
+                    "ProviderConfig", (), {"model": "live-model", "voice": "voice"}
+                )()
+            }
+        ),
+        bus=bus,
+        surface="desktop",
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    by_name = {type(event).__name__: event for event in bus.events}
+    ready = by_name["RealtimeSessionReady"]
+    completed = by_name["VoiceTurnCompleted"]
+    assert ready.provider == "working-family"
+    assert ready.model == "live-model"
+    assert ready.surface == "desktop"
+    assert completed.tier == "realtime"
+    assert completed.provider == "working-family"
+    assert completed.model == "live-model"
+    assert completed.user_text == "Hello"
+    assert completed.jarvis_text == "Hi there."
+    assert "VoiceSessionStarted" not in by_name
+    assert "VoiceSessionEnded" not in by_name
+
+
+@pytest.mark.asyncio
+async def test_browser_session_start_precedes_realtime_turn_events():
+    bus = FakeBus()
+    sess = RealtimeVoiceSession(
+        session_id="browser-telemetry",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=FakeProvider(
+            [RealtimeEvent(type="input_transcript", text="Hello", is_final=True)]
+        ),
+        config=_cfg(),
+        bus=bus,
+        surface="browser",
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 48_000})
+    await sess.wait_finished()
+    await sess.end(reason="ws_closed")
+
+    names = [type(event).__name__ for event in bus.events]
+    assert names.index("VoiceSessionStarted") < names.index("RealtimeSessionReady")
+    assert names.index("VoiceSessionStarted") < names.index("VoiceTurnStarted")
+    assert names[-1] == "VoiceSessionEnded"

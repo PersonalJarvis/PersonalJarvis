@@ -125,9 +125,10 @@ class RealtimeVoiceSession:
                     ),
                 }
             )
-            await self._publish_ready()
             if self._surface == "browser":
                 await self._publish_browser_session_started()
+            await self._publish_ready()
+            self._start_pump()
         elif kind == "barge_in":
             await self._barge_in()
         elif kind == "audio_stop":
@@ -189,14 +190,17 @@ class RealtimeVoiceSession:
             self._in_resampler = StreamingPcm16Resampler(
                 self.browser_sample_rate, input_rate
             )
-            self._pump_task = asyncio.create_task(
-                self._pump(), name=f"rt-pump-{self.session_id}"
-            )
             return
 
         summary = "; ".join(self._provider_errors) or "no provider could open a session"
         await self._publish_error("RealtimeHandshakeError", summary, recoverable=True)
         raise RuntimeError(f"No realtime provider could open a session: {summary}")
+
+    def _start_pump(self) -> None:
+        if self._pump_task is None or self._pump_task.done():
+            self._pump_task = asyncio.create_task(
+                self._pump(), name=f"rt-pump-{self.session_id}"
+            )
 
     async def handle_audio_frame(self, pcm_native: bytes) -> None:
         if self._ended or self._session is None or not pcm_native:

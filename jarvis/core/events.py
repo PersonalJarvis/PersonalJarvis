@@ -1073,6 +1073,8 @@ class VoiceTurnCompleted(Event):
     tokens_in: int = 0
     tokens_out: int = 0
     cost_usd: float = 0.0
+    latency_total_ms: int = 0
+    tool_calls: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

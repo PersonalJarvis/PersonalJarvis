@@ -43,7 +43,8 @@ export function useRuns() {
 }
 
 const LIVE_KINDS = new Set([
-  "VoiceTurnStarted", "VoiceTurnCompleted", "TranscriptFinal", "IntentClassified",
+  "VoiceTurnStarted", "VoiceTurnCompleted", "RealtimeSessionReady",
+  "TranscriptFinal", "IntentClassified",
   "ActionProposed", "ActionApproved", "ActionDenied", "BrainTurnStarted",
   "BrainTurnCompleted", "ResponseGenerated", "SystemStateChanged", "LatencySpan",
   "ErrorOccurred",

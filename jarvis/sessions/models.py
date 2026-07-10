@@ -59,6 +59,7 @@ KNOWN_VOICE_TIERS: frozenset[str] = frozenset(
         "fast",
         "deep",
         "code",
+        "realtime",
     }
 )
 """Routing tier as in CLAUDE.md `Brain-Routing` and `Router-Discipline`."""

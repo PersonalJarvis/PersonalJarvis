@@ -87,6 +87,7 @@ _RAW_EVENT_KINDS: frozenset[str] = frozenset(
         "VoiceSessionEnded",
         "VoiceTurnStarted",
         "VoiceTurnCompleted",
+        "RealtimeSessionReady",
         # Every phrase Jarvis VOICES that is not the brain's normal reply —
         # timeout/unavailable apologies, clarifying questions, skill/mission
         # announcements, the "still working" progress nudge. Without this the
@@ -717,7 +718,16 @@ class SessionRecorder:
 # backwards compatibility with old voice sessions in the DB; new turns
 # use ``openclaw``.
 _VALID_TIERS: frozenset[str] = frozenset(
-    {"router", "openclaw", "sub_jarvis", "trivial", "fast", "deep", "code"}
+    {
+        "router",
+        "openclaw",
+        "sub_jarvis",
+        "trivial",
+        "fast",
+        "deep",
+        "code",
+        "realtime",
+    }
 )
 
 
@@ -796,6 +806,9 @@ def _payload_for(event: Event) -> dict[str, Any]:
         "session_id",
         "turn_id",
         "turn_index",
+        "surface",
+        "input_sample_rate",
+        "output_sample_rate",
         "wake_keyword",
         "hangup_reason",
         "turn_count",
