@@ -66,7 +66,12 @@ def _build_browser_session(
 
     if build_realtime_session is not None:
         rt = build_realtime_session(
-            cfg=cfg, bus=bus, session_id=session_id, send_binary=send_binary, send_json=send_json
+            cfg=cfg,
+            bus=bus,
+            session_id=session_id,
+            send_binary=send_binary,
+            send_json=send_json,
+            surface="browser",
         )
         if rt is not None:
             return rt

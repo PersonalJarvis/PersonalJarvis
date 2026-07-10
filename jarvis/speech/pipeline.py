@@ -326,6 +326,25 @@ _STT_UNAVAILABLE_PHRASE: dict[str, str] = {
     "es": "Perdona, no te he entendido bien ahora mismo. ¿Puedes repetirlo, por favor?",
 }
 
+# Honest cross-family fallback when a requested duplex provider cannot open a
+# session. The classic pipeline remains available for this voice call so a
+# missing key, exhausted balance, unsupported model, or network outage never
+# turns the Realtime switch into a silent dead end (AP-22/AP-23).
+_REALTIME_UNAVAILABLE_PHRASE: dict[str, str] = {
+    "de": (
+        "Die Realtime-Verbindung ist gerade nicht verfügbar. "
+        "Ich wechsle für diese Sitzung zur klassischen Sprachverarbeitung."
+    ),
+    "en": (
+        "The realtime connection is unavailable right now. "
+        "I am switching this session to the classic voice pipeline."
+    ),
+    "es": (
+        "La conexión en tiempo real no está disponible ahora mismo. "
+        "Cambiaré esta sesión al sistema de voz clásico."
+    ),
+}
+
 # AD-OE6 zero-silent-drop fallback for a brain TURN that times out. Live bug
 # 2026-05-29: "kannst du Claude Code öffnen" stalled the Gemini stream; the
 # brain-timeout path returned to LISTENING in SILENCE (and idle_timeout
@@ -1418,6 +1437,7 @@ class SpeechPipeline:
         self._state = PipelineState.IDLE
         self._call_event = asyncio.Event()
         self._hangup_event = asyncio.Event()
+        self._current_voice_session_id: str | None = None
         # Optionale Event-Bus-Integration — wenn None, sind alle
         # _transition/_emit-Calls no-ops (Rueckwaertskompatibilitaet)
         self._bus = bus
@@ -4713,6 +4733,7 @@ class SpeechPipeline:
             # spoken cue. (The spoken-cue path is for mid-conversation use.)
             self._session_has_assistant_spoken = False
             session_id = str(uuid4())
+            self._current_voice_session_id = session_id
             session_started_at = time.time()
             wake_keyword = (
                 "push_to_talk"
@@ -4738,6 +4759,7 @@ class SpeechPipeline:
             except Exception as exc:  # noqa: BLE001
                 log.exception("Session-Fehler: %s", exc)
             finally:
+                self._current_voice_session_id = None
                 # PTT is one-shot per hold — disarm before the next session so a
                 # stale flag can never reroute a later wake-word session into
                 # the raw-recording path.
@@ -4835,7 +4857,24 @@ class SpeechPipeline:
         self._last_announcement_spoken_monotonic = None
         self._last_answer_floor_monotonic = None
         if self._ptt_mode:
+            # Push-to-talk is deliberately a discrete classic turn: the key-up
+            # edge is its endpoint and the duplex protocols do not expose one
+            # provider-neutral commit primitive. Normal wake/hotkey sessions
+            # use Realtime when selected.
             return await self._ptt_session()
+        requested_mode = str(
+            getattr(
+                getattr(getattr(self, "_config", None), "voice", None),
+                "mode",
+                "pipeline",
+            )
+            or "pipeline"
+        ).strip().lower()
+        if requested_mode == "realtime":
+            realtime_reason = await self._active_realtime_session()
+            if realtime_reason is not None:
+                return realtime_reason
+            await self._speak_realtime_unavailable()
         async with MicrophoneCapture(
             device=self._input_device,
             max_queue_chunks=REALTIME_QUEUE_CHUNKS,
@@ -4967,6 +5006,147 @@ class SpeechPipeline:
                 if next_task is not None and not next_task.done():
                     next_task.cancel()
         return HANGUP_HOTKEY
+
+    async def _active_realtime_session(self) -> str | None:
+        """Run one desktop duplex session, or request classic fallback.
+
+        Imports stay lazy so the optional realtime stack never enters the boot
+        critical path. The session owns provider-family fallback and resampling;
+        this adapter owns only the local microphone, speaker, and lifecycle.
+        Desktop starts half-duplex because PortAudio has no portable acoustic
+        echo cancellation. The browser surface provides full duplex with Web
+        Audio echo cancellation.
+        """
+        try:
+            from jarvis.realtime.desktop import DesktopRealtimePlayback
+            from jarvis.realtime.factory import build_realtime_session
+        except ImportError as exc:
+            log.warning("Realtime desktop stack is unavailable: %s", exc)
+            return None
+
+        playback = DesktopRealtimePlayback(self._player)
+        turn_complete = asyncio.Event()
+        speaking = False
+
+        async def _send_binary(pcm: bytes) -> None:
+            nonlocal speaking
+            if not speaking:
+                speaking = True
+                await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
+            await playback.send_binary(pcm)
+
+        async def _send_json(message: dict[str, Any]) -> None:
+            nonlocal speaking
+            kind = str(message.get("type", ""))
+            if kind == "audio_ready":
+                playback.set_sample_rate(
+                    int(message.get("output_sample_rate", 24_000) or 24_000)
+                )
+                log.info(
+                    "Realtime desktop session ready: provider=%s input=%sHz output=%sHz",
+                    message.get("provider", "unknown"),
+                    message.get("input_sample_rate", "unknown"),
+                    message.get("output_sample_rate", "unknown"),
+                )
+            elif kind == "transcript":
+                role = str(message.get("role", ""))
+                if role == "user" and bool(message.get("is_final", False)):
+                    await self._set_turn_state(TurnTakingState.PROCESSING)
+            elif kind == "tts_cancel":
+                speaking = False
+                await playback.cancel()
+                await self._set_turn_state(TurnTakingState.LISTENING)
+            elif kind == "turn_complete":
+                await playback.finish_turn()
+                speaking = False
+                await self._set_turn_state(TurnTakingState.LISTENING)
+                if not self._continue_listening_after_response:
+                    turn_complete.set()
+            elif kind in {"provider_error", "error_spoken"}:
+                log.warning("Realtime desktop status: %s", message)
+
+        session_id = getattr(self, "_current_voice_session_id", None) or str(uuid4())
+        session = build_realtime_session(
+            cfg=self._config,
+            bus=self._bus,
+            session_id=session_id,
+            send_binary=_send_binary,
+            send_json=_send_json,
+            half_duplex=True,
+            surface="desktop",
+        )
+        if session is None:
+            return None
+
+        wait_tasks: set[asyncio.Task[Any]] = set()
+        reason = "desktop_fallback"
+        try:
+            await session.handle_control({"type": "audio_start", "sample_rate": 16_000})
+            await self._set_turn_state(TurnTakingState.LISTENING)
+            async with MicrophoneCapture(
+                device=self._input_device,
+                max_queue_chunks=REALTIME_QUEUE_CHUNKS,
+                device_priority=self._input_priority,
+            ) as mic:
+                async def _send_microphone() -> None:
+                    async for chunk in self._session_input_stream(mic.stream()):
+                        await session.handle_audio_frame(chunk.pcm)
+
+                microphone_task = asyncio.create_task(
+                    _send_microphone(), name=f"rt-mic-{session_id}"
+                )
+                provider_task = asyncio.create_task(
+                    session.wait_finished(), name=f"rt-provider-{session_id}"
+                )
+                hangup_task = asyncio.create_task(
+                    self._hangup_event.wait(), name=f"rt-hangup-{session_id}"
+                )
+                wait_tasks.update({microphone_task, provider_task, hangup_task})
+                if not self._continue_listening_after_response:
+                    wait_tasks.add(
+                        asyncio.create_task(
+                            turn_complete.wait(), name=f"rt-turn-{session_id}"
+                        )
+                    )
+                done, _pending = await asyncio.wait(
+                    wait_tasks, return_when=asyncio.FIRST_COMPLETED
+                )
+                if hangup_task in done and self._hangup_event.is_set():
+                    reason = HANGUP_HOTKEY
+                    return HANGUP_HOTKEY
+                if turn_complete.is_set():
+                    reason = HANGUP_TURN_COMPLETE
+                    return HANGUP_TURN_COMPLETE
+                for task in done:
+                    if task.cancelled():
+                        continue
+                    exc = task.exception()
+                    if exc is not None:
+                        log.warning(
+                            "Realtime desktop task ended with %s: %s",
+                            type(exc).__name__,
+                            exc,
+                        )
+                # A dead provider stream or microphone unwinds into the classic
+                # pipeline inside the same call, with an honest spoken notice.
+                return None
+        except asyncio.CancelledError:
+            reason = "shutdown"
+            raise
+        except Exception as exc:  # noqa: BLE001 — classic fallback is load-bearing
+            log.warning("Realtime desktop session failed; using pipeline: %s", exc)
+            return None
+        finally:
+            for task in wait_tasks:
+                if not task.done():
+                    task.cancel()
+            for task in wait_tasks:
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            await session.end(reason=reason)
+            await playback.close()
 
     async def _ptt_session(self) -> str:
         """Push-to-talk turn: record raw mic audio until the key is released,
@@ -7282,6 +7462,20 @@ class SpeechPipeline:
             await self._speak(phrase, language=picker_lang, kind=SPOKEN_KIND_STT_UNAVAILABLE)
         except Exception as exc:  # noqa: BLE001
             log.warning("STT-unavailable fallback speak failed: %s", exc)
+
+    async def _speak_realtime_unavailable(self) -> None:
+        """Explain a duplex failure before continuing on the classic path."""
+        lang = _phrase_lang(self._output_language(None, ""))
+        phrase = _REALTIME_UNAVAILABLE_PHRASE[lang]
+        try:
+            await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
+            await self._speak(
+                phrase,
+                language=lang,
+                kind=SPOKEN_KIND_UNAVAILABLE,
+            )
+        except Exception as exc:  # noqa: BLE001 — fallback must never block recovery
+            log.warning("Realtime-unavailable fallback speak failed: %s", exc)
 
     def _mark_brain_progress(self) -> None:
         """Record that the in-flight brain turn just made progress.

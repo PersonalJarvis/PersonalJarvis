@@ -1039,6 +1039,18 @@ class VoiceSessionStarted(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class RealtimeSessionReady(Event):
+    """A duplex provider accepted the effective session configuration."""
+
+    session_id: str = ""
+    provider: str = ""
+    model: str = ""
+    surface: str = ""
+    input_sample_rate: int = 0
+    output_sample_rate: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class VoiceTurnStarted(Event):
     """A new turn within the active session is starting."""
     session_id: str = ""

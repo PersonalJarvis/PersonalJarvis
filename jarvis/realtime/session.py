@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any
+from uuid import uuid4
 
 from jarvis.core.protocols import AudioChunk
 from jarvis.core.turn_language import resolve_output_language
@@ -57,6 +58,7 @@ class RealtimeVoiceSession:
         bus: Any = None,
         browser_sample_rate: int = 48_000,
         half_duplex: bool = False,
+        surface: str = "browser",
     ) -> None:
         self.session_id = session_id
         self._send_binary = send_binary
@@ -75,6 +77,7 @@ class RealtimeVoiceSession:
             self.browser_sample_rate, self._input_sample_rate
         )
         self._half_duplex = bool(half_duplex)
+        self._surface = str(surface or "unknown")
         self._output_active = False
 
         self._language = self._resolve_lang(text="")
@@ -85,6 +88,11 @@ class RealtimeVoiceSession:
         self._output_samples_sent = 0
         self._ended = False
         self._provider_errors: list[str] = []
+        self._active_model = ""
+        self._turn_id = ""
+        self._turn_index = 0
+        self._last_user_text = ""
+        self._output_transcript: list[str] = []
 
     def _resolve_lang(self, *, text: str) -> str:
         brain = getattr(self._config, "brain", None)
@@ -117,6 +125,9 @@ class RealtimeVoiceSession:
                     ),
                 }
             )
+            await self._publish_ready()
+            if self._surface == "browser":
+                await self._publish_browser_session_started()
         elif kind == "barge_in":
             await self._barge_in()
         elif kind == "audio_stop":
@@ -173,6 +184,7 @@ class RealtimeVoiceSession:
 
             self._provider = provider
             self._session = session
+            self._active_model = model
             self._input_sample_rate = input_rate
             self._in_resampler = StreamingPcm16Resampler(
                 self.browser_sample_rate, input_rate
@@ -223,6 +235,12 @@ class RealtimeVoiceSession:
                             language=new_language,
                         )
                     mark_phase(LatencyPhase.REALTIME_INPUT_COMMITTED)
+                    self._last_user_text = event.text
+                    if not self._turn_id:
+                        self._turn_id = str(uuid4())
+                        self._turn_index += 1
+                        await self._publish_turn_started()
+                    await self._publish_transcription(event.text, bool(event.is_final))
                     await self._send_json(
                         {
                             "type": "transcript",
@@ -242,6 +260,7 @@ class RealtimeVoiceSession:
                         )
                         self._gate.drain()
                         continue
+                    self._output_transcript.append(display)
                     await self._send_json(
                         {
                             "type": "transcript",
@@ -272,6 +291,7 @@ class RealtimeVoiceSession:
                         await self._emit_audio(chunk)
                     self._gate.drain()
                     await self._send_json({"type": "turn_complete"})
+                    await self._publish_turn_completed()
                     self._output_active = False
                     self._output_samples_sent = 0
                 elif event.type == "error":
@@ -332,6 +352,116 @@ class RealtimeVoiceSession:
         except Exception:  # noqa: BLE001, S110 — telemetry must never break voice
             pass
 
+    async def _publish_ready(self) -> None:
+        if self._bus is None:
+            return
+        try:
+            from jarvis.core.events import RealtimeSessionReady
+
+            await self._bus.publish(
+                RealtimeSessionReady(
+                    source_layer=f"realtime.{self.active_provider}",
+                    session_id=self.session_id,
+                    provider=self.active_provider,
+                    model=self._active_model,
+                    surface=self._surface,
+                    input_sample_rate=self._input_sample_rate,
+                    output_sample_rate=int(
+                        getattr(self._provider, "output_sample_rate", 24_000) or 24_000
+                    ),
+                )
+            )
+        except Exception:  # noqa: BLE001, S110
+            pass
+
+    async def _publish_browser_session_started(self) -> None:
+        if self._bus is None:
+            return
+        try:
+            from jarvis.core.events import VoiceSessionStarted
+
+            await self._bus.publish(
+                VoiceSessionStarted(
+                    source_layer=f"realtime.{self.active_provider}",
+                    session_id=self.session_id,
+                    wake_keyword="browser_microphone",
+                    language=self._language,
+                )
+            )
+        except Exception:  # noqa: BLE001, S110
+            pass
+
+    async def _publish_transcription(self, text: str, is_final: bool) -> None:
+        if self._bus is None:
+            return
+        try:
+            from jarvis.core.events import TranscriptionUpdate
+
+            await self._bus.publish(
+                TranscriptionUpdate(
+                    source_layer=f"realtime.{self.active_provider}",
+                    text=text,
+                    is_final=is_final,
+                )
+            )
+        except Exception:  # noqa: BLE001, S110
+            pass
+
+    async def _publish_turn_started(self) -> None:
+        if self._bus is None:
+            return
+        try:
+            from jarvis.core.events import VoiceTurnStarted
+
+            await self._bus.publish(
+                VoiceTurnStarted(
+                    source_layer=f"realtime.{self.active_provider}",
+                    session_id=self.session_id,
+                    turn_id=self._turn_id,
+                    turn_index=self._turn_index,
+                )
+            )
+        except Exception:  # noqa: BLE001, S110
+            pass
+
+    async def _publish_turn_completed(self) -> None:
+        if not self._turn_id:
+            self._output_transcript.clear()
+            self._last_user_text = ""
+            return
+        answer = "".join(self._output_transcript).strip()
+        if self._bus is not None:
+            try:
+                from jarvis.core.events import ResponseGenerated, VoiceTurnCompleted
+
+                if answer:
+                    await self._bus.publish(
+                        ResponseGenerated(
+                            source_layer=f"realtime.{self.active_provider}",
+                            text=answer,
+                            language=self._language,
+                        )
+                    )
+                await self._bus.publish(
+                    VoiceTurnCompleted(
+                        source_layer=f"realtime.{self.active_provider}",
+                        session_id=self.session_id,
+                        turn_id=self._turn_id,
+                        user_text=self._last_user_text,
+                        user_lang=self._language,
+                        jarvis_text=answer,
+                        jarvis_lang=self._language,
+                        tier="realtime",
+                        provider=self.active_provider,
+                        model=self._active_model,
+                    )
+                )
+            except Exception:  # noqa: BLE001, S110
+                pass
+        self._turn_id = ""
+        self._last_user_text = ""
+        self._output_transcript.clear()
+
     async def _emit_audio(self, chunk: Any) -> None:
         pcm = bytes(getattr(chunk, "pcm", b"") or b"")
         if not pcm:
@@ -382,6 +512,20 @@ class RealtimeVoiceSession:
             try:
                 await self._session.close()
             except Exception:  # noqa: BLE001, S110 — best-effort teardown
+                pass
+        if self._surface == "browser" and self._bus is not None:
+            try:
+                from jarvis.core.events import VoiceSessionEnded
+
+                await self._bus.publish(
+                    VoiceSessionEnded(
+                        source_layer=f"realtime.{self.active_provider}",
+                        session_id=self.session_id,
+                        hangup_reason=reason or "client_stop",
+                        turn_count=self._turn_index,
+                    )
+                )
+            except Exception:  # noqa: BLE001, S110
                 pass
         log.info("realtime[%s] ended: reason=%s", self.session_id, reason)
 
