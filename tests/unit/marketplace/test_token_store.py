@@ -82,6 +82,64 @@ def test_chunked_backend_resave_smaller_clears_stale_chunks():
     assert list(primitive.store) == ["plugin_gmail_tokens"]
 
 
+class _FailNthSetBackend:
+    """Mimics a keyring backend whose ``set`` raises on a chosen call number
+    (1-indexed across the object's whole lifetime) — used to simulate a
+    write failing partway through a chunked ``ChunkedBackend.set``."""
+
+    def __init__(self) -> None:
+        self.fail_on_call: int | None = None
+        self.calls = 0
+        self.store: dict[str, str] = {}
+
+    def get(self, key: str) -> str | None:
+        return self.store.get(key)
+
+    def set(self, key: str, value: str) -> None:
+        self.calls += 1
+        if self.calls == self.fail_on_call:
+            raise RuntimeError("simulated backend write failure")
+        self.store[key] = value
+
+    def delete(self, key: str) -> None:
+        self.store.pop(key, None)
+
+
+def test_chunked_backend_set_failure_leaves_old_value_intact():
+    # Delete-then-write used to drop the OLD chunks before writing the new
+    # ones, so a failure partway through left a header pointing at deleted
+    # data. Write-then-swap must instead leave the last-good value readable.
+    primitive = _FailNthSetBackend()
+    backend = ChunkedBackend(primitive, chunk_size=20)
+    old_value = "a" * 55  # 3 chunks: 20 / 20 / 15
+    backend.set("plugin_gmail_tokens", old_value)
+    assert backend.get("plugin_gmail_tokens") == old_value
+
+    # Fail on the 2nd chunk write of the NEXT set() call (chunk index 1 of 3).
+    primitive.fail_on_call = primitive.calls + 2
+    with pytest.raises(RuntimeError):
+        backend.set("plugin_gmail_tokens", "b" * 55)
+
+    assert backend.get("plugin_gmail_tokens") == old_value
+
+
+def test_chunked_backend_set_success_leaves_no_orphan_chunks_when_shrinking():
+    # New value needs FEWER chunks than the old one -- the old header's
+    # higher-index leftovers must be cleaned up, not just the count that
+    # overlaps with the new value.
+    primitive = _SizeLimitedFakeBackend(limit=1000)
+    backend = ChunkedBackend(primitive, chunk_size=20)
+    backend.set("plugin_gmail_tokens", "a" * 100)  # 5 chunks
+    backend.set("plugin_gmail_tokens", "b" * 30)  # 2 chunks
+
+    assert backend.get("plugin_gmail_tokens") == "b" * 30
+    assert set(primitive.store) == {
+        "plugin_gmail_tokens",
+        "plugin_gmail_tokens__0",
+        "plugin_gmail_tokens__1",
+    }
+
+
 def test_chunked_backend_raises_when_a_single_chunk_still_too_big():
     # Defensive: if even one chunk can't be stored, fail loudly rather than
     # silently persisting a partial blob that can never be reassembled.

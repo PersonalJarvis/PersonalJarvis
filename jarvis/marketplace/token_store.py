@@ -103,8 +103,14 @@ class KeyringBackend:
     def delete(self, key: str) -> None:
         from jarvis.core.config import delete_secret
 
-        if not delete_secret(key):
-            raise RuntimeError(f"keyring delete failed for {key!r}")
+        # Deliberately does not raise on a failed delete (unlike `set`): both
+        # `ChunkedBackend._clear_overflow` and `ChunkedBackend.set`'s
+        # rollback/leftover-cleanup call this as best-effort housekeeping and
+        # rely on it never raising, so a cleanup failure here can't mask a
+        # more important error or turn a successful token save into a
+        # reported failure. The return value is intentionally not checked;
+        # see jarvis/core/config.py:delete_secret for the honest result.
+        delete_secret(key)
 
 
 _CHUNK_SENTINEL = "\x00JCHUNKS\x00"  # primary-key header for a chunked value: sentinel + <count>

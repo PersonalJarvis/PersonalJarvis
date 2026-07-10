@@ -361,6 +361,43 @@ async def test_on_refreshed_exception_does_not_break_the_loop(caplog) -> None:  
     assert store.load("notion").access == "a1"  # token save is unaffected
 
 
+class _SaveFailsForPlugin:
+    """Wraps a real TokenStore; ``save`` raises for one chosen plugin id --
+    used to prove a store failure for one plugin stays isolated from the
+    rest of the cycle."""
+
+    def __init__(self, inner: TokenStore, fail_for: str) -> None:
+        self._inner = inner
+        self._fail_for = fail_for
+
+    def load(self, plugin_id: str):
+        return self._inner.load(plugin_id)
+
+    def save(self, plugin_id: str, tokens: Tokens) -> None:
+        if plugin_id == self._fail_for:
+            raise RuntimeError("simulated store.save failure")
+        self._inner.save(plugin_id, tokens)
+
+
+@pytest.mark.asyncio
+async def test_one_plugins_save_failure_does_not_block_the_next() -> None:
+    inner = _store()
+    inner.save("gmail", _tokens(60))
+    inner.save("notion", _tokens(60))
+    store = _SaveFailsForPlugin(inner, fail_for="gmail")
+    handlers = {
+        "gmail": _FakeHandler("gmail", new_tokens=Tokens(access="a1", refresh="r1")),
+        "notion": _FakeHandler("notion", new_tokens=Tokens(access="a2", refresh="r2")),
+    }
+
+    outcomes = await refresh_due_tokens(
+        ["gmail", "notion"], store, lambda pid: handlers[pid]
+    )
+
+    assert outcomes == {"gmail": FAILED, "notion": REFRESHED}
+    assert inner.load("notion").access == "a2"
+
+
 @pytest.mark.asyncio
 async def test_scheduler_keep_alive_refreshes_long_lived_token() -> None:
     # The scheduler must apply keep-alive so a long-lived / no-expiry token still
