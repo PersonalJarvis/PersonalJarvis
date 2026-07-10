@@ -13,7 +13,12 @@ from __future__ import annotations
 
 import time
 
-from jarvis.ui.jarvisbar.overlay import FRAME_STALL_THRESHOLD_NS, JarvisBarOverlay
+from jarvis.ui.jarvisbar.overlay import (
+    FRAME_STALL_THRESHOLD_NS,
+    MIN_FRAME_DELAY_MS,
+    TARGET_FRAME_MS,
+    JarvisBarOverlay,
+)
 
 
 class _FakeRoot:
@@ -62,7 +67,13 @@ def _bare_bar(renderer_obj: object) -> tuple[JarvisBarOverlay, _FakeRoot]:
 
 def test_frame_loop_reschedules_after_render_error():
     """A render exception must NOT kill the loop: the next frame is still armed
-    and the call itself does not propagate (the Tk mainloop must keep running)."""
+    and the call itself does not propagate (the Tk mainloop must keep running).
+
+    The re-arm delay is adaptive (derived from how long the tick actually
+    took, see ``TARGET_FRAME_MS``/``MIN_FRAME_DELAY_MS``), so this asserts the
+    delay stays within the documented bounds rather than a hardcoded 16 — a
+    fast-failing render (like ``_BoomRenderer``) should land at (or very near)
+    the full ``TARGET_FRAME_MS`` since almost no time elapsed."""
     bar, root = _bare_bar(_BoomRenderer())
 
     bar._schedule_frame()  # must not raise
@@ -70,7 +81,7 @@ def test_frame_loop_reschedules_after_render_error():
     assert root.scheduled, "frame loop died: next frame was not rescheduled"
     ms, fn = root.scheduled[-1]
     assert fn == bar._schedule_frame
-    assert ms == 16
+    assert MIN_FRAME_DELAY_MS <= ms <= TARGET_FRAME_MS
 
 
 def test_frame_loop_stops_rearming_when_not_running():
