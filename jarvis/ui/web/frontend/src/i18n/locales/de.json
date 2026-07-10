@@ -1091,8 +1091,6 @@
       "self_test_button": "Wake-Word testen",
       "self_test_running": "Prüfe …",
       "engine_label": "Erkennungs-Engine",
-      "sensitivity_label": "Empfindlichkeit",
-      "sensitivity_floor_note": "Minimum ist 0,5: Darunter wird die Erkennung so streng, dass normale Sprechlautstärke praktisch nie auslöst — das wirkt kaputt statt \"weniger empfindlich\". 0,5 ist der ausbalancierte Standard; höhere Werte lösen leichter aus.",
       "custom_model_path_label": "Pfad zum eigenen ONNX-Modell",
       "save": "Wake-Word speichern",
       "saved": "Wake-Word gespeichert",

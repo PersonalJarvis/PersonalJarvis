@@ -7,7 +7,7 @@ Endpoints:
     GET /api/settings/reply-language  → {"language": ..., "options": [...]}
     PUT /api/settings/reply-language  → switch the live BrainManager + persist
     GET /api/settings/wake-word       → {phrase, engine, custom_model_path,
-                                         sensitivity, fuzzy_match_ratio, engines,
+                                         fuzzy_match_ratio, engines,
                                          instant_phrases, local_whisper_available}
     PUT /api/settings/wake-word       → persist to jarvis.toml [trigger.wake_word]
                                          (+ resolved-plan preview); restart required
@@ -472,6 +472,12 @@ class WakeWordBody(BaseModel):
     phrase: str = Field(..., min_length=1, max_length=64)
     engine: str = Field(default="auto")
     custom_model_path: str | None = Field(default=None)
+    # READ-COMPAT ONLY, runtime-ignored since 2026-07-10: the user-facing
+    # Sensitivity slider was removed (every wake path now always runs at its
+    # calibrated-reliable maximum-speed value, identically on every OS). The
+    # field stays accepted so an old client / CLI body with a stray
+    # ``sensitivity`` value does not 422 — it is simply dropped, never
+    # persisted, never floored.
     sensitivity: float | None = Field(default=None, ge=0.0, le=1.0)
     fuzzy_match_ratio: float | None = Field(default=None, ge=0.5, le=1.0)
     persist: bool = Field(default=True, description="Persist to jarvis.toml")
@@ -587,7 +593,6 @@ async def get_wake_word(request: Request) -> dict[str, object]:
         "phrase": ww.phrase,
         "engine": ww.engine,
         "custom_model_path": ww.custom_model_path,
-        "sensitivity": ww.sensitivity,
         "fuzzy_match_ratio": ww.fuzzy_match_ratio,
         "engines": list(WAKE_ENGINES),
         "instant_phrases": list(INSTANT_WAKE_PHRASES),
@@ -612,12 +617,14 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
             detail=f"Unknown wake engine '{body.engine}'. Allowed: {', '.join(WAKE_ENGINES)}.",
         )
 
-    # Sensitivity floor 0.5 (user mandate 2026-07-07): below the calibrated
-    # midpoint the wake word is effectively deaf. Lift instead of reject —
-    # mirrors WakeWordConfig._floor_sensitivity so every write path agrees.
-    sensitivity = (
-        None if body.sensitivity is None else min(1.0, max(0.5, body.sensitivity))
-    )
+    # Sensitivity is read-compat only (2026-07-10): accept it so an old
+    # client/CLI body does not 422, but never persist or floor it — every
+    # wake path always runs at its calibrated-reliable maximum-speed value.
+    if body.sensitivity is not None:
+        log.debug(
+            "wake-word PUT carried a legacy 'sensitivity' value (%s) — ignored.",
+            body.sensitivity,
+        )
 
     # Preview the resolved plan so the UI can tell the user immediately whether
     # the chosen phrase will work as-is or degrade (e.g. no local Whisper).
@@ -634,7 +641,6 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
             phrase=body.phrase,
             engine=engine,
             custom_model_path=body.custom_model_path,
-            sensitivity=sensitivity,
             fuzzy_match_ratio=body.fuzzy_match_ratio,
         ),
         local_whisper_available=_local_whisper_available(),
@@ -650,8 +656,6 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
         updates: dict[str, object] = {"phrase": body.phrase, "engine": engine}
         if body.custom_model_path is not None:
             updates["custom_model_path"] = body.custom_model_path
-        if sensitivity is not None:
-            updates["sensitivity"] = sensitivity
         if body.fuzzy_match_ratio is not None:
             updates["fuzzy_match_ratio"] = body.fuzzy_match_ratio
         for key, value in updates.items():
@@ -669,7 +673,6 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
                 body.phrase,
                 engine=engine,
                 custom_model_path=body.custom_model_path,
-                sensitivity=sensitivity,
                 fuzzy_match_ratio=body.fuzzy_match_ratio,
             )
             persisted = True

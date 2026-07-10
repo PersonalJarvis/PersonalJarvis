@@ -468,7 +468,6 @@ def set_wake_word(
     *,
     engine: str | None = None,
     custom_model_path: str | None = None,
-    sensitivity: float | None = None,
     fuzzy_match_ratio: float | None = None,
     path: Path = DEFAULT_CONFIG_FILE,
 ) -> None:
@@ -498,8 +497,6 @@ def set_wake_word(
         values["engine"] = engine
     if custom_model_path is not None:
         values["custom_model_path"] = custom_model_path
-    if sensitivity is not None:
-        values["sensitivity"] = float(sensitivity)
     if fuzzy_match_ratio is not None:
         values["fuzzy_match_ratio"] = float(fuzzy_match_ratio)
     _patch_wake_word_toml(path, values)

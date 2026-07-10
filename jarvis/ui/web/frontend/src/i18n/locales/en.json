@@ -1092,8 +1092,6 @@
       "self_test_button": "Test wake word",
       "self_test_running": "Checking…",
       "engine_label": "Detection engine",
-      "sensitivity_label": "Sensitivity",
-      "sensitivity_floor_note": "Minimum is 0.5: below the calibrated midpoint the detector becomes so strict that normal speech practically never wakes it — that feels broken, not \"less sensitive\". 0.5 is the balanced default; higher values trigger more easily.",
       "custom_model_path_label": "Custom ONNX model path",
       "save": "Save wake word",
       "saved": "Wake word saved",

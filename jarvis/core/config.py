@@ -194,16 +194,13 @@ class WakeWordConfig(BaseModel):
     engine: str = "auto"
     # Path to a user-supplied/trained .onnx wake model (engine="custom_onnx").
     custom_model_path: str = ""
-    # 0.5..1 wake responsiveness. openWakeWord path: mapped onto the activation
-    # threshold (0.5 == the data-driven PRODUCTION_WAKE_THRESHOLD, BUG-009 floor
-    # preserved). stt_match (local-Whisper) path: drives the poll interval
-    # (higher => polls more often => a spoken wake is picked up sooner), since
-    # that path never scores against the threshold.
-    # FLOOR 0.5 (user mandate 2026-07-07): below the calibrated midpoint the
-    # detector becomes so strict that normal-volume speech practically never
-    # fires it — a live config at 0.0 read as "the wake word is broken", not
-    # as "less sensitive". Values below the floor are LIFTED to 0.5 on load so
-    # an old/hand-edited jarvis.toml can never boot into a deaf wake word.
+    # READ-COMPAT ONLY, runtime-ignored since 2026-07-10: the user-facing
+    # Sensitivity slider was removed (mandate: always run every wake path at
+    # its calibrated-reliable maximum-speed value, identically on every OS —
+    # no per-user tuning). ``resolve_wake_plan`` no longer reads this field.
+    # Kept so an existing jarvis.toml with a hand-set ``sensitivity`` still
+    # parses and boots cleanly (open-source §3 / AP-16 back-compat); the
+    # floor validator stays only to keep any stored value well-formed.
     sensitivity: float = 0.5
     # STT transcript-match tolerance for transcription drift (engine="stt_match").
     fuzzy_match_ratio: float = 0.8

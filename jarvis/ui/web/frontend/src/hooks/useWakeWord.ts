@@ -8,7 +8,6 @@ export interface WakeWordConfig {
   phrase: string;
   engine: string;
   custom_model_path: string;
-  sensitivity: number;
   fuzzy_match_ratio: number;
   engines: string[];
   instant_phrases: string[];
@@ -26,7 +25,6 @@ export interface WakeWordPayload {
   phrase: string;
   engine: string;
   custom_model_path?: string;
-  sensitivity?: number;
   fuzzy_match_ratio?: number;
   persist?: boolean;
 }

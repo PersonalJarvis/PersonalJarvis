@@ -1736,20 +1736,13 @@ class SpeechPipeline:
                 reload_event.set()
 
     def _wake_poll_interval(self) -> float:
-        """The stt_match wake poll interval, derived from the user's Sensitivity
-        slider (``[trigger.wake_word].sensitivity``). Higher sensitivity polls
-        more often, so a spoken wake is picked up sooner. Defensive: any missing
-        field falls back to the balanced default. This is what makes the slider
-        actually DO something on the local-Whisper transcript path (it never
-        scored against the openWakeWord threshold the slider used to feed)."""
-        from jarvis.speech.wake_phrase import sensitivity_to_poll_interval
+        """The stt_match wake poll interval — always the fastest calibrated
+        value (the user-facing Sensitivity slider was removed 2026-07-10;
+        "always spawn at maximum speed on every OS" is now unconditional, not
+        a slider-derived choice)."""
+        from jarvis.speech.wake_phrase import WAKE_POLL_INTERVAL_S
 
-        ww = getattr(getattr(self, "_config", None), "trigger", None)
-        ww = getattr(ww, "wake_word", None)
-        try:
-            return sensitivity_to_poll_interval(getattr(ww, "sensitivity", 0.5))
-        except (TypeError, ValueError):
-            return sensitivity_to_poll_interval(0.5)
+        return WAKE_POLL_INTERVAL_S
 
     def set_wake_plan(self, plan: Any) -> None:
         """Live-apply a resolved WakeWordPlan — no app/pipeline restart.
