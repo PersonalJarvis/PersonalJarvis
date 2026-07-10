@@ -1149,11 +1149,14 @@ function ProviderCard({
           <OpenRouterTtsControls
             providerId={descriptor.id}
             recommendedModel={descriptor.recommended_model}
+            healthActive={descriptor.active}
           />
         ) : (
           <BrainModelSelector
             providerId={descriptor.id}
             recommendedModel={descriptor.recommended_model}
+            healthSection={descriptor.tier}
+            healthActive={descriptor.active}
           />
         ))}
 
@@ -1179,6 +1182,11 @@ function ProviderCard({
           <CuModelSelector
             providerId={descriptor.id}
             recommendedModel={descriptor.recommended_model}
+            healthActive={
+              descriptor.tier === "computer-use"
+                ? descriptor.active
+                : Boolean(descriptor.computer_use_active)
+            }
           />
         )}
 
@@ -1187,7 +1195,10 @@ function ProviderCard({
           already having a stored credential like the other tiers' pickers
           above. */}
       {descriptor.tier === "realtime" && descriptor.configured && (
-        <RealtimeOptionsControl providerId={descriptor.id} />
+        <RealtimeOptionsControl
+          providerId={descriptor.id}
+          healthActive={descriptor.active}
+        />
       )}
 
       {/* Footer: the live connectivity test, visually separated from the

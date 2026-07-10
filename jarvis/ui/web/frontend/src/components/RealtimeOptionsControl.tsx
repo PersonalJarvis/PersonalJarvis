@@ -25,7 +25,13 @@ const PROVIDER_DEFAULT = "";
  * Renders only inside a realtime provider card (`tier === "realtime"`), gated
  * on the card already having a stored credential — see `ApiKeysView.tsx`.
  */
-export function RealtimeOptionsControl({ providerId }: { providerId: string }) {
+export function RealtimeOptionsControl({
+  providerId,
+  healthActive = false,
+}: {
+  providerId: string;
+  healthActive?: boolean;
+}) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
 
@@ -67,15 +73,36 @@ export function RealtimeOptionsControl({ providerId }: { providerId: string }) {
     if (field === "model") setModel(next);
     else setVoice(next);
     setSavingField(field);
+    if (healthActive) {
+      window.dispatchEvent(
+        new CustomEvent("jarvis:provider-selection-pending", {
+          detail: { section: "realtime", provider: providerId },
+        }),
+      );
+    }
     try {
       await saveRealtimeOptions(
         providerId,
         field === "model" ? { model: next } : { voice: next },
       );
+      if (healthActive) {
+        window.dispatchEvent(
+          new CustomEvent("jarvis:provider-config-changed", {
+            detail: { section: "realtime", provider: providerId },
+          }),
+        );
+      }
     } catch (e) {
       // Roll back the optimistic pick on failure.
       if (field === "model") setModel(prev);
       else setVoice(prev);
+      if (healthActive) {
+        window.dispatchEvent(
+          new CustomEvent("jarvis:provider-switch-failed", {
+            detail: { section: "realtime", provider: providerId },
+          }),
+        );
+      }
       pushToast("error", (e as Error).message);
     } finally {
       setSavingField(null);

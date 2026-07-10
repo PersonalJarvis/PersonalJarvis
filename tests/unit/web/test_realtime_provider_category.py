@@ -1,13 +1,7 @@
-"""Realtime provider tier — backend for the API-Keys & Providers "Realtime" tab.
+"""Realtime provider tier for the API-Keys & Providers Realtime tab.
 
-Mirrors the brain/tts/stt tier plumbing: the realtime ProviderSpecs
-(``openai-realtime`` and ``gemini-live`` — the Gemini Live adapter module
-itself lands in a later task, this only covers the declarative spec), the
-``active_realtime`` resolution in ``list_providers``, the credential-presence
-section-health check, and the ``POST /realtime/switch`` route. Style follows
-``tests/unit/web/test_voice_mode_route.py`` (a lightweight FastAPI app with
-just the router mounted, monkeypatched secrets) rather than the heavier
-``WebServer`` fixture in ``tests/integration/test_provider_routes.py``.
+Covers both provider families, registry-based active-provider resolution,
+credential health, switching, and per-provider model and voice selection.
 """
 from __future__ import annotations
 
@@ -26,6 +20,11 @@ from jarvis.ui.web.provider_spec import get_spec
 def _only_openai_key(key: str, *_a, **_kw) -> str | None:
     """Fake ``cfg_mod.get_secret``: only ``openai_api_key`` looks configured."""
     return "sk-test" if key == "openai_api_key" else None
+
+
+def _only_gemini_key(key: str, *_a, **_kw) -> str | None:
+    """Fake ``cfg_mod.get_secret`` for a Gemini-only fresh install."""
+    return "AIza-test" if key == "gemini_api_key" else None
 
 # ---------------------------------------------------------------------------
 # ProviderSpec
@@ -73,6 +72,18 @@ def test_list_providers_includes_active_realtime_provider(monkeypatch):
     assert realtime["configured"] is True
 
 
+def test_list_providers_resolves_gemini_only_fresh_install(monkeypatch):
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_gemini_key)
+    client = TestClient(_app())
+
+    resp = client.get("/api/providers")
+
+    assert resp.status_code == 200
+    by_id = {provider["id"]: provider for provider in resp.json()["providers"]}
+    assert by_id["gemini-live"]["active"] is True
+    assert by_id["openai-realtime"]["active"] is False
+
+
 # ---------------------------------------------------------------------------
 # POST /api/realtime/switch
 # ---------------------------------------------------------------------------
@@ -98,7 +109,7 @@ def test_realtime_switch_persists_with_key(monkeypatch):
     assert body["ok"] is True
     assert body["active"] == "openai-realtime"
     assert body["persisted"] is True
-    assert body["restart_required"] is True
+    assert body["restart_required"] is False
     assert writes == ["openai-realtime"]
     assert app.state.config.brain.realtime is not None
     assert app.state.config.brain.realtime.provider == "openai-realtime"

@@ -66,7 +66,8 @@ except Exception:  # pragma: no cover
     select_autoescape = None  # type: ignore
     _HAVE_JINJA = False
 
-from jarvis.core.protocols import ExecutionContext, ToolResult
+from jarvis.core.protocols import ExecutionContext, RiskTier, ToolResult
+from jarvis.safety.risk_tier import ActionBlocked, RiskTierEvaluator
 
 from .schema import (
     Skill,
@@ -80,6 +81,23 @@ from .schema import (
 log = logging.getLogger(__name__)
 
 _TOOL_LINE_RE = re.compile(r"^\s*TOOL:\s*(?P<name>\S+)\s*(?P<args>\{.*\})?\s*$")
+
+
+@dataclass(frozen=True)
+class _SkillDeclaredTool:
+    """Minimal duck-typed stand-in for :class:`jarvis.core.protocols.Tool`.
+
+    ``RiskTierEvaluator.evaluate()`` only needs ``.name`` (for blacklist/
+    whitelist matching + the command string) and ``.risk_tier`` (the
+    "tool default" fallback). The runner has not resolved the real ``Tool``
+    object at the point it needs to gate the call, and — more importantly —
+    the skill AUTHOR's own frontmatter ``risk_policy`` (per-tool override or
+    default tier) is the tool-default that should apply here, not whatever
+    static tier the underlying tool implementation declares for itself.
+    """
+
+    name: str
+    risk_tier: RiskTier
 
 
 class SkillRunner:
@@ -96,6 +114,10 @@ class SkillRunner:
         self.tool_registry = tool_registry
         self.bus = bus
         self.safety_enforcer = safety_enforcer
+        # Lazily built, cached RiskTierEvaluator backing the internal risk
+        # gate used when no ``safety_enforcer`` was injected (AP-3). See
+        # ``_risk_evaluator()``.
+        self._risk_evaluator_cache: RiskTierEvaluator | None = None
         if _HAVE_JINJA:
             self._env = SandboxedEnvironment(  # type: ignore[call-arg]
                 autoescape=select_autoescape(default=False),
@@ -186,23 +208,69 @@ class SkillRunner:
         except Exception:  # noqa: BLE001
             return None
 
-    def _check_risk(self, skill: Skill, tool_name: str) -> tuple[bool, str]:
-        """Returns (allowed, reason). If safety_enforcer is missing, always allow."""
-        if self.safety_enforcer is None or skill.frontmatter is None:
+    def _risk_evaluator(self) -> RiskTierEvaluator:
+        """Lazily builds + caches a ``RiskTierEvaluator`` off the live safety
+        config, for the internal fail-closed gate used when no external
+        ``safety_enforcer`` was injected (AP-3)."""
+        if self._risk_evaluator_cache is None:
+            from jarvis.core.config import load_config
+
+            self._risk_evaluator_cache = RiskTierEvaluator(load_config().safety)
+        return self._risk_evaluator_cache
+
+    def _check_risk(
+        self, skill: Skill, tool_name: str, tool_args: dict[str, Any]
+    ) -> tuple[bool, str]:
+        """Returns (allowed, reason) for a skill-triggered tool call.
+
+        AP-3: a skill's ``TOOL:`` line must respect the SAME risk-tier gate as
+        every other tool invocation — it must never bypass it. If a
+        ``safety_enforcer`` was injected (its ``.check(tool_name=, tier=)``),
+        defer to it unchanged (back-compat hook). Otherwise this runs the
+        production ``RiskTierEvaluator`` (blacklist > whitelist > tool
+        default) against the skill's OWN frontmatter-declared tier as the
+        "tool default" — the skill author's ``risk_policy`` is what governs
+        here, not the executing tool's own static declaration. Fail-closed:
+        ``block`` refuses; ``ask`` also refuses (skills/cron triggers have no
+        interactive human to ask); only ``safe``/``monitor`` (including a
+        whitelist downgrade) execute.
+        """
+        if skill.frontmatter is None:
             return True, "no-enforcer"
-        tier = skill.frontmatter.risk_policy.per_tool_overrides.get(
+        declared_tier = skill.frontmatter.risk_policy.per_tool_overrides.get(
             tool_name, skill.frontmatter.risk_policy.default_tier
         )
-        fn = getattr(self.safety_enforcer, "check", None)
-        if callable(fn):
-            try:
-                result = fn(tool_name=tool_name, tier=tier)
-                if isinstance(result, tuple):
-                    return bool(result[0]), str(result[1])
-                return bool(result), "enforcer"
-            except Exception as exc:  # noqa: BLE001
-                return False, f"enforcer error: {exc}"
-        return True, "no-check-method"
+
+        if self.safety_enforcer is not None:
+            fn = getattr(self.safety_enforcer, "check", None)
+            if callable(fn):
+                try:
+                    result = fn(tool_name=tool_name, tier=declared_tier)
+                    if isinstance(result, tuple):
+                        return bool(result[0]), str(result[1])
+                    return bool(result), "enforcer"
+                except Exception as exc:  # noqa: BLE001
+                    return False, f"enforcer error: {exc}"
+            return True, "no-check-method"
+
+        # No injected enforcer — internal risk gate. A broken evaluator must
+        # fail CLOSED (refuse), never silently allow.
+        try:
+            decision = self._risk_evaluator().evaluate(
+                _SkillDeclaredTool(name=tool_name, risk_tier=declared_tier), tool_args
+            )
+        except ActionBlocked as exc:
+            return False, f"blocked: {exc.pattern}"
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "skill-runner: risk evaluation failed for %s — refusing: %s",
+                tool_name, exc,
+            )
+            return False, f"risk evaluation failed: {exc}"
+
+        if decision.tier == "ask" and decision.approved_by != "whitelist":
+            return False, "risk_tier=ask (no interactive approver for skills)"
+        return True, f"risk_tier={decision.tier}"
 
     async def _publish(self, event: Any) -> None:
         if self.bus is None:
@@ -255,7 +323,7 @@ class SkillRunner:
         unresolved_tools: list[str] = []
 
         for idx, (tool_name, tool_args) in enumerate(calls):
-            allowed, reason = self._check_risk(skill, tool_name)
+            allowed, reason = self._check_risk(skill, tool_name, tool_args)
             if not allowed:
                 step = {
                     "tool": tool_name,
@@ -321,7 +389,7 @@ class SkillRunner:
                 user_utterance=str(args.get("utterance", "")),
                 config=dict(skill.frontmatter.config),
                 memory_read=None,
-                approved_by="skill-runner",
+                approved_by="skill-runner:risk-gate",
             )
             step_start = time.monotonic()
             try:

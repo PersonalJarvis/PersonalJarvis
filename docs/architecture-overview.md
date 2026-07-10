@@ -74,7 +74,7 @@ Still unrowed (verify with `ls jarvis/ui/web/*routes*.py` + `git log`): `chats`/
 L7 UI/UX           Tray, Toasts, Admin-API, Desktop-App (FastAPI+React+pywebview), Orb-Overlay
 L6 Orchestrator    State-Machine, Router, BrainManager, Supervisor, Mission-Manager
 L5 Harness-Adapter Agent-harness, Codex, Open Interpreter, Python-Script, MCP-Remote
-L4 Brain           5 providers (Claude-API, OpenRouter, OpenAI, Gemini, Grok) + Ack-Brain sub-second tier
+L4 Brain           5 providers (Claude-API, OpenRouter, OpenAI, Gemini, NVIDIA) + Ack-Brain sub-second tier
 L3 Intent/Risk     Classifier, Risk-Tier-Policy, Approval, Rate-Limit-Tracker
 L2 Speech          Wake → VAD (Silero) → STT (faster-whisper / Google) → TTS (Gemini Flash / SAPI5)
 L1 Audio I/O       WASAPI via sounddevice, Device-Routing, Chime-Feedback
@@ -109,7 +109,7 @@ Multi-provider is mandatory — **never hardcode** Anthropic/Claude. Config unde
 
 #### Provider-agnostic features (no provider/model hardcoding) — BINDING
 
-Every feature must work with **whatever brain provider the user has selected/activated**, and across all configured providers — there are five API providers (`claude-api`, `openrouter`, `openai`, `gemini`, `grok`) plus two subscription-CLI brains (`codex` over ChatGPT, `antigravity` over the Google login), and any of them may be the active one. **Never branch on a provider name or a model id to enable or disable behavior** — no `if provider == "grok"`, no hardcoded `grok-4.3`, no provider-specific code path. Gate on a **capability** instead: `supports_vision`, `supports_tools`, the runtime `can_call_tools()` (and codex's runtime `supports_vision`). If the capability you need doesn't exist yet, **add a capability flag — do not name-check the provider**.
+Every feature must work with **whatever brain provider the user has selected/activated**, and across all configured providers — there are five API providers (`claude-api`, `openrouter`, `openai`, `gemini`, `nvidia`) plus two subscription-CLI brains (`codex` over ChatGPT, `antigravity` over the Google login), and any of them may be the active one. **Never branch on a provider name or a model id to enable or disable behavior** — no `if provider == "grok"`, no hardcoded `grok-4.3`, no provider-specific code path. Gate on a **capability** instead: `supports_vision`, `supports_tools`, the runtime `can_call_tools()` (and codex's runtime `supports_vision`). If the capability you need doesn't exist yet, **add a capability flag — do not name-check the provider**.
 
 When the active/selected provider lacks a needed capability — e.g. a text-only CLI brain (`antigravity` / `codex-CLI`) cannot see images for Computer-Use — fall through to the first **available** provider that *has* the capability, provider-agnostically and never pinned to a favorite; if none is available, degrade gracefully with an honest message. A provider or model literal may appear **only** as a documented default/fallback (a plugin's own `DEFAULT_MODEL`) or behind a runtime capability probe — never as the gate that decides whether a feature runs. The Computer-Use "no vision" incident was a *capability-flag* bug (grok's `supports_vision` was wrongly `False`) — the correct fix was to set the flag, **not** to pin Computer-Use to grok. This generalizes AP-6 (don't hardcode Claude) to **don't hardcode *any* provider** (see AP-21).
 

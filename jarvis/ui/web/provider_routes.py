@@ -435,21 +435,24 @@ def _active_stt(request: Request) -> str | None:
 
 
 def _active_realtime(request: Request) -> str | None:
-    """The active realtime-voice provider.
+    """Return the configured or first credential-ready realtime provider.
 
-    Realtime is OpenAI-only today (a single spec in ``PROVIDERS``), so an unset
-    ``cfg.brain.realtime.provider`` still defaults to ``"openai-realtime"`` — the
-    sole card shows as active instead of a confusing "nothing selected" state.
-    Never raises: any resolver error falls back to the default id.
+    Resolution delegates to the plugin registry when no explicit selection
+    exists, so a fresh install with only one arbitrary supported key activates
+    that family without a provider-name default (AP-21/AP-22).
     """
     try:
         cfg = _resolve_cfg(request)
         realtime_cfg = getattr(getattr(cfg, "brain", None), "realtime", None)
         provider = (getattr(realtime_cfg, "provider", None) or "").strip()
-        return provider or "openai-realtime"
-    except Exception as exc:  # noqa: BLE001 — the health panel must never 500
-        log.debug("active-realtime resolution failed (%s); using default.", exc)
-        return "openai-realtime"
+        if provider:
+            return provider
+        from jarvis.realtime.factory import realtime_available_provider
+
+        return realtime_available_provider(cfg)
+    except Exception as exc:  # noqa: BLE001 -- the health panel must never 500
+        log.debug("active-realtime resolution failed (%s); using None.", exc)
+        return None
 
 
 def _active_computer_use(request: Request) -> str | None:
@@ -2369,13 +2372,12 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
 
 @router.post("/realtime/switch")
 async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
-    """Switches the active realtime-voice provider. Persists to jarvis.toml.
+    """Switch the active realtime provider for the next voice session.
 
-    Mirrors ``stt_switch``: no live audio switch — the realtime engine is
-    only selected once the browser realtime client is actually wired in
-    (Phase 2), so the choice always needs a restart to take effect. Realtime
-    is cross-family (OpenAI Realtime, Gemini Live, AP-22), so this only
-    rejects a non-realtime-tier provider id.
+    The desktop and browser runtimes resolve ``voice.mode`` plus the selected
+    provider when each new voice session opens. An already-open duplex stream
+    keeps its negotiated provider, but no application restart is required.
+    Realtime is cross-family (AP-22), so validation is registry/tier based.
 
     Activating a realtime provider also makes Realtime the ACTIVE voice mode
     (``[voice].mode``) — the "Active" badge reads ``[voice].mode``, not
@@ -2385,17 +2387,23 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     spec = get_spec(body.provider)
     if spec is None:
         raise HTTPException(
-            status_code=404, detail=f"Unbekannter Provider: {body.provider}"
+            status_code=404, detail=f"Unknown provider: {body.provider}"
         )
     if spec.tier != "realtime":
         raise HTTPException(
             status_code=400,
-            detail=f"Provider '{body.provider}' ist kein Realtime-Provider (tier={spec.tier})",
+            detail=(
+                f"Provider '{body.provider}' is not a realtime provider "
+                f"(tier={spec.tier})"
+            ),
         )
     if not _is_credential_present(spec):
         raise HTTPException(
             status_code=409,
-            detail=f"Provider '{body.provider}' hat keine Credentials — erst API-Key setzen.",
+            detail=(
+                f"Provider '{body.provider}' has no configured credentials. "
+                "Add its API key first."
+            ),
         )
 
     if body.persist:
@@ -2407,7 +2415,7 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
-                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
         try:
             from jarvis.core.config_writer import set_voice_mode
@@ -2442,7 +2450,7 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         "ok": True,
         "active": body.provider,
         "persisted": body.persist,
-        "restart_required": True,
+        "restart_required": False,
     }
 
 

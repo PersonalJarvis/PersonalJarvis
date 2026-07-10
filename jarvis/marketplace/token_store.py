@@ -103,7 +103,8 @@ class KeyringBackend:
     def delete(self, key: str) -> None:
         from jarvis.core.config import delete_secret
 
-        delete_secret(key)
+        if not delete_secret(key):
+            raise RuntimeError(f"keyring delete failed for {key!r}")
 
 
 _CHUNK_SENTINEL = "\x00JCHUNKS\x00"  # primary-key header for a chunked value: sentinel + <count>
@@ -160,25 +161,55 @@ class ChunkedBackend:
         return "".join(parts)
 
     def set(self, key: str, value: str) -> None:
-        # Drop any chunks from a previous larger value first so we never leave
-        # orphaned overflow entries behind.
-        self._clear_overflow(key)
+        """Write ``value``, chunking it when it exceeds the backend's per-entry cap.
+
+        Write-then-swap: the new data (and, for a multi-chunk value, the new
+        header) is written FIRST; only once that has fully succeeded do we drop
+        chunks a previous, larger value left behind. The old header keeps
+        pointing at the old data until the very last step, so a failure
+        partway through the new write can roll back cleanly instead of
+        leaving a header that points at deleted/missing chunks (the previous
+        delete-then-write order did exactly that — a mid-write failure lost
+        the last good token).
+        """
         if len(value) <= self._chunk_size:
+            # Fits in one entry: no chunks of its own. Write it first, then
+            # drop any old overflow pieces a previous larger value left.
             self._backend.set(key, value)
+            self._clear_overflow(key)
             return
+
         chunks = [
             value[i : i + self._chunk_size]
             for i in range(0, len(value), self._chunk_size)
         ]
-        # Write the pieces first; only stamp the header once they all succeed,
-        # so a mid-write failure can't leave a header pointing at missing data.
+        # Snapshot whatever currently sits at each index we're about to
+        # overwrite (old chunk data, or None) so a partial failure can put it
+        # back exactly as it was rather than leaving a gap under the still-
+        # active OLD header.
+        prior = [self._backend.get(self._overflow_key(key, i)) for i in range(len(chunks))]
+
+        written = 0
         try:
             for i, piece in enumerate(chunks):
                 self._backend.set(self._overflow_key(key, i), piece)
+                written = i + 1
+            self._backend.set(key, f"{_CHUNK_SENTINEL}{len(chunks)}")
         except Exception:
-            self._clear_overflow(key)
+            for i in range(written):
+                old_piece = prior[i]
+                if old_piece is None:
+                    self._backend.delete(self._overflow_key(key, i))
+                else:
+                    self._backend.set(self._overflow_key(key, i), old_piece)
             raise
-        self._backend.set(key, f"{_CHUNK_SENTINEL}{len(chunks)}")
+
+        # The new header is live now — safe to drop old chunks the new value
+        # no longer needs (old_count > new_count leftovers).
+        i = len(chunks)
+        while self._backend.get(self._overflow_key(key, i)) is not None:
+            self._backend.delete(self._overflow_key(key, i))
+            i += 1
 
     def delete(self, key: str) -> None:
         self._clear_overflow(key)

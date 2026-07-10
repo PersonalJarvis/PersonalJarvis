@@ -919,6 +919,48 @@ def test_capabilities_defaults_false_when_unset(app):
     assert r.json()["native_file_actions"] is False
 
 
+# --- /open (session folder in file manager) — cross-platform (Fix 2) --------
+# Previously Windows-only (explorer.exe Popen); non-Windows silently returned
+# opened=false even though open_path.reveal_in_folder already implements
+# Windows/macOS/Linux. The route now delegates to reveal_in_folder everywhere.
+
+
+def test_open_session_folder_calls_reveal_in_folder(app):
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    target = root / slug
+    target.mkdir(parents=True, exist_ok=True)
+    client = TestClient(app)
+    with patch(
+        "jarvis.platform.open_path.reveal_in_folder", return_value=True
+    ) as rev:
+        r = client.post(f"/api/outputs/{slug}/open")
+    assert r.status_code == 200
+    assert r.json() == {"opened": True, "path": str(target.resolve())}
+    rev.assert_called_once()
+
+
+def test_open_session_folder_reports_failure_honestly(app):
+    """A failed launcher (e.g. no display, broken opener) is reported as
+    opened=false rather than raising — mirrors the other native-action routes."""
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    (root / slug).mkdir(parents=True, exist_ok=True)
+    client = TestClient(app)
+    with patch("jarvis.platform.open_path.reveal_in_folder", return_value=False):
+        r = client.post(f"/api/outputs/{slug}/open")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["opened"] is False
+    assert body["reason"] == "open failed"
+
+
+def test_open_session_folder_404_for_unknown_slug(app):
+    client = TestClient(app)
+    r = client.post("/api/outputs/does-not-exist/open")
+    assert r.status_code == 404
+
+
 # --- /reveal and /open-native routes (Task 6) --------------------------------
 
 
