@@ -815,13 +815,15 @@ function TierSection({
   health?: SectionHealth;
 }) {
   const tierHasActive = providers.some((p) => p.active);
-  // Configured providers first — the wall of empty key forms used to bury the
-  // one or two cards the user actually set up. Deliberately NOT sorted by
-  // `active`: activation flips live (optimistically), and a card that jumps
-  // position under the pointer mid-click reads as breakage, while `configured`
-  // only changes on a key save. Stable within each group (Array.sort is stable).
+  // Configured (or active) providers first — the wall of empty key forms used
+  // to bury the one or two cards the user actually set up. `active` counts so
+  // an active-but-keyless anomaly (e.g. a free-tier provider) can never hide
+  // below untouched cards; among configured cards nothing reorders on a switch
+  // (both stay rank 0), so a card never jumps under the pointer mid-click.
+  // Stable within each group (Array.sort is stable).
   const sorted = [...providers].sort(
-    (a, b) => Number(b.configured) - Number(a.configured),
+    (a, b) =>
+      Number(b.configured || b.active) - Number(a.configured || a.active),
   );
   return (
     <ul className="space-y-3">
