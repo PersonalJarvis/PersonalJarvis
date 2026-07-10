@@ -15,6 +15,12 @@ from jarvis.realtime.protocol import RealtimeSessionConfig
 class _FakeConn:
     def __init__(self) -> None:
         self.session_updates: list[dict[str, Any]] = []
+        self.created_items: list[dict[str, Any]] = []
+        self.response_creates = 0
+        self.conversation = SimpleNamespace(
+            item=SimpleNamespace(create=self._create_item)
+        )
+        self.response = SimpleNamespace(create=self._create_response)
         self._events = iter(
             [
                 SimpleNamespace(type="session.created"),
@@ -37,6 +43,12 @@ class _FakeConn:
 
     async def update(self, session: dict[str, Any]) -> None:
         self.session_updates.append(session)
+
+    async def _create_item(self, *, item: dict[str, Any]) -> None:
+        self.created_items.append(item)
+
+    async def _create_response(self) -> None:
+        self.response_creates += 1
 
 
 class _FakeConnectCM:
@@ -163,3 +175,51 @@ async def test_handshake_error_rejects_session(monkeypatch: pytest.MonkeyPatch) 
 @pytest.mark.asyncio
 async def test_keyless_provider_is_unavailable() -> None:
     assert await OpenAIRealtimeProvider().can_open_duplex_session() is False
+
+
+@pytest.mark.asyncio
+async def test_tools_are_declared_mapped_and_answered(monkeypatch: pytest.MonkeyPatch):
+    holder = _patch_openai_client(monkeypatch)
+    declaration = {
+        "name": "open_app",
+        "description": "Open an application.",
+        "parameters": {
+            "type": "object",
+            "properties": {"app_name": {"type": "string"}},
+        },
+    }
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig(tools=(declaration,))
+    )
+    conn = holder["client"].realtime.last_conn
+    payload = conn.session_updates[0]
+
+    assert payload["tools"] == [{"type": "function", **declaration}]
+    assert payload["tool_choice"] == "auto"
+
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="response.function_call_arguments.done",
+                call_id="call-1",
+                name="open_app",
+                arguments='{"app_name":"Calculator"}',
+            )
+        ]
+    )
+    session._events = conn.__aiter__()
+    events = [event async for event in session.receive()]
+
+    assert len(events) == 1
+    assert events[0].type == "tool_call"
+    assert events[0].tool_args == {"app_name": "Calculator"}
+
+    await session.send_tool_result(
+        "call-1",
+        "open_app",
+        {"success": True, "output": "opened", "error": None},
+    )
+    assert conn.created_items[0]["type"] == "function_call_output"
+    assert conn.created_items[0]["call_id"] == "call-1"
+    assert conn.response_creates == 1
+    await session.close()

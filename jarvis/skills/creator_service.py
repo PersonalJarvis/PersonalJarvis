@@ -211,8 +211,10 @@ def render_skill_md(draft: dict[str, Any]) -> str:
     """Render a SKILL.md string from a creator draft dict (state forced draft).
 
     Unlike the manual form (which writes a usable VALIDATED skill), the AI
-    creator stamps ``state: draft`` because the content is LLM-generated — but
-    here we only *render* for preview/validate; ``commit`` decides persistence.
+    creator stamps ``state: draft`` because the content is LLM-generated
+    (AP-15) — a human must explicitly promote it before it goes live. This
+    render is what the user previews AND what ``commit`` persists (via
+    ``SkillCreateRequest(state="draft")``), so the two never disagree.
     """
     fm: dict[str, Any] = {
         "schema_version": "1",
@@ -220,6 +222,7 @@ def render_skill_md(draft: dict[str, Any]) -> str:
         "version": "0.1.0",
         "description": str(draft.get("description", "")),
         "category": str(draft.get("category", "general")) or "general",
+        "state": "draft",
     }
     if draft.get("tags"):
         fm["tags"] = list(draft["tags"])
@@ -335,7 +338,13 @@ class SkillCreatorService:
         return await self._draft_or_refine(inp, refine=True)
 
     async def commit(self, draft: dict[str, Any]) -> Skill:
-        """Persist a reviewed draft as a real skill via the shared writer."""
+        """Persist a reviewed draft as a real skill via the shared writer.
+
+        Always writes ``state="draft"`` frontmatter (AP-15): the content is
+        LLM-generated (or an unreviewed deterministic skeleton), so it must
+        land inactive until a human explicitly promotes it — matching what
+        ``render_skill_md`` already previews to the user.
+        """
         if not isinstance(draft, dict):
             raise ValueError("draft must be an object")
         req = SkillCreateRequest(
@@ -347,6 +356,7 @@ class SkillCreatorService:
             requires_tools=tuple(draft.get("requires_tools", []) or ()),
             risk_policy=draft.get("risk_policy") or None,
             body=str(draft.get("body", "")),
+            state="draft",
         )
         service = SkillAuthoringService(
             registry=self._registry,

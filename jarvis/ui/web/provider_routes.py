@@ -959,13 +959,45 @@ def _section_health_subjects(request: Request, cfg: Any) -> dict[str, str | None
 
 
 def _section_health_fingerprint(
-    request: Request, subjects: dict[str, str | None]
+    request: Request,
+    cfg: Any,
+    subjects: dict[str, str | None],
 ) -> tuple[tuple[str, str], ...]:
-    """Return a secret-free cache key for the full health selection snapshot."""
+    """Return a secret-free cache key for the full health selection snapshot.
+
+    Provider identity alone is insufficient: changing a Brain, Computer-Use,
+    TTS, STT, or Realtime model while its provider stays selected must also
+    supersede the old probe. Otherwise an old model timeout can be cached and
+    displayed against the newly selected, working model.
+    """
     telephony = getattr(request.app.state, "telephony_manager", None)
     reachable = getattr(telephony, "reachable", None) if telephony is not None else None
-    return tuple((key, subjects.get(key) or "") for key in _SECTION_HEALTH_KEYS) + (
+    brain = getattr(cfg, "brain", None) if cfg is not None else None
+    providers = getattr(brain, "providers", None)
+
+    def _provider_value(section: str, field: str) -> str:
+        provider_id = subjects.get(section) or ""
+        provider_cfg = providers.get(provider_id) if isinstance(providers, dict) else None
+        return str(getattr(provider_cfg, field, None) or "")
+
+    tts = getattr(cfg, "tts", None) if cfg is not None else None
+    stt = getattr(cfg, "stt", None) if cfg is not None else None
+    worker = getattr(brain, "worker", None) if brain is not None else None
+    configuration = (
+        ("brain-model", _provider_value("brain", "model")),
+        ("computer-use-model", _provider_value("computer-use", "cu_model")),
+        ("tts-model", str(getattr(tts, "model", None) or "")),
+        ("tts-voice-de", str(getattr(tts, "voice_de", None) or "")),
+        ("tts-voice-en", str(getattr(tts, "voice_en", None) or "")),
+        ("stt-model", str(getattr(stt, "model", None) or "")),
+        ("realtime-model", _provider_value("realtime", "model")),
+        ("realtime-voice", _provider_value("realtime", "voice")),
+        ("jarvis-agent-model", str(getattr(worker, "model", None) or "")),
         ("advanced-reachable", repr(reachable)),
+    )
+    return (
+        tuple((key, subjects.get(key) or "") for key in _SECTION_HEALTH_KEYS)
+        + configuration
     )
 
 
@@ -994,7 +1026,7 @@ async def section_health(request: Request, refresh: bool = False) -> SectionHeal
     while True:
         cfg = _resolve_cfg(request)
         subjects = _section_health_subjects(request, cfg)
-        fingerprint = _section_health_fingerprint(request, subjects)
+        fingerprint = _section_health_fingerprint(request, cfg, subjects)
         cache = getattr(request.app.state, "_section_health_cache", None)
         now = time.time()
         if (
@@ -1049,7 +1081,9 @@ async def section_health(request: Request, refresh: bool = False) -> SectionHeal
 
         current_cfg = _resolve_cfg(request)
         current_subjects = _section_health_subjects(request, current_cfg)
-        current_fingerprint = _section_health_fingerprint(request, current_subjects)
+        current_fingerprint = _section_health_fingerprint(
+            request, current_cfg, current_subjects
+        )
         if current_fingerprint != fingerprint:
             refresh = True
             continue
@@ -1166,6 +1200,26 @@ def _provider_cu_model(cfg: Any, provider: str) -> str:
     providers = getattr(getattr(cfg, "brain", None), "providers", None)
     pc = providers.get(provider) if isinstance(providers, dict) else None
     return (getattr(pc, "cu_model", None) or "") if pc is not None else ""
+
+
+def _set_brain_model_in_memory(cfg: Any, provider: str, value: str) -> None:
+    """Keep route-level config aligned with the live BrainManager selection.
+
+    The manager owns a separate config object. Without this mirror update,
+    section health can keep probing the previous model after the new model has
+    already been persisted and applied successfully.
+    """
+    try:
+        providers = cfg.brain.providers
+        pc = providers.get(provider)
+        if pc is None:
+            from jarvis.core.config import BrainProviderConfig
+
+            pc = BrainProviderConfig()
+            providers[provider] = pc
+        pc.model = value or None
+    except Exception as exc:  # noqa: BLE001 -- detached config is best-effort
+        log.debug("In-memory brain model update skipped for %s: %s", provider, exc)
 
 
 def _set_cu_model_in_memory(cfg: Any, provider: str, value: str) -> None:
@@ -1339,6 +1393,9 @@ async def _apply_brain_model(
                 status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
             ) from exc
 
+    cfg = _resolve_cfg(request)
+    _set_brain_model_in_memory(cfg, provider_id, model)
+
     brain = getattr(request.app.state, "brain", None)
     applied_live = False
     if brain is not None and hasattr(brain, "apply_provider_model"):
@@ -1351,7 +1408,6 @@ async def _apply_brain_model(
 
     probe_payload: BrainModelProbe | None = None
     if probe:
-        cfg = _resolve_cfg(request)
         probe_model = model or _current_brain_model(cfg, provider_id)
         result = await _probe_brain_model(provider_id, probe_model)
         probe_payload = BrainModelProbe(

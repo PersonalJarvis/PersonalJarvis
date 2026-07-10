@@ -3279,6 +3279,7 @@ class BrainManager:
     def _reset_provider_caches(self) -> None:
         """Clears session state that would block a freshly set key."""
         self._dead_providers.clear()
+        self._dead_provider_models.clear()
         self._brain_cache.clear()
         self._rate_tracker.clear()
 
@@ -3297,6 +3298,9 @@ class BrainManager:
         """
         was_dead = provider in self._dead_providers
         self._dead_providers.discard(provider)
+        self._dead_provider_models = {
+            k for k in self._dead_provider_models if k[0] != provider
+        }
         keys_to_drop = [k for k in self._brain_cache if k[0] == provider]
         for k in keys_to_drop:
             self._brain_cache.pop(k, None)
@@ -3369,6 +3373,9 @@ class BrainManager:
         for key in [k for k in self._brain_cache if k[0] == canonical]:
             self._brain_cache.pop(key, None)
         self._dead_providers.discard(canonical)
+        self._dead_provider_models = {
+            k for k in self._dead_provider_models if k[0] != canonical
+        }
         return canonical == self._active_name
 
     @staticmethod
@@ -7470,15 +7477,33 @@ class BrainManager:
                         (prov_name, model, "rate_limit", "HTTP 429"))
                 else:
                     log.warning("Brain %s(%s) fehlgeschlagen: %s", prov_name, model, exc)
-                    if (
-                        kind in _DEAD_LIST_KINDS
-                        and prov_name not in self._dead_providers
-                    ):
-                        self._dead_providers.add(prov_name)
-                        log.warning(
-                            "Provider %s fuer diese Session deaktiviert (%s) — die Kette "
-                            "weicht auf einen anderen verfuegbaren Anbieter aus. "
-                            "Setup: Sidebar -> API-Keys.", prov_name, kind)
+                    if kind in _DEAD_LIST_KINDS and prov_name not in self._dead_providers:
+                        # account_blocked (e.g. a bare 402) is model-scoped when
+                        # the SAME provider still has an untried model later in
+                        # this turn's chain (a capped paid model with a funded
+                        # free model behind it, tests/unit/brain/
+                        # test_depleted_credits_classification.py covers only the
+                        # classifier, not this chain policy). missing_key/bad_key
+                        # are credential problems and stay provider-wide — a dead
+                        # key blocks every model, not just this one.
+                        remaining_model = any(
+                            other_name == prov_name
+                            and other_model != model
+                            and (other_name, other_model) not in self._dead_provider_models
+                            for other_name, other_model in chain[idx + 1:]
+                        )
+                        if kind == "account_blocked" and remaining_model:
+                            self._dead_provider_models.add((prov_name, model))
+                            log.warning(
+                                "Model %s(%s) billing-blocked — anderes Modell "
+                                "desselben Anbieters bleibt in dieser Kette aktiv.",
+                                prov_name, model)
+                        else:
+                            self._dead_providers.add(prov_name)
+                            log.warning(
+                                "Provider %s fuer diese Session deaktiviert (%s) — die Kette "
+                                "weicht auf einen anderen verfuegbaren Anbieter aus. "
+                                "Setup: Sidebar -> API-Keys.", prov_name, kind)
                     provider_errors.append((prov_name, model, kind, msg[:200]))
                 # NOTE BUG-019 (2026-05-11): this generic ``continue`` does
                 # not touch the failing provider's *internal* state. For

@@ -18,7 +18,6 @@ import logging
 import mimetypes
 import os
 import re
-import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -27,7 +26,6 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from starlette.responses import FileResponse, HTMLResponse
 
-from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.missions.kontrollierer.deliverable_paths import (
     is_nondeliverable_scratch,
 )
@@ -1021,7 +1019,7 @@ async def open_artifact_with(
 
 @router.post("/{slug}/open")
 async def open_output(slug: str, request: Request) -> dict[str, Any]:
-    """Open the session folder in the OS file explorer (Windows: explorer.exe).
+    """Open the session folder in the OS file explorer (Explorer/Finder/xdg).
 
     Best-effort, non-blocking — frontend ignores errors. Restricts the path
     inside `outputs_root` so a crafted slug can't open arbitrary folders.
@@ -1034,17 +1032,10 @@ async def open_output(slug: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="invalid slug") from exc
     if not target.is_dir():
         raise HTTPException(status_code=404, detail=f"unknown slug: {slug}")
-    if os.name == "nt":
-        try:
-            subprocess.Popen(  # noqa: S603,S607,ASYNC220 — explorer.exe path is os-fixed; Popen returns immediately (no event-loop block)
-                ["explorer.exe", str(target)],
-                creationflags=NO_WINDOW_CREATIONFLAGS,
-                close_fds=True,
-            )
-        except OSError as exc:
-            logger.warning("outputs: explorer.exe failed for %s: %s", target, exc)
-            raise HTTPException(
-                status_code=500, detail=f"open failed: {exc}"
-            ) from exc
-        return {"opened": True, "path": str(target)}
-    return {"opened": False, "path": str(target), "reason": "non-Windows host"}
+
+    from jarvis.platform import open_path
+
+    opened = await asyncio.to_thread(open_path.reveal_in_folder, target)
+    if not opened:
+        return {"opened": False, "path": str(target), "reason": "open failed"}
+    return {"opened": True, "path": str(target)}

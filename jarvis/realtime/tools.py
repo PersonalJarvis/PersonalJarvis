@@ -147,7 +147,7 @@ class RealtimeToolBridge:
                 "error": "Tool is not available in this session.",
             }
         if self._vetoed_tool == name:
-            return wire_name, {
+            return name, {
                 "success": False,
                 "error": "The user declined this action. Do not ask again in this turn.",
             }

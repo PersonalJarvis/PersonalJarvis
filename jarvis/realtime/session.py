@@ -529,10 +529,23 @@ class RealtimeVoiceSession:
                 {"success": False, "error": "Tool call is not available."},
             )
             return
-        original_name, result = await self._tool_bridge.execute(
-            wire_name=wire_name,
-            arguments=arguments,
-        )
+        try:
+            original_name, result = await self._tool_bridge.execute(
+                wire_name=wire_name,
+                arguments=arguments,
+            )
+        except Exception:  # noqa: BLE001 -- a failed tool must not kill duplex audio
+            log.warning("realtime tool execution failed: %s", wire_name, exc_info=True)
+            await self._publish_error(
+                "RealtimeToolError",
+                f"Realtime tool execution failed: {wire_name}",
+                recoverable=True,
+            )
+            original_name = wire_name
+            result = {
+                "success": False,
+                "error": "The tool failed safely and was not completed.",
+            }
         if result.get("success"):
             self._executed_tool_names.add(original_name)
         await self._session.send_tool_result(call_id, wire_name, result)

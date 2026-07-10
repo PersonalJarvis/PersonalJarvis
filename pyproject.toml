@@ -146,7 +146,7 @@ dev = [
 # (plain `pip install .`) remains the internal torch-free floor for CI and
 # tiny headless servers; users are pointed at [full].
 full = [
-    "personal-jarvis[desktop,telephony,channels,local-voice]",
+    "personal-jarvis[desktop,desktop-macos,telephony,channels,local-voice]",
 ]
 # Twilio telephony voice agent (call Jarvis on a phone number). Optional extra
 # per the cloud-first doctrine: the base install must boot without it, and the

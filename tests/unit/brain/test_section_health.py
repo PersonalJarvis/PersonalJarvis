@@ -96,6 +96,52 @@ async def test_every_catalog_provider_health_is_bound_to_its_exact_id(
     assert result.subject_id == spec.id
 
 
+def test_health_fingerprint_covers_every_model_selection_surface() -> None:
+    """Every model-bearing API surface supersedes an older health snapshot."""
+    from jarvis.ui.web import provider_routes as pr
+
+    openrouter = SimpleNamespace(model="brain-a", cu_model="cu-a")
+    realtime = SimpleNamespace(model="realtime-a", voice="voice-a")
+    cfg = SimpleNamespace(
+        brain=SimpleNamespace(
+            providers={"openrouter": openrouter, "openai-realtime": realtime},
+            worker=SimpleNamespace(model="worker-a"),
+        ),
+        tts=SimpleNamespace(model="tts-a", voice_de="de-a", voice_en="en-a"),
+        stt=SimpleNamespace(model="stt-a"),
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(telephony_manager=None))
+    )
+    subjects = {
+        "brain": "openrouter",
+        "computer-use": "openrouter",
+        "tts": "openrouter-tts",
+        "stt": "openrouter-stt",
+        "realtime": "openai-realtime",
+        "subagents": "openrouter",
+        "advanced": None,
+    }
+    baseline = pr._section_health_fingerprint(request, cfg, subjects)
+
+    mutations = (
+        (openrouter, "model"),
+        (openrouter, "cu_model"),
+        (cfg.tts, "model"),
+        (cfg.tts, "voice_de"),
+        (cfg.tts, "voice_en"),
+        (cfg.stt, "model"),
+        (realtime, "model"),
+        (realtime, "voice"),
+        (cfg.brain.worker, "model"),
+    )
+    for owner, field in mutations:
+        original = getattr(owner, field)
+        setattr(owner, field, f"{original}-changed")
+        assert pr._section_health_fingerprint(request, cfg, subjects) != baseline
+        setattr(owner, field, original)
+
+
 class TestSubagentSectionHealth:
     """Live-honest Sub-Agents tab health (2026-07-06 incident: the tab stayed
     green while every worker spawn 401'd on an expired OAuth token)."""

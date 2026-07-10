@@ -13,6 +13,7 @@ class FakeSession:
     def __init__(self, events):
         self._events = events
         self.sent_audio = []
+        self.tool_results = []
         self.truncated = []
         self.closed = False
 
@@ -32,6 +33,9 @@ class FakeSession:
 
     async def interrupt(self):
         pass
+
+    async def send_tool_result(self, call_id, name, result):
+        self.tool_results.append((call_id, name, result))
 
     async def close(self):
         self.closed = True
@@ -69,6 +73,39 @@ class FakeBus:
 
     async def publish(self, event):
         self.events.append(event)
+
+
+class FakeToolBridge:
+    declarations = (
+        {
+            "name": "open_app",
+            "description": "Open an application.",
+            "parameters": {
+                "type": "object",
+                "properties": {"app_name": {"type": "string"}},
+                "required": ["app_name"],
+            },
+        },
+    )
+
+    def __init__(self):
+        self.languages = []
+        self.transcripts = []
+        self.calls = []
+        self.closed = False
+
+    def set_language(self, language):
+        self.languages.append(language)
+
+    async def handle_user_transcript(self, text):
+        self.transcripts.append(text)
+
+    async def execute(self, *, wire_name, arguments):
+        self.calls.append((wire_name, arguments))
+        return "open_app", {"success": True, "output": "opened", "error": None}
+
+    async def close(self):
+        self.closed = True
 
 
 def _cfg(*, providers=None):
@@ -343,3 +380,82 @@ async def test_browser_session_start_precedes_realtime_turn_events():
     assert names.index("VoiceSessionStarted") < names.index("RealtimeSessionReady")
     assert names.index("VoiceSessionStarted") < names.index("VoiceTurnStarted")
     assert names[-1] == "VoiceSessionEnded"
+
+
+@pytest.mark.asyncio
+async def test_tool_call_waits_for_final_input_transcript_and_uses_bridge():
+    bridge = FakeToolBridge()
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="tool_call",
+                call_id="call-1",
+                tool_name="open_app",
+                tool_args={"app_name": "Calculator"},
+            ),
+            RealtimeEvent(
+                type="input_transcript",
+                text="Open Calculator",
+                is_final=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = RealtimeVoiceSession(
+        session_id="tool-session",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+        tool_bridge=bridge,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert provider.opened_with.tools == bridge.declarations
+    assert bridge.transcripts == ["Open Calculator"]
+    assert bridge.calls == [("open_app", {"app_name": "Calculator"})]
+    assert provider.session.tool_results == [
+        (
+            "call-1",
+            "open_app",
+            {"success": True, "output": "opened", "error": None},
+        )
+    ]
+    assert bridge.closed is True
+
+
+@pytest.mark.asyncio
+async def test_untranscribed_tool_call_is_rejected_without_execution():
+    bridge = FakeToolBridge()
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="tool_call",
+                call_id="call-2",
+                tool_name="open_app",
+                tool_args={"app_name": "Calculator"},
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = RealtimeVoiceSession(
+        session_id="tool-no-transcript",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+        tool_bridge=bridge,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert bridge.calls == []
+    assert provider.session.tool_results[0][0:2] == ("call-2", "open_app")
+    assert provider.session.tool_results[0][2]["success"] is False

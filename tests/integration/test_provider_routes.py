@@ -274,6 +274,59 @@ async def test_section_health_switch_cancels_old_provider_without_misattribution
     assert "NVIDIA" not in old_response.sections["brain"].detail
 
 
+@pytest.mark.asyncio
+async def test_section_health_model_switch_cancels_old_probe_for_same_provider(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A timeout from an old model must not label a new model on the same card."""
+    from jarvis.brain import provider_test as provider_test_module
+    from jarvis.core.config import BrainProviderConfig
+    from jarvis.ui.web import provider_routes
+
+    secret_store.data["openrouter_api_key"] = "sk-or-test"
+    server_with_brain.app.state.brain.active_provider = "openrouter"
+    server_with_brain.cfg.brain.providers["openrouter"] = BrainProviderConfig(
+        model="slow-model"
+    )
+    old_started = asyncio.Event()
+    old_cancelled = asyncio.Event()
+
+    async def _probe(spec: Any, cfg: Any) -> _FakeTestResult:  # noqa: ANN401
+        selected_model = cfg.brain.providers["openrouter"].model
+        if spec.id == "openrouter" and selected_model == "slow-model":
+            old_started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                old_cancelled.set()
+                raise
+        return _FakeTestResult("ok", "")
+
+    monkeypatch.setattr(provider_test_module, "run_provider_test", _probe)
+    monkeypatch.setattr(
+        provider_routes,
+        "_jarvis_agent_section_health",
+        lambda cfg: provider_routes.SectionHealth(status="ok", subject_id="openai"),
+    )
+    request = SimpleNamespace(app=server_with_brain.app)
+
+    old_request = asyncio.create_task(provider_routes.section_health(request, refresh=True))
+    await asyncio.wait_for(old_started.wait(), timeout=1.0)
+
+    server_with_brain.cfg.brain.providers["openrouter"].model = "working-model"
+    new_response = await asyncio.wait_for(
+        provider_routes.section_health(request, refresh=True), timeout=1.0
+    )
+    old_response = await asyncio.wait_for(old_request, timeout=1.0)
+
+    assert old_cancelled.is_set()
+    assert new_response.sections["brain"].subject_id == "openrouter"
+    assert new_response.sections["brain"].status == "ok"
+    assert old_response.sections["brain"].status == "ok"
+
+
 def test_list_providers_exposes_credential_help_and_billing(
     server_with_brain: WebServer, secret_store: _InMemorySecretStore
 ) -> None:

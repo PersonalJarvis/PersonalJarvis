@@ -331,6 +331,7 @@ export function useSectionHealth() {
       "jarvis:subagent-switched",
       "jarvis:agent-switched",
       "jarvis:provider-tested",
+      "jarvis:provider-config-changed",
       "jarvis:provider-selection-pending",
       "jarvis:provider-switch-failed",
     ];

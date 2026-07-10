@@ -105,6 +105,8 @@ export function BrainModelSelector({
   currentModel,
   recommendedModel,
   onSave,
+  healthSection,
+  healthActive = false,
   headingLabel,
   placeholder,
   controlled,
@@ -124,6 +126,11 @@ export function BrainModelSelector({
    * route. Defaults to ``saveBrainProviderModel(providerId, model)``.
    */
   onSave?: (model: string) => Promise<BrainModelSaveResult>;
+  /** Health section affected by this selection. When the provider is active,
+   * its obsolete result is hidden while the save/probe is in flight. */
+  healthSection?: "brain" | "tts" | "stt" | "computer-use" | "subagents";
+  /** Whether this picker belongs to the provider currently powering that section. */
+  healthActive?: boolean;
   /**
    * Override the section heading (e.g. "Computer-Use model"). Defaults to the
    * standard model/voice heading. Presentation only.
@@ -282,10 +289,37 @@ export function BrainModelSelector({
     setProbe(null);
     setOpen(false);
     setQuery("");
+    if (healthSection && healthActive) {
+      window.dispatchEvent(
+        new CustomEvent("jarvis:provider-selection-pending", {
+          detail: { section: healthSection, provider: providerId },
+        }),
+      );
+    }
     try {
       const res = onSave ? await onSave(model) : await saveBrainProviderModel(providerId, model);
       setPinned(res.model);
       setProbe(res.probe ?? null);
+      if (healthSection && healthActive) {
+        if (res.probe) {
+          window.dispatchEvent(
+            new CustomEvent("jarvis:provider-tested", {
+              detail: {
+                section: healthSection,
+                provider: res.provider,
+                active: true,
+                result: { provider: res.provider, ...res.probe },
+              },
+            }),
+          );
+        } else {
+          window.dispatchEvent(
+            new CustomEvent("jarvis:provider-config-changed", {
+              detail: { section: healthSection, provider: res.provider },
+            }),
+          );
+        }
+      }
       const note = res.restart_required
         ? ` ${t("apikeys_model.restart_note")}`
         : res.applied_live
@@ -293,6 +327,13 @@ export function BrainModelSelector({
           : "";
       pushToast("success", `${t("apikeys_model.saved")}${note}`);
     } catch (e) {
+      if (healthSection && healthActive) {
+        window.dispatchEvent(
+          new CustomEvent("jarvis:provider-switch-failed", {
+            detail: { section: healthSection, provider: providerId },
+          }),
+        );
+      }
       pushToast("error", (e as Error).message);
     } finally {
       setSaving(false);

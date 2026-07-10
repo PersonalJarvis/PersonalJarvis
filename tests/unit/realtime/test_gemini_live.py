@@ -11,8 +11,13 @@ from jarvis.plugins.realtime.gemini_live import GeminiLiveProvider, _GeminiLiveS
 from jarvis.realtime.protocol import RealtimeSessionConfig
 
 
-def _fake_message(*, data=None, server_content=None, go_away=None):
-    return SimpleNamespace(data=data, server_content=server_content, go_away=go_away)
+def _fake_message(*, data=None, server_content=None, tool_call=None, go_away=None):
+    return SimpleNamespace(
+        data=data,
+        server_content=server_content,
+        tool_call=tool_call,
+        go_away=go_away,
+    )
 
 
 @pytest.mark.asyncio
@@ -149,3 +154,66 @@ async def test_open_session_uses_current_default_model(
         "gemini-3.1-flash-live-preview"
     )
     await session.close()
+
+
+@pytest.mark.asyncio
+async def test_tools_are_declared_mapped_and_answered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holder = _patch_genai_client(monkeypatch)
+    declaration = {
+        "name": "open_app",
+        "description": "Open an application.",
+        "parameters": {
+            "type": "object",
+            "properties": {"app_name": {"type": "string"}},
+        },
+    }
+    provider_session = await GeminiLiveProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig(tools=(declaration,))
+    )
+    _model, config = holder["client"].aio.live.connect_calls[0]
+    dumped = config.model_dump(exclude_none=True)
+    assert dumped["tools"][0]["function_declarations"][0]["name"] == "open_app"
+
+    class FakeLiveSession:
+        def __init__(self):
+            self.responses = []
+
+        async def receive(self):
+            yield _fake_message(
+                tool_call=SimpleNamespace(
+                    function_calls=[
+                        SimpleNamespace(
+                            id="call-1",
+                            name="open_app",
+                            args={"app_name": "Calculator"},
+                        )
+                    ]
+                )
+            )
+
+        async def send_tool_response(self, *, function_responses):
+            self.responses.extend(function_responses)
+
+    live = FakeLiveSession()
+    mapped = _GeminiLiveSession(
+        session=live,
+        connection_cm=SimpleNamespace(),
+        client=SimpleNamespace(),
+        session_id="tool-session",
+    )
+    events = [event async for event in mapped.receive()]
+
+    assert events[0].type == "tool_call"
+    assert events[0].call_id == "call-1"
+    assert events[0].tool_args == {"app_name": "Calculator"}
+
+    await mapped.send_tool_result(
+        "call-1",
+        "open_app",
+        {"success": True, "output": "opened", "error": None},
+    )
+    assert live.responses[0].id == "call-1"
+    assert live.responses[0].name == "open_app"
+    await provider_session.close()

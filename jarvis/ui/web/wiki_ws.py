@@ -29,6 +29,7 @@ next fetch — there is no need to replay missed events here.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import TYPE_CHECKING
 
@@ -96,9 +97,38 @@ async def wiki_live(ws: WebSocket) -> None:
 
     bus.subscribe(WikiPageChanged, _on_event)
 
+    async def _reader() -> None:
+        """Purely detects client disconnect — no inbound frames are expected.
+
+        Without this, a tab closed while idle (no further wiki events) is
+        never noticed: the forwarding loop below only wakes up on
+        ``queue.get()``, so a subscriber + task would leak for the rest of
+        the server's lifetime. Racing this against the queue read (see the
+        ``asyncio.wait`` below) lets a disconnect interrupt an idle wait.
+        """
+        while True:
+            try:
+                await ws.receive_text()
+            except WebSocketDisconnect:
+                return
+            except RuntimeError:
+                # AP-20: an unclean disconnect raises RuntimeError, not
+                # WebSocketDisconnect — treat any read error as terminal.
+                return
+
+    reader_task = asyncio.create_task(_reader(), name="wiki_ws-reader")
     try:
         while True:
-            event = await queue.get()
+            get_task = asyncio.create_task(queue.get())
+            done, _pending = await asyncio.wait(
+                {reader_task, get_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if reader_task in done:
+                get_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await get_task
+                break
+            event = get_task.result()
             try:
                 await ws.send_json(
                     {
@@ -115,9 +145,10 @@ async def wiki_live(ws: WebSocket) -> None:
                 # mid-write — terminates the stream cleanly.
                 log.debug("wiki_ws: send failed (%s) — closing stream", exc)
                 break
-    except WebSocketDisconnect:
-        pass
     finally:
+        reader_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await reader_task
         # Always remove our subscription so the bus does not grow a
         # dead reference when the client disconnects.
         try:
