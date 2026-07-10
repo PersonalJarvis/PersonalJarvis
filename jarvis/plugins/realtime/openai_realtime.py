@@ -122,6 +122,9 @@ class _OpenAIRealtimeSession:
         self._events = connection.__aiter__()
         self.session_id = session_id
         self._last_item_id = ""
+        self._response_had_tool_calls = False
+        self._tool_response_done_seen = False
+        self._pending_tool_call_ids: set[str] = set()
         self._closed = False
 
     async def wait_until_ready(self) -> None:
@@ -177,6 +180,10 @@ class _OpenAIRealtimeSession:
             elif event_type == "input_audio_buffer.speech_started":
                 yield _ProviderEvent(type="speech_started")
             elif event_type == "response.function_call_arguments.done":
+                call_id = str(getattr(event, "call_id", "") or "")
+                self._response_had_tool_calls = True
+                if call_id:
+                    self._pending_tool_call_ids.add(call_id)
                 raw_arguments = str(getattr(event, "arguments", "") or "{}")
                 try:
                     arguments = json.loads(raw_arguments)
@@ -186,12 +193,16 @@ class _OpenAIRealtimeSession:
                     arguments = {}
                 yield _ProviderEvent(
                     type="tool_call",
-                    call_id=str(getattr(event, "call_id", "") or ""),
+                    call_id=call_id,
                     tool_name=str(getattr(event, "name", "") or ""),
                     tool_args=arguments,
                 )
             elif event_type == "response.done":
-                yield _ProviderEvent(type="turn_complete")
+                if self._response_had_tool_calls:
+                    self._tool_response_done_seen = True
+                    await self._continue_after_tools_if_ready()
+                else:
+                    yield _ProviderEvent(type="turn_complete")
             elif event_type == "error":
                 yield _ProviderEvent(type="error", error=_error_message(event))
 
@@ -226,6 +237,18 @@ class _OpenAIRealtimeSession:
                 "output": json.dumps(result, ensure_ascii=False, default=str),
             }
         )
+        self._pending_tool_call_ids.discard(call_id)
+        await self._continue_after_tools_if_ready()
+
+    async def _continue_after_tools_if_ready(self) -> None:
+        if (
+            not self._response_had_tool_calls
+            or not self._tool_response_done_seen
+            or self._pending_tool_call_ids
+        ):
+            return
+        self._response_had_tool_calls = False
+        self._tool_response_done_seen = False
         await self._conn.response.create()
 
     async def close(self) -> None:

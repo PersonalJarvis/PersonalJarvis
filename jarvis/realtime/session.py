@@ -14,6 +14,7 @@ from typing import Any
 from uuid import uuid4
 
 from jarvis.core.protocols import AudioChunk
+from jarvis.core.redact import safe_preview
 from jarvis.core.turn_language import resolve_output_language
 from jarvis.realtime.audio import StreamingPcm16Resampler
 from jarvis.realtime.protocol import RealtimeSessionConfig
@@ -22,6 +23,7 @@ from jarvis.realtime.scrub_gate import ScrubHoldGate
 log = logging.getLogger(__name__)
 
 _TRANSCRIPT_LOOKAHEAD_S = 0.250
+_TOOL_TRANSCRIPT_WAIT_S = 3.0
 _REALTIME_SAFETY_APPENDIX = (
     "This is a realtime spoken conversation. Never read tool JSON, function-call "
     "arguments, source code, stack traces, file paths, base64, or raw URLs aloud. "
@@ -111,6 +113,7 @@ class RealtimeVoiceSession:
         self._output_transcript: list[str] = []
         self._executed_tool_names: set[str] = set()
         self._pending_tool_events: list[Any] = []
+        self._tool_transcript_task: asyncio.Task[None] | None = None
 
     def _resolve_lang(self, *, text: str) -> str:
         brain = getattr(self._config, "brain", None)
@@ -191,7 +194,7 @@ class RealtimeVoiceSession:
                 session = await provider.open_session(session_config)
             except Exception as exc:  # noqa: BLE001 — cross to the next family
                 provider_id = str(getattr(provider, "name", "unknown") or "unknown")
-                detail = f"{type(exc).__name__}: {exc}"[:800]
+                detail = f"{type(exc).__name__}: {safe_preview(exc, max_chars=700)}"
                 self._provider_errors.append(f"{provider_id}: {detail}")
                 log.warning("Realtime provider %s handshake failed: %s", provider_id, detail)
                 try:
@@ -281,6 +284,7 @@ class RealtimeVoiceSession:
                         }
                     )
                     if event.is_final and self._pending_tool_events:
+                        self._cancel_tool_transcript_wait()
                         pending = self._pending_tool_events
                         self._pending_tool_events = []
                         for pending_event in pending:
@@ -324,10 +328,16 @@ class RealtimeVoiceSession:
                 elif event.type == "tool_call":
                     if not self._last_user_text:
                         self._pending_tool_events.append(event)
+                        if self._tool_transcript_task is None:
+                            self._tool_transcript_task = asyncio.create_task(
+                                self._reject_pending_tools_after_timeout(),
+                                name=f"rt-tool-transcript-{self.session_id}",
+                            )
                     else:
                         await self._handle_tool_call(event)
                 elif event.type == "turn_complete":
                     if self._pending_tool_events:
+                        self._cancel_tool_transcript_wait()
                         pending = self._pending_tool_events
                         self._pending_tool_events = []
                         for pending_event in pending:
@@ -341,7 +351,9 @@ class RealtimeVoiceSession:
                     self._output_active = False
                     self._output_samples_sent = 0
                 elif event.type == "error":
-                    message = str(event.error or "provider error")
+                    message = safe_preview(
+                        event.error or "provider error", max_chars=800
+                    )
                     self._failure_detail = message
                     self._failed.set()
                     log.warning("realtime[%s] provider error: %s", self.session_id, message)
@@ -352,17 +364,18 @@ class RealtimeVoiceSession:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — AP-20: pump error is terminal
-            self._failure_detail = str(exc) or "Realtime receive loop ended"
+            message = safe_preview(exc, max_chars=800) or "Realtime receive loop ended"
+            self._failure_detail = message
             self._failed.set()
             log.warning("realtime[%s] pump ended", self.session_id, exc_info=True)
             await self._publish_error(
                 type(exc).__name__,
-                str(exc) or "Realtime receive loop ended",
+                message,
                 recoverable=True,
             )
             try:
                 await self._send_json(
-                    {"type": "provider_error", "error": str(exc) or "receive loop ended"}
+                    {"type": "provider_error", "error": message}
                 )
             except Exception:  # noqa: BLE001, S110
                 pass
@@ -565,6 +578,24 @@ class RealtimeVoiceSession:
             },
         )
 
+    async def _reject_pending_tools_after_timeout(self) -> None:
+        try:
+            await asyncio.sleep(_TOOL_TRANSCRIPT_WAIT_S)
+            pending = self._pending_tool_events
+            self._pending_tool_events = []
+            for event in pending:
+                await self._reject_untranscribed_tool_call(event)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            self._tool_transcript_task = None
+
+    def _cancel_tool_transcript_wait(self) -> None:
+        task = self._tool_transcript_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._tool_transcript_task = None
+
     async def _emit_audio(self, chunk: Any) -> None:
         pcm = bytes(getattr(chunk, "pcm", b"") or b"")
         if not pcm:
@@ -605,6 +636,7 @@ class RealtimeVoiceSession:
             return
         self._ended = True
         self._cancel_release_task()
+        self._cancel_tool_transcript_wait()
         if self._pump_task is not None and not self._pump_task.done():
             self._pump_task.cancel()
             try:

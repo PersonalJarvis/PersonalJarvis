@@ -85,6 +85,25 @@ class _GeminiLiveSession:
                     audio=_PcmChunk(pcm=bytes(data), sample_rate=_OUTPUT_RATE),
                 )
 
+            tool_call = getattr(message, "tool_call", None)
+            function_calls = tuple(
+                getattr(tool_call, "function_calls", None) or ()
+            )
+            for function_call in function_calls:
+                raw_args = getattr(function_call, "args", None) or {}
+                if hasattr(raw_args, "model_dump"):
+                    raw_args = raw_args.model_dump()
+                try:
+                    args = dict(raw_args)
+                except (TypeError, ValueError):
+                    args = {}
+                yield _ProviderEvent(
+                    type="tool_call",
+                    call_id=str(getattr(function_call, "id", "") or ""),
+                    tool_name=str(getattr(function_call, "name", "") or ""),
+                    tool_args=args,
+                )
+
             content = getattr(message, "server_content", None)
             if content is not None:
                 output_transcription = getattr(content, "output_transcription", None)
@@ -103,24 +122,8 @@ class _GeminiLiveSession:
 
                 if bool(getattr(content, "interrupted", False)):
                     yield _ProviderEvent(type="interrupted")
-                if bool(getattr(content, "turn_complete", False)):
+                if bool(getattr(content, "turn_complete", False)) and not function_calls:
                     yield _ProviderEvent(type="turn_complete")
-
-            tool_call = getattr(message, "tool_call", None)
-            for function_call in getattr(tool_call, "function_calls", None) or ():
-                raw_args = getattr(function_call, "args", None) or {}
-                if hasattr(raw_args, "model_dump"):
-                    raw_args = raw_args.model_dump()
-                try:
-                    args = dict(raw_args)
-                except (TypeError, ValueError):
-                    args = {}
-                yield _ProviderEvent(
-                    type="tool_call",
-                    call_id=str(getattr(function_call, "id", "") or ""),
-                    tool_name=str(getattr(function_call, "name", "") or ""),
-                    tool_args=args,
-                )
 
             go_away = getattr(message, "go_away", None)
             if go_away is not None:

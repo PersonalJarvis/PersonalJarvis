@@ -217,3 +217,45 @@ async def test_tools_are_declared_mapped_and_answered(
     assert live.responses[0].id == "call-1"
     assert live.responses[0].name == "open_app"
     await provider_session.close()
+
+
+@pytest.mark.asyncio
+async def test_tool_call_suppresses_intermediate_turn_complete() -> None:
+    messages = [
+        _fake_message(
+            tool_call=SimpleNamespace(
+                function_calls=[
+                    SimpleNamespace(id="call-1", name="open_app", args={})
+                ]
+            ),
+            server_content=SimpleNamespace(
+                output_transcription=None,
+                input_transcription=None,
+                interrupted=False,
+                turn_complete=True,
+            ),
+        ),
+        _fake_message(
+            server_content=SimpleNamespace(
+                output_transcription=None,
+                input_transcription=None,
+                interrupted=False,
+                turn_complete=True,
+            )
+        ),
+    ]
+
+    async def fake_receive():
+        for message in messages:
+            yield message
+
+    session = _GeminiLiveSession(
+        session=SimpleNamespace(receive=fake_receive),
+        connection_cm=SimpleNamespace(),
+        client=SimpleNamespace(),
+        session_id="tool-turn",
+    )
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == ["tool_call", "turn_complete"]

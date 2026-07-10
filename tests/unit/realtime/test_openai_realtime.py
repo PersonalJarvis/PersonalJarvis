@@ -204,15 +204,17 @@ async def test_tools_are_declared_mapped_and_answered(monkeypatch: pytest.Monkey
                 call_id="call-1",
                 name="open_app",
                 arguments='{"app_name":"Calculator"}',
-            )
+            ),
+            SimpleNamespace(type="response.done"),
+            SimpleNamespace(type="response.done"),
         ]
     )
     session._events = conn.__aiter__()
-    events = [event async for event in session.receive()]
+    events = session.receive()
+    tool_event = await anext(events)
 
-    assert len(events) == 1
-    assert events[0].type == "tool_call"
-    assert events[0].tool_args == {"app_name": "Calculator"}
+    assert tool_event.type == "tool_call"
+    assert tool_event.tool_args == {"app_name": "Calculator"}
 
     await session.send_tool_result(
         "call-1",
@@ -221,5 +223,8 @@ async def test_tools_are_declared_mapped_and_answered(monkeypatch: pytest.Monkey
     )
     assert conn.created_items[0]["type"] == "function_call_output"
     assert conn.created_items[0]["call_id"] == "call-1"
+    assert conn.response_creates == 0
+    final_event = await anext(events)
+    assert final_event.type == "turn_complete"
     assert conn.response_creates == 1
     await session.close()

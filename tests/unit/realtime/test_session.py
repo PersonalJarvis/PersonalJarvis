@@ -67,6 +67,13 @@ class FailingProvider(FakeProvider):
         raise RuntimeError("simulated depleted credits")
 
 
+class LeakyFailingProvider(FakeProvider):
+    name = "leaky-family"
+
+    async def open_session(self, cfg):
+        raise RuntimeError("api_key=sk-proj-abcdefghijklmnopqrstuvwxyz123456")
+
+
 class FakeBus:
     def __init__(self):
         self.events = []
@@ -189,6 +196,60 @@ async def test_handshake_failure_crosses_to_next_provider_family():
         and message.get("provider") == "working-family"
         for message in jsons
     )
+
+
+@pytest.mark.asyncio
+async def test_fallback_status_redacts_credentials_from_provider_errors():
+    fallback = FakeProvider([])
+    messages = []
+    sess = RealtimeVoiceSession(
+        session_id="redacted-fallback",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: messages.append(message) or asyncio.sleep(0),
+        providers=[LeakyFailingProvider([]), fallback],
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.end(reason="test")
+
+    fallback_status = next(
+        message for message in messages if message.get("type") == "provider_fallback"
+    )
+    assert "abcdefghijklmnopqrstuvwxyz" not in fallback_status["error"]
+    assert "<redacted:" in fallback_status["error"]
+
+
+@pytest.mark.asyncio
+async def test_stream_error_redacts_credentials_before_browser_status():
+    messages = []
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="error",
+                error="Bearer abcdefghijklmnopqrstuvwxyz123456",
+            )
+        ]
+    )
+    sess = RealtimeVoiceSession(
+        session_id="redacted-stream-error",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: messages.append(message) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    error_status = next(
+        message for message in messages if message.get("type") == "provider_error"
+    )
+    assert "abcdefghijklmnopqrstuvwxyz" not in error_status["error"]
+    assert "<redacted:bearer_token>" in error_status["error"]
 
 
 @pytest.mark.asyncio
@@ -458,4 +519,38 @@ async def test_untranscribed_tool_call_is_rejected_without_execution():
 
     assert bridge.calls == []
     assert provider.session.tool_results[0][0:2] == ("call-2", "open_app")
+    assert provider.session.tool_results[0][2]["success"] is False
+
+
+@pytest.mark.asyncio
+async def test_untranscribed_tool_call_times_out_and_unblocks_provider(monkeypatch):
+    monkeypatch.setattr("jarvis.realtime.session._TOOL_TRANSCRIPT_WAIT_S", 0.01)
+    bridge = FakeToolBridge()
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="tool_call",
+                call_id="call-timeout",
+                tool_name="open_app",
+                tool_args={"app_name": "Calculator"},
+            )
+        ]
+    )
+    sess = RealtimeVoiceSession(
+        session_id="tool-transcript-timeout",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+        tool_bridge=bridge,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.03)
+    await sess.end(reason="test")
+
+    assert bridge.calls == []
+    assert provider.session.tool_results[0][0] == "call-timeout"
     assert provider.session.tool_results[0][2]["success"] is False
