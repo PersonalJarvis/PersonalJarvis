@@ -21,7 +21,9 @@ import logging
 import os
 import stat
 import sys
+import tempfile
 import threading
+import time
 from pathlib import Path
 
 import tomlkit
@@ -32,6 +34,7 @@ from .config import DEFAULT_CONFIG_FILE, PROJECT_ROOT
 log = logging.getLogger(__name__)
 
 _WRITE_LOCK = threading.Lock()
+_ATOMIC_REPLACE_RETRY_DELAYS_S = (0.0, 0.025, 0.05, 0.1, 0.2, 0.4)
 _BOM = "﻿"
 
 # Canonical User-scope ENV var that overrides ``[brain] primary`` at boot
@@ -690,7 +693,12 @@ def _ensure_writable_config_path(path: Path) -> Path:
     ``resolve_config_path()``; then create the file (+ parent) if absent so an
     in-app save/connect persists on EVERY OS instead of raising FileNotFoundError.
     """
-    from jarvis.core.config import DEFAULT_CONFIG_FILE as _DEFAULT, resolve_config_path
+    from jarvis.core.config import (
+        DEFAULT_CONFIG_FILE as _DEFAULT,
+    )
+    from jarvis.core.config import (
+        resolve_config_path,
+    )
 
     if path == _DEFAULT:
         path = resolve_config_path()
@@ -1494,8 +1502,7 @@ def _atomic_write(path: Path, content: str) -> None:
     verweigert``. We restore the flag in ``finally`` so the defense holds
     even if the write itself raises.
     """
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
+    tmp = _write_unique_temp(path, content)
 
     was_read_only = False
     if path.exists():
@@ -1505,11 +1512,63 @@ def _atomic_write(path: Path, content: str) -> None:
             os.chmod(path, mode | stat.S_IWRITE)
 
     try:
-        tmp.replace(path)
+        _replace_with_retry(tmp, path, ensure_target_writable=True)
     finally:
+        tmp.unlink(missing_ok=True)
         if was_read_only and path.exists():
             current_mode = path.stat().st_mode
             os.chmod(path, current_mode & ~stat.S_IWRITE)
+
+
+def _write_unique_temp(path: Path, content: str) -> Path:
+    """Write and flush a unique sibling tempfile for an atomic replacement.
+
+    A fixed ``jarvis.toml.tmp`` name is unsafe across processes: the desktop,
+    drift guard, and another CLI can overwrite or replace the same tempfile.
+    A unique file in the target directory preserves same-filesystem atomicity.
+    """
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        newline="",
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+        delete=False,
+    ) as handle:
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
+        return Path(handle.name)
+
+
+def _replace_with_retry(
+    tmp: Path,
+    path: Path,
+    *,
+    ensure_target_writable: bool,
+) -> None:
+    """Replace ``path`` atomically, tolerating short-lived sharing locks.
+
+    Windows antivirus, indexers, and concurrent config readers can hold the
+    destination briefly and surface ``PermissionError``/WinError 5 or 32. The
+    bounded retry is also safe on POSIX; other error classes still fail fast.
+    """
+    last_error: PermissionError | None = None
+    for delay_s in _ATOMIC_REPLACE_RETRY_DELAYS_S:
+        if delay_s:
+            time.sleep(delay_s)
+        if ensure_target_writable and path.exists():
+            current_mode = path.stat().st_mode
+            if not current_mode & stat.S_IWRITE:
+                os.chmod(path, current_mode | stat.S_IWRITE)
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
 
 
 # ----------------------------------------------------------------------
@@ -1585,7 +1644,7 @@ def _sync_computer_use_provider_drift_soll(name: str) -> None:  # i18n-allow
     ENV.
 
     NEVER raises and NEVER breaks the (already-completed) TOML write. Same
-    two-step shape as :func:`_sync_worker_provider_drift_soll`.  # i18n-allow: internal config-soll identifier ref
+    two-step shape as :func:`_sync_worker_provider_drift_soll`.  # i18n-allow: internal identifier
     """
     try:
         _update_config_soll_computer_use_provider(name)  # i18n-allow
@@ -1718,7 +1777,10 @@ def _update_config_soll_section(top: str, values: dict[str, object]) -> None:  #
     """
     soll_path = _config_soll_path()  # i18n-allow
     if not soll_path.exists():  # i18n-allow
-        log.debug("config-soll.json absent (%s) — skipping drift-soll sync", soll_path)  # i18n-allow
+        log.debug(
+            "config-soll.json absent (%s) — skipping drift-soll sync",  # i18n-allow
+            soll_path,  # i18n-allow: internal config-soll identifier
+        )
         return
 
     with _WRITE_LOCK:
@@ -1745,7 +1807,10 @@ def _update_config_soll_brain_primary(name: str) -> None:  # i18n-allow
     """
     soll_path = _config_soll_path()  # i18n-allow
     if not soll_path.exists():  # i18n-allow
-        log.debug("config-soll.json absent (%s) — skipping drift-soll sync", soll_path)  # i18n-allow
+        log.debug(
+            "config-soll.json absent (%s) — skipping drift-soll sync",  # i18n-allow
+            soll_path,  # i18n-allow: internal config-soll identifier
+        )
         return
 
     with _WRITE_LOCK:
@@ -1777,7 +1842,10 @@ def _update_config_soll_worker_provider(name: str) -> None:  # i18n-allow
     """
     soll_path = _config_soll_path()  # i18n-allow
     if not soll_path.exists():  # i18n-allow
-        log.debug("config-soll.json absent (%s) — skipping drift-soll sync", soll_path)  # i18n-allow
+        log.debug(
+            "config-soll.json absent (%s) — skipping drift-soll sync",  # i18n-allow
+            soll_path,  # i18n-allow: internal config-soll identifier
+        )
         return
 
     with _WRITE_LOCK:
@@ -1800,8 +1868,9 @@ def _update_config_soll_computer_use_provider(name: str) -> None:  # i18n-allow
     config-soll.json.  # i18n-allow
 
     Note the FLAT dotted key ``"brain.computer_use"`` — same layout as
-    ``"brain.worker"`` (see :func:`_update_config_soll_worker_provider`), NOT  # i18n-allow: internal config-soll identifier ref
-    a nested ``data["brain"]["computer_use"]``. Preserves all other keys.
+    ``"brain.worker"`` (see :func:`_update_config_soll_worker_provider`),  # i18n-allow
+    not a nested table.  # i18n-allow: internal config-soll identifier reference
+    Preserves all other keys.
     Graceful no-op when the file is absent.
     """
     soll_path = _config_soll_path()  # i18n-allow
@@ -1836,7 +1905,10 @@ def _update_config_soll_worker_key(key: str, value: str) -> None:  # i18n-allow
     """
     soll_path = _config_soll_path()  # i18n-allow
     if not soll_path.exists():  # i18n-allow
-        log.debug("config-soll.json absent (%s) — skipping drift-soll sync", soll_path)  # i18n-allow
+        log.debug(
+            "config-soll.json absent (%s) — skipping drift-soll sync",  # i18n-allow
+            soll_path,  # i18n-allow: internal config-soll identifier
+        )
         return
 
     with _WRITE_LOCK:
@@ -1860,9 +1932,11 @@ def _atomic_write_text(path: Path, content: str) -> None:
     Used for config-soll.json, which — unlike jarvis.toml — does not carry the  # i18n-allow
     BUG-010 read-only defense flag.
     """
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    tmp.replace(path)
+    tmp = _write_unique_temp(path, content)
+    try:
+        _replace_with_retry(tmp, path, ensure_target_writable=False)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _set_user_env_var(name: str, value: str) -> None:
