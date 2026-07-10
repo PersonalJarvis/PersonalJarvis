@@ -51,6 +51,8 @@ def _bare_bar(renderer_obj: object) -> tuple[JarvisBarOverlay, _FakeRoot]:
     bar._image_id = None
     bar._photo = None
     bar._last_frame_ns = 0
+    bar._static_tick_key = None
+    bar._static_tick_count = 0
     root = _FakeRoot()
     bar._root = root
     bar._canvas = _FakeCanvas()
