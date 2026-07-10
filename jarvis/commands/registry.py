@@ -145,9 +145,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             params=_provider_switch_params("brain", brain_switchable_only=True),
             ui_section="apikeys",
             voice_aliases={
-                "de": ("wechsle den brain-provider zu claude",),  # i18n-allow: STT input vocabulary
+                "de": ("wechsle den brain-provider zu claude",),  # i18n-allow: input vocab
                 "en": ("switch the brain provider to claude",),
-                "es": ("cambia el proveedor del cerebro a claude",),  # i18n-allow: STT input vocabulary
+                "es": ("cambia el proveedor del cerebro a claude",),  # i18n-allow: input vocab
             },
         ),
         AppCommand(
@@ -159,9 +159,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             params=_provider_switch_params("tts"),
             ui_section="apikeys",
             voice_aliases={
-                "de": ("wechsle die stimme zu elevenlabs",),  # i18n-allow: STT input vocabulary
+                "de": ("wechsle die stimme zu elevenlabs",),  # i18n-allow: input vocab
                 "en": ("switch the voice to elevenlabs",),
-                "es": ("cambia la voz a elevenlabs",),  # i18n-allow: STT input vocabulary
+                "es": ("cambia la voz a elevenlabs",),  # i18n-allow: input vocab
             },
         ),
         AppCommand(
@@ -176,9 +176,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             params=_provider_switch_params("stt"),
             ui_section="apikeys",
             voice_aliases={
-                "de": ("wechsle die spracherkennung zu deepgram",),  # i18n-allow: STT input vocabulary
+                "de": ("wechsle die spracherkennung zu deepgram",),  # i18n-allow: input vocab
                 "en": ("switch speech recognition to deepgram",),
-                "es": ("cambia el reconocimiento de voz a deepgram",),  # i18n-allow: STT input vocabulary
+                "es": ("cambia el reconocimiento de voz a deepgram",),  # i18n-allow: input vocab
             },
         ),
         AppCommand(
@@ -193,9 +193,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             params=_provider_switch_params("realtime"),
             ui_section="apikeys",
             voice_aliases={
-                "de": ("wechsle das realtime-modell zu gemini",),  # i18n-allow: STT input vocabulary
+                "de": ("wechsle das realtime-modell zu gemini",),  # i18n-allow: input vocab
                 "en": ("switch the realtime model to gemini",),
-                "es": ("cambia el modelo en tiempo real a gemini",),  # i18n-allow: STT input vocabulary
+                "es": ("cambia el modelo en tiempo real a gemini",),  # i18n-allow: input vocab
             },
         ),
         AppCommand(
@@ -210,9 +210,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             params=_provider_switch_params("brain"),
             ui_section="apikeys",
             voice_aliases={
-                "de": ("wechsle den computer-use-provider zu gemini",),  # i18n-allow: STT input vocabulary
+                "de": ("wechsle den computer-use-provider zu gemini",),  # i18n-allow: input vocab
                 "en": ("switch the computer use provider to gemini",),
-                "es": ("cambia el proveedor de computer use a gemini",),  # i18n-allow: STT input vocabulary
+                "es": ("cambia el proveedor de computer use a gemini",),  # i18n-allow: input vocab
             },
         ),
         AppCommand(
@@ -227,9 +227,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             params=_provider_switch_params("brain"),
             ui_section="agents",
             voice_aliases={
-                "de": ("wechsle den agent-provider zu openai",),  # i18n-allow: STT input vocabulary
+                "de": ("wechsle den agent-provider zu openai",),  # i18n-allow: input vocab
                 "en": ("switch the agent provider to openai",),
-                "es": ("cambia el proveedor del agente a openai",),  # i18n-allow: STT input vocabulary
+                "es": ("cambia el proveedor del agente a openai",),  # i18n-allow: input vocab
             },
         ),
         AppCommand(
@@ -240,9 +240,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             path="/api/providers",
             ui_section="apikeys",
             voice_aliases={
-                "de": ("welche provider sind konfiguriert",),  # i18n-allow: STT input vocabulary
+                "de": ("welche provider sind konfiguriert",),  # i18n-allow: input vocab
                 "en": ("which providers are configured",),
-                "es": ("qué proveedores están configurados",),  # i18n-allow: STT input vocabulary
+                "es": ("qué proveedores están configurados",),  # i18n-allow: input vocab
             },
         ),
         AppCommand(
@@ -264,9 +264,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             path_params=("provider_id",),
             ui_section="apikeys",
             voice_aliases={
-                "de": ("teste den openai-provider",),  # i18n-allow: STT input vocabulary
+                "de": ("teste den openai-provider",),  # i18n-allow: input vocab
                 "en": ("test the openai provider",),
-                "es": ("prueba el proveedor de openai",),  # i18n-allow: STT input vocabulary
+                "es": ("prueba el proveedor de openai",),  # i18n-allow: input vocab
             },
         ),
         # ------------------------------------------------- voice & language
@@ -294,9 +294,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             },
             ui_section="languages",
             voice_aliases={
-                "de": ("antworte ab jetzt auf englisch",),  # i18n-allow: STT input vocabulary
+                "de": ("antworte ab jetzt auf englisch",),  # i18n-allow: input vocab
                 "en": ("answer in german from now on",),
-                "es": ("responde en inglés a partir de ahora",),  # i18n-allow: STT input vocabulary
+                "es": ("responde en inglés a partir de ahora",),  # i18n-allow: input vocab
             },
         ),
         AppCommand(
@@ -321,9 +321,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             },
             ui_section="settings",
             voice_aliases={
-                "de": ("schalte auf den realtime-modus um",),  # i18n-allow: STT input vocabulary
+                "de": ("schalte auf den realtime-modus um",),  # i18n-allow: input vocab
                 "en": ("switch to realtime mode",),
-                "es": ("cambia al modo en tiempo real",),  # i18n-allow: STT input vocabulary
+                "es": ("cambia al modo en tiempo real",),  # i18n-allow: input vocab
             },
         ),
         AppCommand(
@@ -334,9 +334,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             path="/api/settings/wake-word",
             ui_section="settings",
             voice_aliases={
-                "de": ("wie lautet mein wake word",),  # i18n-allow: STT input vocabulary
+                "de": ("wie lautet mein wake word",),  # i18n-allow: input vocab
                 "en": ("what is my wake word",),
-                "es": ("cuál es mi palabra de activación",),  # i18n-allow: STT input vocabulary
+                "es": ("cuál es mi palabra de activación",),  # i18n-allow: input vocab
             },
         ),
         AppCommand(
@@ -356,9 +356,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             },
             ui_section="settings",
             voice_aliases={
-                "de": ("ändere mein wake word zu nova",),  # i18n-allow: STT input vocabulary
+                "de": ("ändere mein wake word zu nova",),  # i18n-allow: input vocab
                 "en": ("change my wake word to nova",),
-                "es": ("cambia mi palabra de activación a nova",),  # i18n-allow: STT input vocabulary
+                "es": ("cambia mi palabra de activación a nova",),  # i18n-allow: input vocab
             },
         ),
         AppCommand(
@@ -383,9 +383,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             },
             ui_section="settings",
             voice_aliases={
-                "de": ("stell die lautstärke auf 50 prozent",),  # i18n-allow: STT input vocabulary
+                "de": ("stell die lautstärke auf 50 prozent",),  # i18n-allow: input vocab
                 "en": ("set the voice volume to 50 percent",),
-                "es": ("pon el volumen de la voz al 50 por ciento",),  # i18n-allow: STT input vocabulary
+                "es": ("pon el volumen de la voz al 50 por ciento",),  # i18n-allow: input vocab
             },
         ),
         AppCommand(
@@ -396,9 +396,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             path="/api/settings/audio-devices",
             ui_section="settings",
             voice_aliases={
-                "de": ("welche audiogeräte gibt es",),  # i18n-allow: STT input vocabulary
+                "de": ("welche audiogeräte gibt es",),  # i18n-allow: input vocab
                 "en": ("list my audio devices",),
-                "es": ("qué dispositivos de audio hay",),  # i18n-allow: STT input vocabulary
+                "es": ("qué dispositivos de audio hay",),  # i18n-allow: input vocab
             },
         ),
         # ----------------------------------------------------------- system
@@ -411,9 +411,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             dangerous=True,
             ui_section="settings",
             voice_aliases={
-                "de": ("starte jarvis neu",),  # i18n-allow: STT input vocabulary
+                "de": ("starte jarvis neu",),  # i18n-allow: input vocab
                 "en": ("restart jarvis",),
-                "es": ("reinicia jarvis",),  # i18n-allow: STT input vocabulary
+                "es": ("reinicia jarvis",),  # i18n-allow: input vocab
             },
         ),
         # ----------------------------------------------- missions & tasks
@@ -425,9 +425,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             path="/api/missions",
             ui_section="agents",
             voice_aliases={
-                "de": ("zeig mir die missionen",),  # i18n-allow: STT input vocabulary
+                "de": ("zeig mir die missionen",),  # i18n-allow: input vocab
                 "en": ("show me the missions",),
-                "es": ("muéstrame las misiones",),  # i18n-allow: STT input vocabulary
+                "es": ("muéstrame las misiones",),  # i18n-allow: input vocab
             },
         ),
         AppCommand(
@@ -447,9 +447,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             dangerous=True,
             ui_section="agents",
             voice_aliases={
-                "de": ("brich die mission ab",),  # i18n-allow: STT input vocabulary
+                "de": ("brich die mission ab",),  # i18n-allow: input vocab
                 "en": ("cancel the mission",),
-                "es": ("cancela la misión",),  # i18n-allow: STT input vocabulary
+                "es": ("cancela la misión",),  # i18n-allow: input vocab
             },
         ),
         AppCommand(
@@ -460,9 +460,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             path="/api/tasks",
             ui_section="tasks",
             voice_aliases={
-                "de": ("zeig mir meine aufgaben",),  # i18n-allow: STT input vocabulary
+                "de": ("zeig mir meine aufgaben",),  # i18n-allow: input vocab
                 "en": ("show me my tasks",),
-                "es": ("muéstrame mis tareas",),  # i18n-allow: STT input vocabulary
+                "es": ("muéstrame mis tareas",),  # i18n-allow: input vocab
             },
         ),
         AppCommand(
@@ -482,9 +482,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             dangerous=True,
             ui_section="tasks",
             voice_aliases={
-                "de": ("brich die aufgabe ab",),  # i18n-allow: STT input vocabulary
+                "de": ("brich die aufgabe ab",),  # i18n-allow: input vocab
                 "en": ("cancel the task",),
-                "es": ("cancela la tarea",),  # i18n-allow: STT input vocabulary
+                "es": ("cancela la tarea",),  # i18n-allow: input vocab
             },
         ),
     )
