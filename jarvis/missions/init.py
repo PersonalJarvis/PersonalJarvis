@@ -644,6 +644,85 @@ def _cross_family_last_resort_worker(task_text: str) -> Any | None:
     return None
 
 
+def _resolve_api_agent_worker(provider: str, task_text: str) -> Any:
+    """Worker for an ``api_agent``-kind subagent provider (openai / openrouter /
+    nvidia run ON their OWN provider via the in-process ApiAgentWorker).
+
+    Viability-gated (not existence-gated, ``_api_key_family_viable``): a bare
+    key-existence check re-picked a family a worker already proved
+    quota-depleted / auth-dead every single critic round instead of crossing
+    to a healthy one (BUG-042 twin, AP-22). When the provider is not viable,
+    tries the user's other provider families before the honest Claude last
+    resort — never a guaranteed-fail worker.
+    """
+    try:
+        has_key = _api_key_family_viable(provider)
+    except Exception:  # noqa: BLE001 — any resolve failure => no usable key
+        has_key = False
+    if has_key:
+        logger.info(
+            "Mission worker -> ApiAgentWorker on %r (in-process tool-use "
+            "loop over the provider's own API, writes files in the worktree).",
+            provider,
+        )
+        return ApiAgentWorker(provider)
+    logger.warning(
+        "Mission worker: subagent provider %r has no API key configured, "
+        "so it cannot run — trying the user's other provider families "
+        "before the Claude last resort (open-source AP-22/AP-23).",
+        provider,
+    )
+    cross = _cross_family_last_resort_worker(task_text)
+    if cross is not None:
+        return cross
+    return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers(task_text=task_text))
+
+
+def _resolve_codex_dead_login_worker(task_text: str) -> Any:
+    """Worker to use when the codex ChatGPT login is flagged dead this session
+    (``kind == "codex_direct"`` and ``codex_needs_reauth()`` is True).
+
+    Mirrors ``_resolve_api_agent_worker`` / the claude_direct branch's Claude
+    viability gates (CLI binary + auth, quota cooldown, or an Anthropic API
+    key) instead of handing back an unconditional ``ClaudeDirectWorker`` —
+    and crosses to another provider family when Claude itself is not
+    reachable either (open-source AP-22/AP-23).
+    """
+    from jarvis.claude_quota_state import claude_in_quota_cooldown
+    from jarvis.missions.workers.claude_direct_worker import _resolve_claude_binary
+
+    if _resolve_claude_binary() is None and _api_key_family_viable("claude-api"):
+        logger.info(
+            "Mission worker -> ApiAgentWorker('claude-api'): codex login is "
+            "dead and no `claude` CLI binary is present, running in-process "
+            "on the Anthropic API key."
+        )
+        return ApiAgentWorker("claude-api")
+    claude_cli_ready = (
+        _resolve_claude_binary() is not None
+        and _claude_cli_auth_viable()
+        and not claude_in_quota_cooldown()
+    )
+    if claude_cli_ready:
+        logger.warning(
+            "Mission worker -> ClaudeDirectWorker: codex ChatGPT login "
+            "is flagged dead this session — running on Claude Max until "
+            "`codex login` restores it (avoids the dead-provider double "
+            "fallback)."
+        )
+        return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers(task_text=task_text))
+    logger.warning(
+        "Mission worker: codex login is dead and Claude is not reachable "
+        "either (no CLI auth, quota cooldown, or no Anthropic key) — "
+        "crossing provider families instead of a guaranteed-fail worker "
+        "(open-source AP-22/AP-23)."
+    )
+    cross = _cross_family_last_resort_worker(task_text)
+    if cross is not None:
+        return cross
+    return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers(task_text=task_text))
+
+
 async def bootstrap_missions(
     *,
     db_path: Path,
@@ -781,7 +860,11 @@ async def bootstrap_missions(
     _spawn_boot_cleanup(_bg_worktree_sweep(), name="mission-boot-worktree-sweep")
 
     # 5. CriticRunner
-    critic_runner = CriticRunner()
+    # Same containment job factory the orchestrator (Kontrollierer) uses for
+    # workers below (AP-10) — a critic subprocess (claude-direct / codex-direct)
+    # previously escaped every ambient job (create_worker_subprocess sets
+    # CREATE_BREAKAWAY_FROM_JOB) and never got one of its own.
+    critic_runner = CriticRunner(job_factory=_default_job_factory)
 
     # 6. MissionDecomposer
     decomposer = MissionDecomposer(brain=brain_caller)
@@ -1052,17 +1135,13 @@ async def bootstrap_missions(
             from jarvis.codex_auth_state import codex_needs_reauth
 
             if codex_needs_reauth():
-                logger.warning(
-                    "Mission worker -> ClaudeDirectWorker: codex ChatGPT login "
-                    "is flagged dead this session — running on Claude Max until "
-                    "`codex login` restores it (avoids the dead-provider double "
-                    "fallback)."
+                # Mirror of the claude_direct branch above (open-source
+                # AP-22/AP-23): a dead codex login must not hand back an
+                # unconditional ClaudeDirectWorker — see
+                # `_resolve_codex_dead_login_worker`.
+                return _resolve_codex_dead_login_worker(
+                    getattr(step, "prompt", "") or ""
                 )
-                return ClaudeDirectWorker(
-                mcp_servers=_assemble_worker_mcp_servers(
-                    task_text=getattr(step, "prompt", "") or ""
-                )
-            )
             return CodexDirectWorker()
         if kind == "antigravity":
             # "antigravity" (Google subscription): drive the official `agy` CLI
@@ -1080,40 +1159,12 @@ async def bootstrap_missions(
             )
             return GoogleCliWorker()
         if kind == "api_agent":
-            # grok / openai / openrouter: run ON the selected provider via the
-            # in-process ApiAgentWorker. Honest credential gate — if no API key
-            # is configured the provider CANNOT run, so fall back to Claude Max
-            # (mission still completes) instead of spawning a guaranteed-fail
-            # worker (e.g. openai/openrouter with no key).
+            # grok / openai / openrouter / nvidia: run ON the selected
+            # provider via the in-process ApiAgentWorker — see
+            # `_resolve_api_agent_worker` (viability-gated, cross-family
+            # fallback, honest Claude last resort).
             provider = live_provider or ""
-            try:
-                from jarvis.core import config as _cfg
-
-                ep = _cfg.resolve_provider_endpoint(provider, vendor_default_base_url="")
-                has_key = bool(getattr(ep, "credential", None))
-            except Exception:  # noqa: BLE001 — any resolve failure => no usable key
-                has_key = False
-            if has_key:
-                logger.info(
-                    "Mission worker -> ApiAgentWorker on %r (in-process tool-use "
-                    "loop over the provider's own API, writes files in the worktree).",
-                    provider,
-                )
-                return ApiAgentWorker(provider)
-            logger.warning(
-                "Mission worker: subagent provider %r has no API key configured, "
-                "so it cannot run — trying the user's other provider families "
-                "before the Claude last resort (open-source AP-22/AP-23).",
-                provider,
-            )
-            cross = _cross_family_last_resort_worker(getattr(step, "prompt", "") or "")
-            if cross is not None:
-                return cross
-            return ClaudeDirectWorker(
-                mcp_servers=_assemble_worker_mcp_servers(
-                    task_text=getattr(step, "prompt", "") or ""
-                )
-            )
+            return _resolve_api_agent_worker(provider, getattr(step, "prompt", "") or "")
         if kind == "gemini":
             # B4 (open-source AP-22): no Gemini CLI but a Gemini API key → run the
             # heavy worker IN-PROCESS via ApiAgentWorker instead of failing on the
