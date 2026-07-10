@@ -312,7 +312,7 @@ export function useSectionHealth() {
             detail.provider_label ?? detail.result.provider,
           ),
         }));
-      } else {
+      } else if (event.type !== "jarvis:provider-tested") {
         clearSection(section);
       }
 

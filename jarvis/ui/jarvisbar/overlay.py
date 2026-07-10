@@ -67,6 +67,55 @@ AUDIBLE_HOLD_S = 0.5
 WATCHDOG_INTERVAL_MS = 1000
 FRAME_STALL_THRESHOLD_NS = 2_000_000_000  # 2 s of silence ⇒ the loop is dead
 
+# Frame pacing (BUG: "JarvisBar stutters" forensic, 2026-07-10). A 41s GIF
+# capture frame-diffed to only ~5 visual updates/second on average, in a
+# burst-then-freeze pattern (freezes up to 1.25s). Measured root causes, on
+# this machine:
+#
+# 1. The bar's window style itself (frameless + ``-topmost`` + a color-key
+#    ``-transparentcolor`` + a translucent ``-alpha``) is a Windows *layered*
+#    window; every ``ImageTk.PhotoImage``/``itemconfig`` swap makes DWM
+#    recomposite it. A benchmark that swaps a CONSTANT-COLOR image on an
+#    identically-styled window (zero render work) still only reached ~31
+#    updates/s against an ``after(16)`` (60fps) schedule — a ~15ms fixed
+#    per-tick compositing tax, independent of what gets drawn. So the 60fps
+#    target was already unreachable on this window style even at zero cost.
+#    The idle pill draws NOTHING beyond its at-rest background (see
+#    ``renderer.render``'s idle branch), so idle-at-rest frames are paying
+#    that compositing tax for a BYTE-IDENTICAL image every single tick — pure
+#    waste. ``_IDLE_SETTLE_TICKS`` below skips the render/PhotoImage/
+#    itemconfig work once the resting pill has visibly settled.
+# 2. A background thread holding the GIL (simulating wake-poll/other Python
+#    work sharing this process) collapsed the SAME loop to ~4-5 renders/s
+#    with 250-360ms gaps — matching the GIF's freeze pattern. This is GIL/CPU
+#    contention from OTHER threads in the process; no delay-scheduling choice
+#    made here can prevent it (a Windows thread-priority raise for the Tk
+#    thread was benchmarked too and showed no measurable improvement against
+#    pure GIL contention, so it is deliberately NOT used). What this loop CAN
+#    do is shrink its own contribution to that contention — the idle-skip
+#    above is the main lever, and adaptive pacing (below) prevents an
+#    occasional slow render (measured up to ~30ms in "think"+hovered mode)
+#    from compounding into an even longer visible gap.
+#
+# Idle-static skip: once the resting pill's eased size has stopped changing
+# (ease() with factor 0.5 converges to sub-pixel precision within a handful
+# of ticks; 30 is a generous margin) AND the state is idle/not-hovered/
+# not-muted (draws nothing — see renderer.render), every further tick would
+# repaint the exact same pixels. Skipped ticks still stamp the heartbeat and
+# re-arm the loop, so the watchdog/self-healing contract is untouched — only
+# the render()/PhotoImage()/itemconfig() work is skipped.
+_IDLE_SETTLE_TICKS = 30
+
+# Adaptive pacing: the nominal target stays 16ms (~60fps aspirational — the
+# real ceiling is lower, see above), but the actual next delay is derived
+# from how long THIS tick took, not a blind constant. In the common case
+# (render cost << 16ms) this is indistinguishable from the old fixed delay.
+# It only matters after an unusually slow tick, where it schedules the next
+# one sooner instead of adding a full 16ms on top of the overrun — this
+# bounds how much a single slow frame can widen the gap to the next one.
+TARGET_FRAME_MS = 16
+MIN_FRAME_DELAY_MS = 1
+
 
 def _primary_work_area() -> tuple[int, int, int, int] | None:
     """Primary-monitor work area (left, top, right, bottom) EXCLUDING the
@@ -118,6 +167,12 @@ class JarvisBarOverlay:
         # revival watchdog compares against this to tell a living loop from a
         # silently-dead one. 0 = "no frame has run yet" → the watchdog holds off.
         self._last_frame_ns = 0
+        # Idle-static skip bookkeeping (see _IDLE_SETTLE_TICKS docstring above
+        # _schedule_frame): tracks how many consecutive ticks have shared the
+        # same (effective_mode, hovered, muted) key, so a settled idle pill's
+        # repaint can be skipped once its eased size has stopped moving.
+        self._static_tick_key: tuple[str, bool, bool] | None = None
+        self._static_tick_count = 0
         self._root: Any = None
         self._canvas: Any = None
         self._renderer: renderer.JarvisBarRenderer | None = None

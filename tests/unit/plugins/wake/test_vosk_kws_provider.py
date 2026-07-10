@@ -11,12 +11,16 @@ up. What is pinned here:
 - Near-silent candidates are rejected on raw ENERGY (never transcript).
 - A confirm infrastructure error fails OPEN (never eats a real wake).
 - The wake detector yields the canonical keyword, never transcript text.
+- The grammar re-score and the free decode run CONCURRENTLY (spawn-latency
+  mission 2026-07-10): they are independent passes over the same audio, so
+  paying their SUM instead of their MAX is a pure latency regression.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import sys
+import time
 import types
 from collections.abc import AsyncIterator
 
@@ -243,3 +247,82 @@ async def test_cooldown_suppresses_immediate_refire(fake_vosk) -> None:
     fired = await _run_detect(p, [_chunk() for _ in range(24)])
     assert fired == ["nova"]  # second grammar hit lands inside the cooldown
     assert p.stats()["suppressed_cooldown"] >= 1
+
+
+# --- latency: concurrent grammar re-score + free decode ------------------------
+
+
+class _SlowFakeRecognizer:
+    """Recognizer whose ``FinalResult()`` sleeps, to prove the grammar
+    re-score and the free decode run CONCURRENTLY rather than sequentially.
+
+    Grammar mode re-hears the phrase with a passing confidence; free mode
+    returns a sound-close transcript at the same span, so
+    ``_verify_candidate`` legitimately CONFIRMS — this test only cares about
+    the WALL-CLOCK time the call took, not the decision content (that is
+    covered by the tests above).
+    """
+
+    SLEEP_S = 0.12
+
+    def __init__(self, model, rate, grammar=None):  # noqa: ANN001
+        self._model = model
+        self._grammar = grammar
+
+    def SetWords(self, flag):  # noqa: ANN001, N802
+        pass
+
+    def AcceptWaveform(self, pcm):  # noqa: ANN001, N802
+        return False
+
+    def PartialResult(self):  # noqa: N802
+        return json.dumps({"partial": ""})
+
+    def Result(self):  # noqa: N802
+        return json.dumps({"text": ""})
+
+    def FinalResult(self):  # noqa: N802
+        # time.sleep releases the GIL — this stands in for a real vosk decode
+        # call, which likewise releases the GIL during its C++ work.
+        time.sleep(self.SLEEP_S)
+        if self._grammar is not None:
+            phrase = self._model.phrase.lower()
+            return json.dumps({
+                "text": phrase,
+                "result": _timed_words(phrase, self._model.grammar_conf),
+            })
+        return json.dumps({
+            "text": self._model.free_text,
+            "result": _timed_words(self._model.free_text, 0.9),
+        })
+
+
+def test_verify_candidate_runs_grammar_and_free_decode_concurrently(monkeypatch) -> None:
+    mod = types.ModuleType("vosk")
+    state = {"model": None}
+
+    def _model_factory(path):  # noqa: ANN001
+        state["model"] = _FakeModel(path)
+        return state["model"]
+
+    mod.Model = _model_factory
+    mod.KaldiRecognizer = _SlowFakeRecognizer
+    mod.SetLogLevel = lambda *_a: None
+    monkeypatch.setitem(sys.modules, "vosk", mod)
+
+    p = VoskKwsProvider("Hey Nova", model_path="fake", keyword="nova")
+    p._ensure_model()  # noqa: SLF001
+    window = np.full(48000, 0.2, dtype=np.float32)
+
+    t0 = time.perf_counter()
+    result = p._verify_candidate(window)  # noqa: SLF001
+    elapsed = time.perf_counter() - t0
+
+    assert result is True
+    # Sequential execution would cost >= 2 * SLEEP_S (~0.24 s). A generous
+    # margin (1.7x one sleep) leaves headroom for scheduler jitter while
+    # still failing hard on a regression back to sequential calls.
+    assert elapsed < _SlowFakeRecognizer.SLEEP_S * 1.7, (
+        f"_verify_candidate took {elapsed:.3f}s — looks SEQUENTIAL "
+        f"(~2x{_SlowFakeRecognizer.SLEEP_S}s), not concurrent"
+    )

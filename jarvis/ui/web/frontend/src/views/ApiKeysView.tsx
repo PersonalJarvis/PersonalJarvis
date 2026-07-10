@@ -1193,7 +1193,12 @@ function ProviderCard({
       {/* Footer: the live connectivity test, visually separated from the
           configuration body so "set up" and "verify" read as two steps. */}
       <div className="border-t border-border/60 pt-2.5">
-        <ProviderTestControl providerId={descriptor.id} />
+        <ProviderTestControl
+          providerId={descriptor.id}
+          providerLabel={descriptor.label}
+          section={descriptor.tier}
+          active={descriptor.active}
+        />
       </div>
     </div>
   );
@@ -1219,29 +1224,56 @@ const TEST_STATUS_TONE: Record<ProviderTestStatus, string> = {
  * the API-Keys view was missing: the green "configured" badge only ever meant a
  * key STRING was stored, never that the provider answers.
  */
-function ProviderTestControl({ providerId }: { providerId: string }) {
+function ProviderTestControl({
+  providerId,
+  providerLabel,
+  section,
+  active,
+}: {
+  providerId: string;
+  providerLabel: string;
+  section: ProviderTier;
+  active: boolean;
+}) {
   const t = useT();
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<ProviderTestResult | null>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+
+  function publish(next: ProviderTestResult) {
+    window.dispatchEvent(
+      new CustomEvent("jarvis:provider-tested", {
+        detail: {
+          section,
+          provider: providerId,
+          provider_label: providerLabel,
+          active: activeRef.current,
+          result: next,
+        },
+      }),
+    );
+  }
 
   async function run() {
     setRunning(true);
     setResult(null);
     try {
-      setResult(await testProvider(providerId));
+      const next = await testProvider(providerId);
+      setResult(next);
+      publish(next);
     } catch (e) {
-      setResult({
+      const next: ProviderTestResult = {
         provider: providerId,
         status: "error",
         detail: (e as Error).message,
         latency_ms: 0,
         integration_ok: false,
-      });
+      };
+      setResult(next);
+      publish(next);
     } finally {
       setRunning(false);
-      // Let the tab indicators re-check: if this was the active provider, its
-      // tab dot should reflect the fresh result instead of a stale cached one.
-      window.dispatchEvent(new Event("jarvis:provider-tested"));
     }
   }
 
