@@ -441,6 +441,13 @@ class WebServer:
 
         self._register_static_or_spa(app)
 
+        # Publish the live app for in-process consumers: the app-command brain
+        # tool executes Command-Registry commands through it via ASGI transport
+        # (same routes + validation as the UI, no TCP).
+        from jarvis.core import runtime_refs
+
+        runtime_refs.set_web_app(app)
+
         return app
 
     async def _voice_ready_watchdog(self, deadline_s: float = 45.0) -> None:

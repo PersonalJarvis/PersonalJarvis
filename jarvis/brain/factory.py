@@ -78,6 +78,13 @@ ROUTER_TOOLS = frozenset({
     # frontend listener moves the UI. Pure UI action, risk safe, NO spawn —
     # never in a worker set (AP-5/AP-14). See ADR-0011 amendment "Navigate tool".
     "navigate",
+    # Command Registry executor (2026-07-09): run ONE curated app command
+    # (jarvis/commands/registry.py) through the SAME REST endpoint the UI
+    # uses, in-process via ASGI transport. Enum-constrained command_id +
+    # schema-validated args; dangerous commands escalate to risk "ask"
+    # (two-turn voice confirm). Direct gated action, never a spawn — never in
+    # a worker set (AP-5/AP-14). See ADR-0011 amendment "app-command tool".
+    "app-command",
     # Phase A1: synchronous state read on the AwarenessManager (Plan §5).
     # NO brain call, NO IO — property read only.
     "awareness-snapshot",

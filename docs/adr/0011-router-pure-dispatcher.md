@@ -759,3 +759,46 @@ present (`warn_if_phantom_openclaw`).
 - `tests/unit/core/test_capabilities.py::test_dispatch_to_harness_capability_removed`
   / `::test_no_capability_advertises_openclaw` / `::test_harness_adapters_present`
 - `tests/integration/test_dispatch_to_harness.py::test_unknown_harness_returns_neutral_error_no_inventory_leak`
+
+## Amendment — `app-command` tool (Command Registry executor, 2026-07-09)
+
+**Context.** Voice-driven app control had three uneven paths: the deterministic
+pre-LLM gates (fast, but only for a hand-picked set), the self-mod
+`set_config_value` tools, and free-form `cli_jarvisctl` strings composed by the
+LLM — the least-validated route and the primary source of "the command did
+something else" failures. Meanwhile the app's command surface lived in four
+independent, hand-maintained registries (UI nav, CLI, brain tools, mirrored
+constants — the AP-4 drift class).
+
+**Decision.** `ROUTER_TOOLS` gains **`app-command`**
+(`jarvis/plugins/tool/app_command.py`): a single structured executor over the
+new Command Registry (`jarvis/commands/registry.py`). Constraints:
+
+- `command_id` is **enum-constrained** to the curated registry — the LLM cannot
+  invent a target; arguments are validated against the command's JSON schema
+  BEFORE anything is sent.
+- Execution goes through the SAME mounted REST endpoint the desktop UI uses,
+  in-process via httpx `ASGITransport` (`runtime_refs.get_web_app()`) — one
+  validation chain for voice, UI, and CLI.
+- Registry commands flagged `dangerous` escalate to risk tier `ask` via
+  `risk_tier_for_args` (ToolExecutor two-turn voice confirm); the rest run at
+  `monitor`.
+- The readback is composed from the SERVER RESPONSE (echo-verify), never from
+  the model's intent.
+- **No spawn path:** mission dispatch is deliberately NOT a registry command
+  (spawning stays with `spawn-worker`); `app-command` is a direct gated action
+  and must never enter a worker tool set (AP-5/AP-14).
+
+The deterministic pre-LLM gates stay untouched — they remain the zero-latency
+first line; `app-command` covers the validated long tail. `cli_jarvisctl`
+remains as fallback for actions outside the registry.
+
+### Regression guards
+
+- `tests/unit/brain/test_routing.py::test_router_tools_is_pure_dispatcher_set`
+  (exact-match set updated to include `app-command`)
+- `tests/unit/brain/test_routing.py::test_factory_wires_app_command_into_router_set`
+- `tests/unit/plugins/tool/test_app_command.py` — schema/enum validation,
+  ASGI execution against a fake app, dangerous→ask escalation, server-response
+  readback, honest no-server error.
+- `tests/unit/commands/test_registry_parity.py` — registry↔OpenAPI/UI parity.

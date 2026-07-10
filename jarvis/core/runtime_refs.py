@@ -80,6 +80,23 @@ def get_mcp_registry() -> Any | None:
     return _MCP_REGISTRY[0] if _MCP_REGISTRY else None
 
 
+# The live FastAPI app (set by WebServer._build_app). The ``app-command`` tool
+# executes Command-Registry commands through it in-process (httpx ASGI
+# transport — full route validation, no TCP), so a voice command runs the
+# exact same code path as the UI button for the same action.
+_WEB_APP: list[Any] = []
+
+
+def set_web_app(app: Any) -> None:
+    """Register the live FastAPI app (called from the WebServer build)."""
+    _set(_WEB_APP, app)
+
+
+def get_web_app() -> Any | None:
+    """The live FastAPI app, or ``None`` before the server is built."""
+    return _WEB_APP[0] if _WEB_APP else None
+
+
 # Wake-model load coordination (boot speed). When a CUSTOM wake phrase boots,
 # the light base/cpu wake model load competes for CPU/disk with non-urgent
 # boot-storm housekeeping (the deferred DocRegistry/SkillRegistry disk scans).
@@ -185,6 +202,7 @@ def _reset_for_tests() -> None:
     _BRAIN_MANAGER.clear()
     _SPEECH_PIPELINE.clear()
     _MCP_REGISTRY.clear()
+    _WEB_APP.clear()
     _ACTIVE_CHAT_TURN.clear()
     _WAKE_MODEL_EXPECTED.clear()
     _WAKE_MODEL_READY.clear()

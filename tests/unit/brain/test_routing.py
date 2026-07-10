@@ -884,6 +884,37 @@ def test_factory_wires_navigate_into_router_set() -> None:
     assert tools["navigate"].risk_tier == "safe"
 
 
+def test_factory_wires_app_command_into_router_set() -> None:
+    """End-to-end wiring for the app-command tool: entry-point + ROUTER_TOOLS +
+    default construction. A missing entry-point line or a failing registry
+    import would silently drop the Command Registry from the router schema."""
+    from jarvis.brain.factory import _load_tools_for_tier
+
+    tools = _load_tools_for_tier(
+        "router",
+        bus=EventBus(),
+        executor=None,
+        harness_manager=None,
+        user_profile=None,
+        people=None,
+        config=JarvisConfig(),
+    )
+
+    assert "app-command" in tools
+    tool = tools["app-command"]
+    assert tool.name == "app-command"
+    assert tool.risk_tier == "monitor"
+    # Dangerous registry commands escalate to the two-turn confirm tier.
+    assert tool.risk_tier_for_args({"command_id": "app-restart"}) == "ask"
+    assert tool.risk_tier_for_args({"command_id": "brain-switch"}) == "monitor"
+    # The command ids the LLM may pick are enum-pinned to the registry.
+    from jarvis.commands.registry import get_registry
+
+    assert set(tool.schema["properties"]["command_id"]["enum"]) == {
+        c.id for c in get_registry()
+    }
+
+
 def test_inspect_pointer_is_not_a_spawn_in_local_action_set() -> None:
     """The AI-Pointer tool is a router-tier read, never in the worker fast-path."""
     from jarvis.brain.factory import _load_local_action_tools
@@ -1602,6 +1633,11 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # voice/chat. Pure UI action (risk safe), publishes NavigateSidebar,
             # never a spawn (AP-5/AP-14). See ADR-0011 amendment "Navigate tool".
             "navigate",
+            # Command Registry executor (2026-07-09): one curated app command
+            # through the same REST endpoint the UI uses (in-process ASGI).
+            # Enum-constrained + schema-validated; dangerous -> risk "ask".
+            # Never a spawn (AP-5/AP-14). ADR-0011 amendment "app-command tool".
+            "app-command",
             "awareness-snapshot",
             # Awareness Phase A3 (BM25 search over recent episode log).
             "awareness-recall",

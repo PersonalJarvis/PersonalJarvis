@@ -1641,12 +1641,15 @@ _SELF_CONTROL_NOUN_RE = re.compile(
 _SELF_CONTROL_DIRECTIVE = (
     "SELF-CONTROL: The user is asking to change or control Jarvis's OWN settings, "
     "configuration, providers, voice, language, or behavior. You have full "
-    "control over this. Use the `cli_jarvisctl` tool — it performs ANY Jarvis "
-    "action via the local API (e.g. `jarvisctl brain switch <provider>`, "
-    "`jarvisctl config set <key> <value>`) — or `set_config_value` for a simple "
-    "setting. NEVER say you lack access or permission to change a Jarvis setting, "
-    "and never claim the change without actually calling the tool: call it and "
-    "confirm success only AFTER it returns."
+    "control over this. PREFER the `app-command` tool — it runs a validated "
+    "registry command (provider switches, wake word, languages, volume, "
+    "missions/tasks, restart) with schema-checked arguments, so it cannot hit "
+    "the wrong target. For a simple config key use `set_config_value`; only "
+    "for actions NOT covered by either, fall back to the `cli_jarvisctl` tool "
+    "(e.g. `jarvisctl config set <key> <value>`). NEVER say you lack access "
+    "or permission to change a Jarvis setting, and never claim the change "
+    "without actually calling the tool: call it and confirm success only "
+    "AFTER it returns, using the values the tool actually reports."
 )
 
 
