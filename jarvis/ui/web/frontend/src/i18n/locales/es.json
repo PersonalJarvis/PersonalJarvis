@@ -1091,8 +1091,6 @@
       "self_test_button": "Probar palabra de activación",
       "self_test_running": "Comprobando …",
       "engine_label": "Motor de detección",
-      "sensitivity_label": "Sensibilidad",
-      "sensitivity_floor_note": "El mínimo es 0,5: por debajo del punto medio calibrado, la detección se vuelve tan estricta que el habla normal casi nunca la activa — parece rota, no \"menos sensible\". 0,5 es el valor equilibrado por defecto; valores más altos se activan con más facilidad.",
       "custom_model_path_label": "Ruta del modelo ONNX personalizado",
       "save": "Guardar palabra de activación",
       "saved": "Palabra de activación guardada",

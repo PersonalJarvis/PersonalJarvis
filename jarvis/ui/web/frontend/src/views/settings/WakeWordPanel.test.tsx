@@ -77,7 +77,6 @@ function makeWakeWordGET(phrase: string) {
     phrase,
     engine: "auto",
     custom_model_path: "",
-    sensitivity: 0.5,
     fuzzy_match_ratio: 80,
     engines: ["auto", "openwakeword"],
     instant_phrases: ["Hey Jarvis", "Jarvis"],
