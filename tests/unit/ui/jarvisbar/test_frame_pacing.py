@@ -4,11 +4,15 @@ A 41s GIF capture of the bar frame-diffed to only ~5 visual updates/second on
 average, in a burst-then-freeze pattern. Measured root causes (see the
 constants' docstrings in ``overlay.py``):
 
-1. The idle pill draws nothing beyond its at-rest background once its eased
-   size has settled, so re-rendering + re-blitting it every tick was pure
-   waste — a real per-tick Windows DWM compositing cost paid for a
+1. Every branch ``renderer.render()`` can reach while the coarse mode is
+   "idle" is time-independent (empty resting pill / hovered idle pill's
+   static mic glyph / muted idle pill's static mic glyph — the equalizer
+   bars and the close-X both require an active/listen/speak/think mode). So
+   once its eased size has settled, re-rendering + re-blitting it every tick
+   was pure waste — a real per-tick Windows DWM compositing cost paid for a
    byte-identical image. ``_schedule_frame`` now skips the render/PhotoImage/
-   itemconfig work once idle has visibly settled (``_IDLE_SETTLE_TICKS``).
+   itemconfig work once idle has visibly settled (``_IDLE_SETTLE_TICKS``),
+   regardless of hover/mute.
 2. The re-arm delay is now adaptive (derived from actual tick cost via
    ``TARGET_FRAME_MS``/``MIN_FRAME_DELAY_MS``) instead of a blind constant, so
    an unusually slow render can't compound into an even longer visible gap.
@@ -21,9 +25,9 @@ from __future__ import annotations
 import pytest
 
 from jarvis.ui.jarvisbar.overlay import (
+    _IDLE_SETTLE_TICKS,
     MIN_FRAME_DELAY_MS,
     TARGET_FRAME_MS,
-    _IDLE_SETTLE_TICKS,
     JarvisBarOverlay,
 )
 
@@ -73,7 +77,9 @@ class _CountingRenderer:
         return "sentinel-image"
 
 
-def _bare_bar(renderer_obj: object, *, mode: str = "idle") -> tuple[JarvisBarOverlay, _FakeRoot, _FakeCanvas]:
+def _bare_bar(
+    renderer_obj: object, *, mode: str = "idle"
+) -> tuple[JarvisBarOverlay, _FakeRoot, _FakeCanvas]:
     bar = JarvisBarOverlay.__new__(JarvisBarOverlay)
     bar._running = True
     bar._mode = mode
@@ -157,19 +163,47 @@ def test_mode_change_resets_the_idle_settle_counter_and_renders_immediately():
     )
 
 
-def test_hover_prevents_the_idle_skip():
-    """A hovered idle pill shows controls (mic glyph) and must keep rendering
-    even though the coarse mode is 'idle' — only a truly at-rest, uninteracted
-    pill may be skipped."""
+def test_hovered_idle_pill_also_settles_and_skips():
+    """A hovered idle pill only ever draws the static mic glyph (the close-X
+    and equalizer bars require an active/listen/speak mode, unreachable while
+    ``effective_mode == "idle"``) — so it is just as time-independent as the
+    empty resting pill once its (larger, OPEN-sized) eased pill has settled,
+    and must also stop repainting."""
+    renderer_obj = _CountingRenderer()
+    bar, _root, canvas = _bare_bar(renderer_obj, mode="idle")
+    bar._hovered = True
+
+    for _ in range(_IDLE_SETTLE_TICKS):
+        bar._schedule_frame()
+    calls_before = renderer_obj.calls
+    itemconfig_before = canvas.itemconfig_calls
+
+    for _ in range(10):
+        bar._schedule_frame()
+
+    assert renderer_obj.calls == calls_before, (
+        "a settled hovered-idle pill kept calling render() — the static mic "
+        "glyph never changes once the pill size has settled"
+    )
+    assert canvas.itemconfig_calls == itemconfig_before
+
+
+def test_hover_flip_while_idle_forces_an_immediate_render():
+    """A hover state CHANGE (mouse entering/leaving a settled idle pill) must
+    always render on the very next tick — the skip must never delay a real
+    interaction cue (showing/hiding the mic glyph) from appearing."""
     renderer_obj = _CountingRenderer()
     bar, _root, _canvas = _bare_bar(renderer_obj, mode="idle")
-    bar._hovered = True
 
     for _ in range(_IDLE_SETTLE_TICKS + 5):
         bar._schedule_frame()
+    calls_while_settled = renderer_obj.calls
 
-    assert renderer_obj.calls == _IDLE_SETTLE_TICKS + 5, (
-        "a hovered idle pill was skipped despite showing live controls"
+    bar._hovered = True
+    bar._schedule_frame()
+
+    assert renderer_obj.calls == calls_while_settled + 1, (
+        "a hover flip on a settled idle pill did not render on the next tick"
     )
 
 

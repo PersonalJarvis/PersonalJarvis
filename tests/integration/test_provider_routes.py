@@ -180,8 +180,9 @@ def test_section_health_returns_all_tabs(
             assert sec["status"] in valid
         assert body["cached"] is False
         assert body["sections"]["brain"]["subject_id"] == "openai"
+        computer_use_cfg = getattr(server_with_brain.cfg.brain, "computer_use", None)
         expected_cu = (
-            server_with_brain.cfg.brain.computer_use.provider
+            getattr(computer_use_cfg, "provider", None)
             or server_with_brain.cfg.brain.primary
         )
         assert body["sections"]["computer-use"]["subject_id"] == expected_cu

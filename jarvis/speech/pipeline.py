@@ -5074,6 +5074,7 @@ class SpeechPipeline:
             send_json=_send_json,
             half_duplex=True,
             surface="desktop",
+            brain=getattr(self, "_brain", None),
         )
         if session is None:
             return None

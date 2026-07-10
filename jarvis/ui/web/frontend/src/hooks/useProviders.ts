@@ -299,17 +299,18 @@ export function useSectionHealth() {
 
       const detail = (event as CustomEvent<ProviderHealthEventDetail>).detail;
       const section = detail?.section ?? SECTION_HEALTH_EVENT_SECTIONS[event.type];
+      const testResult = detail?.result;
       if (
         event.type === "jarvis:provider-tested" &&
         detail?.active &&
-        detail.result &&
+        testResult &&
         section
       ) {
         setHealth((previous) => ({
           ...previous,
           [section]: sectionHealthFromProviderTest(
-            detail.result as ProviderTestResult,
-            detail.provider_label ?? detail.result.provider,
+            testResult,
+            detail.provider_label ?? testResult.provider,
           ),
         }));
       } else if (event.type !== "jarvis:provider-tested") {

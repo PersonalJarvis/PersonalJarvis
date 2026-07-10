@@ -71,6 +71,7 @@ def _build_browser_session(
             send_binary=send_binary,
             send_json=send_json,
             surface="browser",
+            brain=getattr(state, "brain", None),
         )
         if rt is not None:
             return rt

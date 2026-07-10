@@ -97,13 +97,17 @@ FRAME_STALL_THRESHOLD_NS = 2_000_000_000  # 2 s of silence ⇒ the loop is dead
 #    occasional slow render (measured up to ~30ms in "think"+hovered mode)
 #    from compounding into an even longer visible gap.
 #
-# Idle-static skip: once the resting pill's eased size has stopped changing
-# (ease() with factor 0.5 converges to sub-pixel precision within a handful
-# of ticks; 30 is a generous margin) AND the state is idle/not-hovered/
-# not-muted (draws nothing — see renderer.render), every further tick would
-# repaint the exact same pixels. Skipped ticks still stamp the heartbeat and
-# re-arm the loop, so the watchdog/self-healing contract is untouched — only
-# the render()/PhotoImage()/itemconfig() work is skipped.
+# Idle-static skip: EVERY branch renderer.render() can reach while the coarse
+# mode is "idle" is time-independent (the empty resting pill, the hovered
+# idle pill's static mic glyph, the muted idle pill's static mic glyph — the
+# equalizer bars and the close-X both require an active/listen/speak/think
+# mode, never reached while idle). So once the resting pill's eased size has
+# stopped changing (ease() with factor 0.5 converges to sub-pixel precision
+# within a handful of ticks; 30 is a generous margin) for a given
+# (hover, mute) combination, every further tick would repaint the exact same
+# pixels regardless of hover/mute. Skipped ticks still stamp the heartbeat
+# and re-arm the loop, so the watchdog/self-healing contract is untouched —
+# only the render()/PhotoImage()/itemconfig() work is skipped.
 _IDLE_SETTLE_TICKS = 30
 
 # Adaptive pacing: the nominal target stays 16ms (~60fps aspirational — the
@@ -561,13 +565,21 @@ class JarvisBarOverlay:
                 playback_active=playing,
             )
 
-            # Idle-static skip (see _IDLE_SETTLE_TICKS docstring above): once the
-            # resting pill has been idle/not-hovered/not-muted for enough
-            # consecutive ticks that its eased size has fully settled, every
-            # further tick would repaint the exact same pixels — skip the
-            # render/PhotoImage/itemconfig work entirely. Any change in mode,
-            # hover, or mute resets the counter, so a real transition always
-            # renders immediately.
+            # Idle-static skip (see _IDLE_SETTLE_TICKS docstring above): every
+            # branch renderer.render() can reach while ``effective_mode ==
+            # "idle"`` is time-INDEPENDENT — the empty resting pill, the
+            # hovered idle pill (only draws the static mic glyph; the close-X
+            # and equalizer bars require an active/listen/speak mode, never
+            # reached here), and the muted idle pill (same static mic glyph)
+            # all draw nothing that depends on ``t``. The only thing that
+            # still moves per tick is the eased pill size/color, which
+            # converges (ease() factor 0.5) well within _IDLE_SETTLE_TICKS
+            # ticks of any (hover, mute) combination changing. So once idle
+            # has been static for that long, EVERY further tick — hovered or
+            # muted or neither — would repaint byte-identical pixels; skip
+            # the render/PhotoImage/itemconfig work entirely. Any change in
+            # mode, hover, or mute resets the counter, so a real transition
+            # (including a hover/mute flip) always renders immediately.
             tick_key = (effective_mode, self._hovered, self._muted)
             if tick_key != self._static_tick_key:
                 self._static_tick_key = tick_key
@@ -576,8 +588,6 @@ class JarvisBarOverlay:
                 self._static_tick_count += 1
             is_settled_idle = (
                 effective_mode == "idle"
-                and not self._hovered
-                and not self._muted
                 and self._static_tick_count >= _IDLE_SETTLE_TICKS
             )
 

@@ -61,6 +61,8 @@ class RealtimeVoiceSession:
         browser_sample_rate: int = 48_000,
         half_duplex: bool = False,
         surface: str = "browser",
+        brain: Any = None,
+        tool_bridge: Any = None,
     ) -> None:
         self.session_id = session_id
         self._send_binary = send_binary
@@ -83,6 +85,16 @@ class RealtimeVoiceSession:
         self._output_active = False
 
         self._language = self._resolve_lang(text="")
+        if tool_bridge is None and brain is not None:
+            try:
+                from jarvis.realtime.tools import RealtimeToolBridge
+
+                tool_bridge = RealtimeToolBridge.from_brain(
+                    brain, language=self._language
+                )
+            except Exception:  # noqa: BLE001 — conversation still works without tools
+                log.warning("Realtime tool bridge is unavailable", exc_info=True)
+        self._tool_bridge = tool_bridge
         self._gate = ScrubHoldGate(self._language)
         self._session: Any = None
         self._pump_task: asyncio.Task[None] | None = None
@@ -97,6 +109,8 @@ class RealtimeVoiceSession:
         self._turn_index = 0
         self._last_user_text = ""
         self._output_transcript: list[str] = []
+        self._executed_tool_names: set[str] = set()
+        self._pending_tool_events: list[Any] = []
 
     def _resolve_lang(self, *, text: str) -> str:
         brain = getattr(self._config, "brain", None)
@@ -167,6 +181,11 @@ class RealtimeVoiceSession:
                 input_sample_rate=input_rate,
                 output_sample_rate=output_rate,
                 modalities=("audio",),
+                tools=(
+                    self._tool_bridge.declarations
+                    if self._tool_bridge is not None
+                    else ()
+                ),
             )
             try:
                 session = await provider.open_session(session_config)
@@ -242,8 +261,12 @@ class RealtimeVoiceSession:
                             instructions=_session_instructions(new_language),
                             language=new_language,
                         )
+                        if self._tool_bridge is not None:
+                            self._tool_bridge.set_language(new_language)
                     mark_phase(LatencyPhase.REALTIME_INPUT_COMMITTED)
                     self._last_user_text = event.text
+                    if self._tool_bridge is not None and event.is_final:
+                        await self._tool_bridge.handle_user_transcript(event.text)
                     if not self._turn_id:
                         self._turn_id = str(uuid4())
                         self._turn_index += 1
@@ -257,6 +280,11 @@ class RealtimeVoiceSession:
                             "is_final": bool(event.is_final),
                         }
                     )
+                    if event.is_final and self._pending_tool_events:
+                        pending = self._pending_tool_events
+                        self._pending_tool_events = []
+                        for pending_event in pending:
+                            await self._handle_tool_call(pending_event)
                 elif event.type == "output_transcript_delta" and event.text:
                     mark_phase(LatencyPhase.REALTIME_FIRST_TRANSCRIPT)
                     display = await self._gate.feed_transcript(event.text)
@@ -293,7 +321,17 @@ class RealtimeVoiceSession:
                         )
                 elif event.type in {"speech_started", "interrupted"}:
                     await self._barge_in()
+                elif event.type == "tool_call":
+                    if not self._last_user_text:
+                        self._pending_tool_events.append(event)
+                    else:
+                        await self._handle_tool_call(event)
                 elif event.type == "turn_complete":
+                    if self._pending_tool_events:
+                        pending = self._pending_tool_events
+                        self._pending_tool_events = []
+                        for pending_event in pending:
+                            await self._reject_untranscribed_tool_call(pending_event)
                     self._cancel_release_task()
                     for chunk in self._gate.release_available():
                         await self._emit_audio(chunk)
@@ -466,6 +504,7 @@ class RealtimeVoiceSession:
                         tier="realtime",
                         provider=self.active_provider,
                         model=self._active_model,
+                        tool_calls=tuple(sorted(self._executed_tool_names)),
                     )
                 )
             except Exception:  # noqa: BLE001, S110
@@ -473,6 +512,45 @@ class RealtimeVoiceSession:
         self._turn_id = ""
         self._last_user_text = ""
         self._output_transcript.clear()
+        self._executed_tool_names.clear()
+
+    async def _handle_tool_call(self, event: Any) -> None:
+        if self._session is None:
+            return
+        call_id = str(getattr(event, "call_id", "") or "")
+        wire_name = str(getattr(event, "tool_name", "") or "")
+        arguments = getattr(event, "tool_args", None)
+        if not isinstance(arguments, dict):
+            arguments = {}
+        if not call_id or not wire_name or self._tool_bridge is None:
+            await self._session.send_tool_result(
+                call_id,
+                wire_name,
+                {"success": False, "error": "Tool call is not available."},
+            )
+            return
+        original_name, result = await self._tool_bridge.execute(
+            wire_name=wire_name,
+            arguments=arguments,
+        )
+        if result.get("success"):
+            self._executed_tool_names.add(original_name)
+        await self._session.send_tool_result(call_id, wire_name, result)
+
+    async def _reject_untranscribed_tool_call(self, event: Any) -> None:
+        if self._session is None:
+            return
+        await self._session.send_tool_result(
+            str(getattr(event, "call_id", "") or ""),
+            str(getattr(event, "tool_name", "") or ""),
+            {
+                "success": False,
+                "error": (
+                    "The input transcript was unavailable, so the action was not "
+                    "executed. Ask the user to repeat the request."
+                ),
+            },
+        )
 
     async def _emit_audio(self, chunk: Any) -> None:
         pcm = bytes(getattr(chunk, "pcm", b"") or b"")
@@ -524,6 +602,11 @@ class RealtimeVoiceSession:
             try:
                 await self._session.close()
             except Exception:  # noqa: BLE001, S110 — best-effort teardown
+                pass
+        if self._tool_bridge is not None:
+            try:
+                await self._tool_bridge.close()
+            except Exception:  # noqa: BLE001, S110 — teardown is best-effort
                 pass
         if self._surface == "browser" and self._bus is not None:
             try:

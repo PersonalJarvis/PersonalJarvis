@@ -165,6 +165,7 @@ _MAIN_BRAIN_FALLBACK_PROVIDER_ORDER: tuple[str, ...] = (
     "claude-api",
     "openai",
     "openrouter",
+    "nvidia",
 )
 
 # Human-readable display names for each brain provider id. Used to tell the
@@ -1951,6 +1952,14 @@ class BrainManager:
         # reset). Prevents each voice turn from running through 8 sequential
         # "no API key" failures.
         self._dead_providers: set[str] = set()
+        # Model-scoped twin of `_dead_providers`: a billing-style rejection
+        # (account_blocked, e.g. HTTP 402) on ONE model must not dead-list a
+        # provider that has other, untried models still in this turn's chain
+        # (e.g. a paid model capped out while a free model on the same
+        # provider is still funded). Populated/consulted only for
+        # account_blocked; missing_key/bad_key stay provider-wide since a
+        # dead credential blocks every model on that provider.
+        self._dead_provider_models: set[tuple[str, str | None]] = set()
         # Populated by from_tier_config(). Tier fallbacks are runtime
         # priorities, not just healthcheck metadata.
         self._configured_fallbacks: list[tuple[str, str | None]] = []
@@ -6307,10 +6316,22 @@ class BrainManager:
             if name in seen or name == self._active_name or name not in available:
                 continue
             seen.add(name)
+            # Skip providers dead-listed or rate-limited THIS session — the
+            # chain walk (see the dead_providers/rate_tracker checks at the
+            # top of the provider-chain loop below) already excludes them
+            # from actually answering, so picking one here as the "lead"
+            # left _router_lead_key pointing at an entry the chain would
+            # never reach: _is_router_lead misfired for the real lead and
+            # the toolless fall-through gate accepted a tool-incapable
+            # provider's answer as final.
+            if name in self._dead_providers:
+                continue
             model = (
                 self._deep_model(name) if level in ("deep", "code")
                 else self._fast_model(name)
             ) or self._fast_model(name)
+            if not self._rate_tracker.is_available(name, model):
+                continue
             if self._brain_can_call_tools(name, model):
                 return (name, model)
         return None

@@ -85,6 +85,7 @@ def build_realtime_session(
     send_json: Any,
     half_duplex: bool = False,
     surface: str = "browser",
+    brain: Any = None,
 ):
     """Build a transport-neutral realtime session wrapper.
 
@@ -112,6 +113,7 @@ def build_realtime_session(
             bus=bus,
             half_duplex=half_duplex,
             surface=surface,
+            brain=brain,
         )
     except Exception as exc:  # noqa: BLE001 — unbuildable stack => classic path
         log.warning("Realtime session build failed: %s", exc)

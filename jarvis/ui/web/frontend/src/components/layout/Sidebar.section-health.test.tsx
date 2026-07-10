@@ -47,8 +47,8 @@ afterEach(() => {
 describe("Sidebar — API-Keys alert dot", () => {
   it("shows a red alert dot on API Keys when a section reports error", () => {
     mockHealth = {
-      brain: { status: "error", reason: "rate_limited", detail: "OpenRouter: rate limited" },
-      tts: { status: "ok", reason: "ok", detail: "" },
+      brain: { status: "error", reason: "rate_limited", detail: "OpenRouter: rate limited", subject_id: "openrouter" },
+      tts: { status: "ok", reason: "ok", detail: "", subject_id: "gemini-flash-tts" },
     };
     render(<Sidebar />);
     const dot = screen.getByTestId("nav-alert-apikeys");
@@ -58,9 +58,9 @@ describe("Sidebar — API-Keys alert dot", () => {
 
   it("stays calm (no dot) when nothing is broken", () => {
     mockHealth = {
-      brain: { status: "needs_setup", reason: "not_configured", detail: "" },
-      tts: { status: "ok", reason: "ok", detail: "" },
-      stt: { status: "unknown", reason: "unknown", detail: "" },
+      brain: { status: "needs_setup", reason: "not_configured", detail: "", subject_id: "openrouter" },
+      tts: { status: "ok", reason: "ok", detail: "", subject_id: "gemini-flash-tts" },
+      stt: { status: "unknown", reason: "unknown", detail: "", subject_id: "groq-api" },
     };
     render(<Sidebar />);
     expect(screen.queryByTestId("nav-alert-apikeys")).toBeNull();
