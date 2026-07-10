@@ -26,9 +26,10 @@ import logging
 import re
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from pydantic import ValidationError
 
@@ -495,9 +496,31 @@ class CriticRunner:
         *,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         log_triage: TriageFn | None = None,
+        job_factory: Callable[[], Any] | None = None,
     ) -> None:
         self._timeout = timeout_seconds
         self._log_triage = log_triage
+        # Per-mission process-containment job (Windows Job Object / POSIX
+        # process-group reaper, see jarvis.missions.isolation.job_object).
+        # None keeps the pre-fix behaviour exactly (graceful no-op) for
+        # callers/tests that construct CriticRunner without one — the
+        # bootstrap path (jarvis.missions.init.bootstrap_missions) passes the
+        # SAME factory the orchestrator's Kontrollierer uses for workers.
+        self._job_factory = job_factory
+
+    @staticmethod
+    def _assign_job(job: Any, pid: int, *, label: str) -> None:
+        """Best-effort: place `pid` in the containment job.
+
+        Mirrors ``ClaudeDirectWorker.spawn``'s ``job.assign(proc.pid)`` — a
+        failure here must never abort the critic run, only log (AP-10).
+        """
+        if job is None:
+            return
+        try:
+            job.assign(pid)
+        except Exception:  # noqa: BLE001
+            logger.warning("%s: job.assign(pid=%d) failed", label, pid, exc_info=True)
 
     async def run(
         self,
@@ -1362,51 +1385,67 @@ class CriticRunner:
         )
 
         t0 = time.perf_counter()
+        # Per-mission process containment (AP-10): mirrors ClaudeDirectWorker,
+        # whose orchestrator wraps the whole spawn in ``async with job:``. A
+        # missing/None factory keeps the pre-fix behaviour exactly (graceful
+        # no-op) — see ``self._job_factory``.
+        job = self._job_factory() if self._job_factory is not None else None
+        if job is not None:
+            await job.__aenter__()
         try:
-            # create_worker_subprocess sources the Windows flags and degrades
-            # CREATE_BREAKAWAY_FROM_JOB gracefully (WinError 5) — same fix as
-            # the worker (live mission 019ec61b, 2026-06-14: the critic spawn
-            # died on breakaway in the app's restrictive job).
-            proc = await create_worker_subprocess(
-                cmd,
-                cwd=str(worktree),
-                env=env,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        except FileNotFoundError as exc:
-            logger.warning(
-                "CriticRunner: claude binary not found: %s — cmd=%r",
-                exc, cmd,
-            )
-            return None
+            try:
+                # create_worker_subprocess sources the Windows flags and degrades
+                # CREATE_BREAKAWAY_FROM_JOB gracefully (WinError 5) — same fix as
+                # the worker (live mission 019ec61b, 2026-06-14: the critic spawn
+                # died on breakaway in the app's restrictive job).
+                proc = await create_worker_subprocess(
+                    cmd,
+                    cwd=str(worktree),
+                    env=env,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except FileNotFoundError as exc:
+                logger.warning(
+                    "CriticRunner: claude binary not found: %s — cmd=%r",
+                    exc, cmd,
+                )
+                return None
 
-        # Write the prompt to stdin then close to signal EOF.
-        try:
-            assert proc.stdin is not None  # noqa: S101 - PIPE always present
-            proc.stdin.write(prompt.encode("utf-8"))
-            await proc.stdin.drain()
-            proc.stdin.close()
-        except (BrokenPipeError, ConnectionResetError) as exc:
-            logger.warning(
-                "CriticRunner: claude stdin write failed: %s", exc
-            )
+            self._assign_job(job, proc.pid, label="CriticRunner (claude-direct)")
 
-        try:
-            stdout_b, stderr_b = await asyncio.wait_for(
-                proc.communicate(), timeout=self._timeout
-            )
-        except TimeoutError as exc:
-            with _suppress(ProcessLookupError):
-                proc.kill()
-            # Audit-2 H3 -- always wait() after kill() so the transport
-            # is torn down and we don't leak a zombie + open pipes.
-            with _suppress(Exception):
-                await asyncio.wait_for(proc.wait(), timeout=5.0)
-            raise CriticTimeout(
-                f"Critic (claude-direct) exceeded {self._timeout}s — killed."
-            ) from exc
+            # Write the prompt to stdin then close to signal EOF.
+            try:
+                assert proc.stdin is not None  # noqa: S101 - PIPE always present
+                proc.stdin.write(prompt.encode("utf-8"))
+                await proc.stdin.drain()
+                proc.stdin.close()
+            except (BrokenPipeError, ConnectionResetError) as exc:
+                logger.warning(
+                    "CriticRunner: claude stdin write failed: %s", exc
+                )
+
+            try:
+                stdout_b, stderr_b = await asyncio.wait_for(
+                    proc.communicate(), timeout=self._timeout
+                )
+            except TimeoutError as exc:
+                with _suppress(ProcessLookupError):
+                    proc.kill()
+                # Audit-2 H3 -- always wait() after kill() so the transport
+                # is torn down and we don't leak a zombie + open pipes. The
+                # job (when present) is closed in the outer finally below,
+                # reaping any grandchild the CLI spawned (e.g. MCP servers)
+                # that a bare proc.kill() would leave orphaned.
+                with _suppress(Exception):
+                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                raise CriticTimeout(
+                    f"Critic (claude-direct) exceeded {self._timeout}s — killed."
+                ) from exc
+        finally:
+            if job is not None:
+                await job.__aexit__(None, None, None)
 
         wall_ms = int((time.perf_counter() - t0) * 1000)
         if proc.returncode != 0:
@@ -1599,50 +1638,62 @@ class CriticRunner:
         )
 
         t0 = time.perf_counter()
+        # Per-mission process containment (AP-10): mirrors ClaudeDirectWorker /
+        # _invoke_via_claude_direct above. A missing/None factory keeps the
+        # pre-fix behaviour exactly (graceful no-op) — see self._job_factory.
+        job = self._job_factory() if self._job_factory is not None else None
+        if job is not None:
+            await job.__aenter__()
         try:
-            # create_worker_subprocess: breakaway-flag degradation (WinError 5).
-            proc = await create_worker_subprocess(
-                cmd,
-                cwd=str(worktree),
-                env=env_for_codex,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        except FileNotFoundError as exc:
-            logger.warning(
-                "CriticRunner: codex binary not found: %s -- cmd=%r",
-                exc, cmd,
-            )
-            return None
+            try:
+                # create_worker_subprocess: breakaway-flag degradation (WinError 5).
+                proc = await create_worker_subprocess(
+                    cmd,
+                    cwd=str(worktree),
+                    env=env_for_codex,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except FileNotFoundError as exc:
+                logger.warning(
+                    "CriticRunner: codex binary not found: %s -- cmd=%r",
+                    exc, cmd,
+                )
+                return None
 
-        try:
-            assert proc.stdin is not None  # noqa: S101 -- PIPE always present
-            proc.stdin.write(prompt.encode("utf-8"))
-            await proc.stdin.drain()
-            proc.stdin.close()
-        except (BrokenPipeError, ConnectionResetError) as exc:
-            logger.warning(
-                "CriticRunner: codex stdin write failed: %s", exc,
-            )
+            self._assign_job(job, proc.pid, label="CriticRunner (codex-direct)")
 
-        try:
-            stdout_b, stderr_b = await asyncio.wait_for(
-                proc.communicate(), timeout=self._timeout
-            )
-        except TimeoutError as exc:
-            with _suppress(ProcessLookupError):
-                proc.kill()
-            with _suppress(Exception):
-                await asyncio.wait_for(proc.wait(), timeout=5.0)
-            with _suppress(OSError):
-                __import__("os").unlink(schema_path)
-            raise CriticTimeout(
-                f"Critic (codex-direct) exceeded {self._timeout}s -- killed."
-            ) from exc
+            try:
+                assert proc.stdin is not None  # noqa: S101 -- PIPE always present
+                proc.stdin.write(prompt.encode("utf-8"))
+                await proc.stdin.drain()
+                proc.stdin.close()
+            except (BrokenPipeError, ConnectionResetError) as exc:
+                logger.warning(
+                    "CriticRunner: codex stdin write failed: %s", exc,
+                )
+
+            try:
+                stdout_b, stderr_b = await asyncio.wait_for(
+                    proc.communicate(), timeout=self._timeout
+                )
+            except TimeoutError as exc:
+                with _suppress(ProcessLookupError):
+                    proc.kill()
+                with _suppress(Exception):
+                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                with _suppress(OSError):
+                    __import__("os").unlink(schema_path)
+                raise CriticTimeout(
+                    f"Critic (codex-direct) exceeded {self._timeout}s -- killed."
+                ) from exc
+            finally:
+                with _suppress(OSError):
+                    __import__("os").unlink(schema_path)
         finally:
-            with _suppress(OSError):
-                __import__("os").unlink(schema_path)
+            if job is not None:
+                await job.__aexit__(None, None, None)
 
         wall_ms = int((time.perf_counter() - t0) * 1000)
 
