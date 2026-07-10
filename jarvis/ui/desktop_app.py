@@ -122,6 +122,8 @@ def _install_desktop_log_sink(log_path: Path) -> None:
     # watchdog run has its own handlers via _setup_logging).
     import logging as _logging
 
+    from jarvis.core.redact import safe_preview as _safe_preview
+
     class _InterceptHandler(_logging.Handler):
         def emit(self, record: _logging.LogRecord) -> None:
             try:
@@ -132,9 +134,8 @@ def _install_desktop_log_sink(log_path: Path) -> None:
             while frame and frame.f_code.co_filename == _logging.__file__:
                 frame = frame.f_back
                 depth += 1
-            logger.opt(depth=depth, exception=record.exc_info).log(
-                level, record.getMessage()
-            )
+            message = _safe_preview(record.getMessage(), max_chars=16_384)
+            logger.opt(depth=depth, exception=record.exc_info).log(level, message)
 
     root = _logging.getLogger()
     # Only add it if there isn't already an InterceptHandler present.

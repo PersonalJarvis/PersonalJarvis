@@ -74,3 +74,19 @@ def test_redact_secrets_is_pure_and_idempotent() -> None:
     twice = redact_secrets(once)
     assert once == twice
     assert "<redacted:jwt>" in once
+
+
+def test_redacts_credentials_embedded_in_http_request_urls() -> None:
+    google_key = "AQ." + "a" * 40
+    telegram_token = "123456789:" + "B" * 35
+    text = (
+        f"GET https://example.test/models?key={google_key}&page=1 "
+        f"POST https://api.telegram.org/bot{telegram_token}/getUpdates"
+    )
+
+    redacted = redact_secrets(text)
+
+    assert google_key not in redacted
+    assert telegram_token not in redacted
+    assert "?key=<redacted:query_secret>&page=1" in redacted
+    assert "bot<redacted:telegram_bot_token>/getUpdates" in redacted
