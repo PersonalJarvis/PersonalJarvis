@@ -58,10 +58,7 @@ def _session_payload(cfg: Any) -> dict[str, Any]:
     API accepts ``[\"audio\"]`` only; requesting text and audio together is
     invalid. PCM input and output are both explicitly declared as 24 kHz.
     """
-    language = str(getattr(cfg, "language", "") or "").strip().lower()
     transcription: dict[str, Any] = {"model": "gpt-4o-mini-transcribe"}
-    if language and language != "auto":
-        transcription["language"] = language.split("-", 1)[0]
 
     turn_detection = str(getattr(cfg, "turn_detection", "server_vad") or "server_vad")
     if turn_detection not in {"server_vad", "semantic_vad"}:
@@ -84,7 +81,9 @@ def _session_payload(cfg: Any) -> dict[str, Any]:
                 "transcription": transcription,
                 "turn_detection": {
                     "type": turn_detection,
-                    "create_response": True,
+                    # Jarvis requests the response only after the final input
+                    # transcript has passed the single turn-language resolver.
+                    "create_response": False,
                     "interrupt_response": True,
                 },
             },
@@ -209,11 +208,14 @@ class _OpenAIRealtimeSession:
     async def update_session(
         self, *, instructions: str | None = None, language: str | None = None
     ) -> None:
-        del language  # Input-transcription language is fixed for the live session.
+        del language  # Input transcription stays provider-inferred and multilingual.
         if instructions is not None:
             await self._conn.session.update(
                 session={"type": "realtime", "instructions": instructions}
             )
+
+    async def request_response(self) -> None:
+        await self._conn.response.create()
 
     async def truncate(self, audio_end_ms: int) -> None:
         if self._last_item_id:

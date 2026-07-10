@@ -140,6 +140,10 @@ class _GeminiLiveSession:
         # reconnects on a substantive language change in a later session.
         del instructions, language
 
+    async def request_response(self) -> None:
+        # Gemini Live creates a response automatically at the VAD turn boundary.
+        return None
+
     async def truncate(self, audio_end_ms: int) -> None:
         del audio_end_ms  # Gemini interrupts generation when new audio arrives.
 
@@ -209,6 +213,20 @@ class GeminiLiveProvider:
 
         client = genai.Client(api_key=self._api_key)
         voice = str(getattr(cfg, "voice", "") or "").strip()
+        pinned_language = (
+            str(getattr(cfg, "language", "") or "").strip().lower()
+            if bool(getattr(cfg, "language_is_pinned", False))
+            else ""
+        )
+        speech_config: dict[str, Any] = {}
+        if voice:
+            speech_config["voice_config"] = types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=voice
+                )
+            )
+        if pinned_language:
+            speech_config["language_code"] = pinned_language
         live_config = types.LiveConnectConfig(
             response_modalities=[types.Modality.AUDIO],
             system_instruction=str(getattr(cfg, "instructions", "") or "") or None,
@@ -228,16 +246,8 @@ class GeminiLiveProvider:
                 else {}
             ),
             **(
-                {
-                    "speech_config": types.SpeechConfig(
-                        voice_config=types.VoiceConfig(
-                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                voice_name=voice
-                            )
-                        )
-                    )
-                }
-                if voice
+                {"speech_config": types.SpeechConfig(**speech_config)}
+                if speech_config
                 else {}
             ),
         )

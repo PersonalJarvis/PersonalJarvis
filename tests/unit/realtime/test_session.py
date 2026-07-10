@@ -15,6 +15,8 @@ class FakeSession:
         self.sent_audio = []
         self.tool_results = []
         self.truncated = []
+        self.session_updates = []
+        self.response_requests = 0
         self.closed = False
 
     async def send_audio(self, chunk):
@@ -26,7 +28,12 @@ class FakeSession:
             await asyncio.sleep(0)
 
     async def update_session(self, *, instructions=None, language=None):
-        pass
+        self.session_updates.append(
+            {"instructions": instructions, "language": language}
+        )
+
+    async def request_response(self):
+        self.response_requests += 1
 
     async def truncate(self, audio_end_ms):
         self.truncated.append(audio_end_ms)
@@ -115,11 +122,15 @@ class FakeToolBridge:
         self.closed = True
 
 
-def _cfg(*, providers=None):
+def _cfg(*, providers=None, reply_language="en", stt_language="auto"):
     from types import SimpleNamespace
 
     return SimpleNamespace(
-        brain=SimpleNamespace(reply_language="en", providers=providers or {}),
+        brain=SimpleNamespace(
+            reply_language=reply_language,
+            providers=providers or {},
+        ),
+        stt=SimpleNamespace(language=stt_language),
         voice=SimpleNamespace(mode="realtime"),
     )
 
@@ -303,6 +314,43 @@ async def test_clean_turn_streams_audio_and_transcript():
     await sess.end(reason="test")
     assert any(m.get("type") == "transcript" for m in jsons)
     assert binaries  # audio was released after the clean transcript
+
+
+@pytest.mark.asyncio
+async def test_final_transcript_sets_turn_language_before_requesting_response():
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="Como esta el clima hoy",
+                is_final=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = RealtimeVoiceSession(
+        session_id="language-before-response",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(reply_language="auto"),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert provider.opened_with.language == "en"
+    assert provider.opened_with.language_is_pinned is False
+    assert "language of the user's current spoken turn" in (
+        provider.opened_with.instructions
+    )
+    assert provider.session.session_updates[-1]["language"] == "es"
+    assert "Reply only in Spanish for this turn" in (
+        provider.session.session_updates[-1]["instructions"]
+    )
+    assert provider.session.response_requests == 1
 
 
 @pytest.mark.asyncio

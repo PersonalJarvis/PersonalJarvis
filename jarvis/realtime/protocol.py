@@ -47,6 +47,7 @@ class RealtimeSessionConfig:
 
     instructions: str = ""
     language: str = "en"                     # bare de/en/es (resolved once, upstream)
+    language_is_pinned: bool = False          # explicit reply-language preference
     model: str = ""                          # provider model id ("" -> the adapter's
                                               # hardcoded default; no regression)
     voice: str = ""
@@ -72,6 +73,7 @@ class RealtimeSession(Protocol):
         self, *, instructions: str | None = None, language: str | None = None
     ) -> None: ...
 
+    async def request_response(self) -> None: ...
     async def truncate(self, audio_end_ms: int) -> None: ...
     async def interrupt(self) -> None: ...
     async def send_tool_result(

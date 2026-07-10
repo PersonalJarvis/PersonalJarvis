@@ -33,12 +33,24 @@ _LANGUAGE_NAMES = {"de": "German", "en": "English", "es": "Spanish"}
 
 
 def _session_instructions(
-    language: str, *, provider: str = "", model: str = ""
+    language: str,
+    *,
+    provider: str = "",
+    model: str = "",
+    language_is_pinned: bool = True,
 ) -> str:
     from jarvis.brain.persona_loader import load_effective_persona_prompt
 
     persona = load_effective_persona_prompt().strip()
     language_name = _LANGUAGE_NAMES.get(language, "the user's language")
+    if language_is_pinned:
+        language_directive = f"Reply only in {language_name} for this turn."
+    else:
+        language_directive = (
+            "Reply in the language of the user's current spoken turn. If the "
+            "turn is only a one- or two-word interjection, keep replying in "
+            f"{language_name}, the current conversation language."
+        )
     parts = [
         persona,
         _REALTIME_SAFETY_APPENDIX,
@@ -50,7 +62,7 @@ def _session_instructions(
             "answer from this runtime identity exactly; do not describe the "
             "classic text brain configuration."
         ),
-        f"Reply only in {language_name} for this turn.",
+        language_directive,
     ]
     return "\n\n".join(part for part in parts if part)
 
@@ -96,6 +108,17 @@ class RealtimeVoiceSession:
         self._surface = str(surface or "unknown")
         self._output_active = False
 
+        brain_config = getattr(self._config, "brain", None)
+        reply_language = str(
+            getattr(brain_config, "reply_language", "auto") or "auto"
+        ).strip().lower()
+        self._language_is_pinned = reply_language in _LANGUAGE_NAMES
+        self._initial_conversation_language = str(
+            getattr(brain, "conversation_language", "") or ""
+        ).strip().lower()
+        self._stt_language = getattr(
+            getattr(self._config, "stt", None), "language", "unknown"
+        )
         self._language = self._resolve_lang(text="")
         if tool_bridge is None and brain is not None:
             try:
@@ -124,15 +147,19 @@ class RealtimeVoiceSession:
         self._executed_tool_names: set[str] = set()
         self._pending_tool_events: list[Any] = []
         self._tool_transcript_task: asyncio.Task[None] | None = None
+        self._response_requested_for_turn = False
 
     def _resolve_lang(self, *, text: str) -> str:
         brain = getattr(self._config, "brain", None)
         pin = getattr(brain, "reply_language", "auto")
         return resolve_output_language(
             pin,
-            "unknown",
+            self._stt_language,
             text,
-            conversation_language=getattr(self, "_language", ""),
+            conversation_language=(
+                getattr(self, "_language", "")
+                or self._initial_conversation_language
+            ),
         )
 
     async def handle_control(self, msg: dict[str, Any]) -> None:
@@ -192,8 +219,10 @@ class RealtimeVoiceSession:
                     self._language,
                     provider=str(getattr(provider, "name", "") or ""),
                     model=model,
+                    language_is_pinned=self._language_is_pinned,
                 ),
                 language=self._language,
+                language_is_pinned=self._language_is_pinned,
                 model=model,
                 voice=voice,
                 input_sample_rate=input_rate,
@@ -275,16 +304,18 @@ class RealtimeVoiceSession:
                     if new_language != self._language:
                         self._language = new_language
                         self._gate = ScrubHoldGate(new_language)
+                        if self._tool_bridge is not None:
+                            self._tool_bridge.set_language(new_language)
+                    if event.is_final:
                         await self._session.update_session(
                             instructions=_session_instructions(
                                 new_language,
                                 provider=self.active_provider,
                                 model=self._active_model,
+                                language_is_pinned=True,
                             ),
                             language=new_language,
                         )
-                        if self._tool_bridge is not None:
-                            self._tool_bridge.set_language(new_language)
                     mark_phase(LatencyPhase.REALTIME_INPUT_COMMITTED)
                     self._last_user_text = event.text
                     if self._tool_bridge is not None and event.is_final:
@@ -308,6 +339,9 @@ class RealtimeVoiceSession:
                         self._pending_tool_events = []
                         for pending_event in pending:
                             await self._handle_tool_call(pending_event)
+                    if event.is_final and not self._response_requested_for_turn:
+                        await self._session.request_response()
+                        self._response_requested_for_turn = True
                 elif event.type == "output_transcript_delta" and event.text:
                     mark_phase(LatencyPhase.REALTIME_FIRST_TRANSCRIPT)
                     display = await self._gate.feed_transcript(event.text)
@@ -369,6 +403,7 @@ class RealtimeVoiceSession:
                     await self._publish_turn_completed()
                     self._output_active = False
                     self._output_samples_sent = 0
+                    self._response_requested_for_turn = False
                 elif event.type == "error":
                     message = safe_preview(
                         event.error or "provider error", max_chars=800
@@ -630,6 +665,7 @@ class RealtimeVoiceSession:
         await self._send_binary(pcm)
 
     async def _barge_in(self) -> None:
+        self._response_requested_for_turn = False
         self._cancel_release_task()
         self._gate.drain()
         output_rate = int(getattr(self._provider, "output_sample_rate", 24_000) or 24_000)

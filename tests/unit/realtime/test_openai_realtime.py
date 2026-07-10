@@ -128,7 +128,11 @@ async def test_every_selectable_model_uses_the_valid_ga_session_schema(
     assert payload["audio"]["input"]["transcription"]["model"] == (
         "gpt-4o-mini-transcribe"
     )
+    assert "language" not in payload["audio"]["input"]["transcription"]
+    assert payload["audio"]["input"]["turn_detection"]["create_response"] is False
     assert payload["audio"]["output"]["voice"] == "echo"
+    await session.request_response()
+    assert client.realtime.last_conn.response_creates == 1
     await session.close()
 
 

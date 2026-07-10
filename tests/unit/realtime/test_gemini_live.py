@@ -157,6 +157,21 @@ async def test_open_session_uses_current_default_model(
 
 
 @pytest.mark.asyncio
+async def test_explicit_reply_language_configures_gemini_speech(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holder = _patch_genai_client(monkeypatch)
+    session = await GeminiLiveProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig(language="es", language_is_pinned=True)
+    )
+    _model, config = holder["client"].aio.live.connect_calls[0]
+
+    assert config.speech_config.language_code == "es"
+    await session.request_response()  # Gemini auto-responds; the method is a no-op.
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_tools_are_declared_mapped_and_answered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
