@@ -963,6 +963,11 @@ function ProviderCard({
       pushToast("error", (e as Error).message);
       // Roll the optimistic highlight back to the true active provider.
       onChanged();
+      window.dispatchEvent(
+        new CustomEvent("jarvis:provider-switch-failed", {
+          detail: { section: descriptor.tier, provider: descriptor.id },
+        }),
+      );
     } finally {
       setActivating(false);
     }
