@@ -144,3 +144,55 @@ class TestSubagentSectionHealth:
         health = pr._jarvis_agent_section_health(self._cfg())
         assert health.status == sh.ERROR
         assert health.reason == "no_provider"
+
+    def test_degraded_label_says_subscription_for_oauth_user(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """2026-07-10 report: the banner blamed 'Claude (API-Key)' although the
+        user runs the worker on the Claude subscription login — the degraded
+        message must name the auth mode actually in play."""
+        import json
+
+        from jarvis import claude_credentials
+        from jarvis.ui.web import provider_routes as pr
+
+        (tmp_path / ".credentials.json").write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": "sk-ant-oat01-x",
+                        "expiresAt": 1.0,  # expired-in-place — still an OAuth user
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            claude_credentials, "claude_config_dirs", lambda: [tmp_path]
+        )
+        monkeypatch.setattr(pr, "_worker_usable", lambda p: False)
+        monkeypatch.setattr(pr, "_worker_flagged_dead", lambda p: True)
+        monkeypatch.setattr(
+            "jarvis.missions.init.reachable_worker_families", lambda: ["codex"]
+        )
+        health = pr._jarvis_agent_section_health(self._cfg())
+        assert "Claude (subscription)" in health.detail
+        assert "API-Key" not in health.detail
+
+    def test_degraded_label_keeps_api_key_for_keyed_user(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from jarvis import claude_credentials
+        from jarvis.ui.web import provider_routes as pr
+
+        # No OAuth bearer anywhere → the user really is on the API-key path.
+        monkeypatch.setattr(
+            claude_credentials, "claude_config_dirs", lambda: [tmp_path]
+        )
+        monkeypatch.setattr(pr, "_worker_usable", lambda p: False)
+        monkeypatch.setattr(pr, "_worker_flagged_dead", lambda p: True)
+        monkeypatch.setattr(
+            "jarvis.missions.init.reachable_worker_families", lambda: ["codex"]
+        )
+        health = pr._jarvis_agent_section_health(self._cfg())
+        assert "Claude (API-Key)" in health.detail
