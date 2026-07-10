@@ -278,6 +278,42 @@ async def test_key_is_resolved_lazily_from_config(
     assert captured["url"] == "https://proxy.example/v1/audio/transcriptions"
 
 
+@pytest.mark.asyncio
+async def test_shared_key_replacement_applies_to_the_next_transcription(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A config-resolved key is refreshed without rebuilding the STT instance."""
+    from jarvis.core import config as cfg
+
+    state: dict[str, object] = {"key": "old-key", "revision": 0}
+    seen_auth: list[str] = []
+    monkeypatch.setattr(
+        cfg,
+        "resolve_provider_endpoint",
+        lambda *a, **k: SimpleNamespace(
+            credential=state["key"],
+            base_url="https://openrouter.ai/api/v1",
+            via_proxy=False,
+        ),
+    )
+    monkeypatch.setattr(cfg, "secret_revision", lambda _key: state["revision"])
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen_auth.append(request.headers["Authorization"])
+        return httpx.Response(200, json=_JSON_OK)
+
+    stt = OpenRouterSTT(http_client=_mock_client(handler))
+    try:
+        await stt.transcribe_pcm(_silent_pcm())
+        state["key"] = "new-key"
+        state["revision"] = 1
+        await stt.transcribe_pcm(_silent_pcm())
+    finally:
+        await stt.aclose()
+
+    assert seen_auth == ["Bearer old-key", "Bearer new-key"]
+
+
 # ---------------------------------------------------------------------------
 # Transcription-model filter (the STT picker guard)
 # ---------------------------------------------------------------------------

@@ -103,6 +103,7 @@ class OpenRouterTTS:
         # caller-owned and is never replaced here.
         self._resolved_credential: str | None = None
         self._resolved_base_url: str | None = None
+        self._resolved_secret_revision = -1
         # Overridden by _ensure_client with the resolved endpoint; a default here
         # lets a directly-injected client (tests / warm reuse) synthesise without
         # re-resolving the key.
@@ -125,6 +126,12 @@ class OpenRouterTTS:
         # credential marker and stays caller-owned.
         if self._client is not None and self._resolved_credential is None:
             return
+        current_revision = cfg.secret_revision("openrouter_api_key")
+        if (
+            self._client is not None
+            and self._resolved_secret_revision == current_revision
+        ):
+            return
         ep = cfg.resolve_provider_endpoint(
             "openrouter", vendor_default_base_url=BASE_URL
         )
@@ -142,6 +149,7 @@ class OpenRouterTTS:
             and self._resolved_credential == ep.credential
             and self._resolved_base_url == resolved_base_url
         ):
+            self._resolved_secret_revision = current_revision
             return
 
         old_client = self._client
@@ -158,6 +166,7 @@ class OpenRouterTTS:
         )
         self._resolved_credential = ep.credential
         self._resolved_base_url = resolved_base_url
+        self._resolved_secret_revision = current_revision
         if old_client is not None:
             try:
                 await old_client.aclose()
@@ -173,6 +182,7 @@ class OpenRouterTTS:
                 self._client = None
                 self._resolved_credential = None
                 self._resolved_base_url = None
+                self._resolved_secret_revision = -1
 
     # ------------------------------------------------------------------
     # Voice resolution

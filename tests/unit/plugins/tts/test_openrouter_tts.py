@@ -9,6 +9,7 @@ only speech models survive).
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -176,6 +177,50 @@ async def test_missing_key_raises_clear_error(monkeypatch: pytest.MonkeyPatch) -
     tts = OpenRouterTTS()  # no injected client -> _ensure_client runs
     with pytest.raises(OpenRouterTTSError, match="OpenRouter API key"):
         _ = [c async for c in tts.synthesize("Test.")]
+
+
+@pytest.mark.asyncio
+async def test_shared_key_replacement_refreshes_the_internal_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state: dict[str, Any] = {"key": "old-key", "revision": 0}
+    created: list[Any] = []
+
+    class _ManagedClient:
+        def __init__(self, **kwargs: Any) -> None:
+            self.headers = kwargs["headers"]
+            self.closed = False
+            created.append(self)
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr(
+        ortts.cfg,
+        "resolve_provider_endpoint",
+        lambda *a, **k: SimpleNamespace(
+            credential=state["key"], base_url=ortts.BASE_URL, via_proxy=False
+        ),
+    )
+    monkeypatch.setattr(
+        ortts.cfg, "secret_revision", lambda _key: state["revision"]
+    )
+    monkeypatch.setattr("httpx.AsyncClient", _ManagedClient)
+
+    tts = OpenRouterTTS()
+    await tts._ensure_client()
+    first = tts._client
+    await tts._ensure_client()
+    assert len(created) == 1, "an unchanged credential must reuse the keep-alive client"
+
+    state["key"] = "new-key"
+    state["revision"] += 1
+    await tts._ensure_client()
+
+    assert len(created) == 2
+    assert first.closed is True
+    assert tts._client.headers["Authorization"] == "Bearer new-key"
+    await tts.aclose()
 
 
 # --------------------------------------------------------------------------- #

@@ -2453,6 +2453,24 @@ def load_config(
 # installed ONLY when the current backend is the no-op fail.Keyring).
 _KEYRING_BACKEND_READY: bool = False
 _FILE_BACKEND_ACTIVE: bool = False
+_SECRET_REVISION_LOCK = threading.Lock()
+_SECRET_REVISIONS: dict[str, int] = {}
+
+
+def secret_revision(key: str) -> int:
+    """Return the in-process revision for one credential slot.
+
+    Provider instances use this cheap counter to refresh a replaced credential
+    without performing a keyring read on every request. External credential-store
+    edits still require a process restart; in-app writes increment the counter.
+    """
+    with _SECRET_REVISION_LOCK:
+        return _SECRET_REVISIONS.get(key, 0)
+
+
+def _mark_secret_changed(key: str) -> None:
+    with _SECRET_REVISION_LOCK:
+        _SECRET_REVISIONS[key] = _SECRET_REVISIONS.get(key, 0) + 1
 
 
 # Serializes _FileCredStore's load-mutate-save cycle so two in-process
@@ -2803,6 +2821,7 @@ def set_secret(key: str, value: str) -> bool:
                     store.delete(KEYRING_SERVICE, key)
             except Exception:  # noqa: BLE001, S110 — secure write already succeeded
                 pass
+        _mark_secret_changed(key)
         return True
     except Exception as exc:  # noqa: BLE001
         # A reachable-but-unusable OS keyring (e.g. a locked Linux Secret Service)
@@ -2814,6 +2833,7 @@ def set_secret(key: str, value: str) -> bool:
                 import keyring
 
                 keyring.set_password(KEYRING_SERVICE, key, value)
+                _mark_secret_changed(key)
                 return True
             except Exception:  # noqa: BLE001
                 return False
@@ -2867,6 +2887,8 @@ def delete_secret(key: str) -> bool:
         file_ok = True
     except Exception:  # noqa: BLE001, S110
         pass
+    if keyring_ok or file_ok:
+        _mark_secret_changed(key)
     return keyring_ok and file_ok
 
 

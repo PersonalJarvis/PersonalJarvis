@@ -64,6 +64,7 @@ def test_explicit_save_restores_platform_backend_and_removes_stale_fallback(
 
     monkeypatch.setattr(keyring.core, "init_backend", _restore_platform)
 
+    revision_before = cfg.secret_revision("openrouter_api_key")
     assert cfg.set_secret("openrouter_api_key", "new-file-value") is True
     assert (
         platform_backend.get_password(cfg.KEYRING_SERVICE, "openrouter_api_key")
@@ -71,6 +72,7 @@ def test_explicit_save_restores_platform_backend_and_removes_stale_fallback(
     )
     assert store.get(cfg.KEYRING_SERVICE, "openrouter_api_key") is None
     assert cfg._FILE_BACKEND_ACTIVE is False
+    assert cfg.secret_revision("openrouter_api_key") == revision_before + 1
 
 
 def test_explicit_save_keeps_file_backend_when_platform_store_is_still_unusable(

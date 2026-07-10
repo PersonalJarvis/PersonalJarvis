@@ -136,6 +136,7 @@ class OpenRouterSTT:
         self._client = http_client
         self._owns_client = http_client is None
         self._endpoint_url: str | None = None
+        self._resolved_secret_revision = -1
 
     # ------------------------------------------------------------------
     # Public API (STTProvider contract + pipeline compat shims)
@@ -226,17 +227,28 @@ class OpenRouterSTT:
         OpenRouter credential is configured, so the factory / pipeline can fall
         back to the local floor (AP-22).
         """
+        if self._api_key_is_explicit and self._endpoint_url is not None and self._api_key:
+            return self._endpoint_url
+
         base = self._base_url or DEFAULT_BASE_URL
         if not self._api_key_is_explicit:
             # Import here (not at module top) to keep the plugin ``jarvis.*``-free
             # at import time; the entry-point loader tolerates a lazy internal use.
             from jarvis.core import config as _cfg
 
+            current_revision = _cfg.secret_revision("openrouter_api_key")
+            if (
+                self._endpoint_url is not None
+                and self._api_key
+                and self._resolved_secret_revision == current_revision
+            ):
+                return self._endpoint_url
             ep = _cfg.resolve_provider_endpoint(
                 "openrouter", vendor_default_base_url=DEFAULT_BASE_URL
             )
             self._api_key = ep.credential or None
             base = ep.base_url or DEFAULT_BASE_URL
+            self._resolved_secret_revision = current_revision
 
         if not self._api_key:
             raise RuntimeError(
