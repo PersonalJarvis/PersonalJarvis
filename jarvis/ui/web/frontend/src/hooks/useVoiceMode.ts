@@ -19,7 +19,21 @@ export function useVoiceMode() {
       if (!r.ok) throw new Error(await r.text());
       return r.json();
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["voice-mode"] }),
+    // Optimistic: flip the cached mode BEFORE the PUT resolves, so the
+    // Pipeline|Realtime segment's filled "live" state follows the click
+    // instantly (the persist can take seconds on a busy backend, and the UI
+    // used to only update after PUT + a full refetch — the switch felt dead).
+    // A failed PUT rolls back to the previous server truth.
+    onMutate: async (mode: string) => {
+      await qc.cancelQueries({ queryKey: ["voice-mode"] });
+      const prev = qc.getQueryData<VoiceModeResp>(["voice-mode"]);
+      if (prev) qc.setQueryData<VoiceModeResp>(["voice-mode"], { ...prev, mode });
+      return { prev };
+    },
+    onError: (_err, _mode, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["voice-mode"], ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["voice-mode"] }),
   });
 
   // Activating a realtime provider CARD (ApiKeysView's ProviderCategory, the

@@ -881,7 +881,9 @@
     "mode_active_badge": "Active",
     "voice_engine_label": "Voice engine",
     "voice_engine_desc": "How Jarvis listens and talks — the classic pipeline, or a single realtime model.",
-    "mode_needs_key": "add a key",
+    "mode_needs_key": "Realtime needs an API key — add one below to switch.",
+    "mode_desc_pipeline": "Three steps: speech-to-text, the Brain thinks, text-to-speech.",
+    "mode_desc_realtime": "One model listens and answers in the same live audio stream.",
     "cat_brain_desc": "The model that powers chat, routing, and Computer-Use.",
     "cat_tts_desc": "The voice Jarvis speaks with.",
     "cat_stt_desc": "How Jarvis turns your speech into text.",
@@ -908,7 +910,11 @@
     "trademark_notice": "Provider and service names and logos are trademarks of their respective owners, shown only to identify the integrations you can connect. No affiliation or endorsement is implied.",
     "realtime_model_label": "Realtime model",
     "realtime_voice_label": "Voice",
-    "realtime_provider_default": "Provider default"
+    "realtime_provider_default": "Provider default (recommended)",
+    "guide_realtime_title": "Which model should I pick?",
+    "guide_realtime_body": "OpenAI: GPT Realtime (the provider default) sounds the most natural; GPT Realtime Mini is the budget pick. Google: Gemini 3.1 Flash Live is the current Live flagship. \"Provider default\" always resolves to the recommended model, so you can simply leave it.",
+    "guide_computer_use_title": "Which provider should run Computer-Use?",
+    "guide_computer_use_body": "Computer-Use looks at screenshots of your screen, so it needs a model that understands images — the picker hides text-only models. If unsure, keep your main Brain provider and its default model."
   },
   "apikeys_test": {
     "button": "Test",

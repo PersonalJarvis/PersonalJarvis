@@ -1,5 +1,5 @@
 ﻿import { useEffect, useState } from "react";
-import { AlertCircle, Bot, Brain, Check, Copy, KeyRound, Loader2, LogIn, LogOut, Mic, Phone, PlugZap, Radio, SlidersHorizontal, Terminal, Volume2, XCircle } from "lucide-react";
+import { AlertCircle, Bot, Brain, Check, Copy, KeyRound, Loader2, LogIn, LogOut, Mic, Phone, PlugZap, Radio, SlidersHorizontal, Sparkles, Terminal, Volume2, Waypoints, XCircle } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
@@ -161,6 +161,11 @@ export function ApiKeysView() {
       <CategoryTabs active={active} onSelect={setActive} health={health} tabs={modeTabs} />
 
       <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
+        {/* Readability: the provider cards used to stretch across the full
+            window width (2000px+ on wide screens). One centered measure keeps
+            every card scannable; the key prop re-runs the rise animation on
+            each tab/mode change (respects prefers-reduced-motion). */}
+        <div key={`${engineMode}-${active}`} className="profile-rise mx-auto w-full max-w-4xl">
         {(active === "brain" || active === "tts" || active === "stt") && (
           <ProviderCategory
             meta={categories[active]}
@@ -197,6 +202,7 @@ export function ApiKeysView() {
         )}
         {active === "subagents" && <SubagentCategory />}
         {active === "advanced" && <AdvancedCategory />}
+        </div>
       </div>
     </div>
   );
@@ -211,15 +217,18 @@ export function ApiKeysView() {
  * the Realtime tab without silently pinning the boot default to a dead
  * engine.
  *
- * Visual system (one system, two legible states — replaces the old
- * two-color gold-ring + emerald-badge combo):
- * - The segment matching the LIVE `[voice].mode` is the filled solid
- *   segment (`bg-primary`) with a leading "●" — unmistakably "this is on".
+ * Visual system (one system, two legible states):
+ * - A sliding gold thumb sits under the segment matching the LIVE
+ *   `[voice].mode` — unmistakably "this engine is on". `useVoiceMode` updates
+ *   its cache optimistically, so the thumb follows the click INSTANTLY and
+ *   only rolls back if the persist fails.
  * - The segment currently being VIEWED but not live gets a subtle outline
  *   only (no fill) — it's a transient look, not "on".
  * - Realtime with no key configured anywhere (`!realtimeAvailable`) reads
- *   muted with an inline "add a key" hint; it stays clickable (opens the
+ *   muted with an "add a key" caption below; it stays clickable (opens the
  *   Realtime tab so the user can add one) but never gets the fill.
+ * - One caption line under the control describes the VIEWED engine in plain
+ *   words, so "Pipeline vs Realtime" needs no prior knowledge.
  */
 function EngineModeSwitch({
   mode,
@@ -238,10 +247,11 @@ function EngineModeSwitch({
   onSetVoiceMode: (mode: string) => void;
 }) {
   const t = useT();
-  const segments: { key: VoiceEngineMode; label: string }[] = [
-    { key: "pipeline", label: t("apikeys_view.mode_pipeline") },
-    { key: "realtime", label: t("apikeys_view.mode_realtime") },
+  const segments: { key: VoiceEngineMode; label: string; icon: LucideIcon }[] = [
+    { key: "pipeline", label: t("apikeys_view.mode_pipeline"), icon: Waypoints },
+    { key: "realtime", label: t("apikeys_view.mode_realtime"), icon: Radio },
   ];
+  const liveIndex = liveMode === "realtime" ? 1 : 0;
 
   function handleSelect(seg: VoiceEngineMode) {
     onSelect(seg);
@@ -252,48 +262,65 @@ function EngineModeSwitch({
 
   return (
     <div className="border-b border-border px-6 pt-4 pb-4">
-      <div className="mb-2.5">
-        <h2 className="text-sm font-semibold text-foreground">{t("apikeys_view.voice_engine_label")}</h2>
-        <p className="text-xs text-muted-foreground">{t("apikeys_view.voice_engine_desc")}</p>
-      </div>
-      <div className="inline-flex items-center gap-1 rounded-xl border border-border bg-card/40 p-1">
-        {segments.map((seg) => {
-          const isLive = liveMode === seg.key;
-          const isViewedOnly = mode === seg.key && !isLive;
-          const needsKey = seg.key === "realtime" && !realtimeAvailable;
-          return (
-            <div key={seg.key} className="inline-flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => handleSelect(seg.key)}
-                aria-pressed={mode === seg.key}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors",
-                  isLive
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : isViewedOnly
-                      ? "text-foreground ring-1 ring-border"
-                      : needsKey
-                        ? "text-muted-foreground/60 hover:bg-secondary/40 hover:text-muted-foreground"
-                        : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
-                )}
-              >
-                {isLive && (
-                  <span aria-hidden="true" className="text-[10px] leading-none">
-                    ●
-                  </span>
-                )}
-                {seg.label}
-                {isLive && <span className="sr-only">{t("apikeys_view.mode_active_badge")}</span>}
-              </button>
-              {needsKey && (
-                <span className="pr-2 text-[10px] text-muted-foreground/70">
-                  {t("apikeys_view.mode_needs_key")}
-                </span>
-              )}
-            </div>
-          );
-        })}
+      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+        <div className="min-w-0">
+          <h2 className="font-display text-sm font-semibold text-foreground">
+            {t("apikeys_view.voice_engine_label")}
+          </h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {t("apikeys_view.voice_engine_desc")}
+          </p>
+        </div>
+
+        <div className="shrink-0">
+          {/* Two equal segments over one sliding thumb: the thumb tracks the
+              LIVE engine, so its glide IS the switch feedback. */}
+          <div className="relative grid w-64 grid-cols-2 rounded-xl border border-border bg-card/40 p-1">
+            <span
+              aria-hidden="true"
+              className="absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-lg bg-primary shadow-[0_0_18px_rgba(255,214,10,0.25)] transition-transform duration-200 ease-out"
+              style={{ transform: `translateX(${liveIndex * 100}%)` }}
+            />
+            {segments.map((seg) => {
+              const isLive = liveMode === seg.key;
+              const isViewedOnly = mode === seg.key && !isLive;
+              const needsKey = seg.key === "realtime" && !realtimeAvailable;
+              const Icon = seg.icon;
+              return (
+                <button
+                  key={seg.key}
+                  type="button"
+                  onClick={() => handleSelect(seg.key)}
+                  aria-pressed={mode === seg.key}
+                  className={cn(
+                    "relative z-10 inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    isLive
+                      ? "text-primary-foreground"
+                      : isViewedOnly
+                        ? "text-foreground ring-1 ring-border"
+                        : needsKey
+                          ? "text-muted-foreground/60 hover:text-muted-foreground"
+                          : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <Icon aria-hidden="true" className="h-3.5 w-3.5" />
+                  {seg.label}
+                  {isLive && (
+                    <span className="sr-only">{t("apikeys_view.mode_active_badge")}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-1.5 max-w-64 text-right text-[11px] leading-snug text-muted-foreground">
+            {mode === "realtime" && !realtimeAvailable
+              ? t("apikeys_view.mode_needs_key")
+              : mode === "realtime"
+                ? t("apikeys_view.mode_desc_realtime")
+                : t("apikeys_view.mode_desc_pipeline")}
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -476,6 +503,24 @@ function CategoryHero({
 }
 
 /**
+ * A soft, gold-tinted "which one should I pick?" band — the one place a
+ * category speaks up with an opinion. Used by the Realtime and Computer-Use
+ * tabs, where the model choice genuinely confuses people; the calmer tiers
+ * carry their guidance on the cards themselves (Recommended badges).
+ */
+function GuidancePanel({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="mb-5 flex items-start gap-3 rounded-xl border border-primary/25 bg-primary/[0.05] px-4 py-3">
+      <Sparkles aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+      <div className="min-w-0 text-xs leading-relaxed">
+        <p className="font-medium text-foreground">{title}</p>
+        <p className="mt-0.5 text-muted-foreground">{body}</p>
+      </div>
+    </div>
+  );
+}
+
+/**
  * One of the three provider tiers (brain/tts/stt): the hero band plus the
  * loading / error / empty / card states. The card list itself is `TierSection`,
  * reused unchanged from the original layout.
@@ -489,6 +534,7 @@ function ProviderCategory({
   onChanged,
   onActivateOptimistic,
   health,
+  intro,
 }: {
   meta: CategoryMeta;
   tier: ProviderTier;
@@ -500,6 +546,8 @@ function ProviderCategory({
   /** Live health of this tier's ACTIVE provider — drills the tab's red dot down
    *  onto the exact card that is failing so the user sees WHICH provider broke. */
   health?: SectionHealth;
+  /** Optional guidance band rendered between the hero and the card list. */
+  intro?: React.ReactNode;
 }) {
   const t = useT();
   const tierProviders = providers.filter(
@@ -509,6 +557,8 @@ function ProviderCategory({
   return (
     <div role="tabpanel">
       <CategoryHero icon={meta.icon} title={meta.title} description={meta.description} />
+
+      {intro}
 
       {loading && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -573,6 +623,7 @@ function RealtimeCategory({
   onActivateOptimistic: (tier: ProviderTier, id: string) => void;
   health?: SectionHealth;
 }) {
+  const t = useT();
   return (
     <ProviderCategory
       meta={meta}
@@ -583,6 +634,12 @@ function RealtimeCategory({
       onChanged={onChanged}
       onActivateOptimistic={onActivateOptimistic}
       health={health}
+      intro={
+        <GuidancePanel
+          title={t("apikeys_view.guide_realtime_title")}
+          body={t("apikeys_view.guide_realtime_body")}
+        />
+      }
     />
   );
 }
@@ -619,6 +676,7 @@ function ComputerUseCategory({
   onActivateOptimistic: (tier: ProviderTier, id: string) => void;
   health?: SectionHealth;
 }) {
+  const t = useT();
   const cuProviders: ProviderDescriptor[] = providers
     .filter((p) => p.tier === "brain" && p.brain_switchable !== false)
     .map((p) => ({ ...p, tier: "computer-use", active: !!p.computer_use_active }));
@@ -633,6 +691,12 @@ function ComputerUseCategory({
       onChanged={onChanged}
       onActivateOptimistic={onActivateOptimistic}
       health={health}
+      intro={
+        <GuidancePanel
+          title={t("apikeys_view.guide_computer_use_title")}
+          body={t("apikeys_view.guide_computer_use_body")}
+        />
+      }
     />
   );
 }
@@ -736,9 +800,17 @@ function TierSection({
   health?: SectionHealth;
 }) {
   const tierHasActive = providers.some((p) => p.active);
+  // Configured providers first — the wall of empty key forms used to bury the
+  // one or two cards the user actually set up. Deliberately NOT sorted by
+  // `active`: activation flips live (optimistically), and a card that jumps
+  // position under the pointer mid-click reads as breakage, while `configured`
+  // only changes on a key save. Stable within each group (Array.sort is stable).
+  const sorted = [...providers].sort(
+    (a, b) => Number(b.configured) - Number(a.configured),
+  );
   return (
     <ul className="space-y-3">
-      {providers.map((p) => (
+      {sorted.map((p) => (
         <li key={p.id}>
           <ProviderCard
             descriptor={p}
@@ -925,11 +997,13 @@ function ProviderCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">{descriptor.label}</span>
+            <span className="font-display text-sm font-semibold tracking-tight">
+              {descriptor.label}
+            </span>
             <StatusBadge descriptor={descriptor} />
             {descriptor.recommended && (
               <span
-                className="rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-primary"
+                className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
                 title={
                   descriptor.recommended_model
                     ? t("apikeys_view.recommended_tooltip").replace(
@@ -939,12 +1013,13 @@ function ProviderCard({
                     : undefined
                 }
               >
+                <Sparkles aria-hidden="true" className="h-2.5 w-2.5" />
                 {t("apikeys_view.recommended")}
               </span>
             )}
             {descriptor.caution && (
               <span
-                className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-amber-600 dark:text-amber-400"
+                className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
                 title={descriptor.caution}
               >
                 {t("apikeys_view.not_recommended")}
@@ -1071,7 +1146,11 @@ function ProviderCard({
         <RealtimeOptionsControl providerId={descriptor.id} />
       )}
 
-      <ProviderTestControl providerId={descriptor.id} />
+      {/* Footer: the live connectivity test, visually separated from the
+          configuration body so "set up" and "verify" read as two steps. */}
+      <div className="border-t border-border/60 pt-2.5">
+        <ProviderTestControl providerId={descriptor.id} />
+      </div>
     </div>
   );
 }
@@ -1557,28 +1636,49 @@ function AntigravityAuthWidget({
   );
 }
 
+// One calm chip vocabulary for every card state. Sentence-case, small, and
+// tonally consistent (gold = on, green = ready, neutral = untouched, red =
+// broken) — replaces the earlier mix of shouting uppercase badges.
+const STATE_CHIP_TONE = {
+  active: "border-primary/40 bg-primary/15 text-primary font-semibold",
+  ready: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600",
+  missing: "border-destructive/30 bg-destructive/10 text-destructive",
+  neutral: "border-border bg-muted text-muted-foreground",
+} as const;
+
+function StateChip({
+  tone,
+  children,
+}: {
+  tone: keyof typeof STATE_CHIP_TONE;
+  children: React.ReactNode;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium",
+        STATE_CHIP_TONE[tone],
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
 function StatusBadge({ descriptor }: { descriptor: ProviderDescriptor }) {
-  if (descriptor.active) return <span className="chip-yellow">active</span>;
+  if (descriptor.active) return <StateChip tone="active">active</StateChip>;
   if (descriptor.auth_mode === "codex") {
     const status = descriptor.codex_status;
-    if (!status?.installed) {
-      return <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-destructive">missing</span>;
-    }
-    if (descriptor.configured) {
-      return <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">ready</span>;
-    }
-    return <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">not connected</span>;
+    if (!status?.installed) return <StateChip tone="missing">missing</StateChip>;
+    if (descriptor.configured) return <StateChip tone="ready">ready</StateChip>;
+    return <StateChip tone="neutral">not connected</StateChip>;
   }
   if (descriptor.auth_mode === "antigravity") {
     const status = descriptor.antigravity_status;
-    if (!status?.installed) {
-      return <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-destructive">missing</span>;
-    }
-    if (status.connected) {
-      return <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">ready</span>;
-    }
-    return <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">not connected</span>;
+    if (!status?.installed) return <StateChip tone="missing">missing</StateChip>;
+    if (status.connected) return <StateChip tone="ready">ready</StateChip>;
+    return <StateChip tone="neutral">not connected</StateChip>;
   }
-  if (descriptor.configured) return <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">ready</span>;
-  return <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">open</span>;
+  if (descriptor.configured) return <StateChip tone="ready">ready</StateChip>;
+  return <StateChip tone="neutral">open</StateChip>;
 }

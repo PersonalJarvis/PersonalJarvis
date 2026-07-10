@@ -881,7 +881,9 @@
     "mode_active_badge": "Activo",
     "voice_engine_label": "Motor de voz",
     "voice_engine_desc": "Cómo escucha y habla Jarvis: la pipeline clásica o un único modelo en tiempo real.",
-    "mode_needs_key": "falta una clave",
+    "mode_needs_key": "Tiempo real necesita una clave API — añade una abajo para cambiar.",
+    "mode_desc_pipeline": "Tres pasos: voz a texto, el Brain piensa, texto a voz.",
+    "mode_desc_realtime": "Un solo modelo escucha y responde en el mismo flujo de audio en vivo.",
     "cat_brain_desc": "El modelo que impulsa el chat, el enrutamiento y Computer-Use.",
     "cat_tts_desc": "La voz con la que habla Jarvis.",
     "cat_stt_desc": "Cómo convierte Jarvis tu voz en texto.",
@@ -907,7 +909,11 @@
     "security_notice": "",
     "realtime_model_label": "Modelo en tiempo real",
     "realtime_voice_label": "Voz",
-    "realtime_provider_default": "Predeterminado del proveedor"
+    "realtime_provider_default": "Predeterminado del proveedor (recomendado)",
+    "guide_realtime_title": "¿Qué modelo debería elegir?",
+    "guide_realtime_body": "OpenAI: GPT Realtime (el predeterminado del proveedor) suena más natural; GPT Realtime Mini es la opción económica. Google: Gemini 3.1 Flash Live es el buque insignia actual de Live. «Predeterminado del proveedor» siempre resuelve al modelo recomendado, así que puedes dejarlo tal cual.",
+    "guide_computer_use_title": "¿Qué proveedor debería ejecutar Computer-Use?",
+    "guide_computer_use_body": "Computer-Use mira capturas de tu pantalla, así que necesita un modelo que entienda imágenes — el selector oculta los modelos de solo texto. En caso de duda, quédate con tu proveedor Brain principal y su modelo predeterminado."
   },
   "apikeys_test": {
     "button": "Probar",
