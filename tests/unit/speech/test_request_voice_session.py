@@ -8,6 +8,8 @@ pattern) so we don't drag in stt/tts/audio.
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 
 from jarvis.speech.pipeline import PipelineState, SpeechPipeline, TurnTakingState
 
@@ -32,6 +34,7 @@ def _pipe(*, state=PipelineState.IDLE, gate=True, ptt=False, brain=None):
     p._muted = False
     p._last_wake_keyword = ""
     p._brain = brain
+    p._runtime_loop = None
     return p
 
 
@@ -98,3 +101,41 @@ def test_arms_without_seed_messages() -> None:
     assert p.request_voice_session() is True
     assert p._call_event.is_set()
     assert brain.seeded is None  # seed_history never called
+
+
+async def test_taskbar_thread_wakes_owner_loop_immediately() -> None:
+    """A Tk-thread request must wake the pipeline loop without another timer.
+
+    ``asyncio.Event.set()`` is not thread-safe. Calling it directly from the
+    Jarvis Bar's Tk thread only flips the flag; the selector can remain asleep
+    until unrelated I/O or a timer happens to wake it, which created the
+    variable 100-300 ms click-to-listen delay. The public request method must
+    marshal the edge through the pipeline loop's thread-safe scheduler.
+    """
+    p = _pipe()
+    owner = asyncio.get_running_loop()
+    p._runtime_loop = owner
+    ready = threading.Event()
+    release = threading.Event()
+
+    def _click_from_taskbar() -> None:
+        ready.set()
+        release.wait(timeout=0.5)
+        assert p.request_voice_session() is True
+
+    thread = threading.Thread(target=_click_from_taskbar, daemon=True)
+    thread.start()
+    assert ready.wait(timeout=0.1)
+    waiter = asyncio.create_task(p._call_event.wait())
+    await asyncio.sleep(0)  # register the waiter before the Tk-thread edge
+
+    began = time.perf_counter()
+    release.set()
+    await asyncio.wait_for(waiter, timeout=0.5)
+    elapsed = time.perf_counter() - began
+    thread.join(timeout=0.1)
+
+    assert elapsed < 0.2, (
+        "taskbar request did not wake the owner loop promptly; it likely set "
+        "asyncio.Event directly from the Tk thread"
+    )

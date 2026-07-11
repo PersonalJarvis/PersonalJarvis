@@ -4059,7 +4059,7 @@ class SpeechPipeline:
         log.info("🎙 PTT DOWN — recording (hold to talk, release to send)")
         self._ptt_mode = True
         self._ptt_release_event.clear()
-        self._call_event.set()
+        self._arm_call_event()
 
     def _on_ptt_release(self) -> None:
         """Push-to-talk UP edge — stop recording and submit what was held.
@@ -4081,10 +4081,11 @@ class SpeechPipeline:
         {cid}/speak``) calls this to start a session that already remembers a
         past conversation — functionally "Hey Jarvis", but with seeded context.
 
-        Same-loop, in-process: uvicorn and the pipeline share the orchestrator
-        event loop (see ``server.py`` / ``desktop_app.py``), so this runs on
-        the pipeline's own loop and may set ``_call_event`` directly — exactly
-        as the wake/PTT arming paths do.
+        Web routes run on the pipeline loop, while the native Jarvis Bar calls
+        this from its dedicated Tk thread. The final arming edge is therefore
+        marshalled through the owner loop when necessary; setting an
+        ``asyncio.Event`` directly from Tk can leave the selector asleep until
+        unrelated I/O happens to wake it.
 
         Returns ``False`` (no-op) when a session is already active or arming,
         or when the desktop app is not visible (``_activation_allowed``). The
@@ -4112,9 +4113,32 @@ class SpeechPipeline:
         self._ptt_mode = False  # wake-style, not raw PTT recording
         self._last_wake_keyword = "chat_resume"
         log.info(
-            "📞 request_voice_session — arming wake-style session (seeded=%d turns)",
+            "Voice session requested (wake-style, seeded=%d turns).",
             len(seed_messages or []),
         )
+        return self._arm_call_event()
+
+    def _arm_call_event(self) -> bool:
+        """Set the call edge on its owning asyncio loop.
+
+        Native overlay callbacks run on a Tk thread. ``asyncio.Event.set`` may
+        flip the flag from that thread without waking the loop's selector, so
+        the state task resumes only after an unrelated timer or socket event.
+        ``call_soon_threadsafe`` provides both the wakeup and the memory edge.
+        Same-loop callers retain the direct, allocation-free path.
+        """
+        owner = getattr(self, "_runtime_loop", None)
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        if owner is not None and owner.is_running() and current is not owner:
+            try:
+                owner.call_soon_threadsafe(self._call_event.set)
+                return True
+            except RuntimeError:
+                log.warning("Voice session request failed: owner loop is closed.")
+                return False
         self._call_event.set()
         return True
 
