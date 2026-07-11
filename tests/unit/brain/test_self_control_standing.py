@@ -42,7 +42,10 @@ def test_standing_line_present_without_keyword_directive() -> None:
 
 
 def test_standing_line_names_the_structured_path_and_forbids_claiming() -> None:
-    assert "app-command" in _SELF_CONTROL_STANDING
+    # Flat registry tools (post-2026-07-11 rework): the line must name real
+    # callable tool names, not the retired `app-command` umbrella interface.
+    assert "brain-switch" in _SELF_CONTROL_STANDING
+    assert "wake-word-set" in _SELF_CONTROL_STANDING
     low = _SELF_CONTROL_STANDING.lower()
     # The anti-"said it, did nothing" rule, in plain words.
     assert "never" in low

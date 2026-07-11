@@ -1649,28 +1649,32 @@ _SELF_CONTROL_NOUN_RE = re.compile(
 # that claiming without calling is forbidden. The keyworded directive stays
 # as the detailed intensifier.
 _SELF_CONTROL_STANDING = (
-    "SELF-CONTROL (always in effect): When the user asks you to change "
-    "anything about Jarvis itself — name/wake phrase, voice, volume, "
+    "SELF-CONTROL (always in effect): When the user asks you to change or "
+    "check anything about Jarvis itself — wake phrase, voice, volume, "
     "providers, languages, settings, restart, missions/tasks — you CAN do it "
-    "yourself: prefer the `app-command` tool (validated registry commands), "
-    "`set_config_value` for a plain config key, `cli_jarvisctl` as fallback. "
-    "NEVER state or imply that a change or action happened unless a tool "
-    "call actually returned success in THIS turn; without such a result, say "
-    "honestly that you have not done it yet."
+    "yourself with the registry command tools in your tool set (e.g. "
+    "`wake-word-set`, `brain-switch`, `provider-test`, `tts-volume-set`, "
+    "`app-restart`); `set_config_value` covers a plain config key, "
+    "`cli_jarvisctl` is the fallback for anything not covered. NEVER state "
+    "or imply that a change or action happened unless a tool call actually "
+    "returned success in THIS turn; without such a result, say honestly that "
+    "you have not done it yet."
 )
 
 _SELF_CONTROL_DIRECTIVE = (
     "SELF-CONTROL: The user is asking to change or control Jarvis's OWN settings, "
     "configuration, providers, voice, language, or behavior. You have full "
-    "control over this. PREFER the `app-command` tool — it runs a validated "
-    "registry command (provider switches, wake word, languages, volume, "
-    "missions/tasks, restart) with schema-checked arguments, so it cannot hit "
-    "the wrong target. For a simple config key use `set_config_value`; only "
-    "for actions NOT covered by either, fall back to the `cli_jarvisctl` tool "
-    "(e.g. `jarvisctl config set <key> <value>`). NEVER say you lack access "
-    "or permission to change a Jarvis setting, and never claim the change "
-    "without actually calling the tool: call it and confirm success only "
-    "AFTER it returns, using the values the tool actually reports."
+    "control over this. PREFER the registry command tools — `brain-switch`, "
+    "`tts-switch`, `provider-test`, `wake-word-set`, `reply-language-set`, "
+    "`tts-volume-set`, `app-restart`, `missions-list`, `task-cancel`, … — "
+    "each validates its arguments against the app's own endpoint, so it "
+    "cannot hit the wrong target. For a simple config key use "
+    "`set_config_value`; only for actions NOT covered by either, fall back "
+    "to the `cli_jarvisctl` tool (e.g. `jarvisctl config set <key> "
+    "<value>`). NEVER say you lack access or permission to change a Jarvis "
+    "setting, and never claim the change without actually calling the tool: "
+    "call it and confirm success only AFTER it returns, using the values the "
+    "tool actually reports."
 )
 
 

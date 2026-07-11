@@ -884,11 +884,15 @@ def test_factory_wires_navigate_into_router_set() -> None:
     assert tools["navigate"].risk_tier == "safe"
 
 
-def test_factory_wires_app_command_into_router_set() -> None:
-    """End-to-end wiring for the app-command tool: entry-point + ROUTER_TOOLS +
-    default construction. A missing entry-point line or a failing registry
-    import would silently drop the Command Registry from the router schema."""
+def test_factory_wires_registry_command_tools_into_router_set() -> None:
+    """End-to-end wiring for the Command-Registry tools: entry-point +
+    ROUTER_TOOLS gate the `app-command` VIRTUAL LOADER, which expands into one
+    flat tool per registry command (forensic 2026-07-11: the earlier umbrella
+    tool failed live — the LLM called `provider-test` as a tool name). A
+    missing entry-point line or a failing registry import would silently drop
+    every command from the router schema."""
     from jarvis.brain.factory import _load_tools_for_tier
+    from jarvis.commands.registry import get_registry
 
     tools = _load_tools_for_tier(
         "router",
@@ -900,19 +904,13 @@ def test_factory_wires_app_command_into_router_set() -> None:
         config=JarvisConfig(),
     )
 
-    assert "app-command" in tools
-    tool = tools["app-command"]
-    assert tool.name == "app-command"
-    assert tool.risk_tier == "monitor"
-    # Dangerous registry commands escalate to the two-turn confirm tier.
-    assert tool.risk_tier_for_args({"command_id": "app-restart"}) == "ask"
-    assert tool.risk_tier_for_args({"command_id": "brain-switch"}) == "monitor"
-    # The command ids the LLM may pick are enum-pinned to the registry.
-    from jarvis.commands.registry import get_registry
-
-    assert set(tool.schema["properties"]["command_id"]["enum"]) == {
-        c.id for c in get_registry()
-    }
+    # The loader itself never reaches the LLM tool set — only its expansion.
+    assert "app-command" not in tools
+    for cmd in get_registry():
+        assert cmd.id in tools, f"registry command {cmd.id} missing from router set"
+        assert tools[cmd.id].risk_tier == ("ask" if cmd.dangerous else "monitor")
+    # The exact live failure: `provider-test` must BE a callable tool now.
+    assert "provider-test" in tools
 
 
 def test_inspect_pointer_is_not_a_spawn_in_local_action_set() -> None:

@@ -802,3 +802,20 @@ remains as fallback for actions outside the registry.
   ASGI execution against a fake app, dangerous→ask escalation, server-response
   readback, honest no-server error.
 - `tests/unit/commands/test_registry_parity.py` — registry↔OpenAPI/UI parity.
+
+### Addendum (2026-07-11) — umbrella interface replaced by flat expansion
+
+The original `app-command` design (ONE tool, nested `command_id` + `args`)
+failed its first live test: the router LLM read the command list in the
+tool description and called `provider-test` AS A TOOL NAME — "tool
+'provider-test' not in the router tool set", spoken error. Flash-class
+routers flatten nested dispatch interfaces; the repo's own CLI/MCP loaders
+already solved this shape. `app-command` is therefore now a **virtual
+loader** (the `cli-tools` pattern): the ROUTER_TOOLS entry gates the loader,
+`expand()` registers one flat tool per registry command (`brain-switch`,
+`provider-test`, `wake-word-set`, …), each carrying the command's own params
+schema and risk tier (`ask` when dangerous, else `monitor`). Validation,
+ASGI execution, and echo-verify readback are unchanged. Guards:
+`test_factory_wires_registry_command_tools_into_router_set`,
+`tests/unit/plugins/tool/test_app_command.py` (loader expansion + flat
+schemas + the provider-test regression).

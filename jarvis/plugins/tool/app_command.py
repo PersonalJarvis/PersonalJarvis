@@ -1,23 +1,28 @@
-"""``app-command`` — execute a Command-Registry command by voice/chat.
+"""Registry command tools — one flat tool per Command-Registry entry.
 
-Router-tier. The ONE structured path for the LLM to drive app settings and
-actions: the command id is enum-constrained to the curated registry
-(``jarvis/commands/registry.py``), arguments are validated against the
-command's JSON schema BEFORE anything is sent, and execution goes through the
-SAME already-mounted REST endpoint the desktop UI uses (in-process ASGI
-transport — full route validation, no TCP). A voice command therefore can
-never behave differently from the UI button for the same action, and the
-readback the brain speaks is composed from the SERVER RESPONSE (what actually
-changed), never from the model's intent — echo-verify.
+Virtual loader (the ``cli-tools`` pattern): the ``app-command`` entry point
+expands into ONE tool per curated command in ``jarvis/commands/registry.py``
+— ``brain-switch``, ``provider-test``, ``wake-word-set``, … — each with the
+command's own flat JSON schema.
 
-Dangerous commands (registry ``dangerous: true``) surface as risk tier
-``ask`` via ``risk_tier_for_args``, which triggers the ToolExecutor's
-two-turn spoken confirmation; everything else runs at ``monitor`` (audited,
-reversible, no friction).
+Why flat tools and not one umbrella tool with a nested ``command_id``+
+``args`` interface: the umbrella design was tried first and failed live
+(forensic 2026-07-11 11:38): the router LLM read the command list in the
+umbrella's description and called ``provider-test`` AS A TOOL NAME —
+"tool 'provider-test' not in the router tool set" — spoken error. Flash-class
+routers handle many small flat schemas far better than one nested dispatch
+schema, and the repo already loads CLI/MCP tools exactly this way.
+
+Every tool still validates its arguments against the registry schema BEFORE
+anything is sent, and executes through the SAME already-mounted REST endpoint
+the desktop UI uses (in-process ASGI transport — full route validation, no
+TCP). The readback is composed from the SERVER RESPONSE (echo-verify), never
+from the model's intent. Dangerous registry commands carry risk tier ``ask``
+(ToolExecutor two-turn voice confirmation); the rest run at ``monitor``.
 
 Security: the registry contains no raw-secret writes (AP-2) and no spawn
-commands (mission dispatch stays with the dedicated spawn-worker tool,
-AP-5/AP-14) — this tool must never enter a worker tool set.
+commands (mission dispatch stays with spawn-worker, AP-5/AP-14) — these
+tools must never enter a worker tool set.
 """
 from __future__ import annotations
 
@@ -96,11 +101,8 @@ def _summarize(title: str, data: Any) -> str:
     return f"{title} succeeded."
 
 
-class AppCommandTool:
-    """Execute a curated app command through its REST endpoint, in-process."""
-
-    name: str = "app-command"
-    risk_tier: str = "monitor"
+class _Runtime:
+    """Shared execution plumbing: resolve the live app + control key once."""
 
     def __init__(
         self,
@@ -113,54 +115,8 @@ class AppCommandTool:
         self._app_resolver = app_resolver
         self._control_key_resolver = control_key_resolver
         self._transport = transport
-        from jarvis.commands.registry import get_registry
 
-        commands = get_registry()
-        lines = "\n".join(
-            f"- {c.id}: {c.description}" + (" [requires confirmation]" if c.dangerous else "")
-            for c in commands
-        )
-        self.description = (
-            "Run ONE app command from the command registry — the structured, "
-            "validated way to change app settings or query app state by "
-            "voice/chat (provider switches, wake word, languages, volume, "
-            "missions/tasks, restart). Pass the command id in 'command_id' and "
-            "its arguments in 'args' (see each command's schema via GET "
-            "/api/commands). Prefer this over composing raw CLI strings. "
-            "Commands:\n" + lines
-        )
-        self.schema: dict[str, Any] = {
-            "type": "object",
-            "properties": {
-                "command_id": {
-                    "type": "string",
-                    "enum": [c.id for c in commands],
-                    "description": "The registry command to execute.",
-                },
-                "args": {
-                    "type": "object",
-                    "description": (
-                        "Arguments for the command, matching its params schema "
-                        "(e.g. {\"provider\": \"claude-api\"} for brain-switch)."
-                    ),
-                },
-            },
-            "required": ["command_id"],
-        }
-
-    # ------------------------------------------------------------------
-    # Risk refinement: dangerous registry commands need the two-turn confirm.
-    # ------------------------------------------------------------------
-    def risk_tier_for_args(self, args: dict[str, Any]) -> str:
-        from jarvis.commands.registry import get_command
-
-        cmd = get_command(str(args.get("command_id", "")))
-        if cmd is None:
-            return self.risk_tier
-        return "ask" if cmd.dangerous else self.risk_tier
-
-    # ------------------------------------------------------------------
-    def _resolve_transport(self) -> Any | None:
+    def resolve_transport(self) -> Any | None:
         if self._transport is not None:
             return self._transport
         from jarvis.core import runtime_refs
@@ -175,7 +131,7 @@ class AppCommandTool:
 
         return httpx.ASGITransport(app=app)
 
-    def _control_key(self) -> str | None:
+    def control_key(self) -> str | None:
         if self._control_key_resolver is not None:
             return self._control_key_resolver()
         try:
@@ -185,27 +141,31 @@ class AppCommandTool:
         except Exception:  # noqa: BLE001 - most routes need no auth; degrade
             return None
 
+
+class RegistryCommandTool:
+    """One registry command as a flat, schema-validated brain tool."""
+
+    def __init__(self, command: Any, runtime: _Runtime) -> None:
+        self._cmd = command
+        self._runtime = runtime
+        self.name: str = command.id
+        self.risk_tier: str = "ask" if command.dangerous else "monitor"
+        note = (
+            " Requires the user's spoken confirmation before it runs."
+            if command.dangerous else ""
+        )
+        self.description: str = (
+            f"{command.description}{note} Executes the app's own validated "
+            f"endpoint ({command.method} {command.path}); report the result "
+            "the tool returns, never your assumption."
+        )
+        self.schema: dict[str, Any] = command.params or {
+            "type": "object", "properties": {},
+        }
+
     async def execute(self, args: dict[str, Any], ctx: Any) -> ToolResult:
-        from jarvis.commands.registry import get_command, get_registry
-
-        command_id = str(args.get("command_id", ""))
-        cmd = get_command(command_id)
-        if cmd is None:
-            return ToolResult(
-                success=False,
-                output={"requested": command_id},
-                error=(
-                    f"Unknown command id {command_id!r}. Valid ids: "
-                    + ", ".join(c.id for c in get_registry())
-                ),
-            )
-
-        cmd_args = args.get("args") or {}
-        if not isinstance(cmd_args, dict):
-            return ToolResult(
-                success=False, output=None,
-                error="'args' must be an object of command arguments.",
-            )
+        cmd = self._cmd
+        cmd_args = dict(args or {})
         problems = _validate_args(cmd.params, cmd_args)
         if problems:
             return ToolResult(
@@ -224,7 +184,7 @@ class AppCommandTool:
                 "{" + p + "}", quote(str(payload.pop(p)), safe="")
             )
 
-        transport = self._resolve_transport()
+        transport = self._runtime.resolve_transport()
         if transport is None:
             return ToolResult(
                 success=False, output=None,
@@ -237,7 +197,7 @@ class AppCommandTool:
         import httpx
 
         headers = {}
-        key = self._control_key()
+        key = self._runtime.control_key()
         if key:
             headers["Authorization"] = f"Bearer {key}"
         try:
@@ -278,3 +238,29 @@ class AppCommandTool:
                 "response": data,
             },
         )
+
+
+class AppCommandTool:
+    """Virtual loader: expands the Command Registry into flat brain tools.
+
+    Registered under the ``app-command`` entry point (gated by ROUTER_TOOLS);
+    the factory calls :meth:`expand` and registers the returned per-command
+    tools — the loader itself never appears in the LLM tool set.
+    """
+
+    name: str = "app-command"
+    risk_tier: str = "monitor"
+    is_virtual_loader: bool = True
+
+    def __init__(
+        self,
+        app_resolver: Any | None = None,
+        control_key_resolver: Any | None = None,
+        transport: Any | None = None,
+    ) -> None:
+        self._runtime = _Runtime(app_resolver, control_key_resolver, transport)
+
+    def expand(self) -> list[RegistryCommandTool]:
+        from jarvis.commands.registry import get_registry
+
+        return [RegistryCommandTool(cmd, self._runtime) for cmd in get_registry()]
