@@ -6,7 +6,8 @@ the bridge is reused unchanged. ``show(mode)`` selects the renderer state;
 the orb). Text/mouth methods are deliberate no-ops — the bar shows no text.
 
 Signals:
-- LISTENING: the bridge starts its own ``MicListener`` that calls ``set_level``.
+- LISTENING: the speech capture path publishes input RMS via ``mic_level``;
+  ``OrbBusBridge`` forwards it to this surface without opening a second mic.
 - SPEAKING: the audio player publishes its output RMS via ``level_tap``, which
   this surface subscribes to on ``start()``.
 - THINKING: the renderer generates a synthetic wave (no external signal).

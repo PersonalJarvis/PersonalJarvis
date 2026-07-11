@@ -37,28 +37,26 @@ from typing import TYPE_CHECKING, Any
 
 from jarvis.core.events import (
     AudioOutFirst,
-    ListeningStarted,
     JarvisAgentBackgroundCompleted,
+    ListeningStarted,
     OrbResetRequested,
     ResponseGenerated,
     ShowWindowRequested,
     SystemStateChanged,
     TranscriptionUpdate,
     UserVisibleFeedback,
-    WakeCandidateDetected,
-    WakeWordDetected,
     VoiceBootStatus,
     VoiceMuteChanged,
     VoiceMuteToggleRequested,
     VoiceSessionEnded,
     VoiceSessionStarted,
+    WakeCandidateDetected,
+    WakeWordDetected,
 )
-
 from ui.orb.animations import IDLE_ANIMATION_POOL
 
 if TYPE_CHECKING:
     from jarvis.core.bus import EventBus
-
     from ui.orb.overlay import OrbOverlay
 
 
@@ -164,8 +162,8 @@ class OrbBusBridge:
 
     def __init__(
         self,
-        bus: "EventBus",
-        orb: "OrbOverlay",
+        bus: EventBus,
+        orb: OrbOverlay,
         idle_animations_enabled: bool = True,
         hide_on_idle: bool = True,
     ) -> None:
@@ -179,6 +177,13 @@ class OrbBusBridge:
         # actually producing sound" instead — whoever makes sound drives bars.
         self._last_tts_level_t = 0.0
         self._last_state: str = "IDLE"
+        self._voice_session_active = False
+        self._wake_preview_origin_state = "IDLE"
+        # A verified-enough wake candidate can reveal the listening bar before
+        # the authoritative session state arrives. The wake microphone is
+        # already capturing during that interval, so its live levels must be
+        # allowed through without mutating the state-machine edge.
+        self._wake_candidate_active = False
         self._idle_task: asyncio.Task | None = None
         self._idle_enabled = idle_animations_enabled
         self._hide_on_idle = hide_on_idle
@@ -453,17 +458,29 @@ class OrbBusBridge:
         Deliberately does NOT mutate ``_last_state`` on show: the authoritative
         ``_on_wake_word_detected`` that follows a confirmed wake must still see
         the IDLE→LISTENING edge so it plays the greet 'wave' and sets the state
-        cleanly. Until that fires the equalizer mic-feed stays gated off (<1 s).
+        cleanly. A separate candidate latch enables the equalizer during this
+        preview without forging an authoritative session state.
         """
         if event.active:
             # Incoming speech candidate — cancel any pending idle hide and pop
             # the bar. _last_state untouched (see docstring).
+            if not self._wake_candidate_active:
+                self._wake_preview_origin_state = self._last_state
+            self._wake_candidate_active = True
+            # A fresh input affordance supersedes stale output recency from the
+            # preceding turn. Startup no longer plays an ACK, so retaining the
+            # old 500 ms TTS ownership window would keep truthful mic bars dark.
+            self._last_tts_level_t = 0.0
             self._cancel_idle_scheduler()
             self._orb.show(mode="listen")
             return
-        # Retract a rejected candidate. A real session owns the bar → leave it.
-        if self._last_state in _ACTIVE_VOICE_STATES:
+        self._wake_candidate_active = False
+        # Retract a rejected or gate-dropped preview. Only an authoritative
+        # VoiceSessionStarted owns the bar; WakeWordDetected alone is still a
+        # pre-session preview and can legitimately be rolled back.
+        if self._voice_session_active:
             return
+        self._last_state = self._wake_preview_origin_state
         if self._hide_on_idle:
             self._orb.hide()
         else:
@@ -473,8 +490,12 @@ class OrbBusBridge:
         """Pop the orb on the earliest confirmed wake signal."""
         log.info("OrbBridge._on_wake_word_detected: keyword=%s", event.keyword)
         prev_state = self._last_state
+        if not self._wake_candidate_active:
+            self._wake_preview_origin_state = prev_state
         self._last_state_trace_id = str(event.trace_id)
         self._suppress_show_until_session = False
+        self._wake_candidate_active = False
+        self._last_tts_level_t = 0.0
         self._last_state = "LISTENING"
         self._orb.show(mode="listen")
         if prev_state in ("IDLE", "ERROR", "PAUSED"):
@@ -509,8 +530,11 @@ class OrbBusBridge:
         the very first word.
         """
         log.info("OrbBridge._on_session_started: session=%s", event.session_id)
+        self._voice_session_active = True
         prev_state = self._last_state
         self._suppress_show_until_session = False
+        self._wake_candidate_active = False
+        self._last_tts_level_t = 0.0
         self._last_state = "LISTENING"
         # Enter the listening look now — robust to a deduplicated LISTENING state.
         self._orb.show(mode="listen")
@@ -535,6 +559,8 @@ class OrbBusBridge:
         event (preserving the existing salute/grace animation); the latch only
         prevents the resurrection that follows.
         """
+        self._voice_session_active = False
+        self._wake_candidate_active = False
         log.info(
             "OrbBridge._on_session_ended: session=%s reason=%s — late active "
             "states suppressed until next wake.",
@@ -594,6 +620,11 @@ class OrbBusBridge:
         # orb is clickable, so the loop is always captured in time.
         self._remember_loop()
         state = event.new_state
+        if state != "IDLE":
+            # Any authoritative non-idle state supersedes a visual-only wake
+            # preview. Keeping the latch beyond this edge could let a late mic
+            # sample overwrite THINKING/SPEAKING bars.
+            self._wake_candidate_active = False
         # ADR-0016: remember the trace_id so the next visibility snapshot
         # can correlate back to the state-transition that triggered it.
         self._last_state_trace_id = str(event.trace_id)
@@ -958,7 +989,11 @@ class OrbBusBridge:
         state is LISTENING. Works for whichever surface is current."""
         if time.monotonic() - self._last_tts_level_t < self._TTS_OWNS_BARS_S:
             return  # TTS is making sound → it drives the bars, not the silent mic
-        if self._last_state != "LISTENING":
+        candidate_listening = (
+            self._wake_candidate_active
+            and self._last_state in {"IDLE", "ERROR", "PAUSED"}
+        )
+        if self._last_state != "LISTENING" and not candidate_listening:
             return
         try:
             self._orb.set_level(level)

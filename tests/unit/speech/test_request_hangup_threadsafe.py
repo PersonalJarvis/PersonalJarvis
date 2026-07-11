@@ -13,7 +13,7 @@ import threading
 
 import pytest
 
-from jarvis.speech.pipeline import SpeechPipeline
+from jarvis.speech.pipeline import PipelineState, SpeechPipeline
 
 
 def _pipeline(owner_loop) -> SpeechPipeline:
@@ -50,6 +50,23 @@ async def test_owner_loop_hangup_runs_synchronously() -> None:
     pipeline.request_hangup()
 
     assert called_on == [threading.get_ident()]
+
+
+@pytest.mark.asyncio
+async def test_visible_wake_candidate_close_cancels_without_starting_session() -> None:
+    loop = asyncio.get_running_loop()
+    pipeline = _pipeline(loop)
+    pipeline._state = PipelineState.IDLE
+    pipeline._wake_preroll_active = True
+    pipeline._wake_cancel_event = asyncio.Event()
+    pipeline._trigger_voice_hangup = lambda: pytest.fail(
+        "candidate close must not enter live-session hangup"
+    )
+
+    pipeline.request_hangup()
+
+    assert pipeline._wake_cancel_event.is_set()
+    assert pipeline._external_hangup_pending.is_set() is False
 
 
 class _QueuedLoop:

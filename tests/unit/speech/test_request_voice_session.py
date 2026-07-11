@@ -74,6 +74,15 @@ def test_session_is_active_while_start_subscribers_are_still_running() -> None:
     assert p.is_session_active() is True
 
 
+def test_visible_wake_candidate_routes_close_x_to_cancellation() -> None:
+    """A pre-session candidate owns the visible close control."""
+    p = _pipe()
+    p._turn_state = TurnTakingState.IDLE
+    p._wake_preroll_active = True
+
+    assert p.is_session_active() is True
+
+
 def test_noop_when_ptt_active() -> None:
     p = _pipe(ptt=True)
     assert p.request_voice_session() is False

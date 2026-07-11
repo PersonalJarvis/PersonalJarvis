@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from types import SimpleNamespace
 
 import pytest
 
 import jarvis.speech.pipeline as pipeline_mod
-from jarvis.sessions.constants import HANGUP_SHUTDOWN, HANGUP_TURN_COMPLETE
+from jarvis.core.events import MessageSent
+from jarvis.core.protocols import AudioChunk
+from jarvis.sessions.constants import (
+    HANGUP_ERROR,
+    HANGUP_HOTKEY,
+    HANGUP_SHUTDOWN,
+    HANGUP_TURN_COMPLETE,
+)
 from jarvis.speech.pipeline import SpeechPipeline
 
 
@@ -45,6 +53,20 @@ class _EmptyVad:
                 yield b""
 
         return _empty()
+
+
+class _OneShotVad:
+    def __init__(self, captured: list[bytes]) -> None:
+        self._captured = captured
+
+    def utterances(self, stream):  # noqa: ANN001, ANN201
+        async def _one():
+            async for chunk in stream:
+                self._captured.append(chunk.pcm)
+                yield chunk.pcm
+                return
+
+        return _one()
 
 
 class _FakeRealtimeSession:
@@ -84,6 +106,40 @@ class _FakeRealtimeSession:
 
     async def end(self, *, reason: str = "") -> None:
         self.end_reason = reason
+
+
+class _HandshakeOnlyRealtimeSession(_FakeRealtimeSession):
+    def __init__(self, send_binary, send_json) -> None:
+        super().__init__(send_binary, send_json)
+        self.ready = asyncio.Event()
+
+    async def handle_control(self, message) -> None:
+        self.controls.append(message)
+        await self._send_json(
+            {
+                "type": "audio_ready",
+                "provider": "fake-live",
+                "input_sample_rate": 16_000,
+                "output_sample_rate": 24_000,
+            }
+        )
+        self.ready.set()
+
+
+class _CommittedFailureRealtimeSession(_HandshakeOnlyRealtimeSession):
+    async def handle_control(self, message) -> None:
+        await super().handle_control(message)
+        await self._send_json(
+            {
+                "type": "transcript",
+                "role": "user",
+                "text": "run the action",
+                "is_final": True,
+            }
+        )
+
+    async def wait_finished(self) -> None:
+        return None
 
 
 def _pipe(mode: str = "realtime") -> SpeechPipeline:
@@ -161,13 +217,73 @@ async def test_desktop_realtime_handshake_streams_audio_and_ends_single_turn(
 
 
 @pytest.mark.asyncio
+async def test_completed_startup_tasks_do_not_end_healthy_realtime_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A completed build/handshake is not a live-session completion signal."""
+    pipe = _pipe()
+    built: dict[str, _HandshakeOnlyRealtimeSession] = {}
+    built_ready = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def _build(**kwargs):
+        session = _HandshakeOnlyRealtimeSession(
+            kwargs["send_binary"], kwargs["send_json"]
+        )
+        built["session"] = session
+        loop.call_soon_threadsafe(built_ready.set)
+        return session
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    monkeypatch.setattr(pipeline_mod, "MicrophoneCapture", lambda **_kwargs: _SilentMic())
+    task = asyncio.create_task(pipe._active_realtime_session())
+    await asyncio.wait_for(built_ready.wait(), timeout=0.5)
+    await asyncio.wait_for(built["session"].ready.wait(), timeout=0.5)
+    await asyncio.sleep(0)
+    assert task.done() is False
+
+    pipe._hangup_event.set()
+    assert await asyncio.wait_for(task, timeout=0.5) == HANGUP_HOTKEY
+    assert built["session"].end_reason == HANGUP_HOTKEY
+
+
+@pytest.mark.asyncio
+async def test_committed_realtime_turn_is_never_replayed_through_classic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A provider failure after a final transcript must not duplicate tools."""
+    pipe = _pipe()
+    built: dict[str, _CommittedFailureRealtimeSession] = {}
+
+    def _build(**kwargs):
+        session = _CommittedFailureRealtimeSession(
+            kwargs["send_binary"], kwargs["send_json"]
+        )
+        built["session"] = session
+        return session
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    buffer = pipeline_mod._SessionInputBuffer(  # noqa: SLF001
+        initial=(AudioChunk(pcm=b"command", sample_rate=16_000, timestamp_ns=1),)
+    )
+
+    reason = await asyncio.wait_for(
+        pipe._active_realtime_session(input_buffer=buffer),
+        timeout=1.0,
+    )
+
+    assert reason == HANGUP_ERROR
+    assert built["session"].end_reason == HANGUP_ERROR
+
+
+@pytest.mark.asyncio
 async def test_realtime_mode_routes_before_the_classic_microphone(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pipe = _pipe()
     calls = 0
 
-    async def _run_realtime():
+    async def _run_realtime(*, input_buffer=None):  # noqa: ANN001
         nonlocal calls
         calls += 1
         return HANGUP_TURN_COMPLETE
@@ -190,7 +306,7 @@ async def test_failed_realtime_session_explains_and_falls_back_in_same_call(
     pipe = _pipe()
     notices = 0
 
-    async def _failed_realtime():
+    async def _failed_realtime(*, input_buffer=None):  # noqa: ANN001
         return None
 
     async def _notice():
@@ -217,7 +333,7 @@ async def test_default_realtime_mode_falls_back_silently_without_notice(
     pipe._config.voice.model_fields_set = set()
     notices = 0
 
-    async def _failed_realtime():
+    async def _failed_realtime(*, input_buffer=None):  # noqa: ANN001
         return None
 
     async def _notice():
@@ -234,6 +350,43 @@ async def test_default_realtime_mode_falls_back_silently_without_notice(
 
     assert reason == HANGUP_SHUTDOWN
     assert notices == 0
+
+
+@pytest.mark.asyncio
+async def test_capture_first_realtime_fallback_is_visible_and_preserves_audio() -> None:
+    """Fallback status is visible without speaking into the live microphone."""
+    pipe = _pipe()
+    opening = AudioChunk(pcm=b"opening", sample_rate=16_000, timestamp_ns=1)
+    buffer = pipeline_mod._SessionInputBuffer(initial=(opening,))  # noqa: SLF001
+    buffer.finish()
+    captured: list[bytes] = []
+    events: list[object] = []
+    pipe._vad = _OneShotVad(captured)
+    pipe._session_end_reason = HANGUP_TURN_COMPLETE
+
+    async def _failed_realtime(*, input_buffer=None):  # noqa: ANN001, ANN202
+        return None
+
+    async def _must_not_speak() -> None:
+        pytest.fail("capture-first fallback must not speak into its live microphone")
+
+    async def _publish(event) -> None:  # noqa: ANN001
+        events.append(event)
+
+    async def _handle(_pcm: bytes) -> bool:
+        return False
+
+    pipe._active_realtime_session = _failed_realtime  # type: ignore[method-assign]
+    pipe._speak_realtime_unavailable = _must_not_speak  # type: ignore[method-assign]
+    pipe._publish_event = _publish  # type: ignore[method-assign]
+    pipe._handle_utterance = _handle  # type: ignore[method-assign]
+
+    assert await pipe._active_session(input_buffer=buffer) == HANGUP_TURN_COMPLETE
+    assert captured == [b"opening"]
+    notices = [event for event in events if isinstance(event, MessageSent)]
+    assert len(notices) == 1
+    assert notices[0].role == "system"
+    assert "classic voice pipeline" in notices[0].text
 
 
 @pytest.mark.asyncio
@@ -375,3 +528,79 @@ async def test_session_input_stream_muted_feeds_no_level() -> None:
     finally:
         unsubscribe()
         mic_level.reset_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_shared_input_keeps_meter_live_while_realtime_build_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Provider/tool assembly must not starve the capture or Jarvis Bar."""
+    from jarvis.audio import mic_level
+    from jarvis.audio.capture import AudioChunk
+
+    pipe = _pipe()
+    build_entered = threading.Event()
+    release_build = threading.Event()
+
+    def _build(**kwargs):
+        build_entered.set()
+        assert release_build.wait(timeout=1.0)
+        return _FakeRealtimeSession(kwargs["send_binary"], kwargs["send_json"])
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    buffer = pipeline_mod._SessionInputBuffer()  # noqa: SLF001
+    mic_level.reset_for_tests()
+    levels: list[float] = []
+    unsubscribe = mic_level.subscribe(levels.append)
+    task = asyncio.create_task(pipe._active_realtime_session(input_buffer=buffer))
+    try:
+        for _ in range(100):
+            if build_entered.is_set():
+                break
+            await asyncio.sleep(0.001)
+        assert build_entered.is_set()
+
+        buffer.put(
+            AudioChunk(
+                pcm=b"\x00\x40" * 320,
+                sample_rate=16_000,
+                timestamp_ns=1,
+            )
+        )
+        await asyncio.sleep(0)
+        assert levels and levels[-1] > 0.0
+    finally:
+        release_build.set()
+
+    assert await asyncio.wait_for(task, timeout=1.0) == HANGUP_TURN_COMPLETE
+    unsubscribe()
+    mic_level.reset_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_hangup_cancels_realtime_start_while_builder_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipe = _pipe()
+    build_entered = threading.Event()
+    release_build = threading.Event()
+
+    def _build(**kwargs):
+        build_entered.set()
+        release_build.wait(timeout=1.0)
+        return _FakeRealtimeSession(kwargs["send_binary"], kwargs["send_json"])
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    buffer = pipeline_mod._SessionInputBuffer()  # noqa: SLF001
+    task = asyncio.create_task(pipe._active_realtime_session(input_buffer=buffer))
+    for _ in range(100):
+        if build_entered.is_set():
+            break
+        await asyncio.sleep(0.001)
+    assert build_entered.is_set()
+
+    pipe._hangup_event.set()
+    try:
+        assert await asyncio.wait_for(task, timeout=0.5) == HANGUP_HOTKEY
+    finally:
+        release_build.set()

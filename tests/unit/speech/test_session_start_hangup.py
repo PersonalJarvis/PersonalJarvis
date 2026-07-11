@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 
+import jarvis.speech.pipeline as pipeline_mod
 from jarvis.core.events import VoiceSessionEnded, VoiceSessionStarted
 from jarvis.sessions.constants import HANGUP_HOTKEY
 from jarvis.speech.pipeline import PipelineState, SpeechPipeline, TurnTakingState
@@ -21,14 +22,37 @@ class _FakeTTS:
             yield text.encode()
 
 
+class _PreopenedMic:
+    def __init__(self) -> None:
+        self.opened = False
+        self.closed = False
+
+    async def __aenter__(self) -> _PreopenedMic:
+        self.opened = True
+        return self
+
+    async def __aexit__(self, *_exc: object) -> bool:
+        self.closed = True
+        return False
+
+    async def stream(self):  # noqa: ANN201
+        await asyncio.Event().wait()
+        if False:  # pragma: no cover - protocol-shaped async iterator
+            yield None
+
+
 @pytest.mark.asyncio
-async def test_close_during_session_started_dispatch_skips_audio_startup() -> None:
+async def test_close_during_session_started_dispatch_closes_preopened_capture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A close accepted while a slow start subscriber runs must stay closed.
 
-    The bar is already interactive while VoiceSessionStarted is being
-    dispatched. Once the dispatch returns, a pending hangup must bypass the
-    LISTENING transition, acknowledgement, and microphone/session startup.
+    Capture is intentionally armed before VoiceSessionStarted makes the bar
+    interactive. Once dispatch returns, a pending hangup must close that
+    capture promptly and bypass LISTENING, acknowledgement, and provider startup.
     """
+    mic = _PreopenedMic()
+    monkeypatch.setattr(pipeline_mod, "MicrophoneCapture", lambda **_kwargs: mic)
     pipeline = SpeechPipeline(tts=_FakeTTS(), bus=None, enable_whisper_wake=False)
     pipeline._activation_allowed = lambda: True  # type: ignore[method-assign]
 
@@ -62,7 +86,7 @@ async def test_close_during_session_started_dispatch_skips_audio_startup() -> No
     async def _play_ack(*, ptt: bool) -> None:
         ack_calls.append(ptt)
 
-    async def _active_session() -> str:
+    async def _active_session(*, input_buffer=None) -> str:  # noqa: ANN001
         active_calls.append(True)
         return "unexpected"
 
@@ -86,6 +110,8 @@ async def test_close_during_session_started_dispatch_skips_audio_startup() -> No
 
     assert ack_calls == []
     assert active_calls == []
+    assert mic.opened is True
+    assert mic.closed is True
     assert pipeline._state is PipelineState.IDLE
     assert len(ended_events) == 1
     assert ended_events[0].hangup_reason == HANGUP_HOTKEY
