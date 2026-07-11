@@ -1000,7 +1000,10 @@ async def test_delegate_call_dispatches_raw_transcript_with_voice_confirm():
     await asyncio.sleep(0.02)
 
     assert brain.calls == [
-        ("please open the settings view", {"allow_voice_confirm": True})
+        (
+            "please open the settings view",
+            {"allow_voice_confirm": True, "prefer_tool_model": True},
+        )
     ]
     assert provider.session.tool_results == [
         (
@@ -1195,4 +1198,43 @@ async def test_delegate_brain_exception_sends_safe_failure():
     result = provider.session.tool_results[0][2]
     assert result["success"] is False
     assert "failed safely" in result["error"]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_delegate_degrades_kwargs_but_keeps_voice_confirm():
+    """An older brain without the prefer_tool_model kwarg must still get
+    allow_voice_confirm=True via the degrade step (exactly one real call)."""
+
+    class LegacyBrain:
+        def __init__(self):
+            self.calls = []
+
+        async def generate(self, text, *, allow_voice_confirm=False):
+            self.calls.append((text, allow_voice_confirm))
+            return "done legacy"
+
+        async def __call__(self, text):
+            raise AssertionError("bare call must not be reached")
+
+    brain = LegacyBrain()
+    provider = FakeProvider(
+        [
+            RealtimeEvent(type="input_transcript", text="open it", is_final=True),
+            RealtimeEvent(
+                type="tool_call",
+                call_id="c-9",
+                tool_name="jarvis_action",
+                tool_args={"request": "open it"},
+            ),
+        ]
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.02)
+
+    assert brain.calls == [("open it", True)]
+    assert provider.session.tool_results[0][2]["spoken_reply"] == "done legacy"
     await sess.end(reason="test")

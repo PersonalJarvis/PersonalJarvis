@@ -2292,17 +2292,37 @@ class BrainManager:
         Reads ``[brain.computer_use].provider`` FRESH per call (like
         ``_cu_model``), so an in-memory switch (``/api/computer-use/switch``)
         takes effect on the very next CU dispatch. ``""`` means "not
-        configured" — the CU-only dispatch hoist in
-        ``jarvis.cu.brain_call.call_vision_brain`` then leaves the fallback
-        chain untouched (CU keeps running on ``brain.primary``, current
-        behavior). Never raises (getattr-chain safe): a config hiccup must
-        not break Computer-Use dispatch (AP-21/22).
+        configured" — the dispatch hoists (the CU-only one in
+        ``jarvis.cu.brain_call.call_vision_brain`` and the delegated-turn
+        ``_hoist_tool_model``) then leave the fallback chain untouched.
+        Never raises (getattr-chain safe): a config hiccup must not break
+        dispatch (AP-21/22).
         """
         try:
             cu_cfg = getattr(self._config.brain, "computer_use", None)
             return (getattr(cu_cfg, "provider", None) or "").strip()
         except Exception:  # noqa: BLE001 — config hiccup must not block dispatch
             return ""
+
+    def _hoist_tool_model(
+        self, chain: list[tuple[str, str | None]]
+    ) -> list[tuple[str, str | None]]:
+        """Hoist the Tool-Model pick to the head of a turn's fallback chain.
+
+        Mirrors the CU-only hoist in ``jarvis.cu.brain_call.call_vision_brain``:
+        reads ``[brain.computer_use].provider`` FRESH per call (an in-memory
+        switch takes effect on the very next delegated turn), resolves the
+        model via ``_cu_model``, and leaves the rest of the chain untouched as
+        the cross-family fallback (AP-21/22). A keyless/dead pick is skipped
+        here so the honest empty-chain diagnostic still fires unchanged. Only
+        the exact duplicate entry is filtered — other entries of the same
+        provider stay as legitimate same-provider fallbacks.
+        """
+        pref = self._cu_provider()
+        if not pref or pref in self._dead_providers:
+            return chain
+        entry = (pref, self._cu_model(pref))
+        return [entry] + [e for e in chain if e != entry]
 
     def _get_brain(self, name: str, model: str | None = None) -> Brain:
         """Retrieves a Brain instance from the cache, or builds a new one."""

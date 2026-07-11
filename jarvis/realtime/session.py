@@ -899,14 +899,20 @@ class RealtimeVoiceSession:
     async def _dispatch_brain_turn(self, text: str) -> str:
         # allow_voice_confirm=True is load-bearing: without it an ask-tier
         # tool blocks on a UI approval no voice user can give (the classic
-        # pipeline passes the same flag).
+        # pipeline passes the same flag). prefer_tool_model routes the
+        # delegated turn onto the Tool-Model pick. Two-step degrade: an older
+        # brain that rejects the new kwarg must keep voice-confirm rather
+        # than dropping straight to the bare call.
         generate = getattr(self._brain, "generate", None)
         if callable(generate):
-            try:
-                return str(await generate(text, allow_voice_confirm=True) or "")
-            except TypeError:
-                # Bare callables / older brains without the kwarg.
-                pass
+            for kwargs in (
+                {"allow_voice_confirm": True, "prefer_tool_model": True},
+                {"allow_voice_confirm": True},
+            ):
+                try:
+                    return str(await generate(text, **kwargs) or "")
+                except TypeError:
+                    continue
         return str(await self._brain(text) or "")
 
     async def _finish_with_hangup(self) -> None:
