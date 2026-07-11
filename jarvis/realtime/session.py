@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
@@ -90,6 +91,13 @@ _REALTIME_SAFETY_APPENDIX = (
     "Speak only a concise natural-language summary."
 )
 _LANGUAGE_NAMES = {"de": "German", "en": "English", "es": "Spanish"}
+
+
+@dataclass(slots=True)
+class _DelegateTurnState:
+    """Response state shared by every delegate call in one realtime turn."""
+
+    last_reply: str = ""
 
 
 _TOOL_ROLE_DIRECTIVE = (
@@ -220,6 +228,7 @@ class RealtimeVoiceSession:
                 log.warning("Realtime tool bridge is unavailable", exc_info=True)
         self._tool_bridge = tool_bridge
         self._delegate_tasks: set[asyncio.Task[None]] = set()
+        self._delegate_turns: dict[str, _DelegateTurnState] = {}
         # from_brain returns None SILENTLY when the brain object carries no
         # _tools/_tool_executor_ref (e.g. a bare callback was passed) — say so,
         # or a tool-less session is indistinguishable from a healthy one.
@@ -712,15 +721,24 @@ class RealtimeVoiceSession:
             self._last_user_text = ""
             return
         answer = "".join(self._output_transcript).strip()
+        delegate_state = self._delegate_turns.pop(self._turn_id, None)
         if self._bus is not None:
             try:
                 from jarvis.core.events import ResponseGenerated, VoiceTurnCompleted
 
-                if answer:
+                # A delegated BrainManager reply is an internal tool result, not
+                # the response the user heard. The session therefore owns the
+                # one public event for a delegated turn. When the realtime model
+                # emits no transcript, retain the completed delegate reply as a
+                # non-empty record while VoiceTurnCompleted stays literally spoken.
+                response_text = answer or (
+                    delegate_state.last_reply if delegate_state is not None else ""
+                )
+                if answer or delegate_state is not None:
                     await self._bus.publish(
                         ResponseGenerated(
                             source_layer=f"realtime.{self.active_provider}",
-                            text=answer,
+                            text=response_text,
                             language=self._language,
                         )
                     )
@@ -830,19 +848,29 @@ class RealtimeVoiceSession:
         # English, but the router's language resolver and intent matchers
         # need the user's own words. Snapshot NOW — turn state resets later.
         user_text = self._last_user_text or request
+        turn_id = self._turn_id
+        turn_state = self._delegate_turns.setdefault(
+            turn_id,
+            _DelegateTurnState(),
+        )
         log.info(
             "realtime[%s] delegate call: dispatching user turn to the router brain",
             self.session_id,
         )
         task = asyncio.create_task(
-            self._run_delegate(call_id, wire_name, user_text),
+            self._run_delegate(call_id, wire_name, user_text, turn_id, turn_state),
             name=f"rt-delegate-{self.session_id}",
         )
         self._delegate_tasks.add(task)
         task.add_done_callback(self._delegate_tasks.discard)
 
     async def _run_delegate(
-        self, call_id: str, wire_name: str, user_text: str
+        self,
+        call_id: str,
+        wire_name: str,
+        user_text: str,
+        turn_id: str,
+        turn_state: _DelegateTurnState,
     ) -> None:
         try:
             reply = (
@@ -852,6 +880,8 @@ class RealtimeVoiceSession:
                 )
                 or ""
             ).strip()
+            if reply:
+                turn_state.last_reply = reply
             if reply:
                 result: dict[str, Any] = {"success": True, "spoken_reply": reply}
             else:
@@ -863,7 +893,8 @@ class RealtimeVoiceSession:
                         "briefly confirm it to the user."
                     ),
                 }
-            self._executed_tool_names.add(str(_DELEGATE_DECLARATION["name"]))
+            if self._delegate_turns.get(turn_id) is turn_state:
+                self._executed_tool_names.add(str(_DELEGATE_DECLARATION["name"]))
         except TimeoutError:
             result = {
                 "success": False,
@@ -901,11 +932,19 @@ class RealtimeVoiceSession:
         # tool blocks on a UI approval no voice user can give (the classic
         # pipeline passes the same flag). prefer_tool_model routes the
         # delegated turn onto the Tool-Model pick. Two-step degrade: an older
-        # brain that rejects the new kwarg must keep voice-confirm rather
-        # than dropping straight to the bare call.
+        # brain that rejects a newer kwarg must keep voice-confirm rather than
+        # dropping straight to the bare call. Current managers suppress their
+        # internal tool-result event so the realtime session can publish the
+        # one response that was actually spoken.
         generate = getattr(self._brain, "generate", None)
         if callable(generate):
             for kwargs in (
+                {
+                    "allow_voice_confirm": True,
+                    "prefer_tool_model": True,
+                    "publish_response": False,
+                },
+                {"allow_voice_confirm": True, "publish_response": False},
                 {"allow_voice_confirm": True, "prefer_tool_model": True},
                 {"allow_voice_confirm": True},
             ):
@@ -1029,6 +1068,7 @@ class RealtimeVoiceSession:
             if not task.done():
                 task.cancel()
         self._delegate_tasks.clear()
+        self._delegate_turns.clear()
         if self._pump_task is not None and not self._pump_task.done():
             self._pump_task.cancel()
             try:
