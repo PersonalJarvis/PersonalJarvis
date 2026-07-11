@@ -248,6 +248,36 @@ Write-Output "FOUND=$($probe.Compatible);VERSION=$($probe.Version)"
     assert result.stdout.strip().startswith("FOUND=True;VERSION=3.")
 
 
+@pytest.mark.parametrize("powershell", POWERSHELLS or (None,))
+def test_powershell_missing_prerequisite_never_blocks_redirected_input(
+    tmp_path: Path, powershell: str | None
+) -> None:
+    if powershell is None:
+        pytest.skip("PowerShell is not available")
+    driver = r"""
+$ErrorActionPreference = 'Stop'
+$PrerequisiteMode = 'ask'
+$InitialPath = $env:Path
+function Write-Ok { param([string]$Text) }
+function Write-Note { param([string]$Text) }
+function Write-Err { param([string]$Text) }
+__BLOCK__
+$accepted = Request-PrerequisiteConsent @('Git')
+Write-Output "ACCEPTED=$accepted"
+""".replace("__BLOCK__", _block(INSTALL_PS1))
+    path = tmp_path / "redirected-input.ps1"
+    path.write_text(driver, encoding="utf-8")
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-File", str(path)],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert result.stdout.strip() == "ACCEPTED=False"
+
+
 @pytest.mark.skipif(BASH is None, reason="Bash is not available")
 @pytest.mark.parametrize("initially_ready", [True, False])
 def test_posix_rechecks_and_continues_in_same_process(
