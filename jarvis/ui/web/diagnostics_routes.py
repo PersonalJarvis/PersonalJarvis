@@ -97,6 +97,83 @@ async def event_loop_tasks() -> dict[str, Any]:
     }
 
 
+@router.get("/cancel-scopes")
+async def cancel_scopes() -> dict[str, Any]:
+    """Report every anyio CancelScope that is actively delivering cancellation.
+
+    A scope whose ``_cancel_handle`` is set has a ``_deliver_cancellation``
+    callback scheduled on the loop. A HEALTHY delivery lasts a few loop
+    iterations; one that persists across snapshots is the busy-loop engine.
+    For each such scope this names the host task, the tasks still held in the
+    scope's bookkeeping, and its child scopes — the ownership answer the
+    sampled py-spy stack cannot give (live hunt 2026-07-11: the callback
+    burned ~95 % of a core with ZERO tasks carrying a pending cancel, so the
+    owner had to be read off the scope objects themselves).
+
+    Walks ``gc.get_objects()`` — costs a moment and briefly blocks the loop;
+    strictly a diagnostics tool, never called by product code.
+    """
+    import gc
+
+    try:
+        from anyio._backends._asyncio import CancelScope  # type: ignore[import-not-found]
+    except Exception as exc:  # noqa: BLE001 — anyio absent or reshaped
+        return {"error": f"anyio backend CancelScope unavailable: {exc}"}
+
+    def _task_brief(task: Any) -> str:
+        try:
+            return f"{task.get_name()} | {task.get_coro()!r}"[:300]
+        except Exception:  # noqa: BLE001
+            return repr(task)[:300]
+
+    delivering: list[dict[str, Any]] = []
+    total = 0
+    for obj in gc.get_objects():
+        if not isinstance(obj, CancelScope):
+            continue
+        total += 1
+        if getattr(obj, "_cancel_handle", None) is None:
+            continue
+        host = getattr(obj, "_host_task", None)
+        parent = getattr(obj, "_parent_scope", None)
+        delivering.append(
+            {
+                "id": hex(id(obj)),
+                "cancel_called": bool(getattr(obj, "_cancel_called", False)),
+                "shield": bool(getattr(obj, "_shield", False)),
+                "deadline": getattr(obj, "_deadline", None),
+                "host_task": _task_brief(host) if host is not None else None,
+                "host_task_done": bool(host.done()) if host is not None else None,
+                "parent_scope": hex(id(parent)) if parent is not None else None,
+                "tasks": [
+                    _task_brief(t) for t in list(getattr(obj, "_tasks", ()) or ())
+                ][:20],
+                "child_scopes": [
+                    {
+                        "id": hex(id(c)),
+                        "cancel_called": bool(getattr(c, "_cancel_called", False)),
+                        "shield": bool(getattr(c, "_shield", False)),
+                        "host_task": (
+                            _task_brief(getattr(c, "_host_task", None))
+                            if getattr(c, "_host_task", None) is not None
+                            else None
+                        ),
+                        "tasks": [
+                            _task_brief(t)
+                            for t in list(getattr(c, "_tasks", ()) or ())
+                        ][:20],
+                    }
+                    for c in list(getattr(obj, "_child_scopes", ()) or ())[:20]
+                ],
+            }
+        )
+    return {
+        "total_scopes": total,
+        "delivering": delivering,
+        "delivering_count": len(delivering),
+    }
+
+
 @router.get("/event-loop-lag")
 async def event_loop_lag() -> dict[str, Any]:
     """Measure scheduling lag of the serving loop.
