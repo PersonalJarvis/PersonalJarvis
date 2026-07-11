@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 
-from jarvis.speech.pipeline import PipelineState, SpeechPipeline
+from jarvis.speech.pipeline import PipelineState, SpeechPipeline, TurnTakingState
 
 
 class _FakeBrain:
@@ -55,6 +55,20 @@ def test_noop_when_not_idle_and_does_not_seed() -> None:
     assert p.request_voice_session(seed_messages=[("user", "x")]) is False
     assert not p._call_event.is_set()
     assert brain.seeded is None
+
+
+def test_session_is_active_while_start_subscribers_are_still_running() -> None:
+    """The close X must remain a hangup during the startup state gap.
+
+    PipelineState becomes ACTIVE before VoiceSessionStarted is dispatched, but
+    the turn-state stays IDLE until all start subscribers return. This is the
+    exact interval in which the live bar previously routed X clicks back into
+    request_voice_session(), which then rejected them as "pipeline not idle".
+    """
+    p = _pipe(state=PipelineState.ACTIVE)
+    p._turn_state = TurnTakingState.IDLE
+
+    assert p.is_session_active() is True
 
 
 def test_noop_when_ptt_active() -> None:

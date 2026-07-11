@@ -22,6 +22,7 @@ import logging
 import os
 import random
 import re
+import threading
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -1437,6 +1438,13 @@ class SpeechPipeline:
         self._state = PipelineState.IDLE
         self._call_event = asyncio.Event()
         self._hangup_event = asyncio.Event()
+        # ``request_hangup`` is also called by the JarvisBar's dedicated Tk
+        # thread. asyncio primitives are not thread-safe, so ``run()`` records
+        # their owning loop and external callers marshal the hangup onto it.
+        self._runtime_loop: asyncio.AbstractEventLoop | None = None
+        # A thread-safe edge latch keeps repeated X clicks from queueing the
+        # expensive hard-stop path more than once during the same teardown.
+        self._external_hangup_pending = threading.Event()
         self._current_voice_session_id: str | None = None
         # Configured voice mode and effective in-flight engine are deliberately
         # separate. A settings write can happen while a call is already open;
@@ -3523,6 +3531,10 @@ class SpeechPipeline:
     # ------------------------------------------------------------------
 
     async def run(self) -> None:
+        # Capture the loop that owns ``_call_event`` / ``_hangup_event`` before
+        # warm-up. UI controls can become clickable while warm-up is still in
+        # progress, so recording it later would leave a small unsafe window.
+        self._runtime_loop = asyncio.get_running_loop()
         await self._warmup()
         # Permanent-Vision: Background-Refresh-Loop hier im Pipeline-Event-Loop
         # starten. Ohne das kriegt `VisionContextProvider.current()` nie einen
@@ -4202,14 +4214,47 @@ class SpeechPipeline:
         """End the live voice session from outside the audio path.
 
         The jarvis-bar's hover-to-close cross calls this (and any future UI
-        close affordance). Thread-safe like ``request_voice_session``: it routes
-        through the single hangup chokepoint, whose primitives (``Event.set``,
-        player stop, CU-cancel) are safe to invoke from the Tk thread. A no-op
-        in practice when no session is active — the never-consumed event is
-        cleared at the next session start.
+        close affordance). The bar runs on a dedicated Tk thread, while the
+        hangup event and its waiters belong to the pipeline's asyncio loop.
+        Marshal the complete hard-stop chokepoint onto that owning loop; calling
+        ``asyncio.Event.set()`` directly from Tk is unsupported and can fail to
+        wake the waiter until unrelated I/O arrives. Repeated clicks during one
+        teardown are idempotent. A no-op request while idle is cleared when the
+        next session starts.
         """
+        pending = getattr(self, "_external_hangup_pending", None)
+        if pending is not None and pending.is_set():
+            log.debug("request_hangup ignored: external hangup already pending")
+            return
+        if pending is not None:
+            pending.set()
         log.info("📵 request_hangup — closing the voice session")
-        self._trigger_voice_hangup()
+
+        def _dispatch() -> None:
+            try:
+                self._trigger_voice_hangup()
+            except Exception:
+                # A failed dispatch must be retryable; successful requests stay
+                # latched until the authoritative session teardown reaches IDLE.
+                if pending is not None:
+                    pending.clear()
+                raise
+
+        owner = getattr(self, "_runtime_loop", None)
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        if owner is not None and owner.is_running() and current is not owner:
+            try:
+                owner.call_soon_threadsafe(_dispatch)
+                return
+            except RuntimeError:
+                # The loop closed between is_running() and scheduling. The
+                # synchronous fallback still stops audio/CU and is harmless
+                # when no asyncio waiter remains alive.
+                log.debug("request_hangup: owner loop closed during dispatch")
+        _dispatch()
 
     def request_ptt_toggle(self) -> None:
         """Toggle endpoint-free dictation — the jarvis-bar's square button.
@@ -4235,10 +4280,19 @@ class SpeechPipeline:
         active "listen" look when a wake popped it but the post-hangup wake-lock
         cooldown rejected the session — no ``VoiceSessionStarted`` is published
         and no ``IDLE`` state follows, so nothing resets the bar (freeze
-        forensic 2026-06-28). The turn-state is the authoritative signal: it is
-        ``IDLE`` iff no ``_active_session`` loop is running.
+        forensic 2026-06-28).
+
+        ``_state`` becomes ACTIVE before ``VoiceSessionStarted`` is published,
+        while ``_turn_state`` does not leave IDLE until every start subscriber
+        returns. A slow subscriber therefore creates a real session-start window
+        where checking only the turn-state misclassifies the visible X as an
+        idle-body click and calls ``request_voice_session()`` instead of hanging
+        up. Treat either lifecycle signal as active so the close control remains
+        valid throughout startup, the live turn, and teardown.
         """
         return (
+            getattr(self, "_state", PipelineState.IDLE) is not PipelineState.IDLE
+            or
             getattr(self, "_turn_state", TurnTakingState.IDLE)
             is not TurnTakingState.IDLE
         )
@@ -4808,6 +4862,7 @@ class SpeechPipeline:
                 log.info("🔒 Wake-Lock aktiv — ignoriere (noch %.1fs)", remaining)
                 self._ptt_mode = False
                 continue
+            self._external_hangup_pending.clear()
             self._hangup_event.clear()
             # Fresh session: forget any hard-hangup flag left by a no-op hangup
             # while idle, so ONLY this session's own ending decides its lock.
@@ -4839,12 +4894,35 @@ class SpeechPipeline:
                 )
             )
             hangup_reason = HANGUP_ERROR
-            log.info("Voice session accepted (configured engine=%s).", self._active_voice_mode)
-            # Reveal the voice surface and enable microphone feedback.
-            await self._set_turn_state(TurnTakingState.LISTENING)
             try:
-                await self._play_ack(ptt=self._ptt_mode)
-                hangup_reason = await self._active_session()
+                # VoiceSessionStarted dispatch can legitimately take time (for
+                # example while desktop audio ducking enumerates other apps).
+                # The JarvisBar X is already visible during that await. If it
+                # was pressed, do not resurrect LISTENING, play an ack, or open
+                # the microphone after the user has explicitly closed the call.
+                if (
+                    self._hangup_event.is_set()
+                    or self._external_hangup_pending.is_set()
+                ):
+                    hangup_reason = HANGUP_HOTKEY
+                    log.info(
+                        "Voice session cancelled during startup; skipping audio open."
+                    )
+                else:
+                    log.info(
+                        "Voice session accepted (configured engine=%s).",
+                        self._active_voice_mode,
+                    )
+                    # Reveal the voice surface and enable microphone feedback.
+                    await self._set_turn_state(TurnTakingState.LISTENING)
+                    await self._play_ack(ptt=self._ptt_mode)
+                    if (
+                        self._hangup_event.is_set()
+                        or self._external_hangup_pending.is_set()
+                    ):
+                        hangup_reason = HANGUP_HOTKEY
+                    else:
+                        hangup_reason = await self._active_session()
             except Exception as exc:  # noqa: BLE001
                 log.exception("Voice session failed: %s", exc)
             finally:
@@ -4889,6 +4967,7 @@ class SpeechPipeline:
                 self._state = PipelineState.IDLE
                 # Return the supervisor to IDLE and hide the active surface.
                 await self._set_turn_state(TurnTakingState.IDLE)
+                self._external_hangup_pending.clear()
                 if reopen_after_engine_change and self._activation_allowed():
                     # An internal engine reconnect has no response tail to
                     # protect against. Re-arm immediately with the latest

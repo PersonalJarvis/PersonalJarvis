@@ -120,6 +120,12 @@ _IDLE_SETTLE_TICKS = 30
 TARGET_FRAME_MS = 16
 MIN_FRAME_DELAY_MS = 1
 
+# Once the close-X is accepted, suppress rapid follow-up clicks long enough for
+# the authoritative IDLE state to arrive. Without this guard a double-click can
+# hit the same screen position after the optimistic visual collapse and be
+# reinterpreted as an idle-body click that immediately starts a new session.
+HANGUP_CLICK_GUARD_S = 1.0
+
 
 def _primary_work_area() -> tuple[int, int, int, int] | None:
     """Primary-monitor work area (left, top, right, bottom) EXCLUDING the
@@ -195,6 +201,7 @@ class JarvisBarOverlay:
         self._feedback_publisher: Callable[[str, dict], None] | None = None
         self._on_show_window: Callable[[], None] | None = None
         self._hovered = False  # mouse over the bar → reveal the close cross
+        self._hangup_click_block_until = 0.0
         # Local mirror of the global voice-mute state (mic muted FOR JARVIS only).
         # Flipped optimistically on a mic-button click and reconciled by the
         # authoritative VoiceMuteChanged via set_muted(). A bool write is atomic
@@ -795,6 +802,11 @@ class JarvisBarOverlay:
         # session. All entries are thread-safe from the Tk thread.
         if click_x is None:
             click_x = renderer.WIN_W / 2
+        # The first accepted X click optimistically removes the active look.
+        # Ignore follow-up clicks during that short transition so they cannot be
+        # reclassified as idle-body clicks and accidentally reopen the session.
+        if time.monotonic() < self._hangup_click_block_until:
+            return
         try:
             from jarvis.core.runtime_refs import get_speech_pipeline
 
@@ -840,6 +852,14 @@ class JarvisBarOverlay:
                     hangup = getattr(pipeline, "request_hangup", None)
                     if callable(hangup):
                         hangup()
+                        # Give immediate, local feedback instead of waiting for
+                        # microphone/provider teardown plus the EventBus IDLE
+                        # round-trip. The authoritative bridge state will
+                        # reconcile the same value when teardown completes.
+                        self._mode = "idle"
+                        self._hangup_click_block_until = (
+                            time.monotonic() + HANGUP_CLICK_GUARD_S
+                        )
             elif action == "talk":
                 pipeline.request_voice_session()
             # "none" → nothing
