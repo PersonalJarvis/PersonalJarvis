@@ -1469,6 +1469,26 @@ async def test_local_fast_path_publishes_response_generated() -> None:
 
 
 @pytest.mark.asyncio
+async def test_internal_realtime_reply_can_defer_response_event_to_session() -> None:
+    """Realtime delegation may suppress only its internal brain reply event."""
+    bus = EventBus()
+    seen: list[ResponseGenerated] = []
+
+    async def _capture(ev: ResponseGenerated) -> None:
+        seen.append(ev)
+
+    bus.subscribe(ResponseGenerated, _capture)
+    manager, _executor = _manager_with_local_actions_and_bus(bus)
+
+    internal_result = await manager.generate("Open Spotify", publish_response=False)
+    classic_result = await manager.generate("Open Calculator")
+
+    assert internal_result == "ok"
+    assert classic_result == "ok"
+    assert [event.text for event in seen] == ["ok"]
+
+
+@pytest.mark.asyncio
 async def test_local_visual_click_fast_path_dispatches_computer_use() -> None:
     """Visual target commands offload to the computer-use harness (Wave-4).
 

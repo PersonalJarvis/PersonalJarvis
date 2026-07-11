@@ -931,11 +931,11 @@ class RealtimeVoiceSession:
         # allow_voice_confirm=True is load-bearing: without it an ask-tier
         # tool blocks on a UI approval no voice user can give (the classic
         # pipeline passes the same flag). prefer_tool_model routes the
-        # delegated turn onto the Tool-Model pick. Two-step degrade: an older
-        # brain that rejects a newer kwarg must keep voice-confirm rather than
-        # dropping straight to the bare call. Current managers suppress their
-        # internal tool-result event so the realtime session can publish the
-        # one response that was actually spoken.
+        # delegated turn onto the Tool-Model pick. Compatibility degrade: an
+        # older brain that rejects a newer kwarg must keep voice-confirm
+        # rather than dropping straight to the bare call. Current managers
+        # suppress their internal tool-result event so the realtime session
+        # can publish the one response that was actually spoken.
         generate = getattr(self._brain, "generate", None)
         if callable(generate):
             for kwargs in (

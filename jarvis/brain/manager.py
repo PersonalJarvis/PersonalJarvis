@@ -2678,14 +2678,12 @@ class BrainManager:
     async def _provider_down_reply(self, trace_uuid: UUID) -> str:
         """Total-failure apology, ALSO surfaced to the transcript.
 
-        Returns the localized provider-down phrase AND publishes it as a
-        ``ResponseGenerated`` event so the SessionRecorder records it as the
-        turn's ``jarvis_text`` (``recorder.py::_on_response_generated``). Without
-        this the recorded turn keeps an empty reply and the voice transcript
-        shows the user line with no answer, even though the user heard the
-        apology aloud (live forensic 2026-06-20, session 09eef351). The apology
-        is deliberately NOT appended to the conversation history — an "I can't
-        reach my model" line must not pollute the LLM context for later turns.
+        Normal calls publish the phrase as ``ResponseGenerated`` so the
+        SessionRecorder records it as the turn's ``jarvis_text``. Internal
+        realtime delegates transfer that event ownership to their session,
+        which records what the user actually heard. The apology is deliberately
+        NOT appended to conversation history because a provider outage must not
+        pollute the LLM context for later turns.
         """
         phrase = self._next_provider_down_phrase()
         # _next_provider_down_phrase already localized the phrase via
@@ -6545,14 +6543,19 @@ class BrainManager:
         *,
         use_history: bool = True,
         trace_id: UUID | None = None,
-        text_consumer: "Callable[[str], None] | None" = None,
+        text_consumer: Callable[[str], None] | None = None,
         on_progress: Callable[[], None] | None = None,
         source_layer: str | None = None,
         allow_voice_confirm: bool = False,
         prefer_tool_model: bool = False,
         publish_response: bool = True,
     ) -> str:
-        """Generate a turn, optionally leaving its public response event to the caller."""
+        """Generate a turn, optionally leaving its public response event to the caller.
+
+        ``publish_response=False`` suppresses only ``ResponseGenerated``. History,
+        curator work, tool execution, and every other turn side effect remain intact.
+        The context-local policy keeps concurrent classic and delegated calls isolated.
+        """
         token = _PUBLISH_RESPONSE_EVENT.set(bool(publish_response))
         try:
             return await self._generate(
@@ -6574,7 +6577,7 @@ class BrainManager:
         *,
         use_history: bool = True,
         trace_id: UUID | None = None,
-        text_consumer: "Callable[[str], None] | None" = None,
+        text_consumer: Callable[[str], None] | None = None,
         on_progress: Callable[[], None] | None = None,
         source_layer: str | None = None,
         allow_voice_confirm: bool = False,
