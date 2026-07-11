@@ -620,6 +620,12 @@ class OrbBusBridge:
         # orb is clickable, so the loop is always captured in time.
         self._remember_loop()
         state = event.new_state
+        if state == "LISTENING":
+            # An authoritative supervisor edge can arrive after a late bridge
+            # attach even if VoiceSessionStarted itself was missed.
+            self._voice_session_active = True
+        elif state in {"IDLE", "ERROR", "PAUSED"}:
+            self._voice_session_active = False
         if state != "IDLE":
             # Any authoritative non-idle state supersedes a visual-only wake
             # preview. Keeping the latch beyond this edge could let a late mic

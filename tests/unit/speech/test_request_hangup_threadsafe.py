@@ -69,6 +69,24 @@ async def test_visible_wake_candidate_close_cancels_without_starting_session() -
     assert pipeline._external_hangup_pending.is_set() is False
 
 
+@pytest.mark.asyncio
+async def test_stale_idle_hangup_does_not_block_later_candidate_close() -> None:
+    loop = asyncio.get_running_loop()
+    pipeline = _pipeline(loop)
+    pipeline._state = PipelineState.IDLE
+    pipeline._wake_preroll_active = True
+    pipeline._wake_cancel_event = asyncio.Event()
+    pipeline._external_hangup_pending.set()
+    pipeline._trigger_voice_hangup = lambda: pytest.fail(
+        "candidate close must supersede the stale idle edge"
+    )
+
+    pipeline.request_hangup()
+
+    assert pipeline._wake_cancel_event.is_set()
+    assert pipeline._external_hangup_pending.is_set() is False
+
+
 class _QueuedLoop:
     def __init__(self) -> None:
         self.callbacks = []

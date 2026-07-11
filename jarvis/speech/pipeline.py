@@ -1037,10 +1037,10 @@ def _looks_like_complete_smalltalk(text: str) -> bool:
 
 
 async def _queue_iter(q: asyncio.Queue) -> AsyncIterator[AudioChunk]:
-    """Hilfs-Adapter: Queue → AsyncIterator (für die Wake-Detektoren)."""
+    """Adapt a queue into an async iterator for wake detectors."""
     while True:
         chunk = await q.get()
-        if chunk is None:  # Poison-Pill
+        if chunk is None:  # Sentinel
             return
         yield chunk
 
@@ -3738,7 +3738,7 @@ class SpeechPipeline:
             hotkey_bindings["ptt"] = list(self._ptt_hotkeys)
             ptt_events.add("ptt")
         log.info(
-            "Pipeline bereit. CALL=[%s] PTT=[%s] HANGUP=[%s] OWW=%s WAKE=%s (threshold=%.2f) "
+            "Pipeline ready. CALL=[%s] PTT=[%s] HANGUP=[%s] OWW=%s WAKE=%s (threshold=%.2f) "
             "WHISPER-WAKE=%s TURN-MODE=%s",
             ", ".join(self._call_hotkeys),
             ", ".join(self._ptt_hotkeys) or "off",
@@ -3788,7 +3788,9 @@ class SpeechPipeline:
             if wake_task is not None:
                 wake_task.add_done_callback(_log_task_exit)
             else:
-                log.info("Wake-Listener deaktiviert; Mikrofon bleibt bis zum Hotkey-Call geschlossen.")
+                log.info(
+                    "Wake listener disabled; microphone stays closed until a hotkey call."
+                )
             main_task = asyncio.create_task(self._state_loop(), name="state")
             main_task.add_done_callback(_log_task_exit)
 
@@ -4427,11 +4429,20 @@ class SpeechPipeline:
             and getattr(self, "_wake_handoff_ready", None)
             and self._wake_handoff_ready.is_set()
         )
+        candidate_active = bool(
+            getattr(self, "_state", PipelineState.IDLE) is PipelineState.IDLE
+            and getattr(self, "_wake_preroll_active", False)
+        )
         if handoff_ready and handoff_close is not None:
             # Set synchronously on the caller thread. The owner-loop callback
             # can otherwise lose a race with the already-armed state task.
             handoff_close.set()
-        if pending is not None and pending.is_set() and not handoff_ready:
+        if (
+            pending is not None
+            and pending.is_set()
+            and not handoff_ready
+            and not candidate_active
+        ):
             log.debug("request_hangup ignored: external hangup already pending")
             return
         if pending is not None:
