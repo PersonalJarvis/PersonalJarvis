@@ -1141,6 +1141,7 @@ class SpeechPipeline:
                 phrase=wake_plan.phrase,
                 model_path=wake_plan.vosk_model_path or "",
                 keyword=wake_plan.oww_keyword,
+                early_candidate_listener=self._vosk_early_candidate_listener,
             )
         elif wake_plan is not None:
             self._wake = OpenWakeWordProvider(
@@ -1857,6 +1858,7 @@ class SpeechPipeline:
                 phrase=plan.phrase,
                 model_path=getattr(plan, "vosk_model_path", None) or "",
                 keyword=plan.oww_keyword,
+                early_candidate_listener=self._vosk_early_candidate_listener,
             )
             self._openwakeword_enabled = True
             if self._whisper_wake is not None and self._wake_matcher is not None:
@@ -4440,6 +4442,8 @@ class SpeechPipeline:
         reject costs one brief bar flash. Custom ONNX and Vosk grammar stage-one
         candidates both match ordinary speech frequently, so those engines wait
         for the authoritative ``WakeWordDetected`` event after full verification.
+        (vosk_kws additionally gets the PROVIDER-gated early candidate below —
+        that one is mini-verified, not raw, and does not pass through here.)
         """
         if self._state != PipelineState.IDLE:
             return False
@@ -4447,6 +4451,24 @@ class SpeechPipeline:
         if plan is None:
             return True
         return getattr(plan, "engine", "") == "openwakeword"
+
+    async def _vosk_early_candidate_listener(self, active: bool) -> None:
+        """Visual-only bar signal from the vosk provider's mini-verify.
+
+        Deliberately NOT routed through ``_should_show_optimistic_candidate``:
+        that helper gates the RAW pre-verify reveal (openwakeword-only, see
+        revert 5fe5c4d2). The vosk provider only calls this after its
+        mini-verify passed — re-score confidence + span RMS + localized sound
+        confirm on the truncated ring — measured at 0/2500 room-speech windows
+        shown for "hey jarvis" (calibration 2026-07-11), so the flicker class
+        that forced the revert cannot recur. Retracts (active=False) always
+        pass through so a shown bar can never stay stuck.
+        """
+        if active and self._state != PipelineState.IDLE:
+            return  # a session is already running; nothing to reveal
+        await self._publish_event(
+            WakeCandidateDetected(source_layer="speech", active=active)
+        )
 
     async def _verify_oww_hit(self, pcm_snapshot: bytes) -> bool:
         """Second-stage gate: ask the utterance STT whether the few seconds
@@ -4799,8 +4821,15 @@ class SpeechPipeline:
                             # retract the optimistic candidate instead of lying.
                             now = time.time()
                             locked = now < self._wake_lock_until
+                            # The vosk provider may have shown a mini-verified
+                            # early candidate for THIS wake — consume the flag
+                            # either way; retract below if the wake is dropped.
+                            consume = getattr(
+                                self._wake, "consume_early_candidate", None
+                            )
+                            early_shown = consume() if callable(consume) else False
                             if locked or not self._activation_allowed():
-                                if locals().get("show_candidate"):
+                                if locals().get("show_candidate") or early_shown:
                                     await self._publish_event(
                                         WakeCandidateDetected(
                                             source_layer="speech", active=False

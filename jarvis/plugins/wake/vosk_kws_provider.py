@@ -32,15 +32,31 @@ A raw-energy gate (word-agnostic RMS at the match site, AP-27) rejects
 near-silent candidates before the confirm. The detector never emits
 transcript text — its only output is the fired keyword (design criterion:
 user speech must never double-enter the pipeline through the wake path).
+
+**Early candidate (visual-only, mini-verify gated).** A PARTIAL hit waits
+``confirm_tail_s`` before the authoritative verify, so the bar used to react
+~0.85-1.0 s after the phrase. The early candidate runs the SAME three verify
+checks immediately over the audio heard so far (truncated ring) in a worker
+thread and, only when ALL pass, tells ``early_candidate_listener`` to show
+the bar — typically ~0.1-0.25 s after the partial, i.e. around phrase end.
+Calibrated 2026-07-11 on real captured windows (400 pos / 2500 neg per
+phrase): a conf gate alone leaks 0.84-12 % of room-speech windows (the
+flicker that got the plain candidate reveal reverted, 5fe5c4d2); the full
+mini-verify leaks 0/2500 ("hey jarvis") and 1-2/2500 (worst-case single
+word) while early-revealing ~a third of eventual fires. A rejected or
+superseded candidate retracts; infrastructure errors fail CLOSED here
+(visual-only — the opposite polarity of the authoritative confirm, which
+fails open so it can never eat a real wake).
 """
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
 from collections import deque
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 from typing import Any
@@ -145,6 +161,11 @@ class VoskKwsProvider:
         # -3 dBFS (gain capped at 40 dB) exactly like the other wake paths.
         target_peak: float = 0.7079,
         max_gain: float = 100.0,
+        # Visual-only early candidate: awaited with True when the mini-verify
+        # passes at PARTIAL time, False when a shown candidate is retracted.
+        # Never carries transcript text; never fires unverified (see module
+        # docstring + tests). None = feature off (default).
+        early_candidate_listener: Callable[[bool], Awaitable[None]] | None = None,
     ) -> None:
         self._phrase = phrase.strip()
         self._keyword = keyword or "_".join(normalize_phrase_for_match(phrase)) or "wake"
@@ -179,6 +200,14 @@ class VoskKwsProvider:
         self._ring: deque[bytes] = deque()
         self._ring_len = 0
         self._ring_max = int(_RING_SECONDS * sample_rate) * 2  # bytes
+        # Early-candidate state: the listener, whether a candidate is shown,
+        # the in-flight mini-verify task, and a generation counter so a LATE
+        # mini-verify completion can never show a candidate the authoritative
+        # verify already resolved.
+        self._early_listener = early_candidate_listener
+        self._early_active = False
+        self._early_task: asyncio.Task[None] | None = None
+        self._pending_gen = 0
         # Session stats (parity with OpenWakeWordProvider.stats()).
         self._stat_chunks = 0
         self._stat_candidates = 0
@@ -186,6 +215,8 @@ class VoskKwsProvider:
         self._stat_suppressed_confirm = 0
         self._stat_suppressed_cooldown = 0
         self._stat_fired = 0
+        self._stat_early_shown = 0
+        self._stat_early_retracted = 0
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -243,6 +274,13 @@ class VoskKwsProvider:
         await asyncio.to_thread(self._warmup_decode)
 
     async def stop(self) -> None:
+        # Invalidate any in-flight early check and retract a shown candidate
+        # so a detector swap can never leave the bar stuck "candidate".
+        self._pending_gen += 1
+        if self._early_task is not None:
+            self._early_task.cancel()
+            self._early_task = None
+        await self._notify_early(False)
         self._model = None
         self._ring.clear()
         self._ring_len = 0
@@ -255,7 +293,64 @@ class VoskKwsProvider:
             "suppressed_confirm": self._stat_suppressed_confirm,
             "suppressed_cooldown": self._stat_suppressed_cooldown,
             "fired": self._stat_fired,
+            "early_shown": self._stat_early_shown,
+            "early_retracted": self._stat_early_retracted,
         }
+
+    # -- early candidate (visual-only) ----------------------------------------
+
+    def set_early_candidate_listener(
+        self, listener: Callable[[bool], Awaitable[None]] | None
+    ) -> None:
+        """Wire/unwire the visual candidate listener after construction."""
+        self._early_listener = listener
+
+    @property
+    def early_candidate_active(self) -> bool:
+        """Whether a shown early candidate is currently outstanding."""
+        return self._early_active
+
+    def consume_early_candidate(self) -> bool:
+        """Hand the shown-candidate state to the pipeline (reset, no event).
+
+        Called once per yielded keyword: the pipeline needs to know whether
+        the bar is already visible so a silently DROPPED wake (post-hangup
+        echo lock, app not activatable) retracts it instead of leaving it
+        stuck "candidate" with no session behind it. Resetting here also
+        re-arms the show guard for the next candidate.
+        """
+        was_shown = self._early_active
+        self._early_active = False
+        return was_shown
+
+    async def _notify_early(self, active: bool) -> None:
+        if self._early_listener is None or active == self._early_active:
+            return
+        self._early_active = active
+        if active:
+            self._stat_early_shown += 1
+        else:
+            self._stat_early_retracted += 1
+        try:
+            await self._early_listener(active)
+        except Exception as exc:  # noqa: BLE001 — a UI listener error must
+            # never break wake detection.
+            log.debug("early-candidate listener failed: %s", exc)
+
+    async def _run_early_check(self, window: np.ndarray, gen: int) -> None:
+        """Mini-verify the truncated ring; show the candidate only if the
+        pending candidate that spawned this check is still unresolved."""
+        try:
+            ok = await asyncio.to_thread(self._early_check, window)
+        except Exception as exc:  # noqa: BLE001 — visual-only, never disrupt
+            log.debug("early-candidate check errored: %s", exc)
+            return
+        if ok and gen == self._pending_gen:
+            log.info(
+                "vosk-kws: EARLY candidate shown for %r (mini-verify passed)",
+                self._phrase,
+            )
+            await self._notify_early(True)
 
     # -- internals -----------------------------------------------------------
 
@@ -291,7 +386,19 @@ class VoskKwsProvider:
         return None
 
     def _verify_candidate(self, window: np.ndarray) -> bool:
-        """Three checks over the ring window; ALL must pass before a fire.
+        """Authoritative confirm — fails OPEN (never eat a real wake)."""
+        return self._verify_window(window, fail_open=True)
+
+    def _early_check(self, window: np.ndarray) -> bool:
+        """Visual-only mini-verify on the truncated ring — fails CLOSED
+        (never flash the bar on a broken verifier)."""
+        try:
+            return self._verify_window(window, fail_open=False)
+        except Exception:  # noqa: BLE001 — belt and braces for the UI path
+            return False
+
+    def _verify_window(self, window: np.ndarray, *, fail_open: bool) -> bool:
+        """Three checks over the given window; ALL must pass before a fire.
 
         Why this shape (live forensic 2026-07-06, "Hey Ruben" fired on plain
         room speech every few minutes): the streaming PARTIAL that makes the
@@ -313,8 +420,10 @@ class VoskKwsProvider:
            judges what was said AT the candidate's position instead of
            fishing the best pair out of three seconds of conversation.
 
-        Fail-OPEN only on infrastructure errors (a broken confirm must never
-        eat a real wake); a clean "the phrase is not there" is a rejection.
+        On infrastructure errors the ``fail_open`` polarity decides: the
+        authoritative confirm accepts (a broken confirm must never eat a real
+        wake), the visual-only early check rejects. A clean "the phrase is
+        not there" is always a rejection.
 
         Latency (spawn-latency mission, 2026-07-10): the grammar re-score and
         the free decode are independent Kaldi passes over the SAME audio —
@@ -409,9 +518,13 @@ class VoskKwsProvider:
                 if w.get("end", 0.0) >= span_a and w.get("start", 0.0) <= span_b
             ]
             free_local = " ".join(local)
-        except Exception as exc:  # noqa: BLE001 — fail-open, never eat a wake
-            log.warning("vosk-kws: verify failed (%s) — accepting.", exc)
-            return True
+        except Exception as exc:  # noqa: BLE001 — polarity via fail_open
+            log.warning(
+                "vosk-kws: verify failed (%s) — %s.",
+                exc,
+                "accepting" if fail_open else "rejecting (visual-only)",
+            )
+            return fail_open
         ok = sound_confirm(free_local, self._phrase, ratio=self._confirm_ratio)
         log.info(
             "vosk-kws: verify %s — free ear heard %r at the candidate span "
@@ -473,14 +586,43 @@ class VoskKwsProvider:
                 if not is_final and self._confirm_tail_bytes > 0:
                     pending = (is_final, conf)
                     pending_tail = 0
+                    # Visual-only early candidate: mini-verify the audio heard
+                    # SO FAR in a worker thread while the confirm tail keeps
+                    # accumulating. Typically done ~0.1-0.25 s later — the bar
+                    # reacts around phrase end instead of ~0.85 s after it.
+                    if self._early_listener is not None:
+                        self._pending_gen += 1
+                        self._early_task = asyncio.create_task(
+                            self._run_early_check(
+                                self._ring_window(), self._pending_gen
+                            )
+                        )
                     continue
             now = time.time()
             window = self._ring_window()
             confirmed = await asyncio.to_thread(self._verify_candidate, window)
             if not confirmed:
                 self._stat_suppressed_confirm += 1
+                # Resolve the pending candidate: invalidate any in-flight
+                # early check (generation bump) and retract a shown bar.
+                self._pending_gen += 1
+                if self._early_task is not None:
+                    with contextlib.suppress(Exception):
+                        await self._early_task
+                    self._early_task = None
+                await self._notify_early(False)
                 rec = self._new_grammar_rec()
                 continue
+            # Confirmed: let a still-running early check finish first (in
+            # production it completed long ago — the tail wait dwarfs it) so
+            # show-then-wake ordering is deterministic. The shown flag stays
+            # set for the pipeline to CONSUME: it must know the bar is visible
+            # when it silently drops this wake (echo lock) and retract it.
+            if self._early_task is not None:
+                with contextlib.suppress(Exception):
+                    await self._early_task
+                self._early_task = None
+            self._pending_gen += 1
             self._stat_fired += 1
             last_fire_t = now
             log.info(

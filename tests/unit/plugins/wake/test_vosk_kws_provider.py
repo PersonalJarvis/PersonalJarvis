@@ -207,19 +207,98 @@ async def test_near_silent_candidate_is_gated_on_energy(fake_vosk) -> None:
     assert p.stats()["gated_rms"] >= 1
 
 
-# --- unverified-candidate boundary -------------------------------------------
+# --- early-candidate boundary (mini-verify gated) ------------------------------
 
 
-def test_provider_has_no_unverified_candidate_callback() -> None:
-    """Stage-one grammar hits are intentionally noisy and must remain internal.
+async def test_raw_stage_one_hit_never_reaches_the_early_listener(fake_vosk) -> None:
+    """Stage-one grammar hits stay internal (revert 5fe5c4d2): the ONLY
+    outward candidate signal is the mini-verify-gated early candidate.
 
-    Only the confirmed keyword yielded by ``detect`` may cross into the speech
-    pipeline. Exposing a pre-confirm callback previously made the JarvisBar
-    flash for ordinary speech even though the verifier rejected every hit.
+    A weak re-score (conf 0.2) means the mini-verify rejects — the listener
+    must hear NOTHING even though stage one fired. This replaces the older
+    "no callback parameter exists" guard: the boundary is behavioural now —
+    unverified candidates never cross, verified ones may.
     """
-    import inspect
+    events: list[bool] = []
 
-    assert "on_candidate" not in inspect.signature(VoskKwsProvider).parameters
+    async def _listener(active: bool) -> None:
+        events.append(active)
+
+    p = VoskKwsProvider(
+        "Hey Nova", model_path="fake", keyword="nova",
+        early_candidate_listener=_listener,
+    )
+    p._ensure_model()
+    fake_vosk["model"].grammar_conf = 0.2  # weak re-hear -> mini-verify rejects
+    fired = await _run_detect(p, [_chunk() for _ in range(12)])
+    assert fired == []
+    assert events == []
+
+
+async def test_early_candidate_fires_after_mini_verify_then_wake(fake_vosk) -> None:
+    # Calibration 2026-07-11 (400 pos / 2500 neg real windows, "hey jarvis"):
+    # conf-gate alone leaks 0.84-0.92% of room-speech windows to the bar, the
+    # mini-verify (re-score conf + span RMS + localized sound confirm on the
+    # TRUNCATED ring) leaks 0 of 2500. The early candidate therefore runs the
+    # full mini-verify, and a passing one shows the bar BEFORE the 0.6s
+    # confirm tail + authoritative verify complete.
+    events: list[bool] = []
+
+    async def _listener(active: bool) -> None:
+        events.append(active)
+
+    p = VoskKwsProvider(
+        "Hey Nova", model_path="fake", keyword="nova",
+        early_candidate_listener=_listener,
+    )
+    fired = await _run_detect(p, [_chunk() for _ in range(12)])
+    assert fired == ["nova"]
+    assert events == [True]  # shown once; the wake event supersedes (no retract)
+    assert p.stats()["early_shown"] == 1
+    assert p.stats()["early_retracted"] == 0
+    # The shown flag survives the fire for the pipeline to CONSUME (it needs
+    # to retract the bar if it silently drops this wake), then resets.
+    assert p.consume_early_candidate() is True
+    assert p.early_candidate_active is False
+    assert p.consume_early_candidate() is False
+
+
+async def test_early_candidate_retracts_when_confirm_rejects(
+    fake_vosk, monkeypatch
+) -> None:
+    # The bar must never stay stuck on a candidate the authoritative verify
+    # rejects: shown -> retracted, in that order.
+    events: list[bool] = []
+
+    async def _listener(active: bool) -> None:
+        events.append(active)
+
+    p = VoskKwsProvider(
+        "Hey Nova", model_path="fake", keyword="nova",
+        early_candidate_listener=_listener,
+    )
+    monkeypatch.setattr(p, "_early_check", lambda window: True)
+    p._ensure_model()
+    fake_vosk["model"].free_text = "das ist etwas ganz anderes"  # i18n-allow: utterance under test
+    fired = await _run_detect(p, [_chunk() for _ in range(12)])
+    assert fired == []
+    assert events == [True, False]
+    assert p.stats()["early_shown"] == 1
+    assert p.stats()["early_retracted"] == 1
+
+
+def test_early_check_fails_closed_on_infra_error(fake_vosk, monkeypatch) -> None:
+    # Polarity contract: the AUTHORITATIVE confirm fails OPEN (never eat a
+    # real wake), the VISUAL-ONLY early check fails CLOSED (never flash the
+    # bar on a broken verifier).
+    p = VoskKwsProvider("Hey Nova", model_path="fake", keyword="nova")
+
+    def _boom():
+        raise RuntimeError("confirm infra down")
+
+    monkeypatch.setattr(p, "_ensure_model", _boom)
+    assert p._early_check(np.full(1600, 0.2, dtype=np.float32)) is False
+    assert p._verify_candidate(np.full(1600, 0.2, dtype=np.float32)) is True
 
 
 def test_confirm_infrastructure_error_fails_open(fake_vosk, monkeypatch) -> None:
