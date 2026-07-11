@@ -83,6 +83,10 @@ class _FakeRecognizer:
     def SetWords(self, flag):  # noqa: ANN001, N802
         pass
 
+    def Reset(self):  # noqa: N802 — consumed by the prewarm factory
+        self.was_reset = True
+        self._chunks = 0
+
     def AcceptWaveform(self, pcm):  # noqa: ANN001, N802
         self._chunks += 1
         return False  # partial path only — finals are exercised via partials
@@ -387,6 +391,29 @@ async def test_cooldown_suppresses_immediate_refire(fake_vosk) -> None:
     fired = await _run_detect(p, [_chunk() for _ in range(24)])
     assert fired == ["nova"]  # second grammar hit lands inside the cooldown
     assert p.stats()["suppressed_cooldown"] >= 1
+
+
+# --- prewarmed verify-recognizer stock ------------------------------------------
+
+
+def test_verify_stock_prewarms_and_hands_out_exclusive_recognizers(fake_vosk) -> None:
+    """The factory pre-pays Kaldi's ~400ms lazy first-decode init: stocked
+    recognizers are silence-prewarmed (Reset() called after the throwaway
+    decode) and every taker gets EXCLUSIVE ownership (AP-24: never shared;
+    reuse is banned — it drifted 2/600 real decisions). An empty stock falls
+    back to a cold fresh build instead of blocking or sharing."""
+    p = VoskKwsProvider("Hey Nova", model_path="fake", keyword="nova")
+    p._ensure_model()
+    p._replenish_stock()
+    key = ("fake", "grammar")
+    assert len(p._rec_stock[key]) == 2
+    assert all(getattr(r, "was_reset", False) for r in p._rec_stock[key])
+    r1 = p._take_verify_rec("fake", "grammar")
+    r2 = p._take_verify_rec("fake", "grammar")
+    assert r1 is not r2
+    assert len(p._rec_stock[key]) == 0
+    r3 = p._take_verify_rec("fake", "grammar")  # empty stock -> cold build
+    assert r3 is not None and r3 is not r1 and r3 is not r2
 
 
 # --- latency: concurrent grammar re-score + free decode ------------------------

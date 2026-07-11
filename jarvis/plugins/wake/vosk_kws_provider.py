@@ -54,6 +54,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import threading
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -201,6 +202,21 @@ class VoskKwsProvider:
         self._target_peak = float(target_peak)
         self._max_gain = float(max_gain)
         self._models: dict[str, Any] = {}
+        # Pre-warmed ONE-SHOT verify recognizers, keyed (model_path, kind).
+        # Why: a fresh KaldiRecognizer's FIRST decode pays ~400ms lazy init
+        # on top of ~100ms construction (measured 2026-07-11: fresh verify
+        # p50 523ms vs 104ms warm). REUSING recognizers is not an option —
+        # Kaldi adaptation survives Reset() and flipped 2/600 real decisions
+        # (conf drift up to 0.55). A silence decode + Reset() however leaves
+        # every decision unchanged (0/200 mismatches, conf jitter <=0.09),
+        # so a background factory pre-pays the init and each verify consumes
+        # a prewarmed recognizer EXCLUSIVELY, once (AP-24: never shared).
+        # Empty stock (candidate burst) falls back to a cold fresh build —
+        # exactly today's behaviour, just slower.
+        self._rec_stock: dict[tuple[str, str], list[Any]] = {}
+        self._stock_lock = threading.Lock()
+        self._stock_target = 2
+        self._replenish_task: asyncio.Task[None] | None = None
         self._grammar_words = [w for w in self._phrase.lower().split() if w]
         # Duck-typing parity with OpenWakeWordProvider: the pipeline's ready
         # log reads ``_keywords`` and ``_threshold`` off whatever detector is
@@ -256,58 +272,112 @@ class VoskKwsProvider:
         rec.SetWords(True)
         return rec
 
+    def _build_verify_rec(self, path: str | None, kind: str, *, prewarm: bool) -> Any:
+        """A fresh one-shot verify recognizer; optionally silence-prewarmed.
+
+        The prewarm decodes 0.3s of silence and Resets — it pre-pays Kaldi's
+        lazy first-decode init without touching decisions (parity-measured).
+        A prewarm error degrades to the cold recognizer, never fails a verify.
+        """
+        from vosk import KaldiRecognizer
+
+        if kind == "grammar":
+            rec = self._new_grammar_rec(path)
+        else:
+            rec = KaldiRecognizer(self._ensure_model(path), self._sample_rate)
+            rec.SetWords(True)
+        if prewarm:
+            try:
+                silence = np.zeros(
+                    int(0.3 * self._sample_rate), dtype=np.int16
+                ).tobytes()
+                rec.AcceptWaveform(silence)
+                rec.FinalResult()
+                rec.Reset()
+            except Exception as exc:  # noqa: BLE001 — cold rec still works
+                log.debug("vosk-kws: prewarm skipped (%s/%s): %s", path, kind, exc)
+        return rec
+
+    def _take_verify_rec(self, path: str | None, kind: str) -> Any:
+        """Pop a prewarmed one-shot recognizer, or build cold on empty stock.
+
+        The taker owns the recognizer exclusively and discards it after ONE
+        use (AP-24: no sharing, no reuse — reuse drifts decisions).
+        """
+        key = (path or self._model_path, kind)
+        with self._stock_lock:
+            stack = self._rec_stock.get(key)
+            if stack:
+                return stack.pop()
+        return self._build_verify_rec(path, kind, prewarm=False)
+
+    def _replenish_stock(self) -> None:
+        """Top the prewarmed stock back up to target (worker thread only)."""
+        for path in self._model_paths:
+            for kind in ("grammar", "free"):
+                key = (path, kind)
+                while True:
+                    with self._stock_lock:
+                        if len(self._rec_stock.setdefault(key, [])) >= self._stock_target:
+                            break
+                    try:
+                        rec = self._build_verify_rec(path, kind, prewarm=True)
+                    except Exception as exc:  # noqa: BLE001 — broken model:
+                        # takers fall back to cold builds which fail the same
+                        # way and are handled at the verify layer.
+                        log.debug(
+                            "vosk-kws: stock replenish failed (%s/%s): %s",
+                            path, kind, exc,
+                        )
+                        break
+                    with self._stock_lock:
+                        self._rec_stock[key].append(rec)
+
+    def _kick_replenish(self) -> None:
+        """Fire-and-forget stock top-up off the hot path (needs a loop)."""
+        if self._replenish_task is not None and not self._replenish_task.done():
+            return
+        with contextlib.suppress(RuntimeError):  # no running loop (sync tests)
+            asyncio.get_running_loop()
+            self._replenish_task = asyncio.create_task(
+                asyncio.to_thread(self._replenish_stock)
+            )
+
     def _fresh_recs(self) -> dict[str, Any]:
         """One streaming grammar recognizer per LOADABLE model path.
 
-        A corrupt/missing model dir must never brick the working ones —
-        it is skipped with a warning and detection continues on the rest.
+        Taken from the prewarmed stock when available: a rebuilt streaming
+        recognizer otherwise pays Kaldi's ~400ms lazy first-decode init
+        INLINE in the detect loop (it decodes chunks on the event loop) —
+        after every candidate reset, per model. A corrupt/missing model dir
+        must never brick the working ones — it is skipped with a warning and
+        detection continues on the rest.
         """
         recs: dict[str, Any] = {}
         for path in self._model_paths:
             try:
-                recs[path] = self._new_grammar_rec(path)
+                recs[path] = self._take_verify_rec(path, "grammar")
             except Exception as exc:  # noqa: BLE001 — isolate a broken model
                 log.warning("vosk-kws: model %s unusable (%s) — skipped.", path, exc)
+        self._kick_replenish()
         return recs
 
-    def _warmup_decode(self) -> None:
-        """Run ONE throwaway grammar + free decode pass so the FIRST real
-        candidate's verify does not also pay Kaldi's cold-start cost
-        (recognizer graph build, ivector/CMVN buffer allocation — separate
-        from the ``Model()`` load itself). Mirrors
-        ``OpenWakeWordProvider._warmup_model``'s parity fix for the same
-        class of "first inference after load is slow" cost. Fail-closed: a
-        warm-up error must never break boot or arm a broken detector — the
-        real detect loop still builds fresh recognizers on the first genuine
-        candidate regardless of whether this succeeded.
-        """
-        for path in self._model_paths:
-            try:
-                from vosk import KaldiRecognizer
-
-                silence = np.zeros(
-                    int(0.3 * self._sample_rate), dtype=np.int16
-                ).tobytes()
-                g = self._new_grammar_rec(path)
-                g.AcceptWaveform(silence)
-                g.FinalResult()
-                f = KaldiRecognizer(self._ensure_model(path), self._sample_rate)
-                f.SetWords(True)
-                f.AcceptWaveform(silence)
-                f.FinalResult()
-            except Exception as exc:  # noqa: BLE001 — warm-up must never break boot
-                log.debug("vosk-kws warm-up decode skipped (%s): %s", path, exc)
-
     async def start(self) -> None:
-        """Pre-load AND warm every model — moves Kaldi's cold-start decode
-        cost off the first real wake candidate and onto boot warm-up instead."""
+        """Pre-load every model and FILL the prewarmed recognizer stock.
+
+        Replaces the former throwaway warm-up decode: the stock recognizers
+        ARE the warm-up now (their silence decode pre-pays Kaldi's lazy
+        first-decode init), and unlike the throwaways they are kept and
+        consumed by the first real detect/verify. Fail-closed: errors must
+        never break boot — takers fall back to cold builds.
+        """
         for path in self._model_paths:
             try:
                 await asyncio.to_thread(self._ensure_model, path)
             except Exception as exc:  # noqa: BLE001 — a broken model must not
                 # brick the working ones; _fresh_recs skips it too.
                 log.warning("vosk-kws: model %s failed to load (%s).", path, exc)
-        await asyncio.to_thread(self._warmup_decode)
+        await asyncio.to_thread(self._replenish_stock)
 
     async def stop(self) -> None:
         # Invalidate any in-flight early check and retract a shown candidate
@@ -317,6 +387,11 @@ class VoskKwsProvider:
             self._early_task.cancel()
             self._early_task = None
         await self._notify_early(False)
+        if self._replenish_task is not None:
+            self._replenish_task.cancel()
+            self._replenish_task = None
+        with self._stock_lock:
+            self._rec_stock.clear()
         self._models.clear()
         self._ring.clear()
         self._ring_len = 0
@@ -497,8 +572,6 @@ class VoskKwsProvider:
         threshold/comparison is untouched.
         """
         try:
-            from vosk import KaldiRecognizer
-
             peak = float(np.max(np.abs(window))) if len(window) else 0.0
             if peak > 1e-6:
                 window = np.clip(
@@ -514,15 +587,12 @@ class VoskKwsProvider:
             # matrix 3 -> 7 with a last-1.8 s retry), because the grammar
             # happily forces any short speech snippet onto the phrase.
             def _grammar_pass() -> dict:
-                g = self._new_grammar_rec(model_path)
+                g = self._take_verify_rec(model_path, "grammar")
                 g.AcceptWaveform(pcm)
                 return json.loads(g.FinalResult())
 
             def _free_pass() -> dict:
-                f = KaldiRecognizer(
-                    self._ensure_model(model_path), self._sample_rate
-                )
-                f.SetWords(True)
+                f = self._take_verify_rec(model_path, "free")
                 f.AcceptWaveform(pcm)
                 return json.loads(f.FinalResult())
 
@@ -672,6 +742,10 @@ class VoskKwsProvider:
                                 self._ring_window(), self._pending_gen, hit_path
                             )
                         )
+                        # The early check just consumed prewarmed recognizers;
+                        # top the stock back up before the authoritative
+                        # verify needs its own pair (~0.6s from now).
+                        self._kick_replenish()
                     continue
             now = time.time()
             window = self._ring_window()
@@ -696,13 +770,17 @@ class VoskKwsProvider:
                         break
             if not confirmed:
                 self._stat_suppressed_confirm += 1
-                # Resolve the pending candidate: invalidate any in-flight
-                # early check (generation bump) and retract a shown bar.
-                self._pending_gen += 1
+                # Resolve the pending candidate: let an in-flight early check
+                # finish FIRST (its show is still legitimate — the retract
+                # right below keeps the bar honest either way), THEN
+                # invalidate the generation and retract. Bumping before the
+                # await races a slow early check into dropping its show while
+                # the retract below no-ops — bar states must be deterministic.
                 if self._early_task is not None:
                     with contextlib.suppress(Exception):
                         await self._early_task
                     self._early_task = None
+                self._pending_gen += 1
                 await self._notify_early(False)
                 recs = self._fresh_recs()
                 continue
