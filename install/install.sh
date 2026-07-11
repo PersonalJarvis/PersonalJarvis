@@ -152,16 +152,30 @@ find_python() {
 # This block stays shell-native because Python may not exist yet. Tests extract
 # it directly and exercise the retry/continuation state machine with fakes.
 git_available() {
-    _git_path=$(command -v git 2>/dev/null) || return 1
-    # macOS ships a /usr/bin/git launcher even before the Command Line Tools
-    # exist. Calling that launcher may open an unrelated system dialog, so
-    # check the toolchain receipt before treating the stub as a real Git.
-    if [ "$(uname -s 2>/dev/null || true)" = 'Darwin' ] &&
-       [ "$_git_path" = '/usr/bin/git' ] && command -v xcode-select >/dev/null 2>&1 &&
-       ! xcode-select -p >/dev/null 2>&1; then
-        return 1
-    fi
-    "$_git_path" --version >/dev/null 2>&1
+    _git_candidates=()
+    _git_on_path=$(command -v git 2>/dev/null || true)
+    if [ -n "$_git_on_path" ]; then _git_candidates+=("$_git_on_path"); fi
+    _git_candidates+=(/opt/homebrew/bin/git /usr/local/bin/git /usr/bin/git)
+
+    for _git_path in "${_git_candidates[@]}"; do
+        [ -x "$_git_path" ] || continue
+        # macOS ships a /usr/bin/git launcher even before the Command Line
+        # Tools exist. Calling that launcher may open an unrelated system
+        # dialog, so skip it and keep probing Homebrew's off-PATH locations.
+        if [ "$(uname -s 2>/dev/null || true)" = 'Darwin' ] &&
+           [ "$_git_path" = '/usr/bin/git' ] && command -v xcode-select >/dev/null 2>&1 &&
+           ! xcode-select -p >/dev/null 2>&1; then
+            continue
+        fi
+        "$_git_path" --version >/dev/null 2>&1 || continue
+        _git_dir=${_git_path%/*}
+        case ":$PATH:" in
+            *":$_git_dir:"*) ;;
+            *) PATH="$_git_dir:$PATH"; export PATH ;;
+        esac
+        return 0
+    done
+    return 1
 }
 
 refresh_prerequisite_state() {
@@ -205,7 +219,7 @@ missing_prerequisite_labels() {
 }
 
 has_install_tty() {
-    [ -r /dev/tty ] && [ -w /dev/tty ]
+    { : </dev/tty; } 2>/dev/null && { : >/dev/tty; } 2>/dev/null
 }
 
 detect_prerequisite_manager() {

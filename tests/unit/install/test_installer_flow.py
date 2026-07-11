@@ -59,7 +59,12 @@ def test_installer_prompts_only_inside_missing_prerequisite_flow() -> None:
     ps1_outside = ps1[:ps1_begin] + ps1[ps1_end:]
     assert "Read-Host" not in ps1_outside
     assert "$Host.UI.Prompt" not in ps1
-    assert ps1[ps1_begin:ps1_end].count("Read-Host") == 2
+    ps1_prompt_lines = [
+        line
+        for line in ps1[ps1_begin:ps1_end].splitlines()
+        if "Read-Host" in line and not line.lstrip().startswith("#")
+    ]
+    assert len(ps1_prompt_lines) == 2
 
     for forbidden in ("input(", "Confirm.ask", "Prompt.ask", "getpass"):
         assert forbidden not in py

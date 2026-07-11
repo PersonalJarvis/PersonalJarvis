@@ -111,7 +111,12 @@ function Test-Tool {
 function Test-PythonCandidate {
     param([string]$Exe)
     try {
-        $out = & $Exe -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>&1
+        # Keep the Python snippet quote-free. Windows PowerShell 5's legacy
+        # native-argument marshaller can strip nested quote characters even
+        # when the PowerShell string itself is correctly quoted.
+        $probe = 'import sys; print(sys.version_info.major, sys.version_info.minor,' +
+            'sys.version_info.micro, sep=chr(46))'
+        $out = & $Exe -c $probe 2>&1
         if ($LASTEXITCODE -ne 0) { return $null }
         $version = [string]($out | Select-Object -First 1)
         if ($version -notmatch '^(\d+)\.(\d+)\.(\d+)$') { return $null }
@@ -212,6 +217,19 @@ function Get-MissingPrerequisiteLabels {
     return $missing
 }
 
+function Test-InstallPromptAvailable {
+    if (-not [Environment]::UserInteractive) { return $false }
+    try {
+        # `irm ... | iex` is a PowerShell object pipeline, not redirected
+        # console input, so it remains prompt-capable. CI/stdin pipelines do
+        # not, and must opt in explicitly with JARVIS_INSTALL_PREREQS=auto.
+        return (-not [Console]::IsInputRedirected)
+    } catch {
+        # Hosts such as PowerShell ISE have no console but provide Read-Host.
+        return $true
+    }
+}
+
 function Request-PrerequisiteConsent {
     param([string[]]$Missing)
     switch ($PrerequisiteMode) {
@@ -227,7 +245,7 @@ function Request-PrerequisiteConsent {
         }
     }
 
-    if (-not [Environment]::UserInteractive) {
+    if (-not (Test-InstallPromptAvailable)) {
         Write-Note 'This shell cannot ask for consent. Re-run interactively or set JARVIS_INSTALL_PREREQS=auto.'
         return $false
     }
@@ -340,7 +358,7 @@ function Ensure-Prerequisites {
     while (-not $state.Ready) {
         Write-Err 'The required commands are still unavailable in this terminal.'
         Write-ManualPrerequisiteHelp $state
-        if ($PrerequisiteMode -eq 'auto' -or -not [Environment]::UserInteractive) {
+        if ($PrerequisiteMode -eq 'auto' -or -not (Test-InstallPromptAvailable)) {
             return $null
         }
         try {

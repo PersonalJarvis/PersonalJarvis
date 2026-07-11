@@ -9,8 +9,10 @@ re-check, and return ready to the same installer process.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -41,11 +43,19 @@ def _find_bash() -> str | None:
     return None
 
 
-POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
+POWERSHELLS = tuple(
+    dict.fromkeys(
+        executable
+        for name in ("pwsh", "powershell")
+        if (executable := shutil.which(name)) is not None
+    )
+)
 BASH = _find_bash()
 
 
-def _run_powershell_flow(tmp_path: Path, *, initially_ready: bool) -> str:
+def _run_powershell_flow(
+    tmp_path: Path, *, powershell: str, initially_ready: bool
+) -> str:
     driver = r"""
 $ErrorActionPreference = 'Stop'
 $PrerequisiteMode = 'auto'
@@ -111,7 +121,7 @@ Write-Output $summary
     path = tmp_path / "driver.ps1"
     path.write_text(driver, encoding="utf-8")
     result = subprocess.run(
-        [POWERSHELL, "-NoProfile", "-File", str(path)],
+        [powershell, "-NoProfile", "-File", str(path)],
         capture_output=True,
         text=True,
         timeout=30,
@@ -189,16 +199,53 @@ printf 'READY=%s;INSTALLS=%s;ITEMS=%s;STATES=%s\n' \
     return result.stdout.strip()
 
 
-@pytest.mark.skipif(POWERSHELL is None, reason="PowerShell is not available")
+@pytest.mark.parametrize("powershell", POWERSHELLS or (None,))
 @pytest.mark.parametrize("initially_ready", [True, False])
 def test_powershell_rechecks_and_continues_in_same_process(
-    tmp_path: Path, initially_ready: bool
+    tmp_path: Path, powershell: str | None, initially_ready: bool
 ) -> None:
-    out = _run_powershell_flow(tmp_path, initially_ready=initially_ready)
+    if powershell is None:
+        pytest.skip("PowerShell is not available")
+    out = _run_powershell_flow(
+        tmp_path, powershell=powershell, initially_ready=initially_ready
+    )
     if initially_ready:
         assert out == "READY=True;INSTALLS=0;ITEMS=;STATES=1"
     else:
         assert out == "READY=True;INSTALLS=1;ITEMS=python,git;STATES=2"
+
+
+@pytest.mark.parametrize("powershell", POWERSHELLS or (None,))
+def test_powershell_probes_a_real_python_without_nested_quote_breakage(
+    tmp_path: Path, powershell: str | None
+) -> None:
+    """Windows PowerShell 5 strips some nested native-command quotes."""
+    if powershell is None:
+        pytest.skip("PowerShell is not available")
+    driver = r"""
+$ErrorActionPreference = 'Stop'
+$PrerequisiteMode = 'never'
+$InitialPath = $env:Path
+function Write-Ok { param([string]$Text) }
+function Write-Note { param([string]$Text) }
+function Write-Err { param([string]$Text) }
+__BLOCK__
+$probe = Test-PythonCandidate $env:JARVIS_TEST_PYTHON
+if ($null -eq $probe) { throw 'real Python probe returned null' }
+Write-Output "FOUND=$($probe.Compatible);VERSION=$($probe.Version)"
+""".replace("__BLOCK__", _block(INSTALL_PS1))
+    path = tmp_path / "real-python-probe.ps1"
+    path.write_text(driver, encoding="utf-8")
+    env = dict(os.environ, JARVIS_TEST_PYTHON=sys.executable)
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-File", str(path)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert result.stdout.strip().startswith("FOUND=True;VERSION=3.")
 
 
 @pytest.mark.skipif(BASH is None, reason="Bash is not available")
@@ -226,3 +273,6 @@ def test_posix_covers_established_native_package_managers() -> None:
     source = INSTALL_SH.read_text(encoding="utf-8")
     for manager in ("Homebrew", "apt-get", "dnf", "yum", "zypper", "pacman", "apk"):
         assert manager in source
+    # A curl-piped macOS shell may not have Homebrew's prefix on PATH yet.
+    assert "/opt/homebrew/bin/git" in source
+    assert "/usr/local/bin/git" in source
