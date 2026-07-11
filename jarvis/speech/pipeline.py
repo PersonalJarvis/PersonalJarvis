@@ -5098,7 +5098,17 @@ class SpeechPipeline:
             realtime_reason = await self._active_realtime_session()
             if realtime_reason is not None:
                 return realtime_reason
-            await self._speak_realtime_unavailable()
+            # Speak the "realtime unavailable" notice only when the user
+            # EXPLICITLY picked realtime ([voice].mode present in the TOML).
+            # Since "realtime" became the product default, a fresh keyless
+            # install lands here on every call and must degrade silently
+            # instead of nagging before each pipeline session.
+            voice_cfg = getattr(self._config, "voice", None)
+            explicitly_chosen = "mode" in (
+                getattr(voice_cfg, "model_fields_set", None) or ()
+            )
+            if explicitly_chosen:
+                await self._speak_realtime_unavailable()
         self._active_voice_mode = "pipeline"
         self._active_realtime_provider = ""
         self._active_realtime_model = ""

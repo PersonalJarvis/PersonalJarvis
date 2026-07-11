@@ -1925,11 +1925,14 @@ class VoiceConfig(BaseModel):
     # Master switch for the completion classifier + waiting state. When false
     # the pipeline behaves exactly as before this feature landed.
     completion_detection_enabled: bool = True
-    # Voice engine selector. "pipeline" = the classic STT->brain->TTS chain
-    # (default, unchanged). "realtime" = the full-duplex speech-to-speech engine
-    # (browser, OpenAI Realtime; opt-in). Read once per voice session; a live
-    # change lands on the next session.
-    mode: str = "pipeline"
+    # Voice engine selector. "realtime" (default) = the full-duplex
+    # speech-to-speech engine — the recommended mode. "pipeline" = the classic
+    # STT->brain->TTS chain. Read once per voice session; a live change lands
+    # on the next session. When no realtime-capable key exists, the session
+    # falls back to the pipeline; the spoken "realtime unavailable" notice is
+    # reserved for an EXPLICIT user pick (mode present in the TOML), so a
+    # fresh keyless install degrades silently instead of nagging every call.
+    mode: str = "realtime"
     # Realtime tool exposure. "delegate" (default) declares ONE action function
     # (jarvis_action) that hands the user's spoken request to the classic
     # router brain — full ToolExecutor safety path, two-turn voice confirm,

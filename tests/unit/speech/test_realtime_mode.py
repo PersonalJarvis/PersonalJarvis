@@ -89,7 +89,9 @@ class _FakeRealtimeSession:
 def _pipe(mode: str = "realtime") -> SpeechPipeline:
     pipe = SpeechPipeline.__new__(SpeechPipeline)
     pipe._config = SimpleNamespace(
-        voice=SimpleNamespace(mode=mode),
+        # model_fields_set mirrors an EXPLICIT user pick (mode in the TOML);
+        # the silent-default fallback test overrides it with an empty set.
+        voice=SimpleNamespace(mode=mode, model_fields_set={"mode"}),
         brain=SimpleNamespace(reply_language="en"),
     )
     pipe._player = _FakePlayer()
@@ -203,6 +205,35 @@ async def test_failed_realtime_session_explains_and_falls_back_in_same_call(
 
     assert reason == HANGUP_SHUTDOWN
     assert notices == 1
+
+
+@pytest.mark.asyncio
+async def test_default_realtime_mode_falls_back_silently_without_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Realtime is the product DEFAULT now: a keyless install must fall back
+    to the pipeline without speaking the unavailable notice every call."""
+    pipe = _pipe()
+    pipe._config.voice.model_fields_set = set()
+    notices = 0
+
+    async def _failed_realtime():
+        return None
+
+    async def _notice():
+        nonlocal notices
+        notices += 1
+
+    pipe._active_realtime_session = _failed_realtime  # type: ignore[method-assign]
+    pipe._speak_realtime_unavailable = _notice  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        pipeline_mod, "MicrophoneCapture", lambda **_kwargs: _SilentMic()
+    )
+
+    reason = await asyncio.wait_for(pipe._active_session(), timeout=2.0)
+
+    assert reason == HANGUP_SHUTDOWN
+    assert notices == 0
 
 
 @pytest.mark.asyncio
