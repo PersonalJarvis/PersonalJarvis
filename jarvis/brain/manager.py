@@ -6516,6 +6516,7 @@ class BrainManager:
         on_progress: Callable[[], None] | None = None,
         source_layer: str | None = None,
         allow_voice_confirm: bool = False,
+        prefer_tool_model: bool = False,
     ) -> str:
         # 1. Intercept meta-commands (cancel, switch, depth override).
         # User request 2026-04-25: no standardised confirmation phrases
@@ -6995,6 +6996,11 @@ class BrainManager:
             user_text
         )
         chain = self._build_fallback_chain(decision.level)
+        if prefer_tool_model:
+            # Realtime delegation runs on the Tool Model pick; hoisted BEFORE
+            # the empty-chain check so an all-dead chain keeps the honest
+            # provider-down diagnostic below.
+            chain = self._hoist_tool_model(chain)
         if not chain:
             # Empty chain means either (a) no providers registered or
             # (b) all filtered out by _dead_providers (no key set).
