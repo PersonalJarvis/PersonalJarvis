@@ -156,17 +156,10 @@ class JarvisBarOverlay:
         persistent: bool = True,
         accent: str = "#e7c46e",
         opacity: float = BAR_ALPHA,
-        start_hidden: bool = False,
     ) -> None:
         self._persistent = persistent
         self._accent = accent
         self._opacity = max(0.2, min(1.0, float(opacity)))  # clamp to sane range
-        # Boot gate: when set, the bar starts WITHDRAWN even if persistent, so it
-        # does not appear before the speech pipeline is ready to listen (the
-        # "looks ready but isn't" boot confusion). The boot wiring reveals it via
-        # show("idle") once VoiceBootStatus(ready=True) arrives. Default False
-        # keeps every other caller (live swap / set_bar_persistent) unchanged.
-        self._start_hidden = bool(start_hidden)
         self._mode = "idle"
         self._ext_level = 0.0
         # perf_counter() of the last set_level() that carried real sound
@@ -276,13 +269,12 @@ class JarvisBarOverlay:
     # Lifecycle                                                          #
     # ------------------------------------------------------------------ #
     def _should_start_withdrawn(self) -> bool:
-        """True when ``start()`` must withdraw the window instead of mapping it.
+        """True only for the wake-triggered, non-persistent variant.
 
-        A non-persistent bar always starts hidden (it pops on a session). A
-        persistent bar normally maps immediately, but the boot gate
-        (``start_hidden=True``) keeps it hidden until voice is ready.
+        A persistent bar is an always-visible desktop element and maps as soon
+        as its Tk window starts. Voice readiness must never gate its visibility.
         """
-        return (not self._persistent) or self._start_hidden
+        return not self._persistent
 
     def start_in_thread(self, timeout: float = 3.0) -> None:
         def _run() -> None:

@@ -1,13 +1,11 @@
 """The reveal path must LIFT + re-pin topmost, not just deiconify.
 
-Forensic (2026-06-27): on the fast-boot path the persistent bar's boot reveal
-(``VoiceBootStatus(ready=True)`` → ``show("idle")``) fires within ~200 ms of
-window creation, before the desktop main window + tray finish mapping. A
-withdrawn→deiconified ``overrideredirect`` window loses its topmost z-order on
-Windows, so the later boot windows mapped on top of the bar and it stayed hidden
-until the first wake-word re-showed it ("bar does not appear when ready, only
-after the wake-word"). ``_do_show`` now re-asserts ``-topmost`` and lifts, matching
-the mascot orb. These tests pin that contract without a real Tk window.
+Forensic (2026-06-27): a withdrawn→deiconified ``overrideredirect`` window can
+lose its topmost z-order on Windows, so later desktop windows map above it until
+the next wake re-shows it. The persistent bar now maps immediately at boot, and
+the voice-ready maintenance pass re-shows its current mode only to re-pin
+topmost. ``_do_show`` re-asserts ``-topmost`` and lifts, matching the mascot orb.
+These tests pin that contract without a real Tk window.
 
 Forensic (2026-06-30): re-asserting ``-topmost`` is itself a Win32 style
 mutation on this layered (color-key + alpha) window, and Windows can silently

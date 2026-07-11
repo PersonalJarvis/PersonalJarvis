@@ -210,17 +210,18 @@ class OrbBusBridge:
         # drives _on_state without publishing VoiceSession events (and the
         # very first session before any end-event) behaves exactly as before.
         self._suppress_show_until_session: bool = False
-        # Boot z-order re-lift latch. The persistent bar is now visible from
+        # Boot z-order re-lift latch. The persistent bar is visible from
         # boot (the overlay maps its window immediately — see
         # DesktopApp._build_overlay_surface), so this is NO LONGER a visibility
-        # gate. Once voice is ready, ``reveal_bar_when_voice_ready`` re-asserts
-        # the bar's topmost (after the main window + tray have finished mapping).
-        # ``_boot_reveal_done`` makes the re-lift idempotent across the ready
+        # gate. Once voice is ready,
+        # ``reassert_persistent_bar_when_voice_ready`` re-asserts the bar's
+        # topmost after the main window + tray have finished mapping.
+        # ``_boot_reassert_done`` makes the re-lift idempotent across the ready
         # signal and the fallback timeout. asyncio.Event() is loop-agnostic at
         # construction (Py3.10+ dropped the loop param; project minimum is
         # 3.11), so it is safe to build off the running loop.
         self._voice_ready_event = asyncio.Event()
-        self._boot_reveal_done: bool = False
+        self._boot_reassert_done: bool = False
         # Backend asyncio loop the bridge's bus handlers run on. The Tk gesture
         # callbacks (_publish_mute_toggle / _publish_show_window /
         # _publish_visible_feedback) fire on the overlay's *Tk thread*, which has
@@ -535,8 +536,8 @@ class OrbBusBridge:
         prevents the resurrection that follows.
         """
         log.info(
-            "OrbBridge._on_session_ended: session=%s reason=%s — orb stays hidden "
-            "until next wake.",
+            "OrbBridge._on_session_ended: session=%s reason=%s — late active "
+            "states suppressed until next wake.",
             event.session_id,
             event.hangup_reason,
         )
@@ -553,18 +554,14 @@ class OrbBusBridge:
         if event.ready:
             self._voice_ready_event.set()
 
-    async def reveal_bar_when_voice_ready(self, *, timeout_s: float = 30.0) -> None:
-        """Show the persistent bar once the voice stack is genuinely ready.
+    async def reassert_persistent_bar_when_voice_ready(
+        self, *, timeout_s: float = 30.0
+    ) -> None:
+        """Re-assert the already-visible persistent bar after desktop boot.
 
-        Synchronized appearance (2026-06-29): the persistent bar is now started
-        WITHDRAWN (``start_hidden=True`` — see DesktopApp._build_overlay_surface),
-        so THIS is the visibility gate. Scheduled once on the event loop at boot,
-        it waits for ``VoiceBootStatus(ready=True)`` (emitted after the deferred
-        loaders bring up wake+VAD+TTS) — or a bounded ``timeout_s`` fallback so
-        the bar can never be stuck hidden — and then shows the idle pill, which
-        maps + lifts the bar exactly when the user can actually talk. A
-        non-persistent bar / the mascot (``hide_on_idle``) is left untouched: it
-        pops on a real session, not at boot.
+        The bar maps immediately and does not wait for voice readiness. This
+        bounded task only re-pins its current mode/topmost state after later boot
+        windows have mapped. A non-persistent bar or mascot remains untouched.
         """
         reason = "timeout-fallback"
         try:
@@ -572,26 +569,24 @@ class OrbBusBridge:
             reason = "voice-ready"
         except TimeoutError:
             pass
-        self._reveal_persistent_bar(reason)
+        self._reassert_persistent_bar(reason)
 
-    def _reveal_persistent_bar(self, reason: str) -> None:
-        """Show the persistent bar's idle pill exactly once (the boot reveal).
-
-        Idempotent (``_boot_reveal_done``). The bar starts withdrawn
-        (start_hidden), so ``show("idle")`` here maps + lifts it — this is the
-        moment the bar first becomes visible, synchronized with voice-ready.
-        """
-        if self._boot_reveal_done:
+    def _reassert_persistent_bar(self, reason: str) -> None:
+        """Re-show the persistent bar's current mode exactly once."""
+        if self._boot_reassert_done:
             return
-        self._boot_reveal_done = True
+        self._boot_reassert_done = True
         if self._hide_on_idle:
             # Non-persistent bar / mascot: stays hidden until a voice session.
             return
         try:
-            self._orb.show("idle")
-            log.info("Persistent overlay revealed after boot (%s).", reason)
+            mode = str(getattr(self._orb, "_mode", "idle") or "idle")
+            self._orb.show(mode)
+            log.info(
+                "Persistent overlay z-order reasserted after boot (%s).", reason
+            )
         except Exception:  # noqa: BLE001
-            log.debug("persistent bar boot reveal failed", exc_info=True)
+            log.debug("persistent bar boot reassert failed", exc_info=True)
 
     async def _on_state(self, event: SystemStateChanged) -> None:
         # Lazily pin the backend loop (idempotent) so Tk-thread gestures can

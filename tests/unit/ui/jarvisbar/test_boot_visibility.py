@@ -10,6 +10,7 @@ always; a non-persistent bar still pops on a real session.
 """
 from __future__ import annotations
 
+import inspect
 from types import SimpleNamespace
 
 from jarvis.ui.desktop_app import DesktopApp
@@ -39,8 +40,11 @@ def test_boot_persistent_bar_is_visible_not_withdrawn(monkeypatch) -> None:
     assert isinstance(surface, JarvisBarOverlay)
     assert surface._persistent is True
     # Visible at boot — NOT gated behind VoiceBootStatus(ready=True) / a wake word.
-    assert surface._start_hidden is False
     assert surface._should_start_withdrawn() is False
+    assert "start_hidden" not in inspect.signature(JarvisBarOverlay).parameters
+    assert "start_hidden" not in inspect.signature(
+        DesktopApp._build_overlay_surface
+    ).parameters
 
 
 def test_boot_non_persistent_bar_still_starts_withdrawn(monkeypatch) -> None:

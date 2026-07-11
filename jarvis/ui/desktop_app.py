@@ -1899,7 +1899,7 @@ class DesktopApp:
             logger.opt(exception=exc).warning("Virtual mouse overlay not startable")
             self._virtual_cursor = None
 
-    def _build_overlay_surface(self, style: str, *, start_hidden: bool = False):
+    def _build_overlay_surface(self, style: str):
         """Construct (and start) the overlay surface for a display style.
 
         Returns a ``NullOverlay`` for ``"none"`` (no Tk window, no-op surface),
@@ -1921,22 +1921,12 @@ class DesktopApp:
         if style == "jarvis_bar":
             from jarvis.ui.jarvisbar import JarvisBarOverlay
 
-            # Synchronized appearance (2026-06-29): when ``start_hidden`` is set,
-            # the persistent bar starts WITHDRAWN and is revealed only on the
-            # honest ``VoiceBootStatus(ready=True)`` (via
-            # ``reveal_bar_when_voice_ready``), so the bar appears AT THE SAME
-            # MOMENT the voice stack is genuinely ready — no more "bar shows at
-            # boot, then 'ready' a few seconds later" desync. An earlier attempt
-            # at this left the bar hidden until the first wake word because
-            # ready=True fired unreliably/too early on the fast-boot path; that
-            # root cause is fixed (ready now fires once, after the deferred
-            # loaders bring up wake+VAD+TTS), and a 30 s reveal timeout backstops
-            # it so the bar can never be stuck hidden. A non-persistent bar starts
-            # withdrawn regardless (it pops on a session).
+            # A persistent bar maps immediately. The non-persistent variant
+            # still starts withdrawn through its own ``persistent`` contract and
+            # appears on the first genuine voice session.
             surface = JarvisBarOverlay(
                 persistent=self.cfg.ui.bar_persistent,
                 accent=self.cfg.ui.bar_accent,
-                start_hidden=start_hidden,
             )
         else:  # "mascot" (and any legacy style value)
             from ui.orb.overlay import OrbOverlay
@@ -2225,12 +2215,9 @@ class DesktopApp:
                 from ui.orb.bus_bridge import OrbBusBridge
 
                 # NullOverlay for "none" still gets a bridge, so a live switch to
-                # bar/mascot works without a restart. Synchronized appearance:
-                # the persistent bar starts WITHDRAWN (start_hidden=True) and is
-                # revealed only on the honest VoiceBootStatus(ready=True), so it
-                # appears exactly when the voice stack is genuinely ready — no
-                # "bar at boot, ready a few seconds later" desync.
-                surface = self._build_overlay_surface(orb_style, start_hidden=True)
+                # bar/mascot works without a restart. A persistent bar maps now;
+                # voice readiness is reported separately by the desktop UI.
+                surface = self._build_overlay_surface(orb_style)
                 hide_on_idle = (
                     (not self.cfg.ui.bar_persistent)
                     if orb_style == "jarvis_bar"
@@ -2238,15 +2225,12 @@ class DesktopApp:
                 )
                 bridge = OrbBusBridge(bus=bus, orb=surface, hide_on_idle=hide_on_idle)
                 bridge.attach()
-                # Visibility gate: the persistent bar started withdrawn (above),
-                # so this task is what actually SHOWS it — it waits for
-                # VoiceBootStatus(ready=True) (full stack: wake+VAD+TTS) and then
-                # maps + lifts the idle pill. Bounded by a 30 s timeout fallback
-                # so the bar can never be stuck hidden. A non-persistent bar / the
-                # mascot is left untouched (it pops on a real session).
+                # The persistent bar is already visible. Once the rest of the
+                # desktop and voice stack have mapped, re-assert its current
+                # mode/topmost state without changing visibility or turn state.
                 loop.create_task(
-                    bridge.reveal_bar_when_voice_ready(),
-                    name="overlay-boot-reveal",
+                    bridge.reassert_persistent_bar_when_voice_ready(),
+                    name="overlay-boot-reassert",
                 )
                 self._orb = surface
                 self._bridge = bridge
