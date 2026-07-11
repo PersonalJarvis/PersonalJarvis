@@ -90,7 +90,8 @@
     "model": "gemini-3.5-flash"
   },
   "brain.providers.openrouter": {
-    "model": "google/gemini-3.5-flash"
+    "model": "google/gemini-3.5-flash",
+    "cu_model": "google/gemini-3.5-flash"
   },
   "brain.providers.nvidia": {
     "model": "z-ai/glm-5.2"
