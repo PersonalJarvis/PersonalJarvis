@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from types import SimpleNamespace
 from typing import Any
 
@@ -17,10 +18,15 @@ class _FakeConn:
         self.session_updates: list[dict[str, Any]] = []
         self.created_items: list[dict[str, Any]] = []
         self.response_creates = 0
+        self.response_create_payloads: list[dict[str, Any]] = []
+        self.response_cancels: list[str] = []
         self.conversation = SimpleNamespace(
             item=SimpleNamespace(create=self._create_item)
         )
-        self.response = SimpleNamespace(create=self._create_response)
+        self.response = SimpleNamespace(
+            create=self._create_response,
+            cancel=self._cancel_response,
+        )
         self._events = iter(
             [
                 SimpleNamespace(type="session.created"),
@@ -47,8 +53,12 @@ class _FakeConn:
     async def _create_item(self, *, item: dict[str, Any]) -> None:
         self.created_items.append(item)
 
-    async def _create_response(self) -> None:
+    async def _create_response(self, **kwargs: Any) -> None:
         self.response_creates += 1
+        self.response_create_payloads.append(kwargs)
+
+    async def _cancel_response(self, *, response_id: str) -> None:
+        self.response_cancels.append(response_id)
 
 
 class _FakeConnectCM:
@@ -130,9 +140,139 @@ async def test_every_selectable_model_uses_the_valid_ga_session_schema(
     )
     assert "language" not in payload["audio"]["input"]["transcription"]
     assert payload["audio"]["input"]["turn_detection"]["create_response"] is False
+    assert payload["audio"]["input"]["turn_detection"]["interrupt_response"] is False
     assert payload["audio"]["output"]["voice"] == "echo"
     await session.request_response()
     assert client.realtime.last_conn.response_creates == 1
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_unsolicited_second_response_is_cancelled_without_replaying_audio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One manual request may emit exactly one audible response lifecycle."""
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+
+    await session.request_response()
+    marker = conn.response_create_payloads[0]["response"]["metadata"][
+        "jarvis_request_id"
+    ]
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(
+                    id="resp-requested",
+                    metadata={"jarvis_request_id": marker},
+                ),
+            ),
+            SimpleNamespace(
+                type="response.output_audio.delta",
+                response_id="resp-requested",
+                item_id="item-requested",
+                delta=base64.b64encode(b"\x01\x00").decode("ascii"),
+            ),
+            SimpleNamespace(
+                type="response.done",
+                response=SimpleNamespace(id="resp-requested"),
+            ),
+            # Live incident 2026-07-11: after the completed response returned
+            # the desktop to LISTENING, another response started without a new
+            # final input transcript or client request. Its PCM must never be
+            # forwarded to the speaker.
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-unsolicited", metadata=None),
+            ),
+            SimpleNamespace(
+                type="response.output_audio.delta",
+                response_id="resp-unsolicited",
+                item_id="item-unsolicited",
+                delta=base64.b64encode(b"\x02\x00").decode("ascii"),
+            ),
+            SimpleNamespace(
+                type="response.output_audio_transcript.delta",
+                response_id="resp-unsolicited",
+                delta="Repeated answer.",
+            ),
+            SimpleNamespace(
+                type="response.done",
+                response=SimpleNamespace(id="resp-unsolicited"),
+            ),
+        ]
+    )
+    session._events = conn.__aiter__()
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == ["audio_delta", "turn_complete"]
+    assert events[0].audio.pcm == b"\x01\x00"
+    assert conn.response_cancels == ["resp-unsolicited"]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_automatic_response_race_consumes_only_one_manual_allowance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unmarked VAD response racing response.create must not yield two replies."""
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+
+    await session.request_response()
+    marker = conn.response_create_payloads[0]["response"]["metadata"][
+        "jarvis_request_id"
+    ]
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-vad-race", metadata=None),
+            ),
+            SimpleNamespace(
+                type="response.output_audio.delta",
+                response_id="resp-vad-race",
+                item_id="item-vad-race",
+                delta=base64.b64encode(b"\x03\x00").decode("ascii"),
+            ),
+            SimpleNamespace(
+                type="response.done",
+                response=SimpleNamespace(id="resp-vad-race"),
+            ),
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(
+                    id="resp-client-late",
+                    metadata={"jarvis_request_id": marker},
+                ),
+            ),
+            SimpleNamespace(
+                type="response.output_audio.delta",
+                response_id="resp-client-late",
+                item_id="item-client-late",
+                delta=base64.b64encode(b"\x04\x00").decode("ascii"),
+            ),
+            SimpleNamespace(
+                type="response.done",
+                response=SimpleNamespace(id="resp-client-late"),
+            ),
+        ]
+    )
+    session._events = conn.__aiter__()
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == ["audio_delta", "turn_complete"]
+    assert events[0].audio.pcm == b"\x03\x00"
+    assert conn.response_cancels == ["resp-client-late"]
     await session.close()
 
 
@@ -232,16 +372,41 @@ async def test_tools_are_declared_mapped_and_answered(monkeypatch: pytest.Monkey
     assert payload["tools"] == [{"type": "function", **declaration}]
     assert payload["tool_choice"] == "auto"
 
+    await session.request_response()
+    marker = conn.response_create_payloads[0]["response"]["metadata"][
+        "jarvis_request_id"
+    ]
     conn._events = iter(
         [
             SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(
+                    id="resp-tool",
+                    metadata={"jarvis_request_id": marker},
+                ),
+            ),
+            SimpleNamespace(
                 type="response.function_call_arguments.done",
+                response_id="resp-tool",
                 call_id="call-1",
                 name="open_app",
                 arguments='{"app_name":"Calculator"}',
             ),
-            SimpleNamespace(type="response.done"),
-            SimpleNamespace(type="response.done"),
+            SimpleNamespace(
+                type="response.done",
+                response=SimpleNamespace(id="resp-tool"),
+            ),
+            # The follow-up marker is created while handling the preceding
+            # response.done. No metadata here exercises the compatibility
+            # path for SDK/server versions that do not echo response metadata.
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-final", metadata=None),
+            ),
+            SimpleNamespace(
+                type="response.done",
+                response=SimpleNamespace(id="resp-final"),
+            ),
         ]
     )
     session._events = conn.__aiter__()
@@ -258,8 +423,9 @@ async def test_tools_are_declared_mapped_and_answered(monkeypatch: pytest.Monkey
     )
     assert conn.created_items[0]["type"] == "function_call_output"
     assert conn.created_items[0]["call_id"] == "call-1"
-    assert conn.response_creates == 0
+    assert conn.response_creates == 1
     final_event = await anext(events)
     assert final_event.type == "turn_complete"
-    assert conn.response_creates == 1
+    assert conn.response_creates == 2
+    assert conn.response_cancels == []
     await session.close()

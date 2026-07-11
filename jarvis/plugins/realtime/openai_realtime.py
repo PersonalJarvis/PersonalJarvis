@@ -11,15 +11,19 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
+log = logging.getLogger(__name__)
+
 _MODEL = "gpt-realtime"
 _INPUT_RATE = 24_000
 _OUTPUT_RATE = 24_000
 _HANDSHAKE_TIMEOUT_S = 12.0
+_RESPONSE_REQUEST_METADATA_KEY = "jarvis_request_id"
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +88,9 @@ def _session_payload(cfg: Any) -> dict[str, Any]:
                     # Jarvis requests the response only after the final input
                     # transcript has passed the single turn-language resolver.
                     "create_response": False,
-                    "interrupt_response": True,
+                    # Jarvis also owns barge-in explicitly. Keeping both flags
+                    # false is OpenAI's documented manual-response VAD mode.
+                    "interrupt_response": False,
                 },
             },
             "output": output,
@@ -124,6 +130,13 @@ class _OpenAIRealtimeSession:
         self._response_had_tool_calls = False
         self._tool_response_done_seen = False
         self._pending_tool_call_ids: set[str] = set()
+        # Every client response.create carries a unique marker. Only the first
+        # response.created lifecycle that consumes one pending marker may emit
+        # audio. This is a transport boundary, not transcript-text deduplication:
+        # a provider-side duplicate or unsolicited response is cancelled before
+        # any PCM reaches the speaker.
+        self._pending_response_markers: set[str] = set()
+        self._accepted_response_ids: set[str] = set()
         self._closed = False
 
     async def wait_until_ready(self) -> None:
@@ -156,6 +169,13 @@ class _OpenAIRealtimeSession:
     async def receive(self) -> AsyncIterator[_ProviderEvent]:
         async for event in self._events:
             event_type = str(getattr(event, "type", "") or "")
+            if event_type == "response.created":
+                await self._handle_response_created(event)
+                continue
+            if event_type.startswith("response.") and not self._response_is_accepted(
+                event
+            ):
+                continue
             if event_type == "response.output_audio.delta":
                 self._last_item_id = str(getattr(event, "item_id", "") or "")
                 yield _ProviderEvent(
@@ -207,6 +227,11 @@ class _OpenAIRealtimeSession:
                     tool_args=arguments,
                 )
             elif event_type == "response.done":
+                response_id = self._event_response_id(event)
+                if response_id:
+                    self._accepted_response_ids.discard(response_id)
+                elif len(self._accepted_response_ids) == 1:
+                    self._accepted_response_ids.pop()
                 if self._response_had_tool_calls:
                     self._tool_response_done_seen = True
                     await self._continue_after_tools_if_ready()
@@ -225,7 +250,7 @@ class _OpenAIRealtimeSession:
             )
 
     async def request_response(self) -> None:
-        await self._conn.response.create()
+        await self._create_response()
 
     async def truncate(self, audio_end_ms: int) -> None:
         if self._last_item_id:
@@ -261,12 +286,93 @@ class _OpenAIRealtimeSession:
             return
         self._response_had_tool_calls = False
         self._tool_response_done_seen = False
-        await self._conn.response.create()
+        await self._create_response()
+
+    async def _create_response(self) -> None:
+        marker = uuid4().hex
+        self._pending_response_markers.add(marker)
+        try:
+            await self._conn.response.create(
+                response={
+                    "metadata": {_RESPONSE_REQUEST_METADATA_KEY: marker},
+                }
+            )
+        except BaseException:
+            self._pending_response_markers.discard(marker)
+            raise
+
+    @staticmethod
+    def _event_response_id(event: Any) -> str:
+        direct = str(getattr(event, "response_id", "") or "")
+        if direct:
+            return direct
+        response = getattr(event, "response", None)
+        return str(getattr(response, "id", "") or "")
+
+    async def _handle_response_created(self, event: Any) -> None:
+        response = getattr(event, "response", None)
+        response_id = self._event_response_id(event)
+        if response_id and response_id in self._accepted_response_ids:
+            return
+
+        metadata = getattr(response, "metadata", None) or {}
+        if hasattr(metadata, "model_dump"):
+            metadata = metadata.model_dump()
+        marker = (
+            str(metadata.get(_RESPONSE_REQUEST_METADATA_KEY, "") or "")
+            if isinstance(metadata, dict)
+            else ""
+        )
+
+        if marker and marker in self._pending_response_markers:
+            self._pending_response_markers.discard(marker)
+        elif not marker and self._pending_response_markers:
+            # Compatibility for a server/SDK that omits echoed metadata. The
+            # pending allowance is still consumed, preserving the exactly-one
+            # response invariant even if an automatic response races our own.
+            self._pending_response_markers.pop()
+            log.warning(
+                "OpenAI Realtime response.created omitted Jarvis request metadata; "
+                "accepted one pending response by lifecycle order"
+            )
+        else:
+            log.warning(
+                "OpenAI Realtime suppressed unsolicited response %s",
+                response_id or "<unknown>",
+            )
+            if response_id:
+                try:
+                    await self._conn.response.cancel(response_id=response_id)
+                except Exception:  # noqa: BLE001 -- suppression remains fail-closed
+                    log.debug(
+                        "OpenAI Realtime unsolicited response cancel failed",
+                        exc_info=True,
+                    )
+            return
+
+        if not response_id:
+            log.warning(
+                "OpenAI Realtime response.created had no response id; "
+                "response events remain suppressed"
+            )
+            return
+        self._accepted_response_ids.add(response_id)
+
+    def _response_is_accepted(self, event: Any) -> bool:
+        response_id = self._event_response_id(event)
+        if response_id:
+            return response_id in self._accepted_response_ids
+        # Current GA response events carry response_id (or response.id for
+        # response.done). This fallback keeps older SDK event shapes usable
+        # only when their lifecycle is otherwise unambiguous.
+        return len(self._accepted_response_ids) == 1
 
     async def close(self) -> None:
         if self._closed:
             return
         self._closed = True
+        self._pending_response_markers.clear()
+        self._accepted_response_ids.clear()
         try:
             await self._connection_cm.__aexit__(None, None, None)
         finally:
