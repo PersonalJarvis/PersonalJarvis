@@ -35,17 +35,32 @@ def test_dry_run_prints_the_numbered_journey(monkeypatch, capsys) -> None:
     assert "Finish & launch" in out
 
 
-def test_installer_never_prompts() -> None:
-    """Design 2026-07-09: the install is 100% prompt-free — every consent
-    question lives in the app's onboarding. A terminal prompt anywhere in the
-    install path is a regression; this static guard turns it red."""
+def test_installer_prompts_only_inside_missing_prerequisite_flow() -> None:
+    """Design amendment 2026-07-11: Stage 1 may ask only when Python or Git
+    is missing. The normal path and all of Stage 2 remain prompt-free."""
     sh = (REPO / "install" / "install.sh").read_text(encoding="utf-8")
     ps1 = (REPO / "install" / "install.ps1").read_text(encoding="utf-8")
     py = (REPO / "install" / "installer.py").read_text(encoding="utf-8")
-    for forbidden in ("read -p", "read -r"):
-        assert forbidden not in sh
-    for forbidden in ("Read-Host", "$Host.UI.Prompt"):
-        assert forbidden not in ps1
+
+    sh_begin = sh.index("# --- prerequisite-bootstrap begin")
+    sh_end = sh.index("# --- prerequisite-bootstrap end")
+    sh_outside = sh[:sh_begin] + sh[sh_end:]
+    assert "read -r" not in sh_outside
+    assert "read -p" not in sh
+    assert sh[sh_begin:sh_end].count("read -r") == 2
+    assert all(
+        "</dev/tty" in line
+        for line in sh[sh_begin:sh_end].splitlines()
+        if "read -r" in line
+    )
+
+    ps1_begin = ps1.index("# --- prerequisite-bootstrap begin")
+    ps1_end = ps1.index("# --- prerequisite-bootstrap end")
+    ps1_outside = ps1[:ps1_begin] + ps1[ps1_end:]
+    assert "Read-Host" not in ps1_outside
+    assert "$Host.UI.Prompt" not in ps1
+    assert ps1[ps1_begin:ps1_end].count("Read-Host") == 2
+
     for forbidden in ("input(", "Confirm.ask", "Prompt.ask", "getpass"):
         assert forbidden not in py
 
