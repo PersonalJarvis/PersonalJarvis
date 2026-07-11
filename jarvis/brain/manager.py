@@ -1641,8 +1641,9 @@ _SELF_CONTROL_NOUN_RE = re.compile(
 )
 # Always-on compact self-control truth (forensic 2026-07-10): the LONG
 # directive below is injected only when _SELF_CONTROL_PATTERN matches, but a
-# keyword-free phrasing ("ich will dich ab jetzt Edith rufen koennen") sails  # i18n-allow: quoted German utterance under test
-# past the regex — the router LLM then answered in prose and CLAIMED the
+# keyword-free phrasing ("ich will dich ab jetzt Edith  # i18n-allow: quoted utterance
+# rufen koennen") sails past the regex — the router LLM  # i18n-allow: quoted utterance
+# then answered in prose and CLAIMED the
 # change without any tool call. Broadening the keyword list would be
 # whack-a-mole (the AP-27 tightening class); instead this short line rides in
 # EVERY substantive prompt so the model always knows it has the power and
