@@ -104,8 +104,8 @@ export function TurnCard({ turn, spoken = [] }: Props) {
   });
 
   return (
-    <Card className="bg-background/40">
-      <CardContent className="space-y-3 p-4">
+    <Card className="min-w-0 max-w-full bg-background/40">
+      <CardContent className="min-w-0 space-y-3 p-4">
         {/* Header */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -157,7 +157,7 @@ export function TurnCard({ turn, spoken = [] }: Props) {
                 {turn.user_lang}
               </Badge>
             </div>
-            <div className="rounded-md border border-emerald-400/20 bg-emerald-400/5 p-2 text-sm">
+            <div className="min-w-0 whitespace-pre-wrap break-words rounded-md border border-emerald-400/20 bg-emerald-400/5 p-2 text-sm [overflow-wrap:anywhere]">
               {turn.user_text}
             </div>
           </div>
@@ -233,7 +233,7 @@ export function TurnCard({ turn, spoken = [] }: Props) {
                 </Badge>
               )}
             </div>
-            <div className="rounded-md border border-primary/20 bg-primary/5 p-2 text-sm">
+            <div className="min-w-0 whitespace-pre-wrap break-words rounded-md border border-primary/20 bg-primary/5 p-2 text-sm [overflow-wrap:anywhere]">
               {turn.jarvis_text}
             </div>
           </div>
@@ -281,7 +281,9 @@ export function TurnCard({ turn, spoken = [] }: Props) {
                           stays on the recorded SpeechSpoken event and is shown
                           in the Run Inspector — never here (user request
                           2026-06-22, reversing the 2026-06-16 ask). */}
-                      <span className="break-words">{s.text}</span>
+                      <span className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                        {s.text}
+                      </span>
                     </div>
                   </div>
                 );

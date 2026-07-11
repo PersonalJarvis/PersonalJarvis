@@ -21,6 +21,25 @@ async def test_clean_transcript_releases_buffered_audio():
 
 
 @pytest.mark.asyncio
+async def test_clean_transcript_preserves_provider_delta_boundaries():
+    gate = ScrubHoldGate(language="en")
+    raw_deltas = ["All", " right", ", ", "I", " can", " help", "."]
+
+    display_deltas = [await gate.feed_transcript(delta) for delta in raw_deltas]
+
+    assert "".join(display_deltas) == "All right, I can help."
+
+
+@pytest.mark.asyncio
+async def test_scrubbed_delta_keeps_its_original_leading_separator():
+    gate = ScrubHoldGate(language="en")
+
+    display = await gate.feed_transcript(" **ready**")
+
+    assert display == " ready"
+
+
+@pytest.mark.asyncio
 async def test_hard_leak_transcript_marks_leak_and_drops_audio():
     gate = ScrubHoldGate(language="en")
     await gate.push_audio(_chunk(4))

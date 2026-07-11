@@ -52,7 +52,15 @@ class ScrubHoldGate:
             self._pending.clear()
             return result.cleaned  # the canned fallback phrase
         self._cleared = True
-        return result.cleaned
+        if not result.actions:
+            # Realtime providers stream transcript deltas with meaningful edge
+            # whitespace (for example ``"All"``, ``" right"``). The voice
+            # scrubber normalizes each call with ``strip()``, so returning its
+            # clean result here would glue every streamed word together. No
+            # scrub action means the original delta was safe; preserve it byte
+            # for byte, including punctuation-only and whitespace-only deltas.
+            return text
+        return _restore_edge_whitespace(text, result.cleaned)
 
     async def push_audio(self, chunk: AudioChunk) -> list[AudioChunk]:
         """Buffer or release an audio delta. Returns chunks safe to play now."""
@@ -80,3 +88,14 @@ class ScrubHoldGate:
         self._pending.clear()
         self._cleared = False
         self._hard_leak = False
+
+
+def _restore_edge_whitespace(original: str, cleaned: str) -> str:
+    """Keep provider delta separators around content changed by the scrubber."""
+    if not cleaned:
+        return cleaned
+    leading_count = len(original) - len(original.lstrip())
+    trailing_count = len(original) - len(original.rstrip())
+    leading = original[:leading_count]
+    trailing = original[-trailing_count:] if trailing_count else ""
+    return f"{leading}{cleaned}{trailing}"

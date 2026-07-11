@@ -276,6 +276,47 @@ async def test_session_end_flushes_pending_turn_without_provider_completion(
 
 
 @pytest.mark.asyncio
+async def test_streamed_output_deltas_keep_spaces_in_persisted_transcript(
+    tmp_path,
+) -> None:
+    provider = FakeRealtimeProvider(
+        "openai-realtime",
+        [
+            RealtimeEvent(
+                type="input_transcript", text="Can you help?", is_final=True
+            ),
+            RealtimeEvent(type="output_transcript_delta", text="All"),
+            RealtimeEvent(type="output_transcript_delta", text=" right"),
+            RealtimeEvent(type="output_transcript_delta", text=", "),
+            RealtimeEvent(type="output_transcript_delta", text="I"),
+            RealtimeEvent(type="output_transcript_delta", text=" can help"),
+            RealtimeEvent(type="output_transcript_delta", text="."),
+            RealtimeEvent(type="turn_complete"),
+        ],
+    )
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        bus = EventBus()
+        SessionRecorder(store).attach(bus)
+        session = await _start_session(
+            bus=bus,
+            provider=provider,
+            surface="browser",
+            tool_mode="direct",
+            session_id="streamed-spacing-session",
+        )
+        await session.wait_finished()
+        await _end_session(session, bus=bus, surface="browser", reason="ws_closed")
+
+        turns = store.get_turns("streamed-spacing-session")
+        assert len(turns) == 1
+        assert turns[0].jarvis_text == "All right, I can help."
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
 async def test_assistant_output_without_input_transcript_still_persists_turn(
     tmp_path,
 ) -> None:

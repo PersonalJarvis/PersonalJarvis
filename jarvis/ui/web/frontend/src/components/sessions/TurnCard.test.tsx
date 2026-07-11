@@ -72,6 +72,23 @@ describe("TurnCard spoken track", () => {
     expect(screen.queryByText("Spoken output")).toBeNull();
   });
 
+  it("wraps very long transcript content without widening the turn card", () => {
+    const longUserText = `user-${"x".repeat(400)}`;
+    const longJarvisText = `assistant-${"y".repeat(400)}`;
+    const { container } = render(
+      <TurnCard
+        turn={turn({ user_text: longUserText, jarvis_text: longJarvisText })}
+      />,
+    );
+
+    expect(container.firstElementChild?.className).toContain("min-w-0");
+    for (const text of [longUserText, longJarvisText]) {
+      const block = screen.getByText(text);
+      expect(block.className).toContain("whitespace-pre-wrap");
+      expect(block.className).toContain("[overflow-wrap:anywhere]");
+    }
+  });
+
   it("does NOT surface the technical detail in the transcript", () => {
     // The technical diagnostic (exit code + raw harness reason) is still recorded
     // on the SpeechSpoken event so the Run Inspector can show it, but it must NOT
