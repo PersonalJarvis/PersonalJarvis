@@ -43,6 +43,47 @@ _END_CALL_DECLARATION: dict[str, Any] = {
     ),
     "parameters": {"type": "object", "properties": {}},
 }
+# Delegate mode: the realtime model gets ONE action function instead of the
+# full router-tool set. The handler runs a complete classic router-brain turn
+# (ToolExecutor risk tiers, two-turn voice confirm, spawn-worker escalation)
+# and returns the spoken reply for the realtime voice to deliver. Hard budget:
+# the router turn itself offloads heavy work to background missions, so a
+# turn that exceeds this is stuck, not busy.
+_DELEGATE_TIMEOUT_S = 90.0
+_DELEGATE_DECLARATION: dict[str, Any] = {
+    "name": "jarvis_action",
+    "description": (
+        "Execute an action for the user through the Jarvis action system: "
+        "open apps or views, change settings, control the computer, manage "
+        "files, start background research or coding missions, and any other "
+        "operation on the user's system. Also call this to relay the user's "
+        "answer to a pending confirmation question."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "request": {
+                "type": "string",
+                "description": "The user's request in their own words.",
+            }
+        },
+        "required": ["request"],
+    },
+}
+_DELEGATE_ROLE_DIRECTIVE = (
+    "You have ONE action function: jarvis_action. It hands the user's spoken "
+    "request to the Jarvis action system, which can open apps and views, "
+    "change settings, control the computer, manage files and windows, and "
+    "start background research or coding missions. Whenever the user asks "
+    "you to DO something on their computer or in the Jarvis app, call "
+    "jarvis_action — never claim you cannot act, and never invent an "
+    "outcome. The function returns spoken_reply: deliver that content to the "
+    "user in your own voice, in the conversation language, without reading "
+    "JSON. If spoken_reply asks a confirmation question, ask the user and "
+    "call jarvis_action again with their answer. Answer pure knowledge and "
+    "chat questions yourself, without the function. Use end_call only when "
+    "the user says goodbye."
+)
 _REALTIME_SAFETY_APPENDIX = (
     "This is a realtime spoken conversation. Never read tool JSON, function-call "
     "arguments, source code, stack traces, file paths, base64, or raw URLs aloud. "
@@ -69,7 +110,7 @@ def _session_instructions(
     provider: str = "",
     model: str = "",
     language_is_pinned: bool = True,
-    has_action_tools: bool = False,
+    tool_directive: str = "",
 ) -> str:
     from jarvis.brain.persona_loader import load_effective_persona_prompt
 
@@ -85,7 +126,7 @@ def _session_instructions(
         )
     parts = [
         persona,
-        _TOOL_ROLE_DIRECTIVE if has_action_tools else "",
+        tool_directive,
         _REALTIME_SAFETY_APPENDIX,
         (
             "Runtime identity: this voice session is using the Realtime engine"
@@ -153,7 +194,22 @@ class RealtimeVoiceSession:
             getattr(self._config, "stt", None), "language", "unknown"
         )
         self._language = self._resolve_lang(text="")
-        if tool_bridge is None and brain is not None:
+        self._brain = brain
+        mode = str(
+            getattr(
+                getattr(self._config, "voice", None), "realtime_tool_mode", "delegate"
+            )
+            or "delegate"
+        ).strip().lower()
+        if mode not in {"delegate", "direct"}:
+            mode = "delegate"
+        # Delegate mode needs only a callable brain (the boot proxy and the
+        # real BrainManager both qualify); an explicitly injected bridge
+        # always wins so existing callers/tests keep today's behavior.
+        self._delegate_enabled = (
+            mode == "delegate" and tool_bridge is None and callable(brain)
+        )
+        if tool_bridge is None and brain is not None and not self._delegate_enabled:
             try:
                 from jarvis.realtime.tools import RealtimeToolBridge
 
@@ -163,10 +219,17 @@ class RealtimeVoiceSession:
             except Exception:  # noqa: BLE001 — conversation still works without tools
                 log.warning("Realtime tool bridge is unavailable", exc_info=True)
         self._tool_bridge = tool_bridge
+        self._delegate_tasks: set[asyncio.Task[None]] = set()
         # from_brain returns None SILENTLY when the brain object carries no
         # _tools/_tool_executor_ref (e.g. a bare callback was passed) — say so,
         # or a tool-less session is indistinguishable from a healthy one.
-        if tool_bridge is not None:
+        if self._delegate_enabled:
+            log.info(
+                "realtime[%s] tool mode: delegate — one action function "
+                "backed by the router brain",
+                session_id,
+            )
+        elif tool_bridge is not None:
             log.info(
                 "realtime[%s] tool bridge active: %d tools",
                 session_id,
@@ -272,7 +335,7 @@ class RealtimeVoiceSession:
                     provider=str(getattr(provider, "name", "") or ""),
                     model=model,
                     language_is_pinned=self._language_is_pinned,
-                    has_action_tools=self._tool_bridge is not None,
+                    tool_directive=self._tool_directive(),
                 ),
                 language=self._language,
                 language_is_pinned=self._language_is_pinned,
@@ -281,14 +344,7 @@ class RealtimeVoiceSession:
                 input_sample_rate=input_rate,
                 output_sample_rate=output_rate,
                 modalities=("audio",),
-                tools=(
-                    *(
-                        self._tool_bridge.declarations
-                        if self._tool_bridge is not None
-                        else ()
-                    ),
-                    _END_CALL_DECLARATION,
-                ),
+                tools=self._declared_tools(),
             )
             try:
                 session = await provider.open_session(session_config)
@@ -372,7 +428,7 @@ class RealtimeVoiceSession:
                                 provider=self.active_provider,
                                 model=self._active_model,
                                 language_is_pinned=True,
-                                has_action_tools=self._tool_bridge is not None,
+                                tool_directive=self._tool_directive(),
                             ),
                             language=new_language,
                         )
@@ -690,6 +746,20 @@ class RealtimeVoiceSession:
         self._output_transcript.clear()
         self._executed_tool_names.clear()
 
+    def _declared_tools(self) -> tuple[dict[str, Any], ...]:
+        if self._delegate_enabled:
+            return (_DELEGATE_DECLARATION, _END_CALL_DECLARATION)
+        if self._tool_bridge is not None:
+            return (*self._tool_bridge.declarations, _END_CALL_DECLARATION)
+        return (_END_CALL_DECLARATION,)
+
+    def _tool_directive(self) -> str:
+        if self._delegate_enabled:
+            return _DELEGATE_ROLE_DIRECTIVE
+        if self._tool_bridge is not None:
+            return _TOOL_ROLE_DIRECTIVE
+        return ""
+
     async def _handle_tool_call(self, event: Any) -> None:
         if self._session is None:
             return
@@ -698,6 +768,15 @@ class RealtimeVoiceSession:
         arguments = getattr(event, "tool_args", None)
         if not isinstance(arguments, dict):
             arguments = {}
+        if (
+            self._delegate_enabled
+            and call_id
+            and wire_name == str(_DELEGATE_DECLARATION["name"])
+        ):
+            # Routed HERE (not in the pump branch) so the untranscribed-call
+            # guard and pending flush keep applying to delegate calls too.
+            self._start_delegate(call_id, wire_name, arguments)
+            return
         if not call_id or not wire_name or self._tool_bridge is None:
             await self._session.send_tool_result(
                 call_id,
@@ -742,6 +821,93 @@ class RealtimeVoiceSession:
                 self._finish_hangup_after_grace(),
                 name=f"rt-end-call-{self.session_id}",
             )
+
+    def _start_delegate(
+        self, call_id: str, wire_name: str, arguments: dict[str, Any]
+    ) -> None:
+        request = str(arguments.get("request", "") or "")
+        # Dispatch the RAW final transcript: the model may paraphrase into
+        # English, but the router's language resolver and intent matchers
+        # need the user's own words. Snapshot NOW — turn state resets later.
+        user_text = self._last_user_text or request
+        log.info(
+            "realtime[%s] delegate call: dispatching user turn to the router brain",
+            self.session_id,
+        )
+        task = asyncio.create_task(
+            self._run_delegate(call_id, wire_name, user_text),
+            name=f"rt-delegate-{self.session_id}",
+        )
+        self._delegate_tasks.add(task)
+        task.add_done_callback(self._delegate_tasks.discard)
+
+    async def _run_delegate(
+        self, call_id: str, wire_name: str, user_text: str
+    ) -> None:
+        try:
+            reply = (
+                await asyncio.wait_for(
+                    self._dispatch_brain_turn(user_text),
+                    timeout=_DELEGATE_TIMEOUT_S,
+                )
+                or ""
+            ).strip()
+            if reply:
+                result: dict[str, Any] = {"success": True, "spoken_reply": reply}
+            else:
+                result = {
+                    "success": True,
+                    "spoken_reply": "",
+                    "note": (
+                        "The action completed without a spoken reply; "
+                        "briefly confirm it to the user."
+                    ),
+                }
+            self._executed_tool_names.add(str(_DELEGATE_DECLARATION["name"]))
+        except TimeoutError:
+            result = {
+                "success": False,
+                "error": (
+                    "The action did not finish in time. Tell the user it may "
+                    "still be running and offer to check later."
+                ),
+            }
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — a failed delegation must not kill audio
+            log.warning(
+                "realtime[%s] delegate turn failed", self.session_id, exc_info=True
+            )
+            await self._publish_error(
+                "RealtimeDelegateError", "Delegated brain turn failed", recoverable=True
+            )
+            result = {
+                "success": False,
+                "error": "The action failed safely and was not completed.",
+            }
+        if self._ended or self._session is None:
+            return
+        try:
+            await self._session.send_tool_result(call_id, wire_name, result)
+        except Exception:  # noqa: BLE001 — late result on a torn-down wire
+            log.debug(
+                "realtime[%s] delegate result send failed",
+                self.session_id,
+                exc_info=True,
+            )
+
+    async def _dispatch_brain_turn(self, text: str) -> str:
+        # allow_voice_confirm=True is load-bearing: without it an ask-tier
+        # tool blocks on a UI approval no voice user can give (the classic
+        # pipeline passes the same flag).
+        generate = getattr(self._brain, "generate", None)
+        if callable(generate):
+            try:
+                return str(await generate(text, allow_voice_confirm=True) or "")
+            except TypeError:
+                # Bare callables / older brains without the kwarg.
+                pass
+        return str(await self._brain(text) or "")
 
     async def _finish_with_hangup(self) -> None:
         """Mark this session as ended by voice and notify the surface.
@@ -853,6 +1019,10 @@ class RealtimeVoiceSession:
         if self._end_call_timer is not None and not self._end_call_timer.done():
             self._end_call_timer.cancel()
         self._end_call_timer = None
+        for task in tuple(self._delegate_tasks):
+            if not task.done():
+                task.cancel()
+        self._delegate_tasks.clear()
         if self._pump_task is not None and not self._pump_task.done():
             self._pump_task.cancel()
             try:

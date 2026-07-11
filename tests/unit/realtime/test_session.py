@@ -868,3 +868,331 @@ async def test_instructions_omit_tool_role_without_bridge():
     await sess.end(reason="test")
 
     assert "call the matching function" not in provider.opened_with.instructions
+
+
+# --- Delegate tool mode (jarvis_action -> classic router-brain turn) --------
+
+
+class FakeBrain:
+    """Recording callable brain with a generate(text, **kwargs) contract."""
+
+    def __init__(self, replies=("done",), error=None, gate=None):
+        self.calls = []
+        self._replies = list(replies)
+        self._error = error
+        self._gate = gate
+
+    async def generate(self, text, **kwargs):
+        self.calls.append((text, kwargs))
+        if self._gate is not None:
+            await self._gate.wait()
+        if self._error is not None:
+            raise self._error
+        return self._replies.pop(0) if self._replies else "done"
+
+    async def __call__(self, text):
+        return await self.generate(text)
+
+
+class _StubTool:
+    name = "open_app"
+    description = "Open an application."
+    risk_tier = "monitor"
+    schema = {"type": "object", "properties": {}}
+
+
+def _delegate_cfg(tool_mode=None):
+    cfg = _cfg()
+    if tool_mode is not None:
+        cfg.voice.realtime_tool_mode = tool_mode
+    return cfg
+
+
+def _tool_names(opened_cfg):
+    return [d["name"] for d in opened_cfg.tools]
+
+
+def _session(provider, *, brain=None, tool_bridge=None, tool_mode=None, jsons=None):
+    return RealtimeVoiceSession(
+        session_id="delegate-test",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=(
+            (lambda m: jsons.append(m) or asyncio.sleep(0))
+            if jsons is not None
+            else (lambda _m: asyncio.sleep(0))
+        ),
+        provider=provider,
+        config=_delegate_cfg(tool_mode),
+        bus=None,
+        brain=brain,
+        tool_bridge=tool_bridge,
+    )
+
+
+@pytest.mark.asyncio
+async def test_delegate_mode_declares_single_action_function():
+    provider = FakeProvider([RealtimeEvent(type="turn_complete")])
+    sess = _session(provider, brain=FakeBrain())
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert _tool_names(provider.opened_with) == ["jarvis_action", "end_call"]
+    assert "jarvis_action" in provider.opened_with.instructions
+
+
+@pytest.mark.asyncio
+async def test_direct_mode_builds_bridge_from_brain():
+    brain = FakeBrain()
+    brain._tools = {"open_app": _StubTool()}
+    brain._tool_executor_ref = object()
+    provider = FakeProvider([RealtimeEvent(type="turn_complete")])
+    sess = _session(provider, brain=brain, tool_mode="direct")
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    names = _tool_names(provider.opened_with)
+    assert "open_app" in names
+    assert "end_call" in names
+    assert "jarvis_action" not in names
+
+
+@pytest.mark.asyncio
+async def test_explicit_bridge_wins_over_delegate_mode():
+    provider = FakeProvider([RealtimeEvent(type="turn_complete")])
+    sess = _session(provider, brain=FakeBrain(), tool_bridge=FakeToolBridge())
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    names = _tool_names(provider.opened_with)
+    assert "open_app" in names
+    assert "jarvis_action" not in names
+
+
+@pytest.mark.asyncio
+async def test_delegate_call_dispatches_raw_transcript_with_voice_confirm():
+    brain = FakeBrain(replies=("Settings are open.",))
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="please open the settings view",
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="tool_call",
+                call_id="c-1",
+                tool_name="jarvis_action",
+                tool_args={"request": "Open settings"},
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.02)
+
+    assert brain.calls == [
+        ("please open the settings view", {"allow_voice_confirm": True})
+    ]
+    assert provider.session.tool_results == [
+        (
+            "c-1",
+            "jarvis_action",
+            {"success": True, "spoken_reply": "Settings are open."},
+        )
+    ]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_delegate_does_not_block_pump():
+    gate = asyncio.Event()
+    brain = FakeBrain(replies=("Done.",), gate=gate)
+    jsons = []
+    provider = FakeProvider(
+        [
+            RealtimeEvent(type="input_transcript", text="do the thing", is_final=True),
+            RealtimeEvent(
+                type="tool_call",
+                call_id="c-2",
+                tool_name="jarvis_action",
+                tool_args={"request": "do the thing"},
+            ),
+            RealtimeEvent(type="output_transcript_delta", text="Working on it."),
+        ]
+    )
+    sess = _session(provider, brain=brain, jsons=jsons)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+
+    # The pump processed the later transcript while the brain turn still hangs.
+    assert any(
+        m.get("type") == "transcript" and m.get("role") == "assistant" for m in jsons
+    )
+    assert provider.session.tool_results == []
+
+    gate.set()
+    await asyncio.sleep(0.02)
+    assert provider.session.tool_results
+    assert provider.session.tool_results[0][2]["spoken_reply"] == "Done."
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_delegate_timeout_sends_honest_failure(monkeypatch):
+    monkeypatch.setattr("jarvis.realtime.session._DELEGATE_TIMEOUT_S", 0.05)
+    gate = asyncio.Event()  # never set -- the brain turn hangs
+    brain = FakeBrain(gate=gate)
+    provider = FakeProvider(
+        [
+            RealtimeEvent(type="input_transcript", text="slow task", is_final=True),
+            RealtimeEvent(
+                type="tool_call",
+                call_id="c-3",
+                tool_name="jarvis_action",
+                tool_args={"request": "slow task"},
+            ),
+        ]
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.15)
+
+    result = provider.session.tool_results[0][2]
+    assert result["success"] is False
+    assert "did not finish" in result["error"]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_delegate_confirm_roundtrip():
+    brain = FakeBrain(
+        replies=("Should I really restart the app?", "Restarted."),
+    )
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="starte die app neu",  # i18n-allow: German confirm fixture
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="tool_call",
+                call_id="c-4",
+                tool_name="jarvis_action",
+                tool_args={"request": "restart the app"},
+            ),
+            RealtimeEvent(type="turn_complete"),
+            RealtimeEvent(
+                type="input_transcript",
+                text="ja bitte",  # i18n-allow: German confirm fixture
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="tool_call",
+                call_id="c-5",
+                tool_name="jarvis_action",
+                tool_args={"request": "yes"},
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.02)
+
+    replies = [r[2]["spoken_reply"] for r in provider.session.tool_results]
+    assert replies == ["Should I really restart the app?", "Restarted."]
+    # The confirmation answer went through in the user's own words.
+    assert brain.calls[1][0] == "ja bitte"  # i18n-allow: German confirm fixture
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_delegate_untranscribed_tool_call_rejected(monkeypatch):
+    monkeypatch.setattr("jarvis.realtime.session._TOOL_TRANSCRIPT_WAIT_S", 0.01)
+    brain = FakeBrain()
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="tool_call",
+                call_id="c-6",
+                tool_name="jarvis_action",
+                tool_args={"request": "mystery action"},
+            ),
+        ]
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.05)
+
+    assert brain.calls == []
+    assert provider.session.tool_results[0][2]["success"] is False
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_delegate_tasks_cancelled_on_end():
+    gate = asyncio.Event()  # never set
+    brain = FakeBrain(gate=gate)
+    provider = FakeProvider(
+        [
+            RealtimeEvent(type="input_transcript", text="long task", is_final=True),
+            RealtimeEvent(
+                type="tool_call",
+                call_id="c-7",
+                tool_name="jarvis_action",
+                tool_args={"request": "long task"},
+            ),
+        ]
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+    await asyncio.sleep(0.02)
+
+    assert provider.session.tool_results == []
+    assert sess._delegate_tasks == set()
+
+
+@pytest.mark.asyncio
+async def test_delegate_brain_exception_sends_safe_failure():
+    brain = FakeBrain(error=RuntimeError("boom"))
+    provider = FakeProvider(
+        [
+            RealtimeEvent(type="input_transcript", text="do it", is_final=True),
+            RealtimeEvent(
+                type="tool_call",
+                call_id="c-8",
+                tool_name="jarvis_action",
+                tool_args={"request": "do it"},
+            ),
+        ]
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.02)
+
+    result = provider.session.tool_results[0][2]
+    assert result["success"] is False
+    assert "failed safely" in result["error"]
+    await sess.end(reason="test")

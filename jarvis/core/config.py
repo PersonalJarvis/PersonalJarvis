@@ -1930,6 +1930,13 @@ class VoiceConfig(BaseModel):
     # (browser, OpenAI Realtime; opt-in). Read once per voice session; a live
     # change lands on the next session.
     mode: str = "pipeline"
+    # Realtime tool exposure. "delegate" (default) declares ONE action function
+    # (jarvis_action) that hands the user's spoken request to the classic
+    # router brain — full ToolExecutor safety path, two-turn voice confirm,
+    # spawn-worker escalation for heavy missions. "direct" declares every
+    # router tool individually via RealtimeToolBridge. Read once per session;
+    # unknown values fall back to "delegate".
+    realtime_tool_mode: str = "delegate"
     # Per-gap budget after which a stale pending fragment is silently
     # discarded (user-mandated 2026-05-26 — was: flushed/spoken). NOT a total
     # budget — every continuation resets the timer. Bumped from 8 s to 15 s

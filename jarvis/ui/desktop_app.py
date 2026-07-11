@@ -1135,6 +1135,18 @@ class DesktopApp:
                 brain = brain_holder["brain"]
                 return str(getattr(brain, "conversation_language", "")) if brain else ""
 
+            # Realtime direct mode builds its tool bridge from these two
+            # attributes at session construction; delegate through to the
+            # real brain so a session opened after boot sees the full tool
+            # set (None during early boot → bridge cleanly degrades).
+            @property
+            def _tools(self) -> Any:
+                return getattr(brain_holder["brain"], "_tools", None)
+
+            @property
+            def _tool_executor_ref(self) -> Any:
+                return getattr(brain_holder["brain"], "_tool_executor_ref", None)
+
             def _brain_unavailable_message(self) -> str:
                 detail = brain_holder["error"] or "BrainManager not initialized"
                 return f"Brain unavailable: {detail}"
