@@ -24,9 +24,24 @@ function floatToInt16(float32: Float32Array): ArrayBuffer {
 }
 
 class PcmCapture extends AudioWorkletProcessor {
+  private levelSum = 0;
+  private levelCount = 0;
+
   process(inputs: Float32Array[][]): boolean {
     const ch = inputs[0]?.[0];
     if (ch && ch.length) {
+      // Throttled (~30 Hz) input-level messages for the speaking indicator —
+      // computed here where the float32 samples already live, so no extra
+      // server round-trip. Separate message type; the audio path below is
+      // untouched.
+      for (let i = 0; i < ch.length; i++) this.levelSum += ch[i] * ch[i];
+      this.levelCount += ch.length;
+      if (this.levelCount >= sampleRate / 30) {
+        const rms = Math.sqrt(this.levelSum / this.levelCount);
+        this.port.postMessage({ type: "level", rms });
+        this.levelSum = 0;
+        this.levelCount = 0;
+      }
       const buf = floatToInt16(ch);
       this.port.postMessage(buf, [buf]);
     }

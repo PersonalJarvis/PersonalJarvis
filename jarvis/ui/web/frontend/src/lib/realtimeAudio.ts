@@ -1,6 +1,8 @@
 // Dedicated /ws/audio client for browser-owned voice. Separate from the
 // JSON-only WSClient: this socket carries raw mono PCM16 in both directions.
 
+import { LevelMeter } from "./levelMeter";
+
 export function buildAudioSocketUrl(): string {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   const host = window.location.host;
@@ -15,6 +17,8 @@ export type RealtimeCallbacks = {
   onTranscript?: (text: string, isFinal: boolean, role: string) => void;
   onStatus?: (status: string, payload: RealtimeStatusPayload) => void;
   onAudio?: () => void;
+  /** Normalized 0..1 microphone input level, ~30 Hz while capturing. */
+  onInputLevel?: (level: number) => void;
 };
 
 /** Stateful linear PCM16 resampler used for provider audio playback.
@@ -93,6 +97,7 @@ export class RealtimeAudioClient {
   private connecting: Promise<void> | null = null;
   private ready = false;
   private intentionalClose = false;
+  private inputMeter = new LevelMeter();
 
   constructor(private cb: RealtimeCallbacks = {}) {}
 
@@ -136,8 +141,15 @@ export class RealtimeAudioClient {
       this.ws = new WebSocket(buildAudioSocketUrl());
       this.ws.binaryType = "arraybuffer";
       this.captureNode.port.onmessage = (event) => {
-        if (this.ready && this.ws?.readyState === WebSocket.OPEN) {
-          this.ws.send(event.data as ArrayBuffer);
+        const data = event.data as ArrayBuffer | { type?: string; rms?: number };
+        if (data instanceof ArrayBuffer) {
+          if (this.ready && this.ws?.readyState === WebSocket.OPEN) {
+            this.ws.send(data);
+          }
+          return;
+        }
+        if (data && data.type === "level" && typeof data.rms === "number") {
+          this.cb.onInputLevel?.(this.inputMeter.push(data.rms));
         }
       };
 
@@ -263,5 +275,7 @@ export class RealtimeAudioClient {
     this.playbackResampler = null;
     this.stream = null;
     this.ctx = null;
+    this.inputMeter.reset();
+    this.cb.onInputLevel?.(0);
   }
 }

@@ -26,6 +26,7 @@ export function BrowserRealtimeControl() {
   const [state, setState] = useState<ConnectionState>("idle");
   const [effectiveProvider, setEffectiveProvider] = useState("");
   const [error, setError] = useState("");
+  const [inputLevel, setInputLevel] = useState(0);
   const clientRef = useRef<RealtimeAudioClient | null>(null);
   const browserSurface = capabilities.data?.native_file_actions === false;
   const visible = browserSurface && mode === "realtime";
@@ -37,6 +38,7 @@ export function BrowserRealtimeControl() {
     setState("idle");
     setEffectiveProvider("");
     setError("");
+    setInputLevel(0);
     setVoice("idle");
   }, [setVoice]);
 
@@ -53,6 +55,7 @@ export function BrowserRealtimeControl() {
         if (role === "user" && isFinal) setVoice("thinking");
       },
       onAudio: () => setVoice("speaking"),
+      onInputLevel: setInputLevel,
       onStatus: (status, payload) => {
         if (status === "audio_ready") {
           const provider = typeof payload.provider === "string" ? payload.provider : "";
@@ -61,6 +64,10 @@ export function BrowserRealtimeControl() {
           setVoice("listening");
         } else if (status === "mode_fallback") {
           setEffectiveProvider(t("sidebar.realtime_pipeline_fallback"));
+        } else if (status === "hangup") {
+          // The session ended the call by voice ("auflegen" / end_call) —
+          // release the microphone and return to idle.
+          void stop();
         } else if (status === "turn_complete" || status === "tts_end") {
           setVoice("listening");
         } else if (status === "tts_cancel") {
@@ -82,7 +89,7 @@ export function BrowserRealtimeControl() {
       setError(t("sidebar.realtime_error"));
       setVoice("error");
     }
-  }, [realtimeAvailable, setTranscription, setVoice, state, t]);
+  }, [realtimeAvailable, setTranscription, setVoice, state, stop, t]);
 
   useEffect(() => {
     if (visible) return;
@@ -138,6 +145,19 @@ export function BrowserRealtimeControl() {
         />
         <span>{connecting ? t("sidebar.realtime_connecting") : label}</span>
       </button>
+      {connected && (
+        <div className="mt-1.5 flex h-1.5 items-stretch gap-0.5" aria-hidden="true">
+          {[0.08, 0.24, 0.42, 0.6, 0.78].map((threshold) => (
+            <span
+              key={threshold}
+              className={cn(
+                "flex-1 rounded-sm transition-colors duration-75",
+                inputLevel >= threshold ? "bg-primary" : "bg-border/60",
+              )}
+            />
+          ))}
+        </div>
+      )}
       <div className="mt-1.5 min-h-4 text-[10px] text-muted-foreground" aria-live="polite">
         {error ||
           (connected
