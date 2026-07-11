@@ -101,6 +101,7 @@
     "voice": "Fenrir"
   },
   "brain.providers.openai-realtime": {
-    "model": "gpt-realtime-2.1"
+    "model": "gpt-realtime-2.1",
+    "voice": "coral"
   }
 }
