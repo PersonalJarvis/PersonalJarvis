@@ -56,7 +56,7 @@ import json
 import logging
 import time
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 from typing import Any
@@ -150,6 +150,13 @@ class VoskKwsProvider:
         phrase: str,
         model_path: str,
         *,
+        # ALL model dirs to listen on (primary first). None/empty = just
+        # model_path. A phrase and the speaker language routinely diverge
+        # ("Hey Jarvis": English name, German speaker — live forensic
+        # 2026-07-11: the de model re-heard 'hey [unk]' and ate real wakes),
+        # so every installed language model streams its own grammar and the
+        # candidate is verified against the model that heard it.
+        model_paths: Sequence[str] | None = None,
         keyword: str | None = None,
         sample_rate: int = 16_000,
         min_final_conf: float = _MIN_FINAL_CONF,
@@ -170,6 +177,10 @@ class VoskKwsProvider:
         self._phrase = phrase.strip()
         self._keyword = keyword or "_".join(normalize_phrase_for_match(phrase)) or "wake"
         self._model_path = model_path
+        paths = [p for p in (model_paths or ()) if p]
+        if model_path and model_path not in paths:
+            paths.insert(0, model_path)
+        self._model_paths: list[str] = paths or [model_path]
         self._sample_rate = sample_rate
         self._min_final_conf = float(min_final_conf)
         self._confirm_ratio = float(confirm_ratio)
@@ -189,7 +200,7 @@ class VoskKwsProvider:
             self._confirm_ratio = max(self._confirm_ratio, 0.62)
         self._target_peak = float(target_peak)
         self._max_gain = float(max_gain)
-        self._model: Any = None
+        self._models: dict[str, Any] = {}
         self._grammar_words = [w for w in self._phrase.lower().split() if w]
         # Duck-typing parity with OpenWakeWordProvider: the pipeline's ready
         # log reads ``_keywords`` and ``_threshold`` off whatever detector is
@@ -220,27 +231,44 @@ class VoskKwsProvider:
 
     # -- lifecycle -----------------------------------------------------------
 
-    def _ensure_model(self) -> Any:
-        if self._model is None:
+    def _ensure_model(self, path: str | None = None) -> Any:
+        key = path or self._model_path
+        model = self._models.get(key)
+        if model is None:
             from vosk import Model, SetLogLevel  # lazy: keep base import light
 
             SetLogLevel(-1)
             t0 = time.perf_counter()
-            self._model = Model(self._model_path)
+            model = Model(key)
+            self._models[key] = model
             log.info(
                 "vosk-kws: model loaded in %.1f s (%s)",
                 time.perf_counter() - t0,
-                self._model_path,
+                key,
             )
-        return self._model
+        return model
 
-    def _new_grammar_rec(self) -> Any:
+    def _new_grammar_rec(self, path: str | None = None) -> Any:
         from vosk import KaldiRecognizer
 
         grammar = json.dumps([self._phrase.lower(), "[unk]"])
-        rec = KaldiRecognizer(self._ensure_model(), self._sample_rate, grammar)
+        rec = KaldiRecognizer(self._ensure_model(path), self._sample_rate, grammar)
         rec.SetWords(True)
         return rec
+
+    def _fresh_recs(self) -> dict[str, Any]:
+        """One streaming grammar recognizer per LOADABLE model path.
+
+        A corrupt/missing model dir must never brick the working ones —
+        it is skipped with a warning and detection continues on the rest.
+        """
+        recs: dict[str, Any] = {}
+        for path in self._model_paths:
+            try:
+                recs[path] = self._new_grammar_rec(path)
+            except Exception as exc:  # noqa: BLE001 — isolate a broken model
+                log.warning("vosk-kws: model %s unusable (%s) — skipped.", path, exc)
+        return recs
 
     def _warmup_decode(self) -> None:
         """Run ONE throwaway grammar + free decode pass so the FIRST real
@@ -253,24 +281,32 @@ class VoskKwsProvider:
         real detect loop still builds fresh recognizers on the first genuine
         candidate regardless of whether this succeeded.
         """
-        try:
-            from vosk import KaldiRecognizer
+        for path in self._model_paths:
+            try:
+                from vosk import KaldiRecognizer
 
-            silence = np.zeros(int(0.3 * self._sample_rate), dtype=np.int16).tobytes()
-            g = self._new_grammar_rec()
-            g.AcceptWaveform(silence)
-            g.FinalResult()
-            f = KaldiRecognizer(self._ensure_model(), self._sample_rate)
-            f.SetWords(True)
-            f.AcceptWaveform(silence)
-            f.FinalResult()
-        except Exception as exc:  # noqa: BLE001 — warm-up must never break boot
-            log.debug("vosk-kws warm-up decode skipped: %s", exc)
+                silence = np.zeros(
+                    int(0.3 * self._sample_rate), dtype=np.int16
+                ).tobytes()
+                g = self._new_grammar_rec(path)
+                g.AcceptWaveform(silence)
+                g.FinalResult()
+                f = KaldiRecognizer(self._ensure_model(path), self._sample_rate)
+                f.SetWords(True)
+                f.AcceptWaveform(silence)
+                f.FinalResult()
+            except Exception as exc:  # noqa: BLE001 — warm-up must never break boot
+                log.debug("vosk-kws warm-up decode skipped (%s): %s", path, exc)
 
     async def start(self) -> None:
-        """Pre-load AND warm the model — moves Kaldi's cold-start decode cost
-        off the first real wake candidate and onto boot warm-up instead."""
-        await asyncio.to_thread(self._ensure_model)
+        """Pre-load AND warm every model — moves Kaldi's cold-start decode
+        cost off the first real wake candidate and onto boot warm-up instead."""
+        for path in self._model_paths:
+            try:
+                await asyncio.to_thread(self._ensure_model, path)
+            except Exception as exc:  # noqa: BLE001 — a broken model must not
+                # brick the working ones; _fresh_recs skips it too.
+                log.warning("vosk-kws: model %s failed to load (%s).", path, exc)
         await asyncio.to_thread(self._warmup_decode)
 
     async def stop(self) -> None:
@@ -281,7 +317,7 @@ class VoskKwsProvider:
             self._early_task.cancel()
             self._early_task = None
         await self._notify_early(False)
-        self._model = None
+        self._models.clear()
         self._ring.clear()
         self._ring_len = 0
 
@@ -337,11 +373,13 @@ class VoskKwsProvider:
             # never break wake detection.
             log.debug("early-candidate listener failed: %s", exc)
 
-    async def _run_early_check(self, window: np.ndarray, gen: int) -> None:
+    async def _run_early_check(
+        self, window: np.ndarray, gen: int, model_path: str | None = None
+    ) -> None:
         """Mini-verify the truncated ring; show the candidate only if the
         pending candidate that spawned this check is still unresolved."""
         try:
-            ok = await asyncio.to_thread(self._early_check, window)
+            ok = await asyncio.to_thread(self._early_check, window, model_path)
         except Exception as exc:  # noqa: BLE001 — visual-only, never disrupt
             log.debug("early-candidate check errored: %s", exc)
             return
@@ -385,19 +423,35 @@ class VoskKwsProvider:
             return (False, 1.0)  # partials carry no conf; the confirm decides
         return None
 
-    def _verify_candidate(self, window: np.ndarray) -> bool:
-        """Authoritative confirm — fails OPEN (never eat a real wake)."""
-        return self._verify_window(window, fail_open=True)
+    def _verify_candidate(
+        self, window: np.ndarray, model_path: str | None = None
+    ) -> bool:
+        """Authoritative confirm — fails OPEN (never eat a real wake).
 
-    def _early_check(self, window: np.ndarray) -> bool:
+        ``model_path`` selects the model that HEARD the candidate; the verify
+        must use the same acoustics that produced the hit, never a sibling.
+        """
+        return self._verify_window(window, fail_open=True, model_path=model_path)
+
+    def _early_check(
+        self, window: np.ndarray, model_path: str | None = None
+    ) -> bool:
         """Visual-only mini-verify on the truncated ring — fails CLOSED
         (never flash the bar on a broken verifier)."""
         try:
-            return self._verify_window(window, fail_open=False)
+            return self._verify_window(
+                window, fail_open=False, model_path=model_path
+            )
         except Exception:  # noqa: BLE001 — belt and braces for the UI path
             return False
 
-    def _verify_window(self, window: np.ndarray, *, fail_open: bool) -> bool:
+    def _verify_window(
+        self,
+        window: np.ndarray,
+        *,
+        fail_open: bool,
+        model_path: str | None = None,
+    ) -> bool:
         """Three checks over the given window; ALL must pass before a fire.
 
         Why this shape (live forensic 2026-07-06, "Hey Ruben" fired on plain
@@ -460,12 +514,14 @@ class VoskKwsProvider:
             # matrix 3 -> 7 with a last-1.8 s retry), because the grammar
             # happily forces any short speech snippet onto the phrase.
             def _grammar_pass() -> dict:
-                g = self._new_grammar_rec()
+                g = self._new_grammar_rec(model_path)
                 g.AcceptWaveform(pcm)
                 return json.loads(g.FinalResult())
 
             def _free_pass() -> dict:
-                f = KaldiRecognizer(self._ensure_model(), self._sample_rate)
+                f = KaldiRecognizer(
+                    self._ensure_model(model_path), self._sample_rate
+                )
                 f.SetWords(True)
                 f.AcceptWaveform(pcm)
                 return json.loads(f.FinalResult())
@@ -550,14 +606,23 @@ class VoskKwsProvider:
         Only the keyword yielded after the full verify pass may cross into the
         pipeline or become visible in the overlay.
         """
-        await asyncio.to_thread(self._ensure_model)
-        rec = self._new_grammar_rec()
+        for path in self._model_paths:
+            try:
+                await asyncio.to_thread(self._ensure_model, path)
+            except Exception as exc:  # noqa: BLE001 — skip a broken model
+                log.warning("vosk-kws: model %s failed to load (%s).", path, exc)
+        # One streaming grammar per installed model — a phrase whose language
+        # differs from the speaker's still has a model that can spell it
+        # (union recall measured +38% on the fixture corpus, 2026-07-11).
+        recs = self._fresh_recs()
         last_fire_t = 0.0
         # Pending candidate: a PARTIAL hit waits for ``confirm_tail_s`` more
         # audio before the confirm pass so the free decoder sees the WHOLE
         # phrase, not a truncated one (E2E-measured recall trap). Finals skip
-        # the wait — their endpoint already passed.
-        pending: tuple[bool, float] | None = None
+        # the wait — their endpoint already passed. ``hit_path`` pins the
+        # model that heard the candidate: verify and early check must use the
+        # same acoustics, never a sibling model.
+        pending: tuple[bool, float, str] | None = None
         pending_tail = 0
         async for chunk in chunks:
             self._stat_chunks += 1
@@ -565,26 +630,36 @@ class VoskKwsProvider:
             self._ring_push(pcm)
             if pending is not None:
                 pending_tail += len(pcm)
+                # Keep every model's stream fed during the tail wait so their
+                # decode state stays aligned with the ring.
+                for r in recs.values():
+                    self._grammar_hit(r, pcm)
                 if pending_tail < self._confirm_tail_bytes:
                     continue
-                is_final, conf = pending
+                is_final, conf, hit_path = pending
                 pending = None
             else:
-                hit = self._grammar_hit(rec, pcm)
+                # Feed EVERY model; first hit wins the candidate slot.
+                hit: tuple[bool, float] | None = None
+                hit_path = ""
+                for path, r in recs.items():
+                    h = self._grammar_hit(r, pcm)
+                    if h is not None and hit is None:
+                        hit, hit_path = h, path
                 if hit is None:
                     continue
                 is_final, conf = hit
                 now = time.time()
                 if now - last_fire_t < self._cooldown_s:
                     self._stat_suppressed_cooldown += 1
-                    rec = self._new_grammar_rec()
+                    recs = self._fresh_recs()
                     continue
                 self._stat_candidates += 1
                 if is_final and conf < self._min_final_conf:
-                    rec = self._new_grammar_rec()
+                    recs = self._fresh_recs()
                     continue
                 if not is_final and self._confirm_tail_bytes > 0:
-                    pending = (is_final, conf)
+                    pending = (is_final, conf, hit_path)
                     pending_tail = 0
                     # Visual-only early candidate: mini-verify the audio heard
                     # SO FAR in a worker thread while the confirm tail keeps
@@ -594,13 +669,31 @@ class VoskKwsProvider:
                         self._pending_gen += 1
                         self._early_task = asyncio.create_task(
                             self._run_early_check(
-                                self._ring_window(), self._pending_gen
+                                self._ring_window(), self._pending_gen, hit_path
                             )
                         )
                     continue
             now = time.time()
             window = self._ring_window()
-            confirmed = await asyncio.to_thread(self._verify_candidate, window)
+            confirmed = await asyncio.to_thread(
+                self._verify_candidate, window, hit_path
+            )
+            fired_path = hit_path
+            if not confirmed:
+                # Sibling rescue: the model that HEARD the candidate could not
+                # verify it, but the ring still holds the phrase — let every
+                # other model try (union recall, measured +38%: 'Hey Jarvis'
+                # de-spoken garbles on the de model yet verifies on en).
+                # Fail-CLOSED via _early_check: an opportunistic rescue must
+                # never fire off a broken sibling (the fail-open contract
+                # protects only the primary confirm).
+                for other in self._model_paths:
+                    if other == hit_path or other not in recs:
+                        continue
+                    if await asyncio.to_thread(self._early_check, window, other):
+                        confirmed = True
+                        fired_path = other
+                        break
             if not confirmed:
                 self._stat_suppressed_confirm += 1
                 # Resolve the pending candidate: invalidate any in-flight
@@ -611,7 +704,7 @@ class VoskKwsProvider:
                         await self._early_task
                     self._early_task = None
                 await self._notify_early(False)
-                rec = self._new_grammar_rec()
+                recs = self._fresh_recs()
                 continue
             # Confirmed: let a still-running early check finish first (in
             # production it completed long ago — the tail wait dwarfs it) so
@@ -626,12 +719,13 @@ class VoskKwsProvider:
             self._stat_fired += 1
             last_fire_t = now
             log.info(
-                "vosk-kws: WAKE fired for %r (%s candidate)",
+                "vosk-kws: WAKE fired for %r (%s candidate, model %s)",
                 self._phrase,
                 "final" if is_final else "partial",
+                fired_path,
             )
             yield self._keyword
-            rec = self._new_grammar_rec()
+            recs = self._fresh_recs()
 
 
 def vosk_model_supports_phrase(model_path: str, phrase: str) -> bool:

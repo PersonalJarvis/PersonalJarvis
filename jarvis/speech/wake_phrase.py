@@ -36,6 +36,7 @@ from jarvis.speech.wake_constants import (
     phrase_core,
     phrase_core_for_match,
     resolve_vosk_model_path,
+    resolve_vosk_model_paths,
     sound_fold,
 )
 
@@ -288,6 +289,13 @@ class WakeWordPlan:
     wake_available: bool = True
     # Extracted Vosk model directory for the vosk_kws engine (None otherwise).
     vosk_model_path: str | None = None
+    # ALL installed Vosk model dirs, primary language first (vosk_kws only).
+    # The provider streams a grammar per model and fires on whichever model's
+    # verify confirms — a phrase and the speaker language routinely diverge
+    # ("Hey Jarvis": English name, German speaker; live forensic 2026-07-11),
+    # and the single language-matched model eats genuine wakes it cannot
+    # spell. Empty tuple = fall back to the single vosk_model_path.
+    vosk_model_paths: tuple[str, ...] = ()
 
 
 def _read(cfg: Any, name: str, default: Any) -> Any:
@@ -443,6 +451,15 @@ def resolve_wake_plan(
                 ),
                 verify_prefix=False,  # the provider's sound confirm is built in
                 vosk_model_path=vosk_model,
+                # Every installed model, primary first: the provider listens
+                # on all of them so a phrase whose language differs from the
+                # speaker's ("Hey Jarvis" de-spoken) still has a model that
+                # can spell it. Verified per model — precision gates intact.
+                vosk_model_paths=tuple(
+                    resolve_vosk_model_paths(
+                        lang_norm if lang_is_concrete else language
+                    )
+                ),
             )
 
     # 3. Arbitrary phrase via local-Whisper transcript match.

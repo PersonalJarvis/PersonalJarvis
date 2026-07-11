@@ -120,10 +120,13 @@ class _FakeModel:
 @pytest.fixture()
 def fake_vosk(monkeypatch):
     mod = types.ModuleType("vosk")
-    state = {"model": None}
+    # "model" = the most recently built model (single-model tests);
+    # "models" = every model by path (multi-model tests).
+    state = {"model": None, "models": {}}
 
     def _model_factory(path):  # noqa: ANN001
         state["model"] = _FakeModel(path)
+        state["models"][path] = state["model"]
         return state["model"]
 
     mod.Model = _model_factory
@@ -277,7 +280,7 @@ async def test_early_candidate_retracts_when_confirm_rejects(
         "Hey Nova", model_path="fake", keyword="nova",
         early_candidate_listener=_listener,
     )
-    monkeypatch.setattr(p, "_early_check", lambda window: True)
+    monkeypatch.setattr(p, "_early_check", lambda window, model_path=None: True)
     p._ensure_model()
     fake_vosk["model"].free_text = "das ist etwas ganz anderes"  # i18n-allow: utterance under test
     fired = await _run_detect(p, [_chunk() for _ in range(12)])
@@ -335,6 +338,48 @@ def test_free_words_outside_the_span_cannot_confirm(fake_vosk) -> None:
     # far outside the grammar span (0.5-1.15s +-0.3) -> localised confirm
     # sees only unrelated words and rejects.
     assert p._verify_candidate(np.full(48000, 0.2, dtype=np.float32)) is False
+
+
+async def test_multi_model_second_model_fires_when_first_is_deaf(fake_vosk) -> None:
+    """Union recall (measured +38% on the fixture corpus, 2026-07-11): a
+    phrase the primary language model cannot hear ("Hey Jarvis" on the de
+    model → 'hey [unk]') must still fire through a sibling model that can.
+    The verify runs against the model that HEARD the candidate.
+    """
+    p = VoskKwsProvider(
+        "Hey Nova",
+        model_path="deaf-model",
+        model_paths=["deaf-model", "hearing-model"],
+        keyword="nova",
+    )
+    p._ensure_model("deaf-model")
+    p._ensure_model("hearing-model")
+    fake_vosk["models"]["deaf-model"].fire_after = 10**9  # never hears
+    fired = await _run_detect(p, [_chunk() for _ in range(12)])
+    assert fired == ["nova"]
+    assert p.stats()["fired"] == 1
+
+
+async def test_sibling_rescue_fires_when_primary_verify_rejects(fake_vosk) -> None:
+    """First-hit-wins must not eat the union: when the model that heard the
+    candidate cannot VERIFY it, the other models get to try over the same
+    ring audio before the candidate is suppressed."""
+    p = VoskKwsProvider(
+        "Hey Nova",
+        model_path="primary",
+        model_paths=["primary", "sibling"],
+        keyword="nova",
+    )
+    p._ensure_model("primary")
+    p._ensure_model("sibling")
+    # The primary hears the candidate but its free ear contradicts it; the
+    # sibling's free ear confirms the phrase.
+    fake_vosk["models"]["primary"].free_text = "das ist ganz anders"  # i18n-allow: test utterance
+    fake_vosk["models"]["sibling"].fire_after = 10**9  # never stage-1-hits
+    fired = await _run_detect(p, [_chunk() for _ in range(12)])
+    assert fired == ["nova"]
+    assert p.stats()["fired"] == 1
+    assert p.stats()["suppressed_confirm"] == 0
 
 
 async def test_cooldown_suppresses_immediate_refire(fake_vosk) -> None:

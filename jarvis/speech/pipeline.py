@@ -1140,6 +1140,7 @@ class SpeechPipeline:
             self._wake = VoskKwsProvider(
                 phrase=wake_plan.phrase,
                 model_path=wake_plan.vosk_model_path or "",
+                model_paths=getattr(wake_plan, "vosk_model_paths", ()),
                 keyword=wake_plan.oww_keyword,
                 early_candidate_listener=self._vosk_early_candidate_listener,
             )
@@ -1857,6 +1858,7 @@ class SpeechPipeline:
             self._wake = VoskKwsProvider(
                 phrase=plan.phrase,
                 model_path=getattr(plan, "vosk_model_path", None) or "",
+                model_paths=getattr(plan, "vosk_model_paths", ()),
                 keyword=plan.oww_keyword,
                 early_candidate_listener=self._vosk_early_candidate_listener,
             )
