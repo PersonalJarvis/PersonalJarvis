@@ -47,10 +47,13 @@ only place Terms are recorded — removing it silently removes the legal record.
 
 ## 2. Goals
 
-- The install one-liner is **fully non-interactive**: it downloads and prepares
-  *everything* (code, Python deps, voice models, worker CLI, shortcuts/icon),
-  explains each step in one plain-English line, and launches the app **as its
-  last action**. When the installer says "done", the app is genuinely ready.
+- The install one-liner is non-interactive when Python 3.11+ and Git exist. A
+  2026-07-11 amendment permits one explicit consent prompt when either system
+  prerequisite is missing; Stage 1 installs, re-checks, and continues in the
+  same process. It then downloads and prepares *everything* (code, Python deps,
+  voice models, worker CLI, shortcuts/icon), explains each step in one
+  plain-English line, and launches the app **as its last action**. When the
+  installer says "done", the app is genuinely ready.
 - The **first app launch reliably shows the real desktop app** with the
   onboarding flow as the first thing the user sees. No broken-looking interim
   state, no restarts needed.
@@ -70,7 +73,7 @@ only place Terms are recorded — removing it silently removes the legal record.
 
 ## 3. Design
 
-### A. Installer: download everything, ask nothing, explain everything
+### A. Installer: ask only for missing prerequisites, explain everything
 
 **A1. Remove the wizard from the install path.**
 - Delete `step_wizard` from `installer.py`'s default sequence. No completion
@@ -194,13 +197,14 @@ Extend `fresh-install-smoke.yml` beyond "any `GET /` returns 200":
 3. Served `index.html` references the freshly built asset hash (stale-`dist/`
    guard against the "old app" failure mode; build parity with the shipped
    bundle).
-4. Assert the installer output contains no interactive prompt markers (guards
-   against a wizard invocation regressing into the install path).
+4. Assert prompt markers occur only in the marked Python/Git prerequisite
+   state machine (guards against a wizard regressing into the install path).
 
 ## 4. Error handling summary
 
 | Failure | Behavior |
 |---|---|
+| Python 3.11+ or Git missing | Offer native package-manager installation once, await it, re-check both, and continue the same run. |
 | Model download fails during install | Warn honestly, continue; runtime lazy-download remains the fallback (B3 shows honest status). |
 | npm/node missing | One-line note; worker CLI installable later in-app. Never fatal. |
 | Shortcut/AUMID registration fails | Best-effort, logged, never fatal (non-Windows: silent no-op). |
@@ -216,9 +220,10 @@ Extend `fresh-install-smoke.yml` beyond "any `GET /` returns 200":
 - Frontend: RiskGate calls `acceptTerms`; gate retry/backoff behavior;
   FinishStep autostart toggle; existing parity tests stay green.
 - Integration/CI: extended fresh-install smoke (E1-E4).
-- Manual (fresh VM): one-liner → zero prompts → app launches last → onboarding
-  appears immediately → complete → restart → no onboarding → re-run one-liner
-  (update) → no onboarding.
+- Manual (fresh VM): ready prerequisites → zero prompts; missing prerequisites
+  → one install-consent prompt and same-run continuation; app launches last →
+  onboarding appears immediately → complete → restart → no onboarding →
+  re-run one-liner (update) → no onboarding.
 
 ## 6. Decided trade-offs
 

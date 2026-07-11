@@ -121,7 +121,8 @@ find_python() {
     # globs stay literal and are filtered by the -x test; on Linux these
     # directories simply don't exist and the loop is a no-op.
     if [ -n "${JARVIS_PYTHON_SEARCH_DIRS:-}" ]; then
-        # Colon-split without `read` (the never-prompts guard bans that token).
+        # Colon-split without reading stdin, which still carries the piped
+        # installer source in the public `curl | bash` path.
         _old_ifs=$IFS
         IFS=':'
         # shellcheck disable=SC2086 -- colon-splitting the override is the point
@@ -351,6 +352,8 @@ write_manual_prerequisite_help() {
     if [ "$PYTHON_READY" -eq 0 ]; then
         note 'Python: https://www.python.org/downloads/'
         note 'Linux: install Python 3.11+ plus its venv package from your distribution.'
+        note 'Already installed somewhere unusual? Pin it for this run:'
+        note '  curl -fsSL <this url> | JARVIS_PYTHON=/path/to/python3.12 bash'
     fi
     if [ "$GIT_READY" -eq 0 ]; then
         note 'Git:    https://git-scm.com/downloads'

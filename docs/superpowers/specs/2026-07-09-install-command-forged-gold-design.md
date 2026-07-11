@@ -1,6 +1,6 @@
 # Install Command "Forged Gold" Redesign — Design
 
-**Date:** 2026-07-09 · **Status:** approved (maintainer picked variant A + keep-URL)
+**Date:** 2026-07-09 · **Status:** approved, amended 2026-07-11
 
 ## Problem
 
@@ -21,8 +21,11 @@ Decisions made by the maintainer:
 - **Install URL stays** (`raw.githubusercontent.com/...`) — no short domain for now.
 - **Terminal look becomes variant A "Forged Gold"** (branded banner gradient,
   numbered phases, flat finale).
-- Install stays 100 % prompt-free (already true — now enforced by a guard test);
-  all consent lives in the app onboarding, and **declining the Terms quits the app**.
+- The normal path stays prompt-free. Amendment 2026-07-11: if Python or Git is
+  missing, Stage 1 asks once before installing those system prerequisites,
+  re-checks them in the same process, and continues without a second command.
+  All product setup consent remains in app onboarding, and **declining the
+  Terms quits the app**.
 
 ## Design
 
@@ -50,7 +53,7 @@ gold, rows 5–6 gold-deep — replacing the flat single-color banner. The
 
 ```
   P E R S O N A L  J A R V I S   ·   talk to your computer
-  Installs the full profile · asks nothing · launches when done
+  Checks prerequisites · installs the full profile · launches when done
 ```
 
 (first line muted letter-spaced caps, second line muted). The subtitle line
@@ -62,7 +65,7 @@ One fixed six-phase journey; Stage 1 owns 1–3, Stage 2 owns 4–6:
 
 | # | Phase | Stage | Contains |
 |---|---|---|---|
-| 1/6 | Prerequisites | 1 | Python, git, Node checks |
+| 1/6 | Prerequisites | 1 | Python+Git detect/install/re-check; optional Node check |
 | 2/6 | Fetching Personal Jarvis | 1 | clone/update, payload pin |
 | 3/6 | Python environment | 1 | venv + bootstrap deps (merged) |
 | 4/6 | Dependencies | 2 | pip editable + lockfile + extras |
@@ -92,14 +95,21 @@ by design — the numbering documents the journey, not the entry point.
 Update runs keep the "no re-onboarding" promise line. Headless runs keep the
 server-address hint.
 
-### 5. Prompt-free install, enforced
+### 5. Conditional prerequisite consent, tightly scoped
 
-New static guard test in `tests/unit/install/test_installer_flow.py`:
-`install.sh` contains no `read ` prompt, `install.ps1` no `Read-Host`,
-`installer.py` no `input(` / `Prompt.ask` / `Confirm.ask`. Any future change
-that adds a terminal question turns CI red. Existing flow tests are updated to
-the new strings ("ready" instead of the panel's "Done"); launch-last ordering
-stays asserted.
+Amendment 2026-07-11 supersedes the original fully prompt-free Stage-1 rule.
+Both shells first evaluate Python 3.11+ and Git. When both exist, they print the
+versions and continue without a prompt. Otherwise they list the missing items
+and ask once before invoking WinGet, Homebrew, or the detected Linux package
+manager. The package-manager process is awaited, the current PATH/command cache
+is refreshed, and both prerequisites are re-checked. A rare failed/manual path
+keeps the same installer alive for re-check/retry until the user succeeds or
+explicitly quits. `JARVIS_INSTALL_PREREQS=auto` is the explicit unattended
+consent path; `never` forbids prerequisite installation.
+
+The static guard now confines `Read-Host`/TTY `read` calls to the marked
+prerequisite state machine. `installer.py` remains fully prompt-free, so the
+terminal wizard or product-setup questions cannot leak back into installation.
 
 ### 6. Onboarding: declining the Terms quits the app
 
@@ -129,7 +139,8 @@ path:
 
 ## Testing
 
-- `pytest tests/unit/install/` — updated flow tests + new no-prompt guard.
+- `pytest tests/unit/install/` — shell state-machine tests, scoped-prompt guard,
+  existing flow and Python-detection regressions.
 - `pytest tests/unit/ui/` routes tests for the decline endpoint (409 after
   acceptance, quit scheduling stubbed).
 - Frontend: RiskGate decline-state test via vitest.

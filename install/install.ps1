@@ -12,8 +12,8 @@
 #   6. Hands control to install/installer.py (the Stage 2 orchestrator).
 #
 # All heavy logic lives in installer.py so it can be unit-tested and
-# kept cross-platform. This file is meant to be read top-to-bottom in
-# under 60 seconds before you paste it into a terminal.
+# kept cross-platform. The shell-native prerequisite block is delimited so it
+# can be tested directly even on machines where Python is not installed yet.
 #
 # SOURCE-ENCODING RULE: this file is served BOM-less (a BOM breaks
 # `irm | iex`), and Windows PowerShell then reads it as cp1252. So the
@@ -245,7 +245,15 @@ function Request-PrerequisiteConsent {
 function Refresh-ProcessPath {
     $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    $env:Path = ((@($InitialPath, $userPath, $machinePath) |
+    $commonGitPaths = @()
+    if ($env:ProgramFiles) {
+        $commonGitPaths += Join-Path $env:ProgramFiles 'Git\cmd'
+    }
+    if ($env:LOCALAPPDATA) {
+        $commonGitPaths += Join-Path $env:LOCALAPPDATA 'Programs\Git\cmd'
+    }
+    $commonGitPaths = @($commonGitPaths | Where-Object { Test-Path $_ })
+    $env:Path = ((@($InitialPath, $userPath, $machinePath) + $commonGitPaths |
         Where-Object { $_ }) -join ';')
 }
 
@@ -309,6 +317,7 @@ function Write-ManualPrerequisiteHelp {
 }
 
 function Ensure-Prerequisites {
+    Refresh-ProcessPath
     $state = Get-PrerequisiteState
     Write-PrerequisiteState $state -ShowMissing
     if ($state.Ready) { return $state }

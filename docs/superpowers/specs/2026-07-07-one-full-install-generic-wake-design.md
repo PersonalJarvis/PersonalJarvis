@@ -118,8 +118,9 @@ The non-goal "No GPU/`[local-voice]` extras in the base install (stays opt-in,
 AP-25)" is **amended**: the *base* install indeed stays torch-free (unchanged),
 but the *official installer/one-liner* now installs the full profile including
 `[local-voice]`. AP-25 is unaffected — it governs runtime GPU *usage*, not
-packaging. The rest of that spec (non-interactive installer, prefetch,
-onboarding-once) stands.
+packaging. The rest of that spec (prefetch and onboarding-once) stands. Its
+fully non-interactive Stage-1 rule was superseded on 2026-07-11: only a missing
+Python/Git prerequisite may trigger one explicit install-consent prompt.
 
 ## 5. Error handling
 
