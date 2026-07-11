@@ -875,19 +875,20 @@
     "tier_tts": "Salida de voz (TTS)",
     "tier_stt": "Entrada de voz (STT)",
     "tier_realtime": "Voz en tiempo real",
-    "tier_computer_use": "Proveedor de Computer-Use",
+    "tier_computer_use": "Proveedor del Tool Model",
     "tier_subagent": "Jarvis-Agent (tareas pesadas)",
     "tier_telephony": "Telefonía",
     "tab_brain": "IA",
     "tab_tts": "Salida de voz",
     "tab_stt": "Entrada de voz",
     "tab_realtime": "Tiempo real",
-    "tab_computer_use": "Computer-Use",
+    "tab_computer_use": "Tool Model",
     "tab_subagents": "Jarvis-Agents",
     "tab_advanced": "Avanzado",
     "mode_pipeline": "Pipeline",
     "mode_realtime": "Tiempo real",
     "mode_active_badge": "Activo",
+    "mode_recommended": "Recomendado",
     "voice_engine_label": "Motor de voz",
     "voice_engine_desc": "Cómo escucha y habla Jarvis: la pipeline clásica o un único modelo en tiempo real.",
     "mode_needs_key": "Tiempo real necesita una clave API — añade una abajo para cambiar.",
@@ -902,7 +903,7 @@
     "cat_tts_desc": "La voz con la que habla Jarvis.",
     "cat_stt_desc": "Cómo convierte Jarvis tu voz en texto.",
     "cat_realtime_desc": "Voz a voz dúplex completo mediante cualquier proveedor de tiempo real configurado, en escritorio o navegador.",
-    "cat_computer_use_desc": "Computer-Use lee tu pantalla; elige qué proveedor lo planifica, independientemente de tu Brain de chat. Los modelos Realtime no pueden ver la pantalla, así que esto también se ejecuta ahí.",
+    "cat_computer_use_desc": "El Tool Model ejecuta tus acciones: enruta comandos de voz, planifica Computer-Use en tu pantalla, inicia agentes en segundo plano y controla la app — independiente de tu Brain de chat.",
     "cat_subagents_title": "Jarvis-Agents",
     "cat_subagents_desc": "Elige qué proveedor ejecuta las tareas pesadas en segundo plano.",
     "advanced_title": "Acceso e integraciones",
@@ -926,8 +927,8 @@
     "realtime_provider_default": "Predeterminado del proveedor (recomendado)",
     "guide_realtime_title": "¿Qué modelo debería elegir?",
     "guide_realtime_body": "OpenAI: GPT Realtime (el predeterminado del proveedor) suena más natural; GPT Realtime Mini es la opción económica. Google: Gemini 3.1 Flash Live es el buque insignia actual de Live. «Predeterminado del proveedor» siempre resuelve al modelo recomendado, así que puedes dejarlo tal cual.",
-    "guide_computer_use_title": "¿Qué proveedor debería ejecutar Computer-Use?",
-    "guide_computer_use_body": "Computer-Use mira capturas de tu pantalla, así que necesita un modelo que entienda imágenes — el selector oculta los modelos de solo texto. En caso de duda, quédate con tu proveedor Brain principal y su modelo predeterminado."
+    "guide_computer_use_title": "¿Qué proveedor debería impulsar el Tool Model?",
+    "guide_computer_use_body": "El Tool Model se encarga de cada acción que Jarvis realiza por ti — incluido Computer-Use, que lee capturas de tu pantalla y necesita un modelo que entienda imágenes; el selector oculta los modelos de solo texto. En caso de duda, quédate con tu proveedor Brain principal y su modelo predeterminado."
   },
   "apikeys_test": {
     "button": "Probar",
@@ -992,11 +993,11 @@
     "preview_in": "Vista previa en"
   },
   "apikeys_cu_model": {
-    "heading": "Modelo para Computer-Use",
+    "heading": "Tool Model",
     "use_main": "Usar mi modelo principal",
     "using_main": "Usando tu modelo principal",
-    "effective": "Computer-Use usa",
-    "cleared": "Modelo de Computer-Use restablecido a tu modelo principal",
+    "effective": "El Tool Model usa",
+    "cleared": "Tool Model restablecido a tu modelo principal",
     "vision_note": "Solo se muestran modelos que entienden imágenes: Computer-Use lee la pantalla mediante capturas, un modelo de solo texto no puede controlarlo."
   },
   "settings_view": {

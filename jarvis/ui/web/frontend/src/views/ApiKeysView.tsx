@@ -378,6 +378,18 @@ function EngineModeSwitch({
                 >
                   <Icon aria-hidden="true" className="h-3.5 w-3.5" />
                   {seg.label}
+                  {seg.key === "realtime" && (
+                    <span
+                      className={cn(
+                        "rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide",
+                        isLive
+                          ? "bg-primary-foreground/20 text-primary-foreground"
+                          : "bg-primary/15 text-primary",
+                      )}
+                    >
+                      {t("apikeys_view.mode_recommended")}
+                    </span>
+                  )}
                   {isLive && (
                     <span className="sr-only">{t("apikeys_view.mode_active_badge")}</span>
                   )}

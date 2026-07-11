@@ -875,19 +875,20 @@
     "tier_tts": "Voice Output (TTS)",
     "tier_stt": "Voice Input (STT)",
     "tier_realtime": "Realtime voice",
-    "tier_computer_use": "Computer-Use provider",
+    "tier_computer_use": "Tool Model provider",
     "tier_subagent": "Jarvis-Agent (heavy tasks)",
     "tier_telephony": "Telephony",
     "tab_brain": "Brain",
     "tab_tts": "Voice Output",
     "tab_stt": "Voice Input",
     "tab_realtime": "Realtime",
-    "tab_computer_use": "Computer-Use",
+    "tab_computer_use": "Tool Model",
     "tab_subagents": "Jarvis-Agents",
     "tab_advanced": "Advanced",
     "mode_pipeline": "Pipeline",
     "mode_realtime": "Realtime",
     "mode_active_badge": "Active",
+    "mode_recommended": "Recommended",
     "voice_engine_label": "Voice engine",
     "voice_engine_desc": "How Jarvis listens and talks — the classic pipeline, or a single realtime model.",
     "mode_needs_key": "Realtime needs an API key — add one below to switch.",
@@ -902,7 +903,7 @@
     "cat_tts_desc": "The voice Jarvis speaks with.",
     "cat_stt_desc": "How Jarvis turns your speech into text.",
     "cat_realtime_desc": "Full-duplex speech-to-speech through any configured Realtime provider, on desktop or in the browser.",
-    "cat_computer_use_desc": "Computer-Use reads your screen; pick which provider plans it — independent of your chat Brain. Realtime models can't see the screen, so this runs it there too.",
+    "cat_computer_use_desc": "The Tool Model runs your actions: it routes spoken commands, plans Computer-Use on your screen, starts background agents, and drives app controls — independent of your chat Brain.",
     "cat_subagents_title": "Jarvis-Agents",
     "cat_subagents_desc": "Choose which provider runs heavy background tasks.",
     "advanced_title": "Access & Integrations",
@@ -927,8 +928,8 @@
     "realtime_provider_default": "Provider default (recommended)",
     "guide_realtime_title": "Which model should I pick?",
     "guide_realtime_body": "OpenAI: GPT Realtime (the provider default) sounds the most natural; GPT Realtime Mini is the budget pick. Google: Gemini 3.1 Flash Live is the current Live flagship. \"Provider default\" always resolves to the recommended model, so you can simply leave it.",
-    "guide_computer_use_title": "Which provider should run Computer-Use?",
-    "guide_computer_use_body": "Computer-Use looks at screenshots of your screen, so it needs a model that understands images — the picker hides text-only models. If unsure, keep your main Brain provider and its default model."
+    "guide_computer_use_title": "Which provider should power the Tool Model?",
+    "guide_computer_use_body": "The Tool Model handles every action Jarvis takes for you — including Computer-Use, which reads screenshots of your screen, so it needs a model that understands images; the picker hides text-only models. If unsure, keep your main Brain provider and its default model."
   },
   "apikeys_test": {
     "button": "Test",
@@ -993,11 +994,11 @@
     "preview_in": "Preview in"
   },
   "apikeys_cu_model": {
-    "heading": "Computer-Use model",
+    "heading": "Tool Model",
     "use_main": "Use my main model",
     "using_main": "Using your main model",
-    "effective": "Computer-Use runs",
-    "cleared": "Computer-Use model reset to your main model",
+    "effective": "The Tool Model runs",
+    "cleared": "Tool Model reset to your main model",
     "vision_note": "Only models that can see images are listed - Computer-Use reads the screen from screenshots, so a text-only model cannot run it."
   },
   "settings_view": {

@@ -82,7 +82,7 @@ describe("ApiKeysView two-mode", () => {
   it("shows the segmented Pipeline|Realtime switch with an Active badge on the live mode", () => {
     render(<ApiKeysView />);
     const pipelineSegment = screen.getByRole("button", { name: /pipeline/i });
-    const realtimeSegment = screen.getByRole("button", { name: /^realtime$/i });
+    const realtimeSegment = screen.getByRole("button", { name: /^realtime/i });
     expect(pipelineSegment).toBeTruthy();
     expect(realtimeSegment).toBeTruthy();
     // The live [voice].mode from the mocked useVoiceMode is "pipeline", so
@@ -105,7 +105,7 @@ describe("ApiKeysView two-mode", () => {
 
   it("switching to Realtime mode shows only Realtime/Subagents/Advanced and persists voice-mode (available)", () => {
     render(<ApiKeysView />);
-    fireEvent.click(screen.getByRole("button", { name: /^realtime$/i })); // the segment
+    fireEvent.click(screen.getByRole("button", { name: /^realtime/i })); // the segment
 
     expect(screen.getByRole("tab", { name: /realtime/i })).toBeTruthy();
     expect(screen.getByRole("tab", { name: /jarvis-agents/i })).toBeTruthy();
@@ -121,7 +121,7 @@ describe("ApiKeysView two-mode", () => {
 
   it("switching back to Pipeline restores the five pipeline tabs and always persists voice-mode", () => {
     render(<ApiKeysView />);
-    fireEvent.click(screen.getByRole("button", { name: /^realtime$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
     putVoiceMode.mockClear();
     fireEvent.click(screen.getByRole("button", { name: /pipeline/i }));
 
@@ -136,7 +136,7 @@ describe("ApiKeysView two-mode — realtime unavailable (no key in any family)",
   it("switching to Realtime still switches the view, but does NOT persist voice-mode", () => {
     mockRealtimeAvailable = false;
     render(<ApiKeysView />);
-    fireEvent.click(screen.getByRole("button", { name: /^realtime$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
 
     // The view still switches, so the user can add a key from the Realtime tab.
     expect(screen.getByRole("tab", { name: /realtime/i })).toBeTruthy();
@@ -147,7 +147,7 @@ describe("ApiKeysView two-mode — realtime unavailable (no key in any family)",
   it("switching back to Pipeline still persists voice-mode even when realtime is unavailable", () => {
     mockRealtimeAvailable = false;
     render(<ApiKeysView />);
-    fireEvent.click(screen.getByRole("button", { name: /^realtime$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
     putVoiceMode.mockClear();
     fireEvent.click(screen.getByRole("button", { name: /pipeline/i }));
 

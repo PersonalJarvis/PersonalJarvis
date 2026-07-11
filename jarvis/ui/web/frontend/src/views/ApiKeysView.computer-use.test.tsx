@@ -166,12 +166,12 @@ describe("ApiKeysView — Computer-Use tab", () => {
     installFetchMock();
     render(<ApiKeysView />);
 
-    expect(await screen.findByRole("tab", { name: /computer-use/i })).toBeTruthy();
+    expect(await screen.findByRole("tab", { name: /tool model/i })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: /^realtime$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
 
-    expect(await screen.findByRole("tab", { name: /computer-use/i })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: /^realtime$/i })).toBeTruthy();
+    expect(await screen.findByRole("tab", { name: /tool model/i })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /^realtime/i })).toBeTruthy();
   });
 
   it("renders the 4 brain-provider cards, same style as the Brain tab", async () => {
@@ -184,7 +184,7 @@ describe("ApiKeysView — Computer-Use tab", () => {
     installFetchMock();
     render(<ApiKeysView />);
 
-    fireEvent.click(await screen.findByRole("tab", { name: /computer-use/i }));
+    fireEvent.click(await screen.findByRole("tab", { name: /tool model/i }));
 
     expect(await screen.findByText("Claude")).toBeTruthy();
     expect(screen.getByText("OpenAI")).toBeTruthy();
@@ -200,7 +200,7 @@ describe("ApiKeysView — Computer-Use tab", () => {
     const { calls } = installFetchMock();
     render(<ApiKeysView />);
 
-    fireEvent.click(await screen.findByRole("tab", { name: /computer-use/i }));
+    fireEvent.click(await screen.findByRole("tab", { name: /tool model/i }));
     const claudeCard = (await screen.findByText("Claude")).closest("li") as HTMLElement | null;
     if (!claudeCard) throw new Error("Claude card not found");
     fireEvent.click(within(claudeCard).getByRole("radio"));
@@ -238,7 +238,7 @@ describe("ApiKeysView — Computer-Use tab", () => {
     installFetchMock();
     render(<ApiKeysView />);
 
-    fireEvent.click(await screen.findByRole("tab", { name: /computer-use/i }));
+    fireEvent.click(await screen.findByRole("tab", { name: /tool model/i }));
 
     expect(await screen.findByTestId("cu-model-selector-stub-openai")).toBeTruthy();
   });
