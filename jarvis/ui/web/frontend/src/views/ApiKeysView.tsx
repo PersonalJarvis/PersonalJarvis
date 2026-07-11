@@ -305,11 +305,13 @@ function EngineModeSwitch({
   onSetVoiceMode: (mode: string) => void;
 }) {
   const t = useT();
+  // Realtime leads: it is the recommended default, so it takes the first
+  // (left) segment with the Recommended badge fully visible.
   const segments: { key: VoiceEngineMode; label: string; icon: LucideIcon }[] = [
-    { key: "pipeline", label: t("apikeys_view.mode_pipeline"), icon: Waypoints },
     { key: "realtime", label: t("apikeys_view.mode_realtime"), icon: Radio },
+    { key: "pipeline", label: t("apikeys_view.mode_pipeline"), icon: Waypoints },
   ];
-  const liveIndex = liveMode === "realtime" ? 1 : 0;
+  const liveIndex = liveMode === "realtime" ? 0 : 1;
   const runtimeDetail = [activeSessionProvider, activeSessionModel]
     .filter(Boolean)
     .join(" · ");
@@ -347,7 +349,10 @@ function EngineModeSwitch({
         <div className="shrink-0">
           {/* Two equal segments over one sliding thumb: the thumb tracks the
               LIVE engine, so its glide IS the switch feedback. */}
-          <div className="relative grid w-64 grid-cols-2 rounded-xl border border-border bg-card/40 p-1">
+          {/* w-auto + equal columns: the container grows with the widest
+              segment (Realtime + Recommended badge) instead of clipping it;
+              the sliding thumb stays correct at any width. */}
+          <div className="relative grid w-auto min-w-64 grid-cols-2 rounded-xl border border-border bg-card/40 p-1">
             <span
               aria-hidden="true"
               className="absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-lg bg-primary shadow-[0_0_18px_rgba(255,214,10,0.25)] transition-transform duration-200 ease-out"
@@ -381,7 +386,7 @@ function EngineModeSwitch({
                   {seg.key === "realtime" && (
                     <span
                       className={cn(
-                        "rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide",
+                        "whitespace-nowrap rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide",
                         isLive
                           ? "bg-primary-foreground/20 text-primary-foreground"
                           : "bg-primary/15 text-primary",
