@@ -5330,8 +5330,20 @@ class SpeechPipeline:
         wait_tasks: set[asyncio.Task[Any]] = set()
         reason = "desktop_fallback"
         try:
-            await session.handle_control({"type": "audio_start", "sample_rate": 16_000})
-            await self._set_turn_state(TurnTakingState.LISTENING)
+            # Open the microphone BEFORE the provider handshake and buffer
+            # locally until the session accepts audio. The handshake takes
+            # 1-3s (live 2026-07-11: wake fired 15:08:20.4, Gemini Live ready
+            # 15:08:23.0) and used to gate the mic open — the user's first
+            # words after "Hey Jarvis" fell into that hole and the session
+            # started deaf ("bar spawns instantly but speech only counts
+            # ~0.5s+ later"). Now capture starts within ~10ms of the wake
+            # (resolve cache) and the pre-ready frames are flushed to the
+            # provider the moment the handshake completes — nothing is lost,
+            # the first reply is at worst handshake-delayed.
+            provider_ready = asyncio.Event()
+            # Cap ~6s; drop OLDEST beyond it (a longer handshake means a
+            # provider problem — memory stays bounded, freshest speech wins).
+            preroll: deque[bytes] = deque(maxlen=60)
             async with MicrophoneCapture(
                 device=self._input_device,
                 max_queue_chunks=REALTIME_QUEUE_CHUNKS,
@@ -5339,11 +5351,21 @@ class SpeechPipeline:
             ) as mic:
                 async def _send_microphone() -> None:
                     async for chunk in self._session_input_stream(mic.stream()):
+                        if not provider_ready.is_set():
+                            preroll.append(chunk.pcm)
+                            continue
+                        while preroll:
+                            await session.handle_audio_frame(preroll.popleft())
                         await session.handle_audio_frame(chunk.pcm)
 
                 microphone_task = asyncio.create_task(
                     _send_microphone(), name=f"rt-mic-{session_id}"
                 )
+                await session.handle_control(
+                    {"type": "audio_start", "sample_rate": 16_000}
+                )
+                provider_ready.set()
+                await self._set_turn_state(TurnTakingState.LISTENING)
                 provider_task = asyncio.create_task(
                     session.wait_finished(), name=f"rt-provider-{session_id}"
                 )
