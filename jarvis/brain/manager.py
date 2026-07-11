@@ -29,6 +29,7 @@ import logging
 import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID, uuid4
 
@@ -106,6 +107,11 @@ if TYPE_CHECKING:
     from jarvis.voice.contextual_readback import ReadbackComposer
 
 log = logging.getLogger(__name__)
+
+_PUBLISH_RESPONSE_EVENT: ContextVar[bool] = ContextVar(
+    "jarvis.brain.manager.publish_response_event",
+    default=True,
+)
 
 #: Hard bound on the per-turn vision capture (Wave-3 latency fix). ``vision.
 #: current()`` can stall (mss BitBlt hang, paused-state miss, slow disk); without
@@ -2687,12 +2693,20 @@ class BrainManager:
         # detected-language inputs, the rotation index does not affect language)
         # and only tags the transcript's jarvis_lang — NEVER _looks_german, which
         # would mislabel a Spanish apology as English (Runtime Output Language).
-        await self._bus.publish(ResponseGenerated(
-            trace_id=trace_uuid,
-            text=phrase,
-            language=self._resolve_turn_lang(),
-        ))
+        await self._publish_response_generated(trace_id=trace_uuid, text=phrase)
         return phrase
+
+    async def _publish_response_generated(self, *, trace_id: UUID, text: str) -> None:
+        """Publish the public response event unless this call is an internal reply."""
+        if not _PUBLISH_RESPONSE_EVENT.get():
+            return
+        await self._bus.publish(
+            ResponseGenerated(
+                trace_id=trace_id,
+                text=text,
+                language=self._resolve_turn_lang(),
+            )
+        )
 
     def _mandatory_lang_directive(self, name: str) -> str:
         """The hard MANDATORY reply-language pin for a named language.
@@ -5852,11 +5866,10 @@ class BrainManager:
             if len(self._history) > 40:
                 self._history = self._history[-40:]
 
-        await self._bus.publish(ResponseGenerated(
+        await self._publish_response_generated(
             trace_id=trace_id or uuid4(),
             text=response_text,
-            language=self._resolve_turn_lang(),
-        ))
+        )
 
         if self._curator is not None:
             try:
@@ -6527,6 +6540,35 @@ class BrainManager:
     # ------------------------------------------------------------------
 
     async def generate(
+        self,
+        user_text: str,
+        *,
+        use_history: bool = True,
+        trace_id: UUID | None = None,
+        text_consumer: "Callable[[str], None] | None" = None,
+        on_progress: Callable[[], None] | None = None,
+        source_layer: str | None = None,
+        allow_voice_confirm: bool = False,
+        prefer_tool_model: bool = False,
+        publish_response: bool = True,
+    ) -> str:
+        """Generate a turn, optionally leaving its public response event to the caller."""
+        token = _PUBLISH_RESPONSE_EVENT.set(bool(publish_response))
+        try:
+            return await self._generate(
+                user_text,
+                use_history=use_history,
+                trace_id=trace_id,
+                text_consumer=text_consumer,
+                on_progress=on_progress,
+                source_layer=source_layer,
+                allow_voice_confirm=allow_voice_confirm,
+                prefer_tool_model=prefer_tool_model,
+            )
+        finally:
+            _PUBLISH_RESPONSE_EVENT.reset(token)
+
+    async def _generate(
         self,
         user_text: str,
         *,
@@ -7644,11 +7686,10 @@ class BrainManager:
             if len(self._history) > 40:
                 self._history = self._history[-40:]
 
-        await self._bus.publish(ResponseGenerated(
+        await self._publish_response_generated(
             trace_id=trace_uuid,
             text=response_text,
-            language=self._resolve_turn_lang(),
-        ))
+        )
 
         # Fire-and-forget: the curator extracts personal facts from the turn
         # and merges them into USER.md / people/*.md in a controlled manner.
