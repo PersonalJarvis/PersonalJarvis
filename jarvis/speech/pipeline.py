@@ -5314,36 +5314,27 @@ class SpeechPipeline:
                 log.warning("Realtime desktop status: %s", message)
 
         session_id = getattr(self, "_current_voice_session_id", None) or str(uuid4())
-        session = build_realtime_session(
-            cfg=self._config,
-            bus=self._bus,
-            session_id=session_id,
-            send_binary=_send_binary,
-            send_json=_send_json,
-            half_duplex=True,
-            surface="desktop",
-            brain=getattr(self, "_brain", None),
-        )
-        if session is None:
-            return None
-
+        # Open the microphone BEFORE building the realtime session AND before
+        # the provider handshake, buffering locally until the session accepts
+        # audio. Both stages used to gate the mic open — measured live
+        # 2026-07-11: ~0.6s build_realtime_session (delegate-tool assembly) +
+        # 1.6-2.9s provider handshake — and the user's first words after
+        # "Hey Jarvis" fell into that hole ("bar spawns instantly but speech
+        # only counts ~0.5s+ later"). Now capture starts ~150ms after the
+        # wake (resolve cache makes the open itself ~10ms) and the buffered
+        # frames are flushed the moment the handshake completes — nothing is
+        # lost, the first reply is at worst handshake-delayed. The pump
+        # closure late-binds ``session``: the provider_ready gate only opens
+        # after the session object exists.
+        provider_ready = asyncio.Event()
+        # Cap ~6s; drop OLDEST beyond it (a longer handshake means a provider
+        # problem — memory stays bounded, freshest speech wins).
+        preroll: deque[bytes] = deque(maxlen=60)
         wait_tasks: set[asyncio.Task[Any]] = set()
         reason = "desktop_fallback"
+        session: Any | None = None
+        microphone_task: asyncio.Task[Any] | None = None
         try:
-            # Open the microphone BEFORE the provider handshake and buffer
-            # locally until the session accepts audio. The handshake takes
-            # 1-3s (live 2026-07-11: wake fired 15:08:20.4, Gemini Live ready
-            # 15:08:23.0) and used to gate the mic open — the user's first
-            # words after "Hey Jarvis" fell into that hole and the session
-            # started deaf ("bar spawns instantly but speech only counts
-            # ~0.5s+ later"). Now capture starts within ~10ms of the wake
-            # (resolve cache) and the pre-ready frames are flushed to the
-            # provider the moment the handshake completes — nothing is lost,
-            # the first reply is at worst handshake-delayed.
-            provider_ready = asyncio.Event()
-            # Cap ~6s; drop OLDEST beyond it (a longer handshake means a
-            # provider problem — memory stays bounded, freshest speech wins).
-            preroll: deque[bytes] = deque(maxlen=60)
             async with MicrophoneCapture(
                 device=self._input_device,
                 max_queue_chunks=REALTIME_QUEUE_CHUNKS,
@@ -5361,6 +5352,18 @@ class SpeechPipeline:
                 microphone_task = asyncio.create_task(
                     _send_microphone(), name=f"rt-mic-{session_id}"
                 )
+                session = build_realtime_session(
+                    cfg=self._config,
+                    bus=self._bus,
+                    session_id=session_id,
+                    send_binary=_send_binary,
+                    send_json=_send_json,
+                    half_duplex=True,
+                    surface="desktop",
+                    brain=getattr(self, "_brain", None),
+                )
+                if session is None:
+                    return None
                 await session.handle_control(
                     {"type": "audio_start", "sample_rate": 16_000}
                 )
@@ -5417,6 +5420,10 @@ class SpeechPipeline:
             log.warning("Realtime desktop session failed; using pipeline: %s", exc)
             return None
         finally:
+            # The mic pump may not be in wait_tasks yet when the session
+            # build/handshake failed — cancel it explicitly either way.
+            if microphone_task is not None and not microphone_task.done():
+                microphone_task.cancel()
             for task in wait_tasks:
                 if not task.done():
                     task.cancel()
@@ -5425,7 +5432,13 @@ class SpeechPipeline:
                     await task
                 except (asyncio.CancelledError, Exception):
                     pass
-            await session.end(reason=reason)
+            if microphone_task is not None:
+                try:
+                    await microphone_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            if session is not None:
+                await session.end(reason=reason)
             await playback.close()
 
     async def _ptt_session(self) -> str:
