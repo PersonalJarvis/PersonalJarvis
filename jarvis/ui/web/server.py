@@ -231,6 +231,7 @@ class WebServer:
         from .drop_routes import router as drop_router
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
+        from .diagnostics_routes import router as diagnostics_router
         from .dictionary_routes import router as dictionary_router
         from .docs_routes import router as docs_router
         from .federation_proxy_routes import router as federation_proxy_router
@@ -282,6 +283,9 @@ class WebServer:
             conductor_router = None
         app.include_router(mcp_router)
         app.include_router(tools_router)
+        # Event-loop diagnostics (read-only) — names the owner of an AP-20
+        # cancellation busy-loop from inside the loop; see diagnostics_routes.
+        app.include_router(diagnostics_router)
         app.include_router(provider_router)
         app.include_router(antigravity_router)
         app.include_router(claude_router)
