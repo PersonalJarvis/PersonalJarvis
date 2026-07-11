@@ -5,8 +5,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
 #
 # This bootstrap is intentionally small. It:
-#   1. Verifies Python 3.11+ is available.
-#   2. Verifies git is available.
+#   1. Verifies Python 3.11+ and git are available.
+#   2. Offers to install either missing prerequisite, then re-checks in place.
 #   3. Checks for Node.js 18+ (optional - a missing Node never blocks the install).
 #   4. Clones (or updates) personal-jarvis into ~/.personal-jarvis.
 #   5. Creates a Python venv, installs `rich` + `packaging`.
@@ -20,6 +20,7 @@ set -euo pipefail
 REPO_URL="${JARVIS_INSTALL_REPO:-https://github.com/PersonalJarvis/PersonalJarvis.git}"
 BRANCH="${JARVIS_INSTALL_REF:-main}"
 INSTALL_DIR="${JARVIS_INSTALL_DIR:-$HOME/.personal-jarvis}"
+PREREQUISITE_MODE="${JARVIS_INSTALL_PREREQS:-ask}"
 
 # 24-bit brand palette (docs/BRAND.md): Signal Yellow on matte black, with the
 # forged-gold wordmark gradient #FFE552 → #FFD60A → #B8960A. On a real terminal
@@ -58,7 +59,7 @@ ${GOLD_DEEP}╚█████╔╝██║  ██║██║  ██║ ╚
 ${GOLD_DEEP} ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝${RST}
 
 ${DIM}     P E R S O N A L  J A R V I S   ·   talk to your computer${RST}
-${DIM}     Installs the full profile · asks nothing · launches when done${RST}
+${DIM}     Checks prerequisites · installs the full profile · launches when done${RST}
 EOF
 
 # -------------------------------------------------------------- preflight
@@ -146,30 +147,281 @@ find_python() {
 }
 # --- python-detection end ---------------------------------------------------
 
-if ! find_python; then
-    err 'Python 3.11+ not found.'
-    if [ -n "$FOUND_TOO_OLD" ]; then
-        note "Closest match: $FOUND_TOO_OLD - too old: Jarvis needs 3.11+,"
-        note 'and Python versions count 3.8 < 3.9 < 3.10 < 3.11.'
+# --- prerequisite-bootstrap begin ------------------------------------------
+# This block stays shell-native because Python may not exist yet. Tests extract
+# it directly and exercise the retry/continuation state machine with fakes.
+git_available() {
+    _git_path=$(command -v git 2>/dev/null) || return 1
+    # macOS ships a /usr/bin/git launcher even before the Command Line Tools
+    # exist. Calling that launcher may open an unrelated system dialog, so
+    # check the toolchain receipt before treating the stub as a real Git.
+    if [ "$(uname -s 2>/dev/null || true)" = 'Darwin' ] &&
+       [ "$_git_path" = '/usr/bin/git' ] && command -v xcode-select >/dev/null 2>&1 &&
+       ! xcode-select -p >/dev/null 2>&1; then
+        return 1
     fi
-    note 'Install it from:'
-    note '  - macOS:  https://www.python.org/downloads/ or "brew install python"'
-    note '  - Linux:  your distro package (apt install python3.12, dnf install python3.12, ...)'
-    note 'Then open a NEW terminal window and re-run this command.'
-    note 'Python installed somewhere unusual? Pin it explicitly:'
-    note '  curl -fsSL <this url> | JARVIS_PYTHON=/path/to/python3.12 bash'
-    exit 1
-fi
-PY_VER=$("$PYTHON_EXE" -c 'import sys; print("Python %d.%d.%d" % sys.version_info[:3])' 2>/dev/null || echo "$PYTHON_EXE")
-ok "$PY_VER ($PYTHON_EXE)"
+    "$_git_path" --version >/dev/null 2>&1
+}
 
-if ! command -v git >/dev/null 2>&1; then
-    err 'git not found.'
-    note '  - macOS:  install Xcode CLT ("xcode-select --install") or "brew install git"'
-    note '  - Linux:  your distro package (apt install git, ...)'
+refresh_prerequisite_state() {
+    PYTHON_EXE=""
+    if find_python; then PYTHON_READY=1; else PYTHON_READY=0; fi
+    if git_available; then GIT_READY=1; else GIT_READY=0; fi
+    if [ "$PYTHON_READY" -eq 1 ] && [ "$GIT_READY" -eq 1 ]; then
+        PREREQUISITES_READY=1
+    else
+        PREREQUISITES_READY=0
+    fi
+}
+
+write_prerequisite_state() {
+    _show_missing="${1:-0}"
+    if [ "$PYTHON_READY" -eq 1 ]; then
+        _py_ver=$("$PYTHON_EXE" -c 'import sys; print("Python %d.%d.%d" % sys.version_info[:3])' 2>/dev/null || printf '%s' "$PYTHON_EXE")
+        ok "$_py_ver ($PYTHON_EXE)"
+    elif [ "$_show_missing" -eq 1 ]; then
+        err 'Python 3.11+ not found.'
+        if [ -n "$FOUND_TOO_OLD" ]; then
+            note "Closest match: $FOUND_TOO_OLD - too old: Jarvis needs 3.11+."
+            note 'Python versions count 3.8 < 3.9 < 3.10 < 3.11.'
+        fi
+    fi
+    if [ "$GIT_READY" -eq 1 ]; then
+        _git_ver=$(git --version 2>/dev/null || printf 'git')
+        ok "$_git_ver"
+    elif [ "$_show_missing" -eq 1 ]; then
+        err 'git not found.'
+    fi
+}
+
+missing_prerequisite_labels() {
+    _missing=""
+    if [ "$PYTHON_READY" -eq 0 ]; then _missing='Python 3.11+'; fi
+    if [ "$GIT_READY" -eq 0 ]; then
+        if [ -n "$_missing" ]; then _missing="$_missing, Git"; else _missing='Git'; fi
+    fi
+    printf '%s' "$_missing"
+}
+
+has_install_tty() {
+    [ -r /dev/tty ] && [ -w /dev/tty ]
+}
+
+detect_prerequisite_manager() {
+    PREREQ_MANAGER=""
+    PREREQ_MANAGER_CMD=""
+    case "$(uname -s 2>/dev/null || printf unknown)" in
+        Darwin)
+            for _brew in "$(command -v brew 2>/dev/null || true)" /opt/homebrew/bin/brew /usr/local/bin/brew; do
+                if [ -n "$_brew" ] && [ -x "$_brew" ]; then
+                    PREREQ_MANAGER='Homebrew'
+                    PREREQ_MANAGER_CMD="$_brew"
+                    return 0
+                fi
+            done
+            ;;
+        *)
+            for _manager in apt-get dnf yum zypper pacman apk; do
+                if command -v "$_manager" >/dev/null 2>&1; then
+                    PREREQ_MANAGER="$_manager"
+                    PREREQ_MANAGER_CMD="$_manager"
+                    return 0
+                fi
+            done
+            ;;
+    esac
+    return 1
+}
+
+request_prerequisite_consent() {
+    _missing="$1"
+    case "$PREREQUISITE_MODE" in
+        auto)
+            note 'Automatic prerequisite installation was enabled by JARVIS_INSTALL_PREREQS=auto.'
+            return 0
+            ;;
+        never) return 1 ;;
+        ask) ;;
+        *)
+            err "Invalid JARVIS_INSTALL_PREREQS value '$PREREQUISITE_MODE'. Use ask, auto, or never."
+            return 1
+            ;;
+    esac
+    if ! has_install_tty; then
+        note 'This shell cannot ask for consent. Re-run interactively or set JARVIS_INSTALL_PREREQS=auto.'
+        return 1
+    fi
+
+    note "Missing required software: $_missing."
+    if [ -n "$PREREQ_MANAGER" ]; then
+        note "Jarvis can install it with $PREREQ_MANAGER, wait, and continue this same run."
+        note 'Continuing authorizes the package manager to accept the relevant package agreements.'
+        _prompt='  Install the missing prerequisites now? [Y/n] '
+    else
+        note 'No supported package manager was found; Jarvis can keep this run open while you install it.'
+        _prompt='  Show the manual path and keep checking this run? [Y/n] '
+    fi
+    printf '%s' "$_prompt" >/dev/tty
+    IFS= read -r _answer </dev/tty || return 1
+    case "$_answer" in ''|y|Y|yes|YES|Yes) return 0 ;; *) return 1 ;; esac
+}
+
+run_privileged() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo "$@"
+    else
+        note 'Administrator access is required, but sudo is unavailable.'
+        return 126
+    fi
+}
+
+install_with_prerequisite_manager() {
+    _python_ready="$1"
+    _git_ready="$2"
+    _log=$(mktemp "${TMPDIR:-/tmp}/jarvis-prerequisites.XXXXXX") || return 1
+    _result=1
+
+    case "$PREREQ_MANAGER" in
+        Homebrew)
+            _packages=()
+            if [ "$_python_ready" -eq 0 ]; then _packages+=(python); fi
+            if [ "$_git_ready" -eq 0 ]; then _packages+=(git); fi
+            if "$PREREQ_MANAGER_CMD" install "${_packages[@]}" >"$_log" 2>&1; then _result=0; fi
+            ;;
+        apt-get)
+            _packages=()
+            if [ "$_python_ready" -eq 0 ]; then _packages+=(python3 python3-venv); fi
+            if [ "$_git_ready" -eq 0 ]; then _packages+=(git); fi
+            if run_privileged env DEBIAN_FRONTEND=noninteractive apt-get update -qq >"$_log" 2>&1 &&
+               run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${_packages[@]}" >>"$_log" 2>&1; then
+                _result=0
+            fi
+            ;;
+        dnf|yum)
+            _packages=()
+            if [ "$_python_ready" -eq 0 ]; then _packages+=(python3); fi
+            if [ "$_git_ready" -eq 0 ]; then _packages+=(git); fi
+            if run_privileged "$PREREQ_MANAGER_CMD" -q -y install "${_packages[@]}" >"$_log" 2>&1; then _result=0; fi
+            ;;
+        zypper)
+            _packages=()
+            if [ "$_python_ready" -eq 0 ]; then _packages+=(python3); fi
+            if [ "$_git_ready" -eq 0 ]; then _packages+=(git); fi
+            if run_privileged zypper --non-interactive --quiet install "${_packages[@]}" >"$_log" 2>&1; then _result=0; fi
+            ;;
+        pacman)
+            _packages=()
+            if [ "$_python_ready" -eq 0 ]; then _packages+=(python); fi
+            if [ "$_git_ready" -eq 0 ]; then _packages+=(git); fi
+            if run_privileged pacman -Sy --noconfirm --needed "${_packages[@]}" >"$_log" 2>&1; then _result=0; fi
+            ;;
+        apk)
+            _packages=()
+            if [ "$_python_ready" -eq 0 ]; then _packages+=(python3 py3-pip); fi
+            if [ "$_git_ready" -eq 0 ]; then _packages+=(git); fi
+            if run_privileged apk add --no-progress "${_packages[@]}" >"$_log" 2>&1; then _result=0; fi
+            ;;
+    esac
+
+    if [ "$_result" -eq 0 ]; then
+        ok "$PREREQ_MANAGER finished installing prerequisites"
+    else
+        err "$PREREQ_MANAGER did not complete the prerequisite installation."
+        tail -n 12 "$_log" 2>/dev/null || true
+    fi
+    rm -f "$_log"
+    return "$_result"
+}
+
+start_manual_prerequisite_path() {
+    write_manual_prerequisite_help
+    if [ "$PYTHON_READY" -eq 0 ] &&
+       [ "$(uname -s 2>/dev/null || true)" = 'Darwin' ] && command -v open >/dev/null 2>&1; then
+        open 'https://www.python.org/downloads/macos/' >/dev/null 2>&1 || true
+    fi
+    if [ "$GIT_READY" -eq 0 ] &&
+       [ "$(uname -s 2>/dev/null || true)" = 'Darwin' ] && command -v xcode-select >/dev/null 2>&1; then
+        xcode-select --install >/dev/null 2>&1 || true
+    fi
+}
+
+write_manual_prerequisite_help() {
+    if [ "$PYTHON_READY" -eq 0 ]; then
+        note 'Python: https://www.python.org/downloads/'
+        note 'Linux: install Python 3.11+ plus its venv package from your distribution.'
+    fi
+    if [ "$GIT_READY" -eq 0 ]; then
+        note 'Git:    https://git-scm.com/downloads'
+    fi
+}
+
+install_missing_prerequisites() {
+    detect_prerequisite_manager || true
+    if [ -z "$PREREQ_MANAGER" ]; then
+        start_manual_prerequisite_path
+        return 1
+    fi
+    note "installing prerequisites with $PREREQ_MANAGER"
+    install_with_prerequisite_manager "$PYTHON_READY" "$GIT_READY"
+}
+
+wait_for_prerequisites() {
+    _attempt=0
+    while [ "$_attempt" -lt 5 ]; do
+        hash -r
+        refresh_prerequisite_state
+        if [ "$PREREQUISITES_READY" -eq 1 ]; then return 0; fi
+        _attempt=$((_attempt + 1))
+        if [ "$_attempt" -lt 5 ]; then sleep 2; fi
+    done
+    return 1
+}
+
+ensure_prerequisites() {
+    refresh_prerequisite_state
+    write_prerequisite_state 1
+    if [ "$PREREQUISITES_READY" -eq 1 ]; then return 0; fi
+    if [ -n "${JARVIS_PYTHON:-}" ] && [ "$PYTHON_READY" -eq 0 ]; then
+        note "JARVIS_PYTHON is pinned to '$JARVIS_PYTHON' and is not a compatible interpreter."
+        note 'Update or unset that pin before prerequisite installation.'
+        return 1
+    fi
+
+    detect_prerequisite_manager || true
+    _missing=$(missing_prerequisite_labels)
+    if ! request_prerequisite_consent "$_missing"; then
+        write_manual_prerequisite_help
+        note 'Nothing was installed. Run this command again after adding the prerequisites.'
+        return 1
+    fi
+
+    install_missing_prerequisites || true
+    wait_for_prerequisites || true
+
+    while [ "$PREREQUISITES_READY" -eq 0 ]; do
+        err 'The required commands are still unavailable in this terminal.'
+        write_manual_prerequisite_help
+        if [ "$PREREQUISITE_MODE" = 'auto' ] || ! has_install_tty; then return 1; fi
+        printf '%s' '  Finish any manual installer, then press Enter to re-check; R retries, Q stops: ' >/dev/tty
+        IFS= read -r _answer </dev/tty || return 1
+        case "$_answer" in
+            q|Q|quit|QUIT|Quit) return 1 ;;
+            r|R|retry|RETRY|Retry) install_missing_prerequisites || true ;;
+        esac
+        wait_for_prerequisites || true
+    done
+
+    write_prerequisite_state 0
+    return 0
+}
+# --- prerequisite-bootstrap end --------------------------------------------
+
+if ! ensure_prerequisites; then
+    err 'Prerequisite setup was not completed.'
     exit 1
 fi
-ok 'git'
 
 # Node.js 18+ — powers only the OPTIONAL Jarvis-Agent worker CLIs (Claude Code
 # / Codex) that heavy missions delegate to, plus the Node-based marketplace

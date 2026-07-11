@@ -4,8 +4,8 @@
 #   irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.ps1 | iex
 #
 # This bootstrap is intentionally small. It:
-#   1. Verifies Python 3.11+ is available.
-#   2. Verifies git is available.
+#   1. Verifies Python 3.11+ and git are available.
+#   2. Offers to install either missing prerequisite, then re-checks in place.
 #   3. Checks for Node.js 18+ (optional - a missing Node never blocks the install).
 #   4. Clones (or updates) personal-jarvis into ~\.personal-jarvis.
 #   5. Creates a Python venv, installs `rich` + `packaging`.
@@ -66,7 +66,7 @@ $GoldDeep╚█████╔╝██║  ██║██║  ██║ ╚█
 $GoldDeep ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝$Rst
 
 $Dim     P E R S O N A L  J A R V I S   ·   talk to your computer$Rst
-$Dim     Installs the full profile · asks nothing · launches when done$Rst
+$Dim     Checks prerequisites · installs the full profile · launches when done$Rst
 "@
     Write-Host $art
 }
@@ -84,75 +84,283 @@ Write-Banner
 $RepoUrl    = if ($env:JARVIS_INSTALL_REPO) { $env:JARVIS_INSTALL_REPO } else { 'https://github.com/PersonalJarvis/PersonalJarvis.git' }
 $Branch     = if ($env:JARVIS_INSTALL_REF)  { $env:JARVIS_INSTALL_REF }  else { 'main' }
 $InstallDir = if ($env:JARVIS_INSTALL_DIR)  { $env:JARVIS_INSTALL_DIR }  else { Join-Path $env:USERPROFILE '.personal-jarvis' }
+$PrerequisiteMode = if ($env:JARVIS_INSTALL_PREREQS) { $env:JARVIS_INSTALL_PREREQS.ToLowerInvariant() } else { 'ask' }
+$InitialPath = $env:Path
 
 # Forward any extra args to installer.py (e.g. --no-launch, --dry-run, --with-voice-local)
 $ExtraArgs = $args
 
+# --- prerequisite-bootstrap begin ------------------------------------------
+# This block stays shell-native because Python may not exist yet. Tests extract
+# it directly and exercise the retry/continuation state machine with fakes.
 function Test-Tool {
-    param([string]$Name, [string]$VersionArg = '--version')
+    param([string]$Name, [string[]]$VersionArgs = @('--version'))
     try {
-        $out = & $Name $VersionArg 2>&1
-        return @{ Found = $true; Version = ($out | Select-Object -First 1) }
+        $out = & $Name @VersionArgs 2>&1
+        $code = $LASTEXITCODE
+        if ($null -eq $code) { $code = 0 }
+        return @{
+            Found = ($code -eq 0)
+            Version = [string]($out | Select-Object -First 1)
+        }
     } catch {
         return @{ Found = $false; Version = $null }
     }
 }
 
-function Test-PythonVersion {
+function Test-PythonCandidate {
     param([string]$Exe)
-    $check = Test-Tool $Exe
-    if (-not $check.Found) { return $false }
-    # Match X.Y where X >= 3 and Y >= 11
-    if ($check.Version -match 'Python\s+(\d+)\.(\d+)\.\d+') {
+    try {
+        $out = & $Exe -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>&1
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $version = [string]($out | Select-Object -First 1)
+        if ($version -notmatch '^(\d+)\.(\d+)\.(\d+)$') { return $null }
         $major = [int]$Matches[1]
         $minor = [int]$Matches[2]
-        return ($major -gt 3) -or ($major -eq 3 -and $minor -ge 11)
+        return [pscustomobject]@{
+            Exe = $Exe
+            Version = $version
+            Compatible = (($major -gt 3) -or ($major -eq 3 -and $minor -ge 11))
+        }
+    } catch {
+        return $null
     }
-    return $false
 }
+
+function Find-CompatiblePython {
+    $candidates = @()
+    if ($env:JARVIS_PYTHON) {
+        # An explicit pin is authoritative: never silently substitute another
+        # interpreter for the one the user selected.
+        $candidates += $env:JARVIS_PYTHON
+    } else {
+        $candidates += @('python', 'python3', 'py')
+        $patterns = @()
+        if ($env:LOCALAPPDATA) {
+            $patterns += Join-Path $env:LOCALAPPDATA 'Programs\Python\Python*\python.exe'
+        }
+        if ($env:ProgramFiles) {
+            $patterns += Join-Path $env:ProgramFiles 'Python*\python.exe'
+        }
+        foreach ($pattern in $patterns) {
+            $candidates += @(Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue |
+                Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName)
+        }
+    }
+
+    $closest = $null
+    $seen = @{}
+    foreach ($candidate in $candidates) {
+        if (-not $candidate) { continue }
+        $key = $candidate.ToLowerInvariant()
+        if ($seen[$key]) { continue }
+        $seen[$key] = $true
+        $probe = Test-PythonCandidate $candidate
+        if ($null -eq $probe) { continue }
+        if ($probe.Compatible) {
+            return [pscustomobject]@{
+                Found = $true
+                Exe = $probe.Exe
+                Version = $probe.Version
+                Closest = $closest
+            }
+        }
+        if ($null -eq $closest) { $closest = $probe }
+    }
+    return [pscustomobject]@{
+        Found = $false
+        Exe = $null
+        Version = $null
+        Closest = $closest
+    }
+}
+
+function Get-PrerequisiteState {
+    $python = Find-CompatiblePython
+    $gitCheck = Test-Tool 'git'
+    return [pscustomobject]@{
+        Python = $python
+        GitFound = $gitCheck.Found
+        GitVersion = $gitCheck.Version
+        Ready = ($python.Found -and $gitCheck.Found)
+    }
+}
+
+function Write-PrerequisiteState {
+    param($State, [switch]$ShowMissing)
+    if ($State.Python.Found) {
+        Write-Ok "Python $($State.Python.Version) ($($State.Python.Exe))"
+    } elseif ($ShowMissing) {
+        Write-Err 'Python 3.11+ not found.'
+        if ($null -ne $State.Python.Closest) {
+            Write-Note "Closest match: Python $($State.Python.Closest.Version) via '$($State.Python.Closest.Exe)' - too old."
+            Write-Note 'Python versions count 3.8 < 3.9 < 3.10 < 3.11.'
+        }
+    }
+    if ($State.GitFound) {
+        Write-Ok $State.GitVersion
+    } elseif ($ShowMissing) {
+        Write-Err 'git not found.'
+    }
+}
+
+function Get-MissingPrerequisiteLabels {
+    param($State)
+    $missing = @()
+    if (-not $State.Python.Found) { $missing += 'Python 3.12 (satisfies 3.11+)' }
+    if (-not $State.GitFound) { $missing += 'Git' }
+    return $missing
+}
+
+function Request-PrerequisiteConsent {
+    param([string[]]$Missing)
+    switch ($PrerequisiteMode) {
+        'auto' {
+            Write-Note 'Automatic prerequisite installation was enabled by JARVIS_INSTALL_PREREQS=auto.'
+            return $true
+        }
+        'never' { return $false }
+        'ask' { }
+        default {
+            Write-Err "Invalid JARVIS_INSTALL_PREREQS value '$PrerequisiteMode'. Use ask, auto, or never."
+            return $false
+        }
+    }
+
+    if (-not [Environment]::UserInteractive) {
+        Write-Note 'This shell cannot ask for consent. Re-run interactively or set JARVIS_INSTALL_PREREQS=auto.'
+        return $false
+    }
+    Write-Note "Missing required software: $($Missing -join ', ')."
+    Write-Note 'Jarvis can install it with WinGet, wait for completion, and continue this same run.'
+    Write-Note 'Continuing also accepts the package and WinGet source agreements for these packages.'
+    try {
+        $answer = Read-Host '  Install the missing prerequisites now? [Y/n]'
+    } catch {
+        return $false
+    }
+    return ([string]::IsNullOrWhiteSpace($answer) -or $answer -match '^(?i:y|yes)$')
+}
+
+function Refresh-ProcessPath {
+    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $env:Path = ((@($InitialPath, $userPath, $machinePath) |
+        Where-Object { $_ }) -join ';')
+}
+
+function Invoke-PrerequisitePackage {
+    param([string]$PackageId, [string]$Label)
+    Write-Note "installing $Label (this may open one Windows approval prompt)"
+    $output = & winget install --id $PackageId --exact --source winget --silent `
+        --disable-interactivity --accept-source-agreements --accept-package-agreements 2>&1
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
+        Write-Err "$Label installation did not complete (WinGet exit $code)."
+        @($output | Select-Object -Last 8) | ForEach-Object { Write-Note ([string]$_) }
+        return $false
+    }
+    Write-Ok "$Label installer completed"
+    return $true
+}
+
+function Invoke-MissingPrerequisiteInstall {
+    param($State)
+    $wingetCheck = Test-Tool 'winget'
+    if (-not $wingetCheck.Found) {
+        Write-Err 'WinGet is not available, so Jarvis cannot install the prerequisites automatically.'
+        return $false
+    }
+    $installOk = $true
+    if (-not $State.Python.Found) {
+        if (-not (Invoke-PrerequisitePackage 'Python.Python.3.12' 'Python 3.12')) {
+            $installOk = $false
+        }
+    }
+    if (-not $State.GitFound) {
+        if (-not (Invoke-PrerequisitePackage 'Git.Git' 'Git')) {
+            $installOk = $false
+        }
+    }
+    return $installOk
+}
+
+function Wait-ForPrerequisites {
+    param([int]$Seconds = 10)
+    $attempts = [Math]::Max(1, [int][Math]::Ceiling($Seconds / 2.0))
+    $state = $null
+    for ($i = 0; $i -lt $attempts; $i++) {
+        Refresh-ProcessPath
+        $state = Get-PrerequisiteState
+        if ($state.Ready) { return $state }
+        if ($i -lt ($attempts - 1)) { Start-Sleep -Seconds 2 }
+    }
+    return $state
+}
+
+function Write-ManualPrerequisiteHelp {
+    param($State)
+    if (-not $State.Python.Found) {
+        Write-Note 'Python: https://www.python.org/downloads/windows/'
+    }
+    if (-not $State.GitFound) {
+        Write-Note 'Git:    https://git-scm.com/download/win'
+    }
+}
+
+function Ensure-Prerequisites {
+    $state = Get-PrerequisiteState
+    Write-PrerequisiteState $state -ShowMissing
+    if ($state.Ready) { return $state }
+    if ($env:JARVIS_PYTHON -and -not $state.Python.Found) {
+        Write-Note "JARVIS_PYTHON is pinned to '$($env:JARVIS_PYTHON)' and is not a compatible interpreter."
+        Write-Note 'Update or unset that pin before prerequisite installation.'
+        return $null
+    }
+
+    $missing = @(Get-MissingPrerequisiteLabels $state)
+    if (-not (Request-PrerequisiteConsent $missing)) {
+        Write-ManualPrerequisiteHelp $state
+        Write-Note 'Nothing was installed. Run this command again after adding the prerequisites.'
+        return $null
+    }
+
+    [void](Invoke-MissingPrerequisiteInstall $state)
+    $state = Wait-ForPrerequisites
+
+    while (-not $state.Ready) {
+        Write-Err 'The required commands are still unavailable in this terminal.'
+        Write-ManualPrerequisiteHelp $state
+        if ($PrerequisiteMode -eq 'auto' -or -not [Environment]::UserInteractive) {
+            return $null
+        }
+        try {
+            $answer = Read-Host '  Finish any manual installer, then press Enter to re-check; R retries WinGet, Q stops'
+        } catch {
+            return $null
+        }
+        if ($answer -match '^(?i:q|quit)$') { return $null }
+        if ($answer -match '^(?i:r|retry)$') {
+            [void](Invoke-MissingPrerequisiteInstall $state)
+        }
+        $state = Wait-ForPrerequisites
+    }
+
+    Write-PrerequisiteState $state
+    return $state
+}
+# --- prerequisite-bootstrap end --------------------------------------------
 
 # ----------------------------------------------------------------- preflight
 Write-Phase '1/6' 'Prerequisites'
 
-# Python: try `python` first, then `py -3.11`, then `py -3`.
-$pythonExe = $null
-$pythonVer = $null
-foreach ($candidate in @('python', 'py')) {
-    if (Test-PythonVersion $candidate) {
-        $pythonExe = $candidate
-        $info = Test-Tool $candidate
-        if ($info.Version -match '(Python\s+\d+\.\d+\.\d+)') { $pythonVer = $Matches[1] } else { $pythonVer = $candidate }
-        break
-    }
-}
-if (-not $pythonExe) {
-    Write-Err 'Python 3.11+ not found.'
-    # Honesty over a bare "not found": name any too-old interpreter we saw, so
-    # a user staring at a working `python --version` understands the verdict
-    # (3.8 reads "bigger" than 3.11 unless you know Python's version ordering).
-    $reported = @{}
-    foreach ($candidate in @('python', 'py')) {
-        $info = Test-Tool $candidate
-        if ($info.Found -and $info.Version -match 'Python\s+(\d+\.\d+\.\d+)' -and -not $reported[$Matches[1]]) {
-            $reported[$Matches[1]] = $true
-            Write-Note "Closest match: Python $($Matches[1]) (via '$candidate') - too old: Jarvis needs 3.11+,"
-            Write-Note 'and Python versions count 3.8 < 3.9 < 3.10 < 3.11.'
-        }
-    }
-    Write-Note 'Install it from https://www.python.org/downloads/ then re-run this command.'
-    Write-Note '(After install, open a NEW PowerShell window so PATH refreshes.)'
+$prerequisites = Ensure-Prerequisites
+if ($null -eq $prerequisites) {
+    Write-Err 'Prerequisite setup was not completed.'
     exit 1
 }
-Write-Ok "$pythonVer"
-
-# Git
-$gitCheck = Test-Tool 'git'
-if (-not $gitCheck.Found) {
-    Write-Err 'git not found.'
-    Write-Note 'Install from https://git-scm.com/download/win then re-run this command.'
-    exit 1
-}
-Write-Ok 'git'
+$pythonExe = $prerequisites.Python.Exe
+$pythonVer = "Python $($prerequisites.Python.Version)"
 
 # Node.js 18+ -- powers only the OPTIONAL Jarvis-Agent worker CLIs (Claude
 # Code / Codex) that heavy missions delegate to, plus the Node-based
