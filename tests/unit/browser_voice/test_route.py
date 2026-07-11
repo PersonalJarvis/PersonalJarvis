@@ -7,12 +7,22 @@ runs in the finally. The real socket + AudioWorklet are browser-only (slice 3).
 """
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 from fastapi import WebSocketDisconnect
 
 import jarvis.browser_voice.route as route_mod
 from jarvis.browser_voice.route import browser_voice_ws
+from jarvis.core.bus import EventBus
+from jarvis.realtime.protocol import RealtimeEvent
+from jarvis.realtime.session import RealtimeVoiceSession
+from jarvis.sessions.recorder import SessionRecorder
+from jarvis.sessions.store import SessionStore
+from tests.fakes.fake_realtime import (
+    FakeRealtimeProvider,
+    FakeRealtimeToolBridge,
+)
 
 
 class _RecSession:
@@ -188,3 +198,91 @@ async def test_dead_realtime_stream_crosses_to_classic_on_next_audio_frame(monke
     assert classic.controls == [{"type": "audio_start", "sample_rate": 48_000}]
     assert classic.audio == [b"\x01\x00\x02\x00"]
     assert {"type": "mode_fallback", "mode": "pipeline"} in ws.sent_json
+
+
+async def test_realtime_socket_drop_flushes_pending_turn_to_session_store(
+    monkeypatch,
+    tmp_path,
+):
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        bus = EventBus()
+        SessionRecorder(store).attach(bus)
+        provider = FakeRealtimeProvider(
+            "openai-realtime",
+            [
+                RealtimeEvent(
+                    type="input_transcript",
+                    text="Keep this browser turn",
+                    is_final=True,
+                ),
+                RealtimeEvent(
+                    type="output_transcript_delta",
+                    text="This answer arrived before disconnect.",
+                ),
+            ],
+            hold_after_events=True,
+        )
+        cfg = SimpleNamespace(
+            browser_voice=SimpleNamespace(enabled=True),
+            voice=SimpleNamespace(mode="realtime", realtime_tool_mode="direct"),
+            brain=SimpleNamespace(
+                reply_language="en",
+                providers={
+                    "openai-realtime": SimpleNamespace(
+                        model="live-model",
+                        voice="voice",
+                    )
+                },
+            ),
+            stt=SimpleNamespace(language="auto"),
+        )
+        state = SimpleNamespace(config=cfg, bus=bus, brain=None)
+
+        def _build_realtime(**kwargs):
+            return RealtimeVoiceSession(
+                session_id=kwargs["session_id"],
+                send_binary=kwargs["send_binary"],
+                send_json=kwargs["send_json"],
+                config=cfg,
+                provider=provider,
+                bus=bus,
+                surface="browser",
+                tool_bridge=FakeRealtimeToolBridge(),
+            )
+
+        monkeypatch.setattr(route_mod, "_build_browser_session", _build_realtime)
+
+        class _DropAfterProviderEvents(_FakeWS):
+            async def receive(self) -> dict:
+                if self._incoming:
+                    return self._incoming.pop(0)
+                assert provider.session is not None
+                await asyncio.wait_for(provider.session.events_drained.wait(), timeout=1.0)
+                raise WebSocketDisconnect()
+
+        ws = _DropAfterProviderEvents(
+            [
+                {
+                    "type": "websocket.receive",
+                    "text": '{"type":"audio_start","sample_rate":48000}',
+                }
+            ],
+            state=state,
+        )
+
+        await browser_voice_ws(ws)
+
+        sessions = store.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0].hangup_reason == "ws_closed"
+        turns = store.get_turns(sessions[0].id)
+        assert len(turns) == 1
+        assert turns[0].user_text == "Keep this browser turn"
+        assert turns[0].jarvis_text == "This answer arrived before disconnect."
+        assert turns[0].tier == "realtime"
+        assert turns[0].ended_ms is not None
+        assert provider.session is not None and provider.session.closed is True
+    finally:
+        store.close()

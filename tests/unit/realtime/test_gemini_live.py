@@ -57,14 +57,14 @@ async def test_receive_maps_audio_transcripts_interrupt_and_completion():
     assert [event.type for event in events] == [
         "audio_delta",
         "output_transcript_delta",
-        "input_transcript",
         "interrupted",
+        "input_transcript",
         "turn_complete",
     ]
     assert events[0].audio.pcm == b"\x01\x02\x03\x04"
     assert events[0].audio.sample_rate == 24_000
     assert events[1].text == "hello there"
-    assert events[2].text == "what the user said"
+    assert events[3].text == "what the user said"
 
 
 class _FakeConnectCM:

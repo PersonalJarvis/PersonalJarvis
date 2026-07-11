@@ -18,6 +18,7 @@ from uuid import uuid4
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from jarvis.core import config as cfg_mod
+from jarvis.sessions.constants import HANGUP_REALTIME_FALLBACK, HANGUP_WS_CLOSED
 
 log = logging.getLogger("jarvis.browser_voice.route")
 
@@ -167,7 +168,7 @@ async def browser_voice_ws(ws: WebSocket) -> None:
             "browser_voice: realtime session unavailable; using classic pipeline: %s",
             reason,
         )
-        await session.end(reason="realtime_fallback")
+        await session.end(reason=HANGUP_REALTIME_FALLBACK)
         fallback = _build_classic_browser_session(
             state=state,
             cfg=cfg,
@@ -247,5 +248,7 @@ async def browser_voice_ws(ws: WebSocket) -> None:
     finally:
         # A voice hang-up ends the session with its own reason; only a plain
         # socket teardown reports ws_closed.
-        end_reason = str(getattr(session, "hangup_reason", "") or "") or "ws_closed"
+        end_reason = (
+            str(getattr(session, "hangup_reason", "") or "") or HANGUP_WS_CLOSED
+        )
         await session.end(reason=end_reason)

@@ -38,6 +38,7 @@ from jarvis.browser_voice.audio import (
     EnergyEndpointer,
     Resampler,
 )
+from jarvis.sessions.constants import HANGUP_CLIENT_STOP
 
 log = logging.getLogger("jarvis.browser_voice")
 
@@ -155,7 +156,7 @@ class BrowserVoiceSession:
         elif kind == "barge_in":
             await self._barge_in()
         elif kind == "audio_stop":
-            await self.end(reason="client_stop")
+            await self.end(reason=HANGUP_CLIENT_STOP)
 
     def _on_turn_done(self, task: asyncio.Task[None]) -> None:
         """Surface a turn task that died outside _run_turn's own guard (a bare

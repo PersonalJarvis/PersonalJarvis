@@ -20,7 +20,7 @@ from jarvis.core.turn_language import resolve_output_language
 from jarvis.realtime.audio import StreamingPcm16Resampler
 from jarvis.realtime.protocol import RealtimeSessionConfig
 from jarvis.realtime.scrub_gate import ScrubHoldGate
-from jarvis.sessions.constants import HANGUP_VOICE_PATTERN
+from jarvis.sessions.constants import HANGUP_CLIENT_STOP, HANGUP_VOICE_PATTERN
 from jarvis.speech.hangup import HANGUP_RE
 
 log = logging.getLogger(__name__)
@@ -256,6 +256,7 @@ class RealtimeVoiceSession:
         self._release_task: asyncio.Task[None] | None = None
         self._output_samples_sent = 0
         self._ended = False
+        self._browser_session_started = False
         self._provider_errors: list[str] = []
         self._failed = asyncio.Event()
         self._failure_detail = ""
@@ -263,6 +264,8 @@ class RealtimeVoiceSession:
         self._turn_id = ""
         self._turn_index = 0
         self._last_user_text = ""
+        self._user_transcript_parts: list[str] = []
+        self._input_turn_observed = False
         self._output_transcript: list[str] = []
         self._executed_tool_names: set[str] = set()
         self._pending_tool_events: list[Any] = []
@@ -308,14 +311,16 @@ class RealtimeVoiceSession:
                     ),
                 }
             )
-            if self._surface == "browser":
+            if self._surface == "browser" and not self._browser_session_started:
                 await self._publish_browser_session_started()
+                self._browser_session_started = True
             await self._publish_ready()
             self._start_pump()
         elif kind == "barge_in":
+            await self._begin_user_speech_turn()
             await self._barge_in()
         elif kind == "audio_stop":
-            await self.end(reason="client_stop")
+            await self.end(reason=HANGUP_CLIENT_STOP)
 
     def _active_provider_selection(self, provider: Any) -> tuple[str, str]:
         provider_id = str(getattr(provider, "name", "") or "")
@@ -422,6 +427,7 @@ class RealtimeVoiceSession:
             async for event in self._session.receive():
                 if event.type == "input_transcript":
                     transcript = str(event.text or "").strip()
+                    self._input_turn_observed = True
                     new_language = self._language
                     if transcript:
                         new_language = self._resolve_lang(text=transcript)
@@ -444,13 +450,19 @@ class RealtimeVoiceSession:
                     if transcript or event.is_final:
                         mark_phase(LatencyPhase.REALTIME_INPUT_COMMITTED)
                     if transcript:
-                        self._last_user_text = transcript
+                        if event.is_final:
+                            self._user_transcript_parts.append(transcript)
+                            self._last_user_text = " ".join(
+                                self._user_transcript_parts
+                            ).strip()
+                        elif not self._user_transcript_parts:
+                            self._last_user_text = transcript
                     if self._tool_bridge is not None and event.is_final and transcript:
-                        await self._tool_bridge.handle_user_transcript(transcript)
-                    if (transcript or event.is_final) and not self._turn_id:
-                        self._turn_id = str(uuid4())
-                        self._turn_index += 1
-                        await self._publish_turn_started()
+                        await self._tool_bridge.handle_user_transcript(
+                            self._last_user_text
+                        )
+                    if transcript or event.is_final:
+                        await self._ensure_turn_started()
                     if transcript:
                         await self._publish_transcription(
                             transcript, bool(event.is_final)
@@ -506,6 +518,7 @@ class RealtimeVoiceSession:
                         await self._session.request_response()
                         self._response_requested_for_turn = True
                 elif event.type == "output_transcript_delta" and event.text:
+                    await self._ensure_turn_started()
                     mark_phase(LatencyPhase.REALTIME_FIRST_TRANSCRIPT)
                     display = await self._gate.feed_transcript(event.text)
                     if self._gate.hard_leak_pending():
@@ -529,6 +542,7 @@ class RealtimeVoiceSession:
                     for chunk in self._gate.release_available():
                         await self._emit_audio(chunk)
                 elif event.type == "audio_delta" and event.audio is not None:
+                    await self._ensure_turn_started()
                     mark_phase(LatencyPhase.REALTIME_FIRST_AUDIO)
                     self._output_active = True
                     released = await self._gate.push_audio(event.audio)
@@ -540,8 +554,10 @@ class RealtimeVoiceSession:
                             name=f"rt-hold-{self.session_id}",
                         )
                 elif event.type in {"speech_started", "interrupted"}:
+                    await self._begin_user_speech_turn()
                     await self._barge_in()
                 elif event.type == "tool_call":
+                    await self._ensure_turn_started()
                     if str(getattr(event, "tool_name", "") or "") == "end_call":
                         # Session lifecycle, not a bridge tool: works without
                         # a tool bridge and must not be held back by the
@@ -698,6 +714,29 @@ class RealtimeVoiceSession:
         except Exception:  # noqa: BLE001, S110
             pass
 
+    async def _ensure_turn_started(self) -> None:
+        """Open one explicit turn as soon as either side produces turn evidence."""
+        if self._turn_id:
+            return
+        self._turn_id = str(uuid4())
+        self._turn_index += 1
+        await self._publish_turn_started()
+
+    def _turn_has_activity(self) -> bool:
+        return bool(
+            self._input_turn_observed
+            or self._last_user_text
+            or self._output_transcript
+            or self._output_samples_sent
+            or self._executed_tool_names
+        )
+
+    async def _begin_user_speech_turn(self) -> None:
+        """Close an interrupted reply before opening the user's next turn."""
+        if self._turn_id and self._turn_has_activity():
+            await self._publish_turn_completed()
+        await self._ensure_turn_started()
+
     async def _publish_turn_started(self) -> None:
         if self._bus is None:
             return
@@ -717,8 +756,7 @@ class RealtimeVoiceSession:
 
     async def _publish_turn_completed(self) -> None:
         if not self._turn_id:
-            self._output_transcript.clear()
-            self._last_user_text = ""
+            self._reset_turn_tracking()
             return
         answer = "".join(self._output_transcript).strip()
         delegate_state = self._delegate_turns.pop(self._turn_id, None)
@@ -759,10 +797,16 @@ class RealtimeVoiceSession:
                 )
             except Exception:  # noqa: BLE001, S110
                 pass
+        self._reset_turn_tracking()
+
+    def _reset_turn_tracking(self) -> None:
         self._turn_id = ""
         self._last_user_text = ""
+        self._user_transcript_parts.clear()
+        self._input_turn_observed = False
         self._output_transcript.clear()
         self._executed_tool_names.clear()
+        self._turn_final_text = ""
 
     def _declared_tools(self) -> tuple[dict[str, Any], ...]:
         if self._delegate_enabled:
@@ -1068,13 +1112,18 @@ class RealtimeVoiceSession:
             if not task.done():
                 task.cancel()
         self._delegate_tasks.clear()
-        self._delegate_turns.clear()
         if self._pump_task is not None and not self._pump_task.done():
             self._pump_task.cancel()
             try:
                 await self._pump_task
             except asyncio.CancelledError:
                 pass
+        # A provider/socket can disappear after either side has already emitted
+        # transcript text but before its turn_complete marker. Freeze the
+        # accumulated values into VoiceTurnCompleted before the logical session
+        # end lets SessionRecorder finalize the row.
+        await self._publish_turn_completed()
+        self._delegate_turns.clear()
         if self._session is not None:
             try:
                 await self._session.close()
@@ -1085,7 +1134,11 @@ class RealtimeVoiceSession:
                 await self._tool_bridge.close()
             except Exception:  # noqa: BLE001, S110 — teardown is best-effort
                 pass
-        if self._surface == "browser" and self._bus is not None:
+        if (
+            self._surface == "browser"
+            and self._browser_session_started
+            and self._bus is not None
+        ):
             try:
                 from jarvis.core.events import VoiceSessionEnded
 
@@ -1093,7 +1146,7 @@ class RealtimeVoiceSession:
                     VoiceSessionEnded(
                         source_layer=f"realtime.{self.active_provider}",
                         session_id=self.session_id,
-                        hangup_reason=reason or "client_stop",
+                        hangup_reason=reason or HANGUP_CLIENT_STOP,
                         turn_count=self._turn_index,
                     )
                 )

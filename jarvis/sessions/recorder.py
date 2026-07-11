@@ -41,14 +41,13 @@ from jarvis.core.bus import EventBus
 from jarvis.core.events import (
     ActionExecuted,
     AudioOutFirst,
-    BrainTTFT,
     BrainTurnCompleted,
     BrainTurnStarted,
     Event,
-    ListeningStarted,
-    ResponseGenerated,
     JarvisAgentTaskCompleted,
     JarvisAgentTaskStarted,
+    ListeningStarted,
+    ResponseGenerated,
     SpeechSpoken,
     SystemStateChanged,
     ToolCallCompleted,
@@ -72,6 +71,7 @@ _RAW_EVENT_KINDS: frozenset[str] = frozenset(
         "WakeWordDetected",
         "ListeningStarted",
         "TranscriptFinal",
+        "TranscriptionUpdate",
         "BrainTurnStarted",
         "BrainTurnCompleted",
         "BrainTTFT",
@@ -138,6 +138,10 @@ class _TurnState:
     # (BrainTurnCompleted.finish_reason == "voice_confirm_pending"): the reply
     # is a pending yes/no question, not a normal answer.
     awaiting_confirmation: bool = False
+    # Realtime emits an authoritative VoiceTurnStarted/VoiceTurnCompleted pair.
+    # Supervisor state changes may happen between those two events and must not
+    # close the row early under a recorder-generated boundary.
+    uses_explicit_lifecycle: bool = False
     finalized: bool = False
 
 
@@ -353,6 +357,7 @@ class SessionRecorder:
             turn_id=event.turn_id,
             idx=idx,
             started_ms=ts_ms,
+            uses_explicit_lifecycle=True,
         )
         self._store.upsert_turn(
             turn_id=event.turn_id,
@@ -540,7 +545,12 @@ class SessionRecorder:
             # Turn boundary: this turn is complete. Not finalizing here
             # would be wrong — otherwise values would accumulate across all
             # turns of a multi-turn session and only the last turn stays visible.
-            self._finalize_current_turn(end_ms=ts_ms)
+            # Classic turns infer their boundary from SPEAKING -> LISTENING.
+            # Realtime publishes its explicit completion just after the desktop
+            # callback makes this transition. Closing it here would make that
+            # completion miss its turn_id and create a response-only auto row.
+            if not t.uses_explicit_lifecycle:
+                self._finalize_current_turn(end_ms=ts_ms)
 
     def _on_brain_started(self, event: BrainTurnStarted) -> None:
         # Defensive: no hard assert — on race conditions between
@@ -568,7 +578,7 @@ class SessionRecorder:
     def _on_worker_task_started(self, event: JarvisAgentTaskStarted) -> None:
         """Jarvis-Agent task spawn — set tier + provider/model for telemetry.
 
-        Welle-4-Migration: formerly ``_on_sub_jarvis_started`` with
+        Wave 4 migration: formerly ``_on_sub_jarvis_started`` with
         ``SubJarvisStarted``-Event. Sub-Jarvis tier was replaced by the worker
         harness (see docs/openclaw-bridge.md §11). Schema preserved 1:1.
 
@@ -714,7 +724,7 @@ class SessionRecorder:
 
 
 # VoiceTurnRow.tier literal — keep in sync with jarvis/sessions/models.py.
-# Welle-4 migration: the ``sub_jarvis`` legacy value is still accepted for
+# Wave 4 migration: the ``sub_jarvis`` legacy value is still accepted for
 # backwards compatibility with old voice sessions in the DB; new turns
 # use ``openclaw``.
 _VALID_TIERS: frozenset[str] = frozenset(

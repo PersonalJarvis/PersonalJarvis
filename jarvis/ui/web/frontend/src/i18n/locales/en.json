@@ -1739,6 +1739,9 @@
     "unit_hour": "h",
     "duration_running": "running",
     "hangup_hotkey": "Hotkey",
+    "hangup_client_stop": "Stopped",
+    "hangup_ws_closed": "Browser closed",
+    "hangup_realtime_fallback": "Switched to classic",
     "hangup_idle_timeout": "Timeout",
     "hangup_shutdown": "Shutdown"
   },

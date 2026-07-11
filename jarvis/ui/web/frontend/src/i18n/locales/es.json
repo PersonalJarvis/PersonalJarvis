@@ -1738,6 +1738,9 @@
     "unit_hour": "h",
     "duration_running": "en curso",
     "hangup_hotkey": "Atajo",
+    "hangup_client_stop": "Detenido",
+    "hangup_ws_closed": "Navegador cerrado",
+    "hangup_realtime_fallback": "Cambio al modo clásico",
     "hangup_idle_timeout": "Tiempo de espera",
     "hangup_shutdown": "Apagado"
   },

@@ -113,6 +113,13 @@ class _GeminiLiveSession:
                         type="output_transcript_delta", text=output_text
                     )
 
+                # The interrupted flag is the boundary between the partial
+                # assistant reply above and any new user transcript carried by
+                # the same server-content message. Emit it first so the shared
+                # session closes the old turn before adopting the new words.
+                if bool(getattr(content, "interrupted", False)):
+                    yield _ProviderEvent(type="interrupted")
+
                 input_transcription = getattr(content, "input_transcription", None)
                 input_text = str(getattr(input_transcription, "text", "") or "")
                 if input_text:
@@ -120,8 +127,6 @@ class _GeminiLiveSession:
                         type="input_transcript", text=input_text, is_final=True
                     )
 
-                if bool(getattr(content, "interrupted", False)):
-                    yield _ProviderEvent(type="interrupted")
                 if bool(getattr(content, "turn_complete", False)) and not function_calls:
                     yield _ProviderEvent(type="turn_complete")
 
