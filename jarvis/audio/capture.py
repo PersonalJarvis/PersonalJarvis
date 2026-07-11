@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncIterator, Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from loguru import logger as _log
@@ -217,6 +217,55 @@ def _os_default_input_name(
     return name
 
 
+# Resolve-result cache: (device_spec, priority) -> (resolved, monotonic_ts).
+# WHY: resolving "auto-headset" enumerates every audio device (~0.4s on
+# Windows) and used to run on EVERY MicrophoneCapture construction — the
+# dominant share of the wake→session mic handover gap, during which the
+# user's first words after "Hey Jarvis" were simply not captured (live
+# forensic 2026-07-11: bar visible instantly, speech only heard ~0.5-0.7s
+# later). A capture whose stream is delivering frames TOUCHES its cache
+# entry every watchdog tick, so the session mic that opens <1s after the
+# wake mic closed reuses the proven device instantly. Freshness window is
+# deliberately short (a few seconds past the last live frame) and any
+# open FAILURE invalidates, so hot-plug/device-switch behaviour falls back
+# to a full fresh resolve exactly as before.
+_RESOLVE_CACHE: dict[tuple[Any, tuple[str, ...]], tuple[Any, float]] = {}
+_RESOLVE_CACHE_FRESH_S = 5.0
+
+
+def _resolve_cache_key(
+    device: int | str | None, priority: tuple[str, ...]
+) -> tuple[Any, tuple[str, ...]]:
+    return (device, priority)
+
+
+def _touch_resolve_cache(
+    device_spec: int | str | None, priority: tuple[str, ...], resolved: Any
+) -> None:
+    """Mark ``resolved`` as live-and-working for ``device_spec`` right now."""
+    _RESOLVE_CACHE[_resolve_cache_key(device_spec, priority)] = (
+        resolved,
+        time.monotonic(),
+    )
+
+
+def _invalidate_resolve_cache() -> None:
+    """Drop every cached resolve — called on open failures/stream stalls."""
+    _RESOLVE_CACHE.clear()
+
+
+def _cached_resolve(
+    device_spec: int | str | None, priority: tuple[str, ...]
+) -> Any | None:
+    entry = _RESOLVE_CACHE.get(_resolve_cache_key(device_spec, priority))
+    if entry is None:
+        return None
+    resolved, ts = entry
+    if time.monotonic() - ts > _RESOLVE_CACHE_FRESH_S:
+        return None
+    return resolved
+
+
 def _resolve_input_device(
     device: int | str | None,
     priority: Sequence[str] | None = None,
@@ -392,7 +441,23 @@ class MicrophoneCapture:
         # consulted BEFORE the generic _INPUT_PRIORITY default when resolving
         # "auto-headset". Empty = today's generic behavior.
         self._device_priority: tuple[str, ...] = tuple(device_priority or ())
-        self._device = _resolve_input_device(device, self._device_priority)
+        # Original spec (e.g. "auto-headset") kept for the resolve cache; the
+        # cache only serves STRING specs — ints/None resolve instantly anyway.
+        self._device_spec: int | str | None = device
+        cached = (
+            _cached_resolve(device, self._device_priority)
+            if isinstance(device, str)
+            else None
+        )
+        if cached is not None:
+            _log.info(
+                "Mic-Resolve: cache hit for '{}' -> {} (device live moments ago).",
+                device,
+                cached,
+            )
+            self._device = cached
+        else:
+            self._device = _resolve_input_device(device, self._device_priority)
         self._sample_rate = sample_rate
         self._blocksize = blocksize
         self._channels = channels
@@ -501,6 +566,10 @@ class MicrophoneCapture:
                 stream.start()
                 self._stream = stream
                 self._device = attempt
+                if isinstance(self._device_spec, str):
+                    _touch_resolve_cache(
+                        self._device_spec, self._device_priority, attempt
+                    )
                 _log.info(
                     "Mic opened (device={}, sr={}, blocksize={}, dtype={}).",
                     attempt,
@@ -511,6 +580,9 @@ class MicrophoneCapture:
                 return
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
+                # A failed open means the cached/resolved device may be gone —
+                # force the next construction through a fresh full resolve.
+                _invalidate_resolve_cache()
                 _log.warning(
                     "Mic-Open on device={} failed ({}); trying next fallback.",
                     attempt,
@@ -548,7 +620,16 @@ class MicrophoneCapture:
                 return
             elapsed = time.monotonic() - self._last_chunk_monotonic
             if elapsed <= self._STALL_THRESHOLD_S:
+                # The stream is delivering — keep the resolve cache fresh so a
+                # capture constructed moments after this one closes (the
+                # wake→session handover) skips the ~0.4s device enumeration.
+                if isinstance(self._device_spec, str):
+                    _touch_resolve_cache(
+                        self._device_spec, self._device_priority, self._device
+                    )
                 continue
+            # Stalled: whatever we knew about the device landscape is suspect.
+            _invalidate_resolve_cache()
             self._restart_count += 1
             _log.warning(
                 "Mic stall detected ({:.1f}s without a frame) — restart #{} (device={}).",
