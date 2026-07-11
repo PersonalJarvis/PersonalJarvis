@@ -11,6 +11,12 @@ This bridge listens for ``TranscriptFinal`` and ``ResponseGenerated`` on
 the bus, correlates them as one voice turn, and feeds the user text to
 the WikiCurator via two complementary paths:
 
+The realtime engine never emits ``TranscriptFinal``/``MessageSent`` — its
+one signal carrying both final texts of a turn is ``VoiceTurnCompleted``
+(tier="realtime"). The bridge consumes that event directly (no pairing
+state needed) and routes it through the SAME two paths below, so both
+voice engines share one ingest contract.
+
 1. **Ack path (B5, narrow):** when the brain reply contains an
    acknowledgement keyword ("notiert", "vermerkt", ...). Mirrors the
    user-visible contract -- if the brain says it noted the fact, the
@@ -44,7 +50,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from jarvis.core.bus import EventBus
-from jarvis.core.events import MessageSent, ResponseGenerated, TranscriptFinal
+from jarvis.core.events import (
+    MessageSent,
+    ResponseGenerated,
+    TranscriptFinal,
+    VoiceTurnCompleted,
+)
 from jarvis.memory.wiki.telemetry import telemetry
 
 if TYPE_CHECKING:
@@ -150,7 +161,7 @@ class VoiceFactBridge:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """Subscribe to TranscriptFinal, MessageSent and ResponseGenerated."""
+        """Subscribe to the turn events of both voice engines."""
         if self._started:
             return
         self._unsubs.append(
@@ -161,6 +172,9 @@ class VoiceFactBridge:
         )
         self._unsubs.append(
             self._bus.subscribe(ResponseGenerated, self._on_response_generated)
+        )
+        self._unsubs.append(
+            self._bus.subscribe(VoiceTurnCompleted, self._on_voice_turn_completed)
         )
         self._started = True
         log.info(
@@ -231,26 +245,63 @@ class VoiceFactBridge:
         )
 
     async def _on_response_generated(self, event: ResponseGenerated) -> None:
-        """Run ack-path first, then aggressive-path. At most one dispatch fires."""
+        """Pair the pending user text with the brain reply and ingest."""
         reply_raw = (getattr(event, "text", "") or "").strip()
-        jarvis_text = reply_raw.lower()
-        if not jarvis_text:
+        if not reply_raw:
             return
 
         pending = self._pending
         if not pending.user_text:
             return
+        if self._decide_and_dispatch(pending, reply_raw):
+            self._pending = _PendingTurn()
+
+    async def _on_voice_turn_completed(self, event: VoiceTurnCompleted) -> None:
+        """Ingest a REALTIME turn — both final texts arrive on this one event.
+
+        The realtime engine emits ``TranscriptionUpdate`` (never
+        ``TranscriptFinal``/``MessageSent``), so the pairing path above stays
+        silent for it. Pipeline turns (any other tier) are already ingested
+        via that pairing and MUST be ignored here — reacting to both signals
+        would double-extract every pipeline turn. The turn-hash gate in
+        :meth:`_dispatch` additionally dedupes any residual overlap.
+
+        Unlike the pairing path, an empty reply does not block ingestion:
+        a realtime turn can end without an output transcript (barge-in) and
+        the fact lives in the user text.
+        """
+        if (getattr(event, "tier", "") or "") != "realtime":
+            return
+        user_text = (getattr(event, "user_text", "") or "").strip()
+        if not user_text:
+            return
+        telemetry.inc("voice_turns_seen")
+        pending = _PendingTurn(
+            user_text=user_text,
+            user_language=getattr(event, "user_lang", "") or "",
+            captured_at_ns=getattr(event, "timestamp_ns", 0) or 0,
+            origin="realtime",
+        )
+        reply_raw = (getattr(event, "jarvis_text", "") or "").strip()
+        self._decide_and_dispatch(pending, reply_raw)
+
+    def _decide_and_dispatch(self, pending: _PendingTurn, reply_raw: str) -> bool:
+        """Run ack-path first, then aggressive-path. At most one dispatch fires.
+
+        Returns ``True`` when the turn was consumed (dispatched) so callers
+        holding pairing state know to clear it.
+        """
+        jarvis_text = reply_raw.lower()
 
         # ---- Path 1: ack-keyword match -----------------------------------
-        if any(kw in jarvis_text for kw in _ACK_KEYWORDS):
+        if jarvis_text and any(kw in jarvis_text for kw in _ACK_KEYWORDS):
             if len(pending.user_text) < _MIN_ACK_USER_CHARS:
                 log.debug(
                     "VoiceFactBridge: ack-keyword matched but user text too "
                     "short (len=%d).",
                     len(pending.user_text),
                 )
-                return
-            self._pending = _PendingTurn()
+                return False
             telemetry.inc("voice_turns_ingested_ack")
             log.info(
                 "VoiceFactBridge[ack]: brain acked storage, capturing user text "
@@ -258,13 +309,13 @@ class VoiceFactBridge:
                 len(pending.user_text), pending.user_language, pending.origin,
             )
             self._dispatch(pending, reply_raw, source_kind=f"{pending.origin}-fact")
-            return
+            return True
 
         # ---- Path 2: aggressive ingest -----------------------------------
         if not self._cfg.aggressive_mode:
-            return
+            return False
         if len(pending.user_text) < self._cfg.min_user_chars:
-            return
+            return False
         if not self._aggressive_rate_limit_ok():
             log.debug(
                 "VoiceFactBridge[aggressive]: rate-limited (last ingest "
@@ -272,9 +323,8 @@ class VoiceFactBridge:
                 (time.monotonic_ns() - self._last_aggressive_ns) / 1e9,
                 self._cfg.rate_limit_seconds,
             )
-            return
+            return False
 
-        self._pending = _PendingTurn()
         self._last_aggressive_ns = time.monotonic_ns()
         telemetry.inc("voice_turns_ingested_aggressive")
         log.info(
@@ -284,6 +334,7 @@ class VoiceFactBridge:
             len(pending.user_text), pending.user_language, pending.origin,
         )
         self._dispatch(pending, reply_raw, source_kind=f"{pending.origin}-aggressive")
+        return True
 
     # ------------------------------------------------------------------
     # ingest plumbing
