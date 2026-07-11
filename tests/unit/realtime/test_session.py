@@ -821,3 +821,50 @@ async def test_ordinary_speech_does_not_hang_up():
     assert sess.hangup_reason == ""
     assert _hangup_jsons(jsons) == []
     assert provider.session.response_requests == 1
+
+
+# --- Tool-role directive in session instructions ----------------------------
+
+
+@pytest.mark.asyncio
+async def test_instructions_carry_tool_role_when_bridge_active():
+    """A session WITH action tools must tell the model to use them — the
+    live defect was a model that had ~25 declared functions but instructions
+    that never mentioned a tool role, so it claimed it could not act."""
+    provider = FakeProvider([RealtimeEvent(type="turn_complete")])
+    sess = RealtimeVoiceSession(
+        session_id="tool-role-on",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+        tool_bridge=FakeToolBridge(),
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    instructions = provider.opened_with.instructions
+    assert "call the matching function" in instructions
+    assert "background-agent spawn" in instructions
+
+
+@pytest.mark.asyncio
+async def test_instructions_omit_tool_role_without_bridge():
+    provider = FakeProvider([RealtimeEvent(type="turn_complete")])
+    sess = RealtimeVoiceSession(
+        session_id="tool-role-off",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert "call the matching function" not in provider.opened_with.instructions

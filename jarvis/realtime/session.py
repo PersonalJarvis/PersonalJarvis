@@ -51,12 +51,25 @@ _REALTIME_SAFETY_APPENDIX = (
 _LANGUAGE_NAMES = {"de": "German", "en": "English", "es": "Spanish"}
 
 
+_TOOL_ROLE_DIRECTIVE = (
+    "You have live function tools that act on the user's Jarvis app and "
+    "computer. When the user asks you to DO something — create a file, write "
+    "code, research, start background work, open a view, change a setting, "
+    "control the computer — call the matching function instead of claiming "
+    "you cannot act. Heavy multi-minute work (building files, coding, deep "
+    "research) belongs to the background-agent spawn function: start it, "
+    "then briefly confirm what you started. If a function asks for a spoken "
+    "confirmation, relay the question and wait for the user's answer."
+)
+
+
 def _session_instructions(
     language: str,
     *,
     provider: str = "",
     model: str = "",
     language_is_pinned: bool = True,
+    has_action_tools: bool = False,
 ) -> str:
     from jarvis.brain.persona_loader import load_effective_persona_prompt
 
@@ -72,6 +85,7 @@ def _session_instructions(
         )
     parts = [
         persona,
+        _TOOL_ROLE_DIRECTIVE if has_action_tools else "",
         _REALTIME_SAFETY_APPENDIX,
         (
             "Runtime identity: this voice session is using the Realtime engine"
@@ -149,6 +163,21 @@ class RealtimeVoiceSession:
             except Exception:  # noqa: BLE001 — conversation still works without tools
                 log.warning("Realtime tool bridge is unavailable", exc_info=True)
         self._tool_bridge = tool_bridge
+        # from_brain returns None SILENTLY when the brain object carries no
+        # _tools/_tool_executor_ref (e.g. a bare callback was passed) — say so,
+        # or a tool-less session is indistinguishable from a healthy one.
+        if tool_bridge is not None:
+            log.info(
+                "realtime[%s] tool bridge active: %d tools",
+                session_id,
+                len(tool_bridge.declarations),
+            )
+        elif brain is not None:
+            log.warning(
+                "realtime[%s] brain provided but NO tool bridge — object has "
+                "no usable _tools/_tool_executor_ref; session runs tool-less",
+                session_id,
+            )
         self._gate = ScrubHoldGate(self._language)
         self._session: Any = None
         self._pump_task: asyncio.Task[None] | None = None
@@ -243,6 +272,7 @@ class RealtimeVoiceSession:
                     provider=str(getattr(provider, "name", "") or ""),
                     model=model,
                     language_is_pinned=self._language_is_pinned,
+                    has_action_tools=self._tool_bridge is not None,
                 ),
                 language=self._language,
                 language_is_pinned=self._language_is_pinned,
@@ -342,6 +372,7 @@ class RealtimeVoiceSession:
                                 provider=self.active_provider,
                                 model=self._active_model,
                                 language_is_pinned=True,
+                                has_action_tools=self._tool_bridge is not None,
                             ),
                             language=new_language,
                         )
