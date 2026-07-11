@@ -280,6 +280,22 @@ cannot break:
   `jarvis/core/config_writer.py` (lock + tempfile + BOM-safe, AP-7). The
   self-mod pipeline (Allowlist → Pre-Validate → Backup → replace → sync
   reload-test → Rollback → Audit) is non-negotiable (AP-13/14).
+- **CLI-first feature contract (maintainer mandate 2026-07-11):** every new
+  user-facing capability ships its actions as REST routes under
+  `jarvis/ui/web/*_routes.py`, mounted + tagged (enforced fail-closed by
+  `scripts/ci/check_cli_coverage.py`) — which makes each action a
+  `jarvis api <tag> <op>` CLI command AUTOMATICALLY, with `--json`, `--yes`
+  and `--dry-run` for free. A feature that exists only in the UI, only as an
+  internal function, or only as a brain tool is NOT done. On top of that
+  floor: voice/agent-relevant actions add a Command-Registry entry
+  (`jarvis/commands/registry.py` — becomes a flat brain tool, appears in
+  `GET /api/commands`, and lands in the generated
+  `docs/commands-reference.md`; drift-gated by
+  `gen_commands_reference.py --check`); destructive routes declare
+  `openapi_extra={"x-jarvis-dangerous": True}` (gated by
+  `check_danger_metadata.py`); high-value routes get a curated
+  `jarvis <group> <command>` (the `generate-cli-command` skill is the
+  definition-of-done checklist).
 - **Multi-layer enum drift:** any value crossing Python ↔ SQL ↔ Pydantic ↔ TS
   ↔ UI uses the five-layer pattern (`docs/anti-drift-three-layer.md`) + a
   parity test, preemptively (BUG-008 recurred 4×).
