@@ -9,7 +9,7 @@ import { useT } from "@/i18n";
  * Per-page "Open in Obsidian" button.
  *
  * Hands editing off to the real Obsidian desktop app via the
- * `obsidian://open?vault=…&file=…` URL scheme. There is no reliable way
+ * `obsidian://open?path=…` URL scheme. There is no reliable way
  * to detect from the browser whether the URL handler is registered, so
  * we fire a fallback toast 800 ms after the click to inform the user
  * what was attempted — if Obsidian launched, they'll see the file open;
@@ -19,6 +19,8 @@ import { useT } from "@/i18n";
  * "Open vault in Obsidian" button in the wiki tab header).
  */
 export interface ObsidianButtonProps {
+  /** Absolute configured Jarvis vault root. */
+  vaultRoot: string;
   /** Vault-relative POSIX path, e.g. `"entities/harald.md"`. Empty opens the root. */
   vaultRelPath: string;
   /** Use the compact "sm" button size — useful inside dense panels. */
@@ -31,6 +33,7 @@ export interface ObsidianButtonProps {
 export const FALLBACK_TOAST_DELAY_MS = 800;
 
 export function ObsidianButton({
+  vaultRoot,
   vaultRelPath,
   size = "sm",
   label,
@@ -39,7 +42,7 @@ export function ObsidianButton({
   const pushToast = useEventStore((s) => s.pushToast);
 
   const handleClick = useCallback(() => {
-    const url = buildObsidianUrl(vaultRelPath);
+    const url = buildObsidianUrl(vaultRoot, vaultRelPath);
     // Trigger the URL handler. We use `window.location.assign` rather
     // than `window.open` because the latter is blocked by popup blockers
     // and pywebview's window-open hook; `assign` invokes the protocol
@@ -73,7 +76,7 @@ export function ObsidianButton({
         );
       }
     }, FALLBACK_TOAST_DELAY_MS);
-  }, [pushToast, vaultRelPath]);
+  }, [pushToast, t, vaultRelPath, vaultRoot]);
 
   const buttonLabel =
     label ?? (vaultRelPath ? t("obsidian_button.open_in_obsidian") : t("obsidian_button.open_vault_in_obsidian"));
@@ -85,7 +88,7 @@ export function ObsidianButton({
       size={size}
       onClick={handleClick}
       className="gap-1.5"
-      title={vaultRelPath || "obsidian-vault"}
+      title={vaultRelPath || vaultRoot}
     >
       <ExternalLink className="h-3.5 w-3.5" aria-hidden />
       <span>{buttonLabel}</span>

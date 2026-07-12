@@ -317,17 +317,43 @@ def _normalize_for_compare(path: Path) -> str:
 
 
 def is_vault_registered(vaults: list[VaultEntry], expected_vault_path: Path) -> bool:
-    """Return True iff ``expected_vault_path`` is among the registered vaults.
+    """Return True when Obsidian can reach ``expected_vault_path``.
 
-    Comparison is case-insensitive (Windows) and trailing-separator
-    tolerant. Both sides are passed through ``Path.resolve()`` so
-    relative-vs-absolute inputs match correctly.
+    An exact match is reachable, but so is a Jarvis-owned subdirectory inside
+    an already-registered user vault. The latter is the shape created by the
+    setup wizard's ``mode="existing"`` flow: Obsidian registers
+    ``<user-vault>`` while Jarvis writes under ``<user-vault>/Jarvis``.
+    """
+    return find_registered_vault(vaults, expected_vault_path) is not None
+
+
+def find_registered_vault(
+    vaults: list[VaultEntry], expected_vault_path: Path,
+) -> VaultEntry | None:
+    """Return the most specific registered vault containing ``expected``.
+
+    This mirrors Obsidian's URI ``path`` resolution rule and keeps status
+    detection aligned with deep links when nested vault candidates exist.
     """
     expected_norm = _normalize_for_compare(expected_vault_path)
+    matches: list[tuple[int, VaultEntry]] = []
     for entry in vaults:
-        if _normalize_for_compare(entry.path) == expected_norm:
-            return True
-    return False
+        registered_norm = _normalize_for_compare(entry.path)
+        try:
+            contains = (
+                registered_norm == expected_norm
+                or os.path.commonpath((registered_norm, expected_norm)) == registered_norm
+            )
+        except ValueError:
+            # Different Windows drives (or otherwise incompatible roots) cannot
+            # contain one another.
+            contains = False
+        if contains:
+            matches.append((len(registered_norm), entry))
+    if not matches:
+        return None
+    matches.sort(key=lambda item: item[0], reverse=True)
+    return matches[0][1]
 
 
 # ---------------------------------------------------------------------------

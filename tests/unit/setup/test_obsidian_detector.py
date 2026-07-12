@@ -14,12 +14,12 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.setup import obsidian as mod
 from jarvis.setup.obsidian import (
     ObsidianDetection,
     ObsidianVaultsState,
     VaultEntry,
     detect_obsidian,
+    find_registered_vault,
     is_vault_registered,
     read_obsidian_vaults,
 )
@@ -315,6 +315,30 @@ def test_is_vault_registered_trailing_slash_robust() -> None:
 def test_is_vault_registered_empty_vault_list() -> None:
     """An empty registry is trivially a no-match."""
     assert is_vault_registered([], Path(r"C:\anything")) is False
+
+
+def test_is_vault_registered_for_subdirectory_of_registered_vault(
+    tmp_path: Path,
+) -> None:
+    """Existing-vault mode keeps Jarvis in a reachable child directory."""
+    parent = tmp_path / "Notes"
+    expected = parent / "Jarvis"
+    vaults = [VaultEntry(id="parent", path=parent)]
+
+    assert is_vault_registered(vaults, expected) is True
+    assert find_registered_vault(vaults, expected) == vaults[0]
+
+
+def test_find_registered_vault_prefers_most_specific_container(tmp_path: Path) -> None:
+    root = tmp_path / "Notes"
+    nested = root / "Team"
+    expected = nested / "Jarvis"
+    vaults = [
+        VaultEntry(id="root", path=root),
+        VaultEntry(id="nested", path=nested),
+    ]
+
+    assert find_registered_vault(vaults, expected) == vaults[1]
 
 
 # ---------------------------------------------------------------------------

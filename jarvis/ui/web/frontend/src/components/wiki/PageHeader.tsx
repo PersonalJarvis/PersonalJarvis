@@ -25,6 +25,7 @@ interface PageHeaderProps {
   kind: WikiKind;
   title: string;
   frontmatter: Record<string, string | string[]>;
+  vaultRoot: string;
   vaultRelPath: string;
 }
 
@@ -52,6 +53,7 @@ export function PageHeader({
   kind,
   title,
   frontmatter,
+  vaultRoot,
   vaultRelPath,
 }: PageHeaderProps) {
   const pills = buildPills(frontmatter);
@@ -97,7 +99,7 @@ export function PageHeader({
           <ObsidianButtonPlaceholder vaultRelPath={vaultRelPath} />
         }
       >
-        <ObsidianButton vaultRelPath={vaultRelPath} />
+        <ObsidianButton vaultRoot={vaultRoot} vaultRelPath={vaultRelPath} />
       </Suspense>
     </header>
   );

@@ -117,6 +117,7 @@ export function PageRenderer({ slug, onWikilinkClick }: PageRendererProps) {
         kind={kind}
         title={title}
         frontmatter={frontmatter}
+        vaultRoot={treeQuery.data?.vault_root ?? ""}
         vaultRelPath={vaultRelPath}
       />
 

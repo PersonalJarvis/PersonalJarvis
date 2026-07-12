@@ -11,7 +11,7 @@
  *      Jarvis vault" (default) or "use my existing vault", the latter fed
  *      by ``GET /api/setup/obsidian/vaults`` and enabled only once that
  *      list is non-empty.
- *   3. Live-test the ``obsidian://open?vault=…`` URL scheme. Also shows the
+ *   3. Live-test the ``obsidian://open?path=…`` URL scheme. Also shows the
  *      ``active_vault_root`` returned by step 2 and, when the backend
  *      reports ``restart_required`` (always true for the "existing" vault
  *      choice — the running wiki index still targets the old vault root
@@ -26,7 +26,7 @@
  * Sub-Agent 6 will wire `onComplete` into the first-run flag; we expose
  * the slot but do not act on it here.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, ExternalLink, Loader2, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,7 @@ import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import type { ObsidianStatus } from "@/types/setup";
 import {
+  buildObsidianUrl,
   fetchObsidianVaults,
   registerObsidianVault,
   type ObsidianVaultInfo,
@@ -75,26 +76,6 @@ interface RegisterResponse {
 }
 
 const RESTART_URL = "/api/settings/restart-app";
-
-/**
- * Extract the final segment of the vault path so the
- * ``obsidian://open?vault=`` URL scheme can target it by name.
- *
- * Handles both POSIX and Windows separators. Decodes percent-encoding
- * once because the path comes through ``str(Path)`` on the backend and
- * is otherwise opaque.
- */
-function deriveVaultName(vaultPath: string): string {
-  if (!vaultPath) return "";
-  const trimmed = vaultPath.replace(/[\\/]+$/, "");
-  const segments = trimmed.split(/[\\/]/);
-  const last = segments[segments.length - 1] ?? "";
-  try {
-    return decodeURIComponent(last);
-  } catch {
-    return last;
-  }
-}
 
 /** Decide which step should be the initial active step. */
 function decideInitialStep(status: ObsidianStatus): StepId {
@@ -410,10 +391,8 @@ export function ObsidianSetupDialog({
     }
   }, []);
 
-  const vaultName = useMemo(() => deriveVaultName(vaultPath), [vaultPath]);
-
   const handleLaunchObsidian = useCallback(() => {
-    const url = `obsidian://open?vault=${encodeURIComponent(vaultName)}`;
+    const url = buildObsidianUrl(activeVaultRoot ?? vaultPath);
     // Use ``location.href`` rather than ``window.open`` — Chrome and
     // pywebview both block popups for custom URI schemes.
     try {
@@ -422,7 +401,7 @@ export function ObsidianSetupDialog({
       // jsdom or sandboxed embed: nothing we can do, the failure message
       // shows up on the "It didn't work" branch anyway.
     }
-  }, [vaultName]);
+  }, [activeVaultRoot, vaultPath]);
 
   const handleComplete = useCallback(() => {
     onComplete?.();

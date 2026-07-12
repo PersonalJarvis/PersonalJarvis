@@ -351,6 +351,7 @@ describe("PageHeader — frontmatter pills", () => {
           created: "2026-05-13",
           updated: "2026-05-13",
         }}
+        vaultRoot="C:/vault/Jarvis"
         vaultRelPath="entities/harald.md"
       />,
     );
