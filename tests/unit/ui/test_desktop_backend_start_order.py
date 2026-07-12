@@ -67,7 +67,7 @@ class _FakeBootstrap:
     def set_app(self, app: Any) -> None:
         self.app_set = app
 
-    async def wait_shell_served(self, timeout: float = 0.0) -> bool:  # noqa: ASYNC109
+    async def wait_shell_painted(self, timeout: float = 0.0) -> bool:  # noqa: ASYNC109
         return True
 
     async def stop(self) -> None:

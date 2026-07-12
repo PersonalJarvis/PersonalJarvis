@@ -827,50 +827,6 @@ class DesktopApp:
             self._bootstrap = bootstrap
             _db_boot_ready()  # /api/health is servable now → window can appear
 
-        # Fire the heavy OpenWakeWord/onnxruntime import NOW, in a daemon thread,
-        # BEFORE the WebServer + brain build + subsystem boot storm grab the
-        # Python import lock. The wake-critical Phase-A warm-up gates
-        # VoiceBootStatus(ready=True) — the UI's "VOICE STARTING…" → listening
-        # flip — on the OWW model load, whose dominant cost is this ~3 s import
-        # (not the ~0.1 s parse). Inside the serve-first boot storm it otherwise
-        # starves on the import lock to 7-24 s. Prefetching it here means Phase A
-        # finds openwakeword already in sys.modules. No-op on a headless VPS /
-        # JARVIS_VOICE=0; never slower than today (worst case Phase A waits on
-        # the same import it would have triggered itself).
-        from jarvis.speech.warmup_prefetch import (
-            start_tts_import_prefetch,
-            start_wake_import_prefetch,
-        )
-        start_wake_import_prefetch()
-        # Same idea for the default TTS SDK (google-genai): the deferred warm-up
-        # loader gates honest readiness on the TTS client, and its dominant cost
-        # is the ``from google import genai`` import (~4-11 s when starved in the
-        # boot storm). Prefetch it now in a daemon thread (disjoint from the wake
-        # import — no torch/shield interaction) so ``_ensure_client`` later hits
-        # a warm sys.modules. No-op for non-Gemini TTS / JARVIS_VOICE=0.
-        start_tts_import_prefetch()
-
-        # Same idea for the audio-device settle: the BUG-014 guard
-        # (wait_for_stable_audio_devices) is a blocking ~1.5 s poll that gates
-        # the voice Phase-A warm-up. Start it NOW in a daemon thread so it
-        # settles concurrently with the brain build + server.start(); Phase A
-        # then reuses the result instead of re-paying the wait. No-op on a
-        # headless host without sounddevice.
-        from jarvis.audio.device_init import start_audio_device_prefetch
-        start_audio_device_prefetch()
-
-        # Wake-MODEL prefetch (TTU iteration 10): the instrumented timeline
-        # showed the ~3.1 s fast-first wake-model load running strictly AFTER
-        # the import mountain + WebServer ctor. Start it NOW in a daemon
-        # thread so it overlaps them; the deferred warm-up later ADOPTS the
-        # loaded engine (FasterWhisperProvider._ensure_model) instead of
-        # loading again. No-op on JARVIS_VOICE=0 / any failure.
-        try:
-            from jarvis.plugins.stt import start_wake_model_prefetch
-            start_wake_model_prefetch(self.cfg.stt)
-        except Exception:  # noqa: BLE001 — a prefetch must never break boot
-            pass
-
         def _log_unhandled_async(loop_: asyncio.AbstractEventLoop, context: dict) -> None:
             exc = context.get("exception")
             msg = context.get("message", "<no message>")
@@ -882,15 +838,49 @@ class DesktopApp:
 
         loop.set_exception_handler(_log_unhandled_async)
 
-        # Let the window OPEN and PAINT (fetch /api/health, then index.html +
-        # the entry JS bundle from the bootstrap) BEFORE the GIL-heavy build
-        # starts. The WebServer ctor + its C-extension imports (fastapi, the
-        # route schemas) hold the GIL in long blocks; if they run first they
-        # starve the loop and the user stares at a blank window. Serving the
-        # shell first means the rendered UI is up before the warm-up storm.
-        # Bounded (2 s) so a headless run with no window never stalls the build.
+        # Let the window OPEN and genuinely PAINT before any GIL-heavy import or
+        # model-prefetch thread starts. The previous two-second wait ended when
+        # the entry JS bytes were served, which was not a browser-readiness
+        # signal: on a cold or busy machine it expired before WebView painted,
+        # then the import storm left a blank native window until the CPU freed.
+        # The boot page now acknowledges after two animation frames. Twelve
+        # seconds is only a failure backstop; the normal path releases as soon
+        # as the visible shell paints, while a broken GUI can never deadlock the
+        # backend forever.
         if self._bootstrap is not None:
-            loop.run_until_complete(self._bootstrap.wait_shell_served(timeout=2.0))
+            loop.run_until_complete(self._bootstrap.wait_shell_painted(timeout=12.0))
+
+        # Fire the heavy OpenWakeWord/onnxruntime import now, in a daemon thread,
+        # before the WebServer + brain build + subsystem boot storm grab the
+        # Python import lock, but only after the user has a visible boot shell.
+        # The wake-critical Phase-A warm-up gates VoiceBootStatus(ready=True) on
+        # this import; prefetching still overlaps all subsequent backend work.
+        from jarvis.speech.warmup_prefetch import (
+            start_tts_import_prefetch,
+            start_wake_import_prefetch,
+        )
+
+        start_wake_import_prefetch()
+        # Same idea for the default TTS SDK (google-genai). This is disjoint
+        # from the wake import and remains a logged no-op for another provider
+        # or a headless host without the optional dependency.
+        start_tts_import_prefetch()
+
+        # Start the audio-device settle after the shell paint too. Phase A then
+        # reuses the result instead of re-paying the blocking stability poll.
+        from jarvis.audio.device_init import start_audio_device_prefetch
+
+        start_audio_device_prefetch()
+
+        # Wake-model prefetch overlaps the heavy backend build and is adopted by
+        # the later provider warm-up. It is a no-op when voice is disabled and
+        # must never make the visible desktop startup load-bearing.
+        try:
+            from jarvis.plugins.stt import start_wake_model_prefetch
+
+            start_wake_model_prefetch(self.cfg.stt)
+        except Exception:  # noqa: BLE001, S110 — prefetch never blocks boot
+            pass
 
         # Heavy imports — done NOW (after the shell has painted) so their
         # GIL-holding C-level work no longer starves the bootstrap loop while

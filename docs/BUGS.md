@@ -3296,3 +3296,45 @@ depend on the same executor used by un-cancellable native inference. Opening
 the microphone early is necessary but not sufficient: every prerequisite for
 the eventual audio consumer must also remain schedulable while the default
 pool is exhausted.
+
+## BUG-044: Desktop window is blank during a cold or busy startup (HIGH, 2026-07-12)
+
+**Symptom.** First observed as a regression again on 2026-07-12: after the PC
+starts and the desktop app opens, the entire client area is a featureless dark
+surface. No navigation, loading indicator, assistant name, or error message is
+visible. The normal React UI eventually appears after the machine finishes its
+startup work, but the delay looks like a crashed JavaScript app and is highly
+confusing for users. The screenshot captured at 12:04 shows WebView's native
+background rather than the product's existing HTML boot shell.
+
+**Root cause.** The serve-first backend waited for
+`FastBootstrap.wait_shell_served(timeout=2.0)` before starting its import and
+model-prefetch storm. That event fired when the entry JavaScript bytes left the
+local HTTP server, not when the browser painted them. On a cold WebView or a
+busy/weak CPU, two seconds could expire before the browser had produced its
+first frame. OpenWakeWord, TTS, audio, STT, FastAPI, and route imports then
+competed for the GIL/import lock while the window was already visible, leaving
+only the native background until that work released the browser/server path.
+The race was machine-load dependent, so a fast maintainer machine could miss
+it while another computer or operating system exposed it.
+
+**Fix.** The dependency-free boot page now sends `POST
+/api/ui/shell-painted` only after two `requestAnimationFrame` callbacks. The
+bootstrap records that browser-originated paint acknowledgment, and the desktop
+backend waits on it (with a bounded failure backstop) before launching any
+heavy prefetch or import. The original asset-served event remains available for
+transport diagnostics but no longer gates visible readiness. Both the source
+and packaged `dist/index.html` carry the same paint handshake, so installed and
+development builds behave identically on Windows, macOS, and Linux.
+
+**Guards.** `tests/unit/ui/web/test_fast_bootstrap.py` proves that serving the
+entry JavaScript alone cannot release the paint gate, that the warm-up endpoint
+does release it with HTTP 204, and that the build-source boot page acknowledges
+only after two animation frames. `tests/unit/ui/test_desktop_backend_start_order.py`
+keeps the desktop orchestration compatible with the stronger readiness signal.
+
+**Class rule.** Network delivery is not visual readiness. Any startup path that
+shows a WebView before heavy process initialization must wait for a signal from
+an actually rendered browser frame, never a server-side response, asset-read,
+or fixed sleep. The wait must remain bounded so a broken GUI cannot deadlock a
+headless or degraded backend.
