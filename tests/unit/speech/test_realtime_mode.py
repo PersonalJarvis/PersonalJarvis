@@ -496,6 +496,41 @@ async def test_pipeline_mode_never_enters_realtime_branch(
     assert await asyncio.wait_for(pipe._active_session(), timeout=2.0) == HANGUP_SHUTDOWN
 
 
+@pytest.mark.asyncio
+async def test_pipeline_mode_listens_with_default_thread_pool_exhausted() -> None:
+    """Classic VAD startup must not depend on workers used by wake or local STT."""
+    pipe = _pipe(mode="pipeline")
+    opening_pcm = b"\x00\x40" * 320
+    opening = AudioChunk(pcm=opening_pcm, sample_rate=16_000, timestamp_ns=1)
+    buffer = pipeline_mod._SessionInputBuffer(initial=(opening,))  # noqa: SLF001
+    buffer.finish()
+    captured: list[bytes] = []
+    pipe._vad = _OneShotVad(captured)
+    pipe._session_end_reason = HANGUP_TURN_COMPLETE
+
+    async def _handle(pcm: bytes) -> bool:
+        assert pcm == opening_pcm
+        return False
+
+    pipe._handle_utterance = _handle  # type: ignore[method-assign]
+
+    loop = asyncio.get_running_loop()
+    release_pool = threading.Event()
+    blockers = [loop.run_in_executor(None, release_pool.wait) for _ in range(64)]
+    await asyncio.sleep(0.1)
+    try:
+        reason = await asyncio.wait_for(
+            pipe._active_session(input_buffer=buffer),
+            timeout=1.0,
+        )
+    finally:
+        release_pool.set()
+        await asyncio.gather(*blockers, return_exceptions=True)
+
+    assert reason == HANGUP_TURN_COMPLETE
+    assert captured == [opening_pcm]
+
+
 def test_live_mode_change_schedules_active_call_for_reopen() -> None:
     pipe = _pipe(mode="pipeline")
     pipe._state = pipeline_mod.PipelineState.ACTIVE

@@ -3284,6 +3284,13 @@ still starts and completes. The existing
 `test_capture_precedes_listening_signal_and_preserves_startup_audio` retain the
 metering, ordering, and zero-loss guarantees.
 
+The classic pipeline does not have a session-builder step before VAD: it
+consumes the same capture-first buffer immediately. The companion
+`test_pipeline_mode_listens_with_default_thread_pool_exhausted` pins that this
+path still accepts the opening audio even when wake/local-STT work occupies
+every shared executor worker. Weak-CPU endpointing remains covered separately
+by `test_capture_overflow` and `test_vad_realtime_gap_credit`.
+
 **Class rule.** A voice-critical recovery or startup control path must never
 depend on the same executor used by un-cancellable native inference. Opening
 the microphone early is necessary but not sufficient: every prerequisite for
