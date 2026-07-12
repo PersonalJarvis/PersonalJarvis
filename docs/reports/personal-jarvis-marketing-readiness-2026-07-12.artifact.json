@@ -1,0 +1,526 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "Personal Jarvis Marketing Readiness",
+    "description": "Evidence-backed pre-marketing launch audit and phased readiness plan.",
+    "generatedAt": "2026-07-12T11:15:00+02:00",
+    "cards": [
+      {
+        "id": "card_overall",
+        "description": "Evidence-weighted readiness across product, quality, platforms, distribution, security, UX, website, and operations.",
+        "dataset": "headline_metrics",
+        "sourceId": "src_audit",
+        "filter": { "metric": "overall" },
+        "metrics": [
+          { "label": "Overall readiness / 100", "field": "value", "format": "number" },
+          { "label": "Broad-marketing gate", "field": "target", "format": "number" }
+        ]
+      },
+      {
+        "id": "card_backend",
+        "description": "Current local backend CI-profile result on the audited working tree.",
+        "dataset": "headline_metrics",
+        "sourceId": "src_local_tests",
+        "filter": { "metric": "backend_failures" },
+        "metrics": [
+          { "label": "Backend failures", "field": "value", "format": "number" },
+          { "label": "Collection errors", "field": "target", "format": "number" }
+        ]
+      },
+      {
+        "id": "card_mac",
+        "description": "Recorded live macOS GUI and permission sign-offs in the canonical cross-platform log.",
+        "dataset": "headline_metrics",
+        "sourceId": "src_crossplatform",
+        "filter": { "metric": "mac_live" },
+        "metrics": [
+          { "label": "macOS live sign-offs", "field": "value", "format": "number" },
+          { "label": "Required macOS rows", "field": "target", "format": "number" }
+        ]
+      },
+      {
+        "id": "card_distribution",
+        "description": "Stable website installer endpoints returning HTTP 200 at the audit timestamp.",
+        "dataset": "headline_metrics",
+        "sourceId": "src_live_site",
+        "filter": { "metric": "install_endpoints" },
+        "metrics": [
+          { "label": "Working stable install URLs", "field": "value", "format": "number" },
+          { "label": "Required install URLs", "field": "target", "format": "number" }
+        ]
+      }
+    ],
+    "charts": [
+      {
+        "id": "chart_readiness",
+        "title": "Readiness by launch dimension",
+        "subtitle": "Evidence-weighted audit score; 85 is the recommended broad-marketing gate.",
+        "showDescription": true,
+        "intent": "comparison",
+        "question": "Which readiness dimensions most constrain a public marketing launch?",
+        "rationale": "A simple categorical bar chart compares the eight audited dimensions without implying a time trend.",
+        "comparisonContext": {
+          "baseline": "Broad-marketing gate = 85",
+          "denominator": "100 audit points",
+          "grain": "launch-readiness dimension",
+          "normalization": "expert evidence-weighted scoring",
+          "semanticFamily": "readiness",
+          "unit": "points"
+        },
+        "type": "bar",
+        "dataset": "readiness_dimensions",
+        "sourceId": "src_audit",
+        "encodings": {
+          "x": { "field": "short_dimension", "type": "nominal", "aggregate": "none", "label": "Dimension" },
+          "y": { "field": "score", "type": "quantitative", "aggregate": "none", "format": "number", "label": "Readiness", "unit": "points" },
+          "tooltip": [
+            { "field": "dimension", "type": "text", "label": "Dimension" },
+            { "field": "score", "type": "quantitative", "format": "number", "label": "Score" },
+            { "field": "weight", "type": "quantitative", "format": "number", "label": "Weight", "unit": "%" }
+          ]
+        },
+        "xAxisTitle": "Launch dimension",
+        "yAxisTitle": "Readiness / 100",
+        "valueFormat": "number",
+        "unit": "points",
+        "layout": "full",
+        "maxRows": 8,
+        "referenceLines": [
+          { "axis": "y", "value": 85, "label": "Marketing gate", "color": "neutral", "lineStyle": "dashed" }
+        ],
+        "settings": { "showValues": true, "sort": "ascending", "categoryLabelPolicy": "wrap" },
+        "surface": { "surface": "export", "compact": false, "interactiveLegend": false, "showControls": true, "viewMode": "both" }
+      }
+    ],
+    "tables": [
+      {
+        "id": "table_blockers",
+        "title": "Launch blockers",
+        "subtitle": "P0 items that must close before broad marketing; scope may be narrowed for a Windows-only closed beta.",
+        "showDescription": true,
+        "dataset": "blockers",
+        "defaultSort": { "field": "id", "direction": "asc" },
+        "density": "spacious",
+        "sourceId": "src_audit",
+        "layout": "full",
+        "columns": [
+          { "field": "id", "label": "ID", "type": "text" },
+          { "field": "blocker", "label": "Blocker", "type": "text" },
+          { "field": "required_action", "label": "Required action", "type": "text" },
+          { "field": "exit_criterion", "label": "Exit criterion", "type": "text" },
+          { "field": "owner", "label": "Owner", "type": "text" }
+        ]
+      },
+      {
+        "id": "table_platforms",
+        "title": "Platform evidence matrix",
+        "subtitle": "Current audited evidence for the exact launch claim, not merely code presence.",
+        "showDescription": true,
+        "dataset": "platform_matrix",
+        "defaultSort": { "field": "platform", "direction": "asc" },
+        "density": "spacious",
+        "sourceId": "src_crossplatform",
+        "layout": "full",
+        "columns": [
+          { "field": "platform", "label": "Platform", "type": "text" },
+          { "field": "evidence", "label": "What is proven", "type": "text" },
+          { "field": "gap", "label": "What remains", "type": "text" },
+          { "field": "decision", "label": "Current decision", "type": "text" }
+        ]
+      },
+      {
+        "id": "table_verification",
+        "title": "Verification results",
+        "subtitle": "Commands run against the current local app and website working trees on July 12, 2026.",
+        "showDescription": true,
+        "dataset": "verification_results",
+        "defaultSort": { "field": "check", "direction": "asc" },
+        "density": "dense",
+        "sourceId": "src_audit",
+        "layout": "full",
+        "columns": [
+          { "field": "check", "label": "Check", "type": "text" },
+          { "field": "result", "label": "Result", "type": "text" },
+          { "field": "status", "label": "Status", "type": "text" },
+          { "field": "launch_meaning", "label": "Launch meaning", "type": "text" }
+        ]
+      },
+      {
+        "id": "table_p0",
+        "title": "Phase 0: Stabilize and restore distribution",
+        "subtitle": "Estimated 5–10 focused engineering days plus access to real test hardware; estimates are planning ranges, not commitments.",
+        "showDescription": true,
+        "dataset": "roadmap_p0",
+        "defaultSort": { "field": "workstream", "direction": "asc" },
+        "density": "spacious",
+        "sourceId": "src_audit",
+        "layout": "full",
+        "columns": [
+          { "field": "workstream", "label": "Workstream", "type": "text" },
+          { "field": "deliverable", "label": "Deliverable", "type": "text" },
+          { "field": "proof", "label": "Required proof", "type": "text" },
+          { "field": "owner", "label": "Owner", "type": "text" }
+        ]
+      },
+      {
+        "id": "table_p1",
+        "title": "Phase 1: Prove with external users",
+        "subtitle": "A controlled beta converts engineering confidence into user evidence before demand is amplified.",
+        "showDescription": true,
+        "dataset": "roadmap_p1",
+        "defaultSort": { "field": "workstream", "direction": "asc" },
+        "density": "spacious",
+        "sourceId": "src_audit",
+        "layout": "full",
+        "columns": [
+          { "field": "workstream", "label": "Workstream", "type": "text" },
+          { "field": "deliverable", "label": "Deliverable", "type": "text" },
+          { "field": "exit_criterion", "label": "Exit criterion", "type": "text" },
+          { "field": "owner", "label": "Owner", "type": "text" }
+        ]
+      },
+      {
+        "id": "table_p2",
+        "title": "Phase 2: Marketing go and hardening",
+        "subtitle": "Growth work starts only after the release candidate and beta evidence meet the explicit launch gates.",
+        "showDescription": true,
+        "dataset": "roadmap_p2",
+        "defaultSort": { "field": "workstream", "direction": "asc" },
+        "density": "spacious",
+        "sourceId": "src_audit",
+        "layout": "full",
+        "columns": [
+          { "field": "workstream", "label": "Workstream", "type": "text" },
+          { "field": "deliverable", "label": "Deliverable", "type": "text" },
+          { "field": "launch_gate", "label": "Launch gate", "type": "text" },
+          { "field": "owner", "label": "Owner", "type": "text" }
+        ]
+      }
+    ],
+    "sources": [
+      {
+        "id": "src_audit",
+        "label": "Personal Jarvis pre-marketing readiness audit, July 12, 2026",
+        "path": "docs/reports/personal-jarvis-marketing-readiness-2026-07-12.evidence.sql"
+      },
+      {
+        "id": "src_local_tests",
+        "label": "Current backend CI-profile test run",
+        "path": "docs/reports/personal-jarvis-marketing-readiness-2026-07-12.evidence.sql"
+      },
+      {
+        "id": "src_frontend",
+        "label": "Current desktop frontend verification",
+        "query": {
+          "engine": "Vitest and Vite",
+          "query": "npm test -- --reporter=dot; npm run build",
+          "description": "Local frontend result: 685 of 686 tests passed; the production build succeeded with large-chunk warnings.",
+          "executed_at": "2026-07-12T10:59:00+02:00",
+          "language": "shell",
+          "tables_used": ["jarvis/ui/web/frontend/src", "jarvis/ui/web/frontend/package.json"]
+        }
+      },
+      {
+        "id": "src_crossplatform",
+        "label": "Cross-platform sign-off evidence",
+        "path": "docs/reports/personal-jarvis-marketing-readiness-2026-07-12.evidence.sql"
+      },
+      {
+        "id": "src_live_site",
+        "label": "Live Personal Jarvis website",
+        "path": "docs/reports/personal-jarvis-marketing-readiness-2026-07-12.evidence.sql",
+        "href": "https://personaljarvis.ai/"
+      },
+      {
+        "id": "src_public_repo",
+        "label": "Public GitHub repository",
+        "href": "https://github.com/PersonalJarvis/PersonalJarvis",
+        "query": {
+          "engine": "GitHub CLI and API",
+          "query": "Inspect repository metadata, releases, workflow runs, and branch protection for PersonalJarvis/PersonalJarvis.",
+          "description": "The repository is public under MIT; the latest public release is v1.0.5; recent public CI is green; the default branch is not protected; the repository homepage URL is empty.",
+          "executed_at": "2026-07-12T10:32:00+02:00",
+          "language": "GitHub API"
+        }
+      },
+      {
+        "id": "src_release",
+        "label": "Personal Jarvis v1.0.5 release",
+        "href": "https://github.com/PersonalJarvis/PersonalJarvis/releases/tag/v1.0.5",
+        "query": {
+          "engine": "GitHub Releases API",
+          "query": "Inspect v1.0.5 assets, signatures, provenance, digests, and publication state.",
+          "description": "The release is published and contains installer verifiers, signatures, digests, payload pinning, and SLSA provenance assets.",
+          "executed_at": "2026-07-12T11:10:00+02:00",
+          "language": "GitHub API"
+        }
+      },
+      {
+        "id": "src_security",
+        "label": "Local security and dependency verification",
+        "query": {
+          "engine": "repository CI scripts, pip-audit, and npm audit",
+          "query": "Run check_no_private_keys.py, check_lockfile_universal.py, check_requirements_sync.py, check_import_clean.py, pip-audit, and production npm audits for the app frontend and marketing site.",
+          "description": "No known Python or app-frontend production dependency vulnerabilities were found; the marketing site reported two low-severity findings in Astro/esbuild; private-key and universal-lock gates passed.",
+          "executed_at": "2026-07-12T11:08:00+02:00",
+          "language": "shell",
+          "tables_used": ["requirements.txt", "pyproject.toml", "jarvis/ui/web/frontend/package-lock.json"]
+        }
+      },
+      {
+        "id": "src_website_local",
+        "label": "Local marketing website release candidate",
+        "query": {
+          "engine": "git, Astro check, and Astro build",
+          "query": "Inspect the remake branch; run npx astro check and npm run build; compare local commits with the last deployed blank-homepage commit.",
+          "description": "The complete local website builds with zero Astro diagnostics and 24 static pages, but the restored landing page and stable installer proxies were not deployed at the audit timestamp.",
+          "executed_at": "2026-07-12T11:01:00+02:00",
+          "language": "shell"
+        }
+      },
+      {
+        "id": "src_legal",
+        "label": "Trademark and brand audit",
+        "path": "docs/legal/trademark-brand-audit-2026-06-27.html",
+        "query": {
+          "engine": "repository document review",
+          "query": "Review the project trademark audit, TRADEMARK.md, and live legal pages.",
+          "description": "The project has trademark notices and localized terms/privacy/imprint pages, but the automated audit explicitly states that it is not legal advice.",
+          "executed_at": "2026-07-12T11:09:00+02:00",
+          "language": "analysis"
+        }
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "layout": "full",
+        "body": "# Personal Jarvis Marketing Readiness"
+      },
+      {
+        "id": "executive_summary",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Executive Summary\n\n- **Decision: no-go for broad public marketing today.** Personal Jarvis has a substantial product and security foundation, but the audited current state contains launch-blocking failures in core orchestration paths, no real macOS desktop evidence, and a non-functional public conversion path.\n- **The fastest safe route is a staged launch.** Close P0, run a clearly labeled Windows closed beta, then widen the claim only after the exact release candidate passes fresh-device and real-hardware verification.\n- **The strongest areas are architecture and supply-chain intent.** Import, requirements, universal-lock, private-key, CLI coverage, danger-metadata, frontend build, and signed-release evidence are strong. The problem is not lack of engineering; it is missing end-to-end proof at the point where marketing creates demand.\n- **The four immediate constraints are concrete.** The backend CI profile has 16 failures plus one collection error, macOS has zero live sign-offs and no manual macOS CI run, the live homepage is blank and noindexed, and both stable website installer URLs return 404."
+      },
+      {
+        "id": "decision_frame",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## The product is promising, but the evidence chain is incomplete\n\nThe score below is a decision aid, not a product telemetry metric. Each dimension is scored from 0 to 100 from reviewed evidence, then weighted by launch impact. The recommended broad-marketing gate is **85/100 plus zero open P0 blockers**. A high aggregate score can never override a broken installer, a red core workflow, or an unverified platform claim.\n\n**Current weighted readiness: 48/100.** This supports focused stabilization and a controlled beta—not demand generation across Windows, macOS, and Linux."
+      },
+      {
+        "id": "headline_metrics",
+        "type": "metric-strip",
+        "layout": "full",
+        "cardIds": ["card_overall", "card_backend", "card_mac", "card_distribution"]
+      },
+      {
+        "id": "readiness_constraints",
+        "type": "markdown",
+        "layout": "full",
+        "body": "### Website, platform proof, and release quality are the binding constraints\n\nRead the chart from lowest to highest. Security/privacy is comparatively mature, while website/distribution and cross-platform evidence are far below the launch gate. The implication is practical: adding more product features will not make the launch safer until the conversion path, real-device proof, and operating model are repaired."
+      },
+      {
+        "id": "readiness_chart",
+        "type": "chart",
+        "layout": "full",
+        "chartId": "chart_readiness"
+      },
+      {
+        "id": "strengths",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## What is already strong\n\n**Personal Jarvis is not a prototype held together by a landing page.** The audited repository contains 799 Python modules, more than 10,000 Python test functions, 42 mounted and tagged route modules, a provider-agnostic architecture, a universal GPU-free base lock, explicit cross-platform capability seams, and a multi-axis signed-release pipeline.\n\n**The user-facing frontend is close to stable at the component level.** The current run passed 685 of 686 Vitest tests and produced a successful production build.\n\n**Supply-chain and privacy controls are unusually developed for an early open-source product.** The private-key scan, requirements sync, lockfile-universality check, import-cleanliness gate, CLI coverage, danger metadata, and signed v1.0.5 release assets all passed or were present. Python and the main app frontend showed no known production dependency vulnerabilities in the current audit.\n\nThese strengths materially reduce the work required. The next step is to convert subsystem quality into a release evidence chain that begins with a clean device and ends with a successful user outcome."
+      },
+      {
+        "id": "blockers_intro",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Eight blockers stand between the current state and broad marketing\n\nThe blockers are ordered by dependency. Fixing the website before the release candidate is stable would only send more users into failure; fixing the code without restoring the website would leave no conversion path. All eight must close for a broad launch. A Windows-only closed beta may defer the macOS/Linux rows only if every public claim and onboarding surface is explicitly narrowed."
+      },
+      {
+        "id": "blockers_table",
+        "type": "table",
+        "layout": "full",
+        "tableId": "table_blockers"
+      },
+      {
+        "id": "platform_story",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## macOS support exists in code, not yet as a verified product claim\n\nThe repository has real macOS engineering: desktop extras, PyObjC integrations, Accessibility and Screen Recording probes, a POSIX PTY, application launch resolution, overlay and hotkey implementations, and permission-aware fallback design. That is valuable implementation evidence.\n\nIt is not yet launch evidence. The canonical sign-off log still records **zero live macOS/Linux desktop GUI or permission verdicts**, and no manual workflow run including the macOS CI leg was found. The public README advertises Windows, macOS, and Linux, while the marketing-site copy more honestly says Windows is hardware-tested. Until real-device proof exists, the marketing claim must follow the narrower statement."
+      },
+      {
+        "id": "platform_table",
+        "type": "table",
+        "layout": "full",
+        "tableId": "table_platforms"
+      },
+      {
+        "id": "quality_story",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## A green CI badge currently overstates release confidence\n\nThe local run using the repository's CI marker profile completed **13,470 passing tests**, which is strong evidence of broad regression coverage. It also produced **16 failures and one collection error**. The affected areas include WebServer startup, Jarvis-Agent and artifact routing, Critic fallback behavior, GitHub-task dispatch, and a Wiki completion announcement. These are core product promises, not peripheral polish.\n\nThe workflow intentionally continues after Pytest exits non-zero and blocks only when a minimum passing floor is missed. Ruff and mypy are report-only. That strategy is useful while paying down a large backlog, but it is unsuitable as the final release gate. Create a separate release workflow that requires zero collection errors, zero failures, and no regression above frozen lint/type baselines."
+      },
+      {
+        "id": "verification_table",
+        "type": "table",
+        "layout": "full",
+        "tableId": "table_verification"
+      },
+      {
+        "id": "website_story",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## The marketing site is locally close, but production is intentionally dark\n\nAt the audit timestamp, the public homepage returned a 423-byte blank HTML document with `noindex, nofollow`; both `/install.sh` and `/install.ps1` returned 404. The documentation and localized legal routes were live, so the domain and Cloudflare deployment are functioning—the launch surface itself is what is disabled.\n\nThe separate local Astro website is much closer to ready: `astro check` returned zero diagnostics, the build produced 24 static pages, legal pages exist in English, German, and Spanish, and stable installer proxy scripts are present. The restored site is not yet deployed. Before launch, test the exact production domain from an unauthenticated external network, confirm both installer proxies execute the latest signed verifier, remove `noindex`, set the public repository homepage URL, and add a post-deploy smoke that fails on a blank title, missing hero, or non-200 install route."
+      },
+      {
+        "id": "release_story",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Release security is a strength, but the next candidate must prove the current code\n\nThe public v1.0.5 release contains signed installer wrappers, digests, payload pinning, cross-runner hash evidence, and SLSA provenance. Recent public CI runs are green. However, the local working tree contains extensive subsequent product work and the public snapshot history intentionally diverges from local history. v1.0.5 therefore cannot certify today's code.\n\nBuild one release candidate from the exact commit that passes P0. Run it through the separate depersonalized snapshot clone, deterministic privacy and secret gates, human approval, full release CI, signed-asset generation, and fresh-device installation. Also protect the public default branch with required checks and review; the GitHub API currently reports no branch protection. The local docs-privacy scan found 20 hits, reinforcing that the live worktree must never be the publish source."
+      },
+      {
+        "id": "roadmap_intro",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Recommended route: stabilize, prove, then amplify\n\nThe sequence below avoids a common launch failure: spending on attention before the install and support systems can absorb it. Phase 0 closes hard blockers. Phase 1 uses a small external cohort to expose environment-specific failures. Phase 2 turns on marketing only after the exact signed release and production website meet explicit gates."
+      },
+      {
+        "id": "roadmap_p0",
+        "type": "table",
+        "layout": "full",
+        "tableId": "table_p0"
+      },
+      {
+        "id": "roadmap_p1",
+        "type": "table",
+        "layout": "full",
+        "tableId": "table_p1"
+      },
+      {
+        "id": "roadmap_p2",
+        "type": "table",
+        "layout": "full",
+        "tableId": "table_p2"
+      },
+      {
+        "id": "launch_gates",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Marketing-go checklist\n\nDo not start broad acquisition until every item below is true:\n\n1. **Code gate:** standard Pytest collection succeeds; release-profile backend and frontend suites have zero failures; core static-quality baselines do not regress.\n2. **Golden-path gate:** chat, voice, Jarvis-Agent, Computer Use, Wiki write/recall, provider switching, cross-family fallback, update, restart, and uninstall pass on the exact signed candidate with no silent drop or false success.\n3. **Platform gate:** every actively marketed OS has a dated fresh-install and real-device sign-off. For a Windows-only beta, all macOS/Linux marketing surfaces explicitly say unverified or omit the claim.\n4. **Distribution gate:** homepage, docs, privacy, terms, imprint, `install.sh`, and `install.ps1` return the intended content from production; the install proxies launch the signed verifier.\n5. **Beta gate:** at least 20 external fresh installs across the claimed platform/provider matrix, with at least 18 completing installation and first successful task without maintainer intervention.\n6. **Reliability gate:** 30 scripted golden-path runs with zero severity-1/2 security or data-loss events, zero false-success confirmations, and zero silent task drops.\n7. **Operations gate:** named on-call owner, support intake, incident template, rollback/hotfix procedure, known-issues page, and a 24-hour first-response target during launch week.\n8. **Governance gate:** public `main` protection and required release checks are enabled; the missing binding master-plan reference is repaired or retired so contributors have one current source of truth."
+      },
+      {
+        "id": "further_questions",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Decisions still needed\n\n- **Launch scope:** Is the next milestone a Windows closed beta or a simultaneous Windows/macOS/Linux public launch? The latter adds real-device and permission-signoff work.\n- **Hardware ownership:** Who owns the Apple Silicon Mac and Linux desktop sign-off, and by what date can those devices be available?\n- **Provider matrix:** Which three independent provider families define the minimum one-key fresh-install test personas?\n- **Observability boundary:** Which opt-in, privacy-preserving install, crash, and task-outcome events may be collected? Without a minimal funnel, launch failures will be difficult to quantify.\n- **Support promise:** Which channel is authoritative during launch week, and who can ship a rollback or hotfix within 24 hours?\n- **Legal confidence:** Does the maintainer want an attorney to validate the name, marketing claims, terms, and integration-logo usage before paid or high-reach promotion?"
+      },
+      {
+        "id": "caveats",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Caveats and assumptions\n\n- This is a point-in-time audit of the local working tree, public GitHub state, and live website on **July 12, 2026**. External state may change after the report is generated.\n- The working tree contained pre-existing modified frontend tests. The single frontend failure may be related to in-progress work, but it still means the audited state is not release-clean.\n- No destructive installer, updater, uninstaller, microphone, speaker, global-hotkey, Accessibility, Screen Recording, or elevation test was run on a fresh physical machine in this audit. Missing real-device proof is explicitly treated as missing evidence, not as a failure of the code.\n- The readiness score is a transparent expert judgment intended to prioritize work; it is not a statistical reliability estimate. Hard blockers override the score.\n- Dependency audits report known published vulnerabilities only. They do not prove absence of unknown or application-level security issues.\n- The existing trademark report is an engineering scan and explicitly not legal advice. This report does not provide legal advice.\n- The user requested analysis and an HTML deliverable; no code fixes, GitHub pushes, website deployments, releases, or external messages were performed."
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-07-12T11:15:00+02:00",
+    "status": "ready",
+    "datasets": {
+      "headline_metrics": [
+        { "metric": "overall", "value": 48, "target": 85 },
+        { "metric": "backend_failures", "value": 16, "target": 1 },
+        { "metric": "mac_live", "value": 0, "target": 7 },
+        { "metric": "install_endpoints", "value": 0, "target": 2 }
+      ],
+      "readiness_dimensions": [
+        { "dimension": "Website and distribution", "short_dimension": "Website", "score": 20, "weight": 10, "evidence": "Blank noindex homepage; both stable installer endpoints returned 404; complete local site not deployed." },
+        { "dimension": "Cross-platform evidence", "short_dimension": "Platform", "score": 30, "weight": 15, "evidence": "Linux headless evidence exists; zero macOS/Linux desktop live sign-offs; no manual macOS CI run." },
+        { "dimension": "Operations and support", "short_dimension": "Operations", "score": 38, "weight": 5, "evidence": "Feedback paths exist, but no launch SLA, beta funnel, incident owner, or verified rollback drill was evidenced." },
+        { "dimension": "Automated QA", "short_dimension": "QA", "score": 48, "weight": 15, "evidence": "13,470 backend tests pass, but 16 fail and one collection error remains; static checks are report-only." },
+        { "dimension": "Installation and release", "short_dimension": "Release", "score": 50, "weight": 15, "evidence": "Signed v1.0.5 and Linux smoke are strong; current code lacks an exact RC and stable website routes are broken." },
+        { "dimension": "Core product behavior", "short_dimension": "Product", "score": 55, "weight": 20, "evidence": "Large surface and coverage, but failures hit WebServer, mission routing, Critic fallback, and Wiki completion." },
+        { "dimension": "UX and onboarding", "short_dimension": "UX", "score": 62, "weight": 10, "evidence": "Frontend build and 685 tests pass; one Wiki test fails and the manual voice checklist is not signed off." },
+        { "dimension": "Security and privacy", "short_dimension": "Security", "score": 76, "weight": 10, "evidence": "Strong private-key, lockfile, dependency, signing, and privacy-gate foundations; branch protection and docs hits remain." }
+      ],
+      "blockers": [
+        { "order": 1, "id": "P0-1", "blocker": "Core release tests are red", "required_action": "Triage and fix 16 backend failures, one MCP collection collision, and the remaining frontend WikiView failure.", "exit_criterion": "Standard collection succeeds; backend release profile and frontend Vitest exit 0.", "owner": "Core engineering" },
+        { "order": 2, "id": "P0-2", "blocker": "CI can be green with test failures", "required_action": "Add a separate release workflow that blocks on any collection error or failure and freezes lint/type baselines.", "exit_criterion": "Required release checks cannot pass when Pytest, Vitest, collection, or baseline-delta checks are red.", "owner": "Release engineering" },
+        { "order": 3, "id": "P0-3", "blocker": "Public conversion path is broken", "required_action": "Deploy the restored landing page and stable installer proxy files; remove noindex only when production QA passes.", "exit_criterion": "Homepage is non-blank and indexable; both stable install URLs return 200 and invoke the signed verifier.", "owner": "Web and marketing engineering" },
+        { "order": 4, "id": "P0-4", "blocker": "Current code has no exact public release candidate", "required_action": "Cut an RC from the fixed commit through the depersonalized snapshot, privacy review, signing, provenance, and fresh-install pipeline.", "exit_criterion": "One immutable candidate commit maps to the public snapshot, signed assets, CI evidence, and device test log.", "owner": "Release and security" },
+        { "order": 5, "id": "P0-5", "blocker": "macOS claim lacks real evidence", "required_action": "Run manual macOS CI and the live Accessibility, Screen Recording, overlay, hotkey, app-launch, audio, and elevation checklist on Apple Silicon.", "exit_criterion": "Every marketed macOS behavior has a dated pass/degrade verdict on a named device and OS version.", "owner": "Platform QA" },
+        { "order": 6, "id": "P0-6", "blocker": "Fresh-install matrix is incomplete", "required_action": "Test Windows 11, Apple Silicon macOS, Ubuntu headless, and one Linux desktop from clean devices using the public RC.", "exit_criterion": "Install, onboarding, first task, restart, update, and uninstall are recorded for each claimed target.", "owner": "QA and release" },
+        { "order": 7, "id": "P0-7", "blocker": "The full product promise has no current signed-off golden path", "required_action": "Run chat, voice, Jarvis-Agent, Computer Use, Wiki, provider switch, cross-family fallback, and honest-degrade scenarios with one arbitrary key per persona.", "exit_criterion": "No silent drops, false-success readbacks, language splits, or maintainer-only dependencies across the matrix.", "owner": "Product QA" },
+        { "order": 8, "id": "P0-8", "blocker": "Public repository governance is too permissive", "required_action": "Protect public main, require the release checks, keep snapshot-only publication, and repair or retire the missing binding master-plan reference.", "exit_criterion": "Direct unreviewed pushes cannot bypass required checks; contributor source-of-truth links resolve.", "owner": "Repository administration" }
+      ],
+      "platform_matrix": [
+        { "order": 1, "platform": "Windows 11 desktop", "evidence": "Maintainer hardware use, Windows-specific regression tests, successful frontend build, and existing signed PowerShell release assets.", "gap": "Current RC has red backend tests; no clean third-party Windows fresh-device record was produced in this audit.", "decision": "Eligible for closed beta only after P0 test and distribution fixes." },
+        { "order": 2, "platform": "macOS Apple Silicon desktop", "evidence": "Desktop-macos extras, PyObjC capability code, permission probes, POSIX PTY, app resolution, and seam-level tests.", "gap": "No manual macOS CI run and zero live desktop/permission sign-offs; stable website installer URL is 404.", "decision": "Do not actively market until real-device sign-off passes." },
+        { "order": 3, "platform": "Linux headless", "evidence": "Real python:3.11-slim container pass, universal GPU-free lock, import-clean gate, and published Linux fresh-install workflow success for v1.0.5.", "gap": "The exact current code is not a signed RC and the website stable installer proxy is unavailable.", "decision": "Strongest non-Windows path; re-prove on the final RC before launch." },
+        { "order": 4, "platform": "Linux desktop", "evidence": "X11/Wayland capability design, POSIX PTY, app launch, pynput, AT-SPI and graceful-degrade code paths.", "gap": "Zero real desktop GUI/permission sign-offs for AT-SPI, overlay, hotkey, app launch, and elevation.", "decision": "Do not market desktop parity until a real Linux desktop passes." }
+      ],
+      "verification_results": [
+        { "order": 1, "check": "Backend CI-profile Pytest", "result": "13,470 passed; 16 failed; 1 collection error; 12m13s", "status": "FAIL", "launch_meaning": "Core orchestration and server paths remain red." },
+        { "order": 2, "check": "Standard full Pytest collection", "result": "Stopped on duplicate test_mcp_client module name", "status": "FAIL", "launch_meaning": "The ordinary developer command is not clean." },
+        { "order": 3, "check": "Desktop frontend Vitest", "result": "685 passed; 1 failed", "status": "FAIL", "launch_meaning": "Near-green component coverage; one WikiView test remains." },
+        { "order": 4, "check": "Desktop frontend production build", "result": "Build passed; main chunk about 2.0 MB; several chunks above 500 kB", "status": "PASS WITH WARNING", "launch_meaning": "Shippable build; performance work is P1." },
+        { "order": 5, "check": "Import-cleanliness", "result": "799 files scanned; import passed", "status": "PASS", "launch_meaning": "Base import boundary is healthy on the audited Windows environment." },
+        { "order": 6, "check": "Requirements and universal lock", "result": "Requirements in sync; GPU/CUDA/torch-free universal lock passed", "status": "PASS", "launch_meaning": "Headless/base dependency floor is well protected." },
+        { "order": 7, "check": "CLI and dangerous-route gates", "result": "42 route modules mounted/tagged; danger metadata and references passed", "status": "PASS", "launch_meaning": "CLI-first and destructive-action metadata contracts are enforced." },
+        { "order": 8, "check": "Private-key scan", "result": "No private-key material found", "status": "PASS", "launch_meaning": "Strong local secret-material control." },
+        { "order": 9, "check": "Dependency audits", "result": "Python: 0 known; app frontend production: 0; website: 2 low", "status": "PASS WITH WARNING", "launch_meaning": "No high/critical known dependency blocker; patch website advisory in P1." },
+        { "order": 10, "check": "Ruff", "result": "861 findings; report-only in CI", "status": "BACKLOG", "launch_meaning": "Freeze and ratchet; do not require an unsafe mass rewrite." },
+        { "order": 11, "check": "Ruff format", "result": "705 of 799 Python files would be reformatted", "status": "BACKLOG", "launch_meaning": "Formatting baseline is not enforced." },
+        { "order": 12, "check": "mypy", "result": "750 errors in 180 files; report-only in CI", "status": "BACKLOG", "launch_meaning": "Type risk is known but not release-blocking today; prevent further growth." },
+        { "order": 13, "check": "Docs privacy", "result": "20 local documentation hits", "status": "FAIL FOR RAW PUSH", "launch_meaning": "Publish only through the depersonalized snapshot gate." },
+        { "order": 14, "check": "Marketing-site Astro check/build", "result": "0 diagnostics; 24 static pages built", "status": "PASS", "launch_meaning": "The local site is deployable after production route QA." },
+        { "order": 15, "check": "Live homepage and stable install routes", "result": "Blank noindex homepage; install.sh 404; install.ps1 404", "status": "FAIL", "launch_meaning": "No public acquisition or installation path exists today." }
+      ],
+      "roadmap_p0": [
+        { "order": 1, "workstream": "Core stabilization", "deliverable": "Fix and classify every backend/frontend failure and the MCP collection collision; add regression tests for each confirmed defect.", "proof": "Backend release profile and frontend suite exit 0; standard collection has no errors.", "owner": "Core engineering" },
+        { "order": 2, "workstream": "Release gate", "deliverable": "Create a hard release workflow separate from the permissive development floor; ratchet Ruff/mypy without mass-reformatting the shared tree.", "proof": "A known failing test and a new lint/type regression both block the candidate.", "owner": "Release engineering" },
+        { "order": 3, "workstream": "Website restoration", "deliverable": "Deploy the restored Astro site, stable installer proxies, title/SEO metadata, and post-deploy smoke checks.", "proof": "External unauthenticated checks show real homepage content and 200 installer routes; robots allows indexing only after sign-off.", "owner": "Web engineering" },
+        { "order": 4, "workstream": "Exact release candidate", "deliverable": "Produce a depersonalized, signed, provenance-backed RC from the fixed commit.", "proof": "Commit, public snapshot, payload pin, signatures, workflow run, and device log all identify one candidate.", "owner": "Release and security" },
+        { "order": 5, "workstream": "Platform proof", "deliverable": "Run manual macOS CI plus live Apple Silicon and Linux desktop sign-off; repeat Linux headless on the RC.", "proof": "Dated device/OS verdicts replace every unverified row that is part of the launch claim.", "owner": "Platform QA" },
+        { "order": 6, "workstream": "Golden-path matrix", "deliverable": "Test one-key personas from at least three provider families across fresh installs and dead-primary cross-family fallback.", "proof": "Chat, voice, Jarvis-Agent, Wiki, Computer Use, and honest degradation complete without maintainer config.", "owner": "Product QA" }
+      ],
+      "roadmap_p1": [
+        { "order": 1, "workstream": "Closed beta", "deliverable": "Recruit 20 external users; start with Windows if cross-platform evidence is not yet complete.", "exit_criterion": "At least 18 complete install, onboarding, and a first real task without maintainer intervention.", "owner": "Product and community" },
+        { "order": 2, "workstream": "Support and incident response", "deliverable": "Publish support intake, known issues, severity definitions, rollback runbook, hotfix owner, and launch-week response target.", "exit_criterion": "One simulated bad release is rolled back and users receive a status update from the documented process.", "owner": "Operations" },
+        { "order": 3, "workstream": "Update and uninstall", "deliverable": "Verify clean update from v1.0.5 to the RC, interrupted update recovery, uninstall, and user-data retention choices on each claimed OS.", "exit_criterion": "No orphaned runtime, broken shortcut, credential leak, or unrecoverable config across the matrix.", "owner": "Release QA" },
+        { "order": 4, "workstream": "Privacy-safe observability", "deliverable": "Define opt-in install, onboarding, crash, provider-health, and task-outcome events with retention and consent language.", "exit_criterion": "The team can distinguish install failure, onboarding abandonment, provider outage, and product error without collecting prompts or secrets.", "owner": "Product and privacy" },
+        { "order": 5, "workstream": "Performance and accessibility", "deliverable": "Code-split the 2.0 MB app bundle, test weaker devices, and run keyboard, reduced-motion, contrast, responsive, and screen-reader checks on app and site.", "exit_criterion": "No critical accessibility issue; agreed load and interaction budgets pass on a representative low-end laptop.", "owner": "Frontend engineering" },
+        { "order": 6, "workstream": "Claims and legal review", "deliverable": "Align README, website, docs, platform matrix, privacy, terms, trademarks, and integration claims with verified evidence.", "exit_criterion": "Every public claim maps to a current test or dated sign-off; legal counsel reviews if high-reach or paid promotion is planned.", "owner": "Product marketing and legal" }
+      ],
+      "roadmap_p2": [
+        { "order": 1, "workstream": "Launch release", "deliverable": "Promote the proven RC to a SemVer release and publish release notes, checksums, signed assets, provenance, and known issues.", "launch_gate": "All P0 and beta gates pass; public main is protected; installer proxies target the new release.", "owner": "Release owner" },
+        { "order": 2, "workstream": "Production website", "deliverable": "Publish the indexed landing page, documentation, social preview, support links, platform matrix, and install CTA with uptime smoke monitoring.", "launch_gate": "Homepage and installer routes pass from two external regions and a clean browser; repository homepage points to the site.", "owner": "Web and marketing" },
+        { "order": 3, "workstream": "Marketing activation", "deliverable": "Start with controlled community posts and a measured cohort before larger creator, paid, or press outreach.", "launch_gate": "Seven consecutive beta days without severity-1/2 incidents and with support capacity inside the promised response window.", "owner": "Marketing and community" },
+        { "order": 4, "workstream": "Post-launch hardening", "deliverable": "Add Intel macOS install coverage if supported, expand Wayland/Linux desktop coverage, run provider-outage chaos drills, and perform multi-hour voice/mission soak tests.", "launch_gate": "Tracked as post-launch unless the related platform/provider is part of the initial claim.", "owner": "Platform and reliability" },
+        { "order": 5, "workstream": "Quality debt ratchet", "deliverable": "Reduce Ruff, formatting, and mypy baselines in bounded subsystems while keeping release gates regression-free.", "launch_gate": "No backlog growth; every touched subsystem moves toward zero with focused ownership.", "owner": "Engineering leads" }
+      ]
+    }
+  },
+  "sources": [
+    {
+      "id": "src_audit",
+      "label": "Personal Jarvis pre-marketing readiness audit, July 12, 2026",
+      "path": "docs/reports/personal-jarvis-marketing-readiness-2026-07-12.evidence.sql"
+    },
+    { "id": "src_local_tests", "label": "Current backend CI-profile test run", "path": "docs/reports/personal-jarvis-marketing-readiness-2026-07-12.evidence.sql" },
+    { "id": "src_frontend", "label": "Current desktop frontend verification" },
+    { "id": "src_crossplatform", "label": "Cross-platform sign-off evidence", "path": "docs/reports/personal-jarvis-marketing-readiness-2026-07-12.evidence.sql" },
+    { "id": "src_live_site", "label": "Live Personal Jarvis website", "path": "docs/reports/personal-jarvis-marketing-readiness-2026-07-12.evidence.sql", "href": "https://personaljarvis.ai/" },
+    { "id": "src_public_repo", "label": "Public GitHub repository", "href": "https://github.com/PersonalJarvis/PersonalJarvis" },
+    { "id": "src_release", "label": "Personal Jarvis v1.0.5 release", "href": "https://github.com/PersonalJarvis/PersonalJarvis/releases/tag/v1.0.5" },
+    { "id": "src_security", "label": "Local security and dependency verification" },
+    { "id": "src_website_local", "label": "Local marketing website release candidate" },
+    { "id": "src_legal", "label": "Trademark and brand audit", "path": "docs/legal/trademark-brand-audit-2026-06-27.html" }
+  ]
+}
