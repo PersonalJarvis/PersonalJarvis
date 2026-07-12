@@ -91,6 +91,22 @@ describe("ApiKeysView two-mode", () => {
     expect(realtimeSegment.textContent).not.toMatch(/active/i);
   });
 
+  it("marks Pipeline as the recommended engine, not Realtime", () => {
+    // Pipeline is the recommended default; Realtime is a research preview.
+    // The Recommended badge therefore rides the Pipeline segment only.
+    render(<ApiKeysView />);
+    const pipelineSegment = screen.getByRole("button", { name: /pipeline/i });
+    const realtimeSegment = screen.getByRole("button", { name: /^realtime/i });
+    expect(pipelineSegment.textContent).toMatch(/recommended/i);
+    expect(realtimeSegment.textContent).not.toMatch(/recommended/i);
+  });
+
+  it("shows a research-preview disclaimer when Realtime is selected", () => {
+    render(<ApiKeysView />);
+    fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
+    expect(screen.getByText(/research preview/i)).toBeTruthy();
+  });
+
   it("shows when the selected Realtime mode is still served by Pipeline", () => {
     mockVoiceMode = "realtime";
     mockSessionActive = true;

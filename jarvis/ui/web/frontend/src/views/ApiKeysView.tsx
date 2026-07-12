@@ -305,13 +305,14 @@ function EngineModeSwitch({
   onSetVoiceMode: (mode: string) => void;
 }) {
   const t = useT();
-  // Realtime leads: it is the recommended default, so it takes the first
-  // (left) segment with the Recommended badge fully visible.
+  // Pipeline leads: it is the recommended default (Realtime is still a
+  // research preview), so it takes the first (left) segment with the
+  // Recommended badge fully visible.
   const segments: { key: VoiceEngineMode; label: string; icon: LucideIcon }[] = [
-    { key: "realtime", label: t("apikeys_view.mode_realtime"), icon: Radio },
     { key: "pipeline", label: t("apikeys_view.mode_pipeline"), icon: Waypoints },
+    { key: "realtime", label: t("apikeys_view.mode_realtime"), icon: Radio },
   ];
-  const liveIndex = liveMode === "realtime" ? 0 : 1;
+  const liveIndex = liveMode === "pipeline" ? 0 : 1;
   const runtimeDetail = [activeSessionProvider, activeSessionModel]
     .filter(Boolean)
     .join(" · ");
@@ -350,7 +351,7 @@ function EngineModeSwitch({
           {/* Two equal segments over one sliding thumb: the thumb tracks the
               LIVE engine, so its glide IS the switch feedback. */}
           {/* w-auto + equal columns: the container grows with the widest
-              segment (Realtime + Recommended badge) instead of clipping it;
+              segment (Pipeline + Recommended badge) instead of clipping it;
               the sliding thumb stays correct at any width. */}
           <div className="relative grid w-auto min-w-64 grid-cols-2 rounded-xl border border-border bg-card/40 p-1">
             <span
@@ -383,7 +384,7 @@ function EngineModeSwitch({
                 >
                   <Icon aria-hidden="true" className="h-3.5 w-3.5" />
                   {seg.label}
-                  {seg.key === "realtime" && (
+                  {seg.key === "pipeline" && (
                     <span
                       className={cn(
                         "whitespace-nowrap rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide",
@@ -409,6 +410,11 @@ function EngineModeSwitch({
                 ? t("apikeys_view.mode_desc_realtime")
                 : t("apikeys_view.mode_desc_pipeline")}
           </p>
+          {mode === "realtime" && (
+            <p className="mt-1 max-w-64 text-right text-[11px] leading-snug text-amber-500/90">
+              {t("apikeys_view.mode_realtime_preview")}
+            </p>
+          )}
           <div
             className="mt-2 flex max-w-64 items-start justify-end gap-1.5 text-right text-[11px] leading-snug"
             aria-live="polite"
