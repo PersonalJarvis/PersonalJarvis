@@ -135,6 +135,48 @@ if TYPE_CHECKING:
 log = logging.getLogger("jarvis.speech.pipeline")
 
 
+async def _run_voice_critical_thread(fn: Callable[[], Any]) -> Any:
+    """Run blocking voice startup work outside the shared default executor.
+
+    Wake and local-STT implementations legitimately use ``asyncio.to_thread``
+    for native inference. A slow or un-cancellable inference can occupy every
+    default-pool worker, so queueing realtime session assembly there creates a
+    false LISTENING state: the microphone is buffered, but the provider cannot
+    begin accepting that audio until a worker becomes free. A fresh daemon
+    thread keeps this voice-critical control path independent and cannot hold
+    process shutdown open if a platform credential backend itself wedges.
+    """
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[Any] = loop.create_future()
+
+    def _resolve(setter: Callable[[Any], None], value: Any) -> None:
+        if not future.done():
+            setter(value)
+
+    def _runner() -> None:
+        try:
+            result = fn()
+        except BaseException as exc:  # noqa: BLE001 - relay to async caller
+            callback = future.set_exception
+            value: Any = exc
+        else:
+            callback = future.set_result
+            value = result
+        try:
+            loop.call_soon_threadsafe(_resolve, callback, value)
+        except RuntimeError:
+            # The owning loop may close while an un-cancellable native call is
+            # still unwinding. The daemon thread can then finish silently.
+            pass
+
+    threading.Thread(
+        target=_runner,
+        name="jarvis-voice-critical",
+        daemon=True,
+    ).start()
+    return await future
+
+
 async def _gather_timed(
     named_thunks: list[tuple[str, Callable[[], Awaitable[Any]]]],
 ) -> tuple[dict[str, float], list[Any]]:
@@ -5869,7 +5911,7 @@ class SpeechPipeline:
 
         async def _warm_barge_detector() -> None:
             try:
-                await asyncio.to_thread(barge_detector.warmup)
+                await _run_voice_critical_thread(barge_detector.warmup)
             except Exception as exc:  # noqa: BLE001 -- voice still works without local VAD
                 log.warning(
                     "Realtime desktop barge-in detector unavailable; "
@@ -6016,17 +6058,19 @@ class SpeechPipeline:
                     self._hangup_event.wait(), name=f"rt-hangup-{session_id}"
                 )
                 wait_tasks.add(hangup_task)
+                build_started_at = time.monotonic()
                 build_task = asyncio.create_task(
-                    asyncio.to_thread(
-                        build_realtime_session,
-                        cfg=self._config,
-                        bus=self._bus,
-                        session_id=session_id,
-                        send_binary=_send_binary,
-                        send_json=_send_json,
-                        half_duplex=True,
-                        surface="desktop",
-                        brain=getattr(self, "_brain", None),
+                    _run_voice_critical_thread(
+                        lambda: build_realtime_session(
+                            cfg=self._config,
+                            bus=self._bus,
+                            session_id=session_id,
+                            send_binary=_send_binary,
+                            send_json=_send_json,
+                            half_duplex=True,
+                            surface="desktop",
+                            brain=getattr(self, "_brain", None),
+                        )
                     ),
                     name=f"rt-build-{session_id}",
                 )
@@ -6039,8 +6083,11 @@ class SpeechPipeline:
                     build_task.cancel()
                     return HANGUP_HOTKEY
                 session = build_task.result()
+                build_ms = (time.monotonic() - build_started_at) * 1000.0
+                log.info("Realtime desktop session assembled in %.0f ms.", build_ms)
                 if session is None:
                     return None
+                handshake_started_at = time.monotonic()
                 handshake_task = asyncio.create_task(
                     session.handle_control(
                         {"type": "audio_start", "sample_rate": 16_000}
@@ -6057,6 +6104,12 @@ class SpeechPipeline:
                     handshake_task.cancel()
                     return HANGUP_HOTKEY
                 handshake_task.result()
+                log.info(
+                    "Realtime desktop provider handshake completed in %.0f ms "
+                    "(%.0f ms total startup).",
+                    (time.monotonic() - handshake_started_at) * 1000.0,
+                    (time.monotonic() - build_started_at) * 1000.0,
+                )
                 # Completed startup tasks must not remain in the live-session
                 # FIRST_COMPLETED set; either would make a healthy realtime
                 # session unwind into classic voice immediately.

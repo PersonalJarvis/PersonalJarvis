@@ -670,6 +670,38 @@ async def test_shared_input_keeps_meter_live_while_realtime_build_is_blocked(
 
 
 @pytest.mark.asyncio
+async def test_realtime_builder_survives_exhausted_default_thread_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wake/STT workers must never queue the realtime control path behind them."""
+    pipe = _pipe()
+    loop = asyncio.get_running_loop()
+    release_pool = threading.Event()
+    blockers = [loop.run_in_executor(None, release_pool.wait) for _ in range(64)]
+    await asyncio.sleep(0.1)
+
+    build_called = threading.Event()
+
+    def _build(**kwargs):
+        build_called.set()
+        return _FakeRealtimeSession(kwargs["send_binary"], kwargs["send_json"])
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    buffer = pipeline_mod._SessionInputBuffer()  # noqa: SLF001
+    try:
+        reason = await asyncio.wait_for(
+            pipe._active_realtime_session(input_buffer=buffer),
+            timeout=1.0,
+        )
+    finally:
+        release_pool.set()
+        await asyncio.gather(*blockers, return_exceptions=True)
+
+    assert reason == HANGUP_TURN_COMPLETE
+    assert build_called.is_set()
+
+
+@pytest.mark.asyncio
 async def test_hangup_cancels_realtime_start_while_builder_is_blocked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

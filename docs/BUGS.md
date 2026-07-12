@@ -3240,3 +3240,52 @@ usage/rate cap needs a process-local, self-expiring cooldown its factory
 consults (mirror pair: `claude_quota_state` / `codex_quota_state`), and a
 cross-WORKER fallback must probe the target's viability before spawning it —
 never jump to a provider by name (AP-22).
+
+## BUG-043: Realtime bar appears but cannot accept speech while session assembly waits for the shared thread pool (HIGH, 2026-07-12)
+
+**Symptom.** Immediately after a confirmed wake, the desktop Jarvis Bar enters
+its listening state, but its microphone meter appears inert and the user gets
+no response when speaking naturally without a pause. Waiting several seconds
+before speaking can make the same session work. The delay varies with machine
+load and therefore looks provider-specific even though it affects every
+realtime provider.
+
+**Forensics.** In the live incident, wake confirmation and the listening bar
+arrived at 10:40:34. The voice session entered LISTENING at 10:40:35, but the
+first log line from `RealtimeVoiceSession` did not appear until 10:40:44. The
+user closed the still-unready session before any provider handshake began.
+The same session retained an open microphone throughout. A fresh-process
+benchmark assembled the wrapper in about 0.6 seconds, ruling out the provider
+handshake and normal credential resolution as the eight-to-nine-second gap.
+
+**Root cause.** `_active_realtime_session` queued the synchronous session
+wrapper build through `asyncio.to_thread`, which uses the process-wide default
+executor. Wake detectors and local STT also use that executor for native
+inference and recognizer replenishment. Under load, voice startup queued behind
+those workers. Capture-first buffering correctly preserved audio, but no
+realtime consumer could accept it until the unrelated shared-pool backlog
+cleared. This repeated the executor-starvation half of BUG-036 on a different
+voice-critical control path.
+
+**Fix.** `jarvis/speech/pipeline.py::_run_voice_critical_thread` runs realtime
+session assembly and desktop barge-in warmup on fresh daemon threads, outside
+the shared default executor. The existing ordering remains unchanged:
+microphone capture starts first, `VoiceSessionStarted` reveals the bar only
+after capture is armed, startup audio stays in `_SessionInputBuffer`, and the
+selected provider receives the preserved prefix as soon as its handshake
+completes. Provider selection and cross-family fallback remain capability- and
+credential-driven.
+
+**Guards.** `tests/unit/speech/test_realtime_mode.py` contains
+`test_realtime_builder_survives_exhausted_default_thread_pool`, which fills the
+default executor beyond its platform maximum and proves that realtime assembly
+still starts and completes. The existing
+`test_shared_input_keeps_meter_live_while_realtime_build_is_blocked` and
+`test_capture_precedes_listening_signal_and_preserves_startup_audio` retain the
+metering, ordering, and zero-loss guarantees.
+
+**Class rule.** A voice-critical recovery or startup control path must never
+depend on the same executor used by un-cancellable native inference. Opening
+the microphone early is necessary but not sufficient: every prerequisite for
+the eventual audio consumer must also remain schedulable while the default
+pool is exhausted.
