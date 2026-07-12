@@ -79,9 +79,8 @@ def test_populated_vault_searchable_after_boot_index(tmp_path: Path) -> None:
         search.close()
 
 
-def test_boot_index_idempotent_and_skips_when_populated(tmp_path: Path) -> None:
-    """Second call is a no-op (table already populated) — does not raise or
-    duplicate rows."""
+def test_boot_index_reconciles_stale_populated_index(tmp_path: Path) -> None:
+    """A non-empty index is rebuilt when the active vault contents change."""
     vault = tmp_path / "wiki" / "obsidian-vault"
     vault.mkdir(parents=True)
     _write_page(vault, "topics/sailing.md", "# Sailing\n\nThe Albatross sailboat.\n")
@@ -92,11 +91,16 @@ def test_boot_index_idempotent_and_skips_when_populated(tmp_path: Path) -> None:
     server = WebServer.__new__(WebServer)
     server.cfg = _fake_cfg(vault, data_dir)
     server._init_wiki_boot_index()
-    server._init_wiki_boot_index()  # second call must skip cleanly
+    (vault / "topics" / "sailing.md").unlink()
+    _write_page(vault, "topics/aviation.md", "# Aviation\n\nElectric aircraft.\n")
+    server._init_wiki_boot_index()
 
     conn = sqlite3.connect(str(db_path))
     try:
         assert conn.execute("SELECT COUNT(*) FROM wiki_fts").fetchone()[0] == 1
+        assert conn.execute("SELECT path FROM wiki_fts").fetchone()[0] == (
+            "topics/aviation.md"
+        )
     finally:
         conn.close()
 

@@ -270,10 +270,12 @@ async def bootstrap_wiki_integration(
     # ------------------------------------------------------------------
     # Build the curator stack
     # ------------------------------------------------------------------
+    root_cfg = _load_root_config()
     curator = _build_curator(
         repo=repo,
         vault_root=vault_path,
         brain_caller=brain_caller,
+        root_config=root_cfg,
     )
 
     # Publish the live curator so the ``wiki-ingest`` tool can find it.
@@ -310,7 +312,6 @@ async def bootstrap_wiki_integration(
     # and to the D2 gate below — two independent load_config() calls could
     # diverge on a racy partial config write, making the gate inconsistent
     # with the worker's own wiki_write_enabled view.
-    root_cfg = _load_root_config()
     worker = _build_rollup_worker(
         repo=repo,
         vault_root=vault_path,
@@ -422,11 +423,14 @@ async def bootstrap_wiki_integration(
     try:
         extractor_cfg = root_cfg.memory.wiki.extractor
         if bool(getattr(extractor_cfg, "enabled", True)):
+            from jarvis.memory.wiki.db_path import resolve_wiki_db_path
             from jarvis.memory.wiki.extractor import ConversationFactExtractor
             from jarvis.memory.wiki.journal import CandidateJournal
 
-            data_dir = Path(getattr(root_cfg.memory, "data_dir", "./data"))
-            journal = CandidateJournal(data_dir / "jarvis.db")
+            db_path = resolve_wiki_db_path(
+                getattr(root_cfg.memory, "data_dir", "./data")
+            )
+            journal = CandidateJournal(db_path)
             extractor = ConversationFactExtractor(config=root_cfg, journal=journal)
             handle._journal = journal  # noqa: SLF001
             if scheduler is not None:
@@ -450,7 +454,7 @@ async def bootstrap_wiki_integration(
             log.info(
                 "wiki_integration: Stage-1 fact extractor active "
                 "(journal db=%s, journal trigger=%s)",
-                data_dir / "jarvis.db",
+                db_path,
                 "scheduler" if scheduler is not None else "off",
             )
         else:
@@ -736,6 +740,7 @@ def _build_curator(
     repo: "PageRepository",
     vault_root: Path,
     brain_caller: Callable[[str, str], Awaitable[str]] | None,
+    root_config: Any | None = None,
 ) -> Any:
     """Construct a :class:`~jarvis.memory.wiki.curator.WikiCurator` instance.
 
@@ -745,17 +750,22 @@ def _build_curator(
     from jarvis.memory.wiki.atomic_writer import AtomicWriter
     from jarvis.memory.wiki.curator import WikiCurator
     from jarvis.memory.wiki.curator_llm import WikiCuratorLLM
+    from jarvis.memory.wiki.db_path import resolve_wiki_db_path
     from jarvis.memory.wiki.log_writer import LogWriter
     from jarvis.memory.wiki.vault_index import VaultIndex
 
+    if root_config is None:
+        root_config = _load_root_config()
+
+    db_path = resolve_wiki_db_path(root_config.memory.data_dir)
     backup_dir = vault_root.parent / "wiki-backups"
-    writer = AtomicWriter(vault_root=vault_root, backup_dir=backup_dir)
+    writer = AtomicWriter(
+        vault_root=vault_root,
+        backup_dir=backup_dir,
+        db_path=db_path,
+    )
     log_writer = LogWriter(log_path=vault_root / "log.md")
     vault = VaultIndex(repo=repo)
-
-    # Load root config for the LLM; fall back to default config when not
-    # available in the current environment (logged inside the helper).
-    root_config = _load_root_config()
 
     schema_path = vault_root / "schema.md"
     # CRIT-4 (2026-05-17 audit-7): missing schema.md silently broke every
@@ -915,19 +925,21 @@ def _build_rollup_worker(
     from jarvis.memory.wiki.log_writer import LogWriter
     from jarvis.memory.wiki.session_rollup import SessionRollupWorker
 
-    backup_dir = vault_root.parent / "wiki-backups"
-    writer = AtomicWriter(vault_root=vault_root, backup_dir=backup_dir)
-    log_writer = LogWriter(log_path=vault_root / "log.md")
-
     if root_config is None:
         root_config = _load_root_config()
-    try:
-        data_dir = Path(root_config.memory.data_dir)
-    except Exception:  # noqa: BLE001
-        data_dir = Path("./data")
+    from jarvis.memory.wiki.db_path import resolve_wiki_db_path
+
+    db_path = resolve_wiki_db_path(root_config.memory.data_dir)
+    backup_dir = vault_root.parent / "wiki-backups"
+    writer = AtomicWriter(
+        vault_root=vault_root,
+        backup_dir=backup_dir,
+        db_path=db_path,
+    )
+    log_writer = LogWriter(log_path=vault_root / "log.md")
 
     from jarvis.memory.recall import RecallStore
-    recall = RecallStore(data_dir / "jarvis.db")
+    recall = RecallStore(db_path)
     # Schedule an async open so the connection is available when the worker
     # first fires.  open() is idempotent — safe to call again if already open.
     try:

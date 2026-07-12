@@ -1752,11 +1752,10 @@ class WebServer:
                 logger.debug("wiki health.record_bootstrap(False) failed", exc_info=True)
         _boot_mark("wiki_integration")
 
-        # Build the FTS5 search index once if it is empty so a pre-existing
-        # or restored vault returns search hits immediately (idempotent,
-        # guarded — never blocks boot).
+        # Reconcile the derived FTS5 index after readiness. This repairs stale
+        # rows after a vault switch without extending the startup critical path.
         try:
-            self._init_wiki_boot_index()
+            self._init_wiki_boot_index(background=True)
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
                 "WikiBootIndex-Init failed — vault search may return no hits "
@@ -2254,25 +2253,18 @@ class WebServer:
         except Exception:  # noqa: BLE001 — health recording must never break boot
             logger.debug("wiki health.record_bootstrap(True) failed", exc_info=True)
 
-    def _init_wiki_boot_index(self) -> None:
-        """One-shot FTS5 index build at boot for a pre-existing/restored vault.
+    def _init_wiki_boot_index(self, *, background: bool = False) -> None:
+        """Rebuild the derived FTS view against the active vault.
 
-        ``wiki_fts`` is only populated incrementally by
-        ``AtomicWriter.upsert_page`` (on write) and the manual ``reindex``
-        CLI. A vault that already has pages on disk at first boot — a fresh
-        clone, a restored backup, or a hand-edited Obsidian vault — therefore
-        returns zero search hits until something happens to rewrite a page.
-
-        This runs ``index_vault`` exactly once when the FTS table is empty, so
-        ``wiki-recall`` / ``WikiContextInjector`` return hits immediately. It
-        is fully idempotent (``index_vault`` upserts by path) and guarded so a
-        failure can never block boot. It is **not** on the voice critical path
-        (AP-9): it runs synchronously during ``start()`` before the speech
-        pipeline accepts a turn.
+        Production uses a daemon thread after app readiness (AP-26). Tests and
+        explicit callers may keep the synchronous default for deterministic
+        verification.
         """
         import sqlite3
+        import threading
 
-        from jarvis.memory.wiki.fts_index import ensure_schema, index_vault
+        from jarvis.memory.wiki.db_path import resolve_wiki_db_path
+        from jarvis.memory.wiki.fts_index import rebuild_index
 
         wiki_cfg = self.cfg.wiki_integration
         if not wiki_cfg.enabled:
@@ -2285,28 +2277,44 @@ class WebServer:
             logger.info("wiki_boot_index: vault missing — skipping ({})", vault_root)
             return
 
-        data_dir = Path(self.cfg.memory.data_dir)
-        db_path = data_dir / "jarvis.db"
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_wiki_db_path(self.cfg.memory.data_dir)
 
-        conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        try:
-            ensure_schema(conn)
-            row_count = conn.execute("SELECT COUNT(*) FROM wiki_fts").fetchone()[0]
-            if row_count:
+        def _reconcile() -> None:
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(db_path), check_same_thread=False)
+            try:
+                indexed = rebuild_index(vault_root, conn)
                 logger.info(
-                    "wiki_boot_index: FTS index already populated ({} rows) — skipping",
-                    row_count,
+                    "wiki_boot_index: reconciled {} page(s) from {} into {}",
+                    indexed,
+                    vault_root,
+                    db_path,
                 )
-                return
-            indexed = index_vault(vault_root, conn)
-            logger.info(
-                "wiki_boot_index: built FTS index for {} page(s) from {}",
-                indexed,
-                vault_root,
+            except Exception as exc:  # noqa: BLE001
+                logger.opt(exception=exc).warning(
+                    "wiki_boot_index: background reconciliation failed"
+                )
+                try:
+                    from jarvis.memory.wiki.health import health as _wiki_health
+
+                    _wiki_health.record_chain_failure(
+                        f"wiki index reconciliation failed: {exc}"
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug("wiki index health recording failed", exc_info=True)
+            finally:
+                conn.close()
+
+        if background:
+            thread = threading.Thread(
+                target=_reconcile,
+                name="jarvis-wiki-index-reconcile",
+                daemon=True,
             )
-        finally:
-            conn.close()
+            thread.start()
+            self._wiki_index_thread = thread
+            return
+        _reconcile()
 
     def _init_wiki_watcher(self) -> None:
         """Phase B3 — start the WikiWatcher for desktop live-reload.

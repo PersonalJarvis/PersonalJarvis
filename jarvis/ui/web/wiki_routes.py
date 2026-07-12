@@ -613,8 +613,65 @@ async def get_telemetry(_request: Request) -> dict[str, Any]:
     }
 
 
+def _visible_markdown_count(vault_root: Path) -> int:
+    """Count indexable Markdown pages, excluding hidden directories."""
+    return sum(
+        1
+        for path in vault_root.rglob("*.md")
+        if not any(
+            part.startswith(".")
+            for part in path.relative_to(vault_root).parts[:-1]
+        )
+    )
+
+
+@router.post("/reindex")
+async def reindex_wiki(
+    request: Request,
+    dry_run: bool = Query(default=False),
+) -> dict[str, Any]:
+    """Rebuild the derived wiki search index from the active vault."""
+    import sqlite3
+
+    from jarvis.memory.wiki.db_path import resolve_wiki_db_path
+    from jarvis.memory.wiki.fts_index import rebuild_index
+
+    vault_root = _resolve_vault_root(request)
+    if vault_root is None or not vault_root.is_dir():
+        return {"ok": False, "error": "vault unavailable"}
+
+    config = getattr(request.app.state, "config", None)
+    data_dir = getattr(getattr(config, "memory", None), "data_dir", "./data")
+    db_path = resolve_wiki_db_path(data_dir)
+    vault_pages = _visible_markdown_count(vault_root)
+
+    def _run() -> tuple[int, int]:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        try:
+            try:
+                before = int(conn.execute("SELECT COUNT(*) FROM wiki_fts").fetchone()[0])
+            except sqlite3.OperationalError:
+                before = 0
+            if dry_run:
+                return before, before
+            return before, rebuild_index(vault_root, conn)
+        finally:
+            conn.close()
+
+    before, indexed = await asyncio.to_thread(_run)
+    return {
+        "ok": True,
+        "dry_run": dry_run,
+        "vault_root": str(vault_root),
+        "vault_pages": vault_pages,
+        "indexed_before": before,
+        "indexed_pages": indexed,
+    }
+
+
 @router.get("/health")
-async def wiki_health(_request: Request) -> dict[str, Any]:
+async def wiki_health(request: Request) -> dict[str, Any]:
     """Wiki subsystem health for the Wiki tab status panel (spec A5).
 
     The wiki subsystem is fire-and-forget by design (AP-9): failures never
@@ -623,9 +680,76 @@ async def wiki_health(_request: Request) -> dict[str, Any]:
     failures, write failures, chain exhaustion, and journal pressure become
     visible instead of only ever appearing in the logs.
     """
+    import sqlite3
+
+    from jarvis.memory.wiki.db_path import resolve_wiki_db_path
     from jarvis.memory.wiki.health import health as _health
 
-    return {"ok": True, "health": _health.snapshot()}
+    snapshot = _health.snapshot()
+    vault_root = _resolve_vault_root(request)
+    config = getattr(request.app.state, "config", None)
+    data_dir = getattr(getattr(config, "memory", None), "data_dir", "./data")
+    db_path = resolve_wiki_db_path(data_dir)
+
+    def _persistent_state() -> dict[str, Any]:
+        state: dict[str, Any] = {
+            "journal_backlog": 0,
+            "indexed_pages": 0,
+            "last_write": None,
+        }
+        if not db_path.exists():
+            return state
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        try:
+            try:
+                state["journal_backlog"] = int(
+                    conn.execute(
+                        "SELECT COUNT(*) FROM wiki_candidate_journal "
+                        "WHERE status = 'pending'"
+                    ).fetchone()[0]
+                )
+                row = conn.execute(
+                    "SELECT consolidated_ms, target_path, source_label "
+                    "FROM wiki_candidate_journal "
+                    "WHERE status = 'consolidated' AND target_path IS NOT NULL "
+                    "ORDER BY consolidated_ms DESC LIMIT 1"
+                ).fetchone()
+                if row and row[0]:
+                    state["last_write"] = {
+                        "ts": float(row[0]) / 1000.0,
+                        "ok": True,
+                        "pages": [str(row[1])],
+                        "error": None,
+                        "source": str(row[2]),
+                    }
+            except sqlite3.OperationalError:
+                pass
+            try:
+                state["indexed_pages"] = int(
+                    conn.execute("SELECT COUNT(*) FROM wiki_fts").fetchone()[0]
+                )
+            except sqlite3.OperationalError:
+                pass
+        finally:
+            conn.close()
+        return state
+
+    persistent = await asyncio.to_thread(_persistent_state)
+    if snapshot["last_write"] is None and persistent["last_write"] is not None:
+        snapshot["last_write"] = persistent["last_write"]
+    snapshot["journal_backlog"] = persistent["journal_backlog"]
+    snapshot["indexed_pages"] = persistent["indexed_pages"]
+    snapshot["vault_pages"] = (
+        _visible_markdown_count(vault_root)
+        if vault_root is not None and vault_root.is_dir()
+        else 0
+    )
+    snapshot["index_state"] = (
+        "ok"
+        if snapshot["indexed_pages"] == snapshot["vault_pages"]
+        else "stale"
+    )
+    return {"ok": True, "health": snapshot}
 
 
 __all__ = ["router"]

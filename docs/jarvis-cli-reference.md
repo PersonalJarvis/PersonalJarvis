@@ -185,6 +185,7 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis wiki health` — Show wiki subsystem health: bootstrap, last write, chain failures, backlog (spec A5).
 - `jarvis wiki page <slug>` — Read a wiki page by vault path / slug.
 - `jarvis wiki recall <query>` — Full-text search the wiki.
+- `jarvis wiki reindex --preview` — Rebuild the wiki search index from the active vault.
 - `jarvis wiki tree` — Show the vault folder tree + stats.
 - `jarvis wiki vaults` — List the user's registered Obsidian vaults (connect picker, spec A6).
 

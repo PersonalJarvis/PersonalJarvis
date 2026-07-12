@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -36,7 +35,11 @@ def _make_app(vault_root: Path | None) -> FastAPI:
         wiki_cfg = SimpleNamespace(vault_root=None)
     else:
         wiki_cfg = SimpleNamespace(vault_root=vault_root)
-    app.state.config = SimpleNamespace(wiki_integration=wiki_cfg)
+    data_dir = vault_root.parent / "data" if vault_root is not None else Path("data")
+    app.state.config = SimpleNamespace(
+        wiki_integration=wiki_cfg,
+        memory=SimpleNamespace(data_dir=data_dir),
+    )
     return app
 
 
@@ -371,6 +374,53 @@ def test_search_k_parameter_caps_results(populated_vault: Path) -> None:
 
 
 # ----------------------------------------------------------------------
+# /reindex
+# ----------------------------------------------------------------------
+
+
+def test_reindex_replaces_stale_rows_with_active_vault(
+    populated_vault: Path,
+) -> None:
+    import sqlite3
+
+    from jarvis.memory.wiki.db_path import resolve_wiki_db_path
+
+    app = _make_app(populated_vault)
+    db_path = resolve_wiki_db_path(app.state.config.memory.data_dir)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            "CREATE VIRTUAL TABLE wiki_fts USING fts5("
+            "path UNINDEXED, title, frontmatter, body, mtime UNINDEXED)"
+        )
+        conn.execute(
+            "INSERT INTO wiki_fts VALUES (?, ?, ?, ?, ?)",
+            ("entities/stale.md", "Stale", "", "old", "0"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        preview = client.post("/api/wiki/reindex", params={"dry_run": "true"}).json()
+        result = client.post("/api/wiki/reindex").json()
+
+    assert preview["indexed_before"] == 1
+    assert preview["indexed_pages"] == 1
+    assert result["ok"] is True
+    assert result["indexed_pages"] == 3
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        paths = {row[0] for row in conn.execute("SELECT path FROM wiki_fts")}
+    finally:
+        conn.close()
+    assert "entities/stale.md" not in paths
+    assert "entities/ruben.md" in paths
+
+
+# ----------------------------------------------------------------------
 # Defensive: missing config
 # ----------------------------------------------------------------------
 
@@ -403,6 +453,7 @@ def test_page_without_config_returns_error_envelope() -> None:
 
 def test_health_returns_200_with_fresh_snapshot(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """A fresh ``WikiHealth`` singleton reports the all-unknown baseline shape.
 
@@ -416,6 +467,10 @@ def test_health_returns_200_with_fresh_snapshot(
 
     app = FastAPI()
     app.include_router(wiki_router)
+    app.state.config = SimpleNamespace(
+        wiki_integration=SimpleNamespace(vault_root=tmp_path / "vault"),
+        memory=SimpleNamespace(data_dir=tmp_path / "data"),
+    )
     with TestClient(app) as client:
         r = client.get("/api/wiki/health")
     body = r.json()
@@ -425,3 +480,44 @@ def test_health_returns_200_with_fresh_snapshot(
     assert body["health"]["bootstrap_ok"] is None
     assert body["health"]["last_write"] is None
     assert body["health"]["last_chain_failure"] is None
+
+
+def test_health_restores_last_write_and_backlog_from_journal(tmp_path: Path) -> None:
+    from jarvis.memory.wiki.journal import CandidateFact, CandidateJournal
+
+    vault = tmp_path / "vault"
+    _write_page(
+        vault,
+        "entities",
+        "ruben",
+        page_type="entity",
+        body="# Ruben\n",
+    )
+    app = _make_app(vault)
+    db_path = app.state.config.memory.data_dir / "jarvis.db"
+    journal = CandidateJournal(db_path)
+    assert journal.append(
+        [CandidateFact(fact="A durable fact")],
+        source_label="test-source",
+        turn_hash="hash-1",
+    ) == 1
+    journal.mark(
+        [1],
+        status="consolidated",
+        decision="add",
+        target_path="entities/ruben.md",
+    )
+    assert journal.append(
+        [CandidateFact(fact="A pending fact")],
+        source_label="test-source",
+        turn_hash="hash-2",
+    ) == 1
+
+    with TestClient(app) as client:
+        body = client.get("/api/wiki/health").json()
+
+    health = body["health"]
+    assert health["journal_backlog"] == 1
+    assert health["last_write"]["pages"] == ["entities/ruben.md"]
+    assert health["vault_pages"] == 1
+    assert health["index_state"] == "stale"

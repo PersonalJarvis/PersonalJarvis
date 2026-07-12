@@ -217,6 +217,9 @@ describe("WikiView — health strip", () => {
     },
     last_chain_failure: null,
     journal_backlog: 0,
+    indexed_pages: 1,
+    vault_pages: 1,
+    index_state: "ok",
   };
 
   const FAILED_HEALTH: WikiHealthSnapshot = {
@@ -234,6 +237,9 @@ describe("WikiView — health strip", () => {
     },
     last_chain_failure: null,
     journal_backlog: 3,
+    indexed_pages: 0,
+    vault_pages: 1,
+    index_state: "stale",
   };
 
   it("renders the vault path for a healthy snapshot", async () => {
@@ -272,6 +278,26 @@ describe("WikiView — health strip", () => {
       screen.getByTestId("wiki-health-dot").getAttribute("data-visual"),
     ).toBe("red");
     expect(screen.getByTestId("wiki-health-backlog").textContent).toContain("3");
+  });
+
+  it("rebuilds a stale search index from the health strip", async () => {
+    const stale = { ...HEALTHY_HEALTH, indexed_pages: 0, index_state: "stale" as const };
+    const fetchMock = installFetchMock({
+      "/api/wiki/tree": () => EMPTY_TREE,
+      "/api/wiki/health": () => ({ ok: true, health: stale }),
+      "/api/wiki/reindex": () => ({ ok: true, indexed_pages: 1, vault_pages: 1 }),
+    });
+    renderWithClient(<WikiView />);
+
+    const button = await screen.findByTestId("wiki-health-reindex");
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/wiki/reindex",
+        { method: "POST" },
+      );
+    });
   });
 });
 

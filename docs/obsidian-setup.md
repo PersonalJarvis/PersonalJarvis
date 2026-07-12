@@ -17,17 +17,17 @@ read or edit them by hand.
 
    ![Step 1 — Install screen](./images/obsidian-setup-step1.png)
 
-2. Open the Jarvis Desktop App and switch to the **Wiki** tab. In
-   the top-right corner you will see an orange pill labelled
-   **"Obsidian: nicht registriert"** (Obsidian: not registered).  <!-- i18n-allow --> Click
-   it, then click **"Jetzt registrieren"** (Register now) in the dialog  <!-- i18n-allow -->
-   that opens. Jarvis writes the vault into Obsidian's index file and
-   creates a timestamped backup of the previous version next to it.
+2. Open the Jarvis Desktop App and switch to the **Wiki** tab. Choose
+   either an existing Obsidian vault or a separate Jarvis vault. When
+   an existing vault is selected, Jarvis stores its pages in a `Jarvis`
+   subdirectory. The parent vault remains the registered Obsidian vault;
+   Jarvis recognizes the nested directory as connected.
 
    ![Step 2 — Register vault](./images/obsidian-setup-step2.png)
 
 3. Click **"In Obsidian oeffnen"** (Open in Obsidian)  <!-- i18n-allow --> in the same
-   dialog. Obsidian opens directly into your Jarvis vault. Confirm the
+   dialog. Jarvis sends the absolute page path to Obsidian, which selects
+   the most specific registered parent vault and opens the page. Confirm the
    live test succeeded by clicking **"Hat geklappt"** (It worked) — the  <!-- i18n-allow -->
    wizard then closes for good and never auto-opens again on this
    machine.
@@ -38,8 +38,10 @@ read or edit them by hand.
 
 ### "config_missing" — Obsidian not started yet
 
-Obsidian only creates `%APPDATA%\obsidian\obsidian.json` the very
-first time it launches. If the wizard reports `config_missing`, open
+Obsidian only creates its vault index the first time it launches. It is
+stored under `%APPDATA%\obsidian` on Windows, Application Support on
+macOS, and the XDG configuration directory on Linux. If the wizard reports
+`config_missing`, open
 Obsidian once — even just briefly — close it again, then click
 **"Jetzt registrieren"** (Register now) in the Jarvis wizard. The
 second attempt will find the file and succeed.
@@ -67,10 +69,15 @@ but Obsidian maintains its own file cache that occasionally lags by
 a few seconds — especially right after the WikiCurator adds a new
 page during a conversation.
 
+If Jarvis search is stale, use **Rebuild index** in the Wiki health panel
+or run `jarvis wiki reindex`. The command rebuilds the derived FTS index
+from the configured vault and does not modify Markdown pages.
+
 ## Where the vault lives
 
-The vault is on disk at `wiki/obsidian-vault/` inside the Personal
-Jarvis repository. Any change you make in Obsidian appears inside
+The vault location is selected during setup and stored in
+`memory.wiki.vault_root`. It can be a standalone vault or the `Jarvis`
+directory inside an existing Obsidian vault. Any change you make in Obsidian appears inside
 the Jarvis Desktop App within seconds (the wiki-watcher monitors
 that directory). Conversely, any page Jarvis adds through its
 WikiCurator appears in Obsidian on the next file-system poll.

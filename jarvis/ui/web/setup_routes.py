@@ -198,8 +198,10 @@ def _reindex_vault_fts(request: Request, jarvis_root: Path) -> None:
 
     try:
         config = getattr(request.app.state, "config", None)
-        data_dir = Path(getattr(getattr(config, "memory", None), "data_dir", "./data"))
-        db_path = data_dir / "jarvis.db"
+        from jarvis.memory.wiki.db_path import resolve_wiki_db_path
+
+        data_dir = getattr(getattr(config, "memory", None), "data_dir", "./data")
+        db_path = resolve_wiki_db_path(data_dir)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(db_path), check_same_thread=False)
         try:

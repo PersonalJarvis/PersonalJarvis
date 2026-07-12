@@ -288,9 +288,9 @@ def _default_db_path() -> Path:
     containing ``jarvis/`` as a package, then appends ``data/jarvis.db``.
     Falls back to a sibling ``data/`` if the walk fails.
     """
-    # This file is at jarvis/memory/wiki/search.py → project root is 3 levels up.
-    candidate = Path(__file__).resolve().parent.parent.parent.parent / "data" / "jarvis.db"
-    return candidate
+    from jarvis.memory.wiki.db_path import resolve_wiki_db_path
+
+    return resolve_wiki_db_path()
 
 
 __all__ = ["SearchHit", "VaultSearch"]
