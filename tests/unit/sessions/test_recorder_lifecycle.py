@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
+
 import pytest
 
 from jarvis.core.bus import EventBus
@@ -15,6 +19,48 @@ from jarvis.core.events import (
 from jarvis.core.protocols import Transcript
 from jarvis.sessions.recorder import SessionRecorder
 from jarvis.sessions.store import SessionStore
+
+
+class _SlowStartStore:
+    """Minimal store whose session insert models a contended SQLite write."""
+
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def upsert_session(self, **_kwargs) -> None:
+        self.started.set()
+        self.release.wait(timeout=0.5)
+
+    def append_event(self, **_kwargs) -> int:
+        return 1
+
+
+@pytest.mark.asyncio
+async def test_slow_session_write_does_not_block_live_audio_loop() -> None:
+    """Persistence contention must not stall mic pumping or bar level frames."""
+    store = _SlowStartStore()
+    recorder = SessionRecorder(store)  # type: ignore[arg-type]
+    event = VoiceSessionStarted(
+        source_layer="speech.pipeline",
+        session_id="session-slow-store",
+        wake_keyword="hey_jarvis",
+        language="en",
+    )
+
+    started_at = time.perf_counter()
+    dispatch = asyncio.create_task(recorder._on_event(event))  # noqa: SLF001
+    try:
+        # If the synchronous store runs on the event-loop thread, this sleep
+        # cannot resume until the store's 500 ms timeout. Off-loop dispatch
+        # leaves ample time for the microphone buffer and Tk level channel.
+        await asyncio.sleep(0.05)
+        elapsed = time.perf_counter() - started_at
+        assert store.started.is_set()
+        assert elapsed < 0.25, f"event loop was blocked for {elapsed:.3f}s"
+    finally:
+        store.release.set()
+        await dispatch
 
 
 def _final(text: str, lang: str = "de", *, continues: bool = False) -> TranscriptFinal:

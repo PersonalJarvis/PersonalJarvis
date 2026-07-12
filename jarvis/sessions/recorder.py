@@ -32,7 +32,9 @@ replay.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -166,6 +168,16 @@ class SessionRecorder:
     def __init__(self, store: SessionStore) -> None:
         self._store = store
         self._state: _SessionState | None = None
+        # SQLite is synchronous and can briefly wait on another reader/writer.
+        # Keep those waits off the asyncio loop so microphone handoff, live
+        # level metering, and the native overlay remain responsive while a
+        # session event is persisted. The lock preserves event order and keeps
+        # this recorder's in-memory state machine single-threaded.
+        self._dispatch_lock = asyncio.Lock()
+        # ``to_thread`` work cannot be force-cancelled. If the EventBus timeout
+        # cancels an awaiting coroutine, this second lock keeps the still-live
+        # worker serialized with the next dispatch.
+        self._dispatch_thread_lock = threading.Lock()
         # Fallback when the pipeline forgets VoiceTurnStarted — we assign
         # our own turn_id at the first turn-relevant event.
         self._auto_turn_counter: int = 0
@@ -194,13 +206,18 @@ class SessionRecorder:
         but we definitely don't want error-log spam per voice turn.
         """
         try:
-            self._dispatch(event)
+            async with self._dispatch_lock:
+                await asyncio.to_thread(self._dispatch_serialized, event)
         except Exception as exc:  # noqa: BLE001
             log.warning(
                 "SessionRecorder dispatch failed",
                 exc_info=exc,
                 extra={"event_type": type(event).__name__},
             )
+
+    def _dispatch_serialized(self, event: Event) -> None:
+        with self._dispatch_thread_lock:
+            self._dispatch(event)
 
     def _dispatch(self, event: Event) -> None:
         kind = type(event).__name__
