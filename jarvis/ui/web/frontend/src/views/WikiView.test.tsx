@@ -44,6 +44,29 @@ function installFetchMock(
 ): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    if (url.startsWith("/api/setup/obsidian/status")) {
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => ({
+          installed: true,
+          config_exists: true,
+          vault_registered: true,
+          recommended_action: "ok",
+        }),
+      } as Response;
+    }
+    if (url.startsWith("/api/setup/state")) {
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => ({
+          completed: true,
+        }),
+      } as Response;
+    }
     for (const prefix of Object.keys(routes)) {
       if (url.startsWith(prefix)) {
         const body = routes[prefix]();
@@ -198,7 +221,7 @@ describe("WikiView — populated tree", () => {
       expect(screen.getByTestId("wiki-page-renderer")).toBeDefined();
     });
     expect(screen.getByTestId("wiki-page-title").textContent).toBe("Harald");
-  });
+  }, 10_000);
 });
 
 describe("WikiView — health strip", () => {

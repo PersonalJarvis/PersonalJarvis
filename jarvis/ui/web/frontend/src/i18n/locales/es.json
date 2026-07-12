@@ -1496,6 +1496,7 @@
     "install_failed": "{0}: instalación fallida (exit {1}). Prueba otro método."
   },
   "onboarding": {
+    "progress_label": "Progreso de la introducción",
     "nav": {
       "next": "Siguiente",
       "back": "Atrás",
@@ -1581,10 +1582,18 @@
       }
     },
     "api_keys": {
-      "title": "Conecta tus servicios de IA (opcional)",
-      "body": "Añade claves de API para desbloquear proveedores en la nube. Puedes omitir esto y añadirlas más tarde en Ajustes.",
-      "works_now": "Puedes empezar a chatear de inmediato — las claves solo añaden voces y proveedores en la nube.",
-      "skip": "Omitir — las añadiré más tarde"
+      "title": "Configura las claves API después de la introducción",
+      "body": "Termina primero la introducción. Después abre Claves API y proveedores. No necesitas rellenar todos los campos de claves API.",
+      "screenshot_alt": "Vista de Claves API de Personal Jarvis con la navegación de Claves API y el selector Realtime o Pipeline resaltados",
+      "api_location_title": "Abre Claves API",
+      "api_location_body": "Después de la introducción, selecciona Claves API en la barra lateral izquierda. Pega las claves de proveedor únicamente en esta vista segura.",
+      "voice_mode_title": "Elige el modo de voz",
+      "realtime_label": "Realtime (research preview):",
+      "realtime_body": "Añade una clave de OpenAI o Gemini para escucha, razonamiento y voz en un solo modelo.",
+      "pipeline_label": "Pipeline (recomendado):",
+      "pipeline_body": "Añade claves únicamente para los proveedores de razonamiento, salida de voz y entrada de voz que elijas.",
+      "security_note": "Pega las claves únicamente en la vista segura de Claves API, nunca en el chat ni por voz.",
+      "continue": "Continuar la introducción"
     },
     "mic_test": {
       "title": "Comprobación del micrófono",

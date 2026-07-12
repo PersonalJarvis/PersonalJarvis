@@ -7,9 +7,12 @@ vi.mock("@/i18n", () => ({
   useT: () => (key: string) => key,
   useUiLanguage: () => "en",
   useReplyLanguage: () => "auto",
+  useSttLanguage: () => "auto",
   setUiLanguage: vi.fn(),
   setReplyLanguage: vi.fn(),
+  setSttLanguage: vi.fn(),
   hydrateReplyLanguage: vi.fn(),
+  hydrateSttLanguage: vi.fn(),
   hydrateUiLanguage: vi.fn(),
 }));
 
@@ -31,8 +34,8 @@ describe("LanguagesGroup (Languages folded into Settings)", () => {
     expect(screen.getAllByText("languages_view.options.en.label").length).toBeGreaterThan(0);
     expect(screen.getAllByText("languages_view.options.de.label").length).toBeGreaterThan(0);
     expect(screen.getAllByText("languages_view.options.es.label").length).toBeGreaterThan(0);
-    // The reply section is the only one offering "automatic".
-    expect(screen.getByText("languages_view.options.auto.label")).toBeDefined();
+    // STT and reply language both offer "automatic".
+    expect(screen.getAllByText("languages_view.options.auto.label")).toHaveLength(2);
   });
 
   it("does not render a standalone page header (it lives under the Settings header)", () => {

@@ -134,12 +134,12 @@ acknowledgement signal (today: `VoiceFactBridge` aggressive path;
 future: Jarvis-Agents context hints) MUST satisfy three structural
 properties.
 
-**Rate-limited.** A per-source minimum interval, configurable via
+**Configurable cost gate.** A per-source minimum interval is available via
 the trigger's config block (today: `[memory.wiki.voice_bridge]
-.rate_limit_seconds`, default 60). The limiter must be implemented
-against `time.monotonic_ns()` so wall-clock drift does not lift
-the gate spuriously. Burst behaviour — multiple ingests within the
-window — must be silently dropped (DEBUG log only), not queued.
+.rate_limit_seconds`, default 0). Zero reviews every eligible completed turn;
+a positive value is an explicit operator choice that trades memory completeness
+for fewer provider calls. The limiter uses `time.monotonic_ns()` so wall-clock
+drift cannot lift a configured gate spuriously.
 
 **Opt-out via config.** The mode is governed by a boolean
 (`aggressive_mode`, default `true`). Setting it to `false` MUST
@@ -155,9 +155,9 @@ caught with `try/except Exception` inside the task body (already
 the contract in `VoiceFactBridge._ingest_safe`) and routed
 through the loud-regression failure class.
 
-These three properties together prevent the aggressive path from
-becoming a denial-of-service vector (rate-limit + opt-out) or a
-voice-path-blocking call (async).
+These properties keep the reviewer controllable (cost gate + opt-out) and off
+the voice critical path (async) without silently dropping consecutive durable
+facts on a default installation.
 
 ## Consequences
 

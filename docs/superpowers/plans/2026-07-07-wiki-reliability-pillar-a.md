@@ -914,7 +914,7 @@ git commit -m "feat(wiki): health recorder + GET /api/wiki/health + CLI"
 ### Task 6: Ambient journal tuning (spec A4)
 
 **Files:**
-- Modify: `jarvis/core/config.py:896` (`consolidate_after_candidates` 8 → 3;
+- Modify: `jarvis/core/config.py:896` (`consolidate_after_candidates` 8 → 1;
   add `flush_pending_max_age_minutes`)
 - Modify: `jarvis/memory/wiki/journal.py` (add `oldest_pending_ms()`)
 - Modify: `jarvis/memory/wiki/integration.py` (age-based flush loop)
@@ -964,11 +964,11 @@ def test_oldest_pending_ms_returns_first_pending(tmp_path):
     assert oldest <= 1_000_000
 
 
-def test_default_consolidation_threshold_is_three():
+def test_default_consolidation_threshold_is_one():
     from jarvis.core.config import SchedulerConfig
 
     cfg = SchedulerConfig()
-    assert cfg.consolidate_after_candidates == 3
+    assert cfg.consolidate_after_candidates == 1
     assert cfg.flush_pending_max_age_minutes == 10
 ```
 
@@ -978,7 +978,7 @@ def test_default_consolidation_threshold_is_three():
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `pytest tests/unit/memory/wiki/test_journal_age_flush.py -v`
-Expected: FAIL — `AttributeError: oldest_pending_ms` / threshold assert 8 != 3
+Expected: FAIL — `AttributeError: oldest_pending_ms` / threshold assert 8 != 1
 
 - [ ] **Step 3: Implement**
 
@@ -999,7 +999,7 @@ Expected: FAIL — `AttributeError: oldest_pending_ms` / threshold assert 8 != 3
 ```
 
 2. `config.py` `SchedulerConfig`: change the default to
-   `consolidate_after_candidates: int = 3` and add below it:
+   `consolidate_after_candidates: int = 1` and add below it:
 
 ```python
     # Age-based flush (spec A4): even below the count threshold, pending

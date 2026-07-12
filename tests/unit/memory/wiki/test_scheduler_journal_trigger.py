@@ -1,6 +1,6 @@
 """CuratorScheduler JOURNAL trigger (Wave-2 B4): journal pressure drains
-through the Stage-2 consolidator, under the same cooldown + lock gates as
-the legacy sources.
+through the Stage-2 consolidator under the shared lock, without delaying a
+reviewed durable turn behind the general scheduler cooldown.
 """
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ async def test_journal_trigger_runs_consolidator(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_journal_trigger_honours_cooldown(tmp_path: Path) -> None:
+async def test_journal_trigger_bypasses_cooldown(tmp_path: Path) -> None:
     consolidator = FakeConsolidator()
     scheduler = _scheduler(tmp_path, consolidator=consolidator, cooldown=3600)
 
@@ -60,9 +60,9 @@ async def test_journal_trigger_honours_cooldown(tmp_path: Path) -> None:
     second = await scheduler.trigger(TriggerSource.JOURNAL)
 
     assert first.triggered is True
-    assert second.triggered is False
-    assert second.skip_reason == "cooldown"
-    assert consolidator.runs == 1
+    assert second.triggered is True
+    assert second.skip_reason == ""
+    assert consolidator.runs == 2
 
 
 @pytest.mark.asyncio
@@ -76,7 +76,7 @@ async def test_journal_trigger_without_consolidator_skips(tmp_path: Path) -> Non
 
 
 def test_scheduler_config_has_journal_pressure_threshold() -> None:
-    assert SchedulerConfig().consolidate_after_candidates == 3
+    assert SchedulerConfig().consolidate_after_candidates == 1
 
 
 # ---------------------------------------------------------------------------

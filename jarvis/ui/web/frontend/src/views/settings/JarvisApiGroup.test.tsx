@@ -13,14 +13,14 @@ vi.mock("@/lib/clipboard", () => ({
 afterEach(() => vi.restoreAllMocks());
 
 describe("JarvisApiGroup", () => {
-  it("renders the 'Jarvis API' heading and the masked key (full key hidden)", async () => {
+  it("renders the 'Assistant API' heading and the masked key (full key hidden)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({ ok: true, json: async () => ({ key: KEY, masked: MASKED }) }),
     );
     render(<JarvisApiGroup />);
 
-    expect(screen.getByText("Jarvis API")).toBeTruthy();
+    expect(screen.getByText("Assistant API")).toBeTruthy();
     await waitFor(() => expect(screen.getByText(MASKED)).toBeTruthy());
     // The clear key must NOT be on screen until the user reveals it.
     expect(screen.queryByText(KEY)).toBeNull();

@@ -1,4 +1,5 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { Sidebar } from "@/components/layout/Sidebar";
@@ -31,6 +32,20 @@ vi.mock("@/hooks/usePluginAttention", () => ({
       : { count: 0, names: [] },
 }));
 
+function renderSidebar() {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <Sidebar />
+    </QueryClientProvider>,
+  );
+}
+
 describe("Sidebar voice header", () => {
   beforeEach(() => {
     useEventStore.setState({
@@ -57,7 +72,7 @@ describe("Sidebar voice header", () => {
       transcriptionFinal: false,
     });
 
-    const { container } = render(<Sidebar />);
+    const { container } = renderSidebar();
 
     expect(container.querySelector(".gigi-bubble-listening")).toBeNull();
     expect(container.querySelector(".gigi-bubble")).toBeNull();
@@ -72,7 +87,7 @@ describe("Sidebar voice header", () => {
       transcriptionFinal: false,
     });
 
-    render(<Sidebar />);
+    renderSidebar();
 
     // getByText throws if absent or if it matches more than once — so a single
     // hit proves the transcript survives exactly once (no duplicate bubble).
@@ -103,7 +118,7 @@ describe("Sidebar header avatar", () => {
   // test pins the CURRENT behavior; the bar-vs-mascot-vs-logo choice is a
   // product/branding decision tracked separately from the boot-speed work.
   test("renders the static brand-logo avatar (one stable header identity)", () => {
-    const { container } = render(<Sidebar />);
+    const { container } = renderSidebar();
     const avatar = container.querySelector('[data-testid="sidebar-style-avatar"]');
     expect(avatar).not.toBeNull();
     expect(avatar?.getAttribute("data-variant")).toBe("logo");
@@ -132,7 +147,7 @@ describe("Sidebar brain footer", () => {
     // user who configured e.g. opus-4-8 wants that surfaced, not a bare "—".
     useEventStore.setState({ brainProvider: "claude-api", brainModel: "claude-opus-4-8" });
 
-    render(<Sidebar />);
+    renderSidebar();
 
     expect(screen.getByText("Claude (API)")).toBeTruthy();
     const modelLine = screen.getByTestId("sidebar-brain-model");
@@ -142,7 +157,7 @@ describe("Sidebar brain footer", () => {
   test("hides the model line when no model is known (shows provider only)", () => {
     useEventStore.setState({ brainProvider: "gemini", brainModel: "" });
 
-    render(<Sidebar />);
+    renderSidebar();
 
     expect(screen.getByText("Gemini")).toBeTruthy();
     expect(screen.queryByTestId("sidebar-brain-model")).toBeNull();
@@ -150,7 +165,7 @@ describe("Sidebar brain footer", () => {
 
   test("follows a live model change", () => {
     useEventStore.setState({ brainProvider: "claude-api", brainModel: "claude-opus-4-8" });
-    render(<Sidebar />);
+    renderSidebar();
     expect(screen.getByTestId("sidebar-brain-model").textContent).toBe("claude-opus-4-8");
 
     act(() => {
@@ -182,7 +197,7 @@ describe("Sidebar assistant name header", () => {
     // who renames the assistant (e.g. to "Ruben") never sees a stale "Jarvis".
     useEventStore.setState({ assistantName: "Ruben" });
 
-    render(<Sidebar />);
+    renderSidebar();
 
     expect(screen.getByText("Ruben")).toBeTruthy();
     expect(screen.queryByText("Jarvis")).toBeNull();
@@ -190,7 +205,7 @@ describe("Sidebar assistant name header", () => {
 
   test("follows a live assistant-name change", () => {
     useEventStore.setState({ assistantName: "Nova" });
-    render(<Sidebar />);
+    renderSidebar();
     expect(screen.getByText("Nova")).toBeTruthy();
 
     act(() => {
@@ -218,7 +233,7 @@ describe("Sidebar plugin reconnect indicator", () => {
     // Plugins ("Skills & Tools", id "skills").
     pluginAttentionMock.needsReconnect = true;
 
-    render(<Sidebar />);
+    renderSidebar();
 
     expect(screen.getByTestId("nav-warn-skills")).toBeTruthy();
   });
@@ -226,7 +241,7 @@ describe("Sidebar plugin reconnect indicator", () => {
   test("no amber dot when every plugin is healthy", () => {
     pluginAttentionMock.needsReconnect = false;
 
-    render(<Sidebar />);
+    renderSidebar();
 
     expect(screen.queryByTestId("nav-warn-skills")).toBeNull();
   });
@@ -253,7 +268,7 @@ describe("Sidebar voice-boot indicator", () => {
     // normal idle "Ready" state (which would imply the mic already works).
     useEventStore.setState({ connected: true, voiceReady: false });
 
-    const { container } = render(<Sidebar />);
+    const { container } = renderSidebar();
 
     expect(screen.getByText("Voice starting…")).toBeTruthy();
     expect(container.querySelector('[data-testid="voice-starting-spinner"]')).not.toBeNull();
@@ -264,7 +279,7 @@ describe("Sidebar voice-boot indicator", () => {
   test("reverts to the normal voice state once voice is ready", () => {
     useEventStore.setState({ connected: true, voiceReady: true, voiceState: "idle" });
 
-    const { container } = render(<Sidebar />);
+    const { container } = renderSidebar();
 
     expect(screen.getByText("Ready")).toBeTruthy();
     expect(screen.queryByText("Voice starting…")).toBeNull();
@@ -276,7 +291,7 @@ describe("Sidebar voice-boot indicator", () => {
     // loop (no 1013) — the honest state is Offline.
     useEventStore.setState({ connected: false, voiceReady: false, wsWarming: false });
 
-    const { container } = render(<Sidebar />);
+    const { container } = renderSidebar();
 
     expect(screen.getByText("Offline")).toBeTruthy();
     expect(screen.queryByText("Voice starting…")).toBeNull();
@@ -289,7 +304,7 @@ describe("Sidebar voice-boot indicator", () => {
     // the alarming "Offline".
     useEventStore.setState({ connected: false, voiceReady: false, wsWarming: true });
 
-    const { container } = render(<Sidebar />);
+    const { container } = renderSidebar();
 
     expect(screen.getByText("Starting…")).toBeTruthy();
     expect(screen.queryByText("Offline")).toBeNull();

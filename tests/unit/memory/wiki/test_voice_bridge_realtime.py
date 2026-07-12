@@ -35,6 +35,7 @@ from jarvis.core.config import (
     BrainProviderConfig,
     JarvisConfig,
     MemoryConfig,
+    VoiceBridgeConfig,
     WikiMemoryConfig,
 )
 from jarvis.core.events import VoiceTurnCompleted
@@ -105,7 +106,7 @@ def _config() -> JarvisConfig:
     )
 
 
-def _stack(tmp_path: Path):
+def _stack(tmp_path: Path, *, bridge_config: VoiceBridgeConfig | None = None):
     bus = EventBus()
     journal = CandidateJournal(tmp_path / "jarvis.db")
     brain = FakeBrain()
@@ -113,7 +114,12 @@ def _stack(tmp_path: Path):
         config=_config(), journal=journal, registry=FakeRegistry(brain),
     )
     curator = FakeCurator()
-    bridge = VoiceFactBridge(bus=bus, curator=curator, config=None, extractor=extractor)
+    bridge = VoiceFactBridge(
+        bus=bus,
+        curator=curator,
+        config=bridge_config,
+        extractor=extractor,
+    )
     bridge.start()
     return bus, journal, curator, bridge, brain
 
@@ -235,8 +241,11 @@ async def test_empty_reply_does_not_block_aggressive_path(tmp_path: Path) -> Non
 
 @pytest.mark.asyncio
 async def test_aggressive_path_is_rate_limited_across_realtime_turns(tmp_path: Path) -> None:
-    """Chatty realtime sessions must not burn one LLM call per turn."""
-    bus, journal, _curator, bridge, brain = _stack(tmp_path)
+    """Operators can opt into rate limiting when call cost matters more."""
+    bus, journal, _curator, bridge, brain = _stack(
+        tmp_path,
+        bridge_config=VoiceBridgeConfig(rate_limit_seconds=60),
+    )
     try:
         await bus.publish(_realtime_turn(FACT_SENTENCE, "Okay!"))
         await _drain(journal)
@@ -252,3 +261,26 @@ async def test_aggressive_path_is_rate_limited_across_realtime_turns(tmp_path: P
 
     assert journal.backlog_count() == 1, "second aggressive ingest within 60s must be skipped"
     assert brain.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_default_reviews_consecutive_realtime_turns(tmp_path: Path) -> None:
+    """The default must not silently discard a second durable fact."""
+    bus, journal, _curator, bridge, brain = _stack(tmp_path)
+    try:
+        await bus.publish(_realtime_turn(FACT_SENTENCE, "Okay!"))
+        await _drain(journal)
+        await bus.publish(
+            _realtime_turn(
+                "My favourite restaurant is the little place at the harbour.",
+                "Sounds lovely!",
+            )
+        )
+        deadline = time.monotonic() + 2.0
+        while journal.backlog_count() < 2 and time.monotonic() < deadline:
+            await asyncio.sleep(0.02)
+    finally:
+        bridge.stop()
+
+    assert journal.backlog_count() == 2
+    assert brain.call_count == 2

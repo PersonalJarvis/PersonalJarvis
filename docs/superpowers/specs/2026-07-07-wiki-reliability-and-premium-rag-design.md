@@ -129,7 +129,9 @@ an equally honest failure line naming the cause category and the in-app fix
 
 ### A4. Ambient feed tuning
 
-- `consolidate_after_candidates`: default 8 → **3**.
+- `consolidate_after_candidates`: default 8 → **1**. A reviewed durable fact
+  becomes visible without waiting for unrelated future conversation; concurrent
+  candidates may still be consolidated together.
 - New time/idle flush: the existing `IdleEntered` trigger additionally drains
   the journal when the oldest pending candidate exceeds a configurable age
   (default 10 min), regardless of count.

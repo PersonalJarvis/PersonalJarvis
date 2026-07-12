@@ -26,9 +26,9 @@ voice engines share one ingest contract.
 2. **Aggressive path (B8, defence-in-depth):** every user turn with at
    least ``cfg.min_user_chars`` characters is handed to the curator
    anyway, with the curator's prompt acting as the salience filter
-   (smalltalk -> empty list, real facts -> pages). Rate-limited to at
-   most one ingest per ``cfg.rate_limit_seconds`` so chitchat does not
-   burn LLM calls.
+   (smalltalk -> empty list, real facts -> pages). An optional
+   ``cfg.rate_limit_seconds`` can reduce review calls, but the default is
+   zero so consecutive durable facts are never silently skipped.
 
 Both paths are fire-and-forget background tasks. The voice path is
 never blocked, and a failure on one path never crashes the other. When
@@ -118,7 +118,7 @@ class VoiceFactBridge:
     bridge subscribes itself and runs until :meth:`stop` is called.
 
     ``config=None`` falls back to default settings (aggressive_mode=True,
-    min_user_chars=30, rate_limit_seconds=60) so legacy callers keep
+    min_user_chars=30, rate_limit_seconds=0) so legacy callers keep
     working unchanged.
     """
 

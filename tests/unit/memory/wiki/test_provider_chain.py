@@ -10,11 +10,15 @@ when ALL fail.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from jarvis.memory.wiki.provider_chain import (
     build_wiki_provider_chain,
     complete_with_fallback,
+    credential_ready_wiki_providers,
 )
 
 _ALL = {"openrouter", "gemini", "claude-api", "openai"}
@@ -44,6 +48,49 @@ def test_model_override_applies_only_to_primary():
     by = dict(chain)
     assert by["gemini"] == "gemini-custom-x"  # explicit model honored for primary
     assert by["claude-api"] != "gemini-custom-x"  # fallback gets its OWN cheap model
+
+
+@pytest.mark.parametrize(
+    "provider",
+    ["claude-api", "gemini", "nvidia", "openai", "openrouter", "future-brain"],
+)
+def test_every_single_registered_provider_can_power_the_wiki(provider: str) -> None:
+    chain = build_wiki_provider_chain(
+        primary="missing-primary",
+        model_override="",
+        available={provider},
+        credential_ready={provider},
+    )
+    assert [name for name, _model in chain] == [provider]
+
+
+def test_keyless_primary_is_skipped_for_the_users_available_key() -> None:
+    chain = build_wiki_provider_chain(
+        primary="openrouter",
+        model_override="openrouter-only-model",
+        available={"openrouter", "nvidia"},
+        credential_ready={"nvidia"},
+    )
+    assert chain == [("nvidia", None)]
+
+
+def test_credential_probe_uses_core_portable_storage_and_keeps_oauth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis.core import config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "resolve_provider_endpoint",
+        lambda provider, config: SimpleNamespace(
+            credential="configured" if provider == "nvidia" else None
+        ),
+    )
+    ready = credential_ready_wiki_providers(
+        available={"openai", "nvidia", "future-oauth"},
+        config=object(),
+    )
+    assert ready == {"nvidia", "future-oauth"}
 
 
 # --- the fallback loop -------------------------------------------------------

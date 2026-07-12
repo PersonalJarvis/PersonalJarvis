@@ -31,11 +31,39 @@ from jarvis.memory.wiki import telemetry
 
 log = logging.getLogger(__name__)
 
-# Cross-family fallback order, mirroring manager._build_fallback_chain step 3: a
-# separate-quota family first (claude-api), then the gateways. Each is tried
-# ONLY if registered (registry.available()); a keyless / throttled one fails
-# fast and the loop crosses to the next FAMILY — never a same-family dead-end.
-_CROSS_FAMILY_ORDER: tuple[str, ...] = ("claude-api", "gemini", "openrouter", "openai")
+def credential_ready_wiki_providers(
+    *,
+    available: set[str] | frozenset[str],
+    config: Any,
+) -> set[str]:
+    """Return registered providers that have a portable credential path.
+
+    API providers are checked through the core endpoint resolver, which already
+    implements team-proxy credentials plus keyring, environment, ``.env``, and
+    the headless local-file fallback. Providers without a core API-key mapping
+    remain eligible because they may authenticate through OAuth or be local.
+    """
+    from jarvis.core.config import (
+        PROVIDER_SECRET_CANDIDATES,
+        resolve_provider_endpoint,
+    )
+
+    ready: set[str] = set()
+    for provider in available:
+        if provider not in PROVIDER_SECRET_CANDIDATES:
+            ready.add(provider)
+            continue
+        try:
+            endpoint = resolve_provider_endpoint(provider, config=config)
+        except Exception:  # noqa: BLE001 - one credential probe cannot hide others
+            log.debug(
+                "wiki provider credential probe failed for %s", provider,
+                exc_info=True,
+            )
+            continue
+        if endpoint.credential:
+            ready.add(provider)
+    return ready
 
 
 def build_wiki_provider_chain(
@@ -43,22 +71,27 @@ def build_wiki_provider_chain(
     primary: str,
     model_override: str,
     available: set[str] | frozenset[str],
+    credential_ready: set[str] | frozenset[str] | None = None,
 ) -> list[tuple[str, str | None]]:
     """Ordered, de-duplicated ``(provider, model)`` attempts for a wiki LLM call.
 
-    ``primary`` (``cfg.provider`` or ``brain.primary``) leads, then the
-    cross-family order. Only providers in ``available`` survive. An explicit
-    ``model_override`` (``cfg.model``) applies ONLY to ``primary`` — a fallback
-    provider gets its OWN cheap router-tier model, never the primary's model id
-    (sending a gemini model id to claude-api would 404).
+    ``primary`` (``cfg.provider`` or ``brain.primary``) leads when credential
+    ready, then every other registered and credential-ready provider follows in
+    stable order. There is no provider-name allowlist: a newly registered Brain
+    provider automatically becomes a wiki fallback. An explicit
+    ``model_override`` applies only to ``primary``; each fallback resolves its
+    own cheap router-tier model or lets its plugin choose a default.
     """
     from jarvis.memory.wiki.curator_llm import _cheap_model_for
 
     chain: list[tuple[str, str | None]] = []
     seen: set[str] = set()
     override = (model_override or "").strip()
-    for name in (primary, *_CROSS_FAMILY_ORDER):
-        if not name or name in seen or name not in available:
+    eligible = set(available)
+    if credential_ready is not None:
+        eligible.intersection_update(credential_ready)
+    for name in (primary, *sorted(eligible)):
+        if not name or name in seen or name not in eligible:
             continue
         seen.add(name)
         model = override if (name == primary and override) else _cheap_model_for(name)
@@ -141,4 +174,8 @@ async def complete_with_fallback(
     return None
 
 
-__all__ = ["build_wiki_provider_chain", "complete_with_fallback"]
+__all__ = [
+    "build_wiki_provider_chain",
+    "complete_with_fallback",
+    "credential_ready_wiki_providers",
+]

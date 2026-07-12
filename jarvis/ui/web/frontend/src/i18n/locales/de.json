@@ -1496,6 +1496,7 @@
     "install_failed": "{0}: Install fehlgeschlagen (exit {1}). Versuch eine andere Methode."
   },
   "onboarding": {
+    "progress_label": "Onboarding-Fortschritt",
     "nav": {
       "next": "Weiter",
       "back": "Zurück",
@@ -1581,10 +1582,18 @@
       }
     },
     "api_keys": {
-      "title": "Verbinde deine KI-Dienste (optional)",
-      "body": "Füge API-Schlüssel hinzu, um Cloud-Anbieter freizuschalten. Du kannst das überspringen und sie später in den Einstellungen ergänzen.",
-      "works_now": "Du kannst sofort loschatten — Schlüssel ergänzen nur Cloud-Stimmen und -Anbieter.",
-      "skip": "Überspringen — ich ergänze sie später"
+      "title": "API-Schlüssel nach dem Onboarding einrichten",
+      "body": "Schließe zuerst das Onboarding ab. Öffne danach API Keys & Providers. Du musst nicht jedes API-Key-Feld ausfüllen.",
+      "screenshot_alt": "Personal-Jarvis-Ansicht mit Markierungen bei der API-Keys-Navigation und beim Schalter Realtime oder Pipeline",
+      "api_location_title": "API Keys öffnen",
+      "api_location_body": "Wähle nach dem Onboarding links in der Seitenleiste API Keys. Füge Anbieter-Schlüssel nur in dieser sicheren Ansicht ein.",
+      "voice_mode_title": "Wähle deinen Sprachmodus",
+      "realtime_label": "Realtime (Research-Preview):",
+      "realtime_body": "Füge einen OpenAI- oder Gemini-Schlüssel für Zuhören, Denken und Sprechen in einem Modell hinzu.",
+      "pipeline_label": "Pipeline (empfohlen):",
+      "pipeline_body": "Füge nur Schlüssel für die ausgewählten Anbieter für Denken, Sprachausgabe und Spracheingabe hinzu.",
+      "security_note": "Füge Schlüssel ausschließlich in der sicheren API-Keys-Ansicht ein — niemals im Chat oder per Sprache.",
+      "continue": "Onboarding fortsetzen"
     },
     "mic_test": {
       "title": "Mikrofon-Check",

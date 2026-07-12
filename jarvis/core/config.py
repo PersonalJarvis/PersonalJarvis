@@ -982,10 +982,10 @@ class SchedulerConfig(BaseModel):
     periodic_interval_minutes: int = 30
     lock_path: Path = Path("data/wiki_curator.lock")
     lock_stale_after_seconds: int = 300
-    # Wave-2 journal pressure: once this many candidate facts sit pending
-    # in the Stage-1 journal, a JOURNAL trigger asks the consolidator to
-    # drain a batch (still subject to cooldown + lock).
-    consolidate_after_candidates: int = 3
+    # A durable candidate should become visible in the vault without waiting
+    # for unrelated future conversation. The background consolidator may still
+    # coalesce candidates that arrive concurrently.
+    consolidate_after_candidates: int = 1
     # Age-based flush (spec A4): even below the count threshold, pending
     # candidates older than this become a JOURNAL trigger so a quiet fresh
     # install still produces visible pages. 0 disables the age flush.
@@ -1011,17 +1011,16 @@ class VoiceBridgeConfig(BaseModel):
     planned this but never activated it; this section turns it on by
     default.
 
-    Rate-limit: at most one aggressive ingest per
-    ``rate_limit_seconds`` window. Prevents an LLM call on every single
-    voice turn while staying responsive enough for normal conversation
-    pacing.
+    ``rate_limit_seconds`` is an opt-in cost control. The default reviews every
+    eligible completed turn so a second durable fact in the same realtime
+    conversation is not silently discarded.
     """
 
     model_config = ConfigDict(extra="allow")
 
     aggressive_mode: bool = True
     min_user_chars: int = 30
-    rate_limit_seconds: int = 60
+    rate_limit_seconds: int = 0
 
 
 class ExtractorConfig(BaseModel):

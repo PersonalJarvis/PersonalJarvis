@@ -1497,6 +1497,7 @@
     "install_failed": "{0}: install failed (exit {1}). Try a different method."
   },
   "onboarding": {
+    "progress_label": "Onboarding progress",
     "nav": {
       "next": "Next",
       "back": "Back",
@@ -1582,10 +1583,18 @@
       }
     },
     "api_keys": {
-      "title": "Connect your AI services (optional)",
-      "body": "Add API keys to unlock cloud providers. You can skip this and add them later in Settings.",
-      "works_now": "You can start chatting right away — keys only add cloud voices and providers.",
-      "skip": "Skip — I'll add these later"
+      "title": "Set up API keys after onboarding",
+      "body": "Finish onboarding first. Then open API Keys & Providers. You do not need to fill every API-key field.",
+      "screenshot_alt": "Personal Jarvis API Keys view with the API Keys navigation and Realtime or Pipeline switch highlighted",
+      "api_location_title": "Open API Keys",
+      "api_location_body": "After onboarding, select API Keys in the left sidebar. Paste provider keys only in this secure view.",
+      "voice_mode_title": "Choose your voice mode",
+      "realtime_label": "Realtime (research preview):",
+      "realtime_body": "Add one OpenAI or Gemini key for listening, reasoning, and speech in one model.",
+      "pipeline_label": "Pipeline (recommended):",
+      "pipeline_body": "Add keys only for the Brain, Voice Output, and Voice Input providers you choose.",
+      "security_note": "Paste keys only into the secure API Keys view — never into chat or voice.",
+      "continue": "Continue onboarding"
     },
     "mic_test": {
       "title": "Microphone check",

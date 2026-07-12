@@ -94,6 +94,7 @@ class ConversationFactExtractor:
         self._curator_cfg = config.memory.wiki.curator
         self._journal = journal
         self._registry = registry if registry is not None else BrainProviderRegistry()
+        self._credential_filter = registry is None
         self._brain: Any = None
         self._resolved_provider: str | None = None
         self._resolved_model: str | None = None
@@ -213,15 +214,25 @@ class ConversationFactExtractor:
         from jarvis.memory.wiki.provider_chain import (
             build_wiki_provider_chain,
             complete_with_fallback,
+            credential_ready_wiki_providers,
         )
 
         # Key-aware fallback (AP-22/23): try the configured provider, then cross
         # to whatever family is reachable, instead of silently dropping the turn
         # when one provider is throttled / keyless (live 2026-06-30).
+        available = set(self._registry.available())
         chain = build_wiki_provider_chain(
             primary=(self._curator_cfg.provider.strip() or self._root_cfg.brain.primary),
             model_override=self._curator_cfg.model,
-            available=set(self._registry.available()),
+            available=available,
+            credential_ready=(
+                credential_ready_wiki_providers(
+                    available=available,
+                    config=self._root_cfg,
+                )
+                if self._credential_filter
+                else available
+            ),
         )
         result = await complete_with_fallback(
             registry=self._registry,

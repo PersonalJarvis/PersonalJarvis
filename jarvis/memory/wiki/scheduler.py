@@ -130,8 +130,10 @@ class CuratorScheduler:
     Cooldown rules (in priority order):
 
     1. ``MANUAL`` triggers bypass cooldown but **not** the lock.
-    2. ``SESSION_END`` honours cooldown.
-    3. ``PERIODIC`` honours cooldown **and** is a no-op when
+    2. ``JOURNAL`` bypasses cooldown so each reviewed durable turn can become
+       visible without waiting for unrelated future conversation.
+    3. ``SESSION_END`` honours cooldown.
+    4. ``PERIODIC`` honours cooldown **and** is a no-op when
        ``config.enable_periodic`` is ``False``.
 
     The scheduler guarantees ``lock.release()`` runs in a ``try/finally``
@@ -239,8 +241,8 @@ class CuratorScheduler:
                 curator_output_label="",
             )
 
-        # ----- gate 2: cooldown (MANUAL bypasses; first run always passes)
-        if source is not TriggerSource.MANUAL and self._last_run_ts is not None:
+        # ----- gate 2: cooldown (MANUAL/JOURNAL bypass; first run always passes)
+        if source not in {TriggerSource.MANUAL, TriggerSource.JOURNAL} and self._last_run_ts is not None:
             elapsed = time.monotonic() - self._last_run_ts
             if elapsed < self._config.cooldown_seconds:
                 return SchedulerResult(

@@ -42,7 +42,7 @@ describe("JarvisAgentPanel", () => {
   it("shows the empty state when no mission is selected", () => {
     render(<JarvisAgentPanel />);
     expect(
-      screen.getByText("Mission auswaehlen, um OpenClaw-Worker zu sehen."),  // i18n-allow: pre-existing stale assertion string, kept verbatim (see report)
+      screen.getByText("Select a mission to see Jarvis-Agent workers."),
     ).toBeDefined();
   });
 
@@ -53,7 +53,7 @@ describe("JarvisAgentPanel", () => {
     });
     render(<JarvisAgentPanel />);
     expect(
-      screen.getByText("Keine OpenClaw-Worker in dieser Mission."),  // i18n-allow: pre-existing stale assertion string, kept verbatim (see report)
+      screen.getByText("No Jarvis-Agent workers in this mission."),
     ).toBeDefined();
   });
 

@@ -84,6 +84,7 @@ class Consolidator:
         self._search = search
         self._vault_root = Path(vault_root).resolve()
         self._registry = registry if registry is not None else BrainProviderRegistry()
+        self._credential_filter = registry is None
         self._batch_limit = max(1, int(batch_limit))
         self._k_nearest = max(1, int(k_nearest))
         # Optional callback fired after a completed run (B7 wires the
@@ -191,10 +192,6 @@ class Consolidator:
         self, rows: list[JournalRow], neighbours: dict[str, str],
     ) -> list[dict[str, Any]] | str | None:
         """One batched LLM call. Returns decisions, "truncated", or None."""
-        brain = self._ensure_brain()
-        if brain is None:
-            return None
-
         user_slug = str(
             getattr(
                 self._root_cfg.memory.wiki.session_rollup, "user_entity_slug", "",
@@ -213,23 +210,37 @@ class Consolidator:
         )
 
         start_ns = time.time_ns()
-        try:
-            agg = await asyncio.wait_for(
-                aggregate(brain.complete(request)),
-                timeout=float(self._curator_cfg.timeout_s),
-            )
-        except TimeoutError:
-            log.warning(
-                "Consolidator: judge timeout after %.1fs (provider=%s)",
-                self._curator_cfg.timeout_s, self._resolved_provider,
-            )
+        from jarvis.memory.wiki.provider_chain import (
+            build_wiki_provider_chain,
+            complete_with_fallback,
+            credential_ready_wiki_providers,
+        )
+
+        available = set(self._registry.available())
+        chain = build_wiki_provider_chain(
+            primary=(self._curator_cfg.provider.strip() or self._root_cfg.brain.primary),
+            model_override=self._curator_cfg.model,
+            available=available,
+            credential_ready=(
+                credential_ready_wiki_providers(
+                    available=available,
+                    config=self._root_cfg,
+                )
+                if self._credential_filter
+                else available
+            ),
+        )
+        result = await complete_with_fallback(
+            registry=self._registry,
+            chain=chain,
+            request=request,
+            timeout_s=float(self._curator_cfg.timeout_s),
+            label="Consolidator",
+            aggregate=aggregate,
+        )
+        if result is None:
             return None
-        except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "Consolidator: judge call failed (provider=%s): %s",
-                self._resolved_provider, exc,
-            )
-            return None
+        agg, self._resolved_provider = result
 
         if is_length_truncated(agg.finish_reason, agg.text):
             telemetry.inc("wiki_writes_blocked_truncated")
