@@ -5851,22 +5851,42 @@ class SpeechPipeline:
         Audio echo cancellation.
         """
         try:
-            from jarvis.realtime.desktop import DesktopRealtimePlayback
+            from jarvis.realtime.desktop import (
+                DesktopRealtimeBargeInDetector,
+                DesktopRealtimePlayback,
+            )
             from jarvis.realtime.factory import build_realtime_session
         except ImportError as exc:
             log.warning("Realtime desktop stack is unavailable: %s", exc)
             return None
 
+        session_id = getattr(self, "_current_voice_session_id", None) or str(uuid4())
         playback = DesktopRealtimePlayback(self._player)
+        barge_detector = DesktopRealtimeBargeInDetector()
         turn_complete = asyncio.Event()
         speaking = False
         semantic_turn_committed = False
+
+        async def _warm_barge_detector() -> None:
+            try:
+                await asyncio.to_thread(barge_detector.warmup)
+            except Exception as exc:  # noqa: BLE001 -- voice still works without local VAD
+                log.warning(
+                    "Realtime desktop barge-in detector unavailable; "
+                    "continuing half-duplex: %s",
+                    exc,
+                )
+
+        barge_warm_task = asyncio.create_task(
+            _warm_barge_detector(), name=f"rt-barge-warm-{session_id}"
+        )
 
         async def _send_binary(pcm: bytes) -> None:
             nonlocal semantic_turn_committed, speaking
             semantic_turn_committed = True
             if not speaking:
                 speaking = True
+                barge_detector.start_output()
                 await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
             await playback.send_binary(pcm)
 
@@ -5903,25 +5923,31 @@ class SpeechPipeline:
                     semantic_turn_committed = True
             elif kind == "tts_cancel":
                 speaking = False
+                barge_detector.stop_output()
                 await playback.cancel()
                 await self._set_turn_state(TurnTakingState.LISTENING)
             elif kind == "hangup":
                 semantic_turn_committed = True
                 speaking = False
+                barge_detector.stop_output()
                 await playback.cancel()
             elif kind == "turn_complete":
                 semantic_turn_committed = True
                 await playback.finish_turn()
+                interrupted_during_drain = not speaking
                 speaking = False
+                barge_detector.stop_output()
                 await self._set_turn_state(TurnTakingState.LISTENING)
-                if not self._continue_listening_after_response:
+                if (
+                    not self._continue_listening_after_response
+                    and not interrupted_during_drain
+                ):
                     turn_complete.set()
             elif kind in {"provider_error", "error_spoken"}:
                 if kind == "error_spoken":
                     semantic_turn_committed = True
                 log.warning("Realtime desktop status: %s", message)
 
-        session_id = getattr(self, "_current_voice_session_id", None) or str(uuid4())
         # Open the microphone BEFORE building the realtime session AND before
         # the provider handshake, buffering locally until the session accepts
         # audio. Both stages used to gate the mic open — measured live
@@ -5963,6 +5989,18 @@ class SpeechPipeline:
                             buffered = preroll.popleft()
                             preroll_bytes = max(0, preroll_bytes - len(buffered))
                             await session.handle_audio_frame(buffered)
+                        if speaking:
+                            interrupted_pcm = barge_detector.feed(chunk.pcm)
+                            if interrupted_pcm is None:
+                                # Provider half-duplex remains intact: speaker
+                                # echo is inspected locally but never uploaded.
+                                continue
+                            log.info(
+                                "Realtime desktop barge-in confirmed by local CPU VAD"
+                            )
+                            await session.handle_control({"type": "barge_in"})
+                            await session.handle_audio_frame(interrupted_pcm)
+                            continue
                         await session.handle_audio_frame(chunk.pcm)
 
                 # A shared capture buffer already owns and meters production
@@ -6096,6 +6134,13 @@ class SpeechPipeline:
                 return HANGUP_ERROR
             return None
         finally:
+            barge_detector.stop_output()
+            if not barge_warm_task.done():
+                barge_warm_task.cancel()
+            try:
+                await barge_warm_task
+            except asyncio.CancelledError:
+                pass
             # The mic pump may not be in wait_tasks yet when the session
             # build/handshake failed — cancel it explicitly either way.
             if microphone_task is not None and not microphone_task.done():

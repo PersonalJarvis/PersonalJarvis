@@ -18,6 +18,7 @@ class FakeSession:
         self.truncated = []
         self.session_updates = []
         self.response_requests = 0
+        self.interrupts = 0
         self.closed = False
 
     async def send_audio(self, chunk):
@@ -40,7 +41,7 @@ class FakeSession:
         self.truncated.append(audio_end_ms)
 
     async def interrupt(self):
-        pass
+        self.interrupts += 1
 
     async def send_tool_result(self, call_id, name, result):
         self.tool_results.append((call_id, name, result))
@@ -436,6 +437,85 @@ async def test_missing_final_transcript_still_requests_a_response_without_tools(
     assert bridge.calls == []
     assert provider.session.tool_results[0][0] == "unsafe-without-transcript"
     assert provider.session.tool_results[0][2]["success"] is False
+
+
+@pytest.mark.asyncio
+async def test_empty_successful_final_does_not_open_or_request_a_turn():
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="",
+                is_final=True,
+                item_id="empty-input",
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = RealtimeVoiceSession(
+        session_id="empty-success",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert provider.session.response_requests == 0
+    assert sess._turn_index == 0
+
+
+@pytest.mark.asyncio
+async def test_duplicate_final_input_item_requests_exactly_one_response():
+    duplicate = RealtimeEvent(
+        type="input_transcript",
+        text="Tell me once",
+        is_final=True,
+        item_id="input-1",
+    )
+    provider = FakeProvider(
+        [duplicate, RealtimeEvent(type="turn_complete"), duplicate]
+    )
+    sess = RealtimeVoiceSession(
+        session_id="duplicate-input",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert provider.session.response_requests == 1
+    assert sess._turn_index == 1
+
+
+@pytest.mark.asyncio
+async def test_barge_in_calls_provider_interrupt_before_local_cancel():
+    jsons: list[dict[str, object]] = []
+    provider = FakeProvider([])
+    sess = RealtimeVoiceSession(
+        session_id="provider-interrupt",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.handle_control({"type": "barge_in"})
+    await sess.end(reason="test")
+
+    assert provider.session.interrupts == 1
+    assert {"type": "tts_cancel"} in jsons
 
 
 @pytest.mark.asyncio

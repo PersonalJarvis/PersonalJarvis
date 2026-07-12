@@ -41,6 +41,7 @@ class _ProviderEvent:
     is_final: bool = False
     ms_played: int | None = None
     error: str | None = None
+    item_id: str | None = None
     call_id: str | None = None
     tool_name: str | None = None
     tool_args: dict[str, Any] | None = None
@@ -195,6 +196,7 @@ class _OpenAIRealtimeSession:
                     type="input_transcript",
                     text=str(getattr(event, "transcript", "") or ""),
                     is_final=True,
+                    item_id=str(getattr(event, "item_id", "") or "") or None,
                 )
             elif event_type == "conversation.item.input_audio_transcription.failed":
                 # The model still has the committed audio in conversation
@@ -205,6 +207,7 @@ class _OpenAIRealtimeSession:
                     text="",
                     is_final=True,
                     error=_error_message(event),
+                    item_id=str(getattr(event, "item_id", "") or "") or None,
                 )
             elif event_type == "input_audio_buffer.speech_started":
                 yield _ProviderEvent(type="speech_started")

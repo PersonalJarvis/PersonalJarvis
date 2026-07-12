@@ -3,10 +3,146 @@
 from __future__ import annotations
 
 import asyncio
+import time
+from collections import deque
 from collections.abc import AsyncIterator
 from typing import Any
 
+import numpy as np
+
+from jarvis.audio.vad import VAD_FRAME_SAMPLES, SileroEndpointer
 from jarvis.core.protocols import AudioChunk
+
+
+class DesktopRealtimeBargeInDetector:
+    """Detect deliberate desktop barge-in on the existing microphone stream.
+
+    Desktop realtime stays half-duplex at the provider boundary because raw
+    PortAudio capture has no portable acoustic echo cancellation. Dropping the
+    microphone entirely while the assistant speaks also makes interruption
+    impossible, though. This detector therefore inspects those otherwise-dropped
+    16 kHz frames locally with the bundled torch-free Silero ONNX model.
+
+    Detection deliberately matches the conservative classic-pipeline policy:
+    a startup grace period, a high speech probability, and sustained speech.
+    The returned PCM contains a short pre-speech window plus the confirmed speech
+    frames, allowing the caller to cancel output and forward the user's opening
+    syllables to any realtime provider without making the provider/model itself
+    responsible for desktop echo suppression.
+    """
+
+    def __init__(
+        self,
+        *,
+        grace_s: float = 1.5,
+        speech_threshold: float = 0.97,
+        consecutive_frames: int = 12,
+        pre_speech_frames: int = 10,
+        model: Any = None,
+    ) -> None:
+        self._grace_s = max(0.0, float(grace_s))
+        self._speech_threshold = min(1.0, max(0.0, float(speech_threshold)))
+        self._consecutive_frames = max(1, int(consecutive_frames))
+        self._pre_speech_frames = max(1, int(pre_speech_frames))
+        self._model = model or SileroEndpointer(
+            speech_threshold=self._speech_threshold
+        )
+        self._ready = False
+        self._active = False
+        self._started_at = 0.0
+        self._residual = np.empty(0, dtype=np.dtype("<i2"))
+        self._pre_buffer: deque[np.ndarray] = deque(maxlen=self._pre_speech_frames)
+        self._candidate_frames: list[np.ndarray] = []
+        self._speech_run = 0
+
+    @property
+    def ready(self) -> bool:
+        return self._ready
+
+    @property
+    def active(self) -> bool:
+        return self._active
+
+    def warmup(self) -> None:
+        """Load the CPU ONNX session outside the realtime audio callback."""
+
+        self._model._ensure_model()
+        self._ready = True
+
+    def start_output(self) -> None:
+        """Arm a fresh detector window for one assistant audio response."""
+
+        self._active = True
+        self._started_at = time.monotonic()
+        self._reset_buffers()
+
+    def stop_output(self) -> None:
+        self._active = False
+        self._reset_buffers()
+
+    def feed(self, pcm16: bytes) -> bytes | None:
+        """Return buffered user PCM once sustained speech is confirmed."""
+
+        if not self._active or not self._ready or len(pcm16) < 2:
+            return None
+        if time.monotonic() - self._started_at < self._grace_s:
+            # Never let speaker echo collected during the grace period become
+            # user preroll once detection arms.
+            self._reset_buffers()
+            return None
+
+        usable = len(pcm16) - (len(pcm16) % 2)
+        samples = np.frombuffer(pcm16[:usable], dtype=np.dtype("<i2"))
+        if self._residual.size:
+            samples = np.concatenate([self._residual, samples])
+        frame_count = samples.size // VAD_FRAME_SAMPLES
+        if frame_count == 0:
+            self._residual = samples.copy()
+            return None
+
+        framed_samples = frame_count * VAD_FRAME_SAMPLES
+        frames = samples[:framed_samples].reshape(frame_count, VAD_FRAME_SAMPLES)
+        trailing = samples[framed_samples:].copy()
+
+        for index, frame in enumerate(frames):
+            normalized = frame.astype(np.float32) / 32768.0
+            probability = float(self._model._prob(normalized))
+            if probability >= self._speech_threshold:
+                if self._speech_run == 0:
+                    self._candidate_frames = [part.copy() for part in self._pre_buffer]
+                self._candidate_frames.append(frame.copy())
+                self._speech_run += 1
+                if self._speech_run >= self._consecutive_frames:
+                    tail_frames = frames[index + 1 :].reshape(-1)
+                    parts = [*self._candidate_frames]
+                    if tail_frames.size:
+                        parts.append(tail_frames.copy())
+                    if trailing.size:
+                        parts.append(trailing)
+                    detected = np.concatenate(parts).astype(
+                        np.dtype("<i2"), copy=False
+                    )
+                    self._active = False
+                    self._reset_buffers()
+                    return detected.tobytes()
+                continue
+
+            # A short high-probability burst is speaker bleed, not a barge-in.
+            # Retain only the rolling pre-speech window for the next candidate.
+            for candidate in self._candidate_frames:
+                self._pre_buffer.append(candidate)
+            self._candidate_frames = []
+            self._speech_run = 0
+            self._pre_buffer.append(frame.copy())
+
+        self._residual = trailing
+        return None
+
+    def _reset_buffers(self) -> None:
+        self._residual = np.empty(0, dtype=np.dtype("<i2"))
+        self._pre_buffer.clear()
+        self._candidate_frames = []
+        self._speech_run = 0
 
 
 class DesktopRealtimePlayback:
@@ -61,7 +197,7 @@ class DesktopRealtimePlayback:
         self._sample_rate = rate
 
     async def finish_turn(self) -> None:
-        queue, task = self._detach()
+        queue, task = self._queue, self._task
         if queue is None or task is None:
             return
         await queue.put(None)
@@ -74,6 +210,19 @@ class DesktopRealtimePlayback:
                 await task
             except asyncio.CancelledError:
                 pass
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                raise
+            # The playback worker was canceled by a concurrent barge-in.
+        finally:
+            # Keep the active task discoverable while it drains. A user can
+            # barge in after the provider has sent turn_complete but before the
+            # local speaker queue is empty; cancel() must still be able to stop
+            # and drain this exact task during that window.
+            if self._task is task:
+                self._queue = None
+                self._task = None
 
     async def cancel(self) -> None:
         queue, task = self._detach()
@@ -120,4 +269,4 @@ class DesktopRealtimePlayback:
             yield chunk
 
 
-__all__ = ["DesktopRealtimePlayback"]
+__all__ = ["DesktopRealtimeBargeInDetector", "DesktopRealtimePlayback"]

@@ -334,6 +334,7 @@ async def test_transcription_failure_is_a_final_input_event(
         [
             SimpleNamespace(
                 type="conversation.item.input_audio_transcription.failed",
+                item_id="failed-input-1",
                 error=SimpleNamespace(
                     code="transcription_failed",
                     message="Input transcription was unavailable",
@@ -348,7 +349,36 @@ async def test_transcription_failure_is_a_final_input_event(
     assert event.type == "input_transcript"
     assert event.text == ""
     assert event.is_final is True
+    assert event.item_id == "failed-input-1"
     assert "transcription_failed" in event.error
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_completed_transcription_preserves_input_item_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="conversation.item.input_audio_transcription.completed",
+                item_id="input-item-1",
+                transcript="One request",
+            )
+        ]
+    )
+    session._events = conn.__aiter__()
+
+    event = await anext(session.receive())
+
+    assert event.type == "input_transcript"
+    assert event.item_id == "input-item-1"
+    assert event.text == "One request"
     await session.close()
 
 

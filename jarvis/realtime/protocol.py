@@ -36,6 +36,7 @@ class RealtimeEvent:
     is_final: bool = False
     ms_played: int | None = None             # speech_started: ms of our audio already heard
     error: str | None = None
+    item_id: str | None = None
     call_id: str | None = None
     tool_name: str | None = None
     tool_args: dict[str, Any] | None = None

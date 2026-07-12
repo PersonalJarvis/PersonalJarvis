@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import asyncio
 
+import numpy as np
 import pytest
 
-from jarvis.realtime.desktop import DesktopRealtimePlayback
+from jarvis.audio.vad import VAD_FRAME_SAMPLES
+from jarvis.realtime.desktop import (
+    DesktopRealtimeBargeInDetector,
+    DesktopRealtimePlayback,
+)
 
 
 class FakePlayer:
@@ -18,6 +23,56 @@ class FakePlayer:
 
     def stop(self) -> None:
         self.stopped += 1
+
+
+class FakeVadModel:
+    def __init__(self, probabilities: list[float]) -> None:
+        self.probabilities = list(probabilities)
+        self.warmed = False
+
+    def _ensure_model(self) -> None:
+        self.warmed = True
+
+    def _prob(self, _frame: np.ndarray) -> float:
+        return self.probabilities.pop(0)
+
+
+def _pcm_frames(*amplitudes: int) -> bytes:
+    return np.concatenate(
+        [np.full(VAD_FRAME_SAMPLES, value, dtype=np.dtype("<i2")) for value in amplitudes]
+    ).tobytes()
+
+
+def test_cpu_barge_detector_returns_prespeech_and_confirmed_user_audio() -> None:
+    model = FakeVadModel([0.1, 0.2, 0.99, 0.99, 0.99])
+    detector = DesktopRealtimeBargeInDetector(
+        grace_s=0,
+        consecutive_frames=3,
+        pre_speech_frames=2,
+        model=model,
+    )
+    detector.warmup()
+    detector.start_output()
+
+    detected = detector.feed(_pcm_frames(1, 2, 3, 4, 5))
+
+    assert model.warmed is True
+    assert detected == _pcm_frames(1, 2, 3, 4, 5)
+    assert detector.active is False
+
+
+def test_cpu_barge_detector_rejects_short_speaker_bleed() -> None:
+    model = FakeVadModel([0.99, 0.1, 0.99, 0.99, 0.1])
+    detector = DesktopRealtimeBargeInDetector(
+        grace_s=0,
+        consecutive_frames=3,
+        model=model,
+    )
+    detector.warmup()
+    detector.start_output()
+
+    assert detector.feed(_pcm_frames(1, 2, 3, 4, 5)) is None
+    assert detector.active is True
 
 
 @pytest.mark.asyncio
@@ -51,6 +106,33 @@ async def test_cancel_stops_player_and_discards_queued_audio():
     await playback.send_binary(b"\x01\x00" * 8)
 
     await playback.cancel()
+
+    assert player.stopped == 1
+    assert player.chunks == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_can_interrupt_a_turn_already_draining() -> None:
+    stop_event = asyncio.Event()
+
+    class SlowPlayer(FakePlayer):
+        def stop(self) -> None:
+            super().stop()
+            stop_event.set()
+
+        async def play_chunks(self, chunks) -> None:
+            async for _chunk in chunks:
+                await stop_event.wait()
+                return
+
+    player = SlowPlayer()
+    playback = DesktopRealtimePlayback(player)
+    await playback.send_binary(b"\x01\x00" * 8)
+    drain = asyncio.create_task(playback.finish_turn())
+    await asyncio.sleep(0)
+
+    await playback.cancel()
+    await drain
 
     assert player.stopped == 1
     assert player.chunks == []

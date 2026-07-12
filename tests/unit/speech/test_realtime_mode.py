@@ -217,6 +217,98 @@ async def test_desktop_realtime_handshake_streams_audio_and_ends_single_turn(
 
 
 @pytest.mark.asyncio
+async def test_desktop_cpu_barge_in_cancels_and_forwards_user_preroll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipe = _pipe()
+    output_started = asyncio.Event()
+    forwarded = b"\x09\x00" * 32
+
+    class _Detector:
+        def warmup(self) -> None:
+            return None
+
+        def start_output(self) -> None:
+            return None
+
+        def stop_output(self) -> None:
+            return None
+
+        def feed(self, _pcm: bytes) -> bytes:
+            return forwarded
+
+    class _Mic:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc: object) -> bool:
+            return False
+
+        async def stream(self):
+            await output_started.wait()
+            yield AudioChunk(
+                pcm=b"\x01\x00" * 32, sample_rate=16_000, timestamp_ns=0
+            )
+            await asyncio.sleep(0.05)
+            yield AudioChunk(
+                pcm=b"\x02\x00" * 32, sample_rate=16_000, timestamp_ns=0
+            )
+            await asyncio.Event().wait()
+
+    class _Session(_HandshakeOnlyRealtimeSession):
+        def __init__(self, send_binary, send_json) -> None:
+            super().__init__(send_binary, send_json)
+            self.audio_frames: list[bytes] = []
+            self.forwarded = asyncio.Event()
+
+        async def handle_control(self, message) -> None:
+            self.controls.append(message)
+            if message.get("type") == "audio_start":
+                await self._send_json(
+                    {
+                        "type": "audio_ready",
+                        "provider": "fake-live",
+                        "input_sample_rate": 16_000,
+                        "output_sample_rate": 24_000,
+                    }
+                )
+                await self._send_binary(b"\x03\x00" * 32)
+                output_started.set()
+            elif message.get("type") == "barge_in":
+                await self._send_json({"type": "tts_cancel"})
+
+        async def handle_audio_frame(self, pcm: bytes) -> None:
+            self.audio_frames.append(pcm)
+            if pcm == forwarded:
+                self.forwarded.set()
+
+        async def wait_finished(self) -> None:
+            await self.forwarded.wait()
+
+    built: dict[str, object] = {}
+
+    def _build(**kwargs):
+        built.update(kwargs)
+        session = _Session(kwargs["send_binary"], kwargs["send_json"])
+        built["session"] = session
+        return session
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    monkeypatch.setattr(
+        "jarvis.realtime.desktop.DesktopRealtimeBargeInDetector", _Detector
+    )
+    monkeypatch.setattr(pipeline_mod, "MicrophoneCapture", lambda **_kwargs: _Mic())
+
+    reason = await asyncio.wait_for(pipe._active_realtime_session(), timeout=2.0)
+
+    session = built["session"]
+    assert reason == HANGUP_ERROR
+    assert {"type": "barge_in"} in session.controls
+    assert session.audio_frames[-1] == forwarded
+    assert built["half_duplex"] is True
+
+
+@pytest.mark.asyncio
 async def test_completed_startup_tasks_do_not_end_healthy_realtime_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

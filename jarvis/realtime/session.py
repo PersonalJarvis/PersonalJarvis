@@ -271,6 +271,7 @@ class RealtimeVoiceSession:
         self._pending_tool_events: list[Any] = []
         self._tool_transcript_task: asyncio.Task[None] | None = None
         self._response_requested_for_turn = False
+        self._response_requested_input_ids: set[str] = set()
         self._hangup_reason = ""
         self._turn_final_text = ""
         self._end_after_turn = False
@@ -427,7 +428,22 @@ class RealtimeVoiceSession:
             async for event in self._session.receive():
                 if event.type == "input_transcript":
                     transcript = str(event.text or "").strip()
-                    self._input_turn_observed = True
+                    transcription_failed = bool(event.error)
+                    input_observed = bool(transcript or transcription_failed)
+                    input_item_id = str(getattr(event, "item_id", "") or "")
+                    input_already_answered = bool(
+                        input_item_id
+                        and input_item_id in self._response_requested_input_ids
+                    )
+                    if event.is_final and input_already_answered:
+                        log.debug(
+                            "realtime[%s] ignored duplicate final input item %s",
+                            self.session_id,
+                            input_item_id,
+                        )
+                        continue
+                    if input_observed:
+                        self._input_turn_observed = True
                     new_language = self._language
                     if transcript:
                         new_language = self._resolve_lang(text=transcript)
@@ -436,7 +452,7 @@ class RealtimeVoiceSession:
                             self._gate = ScrubHoldGate(new_language)
                             if self._tool_bridge is not None:
                                 self._tool_bridge.set_language(new_language)
-                    if event.is_final:
+                    if event.is_final and input_observed:
                         await self._session.update_session(
                             instructions=_session_instructions(
                                 new_language,
@@ -447,7 +463,7 @@ class RealtimeVoiceSession:
                             ),
                             language=new_language,
                         )
-                    if transcript or event.is_final:
+                    if input_observed:
                         mark_phase(LatencyPhase.REALTIME_INPUT_COMMITTED)
                     if transcript:
                         if event.is_final:
@@ -461,7 +477,7 @@ class RealtimeVoiceSession:
                         await self._tool_bridge.handle_user_transcript(
                             self._last_user_text
                         )
-                    if transcript or event.is_final:
+                    if input_observed:
                         await self._ensure_turn_started()
                     if transcript:
                         await self._publish_transcription(
@@ -503,7 +519,7 @@ class RealtimeVoiceSession:
                             )
                             await self._finish_with_hangup()
                             break
-                    if event.is_final and self._pending_tool_events:
+                    if event.is_final and input_observed and self._pending_tool_events:
                         self._cancel_tool_transcript_wait()
                         pending = self._pending_tool_events
                         self._pending_tool_events = []
@@ -514,9 +530,15 @@ class RealtimeVoiceSession:
                                 await self._reject_untranscribed_tool_call(
                                     pending_event
                                 )
-                    if event.is_final and not self._response_requested_for_turn:
+                    if (
+                        event.is_final
+                        and input_observed
+                        and not self._response_requested_for_turn
+                    ):
                         await self._session.request_response()
                         self._response_requested_for_turn = True
+                        if input_item_id:
+                            self._response_requested_input_ids.add(input_item_id)
                 elif event.type == "output_transcript_delta" and event.text:
                     await self._ensure_turn_started()
                     mark_phase(LatencyPhase.REALTIME_FIRST_TRANSCRIPT)
@@ -732,10 +754,13 @@ class RealtimeVoiceSession:
         )
 
     async def _begin_user_speech_turn(self) -> None:
-        """Close an interrupted reply before opening the user's next turn."""
+        """Close an interrupted reply before the next transcript opens a turn."""
         if self._turn_id and self._turn_has_activity():
             await self._publish_turn_completed()
-        await self._ensure_turn_started()
+        # Do not open the next persisted turn on VAD alone. A cancelled provider
+        # response can still emit response.done after barge-in; opening here would
+        # let that stale completion close an empty new turn before its transcript.
+        # The next transcript/audio/tool event opens the real turn instead.
 
     async def _publish_turn_started(self) -> None:
         if self._bus is None:
@@ -1088,6 +1113,13 @@ class RealtimeVoiceSession:
             else 0
         )
         if self._session is not None:
+            try:
+                # Explicit cancellation is part of the shared provider contract.
+                # OpenAI maps it to response.cancel; Gemini is interrupted by the
+                # user audio forwarded immediately after this local boundary.
+                await self._session.interrupt()
+            except Exception:  # noqa: BLE001, S110 -- repeated VAD edges are safe
+                pass
             try:
                 await self._session.truncate(audio_end_ms=audio_end_ms)
             except Exception:  # noqa: BLE001, S110 — best-effort context alignment
