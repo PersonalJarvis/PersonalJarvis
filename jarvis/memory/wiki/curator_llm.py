@@ -421,6 +421,24 @@ class WikiCuratorLLM:
                 else available
             ),
         )
+        rejection_reasons: list[str] = []
+
+        def _validate_response(agg: Any) -> str | None:
+            if is_length_truncated(agg.finish_reason, agg.text):
+                reason = (
+                    f"truncated structured output ({len(agg.text or '')} chars, "
+                    f"finish_reason={agg.finish_reason!r})"
+                )
+                rejection_reasons.append(reason)
+                return reason
+            try:
+                _parse_updates(agg.text)
+            except (ValueError, json.JSONDecodeError) as exc:
+                reason = f"malformed update JSON: {exc}"
+                rejection_reasons.append(reason)
+                return reason
+            return None
+
         result = await complete_with_fallback(
             registry=self._registry,
             chain=chain,
@@ -428,8 +446,15 @@ class WikiCuratorLLM:
             timeout_s=self._cfg.timeout_s,
             label="WikiCuratorLLM",
             aggregate=aggregate,
+            validate=_validate_response,
         )
         if result is None:
+            if any(reason.startswith("truncated") for reason in rejection_reasons):
+                logger.warning(
+                    "WikiCuratorLLM: every provider hit the output-token cap "
+                    "or failed after a truncated response; no updates were persisted"
+                )
+                telemetry.inc("wiki_writes_blocked_truncated")
             return []
         agg, self._resolved_provider = result
 

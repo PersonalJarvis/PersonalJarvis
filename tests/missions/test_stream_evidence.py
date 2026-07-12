@@ -12,6 +12,7 @@ import json
 from jarvis.missions.stream_evidence import (
     extract_stream_evidence,
     extract_verified_commands,
+    extract_verified_external_actions,
 )
 
 
@@ -207,6 +208,51 @@ def test_no_tools_no_answer_is_empty() -> None:
     assert ev.tool_calls == ()
     assert ev.final_answer == ""
     assert not ev.has_tool_evidence
+
+
+def test_verified_external_action_requires_correlated_success_result() -> None:
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "m1", "name": "mcp__gmail__send_message", "input": {}}
+        ]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "m1", "content": "message id 42"}
+        ]}},
+    ])
+
+    assert extract_verified_external_actions(stream) == (
+        ("mcp__gmail__send_message", "message id 42"),
+    )
+
+
+def test_verified_external_action_rejects_error_and_missing_result() -> None:
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "m1", "name": "mcp__gmail__send_message", "input": {}},
+            {"type": "tool_use", "id": "m2", "name": "mcp__linear__create_issue", "input": {}},
+        ]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "m1", "content": "denied", "is_error": True}
+        ]}},
+    ])
+
+    assert extract_verified_external_actions(stream) == ()
+
+
+def test_codex_mcp_completion_normalizes_to_verified_external_action() -> None:
+    stream = _stream([
+        {"type": "item.completed", "item": {
+            "type": "mcp_tool_call",
+            "server": "gmail",
+            "tool": "send_message",
+            "status": "completed",
+            "result": "message id 84",
+        }}
+    ])
+
+    assert extract_verified_external_actions(stream) == (
+        ("mcp__gmail__send_message", "message id 84"),
+    )
 
 
 # --- readonly_answer: the read-only success signal -------------------------

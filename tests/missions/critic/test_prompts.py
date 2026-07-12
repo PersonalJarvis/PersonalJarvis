@@ -163,6 +163,11 @@ def test_ground_truth_rule_recognizes_verified_external_writes() -> None:
     assert "verified-external-write" in CRITIC_SYSTEM_PROMPT
 
 
+def test_ground_truth_rule_recognizes_verified_external_actions() -> None:
+    assert "diff --external-action-evidence" in CRITIC_SYSTEM_PROMPT
+    assert "verified-external-action" in CRITIC_SYSTEM_PROMPT
+
+
 # --- Render-Behavior ---
 
 

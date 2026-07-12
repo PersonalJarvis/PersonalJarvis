@@ -22,6 +22,7 @@ and the child PID is assigned to the per-mission Job Object via ``on_spawn`` so
 the kernel reaps the tree on cancel/timeout/crash (Windows). Google ToS: only the
 official binary is driven; the OAuth token is never read into our own client.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -45,6 +46,7 @@ from jarvis.google_cli.isolated_home import (
 from jarvis.google_cli.pty_runner import repair_agy_path, run_cli_over_pty
 from jarvis.google_cli.resolver import resolve_google_cli
 
+from .capabilities import WorkerCapabilityInventory
 from .gemini_worker import GeminiWorker
 from .stream_consumer import ClaudeResult, ClaudeSystemInit
 
@@ -89,9 +91,12 @@ def _build_agy_worker_argv(exe: str, prompt: str, worktree: Path) -> list[str]:
     safe_prompt = " ".join(prompt.split())
     return [
         exe,
-        "--print", safe_prompt,
-        "--add-dir", str(worktree),
-        "--print-timeout", f"{int(_WORKER_TIMEOUT_S)}s",
+        "--print",
+        safe_prompt,
+        "--add-dir",
+        str(worktree),
+        "--print-timeout",
+        f"{int(_WORKER_TIMEOUT_S)}s",
         "--dangerously-skip-permissions",
     ]
 
@@ -122,10 +127,15 @@ class GoogleCliWorker:
 
     cli: Literal["claude"] = "claude"
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        capability_inventory: WorkerCapabilityInventory | None = None,
+    ) -> None:
         self.last_pid: int | None = None
         self.last_session_id: str | None = None
-        self._gemini_fallback = GeminiWorker()
+        self.capability_inventory = capability_inventory or WorkerCapabilityInventory.build()
+        self._gemini_fallback = GeminiWorker(capability_inventory=self.capability_inventory)
 
     async def spawn(
         self,
@@ -150,7 +160,11 @@ class GoogleCliWorker:
 
         if cli is None:
             yield ClaudeSystemInit(
-                session_id=session_id, model="antigravity/none", tools=[], cwd=str(worktree)
+                session_id=session_id,
+                model="antigravity/none",
+                tools=[],
+                cwd=str(worktree),
+                external_capabilities=self.capability_inventory.report_for("google-cli"),
             )
             yield ClaudeResult(
                 subtype="error_during_execution",
@@ -207,11 +221,16 @@ class GoogleCliWorker:
         agy_env = _build_agy_worker_env(env)
 
         yield ClaudeSystemInit(
-            session_id=session_id, model="antigravity/agy", tools=[], cwd=str(worktree)
+            session_id=session_id,
+            model="antigravity/agy",
+            tools=[],
+            cwd=str(worktree),
+            external_capabilities=self.capability_inventory.report_for("google-cli"),
         )
         logger.info(
             "GoogleCliWorker[%s] spawn agy over PTY: cwd=%s (Google subscription, OAuth)",
-            worker_id, worktree,
+            worker_id,
+            worktree,
         )
 
         loop = asyncio.get_running_loop()
@@ -222,7 +241,9 @@ class GoogleCliWorker:
                 job.assign(pid)
             except Exception:  # noqa: BLE001
                 logger.warning(
-                    "GoogleCliWorker[%s]: job.assign(pid=%s) failed", worker_id, pid,
+                    "GoogleCliWorker[%s]: job.assign(pid=%s) failed",
+                    worker_id,
+                    pid,
                     exc_info=True,
                 )
 
@@ -250,7 +271,10 @@ class GoogleCliWorker:
             text = f"{text}\n[timeout after {_WORKER_TIMEOUT_S:.0f}s]".strip()
         logger.info(
             "GoogleCliWorker[%s] agy done: error=%s %dms text=%d chars",
-            worker_id, is_error, wall_ms, len(result.text),
+            worker_id,
+            is_error,
+            wall_ms,
+            len(result.text),
         )
         yield ClaudeResult(
             subtype="success" if not is_error else "error_during_execution",

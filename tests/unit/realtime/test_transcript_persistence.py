@@ -189,6 +189,21 @@ async def test_every_realtime_surface_provider_and_tool_mode_persists_complete_t
     tool_mode: str,
 ) -> None:
     events, expected_user, raw_parts = _provider_events(provider_name)
+    if tool_mode == "delegate":
+        output_index = next(
+            index
+            for index, event in enumerate(events)
+            if event.type == "output_transcript_delta"
+        )
+        events.insert(
+            output_index,
+            RealtimeEvent(
+                type="tool_call",
+                call_id="matrix-delegate",
+                tool_name="jarvis_action",
+                tool_args={"request": expected_user},
+            ),
+        )
     provider = FakeRealtimeProvider(provider_name, events)
     store = SessionStore(tmp_path / "sessions.db")
     store.open()

@@ -234,6 +234,24 @@ class ConversationFactExtractor:
                 else available
             ),
         )
+        rejection_reasons: list[str] = []
+
+        def _validate_response(agg: Any) -> str | None:
+            if is_length_truncated(agg.finish_reason, agg.text):
+                reason = (
+                    f"truncated structured output ({len(agg.text or '')} chars, "
+                    f"finish_reason={agg.finish_reason!r})"
+                )
+                rejection_reasons.append(reason)
+                return reason
+            try:
+                _extract_json_array(agg.text)
+            except ValueError as exc:
+                reason = f"malformed JSON array: {exc}"
+                rejection_reasons.append(reason)
+                return reason
+            return None
+
         result = await complete_with_fallback(
             registry=self._registry,
             chain=chain,
@@ -241,8 +259,15 @@ class ConversationFactExtractor:
             timeout_s=float(self._cfg.timeout_s),
             label="ConversationFactExtractor",
             aggregate=aggregate,
+            validate=_validate_response,
         )
         if result is None:
+            if any(reason.startswith("truncated") for reason in rejection_reasons):
+                log.warning(
+                    "ConversationFactExtractor: every provider hit the output-token "
+                    "cap or failed after a truncated response; no candidates were saved"
+                )
+                telemetry.inc("wiki_writes_blocked_truncated")
             return []
         agg, self._resolved_provider = result
 

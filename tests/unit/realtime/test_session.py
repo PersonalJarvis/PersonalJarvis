@@ -10,6 +10,9 @@ from jarvis.realtime.session import RealtimeVoiceSession
 
 class FakeSession:
     session_id = "fake"
+    supports_tool_updates = True
+    creates_responses_automatically = False
+    isolates_response_generations = False
 
     def __init__(self, events):
         self._events = events
@@ -18,6 +21,7 @@ class FakeSession:
         self.truncated = []
         self.session_updates = []
         self.response_requests = 0
+        self.required_tools = []
         self.text_inputs = []
         self.interrupts = 0
         self.closed = False
@@ -30,13 +34,14 @@ class FakeSession:
             yield ev
             await asyncio.sleep(0)
 
-    async def update_session(self, *, instructions=None, language=None):
+    async def update_session(self, *, instructions=None, language=None, tools=None):
         self.session_updates.append(
-            {"instructions": instructions, "language": language}
+            {"instructions": instructions, "language": language, "tools": tools}
         )
 
-    async def request_response(self):
+    async def request_response(self, *, required_tool=None):
         self.response_requests += 1
+        self.required_tools.append(required_tool)
 
     async def send_text(self, text):
         self.text_inputs.append(text)
@@ -136,6 +141,46 @@ class ToolResultGatedProvider(FakeProvider):
             self._before_results,
             self._after_results,
             self._expected_results,
+        )
+        return self.session
+
+
+class AutomaticDelegateSession(FakeSession):
+    """Emit one speculative native turn, then wait for trusted text input."""
+
+    creates_responses_automatically = True
+
+    def __init__(self, before_result, after_result):
+        super().__init__([])
+        self._before_result = before_result
+        self._after_result = after_result
+        self._trusted_text_sent = asyncio.Event()
+
+    async def receive(self):
+        for event in self._before_result:
+            yield event
+            await asyncio.sleep(0)
+        await self._trusted_text_sent.wait()
+        for event in self._after_result:
+            yield event
+            await asyncio.sleep(0)
+
+    async def send_text(self, text):
+        await super().send_text(text)
+        self._trusted_text_sent.set()
+
+
+class AutomaticDelegateProvider(FakeProvider):
+    def __init__(self, before_result, after_result):
+        super().__init__([])
+        self._before_result = before_result
+        self._after_result = after_result
+
+    async def open_session(self, cfg):
+        self.opened_with = cfg
+        self.session = AutomaticDelegateSession(
+            self._before_result,
+            self._after_result,
         )
         return self.session
 
@@ -1195,11 +1240,16 @@ def _session(
     tool_bridge=None,
     tool_mode=None,
     jsons=None,
+    binaries=None,
     bus=None,
 ):
     return RealtimeVoiceSession(
         session_id="delegate-test",
-        send_binary=lambda _data: asyncio.sleep(0),
+        send_binary=(
+            (lambda data: binaries.append(data) or asyncio.sleep(0))
+            if binaries is not None
+            else (lambda _data: asyncio.sleep(0))
+        ),
         send_json=(
             (lambda m: jsons.append(m) or asyncio.sleep(0))
             if jsons is not None
@@ -1224,6 +1274,213 @@ async def test_delegate_mode_declares_single_action_function():
 
     assert _tool_names(provider.opened_with) == ["jarvis_action", "end_call"]
     assert "jarvis_action" in provider.opened_with.instructions
+    assert "private or personal memory" in provider.opened_with.instructions
+    assert "MCPs" in provider.opened_with.instructions
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Who is my best friend?",
+        "Was weißt du über mich?",  # i18n-allow: German speech-input fixture
+        "Which MCPs and CLIs are installed?",
+        "¿Qué herramientas están conectadas?",  # i18n-allow: Spanish speech-input fixture
+        "Write that to the wiki.",
+        "Write the last transcript to the wiki.",
+        "Kannst du bitte mein Wiki-System eintragen, dass ich morgen nach "  # i18n-allow: German speech-input fixture
+        "San Francisco reisen will?",  # i18n-allow: German speech-input fixture
+    ],
+)
+async def test_local_evidence_turns_run_deterministic_jarvis_action(utterance):
+    brain = FakeBrain()
+    provider = FakeProvider(
+        [RealtimeEvent(type="input_transcript", text=utterance, is_final=True)]
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.12)
+
+    assert provider.session.required_tools == []
+    assert brain.calls[0][0] == utterance
+    assert provider.session.text_inputs
+    assert "<trusted_action_result>" in provider.session.text_inputs[-1]
+    update = provider.session.session_updates[-1]["instructions"]
+    assert "orchestrator is handling this current turn" in update
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_general_knowledge_turn_keeps_native_realtime_answering():
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="What is the capital of France?",
+                is_final=True,
+            )
+        ]
+    )
+    sess = _session(provider, brain=FakeBrain())
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+
+    assert provider.session.required_tools == [None]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_automatic_provider_wiki_turn_runs_brain_without_tool_call():
+    brain = FakeBrain(replies=("The Wiki entry was saved.",))
+    speculative_audio = AudioChunk(
+        pcm=b"\x01\x02" * 8,
+        sample_rate=24_000,
+        timestamp_ns=0,
+    )
+    provider = AutomaticDelegateProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="Write the travel plan to my wiki.",
+                is_final=True,
+            ),
+            RealtimeEvent(type="audio_delta", audio=speculative_audio),
+            RealtimeEvent(
+                type="output_transcript_delta",
+                text="I do not have access to your Wiki.",
+            ),
+            RealtimeEvent(type="audio_delta", audio=speculative_audio),
+            RealtimeEvent(type="turn_complete"),
+        ],
+        [
+            RealtimeEvent(
+                type="output_transcript_delta",
+                text="The Wiki entry was saved.",
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ],
+    )
+    jsons = []
+    binaries = []
+    sess = _session(
+        provider,
+        brain=brain,
+        jsons=jsons,
+        binaries=binaries,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+
+    assert [call[0] for call in brain.calls] == [
+        "Write the travel plan to my wiki."
+    ]
+    assistant_text = "".join(
+        str(message.get("text", ""))
+        for message in jsons
+        if message.get("role") == "assistant"
+    )
+    assert assistant_text == "The Wiki entry was saved."
+    assert provider.session.tool_results == []
+    assert len(provider.session.text_inputs) == 1
+    assert binaries == []
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_multi_final_transcript_waits_for_provider_turn_boundary():
+    brain = FakeBrain(replies=("Stored the complete travel plan.",))
+
+    class _DelayedFinalSession(AutomaticDelegateSession):
+        async def receive(self):
+            yield RealtimeEvent(
+                type="input_transcript",
+                text="Write this to my wiki",
+                is_final=True,
+            )
+            await asyncio.sleep(0.12)
+            yield RealtimeEvent(
+                type="input_transcript",
+                text="that I travel to San Francisco tomorrow",
+                is_final=True,
+            )
+            yield RealtimeEvent(type="turn_complete")
+            await self._trusted_text_sent.wait()
+            yield RealtimeEvent(type="turn_complete")
+
+    class _DelayedFinalProvider(FakeProvider):
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = _DelayedFinalSession([], [])
+            return self.session
+
+    provider = _DelayedFinalProvider([])
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.2)
+
+    assert brain.calls[0][0] == (
+        "Write this to my wiki that I travel to San Francisco tomorrow"
+    )
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_barge_in_detaches_late_delegate_result_from_new_turn():
+    gate = asyncio.Event()
+    brain = FakeBrain(replies=("Old Wiki action completed.",), gate=gate)
+
+    class _BargeSession(FakeSession):
+        async def receive(self):
+            yield RealtimeEvent(
+                type="input_transcript",
+                text="Write this to my wiki.",
+                is_final=True,
+            )
+            while not brain.calls:
+                await asyncio.sleep(0.005)
+            yield RealtimeEvent(type="speech_started")
+            yield RealtimeEvent(
+                type="input_transcript",
+                text="What time is it?",
+                is_final=True,
+            )
+            yield RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(
+                    pcm=b"\x01\x02" * 8,
+                    sample_rate=24_000,
+                    timestamp_ns=0,
+                ),
+            )
+
+    class _BargeProvider(FakeProvider):
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = _BargeSession([])
+            return self.session
+
+    provider = _BargeProvider([])
+    binaries = []
+    sess = _session(provider, brain=brain, binaries=binaries)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    new_turn_id = sess._turn_id
+    gate.set()
+    await asyncio.sleep(0.1)
+
+    assert new_turn_id
+    assert sess._last_user_text == "What time is it?"
+    assert provider.session.text_inputs == []
+    assert provider.session.tool_results == []
+    assert binaries == []
+    await sess.end(reason="test")
 
 
 @pytest.mark.asyncio
@@ -1242,6 +1499,32 @@ async def test_direct_mode_builds_bridge_from_brain():
     assert "open_app" in names
     assert "end_call" in names
     assert "jarvis_action" not in names
+
+
+@pytest.mark.asyncio
+async def test_direct_mode_pushes_live_brain_tool_replacements_to_provider():
+    brain = FakeBrain()
+    brain._tools = {"old_tool": _StubTool()}
+    brain._tool_executor_ref = _StubExecutor()
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="Which tools are available?",
+                is_final=True,
+            )
+        ]
+    )
+    sess = _session(provider, brain=brain, tool_mode="direct")
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    brain._tools = {"new_tool": _StubTool()}
+    await sess.wait_finished()
+
+    assert _tool_names(provider.opened_with) == ["old_tool", "end_call"]
+    updated_tools = provider.session.session_updates[-1]["tools"]
+    assert [item["name"] for item in updated_tools] == ["new_tool", "end_call"]
+    await sess.end(reason="test")
 
 
 @pytest.mark.asyncio
@@ -1290,6 +1573,8 @@ async def test_delegate_call_dispatches_raw_transcript_with_voice_confirm():
                 "allow_voice_confirm": True,
                 "prefer_tool_model": True,
                 "publish_response": False,
+                "use_history": False,
+                "history_override": (),
             },
         )
     ]
@@ -1300,6 +1585,82 @@ async def test_delegate_call_dispatches_raw_transcript_with_voice_confirm():
             {"success": True, "spoken_reply": "Settings are open."},
         )
     ]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_delegate_uses_only_bounded_current_realtime_history():
+    brain = FakeBrain(replies=("Saved.",))
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="The launch code name is Aurora.",
+                is_final=True,
+            ),
+            RealtimeEvent(type="output_transcript_delta", text="Understood."),
+            RealtimeEvent(type="turn_complete"),
+            RealtimeEvent(
+                type="input_transcript",
+                text="Write that to the wiki.",
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="tool_call",
+                call_id="history-1",
+                tool_name="jarvis_action",
+                tool_args={"request": "Write that to the wiki."},
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.02)
+
+    text, kwargs = brain.calls[0]
+    assert text == "Write that to the wiki."
+    assert kwargs["use_history"] is False
+    assert [(item.role, item.content) for item in kwargs["history_override"]] == [
+        ("user", "The launch code name is Aurora."),
+        ("assistant", "Understood."),
+    ]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_native_mission_claim_is_withheld_for_trusted_brain_result():
+    jsons = []
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="Start an agent to create the report.",
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="output_transcript_delta",
+                text="I started the mission successfully.",
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = _session(provider, brain=FakeBrain(), jsons=jsons)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+
+    assistant_text = "".join(
+        str(message.get("text", ""))
+        for message in jsons
+        if message.get("role") == "assistant"
+    )
+    assert "started the mission" not in assistant_text
+    assert provider.session.tool_results == []
+    assert provider.session.text_inputs
+    assert "<trusted_action_result>\ndone\n" in provider.session.text_inputs[-1]
     await sess.end(reason="test")
 
 
@@ -1555,6 +1916,44 @@ async def test_delegate_does_not_block_pump():
     await asyncio.sleep(0.02)
     assert provider.session.tool_results
     assert provider.session.tool_results[0][2]["spoken_reply"] == "Done."
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_turn_complete_waits_for_slow_delegate_task_on_same_turn():
+    gate = asyncio.Event()
+    brain = FakeBrain(replies=("Completed on the original turn.",), gate=gate)
+    provider = FakeProvider(
+        [
+            RealtimeEvent(type="input_transcript", text="do it", is_final=True),
+            RealtimeEvent(
+                type="tool_call",
+                call_id="slow-same-turn",
+                tool_name="jarvis_action",
+                tool_args={"request": "do it"},
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    original_turn_id = sess._turn_id
+
+    assert original_turn_id
+    assert original_turn_id in sess._delegate_turns
+    assert sess._last_user_text == "do it"
+    assert sess._turn_has_pending_delegate(original_turn_id) is True
+
+    gate.set()
+    await asyncio.sleep(0.02)
+
+    assert sess._turn_id == original_turn_id
+    assert sess._delegate_turns[original_turn_id].last_reply == (
+        "Completed on the original turn."
+    )
+    assert provider.session.tool_results[0][0] == "slow-same-turn"
     await sess.end(reason="test")
 
 

@@ -18,6 +18,24 @@ def test_show(capture_api):
     assert capture_api["calls"][-1]["path"] == "/api/chats/text/c1"
 
 
+def test_latest_turn(capture_api):
+    result = runner.invoke(app, ["sessions", "latest-turn"])
+    assert result.exit_code == 0
+    call = capture_api["calls"][-1]
+    assert call["method"] == "GET"
+    assert call["path"] == "/api/sessions/latest-turn"
+    assert call["query"] == {}
+
+
+def test_latest_turn_can_be_scoped_to_session(capture_api):
+    result = runner.invoke(
+        app,
+        ["sessions", "latest-turn", "--session-id", "voice-1"],
+    )
+    assert result.exit_code == 0
+    assert capture_api["calls"][-1]["query"] == {"session_id": "voice-1"}
+
+
 def test_delete_requires_yes(capture_api):
     assert runner.invoke(app, ["sessions", "delete", "c1"]).exit_code == 1
     assert capture_api["calls"] == []

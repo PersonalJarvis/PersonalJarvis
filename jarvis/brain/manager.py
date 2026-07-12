@@ -112,6 +112,10 @@ _PUBLISH_RESPONSE_EVENT: ContextVar[bool] = ContextVar(
     "jarvis.brain.manager.publish_response_event",
     default=True,
 )
+_TURN_HISTORY_OVERRIDE: ContextVar[tuple[BrainMessage, ...] | None] = ContextVar(
+    "jarvis.brain.manager.turn_history_override",
+    default=None,
+)
 
 #: Hard bound on the per-turn vision capture (Wave-3 latency fix). ``vision.
 #: current()`` can stall (mss BitBlt hang, paused-state miss, slow disk); without
@@ -5604,7 +5608,7 @@ class BrainManager:
         usable ingest source text; anything else is skipped, never raises.
         """
         try:
-            items = list(self._history)[-4:]
+            items = list(self._active_turn_history())[-4:]
         except Exception:  # noqa: BLE001 — history shape is provider-owned
             return None
         parts: list[str] = []
@@ -5614,6 +5618,56 @@ class BrainManager:
             if role in ("user", "assistant") and isinstance(text, str) and text.strip():
                 parts.append(f"{role}: {text.strip()}")
         return "\n".join(parts[-2:]) or None
+
+    def _active_turn_history(self) -> list[BrainMessage]:
+        """Return the context-local history when a caller supplied one."""
+        override = _TURN_HISTORY_OVERRIDE.get()
+        return list(override) if override is not None else self._history
+
+    async def _persisted_session_exchange_text(self) -> str | None:
+        """Return the latest persisted exchange from the active voice session.
+
+        Realtime deliberately owns a small context-local history instead of
+        sharing ``self._history``.  On its first delegated turn that history can
+        therefore be empty even though the session recorder already contains a
+        previous transcript.  Resolve the existing live runtime objects lazily
+        and require an active session id before reading: an unscoped "latest"
+        lookup could copy text from a different conversation into the Wiki.
+
+        The runtime objects are intentionally accessed through
+        :mod:`jarvis.core.runtime_refs`; the brain layer neither imports the web
+        server nor depends on the concrete ``SessionStore`` type.  Any partially
+        bootstrapped/headless runtime degrades to ``None``.
+        """
+        try:
+            from jarvis.core import runtime_refs
+
+            pipeline = runtime_refs.get_speech_pipeline()
+            status_fn = getattr(pipeline, "voice_engine_status", None)
+            status = status_fn() if callable(status_fn) else {}
+            session_id = str(status.get("session_id") or "").strip()
+            if not session_id:
+                return None
+
+            app = runtime_refs.get_web_app()
+            store = getattr(getattr(app, "state", None), "session_store", None)
+            get_latest = getattr(store, "get_latest_user_turn", None)
+            if not callable(get_latest):
+                return None
+
+            turn = await asyncio.to_thread(get_latest, session_id=session_id)
+        except Exception:  # noqa: BLE001 - persisted context is a soft fallback
+            log.debug("Persisted session-history lookup failed", exc_info=True)
+            return None
+
+        parts: list[str] = []
+        for role, value in (
+            ("user", getattr(turn, "user_text", None)),
+            ("assistant", getattr(turn, "jarvis_text", None)),
+        ):
+            if isinstance(value, str) and value.strip():
+                parts.append(f"{role}: {value.strip()}")
+        return "\n".join(parts) or None
 
     async def _run_wiki_ingest_fast_path(
         self,
@@ -5645,6 +5699,8 @@ class BrainManager:
         content = match.content
         if content is None:
             content = self._last_exchange_text()
+        if content is None:
+            content = await self._persisted_session_exchange_text()
         if not content or len(content.strip()) < 12:
             return await render_readback(
                 getattr(self, "_readback_composer", None),
@@ -5992,7 +6048,12 @@ class BrainManager:
             return self._reply_language
         return "de" if _looks_german(user_text) else "en"
 
-    def _build_history_hints(self, *, max_turns: int = 3, max_chars_per_msg: int = 240) -> list[str]:
+    def _build_history_hints(
+        self,
+        *,
+        max_turns: int = 3,
+        max_chars_per_msg: int = 240,
+    ) -> list[str]:
         """Formats the last N turn pairs as compact ``context_hints``.
 
         Conversation memory bridge to the OpenClaw worker (bug fix 2026-04-30,
@@ -6001,14 +6062,14 @@ class BrainManager:
         explicitly refers to them ("erklaer mir das genauer",
         "was war der zweite Punkt?").
 
-        One hint per turn pair in the format:
-          ``Frueherer Turn — User: '...' | Du sagtest: '...'``
+        One hint is emitted per user/assistant turn pair.
         Truncated to ``max_chars_per_msg`` to prevent long replies from
         bloating the worker context.
         """
-        if not self._history:
+        history = self._active_turn_history()
+        if not history:
             return []
-        recent = self._history[-(2 * max_turns):]
+        recent = history[-(2 * max_turns):]
         hints: list[str] = []
         for i in range(0, len(recent) - 1, 2):
             u = recent[i]
@@ -6017,9 +6078,9 @@ class BrainManager:
                 continue
             u_text = str(u.content)[:max_chars_per_msg]
             a_text = str(a.content)[:max_chars_per_msg]
-            hints.append(f"Frueherer Turn — User: {u_text!r} | Du sagtest: {a_text!r}")
+            hints.append(f"Earlier turn — User: {u_text!r} | Assistant: {a_text!r}")
         if hints:
-            hints.insert(0, "Konversations-Kontext (letzte Turns, juengster zuletzt):")
+            hints.insert(0, "Conversation context (recent turns, newest last):")
         return hints
 
     async def _force_spawn_worker(
@@ -6549,14 +6610,21 @@ class BrainManager:
         allow_voice_confirm: bool = False,
         prefer_tool_model: bool = False,
         publish_response: bool = True,
+        history_override: Iterable[BrainMessage] | None = None,
     ) -> str:
         """Generate a turn, optionally leaving its public response event to the caller.
 
         ``publish_response=False`` suppresses only ``ResponseGenerated``. History,
         curator work, tool execution, and every other turn side effect remain intact.
         The context-local policy keeps concurrent classic and delegated calls isolated.
+        ``history_override`` supplies caller-owned context for this turn without
+        mutating the manager's shared conversation buffer; combine it with
+        ``use_history=False`` when the caller owns history persistence too.
         """
         token = _PUBLISH_RESPONSE_EVENT.set(bool(publish_response))
+        history_token = _TURN_HISTORY_OVERRIDE.set(
+            tuple(history_override) if history_override is not None else None
+        )
         try:
             return await self._generate(
                 user_text,
@@ -6569,6 +6637,7 @@ class BrainManager:
                 prefer_tool_model=prefer_tool_model,
             )
         finally:
+            _TURN_HISTORY_OVERRIDE.reset(history_token)
             _PUBLISH_RESPONSE_EVENT.reset(token)
 
     async def _generate(
@@ -6770,6 +6839,25 @@ class BrainManager:
                 getattr(self._skill_turn_match, "name", "?"),
             )
             self._skill_turn_match = None
+
+        # Wiki-write fast path (spec A1-A3): an explicit wiki target owns the
+        # turn before generic local-action, external-integration, or
+        # keyword-matched skill routing. The destination is authoritative;
+        # nouns inside the content (for example a trip to save as a fact) must
+        # never reinterpret the command as booking or dispatching that noun.
+        # Deterministic, model-independent, and confirm-after-write.
+        wiki_reply = await self._run_wiki_ingest_fast_path(
+            user_text, trace_id=turn_trace_id,
+        )
+        if wiki_reply is not None:
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=wiki_reply,
+                use_history=use_history,
+                trace_id=turn_trace_id,
+            )
+            return wiki_reply
+
         # Sibling of AD-S9: a plugin/marketplace skill that merely keyword-
         # matched an APP NAME ("Discord", "Spotify", "Slack") must NOT capture a
         # turn the deterministic desktop-control gate owns. Computer-Use is the
@@ -6833,25 +6921,6 @@ class BrainManager:
                     trace_id=turn_trace_id,
                 )
                 return local_action
-
-        # Wiki-write fast path (spec A1-A3): an explicit "write this to the
-        # wiki" command must not depend on the router LLM choosing the
-        # wiki-ingest tool (fresh-machine forensics Bug 12/18). Deterministic,
-        # model-independent, confirm-after-write — same shape as the
-        # local-action block above. Placed before navigation/capability gates
-        # so a skill match never shadows an explicit wiki command.
-        if self._skill_turn_match is None:
-            wiki_reply = await self._run_wiki_ingest_fast_path(
-                user_text, trace_id=turn_trace_id,
-            )
-            if wiki_reply is not None:
-                await self._record_response_side_effects(
-                    user_text=user_text,
-                    response_text=wiki_reply,
-                    use_history=use_history,
-                    trace_id=turn_trace_id,
-                )
-                return wiki_reply
 
         # Navigation fast-path: a clear "go to section X" command moves the UI
         # deterministically (a dumb action, AD-OE3). Placed BEFORE the capability
@@ -7087,7 +7156,12 @@ class BrainManager:
                 log.warning("No brain providers available — spoken fallback used.")
             return await self._provider_down_reply(trace_uuid)
 
-        history = self._history if use_history else []
+        history_override = _TURN_HISTORY_OVERRIDE.get()
+        history = (
+            list(history_override)
+            if history_override is not None
+            else (self._history if use_history else [])
+        )
         _drop_in_hist = sum(
             1 for m in history
             if isinstance(getattr(m, "content", None), str)

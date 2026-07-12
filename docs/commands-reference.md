@@ -151,6 +151,36 @@ List available speaker and microphone devices.
 - **Desktop UI section:** `settings`
 - **Voice example (EN):** "list my audio devices"
 
+## `wiki-ingest` — Store a fact in the Wiki
+
+Store one self-contained fact or summary through the guarded Wiki curator. The command succeeds only after a page is written.
+
+- **Endpoint:** `POST /api/wiki/ingest`
+- **Arguments:** `text` (string; required); `source` (string; optional)
+- **Requires confirmation:** no
+- **Desktop UI section:** `memory`
+- **Voice example (EN):** "store that in my wiki"
+
+## `session-latest-turn` — Show latest voice turn
+
+Return the latest persisted user transcript and its complete voice turn, optionally restricted to one session.
+
+- **Endpoint:** `GET /api/sessions/latest-turn`
+- **Arguments:** `session_id` (string; optional)
+- **Requires confirmation:** no
+- **Desktop UI section:** `sessions`
+- **Voice example (EN):** "read the latest transcript"
+
+## `tools-list` — List effective tools
+
+Return the effective live Brain tool surface, including native, connected CLI, Marketplace, and MCP tools.
+
+- **Endpoint:** `GET /api/tools`
+- **Arguments:** none
+- **Requires confirmation:** no
+- **Desktop UI section:** `settings`
+- **Voice example (EN):** "list the connected tools mcps and clis"
+
 ## `app-restart` — Restart Jarvis
 
 Restart the Jarvis desktop app (voice + UI restart too).

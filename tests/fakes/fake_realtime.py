@@ -10,6 +10,10 @@ class FakeRealtimeWire:
     """Scripted provider session with no network, audio device, or model."""
 
     session_id = "fake-realtime-wire"
+    creates_responses_automatically = False
+    # This fake stands in for the two bundled adapters, both of which isolate
+    # cancelled output generations before exposing normalized events.
+    isolates_response_generations = True
 
     def __init__(self, events: list[Any], *, hold_after_events: bool = False) -> None:
         self._events = list(events)
@@ -19,6 +23,7 @@ class FakeRealtimeWire:
         self.tool_results: list[tuple[str, str, dict[str, Any]]] = []
         self.session_updates: list[dict[str, Any]] = []
         self.response_requests = 0
+        self.required_tools: list[str | None] = []
         self.truncated: list[int] = []
         self.interrupts = 0
         self.closed = False
@@ -35,14 +40,19 @@ class FakeRealtimeWire:
             await asyncio.Event().wait()
 
     async def update_session(
-        self, *, instructions: str | None = None, language: str | None = None
+        self,
+        *,
+        instructions: str | None = None,
+        language: str | None = None,
+        tools: tuple[dict[str, Any], ...] | None = None,
     ) -> None:
         self.session_updates.append(
-            {"instructions": instructions, "language": language}
+            {"instructions": instructions, "language": language, "tools": tools}
         )
 
-    async def request_response(self) -> None:
+    async def request_response(self, *, required_tool: str | None = None) -> None:
         self.response_requests += 1
+        self.required_tools.append(required_tool)
 
     async def truncate(self, audio_end_ms: int) -> None:
         self.truncated.append(audio_end_ms)

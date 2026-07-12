@@ -20,6 +20,7 @@ the only spawned processes are short-lived ``Bash`` tool subprocesses (run off
 the loop via ``run_in_executor`` so the voice pipeline never blocks). Cancel is
 honored cooperatively at each turn boundary.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -35,6 +36,7 @@ from typing import Any, Literal
 from jarvis.core.protocols import BrainMessage, BrainRequest
 
 from .api_agent_tools import WORKER_TOOL_SPECS, execute_worker_tool
+from .capabilities import WorkerCapabilityInventory
 from .stream_consumer import (
     ClaudeAssistantMessage,
     ClaudeResult,
@@ -149,6 +151,7 @@ def _resolve_worker_model(provider: str, explicit: str) -> str:
         pass
     return _DEFAULT_MODEL.get(prov, "")
 
+
 _WORKER_TIMEOUT_S: float = 1200.0  # 20 min hard cap, mirrors the other workers
 _MAX_TURNS: int = 25
 _MAX_TOKENS: int = 8192
@@ -205,10 +208,16 @@ class ApiAgentWorker:
 
     cli: Literal["claude"] = "claude"
 
-    def __init__(self, provider: str) -> None:
+    def __init__(
+        self,
+        provider: str,
+        *,
+        capability_inventory: WorkerCapabilityInventory | None = None,
+    ) -> None:
         self.provider = (provider or "").strip().lower()
         self.last_pid: int | None = None
         self.last_session_id: str | None = None
+        self.capability_inventory = capability_inventory or WorkerCapabilityInventory.build()
 
     async def spawn(
         self,
@@ -240,6 +249,7 @@ class ApiAgentWorker:
             model=f"{self.provider}/{resolved_model}",
             tools=[t["name"] for t in WORKER_TOOL_SPECS],
             cwd=str(worktree),
+            external_capabilities=self.capability_inventory.report_for(f"api:{self.provider}"),
         )
         _emit_line(init)
         yield init
@@ -252,8 +262,11 @@ class ApiAgentWorker:
             brain = _build_brain(self.provider, resolved_model)
         except Exception as exc:  # noqa: BLE001
             res = ClaudeResult(
-                subtype="error_during_execution", is_error=True, session_id=session_id,
-                duration_ms=0, result=f"ApiAgentWorker init failed: {exc}",
+                subtype="error_during_execution",
+                is_error=True,
+                session_id=session_id,
+                duration_ms=0,
+                result=f"ApiAgentWorker init failed: {exc}",
             )
             _emit_line(res)
             yield res
@@ -270,7 +283,9 @@ class ApiAgentWorker:
             can_call_tools = True
         if not can_call_tools:
             res = ClaudeResult(
-                subtype="error_during_execution", is_error=True, session_id=session_id,
+                subtype="error_during_execution",
+                is_error=True,
+                session_id=session_id,
                 duration_ms=0,
                 result=_tool_incapable_message(resolved_model, self.provider),
             )
@@ -280,7 +295,10 @@ class ApiAgentWorker:
 
         logger.info(
             "ApiAgentWorker[%s] spawn in-process: provider=%s model=%s cwd=%s",
-            worker_id, self.provider, resolved_model, worktree,
+            worker_id,
+            self.provider,
+            resolved_model,
+            worktree,
         )
 
         messages: list[BrainMessage] = [BrainMessage(role="user", content=prompt)]
@@ -293,8 +311,10 @@ class ApiAgentWorker:
             for turn in range(max_turns):
                 if time.perf_counter() - t0 > _WORKER_TIMEOUT_S:
                     res = ClaudeResult(
-                        subtype="error_during_execution", is_error=True,
-                        session_id=session_id, timed_out=True,
+                        subtype="error_during_execution",
+                        is_error=True,
+                        session_id=session_id,
+                        timed_out=True,
                         duration_ms=int((time.perf_counter() - t0) * 1000),
                         result=f"{final_text}\n[timeout after {_WORKER_TIMEOUT_S:.0f}s]".strip(),
                     )
@@ -338,7 +358,8 @@ class ApiAgentWorker:
                     )
                     if turn == 0 and no_tool_endpoints:
                         res = ClaudeResult(
-                            subtype="error_during_execution", is_error=True,
+                            subtype="error_during_execution",
+                            is_error=True,
                             session_id=session_id,
                             duration_ms=int((time.perf_counter() - t0) * 1000),
                             result=_tool_incapable_message(
@@ -358,12 +379,14 @@ class ApiAgentWorker:
                 if assistant_text:
                     content_blocks.append({"type": "text", "text": assistant_text})
                 for tc in tool_calls:
-                    content_blocks.append({
-                        "type": "tool_use",
-                        "id": str(tc.get("id") or uuid.uuid4().hex),
-                        "name": str(tc.get("name") or ""),
-                        "input": tc.get("input") or {},
-                    })
+                    content_blocks.append(
+                        {
+                            "type": "tool_use",
+                            "id": str(tc.get("id") or uuid.uuid4().hex),
+                            "name": str(tc.get("name") or ""),
+                            "input": tc.get("input") or {},
+                        }
+                    )
                 assistant_event = ClaudeAssistantMessage(
                     message={"role": "assistant", "content": content_blocks},
                     session_id=session_id,
@@ -385,23 +408,28 @@ class ApiAgentWorker:
                     tool_input = block["input"] if isinstance(block["input"], dict) else {}
                     result_text, is_error = await loop.run_in_executor(
                         None,
-                        lambda n=name, i=tool_input: execute_worker_tool(
-                            n, i, worktree=worktree
-                        ),
+                        lambda n=name, i=tool_input: execute_worker_tool(n, i, worktree=worktree),
                     )
                     if name in ("Write", "Edit") and not is_error:
                         fp = str(tool_input.get("file_path", ""))
                         if fp:
                             written.append(fp)
-                    result_blocks.append({
-                        "type": "tool_result",
-                        "tool_use_id": block["id"],
-                        "content": result_text,
-                        "is_error": is_error,
-                    })
-                    messages.append(BrainMessage(
-                        role="tool", content=result_text, tool_call_id=block["id"], name=name,
-                    ))
+                    result_blocks.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block["id"],
+                            "content": result_text,
+                            "is_error": is_error,
+                        }
+                    )
+                    messages.append(
+                        BrainMessage(
+                            role="tool",
+                            content=result_text,
+                            tool_call_id=block["id"],
+                            name=name,
+                        )
+                    )
 
                 user_event = ClaudeUserMessage(
                     message={"role": "user", "content": result_blocks},
@@ -413,11 +441,16 @@ class ApiAgentWorker:
             wall_ms = int((time.perf_counter() - t0) * 1000)
             summary = final_text or (
                 f"Completed {len(written)} file change(s): {', '.join(written[:10])}"
-                if written else "Worker finished with no output."
+                if written
+                else "Worker finished with no output."
             )
             res = ClaudeResult(
-                subtype="success", is_error=False, session_id=session_id,
-                num_turns=turns, duration_ms=wall_ms, result=summary[:4000],
+                subtype="success",
+                is_error=False,
+                session_id=session_id,
+                num_turns=turns,
+                duration_ms=wall_ms,
+                result=summary[:4000],
             )
             # This family's key works — lift any armed cooldown immediately.
             from jarvis.api_family_quota_state import clear_api_family_cooldown
@@ -450,11 +483,15 @@ class ApiAgentWorker:
                     "ApiAgentWorker[%s]: provider %r key is unusable (quota/auth) "
                     "— arming the family cooldown so the worker factory crosses "
                     "to the next reachable key family on the retry.",
-                    worker_id, self.provider,
+                    worker_id,
+                    self.provider,
                 )
             res = ClaudeResult(
-                subtype="error_during_execution", is_error=True, session_id=session_id,
-                num_turns=turns, duration_ms=wall_ms,
+                subtype="error_during_execution",
+                is_error=True,
+                session_id=session_id,
+                num_turns=turns,
+                duration_ms=wall_ms,
                 result=f"{final_text}\n[worker error: {exc}]".strip(),
             )
             _emit_line(res)

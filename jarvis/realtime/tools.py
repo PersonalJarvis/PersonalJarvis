@@ -72,8 +72,16 @@ class _PendingConfirmation:
 class RealtimeToolBridge:
     """Expose the live router tools and execute only through ``ToolExecutor``."""
 
-    def __init__(self, *, tools: dict[str, Any], executor: Any, language: str) -> None:
+    def __init__(
+        self,
+        *,
+        tools: dict[str, Any],
+        executor: Any,
+        language: str,
+        tools_source: Any = None,
+    ) -> None:
         self._tools = dict(tools)
+        self._tools_source = tools_source
         self._executor = executor
         self._language = language
         self._wire_to_name: dict[str, str] = {}
@@ -88,9 +96,15 @@ class RealtimeToolBridge:
         executor = getattr(brain, "_tool_executor_ref", None)
         if not isinstance(tools, dict) or not tools or executor is None:
             return None
-        return cls(tools=tools, executor=executor, language=language)
+        return cls(
+            tools=tools,
+            executor=executor,
+            language=language,
+            tools_source=lambda: getattr(brain, "_tools", None),
+        )
 
     def _build_declarations(self) -> tuple[dict[str, Any], ...]:
+        self._wire_to_name.clear()
         declarations: list[dict[str, Any]] = []
         for name, tool in sorted(self._tools.items()):
             schema = getattr(tool, "schema", None)
@@ -117,6 +131,36 @@ class RealtimeToolBridge:
 
     def set_language(self, language: str) -> None:
         self._language = language
+
+    def refresh_from_source(self) -> bool:
+        """Refresh a live BrainManager tool replacement safely.
+
+        Returns ``True`` only when the provider-facing declarations changed.
+        A tool awaiting voice confirmation is retained until that confirmation
+        resolves, so a concurrent registry refresh cannot strand the pending
+        ``ToolExecutor`` action.
+        """
+        source = self._tools_source
+        if not callable(source):
+            return False
+        current = source()
+        if not isinstance(current, dict):
+            return False
+        try:
+            refreshed = dict(current)
+        except RuntimeError:
+            return False
+        pending = self._pending
+        if (
+            pending is not None
+            and pending.tool_name not in refreshed
+            and pending.tool_name in self._tools
+        ):
+            refreshed[pending.tool_name] = self._tools[pending.tool_name]
+        previous_declarations = self._declarations
+        self._tools = refreshed
+        self._declarations = self._build_declarations()
+        return self._declarations != previous_declarations
 
     async def handle_user_transcript(self, text: str) -> None:
         self._last_user_text = text

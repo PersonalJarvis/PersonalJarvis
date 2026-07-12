@@ -114,6 +114,10 @@ def _session_payload(cfg: Any) -> dict[str, Any]:
 
 
 class _OpenAIRealtimeSession:
+    supports_tool_updates = True
+    creates_responses_automatically = False
+    isolates_response_generations = True
+
     def __init__(
         self,
         *,
@@ -244,16 +248,36 @@ class _OpenAIRealtimeSession:
                 yield _ProviderEvent(type="error", error=_error_message(event))
 
     async def update_session(
-        self, *, instructions: str | None = None, language: str | None = None
+        self,
+        *,
+        instructions: str | None = None,
+        language: str | None = None,
+        tools: tuple[dict[str, Any], ...] | None = None,
     ) -> None:
         del language  # Input transcription stays provider-inferred and multilingual.
+        update: dict[str, Any] = {"type": "realtime"}
         if instructions is not None:
-            await self._conn.session.update(
-                session={"type": "realtime", "instructions": instructions}
-            )
+            update["instructions"] = instructions
+        if tools is not None:
+            update["tools"] = [
+                {
+                    "type": "function",
+                    "name": str(tool.get("name", "")),
+                    "description": str(tool.get("description", "")),
+                    "parameters": tool.get("parameters") or {"type": "object"},
+                }
+                for tool in tools
+                if isinstance(tool, dict) and tool.get("name")
+            ]
+            update["tool_choice"] = "auto" if update["tools"] else "none"
+        if len(update) > 1:
+            await self._conn.session.update(session=update)
 
-    async def request_response(self) -> None:
-        await self._create_response()
+    async def request_response(self, *, required_tool: str | None = None) -> None:
+        tool_choice: Any = None
+        if required_tool:
+            tool_choice = {"type": "function", "name": str(required_tool)}
+        await self._create_response(tool_choice=tool_choice)
 
     async def send_text(self, text: str) -> None:
         """Add one trusted text turn and ask the live model for audio output."""
@@ -275,6 +299,16 @@ class _OpenAIRealtimeSession:
             )
 
     async def interrupt(self) -> None:
+        # Invalidate the cancelled generation before awaiting the wire. Late
+        # audio/transcript/done events keep their old response id and are then
+        # suppressed by ``_response_is_accepted`` even if they race the next
+        # user turn.
+        self._pending_response_markers.clear()
+        self._accepted_response_ids.clear()
+        self._response_had_tool_calls = False
+        self._tool_response_done_seen = False
+        self._pending_tool_call_ids.clear()
+        self._last_item_id = ""
         await self._conn.response.cancel()
 
     async def send_tool_result(
@@ -302,7 +336,7 @@ class _OpenAIRealtimeSession:
         self._tool_response_done_seen = False
         await self._create_response()
 
-    async def _create_response(self, *, tool_choice: str | None = None) -> None:
+    async def _create_response(self, *, tool_choice: Any = None) -> None:
         marker = uuid4().hex
         self._pending_response_markers.add(marker)
         response: dict[str, Any] = {

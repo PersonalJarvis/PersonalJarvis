@@ -2,6 +2,7 @@
 
 Endpoints:
     GET  /api/sessions                       List (newest first, max 100)
+    GET  /api/sessions/latest-turn           Latest persisted user transcript
     GET  /api/sessions/{session_id}          Detail with turns + raw events
     GET  /api/sessions/{session_id}/export   Markdown / plain text for copy
     POST /api/sessions/{session_id}/save     Writes a file to the user's Downloads folder
@@ -32,7 +33,12 @@ from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
 
 from jarvis.sessions.formatter import format_session_markdown, format_session_plain
-from jarvis.sessions.models import SessionDetail, SessionListItem, VoiceSessionRow
+from jarvis.sessions.models import (
+    SessionDetail,
+    SessionListItem,
+    VoiceSessionRow,
+    VoiceTurnRow,
+)
 from jarvis.sessions.store import SessionStore
 
 log = logging.getLogger(__name__)
@@ -72,6 +78,19 @@ async def list_sessions(
     """
     store = _require_store(request)
     return store.list_sessions(limit=limit)
+
+
+@router.get("/latest-turn", response_model=VoiceTurnRow)
+async def get_latest_user_turn(
+    request: Request,
+    session_id: str | None = Query(default=None),
+) -> VoiceTurnRow:
+    """Return the newest persisted turn containing a user transcript."""
+    store = _require_store(request)
+    turn = store.get_latest_user_turn(session_id=session_id)
+    if turn is None:
+        raise HTTPException(status_code=404, detail="user-turn-not-found")
+    return turn
 
 
 @router.get("/{session_id}", response_model=SessionDetail)

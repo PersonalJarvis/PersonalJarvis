@@ -4,14 +4,14 @@ slug: adr-0011-router-pure-dispatcher
 diataxis: adr
 status: active
 owner: sam
-last_reviewed: 2026-04-29
+last_reviewed: 2026-07-12
 phase: 5
 audience: developer
 ---
 
 # ADR-0011 — Main Jarvis is a Pure Dispatcher with EXACTLY four tools
 
-**Status:** Accepted (2026-04-25)
+**Status:** Amended 2026-07-12
 **Phase:** Persona refactor §3 — routing fix
 
 ## Context
@@ -819,3 +819,41 @@ ASGI execution, and echo-verify readback are unchanged. Guards:
 `test_factory_wires_registry_command_tools_into_router_set`,
 `tests/unit/plugins/tool/test_app_command.py` (loader expansion + flat
 schemas + the provider-test regression).
+
+## Amendment 2026-07-12 - retire `multi-spawn` from the router
+
+### Context
+
+The live harness inventory no longer contains the historical OpenClaw/Codex
+vehicles advertised by `multi-spawn`. The tool therefore competed with the
+working `spawn-worker` mission path while offering backend names that could not
+run. This is the same phantom-capability failure class that previously required
+removing `dispatch-to-harness` from the LLM-visible router.
+
+### Decision
+
+`multi-spawn` is removed from `ROUTER_TOOLS` and from the seeded capability
+registry. `spawn-worker` is the sole LLM-visible heavy-work delegation path; its
+Mission Manager may still decompose a mission into parallel supervised steps.
+The legacy implementation and entry point may remain for internal compatibility,
+but model-facing schemas and prompts must not advertise it.
+
+### Consequences
+
+- Heavy work has one observable mission id and one critic/review lifecycle.
+- The router can no longer select unregistered harness names through the legacy
+  fan-out schema.
+- Parallelism remains an internal Mission Manager decision rather than a second
+  public spawn surface.
+
+### Alternatives considered
+
+- Re-register the historical harness names: rejected because those backends were
+  removed after empirical reliability failures.
+- Rewrite `multi-spawn` as an alias for `spawn-worker`: rejected because two
+  model-visible tools for one operation recreate nondeterministic tool choice.
+
+### Follow-up items
+
+- Keep exact router-set and capability-registry negative tests.
+- Keep recursive spawn tools out of every worker capability inventory.

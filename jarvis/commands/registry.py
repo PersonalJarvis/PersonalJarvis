@@ -401,6 +401,80 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "es": ("qué dispositivos de audio hay",),  # i18n-allow: input vocab
             },
         ),
+        # ------------------------------------------------ knowledge & history
+        AppCommand(
+            id="wiki-ingest",
+            title="Store a fact in the Wiki",
+            description=(
+                "Store one self-contained fact or summary through the guarded "
+                "Wiki curator. The command succeeds only after a page is written."
+            ),
+            method="POST",
+            path="/api/wiki/ingest",
+            params={
+                "type": "object",
+                "properties": {
+                    "text": _str_param(
+                        "Self-contained fact or summary to store.",
+                        min_length=12,
+                        max_length=32_000,
+                    ),
+                    "source": _str_param(
+                        "Optional short audit label for the content source.",
+                        min_length=1,
+                        max_length=128,
+                    ),
+                },
+                "required": ["text"],
+            },
+            ui_section="memory",
+            voice_aliases={
+                "de": ("trag das in mein wiki ein",),  # i18n-allow: input vocab
+                "en": ("store that in my wiki",),
+                "es": ("guarda eso en mi wiki",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="session-latest-turn",
+            title="Show latest voice turn",
+            description=(
+                "Return the latest persisted user transcript and its complete "
+                "voice turn, optionally restricted to one session."
+            ),
+            method="GET",
+            path="/api/sessions/latest-turn",
+            params={
+                "type": "object",
+                "properties": {
+                    "session_id": _str_param(
+                        "Optional voice-session id.", min_length=1, max_length=128
+                    ),
+                },
+            },
+            ui_section="sessions",
+            voice_aliases={
+                "de": ("lies die letzte transkription",),  # i18n-allow: input vocab
+                "en": ("read the latest transcript",),
+                "es": ("lee la última transcripción",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="tools-list",
+            title="List effective tools",
+            description=(
+                "Return the effective live Brain tool surface, including native, "
+                "connected CLI, Marketplace, and MCP tools."
+            ),
+            method="GET",
+            path="/api/tools",
+            params={"type": "object", "properties": {}},
+            ui_section="settings",
+            voice_aliases={
+                "de": ("welche tools mcps und clis sind verbunden",),  # i18n-allow: input vocab
+                "en": ("list the connected tools mcps and clis",),
+                "es": ("lista las herramientas mcps y clis conectadas",),  # i18n-allow: input vocab
+            },
+        ),
         # ----------------------------------------------------------- system
         AppCommand(
             id="app-restart",

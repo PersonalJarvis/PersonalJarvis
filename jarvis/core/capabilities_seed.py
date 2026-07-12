@@ -61,8 +61,9 @@ _SCREEN_OBJECTS: tuple[str, ...] = (
 )
 
 _WIKI_OBJECTS: tuple[str, ...] = (
-    "wiki", "notiz", "note", "wissen", "knowledge", "seite", "page",
-    "eintrag", "entry", "fact", "fakt",  # i18n-allow
+    "wiki", "wiki-system", "wiki system", "wikisystem",
+    "notiz", "note", "wissen", "knowledge", "seite", "page",
+    "fact", "fakt",  # i18n-allow
 )
 
 _AWARENESS_OBJECTS: tuple[str, ...] = (
@@ -101,15 +102,6 @@ _SEED_CAPABILITIES: list[Capability] = [
     # no longer an LLM-visible router tool (see jarvis/brain/factory.py header).
     # Desktop-control intent is carried by ``harness.computer-use`` + the shared
     # _ACTION_VERBS; heavy sub-agent intent by ``tool.spawn-worker``.
-    Capability(
-        id="tool.multi-spawn",
-        source="router_tool",
-        verbs=("spawn", "spawne", "spawnen", "starte", "start", "launch", "delegier"),
-        objects=("agent", "agenten", "agents", "worker", "workers", "aufgaben", "tasks"),
-        description="Spawn multiple parallel worker agents for a complex task.",
-        risk_tier="ask",
-        requires_evidence=True,
-    ),
     Capability(
         id="tool.spawn-worker",
         source="router_tool",
@@ -187,7 +179,9 @@ _SEED_CAPABILITIES: list[Capability] = [
         source="router_tool",
         verbs=(
             "speicher", "save", "merk", "merke", "notier", "notiere",
-            "ingest", "store", "schreib", "write",
+            "ingest", "store", "schreib", "write", "record", "add", "put",
+            "eintrag", "eintrage", "eintragen",  # i18n-allow
+            "anota", "apunta", "agrega", "guarda",  # i18n-allow: input vocabulary
         ),
         objects=_WIKI_OBJECTS,
         description="Store a fact / note deterministically into the wiki vault.",

@@ -132,6 +132,7 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 ## sessions
 
 - `jarvis sessions delete <session_id> --yes --dry-run` — Delete a text conversation thread.
+- `jarvis sessions latest-turn --session-id` — Show the latest persisted user transcript and its complete turn.
 - `jarvis sessions list --days --limit` — List text + voice sessions, newest first.
 - `jarvis sessions resume <kind> <session_id> --yes --dry-run` — Seed the brain from a past conversation to continue it in text.
 - `jarvis sessions show <kind> <session_id>` — Show one conversation with its messages.
@@ -183,6 +184,7 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 ## wiki
 
 - `jarvis wiki health` — Show wiki subsystem health: bootstrap, last write, chain failures, backlog (spec A5).
+- `jarvis wiki ingest <text> --source --dry-run` — Store a fact through the guarded Wiki curator.
 - `jarvis wiki page <slug>` — Read a wiki page by vault path / slug.
 - `jarvis wiki recall <query>` — Full-text search the wiki.
 - `jarvis wiki reindex --preview` — Rebuild the wiki search index from the active vault.

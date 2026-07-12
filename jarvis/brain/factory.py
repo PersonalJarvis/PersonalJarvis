@@ -29,7 +29,7 @@ BrainCallback = Callable[[str], Awaitable[str]]
 # + Wave-4 amendment ``spawn-sub-jarvis`` -> ``spawn-worker``) and
 # Master-Plan §22 / Persona-Mandate Phase 3.
 #
-# Baseline (Mandate-Phase-3): run-shell, screen-snapshot, multi-spawn,
+# Baseline after the 2026-07-12 cleanup: run-shell, screen-snapshot,
 # spawn-worker. Phase 8.4 (Plan §6.4 Quality-Gate) added dispatch-with-review,
 # which legitimately extends the set without breaking the pure-dispatcher
 # spirit.
@@ -62,7 +62,6 @@ ROUTER_TOOLS = frozenset({
     # NB: ``dispatch-to-harness`` deliberately absent (removed 2026-06-28) —
     # see the header comment above. Heavy work → spawn-worker; desktop →
     # computer-use. The tool remains for the internal local-action fast path.
-    "multi-spawn",
     "spawn-worker",
     # Phase 8.4 (Plan §6.4) — Hauptjarvis calls the quality-gate pipeline
     # explicitly. NEVER downstream in a recursive spawn (D9 recursion guard).
@@ -329,7 +328,7 @@ def _load_tools_for_tier(
     the heavy worker runs as an external subprocess via the Mission-Manager.
 
     Encapsulates entry-point discovery + special cases (dispatch-to-harness,
-    spawn-worker, multi-spawn, whoami, awareness-snapshot).
+    spawn-worker, whoami, awareness-snapshot).
 
     Args:
         tier: currently only ``"router"``.
@@ -346,6 +345,46 @@ def _load_tools_for_tier(
 
     allow = ROUTER_TOOLS
     tools: dict[str, Any] = {}
+    # ``app-command`` and the other virtual loaders can expand to a name that
+    # is also provided by a purpose-built native entry point.  Entry-point
+    # iteration order is not a contract, so plain ``tools[name] = tool`` made
+    # the winner environment-dependent (notably Command Registry
+    # ``wiki-ingest`` versus the native lazy-curator WikiIngestTool).  Track
+    # provenance and make the precedence explicit: native > virtual; ties are
+    # resolved by stable source name.
+    tool_sources: dict[str, tuple[bool, str]] = {}
+
+    def register_tool(tool: Any, *, source: str, virtual: bool) -> None:
+        name = str(getattr(tool, "name", "") or "").strip()
+        if not name:
+            log.warning("Tool from %s has no name and was skipped", source)
+            return
+        candidate = (not virtual, source)
+        existing = tool_sources.get(name)
+        if existing is not None:
+            candidate_wins = candidate[0] and not existing[0]
+            if candidate[0] == existing[0]:
+                candidate_wins = candidate[1] < existing[1]
+            if not candidate_wins:
+                log.info(
+                    "Tool name collision for %r: keeping %s %r over %s %r",
+                    name,
+                    "native" if existing[0] else "virtual",
+                    existing[1],
+                    "native" if candidate[0] else "virtual",
+                    candidate[1],
+                )
+                return
+            log.info(
+                "Tool name collision for %r: replacing %s %r with %s %r",
+                name,
+                "native" if existing[0] else "virtual",
+                existing[1],
+                "native" if candidate[0] else "virtual",
+                candidate[1],
+            )
+        tools[name] = tool
+        tool_sources[name] = candidate
 
     for ep in entry_points(group="jarvis.tool"):
         if ep.name not in allow:
@@ -384,8 +423,6 @@ def _load_tools_for_tier(
                     manager=harness_manager,
                     max_output_chars=config.harness.max_output_chars,
                 )
-            elif ep.name == "multi-spawn":
-                inst = cls(bus=bus, manager=harness_manager)
             elif ep.name in ("verify-via-curl", "verify-localhost"):
                 inst = cls()
             elif ep.name == "start-preview-server":
@@ -466,9 +503,9 @@ def _load_tools_for_tier(
                     log.debug("virtual-loader '%s' expand() failed: %s", ep.name, exc)
                     continue
                 for tool in expanded:
-                    tools[tool.name] = tool
+                    register_tool(tool, source=ep.name, virtual=True)
             else:
-                tools[inst.name] = inst
+                register_tool(inst, source=ep.name, virtual=False)
         except Exception as exc:  # noqa: BLE001
             log.debug("Tool %s not loadable: %s", ep.name, exc)
 
@@ -711,7 +748,7 @@ def _phase2_full_brain(
     executor = ToolExecutor(bus, evaluator, approval)
 
     # HarnessManager for the internal harness fast path (computer-use /
-    # local-action) + multi-spawn. NB: dispatch-to-harness is no longer an
+    # local-action). NB: dispatch-to-harness is no longer an
     # LLM-visible router tool (removed 2026-06-28) — see the ROUTER_TOOLS header.
     from jarvis.harness.manager import HarnessManager
     harness_manager = HarnessManager(bus=bus)

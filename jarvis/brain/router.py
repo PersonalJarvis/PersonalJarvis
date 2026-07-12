@@ -6,13 +6,14 @@ spawn_worker) IMPLICITLY via tool choice — no separate LLM call.
 
 Design (plan §"Router-Design"):
 - Haiku 4.5 / Gemini Flash as provider (via `BrainManager.from_tier_config("router")`).
-- Tool set: only `bash` (run_shell), `screenshot`, `multi_spawn`, `spawn_worker`.
+- Delegation tool: ``spawn_worker``; direct actions use the explicitly registered
+  router tools such as ``bash`` and ``screenshot``.
 - Strict rule: the user utterance is NEVER rephrased; for `direct_action` and
   `spawn_worker` the utterance is passed VERBATIM as the tool argument.
 
 Classification via tool choice:
 - TRIVIAL    → brain responds directly (no tool call).
-- DIRECT     → brain calls `bash` / `screenshot` / `multi_spawn`.
+- DIRECT     → brain calls an explicitly registered non-spawn router tool.
 - SPAWN      → brain calls `spawn_worker(utterance=...)`.
 
 The loop (text stream + tool use) runs in `BrainDispatcher`; `RouterBrain`

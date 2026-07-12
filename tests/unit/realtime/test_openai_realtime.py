@@ -57,8 +57,8 @@ class _FakeConn:
         self.response_creates += 1
         self.response_create_payloads.append(kwargs)
 
-    async def _cancel_response(self, *, response_id: str) -> None:
-        self.response_cancels.append(response_id)
+    async def _cancel_response(self, *, response_id: str | None = None) -> None:
+        self.response_cancels.append(response_id or "<active>")
 
 
 class _FakeConnectCM:
@@ -307,6 +307,142 @@ async def test_automatic_response_race_consumes_only_one_manual_allowance(
 
 
 @pytest.mark.asyncio
+async def test_interrupt_invalidates_late_events_from_cancelled_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+
+    await session.request_response()
+    old_marker = conn.response_create_payloads[0]["response"]["metadata"][
+        "jarvis_request_id"
+    ]
+    await session._handle_response_created(
+        SimpleNamespace(
+            type="response.created",
+            response=SimpleNamespace(
+                id="resp-old",
+                metadata={"jarvis_request_id": old_marker},
+            ),
+        )
+    )
+    await session.interrupt()
+    await session.request_response()
+    new_marker = conn.response_create_payloads[1]["response"]["metadata"][
+        "jarvis_request_id"
+    ]
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="response.output_audio.delta",
+                response_id="resp-old",
+                item_id="item-old",
+                delta=base64.b64encode(b"\x01\x00").decode("ascii"),
+            ),
+            SimpleNamespace(
+                type="response.done",
+                response=SimpleNamespace(id="resp-old"),
+            ),
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(
+                    id="resp-new",
+                    metadata={"jarvis_request_id": new_marker},
+                ),
+            ),
+            SimpleNamespace(
+                type="response.output_audio.delta",
+                response_id="resp-new",
+                item_id="item-new",
+                delta=base64.b64encode(b"\x02\x00").decode("ascii"),
+            ),
+            SimpleNamespace(
+                type="response.done",
+                response=SimpleNamespace(id="resp-new"),
+            ),
+        ]
+    )
+    session._events = conn.__aiter__()
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == ["audio_delta", "turn_complete"]
+    assert events[0].audio.pcm == b"\x02\x00"
+    assert conn.response_cancels == ["<active>"]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_interrupt_invalidates_pending_response_before_created_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+
+    await session.request_response()
+    old_marker = conn.response_create_payloads[0]["response"]["metadata"][
+        "jarvis_request_id"
+    ]
+    await session.interrupt()
+    await session.request_response()
+    new_marker = conn.response_create_payloads[1]["response"]["metadata"][
+        "jarvis_request_id"
+    ]
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(
+                    id="resp-old",
+                    metadata={"jarvis_request_id": old_marker},
+                ),
+            ),
+            SimpleNamespace(
+                type="response.output_audio.delta",
+                response_id="resp-old",
+                item_id="item-old",
+                delta=base64.b64encode(b"OLD").decode("ascii"),
+            ),
+            SimpleNamespace(
+                type="response.done",
+                response=SimpleNamespace(id="resp-old"),
+            ),
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(
+                    id="resp-new",
+                    metadata={"jarvis_request_id": new_marker},
+                ),
+            ),
+            SimpleNamespace(
+                type="response.output_audio.delta",
+                response_id="resp-new",
+                item_id="item-new",
+                delta=base64.b64encode(b"NEW").decode("ascii"),
+            ),
+            SimpleNamespace(
+                type="response.done",
+                response=SimpleNamespace(id="resp-new"),
+            ),
+        ]
+    )
+    session._events = conn.__aiter__()
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == ["audio_delta", "turn_complete"]
+    assert events[0].audio.pcm == b"NEW"
+    assert conn.response_cancels == ["<active>", "resp-old"]
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_open_session_falls_back_to_adapter_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -432,7 +568,11 @@ async def test_tools_are_declared_mapped_and_answered(monkeypatch: pytest.Monkey
     assert payload["tools"] == [{"type": "function", **declaration}]
     assert payload["tool_choice"] == "auto"
 
-    await session.request_response()
+    await session.request_response(required_tool="open_app")
+    assert conn.response_create_payloads[0]["response"]["tool_choice"] == {
+        "type": "function",
+        "name": "open_app",
+    }
     marker = conn.response_create_payloads[0]["response"]["metadata"][
         "jarvis_request_id"
     ]
@@ -488,4 +628,26 @@ async def test_tools_are_declared_mapped_and_answered(monkeypatch: pytest.Monkey
     assert final_event.type == "turn_complete"
     assert conn.response_creates == 2
     assert conn.response_cancels == []
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_live_session_update_replaces_tool_declarations(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    declaration = {
+        "name": "new_tool",
+        "description": "A newly connected tool.",
+        "parameters": {"type": "object", "properties": {}},
+    }
+
+    await session.update_session(tools=(declaration,))
+
+    update = holder["client"].realtime.last_conn.session_updates[-1]
+    assert update["tools"] == [{"type": "function", **declaration}]
+    assert update["tool_choice"] == "auto"
     await session.close()

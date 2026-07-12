@@ -79,3 +79,66 @@ def test_save_session_to_downloads_uses_events_for_plain_export(tmp_path, monkey
         )
     finally:
         store.close()
+
+
+def test_latest_turn_returns_newest_persisted_user_transcript(tmp_path) -> None:
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        _seed_session(store)
+        store.upsert_session(session_id="s2", started_ms=5_000, language="en")
+        store.upsert_turn(
+            turn_id="t2",
+            session_id="s2",
+            idx=0,
+            started_ms=5_100,
+        )
+        store.finalize_turn(
+            turn_id="t2",
+            ended_ms=5_500,
+            user_text="The newest persisted transcript.",
+            user_lang="en",
+            jarvis_text="Acknowledged.",
+            jarvis_lang="en",
+            tier="fast",
+            provider="fake",
+            model="fake-model",
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0.0,
+            latency_total_ms=400,
+            tool_calls=[],
+        )
+
+        app = FastAPI()
+        app.include_router(sessions_routes.router)
+        app.state.session_store = store
+        with TestClient(app) as client:
+            newest = client.get("/api/sessions/latest-turn")
+            scoped = client.get(
+                "/api/sessions/latest-turn", params={"session_id": "s1"}
+            )
+
+        assert newest.status_code == 200
+        assert newest.json()["id"] == "t2"
+        assert newest.json()["user_text"] == "The newest persisted transcript."
+        assert scoped.status_code == 200
+        assert scoped.json()["id"] == "t1"
+    finally:
+        store.close()
+
+
+def test_latest_turn_returns_404_when_no_user_transcript_exists(tmp_path) -> None:
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        app = FastAPI()
+        app.include_router(sessions_routes.router)
+        app.state.session_store = store
+        with TestClient(app) as client:
+            response = client.get("/api/sessions/latest-turn")
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "user-turn-not-found"
+    finally:
+        store.close()

@@ -71,7 +71,8 @@ def test_keyless_primary_is_skipped_for_the_users_available_key() -> None:
         available={"openrouter", "nvidia"},
         credential_ready={"nvidia"},
     )
-    assert chain == [("nvidia", None)]
+    assert [provider for provider, _model in chain] == ["nvidia"]
+    assert chain[0][1]  # fallback receives its own cheap provider-family model
 
 
 def test_credential_probe_uses_core_portable_storage_and_keeps_oauth(
@@ -182,3 +183,59 @@ async def test_first_provider_success_does_not_try_others():
     assert result is not None
     assert result[1] == "gemini"
     assert reg.tried == ["gemini"]  # no needless fallback calls
+
+
+class _TextBrain:
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def complete(self, request: Any):  # noqa: ARG002
+        async def _gen():
+            yield self._text
+
+        return _gen()
+
+
+class _ScriptedRegistry:
+    def __init__(self, responses: dict[str, str]) -> None:
+        self._responses = responses
+        self.tried: list[str] = []
+
+    def instantiate(self, name: str, **kwargs: Any) -> Any:  # noqa: ARG002
+        self.tried.append(name)
+        return _TextBrain(self._responses[name])
+
+
+async def test_semantically_invalid_success_crosses_to_next_provider() -> None:
+    reg = _ScriptedRegistry(
+        {"openrouter": "not-json", "gemini": '[{"fact":"usable"}]'}
+    )
+    result = await complete_with_fallback(
+        registry=reg,
+        chain=[("openrouter", None), ("gemini", None)],
+        request=object(),
+        timeout_s=5.0,
+        label="test",
+        aggregate=_aggregate,
+        validate=lambda agg: None if agg.text.startswith("[") else "malformed JSON",
+    )
+
+    assert result is not None
+    assert result[1] == "gemini"
+    assert reg.tried == ["openrouter", "gemini"]
+
+
+async def test_returns_none_when_every_provider_output_is_invalid() -> None:
+    reg = _ScriptedRegistry({"openrouter": "bad", "gemini": "also bad"})
+    result = await complete_with_fallback(
+        registry=reg,
+        chain=[("openrouter", None), ("gemini", None)],
+        request=object(),
+        timeout_s=5.0,
+        label="test",
+        aggregate=_aggregate,
+        validate=lambda _agg: "malformed JSON",
+    )
+
+    assert result is None
+    assert reg.tried == ["openrouter", "gemini"]

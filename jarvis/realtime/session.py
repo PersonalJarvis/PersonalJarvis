@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+import re
+import unicodedata
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from jarvis.core.protocols import AudioChunk
+from jarvis.core.protocols import AudioChunk, BrainMessage
 from jarvis.core.redact import safe_preview
 from jarvis.core.turn_language import resolve_output_language
 from jarvis.realtime.audio import StreamingPcm16Resampler
@@ -51,14 +53,19 @@ _END_CALL_DECLARATION: dict[str, Any] = {
 # the router turn itself offloads heavy work to background missions, so a
 # turn that exceeds this is stuck, not busy.
 _DELEGATE_TIMEOUT_S = 90.0
+_DELEGATE_INPUT_BOUNDARY_WAIT_S = 3.0
+_DELEGATE_NATIVE_BOUNDARY_WAIT_S = 1.0
+_DELEGATE_HISTORY_MAX_MESSAGES = 8
+_DELEGATE_HISTORY_MAX_CHARS = 1_200
 _DELEGATE_DECLARATION: dict[str, Any] = {
     "name": "jarvis_action",
     "description": (
         "Execute an action for the user through the Jarvis action system: "
         "open apps or views, change settings, control the computer, manage "
-        "files, start background research or coding missions, and any other "
-        "operation on the user's system. Also call this to relay the user's "
-        "answer to a pending confirmation question."
+        "files, start background research or coding missions, read or write "
+        "the user's private Wiki memory, and inspect the current MCP, CLI, "
+        "tool, integration, configuration, or system state. Also call this "
+        "to relay the user's answer to a pending confirmation question."
     ),
     "parameters": {
         "type": "object",
@@ -75,16 +82,107 @@ _DELEGATE_ROLE_DIRECTIVE = (
     "You have ONE action function: jarvis_action. It hands the user's spoken "
     "request to the Jarvis action system, which can open apps and views, "
     "change settings, control the computer, manage files and windows, and "
-    "start background research or coding missions. Whenever the user asks "
-    "you to DO something on their computer or in the Jarvis app, call "
-    "jarvis_action — never claim you cannot act, and never invent an "
-    "outcome. The function returns spoken_reply: deliver that content to the "
-    "user in your own voice, in the conversation language, without reading "
-    "JSON. If spoken_reply asks a confirmation question, ask the user and "
-    "call jarvis_action again with their answer. Answer pure knowledge and "
-    "chat questions yourself, without the function. Use end_call only when "
-    "the user says goodbye."
+    "start background research or coding missions. The Jarvis orchestrator "
+    "automatically handles every Wiki read or write, every question about the "
+    "user's private or personal memory, and every question about current "
+    "Jarvis settings, installed tools, MCPs, CLIs, integrations, connections, "
+    "capabilities, or system state. Do not answer or call a function for those "
+    "turns; wait for the trusted result that the orchestrator injects. For any "
+    "other request to act on the computer or Jarvis app, call jarvis_action. "
+    "Answer only general world knowledge and ordinary social chat yourself. Never "
+    "claim that an action or mission was started, completed, saved, opened, "
+    "or changed unless the latest successful jarvis_action result explicitly "
+    "supports that claim. A promise or intention is not a result. The function "
+    "returns spoken_reply: deliver that content to the user in your own voice, "
+    "in the conversation language, without reading JSON. If spoken_reply asks "
+    "a confirmation question, ask the user and call jarvis_action again with "
+    "their answer. Use end_call only when the user says goodbye."
 )
+_DELEGATE_REQUIRED_DIRECTIVE = (
+    "The Jarvis orchestrator is handling this current turn deterministically. "
+    "Do not answer, do not call a function, and do not promise an outcome. Wait "
+    "for the trusted action result that the orchestrator will inject."
+)
+
+# Speech-intent vocabulary only. These expressions decide when the live model
+# must cross the local evidence boundary instead of answering from its weights.
+_WIKI_REFERENCE_RE = re.compile(r"\bwiki(?:[\s-]?system)?\b")
+_PERSONAL_REFERENCE_RE = re.compile(
+    r"\b(?:my|mine|about\s+me|remember\s+me|mein\w*|mir|u(?:e)?ber\s+mich|"
+    r"mi|mis|sobre\s+mi)\b"  # i18n-allow: multilingual speech-input vocabulary
+)
+_PERSONAL_KNOWLEDGE_RE = re.compile(
+    r"\b(?:who|what|when|where|how|remember\w*|know\w*|favorite\w*|"
+    r"birthday\w*|friend\w*|address\w*|name\w*|wer|was|wann|wo|wie|"
+    r"erinner\w*|weiss\w*|liebling\w*|geburtstag\w*|freund\w*|adresse\w*|"
+    r"quien|que|cuando|donde|como|recuerd\w*|sab\w*|favorit\w*|"
+    r"cumplean\w*|amig\w*|nombre\w*)\b"  # i18n-allow: multilingual speech-input vocabulary
+)
+_LOCAL_STATE_RE = re.compile(
+    r"\b(?:mcp\w*|cli\w*|command[\s-]?line|tool\w*|werkzeug\w*|"
+    r"integration\w*|connector\w*|plugin\w*|setting\w*|einstellung\w*|"  # i18n-allow: German speech-input vocabulary
+    r"configuration\w*|konfiguration\w*|config\w*|api[\s-]?key\w*|"
+    r"system[\s-]?status|capabilit\w*|faehigkeit\w*|installed\w*|"
+    r"installiert\w*|connected\w*|verbunden\w*|herramient\w*|ajuste\w*|"  # i18n-allow: multilingual speech-input vocabulary
+    r"configuracion\w*|integracion\w*|conectad\w*|instalad\w*|capacidad\w*|"
+    r"clave\w*)\b"  # i18n-allow: multilingual speech-input vocabulary
+)
+_ACTION_VERB_RE = re.compile(
+    r"\b(?:open\w*|close\w*|start\w*|spawn\w*|create\w*|write\w*|save\w*|"
+    r"add\w*|change\w*|set\w*|restart\w*|install\w*|connect\w*|delete\w*|"
+    r"move\w*|send\w*|run\w*|build\w*|research\w*|o(?:e)?ffn\w*|schliess\w*|"
+    r"erstell\w*|schreib\w*|speicher\w*|eintrag\w*|a(?:e)?nder\w*|stell\w*|"  # i18n-allow: German speech-input vocabulary
+    r"installier\w*|verbind\w*|lo(?:e)?sch\w*|verschieb\w*|schick\w*|fu(?:e)?hr\w*|"
+    r"bau\w*|recherchier\w*|abre\w*|cierra\w*|inicia\w*|crea\w*|"
+    r"escrib\w*|guarda\w*|cambia\w*|instala\w*|conecta\w*|elimina\w*|"
+    r"envia\w*|ejecuta\w*)\b"  # i18n-allow: multilingual speech-input vocabulary
+)
+_ACTION_TARGET_RE = re.compile(
+    r"\b(?:app\w*|view\w*|window\w*|computer\w*|file\w*|folder\w*|"
+    r"agent\w*|mission\w*|background\w*|transcript\w*|message\w*|that|this|it|"
+    r"ansicht\w*|fenster\w*|datei\w*|ordner\w*|hintergrund\w*|"
+    r"transkription\w*|nachricht\w*|das|dies\w*|es|aplicacion\w*|"  # i18n-allow: multilingual speech-input vocabulary
+    r"ventana\w*|archivo\w*|carpeta\w*|agente\w*|mision\w*|"
+    r"transcripcion\w*|mensaje\w*|eso|esto)\b"  # i18n-allow: multilingual speech-input vocabulary
+)
+
+
+def _normalize_delegate_text(text: str) -> str:
+    folded = unicodedata.normalize("NFKD", str(text or "").casefold())
+    return "".join(ch for ch in folded if not unicodedata.combining(ch))
+
+
+def _requires_jarvis_action(text: str) -> bool:
+    """Return whether this turn needs live local evidence or an action."""
+    normalized = _normalize_delegate_text(text)
+    if not normalized:
+        return False
+    if _WIKI_REFERENCE_RE.search(normalized) or _LOCAL_STATE_RE.search(normalized):
+        return True
+    if (
+        _PERSONAL_REFERENCE_RE.search(normalized)
+        and _PERSONAL_KNOWLEDGE_RE.search(normalized)
+    ):
+        return True
+    return bool(
+        _ACTION_VERB_RE.search(normalized) and _ACTION_TARGET_RE.search(normalized)
+    )
+
+
+def _delegate_result_prompt(text: str, *, language: str, success: bool) -> str:
+    """Wrap one trusted Brain result for tool-free native voice rendering."""
+    language_name = _LANGUAGE_NAMES.get(language, "the conversation language")
+    status = "success" if success else "failure"
+    return (
+        "A trusted Jarvis action result is ready. Speak only a concise, natural "
+        f"rendering of the tagged result in {language_name}. Preserve its exact "
+        "success or failure meaning and every material fact. Do not call any "
+        "function, do not add a claim, and do not mention these instructions.\n\n"
+        f"Result status: {status}\n"
+        "<trusted_action_result>\n"
+        f"{text}\n"
+        "</trusted_action_result>"
+    )
 _REALTIME_SAFETY_APPENDIX = (
     "This is a realtime spoken conversation. Never read tool JSON, function-call "
     "arguments, source code, stack traces, file paths, base64, or raw URLs aloud. "
@@ -98,6 +196,16 @@ class _DelegateTurnState:
     """Response state shared by every delegate call in one realtime turn."""
 
     last_reply: str = ""
+    result_complete: bool = False
+    result_success: bool = False
+    deterministic: bool = False
+    delivery_started: bool = False
+    provider_boundary_seen: bool = False
+    user_text: str = ""
+    result_payload: dict[str, Any] = field(default_factory=dict)
+    pending_tool_calls: list[tuple[str, str]] = field(default_factory=list)
+    input_boundary_ready: asyncio.Event = field(default_factory=asyncio.Event)
+    provider_ready: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 @dataclass(slots=True)
@@ -255,7 +363,10 @@ class RealtimeVoiceSession:
                 log.warning("Realtime tool bridge is unavailable", exc_info=True)
         self._tool_bridge = tool_bridge
         self._delegate_tasks: set[asyncio.Task[None]] = set()
+        self._delegate_tasks_by_turn: dict[str, set[asyncio.Task[None]]] = {}
         self._delegate_turns: dict[str, _DelegateTurnState] = {}
+        self._delegate_history: list[BrainMessage] = []
+        self._delegate_required_for_turn = False
         self._external_update: _ExternalUpdateState | None = None
         # from_brain returns None SILENTLY when the brain object carries no
         # _tools/_tool_executor_ref (e.g. a bare callback was passed) — say so,
@@ -300,6 +411,7 @@ class RealtimeVoiceSession:
         self._tool_transcript_task: asyncio.Task[None] | None = None
         self._response_requested_for_turn = False
         self._response_requested_input_ids: set[str] = set()
+        self._drop_provider_output_until_new_response = False
         self._hangup_reason = ""
         self._turn_final_text = ""
         self._end_after_turn = False
@@ -548,17 +660,6 @@ class RealtimeVoiceSession:
                             self._gate = ScrubHoldGate(new_language)
                             if self._tool_bridge is not None:
                                 self._tool_bridge.set_language(new_language)
-                    if event.is_final and input_observed:
-                        await self._session.update_session(
-                            instructions=_session_instructions(
-                                new_language,
-                                provider=self.active_provider,
-                                model=self._active_model,
-                                language_is_pinned=True,
-                                tool_directive=self._tool_directive(),
-                            ),
-                            language=new_language,
-                        )
                     if input_observed:
                         mark_phase(LatencyPhase.REALTIME_INPUT_COMMITTED)
                     if transcript:
@@ -569,6 +670,53 @@ class RealtimeVoiceSession:
                             ).strip()
                         elif not self._user_transcript_parts:
                             self._last_user_text = transcript
+                    if event.is_final and input_observed:
+                        if self._delegate_enabled and self._last_user_text:
+                            self._delegate_required_for_turn = (
+                                self._delegate_required_for_turn
+                                or _requires_jarvis_action(self._last_user_text)
+                            )
+                        refresh_tools = getattr(
+                            self._tool_bridge, "refresh_from_source", None
+                        )
+                        tools_changed = bool(
+                            callable(refresh_tools) and refresh_tools()
+                        )
+                        update_kwargs: dict[str, Any] = {
+                            "instructions": _session_instructions(
+                                new_language,
+                                provider=self.active_provider,
+                                model=self._active_model,
+                                language_is_pinned=True,
+                                tool_directive=self._tool_directive(
+                                    delegate_required=self._delegate_required_for_turn,
+                                ),
+                            ),
+                            "language": new_language,
+                        }
+                        if tools_changed:
+                            update_kwargs["tools"] = self._declared_tools()
+                            if not bool(
+                                getattr(
+                                    self._session,
+                                    "supports_tool_updates",
+                                    False,
+                                )
+                            ):
+                                log.warning(
+                                    "realtime[%s] direct tools changed, but %s "
+                                    "cannot update declarations until the next "
+                                    "session; removed tools are denied immediately",
+                                    self.session_id,
+                                    self.active_provider,
+                                )
+                        try:
+                            await self._session.update_session(**update_kwargs)
+                        except TypeError:
+                            # Compatibility with third-party adapters built
+                            # against the older update-session protocol.
+                            update_kwargs.pop("tools", None)
+                            await self._session.update_session(**update_kwargs)
                     if self._tool_bridge is not None and event.is_final and transcript:
                         await self._tool_bridge.handle_user_transcript(
                             self._last_user_text
@@ -629,13 +777,39 @@ class RealtimeVoiceSession:
                     if (
                         event.is_final
                         and input_observed
+                        and self._delegate_required_for_turn
+                    ):
+                        self._start_deterministic_delegate(self._last_user_text)
+                    if (
+                        event.is_final
+                        and input_observed
                         and not self._response_requested_for_turn
                     ):
-                        await self._session.request_response()
+                        if not self._delegate_required_for_turn:
+                            try:
+                                await self._session.request_response(
+                                    required_tool=None
+                                )
+                            except TypeError:
+                                # Compatibility with third-party realtime adapters
+                                # built against the older no-argument protocol.
+                                await self._session.request_response()
+                            if bool(
+                                getattr(
+                                    self._session,
+                                    "isolates_response_generations",
+                                    False,
+                                )
+                            ):
+                                self._drop_provider_output_until_new_response = False
                         self._response_requested_for_turn = True
                         if input_item_id:
                             self._response_requested_input_ids.add(input_item_id)
                 elif event.type == "output_transcript_delta" and event.text:
+                    if self._must_withhold_provider_output():
+                        self._cancel_release_task()
+                        self._gate.drain()
+                        continue
                     await self._ensure_turn_started()
                     mark_phase(LatencyPhase.REALTIME_FIRST_TRANSCRIPT)
                     display = await self._gate.feed_transcript(event.text)
@@ -660,6 +834,10 @@ class RealtimeVoiceSession:
                     for chunk in self._gate.release_available():
                         await self._emit_audio(chunk)
                 elif event.type == "audio_delta" and event.audio is not None:
+                    if self._must_withhold_provider_output():
+                        self._cancel_release_task()
+                        self._gate.drain()
+                        continue
                     await self._ensure_turn_started()
                     mark_phase(LatencyPhase.REALTIME_FIRST_AUDIO)
                     self._output_active = True
@@ -697,6 +875,33 @@ class RealtimeVoiceSession:
                         self._pending_tool_events = []
                         for pending_event in pending:
                             await self._reject_untranscribed_tool_call(pending_event)
+                    delegate_state = self._delegate_turns.get(self._turn_id)
+                    hold_for_delegate = bool(
+                        delegate_state is not None
+                        and (
+                            self._turn_has_pending_delegate(self._turn_id)
+                            or (
+                                delegate_state.deterministic
+                                and not delegate_state.delivery_started
+                            )
+                        )
+                    )
+                    if hold_for_delegate and delegate_state is not None:
+                        self._cancel_release_task()
+                        self._gate.drain()
+                        delegate_state.provider_boundary_seen = True
+                        delegate_state.input_boundary_ready.set()
+                        delegate_state.provider_ready.set()
+                        self._output_transcript.clear()
+                        self._output_active = False
+                        self._output_samples_sent = 0
+                        log.debug(
+                            "realtime[%s] held provider turn_complete for "
+                            "delegate turn %s",
+                            self.session_id,
+                            self._turn_id,
+                        )
+                        continue
                     self._cancel_release_task()
                     for chunk in self._gate.release_available():
                         await self._emit_audio(chunk)
@@ -745,6 +950,9 @@ class RealtimeVoiceSession:
     async def _release_after_lookahead(self) -> None:
         try:
             await asyncio.sleep(_TRANSCRIPT_LOOKAHEAD_S)
+            if self._must_withhold_provider_output():
+                self._gate.drain()
+                return
             for chunk in self._gate.release_available():
                 await self._emit_audio(chunk)
         except asyncio.CancelledError:
@@ -852,6 +1060,7 @@ class RealtimeVoiceSession:
 
     async def _begin_user_speech_turn(self) -> None:
         """Close an interrupted reply before the next transcript opens a turn."""
+        self._drop_provider_output_until_new_response = True
         if self._turn_id and self._turn_has_activity():
             await self._publish_turn_completed()
         # Do not open the next persisted turn on VAD alone. A cancelled provider
@@ -883,6 +1092,9 @@ class RealtimeVoiceSession:
         answer = "".join(self._output_transcript).strip()
         delegate_state = self._delegate_turns.pop(self._turn_id, None)
         external_update = self._external_update
+        response_text = answer or (
+            delegate_state.last_reply if delegate_state is not None else ""
+        )
         if self._bus is not None:
             try:
                 from jarvis.core.events import (
@@ -916,9 +1128,6 @@ class RealtimeVoiceSession:
                     # the one public event for a delegated turn. When the realtime
                     # model emits no transcript, retain the completed delegate reply
                     # as a non-empty record while VoiceTurnCompleted stays literal.
-                    response_text = answer or (
-                        delegate_state.last_reply if delegate_state is not None else ""
-                    )
                     if answer or delegate_state is not None:
                         await self._bus.publish(
                             ResponseGenerated(
@@ -944,8 +1153,32 @@ class RealtimeVoiceSession:
                     )
             except Exception:  # noqa: BLE001, S110
                 pass
+        if external_update is None:
+            self._remember_delegate_turn(self._last_user_text, response_text)
         self._external_update = None
         self._reset_turn_tracking()
+
+    def _remember_delegate_turn(self, user_text: str, assistant_text: str) -> None:
+        """Keep only this live session's bounded context for later delegation."""
+
+        def _bounded(text: str) -> str:
+            cleaned = str(text or "").strip()
+            if len(cleaned) <= _DELEGATE_HISTORY_MAX_CHARS:
+                return cleaned
+            half = _DELEGATE_HISTORY_MAX_CHARS // 2
+            return f"{cleaned[:half]} … {cleaned[-half:]}"
+
+        user = _bounded(user_text)
+        assistant = _bounded(assistant_text)
+        if user:
+            self._delegate_history.append(BrainMessage(role="user", content=user))
+        if assistant:
+            self._delegate_history.append(
+                BrainMessage(role="assistant", content=assistant)
+            )
+        self._delegate_history = self._delegate_history[
+            -_DELEGATE_HISTORY_MAX_MESSAGES:
+        ]
 
     def _reset_turn_tracking(self) -> None:
         self._turn_id = ""
@@ -955,6 +1188,7 @@ class RealtimeVoiceSession:
         self._output_transcript.clear()
         self._executed_tool_names.clear()
         self._turn_final_text = ""
+        self._delegate_required_for_turn = False
 
     def _declared_tools(self) -> tuple[dict[str, Any], ...]:
         if self._delegate_enabled:
@@ -963,12 +1197,69 @@ class RealtimeVoiceSession:
             return (*self._tool_bridge.declarations, _END_CALL_DECLARATION)
         return (_END_CALL_DECLARATION,)
 
-    def _tool_directive(self) -> str:
+    def _tool_directive(self, *, delegate_required: bool = False) -> str:
         if self._delegate_enabled:
+            if delegate_required:
+                return f"{_DELEGATE_ROLE_DIRECTIVE}\n\n{_DELEGATE_REQUIRED_DIRECTIVE}"
             return _DELEGATE_ROLE_DIRECTIVE
         if self._tool_bridge is not None:
             return _TOOL_ROLE_DIRECTIVE
         return ""
+
+    def _delegate_delivery_started(self) -> bool:
+        state = self._delegate_turns.get(self._turn_id)
+        return bool(
+            state is not None
+            and state.result_complete
+            and state.delivery_started
+        )
+
+    def _must_withhold_delegate_output(self) -> bool:
+        return bool(
+            self._delegate_required_for_turn
+            and not self._delegate_delivery_started()
+        )
+
+    def _must_withhold_provider_output(self) -> bool:
+        """Drop untrusted output during delegation and after barge-in."""
+        return bool(
+            self._drop_provider_output_until_new_response
+            or self._must_withhold_delegate_output()
+        )
+
+    def _track_delegate_task(
+        self, turn_id: str, task: asyncio.Task[None]
+    ) -> None:
+        self._delegate_tasks.add(task)
+        turn_tasks = self._delegate_tasks_by_turn.setdefault(turn_id, set())
+        turn_tasks.add(task)
+
+        def _discard(done: asyncio.Task[None]) -> None:
+            self._delegate_tasks.discard(done)
+            tracked = self._delegate_tasks_by_turn.get(turn_id)
+            if tracked is None:
+                return
+            tracked.discard(done)
+            if not tracked:
+                self._delegate_tasks_by_turn.pop(turn_id, None)
+
+        task.add_done_callback(_discard)
+
+    def _turn_has_pending_delegate(self, turn_id: str) -> bool:
+        return any(
+            not task.done()
+            for task in self._delegate_tasks_by_turn.get(turn_id, ())
+        )
+
+    def _delegate_turn_is_active(
+        self, turn_id: str, turn_state: _DelegateTurnState
+    ) -> bool:
+        """Return whether a late delegate result still belongs to this turn."""
+        return bool(
+            turn_id
+            and self._turn_id == turn_id
+            and self._delegate_turns.get(turn_id) is turn_state
+        )
 
     async def _handle_tool_call(self, event: Any) -> None:
         if self._session is None:
@@ -995,6 +1286,20 @@ class RealtimeVoiceSession:
             and call_id
             and wire_name == str(_DELEGATE_DECLARATION["name"])
         ):
+            turn_state = self._delegate_turns.get(self._turn_id)
+            if turn_state is not None and turn_state.deterministic:
+                if turn_state.result_complete and turn_state.result_payload:
+                    self._drop_provider_output_until_new_response = False
+                    await self._session.send_tool_result(
+                        call_id,
+                        wire_name,
+                        turn_state.result_payload,
+                    )
+                else:
+                    turn_state.pending_tool_calls.append((call_id, wire_name))
+                    turn_state.input_boundary_ready.set()
+                    turn_state.provider_ready.set()
+                return
             # Routed HERE (not in the pump branch) so the untranscribed-call
             # guard and pending flush keep applying to delegate calls too.
             self._start_delegate(call_id, wire_name, arguments)
@@ -1025,6 +1330,7 @@ class RealtimeVoiceSession:
             }
         if result.get("success"):
             self._executed_tool_names.add(original_name)
+        self._drop_provider_output_until_new_response = False
         await self._session.send_tool_result(call_id, wire_name, result)
 
     async def _handle_end_call(self, event: Any) -> None:
@@ -1042,6 +1348,183 @@ class RealtimeVoiceSession:
             self._end_call_timer = asyncio.create_task(
                 self._finish_hangup_after_grace(),
                 name=f"rt-end-call-{self.session_id}",
+            )
+
+    def _start_deterministic_delegate(self, user_text: str) -> None:
+        """Start one orchestrator-owned Brain turn for local-evidence input."""
+        turn_id = self._turn_id
+        if not turn_id:
+            return
+        turn_state = self._delegate_turns.setdefault(
+            turn_id,
+            _DelegateTurnState(deterministic=True),
+        )
+        turn_state.deterministic = True
+        turn_state.user_text = str(user_text or "").strip()
+        if self._turn_has_pending_delegate(turn_id) or turn_state.result_complete:
+            return
+        log.info(
+            "realtime[%s] deterministic delegate: dispatching local-evidence turn",
+            self.session_id,
+        )
+        task = asyncio.create_task(
+            self._run_deterministic_delegate(turn_id, turn_state),
+            name=f"rt-deterministic-delegate-{self.session_id}",
+        )
+        self._track_delegate_task(turn_id, task)
+
+    async def _run_deterministic_delegate(
+        self,
+        turn_id: str,
+        turn_state: _DelegateTurnState,
+    ) -> None:
+        try:
+            boundary_ready = True
+            if bool(
+                getattr(
+                    self._session,
+                    "creates_responses_automatically",
+                    False,
+                )
+            ):
+                try:
+                    await asyncio.wait_for(
+                        turn_state.input_boundary_ready.wait(),
+                        timeout=_DELEGATE_INPUT_BOUNDARY_WAIT_S,
+                    )
+                except TimeoutError:
+                    boundary_ready = False
+            else:
+                # A manual-response provider may already have queued a native
+                # function call or cancelled output behind the final input
+                # event. Let the receive pump classify that evidence before
+                # injecting the trusted result response.
+                await asyncio.sleep(0)
+            if not self._delegate_turn_is_active(turn_id, turn_state):
+                return
+            user_text = turn_state.user_text
+            if boundary_ready:
+                reply = (
+                    await asyncio.wait_for(
+                        self._dispatch_brain_turn(user_text),
+                        timeout=_DELEGATE_TIMEOUT_S,
+                    )
+                    or ""
+                ).strip()
+                if reply:
+                    turn_state.last_reply = reply
+                    result: dict[str, Any] = {
+                        "success": True,
+                        "spoken_reply": reply,
+                    }
+                    succeeded = True
+                else:
+                    result = {
+                        "success": False,
+                        "error": "The delegated action returned no grounded result.",
+                    }
+                    succeeded = False
+            else:
+                result = {
+                    "success": False,
+                    "error": (
+                        "The complete spoken request could not be determined "
+                        "safely, so no action was executed."
+                    ),
+                }
+                succeeded = False
+        except TimeoutError:
+            result = {
+                "success": False,
+                "error": "The delegated action did not finish in time.",
+            }
+            succeeded = False
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — deterministic delegation degrades honestly
+            log.warning(
+                "realtime[%s] deterministic delegate failed",
+                self.session_id,
+                exc_info=True,
+            )
+            await self._publish_error(
+                "RealtimeDelegateError",
+                "Deterministic delegated brain turn failed",
+                recoverable=True,
+            )
+            result = {
+                "success": False,
+                "error": "The delegated action failed safely.",
+            }
+            succeeded = False
+
+        if not succeeded:
+            from jarvis.voice.action_phrases import action_phrase
+
+            turn_state.last_reply = action_phrase(
+                "action_failed_generic", self._language
+            )
+            result["spoken_reply"] = turn_state.last_reply
+        turn_state.result_complete = True
+        turn_state.result_success = succeeded
+        turn_state.result_payload = result
+        if self._delegate_turn_is_active(turn_id, turn_state) and succeeded:
+            self._executed_tool_names.add(str(_DELEGATE_DECLARATION["name"]))
+        if (
+            self._ended
+            or self._session is None
+            or not self._delegate_turn_is_active(turn_id, turn_state)
+        ):
+            return
+
+        if (
+            bool(getattr(self._session, "creates_responses_automatically", False))
+            and not turn_state.pending_tool_calls
+            and not turn_state.provider_boundary_seen
+        ):
+            try:
+                await asyncio.wait_for(
+                    turn_state.provider_ready.wait(),
+                    timeout=_DELEGATE_NATIVE_BOUNDARY_WAIT_S,
+                )
+            except TimeoutError:
+                try:
+                    await self._session.interrupt()
+                except Exception:  # noqa: BLE001, S110 — best-effort boundary
+                    pass
+
+        if not self._delegate_turn_is_active(turn_id, turn_state):
+            return
+        turn_state.delivery_started = True
+        drop_before_delivery = self._drop_provider_output_until_new_response
+        self._drop_provider_output_until_new_response = False
+        try:
+            if turn_state.pending_tool_calls:
+                for call_id, wire_name in tuple(turn_state.pending_tool_calls):
+                    await self._session.send_tool_result(
+                        call_id,
+                        wire_name,
+                        result,
+                    )
+                turn_state.pending_tool_calls.clear()
+            else:
+                await self._session.send_text(
+                    _delegate_result_prompt(
+                        turn_state.last_reply,
+                        language=self._language,
+                        success=succeeded,
+                    )
+                )
+        except Exception:  # noqa: BLE001 — preserve an honest surface fallback
+            turn_state.delivery_started = False
+            self._drop_provider_output_until_new_response = drop_before_delivery
+            log.warning(
+                "realtime[%s] trusted delegate result injection failed",
+                self.session_id,
+                exc_info=True,
+            )
+            await self._send_json(
+                {"type": "error_spoken", "text": turn_state.last_reply}
             )
 
     def _start_delegate(
@@ -1065,8 +1548,7 @@ class RealtimeVoiceSession:
             self._run_delegate(call_id, wire_name, user_text, turn_id, turn_state),
             name=f"rt-delegate-{self.session_id}",
         )
-        self._delegate_tasks.add(task)
-        task.add_done_callback(self._delegate_tasks.discard)
+        self._track_delegate_task(turn_id, task)
 
     async def _run_delegate(
         self,
@@ -1076,6 +1558,7 @@ class RealtimeVoiceSession:
         turn_id: str,
         turn_state: _DelegateTurnState,
     ) -> None:
+        succeeded = False
         try:
             reply = (
                 await asyncio.wait_for(
@@ -1097,6 +1580,7 @@ class RealtimeVoiceSession:
                         "briefly confirm it to the user."
                     ),
                 }
+            succeeded = True
             if self._delegate_turns.get(turn_id) is turn_state:
                 self._executed_tool_names.add(str(_DELEGATE_DECLARATION["name"]))
         except TimeoutError:
@@ -1120,11 +1604,23 @@ class RealtimeVoiceSession:
                 "success": False,
                 "error": "The action failed safely and was not completed.",
             }
-        if self._ended or self._session is None:
+        turn_state.result_complete = True
+        turn_state.result_success = succeeded
+        turn_state.result_payload = result
+        if (
+            self._ended
+            or self._session is None
+            or not self._delegate_turn_is_active(turn_id, turn_state)
+        ):
             return
         try:
+            turn_state.delivery_started = True
+            drop_before_delivery = self._drop_provider_output_until_new_response
+            self._drop_provider_output_until_new_response = False
             await self._session.send_tool_result(call_id, wire_name, result)
         except Exception:  # noqa: BLE001 — late result on a torn-down wire
+            turn_state.delivery_started = False
+            self._drop_provider_output_until_new_response = drop_before_delivery
             log.debug(
                 "realtime[%s] delegate result send failed",
                 self.session_id,
@@ -1142,14 +1638,37 @@ class RealtimeVoiceSession:
         # can publish the one response that was actually spoken.
         generate = getattr(self._brain, "generate", None)
         if callable(generate):
+            isolated_context = {
+                "use_history": False,
+                "history_override": tuple(self._delegate_history),
+            }
             for kwargs in (
                 {
                     "allow_voice_confirm": True,
                     "prefer_tool_model": True,
                     "publish_response": False,
+                    **isolated_context,
                 },
-                {"allow_voice_confirm": True, "publish_response": False},
-                {"allow_voice_confirm": True, "prefer_tool_model": True},
+                {
+                    "allow_voice_confirm": True,
+                    "publish_response": False,
+                    **isolated_context,
+                },
+                {
+                    "allow_voice_confirm": True,
+                    "prefer_tool_model": True,
+                    "publish_response": False,
+                    "use_history": False,
+                },
+                {
+                    "allow_voice_confirm": True,
+                    "publish_response": False,
+                    "use_history": False,
+                },
+                {
+                    "allow_voice_confirm": True,
+                    "prefer_tool_model": True,
+                },
                 {"allow_voice_confirm": True},
             ):
                 try:
@@ -1224,6 +1743,8 @@ class RealtimeVoiceSession:
         self._tool_transcript_task = None
 
     async def _emit_audio(self, chunk: Any) -> None:
+        if self._must_withhold_provider_output():
+            return
         pcm = bytes(getattr(chunk, "pcm", b"") or b"")
         if not pcm:
             return
@@ -1238,6 +1759,7 @@ class RealtimeVoiceSession:
         await self._send_binary(pcm)
 
     async def _barge_in(self) -> None:
+        self._drop_provider_output_until_new_response = True
         self._response_requested_for_turn = False
         self._cancel_release_task()
         self._gate.drain()
@@ -1279,6 +1801,7 @@ class RealtimeVoiceSession:
             if not task.done():
                 task.cancel()
         self._delegate_tasks.clear()
+        self._delegate_tasks_by_turn.clear()
         if self._pump_task is not None and not self._pump_task.done():
             self._pump_task.cancel()
             try:

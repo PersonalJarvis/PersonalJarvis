@@ -4,13 +4,18 @@ reviewed durable turn behind the general scheduler cooldown.
 """
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
 
 from jarvis.core.config import SchedulerConfig
 from jarvis.memory.wiki.lock import VaultLock
-from jarvis.memory.wiki.scheduler import CuratorScheduler, TriggerSource
+from jarvis.memory.wiki.scheduler import (
+    CuratorScheduler,
+    TriggerSource,
+    fire_journal_trigger,
+)
 
 
 class FakeCurator:
@@ -63,6 +68,91 @@ async def test_journal_trigger_bypasses_cooldown(tmp_path: Path) -> None:
     assert second.triggered is True
     assert second.skip_reason == ""
     assert consolidator.runs == 2
+
+
+@pytest.mark.asyncio
+async def test_overlapping_journal_triggers_are_coalesced_not_lost(
+    tmp_path: Path,
+) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class _SlowConsolidator(FakeConsolidator):
+        async def run_once(self) -> str:
+            self.runs += 1
+            if self.runs == 1:
+                entered.set()
+                await release.wait()
+            return f"journal-batch:{self.runs}"
+
+    consolidator = _SlowConsolidator()
+    scheduler = _scheduler(tmp_path, consolidator=consolidator)
+    first = asyncio.create_task(scheduler.trigger(TriggerSource.JOURNAL))
+    await entered.wait()
+    second = asyncio.create_task(scheduler.trigger(TriggerSource.JOURNAL))
+    await asyncio.sleep(0)
+
+    assert not second.done(), "the later trigger must wait instead of returning locked"
+    release.set()
+    first_result, second_result = await asyncio.gather(first, second)
+
+    assert first_result.triggered is True
+    assert second_result.triggered is True
+    assert consolidator.runs == 2
+
+
+@pytest.mark.asyncio
+async def test_many_overlapping_journal_triggers_need_only_one_follow_up(
+    tmp_path: Path,
+) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class _SlowConsolidator(FakeConsolidator):
+        async def run_once(self) -> str:
+            self.runs += 1
+            if self.runs == 1:
+                entered.set()
+                await release.wait()
+            return f"journal-batch:{self.runs}"
+
+    consolidator = _SlowConsolidator()
+    scheduler = _scheduler(tmp_path, consolidator=consolidator)
+    first = asyncio.create_task(scheduler.trigger(TriggerSource.JOURNAL))
+    await entered.wait()
+    followers = [
+        asyncio.create_task(scheduler.trigger(TriggerSource.JOURNAL))
+        for _ in range(25)
+    ]
+    await asyncio.sleep(0)
+
+    release.set()
+    results = await asyncio.gather(first, *followers)
+
+    assert all(result.triggered for result in results)
+    assert consolidator.runs == 2
+
+
+@pytest.mark.asyncio
+async def test_fire_and_forget_requests_share_one_task(tmp_path: Path) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class _SlowConsolidator(FakeConsolidator):
+        async def run_once(self) -> str:
+            self.runs += 1
+            entered.set()
+            await release.wait()
+            return f"journal-batch:{self.runs}"
+
+    scheduler = _scheduler(tmp_path, consolidator=_SlowConsolidator())
+    first = fire_journal_trigger(scheduler)
+    await entered.wait()
+    second = fire_journal_trigger(scheduler)
+
+    assert second is first
+    release.set()
+    await first
 
 
 @pytest.mark.asyncio

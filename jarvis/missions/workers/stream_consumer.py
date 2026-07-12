@@ -21,6 +21,7 @@ Codex `--json` is simpler: a flat `type` discriminator
 Frozen + extra='ignore': CLI output may add fields without us crashing —
 we only remember what we know.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -66,6 +67,7 @@ class ClaudeSystemInit(_ClaudeBase):
     model: str | None = None
     tools: list[str] = Field(default_factory=list)
     cwd: str | None = None
+    external_capabilities: dict[str, Any] = Field(default_factory=dict)
 
 
 class ClaudeApiRetry(_ClaudeBase):
@@ -306,8 +308,12 @@ def parse_codex_stream_json(line: str) -> Any | None:
         if isinstance(type_, str) and type_.startswith("item"):
             # Collapse all item.* sub-variants under CodexItem.
             return CodexItem.model_validate(
-                {"type": type_ if type_ in CodexItem.model_fields["type"].annotation.__args__ else "item",  # type: ignore[union-attr]
-                 "payload": {k: v for k, v in data.items() if k != "type"}}
+                {
+                    "type": type_
+                    if type_ in CodexItem.model_fields["type"].annotation.__args__
+                    else "item",  # type: ignore[union-attr]
+                    "payload": {k: v for k, v in data.items() if k != "type"},
+                }
             )
     except ValidationError as exc:
         logger.debug("parse_codex_stream_json: validation fail: %s", exc)
@@ -378,5 +384,3 @@ async def read_ndjson_stream(
     finally:
         if tee_handle is not None:
             tee_handle.close()
-
-

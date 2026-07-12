@@ -36,6 +36,7 @@ from pydantic import ValidationError
 from ..stream_evidence import (
     capability_refusal_answer,
     diff_has_action_evidence,
+    extract_verified_external_actions,
     informational_file_answer,
     is_informational_request,
     readonly_answer,
@@ -58,6 +59,22 @@ from .verdict import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _render_external_action_evidence(worker_log: str) -> str:
+    """Render correlated successful MCP results as a critic evidence block."""
+    actions = extract_verified_external_actions(worker_log)
+    if not actions:
+        return ""
+    lines = [
+        "diff --external-action-evidence",
+        "# verified-external-action",
+    ]
+    for name, result in actions:
+        compact = " ".join(result.split())
+        lines.append(f"+tool: {name}")
+        lines.append(f"+result: {compact}")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -616,6 +633,15 @@ class CriticRunner:
         # record — the "claims success without invoking any tool"
         # hallucination (BUG-LIVE-02, mission_019e2c18): there is nothing on
         # disk for the LLM to grade, so log text alone cannot earn an approve.
+        # Correlated, non-errored MCP results are observable external-action
+        # evidence even though they leave no worktree file. Surface them through
+        # the same diff-like channel used for verified command/desktop actions.
+        # A bare tool call or prose claim never renders this block.
+        if not worker_diff.strip():
+            external_action_diff = _render_external_action_evidence(worker_log)
+            if external_action_diff:
+                worker_diff = external_action_diff
+
         _defer_empty_diff_to_llm = bool(_extract_tool_call_evidence(worker_log))
 
         if not worker_diff.strip() and is_informational_request(mission_prompt):

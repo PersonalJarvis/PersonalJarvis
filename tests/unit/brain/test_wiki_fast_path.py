@@ -13,6 +13,7 @@ only after the write actually happened."""
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -21,6 +22,7 @@ from jarvis.brain.manager import BrainManager
 from jarvis.core.bus import EventBus
 from jarvis.core.config import JarvisConfig
 from jarvis.core.protocols import BrainMessage, ToolResult
+from jarvis.sessions.store import SessionStore
 
 
 class FakeWikiIngestTool:
@@ -226,8 +228,174 @@ async def test_anaphoric_command_without_usable_content_asks_what_to_write(manag
     ], "no write happened, so nothing is announced"
 
 
+async def test_latest_transcript_falls_back_to_active_persisted_session(
+    manager_factory,
+    monkeypatch,
+    tmp_path,
+):
+    """An empty Realtime-owned history uses only its active persisted session."""
+    from jarvis.core import runtime_refs
+
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        for session_id, turn_id, started_ms, user_text, jarvis_text in (
+            (
+                "active-session",
+                "active-turn",
+                1_000,
+                "The launch code name is Aurora.",
+                "I will remember Aurora.",
+            ),
+            (
+                "other-session",
+                "other-turn",
+                2_000,
+                "A different conversation contains private text.",
+                "This must not cross session boundaries.",
+            ),
+        ):
+            store.upsert_session(
+                session_id=session_id,
+                started_ms=started_ms,
+                language="en",
+            )
+            store.upsert_turn(
+                turn_id=turn_id,
+                session_id=session_id,
+                idx=0,
+                started_ms=started_ms,
+            )
+            store.finalize_turn(
+                turn_id=turn_id,
+                ended_ms=started_ms + 100,
+                user_text=user_text,
+                user_lang="en",
+                jarvis_text=jarvis_text,
+                jarvis_lang="en",
+                tier="realtime",
+                provider="fake",
+                model="fake-model",
+                tokens_in=0,
+                tokens_out=0,
+                cost_usd=0.0,
+                latency_total_ms=100,
+                tool_calls=[],
+            )
+
+        pipeline = SimpleNamespace(
+            voice_engine_status=lambda: {"session_id": "active-session"}
+        )
+        app = SimpleNamespace(state=SimpleNamespace(session_store=store))
+        monkeypatch.setattr(runtime_refs, "get_speech_pipeline", lambda: pipeline)
+        monkeypatch.setattr(runtime_refs, "get_web_app", lambda: app)
+
+        tool = FakeWikiIngestTool(ToolResult(success=True, output="stored"))
+        mgr, _executor, _bus = manager_factory(tools={"wiki-ingest": tool})
+        mgr._history.clear()
+
+        reply = await mgr._run_wiki_ingest_fast_path(
+            "Write the latest transcript to the Wiki."
+        )
+
+        assert reply is not None
+        await asyncio.sleep(0.05)
+        assert len(tool.calls) == 1
+        saved_text = tool.calls[0]["text"]
+        assert "Aurora" in saved_text
+        assert "different conversation" not in saved_text
+        assert "cross session boundaries" not in saved_text
+    finally:
+        store.close()
+
+
+async def test_latest_transcript_never_uses_unscoped_persisted_history(
+    manager_factory,
+    monkeypatch,
+    tmp_path,
+):
+    """Without a reliable active session id, persisted fallback stays closed."""
+    from jarvis.core import runtime_refs
+
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        store.upsert_session(session_id="unrelated", started_ms=1_000, language="en")
+        store.upsert_turn(
+            turn_id="unrelated-turn",
+            session_id="unrelated",
+            idx=0,
+            started_ms=1_000,
+        )
+        store.finalize_turn(
+            turn_id="unrelated-turn",
+            ended_ms=1_100,
+            user_text="Never copy this unrelated transcript.",
+            user_lang="en",
+            jarvis_text="Unrelated answer.",
+            jarvis_lang="en",
+            tier="realtime",
+            provider="fake",
+            model="fake-model",
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0.0,
+            latency_total_ms=100,
+            tool_calls=[],
+        )
+
+        pipeline = SimpleNamespace(voice_engine_status=lambda: {"session_id": ""})
+        app = SimpleNamespace(state=SimpleNamespace(session_store=store))
+        monkeypatch.setattr(runtime_refs, "get_speech_pipeline", lambda: pipeline)
+        monkeypatch.setattr(runtime_refs, "get_web_app", lambda: app)
+
+        tool = FakeWikiIngestTool(ToolResult(success=True, output="stored"))
+        mgr, _executor, _bus = manager_factory(tools={"wiki-ingest": tool})
+        mgr._history.clear()
+
+        reply = await mgr._run_wiki_ingest_fast_path(
+            "Write the latest transcript to the Wiki."
+        )
+
+        assert reply is not None
+        assert "wiki" in reply.lower()
+        await asyncio.sleep(0.05)
+        assert not tool.calls
+    finally:
+        store.close()
+
+
 async def test_non_wiki_turn_returns_none(manager_factory):
     tool = FakeWikiIngestTool(ToolResult(success=True, output=""))
     mgr, executor, bus = manager_factory(tools={"wiki-ingest": tool})
     assert await mgr._run_wiki_ingest_fast_path("wie wird das wetter morgen?") is None  # i18n-allow
     assert not tool.calls
+
+
+async def test_live_polite_travel_fact_reaches_wiki_before_local_action(
+    manager_factory,
+    monkeypatch,
+):
+    """The production utterance must never be reinterpreted as trip booking."""
+    tool = FakeWikiIngestTool(
+        ToolResult(success=True, output="Wiki ingest done:\n- applied: 1")
+    )
+    mgr, executor, bus = manager_factory(tools={"wiki-ingest": tool})
+
+    async def fail_if_local_action_runs(*args, **kwargs):
+        raise AssertionError("explicit wiki writes must precede local-action routing")
+
+    monkeypatch.setattr(
+        BrainManager,
+        "_run_local_action_fast_path",
+        fail_if_local_action_runs,
+    )
+    reply = await mgr.generate(
+        "Kannst du bitte mein Wiki-System eintragen, dass ich morgen nach "  # i18n-allow
+        "San Francisco reisen will?"  # i18n-allow: production transcript under test
+    )
+
+    assert reply
+    await asyncio.sleep(0.05)
+    assert len(tool.calls) == 1
+    assert "san francisco" in tool.calls[0]["text"].lower()

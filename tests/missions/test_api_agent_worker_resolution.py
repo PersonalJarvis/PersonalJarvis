@@ -20,6 +20,7 @@ Both branches were extracted into standalone, directly-testable helpers
 worker-factory closure inside ``bootstrap_missions`` stays a thin dispatcher —
 same pattern as ``_cross_family_last_resort_worker``.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -46,8 +47,9 @@ def test_unviable_provider_crosses_family_instead_of_being_reused(
     `_api_key_family_viable` reports False, so the branch crosses family."""
     monkeypatch.setattr(mi, "_api_key_family_viable", lambda p: False)
     monkeypatch.setattr(
-        mi, "_cross_family_last_resort_worker",
-        lambda task_text: ApiAgentWorker("gemini"),
+        mi,
+        "_cross_family_last_resort_worker",
+        lambda task_text, *_args: ApiAgentWorker("gemini"),
     )
     worker = mi._resolve_api_agent_worker("openrouter", "do the task")
     assert isinstance(worker, ApiAgentWorker)
@@ -58,7 +60,7 @@ def test_no_family_reachable_falls_back_to_claude_honest_fail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(mi, "_api_key_family_viable", lambda p: False)
-    monkeypatch.setattr(mi, "_cross_family_last_resort_worker", lambda task_text: None)
+    monkeypatch.setattr(mi, "_cross_family_last_resort_worker", lambda task_text, *_args: None)
     monkeypatch.setattr(mi, "_assemble_worker_mcp_servers", lambda **_k: {})
     worker = mi._resolve_api_agent_worker("openrouter", "do the task")
     assert isinstance(worker, ClaudeDirectWorker)
@@ -72,8 +74,9 @@ def test_viability_check_failure_is_treated_as_no_key(
 
     monkeypatch.setattr(mi, "_api_key_family_viable", _boom)
     monkeypatch.setattr(
-        mi, "_cross_family_last_resort_worker",
-        lambda task_text: ApiAgentWorker("gemini"),
+        mi,
+        "_cross_family_last_resort_worker",
+        lambda task_text, *_args: ApiAgentWorker("gemini"),
     )
     worker = mi._resolve_api_agent_worker("openrouter", "do the task")
     assert isinstance(worker, ApiAgentWorker)
@@ -101,7 +104,8 @@ def _patch_codex_dead_login(
         lambda: claude_quota_capped,
     )
     monkeypatch.setattr(
-        mi, "_api_key_family_viable",
+        mi,
+        "_api_key_family_viable",
         lambda p: claude_api_key_viable if p == "claude-api" else False,
     )
     monkeypatch.setattr(mi, "_assemble_worker_mcp_servers", lambda **_k: {})
@@ -120,7 +124,9 @@ def test_dead_codex_login_viable_claude_cli_runs_claude_direct(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_codex_dead_login(
-        monkeypatch, claude_binary="/usr/bin/claude", claude_auth_viable=True,
+        monkeypatch,
+        claude_binary="/usr/bin/claude",
+        claude_auth_viable=True,
     )
     worker = mi._resolve_codex_dead_login_worker("do the task")
     assert isinstance(worker, ClaudeDirectWorker)
@@ -139,8 +145,9 @@ def test_dead_codex_login_claude_quota_cooldown_crosses_family(
         claude_quota_capped=True,
     )
     monkeypatch.setattr(
-        mi, "_cross_family_last_resort_worker",
-        lambda task_text: ApiAgentWorker("openrouter"),
+        mi,
+        "_cross_family_last_resort_worker",
+        lambda task_text, *_args: ApiAgentWorker("openrouter"),
     )
     worker = mi._resolve_codex_dead_login_worker("do the task")
     assert isinstance(worker, ApiAgentWorker)
@@ -151,11 +158,14 @@ def test_dead_codex_login_and_dead_claude_auth_crosses_family(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_codex_dead_login(
-        monkeypatch, claude_binary="/usr/bin/claude", claude_auth_viable=False,
+        monkeypatch,
+        claude_binary="/usr/bin/claude",
+        claude_auth_viable=False,
     )
     monkeypatch.setattr(
-        mi, "_cross_family_last_resort_worker",
-        lambda task_text: ApiAgentWorker("gemini"),
+        mi,
+        "_cross_family_last_resort_worker",
+        lambda task_text, *_args: ApiAgentWorker("gemini"),
     )
     worker = mi._resolve_codex_dead_login_worker("do the task")
     assert isinstance(worker, ApiAgentWorker)
@@ -166,8 +176,10 @@ def test_dead_codex_login_nothing_reachable_falls_back_to_claude_honest_fail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_codex_dead_login(
-        monkeypatch, claude_binary="/usr/bin/claude", claude_auth_viable=False,
+        monkeypatch,
+        claude_binary="/usr/bin/claude",
+        claude_auth_viable=False,
     )
-    monkeypatch.setattr(mi, "_cross_family_last_resort_worker", lambda task_text: None)
+    monkeypatch.setattr(mi, "_cross_family_last_resort_worker", lambda task_text, *_args: None)
     worker = mi._resolve_codex_dead_login_worker("do the task")
     assert isinstance(worker, ClaudeDirectWorker)

@@ -317,7 +317,6 @@ class TestSeedRegistry:
             "tool.screen-snapshot",
             # NB: tool.dispatch-to-harness removed 2026-06-28 (no longer an
             # LLM-visible router tool — phantom-openclaw routing fix).
-            "tool.multi-spawn",
             "tool.spawn-worker",
             "tool.dispatch-with-review",
             "tool.awareness-snapshot",
@@ -329,10 +328,25 @@ class TestSeedRegistry:
         ):
             assert tool in ids, f"{tool!r} missing from seed"
 
+    def test_polite_wiki_system_write_resolves_to_ingest(self) -> None:
+        """Wiki destination wins even when the fact mentions travel."""
+        cap = self.reg.resolve_intent(
+            "Kannst du bitte mein Wiki-System eintragen, dass ich morgen nach "  # i18n-allow
+            "San Francisco reisen will?"  # i18n-allow: production transcript under test
+        )
+
+        assert cap is not None
+        assert cap.id == "tool.wiki-ingest"
+
     def test_dispatch_to_harness_capability_removed(self) -> None:
         """The dead dispatch-to-harness capability must not reappear (2026-06-28)."""
         ids = {c.id for c in self.reg.all()}
         assert "tool.dispatch-to-harness" not in ids
+
+    def test_multi_spawn_capability_removed(self) -> None:
+        """Parallel work is expressed through one supervised mission path."""
+        ids = {c.id for c in self.reg.all()}
+        assert "tool.multi-spawn" not in ids
 
     def test_local_actions_present(self) -> None:
         ids = {c.id for c in self.reg.all()}
@@ -379,7 +393,6 @@ class TestSeedRegistry:
         action_ids = {
             "tool.run-shell",
             "tool.screen-snapshot",
-            "tool.multi-spawn",
             "tool.spawn-worker",
             "tool.dispatch-with-review",
             "tool.run-skill",

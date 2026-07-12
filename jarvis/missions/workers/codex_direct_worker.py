@@ -31,6 +31,7 @@ once interactively) is the canonical way to populate that file. We
 NEVER write API keys here -- the user explicitly chose the ChatGPT
 subscription path.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -44,6 +45,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
+from .capabilities import WorkerCapabilityInventory
 from .process_utils import create_worker_subprocess, resolve_node_executable
 from .stream_consumer import (
     ClaudeAssistantMessage,
@@ -139,9 +141,7 @@ def _resolve_codex_argv_prefix() -> list[str]:
             cli_dir = Path(cli).resolve().parent
             # npm shim layout: ``<npm-root>/codex.cmd`` →
             # ``<npm-root>/node_modules/@openai/codex/bin/codex.js``.
-            candidate = (
-                cli_dir / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
-            )
+            candidate = cli_dir / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
             if candidate.is_file():
                 return [node, str(candidate)]
     return [_resolve_codex_binary() or "codex"]
@@ -187,9 +187,13 @@ def _build_codex_env(env: dict[str, str], *, oauth_available: bool) -> dict[str,
 # normalisation converts them to empty string so codex falls back to
 # the user's CLI default (configured under ~/.codex/config.toml or
 # whatever the ChatGPT subscription exposes today).
-_CLAUDE_MODEL_ALIASES: frozenset[str] = frozenset({
-    "sonnet", "opus", "haiku",
-})
+_CLAUDE_MODEL_ALIASES: frozenset[str] = frozenset(
+    {
+        "sonnet",
+        "opus",
+        "haiku",
+    }
+)
 
 
 def _normalize_model_for_codex(model: str | None) -> str:
@@ -236,20 +240,19 @@ def _build_codex_direct_cmd(
         "exec",
         "--json",
         "--skip-git-repo-check",
-        # Welle 6 (2026-05-18 live debug): worker keeps the user's
-        # ~/.codex/config.toml so the default sandbox + tool registry
-        # apply. The Cloudflare MCP plugin errors loudly in stderr
-        # when its OAuth token is expired, but the worker still
-        # completes the turn successfully (file_write + turn.completed).
-        # The Critic path strips user config because the critic's
-        # long prompt + plugin-bootstrap race actually does swallow
-        # the agent_message frame -- worker doesn't.
-        "--sandbox", sandbox,
-        "-c", f"approval_policy={approval_policy}",
+        # Auth still comes from CODEX_HOME, but mission capabilities must never
+        # come from the user's machine-global config. Explicit unsupported MCP
+        # inventory is safer than silently inheriting unrelated plugins.
+        "--ignore-user-config",
+        "--sandbox",
+        sandbox,
+        "-c",
+        f"approval_policy={approval_policy}",
         # Cap reasoning effort for SPEED, overriding the user's interactive
         # config (often "xhigh" -> ~7 min/run). A CLI `-c` override wins over
         # config.toml. See _MISSION_REASONING_EFFORT (live mission 019ec742).
-        "-c", f"model_reasoning_effort={_MISSION_REASONING_EFFORT}",
+        "-c",
+        f"model_reasoning_effort={_MISSION_REASONING_EFFORT}",
         # Enable web search so research / current-events missions can produce
         # SOURCED work instead of fabricating it. Without it the worker has no
         # live data, invents current events (GPT-5.5, a 2026 AI Agent Index),
@@ -260,7 +263,8 @@ def _build_codex_direct_cmd(
         # current data inside the workspace-write sandbox WITHOUT opening raw
         # network access, so this is the targeted capability, not a blast-radius
         # network grant.
-        "-c", "tools.web_search=true",
+        "-c",
+        "tools.web_search=true",
         # D9 recursion guard at the codex level. A mission worker IS the
         # sub-agent — it must NEVER use codex's native multi-agent collaboration
         # tools (spawn_agent / wait) to spawn a NESTED codex agent and block on
@@ -272,9 +276,12 @@ def _build_codex_direct_cmd(
         # off here. `--disable <FEATURE>` == `-c features.<name>=false`;
         # multi_agent is `stable`/on-by-default, multi_agent_v2 is the
         # in-development successor (future-proofing).
-        "--disable", "multi_agent",
-        "--disable", "multi_agent_v2",
-        "--add-dir", str(worktree),
+        "--disable",
+        "multi_agent",
+        "--disable",
+        "multi_agent_v2",
+        "--add-dir",
+        str(worktree),
     ]
     if model:
         cmd.extend(["--model", model])
@@ -384,10 +391,15 @@ class CodexDirectWorker:
 
     cli: ClassVar[Literal["claude", "codex", "python", "browser"]] = "codex"
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        capability_inventory: WorkerCapabilityInventory | None = None,
+    ) -> None:
         self.last_pid: int | None = None
         self.last_session_id: str | None = None
         self.last_thread_id: str | None = None
+        self.capability_inventory = capability_inventory or WorkerCapabilityInventory.build()
 
     async def spawn(
         self,
@@ -399,9 +411,9 @@ class CodexDirectWorker:
         worker_id: str,
         log_dir: Path,
         model: str = "",
-        allowed_tools: str = "",        # unused -- codex has its own toolset
-        permission_mode: str = "",      # unused
-        max_turns: int = 20,             # unused -- codex turn cap is internal
+        allowed_tools: str = "",  # unused -- codex has its own toolset
+        permission_mode: str = "",  # unused
+        max_turns: int = 20,  # unused -- codex turn cap is internal
         resume_session_id: str | None = None,
         extra_args: tuple[str, ...] = (),
         timeout_s: float = _DEFAULT_TIMEOUT_S,
@@ -445,11 +457,15 @@ class CodexDirectWorker:
             model=f"codex-cli/{model or 'default'}",
             tools=[],
             cwd=str(worktree),
+            external_capabilities=self.capability_inventory.report_for("codex-cli"),
         )
 
         logger.info(
             "CodexDirectWorker[%s] spawn: cwd=%s model=%s argv=%s",
-            worker_id, worktree, model or "<default>", cmd,
+            worker_id,
+            worktree,
+            model or "<default>",
+            cmd,
         )
 
         # The helper sources the Windows creation flags itself and degrades
@@ -482,7 +498,9 @@ class CodexDirectWorker:
         except Exception:  # noqa: BLE001
             logger.warning(
                 "CodexDirectWorker[%s]: job.assign(pid=%d) failed",
-                worker_id, proc.pid, exc_info=True,
+                worker_id,
+                proc.pid,
+                exc_info=True,
             )
 
         # Write the prompt to stdin then close to signal EOF.
@@ -494,7 +512,8 @@ class CodexDirectWorker:
         except (BrokenPipeError, ConnectionResetError) as exc:
             logger.warning(
                 "CodexDirectWorker[%s]: prompt stdin write failed: %s",
-                worker_id, exc,
+                worker_id,
+                exc,
             )
 
         # Live line-by-line streaming (2026-06-10 root-cause fix, missions
@@ -552,15 +571,9 @@ class CodexDirectWorker:
                     f"({timeout_s + _HARDCAP_GRACE_S:.0f}s) exceeded while streaming"
                 )
                 break
-            read_cap = (
-                remaining
-                if got_first_line
-                else min(first_output_timeout_s, remaining)
-            )
+            read_cap = remaining if got_first_line else min(first_output_timeout_s, remaining)
             try:
-                raw = await asyncio.wait_for(
-                    proc.stdout.readline(), timeout=read_cap
-                )
+                raw = await asyncio.wait_for(proc.stdout.readline(), timeout=read_cap)
             except TimeoutError:
                 if got_first_line:
                     # read_cap == remaining here, so the deadline check at the
@@ -597,7 +610,8 @@ class CodexDirectWorker:
                     stream_fh.write(raw)
             except OSError as exc:
                 logger.warning(
-                    "CodexDirectWorker: stream.jsonl append failed: %s", exc,
+                    "CodexDirectWorker: stream.jsonl append failed: %s",
+                    exc,
                 )
             line = raw.decode("utf-8", errors="replace").strip()
             if not line:
@@ -639,18 +653,17 @@ class CodexDirectWorker:
                     yield ClaudeAssistantMessage(
                         message={
                             "role": "assistant",
-                            "content": [{
-                                "type": "tool_use",
-                                "name": (
-                                    "Write" if item_type == "file_change"
-                                    else "Bash"
-                                ),
-                                "input": (
-                                    item.get("changes", [{}])[0]
-                                    if item_type == "file_change"
-                                    else {"command": item.get("command", "")}
-                                ),
-                            }],
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "name": ("Write" if item_type == "file_change" else "Bash"),
+                                    "input": (
+                                        item.get("changes", [{}])[0]
+                                        if item_type == "file_change"
+                                        else {"command": item.get("command", "")}
+                                    ),
+                                }
+                            ],
                         },
                         session_id=session_id,
                     )
@@ -715,11 +728,11 @@ class CodexDirectWorker:
         # claude result drive the outcome; the git diff is captured after.
         _err = terminal_message or ""
         _auth_dead = (
-            terminal_kind == "error" and not any_tool_use
-            and _codex_error_is_auth_expired(_err)
+            terminal_kind == "error" and not any_tool_use and _codex_error_is_auth_expired(_err)
         )
         _usage_capped = (
-            terminal_kind == "error" and not any_tool_use
+            terminal_kind == "error"
+            and not any_tool_use
             and not _auth_dead
             and _codex_error_is_usage_limited(_err)
         )
@@ -766,13 +779,15 @@ class CodexDirectWorker:
                     "CodexDirectWorker[%s]: codex %s (%r) — falling back to the "
                     "Claude Max OAuth worker so the mission completes. %s",
                     worker_id,
-                    "ChatGPT login expired" if _auth_dead
-                    else "usage/rate limit hit",
+                    "ChatGPT login expired" if _auth_dead else "usage/rate limit hit",
                     _err[:160],
-                    "Run `codex login` to use codex again." if _auth_dead
+                    "Run `codex login` to use codex again."
+                    if _auth_dead
                     else "codex resumes automatically once the cap resets.",
                 )
-                async for ev in ClaudeDirectWorker().spawn(
+                async for ev in ClaudeDirectWorker(
+                    capability_inventory=self.capability_inventory
+                ).spawn(
                     prompt,
                     worktree=worktree,
                     env=env,
@@ -794,8 +809,7 @@ class CodexDirectWorker:
                 "is not auth-viable — surfacing the error honestly; the worker "
                 "factory will cross to another provider family on the retry.",
                 worker_id,
-                "ChatGPT login expired" if _auth_dead
-                else "usage/rate limit hit",
+                "ChatGPT login expired" if _auth_dead else "usage/rate limit hit",
                 _err[:160],
             )
 
@@ -820,10 +834,13 @@ class CodexDirectWorker:
         )
 
         logger.info(
-            "CodexDirectWorker[%s] done: exit=%s wall_ms=%s tool_use_seen=%s "
-            "thread=%s tokens=%s",
-            worker_id, exit_code, wall_ms, any_tool_use,
-            self.last_thread_id, tokens_used,
+            "CodexDirectWorker[%s] done: exit=%s wall_ms=%s tool_use_seen=%s thread=%s tokens=%s",
+            worker_id,
+            exit_code,
+            wall_ms,
+            any_tool_use,
+            self.last_thread_id,
+            tokens_used,
         )
 
         yield final

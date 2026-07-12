@@ -23,6 +23,8 @@ import pytest
 from jarvis.missions.critic.runner import (
     CriticRunner,
     _extract_tool_call_evidence,
+    _render_external_action_evidence,
+    _request_is_messaging_action,
     enforce_capability_honesty,
 )
 from jarvis.missions.critic.verdict import (
@@ -30,7 +32,6 @@ from jarvis.missions.critic.verdict import (
     CriticAxis,
     CriticVerdict,
 )
-from jarvis.missions.critic.runner import _request_is_messaging_action
 from jarvis.missions.stream_evidence import diff_has_action_evidence
 from tests.missions.critic.test_runner_claude_direct import (
     _patch_direct,
@@ -92,6 +93,25 @@ def test_codex_mcp_tool_call_counts_as_evidence() -> None:
         }
     )
     assert _extract_tool_call_evidence(stream)
+
+
+def test_codex_mcp_success_renders_ground_truth_evidence_block() -> None:
+    stream = _codex_item_line(
+        {
+            "id": "item_9",
+            "type": "mcp_tool_call",
+            "server": "gmail",
+            "tool": "send_message",
+            "status": "completed",
+            "result": "message id 84",
+        }
+    )
+
+    evidence = _render_external_action_evidence(stream)
+    assert evidence.startswith("diff --external-action-evidence")
+    assert "# verified-external-action" in evidence
+    assert "+tool: mcp__gmail__send_message" in evidence
+    assert "+result: message id 84" in evidence
 
 
 def test_codex_prose_only_is_not_evidence() -> None:

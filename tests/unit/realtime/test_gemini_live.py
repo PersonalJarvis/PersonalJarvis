@@ -186,7 +186,8 @@ async def test_explicit_reply_language_configures_gemini_speech(
     _model, config = holder["client"].aio.live.connect_calls[0]
 
     assert config.speech_config.language_code == "es"
-    await session.request_response()  # Gemini auto-responds; the method is a no-op.
+    # Gemini auto-responds; the required-tool hint remains a compatible no-op.
+    await session.request_response(required_tool="jarvis_action")
     await session.close()
 
 
@@ -209,6 +210,9 @@ async def test_tools_are_declared_mapped_and_answered(
     _model, config = holder["client"].aio.live.connect_calls[0]
     dumped = config.model_dump(exclude_none=True)
     assert dumped["tools"][0]["function_declarations"][0]["name"] == "open_app"
+    # Gemini fixes tool declarations at connection time; accepting a live
+    # update remains a safe no-op until the next session reconnects.
+    await provider_session.update_session(tools=(declaration,))
 
     class FakeLiveSession:
         def __init__(self):

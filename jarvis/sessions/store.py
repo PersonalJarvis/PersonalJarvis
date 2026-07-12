@@ -22,8 +22,9 @@ import json
 import logging
 import sqlite3
 import threading
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -372,6 +373,31 @@ class SessionStore:
             )
             rows = cur.fetchall()
         return [_row_to_turn(r) for r in rows]
+
+    def get_latest_user_turn(
+        self,
+        *,
+        session_id: str | None = None,
+    ) -> VoiceTurnRow | None:
+        """Return the newest persisted turn with a non-empty user transcript.
+
+        ``started_ms`` is the durable utterance-order signal. The optional
+        session filter lets callers avoid crossing conversation boundaries;
+        without it, this is the newest voice transcript in the store.
+        """
+        with self._lock:
+            cur = self._c.execute(
+                """
+                SELECT * FROM voice_turns
+                WHERE TRIM(user_text) != ''
+                  AND (? IS NULL OR session_id = ?)
+                ORDER BY started_ms DESC, idx DESC, id DESC
+                LIMIT 1
+                """,
+                (session_id, session_id),
+            )
+            row = cur.fetchone()
+        return _row_to_turn(row) if row is not None else None
 
     def get_events(self, session_id: str) -> list[VoiceEventRow]:
         with self._lock:

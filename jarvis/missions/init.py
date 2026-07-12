@@ -19,6 +19,7 @@ Startup order per plan §"Block D":
 Each step is optional via a cfg flag. Default values come from jarvis.toml
 [phase6.*] (see the section defaults there).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -50,6 +51,10 @@ from .worker_runtime.provider_map import (
     CODEX_SUBAGENT_SLUGS,
 )
 from .workers.api_agent_worker import ApiAgentWorker
+from .workers.capabilities import (
+    WorkerCapabilityInventory,
+    restricted_worker_app_commands,
+)
 from .workers.claude_direct_worker import ClaudeDirectWorker
 from .workers.codex_direct_worker import CodexDirectWorker
 from .workers.gemini_worker import GeminiWorker
@@ -99,9 +104,7 @@ def _default_job_factory() -> Any:
     return WindowsJobObject()
 
 
-def _resolve_readback_mode(
-    *, tts_speak_fn: object | None, speech_bus: object | None
-) -> str:
+def _resolve_readback_mode(*, tts_speak_fn: object | None, speech_bus: object | None) -> str:
     """Decide which mission voice-readback path is active — exactly one.
 
     Starting BOTH the MissionVoiceListener (direct-TTS callback) and the
@@ -132,9 +135,7 @@ def _worker_mcp_relevance_filter_enabled() -> bool:
         from jarvis.core.config import load_config
 
         cfg = load_config()
-        return bool(
-            getattr(cfg.brain.routing, "worker_mcp_relevance_filter", True)
-        )
+        return bool(getattr(cfg.brain.routing, "worker_mcp_relevance_filter", True))
     except Exception:  # noqa: BLE001 — missing/blip config => keep the gate ON
         return True
 
@@ -171,8 +172,9 @@ def _live_server_tools():  # noqa: ANN202
                 if name:
                     tools.append({"name": f"{sid}/{name}", "description": desc})
             out[sid] = tools
-    except Exception:  # noqa: BLE001 — gate must never break mission dispatch
+    except Exception:  # noqa: BLE001 - gate must never break mission dispatch
         logger.debug("missions: live MCP tool gather failed", exc_info=True)
+        return None
     return out
 
 
@@ -212,6 +214,9 @@ def _filter_servers_by_relevance(  # noqa: ANN201
         from jarvis.marketplace.plugin_relevance import plugin_is_relevant
 
         tool_lookup = server_tools if server_tools is not None else _live_server_tools()
+        if tool_lookup is None:
+            logger.warning("missions: MCP relevance evidence unavailable - full export")
+            return servers
         kept: dict[str, dict] = {}
         dropped: list[str] = []
         for sid, entry in servers.items():
@@ -227,13 +232,12 @@ def _filter_servers_by_relevance(  # noqa: ANN201
         if dropped:
             logger.info(
                 "missions: MCP relevance filter kept %s, dropped %s (off-task)",
-                sorted(kept), sorted(dropped),
+                sorted(kept),
+                sorted(dropped),
             )
         return kept
     except Exception as exc:  # noqa: BLE001 — never break dispatch; full export
-        logger.debug(
-            "missions: MCP relevance filter failed (%s) — full export", exc
-        )
+        logger.debug("missions: MCP relevance filter failed (%s) — full export", exc)
         return servers
 
 
@@ -289,9 +293,7 @@ def _assemble_worker_mcp_servers(  # noqa: ANN201
             logger.warning("missions: mcp.json -> claude config failed (%s)", exc)
             extra = {}
 
-        servers = assemble_claude_mcp_servers(
-            load_catalog(), store, extra_servers=extra
-        )
+        servers = assemble_claude_mcp_servers(load_catalog(), store, extra_servers=extra)
         return _filter_servers_by_relevance(
             servers,
             task_text=task_text,
@@ -307,9 +309,15 @@ def _assemble_worker_mcp_servers(  # noqa: ANN201
         return {}
 
 
-def _select_subagent_worker_kind(
-    sub_jarvis_provider: str | None, step_model: str
-) -> str:
+def _assemble_worker_capability_inventory(task_text: str) -> WorkerCapabilityInventory:
+    """Build the one restricted capability snapshot shared by all backends."""
+    return WorkerCapabilityInventory.build(
+        mcp_servers=_assemble_worker_mcp_servers(task_text=task_text),
+        app_commands=restricted_worker_app_commands(),
+    )
+
+
+def _select_subagent_worker_kind(sub_jarvis_provider: str | None, step_model: str) -> str:
     """Pure routing decision for the Heavy-Task subagent worker.
 
     Returns one of ``"claude_direct"`` | ``"codex_direct"`` | ``"antigravity"``
@@ -441,8 +449,7 @@ def _live_subagent_provider(boot_snapshot: str | None) -> str | None:
             return primary
     except Exception as exc:  # noqa: BLE001
         logger.debug(
-            "missions: live subagent re-resolve failed (%s) — using boot "
-            "snapshot %r",
+            "missions: live subagent re-resolve failed (%s) — using boot snapshot %r",
             exc,
             boot_snapshot,
         )
@@ -478,9 +485,7 @@ def _claude_cli_auth_viable() -> bool:
 
     if live_claude_oauth_status() == "valid":
         token = read_live_claude_oauth_token()
-        return not claude_auth_dead(
-            current_fingerprint=credential_fingerprint(token)
-        )
+        return not claude_auth_dead(current_fingerprint=credential_fingerprint(token))
     try:
         from jarvis.core.config import get_secret
 
@@ -519,9 +524,7 @@ def _api_key_family_viable(provider: str) -> bool:
     from jarvis.api_family_quota_state import api_family_in_cooldown
     from jarvis.claude_auth_state import claude_auth_dead, credential_fingerprint
 
-    if api_family_in_cooldown(
-        provider, current_fingerprint=credential_fingerprint(key)
-    ):
+    if api_family_in_cooldown(provider, current_fingerprint=credential_fingerprint(key)):
         return False
     if provider == "claude-api":
         if key.startswith("sk-ant-oat"):
@@ -549,11 +552,7 @@ def reachable_worker_families() -> list[str]:
     from jarvis.codex_quota_state import codex_in_quota_cooldown
     from jarvis.missions.workers.codex_direct_worker import _codex_oauth_available
 
-    if (
-        _codex_oauth_available()
-        and not codex_needs_reauth()
-        and not codex_in_quota_cooldown()
-    ):
+    if _codex_oauth_available() and not codex_needs_reauth() and not codex_in_quota_cooldown():
         families.append("codex")
     from jarvis.missions.workers.api_agent_worker import supports_api_agent_worker
 
@@ -563,7 +562,10 @@ def reachable_worker_families() -> list[str]:
     return families
 
 
-def _cross_family_last_resort_worker(task_text: str) -> Any | None:
+def _cross_family_last_resort_worker(
+    task_text: str,
+    capability_inventory: WorkerCapabilityInventory | None = None,
+) -> Any | None:
     """The key-aware, cross-family LAST-resort heavy worker (open-source AP-22/23).
 
     The legacy last resort was always ``ClaudeDirectWorker`` — the Claude Max
@@ -594,13 +596,13 @@ def _cross_family_last_resort_worker(task_text: str) -> Any | None:
     #    Auth-aware since 2026-07-06: binary presence alone picked a claude CLI
     #    whose OAuth token had expired in place, and every mission 401'd while
     #    a healthy codex login + OpenRouter key sat unused (AP-22).
+    inventory = capability_inventory or _assemble_worker_capability_inventory(task_text)
+
     from jarvis.missions.workers.claude_direct_worker import _resolve_claude_binary
 
     if _resolve_claude_binary() is not None:
         if _claude_cli_auth_viable():
-            return ClaudeDirectWorker(
-                mcp_servers=_assemble_worker_mcp_servers(task_text=task_text)
-            )
+            return ClaudeDirectWorker(capability_inventory=inventory)
         logger.warning(
             "Mission worker: the `claude` CLI is installed but its auth is "
             "dead/expired (no live OAuth login, no classic Anthropic key) — "
@@ -620,7 +622,7 @@ def _cross_family_last_resort_worker(task_text: str) -> Any | None:
 
     if _codex_oauth_available() and not codex_needs_reauth():
         if not codex_in_quota_cooldown():
-            return CodexDirectWorker()
+            return CodexDirectWorker(capability_inventory=inventory)
         logger.warning(
             "Mission worker: the codex ChatGPT plan is in quota cooldown "
             "(usage cap hit this session) — skipping codex and crossing "
@@ -640,11 +642,15 @@ def _cross_family_last_resort_worker(task_text: str) -> Any | None:
                 "(open-source AP-22/AP-23, single-key downloader).",
                 prov,
             )
-            return ApiAgentWorker(prov)
+            return ApiAgentWorker(prov, capability_inventory=inventory)
     return None
 
 
-def _resolve_api_agent_worker(provider: str, task_text: str) -> Any:
+def _resolve_api_agent_worker(
+    provider: str,
+    task_text: str,
+    capability_inventory: WorkerCapabilityInventory | None = None,
+) -> Any:
     """Worker for an ``api_agent``-kind subagent provider (openai / openrouter /
     nvidia run ON their OWN provider via the in-process ApiAgentWorker).
 
@@ -655,6 +661,7 @@ def _resolve_api_agent_worker(provider: str, task_text: str) -> Any:
     tries the user's other provider families before the honest Claude last
     resort — never a guaranteed-fail worker.
     """
+    inventory = capability_inventory or _assemble_worker_capability_inventory(task_text)
     try:
         has_key = _api_key_family_viable(provider)
     except Exception:  # noqa: BLE001 — any resolve failure => no usable key
@@ -665,20 +672,23 @@ def _resolve_api_agent_worker(provider: str, task_text: str) -> Any:
             "loop over the provider's own API, writes files in the worktree).",
             provider,
         )
-        return ApiAgentWorker(provider)
+        return ApiAgentWorker(provider, capability_inventory=inventory)
     logger.warning(
         "Mission worker: subagent provider %r has no API key configured, "
         "so it cannot run — trying the user's other provider families "
         "before the Claude last resort (open-source AP-22/AP-23).",
         provider,
     )
-    cross = _cross_family_last_resort_worker(task_text)
+    cross = _cross_family_last_resort_worker(task_text, inventory)
     if cross is not None:
         return cross
-    return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers(task_text=task_text))
+    return ClaudeDirectWorker(capability_inventory=inventory)
 
 
-def _resolve_codex_dead_login_worker(task_text: str) -> Any:
+def _resolve_codex_dead_login_worker(
+    task_text: str,
+    capability_inventory: WorkerCapabilityInventory | None = None,
+) -> Any:
     """Worker to use when the codex ChatGPT login is flagged dead this session
     (``kind == "codex_direct"`` and ``codex_needs_reauth()`` is True).
 
@@ -688,6 +698,8 @@ def _resolve_codex_dead_login_worker(task_text: str) -> Any:
     and crosses to another provider family when Claude itself is not
     reachable either (open-source AP-22/AP-23).
     """
+    inventory = capability_inventory or _assemble_worker_capability_inventory(task_text)
+
     from jarvis.claude_quota_state import claude_in_quota_cooldown
     from jarvis.missions.workers.claude_direct_worker import _resolve_claude_binary
 
@@ -697,7 +709,7 @@ def _resolve_codex_dead_login_worker(task_text: str) -> Any:
             "dead and no `claude` CLI binary is present, running in-process "
             "on the Anthropic API key."
         )
-        return ApiAgentWorker("claude-api")
+        return ApiAgentWorker("claude-api", capability_inventory=inventory)
     claude_cli_ready = (
         _resolve_claude_binary() is not None
         and _claude_cli_auth_viable()
@@ -710,17 +722,17 @@ def _resolve_codex_dead_login_worker(task_text: str) -> Any:
             "`codex login` restores it (avoids the dead-provider double "
             "fallback)."
         )
-        return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers(task_text=task_text))
+        return ClaudeDirectWorker(capability_inventory=inventory)
     logger.warning(
         "Mission worker: codex login is dead and Claude is not reachable "
         "either (no CLI auth, quota cooldown, or no Anthropic key) — "
         "crossing provider families instead of a guaranteed-fail worker "
         "(open-source AP-22/AP-23)."
     )
-    cross = _cross_family_last_resort_worker(task_text)
+    cross = _cross_family_last_resort_worker(task_text, inventory)
     if cross is not None:
         return cross
-    return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers(task_text=task_text))
+    return ClaudeDirectWorker(capability_inventory=inventory)
 
 
 async def bootstrap_missions(
@@ -849,10 +861,7 @@ async def bootstrap_missions(
             sweep_report = await asyncio.to_thread(
                 worktree_mgr.prune_and_sweep_leaked, max_age_hours=6.0
             )
-            if (
-                sweep_report.get("swept_run_dirs", 0) > 0
-                or sweep_report.get("errors", 0) > 0
-            ):
+            if sweep_report.get("swept_run_dirs", 0) > 0 or sweep_report.get("errors", 0) > 0:
                 logger.info("worktree-sweep at bootstrap: %s", sweep_report)
         except Exception:  # noqa: BLE001
             logger.warning("worktree-sweep at bootstrap failed", exc_info=True)
@@ -900,7 +909,8 @@ async def bootstrap_missions(
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "missions: brain config lookup failed (%s) — defaulting to "
-            "openclaw-backed worker routing", exc,
+            "openclaw-backed worker routing",
+            exc,
         )
 
     # B6 (open-source AP-22): no explicit sub-agent provider → default to the
@@ -931,9 +941,7 @@ async def bootstrap_missions(
             # persisted choice instead of the frozen boot snapshot).
             live_provider = _live_subagent_provider(sub_jarvis_provider)
 
-            anthropic_key = get_secret(
-                "anthropic_api_key", env_fallback="ANTHROPIC_API_KEY"
-            )
+            anthropic_key = get_secret("anthropic_api_key", env_fallback="ANTHROPIC_API_KEY")
             # Codex-as-subagent API-key path: prefer the dedicated Codex key slot
             # so OPENAI_API_KEY carries it (the OAuth path strips the key anyway —
             # see CodexDirectWorker._build_codex_env). Other subagents use the
@@ -943,9 +951,7 @@ async def bootstrap_missions(
                     "codex_openai_api_key", env_fallback="OPENAI_API_KEY"
                 ) or get_secret("openai_api_key", env_fallback="OPENAI_API_KEY")
             else:
-                openai_key = get_secret(
-                    "openai_api_key", env_fallback="OPENAI_API_KEY"
-                )
+                openai_key = get_secret("openai_api_key", env_fallback="OPENAI_API_KEY")
             # Antigravity (Google subscription) deliberately runs OAuth-only: a
             # configured Gemini API key must NOT be injected, or the CLI would
             # bill the key instead of the subscription login. Other subagents
@@ -955,26 +961,20 @@ async def bootstrap_missions(
             else:
                 gemini_key = get_secret(
                     "gemini_api_key", env_fallback="GEMINI_API_KEY"
-                ) or get_secret(
-                    "google_api_key", env_fallback="GOOGLE_API_KEY"
-                )
+                ) or get_secret("google_api_key", env_fallback="GOOGLE_API_KEY")
             # Grok / xAI: Jarvis stores under ``grok_api_key`` in the
             # credential manager (ENV fallback ``GROK_API_KEY``); we set
             # both XAI_API_KEY + GROK_API_KEY on the worker side so
             # OpenClaw (XAI_API_KEY) and any legacy SDK (GROK_API_KEY)
             # both find it.
-            xai_key = get_secret(
-                "grok_api_key", env_fallback="GROK_API_KEY"
-            ) or get_secret(
+            xai_key = get_secret("grok_api_key", env_fallback="GROK_API_KEY") or get_secret(
                 "xai_api_key", env_fallback="XAI_API_KEY"
             )
-            openrouter_key = get_secret(
-                "openrouter_api_key", env_fallback="OPENROUTER_API_KEY"
-            )
+            openrouter_key = get_secret("openrouter_api_key", env_fallback="OPENROUTER_API_KEY")
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "missions: secret lookup failed (%s) — worker will hit "
-                "authentication_failed", exc,
+                "missions: secret lookup failed (%s) — worker will hit authentication_failed",
+                exc,
             )
 
         # Subscription-first billing for Claude (mirror of Codex's "OAuth wins,
@@ -1011,7 +1011,9 @@ async def bootstrap_missions(
             openrouter_api_key=openrouter_key,
         )
 
-    def _worker_factory(step):  # noqa: ANN001 — Step type local
+    def _worker_factory(step):  # noqa: ANN001 - Step type local
+        task_text = getattr(step, "prompt", "") or ""
+        capability_inventory = _assemble_worker_capability_inventory(task_text)
         # Worker routing post-Welle-4:
         #
         # 1. If ``[brain.sub_jarvis].provider`` is set in jarvis.toml,
@@ -1064,9 +1066,7 @@ async def bootstrap_missions(
         # kept routing every heavy mission to the ClaudeDirectWorker (Opus)
         # fallback for hours. Degrades to the boot snapshot on any read failure.
         live_provider = _live_subagent_provider(sub_jarvis_provider)
-        kind = _select_subagent_worker_kind(
-            live_provider, getattr(step, "model", "") or ""
-        )
+        kind = _select_subagent_worker_kind(live_provider, getattr(step, "model", "") or "")
         if kind == "claude_direct":
             # B3 (open-source AP-22): an Anthropic-API-key-only user has NO `claude`
             # CLI binary — run the heavy worker IN-PROCESS via ApiAgentWorker on the
@@ -1075,14 +1075,13 @@ async def bootstrap_missions(
             from jarvis.missions.workers.claude_direct_worker import (
                 _resolve_claude_binary,
             )
-            if _resolve_claude_binary() is None and _api_key_family_viable(
-                "claude-api"
-            ):
+
+            if _resolve_claude_binary() is None and _api_key_family_viable("claude-api"):
                 logger.info(
                     "Mission worker -> ApiAgentWorker('claude-api'): no `claude` CLI "
                     "binary, running in-process on the Anthropic API key."
                 )
-                return ApiAgentWorker("claude-api")
+                return ApiAgentWorker("claude-api", capability_inventory=capability_inventory)
             # Proactive quota routing (mirror of the codex_needs_reauth branch
             # below): if a Claude worker already proved the Max window exhausted
             # this session, route STRAIGHT to codex (a separate ChatGPT
@@ -1109,23 +1108,19 @@ async def bootstrap_missions(
                         "quota cooldown this session — routing to codex until the "
                         "window resets (avoids a wasted Claude probe per mission)."
                     )
-                    return CodexDirectWorker()
+                    return CodexDirectWorker(capability_inventory=capability_inventory)
             # Open-source AP-22/AP-23: before the honest Claude last resort, try
             # the user's ACTUAL provider family. A fresh install whose only key is
             # gemini/openrouter/openai (and who never moved off the claude-api
             # default) has neither the `claude` binary nor an Anthropic key, so a
             # bare ClaudeDirectWorker here would brick the mission. The helper
             # probes Claude FIRST, so a host WITH Claude is unchanged.
-            cross = _cross_family_last_resort_worker(getattr(step, "prompt", "") or "")
+            cross = _cross_family_last_resort_worker(task_text, capability_inventory)
             if cross is not None:
                 return cross
             # Give the delegated worker the connected marketplace plugins as a
             # claude-cli MCP config so it can issue the plugin tool calls (AD-OE4).
-            return ClaudeDirectWorker(
-                mcp_servers=_assemble_worker_mcp_servers(
-                    task_text=getattr(step, "prompt", "") or ""
-                )
-            )
+            return ClaudeDirectWorker(capability_inventory=capability_inventory)
         if kind == "codex_direct":
             # If a codex subprocess already proved the ChatGPT login dead this
             # session, skip codex entirely and run on Claude Max directly (one
@@ -1139,10 +1134,8 @@ async def bootstrap_missions(
                 # AP-22/AP-23): a dead codex login must not hand back an
                 # unconditional ClaudeDirectWorker — see
                 # `_resolve_codex_dead_login_worker`.
-                return _resolve_codex_dead_login_worker(
-                    getattr(step, "prompt", "") or ""
-                )
-            return CodexDirectWorker()
+                return _resolve_codex_dead_login_worker(task_text, capability_inventory)
+            return CodexDirectWorker(capability_inventory=capability_inventory)
         if kind == "antigravity":
             # "antigravity" (Google subscription): drive the official `agy` CLI
             # over a PTY with --dangerously-skip-permissions so it can write files
@@ -1157,14 +1150,14 @@ async def bootstrap_missions(
                 "Mission worker -> GoogleCliWorker over the Google subscription "
                 "(agy over PTY, OAuth login, no API key) — billed against Antigravity."
             )
-            return GoogleCliWorker()
+            return GoogleCliWorker(capability_inventory=capability_inventory)
         if kind == "api_agent":
             # grok / openai / openrouter / nvidia: run ON the selected
             # provider via the in-process ApiAgentWorker — see
             # `_resolve_api_agent_worker` (viability-gated, cross-family
             # fallback, honest Claude last resort).
             provider = live_provider or ""
-            return _resolve_api_agent_worker(provider, getattr(step, "prompt", "") or "")
+            return _resolve_api_agent_worker(provider, task_text, capability_inventory)
         if kind == "gemini":
             # B4 (open-source AP-22): no Gemini CLI but a Gemini API key → run the
             # heavy worker IN-PROCESS via ApiAgentWorker instead of failing on the
@@ -1172,14 +1165,15 @@ async def bootstrap_missions(
             import shutil
 
             from jarvis.core.config import get_provider_secret
-            if not (
-                shutil.which("gemini") or shutil.which("gemini.cmd")
-            ) and get_provider_secret("gemini"):
+
+            if not (shutil.which("gemini") or shutil.which("gemini.cmd")) and get_provider_secret(
+                "gemini"
+            ):
                 logger.info(
                     "Mission worker -> ApiAgentWorker('gemini'): no Gemini CLI, "
                     "running in-process on the Gemini API key."
                 )
-                return ApiAgentWorker("gemini")
+                return ApiAgentWorker("gemini", capability_inventory=capability_inventory)
             # Reached when [brain.sub_jarvis].provider == "gemini" was selected
             # (the user's "selected provider must run" mandate) OR, legacy, when
             # no provider is configured but the step model is a gemini model.
@@ -1191,21 +1185,17 @@ async def bootstrap_missions(
                 "Max subscription.",
                 getattr(step, "model", ""),
             )
-            return GeminiWorker()
+            return GeminiWorker(capability_inventory=capability_inventory)
         # The legacy ``"subjarvis"`` kind (openclaw-claude / unknown provider /
         # unset default) routed to the OpenClaw subprocess worker, which was
         # removed (it caused the ~92% nested-claude hang; see docs/BUGS.md).
         # Open-source AP-22/AP-23: try the user's ACTUAL provider family before
         # the Claude last resort, so an openrouter/gemini/openai-only downloader
         # is not dead-ended on the absent `claude` binary.
-        cross = _cross_family_last_resort_worker(getattr(step, "prompt", "") or "")
+        cross = _cross_family_last_resort_worker(task_text, capability_inventory)
         if cross is not None:
             return cross
-        return ClaudeDirectWorker(
-            mcp_servers=_assemble_worker_mcp_servers(
-                task_text=getattr(step, "prompt", "") or ""
-            )
-        )
+        return ClaudeDirectWorker(capability_inventory=capability_inventory)
 
     kontrollierer = Kontrollierer(
         manager=manager,
@@ -1226,9 +1216,7 @@ async def bootstrap_missions(
     # #6): exactly one readback path runs, else every completion is spoken
     # twice. The announcer wins when a speech_bus is present (production),
     # the listener is the direct-TTS fallback.
-    _readback_mode = _resolve_readback_mode(
-        tts_speak_fn=tts_speak_fn, speech_bus=speech_bus
-    )
+    _readback_mode = _resolve_readback_mode(tts_speak_fn=tts_speak_fn, speech_bus=speech_bus)
 
     # Context-aware readback composer (maintainer mandate: no fixed stock
     # phrases). One instance shared by whichever readback path is active. Built
@@ -1238,6 +1226,7 @@ async def bootstrap_missions(
     _readback_composer = None
     try:
         from jarvis.brain.factory import build_readback_composer
+
         _readback_composer = build_readback_composer()
     except Exception as exc:  # noqa: BLE001
         logger.warning("Mission readback composer wiring skipped: %s", exc)

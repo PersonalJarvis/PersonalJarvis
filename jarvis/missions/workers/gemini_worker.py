@@ -1,4 +1,4 @@
-"""GeminiWorker — wrapt `gemini -p ... --yolo` als Phase-6-Worker-Subprocess.
+"""GeminiWorker - wrap ``gemini -p ... --yolo`` as a Phase-6 worker subprocess.
 
 Driven by the Gemini CLI (installed via `npm install -g @google/gemini-cli`,
 resolved from PATH at runtime). Lets a mission honor the brain provider the
@@ -25,24 +25,28 @@ Spawn discipline:
   helper owns the Win32 creationflags (incl. CREATE_BREAKAWAY_FROM_JOB so the
   per-mission Job Object can assign the tree) AND sets start_new_session=True
   on POSIX so the worker forms its own killable process group (H3).
-- `env=...` strikt aus `build_worker_env` (Whitelist-only); we expect
+- ``env=...`` comes strictly from ``build_worker_env`` (allowlist only); we expect
   GEMINI_API_KEY / GOOGLE_API_KEY to be injected by the caller.
 - `cwd=worktree` — Gemini CLI writes/reads files relative to cwd, so
   hello.py-style tasks land inside the git worktree and the
   Kontrollierer's `_capture_diff` picks them up (`git add -N .` + `git
   diff HEAD`).
 """
+
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
 import time
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, AsyncIterator, Literal
+from typing import Any, Literal
 
+from .capabilities import WorkerCapabilityInventory
 from .process_utils import create_worker_subprocess
 from .stream_consumer import ClaudeResult, ClaudeSystemInit
 
@@ -64,6 +68,28 @@ _QUOTA_BLOCKED_MARKERS: tuple[str, ...] = (
 _FALLBACK_MODEL: str = "gemini-3-flash-preview"
 
 
+def _build_isolated_gemini_env(
+    env: dict[str, str], *, log_dir: Path
+) -> tuple[dict[str, str], Path, str]:
+    """Apply a highest-precedence restricted config without hiding CLI auth."""
+    settings_path = log_dir / ".jarvis-gemini-system-settings.json"
+    no_mcp_server = f"jarvis-no-mcp-{uuid.uuid4().hex}"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "hooksConfig": {"enabled": False},
+                "mcp": {"allowed": [no_mcp_server]},
+                "security": {"allowedExtensions": ["(?!)"]},
+                "skills": {"enabled": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+    restricted = dict(env)
+    restricted["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = str(settings_path)
+    return restricted, settings_path, no_mcp_server
+
+
 def _stderr_signals_quota_block(stderr_bytes: bytes) -> bool:
     """True if the CLI stderr indicates the Frontier model is unavailable
     (rolling-window 429 quota or 403 access denial). Used to decide whether
@@ -83,11 +109,9 @@ def _resolve_gemini_argv_prefix(*, bundle_finder: Any = None) -> list[str]:
     `asyncio.create_subprocess_exec` makes cmd.exe re-parse the full
     argv with batch tokenizer rules, and that tokenizer treats `<`,
     `>`, `&`, `|`, `^`, `%` as metacharacters. Embedding a JSON
-    schema (which contains `<`) in `--prompt` then causes
-    CreateProcess to fail with `Das System kann die angegebene Datei  # i18n-allow (quotes the literal OS error string)
-    nicht finden` (the literal Win32 error text on a German-locale  # i18n-allow (quotes the literal OS error string)
-    machine — English: "The system cannot find the file specified")  # i18n-allow (quotes the literal OS error string)
-    long before the model is ever invoked — verified live 2026-05-13.
+    schema (which contains `<`) in `--prompt` then causes CreateProcess
+    to fail with the localized Win32 "file not found" error long before
+    the model is invoked - verified live 2026-05-13.
 
     Skipping the .cmd wrapper entirely by invoking `node ...gemini.js`
     directly avoids the second-stage parser and lets any payload
@@ -105,10 +129,7 @@ def _resolve_gemini_argv_prefix(*, bundle_finder: Any = None) -> list[str]:
             if not cli:
                 continue
             cli_dir = Path(cli).resolve().parent
-            candidate = (
-                cli_dir / "node_modules" / "@google" / "gemini-cli"
-                / "bundle" / "gemini.js"
-            )
+            candidate = cli_dir / "node_modules" / "@google" / "gemini-cli" / "bundle" / "gemini.js"
             if candidate.is_file():
                 return [node, str(candidate)]
 
@@ -247,9 +268,14 @@ class GeminiWorker:
 
     cli: Literal["claude"] = "claude"
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        capability_inventory: WorkerCapabilityInventory | None = None,
+    ) -> None:
         self.last_pid: int | None = None
         self.last_session_id: str | None = None
+        self.capability_inventory = capability_inventory or WorkerCapabilityInventory.build()
 
     async def spawn(
         self,
@@ -275,7 +301,7 @@ class GeminiWorker:
         NOT extracted from stream events — `_capture_diff(worktree)`
         runs `git diff` after this generator exits.
         """
-        log_dir.mkdir(parents=True, exist_ok=True)
+        log_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
         stdout_log = log_dir / "stream.jsonl"
         stderr_log = log_dir / "stderr.log"
 
@@ -291,7 +317,8 @@ class GeminiWorker:
         effective_model = _resolve_gemini_model(model)
 
         cmd = _build_gemini_cmd(
-            prompt, model=effective_model,
+            prompt,
+            model=effective_model,
             yolo=(permission_mode == "yolo"),
             extra_args=extra_args,
         )
@@ -308,11 +335,21 @@ class GeminiWorker:
             model=f"gemini/{effective_model}",
             tools=[],
             cwd=str(worktree),
+            external_capabilities=self.capability_inventory.report_for("gemini-cli"),
         )
+
+        (
+            env_for_gemini,
+            restricted_settings,
+            no_mcp_server,
+        ) = _build_isolated_gemini_env(env, log_dir=log_dir)
+        cmd.extend(["--allowed-mcp-server-names", no_mcp_server])
 
         logger.info(
             "GeminiWorker[%s] spawn: cwd=%s model=%s yolo=%s",
-            worker_id, worktree, effective_model,
+            worker_id,
+            worktree,
+            effective_model,
             permission_mode == "yolo",
         )
 
@@ -329,7 +366,9 @@ class GeminiWorker:
             # create_subprocess_exec, which would leave the worker in the
             # orchestrator's process group off Windows (H3).
             proc_local = await create_worker_subprocess(
-                spawn_cmd, cwd=str(worktree), env=env,
+                spawn_cmd,
+                cwd=str(worktree),
+                env=env_for_gemini,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -339,17 +378,17 @@ class GeminiWorker:
             except Exception:  # noqa: BLE001
                 logger.warning(
                     "GeminiWorker[%s]: job.assign(pid=%d) failed",
-                    worker_id, proc_local.pid, exc_info=True,
+                    worker_id,
+                    proc_local.pid,
+                    exc_info=True,
                 )
             # 1200 s (20 min) hard cap — raised from 600 s so complex tasks can
             # finish (user mandate 2026-06-09). The "timeout" substring in the
             # stderr below still flags is_timeout to the orchestrator, which then
             # grades the on-disk diff instead of discarding it.
             try:
-                out, err = await asyncio.wait_for(
-                    proc_local.communicate(), timeout=1200.0
-                )
-            except asyncio.TimeoutError:
+                out, err = await asyncio.wait_for(proc_local.communicate(), timeout=1200.0)
+            except TimeoutError:
                 with suppress(ProcessLookupError):
                     proc_local.kill()
                 # Audit-2 H3 (2026-05-17): always wait() after kill() so the
@@ -357,9 +396,7 @@ class GeminiWorker:
                 with suppress(Exception):
                     await asyncio.wait_for(proc_local.wait(), timeout=5.0)
                 out, err = b"", b"GeminiWorker: subprocess wait_for timeout (1200s)"
-            exit_local = (
-                proc_local.returncode if proc_local.returncode is not None else -1
-            )
+            exit_local = proc_local.returncode if proc_local.returncode is not None else -1
             return out, err, exit_local
 
         t0 = time.perf_counter()
@@ -380,13 +417,17 @@ class GeminiWorker:
         ):
             logger.warning(
                 "GeminiWorker[%s]: %s returned 429/quota — retrying on %s",
-                worker_id, effective_model, _FALLBACK_MODEL,
+                worker_id,
+                effective_model,
+                _FALLBACK_MODEL,
             )
             fallback_cmd = _build_gemini_cmd(
-                prompt, model=_FALLBACK_MODEL,
+                prompt,
+                model=_FALLBACK_MODEL,
                 yolo=(permission_mode == "yolo"),
                 extra_args=extra_args,
             )
+            fallback_cmd.extend(["--allowed-mcp-server-names", no_mcp_server])
             effective_model = _FALLBACK_MODEL
             stdout_bytes, stderr_bytes, exit_code = await _spawn_once(fallback_cmd)
 
@@ -395,6 +436,8 @@ class GeminiWorker:
             stdout_log.write_bytes(stdout_bytes)
         with suppress(OSError):
             stderr_log.write_bytes(stderr_bytes)
+        with suppress(OSError):
+            restricted_settings.unlink(missing_ok=True)
 
         wall_ms = int((time.perf_counter() - t0) * 1000)
         is_error = exit_code != 0
@@ -407,10 +450,7 @@ class GeminiWorker:
         result_text = stdout_bytes.decode("utf-8", errors="replace")
         if is_error and stderr_bytes:
             tail = stderr_bytes.decode("utf-8", errors="replace")[-300:]
-            result_text = (
-                (result_text or "")
-                + f"\n[stderr-tail]\n{tail}"
-            )
+            result_text = (result_text or "") + f"\n[stderr-tail]\n{tail}"
 
         yield ClaudeResult(
             subtype="success" if not is_error else "error_during_execution",

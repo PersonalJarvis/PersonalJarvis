@@ -146,14 +146,21 @@ def _codex_item_to_claude_lines(
     if itype in ("mcp_tool_call", "web_search"):
         counter += 1
         tid = f"codex_{itype}_{counter}"
-        name = "web_search" if itype == "web_search" else str(
-            item.get("tool") or item.get("server") or "mcp_tool_call"
-        )
+        if itype == "web_search":
+            name = "web_search"
+        else:
+            server = str(item.get("server") or "mcp").strip()
+            tool = str(item.get("tool") or "tool").strip()
+            name = f"mcp__{server}__{tool}"
         excerpt = str(
             item.get("result") or item.get("query") or item.get("output") or ""
         )[:_CODEX_OUTPUT_CAP]
         lines.append(_tool_use(name, {}, tid))
-        lines.append(_tool_result(tid, excerpt or "(tool completed)", is_error=False))
+        status = str(item.get("status") or "completed").strip().lower()
+        is_error = status in {"failed", "error", "cancelled", "canceled"}
+        lines.append(
+            _tool_result(tid, excerpt or "(tool completed)", is_error=is_error)
+        )
         return lines, counter
 
     return lines, counter
@@ -499,6 +506,61 @@ def extract_verified_commands(
     return tuple(credited)
 
 
+def extract_verified_external_actions(
+    stream_text: str, *, max_result_chars: int = 800
+) -> tuple[tuple[str, str], ...]:
+    """Successful MCP actions with a correlated, non-errored result frame.
+
+    A remote action can legitimately leave no filesystem diff. It is credited
+    only when the worker stream contains both a namespaced MCP ``tool_use`` and
+    its matching successful ``tool_result``. A bare tool call, prose claim, or
+    truncated stream is never evidence. Codex ``mcp_tool_call`` items are first
+    normalised into the same paired representation as Claude workers.
+    """
+    stream_text = _normalize_worker_stream(stream_text)
+    pending: dict[str, str] = {}
+    credited: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for raw in stream_text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(obj, dict):
+            continue
+        otype = obj.get("type")
+        if otype == "assistant":
+            for blk in (obj.get("message", {}) or {}).get("content", []) or []:
+                if not isinstance(blk, dict) or blk.get("type") != "tool_use":
+                    continue
+                name = str(blk.get("name", "")).strip()
+                tid = str(blk.get("id", "")).strip()
+                is_mcp = name.startswith("mcp__") or "/" in name
+                if is_mcp and tid:
+                    pending[tid] = name
+        elif otype == "user":
+            for blk in (obj.get("message", {}) or {}).get("content", []) or []:
+                if not isinstance(blk, dict) or blk.get("type") != "tool_result":
+                    continue
+                tid = str(blk.get("tool_use_id", "")).strip()
+                name = pending.pop(tid, None)
+                if name is None or _result_is_error(blk):
+                    continue
+                result = _result_text(blk.get("content", "")).strip()
+                if not result:
+                    result = "(tool completed successfully; no output captured)"
+                evidence = (name, result[:max_result_chars])
+                if evidence not in seen:
+                    seen.add(evidence)
+                    credited.append(evidence)
+
+    return tuple(credited)
+
+
 # Desktop/process-LAUNCH commands that produce NO file diff: the deliverable is
 # a running process, not a file change. Cross-platform (Win/mac/Linux). Mirrors
 # the git/gh command-evidence path so a diff-less "open Explorer / launch Chrome"
@@ -639,6 +701,7 @@ _DIFF_ACTION_PREFIXES: tuple[str, ...] = (
     "diff --external-target",
     "diff --command-evidence",
     "diff --desktop-action-evidence",
+    "diff --external-action-evidence",
 )
 
 
@@ -1104,6 +1167,7 @@ __all__ = [
     "extract_stream_evidence",
     "extract_verified_commands",
     "extract_verified_desktop_actions",
+    "extract_verified_external_actions",
     "extract_write_targets",
     "informational_file_answer",
     "is_informational_request",

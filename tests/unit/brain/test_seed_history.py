@@ -14,6 +14,8 @@ Invariants:
 """
 from __future__ import annotations
 
+import pytest
+
 from jarvis.brain.manager import BrainManager
 from jarvis.core.bus import EventBus
 from jarvis.core.config import JarvisConfig
@@ -90,3 +92,31 @@ def test_seeded_turns_visible_to_history_hints() -> None:
     joined = "\n".join(hints)
     assert "Paris." in joined
     assert "capital of France" in joined
+
+
+@pytest.mark.asyncio
+async def test_generate_history_override_is_context_local(monkeypatch) -> None:
+    manager = _bare_manager()
+    manager.seed_history(
+        [("user", "stale unrelated request"), ("assistant", "stale answer")]
+    )
+    realtime_history = (
+        BrainMessage(role="user", content="The launch code name is Aurora."),
+        BrainMessage(role="assistant", content="Understood."),
+    )
+
+    async def observe_context(_user_text, **_kwargs):
+        assert "Aurora" in (manager._last_exchange_text() or "")
+        assert "stale" not in "\n".join(manager._build_history_hints())
+        return "observed"
+
+    monkeypatch.setattr(manager, "_generate", observe_context)
+
+    result = await manager.generate(
+        "Write that to the wiki.",
+        use_history=False,
+        history_override=realtime_history,
+    )
+
+    assert result == "observed"
+    assert manager._last_exchange_text() == "user: stale unrelated request\nassistant: stale answer"

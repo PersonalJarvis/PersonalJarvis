@@ -43,6 +43,13 @@ class _ProviderEvent:
 
 
 class _GeminiLiveSession:
+    supports_tool_updates = False
+    creates_responses_automatically = True
+    # The ordered Live stream emits old output before ``interrupted`` and the
+    # next input transcript. Output observed after that boundary belongs to
+    # the new automatic response generation.
+    isolates_response_generations = True
+
     def __init__(
         self,
         *,
@@ -140,14 +147,19 @@ class _GeminiLiveSession:
                 )
 
     async def update_session(
-        self, *, instructions: str | None = None, language: str | None = None
+        self,
+        *,
+        instructions: str | None = None,
+        language: str | None = None,
+        tools: tuple[dict[str, Any], ...] | None = None,
     ) -> None:
         # Gemini fixes system instructions at connect time. The orchestrator
         # reconnects on a substantive language change in a later session.
-        del instructions, language
+        del instructions, language, tools
 
-    async def request_response(self) -> None:
+    async def request_response(self, *, required_tool: str | None = None) -> None:
         # Gemini Live creates a response automatically at the VAD turn boundary.
+        del required_tool
         return None
 
     async def send_text(self, text: str) -> None:

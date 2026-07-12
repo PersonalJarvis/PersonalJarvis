@@ -107,14 +107,14 @@ async def complete_with_fallback(
     timeout_s: float,
     label: str,
     aggregate: Callable[[Any], Any],
+    validate: Callable[[Any], str | None] | None = None,
 ) -> tuple[Any, str] | None:
     """Try each ``(provider, model)`` until one returns an aggregated response.
 
-    Returns ``(agg, provider_name)`` on the first success, or ``None`` when the
-    WHOLE chain failed. A single provider failure is a WARNING (visible, not
-    fatal); an exhausted chain is an ERROR plus a ``wiki_all_providers_failed``
-    telemetry bump — the HONEST signal that the wiki could reach NO provider,
-    instead of the old silent empty return.
+    Returns ``(agg, provider_name)`` on the first usable success, or ``None``
+    when the whole chain fails. ``validate`` can reject a transport-successful
+    response with a short reason; the next provider is then tried before the
+    caller gives up on malformed or truncated structured output.
     """
     from jarvis.memory.wiki.curator_llm import instantiate_curator_brain
 
@@ -138,6 +138,31 @@ async def complete_with_fallback(
             continue
         try:
             agg = await asyncio.wait_for(aggregate(brain.complete(request)), timeout=timeout_s)
+            if validate is not None:
+                try:
+                    rejection = validate(agg)
+                except Exception as exc:  # noqa: BLE001 - validator faults mean unusable output
+                    rejection = f"response validation failed: {exc}"
+                if rejection:
+                    log.warning(
+                        "%s: provider %s returned unusable output (%s) - "
+                        "trying next provider",
+                        label,
+                        provider,
+                        rejection,
+                    )
+                    failure_summaries.append(
+                        f"{provider} unusable output: {rejection}"
+                    )
+                    try:
+                        telemetry.inc("wiki_provider_output_rejected")
+                    except Exception:  # noqa: BLE001 - telemetry cannot break fallback
+                        log.debug(
+                            "%s: output-rejection telemetry failed",
+                            label,
+                            exc_info=True,
+                        )
+                    continue
             return agg, provider
         except TimeoutError:
             log.warning(
@@ -154,8 +179,8 @@ async def complete_with_fallback(
             continue
 
     log.error(
-        "%s: ALL %d wiki provider(s) failed — no LLM reachable this round; nothing "
-        "was written. Check API keys / quota in the API-Keys section.",
+        "%s: ALL %d wiki provider(s) failed or returned unusable output — "
+        "nothing was written. Check provider health and structured-output logs.",
         label,
         len(chain),
     )

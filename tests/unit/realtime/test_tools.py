@@ -159,3 +159,60 @@ def test_bridge_declarations_keep_the_full_json_schema() -> None:
     declaration = bridge.declarations[0]
 
     assert declaration["parameters"]["additionalProperties"] is False
+
+
+@pytest.mark.asyncio
+async def test_bridge_refreshes_replaced_brain_tools_and_denies_removed_tool():
+    executor = FakeExecutor()
+    old_tool = FakeTool("old_tool")
+    new_tool = FakeTool("new_tool")
+    brain = SimpleNamespace(
+        _tools={"old_tool": old_tool},
+        _tool_executor_ref=executor,
+    )
+    bridge = RealtimeToolBridge.from_brain(brain, language="en")
+    assert bridge is not None
+
+    brain._tools = {"new_tool": new_tool}
+
+    assert bridge.refresh_from_source() is True
+    assert [item["name"] for item in bridge.declarations] == ["new_tool"]
+    _name, removed = await bridge.execute(
+        wire_name="old_tool", arguments={"app_name": "Calculator"}
+    )
+    _name, added = await bridge.execute(
+        wire_name="new_tool", arguments={"app_name": "Calculator"}
+    )
+    assert removed["success"] is False
+    assert added["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_bridge_refresh_retains_a_tool_awaiting_voice_confirmation():
+    executor = FakeExecutor(confirmation_required=True)
+    pending_tool = FakeTool("pending_tool")
+    brain = SimpleNamespace(
+        _tools={"pending_tool": pending_tool},
+        _tool_executor_ref=executor,
+    )
+    bridge = RealtimeToolBridge.from_brain(brain, language="en")
+    assert bridge is not None
+    await bridge.handle_user_transcript("Open Calculator")
+    await bridge.execute(
+        wire_name="pending_tool", arguments={"app_name": "Calculator"}
+    )
+
+    brain._tools = {"new_tool": FakeTool("new_tool")}
+    assert bridge.refresh_from_source() is True
+    assert {item["name"] for item in bridge.declarations} == {
+        "new_tool",
+        "pending_tool",
+    }
+
+    await bridge.handle_user_transcript("Yes")
+    _name, result = await bridge.execute(
+        wire_name="pending_tool", arguments={"app_name": "Calculator"}
+    )
+    assert result["success"] is True
+    assert bridge.refresh_from_source() is True
+    assert [item["name"] for item in bridge.declarations] == ["new_tool"]
