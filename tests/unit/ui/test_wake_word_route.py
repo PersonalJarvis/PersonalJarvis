@@ -15,9 +15,13 @@ class _FakePipeline:
 
     def __init__(self) -> None:
         self.applied = None
+        self.activation: bool | None = None
 
     def set_wake_plan(self, plan: object) -> None:
         self.applied = plan
+
+    def set_wake_activation(self, enabled: bool) -> None:
+        self.activation = enabled
 
 
 def _client(
@@ -84,6 +88,36 @@ def test_put_without_pipeline_reports_restart_required() -> None:
     ).json()
     assert body["applied_live"] is False
     assert body["restart_required"] is True
+
+
+def test_activation_live_applies_without_restart(monkeypatch) -> None:
+    from jarvis.core import config_writer
+
+    monkeypatch.setattr(config_writer, "set_wake_word_enabled", lambda _enabled: None)
+    pipe = _FakePipeline()
+    response = _client(pipeline=pipe).post(
+        "/api/settings/wake-word/activation", json={"enabled": True}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["applied_live"] is True
+    assert response.json()["restart_required"] is False
+    assert pipe.activation is True
+
+
+def test_activation_without_voice_pipeline_is_persisted_for_next_start(monkeypatch) -> None:
+    from jarvis.core import config_writer
+
+    persisted: list[bool] = []
+    monkeypatch.setattr(config_writer, "set_wake_word_enabled", persisted.append)
+    response = _client().post(
+        "/api/settings/wake-word/activation", json={"enabled": False}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["applied_live"] is False
+    assert response.json()["restart_required"] is True
+    assert persisted == [False]
 
 
 def test_put_rejects_unknown_engine() -> None:

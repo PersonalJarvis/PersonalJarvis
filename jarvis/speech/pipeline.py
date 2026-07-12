@@ -1303,6 +1303,19 @@ class SpeechPipeline:
         except Exception as exc:  # noqa: BLE001 — corrections must never break voice boot
             log.warning("STT dictionary wrapper unavailable: %s", exc)
         self._tts = tts or _default_tts_for_pipeline(config)
+        # Keep the user's activation preference separate from the detector
+        # selected by the current wake plan. A phrase/model can change while
+        # always-on listening is disabled; that must update the prepared plan
+        # without silently opening the microphone. Older/duck-typed callers
+        # without a TriggerConfig keep the legacy behaviour where a later
+        # set_wake_plan() arms the resolved detector.
+        trigger_cfg = getattr(config, "trigger", None)
+        configured_wake_enabled = getattr(trigger_cfg, "wake_word_enabled", None)
+        self._wake_word_enabled: bool | None = (
+            bool(configured_wake_enabled)
+            if configured_wake_enabled is not None
+            else None
+        )
         self._openwakeword_enabled = enable_openwakeword
         # Custom-wake-word plan (jarvis.speech.wake_phrase.WakeWordPlan) or None.
         # When None, the wake path is byte-identical to the legacy "Hey Jarvis"
@@ -1995,16 +2008,32 @@ class SpeechPipeline:
         live-switch contract. Safe to call from the FastAPI handler thread — it
         shares the pipeline's event loop.
         """
+        wake_preference = getattr(self, "_wake_word_enabled", None)
+        wake_enabled = True if wake_preference is None else bool(wake_preference)
         prev = getattr(self._wake_plan, "oww_keyword", None)
         self._wake_plan = plan
         self._wake_matcher = getattr(plan, "matcher", None)
         self._wake_phrase_label = getattr(plan, "phrase", None) or "the wake word"
         engine = getattr(plan, "engine", "openwakeword")
 
+        # A Faster-Whisper wake provider reads its phrase bias on every call.
+        # Update it through a capability method so switching between arbitrary
+        # stt_match phrases cannot keep transcribing with the old wake word.
+        # Clear the bias on non-stt plans because the same provider can also
+        # serve the live transcript preview.
+        set_initial_prompt = getattr(self._stt, "set_initial_prompt", None)
+        if callable(set_initial_prompt):
+            prompt = getattr(plan, "phrase", None) if engine == "stt_match" else None
+            set_initial_prompt(prompt)
+
         # Build a local Whisper engine on demand for the stt_match path. The
         # provider __init__ is light (the model loads lazily on first
         # transcription), so this does not block the caller.
-        if getattr(plan, "needs_local_whisper", False) and self._stt is None:
+        if (
+            wake_enabled
+            and getattr(plan, "needs_local_whisper", False)
+            and self._stt is None
+        ):
             try:
                 from jarvis.plugins.stt import build_wake_whisper
 
@@ -2074,7 +2103,7 @@ class SpeechPipeline:
                 keyword=plan.oww_keyword,
                 early_candidate_listener=self._vosk_early_candidate_listener,
             )
-            self._openwakeword_enabled = True
+            self._openwakeword_enabled = wake_enabled
             if self._whisper_wake is not None and self._wake_matcher is not None:
                 self._whisper_wake._pattern = self._wake_matcher  # noqa: SLF001
             self._whisper_wake_enabled = False
@@ -2087,7 +2116,7 @@ class SpeechPipeline:
                 # quiet breath to full scale and false-fires (see the ctor site).
                 gain_normalization=engine != "custom_onnx",
             )
-            self._openwakeword_enabled = True
+            self._openwakeword_enabled = wake_enabled
             # OWW stands alone for a live switch (lightweight default). The heavy
             # RollingWhisperWake backstop is a boot-time opt-in (heavy_local_whisper),
             # not part of a live wake-word change — turn it off here so switching
@@ -2097,7 +2126,10 @@ class SpeechPipeline:
                 self._whisper_wake._pattern = self._wake_matcher  # noqa: SLF001
             self._whisper_wake_enabled = False
         else:  # stt_match — arbitrary phrase via local-Whisper transcript match
-            if self._stt is not None:
+            if not wake_enabled:
+                self._openwakeword_enabled = False
+                self._whisper_wake_enabled = False
+            elif self._stt is not None:
                 self._openwakeword_enabled = False
                 self._whisper_wake = RollingWhisperWake(
                     self._stt,
@@ -2133,6 +2165,24 @@ class SpeechPipeline:
             self._whisper_wake_enabled,
         )
         # Re-arm the running wake loop with the new detectors.
+        self._wake_reload_event.set()
+
+    def set_wake_activation(self, enabled: bool) -> None:
+        """Enable or park always-on wake listening without restarting.
+
+        The configured plan stays resident while disabled so hotkeys and the
+        rest of the audio pipeline remain untouched. Enabling re-applies that
+        plan, lazily preparing any detector it needs, and both transitions wake
+        the parked/running wake loop through the existing reload event.
+        """
+        self._wake_word_enabled = bool(enabled)
+        plan = getattr(self, "_wake_plan", None)
+        if self._wake_word_enabled and plan is not None:
+            self.set_wake_plan(plan)
+            return
+
+        self._openwakeword_enabled = False
+        self._whisper_wake_enabled = False
         self._wake_reload_event.set()
 
     def set_keybinds(

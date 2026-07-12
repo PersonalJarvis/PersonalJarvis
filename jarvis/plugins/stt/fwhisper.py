@@ -379,6 +379,17 @@ class FasterWhisperProvider:
         forensic) and therefore needs the unbiased second-pass confirm."""
         return self._initial_prompt
 
+    def set_initial_prompt(self, prompt: str | None) -> None:
+        """Replace the per-call decoder bias without rebuilding the model.
+
+        Faster-Whisper reads ``_initial_prompt`` for every transcription, so an
+        atomic reference swap is enough for a live wake-phrase change. An
+        inference already in flight may finish with the prior prompt; the wake
+        reload event discards that detector session before the new one re-arms.
+        """
+        normalized = prompt.strip() if prompt and prompt.strip() else None
+        self._initial_prompt = normalized
+
     def _ensure_model(self) -> None:
         if self._model is not None:
             return

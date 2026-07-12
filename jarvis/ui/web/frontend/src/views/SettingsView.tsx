@@ -299,8 +299,15 @@ function WakeWordPanel() {
     setTogglingActivation(true);
     setEnabled(next); // optimistic
     try {
-      await setWakeActivation(next);
-      pushToast("info", t("settings_view.wake_word.activation_saved"));
+      const activation = await setWakeActivation(next);
+      pushToast(
+        activation.restart_required ? "info" : "success",
+        t(
+          activation.restart_required
+            ? "settings_view.wake_word.restart_required"
+            : "settings_view.wake_word.activation_saved",
+        ),
+      );
     } catch (e) {
       setEnabled(!next); // revert on failure
       pushToast("error", (e as Error).message);
@@ -341,15 +348,6 @@ function WakeWordPanel() {
       pushToast("error", (e as Error).message);
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function onRestart() {
-    try {
-      await fetch("/api/settings/restart-app", { method: "POST" });
-      pushToast("info", t("settings_view.wake_word.restarting"));
-    } catch (e) {
-      pushToast("error", (e as Error).message);
     }
   }
 
@@ -578,9 +576,6 @@ function WakeWordPanel() {
               {installStatus.state === "done" && (
                 <div className="mt-2 text-foreground">
                   <p>{t("settings_view.wake_word.enable_local_done")}</p>
-                  <Button size="sm" className="mt-2" onClick={() => void onRestart()}>
-                    {t("settings_view.wake_word.enable_local_restart")}
-                  </Button>
                 </div>
               )}
             </div>

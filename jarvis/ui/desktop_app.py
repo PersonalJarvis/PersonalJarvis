@@ -2589,6 +2589,37 @@ class DesktopApp:
                 # phrase matcher for the verifier + rolling-whisper.
                 wake_plan=wake_plan,
             )
+            # Onboarding is usable while the voice stack warms in the
+            # background. A user can therefore save a new phrase after the
+            # initial plan was resolved above but before this constructor
+            # finishes. Re-resolve once at the handoff boundary and apply only
+            # when the effective plan changed, closing that startup race without
+            # adding work to the normal boot path.
+            latest_wake_plan = resolve_wake_plan(
+                self.cfg.trigger.wake_word,
+                local_whisper_available=(
+                    _ilu.find_spec("faster_whisper") is not None
+                ),
+                language=resolve_wake_language(self.cfg),
+            )
+            plan_signature = (
+                wake_plan.phrase,
+                wake_plan.engine,
+                wake_plan.oww_model_path,
+                wake_plan.vosk_model_path,
+            )
+            latest_plan_signature = (
+                latest_wake_plan.phrase,
+                latest_wake_plan.engine,
+                latest_wake_plan.oww_model_path,
+                latest_wake_plan.vosk_model_path,
+            )
+            if latest_plan_signature != plan_signature:
+                pipeline.set_wake_plan(latest_wake_plan)
+                wake_plan = latest_wake_plan
+            latest_wake_enabled = bool(self.cfg.trigger.wake_word_enabled)
+            if pipeline._wake_word_enabled != latest_wake_enabled:  # noqa: SLF001
+                pipeline.set_wake_activation(latest_wake_enabled)
             _t_ctor = time.perf_counter()
             # Targeted boot-timing breakdown so the log shows exactly which voice
             # build step costs what (the wake-Whisper CUDA probe was the hidden

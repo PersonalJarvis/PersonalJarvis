@@ -61,10 +61,10 @@ def _cfg(**kw: object) -> SimpleNamespace:
     return SimpleNamespace(**base)
 
 
-def _pipe() -> SpeechPipeline:
+def _pipe(*, wake_enabled: bool = True) -> SpeechPipeline:
     return SpeechPipeline(
         tts=_FakeTTS(), bus=None,
-        enable_openwakeword=False, enable_whisper_wake=False,
+        enable_openwakeword=wake_enabled, enable_whisper_wake=False,
         enable_local_whisper=False, config=None,
     )
 
@@ -184,4 +184,37 @@ def test_set_wake_plan_switch_between_phrases_stays_on_stt_match(tmp_path) -> No
     assert pipe._openwakeword_enabled is False
     assert pipe._whisper_wake_enabled is True
     assert pipe._wake_phrase_label == "Hey Jarvis"
+    assert pipe._stt.bias_prompt == "Hey Jarvis"
+    assert pipe._wake_reload_event.is_set()
+
+
+def test_disabled_wake_stays_parked_across_plan_changes_and_toggles_live(tmp_path) -> None:
+    pipe = _pipe(wake_enabled=False)
+    pipe.set_wake_activation(False)
+    pipe._wake_reload_event.clear()
+    onnx = tmp_path / "hey_fable.onnx"
+    onnx.write_bytes(b"stub")
+    plan = resolve_wake_plan(
+        _cfg(phrase="Hey Fable", engine="custom_onnx", custom_model_path=str(onnx)),
+        local_whisper_available=False,
+    )
+
+    pipe.set_wake_plan(plan)
+
+    assert pipe._wake_plan is plan
+    assert pipe._openwakeword_enabled is False
+    assert pipe._whisper_wake_enabled is False
+
+    pipe._wake_reload_event.clear()
+    pipe.set_wake_activation(True)
+
+    assert pipe._openwakeword_enabled is True
+    assert pipe._whisper_wake_enabled is False
+    assert pipe._wake_reload_event.is_set()
+
+    pipe._wake_reload_event.clear()
+    pipe.set_wake_activation(False)
+
+    assert pipe._openwakeword_enabled is False
+    assert pipe._whisper_wake_enabled is False
     assert pipe._wake_reload_event.is_set()

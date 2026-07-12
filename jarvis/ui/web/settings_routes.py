@@ -476,8 +476,8 @@ async def put_stt_language(body: SttLanguageBody, request: Request) -> dict[str,
 
 # ---------------------------------------------------------------------------
 # Wake word (custom-wake-word feature). GET current + options; PUT to switch.
-# Persisted to jarvis.toml [trigger.wake_word]; applies on the next voice
-# bootstrap (a Jarvis restart). See docs/local-wakeword/CUSTOM-WAKE-WORD-DESIGN.md.
+# Persisted to jarvis.toml [trigger.wake_word] and live-applied when the desktop
+# voice pipeline is running. See docs/local-wakeword/CUSTOM-WAKE-WORD-DESIGN.md.
 # ---------------------------------------------------------------------------
 
 
@@ -582,7 +582,7 @@ async def enable_local_speech(request: Request) -> dict[str, object]:
 
 
 @router.get("/wake-word/enable-local-speech/status")
-async def enable_local_speech_status() -> dict[str, object]:
+async def enable_local_speech_status(request: Request) -> dict[str, object]:
     """Report the local-speech install progress + whether the pack is present."""
     available = _local_whisper_available()
     with _local_speech_install_lock:
@@ -592,7 +592,36 @@ async def enable_local_speech_status() -> dict[str, object]:
     # or a prior run before a restart) → report done so the UI is truthful.
     if available and state in ("idle", "running"):
         state = "done"
-    return {"state": state, "message": message, "available": available}
+    applied_live = False
+    if available:
+        try:
+            from jarvis.speech.wake_model_fetch import resolve_wake_language
+            from jarvis.speech.wake_phrase import resolve_wake_plan
+
+            cfg = _config(request)
+            pipeline = getattr(request.app.state, "speech_pipeline", None)
+            if (
+                cfg is not None
+                and getattr(getattr(cfg, "trigger", None), "wake_word", None) is not None
+                and pipeline is not None
+                and hasattr(pipeline, "set_wake_plan")
+            ):
+                plan = resolve_wake_plan(
+                    cfg.trigger.wake_word,
+                    local_whisper_available=True,
+                    language=resolve_wake_language(cfg),
+                )
+                pipeline.set_wake_plan(plan)
+                applied_live = True
+        except Exception as exc:  # noqa: BLE001 — install status must never 500
+            log.warning("local-speech wake live-apply skipped: %s", exc)
+    return {
+        "state": state,
+        "message": message,
+        "available": available,
+        "applied_live": applied_live,
+        "restart_required": available and not applied_live,
+    }
 
 
 @router.get("/wake-word")
@@ -744,9 +773,9 @@ async def set_wake_activation(body: WakeActivationBody, request: Request) -> dic
     only. This was previously settable only by hand-editing jarvis.toml (default
     False), so a fresh downloader could never enable their wake word in-app.
 
-    Persisted to ``[trigger] wake_word_enabled``; takes effect on the next voice
-    restart (the detector enable-flags are wired at pipeline construction), so
-    ``restart_required`` is always True.
+    Persisted to ``[trigger] wake_word_enabled`` and applied to the running voice
+    pipeline when available. Headless/voice-disabled processes keep the setting
+    for their next voice start.
     """
     try:
         from jarvis.core import config_writer
@@ -763,7 +792,20 @@ async def set_wake_activation(body: WakeActivationBody, request: Request) -> dic
             cfg.trigger.wake_word_enabled = bool(body.enabled)
         except Exception as exc:  # noqa: BLE001 — frozen model is not an error
             log.debug("in-memory wake_word_enabled update skipped: %s", exc)
-    return {"ok": True, "enabled": bool(body.enabled), "restart_required": True}
+    applied_live = False
+    pipeline = getattr(request.app.state, "speech_pipeline", None)
+    if pipeline is not None and hasattr(pipeline, "set_wake_activation"):
+        try:
+            pipeline.set_wake_activation(bool(body.enabled))
+            applied_live = True
+        except Exception as exc:  # noqa: BLE001 — persistence already succeeded
+            log.warning("wake activation live-apply failed: %s", exc)
+    return {
+        "ok": True,
+        "enabled": bool(body.enabled),
+        "applied_live": applied_live,
+        "restart_required": not applied_live,
+    }
 
 
 @router.post("/wake-word/download-model")
