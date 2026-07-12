@@ -185,3 +185,11 @@ def test_language_switch_single_language_unaffected() -> None:
     m = match_voice_command("antworte auf englisch")
     assert m is not None and m.kind == "language_switch"
     assert m.target == "en"
+
+
+def test_language_switch_survives_live_stt_mistranscript() -> None:
+    m = match_voice_command(
+        "Antworte auf jetzt nur noch auf Englisch."  # i18n-allow: bug transcript
+    )
+    assert m is not None and m.kind == "language_switch"
+    assert m.target == "en"

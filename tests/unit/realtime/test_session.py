@@ -1051,6 +1051,40 @@ async def test_ordinary_speech_does_not_hang_up():
     assert provider.session.response_requests == 1
 
 
+@pytest.mark.asyncio
+async def test_language_switch_mistranscript_reaches_realtime_provider():
+    """The live ``auf jetzt`` false positive must not end the session."""
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text=(
+                    "Antworte auf jetzt nur noch auf Englisch."  # i18n-allow: bug transcript
+                ),
+                is_final=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="language-switch-hangup-guard",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert sess.hangup_reason == ""
+    assert _hangup_jsons(jsons) == []
+    assert provider.session.response_requests == 1
+
+
 # --- Tool-role directive in session instructions ----------------------------
 
 

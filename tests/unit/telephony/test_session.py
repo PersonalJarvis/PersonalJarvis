@@ -132,7 +132,15 @@ def test_hangup_regex_matches_closing_phrases(phrase):
     assert HANGUP_RE.search(phrase)
 
 
-@pytest.mark.parametrize("phrase", ["wie geht es dir", "erzähl mir was", "danke schön"])  # i18n-allow
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "wie geht es dir",  # i18n-allow: German speech-input fixture
+        "erzähl mir was",  # i18n-allow: German speech-input fixture
+        "danke schön",  # i18n-allow: German speech-input fixture
+        "Antworte auf jetzt nur noch auf Englisch.",  # i18n-allow: bug transcript
+    ],
+)
 def test_hangup_regex_ignores_normal_speech(phrase):
     assert HANGUP_RE.search(phrase) is None
 

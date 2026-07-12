@@ -336,6 +336,24 @@ async def test_lets_get_up_mistranscript_does_not_hang_up() -> None:
     assert keep_session is True
 
 
+@pytest.mark.asyncio
+async def test_language_switch_mistranscript_does_not_hang_up() -> None:
+    """Ordinary speech containing the ``auf jetzt`` mishearing stays live."""
+    pipe = _make_pipeline(
+        FakeSTT(
+            text="Antworte auf jetzt nur noch auf Englisch."  # i18n-allow: bug transcript
+        ),
+        brain_response="Certainly. I will answer in English.",
+        continue_listening_after_response=True,
+    )
+
+    keep_session = await pipe._handle_utterance(b"\x01\x00" * 1024)
+
+    assert keep_session is True
+    assert pipe._spoken == [("Certainly. I will answer in English.", "de")]
+    assert pipe._session_end_reason is None
+
+
 @pytest.mark.xfail(
     reason=(
         "Superseded by the user-approved 'incomplete-prompt completion buffer' "
@@ -383,7 +401,8 @@ async def test_pending_buffer_discard_after_timeout_does_not_flush_to_brain() ->
     assert pipe._pending_user_context == []
     # … but the brain must NOT have been called with the half-command.
     assert brain_calls == [], (
-        f"Brain was called with {brain_calls!r} — the discard timer flushed a half-command to the brain"
+        f"Brain was called with {brain_calls!r} — the discard timer flushed "
+        "a half-command to the brain"
     )
 
 

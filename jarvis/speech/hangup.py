@@ -46,7 +46,12 @@ _HANGUP_PATTERNS: Final[tuple[str, ...]] = (
     r"\baufleg\w*\b",
     r"\bauf\s+leg\w*\b",   # "auf leg", "auf lege" — Whisper splits "auflegen"
     r"\bauf\s+legt\b",
-    r"\bauf\s+jetzt\b",    # Whisper mis-hearing of "auflegen"
+    # This lossy STT alias is safe only as the complete utterance. Keeping it
+    # unanchored caused a live language-switch request containing "auf jetzt"
+    # to terminate before the brain ran (2026-07-12). Optional discourse
+    # fillers preserve the original one-word-command recovery without matching
+    # the same words inside ordinary speech.
+    r"^\s*(?:(?:okay|ok|bitte)[\s,]+)*auf\s+jetzt[\s.!?]*$",  # i18n-allow: STT input
     r"\bleg(e|t|en)?\s+auf\b",
     r"\blegs?\s+auf\b",
     r"\blegen sie auf\b",
