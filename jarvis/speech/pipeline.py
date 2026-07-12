@@ -1680,6 +1680,7 @@ class SpeechPipeline:
         self._active_voice_mode: str | None = None
         self._active_realtime_provider: str = ""
         self._active_realtime_model: str = ""
+        self._active_realtime_handle: Any | None = None
         self._voice_engine_transitioning: bool = False
         self._reopen_after_engine_change: bool = False
         self._engine_change_reason: str = ""
@@ -3225,6 +3226,16 @@ class SpeechPipeline:
                     return
             self._last_preamble_spoken = (spoken_text, now_monotonic)
             spoken_times.append(now_monotonic)
+        if await self._deliver_announcement_via_realtime(
+            event,
+            text=scrubbed.cleaned,
+            language=ann_lang,
+        ):
+            # The live session publishes SpeechSpoken with the wording it
+            # actually generated. Emitting or synthesizing here would create a
+            # second, classic-pipeline voice and duplicate the readback.
+            self._last_announcement_spoken_monotonic = time.monotonic()
+            return
         # We are now committed to actually speaking this announcement (past every
         # suppression / defer / empty guard). Record it as voice activity so the
         # idle-timeout branch in ``_active_session`` re-arms a fresh window: an
@@ -3294,6 +3305,47 @@ class SpeechPipeline:
             if animate:
                 hungup = hangup is not None and hangup.is_set()
                 await self._transition("IDLE" if hungup else "LISTENING")
+
+    async def _deliver_announcement_via_realtime(
+        self,
+        event: AnnouncementRequested,
+        *,
+        text: str,
+        language: str,
+    ) -> bool:
+        """Offer a standardized readback to the active duplex model.
+
+        The live wrapper rejects busy, failed, or unsupported sessions. Any
+        rejection returns to ``_on_announcement`` and preserves the established
+        key-aware classic TTS path.
+        """
+        if getattr(self, "_active_voice_mode", None) != "realtime":
+            return False
+        session = getattr(self, "_active_realtime_handle", None)
+        deliver = getattr(session, "deliver_announcement", None)
+        if not callable(deliver):
+            return False
+        try:
+            accepted = bool(
+                await deliver(
+                    text=text,
+                    language=language,
+                    spoken_kind=_announcement_spoken_kind(
+                        getattr(event, "kind", None)
+                    ),
+                    detail=getattr(event, "detail", None),
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 -- classic path is load-bearing
+            log.warning("Realtime announcement handoff failed: %s", exc)
+            return False
+        if accepted:
+            log.info(
+                "Announcement handed to active realtime provider %s: %r",
+                getattr(self, "_active_realtime_provider", "") or "unknown",
+                text[:80],
+            )
+        return accepted
 
     async def _await_ack_turn_commit(self, grace_ms: int) -> bool:
         """Poll the turn-state for up to ``grace_ms``; True only if it stays
@@ -6154,6 +6206,7 @@ class SpeechPipeline:
                     handshake_task.cancel()
                     return HANGUP_HOTKEY
                 handshake_task.result()
+                self._active_realtime_handle = session
                 log.info(
                     "Realtime desktop provider handshake completed in %.0f ms "
                     "(%.0f ms total startup).",
@@ -6237,6 +6290,8 @@ class SpeechPipeline:
                 return HANGUP_ERROR
             return None
         finally:
+            if getattr(self, "_active_realtime_handle", None) is session:
+                self._active_realtime_handle = None
             barge_detector.stop_output()
             if not barge_warm_task.done():
                 barge_warm_task.cancel()

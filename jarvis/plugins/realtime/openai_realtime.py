@@ -255,6 +255,17 @@ class _OpenAIRealtimeSession:
     async def request_response(self) -> None:
         await self._create_response()
 
+    async def send_text(self, text: str) -> None:
+        """Add one trusted text turn and ask the live model for audio output."""
+        await self._conn.conversation.item.create(
+            item={
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": str(text)}],
+            }
+        )
+        await self._create_response(tool_choice="none")
+
     async def truncate(self, audio_end_ms: int) -> None:
         if self._last_item_id:
             await self._conn.conversation.item.truncate(
@@ -291,15 +302,16 @@ class _OpenAIRealtimeSession:
         self._tool_response_done_seen = False
         await self._create_response()
 
-    async def _create_response(self) -> None:
+    async def _create_response(self, *, tool_choice: str | None = None) -> None:
         marker = uuid4().hex
         self._pending_response_markers.add(marker)
+        response: dict[str, Any] = {
+            "metadata": {_RESPONSE_REQUEST_METADATA_KEY: marker},
+        }
+        if tool_choice is not None:
+            response["tool_choice"] = tool_choice
         try:
-            await self._conn.response.create(
-                response={
-                    "metadata": {_RESPONSE_REQUEST_METADATA_KEY: marker},
-                }
-            )
+            await self._conn.response.create(response=response)
         except BaseException:
             self._pending_response_markers.discard(marker)
             raise

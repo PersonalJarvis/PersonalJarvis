@@ -67,6 +67,25 @@ async def test_receive_maps_audio_transcripts_interrupt_and_completion():
     assert events[3].text == "what the user said"
 
 
+@pytest.mark.asyncio
+async def test_text_update_uses_realtime_input_for_gemini_31() -> None:
+    calls: list[dict[str, str]] = []
+
+    async def send_realtime_input(**kwargs):
+        calls.append(kwargs)
+
+    session = _GeminiLiveSession(
+        session=SimpleNamespace(send_realtime_input=send_realtime_input),
+        connection_cm=SimpleNamespace(),
+        client=SimpleNamespace(),
+        session_id="s-text",
+    )
+
+    await session.send_text("Deliver the completed mission update.")
+
+    assert calls == [{"text": "Deliver the completed mission update."}]
+
+
 class _FakeConnectCM:
     def __init__(self) -> None:
         self.exited = False

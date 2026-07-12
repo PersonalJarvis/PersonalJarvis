@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from jarvis.core.events import ResponseGenerated, VoiceTurnCompleted
+from jarvis.core.events import ResponseGenerated, SpeechSpoken, VoiceTurnCompleted
 from jarvis.core.protocols import AudioChunk, ToolResult
 from jarvis.realtime.protocol import RealtimeEvent
 from jarvis.realtime.session import RealtimeVoiceSession
@@ -18,6 +18,7 @@ class FakeSession:
         self.truncated = []
         self.session_updates = []
         self.response_requests = 0
+        self.text_inputs = []
         self.interrupts = 0
         self.closed = False
 
@@ -36,6 +37,9 @@ class FakeSession:
 
     async def request_response(self):
         self.response_requests += 1
+
+    async def send_text(self, text):
+        self.text_inputs.append(text)
 
     async def truncate(self, audio_end_ms):
         self.truncated.append(audio_end_ms)
@@ -66,6 +70,30 @@ class FakeProvider:
     async def open_session(self, cfg):
         self.opened_with = cfg
         self.session = FakeSession(self._events)
+        return self.session
+
+
+class TextResultGatedSession(FakeSession):
+    """Wait for an injected text update before yielding its spoken response."""
+
+    def __init__(self, events):
+        super().__init__(events)
+        self._text_sent = asyncio.Event()
+
+    async def receive(self):
+        await self._text_sent.wait()
+        async for event in super().receive():
+            yield event
+
+    async def send_text(self, text):
+        await super().send_text(text)
+        self._text_sent.set()
+
+
+class TextResultGatedProvider(FakeProvider):
+    async def open_session(self, cfg):
+        self.opened_with = cfg
+        self.session = TextResultGatedSession(self._events)
         return self.session
 
 
@@ -634,6 +662,82 @@ async def test_desktop_session_publishes_effective_provider_and_completed_turn()
     assert completed.jarvis_text == "Hi there."
     assert "VoiceSessionStarted" not in by_name
     assert "VoiceSessionEnded" not in by_name
+
+
+@pytest.mark.asyncio
+async def test_idle_session_renders_external_update_as_realtime_spoken_track():
+    provider = TextResultGatedProvider(
+        [
+            RealtimeEvent(
+                type="output_transcript_delta",
+                text="The research mission is ready.",
+            ),
+            RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(
+                    pcm=b"\x01\x02" * 8,
+                    sample_rate=24_000,
+                    timestamp_ns=0,
+                ),
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    bus = FakeBus()
+    sess = RealtimeVoiceSession(
+        session_id="external-update",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=bus,
+        surface="desktop",
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    accepted = await sess.deliver_announcement(
+        text="Research completed successfully.",
+        language="en",
+        spoken_kind="subagent",
+        detail="artifact: report.md",
+    )
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert accepted is True
+    assert "Research completed successfully." in provider.session.text_inputs[0]
+    spoken = [event for event in bus.events if isinstance(event, SpeechSpoken)]
+    assert len(spoken) == 1
+    assert spoken[0].text == "The research mission is ready."
+    assert spoken[0].language == "en"
+    assert spoken[0].spoken_kind == "subagent"
+    assert spoken[0].detail == "artifact: report.md"
+    assert not any(isinstance(event, ResponseGenerated) for event in bus.events)
+    assert not any(isinstance(event, VoiceTurnCompleted) for event in bus.events)
+
+
+@pytest.mark.asyncio
+async def test_busy_realtime_session_refuses_external_update_for_classic_fallback():
+    provider = FakeProvider([])
+    sess = RealtimeVoiceSession(
+        session_id="busy-update",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    sess._turn_id = "active-user-turn"
+
+    accepted = await sess.deliver_announcement(
+        text="The mission finished.",
+        language="en",
+        spoken_kind="completion",
+    )
+
+    assert accepted is False
+    assert provider.session.text_inputs == []
+    await sess.end(reason="test")
 
 
 @pytest.mark.asyncio

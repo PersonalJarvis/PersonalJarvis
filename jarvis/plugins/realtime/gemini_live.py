@@ -150,6 +150,12 @@ class _GeminiLiveSession:
         # Gemini Live creates a response automatically at the VAD turn boundary.
         return None
 
+    async def send_text(self, text: str) -> None:
+        """Send an incremental text turn through the current Gemini 3.1 API."""
+        # Gemini 3.1 permits send_client_content only for initial history.
+        # Runtime text updates must use the realtime-input text stream.
+        await self._session.send_realtime_input(text=str(text))
+
     async def truncate(self, audio_end_ms: int) -> None:
         del audio_end_ms  # Gemini interrupts generation when new audio arrives.
 

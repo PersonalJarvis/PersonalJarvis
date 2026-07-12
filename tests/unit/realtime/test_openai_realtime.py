@@ -148,6 +148,36 @@ async def test_every_selectable_model_uses_the_valid_ga_session_schema(
 
 
 @pytest.mark.asyncio
+async def test_text_update_creates_tool_free_audio_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+
+    await session.send_text("Deliver the completed mission update.")
+
+    assert conn.created_items == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "Deliver the completed mission update.",
+                }
+            ],
+        }
+    ]
+    response = conn.response_create_payloads[0]["response"]
+    assert response["tool_choice"] == "none"
+    assert response["metadata"]["jarvis_request_id"]
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_unsolicited_second_response_is_cancelled_without_replaying_audio(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
