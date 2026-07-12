@@ -139,6 +139,46 @@ async def test_cancel_can_interrupt_a_turn_already_draining() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancel_during_drain_treats_stopped_stream_as_expected() -> None:
+    stop_event = asyncio.Event()
+
+    class AbortedStreamPlayer(FakePlayer):
+        def stop(self) -> None:
+            super().stop()
+            stop_event.set()
+
+        async def play_chunks(self, chunks) -> None:
+            async for _chunk in chunks:
+                await stop_event.wait()
+                raise RuntimeError("Stream is stopped [PaErrorCode -9983]")
+
+    player = AbortedStreamPlayer()
+    playback = DesktopRealtimePlayback(player)
+    await playback.send_binary(b"\x01\x00" * 8)
+    drain = asyncio.create_task(playback.finish_turn())
+    await asyncio.sleep(0)
+
+    await playback.cancel()
+    await drain
+
+    assert player.stopped == 1
+
+
+@pytest.mark.asyncio
+async def test_finish_turn_still_surfaces_an_unrelated_playback_failure() -> None:
+    class FailingPlayer(FakePlayer):
+        async def play_chunks(self, chunks) -> None:
+            async for _chunk in chunks:
+                raise RuntimeError("output device disappeared")
+
+    playback = DesktopRealtimePlayback(FailingPlayer())
+    await playback.send_binary(b"\x01\x00" * 8)
+
+    with pytest.raises(RuntimeError, match="output device disappeared"):
+        await playback.finish_turn()
+
+
+@pytest.mark.asyncio
 async def test_handshake_sample_rate_is_used_for_the_next_turn():
     player = FakePlayer()
     playback = DesktopRealtimePlayback(player)

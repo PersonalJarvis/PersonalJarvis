@@ -215,6 +215,13 @@ class DesktopRealtimePlayback:
             if current is not None and current.cancelling():
                 raise
             # The playback worker was canceled by a concurrent barge-in.
+        except Exception:
+            if self._task is task:
+                raise
+            # A concurrent cancel detached this task and aborted its PortAudio
+            # stream. The blocked write can then unwind with "Stream is
+            # stopped"; that is the expected result of barge-in, not a failed
+            # realtime session.
         finally:
             # Keep the active task discoverable while it drains. A user can
             # barge in after the provider has sent turn_complete but before the
@@ -226,6 +233,7 @@ class DesktopRealtimePlayback:
 
     async def cancel(self) -> None:
         queue, task = self._detach()
+        task_was_done = task is not None and task.done()
         self._player.stop()
         if queue is None or task is None:
             return
@@ -246,6 +254,12 @@ class DesktopRealtimePlayback:
                 await task
             except asyncio.CancelledError:
                 pass
+        except Exception:
+            if task_was_done:
+                raise
+            # stop() deliberately aborts the live PortAudio stream. A write
+            # already running in its worker thread can report that abort as a
+            # playback exception while the task unwinds.
 
     async def close(self) -> None:
         await self.cancel()
