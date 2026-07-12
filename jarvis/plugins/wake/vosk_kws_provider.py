@@ -20,13 +20,13 @@ Two-stage detection, AP-27-safe:
    confidence. The grammar forces every utterance onto the nearest phrase, so
    stage 1 alone false-accepts on ambient speech (34 % measured) and must
    never fire unconfirmed.
-2. **Permissive free-decode sound confirm** — ONE unconstrained pass over the
-   ring-buffered candidate audio. The folded free transcript must merely be
-   SOUND-CLOSE to the phrase (SequenceMatcher on sound-folded tokens): a
-   genuine "Hey Ruben" free-decodes to "hey ruben"/"hey room"/"herum" (all
-   close), ambient "vielen dank" does not. NEVER require the free pass to
-   spell the word (AP-27: that kills recall for hard names); infrastructure
-   errors fail OPEN so a broken confirm cannot eat a real wake.
+2. **Structured free-decode sound confirm** — ONE unconstrained pass over the
+   ring-buffered candidate audio. For a prefixed phrase, the free transcript
+   must contain a real wake prefix immediately followed by a sound-close core.
+   This keeps ASR spelling/splitting tolerance (for example, "joe avis" for
+   "Jarvis") without letting a high-confidence grammar hallucination turn
+   unrelated room speech into a wake. Infrastructure errors fail OPEN so a
+   broken confirm cannot eat a real wake.
 
 A raw-energy gate (word-agnostic RMS at the match site, AP-27) rejects
 near-silent candidates before the confirm. The detector never emits
@@ -66,6 +66,7 @@ import numpy as np
 
 from jarvis.core.protocols import AudioChunk
 from jarvis.speech.wake_constants import (
+    WAKE_PREFIXES,
     normalize_phrase_for_match,
     phrase_core_for_match,
     sound_fold,
@@ -78,16 +79,24 @@ log = logging.getLogger("jarvis.wake.vosk")
 # fired on plain room speech): genuine wakes re-score at ~1.0 (spike
 # distribution p25..max = 1.0), room speech pulled onto the phrase re-scores
 # lower. Calibrated on 6 min of judged continuous room speech vs the
-# hardest common-sound phrase: conf>=0.9 + the permissive 0.55 sound ratio =
-# 0 false fires at Ruben 20/24 / Luca 8/8 recall; conf 0.5 leaked
-# 0.84 fires/min. Raising the sound ratio instead costs recall (AP-27) —
-# keep the ratio permissive and let the REAL confidence carry precision.
+# hardest common-sound phrase. Later production audio exposed a second class:
+# unrelated speech could still re-score at 1.0, so confidence remains necessary
+# but is now paired with the structured prefix/core confirm below.
 _MIN_FINAL_CONF = 0.9
 
-# Sound-similarity floor for the free-decode confirm. Spike sweep: 0.55 keeps
-# 79-100 % recall at 1/0/0 % false accepts; 0.45 lifts recall ~8 points but
-# false accepts rise to ~5 % — the wrong trade for an always-on listener.
+# Legacy whole-phrase sound-similarity floor. The structured confirm below
+# treats this as the caller's minimum, then applies stronger prefix/core floors
+# that close the live false-wake class where unrelated speech such as
+# "hi servers sichern" scored above 0.55 against "Hey Jarvis".
 _CONFIRM_RATIO = 0.55
+
+# A configured wake prefix is a strong independent anchor. Once it is present,
+# the following core may stay tolerant enough for an ASR token split
+# ("Jarvis" -> "joe avis"), but unrelated words must not be subsidised by the
+# matching prefix. A phrase with no prefix has no independent anchor and needs
+# the stricter bare-core floor.
+_PREFIXED_CORE_RATIO = 0.70
+_UNPREFIXED_CORE_RATIO = 0.80
 
 # Word-agnostic energy floor for a candidate window (mirrors the stt_match
 # path's RollingWhisperWake._match_min_rms — AP-27: silence is gated on raw
@@ -115,25 +124,59 @@ def _folded(text: str) -> str:
 
 
 def sound_confirm(free_text: str, phrase: str, *, ratio: float = _CONFIRM_RATIO) -> bool:
-    """True when the free transcript is SOUND-CLOSE to ``phrase`` (permissive).
+    """Return whether the free transcript supports the configured phrase.
 
-    Empty free text means the unconstrained ear heard nothing at all — the
-    grammar hit was noise pulled onto the phrase, reject. Otherwise slide a
-    phrase-sized window over the folded free tokens and accept the best
-    SequenceMatcher ratio >= ``ratio``.
+    The old implementation compared one flattened phrase-sized string at a
+    permissive 0.55 threshold. That let ordinary speech confirm forced grammar
+    hits: production examples including ``"hi servers sichern"`` and
+    ``"ein jahr bis"`` both matched ``"Hey Jarvis"`` and fired. Prefix and
+    core are now independent evidence. A prefixed wake needs a real known
+    prefix at the candidate position plus a sound-close core; an unprefixed
+    wake needs a stricter core match because it has no second anchor.
+
+    Core candidates may use one extra/fewer token so ASR splits and merges do
+    not require exact spelling or tokenisation. Empty text always rejects.
     """
     if not free_text:
         return False
-    target = _folded(phrase)
-    if not target:
+    phrase_tokens = normalize_phrase_for_match(phrase)
+    core_tokens = phrase_core_for_match(phrase)
+    if not phrase_tokens or not core_tokens:
         return False
-    words = _folded(free_text).split()
-    n = max(1, len(target.split()))
-    best = 0.0
-    for i in range(max(1, len(words) - n + 1)):
-        window = " ".join(words[i : i + n])
-        best = max(best, SequenceMatcher(None, target, window).ratio())
-    return best >= ratio
+
+    words = [sound_fold(t) for t in normalize_phrase_for_match(free_text)]
+    target_core = "".join(sound_fold(t) for t in core_tokens)
+    if not words or not target_core:
+        return False
+
+    prefix_count = len(phrase_tokens) - len(core_tokens)
+    has_prefix = prefix_count > 0
+    known_prefixes = {sound_fold(token) for token in WAKE_PREFIXES}
+    core_token_count = max(1, len(core_tokens))
+    core_sizes = range(max(1, core_token_count - 1), core_token_count + 2)
+    core_floor = max(
+        float(ratio),
+        _PREFIXED_CORE_RATIO if has_prefix else _UNPREFIXED_CORE_RATIO,
+    )
+
+    for start in range(len(words)):
+        if has_prefix:
+            heard_prefix = words[start]
+            if heard_prefix not in known_prefixes:
+                continue
+            core_start = start + 1
+        else:
+            core_start = start
+
+        for size in core_sizes:
+            core_end = core_start + size
+            if core_end > len(words):
+                continue
+            heard_core = "".join(words[core_start:core_end])
+            core_score = SequenceMatcher(None, target_core, heard_core).ratio()
+            if core_score >= core_floor:
+                return True
+    return False
 
 
 class VoskKwsProvider:
@@ -184,21 +227,16 @@ class VoskKwsProvider:
         self._model_paths: list[str] = paths or [model_path]
         self._sample_rate = sample_rate
         self._min_final_conf = float(min_final_conf)
-        self._confirm_ratio = float(confirm_ratio)
+        phrase_tokens = normalize_phrase_for_match(self._phrase)
+        core_tokens = phrase_core_for_match(self._phrase)
+        has_prefix = len(core_tokens) < len(phrase_tokens)
+        structural_floor = (
+            _PREFIXED_CORE_RATIO if has_prefix else _UNPREFIXED_CORE_RATIO
+        )
+        self._confirm_ratio = max(float(confirm_ratio), structural_floor)
         self._match_min_rms = float(match_min_rms)
         self._cooldown_s = float(cooldown_s)
         self._confirm_tail_bytes = int(float(confirm_tail_s) * sample_rate) * 2
-        # Short-core hardening (calibrated 2026-07-06): phrases whose longest
-        # sound-folded token is very short ("Karl", "Anton") are cheap for
-        # room speech to imitate — the 10-word x 3-min matrix leaked only on
-        # the shortest cores. Tightening the RE-SCORE confidence instead
-        # deafened short words (synthetic recall dropped), so the localised
-        # sound confirm carries the extra strictness: a short core must match
-        # its span at 0.62 instead of the permissive 0.55.
-        tokens = normalize_phrase_for_match(self._phrase)
-        longest = max((len(sound_fold(t)) for t in tokens), default=0)
-        if longest < 6:
-            self._confirm_ratio = max(self._confirm_ratio, 0.62)
         self._target_peak = float(target_peak)
         self._max_gain = float(max_gain)
         self._models: dict[str, Any] = {}
@@ -222,7 +260,7 @@ class VoskKwsProvider:
         # log reads ``_keywords`` and ``_threshold`` off whatever detector is
         # armed. The confirm ratio is the closest analogue of a threshold.
         self._keywords = (self._keyword,)
-        self._threshold = float(confirm_ratio)
+        self._threshold = self._confirm_ratio
         # Ring buffer of raw int16 PCM bytes for the confirm pass.
         self._ring: deque[bytes] = deque()
         self._ring_len = 0
