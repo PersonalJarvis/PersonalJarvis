@@ -98,6 +98,18 @@ _CONFIRM_RATIO = 0.55
 _PREFIXED_CORE_RATIO = 0.70
 _UNPREFIXED_CORE_RATIO = 0.80
 
+# A free decoder often preserves the wake core while garbling the short
+# prefix completely (production examples for "Hey Jarvis": "age avis",
+# "a jarvis", "page avis", "pay jarvis").  Requiring the prefix to be one of
+# WAKE_PREFIXES therefore makes the detector deaf even though the grammar
+# pass re-heard the full phrase at high confidence.  The rescue remains
+# narrow: the localised transcript must contain exactly one prefix-shaped
+# token plus the core, and the core itself must clear this stronger floor.
+# This does not revive the old whole-window fuzzy match that accepted
+# unrelated multi-word speech.
+_GARBLED_PREFIX_CORE_RATIO = 0.80
+_GARBLED_PREFIX_PHRASE_RATIO = 0.62
+
 # Word-agnostic energy floor for a candidate window (mirrors the stt_match
 # path's RollingWhisperWake._match_min_rms — AP-27: silence is gated on raw
 # energy, never on transcript content).
@@ -175,6 +187,27 @@ def sound_confirm(free_text: str, phrase: str, *, ratio: float = _CONFIRM_RATIO)
             heard_core = "".join(words[core_start:core_end])
             core_score = SequenceMatcher(None, target_core, heard_core).ratio()
             if core_score >= core_floor:
+                return True
+
+    # Recall rescue for an ASR-garbled prefix.  Do not slide this over longer
+    # speech: exact local token coverage is what keeps a mention of the core
+    # inside an ordinary sentence from becoming a wake.  Split/merged core
+    # spellings still work through ``core_sizes``.
+    if has_prefix:
+        target_phrase = " ".join(sound_fold(token) for token in phrase_tokens)
+        for size in core_sizes:
+            if len(words) != 1 + size:
+                continue
+            heard_core = "".join(words[1:])
+            core_score = SequenceMatcher(None, target_core, heard_core).ratio()
+            heard_phrase = " ".join(words)
+            phrase_score = SequenceMatcher(
+                None, target_phrase, heard_phrase
+            ).ratio()
+            if (
+                core_score >= max(float(ratio), _GARBLED_PREFIX_CORE_RATIO)
+                and phrase_score >= _GARBLED_PREFIX_PHRASE_RATIO
+            ):
                 return True
     return False
 

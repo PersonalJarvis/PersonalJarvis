@@ -40,6 +40,20 @@ def test_sound_confirm_accepts_sound_close_mishearing() -> None:
     assert sound_confirm("hey joe avis", "Hey Jarvis") is True
 
 
+@pytest.mark.parametrize(
+    "heard",
+    (
+        "age avis",
+        "a jarvis",
+        "page avis",
+        "pay jarvis",
+    ),
+)
+def test_sound_confirm_accepts_live_garbled_prefix_wakes(heard: str) -> None:
+    """A free decoder may preserve the core but lose the short prefix."""
+    assert sound_confirm(heard, "Hey Jarvis") is True
+
+
 def test_sound_confirm_rejects_unrelated_speech() -> None:
     assert sound_confirm("vielen dank", "Hey Ruben") is False  # i18n-allow: utterance under test
 
@@ -63,6 +77,10 @@ def test_alternative_known_prefix_still_needs_a_matching_core() -> None:
     assert sound_confirm("hallo jarvis", "Hey Jarvis") is True
     assert sound_confirm("hi servers", "Hey Jarvis") is False
     assert sound_confirm("hey room", "Hey Ruben") is False
+
+
+def test_garbled_prefix_rescue_does_not_fish_the_core_from_longer_speech() -> None:
+    assert sound_confirm("we discussed jarvis today", "Hey Jarvis") is False
 
 
 def test_unprefixed_wake_requires_strong_core_evidence() -> None:
