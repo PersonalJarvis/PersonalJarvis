@@ -60,7 +60,7 @@ class ToolExecutor:
         approval: ApprovalWorkflow,
         *,
         default_timeout_s: float = 60.0,
-        plausibility_config: "BrainPlausibilityConfig | None" = None,
+        plausibility_config: BrainPlausibilityConfig | None = None,
         plausibility_context_fn: PlausibilityContextFn | None = None,
     ) -> None:
         self._bus = bus
@@ -90,7 +90,7 @@ class ToolExecutor:
         self,
         tool: Tool,
         decision: Any,
-    ) -> "PlausibilityDecision | None":
+    ) -> PlausibilityDecision | None:
         """Fetches the current plausibility context and checks it.
 
         Returns ``None`` if no context provider is registered, or the
@@ -170,20 +170,8 @@ class ToolExecutor:
             ))
             return ToolResult(success=False, output=None, error=str(exc))
 
-        # 2. Proposed event (the UI can use this as a live indicator). The brain's
-        # rationale rides along for the Session-Decision-Log — redacted + capped
-        # here so no raw secret reaches the bus / session DB / local diary.
-        await self._bus.publish(ActionProposed(
-            trace_id=tid,
-            tool_name=tool.name,
-            args=args,
-            risk_tier=decision.tier,
-            rationale=safe_preview(rationale),
-        ))
-
-        # 2.5 Plausibility check (Phase 4): between the tier decision and
-        # approval. The result can force ``require_confirmation`` even
-        # when the tier workflow doesn't call for it (e.g. for ``monitor``).
+        # 2. Plausibility check (Phase 4): the result can force confirmation
+        # even when the tier workflow does not (for example, ``monitor``).
         plaus = self._evaluate_plausibility(tool, decision)
         if plaus is not None and plaus.reason != "ok":
             log.info(
@@ -191,11 +179,33 @@ class ToolExecutor:
                 tool.name, decision.tier, plaus.reason, plaus.require_confirmation,
             )
 
-        # 3. Approval (only if the tier workflow OR plausibility wants it)
+        # 3. Arm approval BEFORE publishing ActionProposed. Subscribers such as
+        # TaskAutoApprover may answer synchronously from that event; registering
+        # afterward loses the answer and turns a valid grant into a timeout.
         approved_by = decision.approved_by or "auto"
         needs_confirm = self._evaluator.needs_user_confirmation(decision) or (
             plaus is not None and plaus.require_confirmation
         )
+        voice_confirm = bool((config_snapshot or {}).get("voice_confirm"))
+        approval_ticket = None
+        if needs_confirm and not voice_confirm:
+            approval_ticket = self._approval.arm(tid)
+
+        # 3.5 Proposed event (the UI can use this as a live indicator). The
+        # rationale is redacted and capped so no raw secret reaches the bus.
+        try:
+            await self._bus.publish(ActionProposed(
+                trace_id=tid,
+                tool_name=tool.name,
+                args=args,
+                risk_tier=decision.tier,
+                rationale=safe_preview(rationale),
+            ))
+        except BaseException:
+            if approval_ticket is not None:
+                approval_ticket.close()
+            raise
+
         if needs_confirm:
             # Two-turn confirmation on a conversational turn: do NOT block on the
             # UI-approval future (no voice/chat user can resolve it within the
@@ -204,7 +214,7 @@ class ToolExecutor:
             # ``execute_confirmed`` (AD-OE: the talker never awaits heavy/blocking
             # work on the turn). ``needs_confirm`` already excludes whitelist
             # downgrades, so this fires only for genuinely consequential tools.
-            if bool((config_snapshot or {}).get("voice_confirm")):
+            if voice_confirm:
                 self._pending_voice[tid] = (tool, dict(args))
                 log.info(
                     "voice-confirm: deferring %s (tier=%s) for two-turn confirmation",
@@ -219,14 +229,24 @@ class ToolExecutor:
                     },
                     error=VOICE_CONFIRM_SENTINEL,
                 )
-            approved, who_or_reason = await self._approval.wait(tid, self._default_timeout_s)
+            try:
+                approved, who_or_reason = await self._approval.wait(
+                    tid, self._default_timeout_s
+                )
+            finally:
+                if approval_ticket is not None:
+                    approval_ticket.close()
             if not approved:
                 await self._bus.publish(ActionDenied(
                     trace_id=tid,
                     tool_name=tool.name,
                     reason=who_or_reason,
                 ))
-                return ToolResult(success=False, output=None, error=f"approval-denied ({who_or_reason})")
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"approval-denied ({who_or_reason})",
+                )
             approved_by = who_or_reason  # "user" or "auto"
 
         # 4. Execute

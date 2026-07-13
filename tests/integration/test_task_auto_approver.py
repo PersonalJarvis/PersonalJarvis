@@ -11,15 +11,36 @@ block.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from uuid import uuid4
 
 import pytest
 
 from jarvis.core.bus import EventBus
+from jarvis.core.config import SafetyConfig
 from jarvis.core.events import ActionApproved, ActionProposed
+from jarvis.core.protocols import ExecutionContext, ToolResult
+from jarvis.safety import ApprovalWorkflow, RiskTierEvaluator, ToolExecutor
 from jarvis.tasks.approval_bridge import TaskAutoApprover
 
 pytestmark = pytest.mark.phase5
+
+
+class _AskTool:
+    name = "buffer"
+    risk_tier = "ask"
+    schema: dict[str, Any] = {"type": "object", "properties": {}}
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.approved_by = ""
+
+    async def execute(
+        self, _args: dict[str, Any], ctx: ExecutionContext
+    ) -> ToolResult:
+        self.calls += 1
+        self.approved_by = ctx.approved_by
+        return ToolResult(success=True, output="executed")
 
 
 async def _collect_approvals(bus: EventBus) -> list[ActionApproved]:
@@ -47,6 +68,29 @@ async def test_approves_armed_tool_on_its_trace() -> None:
     assert approvals[0].trace_id == tid
     assert approvals[0].tool_name == "buffer"
     assert approvals[0].approved_by == "scheduled-task:abc"
+
+
+async def test_pre_authorized_tool_executes_without_approval_race() -> None:
+    """An approval published from ActionProposed must reach ToolExecutor.wait."""
+    bus = EventBus()
+    approval = ApprovalWorkflow(bus, timeout_s=0.05)
+    executor = ToolExecutor(
+        bus,
+        RiskTierEvaluator(SafetyConfig()),
+        approval,
+        default_timeout_s=0.05,
+    )
+    approver = TaskAutoApprover(bus)
+    tool = _AskTool()
+    trace_id = uuid4()
+    approver.arm(trace_id, [tool.name], approved_by="scheduled-task:abc")
+
+    result = await executor.execute(tool, {}, trace_id=trace_id)
+
+    assert result.success is True
+    assert result.output == "executed"
+    assert tool.calls == 1
+    assert tool.approved_by == "scheduled-task:abc"
 
 
 async def test_ignores_tool_not_in_grant() -> None:
