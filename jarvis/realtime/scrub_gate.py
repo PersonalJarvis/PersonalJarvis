@@ -29,10 +29,15 @@ class ScrubHoldGate:
 
     def __init__(self, language: str, *, lookahead_ms: int = 250) -> None:
         self._language = language if language in FALLBACK_PHRASES else "en"
-        self._lookahead_ms = lookahead_ms
+        # Retain the argument for adapter compatibility. Realtime audio and
+        # transcript deltas are concurrent, so elapsed wall time cannot prove
+        # that a pending audio chunk has no matching transcript.
+        del lookahead_ms
         self._pending: list[AudioChunk] = []
+        self._pending_audio_ms = 0.0
         self._cleared = False
         self._hard_leak = False
+        self._transcript_seen = False
         self._transcript_tail = ""
 
     def hard_leak_pending(self) -> bool:
@@ -53,6 +58,7 @@ class ScrubHoldGate:
         self._transcript_tail = (
             f"{self._transcript_tail}{text}"[-_TRANSCRIPT_TAIL_MAX_CHARS:]
         )
+        self._transcript_seen = True
         aggregate = scrub_for_voice(self._transcript_tail, language=self._language)
         result = scrub_for_voice(text, language=self._language)
         aggregate_is_hard = bool(
@@ -66,6 +72,7 @@ class ScrubHoldGate:
             self._hard_leak = True
             self._cleared = False
             self._pending.clear()
+            self._pending_audio_ms = 0.0
             return self.fallback_phrase()
         self._cleared = True
         if not result.actions:
@@ -85,9 +92,12 @@ class ScrubHoldGate:
         if self._cleared:
             out = self._pending + [chunk]
             self._pending = []
+            self._pending_audio_ms = 0.0
             self._cleared = False
             return out
         self._pending.append(chunk)
+        sample_rate = max(1, int(chunk.sample_rate or 0))
+        self._pending_audio_ms += (len(chunk.pcm) / 2) * 1_000 / sample_rate
         return []
 
     def release_available(self) -> list[AudioChunk]:
@@ -101,23 +111,51 @@ class ScrubHoldGate:
             return []
         out = self._pending
         self._pending = []
+        self._pending_audio_ms = 0.0
         self._cleared = False
         return out
 
     def fail_closed(self) -> bool:
-        """Drop pending audio when its transcript misses the lookahead budget."""
-        if self._hard_leak or not self._pending:
+        """Drop a completed response that never produced any transcript."""
+        if self._hard_leak or not self._pending or self._transcript_seen:
             return False
         self._pending.clear()
+        self._pending_audio_ms = 0.0
         self._cleared = False
         self._hard_leak = True
         return True
 
+    def fail_if_pending_exceeds(self, max_pending_ms: int) -> bool:
+        """Bound audio memory when transcript deltas stop arriving entirely."""
+        if (
+            self._hard_leak
+            or not self._pending
+            or self._pending_audio_ms <= max(0, int(max_pending_ms))
+        ):
+            return False
+        self._pending.clear()
+        self._pending_audio_ms = 0.0
+        self._cleared = False
+        self._hard_leak = True
+        return True
+
+    def finalize(self) -> list[AudioChunk]:
+        """Release the clean transcript-covered tail at the response boundary."""
+        if self.fail_closed() or self._hard_leak:
+            return []
+        out = self._pending
+        self._pending = []
+        self._pending_audio_ms = 0.0
+        self._cleared = False
+        return out
+
     def drain(self) -> None:
         """Barge-in / turn-end: discard buffered audio and reset per-turn state."""
         self._pending.clear()
+        self._pending_audio_ms = 0.0
         self._cleared = False
         self._hard_leak = False
+        self._transcript_seen = False
         self._transcript_tail = ""
 
 

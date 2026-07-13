@@ -27,7 +27,7 @@ from jarvis.speech.hangup import HANGUP_RE
 
 log = logging.getLogger(__name__)
 
-_TRANSCRIPT_LOOKAHEAD_S = 0.250
+_MAX_UNSCRUBBED_AUDIO_MS = 5_000
 _PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S = 12.0
 _AUDIO_SEND_TIMEOUT_S = 2.0
 _TOOL_TRANSCRIPT_WAIT_S = 3.0
@@ -337,7 +337,6 @@ class RealtimeVoiceSession:
         self._gate = ScrubHoldGate(self._language)
         self._session: Any = None
         self._pump_task: asyncio.Task[None] | None = None
-        self._release_task: asyncio.Task[None] | None = None
         self._output_samples_sent = 0
         self._ended = False
         self._browser_session_started = False
@@ -847,14 +846,12 @@ class RealtimeVoiceSession:
                             self._response_requested_input_ids.add(input_item_id)
                 elif event.type == "output_transcript_delta" and event.text:
                     if self._must_withhold_provider_output():
-                        self._cancel_release_task()
                         self._gate.drain()
                         continue
                     await self._ensure_turn_started()
                     self._mark_latency_named("REALTIME_FIRST_TRANSCRIPT")
                     display = await self._gate.feed_transcript(event.text)
                     if self._gate.hard_leak_pending():
-                        self._cancel_release_task()
                         await self._cancel_unsafe_output(
                             reason="unsafe output transcript"
                         )
@@ -869,12 +866,10 @@ class RealtimeVoiceSession:
                             "is_final": bool(event.is_final),
                         }
                     )
-                    self._cancel_release_task()
                     for chunk in self._gate.release_available():
                         await self._emit_audio(chunk)
                 elif event.type == "audio_delta" and event.audio is not None:
                     if self._must_withhold_provider_output():
-                        self._cancel_release_task()
                         self._gate.drain()
                         continue
                     await self._ensure_turn_started()
@@ -883,10 +878,11 @@ class RealtimeVoiceSession:
                     released = await self._gate.push_audio(event.audio)
                     for chunk in released:
                         await self._emit_audio(chunk)
-                    if not released and self._release_task is None:
-                        self._release_task = asyncio.create_task(
-                            self._release_after_lookahead(),
-                            name=f"rt-hold-{self.session_id}",
+                    if self._gate.fail_if_pending_exceeds(
+                        _MAX_UNSCRUBBED_AUDIO_MS
+                    ):
+                        await self._cancel_unsafe_output(
+                            reason="output transcript exceeded safe audio buffer"
                         )
                 elif event.type in {"speech_started", "interrupted"}:
                     await self._begin_user_speech_turn()
@@ -928,7 +924,6 @@ class RealtimeVoiceSession:
                         )
                     )
                     if hold_for_delegate and delegate_state is not None:
-                        self._cancel_release_task()
                         self._gate.drain()
                         delegate_state.provider_boundary_seen = True
                         delegate_state.input_boundary_ready.set()
@@ -944,13 +939,13 @@ class RealtimeVoiceSession:
                         )
                         await self._coalesce_ready_delegate_result(delegate_state)
                         continue
-                    self._cancel_release_task()
-                    if self._gate.fail_closed():
+                    final_chunks = self._gate.finalize()
+                    if self._gate.hard_leak_pending():
                         await self._cancel_unsafe_output(
                             reason="output transcript missing at turn completion",
                             interrupt_provider=False,
                         )
-                    for chunk in self._gate.release_available():
+                    for chunk in final_chunks:
                         await self._emit_audio(chunk)
                     self._gate.drain()
                     await self._send_json({"type": "turn_complete"})
@@ -994,27 +989,6 @@ class RealtimeVoiceSession:
             except Exception:  # noqa: BLE001, S110
                 pass
 
-    async def _release_after_lookahead(self) -> None:
-        try:
-            await asyncio.sleep(_TRANSCRIPT_LOOKAHEAD_S)
-            if self._must_withhold_provider_output():
-                self._gate.drain()
-                return
-            if self._gate.fail_closed():
-                await self._cancel_unsafe_output(
-                    reason="output transcript missed scrub lookahead"
-                )
-        except asyncio.CancelledError:
-            raise
-        finally:
-            self._release_task = None
-
-    def _cancel_release_task(self) -> None:
-        task = self._release_task
-        if task is not None and not task.done():
-            task.cancel()
-        self._release_task = None
-
     async def _cancel_unsafe_output(
         self,
         *,
@@ -1025,6 +999,7 @@ class RealtimeVoiceSession:
         if self._scrub_cancelled_for_turn:
             return
         self._scrub_cancelled_for_turn = True
+        self._drop_provider_output_until_new_response = True
         self._mark_latency_named(
             "REALTIME_SCRUB_CANCEL",
             detail=f"reason={reason}",
@@ -2002,7 +1977,6 @@ class RealtimeVoiceSession:
         )
         self._drop_provider_output_until_new_response = True
         self._response_requested_for_turn = False
-        self._cancel_release_task()
         self._gate.drain()
         output_rate = int(getattr(self._provider, "output_sample_rate", 24_000) or 24_000)
         audio_end_ms = (
@@ -2033,7 +2007,6 @@ class RealtimeVoiceSession:
         if self._ended:
             return
         self._ended = True
-        self._cancel_release_task()
         self._cancel_tool_transcript_wait()
         if self._end_call_timer is not None and not self._end_call_timer.done():
             self._end_call_timer.cancel()

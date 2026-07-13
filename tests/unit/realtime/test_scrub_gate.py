@@ -129,3 +129,28 @@ async def test_missing_transcript_fails_closed_instead_of_releasing_audio():
     assert gate.fail_closed() is True
     assert gate.hard_leak_pending() is True
     assert gate.release_available() == []
+
+
+@pytest.mark.asyncio
+async def test_clean_transcript_covers_buffered_tail_at_response_boundary():
+    gate = ScrubHoldGate(language="en")
+    first = _chunk(4)
+    tail = _chunk(8)
+
+    await gate.feed_transcript("A complete safe response.")
+    assert await gate.push_audio(first) == [first]
+    assert await gate.push_audio(tail) == []
+
+    assert gate.finalize() == [tail]
+    assert gate.hard_leak_pending() is False
+
+
+@pytest.mark.asyncio
+async def test_untranscribed_audio_buffer_is_bounded_by_audio_duration():
+    gate = ScrubHoldGate(language="en")
+
+    await gate.push_audio(_chunk(2_400))  # 100 ms at 24 kHz.
+
+    assert gate.fail_if_pending_exceeds(50) is True
+    assert gate.hard_leak_pending() is True
+    assert gate.finalize() == []

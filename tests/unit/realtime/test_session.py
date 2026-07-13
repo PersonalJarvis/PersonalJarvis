@@ -729,11 +729,7 @@ async def test_audio_send_timeout_marks_realtime_session_failed(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_audio_without_transcript_is_cancelled_fail_closed(monkeypatch):
-    import jarvis.realtime.session as session_module
-
-    monkeypatch.setattr(session_module, "_TRANSCRIPT_LOOKAHEAD_S", 0.01)
-
+async def test_audio_without_transcript_is_cancelled_fail_closed():
     class _DelayedCompletionSession(FakeSession):
         async def receive(self):
             yield RealtimeEvent(
@@ -770,8 +766,66 @@ async def test_audio_without_transcript_is_cancelled_fail_closed(monkeypatch):
     await sess.end(reason="test")
 
     assert binaries == []
-    assert provider.session.interrupts == 1
+    # response.done already closed the provider generation; fail closed locally
+    # without sending a now-invalid response.cancel.
+    assert provider.session.interrupts == 0
     assert sum(item.get("type") == "error_spoken" for item in messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_transcript_lag_does_not_cancel_clean_output():
+    """Audio deltas may legitimately lead their matching transcript delta."""
+
+    first = b"\x01\x02" * 8
+    middle = b"\x03\x04" * 8
+    tail = b"\x05\x06" * 8
+
+    class _LaggedTranscriptSession(FakeSession):
+        async def receive(self):
+            yield RealtimeEvent(type="output_transcript_delta", text="A safe answer")
+            yield RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(pcm=first, sample_rate=24_000, timestamp_ns=0),
+            )
+            yield RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(pcm=middle, sample_rate=24_000, timestamp_ns=0),
+            )
+            # Realtime delta streams are concurrent rather than one-to-one. The
+            # former 250 ms timer cancelled normal output during this gap.
+            await asyncio.sleep(0.3)
+            yield RealtimeEvent(type="output_transcript_delta", text=" continues.")
+            yield RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(pcm=tail, sample_rate=24_000, timestamp_ns=0),
+            )
+            yield RealtimeEvent(type="turn_complete")
+
+    class _LaggedTranscriptProvider(FakeProvider):
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = _LaggedTranscriptSession([])
+            return self.session
+
+    binaries = []
+    messages = []
+    provider = _LaggedTranscriptProvider([])
+    sess = RealtimeVoiceSession(
+        session_id="lagged-clean-transcript",
+        send_binary=lambda data: binaries.append(data) or asyncio.sleep(0),
+        send_json=lambda message: messages.append(message) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert binaries == [first, middle, tail]
+    assert provider.session.interrupts == 0
+    assert not any(item.get("type") == "error_spoken" for item in messages)
 
 
 @pytest.mark.asyncio
