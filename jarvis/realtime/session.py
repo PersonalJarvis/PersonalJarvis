@@ -369,6 +369,7 @@ class RealtimeVoiceSession:
         self._late_delegate_results: list[_LateDelegateResult] = []
         self._late_delegate_flush_task: asyncio.Task[None] | None = None
         self._user_speech_active = False
+        self._deferred_provider_speech_start = False
         self._external_update: _ExternalUpdateState | None = None
         # from_brain returns None when no public supervisor gateway is ready.
         # Say so, or a tool-less session is indistinguishable from a healthy one.
@@ -724,6 +725,19 @@ class RealtimeVoiceSession:
                     transcript = str(event.text or "").strip()
                     transcription_failed = bool(event.error)
                     input_observed = bool(transcript or transcription_failed)
+                    if (
+                        event.is_final
+                        and input_observed
+                        and self._deferred_provider_speech_start
+                    ):
+                        # A later final transcript confirms that the deferred
+                        # server-VAD edge was a real new utterance. Split the
+                        # turns here; a start edge alone is too noisy to abandon
+                        # an orchestrator action that is still producing its
+                        # answer.
+                        self._deferred_provider_speech_start = False
+                        await self._begin_user_speech_turn()
+                        await self._barge_in(interrupt_provider=False)
                     input_item_id = str(getattr(event, "item_id", "") or "")
                     input_already_answered = bool(
                         input_item_id
@@ -951,6 +965,17 @@ class RealtimeVoiceSession:
                         await self._cancel_unsafe_output(
                             reason="output transcript exceeded safe audio buffer"
                         )
+                elif (
+                    event.type == "speech_started"
+                    and self._pending_delegate_needs_endpoint_protection()
+                ):
+                    if not self._deferred_provider_speech_start:
+                        log.info(
+                            "realtime[%s] deferred an unconfirmed provider "
+                            "speech start while an action result was pending",
+                            self.session_id,
+                        )
+                    self._deferred_provider_speech_start = True
                 elif event.type in {"speech_started", "interrupted"}:
                     await self._begin_user_speech_turn()
                     await self._barge_in(
@@ -1406,6 +1431,7 @@ class RealtimeVoiceSession:
         self._executed_tool_names.clear()
         self._turn_final_text = ""
         self._delegate_required_for_turn = False
+        self._deferred_provider_speech_start = False
         self._scrub_cancelled_for_turn = False
 
     def _declared_tools(self) -> tuple[dict[str, Any], ...]:
@@ -1474,6 +1500,16 @@ class RealtimeVoiceSession:
         return any(
             not task.done()
             for task in self._delegate_tasks_by_turn.get(turn_id, ())
+        )
+
+    def _pending_delegate_needs_endpoint_protection(self) -> bool:
+        """Keep an unconfirmed VAD edge from abandoning a running action."""
+        return bool(
+            self._turn_id
+            and self._delegate_required_for_turn
+            and not self._output_active
+            and not self._delegate_delivery_started()
+            and self._turn_has_pending_delegate(self._turn_id)
         )
 
     @staticmethod
