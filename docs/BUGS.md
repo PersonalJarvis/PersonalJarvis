@@ -3364,15 +3364,32 @@ rescue, and recognizer-stock replenishment. The existing five-second cooldown
 applied only after a successful wake, so a stream of rejected candidates had no
 load bound. Detailed rejection messages at INFO level amplified the burst.
 
-**Fix.** A rejected candidate now opens a two-second, monotonic backpressure
-window. Audio continues advancing the ring, but stage-one decode, fresh
-recognizer construction, and full verification pause until re-arm. The first
-candidate after quiet remains immediate; only work proven to be a false
-candidate is throttled. The early visual verify completes before the
-authoritative pair starts, replenishment begins only after the decision, and
-rejection details are DEBUG-level. Session stats expose backpressure windows and
-skipped chunks. The mechanism uses only asyncio and monotonic time, so Windows,
-macOS, Linux desktops, and headless Linux share the same behaviour.
+A follow-up regression exposed two recall losses in that otherwise necessary
+hardening. First, the backpressure window paused stage one as well as the costly
+verifier, so rapid human retries were discarded. Second, the structured sound
+confirm rejected real one-token merges and close core spellings produced by the
+free decoder even after a high-confidence grammar re-score.
+
+**Fix.** A rejected candidate opens a two-second, monotonic backpressure window.
+Full verification remains paused until re-arm, but stage one immediately gets
+one fresh recognizer set and may latch one retry. Once latched, stage one also
+pauses while audio continues advancing the ring; the retained candidate is
+verified when the existing deadline expires. This preserves the hard verifier
+and recognizer-rebuild bound without turning backpressure into a deaf period for
+a user's immediate second call. The first candidate after quiet remains
+immediate. The early visual verify completes before the authoritative pair
+starts, replenishment begins only after the decision, and rejection details are
+DEBUG-level. Session stats expose backpressure windows and bounded chunks. The
+mechanism uses only asyncio and monotonic time, so Windows, macOS, Linux desktops,
+and headless Linux share the same behaviour.
+
+The sound confirm also accepts a narrowly calibrated class of generic ASR
+variants: a known prefix followed by a two-thirds-similar core, or a one-token
+merge that independently resembles the configured prefix, core, and complete
+phrase. The merge path cannot accept the bare core. Calibration against 100
+real positive and 500 real negative speech windows improved recall without a
+new negative acceptance; the energy, grammar-confidence, localisation, and
+full-phrase requirements remain intact.
 
 The desktop startup path also logs whether the browser-originated shell-paint
 acknowledgment arrived or whether the bounded 12-second fallback released heavy
@@ -3380,9 +3397,13 @@ initialization. A future screenshot can therefore distinguish paint failure
 from post-start process starvation without inference.
 
 **Guards.** `tests/unit/plugins/wake/test_vosk_kws_provider.py` proves that 200
-continuous noisy chunks trigger one verification and one recognizer set, not a
-candidate/rebuild storm. The existing wake recall, sibling rescue, early visual
-candidate, cooldown, and AP-24 exclusive-recognizer tests remain green.
+continuous noisy chunks trigger one verification and only one bounded retry
+recognizer set, not a candidate/rebuild storm. It also proves that immediate
+retries for one-word and multi-word arbitrary phrases are retained during the
+window. Sound-confirm guards cover close spellings, merged phrases, bare-core
+rejection, and the production false-wake transcripts. The existing wake recall,
+sibling rescue, early visual candidate, cooldown, and AP-24
+exclusive-recognizer tests remain green.
 `tests/unit/ui/web/test_fast_bootstrap.py` and
 `tests/unit/ui/test_desktop_backend_start_order.py` retain the cross-platform
 paint-before-heavy-start contract.

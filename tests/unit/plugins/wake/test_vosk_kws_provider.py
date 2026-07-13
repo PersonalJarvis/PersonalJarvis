@@ -16,7 +16,8 @@ up. What is pinned here:
   mission 2026-07-10): they are independent passes over the same audio, so
   paying their SUM instead of their MAX is a pure latency regression.
 - Rejected-candidate storms are backpressured so recall-biased grammar cannot
-  starve the desktop UI, microphone, or local server.
+  starve the desktop UI, microphone, or local server, while one immediate
+  user retry remains latched instead of landing in a deaf period.
 """
 from __future__ import annotations
 
@@ -38,8 +39,25 @@ from jarvis.plugins.wake.vosk_kws_provider import VoskKwsProvider, sound_confirm
 
 def test_sound_confirm_accepts_sound_close_mishearing() -> None:
     assert sound_confirm("hey ruben", "Hey Ruben") is True
+    assert sound_confirm("hey oben", "Hey Ruben") is True
     assert sound_confirm("hey nowa", "Hey Nova") is True
     assert sound_confirm("hey joe avis", "Hey Jarvis") is True
+
+
+@pytest.mark.parametrize(
+    ("heard", "phrase"),
+    (
+        ("herum", "Hey Ruben"),
+        ("erhoben", "Hey Ruben"),
+        ("henowa", "Hey Nova"),
+        ("helatlas", "Hello Atlas"),
+    ),
+)
+def test_sound_confirm_accepts_generic_merged_full_phrase(
+    heard: str, phrase: str
+) -> None:
+    """A one-token ASR merge still carries independent prefix/core evidence."""
+    assert sound_confirm(heard, phrase) is True
 
 
 @pytest.mark.parametrize(
@@ -83,6 +101,12 @@ def test_alternative_known_prefix_still_needs_a_matching_core() -> None:
 
 def test_garbled_prefix_rescue_does_not_fish_the_core_from_longer_speech() -> None:
     assert sound_confirm("we discussed jarvis today", "Hey Jarvis") is False
+
+
+def test_merged_phrase_rescue_never_accepts_the_bare_core() -> None:
+    """The configured full phrase remains mandatory after a one-token merge."""
+    assert sound_confirm("ruben", "Hey Ruben") is False
+    assert sound_confirm("atlas", "Hello Atlas") is False
 
 
 def test_unprefixed_wake_requires_strong_core_evidence() -> None:
@@ -445,8 +469,9 @@ async def test_rejected_candidate_storm_is_backpressured(
 ) -> None:
     """Room speech can make recall-biased grammar hit continuously.
 
-    One rejection must pause stage-one decoding as well as the expensive
-    verifier.  Rebuilding recognizers on every skipped hit would preserve the
+    One rejection may re-arm one cheap recognizer set to retain a user retry,
+    but the first candidate it hears is latched without another expensive
+    verifier call. Rebuilding on every skipped hit would preserve the
     process-wide CPU storm even if full verification were rate-limited.
     """
     p = VoskKwsProvider(
@@ -481,9 +506,70 @@ async def test_rejected_candidate_storm_is_backpressured(
 
     assert fired == []
     assert verify_calls == 1
-    assert fresh_rec_calls == 1
+    assert fresh_rec_calls == 2  # initial set + one bounded retry listener
     assert p.stats()["backpressure_windows"] == 1
     assert p.stats()["backpressure_chunks"] > 100
+
+
+@pytest.mark.parametrize(
+    ("phrase", "keyword"),
+    (
+        ("Hey Nova", "nova"),
+        ("Computer", "computer"),
+        ("Good Morning Atlas", "atlas"),
+    ),
+)
+async def test_immediate_retry_is_latched_during_reject_backpressure(
+    fake_vosk, monkeypatch, phrase: str, keyword: str
+) -> None:
+    """A clean false-negative must not make any configured phrase deaf.
+
+    The expensive verifier remains limited to one call per backpressure
+    window. Stage one retains the next complete call and releases it at the
+    deadline, so rapid human retries are not discarded.
+    """
+    p = VoskKwsProvider(
+        phrase,
+        model_path="fake",
+        keyword=keyword,
+        confirm_tail_s=0.0,
+        rejected_candidate_backoff_s=0.5,
+    )
+    p._ensure_model()
+    fake_vosk["model"].phrase = phrase.lower()
+    fake_vosk["model"].free_text = phrase.lower()
+
+    now = 0.0
+    verify_calls = 0
+
+    def _clock() -> float:
+        return now
+
+    def _verify(_window, _model_path=None):  # noqa: ANN001
+        nonlocal verify_calls
+        verify_calls += 1
+        return verify_calls > 1
+
+    monkeypatch.setattr(p, "_monotonic", _clock)
+    monkeypatch.setattr(p, "_verify_candidate", _verify)
+
+    async def _iter() -> AsyncIterator[AudioChunk]:
+        nonlocal now
+        # First candidate at t=0.3 rejects. The freshly re-armed recognizer
+        # hears the retry at t=0.6, inside the t=0.8 deadline. On the first
+        # chunk after that deadline the retained retry is verified. The old
+        # deaf-window implementation only begins listening again there and
+        # therefore cannot accumulate the three chunks needed for a wake.
+        for _ in range(9):
+            now += 0.1
+            yield _chunk()
+
+    fired = [wake async for wake in p.detect(_iter())]
+
+    assert fired == [keyword]
+    assert verify_calls == 2
+    assert p.stats()["candidates"] == 2
+    assert p.stats()["backpressure_windows"] == 1
 
 
 # --- prewarmed verify-recognizer stock ------------------------------------------

@@ -95,7 +95,7 @@ _CONFIRM_RATIO = 0.55
 # ("Jarvis" -> "joe avis"), but unrelated words must not be subsidised by the
 # matching prefix. A phrase with no prefix has no independent anchor and needs
 # the stricter bare-core floor.
-_PREFIXED_CORE_RATIO = 0.70
+_PREFIXED_CORE_RATIO = 2.0 / 3.0
 _UNPREFIXED_CORE_RATIO = 0.80
 
 # A free decoder often preserves the wake core while garbling the short
@@ -109,6 +109,20 @@ _UNPREFIXED_CORE_RATIO = 0.80
 # unrelated multi-word speech.
 _GARBLED_PREFIX_CORE_RATIO = 0.80
 _GARBLED_PREFIX_PHRASE_RATIO = 0.62
+
+# Some free decoders merge the complete prefixed phrase into one word. Real
+# captures include "Hey Ruben" -> "herum" / "erhoben"; treating those as a
+# missing prefix would either reject genuine calls or accidentally accept the
+# bare core. The rescue therefore requires independent similarity to the
+# prefix, core, and complete merged phrase, plus a bounded length ratio. A
+# 100-positive / 500-negative real-window calibration on 2026-07-13 lifted
+# recall without adding a negative acceptance. These rules are derived from
+# the configured tokens and apply equally to every supported phrase.
+_MERGED_PREFIX_RATIO = 0.40
+_MERGED_CORE_RATIO = 0.40
+_MERGED_PHRASE_RATIO = 0.53
+_MERGED_MIN_LENGTH_RATIO = 0.55
+_MERGED_MAX_LENGTH_RATIO = 1.20
 
 # Word-agnostic energy floor for a candidate window (mirrors the stt_match
 # path's RollingWhisperWake._match_min_rms — AP-27: silence is gated on raw
@@ -128,7 +142,9 @@ _COOLDOWN_S = 5.0
 # passes in 140 seconds, enough to starve the WebView, overlay, microphone, and
 # local HTTP listener in the shared desktop process.  A short reject-only
 # backoff bounds that work on every OS while leaving the first candidate (and
-# therefore the normal quiet-room wake path) at full speed.
+# therefore the normal quiet-room wake path) at full speed.  Stage one keeps
+# listening during this window and latches one retry; otherwise a user's
+# immediate second call would land in a two-second deaf period.
 _REJECTED_CANDIDATE_BACKOFF_S = 2.0
 
 # How much audio to let land in the ring AFTER a PARTIAL candidate before the
@@ -216,6 +232,30 @@ def sound_confirm(free_text: str, phrase: str, *, ratio: float = _CONFIRM_RATIO)
             if (
                 core_score >= max(float(ratio), _GARBLED_PREFIX_CORE_RATIO)
                 and phrase_score >= _GARBLED_PREFIX_PHRASE_RATIO
+            ):
+                return True
+
+        # The unconstrained decoder may merge the complete spoken phrase into
+        # one token. Require that one token to carry separate prefix AND core
+        # evidence; this keeps a bare core from satisfying a configured full
+        # phrase while recovering generic ASR merges.
+        if len(words) == 1:
+            heard = words[0]
+            target_prefix = "".join(
+                sound_fold(token) for token in phrase_tokens[:prefix_count]
+            )
+            target_merged = "".join(sound_fold(token) for token in phrase_tokens)
+            length_ratio = len(heard) / max(1, len(target_merged))
+            if (
+                _MERGED_MIN_LENGTH_RATIO
+                <= length_ratio
+                <= _MERGED_MAX_LENGTH_RATIO
+                and SequenceMatcher(None, target_prefix, heard).ratio()
+                >= _MERGED_PREFIX_RATIO
+                and SequenceMatcher(None, target_core, heard).ratio()
+                >= _MERGED_CORE_RATIO
+                and SequenceMatcher(None, target_merged, heard).ratio()
+                >= _MERGED_PHRASE_RATIO
             ):
                 return True
     return False
@@ -319,6 +359,10 @@ class VoskKwsProvider:
         self._early_active = False
         self._early_task: asyncio.Task[None] | None = None
         self._pending_gen = 0
+        # Instance-local clock hook keeps reject/backpressure state-machine
+        # tests deterministic without replacing Python's process-global
+        # monotonic clock (which asyncio itself also consumes).
+        self._monotonic = time.monotonic
         # Session stats (parity with OpenWakeWordProvider.stats()).
         self._stat_chunks = 0
         self._stat_candidates = 0
@@ -788,20 +832,26 @@ class VoskKwsProvider:
             self._stat_chunks += 1
             pcm = chunk.pcm
             self._ring_push(pcm)
-            # A clean rejection proves that the recall-biased grammar is
-            # currently mapping unrelated audio onto the wake phrase.  Do not
-            # keep decoding/rebuilding recognizers during the bounded reject
-            # window: that was the process-wide UI starvation loop behind
-            # BUG-045.  Ring audio still advances, so the first candidate after
-            # re-arm is verified against current sound rather than stale bytes.
-            now_mono = time.monotonic()
-            if now_mono < verify_not_before:
+            # Full verification remains rate-limited after a clean rejection,
+            # but the cheap streaming grammar must keep listening.  Completely
+            # pausing stage one made this a deaf period: a genuine immediate
+            # retry was discarded before it could ever reach the verifier.
+            # During the window we latch at most one candidate, stop stage-one
+            # work once latched, and verify it only when the same deadline
+            # expires.  This preserves the BUG-045 load bound without dropping
+            # a user's retry.
+            now_mono = self._monotonic()
+            backpressure_active = now_mono < verify_not_before
+            if backpressure_active:
                 self._stat_backpressure_chunks += 1
-                continue
             if not recs:
                 recs = self._fresh_recs()
             if pending is not None:
                 pending_tail += len(pcm)
+                if backpressure_active:
+                    # The retry is already latched.  Advancing the ring is
+                    # enough; do not spend stage-one or verifier work yet.
+                    continue
                 # Keep every model's stream fed during the tail wait so their
                 # decode state stays aligned with the ring.
                 for r in recs.values():
@@ -827,13 +877,20 @@ class VoskKwsProvider:
                     recs = self._fresh_recs()
                     continue
                 self._stat_candidates += 1
+                if backpressure_active:
+                    # One user retry (or one more room-speech candidate) is
+                    # retained without launching any expensive decode.  A
+                    # final already includes its endpoint; a partial keeps
+                    # accumulating the normal confirmation tail in the ring.
+                    pending = (is_final, conf, hit_path)
+                    pending_tail = self._confirm_tail_bytes if is_final else 0
+                    continue
                 if is_final and conf < self._min_final_conf:
                     self._stat_backpressure_windows += 1
                     verify_not_before = (
-                        time.monotonic() + self._rejected_candidate_backoff_s
+                        self._monotonic() + self._rejected_candidate_backoff_s
                     )
-                    self._kick_replenish()
-                    recs = {}
+                    recs = self._fresh_recs()
                     continue
                 if not is_final and self._confirm_tail_bytes > 0:
                     pending = (is_final, conf, hit_path)
@@ -895,7 +952,7 @@ class VoskKwsProvider:
                 await self._notify_early(False)
                 self._stat_backpressure_windows += 1
                 verify_not_before = (
-                    time.monotonic() + self._rejected_candidate_backoff_s
+                    self._monotonic() + self._rejected_candidate_backoff_s
                 )
                 if (
                     self._stat_backpressure_windows == 1
@@ -909,11 +966,10 @@ class VoskKwsProvider:
                         self._stat_backpressure_windows,
                         self._stat_backpressure_chunks,
                     )
-                # Do not consume/build another streaming recognizer until the
-                # backoff expires.  Replenishment can finish in the background
-                # while detection is intentionally idle.
-                self._kick_replenish()
-                recs = {}
+                # Re-arm one cheap streaming recognizer set now.  It may latch
+                # one retry during backpressure, but no second full verify can
+                # run before the deadline above.
+                recs = self._fresh_recs()
                 continue
             # Confirmed: let a still-running early check finish first (in
             # production it completed long ago — the tail wait dwarfs it) so
