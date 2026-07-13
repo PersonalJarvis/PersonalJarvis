@@ -19,6 +19,7 @@ timeout constants via monkeypatch so the tests stay fast and deterministic
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -47,6 +48,17 @@ class _HangingSession:
         self.calls += 1
         await asyncio.sleep(3600)  # effectively forever -> simulates a hang
         raise AssertionError("unreachable")  # pragma: no cover
+
+
+class _ServerErrorSession:
+    """Return the MCP SDK's non-exceptional server-error shape."""
+
+    async def call_tool(self, name: str, args: dict) -> object:  # noqa: ANN401
+        del name, args
+        return SimpleNamespace(
+            isError=True,
+            content=[SimpleNamespace(text="server rejected the operation")],
+        )
 
 
 # ----------------------------------------------------------------------
@@ -96,6 +108,18 @@ async def test_repeated_hangs_open_the_circuit_breaker(
     with pytest.raises(RuntimeError, match="circuit-breaker"):
         await client.call_tool("slow_tool", {})
     assert session.calls == calls_before
+
+
+@pytest.mark.asyncio
+async def test_server_error_result_counts_exactly_once() -> None:
+    client = MCPClient(_spec())
+    client._session = _ServerErrorSession()
+
+    with pytest.raises(RuntimeError, match="server rejected"):
+        await client.call_tool("failing_tool", {})
+
+    assert client._circuit_breaker_failures == 1
+    assert client.is_healthy is True
 
 
 # ----------------------------------------------------------------------

@@ -233,16 +233,9 @@ class MCPClient:
                 ) from exc
             # MCP-SDK quirk: server-side tool exceptions do NOT propagate as
             # Python exceptions; instead they arrive as a CallToolResult with
-            # isError=True. The circuit breaker counts this as a failure.
+            # isError=True. Raise into the one shared failure counter below;
+            # counting here as well would make one server error count twice.
             if getattr(result, "isError", False):
-                self._circuit_breaker_failures += 1
-                if self._circuit_breaker_failures >= _CB_THRESHOLD:
-                    self._disabled_until_ns = time.time_ns() + _CB_COOLDOWN_NS
-                    log.warning(
-                        "MCPClient[%s] circuit-breaker OPEN (60s) nach %d Fehlern",
-                        self.spec.name,
-                        self._circuit_breaker_failures,
-                    )
                 raise RuntimeError(
                     _extract_error_text(result)
                     or f"MCP tool {name} returned isError=True"
@@ -254,7 +247,7 @@ class MCPClient:
             if self._circuit_breaker_failures >= _CB_THRESHOLD:
                 self._disabled_until_ns = time.time_ns() + _CB_COOLDOWN_NS
                 log.warning(
-                    "MCPClient[%s] circuit-breaker OPEN (60s) nach %d Fehlern",
+                    "MCPClient[%s] circuit breaker OPEN (60s) after %d failures",
                     self.spec.name,
                     self._circuit_breaker_failures,
                 )
@@ -301,7 +294,7 @@ class MCPClient:
 
         raw = list(self.spec.install_command)
         if not raw:
-            raise ValueError(f"{self.spec.name}: install_command ist leer")
+            raise ValueError(f"{self.spec.name}: install_command is empty")
 
         def _expand(s: str) -> str:
             return (
