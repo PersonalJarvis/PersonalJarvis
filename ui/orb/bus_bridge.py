@@ -215,18 +215,12 @@ class OrbBusBridge:
         # drives _on_state without publishing VoiceSession events (and the
         # very first session before any end-event) behaves exactly as before.
         self._suppress_show_until_session: bool = False
-        # Boot z-order re-lift latch. The persistent bar is visible from
-        # boot (the overlay maps its window immediately — see
-        # DesktopApp._build_overlay_surface), so this is NO LONGER a visibility
-        # gate. Once voice is ready,
-        # ``reassert_persistent_bar_when_voice_ready`` re-asserts the bar's
-        # topmost after the main window + tray have finished mapping.
-        # ``_boot_reassert_done`` makes the re-lift idempotent across the ready
-        # signal and the fallback timeout. asyncio.Event() is loop-agnostic at
-        # construction (Py3.10+ dropped the loop param; project minimum is
-        # 3.11), so it is safe to build off the running loop.
-        self._voice_ready_event = asyncio.Event()
-        self._boot_reassert_done: bool = False
+        # The boot-created Jarvis Bar is fully initialized but withdrawn. This
+        # latch is released directly by the first genuine VoiceBootStatus ready
+        # event; there is deliberately no timeout reveal because a visible bar is
+        # the product's promise that the user can speak now.
+        self._voice_usable: bool = False
+        self._boot_visibility_released: bool = False
         # Backend asyncio loop the bridge's bus handlers run on. The Tk gesture
         # callbacks (_publish_mute_toggle / _publish_show_window /
         # _publish_visible_feedback) fire on the overlay's *Tk thread*, which has
@@ -298,8 +292,8 @@ class OrbBusBridge:
             self._bus.subscribe(ResponseGenerated, self._on_response_generated)
             self._bus.subscribe(JarvisAgentBackgroundCompleted, self._on_background_completed)
             self._bus.subscribe(AudioOutFirst, self._on_audio_out_first)
-            # Boot z-order re-lift: once the speech pipeline signals voice is
-            # ready, re-assert the (already-visible) persistent bar's topmost.
+            # Boot visibility gate: a genuine voice-ready signal releases the
+            # hidden Jarvis Bar. Degraded UI-only ready signals do not.
             self._bus.subscribe(VoiceBootStatus, self._on_voice_boot_status)
             # Authoritative mute mirror: the pipeline owns the global voice-mute
             # flag and broadcasts VoiceMuteChanged whenever it flips (from this
@@ -570,56 +564,46 @@ class OrbBusBridge:
         self._suppress_show_until_session = True
 
     async def _on_voice_boot_status(self, event: VoiceBootStatus) -> None:
-        """Track the speech-pipeline boot readiness.
+        """Release the Jarvis Bar only when voice is genuinely usable.
 
-        ``ready=True`` (emitted once Phase A of warm-up is live — audio + VAD +
-        wake + STT + TTS client) releases the latch so the persistent bar's
-        topmost z-order is re-asserted (the bar is already visible from boot).
-        ``ready=False`` (warm-up start) is ignored.
+        The normal ``ready=True`` event is emitted after wake + VAD + TTS are
+        initialized. ``voice_unavailable`` and ``watchdog_timeout`` are degraded
+        web-UI escape hatches, not permission to advertise a working microphone.
+        ``ready=False`` (warm-up start) leaves the gate closed.
         """
-        if event.ready:
-            self._voice_ready_event.set()
-
-    async def reassert_persistent_bar_when_voice_ready(
-        self, *, timeout_s: float = 30.0
-    ) -> None:
-        """Re-assert the already-visible persistent bar after desktop boot.
-
-        The bar maps immediately and does not wait for voice readiness. This
-        bounded task only re-pins its current mode/topmost state after later boot
-        windows have mapped. A non-persistent bar or mascot remains untouched.
-        """
-        reason = "timeout-fallback"
-        try:
-            await asyncio.wait_for(self._voice_ready_event.wait(), timeout_s)
-            reason = "voice-ready"
-        except TimeoutError:
-            pass
-        self._reassert_persistent_bar(reason)
-
-    def _reassert_persistent_bar(self, reason: str) -> None:
-        """Re-pin the persistent bar's z-order exactly once."""
-        if self._boot_reassert_done:
+        if not event.voice_usable:
             return
-        self._boot_reassert_done = True
-        if self._hide_on_idle:
-            # Non-persistent bar / mascot: stays hidden until a voice session.
+        self._voice_usable = True
+        self._release_bar_startup_gate(event.detail or "voice-ready")
+
+    def _release_bar_startup_gate(self, reason: str) -> None:
+        """Release a boot-gated bar and repair legacy visible surfaces once."""
+        if self._boot_visibility_released:
             return
         try:
-            reassert = getattr(self._orb, "reassert_z_order", None)
-            if callable(reassert):
-                reassert()
-            else:
-                # Compatibility floor for alternate and test surfaces. Only the
-                # Jarvis Bar owns the layered native window and implements the
-                # explicit style-safe z-order operation.
-                mode = str(getattr(self._orb, "_mode", "idle") or "idle")
-                self._orb.show(mode)
+            release = getattr(self._orb, "release_startup_gate", None)
+            was_gated = bool(release()) if callable(release) else False
+
+            # A non-persistent bar needs its gate released too, but remains
+            # withdrawn while idle. Mascot/Null surfaces expose no gate and stay
+            # untouched. An already-visible legacy bar gets the existing safe
+            # z-order repair instead.
+            if not self._hide_on_idle and not was_gated:
+                reassert = getattr(self._orb, "reassert_z_order", None)
+                if callable(reassert):
+                    reassert()
+                else:
+                    mode = str(getattr(self._orb, "_mode", "idle") or "idle")
+                    self._orb.show(mode)
+            self._boot_visibility_released = True
             log.info(
-                "Persistent overlay z-order reasserted after boot (%s).", reason
+                "Overlay startup visibility released after voice became usable (%s).",
+                reason,
             )
         except Exception:  # noqa: BLE001
-            log.debug("persistent bar boot reassert failed", exc_info=True)
+            # Leave the latch open to a later genuine readiness event instead of
+            # converting a transient surface error into a permanent hidden bar.
+            log.debug("overlay startup visibility release failed", exc_info=True)
 
     async def _on_state(self, event: SystemStateChanged) -> None:
         # Lazily pin the backend loop (idempotent) so Tk-thread gestures can
@@ -1025,6 +1009,11 @@ class OrbBusBridge:
         The caller tears the old surface down afterwards.
         """
         self._orb = surface
+        # Visibility release is per surface, not merely per bridge. A user can
+        # switch to "none" during warm-up and back to the cached boot bar after
+        # ready; that original bar must then have its still-active gate released
+        # without waiting for another VoiceBootStatus event.
+        self._boot_visibility_released = False
         setter = getattr(surface, "set_on_mute_toggle", None)
         if callable(setter):
             setter(self._publish_mute_toggle)
@@ -1034,4 +1023,6 @@ class OrbBusBridge:
         show_window_setter = getattr(surface, "set_on_show_window", None)
         if callable(show_window_setter):
             show_window_setter(self._publish_show_window)
+        if self._voice_usable:
+            self._release_bar_startup_gate("voice-ready surface swap")
         log.info("OrbBridge surface swapped (last_state=%s)", self._last_state)

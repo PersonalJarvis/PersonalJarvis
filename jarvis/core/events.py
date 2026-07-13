@@ -1048,11 +1048,22 @@ class VoiceBootStatus(Event):
     device, VAD, wake-word, TTS client) is live — *before* the background
     confirmation-audio pre-render finishes. The frontend listens for event_name
     ``VoiceBootStatus`` and reads ``GET /api/voice/status`` on a late mount
-    (WS events are not persistent). ``detail`` carries a short phase label for
-    logs/diagnostics only.
+    (WS events are not persistent).
+
+    Two degraded recovery paths also set ``ready=True`` solely to release the
+    web UI from a permanent loading screen. ``voice_usable`` is the stricter
+    product contract for affordances that promise the user can speak now.
     """
     ready: bool = False
     detail: str = ""
+
+    @property
+    def voice_usable(self) -> bool:
+        """Whether this event truthfully confirms a usable local voice path."""
+        return self.ready and self.detail not in {
+            "voice_unavailable",
+            "watchdog_timeout",
+        }
 
 
 @dataclass(frozen=True, slots=True)

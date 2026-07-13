@@ -215,6 +215,7 @@
     "realtime_connecting": "Conectando…",
     "realtime_connected": "Conectado mediante",
     "realtime_browser_hint": "Tu navegador controla el micrófono en este dispositivo.",
+    "realtime_browser_tts_unavailable": "Este navegador no tiene una voz del sistema utilizable. La respuesta sigue disponible como texto; conecta un proveedor de TTS para oírla.",
     "realtime_pipeline_fallback": "Sistema de voz clásico como alternativa",
     "realtime_unavailable": "Configura una clave API de tiempo real",
     "realtime_error": "No se pudo iniciar la voz. Prueba el proveedor activo en API Keys y vuelve a intentarlo."

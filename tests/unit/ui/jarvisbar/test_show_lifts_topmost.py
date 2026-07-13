@@ -2,10 +2,10 @@
 
 Forensic (2026-06-27): a withdrawn→deiconified ``overrideredirect`` window can
 lose its topmost z-order on Windows, so later desktop windows map above it until
-the next wake re-shows it. The persistent bar now maps immediately at boot, and
-the voice-ready maintenance pass explicitly re-pins topmost. ``_do_show``
-re-asserts ``-topmost`` and lifts only when it maps a withdrawn window.
-These tests pin that contract without a real Tk window.
+the next wake re-shows it. The voice-ready startup-gate release now maps the
+fully configured bar and explicitly re-pins topmost. ``_do_show`` re-asserts
+``-topmost`` and lifts only when it maps a withdrawn window. These tests pin
+that contract without a real Tk window.
 
 Forensic (2026-06-30): re-asserting ``-topmost`` is itself a Win32 style
 mutation on this layered (color-key + alpha) window, and Windows can silently

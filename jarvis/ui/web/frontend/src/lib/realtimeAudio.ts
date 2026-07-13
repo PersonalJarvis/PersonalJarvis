@@ -21,6 +21,86 @@ export type RealtimeCallbacks = {
   onInputLevel?: (level: number) => void;
 };
 
+export type BrowserSpeechOutcome = "ended" | "error" | "unavailable";
+
+type BrowserSpeechHandlers = {
+  onStart?: () => void;
+  onFinish: (outcome: BrowserSpeechOutcome) => void;
+};
+
+type SpeechSynthesisSurface = Pick<SpeechSynthesis, "cancel" | "speak">;
+
+/** Keyless speech output for the headless/browser surface.
+ *
+ * The controller owns exactly one utterance. A new turn or barge-in invalidates
+ * callbacks from the previous one, preventing a stale `onend` event from
+ * acknowledging the wrong server turn.
+ */
+export class BrowserSpeechFallback {
+  private generation = 0;
+  private active = false;
+
+  constructor(
+    private readonly synthesis: SpeechSynthesisSurface | null =
+      typeof window !== "undefined" && "speechSynthesis" in window
+        ? window.speechSynthesis
+        : null,
+    private readonly createUtterance: ((text: string) => SpeechSynthesisUtterance) | null =
+      typeof SpeechSynthesisUtterance === "function"
+        ? (text) => new SpeechSynthesisUtterance(text)
+        : null,
+  ) {}
+
+  speak(
+    text: string,
+    language: string,
+    volume: number,
+    handlers: BrowserSpeechHandlers,
+  ): boolean {
+    this.cancel();
+    if (!this.synthesis || !this.createUtterance || !text.trim()) {
+      handlers.onFinish("unavailable");
+      return false;
+    }
+
+    const generation = ++this.generation;
+    const utterance = this.createUtterance(text);
+    let settled = false;
+    const finish = (outcome: BrowserSpeechOutcome) => {
+      if (settled || generation !== this.generation) return;
+      settled = true;
+      this.active = false;
+      handlers.onFinish(outcome);
+    };
+    utterance.lang = language || "en-US";
+    utterance.volume = Math.max(0, Math.min(1, Number.isFinite(volume) ? volume : 1));
+    utterance.onstart = () => {
+      if (generation === this.generation) handlers.onStart?.();
+    };
+    utterance.onend = () => finish("ended");
+    utterance.onerror = () => finish("error");
+    try {
+      this.active = true;
+      this.synthesis.speak(utterance);
+      return true;
+    } catch {
+      finish("error");
+      return false;
+    }
+  }
+
+  cancel(): void {
+    this.generation += 1;
+    if (!this.active) return;
+    this.active = false;
+    try {
+      this.synthesis?.cancel();
+    } catch {
+      // A browser may tear down its speech service during page navigation.
+    }
+  }
+}
+
 /** Stateful linear PCM16 resampler used for provider audio playback.
  *
  * Realtime providers currently emit 24 kHz PCM, while AudioContext commonly
@@ -98,6 +178,7 @@ export class RealtimeAudioClient {
   private ready = false;
   private intentionalClose = false;
   private inputMeter = new LevelMeter();
+  private browserSpeech = new BrowserSpeechFallback();
 
   constructor(private cb: RealtimeCallbacks = {}) {}
 
@@ -209,6 +290,7 @@ export class RealtimeAudioClient {
             typeof message.role === "string" ? message.role : "user",
           );
         } else if (type === "tts_cancel") {
+          this.browserSpeech.cancel();
           this.playbackResampler?.reset();
           this.playbackNode?.port.postMessage({ type: "flush" });
         } else if (type === "audio_ready") {
@@ -220,7 +302,10 @@ export class RealtimeAudioClient {
             resolve();
           }
         } else if (type === "tts_start") {
+          this.browserSpeech.cancel();
           this.setOutputRate(message.sample_rate);
+        } else if (type === "tts_browser_fallback") {
+          this.handleBrowserSpeech(message);
         } else if (type === "turn_complete" || type === "tts_end") {
           this.playbackResampler?.reset();
         }
@@ -236,11 +321,34 @@ export class RealtimeAudioClient {
   }
 
   private handleAudio(pcm: ArrayBuffer): void {
+    this.browserSpeech.cancel();
     if (!this.playbackResampler) this.setOutputRate(24_000);
     const converted = this.playbackResampler?.process(pcm) ?? pcm;
     if (converted.byteLength === 0) return;
     this.playbackNode?.port.postMessage({ type: "pcm", data: converted }, [converted]);
     this.cb.onAudio?.();
+  }
+
+  private handleBrowserSpeech(message: RealtimeStatusPayload): void {
+    const id = typeof message.id === "string" ? message.id : "";
+    const text = typeof message.text === "string" ? message.text : "";
+    if (!id || !text.trim()) return;
+
+    this.playbackResampler?.reset();
+    this.playbackNode?.port.postMessage({ type: "flush" });
+    const language = typeof message.language === "string" ? message.language : "en-US";
+    const volume = typeof message.volume === "number" ? message.volume : 1;
+    this.browserSpeech.speak(text, language, volume, {
+      onStart: () => this.cb.onAudio?.(),
+      onFinish: (outcome) => {
+        if (outcome !== "ended") {
+          this.cb.onStatus?.(`tts_browser_${outcome}`, { ...message, outcome });
+        }
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: "tts_browser_done", id, outcome }));
+        }
+      },
+    });
   }
 
   async disconnect(): Promise<void> {
@@ -260,6 +368,7 @@ export class RealtimeAudioClient {
       }
     }
     socket?.close();
+    this.browserSpeech.cancel();
     this.captureNode?.disconnect();
     this.captureSink?.disconnect();
     this.playbackNode?.disconnect();

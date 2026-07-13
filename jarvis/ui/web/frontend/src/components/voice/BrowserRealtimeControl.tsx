@@ -54,7 +54,10 @@ export function BrowserRealtimeControl() {
         if (role === "user") setTranscription(text, isFinal);
         if (role === "user" && isFinal) setVoice("thinking");
       },
-      onAudio: () => setVoice("speaking"),
+      onAudio: () => {
+        setError("");
+        setVoice("speaking");
+      },
       onInputLevel: setInputLevel,
       onStatus: (status, payload) => {
         if (status === "audio_ready") {
@@ -71,6 +74,9 @@ export function BrowserRealtimeControl() {
         } else if (status === "turn_complete" || status === "tts_end") {
           setVoice("listening");
         } else if (status === "tts_cancel") {
+          setVoice("listening");
+        } else if (status === "tts_browser_unavailable" || status === "tts_browser_error") {
+          setError(t("sidebar.realtime_browser_tts_unavailable"));
           setVoice("listening");
         } else if (status === "provider_error" || status === "disconnected") {
           setState("error");

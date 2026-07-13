@@ -1,5 +1,9 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { buildAudioSocketUrl, StreamingPcm16Resampler } from "./realtimeAudio";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import {
+  BrowserSpeechFallback,
+  buildAudioSocketUrl,
+  StreamingPcm16Resampler,
+} from "./realtimeAudio";
 
 describe("realtime audio client", () => {
   beforeEach(() => {
@@ -31,5 +35,59 @@ describe("realtime audio client", () => {
     const second = new Int16Array(streamed.process(input.slice(1_200).buffer));
 
     expect([...first, ...second]).toEqual([...whole]);
+  });
+
+  it("speaks a server-approved fallback with language and volume", () => {
+    const utterances: SpeechSynthesisUtterance[] = [];
+    const synthesis = {
+      cancel: vi.fn(),
+      speak: vi.fn((utterance: SpeechSynthesisUtterance) => utterances.push(utterance)),
+    };
+    const createUtterance = (text: string) =>
+      ({ text, lang: "", volume: 1, onstart: null, onend: null, onerror: null }) as unknown as
+      SpeechSynthesisUtterance;
+    const controller = new BrowserSpeechFallback(synthesis, createUtterance);
+    const started = vi.fn();
+    const finished = vi.fn();
+
+    expect(controller.speak("Hola", "es-ES", 0.4, { onStart: started, onFinish: finished })).toBe(
+      true,
+    );
+    expect(utterances[0].lang).toBe("es-ES");
+    expect(utterances[0].volume).toBe(0.4);
+    utterances[0].onstart?.(new Event("start") as SpeechSynthesisEvent);
+    utterances[0].onend?.(new Event("end") as SpeechSynthesisEvent);
+    expect(started).toHaveBeenCalledOnce();
+    expect(finished).toHaveBeenCalledWith("ended");
+  });
+
+  it("fails honestly when the browser has no speech service", () => {
+    const finished = vi.fn();
+    const controller = new BrowserSpeechFallback(null, null);
+
+    expect(controller.speak("Answer", "en-US", 1, { onFinish: finished })).toBe(false);
+    expect(finished).toHaveBeenCalledWith("unavailable");
+  });
+
+  it("ignores a stale completion after a newer fallback starts", () => {
+    const utterances: SpeechSynthesisUtterance[] = [];
+    const synthesis = {
+      cancel: vi.fn(),
+      speak: (utterance: SpeechSynthesisUtterance) => utterances.push(utterance),
+    };
+    const createUtterance = (text: string) =>
+      ({ text, lang: "", volume: 1, onstart: null, onend: null, onerror: null }) as unknown as
+      SpeechSynthesisUtterance;
+    const controller = new BrowserSpeechFallback(synthesis, createUtterance);
+    const first = vi.fn();
+    const second = vi.fn();
+
+    controller.speak("First", "en-US", 1, { onFinish: first });
+    controller.speak("Second", "en-US", 1, { onFinish: second });
+    utterances[0].onend?.(new Event("end") as SpeechSynthesisEvent);
+    utterances[1].onend?.(new Event("end") as SpeechSynthesisEvent);
+
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledWith("ended");
   });
 });

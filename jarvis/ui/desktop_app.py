@@ -1902,7 +1902,9 @@ class DesktopApp:
             logger.opt(exception=exc).warning("Virtual mouse overlay not startable")
             self._virtual_cursor = None
 
-    def _build_overlay_surface(self, style: str):
+    def _build_overlay_surface(
+        self, style: str, *, gate_until_voice_ready: bool = False
+    ):
         """Construct (and start) the overlay surface for a display style.
 
         Returns a ``NullOverlay`` for ``"none"`` (no Tk window, no-op surface),
@@ -1910,12 +1912,11 @@ class DesktopApp:
         mascot ``OrbOverlay`` for anything else. Shared by boot wiring and the
         live ``swap_overlay`` path so the two never drift.
 
-        A persistent ``JarvisBarOverlay`` maps its window immediately, so the
-        bar is visible as soon as it is constructed — at boot AND on a live
-        ``swap_overlay``. Its boot visibility is deliberately decoupled from the
-        voice warm-up / wake path (the sidebar "Voice starting…" badge carries
-        readiness instead). A non-persistent bar / the mascot still starts
-        withdrawn and pops on a real session.
+        ``gate_until_voice_ready=True`` is reserved for the desktop boot path.
+        It lets the Jarvis Bar initialize and paint off-screen, but suppresses
+        every reveal until ``OrbBusBridge`` receives the honest voice-usable
+        signal. Runtime surfaces keep their immediate behavior. A non-persistent
+        bar / the mascot still starts withdrawn and pops on a real session.
         """
         if style == "none":
             from jarvis.ui.jarvisbar import NullOverlay
@@ -1924,12 +1925,12 @@ class DesktopApp:
         if style == "jarvis_bar":
             from jarvis.ui.jarvisbar import JarvisBarOverlay
 
-            # A persistent bar maps immediately. The non-persistent variant
-            # still starts withdrawn through its own ``persistent`` contract and
-            # appears on the first genuine voice session.
+            # The startup gate is stronger than merely starting withdrawn: early
+            # state/wake events cannot reveal the bar while voice is warming.
             surface = JarvisBarOverlay(
                 persistent=self.cfg.ui.bar_persistent,
                 accent=self.cfg.ui.bar_accent,
+                startup_gated=gate_until_voice_ready,
             )
         else:  # "mascot" (and any legacy style value)
             from ui.orb.overlay import OrbOverlay
@@ -2218,9 +2219,13 @@ class DesktopApp:
                 from ui.orb.bus_bridge import OrbBusBridge
 
                 # NullOverlay for "none" still gets a bridge, so a live switch to
-                # bar/mascot works without a restart. A persistent bar maps now;
-                # voice readiness is reported separately by the desktop UI.
-                surface = self._build_overlay_surface(orb_style)
+                # bar/mascot works without a restart. The boot-created Jarvis Bar
+                # initializes withdrawn; the bridge releases its visibility gate
+                # only on the genuine voice-usable signal.
+                surface = self._build_overlay_surface(
+                    orb_style,
+                    gate_until_voice_ready=(orb_style == "jarvis_bar"),
+                )
                 hide_on_idle = (
                     (not self.cfg.ui.bar_persistent)
                     if orb_style == "jarvis_bar"
@@ -2228,13 +2233,6 @@ class DesktopApp:
                 )
                 bridge = OrbBusBridge(bus=bus, orb=surface, hide_on_idle=hide_on_idle)
                 bridge.attach()
-                # The persistent bar is already visible. Once the rest of the
-                # desktop and voice stack have mapped, re-assert its current
-                # mode/topmost state without changing visibility or turn state.
-                loop.create_task(
-                    bridge.reassert_persistent_bar_when_voice_ready(),
-                    name="overlay-boot-reassert",
-                )
                 self._orb = surface
                 self._bridge = bridge
                 # Cache the boot surface so a later swap back to it reuses the
@@ -2715,7 +2713,7 @@ class DesktopApp:
                 _usable_printed = [False]
 
                 async def _print_voice_usable(evt: _VBS) -> None:
-                    if getattr(evt, "ready", False) and not _usable_printed[0]:
+                    if evt.voice_usable and not _usable_printed[0]:
                         _usable_printed[0] = True
                         print(
                             "VOICE_USABLE_MS="

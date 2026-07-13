@@ -171,10 +171,18 @@ class JarvisBarOverlay:
         persistent: bool = True,
         accent: str = "#e7c46e",
         opacity: float = BAR_ALPHA,
+        startup_gated: bool = False,
     ) -> None:
         self._persistent = persistent
         self._accent = accent
         self._opacity = max(0.2, min(1.0, float(opacity)))  # clamp to sane range
+        # The desktop boot path constructs and paints the bar early, while it is
+        # still withdrawn, then releases this gate on the honest voice-usable
+        # signal. This is stronger than an initial ``withdraw``: every early
+        # IDLE/wake/session ``show()`` is suppressed too, so no event can make the
+        # bar advertise a voice stack that is still warming. Runtime-created
+        # surfaces leave the opt-in gate off and retain their immediate behavior.
+        self._startup_gated = bool(startup_gated)
         self._mode = "idle"
         self._ext_level = 0.0
         # perf_counter() of the last set_level() that carried real sound
@@ -225,6 +233,12 @@ class JarvisBarOverlay:
         self._mode = mode
         if self._root is None:
             return
+        # Keep accepting state updates while boot is warming so release can show
+        # the latest correct mode, but never map the native window before the
+        # voice-usable signal. This guard closes the historical bypass where a
+        # wake candidate revealed a merely start-withdrawn bar.
+        if getattr(self, "_startup_gated", False):
+            return
         if not self._persistent and mode == "idle":
             self._enqueue_ui(self._do_hide)
         else:
@@ -249,7 +263,28 @@ class JarvisBarOverlay:
         """
         if self._root is None:
             return
+        if getattr(self, "_startup_gated", False):
+            return
         self._enqueue_ui(self._do_reassert_z_order)
+
+    def release_startup_gate(self) -> bool:
+        """Allow the boot-created bar to become visible exactly once.
+
+        Returns ``True`` only when this call released an active gate. The latest
+        mode has continued to track bus events while hidden, so a persistent bar
+        is revealed in that mode rather than being reset to idle. A
+        non-persistent bar remains withdrawn while idle and can pop normally on
+        its next real session.
+        """
+        if not getattr(self, "_startup_gated", False):
+            return False
+        self._startup_gated = False
+        if self._root is None:
+            return True
+        if not self._persistent and self._mode == "idle":
+            return True
+        self._enqueue_ui(self._do_show)
+        return True
 
     def set_level(self, level: float) -> None:
         # Direct atomic write (no enqueue) — matches OrbOverlay.set_level.
@@ -295,12 +330,13 @@ class JarvisBarOverlay:
     # Lifecycle                                                          #
     # ------------------------------------------------------------------ #
     def _should_start_withdrawn(self) -> bool:
-        """True only for the wake-triggered, non-persistent variant.
+        """True while boot-gated or for the non-persistent variant.
 
-        A persistent bar is an always-visible desktop element and maps as soon
-        as its Tk window starts. Voice readiness must never gate its visibility.
+        The boot-created persistent bar is fully configured and painted while
+        withdrawn, then mapped by ``release_startup_gate`` once voice is usable.
+        Other persistent bars keep their immediate-map behavior.
         """
-        return not self._persistent
+        return (not self._persistent) or getattr(self, "_startup_gated", False)
 
     def start_in_thread(self, timeout: float = 3.0) -> None:
         def _run() -> None:
