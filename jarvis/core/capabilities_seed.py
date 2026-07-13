@@ -78,7 +78,7 @@ _AWARENESS_OBJECTS: tuple[str, ...] = (
 
 _SEED_CAPABILITIES: list[Capability] = [
     # ------------------------------------------------------------------ #
-    # ROUTER_TOOLS (11)
+    # LLM-visible router capabilities
     # ------------------------------------------------------------------ #
     Capability(
         id="tool.run-shell",
@@ -114,18 +114,6 @@ _SEED_CAPABILITIES: list[Capability] = [
             "worker", "code", "datei", "file", "repo", "repository",
         ),
         description="Spawn a background worker sub-agent for heavy code or file tasks.",
-        risk_tier="ask",
-        requires_evidence=True,
-    ),
-    Capability(
-        id="tool.dispatch-with-review",
-        source="router_tool",
-        verbs=_ACTION_VERBS + ("review", "check", "pruefe", "prüfe"),  # i18n-allow
-        objects=(
-            "review", "quality", "qualitaet", "qualität", "critic",  # i18n-allow
-            "kritik", "check", "pruefung", "prüfung",  # i18n-allow
-        ),
-        description="Dispatch a task through the Quality-Gate (Worker + Critic) pipeline.",
         risk_tier="ask",
         requires_evidence=True,
     ),

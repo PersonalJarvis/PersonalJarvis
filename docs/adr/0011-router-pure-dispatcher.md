@@ -4,14 +4,14 @@ slug: adr-0011-router-pure-dispatcher
 diataxis: adr
 status: active
 owner: sam
-last_reviewed: 2026-07-12
+last_reviewed: 2026-07-13
 phase: 5
 audience: developer
 ---
 
 # ADR-0011 — Main Jarvis is a Pure Dispatcher with EXACTLY four tools
 
-**Status:** Amended 2026-07-12
+**Status:** Amended 2026-07-13
 **Phase:** Persona refactor §3 — routing fix
 
 ## Context
@@ -857,3 +857,50 @@ but model-facing schemas and prompts must not advertise it.
 
 - Keep exact router-set and capability-registry negative tests.
 - Keep recursive spawn tools out of every worker capability inventory.
+
+## Amendment 2026-07-13 - retire `dispatch-with-review` from the router
+
+### Context
+
+`dispatch-with-review` still exposed the retired Phase-8 review pipeline as a
+second model-visible heavy-work path. Its worker spawner can only select the
+unregistered `jarvis_agent` or `openclaw` harness names, while the production
+Mission Manager already applies `CriticRunner` to every supervised mission.
+Keeping both tools made an otherwise valid Realtime action nondeterministically
+choose a path that cannot execute on any supported installation.
+
+### Decision
+
+Remove `dispatch-with-review` from `ROUTER_TOOLS` and from the seeded capability
+registry. `spawn-worker` is the sole model-visible heavy-work entry point, and
+its Mission Manager owns worker execution, critic retries, and Kontrollierer
+sign-off. The legacy review entry point may remain temporarily for internal
+compatibility, but routing, capability discovery, and prompts must not advertise
+it.
+
+### Consequences
+
+- Realtime, chat, and voice all enter the same supervised mission lifecycle.
+- Every model-selected heavy task receives the live worker fallback chain and
+  the production Critic instead of an unavailable harness error.
+- Existing direct callers of the legacy review tool continue to receive its
+  compatibility behavior until the implementation is removed or migrated.
+- Two model-visible tools can no longer compete for the same reviewed mission.
+
+### Alternatives considered
+
+- Re-register the retired harnesses: rejected because the OpenClaw subprocess
+  path was removed after repeated reliability failures.
+- Rewrite `dispatch-with-review` as a second alias for `spawn-worker`: rejected
+  because duplicate schemas recreate nondeterministic model selection and split
+  telemetry across two names.
+- Keep both tools and improve the prompt: rejected because prompt guidance
+  cannot make an unregistered execution backend available.
+
+### Follow-up items
+
+- Keep negative router and capability-registry tests for
+  `dispatch-with-review`.
+- Preserve the Mission Manager Critic-loop smoke test as the review guarantee.
+- Remove the legacy review implementation once non-router compatibility callers
+  have migrated.

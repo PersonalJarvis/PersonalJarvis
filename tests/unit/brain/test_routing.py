@@ -1093,6 +1093,13 @@ def test_multi_spawn_not_in_router_tools() -> None:
     assert "multi-spawn" not in ROUTER_TOOLS
 
 
+def test_dispatch_with_review_not_in_router_tools() -> None:
+    """Review belongs to the canonical Mission Manager lifecycle."""
+    from jarvis.brain.factory import ROUTER_TOOLS
+
+    assert "dispatch-with-review" not in ROUTER_TOOLS
+
+
 @pytest.mark.parametrize(
     "utterance",
     [
@@ -1691,8 +1698,6 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # spawn-worker, desktop → computer-use. It must NOT reappear here;
             # the negative guard ``test_dispatch_to_harness_not_in_router_tools``
             # pins that.
-            # Phase 8.4 (Quality-Gate, Recursion-geschuetzt analog spawn-worker)
-            "dispatch-with-review",
             # AI Pointer (pull path): resolve the element under the mouse cursor
             # via the OS accessibility tree. Read-only safe-tier, direct action,
             # never a spawn (AP-5/AP-14). See docs/plans/ai-pointer/DESIGN.md.

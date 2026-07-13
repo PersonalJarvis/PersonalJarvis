@@ -29,10 +29,10 @@ BrainCallback = Callable[[str], Awaitable[str]]
 # + Wave-4 amendment ``spawn-sub-jarvis`` -> ``spawn-worker``) and
 # Master-Plan §22 / Persona-Mandate Phase 3.
 #
-# Baseline after the 2026-07-12 cleanup: run-shell, screen-snapshot,
-# spawn-worker. Phase 8.4 (Plan §6.4 Quality-Gate) added dispatch-with-review,
-# which legitimately extends the set without breaking the pure-dispatcher
-# spirit.
+# Baseline after the 2026-07-13 cleanup: run-shell, screen-snapshot, and
+# spawn-worker. The legacy dispatch-to-harness, multi-spawn, and
+# dispatch-with-review paths are deliberately not model-visible because each
+# duplicated or bypassed the supervised Mission Manager lifecycle.
 #
 # REMOVED 2026-06-28 — ``dispatch-to-harness`` is intentionally NOT a
 # LLM-visible router tool. Its raw ``harness`` parameter let the brain request
@@ -63,9 +63,6 @@ ROUTER_TOOLS = frozenset({
     # see the header comment above. Heavy work → spawn-worker; desktop →
     # computer-use. The tool remains for the internal local-action fast path.
     "spawn-worker",
-    # Phase 8.4 (Plan §6.4) — Hauptjarvis calls the quality-gate pipeline
-    # explicitly. NEVER downstream in a recursive spawn (D9 recursion guard).
-    "dispatch-with-review",
     # AI Pointer (pull path): resolve the on-screen element under the mouse
     # cursor via the OS accessibility tree. Read-only, safe-tier; the brain
     # calls it on deictic questions ("what is this?"). A direct safe-gated read,

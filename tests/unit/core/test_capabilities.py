@@ -318,7 +318,6 @@ class TestSeedRegistry:
             # NB: tool.dispatch-to-harness removed 2026-06-28 (no longer an
             # LLM-visible router tool — phantom-openclaw routing fix).
             "tool.spawn-worker",
-            "tool.dispatch-with-review",
             "tool.awareness-snapshot",
             "tool.awareness-recall",
             "tool.run-skill",
@@ -347,6 +346,11 @@ class TestSeedRegistry:
         """Parallel work is expressed through one supervised mission path."""
         ids = {c.id for c in self.reg.all()}
         assert "tool.multi-spawn" not in ids
+
+    def test_dispatch_with_review_capability_removed(self) -> None:
+        """Review is part of spawn-worker, never a competing router action."""
+        ids = {c.id for c in self.reg.all()}
+        assert "tool.dispatch-with-review" not in ids
 
     def test_local_actions_present(self) -> None:
         ids = {c.id for c in self.reg.all()}
@@ -394,7 +398,6 @@ class TestSeedRegistry:
             "tool.run-shell",
             "tool.screen-snapshot",
             "tool.spawn-worker",
-            "tool.dispatch-with-review",
             "tool.run-skill",
             "tool.wiki-ingest",
         }
