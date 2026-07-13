@@ -26,7 +26,7 @@ import logging
 import re
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
@@ -1418,9 +1418,11 @@ class CriticRunner:
         # onto disk via the cross-family walk) was thrown away. A non-viable
         # Claude falls through to the codex / in-process API critic below.
         claude_cli_viable = _claude_cli_critic_viable()
+        claude_cli_attempted = False
         if primary_provider == "claude-api":
             if claude_cli_viable:
-                return await self._invoke_via_claude_direct(
+                claude_cli_attempted = True
+                claude_verdict = await self._invoke_via_claude_direct(
                     prompt=prompt_for_subprocess,
                     worktree=worktree,
                     env=env,
@@ -1428,12 +1430,19 @@ class CriticRunner:
                     iteration=iteration,
                     adversarial_reframe=adversarial_reframe,
                 )
-            logger.warning(
-                "CriticRunner: the `claude` CLI critic is not auth-viable "
-                "(dead/expired login, no classic Anthropic key) — crossing to "
-                "the codex / API-key critic families. Run `claude /login` to "
-                "restore the Claude critic."
-            )
+                if claude_verdict is not None:
+                    return claude_verdict
+                logger.warning(
+                    "CriticRunner: claude critic produced no schema-valid "
+                    "verdict; crossing to the other viable critic families."
+                )
+            else:
+                logger.warning(
+                    "CriticRunner: the `claude` CLI critic is not auth-viable "
+                    "(dead/expired login, no classic Anthropic key) — crossing "
+                    "to the codex / API-key critic families. Run `claude "
+                    "/login` to restore the Claude critic."
+                )
         # Welle 6 (2026-05-18): ChatGPT subscription path via codex exec.
         # Same JSON-verdict contract -- codex exec --json runs the model
         # non-interactively, the prompt enforces strict JSON output, the
@@ -1483,7 +1492,8 @@ class CriticRunner:
                     "restore the codex critic.",
                     model,
                 )
-                return await self._invoke_via_claude_direct(
+                claude_cli_attempted = True
+                claude_verdict = await self._invoke_via_claude_direct(
                     prompt=prompt_for_subprocess,
                     worktree=worktree,
                     env=env,
@@ -1491,11 +1501,19 @@ class CriticRunner:
                     iteration=iteration,
                     adversarial_reframe=adversarial_reframe,
                 )
-            logger.warning(
-                "CriticRunner: codex critic produced no verdict and the claude "
-                "critic is not auth-viable — crossing to the in-process API "
-                "critic families."
-            )
+                if claude_verdict is not None:
+                    return claude_verdict
+                logger.warning(
+                    "CriticRunner: both codex and claude produced no "
+                    "schema-valid verdict; crossing to the API critic "
+                    "families."
+                )
+            if not claude_cli_viable:
+                logger.warning(
+                    "CriticRunner: codex critic produced no verdict and the "
+                    "claude critic is not auth-viable; crossing to the "
+                    "in-process API critic families."
+                )
 
         # Any other provider (grok / gemini / openrouter / unset) falls back to
         # the direct claude critic. The OpenClaw subprocess critic path was
@@ -1514,8 +1532,16 @@ class CriticRunner:
         # legacy claude-CLI critic, so openrouter/openai/gemini/antigravity/unset
         # missions are reviewed with the user's OWN key instead of the absent
         # `claude` binary. Falls through to claude-direct only when NO API key exists.
-        api_provider, api_model = _resolve_api_critic_provider(primary_provider, primary_model)
-        if api_provider:
+        attempted_api_providers: set[str] = set()
+        while True:
+            api_provider, api_model = _resolve_api_critic_provider(
+                primary_provider,
+                primary_model,
+                excluded_providers=attempted_api_providers,
+            )
+            if not api_provider or api_provider in attempted_api_providers:
+                break
+            attempted_api_providers.add(api_provider)
             logger.info(
                 "CriticRunner: grading in-process via the %r API brain "
                 "(worker provider=%r).", api_provider, primary_provider,
@@ -1530,23 +1556,29 @@ class CriticRunner:
             if api_verdict is not None:
                 return api_verdict
             logger.warning(
-                "CriticRunner: in-process API critic (%r) produced no verdict — "
-                "falling back to the claude-direct critic.", api_provider,
+                "CriticRunner: in-process API critic (%r) produced no "
+                "schema-valid verdict; trying the next viable family.",
+                api_provider,
             )
-        if primary_provider:
+        if claude_cli_viable and not claude_cli_attempted:
             logger.info(
-                "CriticRunner: sub_jarvis provider %r has no direct critic — "
-                "grading on the claude critic model %r (Claude Max OAuth).",
-                primary_provider, model,
+                "CriticRunner: API critic families are exhausted; grading "
+                "the Jarvis-Agent output with the claude critic model %r.",
+                model,
             )
-        return await self._invoke_via_claude_direct(
-            prompt=prompt_for_subprocess,
-            worktree=worktree,
-            env=env,
-            model=model,
-            iteration=iteration,
-            adversarial_reframe=adversarial_reframe,
+            return await self._invoke_via_claude_direct(
+                prompt=prompt_for_subprocess,
+                worktree=worktree,
+                env=env,
+                model=model,
+                iteration=iteration,
+                adversarial_reframe=adversarial_reframe,
+            )
+        logger.error(
+            "CriticRunner: every viable critic family failed to return a "
+            "schema-valid verdict."
         )
+        return None
 
     # --- Internal: direct claude --print path (CRIT-1, 2026-05-17) ---
 
@@ -2061,7 +2093,10 @@ def _provider_picked_model(provider: str) -> str | None:
 
 
 def _resolve_api_critic_provider(
-    primary_provider: str | None, primary_model: str | None
+    primary_provider: str | None,
+    primary_model: str | None,
+    *,
+    excluded_providers: Collection[str] = (),
 ) -> tuple[str | None, str | None]:
     """Pick a keyed API brain provider to grade the mission IN-PROCESS (B2, AP-22).
 
@@ -2069,8 +2104,9 @@ def _resolve_api_critic_provider(
     otherwise the first API provider that actually has a usable key at runtime. So
     a mission whose worker ran on antigravity/openrouter/gemini is still reviewed
     with the user's OWN key instead of the absent `claude` CLI binary. Returns
-    ``(None, None)`` when no API key is available → the caller keeps the legacy
-    claude-direct critic as the last resort.
+    ``excluded_providers`` contains families already attempted during this
+    review turn. Returns ``(None, None)`` when no untried API family is viable,
+    allowing the caller to continue to a separately authenticated CLI family.
     """
     # Viability-gated, not existence-gated (BUG-042 defect 3, critic edition):
     # a stale sk-ant-oat claude-api credential or a family a worker just
@@ -2081,7 +2117,10 @@ def _resolve_api_critic_provider(
     if primary_provider in _API_CRITIC_PROVIDERS:
         order.append(primary_provider)  # type: ignore[arg-type]
     order += [p for p in _API_CRITIC_PROVIDERS if p not in order]
+    excluded = set(excluded_providers)
     for prov in order:
+        if prov in excluded:
+            continue
         try:
             if _api_key_family_viable(prov):
                 # Same provider as the worker → reuse its model. Cross-family →
@@ -2094,7 +2133,7 @@ def _resolve_api_critic_provider(
                     else _provider_picked_model(prov)
                 )
                 return prov, model
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S112 -- skip an unreadable family probe
             continue
     return None, None
 

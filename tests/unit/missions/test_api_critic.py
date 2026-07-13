@@ -5,10 +5,15 @@ parser used by the in-process path.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 import jarvis.core.config as cfg_mod
 from jarvis.missions.critic.runner import (
     REQUIRED_AXES,
     CriticAxis,
+    CriticRunner,
     CriticVerdict,
     _parse_verdict_from_text,
     _resolve_api_critic_provider,
@@ -68,3 +73,72 @@ def test_api_critic_none_when_no_api_key(monkeypatch):
     monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda p: None)
     prov, model = _resolve_api_critic_provider("antigravity", None)
     assert prov is None
+
+
+def test_api_critic_resolver_can_exclude_a_failed_family(monkeypatch):
+    monkeypatch.setattr(
+        "jarvis.missions.init._api_key_family_viable",
+        lambda provider: provider in {"openrouter", "gemini"},
+    )
+
+    provider, _model = _resolve_api_critic_provider(
+        "antigravity",
+        None,
+        excluded_providers={"openrouter"},
+    )
+
+    assert provider == "gemini"
+
+
+@pytest.mark.asyncio
+async def test_critic_walks_to_next_api_family_after_invalid_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "jarvis.missions.critic.runner._resolve_critic_provider_model",
+        lambda: ("antigravity", None),
+    )
+    monkeypatch.setattr(
+        "jarvis.missions.critic.runner._claude_cli_critic_viable",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "jarvis.missions.init._api_key_family_viable",
+        lambda provider: provider in {"openrouter", "gemini"},
+    )
+    attempted: list[str] = []
+
+    async def _fake_api_critic(self, **kwargs):  # noqa: ANN001, ANN202
+        attempted.append(kwargs["provider"])
+        if kwargs["provider"] == "openrouter":
+            return None
+        return CriticVerdict(
+            verdict="approve",
+            axes={
+                axis: CriticAxis(status="pass", evidence=["verified"])
+                for axis in REQUIRED_AXES
+            },
+            issues=[],
+            correction_instruction="",
+            summary="The mission output is verified.",
+            summary_de="The mission output is verified.",
+            confidence=0.9,
+            suggested_next_action="accept",
+        )
+
+    monkeypatch.setattr(CriticRunner, "_invoke_via_api_critic", _fake_api_critic)
+
+    verdict = await CriticRunner().run(
+        mission_prompt="Implement the requested feature.",
+        worker_diff="diff --git a/a.py b/a.py\n+print('done')",
+        worker_log="worker completed",
+        prior_reflections="",
+        iteration=0,
+        worktree=tmp_path,
+        env={},
+        _capability_check=False,
+    )
+
+    assert verdict.verdict == "approve"
+    assert attempted == ["openrouter", "gemini"]
