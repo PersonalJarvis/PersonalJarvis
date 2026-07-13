@@ -3596,3 +3596,33 @@ back deterministically — never rely on the model to do it. And every
 vocabulary that matches normalized text must be written in the SAME
 normalized form that `_normalize` actually produces; a mismatch is silent
 and total, not partial.
+
+## BUG-049: Classic TTS voice speaks into a live realtime call (HIGH, 2026-07-13)
+
+**Symptom.** In a realtime voice session (17:39, delegate mode), the user asked
+for a full listing of their Wiki. While the delegated router-brain turn was
+thinking (~31 s), Jarvis spoke the interim line "I am searching your wiki" in
+the CLASSIC pipeline TTS voice — a sudden second voice/engine inside the live
+call. The user read it as "Jarvis switched from realtime to the pipeline",
+although the final answer was in fact delivered by the realtime model.
+
+**Root cause.** The ack brain published `AnnouncementRequested(kind=preamble)`
+mid-turn. `RealtimeVoiceSession.deliver_announcement` correctly refuses a busy
+session (text input would interrupt the provider's response lifecycle), and
+`_on_announcement` treated every refusal as "use classic TTS" — it never
+distinguished a BUSY live call from a DEAD one.
+
+**Fix.** `RealtimeVoiceSession.is_active` + a gate in `_on_announcement`:
+while a healthy live call owns the voice, ephemeral preamble/progress lines
+are dropped (stale by the time the live model could speak them) and owed
+readbacks are parked in `_deferred_announcements`, whose existing
+turn-boundary replay hands them to the now-idle live model. Classic TTS
+speaks only once the call has ended or failed.
+
+**Guards.** `tests/unit/speech/test_realtime_announcement_bridge.py` — busy
+call defers owed readbacks and drops preambles, dead call keeps the classic
+fallback, deferred readback reaches the idle live model at the boundary.
+
+**Class rule.** A voice surface has ONE voice at a time. Any fallback from
+the live realtime voice to classic TTS must be gated on the live call being
+GONE, never merely busy — "busy" means wait or drop, not switch voices.
