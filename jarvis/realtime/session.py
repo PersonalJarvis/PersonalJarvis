@@ -794,6 +794,7 @@ class RealtimeVoiceSession:
                             self._delegate_required_for_turn = (
                                 self._delegate_required_for_turn
                                 or turn_plan.requires_orchestrator
+                                or self._brain_awaits_voice_confirm()
                             )
                         refresh_tools = getattr(
                             self._tool_bridge, "refresh_from_source", None
@@ -1456,6 +1457,24 @@ class RealtimeVoiceSession:
         if self._tool_bridge is not None:
             return _TOOL_ROLE_DIRECTIVE
         return ""
+
+    def _brain_awaits_voice_confirm(self) -> bool:
+        """True while the classic brain holds a two-turn ask-tier confirmation.
+
+        The pending yes/no answer must reach the brain's confirmation resume
+        deterministically: a bare answer ("yes", "no") never matches the
+        planner's action vocabulary, so without this probe the confirmed
+        ask-tier action would depend on the provider voluntarily calling
+        ``jarvis_action`` — prompt compliance is not a correctness boundary
+        (BUG-047 class rule).
+        """
+        probe = getattr(self._brain, "has_pending_voice_confirm", None)
+        if not callable(probe):
+            return False
+        try:
+            return bool(probe())
+        except Exception:  # noqa: BLE001 — a probe failure must not stall the turn
+            return False
 
     def _delegate_delivery_started(self) -> bool:
         state = self._delegate_turns.get(self._turn_id)

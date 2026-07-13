@@ -1790,6 +1790,69 @@ async def test_general_knowledge_turn_keeps_native_realtime_answering(utterance)
     await sess.end(reason="test")
 
 
+class _ConfirmAwaitingBrain(FakeBrain):
+    """FakeBrain that reports a pending two-turn voice confirmation."""
+
+    def __init__(self, *args, pending=True, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.pending = pending
+
+    def has_pending_voice_confirm(self):
+        return self.pending
+
+
+@pytest.mark.asyncio
+async def test_pending_voice_confirm_forces_deterministic_delegation():
+    """A bare yes/no answer must reach the brain's confirmation resume.
+
+    "Ja, gerne." matches no planner action vocabulary, so without the
+    pending-confirm probe the armed ask-tier action would depend on the
+    provider voluntarily calling jarvis_action.
+    """
+    brain = _ConfirmAwaitingBrain(replies=("The email was sent.",))
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="Ja, gerne.",  # i18n-allow: German speech-input fixture
+                is_final=True,
+            )
+        ]
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.12)
+
+    assert brain.calls[0][0] == "Ja, gerne."  # i18n-allow: fixture echo
+    assert provider.session.text_inputs
+    assert "<trusted_action_result>" in provider.session.text_inputs[-1]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_bare_answer_without_pending_confirm_stays_native():
+    brain = _ConfirmAwaitingBrain(pending=False)
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="Ja, gerne.",  # i18n-allow: German speech-input fixture
+                is_final=True,
+            )
+        ]
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+
+    assert brain.calls == []
+    assert provider.session.required_tools == [None]
+    await sess.end(reason="test")
+
+
 @pytest.mark.asyncio
 async def test_automatic_provider_wiki_turn_runs_brain_without_tool_call():
     brain = FakeBrain(replies=("The Wiki entry was saved.",))
