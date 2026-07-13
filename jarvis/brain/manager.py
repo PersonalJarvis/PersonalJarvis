@@ -78,6 +78,7 @@ from jarvis.safety.tool_executor import ToolExecutor
 from jarvis.brain.provider_test import BILLING_LIMIT_MARKERS
 
 from .dispatcher import BrainDispatcher
+from .tool_surface import maybe_reconcile_tool_surface, stamp_tool_surface
 from .intent_router import RoutingDecision, classify
 from .local_action_gate import (
     HARNESS_NAME,
@@ -6669,6 +6670,14 @@ class BrainManager:
         self._active_turn_identity = None
         turn_trace_id = trace_id or uuid4()
 
+        # Tool-surface self-heal (live 2026-07-13): a source that connects
+        # AFTER the boot's last BrainToolsChanged — or whose event is lost to a
+        # wedged plugin bootstrap — otherwise stays invisible for the WHOLE
+        # session and the model refuses with "tool not available". Cheap
+        # names-only drift check against the live CLI/plugin/MCP caches; one
+        # refresh_tools() when they diverge. Never raises.
+        maybe_reconcile_tool_surface(self)
+
         # auto mode: resolve this turn's language so _reply_language_directive()
         # hard-pins it (a soft "mirror" drifts to German on tool-synthesis
         # turns — live bug 2026-06-14: an English weather turn answered in
@@ -8290,6 +8299,10 @@ class BrainManager:
         old_count = len(self._tools)
         self._tools = new_tools
         self._local_action_tools = new_local_action_tools
+        # Record what the sources looked like at THIS load, so the per-turn
+        # reconcile (tool_surface.maybe_reconcile_tool_surface) only fires on
+        # genuine drift after a missed BrainToolsChanged.
+        stamp_tool_surface(self)
         log.info(
             "Tool-Registry refreshed: %d -> %d tools",
             old_count, len(new_tools),

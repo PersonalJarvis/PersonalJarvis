@@ -13,8 +13,10 @@ graceful-degradation doctrine).
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from jarvis.marketplace.catalog import PluginCatalog, PluginSpec
 from jarvis.marketplace.catalog_data import load_catalog
@@ -53,6 +55,34 @@ def _deregister_plugin_capability(cap_registry, plugin_id) -> None:
     cap_registry.deregister(f"{PAIRED_CAP_PREFIX}{plugin_id}")
 
 
+# Upper bound for one plugin's connect (transport handshake + list_tools).
+# A wedged remote handshake must degrade to a per-plugin connect error, never
+# stall the bootstrap loop: live 2026-07-13, mcp.linear.app answered a stale
+# token with 401 and then never completed the stream — bootstrap hung there on
+# every boot, so the completion BrainToolsChanged never fired and the github
+# plugin's tools only reached the brain when their connect happened to beat
+# the last unrelated tool refresh (the intermittent "tool not available" bug).
+_CONNECT_TIMEOUT_S_DEFAULT = 15.0
+
+
+def _connect_needs_reauth(message: str) -> bool:
+    """True iff a connect failure indicates a dead credential, not a flaky host.
+
+    Reuses the refresh scheduler's canonical OAuth marker list and adds the
+    connect-time shapes (an HTTP 401/unauthorized on the MCP endpoint itself).
+    Conservative on purpose: 'Connection closed', timeouts, and 5xx stay
+    retryable so one flaky boot never flags a healthy plugin."""
+    try:
+        from jarvis.marketplace.refresh_scheduler import _refresh_needs_reauth
+
+        if _refresh_needs_reauth(message):
+            return True
+    except Exception:  # noqa: BLE001 — classifier is best-effort
+        log.debug("connect reauth classifier unavailable", exc_info=True)
+    m = message.lower()
+    return "401" in m or "unauthorized" in m or "invalid_token" in m
+
+
 class PluginToolRegistry:
     def __init__(
         self,
@@ -62,12 +92,14 @@ class PluginToolRegistry:
         client_factory: Callable[..., Any] | None = None,
         bus: Any = None,
         default_risk_tier: str = "monitor",
+        connect_timeout_s: float = _CONNECT_TIMEOUT_S_DEFAULT,
     ) -> None:
         self._catalog = catalog or load_catalog()
         self._store = token_store or TokenStore()
         self._client_factory = client_factory or _default_client_factory
         self._bus = bus
         self._risk_tier = default_risk_tier
+        self._connect_timeout_s = float(connect_timeout_s)
         self._clients: dict[str, Any] = {}
         self._tools: dict[str, MCPToolAdapter] = {}
         # Last swallowed connect/list_tools error per plugin (honest liveness
@@ -102,18 +134,28 @@ class PluginToolRegistry:
         # Idempotent: a second bootstrap() would leak the first run's MCP
         # clients (their AsyncExitStacks) by overwriting self._clients. Callers
         # use refresh_plugin() for incremental updates after the first boot.
+        # (_connect_plugin additionally skips already-connected ids, so a rare
+        # concurrent second bootstrap degrades to no-ops, never double-registers.)
         async with self._lock:
             if self._bootstrapped:
                 return
-            for plugin in self._catalog.plugins:
+            plugins = list(self._catalog.plugins)
+        # Per-plugin lock + per-plugin publish: an early plugin's tools reach
+        # the live brain IMMEDIATELY, even while a later plugin is still
+        # connecting or timing out. Holding one lock across the whole loop let
+        # a single wedged handshake starve every other plugin AND the
+        # completion event (live 2026-07-13, see _CONNECT_TIMEOUT_S_DEFAULT).
+        for plugin in plugins:
+            async with self._lock:
                 await self._connect_plugin(plugin)
+                connected = self.live_tool_count(plugin.id) > 0
+            # Publish outside the lock — refresh_tools() (the subscriber) must
+            # be free to call active_tools() without contending for this lock.
+            if connected:
+                await self._publish_brain_tools_changed(plugin.id, connected=True)
+        async with self._lock:
             self._bootstrapped = True
             log.info("plugin-registry: %d plugin tools exposed", len(self._tools))
-            tools_present = bool(self._tools)
-        # Publish outside the lock — refresh_tools() (the subscriber) must be
-        # free to call active_tools() without contending for this lock.
-        if tools_present:
-            await self._publish_brain_tools_changed("*", connected=True)
 
     async def refresh_plugin(self, plugin_id: str) -> None:
         """Re-evaluate a single plugin after connect/disconnect."""
@@ -157,13 +199,36 @@ class PluginToolRegistry:
         if resolved is None:
             return
         server_spec, env_overrides = resolved
+        client: Any | None = None
         try:
             client = self._client_factory(server_spec, env_overrides=env_overrides)
-            await client.start()
-            tool_defs = await client.list_tools()
+            # Bounded connect: a handshake that never completes (dead host,
+            # 401-that-hangs) must not stall the caller — see
+            # _CONNECT_TIMEOUT_S_DEFAULT for the live forensic.
+            tool_defs = await asyncio.wait_for(
+                self._start_and_list(client), timeout=self._connect_timeout_s
+            )
         except Exception as exc:  # noqa: BLE001 — graceful per-plugin degrade
-            log.warning("plugin-registry: %s connect failed: %s", plugin.id, exc)
-            self._last_errors[plugin.id] = str(exc)
+            if isinstance(exc, asyncio.TimeoutError):
+                msg = (
+                    f"connect timed out after {self._connect_timeout_s:.0f}s "
+                    "(handshake never completed)"
+                )
+            else:
+                msg = str(exc) or type(exc).__name__
+            log.warning("plugin-registry: %s connect failed: %s", plugin.id, msg)
+            self._last_errors[plugin.id] = msg
+            self._maybe_mark_needs_reauth(plugin.id, tokens, msg)
+            if client is not None:
+                # Best-effort cleanup; a cancelled/hung transport may not
+                # close cleanly, so the stop itself is bounded too.
+                try:
+                    await asyncio.wait_for(client.stop(), timeout=5.0)
+                except Exception:  # noqa: BLE001 — cleanup must never raise
+                    log.debug(
+                        "plugin-registry: %s post-failure stop failed", plugin.id,
+                        exc_info=True,
+                    )
             return
         self._clients[plugin.id] = client
         self._last_errors.pop(plugin.id, None)
@@ -181,6 +246,32 @@ class PluginToolRegistry:
                 )
         except Exception as exc:  # noqa: BLE001 — capability is best-effort
             log.debug("paired cap register failed for %s: %s", plugin.id, exc)
+
+    @staticmethod
+    async def _start_and_list(client: Any) -> list[dict[str, Any]]:
+        """Handshake + tool listing as one awaitable so wait_for bounds both."""
+        await client.start()
+        return await client.list_tools()
+
+    def _maybe_mark_needs_reauth(self, plugin_id: str, tokens: Any, message: str) -> None:
+        """Flag the stored token after an auth-shaped connect failure.
+
+        Mirrors the refresh scheduler's marking: later boots then skip the
+        doomed connect (no repeated timeout cost) and the plugins view shows
+        the Reconnect affordance instead of a silent per-boot failure."""
+        try:
+            if not _connect_needs_reauth(message):
+                return
+            self._store.save(plugin_id, dataclasses.replace(tokens, needs_reauth=True))
+            log.warning(
+                "plugin-registry: %s connect needs re-auth — marked: %s",
+                plugin_id, message,
+            )
+        except Exception as exc:  # noqa: BLE001 — marking is best-effort
+            log.debug(
+                "plugin-registry: needs_reauth save failed for %s: %s",
+                plugin_id, exc,
+            )
 
     async def _disconnect_plugin(self, plugin_id: str) -> None:
         for name in [n for n in self._tools if n.startswith(f"{plugin_id}/")]:
