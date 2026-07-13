@@ -52,15 +52,19 @@ class TurnPlan:
 
 
 _LOOKUP_SHAPE_RE = re.compile(
-    r"\b(?:what|when|where|which|who|how many|show|read|list|find|lookup|"
-    r"check|summarize|search|do i have|is there|are there|"
-    r"was|wann|wo|welch\w*|wer|wie viele|zeig\w*|lies|lese|list\w*|"
+    r"\b(?:what|when|where|which|who|how many|how is|show|read|list|find|"
+    r"lookup|check|summarize|search|do i have|is there|are there|"
+    r"was|wann|wo|welch\w*|wer|wie viele|wie ist|wie lautet|wie heisst|"
+    r"zeig\w*|lies|lese|list\w*|"
     r"find\w*|such\w*|pruef\w*|fass\w*|habe ich|hab ich|gibt es|"
     r"que|cuando|donde|cual\w*|quien|cuantos|muestra|lee|lista|"
     r"busca|revisa|resume|tengo|hay)\b"  # i18n-allow: multilingual speech-input matching data
 )
+# "what is this/that ..." is deictic (the user points at something live),
+# not a request for a definition — it must stay eligible for delegation.
 _DEFINITION_RE = re.compile(
-    r"\b(?:what is (?:a|an|the)?|what are|what does .{0,40} mean|explain|"
+    r"\b(?:what is (?!this|that|these|those)(?:a|an|the)?|what are|"
+    r"what does .{0,40} mean|explain|"
     r"was ist (?:ein|eine|der|die|das)?|"  # i18n-allow: speech input
     r"was sind|was bedeutet|erklaer\w*|"  # i18n-allow: speech input
     r"que es|que son|explica)\b"  # i18n-allow: multilingual speech-input matching data
@@ -71,14 +75,15 @@ _INSTRUCTIONAL_RE = re.compile(
     r"como (?:puedo|se puede)|como hacer)\b"  # i18n-allow: multilingual speech-input matching data
 )
 _OWNERSHIP_RE = re.compile(
-    r"\b(?:my|mine|our|about me|remember me|"
-    r"mein\w*|unser\w*|mir|ueber mich|uber mich|erinner\w* mich|"  # i18n-allow: speech input
+    r"\b(?:my|mine|our|we|about me|remember me|"
+    r"mein\w*|unser\w*|mir|wir|ueber mich|uber mich|erinner\w* mich|"  # i18n-allow: speech input
     r"mi|mis|mio|nuestr\w*|sobre mi|recuerd\w* de mi)\b"  # i18n-allow: speech input
 )
 _CURRENT_RE = re.compile(
     r"\b(?:current|currently|latest|today|tonight|tomorrow|now|recent|"
     r"news|weather|status|available|online|"
     r"aktuell\w*|neueste\w*|heute|morgen|jetzt|kuerzlich|nachrichten|"
+    r"gerade|eben|vorhin|soeben|"  # i18n-allow: speech input
     r"wetter|status|verfuegbar|online|"  # i18n-allow: speech input
     r"actual\w*|ultimo\w*|hoy|manana|ahora|reciente\w*|noticias|"
     r"clima|tiempo|estado|disponible)\b"  # i18n-allow: multilingual speech-input matching data
@@ -100,6 +105,28 @@ _CONNECTED_DOMAIN_RE = re.compile(
     r"postfach|posteingang|kalender|termin\w*|kontakt\w*|abrechnung\w*|"
     r"correo|bandeja|calendario|cita\w*|contacto\w*)\b"  # i18n-allow: speech input
 )
+# App/runtime nouns that are too common for the bare-mention LOCAL_STATE rule
+# — they count only combined with a lookup, action, or ownership signal,
+# mirroring the connected-domain condition. The bare English "task" is
+# excluded on purpose: the English past-tense "was" doubles as the German
+# question word in the lookup vocabulary ("that was a hard task" would
+# delegate); real task requests carry my/list/cancel/which anyway.
+_APP_STATE_RE = re.compile(
+    r"\b(?:provider\w*|voice mode|wake[\s-]?word\w*|volume|microphone\w*|"
+    r"audio device\w*|screen\w*|cursor\w*|pointing|"
+    r"stimme\w*|lautstaerke\w*|mikrofon\w*|aufgabe\w*|bildschirm\w*|"  # i18n-allow: speech input
+    r"mauszeiger\w*|weckwort\w*|"  # i18n-allow: speech input
+    r"proveedor\w*|microfono\w*|tarea\w*|pantalla|volumen)\b"  # i18n-allow: speech input
+)
+# A person's contact detail is never a definition question, so this rule is
+# deliberately NOT gated on the definition shape ("What is Anna's number?").
+_CONTACT_DETAIL_RE = re.compile(
+    r"\b(?:phone number|mobile number|email address|e-mail address|"
+    r"birthday|home address|"
+    r"telefonnummer|handynummer|rufnummer|mail-adresse|e-mail-adresse|"  # i18n-allow: speech input
+    r"geburtstag|anschrift|"  # i18n-allow: speech input
+    r"numero de telefono|direccion|cumpleanos)\b"  # i18n-allow: speech input
+)
 _MISSION_RE = re.compile(
     r"\b(?:jarvis[\s-]?agent\w*|agent\w*|mission\w*|worker\w*|"
     r"background task\w*|subagent\w*|sub-agent\w*|"
@@ -120,18 +147,20 @@ _ACTION_FALLBACK_RE = re.compile(
     r"upload|download|book|buy|post|reply|switch\w*|turn\w*|play\w*|"
     r"paus\w*|resume|remember|notes?|schedule|remind\w*|cancel\w*|"
     r"update\w*|rename|enable|disable|mute|record|activ\w*|deactiv\w*|"
+    r"use|test\w*|speak|louder|quieter|"
     r"oeffn\w*|schliess\w*|start\w*|stopp\w*|erstell\w*|schreib\w*|"
     r"speicher\w*|aender\w*|installier\w*|verbind\w*|loesch\w*|"
     r"verschieb\w*|schick\w*|send\w*|fuehr\w*|bau\w*|ruf\w*|klick\w*|"
     r"tipp\w*|buch\w*|kauf\w*|antwort\w*|wechsel\w*|wechsl\w*|schalt\w*|"
     r"stell\w*|spiel\w*|merk(?!wuerdig)\w*|notier\w*|trag(?!isch|oedi)\w*|"
     r"leg(?:e|st|t|en)?\b|setz\w*|pausier\w*|aktivier\w*|deaktivier\w*|"
-    r"erinner\w*|dreh\w*|"
+    r"erinner\w*|dreh\w*|mach\w*|nutz\w*|benutz\w*|verwend\w*|"
+    r"sprich\w*|sprech\w*|brich|brech\w*|abbrech\w*|lauter|leiser|"  # i18n-allow: speech input
     r"abre\w*|cierra\w*|inicia\w*|crea\w*|escrib\w*|guarda\w*|"
     r"cambia\w*|instala\w*|conecta\w*|elimina\w*|envia\w*|"
     r"ejecuta\w*|llama\w*|haz\w*|recuerd\w*|anot\w*|apunt\w*|pon\w*|"
     r"reproduc\w*|reanud\w*|apag\w*|enciend\w*|agend\w*|"
-    r"reserv\w*)\b"  # i18n-allow: multilingual speech-input matching data
+    r"reserv\w*|usa\w*|habla\w*|prueba\w*)\b"  # i18n-allow: multilingual speech-input matching data
 )
 _FOLLOW_UP_REFERENCE_RE = re.compile(
     r"\b(?:that|there|those|them|inside|what else|"
@@ -262,6 +291,16 @@ def plan_turn(
         and not definition
         and (lookup or action_intent or private)
     ):
+        reasons.add(TurnReason.CONNECTED_DATA)
+    if (
+        _APP_STATE_RE.search(normalized)
+        and not definition
+        and (lookup or action_intent or private)
+    ):
+        reasons.add(TurnReason.LOCAL_STATE)
+    # Deliberately not gated on the definition shape: "What is Anna's
+    # phone number?" is a contact lookup, never a definition.
+    if _CONTACT_DETAIL_RE.search(normalized) and (lookup or action_intent):
         reasons.add(TurnReason.CONNECTED_DATA)
     if _CURRENT_RE.search(normalized) and (lookup or normalized.endswith("?")):
         reasons.add(TurnReason.CURRENT_DATA)

@@ -178,7 +178,41 @@ def test_common_assistant_action_verbs_route_to_orchestrator(utterance: str) -> 
         "Das ist wirklich merkwürdig.",  # i18n-allow: German speech-input fixture
         "Das war eine Tragödie.",  # i18n-allow: German speech-input fixture
         "Erzähl mir einen Witz.",  # i18n-allow: German speech-input fixture
+        "Ich denke, das stimmt so.",  # i18n-allow: German speech-input fixture
+        "That was a hard task for everyone.",
+        "How is it going?",
+        "Guten Morgen.",  # i18n-allow: German speech-input fixture
     ],
 )
 def test_guarded_non_action_words_stay_native(utterance: str) -> None:
     assert plan_turn(utterance).path is TurnPath.NATIVE_REALTIME
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # One canonical spoken form per capability class that previously
+        # stayed native (per-action reachability matrix, 2026-07-13).
+        "Wie ist Christophs Telefonnummer?",  # i18n-allow: German fixture
+        "What is Christoph's phone number?",
+        "Welche Provider gibt es?",  # i18n-allow: German speech-input fixture
+        "Teste den Gemini-Provider.",  # i18n-allow: German speech-input fixture
+        "Nutz eine andere Stimme.",  # i18n-allow: German speech-input fixture
+        "Use a different voice.",
+        "Mach lauter.",  # i18n-allow: German speech-input fixture
+        "Welche Mikrofone gibt es?",  # i18n-allow: German speech-input fixture
+        "Sprich Englisch mit mir.",  # i18n-allow: German speech-input fixture
+        "Speak German from now on.",
+        "Brich alles ab.",  # i18n-allow: German speech-input fixture
+        "Brich die Aufgabe ab.",  # i18n-allow: German speech-input fixture
+        "Welche Aufgaben stehen an?",  # i18n-allow: German speech-input fixture
+        "Woran arbeitest du gerade?",  # i18n-allow: German speech-input fixture
+        "Was haben wir vorhin besprochen?",  # i18n-allow: German fixture
+        "What do we know about project Atlas?",
+        "What is this element I am pointing at?",
+    ],
+)
+def test_capability_canonical_utterances_route_to_orchestrator(
+    utterance: str,
+) -> None:
+    assert plan_turn(utterance).path is TurnPath.ORCHESTRATOR
