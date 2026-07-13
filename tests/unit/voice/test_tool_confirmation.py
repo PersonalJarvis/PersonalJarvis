@@ -89,3 +89,26 @@ class TestFormatConfirmOutcome:
     def test_every_outcome_covers_all_three_languages(self, kind: str, lang: str) -> None:
         msg = format_confirm_outcome(kind, "gmail", language=lang)
         assert msg.strip() != ""
+
+    def test_failed_appends_the_actionable_reason(self) -> None:
+        msg = format_confirm_outcome(
+            "failed",
+            "manage-mcp-server",
+            language="de",
+            detail="no MCP server named 'github' — configured MCP servers: notebooklm",
+        )
+        assert "github" in msg
+        assert "notebooklm" in msg
+
+    def test_failed_detail_is_collapsed_and_bounded(self) -> None:
+        msg = format_confirm_outcome(
+            "failed", "gmail", language="en", detail="  a\n\n b  " + "x" * 500
+        )
+        assert "\n" not in msg
+        assert len(msg) < 220
+
+    def test_done_never_carries_a_detail(self) -> None:
+        msg = format_confirm_outcome(
+            "done", "gmail", language="en", detail="should not appear"
+        )
+        assert "should not appear" not in msg

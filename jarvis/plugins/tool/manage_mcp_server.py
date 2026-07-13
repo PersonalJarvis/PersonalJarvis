@@ -204,10 +204,34 @@ class ManageMcpServerTool:
             },
         )
 
+    @staticmethod
+    def _unknown_name_error(mcp_state: Any, name: str) -> str:
+        """Name the configured servers so a miss is actionable, not a dead end.
+
+        Forensic 2026-07-13 18:33: "reconnect the GitHub MCP" failed with a
+        bare unknown-name error — GitHub was a marketplace PLUGIN, not an
+        mcp.json server — and the spoken outcome gave the user nothing to
+        correct with.
+        """
+        try:
+            names = sorted(mcp_state.load_config().get("mcpServers", {}).keys())
+        except Exception:  # noqa: BLE001 — the base error must still surface
+            names = []
+        configured = ", ".join(names) if names else "none"
+        return (
+            f"no MCP server named {name!r} — configured MCP servers: "
+            f"{configured}. A marketplace plugin (e.g. GitHub) is not an "
+            "MCP server and is managed from the Plugins view."
+        )
+
     async def _remove(self, mcp_state: Any, name: str, reason: str) -> ToolResult:
         existed = mcp_state.remove_server(name)
         if not existed:
-            return ToolResult(success=False, output=None, error=f"no MCP server named {name!r}")
+            return ToolResult(
+                success=False,
+                output=None,
+                error=self._unknown_name_error(mcp_state, name),
+            )
         was_running = self._is_running(name)
         log.info(
             "manage-mcp-server: removed %r (was_running=%s) reason=%r",
@@ -225,7 +249,11 @@ class ManageMcpServerTool:
 
     async def _toggle(self, mcp_state: Any, name: str, *, enabled: bool, reason: str) -> ToolResult:
         if mcp_state.get_server_entry(name) is None:
-            return ToolResult(success=False, output=None, error=f"no MCP server named {name!r}")
+            return ToolResult(
+                success=False,
+                output=None,
+                error=self._unknown_name_error(mcp_state, name),
+            )
         mcp_state.set_enabled(name, enabled)
 
         applied_live = False

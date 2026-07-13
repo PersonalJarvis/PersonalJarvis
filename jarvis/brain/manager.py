@@ -6003,7 +6003,14 @@ class BrainManager:
                     "failed", pending.tool_name, language=pending.lang
                 )
             kind = "done" if getattr(result, "success", False) else "failed"
-            return format_confirm_outcome(kind, pending.tool_name, language=pending.lang)
+            return format_confirm_outcome(
+                kind,
+                pending.tool_name,
+                language=pending.lang,
+                detail=(
+                    None if kind == "done" else getattr(result, "error", None)
+                ),
+            )
 
         if verdict == "veto":
             self._pending_voice_confirm = None
