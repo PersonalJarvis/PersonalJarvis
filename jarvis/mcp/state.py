@@ -1,8 +1,10 @@
-"""MCP config: mcp.json as the primary user-editable source.
+"""MCP config: ``mcp.json`` as the primary user-editable source.
 
-The file lives in the project root as ``mcp.json`` and follows the
-Claude Desktop format, extended with ``enabled`` and ``description``
-per server::
+The active file honors ``JARVIS_MCP_CONFIG`` first, then
+``JARVIS_DATA_DIR/mcp.json`` on headless/read-only installs. Existing project
+root files remain readable for compatibility; a failed project-root write
+falls back to the per-user app-data directory. The schema follows the Claude
+Desktop format, extended with ``enabled`` and ``description`` per server::
 
     {
       "mcpServers": {
@@ -11,7 +13,7 @@ per server::
           "args": ["mcp-server-filesystem", "--root", "{PROJECT_ROOT}"],
           "env": {},
           "enabled": true,
-          "description": "Sicherer Datei-Zugriff"
+          "description": "Restricted file access"
         }
       }
     }
@@ -39,7 +41,8 @@ from jarvis.core.config import DATA_DIR, PROJECT_ROOT
 
 log = logging.getLogger(__name__)
 
-# Primary user config
+# Backward-compatible project-root config. Runtime resolution may select an
+# explicit, data-dir, or per-user path instead.
 MCP_JSON_PATH = PROJECT_ROOT / "mcp.json"
 
 # Legacy state file (for migration)
@@ -56,11 +59,39 @@ def _empty_config() -> dict[str, Any]:
     return {"mcpServers": {}}
 
 
+def _explicit_mcp_json_path() -> Path | None:
+    override = os.environ.get("JARVIS_MCP_CONFIG", "").strip()
+    if override:
+        return Path(override)
+    data_dir = os.environ.get("JARVIS_DATA_DIR", "").strip()
+    if data_dir:
+        return Path(data_dir) / "mcp.json"
+    return None
+
+
+def _user_mcp_json_path() -> Path:
+    from jarvis.core.paths import user_data_dir
+
+    return user_data_dir() / "mcp.json"
+
+
+def _active_mcp_json_path() -> Path:
+    """Resolve one durable MCP config path without probing at import time."""
+    explicit = _explicit_mcp_json_path()
+    if explicit is not None:
+        return explicit
+    user_path = _user_mcp_json_path()
+    if user_path.exists():
+        return user_path
+    return MCP_JSON_PATH
+
+
 def _read_mcp_json() -> dict[str, Any]:
-    if not MCP_JSON_PATH.exists():
+    path = _active_mcp_json_path()
+    if not path.exists():
         return _empty_config()
     try:
-        data = json.loads(MCP_JSON_PATH.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
         log.warning("mcp.json not readable (%s) — using default", exc)
         return _empty_config()
@@ -70,12 +101,30 @@ def _read_mcp_json() -> dict[str, Any]:
     return data
 
 
+def _write_to_path(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def _write_mcp_json(data: dict[str, Any]) -> None:
     with _lock:
-        MCP_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp = MCP_JSON_PATH.with_suffix(MCP_JSON_PATH.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, MCP_JSON_PATH)
+        path = _active_mcp_json_path()
+        try:
+            _write_to_path(path, data)
+        except OSError:
+            # Explicit paths are a user contract and must fail honestly. Only
+            # the legacy project-root default may cross to per-user storage.
+            if _explicit_mcp_json_path() is not None or path != MCP_JSON_PATH:
+                raise
+            fallback = _user_mcp_json_path()
+            log.info(
+                "project MCP config path %s is not writable; using %s",
+                path,
+                fallback,
+            )
+            _write_to_path(fallback, data)
 
 
 # ----------------------------------------------------------------------
@@ -86,7 +135,7 @@ def _migrate_legacy_if_needed() -> None:
     """Read the old ``data/mcp_state.json`` once and transfer it into
     ``mcp.json``. The old file is then renamed to ``.bak``.
     """
-    if MCP_JSON_PATH.exists() or not LEGACY_STATE_PATH.exists():
+    if _active_mcp_json_path().exists() or not LEGACY_STATE_PATH.exists():
         return
     try:
         raw = json.loads(LEGACY_STATE_PATH.read_text(encoding="utf-8"))
