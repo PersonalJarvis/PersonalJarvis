@@ -16,9 +16,15 @@ from mcp import types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-from .worker_tool_broker import BROKER_TOKEN_ENV, BROKER_URL_ENV
+from .worker_tool_broker import (
+    BROKER_EXECUTION_TIMEOUT_S,
+    BROKER_TOKEN_ENV,
+    BROKER_URL_ENV,
+)
 
-_HTTP_TIMEOUT_S = 65.0
+# The client must outlive the supervisor-side wait so it can receive the
+# broker's deterministic timeout response instead of dropping the socket first.
+_HTTP_TIMEOUT_S = BROKER_EXECUTION_TIMEOUT_S + 5.0
 
 
 def _endpoint() -> tuple[str, int]:

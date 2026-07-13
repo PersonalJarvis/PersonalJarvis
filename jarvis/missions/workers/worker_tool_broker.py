@@ -33,7 +33,11 @@ BROKER_TOKEN_ENV = "JARVIS_WORKER_BROKER_TOKEN"  # noqa: S105 - env variable nam
 BROKER_URL_ENV = "JARVIS_WORKER_BROKER_URL"
 
 _DEFAULT_TTL_S = 25 * 60.0
-_EXECUTION_TIMEOUT_S = 65.0
+# Approval alone may consume ToolExecutor's 60-second window. Keep the process
+# boundary open for the subsequent action and let mission cancellation revoke
+# the grant and cancel the in-flight task. A 65-second cap left only five
+# seconds for the real MCP/app call after a last-moment approval.
+BROKER_EXECUTION_TIMEOUT_S = 15 * 60.0
 _MAX_REQUEST_BYTES = 1024 * 1024
 
 _FORBIDDEN_EXACT = frozenset(
@@ -550,7 +554,7 @@ class _BrokerRequestHandler(BaseHTTPRequestHandler):
             scope.execute(name, arguments), scope.loop
         )
         try:
-            result = future.result(timeout=_EXECUTION_TIMEOUT_S)
+            result = future.result(timeout=BROKER_EXECUTION_TIMEOUT_S)
         except TimeoutError:
             future.cancel()
             self._send(504, {"error": "supervisor tool execution timed out"})
@@ -697,6 +701,7 @@ def issue_worker_tool_binding(
 
 
 __all__ = [
+    "BROKER_EXECUTION_TIMEOUT_S",
     "BROKER_SERVER_ID",
     "BROKER_TOKEN_ENV",
     "BROKER_URL_ENV",

@@ -26,10 +26,16 @@ from jarvis.missions.workers.codex_direct_worker import _build_codex_direct_cmd
 from jarvis.missions.workers.gemini_worker import _build_isolated_gemini_env
 from jarvis.missions.workers.worker_tool_broker import (
     _BROKER,
+    BROKER_EXECUTION_TIMEOUT_S,
     BROKER_TOKEN_ENV,
     BROKER_URL_ENV,
 )
 from jarvis.safety import ApprovalWorkflow, RiskTierEvaluator, ToolExecutor
+
+
+def test_broker_timeout_leaves_room_after_the_approval_window() -> None:
+    assert BROKER_EXECUTION_TIMEOUT_S >= 2 * 60.0
+    assert broker_stdio._HTTP_TIMEOUT_S > BROKER_EXECUTION_TIMEOUT_S
 
 
 @dataclass
