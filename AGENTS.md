@@ -302,7 +302,17 @@ cannot break:
 - **Worker isolation:** every mission worker runs in a fresh `git worktree`
   under `<repo_parent>/jarvis-agent-outputs/` (legacy `sub-agents-outputs/`
   still read as fallback) with kill-on-crash containment (Job Object on
-  Windows; process-group reaper on POSIX). `MAX_CRITIC_LOOPS = 3` is fixed.
+  Windows; process-group reaper on POSIX). Headless installs keep both outputs
+  and their per-user `HOME` under `JARVIS_DATA_DIR` (ADR-0027).
+  `MAX_CRITIC_LOOPS = 3` is fixed.
+- **Worker tool broker:** connected tools delegated to mission workers use a
+  short-lived, mission-scoped supervisor grant (ADR-0025). Tool objects and
+  credentials stay in the supervisor; every call still runs through
+  `ToolExecutor`. Recursive, skill, secret, and config-mutation tools are never
+  exported, and an unattended ask-tier action never becomes an implicit yes.
+- **Native Windows Codex workers:** keep `--ignore-user-config`, explicitly use
+  the ACL-bounded `unelevated` sandbox, and recover a rejected file-change tool
+  only through BOM-free UTF-8 writes inside the current worktree (ADR-0026).
 - **Platform gotchas:** UTF-8 stdout (cp1252 default on Windows); every
   subprocess passes `NO_WINDOW_CREATIONFLAGS` (AP-1); WASAPI audio, WDM-KS
   forbidden (BUG-014); no Windows Service (SYSTEM has no mic); UAC
@@ -421,6 +431,32 @@ genuine, fail-open) and SKIP it on a loud window (`_ECHO_CONFIRM_SKIP_RMS`,
 latency). Guard:
 `tests/unit/speech/test_rolling_whisper_wake_silence_ghost.py::test_loud_wake_fires_even_when_unbiased_pass_garbles_the_hard_word`.
 
+**The same trap in the `vosk_kws` path (2026-07-13) — it is NOT an `stt_match`
+quirk, it is a property of every wake engine that verifies via a TRANSCRIPT.**
+The Vosk verify accepted a candidate only when the FREE (unconstrained) decoder
+spelled the phrase back. An offline small model holds no arbitrary proper noun
+in its lexicon, so it CANNOT: replaying 159 real captured `Hey Ruben` calls, it
+spelled the phrase in 28 % of genuine calls and otherwise produced sound-alike
+garbage (`'herum'`, `'erhoben'`, `'hey room'`, `'hey oben'`); for `Hey Jarvis`
+on the de model, `'hey jahwe'` / `'hey genres'` / `'herr jahres'`. <!-- i18n-allow: forensic quotes of the German free-decode garble under test -->
+That gate ate 38 % of ALL real wakes (recall 32 % — the maintainer had to
+repeat the wake word four or five times) at 0/400 false accepts, i.e. far past
+the point of diminishing precision. **And no spelling threshold can close it:
+the free transcript `'herr oben'` was produced BOTH by a genuine call and by
+room chatter, and EVERY wake word is out-of-vocabulary for SOME installed
+language model** — so a spelling rule is guaranteed to be deaf for some phrase
+in some language, which is exactly the universality requirement (§3) it
+violates. Loosening the similarity floors only trades one mishearing for the
+next false wake. Fix (`candidate_shape_ok`): confirm on the word-agnostic SHAPE
+of what the free ear heard AT the span — a wake call is short and stands alone
+(measured 0.72 s / 2 words), room speech is a longer stream of words the
+decoder CONFIDENTLY recognises (1.29 s / 5 words, top conf ~1.0); every bound
+derives from the configured phrase, never its spelling. Keep the spelling match
+as a BONUS path that may only ACCEPT, never reject. Measured: verify pass-rate
+on genuine calls 50 % → 74 %, false accepts 1 → 3 per 1650 real windows; the
+identical thresholds, untuned, lift `Hey Jarvis` from 36 % → 66 %. Guard:
+`tests/unit/plugins/wake/test_vosk_wake_word_agnostic.py`.
+
 ### AP-28 — Never gate CI checks on `isinstance` against an unpinned third-party lib
 
 Never gate a pre-push / CI check on `isinstance` against the *installed* copy
@@ -495,6 +531,21 @@ defense:
    NEVER on transcript content; keep the confirm permissive + skip it when
    loud; the recall guard test must stay green. Truly-instant + zero-ghost
    custom wake needs a neural KWS model, not transcription (AP-25).
+10. **Transcript-verified wake goes deaf on its own wake word** (AP-27, the
+   general form; `vosk_kws` 2026-07-13): ANY wake engine whose verify asks a
+   decoder to SPELL the phrase is deaf for every phrase that decoder has no
+   lexicon entry for — and every wake word is out-of-vocabulary for some
+   installed language model, so the bug is guaranteed, not incidental. Signal:
+   the user repeats the wake word four or five times; the log shows a healthy
+   stage-1 candidate followed by `verify SUPPRESSED` with a sound-alike
+   transcript (`Hey Ruben`→`'herum'`, `Hey Jarvis`→`'hey jahwe'`). <!-- i18n-allow: German free-decode garble under test -->
+   The trap: it looks like a PRECISION win (false accepts drop to zero) while
+   recall quietly collapses, and every "fix" loosens a similarity floor,
+   trading one mishearing for the next false wake. Defense: verify on
+   WORD-AGNOSTIC properties (energy, spoken duration, word count at the
+   candidate span, the free decoder's own confidence that it heard something
+   ELSE) — all derived from the configured phrase, never its spelling. A
+   spelling match may only ever ACCEPT (bonus path), never reject.
 
 ---
 
