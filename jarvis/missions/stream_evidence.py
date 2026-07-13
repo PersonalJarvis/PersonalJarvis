@@ -396,11 +396,53 @@ def extract_write_targets(stream_text: str) -> tuple[str, ...]:
 # OpenClaw / codex / generic variants). Matched case-sensitively against
 # `tool_use.name`.
 _SHELL_TOOL_NAMES: frozenset[str] = frozenset({
-    "Bash", "shell", "run_command", "exec", "execute", "run_shell_command",
+    "Bash",
+    "RunCommand",
+    "shell",
+    "run_command",
+    "exec",
+    "execute",
+    "run_shell_command",
 })
 
 # Keys under `tool_use.input` that carry the shell command string.
 _COMMAND_INPUT_KEYS: tuple[str, ...] = ("command", "cmd", "script", "shell")
+
+
+def _structured_command_argv(tool_input: dict) -> tuple[str, tuple[str, ...]] | None:
+    """Return a strictly typed ``RunCommand`` argv, or ``None`` when malformed."""
+    program = tool_input.get("program")
+    args = tool_input.get("args", [])
+    if not isinstance(program, str) or not program.strip():
+        return None
+    if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
+        return None
+    return program.strip(), tuple(args)
+
+
+def _command_from_tool_input(tool_name: str, tool_input: dict) -> str:
+    """Normalize legacy shell strings or structured ``RunCommand`` argv.
+
+    The returned text is evidence for pattern matching and display only; it is
+    never executed. Keeping the structured path here preserves the Critic's
+    correlated command-result contract after API workers stopped using shells.
+    """
+    if tool_name == "RunCommand":
+        structured = _structured_command_argv(tool_input)
+        if structured is None:
+            return ""
+        program, args = structured
+        return " ".join((program, *(arg.strip() for arg in args))).strip()
+
+    legacy = next(
+        (
+            str(tool_input[key]).strip()
+            for key in _COMMAND_INPUT_KEYS
+            if isinstance(tool_input.get(key), str) and tool_input[key].strip()
+        ),
+        "",
+    )
+    return legacy
 
 # State-CHANGING git / GitHub-CLI operations. A successful one of these is a
 # real deliverable for a "commit and push" / "open a PR" task that leaves NO
@@ -422,6 +464,27 @@ _MUTATING_CMD_RE = re.compile(
     r"(?:create|merge|close|edit|comment|review|delete|reopen)\b",
     re.IGNORECASE,
 )
+
+
+def _is_mutating_command(tool_name: str, tool_input: dict, command: str) -> bool:
+    """Match command evidence without mistaking an argument for an executable.
+
+    Legacy shell tools carry one evaluated command string, so their established
+    regex remains appropriate. ``RunCommand`` is a direct argv boundary: only
+    an actual git/GitHub CLI executable may earn state-changing evidence. This
+    prevents successful commands such as ``echo git push`` from being credited.
+    """
+    if tool_name != "RunCommand":
+        return bool(_MUTATING_CMD_RE.search(command))
+    structured = _structured_command_argv(tool_input)
+    if structured is None:
+        return False
+    program, args = structured
+    if program.casefold() not in {"git", "git.exe", "gh", "gh.exe"}:
+        return False
+    normalized_program = program.casefold().removesuffix(".exe")
+    probe = " ".join((normalized_program, *(arg.strip() for arg in args))).strip()
+    return bool(_MUTATING_CMD_RE.match(probe))
 
 
 def extract_verified_commands(
@@ -472,20 +535,19 @@ def extract_verified_commands(
             for blk in (obj.get("message", {}) or {}).get("content", []) or []:
                 if not isinstance(blk, dict) or blk.get("type") != "tool_use":
                     continue
-                if str(blk.get("name", "")).strip() not in _SHELL_TOOL_NAMES:
+                tool_name = str(blk.get("name", "")).strip()
+                if tool_name not in _SHELL_TOOL_NAMES:
                     continue
                 tool_input = blk.get("input") or {}
                 if not isinstance(tool_input, dict):
                     continue
-                command = next(
-                    (str(tool_input[k]).strip() for k in _COMMAND_INPUT_KEYS
-                     if isinstance(tool_input.get(k), str) and tool_input[k].strip()),
-                    "",
-                )
+                command = _command_from_tool_input(tool_name, tool_input)
                 tid = str(blk.get("id", "")).strip()
                 # An id is required to correlate the result; a mutating command
                 # with no confirmable result is not credited (anti-hearsay).
-                if command and tid and _MUTATING_CMD_RE.search(command):
+                if command and tid and _is_mutating_command(
+                    tool_name, tool_input, command
+                ):
                     pending[tid] = command
         elif otype == "user":
             for blk in (obj.get("message", {}) or {}).get("content", []) or []:
@@ -584,6 +646,29 @@ _DESKTOP_ACTION_CMD_RE = re.compile(
 )
 
 
+def _is_desktop_action_command(
+    tool_name: str, tool_input: dict, command: str
+) -> bool:
+    """Recognize a real launcher executable at the structured argv boundary."""
+    if tool_name != "RunCommand":
+        return bool(_DESKTOP_ACTION_CMD_RE.search(command))
+    structured = _structured_command_argv(tool_input)
+    if structured is None:
+        return False
+    program, args = structured
+    executable = program.casefold()
+    if executable in {"explorer", "explorer.exe", "xdg-open"}:
+        return bool(args)
+    if executable == "gio":
+        return bool(args) and args[0].casefold() == "open"
+    if executable == "open":
+        return any(
+            arg.startswith("-") and len(arg) > 1 and arg[1] in "aAbnegtWR"
+            for arg in args
+        )
+    return False
+
+
 def extract_verified_desktop_actions(
     stream_text: str, *, max_result_chars: int = 400
 ) -> tuple[tuple[str, str], ...]:
@@ -637,20 +722,19 @@ def extract_verified_desktop_actions(
             for blk in (obj.get("message", {}) or {}).get("content", []) or []:
                 if not isinstance(blk, dict) or blk.get("type") != "tool_use":
                     continue
-                if str(blk.get("name", "")).strip() not in _SHELL_TOOL_NAMES:
+                tool_name = str(blk.get("name", "")).strip()
+                if tool_name not in _SHELL_TOOL_NAMES:
                     continue
                 tool_input = blk.get("input") or {}
                 if not isinstance(tool_input, dict):
                     continue
-                command = next(
-                    (str(tool_input[k]).strip() for k in _COMMAND_INPUT_KEYS
-                     if isinstance(tool_input.get(k), str) and tool_input[k].strip()),
-                    "",
-                )
+                command = _command_from_tool_input(tool_name, tool_input)
                 tid = str(blk.get("id", "")).strip()
                 # An id is required to correlate the result; a launch command
                 # with no confirmable result is not credited (anti-hearsay).
-                if command and tid and _DESKTOP_ACTION_CMD_RE.search(command):
+                if command and tid and _is_desktop_action_command(
+                    tool_name, tool_input, command
+                ):
                     pending[tid] = command
         elif otype == "user":
             for blk in (obj.get("message", {}) or {}).get("content", []) or []:

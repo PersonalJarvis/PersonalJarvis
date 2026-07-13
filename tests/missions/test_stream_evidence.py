@@ -44,6 +44,48 @@ def test_credits_successful_git_push() -> None:
     assert "main -> main" in cmds[0][1]
 
 
+def test_credits_successful_structured_run_command() -> None:
+    """API workers provide direct argv rather than a shell command string."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "RunCommand",
+             "input": {"program": "git", "args": ["push", "origin", "main"]}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1",
+             "content": "abc..def  main -> main"}]}},
+    ])
+    commands = extract_verified_commands(stream)
+    assert len(commands) == 1
+    assert commands[0][0] == "git push origin main"
+
+
+def test_structured_run_command_does_not_credit_mutating_words_in_echo_args() -> None:
+    """A successful non-git executable cannot forge state-changing evidence."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "RunCommand",
+             "input": {"program": "echo", "args": ["git", "push"]}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1",
+             "content": "git push"}]}},
+    ])
+    assert extract_verified_commands(stream) == ()
+
+
+def test_structured_run_command_ignores_legacy_command_field() -> None:
+    """Unused shell-string fields cannot override the argv that really ran."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "RunCommand",
+             "input": {"program": "echo", "args": [],
+                       "command": "git push origin main"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1",
+             "content": "ok"}]}},
+    ])
+    assert extract_verified_commands(stream) == ()
+
+
 def test_credits_gh_pr_create() -> None:
     stream = _stream([
         {"type": "assistant", "message": {"content": [
@@ -829,6 +871,30 @@ def test_extract_verified_desktop_actions_linux_xdg_open() -> None:
     assert len(actions) == 1
     assert "xdg-open" in actions[0][0]
     assert actions[0][1] == "(command succeeded; no output captured)"
+
+
+def test_structured_run_command_credits_real_xdg_open_program() -> None:
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "x2", "name": "RunCommand",
+             "input": {"program": "xdg-open", "args": ["artifact.pdf"]}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "x2", "content": ""}]}},
+    ])
+    actions = extract_verified_desktop_actions(stream)
+    assert len(actions) == 1
+    assert actions[0][0] == "xdg-open artifact.pdf"
+
+
+def test_structured_run_command_does_not_credit_launcher_words_in_echo_args() -> None:
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "x3", "name": "RunCommand",
+             "input": {"program": "echo", "args": ["xdg-open", "artifact.pdf"]}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "x3", "content": "ok"}]}},
+    ])
+    assert extract_verified_desktop_actions(stream) == ()
 
 
 def test_extract_verified_desktop_actions_macos_open() -> None:
