@@ -961,6 +961,53 @@ async def test_latency_and_voice_events_share_one_fresh_trace_per_turn():
 
 
 @pytest.mark.asyncio
+async def test_missing_turn_complete_latency_phase_cannot_fail_voice_turn(monkeypatch):
+    """A stale telemetry enum must never close an otherwise healthy session."""
+    import jarvis.telemetry.latency as latency_module
+
+    class LegacyLatencyPhase:
+        REALTIME_INPUT_COMMITTED = LatencyPhase.REALTIME_INPUT_COMMITTED
+        REALTIME_ROUTING_DECISION = LatencyPhase.REALTIME_ROUTING_DECISION
+        REALTIME_FIRST_TRANSCRIPT = LatencyPhase.REALTIME_FIRST_TRANSCRIPT
+
+    monkeypatch.setattr(latency_module, "LatencyPhase", LegacyLatencyPhase)
+    bus = FakeBus()
+    messages = []
+    sess = RealtimeVoiceSession(
+        session_id="stale-latency-enum",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: messages.append(message) or asyncio.sleep(0),
+        provider=FakeProvider(
+            [
+                RealtimeEvent(
+                    type="input_transcript",
+                    text="Keep this conversation open",
+                    is_final=True,
+                ),
+                RealtimeEvent(
+                    type="output_transcript_delta",
+                    text="The session is still active.",
+                ),
+                RealtimeEvent(type="turn_complete"),
+            ]
+        ),
+        config=_cfg(),
+        bus=bus,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+
+    assert sess.failed is False
+    assert any(isinstance(event, VoiceTurnCompleted) for event in bus.events)
+    assert {message["type"] for message in messages} >= {
+        "audio_ready",
+        "turn_complete",
+    }
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
 async def test_disabled_realtime_latency_emits_no_spans():
     bus = FakeBus()
     provider = FakeProvider(

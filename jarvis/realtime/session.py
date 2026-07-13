@@ -656,8 +656,6 @@ class RealtimeVoiceSession:
         return True
 
     async def _pump(self) -> None:
-        from jarvis.telemetry.latency import LatencyPhase
-
         try:
             async for event in self._session.receive():
                 if event.type == "input_transcript":
@@ -688,8 +686,8 @@ class RealtimeVoiceSession:
                             if self._tool_bridge is not None:
                                 self._tool_bridge.set_language(new_language)
                     if input_observed:
-                        self._mark_latency(
-                            LatencyPhase.REALTIME_INPUT_COMMITTED,
+                        self._mark_latency_named(
+                            "REALTIME_INPUT_COMMITTED",
                             detail=(
                                 "transcription=failed"
                                 if transcription_failed
@@ -709,8 +707,8 @@ class RealtimeVoiceSession:
                         reasons = ",".join(
                             sorted(reason.value for reason in turn_plan.reasons)
                         ) or "none"
-                        self._mark_latency(
-                            LatencyPhase.REALTIME_ROUTING_DECISION,
+                        self._mark_latency_named(
+                            "REALTIME_ROUTING_DECISION",
                             detail=(
                                 f"path={turn_plan.path.value};reasons={reasons}"
                             ),
@@ -853,7 +851,7 @@ class RealtimeVoiceSession:
                         self._gate.drain()
                         continue
                     await self._ensure_turn_started()
-                    self._mark_latency(LatencyPhase.REALTIME_FIRST_TRANSCRIPT)
+                    self._mark_latency_named("REALTIME_FIRST_TRANSCRIPT")
                     display = await self._gate.feed_transcript(event.text)
                     if self._gate.hard_leak_pending():
                         self._cancel_release_task()
@@ -880,7 +878,7 @@ class RealtimeVoiceSession:
                         self._gate.drain()
                         continue
                     await self._ensure_turn_started()
-                    self._mark_latency(LatencyPhase.REALTIME_FIRST_AUDIO)
+                    self._mark_latency_named("REALTIME_FIRST_AUDIO")
                     self._output_active = True
                     released = await self._gate.push_audio(event.audio)
                     for chunk in released:
@@ -1027,10 +1025,8 @@ class RealtimeVoiceSession:
         if self._scrub_cancelled_for_turn:
             return
         self._scrub_cancelled_for_turn = True
-        from jarvis.telemetry.latency import LatencyPhase
-
-        self._mark_latency(
-            LatencyPhase.REALTIME_SCRUB_CANCEL,
+        self._mark_latency_named(
+            "REALTIME_SCRUB_CANCEL",
             detail=f"reason={reason}",
         )
         log.warning("realtime[%s] scrub gate cancelled output: %s", self.session_id, reason)
@@ -1164,6 +1160,23 @@ class RealtimeVoiceSession:
         if tracker is not None and phase not in tracker.stages_snapshot():
             tracker.mark(phase, detail=self._latency_detail(detail))
 
+    def _mark_latency_named(self, phase_name: str, *, detail: str = "") -> Any | None:
+        """Mark optional telemetry without letting enum skew break voice."""
+        try:
+            from jarvis.telemetry.latency import LatencyPhase
+
+            phase = getattr(LatencyPhase, phase_name)
+            self._mark_latency(phase, detail=detail)
+            return phase
+        except Exception:  # noqa: BLE001 -- telemetry never breaks the hot path
+            log.debug(
+                "realtime[%s] skipped unavailable latency phase %s",
+                self.session_id,
+                phase_name,
+                exc_info=True,
+            )
+            return None
+
     def _event_trace_kwargs(self) -> dict[str, Any]:
         return (
             {"trace_id": self._turn_trace_id}
@@ -1182,12 +1195,10 @@ class RealtimeVoiceSession:
 
     async def _begin_user_speech_turn(self) -> None:
         """Close an interrupted reply before the next transcript opens a turn."""
-        from jarvis.telemetry.latency import LatencyPhase
-
         self._drop_provider_output_until_new_response = True
         if self._turn_id and self._turn_has_activity():
-            self._mark_latency(
-                LatencyPhase.REALTIME_CANCEL,
+            self._mark_latency_named(
+                "REALTIME_CANCEL",
                 detail="reason=barge_in",
             )
             await self._publish_turn_completed()
@@ -1224,17 +1235,15 @@ class RealtimeVoiceSession:
         response_text = answer or (
             delegate_state.last_reply if delegate_state is not None else ""
         )
-        from jarvis.telemetry.latency import LatencyPhase
-
-        self._mark_latency(
-            LatencyPhase.REALTIME_TURN_COMPLETE,
+        turn_complete_phase = self._mark_latency_named(
+            "REALTIME_TURN_COMPLETE",
             detail=f"hangup_reason={self._hangup_reason or 'none'}",
         )
         latency_total_ms = 0
-        if self._latency_tracker is not None:
+        if self._latency_tracker is not None and turn_complete_phase is not None:
             latency_total_ms = int(
                 self._latency_tracker.stages_snapshot().get(
-                    LatencyPhase.REALTIME_TURN_COMPLETE,
+                    turn_complete_phase,
                     0.0,
                 )
             )
@@ -1523,10 +1532,8 @@ class RealtimeVoiceSession:
             }
         if result.get("success"):
             self._executed_tool_names.add(original_name)
-        from jarvis.telemetry.latency import LatencyPhase
-
-        self._mark_latency(
-            LatencyPhase.REALTIME_TOOL_COMPLETED,
+        self._mark_latency_named(
+            "REALTIME_TOOL_COMPLETED",
             detail=(
                 f"tool={original_name};success={bool(result.get('success'))}"
             ),
@@ -1565,10 +1572,8 @@ class RealtimeVoiceSession:
         if turn_state.dispatch_started or turn_state.result_complete:
             return
         turn_state.dispatch_started = True
-        from jarvis.telemetry.latency import LatencyPhase
-
-        self._mark_latency(
-            LatencyPhase.REALTIME_DELEGATE_STARTED,
+        self._mark_latency_named(
+            "REALTIME_DELEGATE_STARTED",
             detail="kind=deterministic",
         )
         log.info(
@@ -1677,10 +1682,8 @@ class RealtimeVoiceSession:
         turn_state.result_success = succeeded
         turn_state.result_payload = result
         if self._turn_id == turn_id:
-            from jarvis.telemetry.latency import LatencyPhase
-
-            self._mark_latency(
-                LatencyPhase.REALTIME_DELEGATE_COMPLETED,
+            self._mark_latency_named(
+                "REALTIME_DELEGATE_COMPLETED",
                 detail=f"kind=deterministic;success={succeeded}",
             )
         if self._delegate_turn_is_active(turn_id, turn_state) and succeeded:
@@ -1751,10 +1754,8 @@ class RealtimeVoiceSession:
         if turn_state.dispatch_started or turn_state.result_complete:
             return
         turn_state.dispatch_started = True
-        from jarvis.telemetry.latency import LatencyPhase
-
-        self._mark_latency(
-            LatencyPhase.REALTIME_DELEGATE_STARTED,
+        self._mark_latency_named(
+            "REALTIME_DELEGATE_STARTED",
             detail="kind=provider_requested",
         )
         log.info(
@@ -1822,10 +1823,8 @@ class RealtimeVoiceSession:
         turn_state.result_success = succeeded
         turn_state.result_payload = result
         if self._turn_id == turn_id:
-            from jarvis.telemetry.latency import LatencyPhase
-
-            self._mark_latency(
-                LatencyPhase.REALTIME_DELEGATE_COMPLETED,
+            self._mark_latency_named(
+                "REALTIME_DELEGATE_COMPLETED",
                 detail=f"kind=provider_requested;success={succeeded}",
             )
         if (
