@@ -81,6 +81,14 @@ def _state(session, cfg=None):
     )
 
 
+def test_classic_fallback_language_uses_canonical_default_and_pin() -> None:
+    auto_cfg = SimpleNamespace(brain=SimpleNamespace(reply_language="auto"))
+    spanish_cfg = SimpleNamespace(brain=SimpleNamespace(reply_language="es"))
+
+    assert route_mod._resolve_language(auto_cfg) == "en-US"
+    assert route_mod._resolve_language(spanish_cfg) == "es-ES"
+
+
 async def test_route_dispatches_binary_and_control_then_ends():
     rec = _RecSession()
     ws = _FakeWS(

@@ -18,13 +18,14 @@ from uuid import uuid4
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from jarvis.core import config as cfg_mod
+from jarvis.core.turn_language import DEFAULT_LOCALE, resolve_output_language
 from jarvis.sessions.constants import HANGUP_REALTIME_FALLBACK, HANGUP_WS_CLOSED
 
 log = logging.getLogger("jarvis.browser_voice.route")
 
 router = APIRouter()
 
-# BCP-47 from the brain.reply_language pin (de/en/es) — falls back to de-DE.
+# BCP-47 from the canonical per-turn resolver (de/en/es).
 _LANG_MAP = {"de": "de-DE", "en": "en-US", "es": "es-ES"}
 
 
@@ -41,9 +42,8 @@ def _browser_voice_enabled(cfg: Any) -> bool:
 
 def _resolve_language(cfg: Any) -> str:
     pin = getattr(getattr(cfg, "brain", None), "reply_language", "") or ""
-    if not pin or pin == "auto":
-        return "de-DE"
-    return _LANG_MAP.get(pin, pin)
+    language = resolve_output_language(pin, "", "", default=DEFAULT_LOCALE)
+    return _LANG_MAP.get(language, _LANG_MAP[DEFAULT_LOCALE])
 
 
 def _build_browser_session(
