@@ -1,11 +1,12 @@
 """WikiWatcher — filesystem observer for the Obsidian vault.
 
-Watches the wiki vault root for ``.md`` file changes in the four content
-folders (``entities/``, ``concepts/``, ``projects/``, ``sessions/``) and
-publishes :class:`jarvis.core.events.WikiPageChanged` events on the
-provided :class:`~jarvis.core.bus.EventBus`. Events are debounced
-per-path with a 500 ms window so that a curator burst that writes ten
-pages in <300 ms produces ten events, not fifty.
+Watches visible ``.md`` files beneath the wiki vault and incrementally keeps
+the derived FTS index synchronized. Changes in the four interactive content
+folders (``entities/``, ``concepts/``, ``projects/``, ``sessions/``) also
+publish :class:`jarvis.core.events.WikiPageChanged` events on the provided
+:class:`~jarvis.core.bus.EventBus`. Events are debounced per-path with a 500 ms
+window so that a curator burst that writes ten pages in <300 ms produces ten
+events, not fifty.
 
 The class is started with :meth:`WikiWatcher.start` (synchronous, captures
 the running asyncio loop) and torn down with :meth:`WikiWatcher.shutdown`
@@ -84,20 +85,26 @@ class WikiWatcher:
     debounce_ms:
         Per-path debounce window. Defaults to 500 ms which is the value
         documented in the binding briefing.
+    db_path:
+        Canonical SQLite database for incremental FTS maintenance. ``None``
+        keeps the watcher event-only, which is useful for standalone callers.
     """
 
     def __init__(
         self,
         vault_root: Path,
-        bus: "EventBus",
+        bus: EventBus,
         debounce_ms: int = DEFAULT_DEBOUNCE_MS,
+        db_path: Path | None = None,
     ) -> None:
         self.vault_root = Path(vault_root)
         self.bus = bus
         self._debounce_s = max(0.0, debounce_ms / 1000.0)
+        self._db_path = Path(db_path) if db_path is not None else None
 
         self._observer: Any | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._index_lock = threading.Lock()
 
         # Per-path debounce: {absolute_path: (Timer, latest_kind)}.
         self._timers_lock = threading.Lock()
@@ -148,23 +155,21 @@ class WikiWatcher:
 
         handler = _WatchdogBridge(self)
 
-        # Schedule one observer entry per sub-folder so a non-recursive
-        # vault-root listing (e.g. log.md, schema.md) is excluded from
-        # the stream. ``recursive=True`` is fine because the wiki sub-
-        # folders themselves are flat in practice, but we keep the option
-        # in case sessions/ later gets year-buckets.
-        for sub in WATCHED_SUBDIRS:
-            target = self.vault_root / sub
-            try:
-                observer.schedule(handler, str(target), recursive=True)
-            except FileNotFoundError as exc:
-                log.warning(
-                    "wiki_watcher: could not schedule %s: %s", target, exc
-                )
-            except PermissionError as exc:
-                log.warning(
-                    "wiki_watcher: permission denied for %s: %s", target, exc
-                )
+        # Observe the whole vault so manual changes to root pages and archived
+        # pages stay in FTS parity. Event publication remains restricted to the
+        # four interactive folders below.
+        try:
+            observer.schedule(handler, str(self.vault_root), recursive=True)
+        except FileNotFoundError as exc:
+            log.warning(
+                "wiki_watcher: could not schedule %s: %s", self.vault_root, exc
+            )
+            return False
+        except PermissionError as exc:
+            log.warning(
+                "wiki_watcher: permission denied for %s: %s", self.vault_root, exc
+            )
+            return False
 
         observer.daemon = True
         try:
@@ -196,7 +201,7 @@ class WikiWatcher:
             try:
                 timer.cancel()
             except Exception:  # noqa: BLE001
-                pass
+                log.debug("wiki_watcher: timer cancellation failed", exc_info=True)
 
         observer = self._observer
         if observer is None:
@@ -236,8 +241,14 @@ class WikiWatcher:
         if abs_path.suffix.lower() != ".md":
             return
 
-        # Filter: must be under a watched sub-folder.
-        if not self._is_under_watched_subdir(abs_path):
+        # FTS follows the same visible-Markdown rule as a full vault rebuild.
+        if not self._is_indexable_path(abs_path):
+            return
+
+        # An event-only watcher has no work for paths outside the interactive
+        # folders. A DB-backed watcher still indexes those paths without
+        # publishing frontend events.
+        if self._db_path is None and not self._is_under_watched_subdir(abs_path):
             return
 
         # Per-path debounce. If a timer already exists for this path,
@@ -249,7 +260,10 @@ class WikiWatcher:
                 try:
                     existing[0].cancel()
                 except Exception:  # noqa: BLE001
-                    pass
+                    log.debug(
+                        "wiki_watcher: debounce cancellation failed",
+                        exc_info=True,
+                    )
             # "deleted" wins over "modified" if both fire in the window,
             # because reading the file would race with the deletion.
             # "created" wins over "modified" similarly (a fresh file's
@@ -295,6 +309,12 @@ class WikiWatcher:
             return False
         return parts[0] in WATCHED_SUBDIRS
 
+    def _is_indexable_path(self, abs_path: Path) -> bool:
+        """Return whether a path follows the full-index visibility rules."""
+        from jarvis.memory.wiki.fts_index import is_indexable_path
+
+        return is_indexable_path(self.vault_root, abs_path)
+
     def _fire(self, abs_path: Path, kind: str) -> None:
         """Debounced emit — called by the threading.Timer thread."""
         # Belt-and-suspenders against the shutdown race: a Timer that
@@ -305,6 +325,15 @@ class WikiWatcher:
         # Pop our own entry so the next event for this path starts fresh.
         with self._timers_lock:
             self._timers.pop(abs_path, None)
+
+        # Editors commonly save by deleting and recreating the same path. The
+        # final filesystem state is authoritative after the debounce window;
+        # an intermediate delete must not remove a replacement file from FTS.
+        if abs_path.is_file():
+            if kind == "deleted":
+                kind = "modified"
+        else:
+            kind = "deleted"
 
         try:
             rel = abs_path.resolve().relative_to(self.vault_root.resolve())
@@ -323,6 +352,13 @@ class WikiWatcher:
 
         path_posix = rel.as_posix()
         slug = abs_path.stem
+
+        self._maintain_index(abs_path, kind, path_posix)
+
+        # Root, archive, and other visible Markdown files participate in FTS
+        # parity but are not interactive Wiki-page events.
+        if not self._is_under_watched_subdir(abs_path):
+            return
 
         event = WikiPageChanged(
             slug=slug,
@@ -345,6 +381,58 @@ class WikiWatcher:
                 exc_info=True,
                 extra={"path": path_posix, "kind": kind, "error": str(exc)},
             )
+
+    def _maintain_index(self, abs_path: Path, kind: str, rel_path: str) -> None:
+        """Apply one debounced filesystem change to the derived FTS index."""
+        db_path = self._db_path
+        if db_path is None:
+            return
+
+        import sqlite3
+
+        from jarvis.memory.wiki import fts_index
+        from jarvis.memory.wiki.health import health
+
+        operation = "upsert" if abs_path.is_file() else "remove"
+        try:
+            # Different page timers may fire together. Serialize their short
+            # SQLite transactions so a curator burst does not become a lock
+            # storm on slower or network-backed filesystems.
+            with self._index_lock:
+                db_path.parent.mkdir(parents=True, exist_ok=True)
+                conn = sqlite3.connect(
+                    str(db_path),
+                    timeout=5.0,
+                    check_same_thread=False,
+                )
+                try:
+                    fts_index.ensure_schema(conn)
+                    if operation == "remove":
+                        fts_index.remove_page(conn, self.vault_root, abs_path)
+                    else:
+                        fts_index.upsert_page(conn, self.vault_root, abs_path)
+                finally:
+                    conn.close()
+            health.record_index(
+                True,
+                operation=operation,
+                path=rel_path,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "wiki_watcher_index_failed",
+                exc_info=True,
+                extra={"path": rel_path, "kind": kind, "error": str(exc)},
+            )
+            try:
+                health.record_index(
+                    False,
+                    operation=operation,
+                    path=rel_path,
+                    error=str(exc),
+                )
+            except Exception:  # noqa: BLE001
+                log.debug("wiki_watcher: health recording failed", exc_info=True)
 
 
 class _WatchdogBridge(FileSystemEventHandler):  # type: ignore[misc]

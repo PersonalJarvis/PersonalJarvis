@@ -18,16 +18,14 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-import pytest
-
 from jarvis.memory.wiki.fts_index import (
     ensure_schema,
     index_vault,
+    read_index_metadata,
     rebuild_index,
     remove_page,
     upsert_page,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -93,7 +91,8 @@ def test_index_vault_three_pages(tmp_path: Path) -> None:
     # Page 3: frontmatter with a list-valued aliases field.
     _write_md(
         entities / "jarvis.md",
-        "---\ntype: entity\nslug: jarvis\naliases: [J, Personal Jarvis, PJ]\n---\n# Jarvis\nAssistant.\n",
+        "---\ntype: entity\nslug: jarvis\n"
+        "aliases: [J, Personal Jarvis, PJ]\n---\n# Jarvis\nAssistant.\n",
     )
 
     conn = _mem_conn()
@@ -123,6 +122,22 @@ def test_index_vault_idempotent(tmp_path: Path) -> None:
 
     assert count2 == 1
     assert _row_count(conn) == 1
+    conn.close()
+
+
+def test_index_vault_matches_cross_platform_visibility_rules(tmp_path: Path) -> None:
+    """Mixed-case Markdown is indexed while archive and template files are not."""
+    _write_md(tmp_path / "entities" / "visible.MD", "# Visible\n")
+    _write_md(tmp_path / "_archive" / "old.md", "# Archived\n")
+    _write_md(tmp_path / "attachments" / "note.md", "# Attachment\n")
+    _write_md(tmp_path / "99-templates" / "seed.md", "# Template\n")
+
+    conn = _mem_conn()
+    count = index_vault(tmp_path, conn)
+    paths = {row[0] for row in conn.execute("SELECT path FROM wiki_fts")}
+
+    assert count == 1
+    assert paths == {"entities/visible.MD"}
     conn.close()
 
 
@@ -222,6 +237,27 @@ def test_remove_page_noop_when_absent(tmp_path: Path) -> None:
 
     conn = _mem_conn()
     remove_page(conn, tmp_path, page)  # must not raise
+    conn.close()
+
+
+def test_index_metadata_tracks_latest_incremental_mutation(tmp_path: Path) -> None:
+    """Health metadata identifies the latest successful index operation."""
+    page = _write_md(tmp_path / "entities" / "tracked.md", "# Tracked\n")
+    conn = _mem_conn()
+
+    upsert_page(conn, tmp_path, page)
+    after_upsert = read_index_metadata(conn)
+    assert after_upsert is not None
+    assert after_upsert["operation"] == "upsert"
+    assert after_upsert["path"] == "entities/tracked.md"
+
+    page.unlink()
+    remove_page(conn, tmp_path, page)
+    after_remove = read_index_metadata(conn)
+    assert after_remove is not None
+    assert after_remove["operation"] == "remove"
+    assert after_remove["path"] == "entities/tracked.md"
+    assert after_remove["last_indexed_at"] >= after_upsert["last_indexed_at"]
     conn.close()
 
 

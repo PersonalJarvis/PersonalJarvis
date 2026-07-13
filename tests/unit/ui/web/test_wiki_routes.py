@@ -515,11 +515,20 @@ def test_reindex_replaces_stale_rows_with_active_vault(
     with TestClient(app) as client:
         preview = client.post("/api/wiki/reindex", params={"dry_run": "true"}).json()
         result = client.post("/api/wiki/reindex").json()
+        health = client.get("/api/wiki/health").json()["health"]
 
     assert preview["indexed_before"] == 1
     assert preview["indexed_pages"] == 1
     assert result["ok"] is True
     assert result["indexed_pages"] == 3
+    assert health["index_state"] == "ok"
+    assert health["indexed_pages"] == health["vault_pages"] == 3
+    assert health["missing_pages"] == 0
+    assert health["orphaned_pages"] == 0
+    assert health["outdated_pages"] == 0
+    assert health["last_index_at"] is not None
+    assert health["last_index_operation"] == "rebuild"
+    assert health["index_lag_seconds"] == 0.0
 
     conn = sqlite3.connect(str(db_path))
     try:
@@ -589,7 +598,11 @@ def test_health_returns_200_with_fresh_snapshot(
     assert body["health"]["journal_backlog"] == 0
     assert body["health"]["bootstrap_ok"] is None
     assert body["health"]["last_write"] is None
+    assert body["health"]["last_index"] is None
     assert body["health"]["last_chain_failure"] is None
+    assert body["health"]["index_available"] is False
+    assert body["health"]["index_state"] == "stale"
+    assert body["health"]["index_state_reason"] == "vault_unavailable"
 
 
 def test_health_restores_last_write_and_backlog_from_journal(tmp_path: Path) -> None:
@@ -630,4 +643,6 @@ def test_health_restores_last_write_and_backlog_from_journal(tmp_path: Path) -> 
     assert health["journal_backlog"] == 1
     assert health["last_write"]["pages"] == ["entities/ruben.md"]
     assert health["vault_pages"] == 1
+    assert health["missing_pages"] == 1
+    assert health["orphaned_pages"] == 0
     assert health["index_state"] == "stale"

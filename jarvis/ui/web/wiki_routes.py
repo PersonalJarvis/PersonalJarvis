@@ -762,6 +762,7 @@ async def wiki_health(request: Request) -> dict[str, Any]:
 
     from jarvis.memory.wiki.db_path import resolve_wiki_db_path
     from jarvis.memory.wiki.health import health as _health
+    from jarvis.memory.wiki.health import inspect_index_health
 
     snapshot = _health.snapshot()
     vault_root = _resolve_vault_root(request)
@@ -772,7 +773,6 @@ async def wiki_health(request: Request) -> dict[str, Any]:
     def _persistent_state() -> dict[str, Any]:
         state: dict[str, Any] = {
             "journal_backlog": 0,
-            "indexed_pages": 0,
             "last_write": None,
         }
         if not db_path.exists():
@@ -802,31 +802,33 @@ async def wiki_health(request: Request) -> dict[str, Any]:
                     }
             except sqlite3.OperationalError:
                 pass
-            try:
-                state["indexed_pages"] = int(
-                    conn.execute("SELECT COUNT(*) FROM wiki_fts").fetchone()[0]
-                )
-            except sqlite3.OperationalError:
-                pass
         finally:
             conn.close()
         return state
 
-    persistent = await asyncio.to_thread(_persistent_state)
+    persistent, index_health = await asyncio.gather(
+        asyncio.to_thread(_persistent_state),
+        asyncio.to_thread(inspect_index_health, vault_root, db_path),
+    )
     if snapshot["last_write"] is None and persistent["last_write"] is not None:
         snapshot["last_write"] = persistent["last_write"]
     snapshot["journal_backlog"] = persistent["journal_backlog"]
-    snapshot["indexed_pages"] = persistent["indexed_pages"]
-    snapshot["vault_pages"] = (
-        _visible_markdown_count(vault_root)
-        if vault_root is not None and vault_root.is_dir()
-        else 0
-    )
-    snapshot["index_state"] = (
-        "ok"
-        if snapshot["indexed_pages"] == snapshot["vault_pages"]
-        else "stale"
-    )
+    snapshot.update(index_health)
+
+    last_index = snapshot.get("last_index")
+    if (
+        isinstance(last_index, dict)
+        and last_index.get("ok") is False
+        and snapshot.get("index_state") != "ok"
+        and float(last_index.get("ts") or 0.0)
+        >= float(snapshot.get("last_index_at") or 0.0)
+    ):
+        reasons = list(snapshot.get("index_state_reasons") or [])
+        if "index_update_failed" not in reasons:
+            reasons.insert(0, "index_update_failed")
+        snapshot["index_state"] = "stale"
+        snapshot["index_state_reason"] = "index_update_failed"
+        snapshot["index_state_reasons"] = reasons
     return {"ok": True, "health": snapshot}
 
 

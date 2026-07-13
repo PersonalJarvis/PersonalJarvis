@@ -2324,6 +2324,7 @@ class WebServer:
         the desktop app must boot when the vault is empty or watchdog
         cannot start an observer.
         """
+        from jarvis.memory.wiki.db_path import resolve_wiki_db_path
         from jarvis.memory.wiki.vault_root import resolve_vault_root
         from jarvis.memory.wiki.watcher import WikiWatcher
 
@@ -2333,8 +2334,13 @@ class WebServer:
             return
 
         vault_root = resolve_vault_root(wiki_cfg.vault_root).path
+        db_path = resolve_wiki_db_path(self.cfg.memory.data_dir)
 
-        watcher = WikiWatcher(vault_root=vault_root, bus=self.bus)
+        watcher = WikiWatcher(
+            vault_root=vault_root,
+            bus=self.bus,
+            db_path=db_path,
+        )
         try:
             started = watcher.start()
         except FileNotFoundError as exc:

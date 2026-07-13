@@ -14,6 +14,8 @@ Anti-patterns avoided:
 from __future__ import annotations
 
 import asyncio
+import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -22,7 +24,6 @@ import pytest_asyncio
 from jarvis.core.bus import EventBus
 from jarvis.core.events import WikiPageChanged
 from jarvis.memory.wiki.watcher import WikiWatcher
-
 
 # Plenty of slack — Windows ReadDirectoryChangesW is usually <50 ms but
 # we have seen the test runner pause much longer under load.
@@ -36,11 +37,34 @@ def _make_vault(root: Path) -> Path:
     return root
 
 
+async def _wait_for_index(
+    db_path: Path,
+    predicate: Callable[[sqlite3.Connection], bool],
+    *,
+    wait_s: float = EVENT_WAIT_S,
+) -> None:
+    """Poll a real FTS database until ``predicate`` observes the change."""
+    deadline = asyncio.get_running_loop().time() + wait_s
+    while asyncio.get_running_loop().time() < deadline:
+        if await asyncio.to_thread(db_path.is_file):
+            conn = sqlite3.connect(str(db_path))
+            try:
+                try:
+                    if predicate(conn):
+                        return
+                except sqlite3.OperationalError:
+                    pass
+            finally:
+                conn.close()
+        await asyncio.sleep(0.05)
+    pytest.fail("timed out waiting for the wiki FTS index")
+
+
 async def _collect_events(
     bus: EventBus,
     *,
     count: int,
-    timeout: float = EVENT_WAIT_S,
+    wait_s: float = EVENT_WAIT_S,
 ) -> list[WikiPageChanged]:
     """Wait for ``count`` :class:`WikiPageChanged` events on the bus.
 
@@ -59,8 +83,8 @@ async def _collect_events(
     bus.subscribe(WikiPageChanged, _on_event)
     try:
         try:
-            await asyncio.wait_for(fut, timeout=timeout)
-        except asyncio.TimeoutError:
+            await asyncio.wait_for(fut, timeout=wait_s)
+        except TimeoutError:
             pass
     finally:
         bus.unsubscribe(WikiPageChanged, _on_event)
@@ -193,6 +217,108 @@ async def test_burst_modifications_are_debounced(watcher_stack):
     events = await _wait_quiescent(bus)
     assert len(events) == 1, f"expected one debounced event, got {events!r}"
     assert events[0].slug == "karpathy"
+
+
+@pytest.mark.asyncio
+async def test_manual_create_modify_delete_maintains_fts(tmp_path: Path):
+    """Manual vault edits update and remove their FTS row without restart."""
+    vault = _make_vault(tmp_path / "vault")
+    db_path = tmp_path / "data" / "jarvis.db"
+    bus = EventBus()
+    watcher = WikiWatcher(
+        vault_root=vault,
+        bus=bus,
+        debounce_ms=50,
+        db_path=db_path,
+    )
+    assert watcher.start()
+    await asyncio.sleep(0.1)
+    target = vault / "entities" / "manual.md"
+    try:
+        target.write_text("# Manual\n\nFirst version.\n", encoding="utf-8")
+        await _wait_for_index(
+            db_path,
+            lambda conn: conn.execute(
+                "SELECT COUNT(*) FROM wiki_fts WHERE path = ? AND body LIKE ?",
+                ("entities/manual.md", "%First version%"),
+            ).fetchone()[0]
+            == 1,
+        )
+
+        target.write_text("# Manual\n\nSecond version.\n", encoding="utf-8")
+        await _wait_for_index(
+            db_path,
+            lambda conn: conn.execute(
+                "SELECT COUNT(*) FROM wiki_fts WHERE path = ? AND body LIKE ?",
+                ("entities/manual.md", "%Second version%"),
+            ).fetchone()[0]
+            == 1,
+        )
+
+        # Atomic-save editors may report an intermediate deletion even though
+        # the replacement file exists by the end of the debounce window.
+        target.write_text("# Manual\n\nAtomic replacement.\n", encoding="utf-8")
+        watcher._handle_event(str(target), "deleted")  # noqa: SLF001
+        await _wait_for_index(
+            db_path,
+            lambda conn: conn.execute(
+                "SELECT COUNT(*) FROM wiki_fts WHERE path = ? AND body LIKE ?",
+                ("entities/manual.md", "%Atomic replacement%"),
+            ).fetchone()[0]
+            == 1,
+        )
+
+        target.unlink()
+        await _wait_for_index(
+            db_path,
+            lambda conn: conn.execute(
+                "SELECT COUNT(*) FROM wiki_fts WHERE path = ?",
+                ("entities/manual.md",),
+            ).fetchone()[0]
+            == 0,
+        )
+    finally:
+        await watcher.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_visible_root_page_is_indexed_without_ui_event(tmp_path: Path):
+    """Full-index pages outside content folders stay searchable but stay quiet."""
+    vault = _make_vault(tmp_path / "vault")
+    db_path = tmp_path / "data" / "jarvis.db"
+    bus = EventBus()
+    watcher = WikiWatcher(
+        vault_root=vault,
+        bus=bus,
+        debounce_ms=50,
+        db_path=db_path,
+    )
+    received: list[WikiPageChanged] = []
+
+    async def _on_event(event: WikiPageChanged) -> None:
+        received.append(event)
+
+    bus.subscribe(WikiPageChanged, _on_event)
+    assert watcher.start()
+    await asyncio.sleep(0.1)
+    try:
+        (vault / "schema.md").write_text(
+            "# Schema\n\nSearchable root page.\n",
+            encoding="utf-8",
+        )
+        await _wait_for_index(
+            db_path,
+            lambda conn: conn.execute(
+                "SELECT COUNT(*) FROM wiki_fts WHERE path = ?",
+                ("schema.md",),
+            ).fetchone()[0]
+            == 1,
+        )
+        await asyncio.sleep(0.2)
+        assert received == []
+    finally:
+        bus.unsubscribe(WikiPageChanged, _on_event)
+        await watcher.shutdown()
 
 
 @pytest.mark.asyncio
