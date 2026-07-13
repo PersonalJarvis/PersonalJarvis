@@ -2,6 +2,8 @@ import asyncio
 
 import pytest
 
+from jarvis.brain.tool_gateway import BrainSupervisorToolGateway
+from jarvis.core import runtime_refs
 from jarvis.core.events import (
     LatencyPhase,
     LatencySpan,
@@ -1578,7 +1580,7 @@ async def test_instructions_carry_tool_role_when_bridge_active():
 
     instructions = provider.opened_with.instructions
     assert "call the matching function" in instructions
-    assert "background-agent spawn" in instructions
+    assert "Jarvis-Agent spawn" in instructions
 
 
 @pytest.mark.asyncio
@@ -1639,6 +1641,9 @@ class _StubTool:
     risk_tier = "monitor"
     schema = {"type": "object", "properties": {}}
 
+    async def execute(self, *_args, **_kwargs):
+        raise AssertionError("Realtime must execute through the supervisor gateway")
+
 
 class _StubExecutor:
     async def execute(self, _tool, _arguments, **_kwargs):
@@ -1684,6 +1689,19 @@ def _session(
         brain=brain,
         tool_bridge=tool_bridge,
     )
+
+
+@pytest.fixture
+def wire_supervisor_gateway():
+    previous = runtime_refs.get_supervisor_tool_gateway()
+
+    def _wire(brain, executor):
+        brain._tool_executor = executor
+        gateway = BrainSupervisorToolGateway(brain)
+        runtime_refs.set_supervisor_tool_gateway(gateway)
+
+    yield _wire
+    runtime_refs.set_supervisor_tool_gateway(previous)
 
 
 @pytest.mark.asyncio
@@ -1930,10 +1948,10 @@ async def test_barge_in_detaches_late_delegate_result_from_new_turn():
 
 
 @pytest.mark.asyncio
-async def test_direct_mode_builds_bridge_from_brain():
+async def test_direct_mode_builds_bridge_from_brain(wire_supervisor_gateway):
     brain = FakeBrain()
     brain._tools = {"open_app": _StubTool()}
-    brain._tool_executor_ref = object()
+    wire_supervisor_gateway(brain, _StubExecutor())
     provider = FakeProvider([RealtimeEvent(type="turn_complete")])
     sess = _session(provider, brain=brain, tool_mode="direct")
 
@@ -1948,10 +1966,12 @@ async def test_direct_mode_builds_bridge_from_brain():
 
 
 @pytest.mark.asyncio
-async def test_direct_mode_pushes_live_brain_tool_replacements_to_provider():
+async def test_direct_mode_pushes_live_brain_tool_replacements_to_provider(
+    wire_supervisor_gateway,
+):
     brain = FakeBrain()
     brain._tools = {"old_tool": _StubTool()}
-    brain._tool_executor_ref = _StubExecutor()
+    wire_supervisor_gateway(brain, _StubExecutor())
     provider = FakeProvider(
         [
             RealtimeEvent(
@@ -2168,11 +2188,13 @@ async def test_delegate_conversation_turn_keeps_the_session_response_event():
 
 
 @pytest.mark.asyncio
-async def test_direct_tool_turn_keeps_the_session_response_event():
+async def test_direct_tool_turn_keeps_the_session_response_event(
+    wire_supervisor_gateway,
+):
     bus = FakeBus()
     brain = FakeBrain(bus=bus)
     brain._tools = {"open_app": _StubTool()}
-    brain._tool_executor_ref = _StubExecutor()
+    wire_supervisor_gateway(brain, _StubExecutor())
     provider = FakeProvider(
         [
             RealtimeEvent(type="input_transcript", text="open it", is_final=True),
@@ -2269,6 +2291,33 @@ async def test_delegate_failure_leaves_the_spoken_error_as_the_only_response():
     responses = [event for event in bus.events if isinstance(event, ResponseGenerated)]
     assert [event.text for event in responses] == ["I could not complete that action."]
     assert provider.session.tool_results[0][2]["success"] is False
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_delegate_empty_brain_result_cannot_claim_action_success():
+    brain = FakeBrain(replies=("",))
+    provider = ToolResultGatedProvider(
+        [
+            RealtimeEvent(type="input_transcript", text="do it", is_final=True),
+            RealtimeEvent(
+                type="tool_call",
+                call_id="empty-result-1",
+                tool_name="jarvis_action",
+                tool_args={"request": "do it"},
+            ),
+        ],
+        [RealtimeEvent(type="turn_complete")],
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+
+    result = provider.session.tool_results[0][2]
+    assert result["success"] is False
+    assert "no grounded result" in result["error"]
+    assert result["spoken_reply"]
     await sess.end(reason="test")
 
 

@@ -32,6 +32,7 @@ from loguru import logger
 
 # Each ref is a 1-element list so the setter can rebind without ``global``.
 _BRAIN_MANAGER: list[Any] = []
+_SUPERVISOR_TOOL_GATEWAY: list[Any] = []
 _SPEECH_PIPELINE: list[Any] = []
 _MCP_REGISTRY: list[Any] = []
 
@@ -58,6 +59,16 @@ def set_brain_manager(manager: Any) -> None:
 def get_brain_manager() -> Any | None:
     """The live BrainManager, or ``None`` if not yet built."""
     return _BRAIN_MANAGER[0] if _BRAIN_MANAGER else None
+
+
+def set_supervisor_tool_gateway(gateway: Any) -> None:
+    """Register the protocol-only gateway to supervisor-owned tools."""
+    _set(_SUPERVISOR_TOOL_GATEWAY, gateway)
+
+
+def get_supervisor_tool_gateway() -> Any | None:
+    """Return the live supervisor tool gateway, or ``None`` before brain wiring."""
+    return _SUPERVISOR_TOOL_GATEWAY[0] if _SUPERVISOR_TOOL_GATEWAY else None
 
 
 def set_speech_pipeline(pipeline: Any) -> None:
@@ -200,6 +211,7 @@ def cancel_active_chat_turn() -> bool:
 def _reset_for_tests() -> None:
     """Clear all refs. Test-only helper (fixtures call this in teardown)."""
     _BRAIN_MANAGER.clear()
+    _SUPERVISOR_TOOL_GATEWAY.clear()
     _SPEECH_PIPELINE.clear()
     _MCP_REGISTRY.clear()
     _WEB_APP.clear()

@@ -36,6 +36,7 @@ def test_launcher_invocations_not_routed():
     assert not is_control_invocation(["--wizard"])
     assert not is_control_invocation(["--check"])
     assert not is_control_invocation(["--debug"])
+    assert not is_control_invocation(["--worker-tool-broker-stdio"])
 
 
 def test_control_invocations_routed():
@@ -67,3 +68,11 @@ def test_main_does_not_route_launcher(monkeypatch):
     monkeypatch.setattr(jm, "_cmd_check", lambda: 0)
     rc = jm.main(["--check"])
     assert rc == 0
+
+
+def test_main_routes_frozen_worker_broker_mode(monkeypatch):
+    from jarvis.missions.workers import broker_stdio
+
+    monkeypatch.setattr(broker_stdio, "main", lambda: 17)
+
+    assert jm.main(["--worker-tool-broker-stdio"]) == 17

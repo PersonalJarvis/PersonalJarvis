@@ -69,25 +69,30 @@ _FALLBACK_MODEL: str = "gemini-3-flash-preview"
 
 
 def _build_isolated_gemini_env(
-    env: dict[str, str], *, log_dir: Path
+    env: dict[str, str],
+    *,
+    log_dir: Path,
+    mcp_servers: dict[str, Any] | None = None,
 ) -> tuple[dict[str, str], Path, str]:
     """Apply a highest-precedence restricted config without hiding CLI auth."""
     settings_path = log_dir / ".jarvis-gemini-system-settings.json"
-    no_mcp_server = f"jarvis-no-mcp-{uuid.uuid4().hex}"
+    server_names = tuple(sorted((mcp_servers or {}).keys()))
+    allowed_server = server_names[0] if server_names else f"jarvis-no-mcp-{uuid.uuid4().hex}"
+    settings: dict[str, Any] = {
+        "hooksConfig": {"enabled": False},
+        "mcp": {"allowed": list(server_names) or [allowed_server]},
+        "security": {"allowedExtensions": ["(?!)"]},
+        "skills": {"enabled": False},
+    }
+    if server_names:
+        settings["mcpServers"] = dict(mcp_servers or {})
     settings_path.write_text(
-        json.dumps(
-            {
-                "hooksConfig": {"enabled": False},
-                "mcp": {"allowed": [no_mcp_server]},
-                "security": {"allowedExtensions": ["(?!)"]},
-                "skills": {"enabled": False},
-            }
-        ),
+        json.dumps(settings),
         encoding="utf-8",
     )
     restricted = dict(env)
     restricted["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = str(settings_path)
-    return restricted, settings_path, no_mcp_server
+    return restricted, settings_path, allowed_server
 
 
 def _stderr_signals_quota_block(stderr_bytes: bytes) -> bool:
@@ -292,6 +297,59 @@ class GeminiWorker:
         max_turns: int = 20,
         resume_session_id: str | None = None,
         extra_args: tuple[str, ...] = (),
+        _broker_binding: Any | None = None,
+        **_unused: Any,
+    ) -> AsyncIterator[Any]:
+        """Run one Gemini worker lifecycle under one mission-scoped grant."""
+        broker_binding = _broker_binding
+        issued_here = broker_binding is None
+        if issued_here:
+            broker_binding = self.capability_inventory.bind_broker(
+                ttl_s=1260.0,
+                mission_id=_unused.get("mission_id"),
+                worker_id=worker_id,
+            )
+        try:
+            async for event in self._spawn_bound(
+                prompt,
+                worktree=worktree,
+                env=env,
+                job=job,
+                worker_id=worker_id,
+                log_dir=log_dir,
+                model=model,
+                allowed_tools=allowed_tools,
+                permission_mode=permission_mode,
+                max_turns=max_turns,
+                resume_session_id=resume_session_id,
+                extra_args=extra_args,
+                broker_binding=broker_binding,
+                **_unused,
+            ):
+                yield event
+        finally:
+            if issued_here and broker_binding is not None:
+                try:
+                    broker_binding.close()
+                except Exception:  # noqa: BLE001 - cleanup must not mask cancellation
+                    logger.exception("GeminiWorker: broker binding cleanup failed")
+
+    async def _spawn_bound(
+        self,
+        prompt: str,
+        *,
+        worktree: Path,
+        env: dict[str, str],
+        job: Any,
+        worker_id: str,
+        log_dir: Path,
+        model: str = "gemini-3-flash-preview",
+        allowed_tools: str = "",  # accepted for parity, ignored by Gemini CLI
+        permission_mode: str = "yolo",
+        max_turns: int = 20,
+        resume_session_id: str | None = None,
+        extra_args: tuple[str, ...] = (),
+        broker_binding: Any | None,
         **_unused: Any,
     ) -> AsyncIterator[Any]:
         """Spawn the Gemini CLI and emit a synthetic init + result.
@@ -315,6 +373,9 @@ class GeminiWorker:
         # (Gemini 4, etc.) the user updates the TOML and we pick it up
         # automatically — no code change needed.
         effective_model = _resolve_gemini_model(model)
+        broker_servers = (
+            broker_binding.mcp_server_config() if broker_binding is not None else {}
+        )
 
         cmd = _build_gemini_cmd(
             prompt,
@@ -335,14 +396,24 @@ class GeminiWorker:
             model=f"gemini/{effective_model}",
             tools=[],
             cwd=str(worktree),
-            external_capabilities=self.capability_inventory.report_for("gemini-cli"),
+            external_capabilities=self.capability_inventory.report_for(
+                "gemini-cli", binding=broker_binding
+            ),
         )
 
         (
             env_for_gemini,
             restricted_settings,
             no_mcp_server,
-        ) = _build_isolated_gemini_env(env, log_dir=log_dir)
+        ) = _build_isolated_gemini_env(
+            (
+                broker_binding.apply_environment(env)
+                if broker_binding is not None
+                else env
+            ),
+            log_dir=log_dir,
+            mcp_servers=broker_servers,
+        )
         cmd.extend(["--allowed-mcp-server-names", no_mcp_server])
 
         logger.info(

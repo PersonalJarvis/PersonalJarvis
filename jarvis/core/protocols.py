@@ -155,6 +155,31 @@ class ToolResult:
     artifacts: tuple[str, ...] = field(default_factory=tuple)
 
 
+@dataclass(frozen=True, slots=True)
+class SupervisorToolDescriptor:
+    """Secret-free description of one tool owned by the supervisor."""
+
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+    risk_tier: RiskTier
+    is_action_tool: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class SupervisorToolRequest:
+    """Execution metadata supplied by Realtime or a mission worker."""
+
+    trace_id: UUID
+    origin: str
+    user_utterance: str
+    rationale: str = ""
+    mission_id: str | None = None
+    worker_id: str | None = None
+    config_snapshot: dict[str, Any] = field(default_factory=dict)
+    cancel_token: CancelToken | None = None
+
+
 # ----------------------------------------------------------------------
 # Protocols
 # ----------------------------------------------------------------------
@@ -321,6 +346,39 @@ class Tool(Protocol):
     async def execute(self, args: dict[str, Any], ctx: ExecutionContext) -> ToolResult:
         """Execute the action."""
         ...
+
+
+@runtime_checkable
+class SupervisorToolGateway(Protocol):
+    """Versioned catalog and sole safety-gated execution seam for owned tools."""
+
+    @property
+    def catalog_version(self) -> int: ...
+
+    def catalog(self) -> tuple[SupervisorToolDescriptor, ...]: ...
+
+    async def execute(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        request: SupervisorToolRequest,
+    ) -> ToolResult: ...
+
+    async def execute_confirmed(
+        self,
+        trace_id: UUID,
+        request: SupervisorToolRequest,
+    ) -> ToolResult: ...
+
+    async def cancel_pending(self, trace_id: UUID) -> bool: ...
+
+    async def publish_guard_denied(
+        self,
+        name: str,
+        reason: str,
+        *,
+        trace_id: UUID,
+    ) -> None: ...
 
 
 @runtime_checkable

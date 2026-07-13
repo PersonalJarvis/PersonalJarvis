@@ -225,7 +225,7 @@ async def test_runner_agent_delivers_result_as_announcement(store: TaskStore):
 
 async def test_runner_arms_auto_approver_for_write_grants(store: TaskStore):
     """A write-scoped grant lets an ask-tier tool run unattended."""
-    from jarvis.core.events import ActionApproved, ActionProposed
+    from jarvis.core.events import ActionApprovalRequired, ActionApproved
     from jarvis.tasks.approval_bridge import TaskAutoApprover
 
     bus = EventBus()
@@ -242,7 +242,9 @@ async def test_runner_arms_auto_approver_for_write_grants(store: TaskStore):
         async def run_task(self, *, prompt, allowed_tools, model_tier, trace_id):
             # Simulate the tool loop proposing an ask-tier action mid-turn.
             await bus.publish(
-                ActionProposed(trace_id=trace_id, tool_name="buffer", risk_tier="ask")
+                ActionApprovalRequired(
+                    trace_id=trace_id, tool_name="buffer", risk_tier="ask"
+                )
             )
             await asyncio.sleep(0)
             return "posted"
@@ -263,7 +265,7 @@ async def test_runner_arms_auto_approver_for_write_grants(store: TaskStore):
 
 async def test_runner_does_not_auto_approve_read_grants(store: TaskStore):
     """A read-scoped grant must NOT pre-authorize an ask-tier action."""
-    from jarvis.core.events import ActionApproved, ActionProposed
+    from jarvis.core.events import ActionApprovalRequired, ActionApproved
     from jarvis.tasks.approval_bridge import TaskAutoApprover
 
     bus = EventBus()
@@ -279,7 +281,9 @@ async def test_runner_does_not_auto_approve_read_grants(store: TaskStore):
     class _Brain:
         async def run_task(self, *, prompt, allowed_tools, model_tier, trace_id):
             await bus.publish(
-                ActionProposed(trace_id=trace_id, tool_name="gmail", risk_tier="ask")
+                ActionApprovalRequired(
+                    trace_id=trace_id, tool_name="gmail", risk_tier="ask"
+                )
             )
             await asyncio.sleep(0)
             return "read done"

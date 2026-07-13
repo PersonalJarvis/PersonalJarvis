@@ -194,6 +194,24 @@ class ActionProposed(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class ActionApprovalRequired(Event):
+    """A concrete tool call is paused until this trace receives a decision.
+
+    ``args_preview`` is redacted and length-capped before publication. Mission
+    identifiers are correlation metadata only; the mission itself remains in
+    its running state while this individual call waits.
+    """
+
+    tool_name: str = ""
+    risk_tier: RiskTier = "ask"
+    reason: str = "risk_tier"  # "risk_tier" | "plausibility"
+    args_preview: str = ""
+    expires_at_ns: int = 0
+    mission_id: str | None = None
+    worker_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ActionApproved(Event):
     tool_name: str = ""
     approved_by: str = "auto"  # "auto" | "user" | "whitelist"

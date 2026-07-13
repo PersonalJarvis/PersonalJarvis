@@ -275,7 +275,7 @@ def test_lean_create_respects_path_length_cap(
     workspaces too (files written inside must still fit under MAX_PATH)."""
     very_deep = tmp_path / ("x" * 220)
     mgr = WorktreeManager(repo_root=tmp_git_repo, outputs_root=very_deep)
-    with pytest.raises(ValueError, match="zu lang"):
+    with pytest.raises(ValueError, match="too long"):
         mgr.create(mission_slug="m", task_id="01", needs_repo=False)
 
 
@@ -303,11 +303,11 @@ def test_create_path_layout_matches_spec(manager: WorktreeManager, tmp_path: Pat
 
 
 def test_create_raises_when_path_too_long(tmp_git_repo: Path, tmp_path: Path) -> None:
-    """Pfad-Length-Cap: wirft ValueError wenn Worktree-Wurzel >200 Chars."""
+    """The path-length cap raises ValueError above 200 characters."""
     # Very deep outputs_root to exceed the cap
     very_deep = tmp_path / ("x" * 220)
     mgr = WorktreeManager(repo_root=tmp_git_repo, outputs_root=very_deep)
-    with pytest.raises(ValueError, match="zu lang"):
+    with pytest.raises(ValueError, match="too long"):
         mgr.create(mission_slug="m", task_id="01")
 
 

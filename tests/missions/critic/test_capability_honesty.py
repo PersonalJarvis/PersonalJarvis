@@ -176,6 +176,165 @@ def test_claude_tool_use_still_recognized() -> None:
     assert "Write" in _extract_tool_call_evidence(stream)
 
 
+def _claude_tool_result_stream(result: dict) -> str:
+    return "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "tu_1",
+                                "name": "mcp__gmail__send_message",
+                                "input": {},
+                            }
+                        ]
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "tu_1",
+                                **result,
+                            }
+                        ]
+                    },
+                }
+            ),
+        )
+    )
+
+
+def test_claude_correlated_success_result_counts_as_evidence() -> None:
+    stream = _claude_tool_result_stream(
+        {"content": '{"status":"ok","success":true,"message_id":"42"}'}
+    )
+
+    assert _extract_tool_call_evidence(stream) == ("mcp__gmail__send_message",)
+
+
+def test_claude_is_error_result_removes_tool_call_evidence() -> None:
+    stream = _claude_tool_result_stream(
+        {"content": "provider rejected the request", "is_error": True}
+    )
+
+    assert _extract_tool_call_evidence(stream) == ()
+
+
+def test_claude_success_false_result_removes_tool_call_evidence() -> None:
+    stream = _claude_tool_result_stream(
+        {"content": {"status": "error", "success": False, "error": "offline"}}
+    )
+
+    assert _extract_tool_call_evidence(stream) == ()
+
+
+@pytest.mark.parametrize(
+    "content",
+    (
+        "denied: user did not approve this action",
+        '{"status":"approval_denied","success":false}',
+        {"status": "blocked", "ok": False},
+        [{"type": "text", "text": '{"status":"approval_denied"}'}],
+    ),
+)
+def test_claude_denied_result_removes_tool_call_evidence(content: object) -> None:
+    stream = _claude_tool_result_stream({"content": content})
+
+    assert _extract_tool_call_evidence(stream) == ()
+
+
+def test_successful_retry_survives_failed_call_of_same_tool() -> None:
+    stream = "\n".join(
+        (
+            _claude_tool_result_stream({"content": "denied", "is_error": True}),
+            _claude_tool_result_stream({"content": "message id 43"})
+            .replace('"tu_1"', '"tu_2"'),
+        )
+    )
+
+    assert _extract_tool_call_evidence(stream) == ("mcp__gmail__send_message",)
+
+
+def test_codex_failed_completion_overrides_started_action() -> None:
+    stream = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {
+                        "id": "item_9",
+                        "type": "mcp_tool_call",
+                        "status": "in_progress",
+                    },
+                }
+            ),
+            _codex_item_line(
+                {
+                    "id": "item_9",
+                    "type": "mcp_tool_call",
+                    "server": "gmail",
+                    "tool": "send_message",
+                    "status": "failed",
+                    "result": "denied",
+                }
+            ),
+        )
+    )
+
+    assert _extract_tool_call_evidence(stream) == ()
+
+
+def test_codex_failed_completion_without_id_is_not_evidence() -> None:
+    stream = _codex_item_line(
+        {
+            "type": "mcp_tool_call",
+            "server": "gmail",
+            "tool": "send_message",
+            "status": "failed",
+            "result": "denied",
+        }
+    )
+
+    assert _extract_tool_call_evidence(stream) == ()
+
+
+def test_codex_nonzero_command_result_is_not_evidence() -> None:
+    stream = _codex_item_line(
+        {
+            "id": "item_11",
+            "type": "command_execution",
+            "command": "send-message",
+            "status": "completed",
+            "exit_code": 1,
+            "aggregated_output": "provider unavailable",
+        }
+    )
+
+    assert _extract_tool_call_evidence(stream) == ()
+
+
+def test_failed_tool_call_cannot_satisfy_side_effect_honesty_gate() -> None:
+    check = enforce_capability_honesty(
+        user_request="Send an email to Max",
+        verdict=_approval_verdict(),
+        worker_output=_claude_tool_result_stream(
+            {"content": '{"status":"approval_denied","success":false}'}
+        ),
+    )
+
+    assert check.honesty_overridden is True
+    assert check.verdict.verdict == "revise"
+    assert check.tool_call_evidence == ()
+
+
 # --- full gate behaviour ---
 
 

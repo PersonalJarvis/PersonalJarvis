@@ -109,12 +109,15 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 
 ## missions
 
+- `jarvis missions approve-tool <mission_id> <trace_id> --yes --dry-run` — Approve one paused mission tool call and resume it.
 - `jarvis missions cancel <mission_id> --yes --dry-run` — Cancel a running mission (kills its worker).
+- `jarvis missions deny-tool <mission_id> <trace_id> --reason --dry-run` — Deny one paused mission tool call without executing it.
 - `jarvis missions dispatch <prompt> --language --confirmed --yes --dry-run` — Dispatch a new self-healing mission — spawns a worker (destructive: --yes).
 - `jarvis missions kill <worker_id> --yes --dry-run` — Hard-kill a worker process by id.
 - `jarvis missions list --state --limit` — List missions (optionally filtered by state).
 - `jarvis missions rerun <mission_id> --confirmed --yes --dry-run` — Re-dispatch a terminal mission's prompt as a new linked mission.
 - `jarvis missions show <mission_id>` — Show one mission with its events + verdicts.
+- `jarvis missions tool-approvals <mission_id>` — List supervisor tool calls waiting for approval in a mission.
 
 ## outputs
 

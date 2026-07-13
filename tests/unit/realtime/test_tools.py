@@ -6,6 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from jarvis.brain.tool_gateway import BrainSupervisorToolGateway
+from jarvis.core import runtime_refs
 from jarvis.realtime.tools import RealtimeToolBridge
 from jarvis.safety.tool_executor import VOICE_CONFIRM_SENTINEL
 
@@ -53,6 +55,19 @@ class FakeExecutor:
 
     async def publish_guard_denied(self, name, reason, *, trace_id):
         self.denied.append((name, reason, trace_id))
+
+
+@pytest.fixture
+def wire_gateway():
+    previous = runtime_refs.get_supervisor_tool_gateway()
+
+    def _wire(brain):
+        gateway = BrainSupervisorToolGateway(brain)
+        runtime_refs.set_supervisor_tool_gateway(gateway)
+        return gateway
+
+    yield _wire
+    runtime_refs.set_supervisor_tool_gateway(previous)
 
 
 def _bridge(*, name: str = "open_app", confirmation_required: bool = False):
@@ -162,14 +177,17 @@ def test_bridge_declarations_keep_the_full_json_schema() -> None:
 
 
 @pytest.mark.asyncio
-async def test_bridge_refreshes_replaced_brain_tools_and_denies_removed_tool():
+async def test_bridge_refreshes_replaced_brain_tools_and_denies_removed_tool(
+    wire_gateway,
+):
     executor = FakeExecutor()
     old_tool = FakeTool("old_tool")
     new_tool = FakeTool("new_tool")
     brain = SimpleNamespace(
         _tools={"old_tool": old_tool},
-        _tool_executor_ref=executor,
+        _tool_executor=executor,
     )
+    wire_gateway(brain)
     bridge = RealtimeToolBridge.from_brain(brain, language="en")
     assert bridge is not None
 
@@ -188,13 +206,16 @@ async def test_bridge_refreshes_replaced_brain_tools_and_denies_removed_tool():
 
 
 @pytest.mark.asyncio
-async def test_bridge_refresh_retains_a_tool_awaiting_voice_confirmation():
+async def test_bridge_refresh_retains_a_tool_awaiting_voice_confirmation(
+    wire_gateway,
+):
     executor = FakeExecutor(confirmation_required=True)
     pending_tool = FakeTool("pending_tool")
     brain = SimpleNamespace(
         _tools={"pending_tool": pending_tool},
-        _tool_executor_ref=executor,
+        _tool_executor=executor,
     )
+    wire_gateway(brain)
     bridge = RealtimeToolBridge.from_brain(brain, language="en")
     assert bridge is not None
     await bridge.handle_user_transcript("Open Calculator")

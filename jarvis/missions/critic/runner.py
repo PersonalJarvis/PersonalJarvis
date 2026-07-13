@@ -134,6 +134,136 @@ _RE_CODEX_ACTION_ITEM = re.compile(
     r'"type"\s*:\s*"(command_execution|file_change|mcp_tool_call|web_search)"'
 )
 
+_ACTION_ITEM_TYPES: Final[frozenset[str]] = frozenset(
+    {"command_execution", "file_change", "mcp_tool_call", "web_search"}
+)
+_FAILED_RESULT_STATUSES: Final[frozenset[str]] = frozenset(
+    {
+        "approval_denied",
+        "blocked",
+        "cancelled",
+        "canceled",
+        "denied",
+        "error",
+        "expired",
+        "failed",
+        "outcome_unknown",
+        "rejected",
+        "timed_out",
+        "timeout",
+        "unavailable",
+    }
+)
+_RE_DENIED_RESULT = re.compile(
+    r"^(?:approval[ _-]?denied|permission[ _-]?denied|denied|blocked|rejected|"
+    r"cancelled|canceled|timed[ _-]?out|timeout|expired|outcome[ _-]?unknown)"
+    r"(?:\b|[ _:-])",
+    re.IGNORECASE,
+)
+
+
+def _result_signals_failure(value: Any) -> bool:
+    """Return whether a provider result explicitly reports non-execution.
+
+    The mission tool broker returns structured ``success``/``status`` fields,
+    while Claude-style streams commonly use ``is_error`` and some adapters
+    serialize that mapping into the result's text content. All three shapes
+    must override the preceding call frame: an attempted action is not proof
+    that the action completed.
+    """
+    if isinstance(value, dict):
+        is_error = value.get("is_error", value.get("isError"))
+        if is_error is True or (
+            isinstance(is_error, str) and is_error.strip().lower() == "true"
+        ):
+            return True
+        for key in ("success", "ok"):
+            flag = value.get(key)
+            if flag is False or (
+                isinstance(flag, str) and flag.strip().lower() == "false"
+            ):
+                return True
+        for key in ("exit_code", "return_code"):
+            code = value.get(key)
+            if code is not None and str(code).strip() not in {"", "0"}:
+                return True
+        status = str(value.get("status", "")).strip().lower().replace("-", "_")
+        if status in _FAILED_RESULT_STATUSES:
+            return True
+        error = value.get("error")
+        if error not in (None, "", False, [], {}):
+            return True
+        return any(
+            _result_signals_failure(value[key])
+            for key in (
+                "content",
+                "result",
+                "structuredContent",
+                "structured_content",
+                "text",
+            )
+            if key in value
+        )
+    if isinstance(value, list):
+        return any(_result_signals_failure(item) for item in value)
+    if not isinstance(value, str):
+        return False
+
+    text = value.strip()
+    if not text:
+        return False
+    if "<tool_use_error>" in text.lower():
+        return True
+    if text[0] in "[{":
+        try:
+            decoded = json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            pass
+        else:
+            return _result_signals_failure(decoded)
+    return _RE_DENIED_RESULT.match(text) is not None
+
+
+def _json_stream_records(worker_output: str) -> tuple[dict[str, Any], ...]:
+    """Best-effort JSON/NDJSON records without interpreting quoted prose."""
+    stripped = worker_output.strip()
+    if not stripped:
+        return ()
+    try:
+        decoded = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        decoded = None
+    if isinstance(decoded, dict):
+        return (decoded,)
+    if isinstance(decoded, list):
+        return tuple(item for item in decoded if isinstance(item, dict))
+
+    records: list[dict[str, Any]] = []
+    for raw in worker_output.splitlines():
+        try:
+            decoded = json.loads(raw.strip())
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(decoded, dict):
+            records.append(decoded)
+        elif isinstance(decoded, list):
+            records.extend(item for item in decoded if isinstance(item, dict))
+    return tuple(records)
+
+
+def _message_blocks(record: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    """Return tool blocks from canonical and flattened provider frames."""
+    if record.get("type") in {"tool_use", "tool_result"}:
+        return (record,)
+    message = record.get("message")
+    container = message if isinstance(message, dict) else record
+    content = container.get("content")
+    if isinstance(content, dict):
+        return (content,)
+    if isinstance(content, list):
+        return tuple(item for item in content if isinstance(item, dict))
+    return ()
+
 
 def _extract_tool_call_evidence(worker_output: str) -> tuple[str, ...]:
     """Parse tool-call evidence from worker output in a defensive, format-agnostic way.
@@ -146,6 +276,12 @@ def _extract_tool_call_evidence(worker_output: str) -> tuple[str, ...]:
       mcp_tool_call / web_search) — the matched item type doubles as the
       evidence name.
 
+    A correlated failure result removes its call from the evidence set. This
+    prevents a denied, blocked, cancelled, or otherwise failed attempt from
+    satisfying a side-effecting capability merely because ``tool_use`` was
+    emitted first. Uncorrelated call frames retain their historical treatment
+    for compatibility with streaming providers that do not persist results.
+
     If the output format is unrecognised or the text is empty, returns an
     empty tuple — the caller (``enforce_capability_honesty``) treats this as
     conservative failure for ``requires_evidence=True`` capabilities.
@@ -153,11 +289,75 @@ def _extract_tool_call_evidence(worker_output: str) -> tuple[str, ...]:
     if not worker_output:
         return ()
 
-    names: list[str] = []
-    names.extend(_RE_TOOL_USE_NAME.findall(worker_output))
+    calls: list[tuple[str | None, str]] = []
+    outcomes: dict[str, bool] = {}
+    saw_structured_call = False
+
+    for record in _json_stream_records(worker_output):
+        record_type = str(record.get("type", "")).strip()
+        if record_type in {"item.started", "item.completed"}:
+            item = record.get("item")
+            if not isinstance(item, dict):
+                continue
+            item_type = str(item.get("type", "")).strip()
+            if item_type not in _ACTION_ITEM_TYPES:
+                continue
+            saw_structured_call = True
+            item_id = str(item.get("id", "")).strip()
+            key = f"codex:{item_id}" if item_id else f"codex-anonymous:{len(calls)}"
+            calls.append((key, item_type))
+            if record_type == "item.completed":
+                outcomes[key] = outcomes.get(key, False) or _result_signals_failure(item)
+            continue
+
+        if record_type == "dispatch-result":
+            name = str(record.get("tool", "")).strip()
+            if name:
+                saw_structured_call = True
+                key = f"dispatch:{len(calls)}"
+                calls.append((key, name))
+                outcomes[key] = _result_signals_failure(record)
+            continue
+
+        for block in _message_blocks(record):
+            block_type = str(block.get("type", "")).strip()
+            if block_type == "tool_use":
+                name = str(block.get("name", "")).strip()
+                if not name:
+                    continue
+                saw_structured_call = True
+                tool_id = str(block.get("id", "")).strip()
+                calls.append((f"tool:{tool_id}" if tool_id else None, name))
+            elif block_type == "tool_result":
+                tool_id = str(
+                    block.get("tool_use_id")
+                    or block.get("tool_call_id")
+                    or block.get("call_id")
+                    or block.get("toolUseId")
+                    or block.get("toolCallId")
+                    or block.get("callId")
+                    or ""
+                ).strip()
+                if tool_id:
+                    key = f"tool:{tool_id}"
+                    outcomes[key] = outcomes.get(key, False) or _result_signals_failure(
+                        block
+                    )
+
+    names = [
+        name
+        for key, name in calls
+        if key is None or outcomes.get(key) is not True
+    ]
+
+    # Preserve compatibility with old, non-JSON logs. Once structured calls
+    # were parsed, their correlated outcomes are authoritative and a regex
+    # fallback must not accidentally re-add a failed call.
+    if not saw_structured_call:
+        names.extend(_RE_TOOL_USE_NAME.findall(worker_output))
+        names.extend(_RE_DISPATCH_RESULT.findall(worker_output))
+        names.extend(_RE_CODEX_ACTION_ITEM.findall(worker_output))
     names.extend(_RE_TOOL_USE_MARKER.findall(worker_output))
-    names.extend(_RE_DISPATCH_RESULT.findall(worker_output))
-    names.extend(_RE_CODEX_ACTION_ITEM.findall(worker_output))
 
     # Deduplicate while preserving first-seen order.
     seen: set[str] = set()

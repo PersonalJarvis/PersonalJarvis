@@ -298,7 +298,6 @@ class ClaudeDirectWorker:
         self.capability_inventory = capability_inventory or WorkerCapabilityInventory.build(
             mcp_servers=mcp_servers
         )
-        self._mcp_servers = self.capability_inventory.mcp_servers
 
     async def spawn(
         self,
@@ -320,6 +319,69 @@ class ClaudeDirectWorker:
         mission_id: str = "",
         allow_backend_fallback: bool = True,
         force_default_model: bool = False,
+        _broker_binding: Any | None = None,
+        **_unused: Any,
+    ) -> AsyncIterator[Any]:
+        """Run one Claude worker lifecycle under one mission-scoped grant."""
+        broker_binding = _broker_binding
+        issued_here = broker_binding is None
+        if issued_here:
+            broker_binding = self.capability_inventory.bind_broker(
+                ttl_s=timeout_s + _HARDCAP_GRACE_S + 60.0,
+                mission_id=mission_id or None,
+                worker_id=worker_id,
+            )
+        try:
+            async for event in self._spawn_bound(
+                prompt,
+                worktree=worktree,
+                env=env,
+                job=job,
+                worker_id=worker_id,
+                log_dir=log_dir,
+                model=model,
+                allowed_tools=allowed_tools,
+                permission_mode=permission_mode,
+                max_turns=max_turns,
+                resume_session_id=resume_session_id,
+                extra_args=extra_args,
+                timeout_s=timeout_s,
+                first_output_timeout_s=first_output_timeout_s,
+                mission_id=mission_id,
+                allow_backend_fallback=allow_backend_fallback,
+                force_default_model=force_default_model,
+                broker_binding=broker_binding,
+                **_unused,
+            ):
+                yield event
+        finally:
+            if issued_here and broker_binding is not None:
+                try:
+                    broker_binding.close()
+                except Exception:  # noqa: BLE001 - cleanup must not mask cancellation
+                    logger.exception("ClaudeDirectWorker: broker binding cleanup failed")
+
+    async def _spawn_bound(
+        self,
+        prompt: str,
+        *,
+        worktree: Path,
+        env: dict[str, str],
+        job: Any,
+        worker_id: str,
+        log_dir: Path,
+        model: str = "",
+        allowed_tools: str = "",
+        permission_mode: str = "bypassPermissions",
+        max_turns: int = 20,
+        resume_session_id: str | None = None,
+        extra_args: tuple[str, ...] = (),
+        timeout_s: float = _DEFAULT_TIMEOUT_S,
+        first_output_timeout_s: float = _DEFAULT_FIRST_OUTPUT_TIMEOUT_S,
+        mission_id: str = "",
+        allow_backend_fallback: bool = True,
+        force_default_model: bool = False,
+        broker_binding: Any | None,
         **_unused: Any,
     ) -> AsyncIterator[Any]:
         """Spawn ``claude --print --output-format=stream-json`` with the prompt on stdin.
@@ -372,6 +434,9 @@ class ClaudeDirectWorker:
 
         session_id = resume_session_id or str(uuid.uuid4())
         self.last_session_id = session_id
+        broker_servers = (
+            broker_binding.mcp_server_config() if broker_binding is not None else {}
+        )
 
         # 2. Build the claude argv. ``force_default_model`` omits ``--model``
         # entirely so the CLI picks its own accessible default — the recovery
@@ -394,10 +459,9 @@ class ClaudeDirectWorker:
             cmd.extend(["--model", claude_model])
         if allowed_tools:
             cmd.extend(["--allowedTools", allowed_tools])
-        # Connected marketplace plugins / mcp.json -> claude-cli MCP config so
-        # the delegated worker can actually call the plugins (AD-OE4). Written to
-        # log_dir (NOT the worktree) so the resolved token never lands in the diff.
-        cmd.extend(_build_mcp_config_args(log_dir, self._mcp_servers))
+        # The CLI sees only the local broker adapter. Connector credentials stay
+        # in the supervisor and never enter this config or the worker worktree.
+        cmd.extend(_build_mcp_config_args(log_dir, broker_servers))
         cmd.extend(extra_args)
 
         yield ClaudeSystemInit(
@@ -405,7 +469,9 @@ class ClaudeDirectWorker:
             model=f"claude-cli/{claude_model}",
             tools=[],
             cwd=str(worktree),
-            external_capabilities=self.capability_inventory.report_for("claude-cli"),
+            external_capabilities=self.capability_inventory.report_for(
+                "claude-cli", binding=broker_binding
+            ),
         )
 
         logger.info(
@@ -424,7 +490,11 @@ class ClaudeDirectWorker:
             proc = await create_worker_subprocess(
                 cmd,
                 cwd=str(worktree),
-                env=env,
+                env=(
+                    broker_binding.apply_environment(env)
+                    if broker_binding is not None
+                    else env
+                ),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -725,6 +795,7 @@ class ClaudeDirectWorker:
                 mission_id=mission_id,
                 allow_backend_fallback=allow_backend_fallback,
                 force_default_model=True,
+                _broker_binding=broker_binding,
             ):
                 yield ev
             return
@@ -797,6 +868,7 @@ class ClaudeDirectWorker:
                         timeout_s=timeout_s,
                         mission_id=mission_id,
                         allow_backend_fallback=False,
+                        _broker_binding=broker_binding,
                     ):
                         yield ev
                     return
@@ -866,6 +938,7 @@ class ClaudeDirectWorker:
                     timeout_s=timeout_s,
                     mission_id=mission_id,
                     allow_backend_fallback=False,
+                    _broker_binding=broker_binding,
                 ):
                     yield ev
                 return

@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from jarvis.brain.tool_use_loop import (
@@ -16,6 +16,13 @@ from jarvis.brain.tool_use_loop import (
     _is_side_effect_tool,
     _is_stt_hallucinated,
     _should_block_action_as_research,
+)
+from jarvis.core import runtime_refs
+from jarvis.core.protocols import (
+    RiskTier,
+    SupervisorToolDescriptor,
+    SupervisorToolGateway,
+    SupervisorToolRequest,
 )
 from jarvis.safety.tool_executor import VOICE_CONFIRM_SENTINEL
 from jarvis.voice.echo_confirmation import classify_response
@@ -75,15 +82,20 @@ class RealtimeToolBridge:
     def __init__(
         self,
         *,
-        tools: dict[str, Any],
-        executor: Any,
+        tools: dict[str, Any] | None = None,
+        executor: Any = None,
+        gateway: SupervisorToolGateway | None = None,
         language: str,
         tools_source: Any = None,
     ) -> None:
-        self._tools = dict(tools)
+        self._tools = dict(tools or {})
         self._tools_source = tools_source
         self._executor = executor
+        self._gateway = gateway
         self._language = language
+        self._descriptors: dict[str, SupervisorToolDescriptor] = (
+            self._read_descriptors()
+        )
         self._wire_to_name: dict[str, str] = {}
         self._declarations: tuple[dict[str, Any], ...] = self._build_declarations()
         self._pending: _PendingConfirmation | None = None
@@ -91,25 +103,48 @@ class RealtimeToolBridge:
         self._last_user_text = ""
 
     @classmethod
-    def from_brain(cls, brain: Any, *, language: str) -> RealtimeToolBridge | None:
-        tools = getattr(brain, "_tools", None)
-        executor = getattr(brain, "_tool_executor_ref", None)
-        if not isinstance(tools, dict) or not tools or executor is None:
+    def from_brain(cls, _brain: Any, *, language: str) -> RealtimeToolBridge | None:
+        """Build from the public supervisor gateway registered by Brain factory."""
+        gateway = runtime_refs.get_supervisor_tool_gateway()
+        if gateway is None or not gateway.catalog():
             return None
-        return cls(
-            tools=tools,
-            executor=executor,
-            language=language,
-            tools_source=lambda: getattr(brain, "_tools", None),
-        )
+        return cls(gateway=gateway, language=language)
+
+    def _read_descriptors(
+        self,
+        tools_override: dict[str, Any] | None = None,
+    ) -> dict[str, SupervisorToolDescriptor]:
+        if self._gateway is not None:
+            try:
+                return {item.name: item for item in self._gateway.catalog()}
+            except Exception:  # noqa: BLE001 - a catalog refresh degrades safely
+                return {}
+
+        descriptors: dict[str, SupervisorToolDescriptor] = {}
+        source_tools = self._tools if tools_override is None else tools_override
+        for name, tool in source_tools.items():
+            schema = getattr(tool, "schema", None)
+            if not isinstance(schema, dict):
+                continue
+            raw_tier = str(getattr(tool, "risk_tier", "monitor"))
+            risk_tier = cast(
+                RiskTier,
+                raw_tier if raw_tier in {"safe", "monitor", "ask", "block"}
+                else "monitor",
+            )
+            descriptors[str(name)] = SupervisorToolDescriptor(
+                name=str(name),
+                description=str(getattr(tool, "description", "")),
+                input_schema=schema,
+                risk_tier=risk_tier,
+                is_action_tool=bool(getattr(tool, "is_action_tool", False)),
+            )
+        return descriptors
 
     def _build_declarations(self) -> tuple[dict[str, Any], ...]:
         self._wire_to_name.clear()
         declarations: list[dict[str, Any]] = []
-        for name, tool in sorted(self._tools.items()):
-            schema = getattr(tool, "schema", None)
-            if not isinstance(schema, dict):
-                continue
+        for name, descriptor in sorted(self._descriptors.items()):
             wire = _wire_name(str(name))
             if wire in self._wire_to_name:
                 continue
@@ -117,10 +152,10 @@ class RealtimeToolBridge:
             declarations.append(
                 {
                     "name": wire,
-                    "description": str(getattr(tool, "description", ""))[
+                    "description": descriptor.description[
                         :_MAX_DESCRIPTION_CHARS
                     ],
-                    "parameters": schema,
+                    "parameters": descriptor.input_schema,
                 }
             )
         return tuple(declarations)
@@ -140,25 +175,40 @@ class RealtimeToolBridge:
         resolves, so a concurrent registry refresh cannot strand the pending
         ``ToolExecutor`` action.
         """
-        source = self._tools_source
-        if not callable(source):
-            return False
-        current = source()
-        if not isinstance(current, dict):
-            return False
-        try:
-            refreshed = dict(current)
-        except RuntimeError:
-            return False
+        if self._gateway is not None:
+            refreshed_descriptors = self._read_descriptors()
+            refreshed_tools: dict[str, Any] | None = None
+        else:
+            source = self._tools_source
+            if not callable(source):
+                return False
+            current = source()
+            if not isinstance(current, dict):
+                return False
+            try:
+                refreshed_tools = dict(current)
+            except RuntimeError:
+                return False
+            refreshed_descriptors = self._read_descriptors(refreshed_tools)
         pending = self._pending
         if (
             pending is not None
-            and pending.tool_name not in refreshed
-            and pending.tool_name in self._tools
+            and pending.tool_name not in refreshed_descriptors
+            and pending.tool_name in self._descriptors
         ):
-            refreshed[pending.tool_name] = self._tools[pending.tool_name]
+            refreshed_descriptors[pending.tool_name] = self._descriptors[
+                pending.tool_name
+            ]
+            if (
+                refreshed_tools is not None
+                and pending.tool_name not in refreshed_tools
+                and pending.tool_name in self._tools
+            ):
+                refreshed_tools[pending.tool_name] = self._tools[pending.tool_name]
         previous_declarations = self._declarations
-        self._tools = refreshed
+        if refreshed_tools is not None:
+            self._tools = refreshed_tools
+        self._descriptors = refreshed_descriptors
         self._declarations = self._build_declarations()
         return self._declarations != previous_declarations
 
@@ -172,7 +222,7 @@ class RealtimeToolBridge:
         if verdict == "confirm":
             pending.confirmed = True
         elif verdict == "veto":
-            await self._executor.cancel_pending(pending.trace_id)
+            await self._cancel_pending(pending.trace_id)
             self._vetoed_tool = pending.tool_name
             self._pending = None
 
@@ -184,8 +234,8 @@ class RealtimeToolBridge:
         trace_id: UUID | None = None,
     ) -> tuple[str, dict[str, Any]]:
         name = self._wire_to_name.get(wire_name, "")
-        tool = self._tools.get(name)
-        if tool is None:
+        descriptor = self._descriptors.get(name)
+        if descriptor is None:
             await self._publish_denied(wire_name, "unknown realtime tool")
             return wire_name, {
                 "success": False,
@@ -196,12 +246,12 @@ class RealtimeToolBridge:
                 "success": False,
                 "error": "The user declined this action. Do not ask again in this turn.",
             }
-        validation_error = self._validate_arguments(tool, arguments)
+        validation_error = self._validate_arguments(descriptor, arguments)
         if validation_error:
             await self._publish_denied(name, validation_error)
             return name, {"success": False, "error": validation_error}
 
-        guard_error = await self._guard(tool, name, arguments)
+        guard_error = await self._guard(descriptor, name, arguments)
         if guard_error:
             return name, {"success": False, "error": guard_error}
 
@@ -215,11 +265,7 @@ class RealtimeToolBridge:
                         name, language=self._language
                     ),
                 }
-            result = await self._executor.execute_confirmed(
-                pending.trace_id,
-                user_utterance=self._last_user_text,
-                config_snapshot={"output_language": self._language},
-            )
+            result = await self._execute_confirmed(pending.trace_id)
             self._pending = None
             return name, _bounded_result(
                 bool(getattr(result, "success", False)),
@@ -228,17 +274,7 @@ class RealtimeToolBridge:
             )
 
         trace_id = trace_id or uuid4()
-        result = await self._executor.execute(
-            tool,
-            arguments,
-            user_utterance=self._last_user_text,
-            config_snapshot={
-                "output_language": self._language,
-                "voice_confirm": True,
-            },
-            trace_id=trace_id,
-            rationale="Realtime model requested an available Jarvis tool.",
-        )
+        result = await self._execute_tool(name, arguments, trace_id)
         if (
             getattr(result, "error", None) == VOICE_CONFIRM_SENTINEL
             and isinstance(getattr(result, "output", None), dict)
@@ -259,7 +295,67 @@ class RealtimeToolBridge:
             getattr(result, "error", None),
         )
 
-    def _validate_arguments(self, tool: Any, arguments: Any) -> str:
+    async def _execute_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        trace_id: UUID,
+    ) -> Any:
+        if self._gateway is not None:
+            return await self._gateway.execute(
+                name,
+                arguments,
+                SupervisorToolRequest(
+                    trace_id=trace_id,
+                    origin="realtime",
+                    user_utterance=self._last_user_text,
+                    rationale="Realtime model requested an available Jarvis tool.",
+                    config_snapshot={
+                        "output_language": self._language,
+                        "voice_confirm": True,
+                    },
+                ),
+            )
+        tool = self._tools[name]
+        return await self._executor.execute(
+            tool,
+            arguments,
+            user_utterance=self._last_user_text,
+            config_snapshot={
+                "output_language": self._language,
+                "voice_confirm": True,
+            },
+            trace_id=trace_id,
+            rationale="Realtime model requested an available Jarvis tool.",
+        )
+
+    async def _execute_confirmed(self, trace_id: UUID) -> Any:
+        if self._gateway is not None:
+            return await self._gateway.execute_confirmed(
+                trace_id,
+                SupervisorToolRequest(
+                    trace_id=trace_id,
+                    origin="realtime",
+                    user_utterance=self._last_user_text,
+                    config_snapshot={"output_language": self._language},
+                ),
+            )
+        return await self._executor.execute_confirmed(
+            trace_id,
+            user_utterance=self._last_user_text,
+            config_snapshot={"output_language": self._language},
+        )
+
+    async def _cancel_pending(self, trace_id: UUID) -> bool:
+        if self._gateway is not None:
+            return await self._gateway.cancel_pending(trace_id)
+        return bool(await self._executor.cancel_pending(trace_id))
+
+    def _validate_arguments(
+        self,
+        descriptor: SupervisorToolDescriptor,
+        arguments: Any,
+    ) -> str:
         if not isinstance(arguments, dict):
             return "Tool arguments must be a JSON object."
         try:
@@ -268,25 +364,36 @@ class RealtimeToolBridge:
             return "Tool arguments are not JSON serializable."
         if size > _MAX_ARGUMENT_CHARS:
             return f"Tool arguments exceed the {_MAX_ARGUMENT_CHARS}-character limit."
-        schema = getattr(tool, "schema", None) or {}
-        required = schema.get("required", ()) if isinstance(schema, dict) else ()
+        schema = descriptor.input_schema
+        required = schema.get("required", ())
         missing = [key for key in required if key not in arguments]
         if missing:
             return f"Missing required tool arguments: {', '.join(map(str, missing))}."
         return ""
 
-    async def _guard(self, tool: Any, name: str, arguments: dict[str, Any]) -> str:
+    async def _guard(
+        self,
+        descriptor: SupervisorToolDescriptor,
+        name: str,
+        arguments: dict[str, Any],
+    ) -> str:
         user_text = self._last_user_text
         blocked, reason = _is_stt_hallucinated(name, arguments)
         if blocked:
             message = f"Suspected speech-recognition argument error: {reason}"
-        elif _is_instructional_question(user_text) and _is_side_effect_tool(tool):
+        elif _is_instructional_question(user_text) and _is_side_effect_tool(descriptor):
             message = "The user asked for instructions; the side-effect tool was not run."
-        elif _is_self_identification(user_text) and _is_side_effect_tool(tool):
+        elif _is_self_identification(user_text) and _is_side_effect_tool(descriptor):
             message = "The user was introducing themselves; the side-effect tool was not run."
         elif name == "spawn_worker" and _is_meta_debug_intent(user_text):
             message = "A meta/debug request must be answered directly, not delegated."
-        elif _should_block_action_as_research(tool, name, user_text, None, ""):
+        elif _should_block_action_as_research(
+            descriptor,
+            name,
+            user_text,
+            None,
+            "",
+        ):
             message = "This sounds like research, not an action on a connected system."
         else:
             return ""
@@ -294,7 +401,11 @@ class RealtimeToolBridge:
         return message
 
     async def _publish_denied(self, name: str, reason: str) -> None:
-        publisher = getattr(self._executor, "publish_guard_denied", None)
+        publisher = getattr(
+            self._gateway if self._gateway is not None else self._executor,
+            "publish_guard_denied",
+            None,
+        )
         if callable(publisher):
             try:
                 await publisher(name, reason, trace_id=uuid4())
@@ -303,7 +414,7 @@ class RealtimeToolBridge:
 
     async def close(self) -> None:
         if self._pending is not None:
-            await self._executor.cancel_pending(self._pending.trace_id)
+            await self._cancel_pending(self._pending.trace_id)
             self._pending = None
 
 

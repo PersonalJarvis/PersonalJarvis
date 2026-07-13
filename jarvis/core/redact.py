@@ -69,7 +69,7 @@ _REDACTORS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "labelled_secret",
         re.compile(
             r"(?i)(\b(?:api[_-]?key|secret(?:[_-]?key)?|password|passwd|pwd"
-            r"|access[_-]?token|auth[_-]?token|client[_-]?secret)\b\s*[:=]\s*)"
+            r"|access[_-]?token|auth[_-]?token|client[_-]?secret)\b['\"]?\s*[:=]\s*)"
             r"['\"]?[^\s'\"]{8,}"
         ),
     ),

@@ -18,7 +18,7 @@ import pytest
 
 from jarvis.core.bus import EventBus
 from jarvis.core.config import SafetyConfig
-from jarvis.core.events import ActionApproved, ActionProposed
+from jarvis.core.events import ActionApprovalRequired, ActionApproved, ActionProposed
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.safety import ApprovalWorkflow, RiskTierEvaluator, ToolExecutor
 from jarvis.tasks.approval_bridge import TaskAutoApprover
@@ -61,7 +61,9 @@ async def test_approves_armed_tool_on_its_trace() -> None:
     tid = uuid4()
     approver.arm(tid, ["buffer"], approved_by="scheduled-task:abc")
 
-    await bus.publish(ActionProposed(trace_id=tid, tool_name="buffer", risk_tier="ask"))
+    await bus.publish(
+        ActionApprovalRequired(trace_id=tid, tool_name="buffer", risk_tier="ask")
+    )
     await asyncio.sleep(0)
 
     assert len(approvals) == 1
@@ -71,7 +73,7 @@ async def test_approves_armed_tool_on_its_trace() -> None:
 
 
 async def test_pre_authorized_tool_executes_without_approval_race() -> None:
-    """An approval published from ActionProposed must reach ToolExecutor.wait."""
+    """An approval published from the explicit request must reach the waiter."""
     bus = EventBus()
     approval = ApprovalWorkflow(bus, timeout_s=0.05)
     executor = ToolExecutor(
@@ -100,7 +102,25 @@ async def test_ignores_tool_not_in_grant() -> None:
     tid = uuid4()
     approver.arm(tid, ["buffer"], approved_by="scheduled-task:abc")
 
-    await bus.publish(ActionProposed(trace_id=tid, tool_name="gmail", risk_tier="ask"))
+    await bus.publish(
+        ActionApprovalRequired(trace_id=tid, tool_name="gmail", risk_tier="ask")
+    )
+    await asyncio.sleep(0)
+
+    assert approvals == []
+
+
+async def test_proposal_alone_never_consumes_pre_authorization() -> None:
+    """Only an armed, explicit approval request may trigger approval."""
+    bus = EventBus()
+    approver = TaskAutoApprover(bus)
+    approvals = await _collect_approvals(bus)
+    tid = uuid4()
+    approver.arm(tid, ["buffer"], approved_by="scheduled-task:abc")
+
+    await bus.publish(
+        ActionProposed(trace_id=tid, tool_name="buffer", risk_tier="ask")
+    )
     await asyncio.sleep(0)
 
     assert approvals == []
@@ -112,7 +132,11 @@ async def test_ignores_other_trace_id() -> None:
     approvals = await _collect_approvals(bus)
     approver.arm(uuid4(), ["buffer"], approved_by="scheduled-task:abc")
 
-    await bus.publish(ActionProposed(trace_id=uuid4(), tool_name="buffer", risk_tier="ask"))
+    await bus.publish(
+        ActionApprovalRequired(
+            trace_id=uuid4(), tool_name="buffer", risk_tier="ask"
+        )
+    )
     await asyncio.sleep(0)
 
     assert approvals == []
@@ -126,7 +150,9 @@ async def test_disarm_stops_approval() -> None:
     approver.arm(tid, ["buffer"], approved_by="scheduled-task:abc")
     approver.disarm(tid)
 
-    await bus.publish(ActionProposed(trace_id=tid, tool_name="buffer", risk_tier="ask"))
+    await bus.publish(
+        ActionApprovalRequired(trace_id=tid, tool_name="buffer", risk_tier="ask")
+    )
     await asyncio.sleep(0)
 
     assert approvals == []
@@ -141,7 +167,9 @@ async def test_matches_mcp_namespaced_tool() -> None:
     approver.arm(tid, ["gmail"], approved_by="scheduled-task:abc")
 
     await bus.publish(
-        ActionProposed(trace_id=tid, tool_name="gmail/send_message", risk_tier="ask")
+        ActionApprovalRequired(
+            trace_id=tid, tool_name="gmail/send_message", risk_tier="ask"
+        )
     )
     await asyncio.sleep(0)
 
@@ -157,7 +185,9 @@ async def test_arm_with_no_tools_is_inert() -> None:
     tid = uuid4()
     approver.arm(tid, [], approved_by="scheduled-task:abc")
 
-    await bus.publish(ActionProposed(trace_id=tid, tool_name="gmail", risk_tier="ask"))
+    await bus.publish(
+        ActionApprovalRequired(trace_id=tid, tool_name="gmail", risk_tier="ask")
+    )
     await asyncio.sleep(0)
 
     assert approvals == []

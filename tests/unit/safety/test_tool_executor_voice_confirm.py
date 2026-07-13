@@ -17,7 +17,7 @@ import pytest
 
 from jarvis.core.bus import EventBus
 from jarvis.core.config import SafetyConfig
-from jarvis.core.events import ActionExecuted
+from jarvis.core.events import ActionApprovalRequired, ActionExecuted
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.safety.approval import ApprovalWorkflow
 from jarvis.safety.risk_tier import RiskTierEvaluator
@@ -154,6 +154,41 @@ async def test_without_voice_confirm_ask_tier_still_blocks_on_approval() -> None
 
 
 @pytest.mark.asyncio
+async def test_non_conversational_approval_request_is_safe_and_correlated() -> None:
+    executor, _approval, bus = _executor()
+    requests: list[ActionApprovalRequired] = []
+
+    async def _capture(event: ActionApprovalRequired) -> None:
+        requests.append(event)
+
+    bus.subscribe(ActionApprovalRequired, _capture)
+    tool = _AskTool()
+    trace_id = uuid4()
+
+    result = await executor.execute(
+        tool,
+        args={"to": "person@example.test", "api_key": "sk-secret-value"},
+        config_snapshot={
+            "voice_confirm": False,
+            "mission_id": "mission-123",
+            "worker_id": "worker-456",
+        },
+        trace_id=trace_id,
+    )
+
+    assert result.success is True
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.trace_id == trace_id
+    assert request.tool_name == tool.name
+    assert request.reason == "risk_tier"
+    assert request.mission_id == "mission-123"
+    assert request.worker_id == "worker-456"
+    assert request.expires_at_ns > request.timestamp_ns
+    assert "sk-secret-value" not in request.args_preview
+
+
+@pytest.mark.asyncio
 async def test_safe_tier_is_not_deferred_even_with_voice_confirm() -> None:
     """A tool that needs no confirmation runs immediately, never deferred."""
     executor, approval, _bus = _executor()
@@ -172,8 +207,10 @@ async def test_gmail_read_is_not_deferred_for_voice_confirm() -> None:
     """Repro 2026-06-19 (session dc533e39): a read-only gmail call (the
     morning-routine "check unread mail" step) must NOT trigger the send
     confirmation on a voice turn. Before the per-action risk fix the whole
-    gmail tool was ask-tier, so "Was habe ich heute auf dem Plan?" produced  # i18n-allow: quotes the actual German voice utterance/output forensic bug content
-    "Soll ich die E-Mail wirklich senden?"."""  # i18n-allow: quotes the actual German voice utterance/output forensic bug content
+    gmail tool was ask-tier, so this input and response reproduced it:
+    "Was habe ich heute auf dem Plan?"  # i18n-allow: quoted runtime voice input
+    "Soll ich die E-Mail wirklich senden?"  # i18n-allow: quoted runtime voice output
+    """
     import httpx
 
     from jarvis.plugins.tool.gmail_rest import GmailRestTool

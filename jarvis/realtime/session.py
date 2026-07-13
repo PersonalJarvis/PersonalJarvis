@@ -168,7 +168,7 @@ _TOOL_ROLE_DIRECTIVE = (
     "code, research, start background work, open a view, change a setting, "
     "control the computer — call the matching function instead of claiming "
     "you cannot act. Heavy multi-minute work (building files, coding, deep "
-    "research) belongs to the background-agent spawn function: start it, "
+    "research) belongs to the Jarvis-Agent spawn function: start it, "
     "then briefly confirm what you started. If a function asks for a spoken "
     "confirmation, relay the question and wait for the user's answer."
 )
@@ -313,9 +313,8 @@ class RealtimeVoiceSession:
         self._delegate_history: list[BrainMessage] = []
         self._delegate_required_for_turn = False
         self._external_update: _ExternalUpdateState | None = None
-        # from_brain returns None SILENTLY when the brain object carries no
-        # _tools/_tool_executor_ref (e.g. a bare callback was passed) — say so,
-        # or a tool-less session is indistinguishable from a healthy one.
+        # from_brain returns None when no public supervisor gateway is ready.
+        # Say so, or a tool-less session is indistinguishable from a healthy one.
         if self._delegate_enabled:
             log.info(
                 "realtime[%s] tool mode: delegate — one action function "
@@ -331,7 +330,7 @@ class RealtimeVoiceSession:
         elif brain is not None:
             log.warning(
                 "realtime[%s] brain provided but NO tool bridge — object has "
-                "no usable _tools/_tool_executor_ref; session runs tool-less",
+                "no usable supervisor tool gateway; session runs tool-less",
                 session_id,
             )
         self._gate = ScrubHoldGate(self._language)
@@ -395,8 +394,15 @@ class RealtimeVoiceSession:
             registry = get_registry()
         except Exception:  # noqa: BLE001 - planner has static safe fallbacks
             log.debug("Realtime capability registry unavailable", exc_info=True)
-        tools = getattr(self._brain, "_tools", None)
-        tool_names = tuple(tools) if isinstance(tools, dict) else ()
+        tool_names: tuple[str, ...] = ()
+        try:
+            from jarvis.core.runtime_refs import get_supervisor_tool_gateway
+
+            gateway = get_supervisor_tool_gateway()
+            if gateway is not None:
+                tool_names = tuple(item.name for item in gateway.catalog())
+        except Exception:  # noqa: BLE001 - planning keeps static fallbacks
+            log.debug("Realtime supervisor tool catalog unavailable", exc_info=True)
         evidence_cfg = getattr(
             getattr(self._config, "brain", None), "evidence_domains", None
         )
@@ -1771,20 +1777,18 @@ class RealtimeVoiceSession:
             ).strip()
             if reply:
                 turn_state.last_reply = reply
-            if reply:
                 result: dict[str, Any] = {"success": True, "spoken_reply": reply}
+                succeeded = True
             else:
                 result = {
-                    "success": True,
-                    "spoken_reply": "",
-                    "note": (
-                        "The action completed without a spoken reply; "
-                        "briefly confirm it to the user."
-                    ),
+                    "success": False,
+                    "error": "The delegated action returned no grounded result.",
                 }
-            succeeded = True
             if self._delegate_turns.get(turn_id) is turn_state:
-                self._executed_tool_names.add(str(_DELEGATE_DECLARATION["name"]))
+                if succeeded:
+                    self._executed_tool_names.add(
+                        str(_DELEGATE_DECLARATION["name"])
+                    )
         except TimeoutError:
             result = {
                 "success": False,
@@ -1806,6 +1810,13 @@ class RealtimeVoiceSession:
                 "success": False,
                 "error": "The action failed safely and was not completed.",
             }
+        if not succeeded:
+            from jarvis.voice.action_phrases import action_phrase
+
+            turn_state.last_reply = action_phrase(
+                "action_failed_generic", self._language
+            )
+            result["spoken_reply"] = turn_state.last_reply
         turn_state.result_complete = True
         turn_state.result_success = succeeded
         turn_state.result_payload = result

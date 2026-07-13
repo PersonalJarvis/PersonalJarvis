@@ -71,8 +71,8 @@ def _build_orch(
     o._manager = _FakeManager()
     o._budget = _FakeBudget()
 
-    async def _noop_transition(*_a: object, **_k: object) -> None:
-        return None
+    async def _noop_transition(*_a: object, **_k: object) -> bool:
+        return True
 
     monkeypatch.setattr(o, "_safe_transition", _noop_transition)
     if stub_deliver:

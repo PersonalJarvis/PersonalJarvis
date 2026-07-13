@@ -18,8 +18,19 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from jarvis.core.bus import EventBus
-from jarvis.core.events import ActionDenied, ActionExecuted, ActionProposed
-from jarvis.core.protocols import ExecutionContext, Tool, ToolResult, Transcript
+from jarvis.core.events import (
+    ActionApprovalRequired,
+    ActionDenied,
+    ActionExecuted,
+    ActionProposed,
+)
+from jarvis.core.protocols import (
+    CancelToken,
+    ExecutionContext,
+    Tool,
+    ToolResult,
+    Transcript,
+)
 from jarvis.core.redact import safe_preview
 
 from .approval import ApprovalWorkflow
@@ -48,6 +59,14 @@ VOICE_CONFIRM_SENTINEL = "__voice_confirm_required__"
 # transcript and the seconds since the last wake trigger. On
 # ``None`` returns the executor behaves as before (no plausibility check).
 PlausibilityContextFn = Callable[[], "tuple[Transcript | None, float | None]"]
+
+
+def _optional_string(value: Any) -> str | None:
+    """Normalize optional correlation metadata without inventing identifiers."""
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
 
 
 class ToolExecutor:
@@ -155,9 +174,17 @@ class ToolExecutor:
         memory_read: Any | None = None,
         trace_id: UUID | None = None,
         rationale: str = "",
+        cancel_token: CancelToken | None = None,
     ) -> ToolResult:
         tid = trace_id or uuid4()
         t_start = time.perf_counter()
+
+        if cancel_token is not None and cancel_token.is_cancelled():
+            return ToolResult(
+                success=False,
+                output=None,
+                error=f"cancelled ({cancel_token.reason or 'requested'})",
+            )
 
         # 1. Evaluate
         try:
@@ -206,6 +233,30 @@ class ToolExecutor:
                 approval_ticket.close()
             raise
 
+        if approval_ticket is not None:
+            reason = (
+                "plausibility"
+                if plaus is not None and plaus.require_confirmation
+                else "risk_tier"
+            )
+            await self._bus.publish(
+                ActionApprovalRequired(
+                    trace_id=tid,
+                    tool_name=tool.name,
+                    risk_tier=decision.tier,
+                    reason=reason,
+                    args_preview=safe_preview(args),
+                    expires_at_ns=time.time_ns()
+                    + int(self._default_timeout_s * 1_000_000_000),
+                    mission_id=_optional_string(
+                        (config_snapshot or {}).get("mission_id")
+                    ),
+                    worker_id=_optional_string(
+                        (config_snapshot or {}).get("worker_id")
+                    ),
+                )
+            )
+
         if needs_confirm:
             # Two-turn confirmation on a conversational turn: do NOT block on the
             # UI-approval future (no voice/chat user can resolve it within the
@@ -248,6 +299,18 @@ class ToolExecutor:
                     error=f"approval-denied ({who_or_reason})",
                 )
             approved_by = who_or_reason  # "user" or "auto"
+
+        if cancel_token is not None and cancel_token.is_cancelled():
+            await self._bus.publish(ActionDenied(
+                trace_id=tid,
+                tool_name=tool.name,
+                reason=f"cancelled: {cancel_token.reason or 'requested'}",
+            ))
+            return ToolResult(
+                success=False,
+                output=None,
+                error=f"cancelled ({cancel_token.reason or 'requested'})",
+            )
 
         # 4. Execute
         ctx = ExecutionContext(

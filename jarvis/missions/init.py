@@ -314,7 +314,47 @@ def _assemble_worker_capability_inventory(task_text: str) -> WorkerCapabilityInv
     return WorkerCapabilityInventory.build(
         mcp_servers=_assemble_worker_mcp_servers(task_text=task_text),
         app_commands=restricted_worker_app_commands(),
+        native_tool_names=_connected_native_worker_tools(task_text),
+        task_text=task_text,
     )
+
+
+def _connected_native_worker_tools(task_text: str) -> tuple[str, ...]:
+    """Connected, task-relevant native connector tools without credentials.
+
+    Some Marketplace connectors (for example Gmail and Vercel) use a native
+    supervisor tool instead of an MCP server.  Include only catalog-declared
+    tools whose credential is present and healthy, and only when the mission
+    names or semantically matches that connector.  Any store/catalog fault
+    fails closed for that connector rather than granting a phantom tool.
+    """
+    try:
+        from jarvis.marketplace.catalog_data import load_catalog
+        from jarvis.marketplace.plugin_relevance import plugin_is_relevant
+        from jarvis.marketplace.token_store import TokenStore
+
+        store = TokenStore()
+        selected: list[str] = []
+        for plugin in load_catalog().plugins:
+            native_name = str(plugin.native_tool or "").strip()
+            if not native_name:
+                continue
+            try:
+                tokens = store.load(plugin.id)
+            except Exception:  # noqa: BLE001 - one broken credential stays isolated
+                logger.debug(
+                    "missions: connector credential unreadable for %s", plugin.id
+                )
+                continue
+            if tokens is None or not tokens.access or tokens.needs_reauth:
+                continue
+            evidence = [{"name": native_name, "description": plugin.description}]
+            if plugin_is_relevant(task_text, plugin.id, evidence):
+                selected.append(native_name)
+        return tuple(dict.fromkeys(selected))
+    except Exception:  # noqa: BLE001 - capability discovery must not block missions
+        logger.debug("missions: native connector discovery failed", exc_info=True)
+        return ()
 
 
 def _select_subagent_worker_kind(sub_jarvis_provider: str | None, step_model: str) -> str:

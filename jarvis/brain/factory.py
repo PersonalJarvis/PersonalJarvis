@@ -689,6 +689,18 @@ def is_worker_bootstrap_failed() -> bool:
     return bool(_WORKER_BOOTSTRAP_FAILED[0])
 
 
+def _register_runtime_manager(manager: Any) -> None:
+    """Publish one Brain Manager and its public tool gateway for all surfaces."""
+    try:
+        from jarvis.brain.tool_gateway import BrainSupervisorToolGateway
+        from jarvis.core import runtime_refs
+
+        runtime_refs.set_brain_manager(manager)
+        runtime_refs.set_supervisor_tool_gateway(BrainSupervisorToolGateway(manager))
+    except Exception as exc:  # noqa: BLE001 - registration never blocks boot
+        log.debug("Runtime supervisor gateway registration failed: %s", exc)
+
+
 def _phase2_full_brain(
     tier: Literal["router"] = "router",
     bus: Any | None = None,
@@ -964,12 +976,7 @@ def _phase2_full_brain(
     # ``switch-provider`` tool (and the ``describe-app-settings`` snapshot) can
     # reach it at execute-time for a live, no-restart provider switch. Mirrors
     # the MissionManager singleton pattern; a headless build registers itself too.
-    try:
-        from jarvis.core import runtime_refs
-
-        runtime_refs.set_brain_manager(manager)
-    except Exception as exc:  # noqa: BLE001 — must never block the brain build
-        log.debug("runtime_refs.set_brain_manager failed: %s", exc)
+    _register_runtime_manager(manager)
 
     # Wire live-reload on BrainToolsChanged (CLI connect/disconnect).
     try:
@@ -1378,6 +1385,10 @@ def _legacy_full_brain(bus: Any | None = None) -> Any:
         soul=soul,
         people=people,
     )
+
+    # Keep the legacy/headless path on the same public supervisor-tool boundary
+    # as the primary router factory.
+    _register_runtime_manager(manager)
 
     manager._vision_provider = None
     router_tier = getattr(config.brain, "router", None)

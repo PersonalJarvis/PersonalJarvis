@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Literal
+from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel
@@ -29,6 +30,7 @@ from jarvis.missions.state_machine import (
     MissionState,
     is_terminal,
 )
+from jarvis.missions.tool_approvals import MissionToolApprovalCoordinator
 from jarvis.ui.web.missions_worker import extract_worker_missions
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,16 @@ def _optional_kontrollierer(request: Request) -> Any | None:
     return getattr(request.app.state, "kontrollierer", None)
 
 
+def _require_tool_approvals(request: Request) -> MissionToolApprovalCoordinator:
+    coordinator = getattr(request.app.state, "mission_tool_approvals", None)
+    if coordinator is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Mission tool approvals are not available",
+        )
+    return coordinator
+
+
 # ---------------------------------------------------------------------------
 # Body-Models
 # ---------------------------------------------------------------------------
@@ -82,6 +94,12 @@ class RerunBody(BaseModel):
     """
 
     confirmed: bool = False
+
+
+class DenyToolApprovalBody(BaseModel):
+    """Optional audit reason for denying one paused supervisor tool call."""
+
+    reason: str = "user_denied"
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +229,79 @@ async def get_mission(mission_id: str, request: Request) -> dict[str, Any]:
     }
 
 
+@router.get("/{mission_id}/tool-approvals")
+async def list_mission_tool_approvals(
+    mission_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    """List secret-free supervisor tool calls awaiting a user decision."""
+    mgr = _require_manager(request)
+    if await mgr.mission(mission_id) is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    pending = await _require_tool_approvals(request).list_pending(mission_id)
+    return {
+        "mission_id": mission_id,
+        "approvals": [item.to_dict() for item in pending],
+    }
+
+
+@router.post(
+    "/{mission_id}/tool-approvals/{trace_id}/approve",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def approve_mission_tool_call(
+    mission_id: str,
+    trace_id: UUID,
+    request: Request,
+) -> dict[str, Any]:
+    """Approve and resume exactly one paused mission tool call."""
+    pending = await _require_tool_approvals(request).approve(
+        mission_id,
+        trace_id,
+        approved_by="user",
+    )
+    if pending is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Pending mission tool approval not found or expired",
+        )
+    return {
+        "ok": True,
+        "mission_id": mission_id,
+        "trace_id": str(trace_id),
+        "decision": "approved",
+        "tool_name": pending.tool_name,
+    }
+
+
+@router.post("/{mission_id}/tool-approvals/{trace_id}/deny")
+async def deny_mission_tool_call(
+    mission_id: str,
+    trace_id: UUID,
+    body: DenyToolApprovalBody,
+    request: Request,
+) -> dict[str, Any]:
+    """Deny exactly one paused mission tool call without running it."""
+    reason = body.reason.strip() or "user_denied"
+    pending = await _require_tool_approvals(request).deny(
+        mission_id,
+        trace_id,
+        reason=reason[:200],
+    )
+    if pending is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Pending mission tool approval not found or expired",
+        )
+    return {
+        "ok": True,
+        "mission_id": mission_id,
+        "trace_id": str(trace_id),
+        "decision": "denied",
+        "tool_name": pending.tool_name,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Dispatch + Cancel + Kill
 # ---------------------------------------------------------------------------
@@ -234,6 +325,7 @@ async def dispatch_mission(
     and re-POSTs with ``confirmed: true``.
     """
     from fastapi.responses import JSONResponse
+
     from jarvis.missions.safety.destructive_confirm import is_destructive
 
     # Phase-5 destructive_confirm gate (UI path; the voice path isn't active yet)

@@ -43,6 +43,18 @@ def test_labelled_secret_keeps_label_drops_value() -> None:
     assert "<redacted:labelled_secret>" in out
 
 
+def test_labelled_secret_masks_python_and_json_mapping_previews() -> None:
+    value = "supersecretvalue123"
+
+    python_preview = safe_preview({"api_key": value})
+    json_preview = safe_preview('{"access_token": "supersecretvalue123"}')
+
+    assert value not in python_preview
+    assert value not in json_preview
+    assert "<redacted:labelled_secret>" in python_preview
+    assert "<redacted:labelled_secret>" in json_preview
+
+
 def test_git_sha1_is_not_treated_as_a_secret() -> None:
     # A 40-char hex is a git commit SHA — legitimate, must NOT be masked.
     sha = "a" * 40

@@ -40,12 +40,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # build-essential/libffi: a few base deps build from sdist on slim.
+# git: Jarvis-Agent lean workspaces are real isolated repositories even when
+# the distribution image intentionally carries no host checkout history.
 # libportaudio2: backs sounddevice (a lazy-imported base dep) so any audio path
 # imports cleanly even though the container has no audio hardware.
 # curl: the HEALTHCHECK below.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-        build-essential libffi-dev libportaudio2 curl \
+        build-essential libffi-dev libportaudio2 curl git \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -62,7 +64,7 @@ RUN python -m pip install --upgrade pip \
 
 # Non-root. /app/data is the only writable location at runtime.
 RUN useradd --system --uid 1000 --shell /usr/sbin/nologin jarvis \
- && mkdir -p /app/data \
+ && mkdir -p /app/data/home \
  && chown -R jarvis:jarvis /app/data
 USER jarvis
 
@@ -76,7 +78,8 @@ EXPOSE 8000
 ENV JARVIS_BIND_HOST=0.0.0.0 \
     JARVIS_NONINTERACTIVE=1 \
     JARVIS_CONFIG=/app/data/jarvis.toml \
-    JARVIS_DATA_DIR=/app/data
+    JARVIS_DATA_DIR=/app/data \
+    HOME=/app/data/home
 
 # Generous start-period: first boot builds the brain in the background.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=6 \

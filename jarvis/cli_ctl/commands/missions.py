@@ -29,6 +29,45 @@ def show(mission_id: str = typer.Argument(..., help="Mission id.")) -> None:
     invoke.run("GET", f"/api/missions/{mission_id}")
 
 
+@app.command("tool-approvals")
+def tool_approvals(mission_id: str = typer.Argument(..., help="Mission id.")) -> None:
+    """List supervisor tool calls waiting for approval in a mission."""
+    invoke.run("GET", f"/api/missions/{mission_id}/tool-approvals")
+
+
+@app.command("approve-tool")
+def approve_tool(
+    mission_id: str = typer.Argument(..., help="Mission id."),
+    trace_id: str = typer.Argument(..., help="Approval trace id."),
+    yes: bool = options.yes_opt(),
+    dry_run: bool = options.dry_opt(),
+) -> None:
+    """Approve one paused mission tool call and resume it."""
+    invoke.run(
+        "POST",
+        f"/api/missions/{mission_id}/tool-approvals/{trace_id}/approve",
+        assume_yes=yes,
+        dry_run=dry_run,
+        dangerous=True,
+    )
+
+
+@app.command("deny-tool")
+def deny_tool(
+    mission_id: str = typer.Argument(..., help="Mission id."),
+    trace_id: str = typer.Argument(..., help="Approval trace id."),
+    reason: str = typer.Option("user_denied", "--reason", help="Audit reason."),
+    dry_run: bool = options.dry_opt(),
+) -> None:
+    """Deny one paused mission tool call without executing it."""
+    invoke.run(
+        "POST",
+        f"/api/missions/{mission_id}/tool-approvals/{trace_id}/deny",
+        body={"reason": reason},
+        dry_run=dry_run,
+    )
+
+
 @app.command()
 def dispatch(
     prompt: str = typer.Argument(..., help="The task for the worker."),

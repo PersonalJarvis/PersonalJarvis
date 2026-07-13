@@ -6,7 +6,7 @@ race conditions in the user's working tree.
 
 Path layout (Research-Doc §E point 1):
 
-    <repo_parent>/sub-agents-outputs/
+    <repo_parent>/jarvis-agent-outputs/
       <YYYYMMDDTHHMMSS>__<mission-slug>__<short-uuid>/
         tasks/
           <NN>__<task-slug>/
@@ -31,9 +31,9 @@ import subprocess
 import time
 import uuid
 from collections.abc import Callable
+from pathlib import Path
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +85,7 @@ def read_worktree_base_sha(workspace: Path) -> str | None:
 # ``Kontrollierer._archive_task_artifacts`` writes live in the SAME outputs
 # root but hold the user's deliverables (diff.patch + artifacts/files/) and are
 # never git worktrees — sweeping them by age silently wipes every completed
-# sub-agent's output (live 2026-05-29: 0/77 mission dirs still had files after a
+# Jarvis-Agent's output (live 2026-05-29: 0/77 mission dirs still had files after a
 # >6 h-old restart triggered the 6 h sweep). The 14-day retention of those
 # archive dirs is owned by ``cleanup.startup_sweep`` instead.
 _RUN_DIR_RE = re.compile(r"^\d{8}T\d{6}__.+__[0-9a-f]{8}$")
@@ -123,11 +123,23 @@ def _slugify(value: str) -> str:
 def resolve_outputs_root(repo_root: Path) -> Path:
     """Return the mission outputs root directory.
 
+    ``JARVIS_ISOLATION_ROOT`` is the explicit highest-priority override.
+    ``JARVIS_DATA_DIR`` places outputs under the writable application data
+    volume used by headless and non-root installs.
+
     Prefers ``<repo_root>.parent/jarvis-agent-outputs/`` (post-rename, 2026-06-29).
     Falls back to ``<repo_root>.parent/sub-agents-outputs/`` when that old directory
     exists AND the new one does NOT — this keeps existing missions readable without
     any migration step. Does NOT create the directory; callers are responsible.
     """
+    explicit_root = os.environ.get("JARVIS_ISOLATION_ROOT", "").strip()
+    if explicit_root:
+        return Path(explicit_root).expanduser().resolve()
+
+    data_root = os.environ.get("JARVIS_DATA_DIR", "").strip()
+    if data_root:
+        return Path(data_root).expanduser().resolve() / "jarvis-agent-outputs"
+
     parent = repo_root.resolve().parent
     new_dir = parent / "jarvis-agent-outputs"
     old_dir = parent / "sub-agents-outputs"
@@ -153,8 +165,8 @@ class WorktreeManager:
         """
         Inputs:
             repo_root: path to the main repo (the one that contains `.git`).
-            outputs_root: optional override for the `sub-agents-outputs/` root
-                directory. Default: `<repo_root>.parent/sub-agents-outputs`.
+            outputs_root: optional override for the mission outputs root.
+                Default: ``resolve_outputs_root(repo_root)``.
         """
         self._repo_root = repo_root.resolve()
         self._outputs_root = (
@@ -210,7 +222,11 @@ class WorktreeManager:
         short_uuid = uuid.uuid4().hex[:8]
 
         run_dir_name = f"{ts}__{mission_part}__{short_uuid}"
-        task_dir_name = task_part if task_part.startswith(tuple("0123456789")) else f"01__{task_part}"
+        task_dir_name = (
+            task_part
+            if task_part.startswith(tuple("0123456789"))
+            else f"01__{task_part}"
+        )
 
         workspace = (
             self._outputs_root / run_dir_name / "tasks" / task_dir_name / "workspace"
@@ -218,7 +234,7 @@ class WorktreeManager:
 
         if len(str(workspace)) > _MAX_WORKTREE_PATH_LEN:
             raise ValueError(
-                f"Worktree-Pfad zu lang ({len(str(workspace))} > "
+                f"Worktree path is too long ({len(str(workspace))} > "
                 f"{_MAX_WORKTREE_PATH_LEN}): {workspace}"
             )
 
@@ -444,7 +460,7 @@ class WorktreeManager:
     # subprocess holds file handles open past parent process teardown.
     # BUG-LIVE-05's retry loop catches the 80 % case but force-quits,
     # process crashes, and parallel-session locks leave behind directories
-    # under sub-agents-outputs/. Audit-team-4 counted 60 such leaks on
+    # under the mission outputs root. Audit-team-4 counted 60 such leaks on
     # disk. Sweep at bootstrap is the simplest defense: forget the missing
     # entries from git's internal state, then aggressively rmtree
     # anything older than `max_age_hours` that no live worktree claims.
@@ -456,7 +472,7 @@ class WorktreeManager:
         Two-step safety:
           1. ``git worktree prune`` removes git's internal entry for any
              worktree whose directory disappeared (e.g. user `rm -rf`d it).
-          2. Scan ``sub-agents-outputs/`` for run-dirs older than
+          2. Scan the mission outputs root for run-dirs older than
              ``max_age_hours``. If git still considers any path under
              that run-dir an active worktree we leave it alone (Windows
              permission errors from racing workers will be retried by
@@ -529,7 +545,7 @@ class WorktreeManager:
             # Only sweep transient worktree RUN-dirs. A persistent
             # ``mission_<id>`` deliverable-archive dir (or any other
             # non-run-dir) must never be rmtree'd here — that is the bug that
-            # left every completed sub-agent's Outputs view empty (2026-05-29).
+            # left every completed Jarvis-Agent's Outputs view empty (2026-05-29).
             if not _RUN_DIR_RE.match(child.name):
                 continue
             try:

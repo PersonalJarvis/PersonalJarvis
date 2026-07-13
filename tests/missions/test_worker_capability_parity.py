@@ -46,14 +46,20 @@ def test_every_backend_receives_the_same_restricted_inventory() -> None:
     assert "secret-value" not in repr(inventory)
 
 
-def test_backend_reports_are_honest_about_unsupported_surfaces() -> None:
+def test_backend_reports_are_honest_when_supervisor_grant_is_unavailable() -> None:
     inventory = _inventory()
 
-    assert inventory.report_for("claude-cli")["mcp"]["status"] == "available"
-    for backend in ("codex-cli", "gemini-cli", "google-cli", "api:openrouter"):
+    for backend in (
+        "claude-cli",
+        "codex-cli",
+        "gemini-cli",
+        "google-cli",
+        "api:openrouter",
+    ):
         report = inventory.report_for(backend)
-        assert report["mcp"]["status"] == "unsupported"
-        assert report["app_commands"]["status"] == "unsupported"
+        assert report["broker"]["status"] == "unavailable"
+        assert report["mcp"]["status"] == "unavailable"
+        assert report["app_commands"]["status"] == "unavailable"
         assert "secret-value" not in json.dumps(report)
 
 

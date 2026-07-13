@@ -281,6 +281,41 @@ async def test_unknown_provider_returns_clean_error(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_init_failure_revokes_worker_tool_grant(tmp_path: Path) -> None:
+    """An early provider failure must not leave a live bearer grant behind."""
+
+    class _Binding:
+        tool_specs: tuple[dict[str, object], ...] = ()
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class _Inventory:
+        def __init__(self, binding: _Binding) -> None:
+            self.binding = binding
+
+        def bind_broker(self, **_kwargs):  # noqa: ANN003, ANN201
+            return self.binding
+
+        def report_for(self, _backend: str, **_kwargs):  # noqa: ANN003, ANN201
+            return {}
+
+    binding = _Binding()
+    worker = ApiAgentWorker(
+        "definitely-not-a-provider",
+        capability_inventory=_Inventory(binding),  # type: ignore[arg-type]
+    )
+
+    await _drain(
+        worker, prompt="x", worktree=tmp_path, env={}, job=None,
+        worker_id="m::0", log_dir=tmp_path / "_logs",
+    )
+
+    assert binding.closed is True
+
+
+@pytest.mark.asyncio
 async def test_stream_jsonl_is_valid_ndjson(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

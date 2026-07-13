@@ -1,4 +1,4 @@
-"""Codex-Worker model-slug normalization (Welle 6 BUG-LIVE follow-up).
+"""Codex-Worker model-slug normalization (Wave 6 BUG-LIVE follow-up).
 
 Live repro 2026-05-18 mission_019e3c52-0acd:
     Codex with ChatGPT account returned HTTP 400 because the
@@ -17,13 +17,17 @@ that via ``if model:`` gating.
 """
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from jarvis.missions.workers.codex_direct_worker import (
     _CLAUDE_MODEL_ALIASES,
+    _build_codex_direct_cmd,
     _normalize_model_for_codex,
+    _prepare_codex_prompt,
 )
-
 
 # --- Anthropic-flavoured aliases (legacy decomposer defaults) ---
 
@@ -104,29 +108,48 @@ def test_claude_alias_set_is_exactly_three() -> None:
     assert _CLAUDE_MODEL_ALIASES == frozenset({"sonnet", "opus", "haiku"})
 
 
-# --- D9 recursion guard: codex must not spawn NESTED sub-agents ---
+# --- D9 recursion guard: codex must not spawn NESTED Jarvis-Agents ---
 
-from pathlib import Path  # noqa: E402
 
-from jarvis.missions.workers.codex_direct_worker import (  # noqa: E402
-    _build_codex_direct_cmd,
-)
+def test_codex_cmd_restores_native_windows_sandbox_after_config_isolation() -> None:
+    """Ignoring user config must not silently erase the Windows sandbox mode."""
+    worktree = Path("C:/mission/worktree")
+    cmd = _build_codex_direct_cmd(
+        worktree=worktree,
+        model=None,
+        windows_sandbox="unelevated",
+    )
+
+    assert "--ignore-user-config" in cmd
+    assert 'windows.sandbox="unelevated"' in cmd
+    assert cmd[cmd.index("--cd") + 1] == str(worktree)
+
+
+def test_codex_prompt_adds_bounded_windows_write_recovery() -> None:
+    prompt = _prepare_codex_prompt("Create hello.txt.", native_windows=True)
+
+    assert "PowerShell shell command" in prompt
+    assert "UTF-8 without a byte-order mark" in prompt
+    assert "System.Text.UTF8Encoding(false)" in prompt
+    assert "Never write outside the current worktree" in prompt
+    assert prompt.endswith("Create hello.txt.")
+    assert _prepare_codex_prompt("Analyze only.", native_windows=False) == "Analyze only."
 
 
 def test_codex_cmd_disables_multi_agent_collab_tools() -> None:
-    """A mission worker IS the sub-agent — it must NEVER use codex's native
+    """A mission worker IS the Jarvis-Agent — it must NEVER use codex's native
     multi_agent collaboration tools (spawn_agent / wait) to spawn a NESTED codex
     agent and block on it.
 
     Live mission 019ec708 (2026-06-14): the prompt was phrased "spawn a
-    sub-agent which will help me plan a trip from London to Taiwan"; the codex
+    Jarvis-Agent which will help me plan a trip from London to Taiwan"; codex
     worker called spawn_agent("Hooke") then `wait` and hung for the full worker
     timeout (frozen stream, no WorkerDraftReady for 7+ min). Jarvis's D9
     recursion guard (AP-5 / AP-14: no spawn tool in any worker set) governs
     Jarvis's own tool registry — codex's native feature bypasses it, so the
     argv must disable it. `--disable <FEATURE>` == `-c features.<name>=false`.
     """
-    cmd = _build_codex_direct_cmd(worktree=Path("/tmp/wt"), model=None)
+    cmd = _build_codex_direct_cmd(worktree=Path("test-worktree"), model=None)
     disabled = [
         cmd[i + 1]
         for i, a in enumerate(cmd)
@@ -139,13 +162,11 @@ def test_codex_cmd_disables_multi_agent_collab_tools() -> None:
 def test_codex_cmd_caps_reasoning_effort_for_speed() -> None:
     """Mission latency (live mission 019ec742, 2026-06-14): the codex worker ran
     452s then 399s at the user's `~/.codex/config.toml` `model_reasoning_effort
-    = "xhigh"` → 899s critic_loop_exhausted. A sub-agent mission worker re-runs
+    = "xhigh"` → 899s critic_loop_exhausted. A Jarvis-Agent mission worker re-runs
     across up to MAX_CRITIC_LOOPS iterations, so a 7-minute xhigh pass per run is
     unacceptable. The argv MUST override config.toml to a FAST tier via
     `-c model_reasoning_effort=<low|medium>`, never inheriting xhigh."""
-    import re
-
-    cmd = _build_codex_direct_cmd(worktree=Path("/tmp/wt"), model=None)
+    cmd = _build_codex_direct_cmd(worktree=Path("test-worktree"), model=None)
     joined = " ".join(cmd)
     m = re.search(r"model_reasoning_effort=(\w+)", joined)
     assert m, f"no reasoning-effort cap in argv (inherits config xhigh): {cmd}"
@@ -166,7 +187,7 @@ def test_codex_cmd_enables_web_search_for_research() -> None:
     confirmed it returns current data (a WSJ URL dated today). The worker argv
     MUST enable it so research/current-events missions can produce SOURCED work:
     ``-c tools.web_search=true``."""
-    cmd = _build_codex_direct_cmd(worktree=Path("/tmp/wt"), model=None)
+    cmd = _build_codex_direct_cmd(worktree=Path("test-worktree"), model=None)
     assert "tools.web_search=true" in " ".join(cmd), (
         f"web_search not enabled in argv (worker cannot research): {cmd}"
     )

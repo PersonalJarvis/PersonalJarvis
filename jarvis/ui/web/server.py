@@ -122,6 +122,9 @@ class WebServer:
         # unchanged. See docs/superpowers/specs/2026-05-11-pre-thinking-ack-
         # flash-brain-design.md §4.
         self.bus.subscribe(AnnouncementRequested, self._forward_preamble_to_chat)
+        from jarvis.missions.tool_approvals import MissionToolApprovalCoordinator
+
+        self._mission_tool_approvals = MissionToolApprovalCoordinator(self.bus)
         self.app: FastAPI = self._build_app()
 
     async def _forward_preamble_to_chat(self, event: AnnouncementRequested) -> None:
@@ -396,6 +399,7 @@ class WebServer:
         # so the REST routes return 503 instead of crashing.
         app.state.mission_manager = None
         app.state.kontrollierer = None
+        app.state.mission_tool_approvals = self._mission_tool_approvals
 
         # Board aggregator (personal-mastery dashboard) — the aggregator is
         # run as a background task in start(); the store is read-only and
@@ -2728,6 +2732,13 @@ class WebServer:
                 logger.opt(exception=exc).warning(
                     "In-flight mission finalize on shutdown failed"
                 )
+
+        try:
+            await self._mission_tool_approvals.deny_all(reason="app_shutdown")
+        except Exception as exc:  # noqa: BLE001 - shutdown remains best-effort
+            logger.opt(exception=exc).warning(
+                "Pending mission tool approval cleanup failed"
+            )
 
         mission_manager = getattr(self.app.state, "mission_manager", None)
         if mission_manager is not None:

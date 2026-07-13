@@ -43,6 +43,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wizard", action="store_true", help="Restart the setup wizard.")
     parser.add_argument("--check", action="store_true", help="Only show the hardware analysis.")
     parser.add_argument("--plugins", action="store_true", help="List the plugin registry.")
+    parser.add_argument(
+        "--worker-tool-broker-stdio",
+        action="store_true",
+        dest="worker_tool_broker_stdio",
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--debug", action="store_true", help="Debug logging + console attach.")
     # Phase 5:
     parser.add_argument("--phase5-doctor", action="store_true", dest="phase5_doctor",
@@ -479,6 +485,10 @@ def main(argv: list[str] | None = None) -> int:
 
     args = _parse_args(raw)
 
+    if args.worker_tool_broker_stdio:
+        from jarvis.missions.workers.broker_stdio import main as broker_stdio_main
+
+        return broker_stdio_main()
     if args.check:
         return _cmd_check()
     if args.plugins:

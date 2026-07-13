@@ -159,7 +159,9 @@ _MAX_TOKENS: int = 8192
 _SYSTEM_PROMPT = (
     "You are an autonomous software worker running inside an isolated git "
     "workspace. Your ONLY way to deliver work is to call the provided tools — "
-    "Write, Edit, Read, Bash, Ls — with paths relative to the workspace root. "
+    "Write, Edit, Read, Bash, Ls, plus any mission-scoped connected tools — "
+    "with file paths relative to the workspace root. Connected tools are "
+    "executed by the supervisor and may honestly require human approval. "
     "Actually CREATE and EDIT the files the task needs; never just describe what "
     "you would do (a text description is not a deliverable and will be rejected). "
     "Work autonomously without asking questions: if a detail is unspecified, pick "
@@ -230,6 +232,50 @@ class ApiAgentWorker:
         log_dir: Path,
         model: str = "",
         max_turns: int = _MAX_TURNS,
+        _broker_binding: Any | None = None,
+        **_unused: Any,
+    ) -> AsyncIterator[Any]:
+        broker_binding = _broker_binding
+        issued_here = broker_binding is None
+        if issued_here:
+            broker_binding = self.capability_inventory.bind_broker(
+                ttl_s=_WORKER_TIMEOUT_S + 60.0,
+                mission_id=_unused.get("mission_id"),
+                worker_id=worker_id,
+            )
+        try:
+            async for event in self._spawn_bound(
+                prompt,
+                worktree=worktree,
+                env=env,
+                job=job,
+                worker_id=worker_id,
+                log_dir=log_dir,
+                model=model,
+                max_turns=max_turns,
+                broker_binding=broker_binding,
+                **_unused,
+            ):
+                yield event
+        finally:
+            if issued_here and broker_binding is not None:
+                try:
+                    broker_binding.close()
+                except Exception:  # noqa: BLE001 - cleanup must not mask cancellation
+                    logger.exception("ApiAgentWorker: broker binding cleanup failed")
+
+    async def _spawn_bound(
+        self,
+        prompt: str,
+        *,
+        worktree: Path,
+        env: dict[str, str],  # noqa: ARG002 - in-process brain reads credentials via config
+        job: Any,  # noqa: ARG002 - no child PID to assign (in-process)
+        worker_id: str,
+        log_dir: Path,
+        model: str = "",
+        max_turns: int = _MAX_TURNS,
+        broker_binding: Any | None,
         **_unused: Any,
     ) -> AsyncIterator[Any]:
         session_id = str(uuid.uuid4())
@@ -238,6 +284,11 @@ class ApiAgentWorker:
         log_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240 — trivial sync mkdir (mirrors sibling workers)
         stream_path = log_dir / "stream.jsonl"
         written: list[str] = []
+        broker_specs = broker_binding.tool_specs if broker_binding is not None else ()
+        local_names = {str(spec["name"]) for spec in WORKER_TOOL_SPECS}
+        all_tool_specs = WORKER_TOOL_SPECS + tuple(
+            spec for spec in broker_specs if str(spec.get("name") or "") not in local_names
+        )
 
         def _emit_line(event: Any) -> None:
             with suppress(OSError):
@@ -247,9 +298,11 @@ class ApiAgentWorker:
         init = ClaudeSystemInit(
             session_id=session_id,
             model=f"{self.provider}/{resolved_model}",
-            tools=[t["name"] for t in WORKER_TOOL_SPECS],
+            tools=[t["name"] for t in all_tool_specs],
             cwd=str(worktree),
-            external_capabilities=self.capability_inventory.report_for(f"api:{self.provider}"),
+            external_capabilities=self.capability_inventory.report_for(
+                f"api:{self.provider}", binding=broker_binding
+            ),
         )
         _emit_line(init)
         yield init
@@ -325,7 +378,7 @@ class ApiAgentWorker:
                 turns = turn + 1
                 req = BrainRequest(
                     messages=tuple(messages),
-                    tools=WORKER_TOOL_SPECS,
+                    tools=all_tool_specs,
                     system=_SYSTEM_PROMPT,
                     max_tokens=_MAX_TOKENS,
                     stream=True,
@@ -406,10 +459,22 @@ class ApiAgentWorker:
                         continue
                     name = block["name"]
                     tool_input = block["input"] if isinstance(block["input"], dict) else {}
-                    result_text, is_error = await loop.run_in_executor(
-                        None,
-                        lambda n=name, i=tool_input: execute_worker_tool(n, i, worktree=worktree),
-                    )
+                    if name in local_names:
+                        result_text, is_error = await loop.run_in_executor(
+                            None,
+                            lambda n=name, i=tool_input: execute_worker_tool(
+                                n, i, worktree=worktree
+                            ),
+                        )
+                    elif broker_binding is not None:
+                        broker_result = await broker_binding.execute(name, tool_input)
+                        result_text = json.dumps(
+                            broker_result, ensure_ascii=False, default=str
+                        )
+                        is_error = not bool(broker_result.get("success"))
+                    else:
+                        result_text = "Tool is not granted to this mission."
+                        is_error = True
                     if name in ("Write", "Edit") and not is_error:
                         fp = str(tool_input.get("file_path", ""))
                         if fp:

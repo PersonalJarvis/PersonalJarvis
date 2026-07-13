@@ -20,6 +20,7 @@ import {
   ListChecks,
   Map as MapIcon,
   MessageSquareText,
+  ShieldAlert,
   Target,
   Wifi,
   WifiOff,
@@ -40,6 +41,10 @@ import { EventTimeline } from "@/components/missions/EventTimeline";
 import { GlobalKillButton } from "@/components/missions/GlobalKillButton";
 import { MissionTree } from "@/components/missions/MissionTree";
 import { JarvisAgentPanel } from "@/components/missions/JarvisAgentPanel";
+import {
+  ToolApprovalPanel,
+  useMissionToolApprovals,
+} from "@/components/missions/ToolApprovalPanel";
 import { VerdictPanel } from "@/components/missions/VerdictPanel";
 import {
   selectActiveCount,
@@ -66,6 +71,11 @@ export function MissionsView() {
   const connected = useMissionsStore((s) => s.connected);
   const totalCount = useMissionsStore(useShallow((s) => Object.keys(s.missions).length));
   const activeCount = useMissionsStore(useShallow(selectActiveCount));
+  const toolApprovalsQuery = useMissionToolApprovals(selectedMissionId);
+  const pendingApprovalCount =
+    toolApprovalsQuery.data?.approvals.filter(
+      (approval) => approval.expires_at_ns / 1_000_000 > Date.now(),
+    ).length ?? 0;
 
   const listQuery = useQuery({
     queryKey: ["missions"],
@@ -119,7 +129,7 @@ export function MissionsView() {
       />
 
       <div className="grid flex-1 grid-cols-[280px_1fr_320px] overflow-hidden">
-        {/* Linke Pane */}
+        {/* Left pane */}
         <div className="flex h-full flex-col overflow-hidden border-r border-border bg-card/20">
           <div className="border-b border-border px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">
             {t("missions_view.tree_label")}
@@ -129,7 +139,7 @@ export function MissionsView() {
           </div>
         </div>
 
-        {/* Mittlere Pane */}
+        {/* Center pane */}
         <div className="grid h-full grid-rows-[1fr_240px] overflow-hidden">
           <div className="overflow-hidden border-b border-border bg-background/20 p-3">
             {selectedWorkerId ? (
@@ -153,7 +163,7 @@ export function MissionsView() {
           </div>
         </div>
 
-        {/* Rechte Pane */}
+        {/* Right pane */}
         <div className="flex h-full flex-col overflow-hidden border-l border-border bg-card/20">
           <Tabs defaultValue="verdicts" className="flex h-full flex-col">
             <div className="border-b border-border px-2 py-2">
@@ -174,6 +184,23 @@ export function MissionsView() {
                   <Cpu className="h-3.5 w-3.5" />
                   Jarvis-Agent
                 </TabsTrigger>
+                <TabsTrigger
+                  value="approvals"
+                  className="relative gap-1.5"
+                  aria-label={
+                    pendingApprovalCount > 0
+                      ? `${t("mission_tool_approvals.tab_label")}: ${pendingApprovalCount} ${t("mission_tool_approvals.pending")}`
+                      : t("mission_tool_approvals.tab_label")
+                  }
+                >
+                  <ShieldAlert className="h-3.5 w-3.5" />
+                  {t("mission_tool_approvals.tab_label")}
+                  {pendingApprovalCount > 0 ? (
+                    <span className="absolute -right-1 -top-1 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 font-mono text-[9px] leading-none text-destructive-foreground">
+                      {pendingApprovalCount}
+                    </span>
+                  ) : null}
+                </TabsTrigger>
               </TabsList>
             </div>
             <TabsContent value="verdicts" className="m-0 flex-1 overflow-hidden">
@@ -187,6 +214,12 @@ export function MissionsView() {
             </TabsContent>
             <TabsContent value="openclaw" className="m-0 flex-1 overflow-hidden">
               <JarvisAgentPanel />
+            </TabsContent>
+            <TabsContent value="approvals" className="m-0 flex-1 overflow-hidden">
+              <ToolApprovalPanel
+                missionId={selectedMissionId}
+                query={toolApprovalsQuery}
+              />
             </TabsContent>
           </Tabs>
         </div>
