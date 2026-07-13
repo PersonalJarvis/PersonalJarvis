@@ -2287,6 +2287,7 @@
     "pending": "pendientes",
     "select_mission": "Selecciona una misión para revisar las solicitudes de herramientas del supervisor.",
     "loading": "Cargando aprobaciones…",
+    "toast_pending": "Se necesita aprobación para {tool} en la misión {mission}. Abre Misiones para revisarla.",
     "load_error": "No se pudieron cargar las aprobaciones.",
     "retry": "Reintentar",
     "empty_title": "No hay acciones en espera",

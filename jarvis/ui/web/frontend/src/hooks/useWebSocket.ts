@@ -259,6 +259,29 @@ export function useWebSocket(): void {
           }
         }
 
+        if (env.event_name === "ActionApprovalRequired") {
+          const p = env.payload as {
+            mission_id?: unknown;
+            tool_name?: unknown;
+          };
+          if (
+            typeof p.mission_id === "string" &&
+            p.mission_id.length > 0 &&
+            typeof p.tool_name === "string" &&
+            p.tool_name.length > 0
+          ) {
+            pushToast(
+              "warning",
+              translate("mission_tool_approvals.toast_pending")
+                .replace("{tool}", p.tool_name)
+                .replace("{mission}", p.mission_id),
+            );
+            window.dispatchEvent(
+              new CustomEvent("jarvis:mission-tool-approval", { detail: p }),
+            );
+          }
+        }
+
         if (env.event_name === "AchievementUnlocked") {
           const p = env.payload as {
             achievement_id?: string;

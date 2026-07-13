@@ -2288,6 +2288,7 @@
     "pending": "pending",
     "select_mission": "Select a mission to review supervisor tool requests.",
     "loading": "Loading approvals…",
+    "toast_pending": "Approval needed for {tool} in mission {mission}. Open Missions to review it.",
     "load_error": "Approvals could not be loaded.",
     "retry": "Retry",
     "empty_title": "No action waiting",

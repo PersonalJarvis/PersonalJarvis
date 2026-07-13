@@ -2287,6 +2287,7 @@
     "pending": "ausstehend",
     "select_mission": "Wähle eine Mission aus, um Tool-Anfragen des Supervisors zu prüfen.",
     "loading": "Freigaben werden geladen…",
+    "toast_pending": "Freigabe für {tool} in Mission {mission} erforderlich. Öffne Missionen, um sie zu prüfen.",
     "load_error": "Freigaben konnten nicht geladen werden.",
     "retry": "Erneut versuchen",
     "empty_title": "Keine Aktion wartet",
