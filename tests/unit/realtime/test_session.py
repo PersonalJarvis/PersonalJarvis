@@ -1853,6 +1853,113 @@ async def test_bare_answer_without_pending_confirm_stays_native():
     await sess.end(reason="test")
 
 
+class _TwoTurnClarifySession(FakeSession):
+    """Turn 1 delegates and asks a question; Turn 2 is the user's answer."""
+
+    def __init__(self, second_turn_text, spoken_reply="Which trip do you mean?"):
+        super().__init__([])
+        self._second_turn_text = second_turn_text
+        self._spoken_reply = spoken_reply
+        self._text_sent = asyncio.Event()
+
+    async def receive(self):
+        yield RealtimeEvent(
+            type="input_transcript",
+            text="Write the travel plan to my wiki.",
+            is_final=True,
+        )
+        await self._text_sent.wait()
+        yield RealtimeEvent(
+            type="output_transcript_delta",
+            text=self._spoken_reply,
+            is_final=True,
+        )
+        await asyncio.sleep(0)
+        yield RealtimeEvent(type="turn_complete")
+        await asyncio.sleep(0)
+        yield RealtimeEvent(
+            type="input_transcript",
+            text=self._second_turn_text,
+            is_final=True,
+        )
+        await asyncio.sleep(0.1)
+
+    async def send_text(self, text):
+        await super().send_text(text)
+        self._text_sent.set()
+
+
+class _TwoTurnClarifyProvider(FakeProvider):
+    def __init__(self, second_turn_text, spoken_reply="Which trip do you mean?"):
+        super().__init__([])
+        self._second_turn_text = second_turn_text
+        self._spoken_reply = spoken_reply
+
+    async def open_session(self, cfg):
+        self.opened_with = cfg
+        self.session = _TwoTurnClarifySession(
+            self._second_turn_text, self._spoken_reply
+        )
+        return self.session
+
+
+@pytest.mark.asyncio
+async def test_short_answer_to_delegate_clarify_question_is_delegated():
+    brain = FakeBrain(
+        replies=("Which trip do you mean?", "Saved the San Francisco trip.")
+    )
+    provider = _TwoTurnClarifyProvider("The one to San Francisco")
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.12)
+
+    assert [call[0] for call in brain.calls] == [
+        "Write the travel plan to my wiki.",
+        "The one to San Francisco",
+    ]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_long_follow_up_after_clarify_question_stays_native():
+    brain = FakeBrain(replies=("Which trip do you mean?",))
+    provider = _TwoTurnClarifyProvider(
+        "Actually tell me a story about a dragon and a knight instead"
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.12)
+
+    assert [call[0] for call in brain.calls] == [
+        "Write the travel plan to my wiki.",
+    ]
+    assert provider.session.required_tools == [None]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_short_follow_up_without_open_question_stays_native():
+    brain = FakeBrain(replies=("The travel plan was saved.",))
+    provider = _TwoTurnClarifyProvider(
+        "Thanks a lot", spoken_reply="The travel plan was saved."
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.12)
+
+    assert [call[0] for call in brain.calls] == [
+        "Write the travel plan to my wiki.",
+    ]
+    assert provider.session.required_tools == [None]
+    await sess.end(reason="test")
+
+
 @pytest.mark.asyncio
 async def test_automatic_provider_wiki_turn_runs_brain_without_tool_call():
     brain = FakeBrain(replies=("The Wiki entry was saved.",))

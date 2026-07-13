@@ -131,6 +131,11 @@ _DELEGATE_PENDING_DIRECTIVE = (
 # follow-up. The bound only decides how long a result may wait for that silence.
 _LATE_DELEGATE_DELIVERY_TIMEOUT_S = 30.0
 _LATE_DELEGATE_POLL_S = 0.15
+# When a delegated Brain reply ends in a question (clarify or confirmation),
+# the user's short elliptical answer ("the readme one", "yes the second")
+# matches no planner category on its own. Only answers up to this token count
+# are pulled back to the orchestrator; a longer utterance is a new topic.
+_DELEGATE_ANSWER_MAX_TOKENS = 6
 
 
 def _requires_jarvis_action(text: str) -> bool:
@@ -366,6 +371,7 @@ class RealtimeVoiceSession:
         self._delegate_turns: dict[str, _DelegateTurnState] = {}
         self._delegate_history: list[BrainMessage] = []
         self._delegate_required_for_turn = False
+        self._delegate_reply_awaits_answer = False
         self._late_delegate_results: list[_LateDelegateResult] = []
         self._late_delegate_flush_task: asyncio.Task[None] | None = None
         self._user_speech_active = False
@@ -795,6 +801,7 @@ class RealtimeVoiceSession:
                                 self._delegate_required_for_turn
                                 or turn_plan.requires_orchestrator
                                 or self._brain_awaits_voice_confirm()
+                                or self._answers_open_delegate_question()
                             )
                         refresh_tools = getattr(
                             self._tool_bridge, "refresh_from_source", None
@@ -1396,6 +1403,17 @@ class RealtimeVoiceSession:
                 pass
         if external_update is None:
             self._remember_delegate_turn(self._last_user_text, response_text)
+            # An out-of-band update between turns must not clear an open
+            # clarify question, so the flag is only re-evaluated for real
+            # user turns.
+            self._delegate_reply_awaits_answer = bool(
+                delegate_state is not None
+                and delegate_state.result_complete
+                and (
+                    delegate_state.last_reply.rstrip().endswith("?")
+                    or response_text.rstrip().endswith("?")
+                )
+            )
         self._external_update = None
         self._reset_turn_tracking()
 
@@ -1457,6 +1475,21 @@ class RealtimeVoiceSession:
         if self._tool_bridge is not None:
             return _TOOL_ROLE_DIRECTIVE
         return ""
+
+    def _answers_open_delegate_question(self) -> bool:
+        """True when a short reply answers the last delegated clarify question.
+
+        A delegated Brain turn that ended in a question owns the next short
+        answer: "the readme one" carries no planner-visible category, and
+        relying on the provider to call ``jarvis_action`` with it would make
+        prompt compliance the correctness boundary again. A long follow-up is
+        treated as a topic change and stays native.
+        """
+        if not self._delegate_reply_awaits_answer:
+            return False
+        return (
+            len(self._last_user_text.split()) <= _DELEGATE_ANSWER_MAX_TOKENS
+        )
 
     def _brain_awaits_voice_confirm(self) -> bool:
         """True while the classic brain holds a two-turn ask-tier confirmation.
