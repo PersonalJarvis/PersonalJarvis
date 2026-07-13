@@ -1650,7 +1650,7 @@ class _StubExecutor:
         return ToolResult(success=True, output="opened")
 
 
-def _delegate_cfg(tool_mode=None):
+def _delegate_cfg(tool_mode="delegate"):
     cfg = _cfg()
     if tool_mode is not None:
         cfg.voice.realtime_tool_mode = tool_mode
@@ -1666,7 +1666,7 @@ def _session(
     *,
     brain=None,
     tool_bridge=None,
-    tool_mode=None,
+    tool_mode="delegate",
     jsons=None,
     binaries=None,
     bus=None,

@@ -24,6 +24,7 @@ _INPUT_RATE = 24_000
 _OUTPUT_RATE = 24_000
 _HANDSHAKE_TIMEOUT_S = 12.0
 _RESPONSE_REQUEST_METADATA_KEY = "jarvis_request_id"
+_RECOVERABLE_ERROR_CODES = frozenset({"conversation_already_has_active_response"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,15 +42,21 @@ class _ProviderEvent:
     is_final: bool = False
     ms_played: int | None = None
     error: str | None = None
+    recoverable: bool = False
     item_id: str | None = None
     call_id: str | None = None
     tool_name: str | None = None
     tool_args: dict[str, Any] | None = None
 
 
+def _error_code(event: Any) -> str:
+    error = getattr(event, "error", None)
+    return str(getattr(error, "code", "") or "").strip()
+
+
 def _error_message(event: Any) -> str:
     error = getattr(event, "error", None)
-    code = str(getattr(error, "code", "") or "").strip()
+    code = _error_code(event)
     message = str(getattr(error, "message", "") or "").strip()
     if code and message:
         return f"{code}: {message}"[:800]
@@ -148,6 +155,13 @@ class _OpenAIRealtimeSession:
         # any PCM reaches the speaker.
         self._pending_response_markers: set[str] = set()
         self._accepted_response_ids: set[str] = set()
+        # OpenAI accepts only one active response per conversation. Every
+        # local response request (native reply, tool continuation, trusted
+        # update) passes this lifecycle boundary so concurrent callers cannot
+        # race two response.create operations onto the same session.
+        self._response_create_lock = asyncio.Lock()
+        self._response_idle = asyncio.Event()
+        self._response_idle.set()
         self._closed = False
 
     async def wait_until_ready(self) -> None:
@@ -245,13 +259,19 @@ class _OpenAIRealtimeSession:
                     self._accepted_response_ids.discard(response_id)
                 elif len(self._accepted_response_ids) == 1:
                     self._accepted_response_ids.pop()
+                self._response_idle.set()
                 if self._response_had_tool_calls:
                     self._tool_response_done_seen = True
                     await self._continue_after_tools_if_ready()
                 else:
                     yield _ProviderEvent(type="turn_complete")
             elif event_type == "error":
-                yield _ProviderEvent(type="error", error=_error_message(event))
+                error_code = _error_code(event)
+                yield _ProviderEvent(
+                    type="error",
+                    error=_error_message(event),
+                    recoverable=error_code in _RECOVERABLE_ERROR_CODES,
+                )
 
     async def update_session(
         self,
@@ -315,7 +335,10 @@ class _OpenAIRealtimeSession:
         self._tool_response_done_seen = False
         self._pending_tool_call_ids.clear()
         self._last_item_id = ""
-        await self._conn.response.cancel()
+        try:
+            await self._conn.response.cancel()
+        finally:
+            self._response_idle.set()
 
     async def send_tool_result(
         self, call_id: str, name: str, result: dict[str, Any]
@@ -343,18 +366,22 @@ class _OpenAIRealtimeSession:
         await self._create_response()
 
     async def _create_response(self, *, tool_choice: Any = None) -> None:
-        marker = uuid4().hex
-        self._pending_response_markers.add(marker)
-        response: dict[str, Any] = {
-            "metadata": {_RESPONSE_REQUEST_METADATA_KEY: marker},
-        }
-        if tool_choice is not None:
-            response["tool_choice"] = tool_choice
-        try:
-            await self._conn.response.create(response=response)
-        except BaseException:
-            self._pending_response_markers.discard(marker)
-            raise
+        async with self._response_create_lock:
+            await self._response_idle.wait()
+            self._response_idle.clear()
+            marker = uuid4().hex
+            self._pending_response_markers.add(marker)
+            response: dict[str, Any] = {
+                "metadata": {_RESPONSE_REQUEST_METADATA_KEY: marker},
+            }
+            if tool_choice is not None:
+                response["tool_choice"] = tool_choice
+            try:
+                await self._conn.response.create(response=response)
+            except BaseException:
+                self._pending_response_markers.discard(marker)
+                self._response_idle.set()
+                raise
 
     @staticmethod
     def _event_response_id(event: Any) -> str:
@@ -428,6 +455,7 @@ class _OpenAIRealtimeSession:
         self._closed = True
         self._pending_response_markers.clear()
         self._accepted_response_ids.clear()
+        self._response_idle.set()
         try:
             await self._connection_cm.__aexit__(None, None, None)
         finally:

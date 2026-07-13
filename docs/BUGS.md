@@ -3612,20 +3612,33 @@ session (text input would interrupt the provider's response lifecycle), and
 `_on_announcement` treated every refusal as "use classic TTS" — it never
 distinguished a BUSY live call from a DEAD one.
 
-**Fix.** `RealtimeVoiceSession.is_active` + a gate in `_on_announcement`:
-while a healthy live call owns the voice, ephemeral preamble/progress lines
-are dropped (stale by the time the live model could speak them) and owed
-readbacks are parked in `_deferred_announcements`, whose existing
-turn-boundary replay hands them to the now-idle live model. Classic TTS
-speaks only once the call has ended or failed.
+The 19:59 recurrence exposed a second state bug. OpenAI rejected a raced
+`response.create` with `conversation_already_has_active_response`; the receive
+pump continued and the realtime call remained usable, but the wrapper set its
+sticky `_failed` flag. `is_active` then returned false, so a later delegated
+`brain.router.ack` preamble crossed into classic TTS even though the accepted
+realtime socket was still carrying the conversation.
 
-**Guards.** `tests/unit/speech/test_realtime_announcement_bridge.py` — busy
-call defers owed readbacks and drops preambles, dead call keeps the classic
-fallback, deferred readback reaches the idle live model at the boundary.
+**Fix.** Voice ownership now follows the accepted realtime handle, never a
+provider-health flag. Until that lifecycle fully unwinds, ephemeral
+preamble/progress lines are dropped and owed readbacks are parked; classic TTS
+cannot speak into the call. Provider events carry explicit recoverability, so
+the OpenAI active-response collision no longer poisons a usable session, while
+terminal events end the receive pump. The OpenAI adapter also serializes every
+local `response.create` against `response.done`, preventing the collision.
+Finally, realtime tool mode defaults to `direct`: the live model calls the
+supervisor safety gateway with its own realtime credential and does not invoke
+the classic Brain/TTS pipeline. Legacy `delegate` remains an explicit opt-in.
+
+**Guards.** `tests/unit/speech/test_realtime_announcement_bridge.py` and
+`test_announcement_bridge.py` cover voice ownership; realtime pipeline
+isolation, autonomous defaults, error recoverability, and OpenAI response
+serialization are covered under `tests/unit/realtime/`.
 
 **Class rule.** A voice surface has ONE voice at a time. Any fallback from
-the live realtime voice to classic TTS must be gated on the live call being
-GONE, never merely busy — "busy" means wait or drop, not switch voices.
+the live realtime voice to classic TTS must be gated on the accepted call
+handle being GONE, never merely busy or unhealthy — those states mean wait,
+drop, or end the call, not switch voices mid-call.
 
 ## BUG-050: run_shell on Windows echoes quoted commands instead of executing them (HIGH, 2026-07-13)
 

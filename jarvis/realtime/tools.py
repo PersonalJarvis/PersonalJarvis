@@ -103,12 +103,19 @@ class RealtimeToolBridge:
         self._last_user_text = ""
 
     @classmethod
-    def from_brain(cls, _brain: Any, *, language: str) -> RealtimeToolBridge | None:
-        """Build from the public supervisor gateway registered by Brain factory."""
+    def from_supervisor_gateway(
+        cls, *, language: str
+    ) -> RealtimeToolBridge | None:
+        """Build from the safety gateway without requiring a classic brain call."""
         gateway = runtime_refs.get_supervisor_tool_gateway()
         if gateway is None or not gateway.catalog():
             return None
         return cls(gateway=gateway, language=language)
+
+    @classmethod
+    def from_brain(cls, _brain: Any, *, language: str) -> RealtimeToolBridge | None:
+        """Compatibility wrapper for callers using the former constructor."""
+        return cls.from_supervisor_gateway(language=language)
 
     def _read_descriptors(
         self,

@@ -1932,13 +1932,12 @@ class VoiceConfig(BaseModel):
     # reserved for an EXPLICIT user pick (mode present in the TOML), so a
     # fresh keyless install degrades silently instead of nagging every call.
     mode: str = "realtime"
-    # Realtime tool exposure. "delegate" (default) declares ONE action function
-    # (jarvis_action) that hands the user's spoken request to the classic
-    # router brain — full ToolExecutor safety path, two-turn voice confirm,
-    # spawn-worker escalation for heavy missions. "direct" declares every
-    # router tool individually via RealtimeToolBridge. Read once per session;
-    # unknown values fall back to "delegate".
-    realtime_tool_mode: str = "delegate"
+    # Realtime tool exposure. "direct" (default) lets the realtime model call
+    # every available tool through the supervisor safety gateway without a
+    # classic Brain provider or TTS hop. "delegate" is a compatibility opt-in
+    # that hands one jarvis_action call to the classic router brain. Read once
+    # per session; unknown values fail closed to the autonomous direct mode.
+    realtime_tool_mode: str = "direct"
     # Per-gap budget after which a stale pending fragment is silently
     # discarded (user-mandated 2026-05-26 — was: flushed/spoken). NOT a total
     # budget — every continuation resets the timer. Bumped from 8 s to 15 s

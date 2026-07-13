@@ -393,12 +393,12 @@ class RealtimeVoiceSession:
         self._brain = brain
         mode = str(
             getattr(
-                getattr(self._config, "voice", None), "realtime_tool_mode", "delegate"
+                getattr(self._config, "voice", None), "realtime_tool_mode", "direct"
             )
-            or "delegate"
+            or "direct"
         ).strip().lower()
         if mode not in {"delegate", "direct"}:
-            mode = "delegate"
+            mode = "direct"
         self._tool_mode = mode
         # Delegate mode needs only a callable brain (the boot proxy and the
         # real BrainManager both qualify); an explicitly injected bridge
@@ -406,12 +406,12 @@ class RealtimeVoiceSession:
         self._delegate_enabled = (
             mode == "delegate" and tool_bridge is None and callable(brain)
         )
-        if tool_bridge is None and brain is not None and not self._delegate_enabled:
+        if tool_bridge is None and not self._delegate_enabled:
             try:
                 from jarvis.realtime.tools import RealtimeToolBridge
 
-                tool_bridge = RealtimeToolBridge.from_brain(
-                    brain, language=self._language
+                tool_bridge = RealtimeToolBridge.from_supervisor_gateway(
+                    language=self._language
                 )
             except Exception:  # noqa: BLE001 — conversation still works without tools
                 log.warning("Realtime tool bridge is unavailable", exc_info=True)
@@ -1148,13 +1148,27 @@ class RealtimeVoiceSession:
                     message = safe_preview(
                         event.error or "provider error", max_chars=800
                     )
+                    recoverable = bool(getattr(event, "recoverable", False))
+                    log.warning(
+                        "realtime[%s] %s provider error: %s",
+                        self.session_id,
+                        "recoverable" if recoverable else "terminal",
+                        message,
+                    )
+                    await self._publish_error(
+                        "RealtimeProviderError", message, recoverable=recoverable
+                    )
+                    if recoverable:
+                        await self._send_json(
+                            {"type": "provider_warning", "error": message}
+                        )
+                        continue
                     self._failure_detail = message
                     self._failed.set()
-                    log.warning("realtime[%s] provider error: %s", self.session_id, message)
-                    await self._publish_error(
-                        "RealtimeProviderError", message, recoverable=True
+                    await self._send_json(
+                        {"type": "provider_error", "error": message}
                     )
-                    await self._send_json({"type": "provider_error", "error": message})
+                    break
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — AP-20: pump error is terminal

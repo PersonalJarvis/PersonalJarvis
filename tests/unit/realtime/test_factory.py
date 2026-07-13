@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from jarvis.core.config import VoiceConfig
 from jarvis.realtime.factory import (
     _provider_candidates,
     _resolve_realtime_provider,
@@ -118,6 +119,29 @@ def test_pipeline_mode_never_builds_realtime_session(monkeypatch):
         )
         is None
     )
+
+
+def test_realtime_tool_mode_defaults_to_autonomous_direct_execution() -> None:
+    assert VoiceConfig().realtime_tool_mode == "direct"
+
+
+def test_one_realtime_key_builds_without_a_classic_brain(monkeypatch) -> None:
+    _fake_registry(monkeypatch, {"gemini"})
+
+    session = build_realtime_session(
+        cfg=_cfg(provider="openai-realtime"),
+        bus=None,
+        session_id="realtime-only",
+        send_binary=lambda _data: None,
+        send_json=lambda _message: None,
+        brain=None,
+    )
+
+    assert session is not None
+    assert session._brain is None
+    assert session._tool_mode == "direct"
+    assert session._delegate_enabled is False
+    assert [provider.name for provider in session._providers] == ["gemini-live"]
 
 
 def test_realtime_without_any_key_degrades_to_pipeline(monkeypatch):

@@ -131,6 +131,41 @@ async def test_announcement_english_language_passthrough() -> None:
 
 
 @pytest.mark.asyncio
+async def test_accepted_realtime_call_never_falls_through_to_classic_tts() -> None:
+    class _RejectedRealtimeDelivery:
+        # The provider may already have reported a terminal error, but the
+        # accepted call still owns the output surface until lifecycle teardown.
+        is_active = False
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def deliver_announcement(self, **_kwargs) -> bool:  # noqa: ANN003
+            self.calls += 1
+            return False
+
+    bus = EventBus()
+    tts = FakeTTS()
+    player = FakePlayer()
+    pipeline = _make_pipeline(tts, bus, player)
+    realtime = _RejectedRealtimeDelivery()
+    pipeline._active_voice_mode = "realtime"
+    pipeline._active_realtime_handle = realtime
+
+    await bus.publish(
+        AnnouncementRequested(
+            text="I am gathering the detailed information now.",
+            language="en",
+            kind="preamble",
+        )
+    )
+
+    assert realtime.calls == 1
+    assert tts.calls == []
+    assert player.plays == 0
+
+
+@pytest.mark.asyncio
 async def test_announcement_bypass_skips_brain() -> None:
     """Announcements must not touch the brain path (TTS bypass).
 

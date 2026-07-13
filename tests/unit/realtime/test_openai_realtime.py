@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from types import SimpleNamespace
 from typing import Any
@@ -486,6 +487,87 @@ async def test_handshake_error_rejects_session(monkeypatch: pytest.MonkeyPatch) 
             RealtimeSessionConfig()
         )
     assert holder_factory["client"].closed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "recoverable"),
+    [
+        ("conversation_already_has_active_response", True),
+        ("rate_limit_exceeded", False),
+    ],
+)
+async def test_runtime_errors_preserve_provider_recoverability(
+    monkeypatch: pytest.MonkeyPatch,
+    code: str,
+    recoverable: bool,
+) -> None:
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="error",
+                error=SimpleNamespace(code=code, message="Provider rejected operation"),
+            )
+        ]
+    )
+    session._events = conn.__aiter__()
+
+    event = await anext(session.receive())
+
+    assert event.type == "error"
+    assert event.recoverable is recoverable
+    assert code in event.error
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_response_requests_wait_for_the_active_response_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+
+    await session.send_text("First trusted update")
+    first_marker = conn.response_create_payloads[0]["response"]["metadata"][
+        "jarvis_request_id"
+    ]
+    second = asyncio.create_task(session.send_text("Second trusted update"))
+    await asyncio.sleep(0)
+
+    assert second.done() is False
+    assert conn.response_creates == 1
+
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(
+                    id="resp-first",
+                    metadata={"jarvis_request_id": first_marker},
+                ),
+            ),
+            SimpleNamespace(
+                type="response.done",
+                response=SimpleNamespace(id="resp-first"),
+            ),
+        ]
+    )
+    session._events = conn.__aiter__()
+
+    event = await anext(session.receive())
+    await second
+
+    assert event.type == "turn_complete"
+    assert conn.response_creates == 2
+    await session.close()
 
 
 @pytest.mark.asyncio

@@ -89,6 +89,22 @@ def test_declaration_uses_a_cross_provider_safe_wire_name():
     assert declaration["parameters"]["required"] == ["app_name"]
 
 
+def test_supervisor_gateway_bridge_needs_no_classic_brain_argument(
+    wire_gateway,
+) -> None:
+    tool = FakeTool("open_app")
+    manager = SimpleNamespace(
+        _tools={"open_app": tool},
+        _tool_executor=FakeExecutor(),
+    )
+    wire_gateway(manager)
+
+    bridge = RealtimeToolBridge.from_supervisor_gateway(language="en")
+
+    assert bridge is not None
+    assert [item["name"] for item in bridge.declarations] == ["open_app"]
+
+
 @pytest.mark.asyncio
 async def test_available_tool_runs_only_through_tool_executor():
     bridge, tool, executor = _bridge()

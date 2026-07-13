@@ -36,6 +36,10 @@ class RealtimeEvent:
     is_final: bool = False
     ms_played: int | None = None             # speech_started: ms of our audio already heard
     error: str | None = None
+    # A recoverable provider event reports a rejected operation while the
+    # duplex transport remains usable. It must not end voice ownership or
+    # trigger the classic pipeline.
+    recoverable: bool = False
     item_id: str | None = None
     call_id: str | None = None
     tool_name: str | None = None

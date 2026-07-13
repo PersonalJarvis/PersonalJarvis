@@ -3331,11 +3331,16 @@ class SpeechPipeline:
                 await self._transition("IDLE" if hungup else "LISTENING")
 
     def _realtime_session_owns_voice(self) -> bool:
-        """True while a healthy live realtime call is the only valid voice."""
+        """True while an accepted realtime call is the only valid voice.
+
+        Provider health is deliberately irrelevant here. The handle is cleared
+        only after the realtime lifecycle unwinds; until then, classic TTS must
+        stay silent rather than becoming a second voice inside the same call.
+        """
         if getattr(self, "_active_voice_mode", None) != "realtime":
             return False
         session = getattr(self, "_active_realtime_handle", None)
-        return bool(session is not None and getattr(session, "is_active", False))
+        return session is not None
 
     async def _deliver_announcement_via_realtime(
         self,
@@ -3346,9 +3351,9 @@ class SpeechPipeline:
     ) -> bool:
         """Offer a standardized readback to the active duplex model.
 
-        The live wrapper rejects busy, failed, or unsupported sessions. Any
-        rejection returns to ``_on_announcement`` and preserves the established
-        key-aware classic TTS path.
+        The live wrapper rejects busy, failed, or unsupported sessions. While
+        the accepted realtime handle still exists, ``_on_announcement`` drops
+        or defers that output; only a fully unwound call may use classic TTS.
         """
         if getattr(self, "_active_voice_mode", None) != "realtime":
             return False
