@@ -319,6 +319,14 @@ class GeminiLiveProvider:
             system_instruction=str(getattr(cfg, "instructions", "") or "") or None,
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
+            realtime_input_config=types.RealtimeInputConfig(
+                automatic_activity_detection=types.AutomaticActivityDetection(
+                    disabled=False,
+                    silence_duration_ms=int(
+                        getattr(cfg, "silence_duration_ms", 1_500) or 1_500
+                    ),
+                )
+            ),
             **(
                 {
                     "tools": [

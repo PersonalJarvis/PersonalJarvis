@@ -119,7 +119,12 @@ async def test_every_selectable_model_uses_the_valid_ga_session_schema(
     provider = OpenAIRealtimeProvider(api_key="test-key")
 
     session = await provider.open_session(
-        RealtimeSessionConfig(model=model, voice="echo", language="en")
+        RealtimeSessionConfig(
+            model=model,
+            voice="echo",
+            language="en",
+            silence_duration_ms=2_700,
+        )
     )
     client = holder["client"]
     payload = client.realtime.last_conn.session_updates[0]
@@ -141,6 +146,7 @@ async def test_every_selectable_model_uses_the_valid_ga_session_schema(
     assert "language" not in payload["audio"]["input"]["transcription"]
     assert payload["audio"]["input"]["turn_detection"]["create_response"] is False
     assert payload["audio"]["input"]["turn_detection"]["interrupt_response"] is False
+    assert payload["audio"]["input"]["turn_detection"]["silence_duration_ms"] == 2_700
     assert payload["audio"]["output"]["voice"] == "echo"
     await session.request_response()
     assert client.realtime.last_conn.response_creates == 1

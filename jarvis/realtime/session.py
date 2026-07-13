@@ -31,6 +31,9 @@ _MAX_UNSCRUBBED_AUDIO_MS = 5_000
 _PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S = 12.0
 _AUDIO_SEND_TIMEOUT_S = 2.0
 _TOOL_TRANSCRIPT_WAIT_S = 3.0
+_THINKING_PAUSE_DEFAULT_MS = 1_500
+_THINKING_PAUSE_MIN_MS = 500
+_THINKING_PAUSE_MAX_MS = 5_000
 # Grace window for the model to finish its goodbye after an end_call tool
 # call; if the provider never sends turn_complete, hang up anyway.
 _END_CALL_GRACE_S = 10.0
@@ -141,6 +144,20 @@ _DELEGATE_ANSWER_MAX_TOKENS = 6
 def _requires_jarvis_action(text: str) -> bool:
     """Compatibility wrapper around the shared Pipeline/Realtime planner."""
     return plan_turn(text).requires_orchestrator
+
+
+def _configured_thinking_pause_ms(config: Any) -> int:
+    """Return the validated shared Pipeline/Realtime silence window."""
+    raw = getattr(
+        getattr(config, "speech", None),
+        "vad_silence_ms",
+        _THINKING_PAUSE_DEFAULT_MS,
+    )
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = _THINKING_PAUSE_DEFAULT_MS
+    return max(_THINKING_PAUSE_MIN_MS, min(_THINKING_PAUSE_MAX_MS, value))
 
 
 def _delegate_result_prompt(
@@ -551,6 +568,7 @@ class RealtimeVoiceSession:
                 input_sample_rate=input_rate,
                 output_sample_rate=output_rate,
                 modalities=("audio",),
+                silence_duration_ms=_configured_thinking_pause_ms(self._config),
                 tools=self._declared_tools(),
             )
             try:

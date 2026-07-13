@@ -30,3 +30,12 @@ def test_session_config_has_selectable_model():
     cfg = RealtimeSessionConfig(model="gpt-realtime-2.1", voice="echo")
     assert cfg.model == "gpt-realtime-2.1"
     assert cfg.voice == "echo"
+
+
+def test_session_config_defaults_to_shared_thinking_pause():
+    from jarvis.core.config import SpeechConfig
+    from jarvis.realtime.protocol import RealtimeSessionConfig
+
+    assert RealtimeSessionConfig().silence_duration_ms == (
+        SpeechConfig().vad_silence_ms
+    ) == 1_500

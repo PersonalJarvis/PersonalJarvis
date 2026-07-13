@@ -58,6 +58,10 @@ class RealtimeSessionConfig:
     # GA Realtime schema rejects requesting text and audio simultaneously.
     modalities: tuple[str, ...] = ("audio",)
     turn_detection: str = "server_vad"       # "server_vad" | "semantic_vad"
+    # Shared with SpeechConfig.vad_silence_ms (the Settings "Thinking pause").
+    # Providers must wait for this much detected silence before committing the
+    # user's turn, so a natural pause cannot start model reasoning early.
+    silence_duration_ms: int = 1500
     tools: tuple[dict[str, Any], ...] = ()
 
 

@@ -149,13 +149,21 @@ async def test_every_selectable_model_uses_live_audio_and_transcriptions(
     provider = GeminiLiveProvider(api_key="test-key")
 
     session = await provider.open_session(
-        RealtimeSessionConfig(model=model, voice="Puck")
+        RealtimeSessionConfig(
+            model=model,
+            voice="Puck",
+            silence_duration_ms=2_700,
+        )
     )
 
     selected, config = holder["client"].aio.live.connect_calls[0]
     assert selected == model
     assert config.input_audio_transcription is not None
     assert config.output_audio_transcription is not None
+    assert (
+        config.realtime_input_config.automatic_activity_detection.silence_duration_ms
+        == 2_700
+    )
     assert config.speech_config.voice_config.prebuilt_voice_config.voice_name == "Puck"
     await session.close()
     assert holder["client"].closed is True

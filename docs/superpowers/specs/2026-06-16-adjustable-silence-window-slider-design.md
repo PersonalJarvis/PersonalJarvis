@@ -36,6 +36,27 @@ chosen value must *actually take effect* — setting 5 s must make Jarvis wait 5
   base because it reads `_silence_frames`).
 - No wake-word VAD change (`whisper_wake.py` has its own short 500 ms window).
 
+## Realtime extension (2026-07-13)
+
+The same setting also owns the turn boundary for native Realtime voice. The
+provider-neutral `RealtimeSessionConfig.silence_duration_ms` receives
+`SpeechConfig.vad_silence_ms` whenever a browser or desktop Realtime session is
+opened, including every cross-family handshake fallback.
+
+- OpenAI Realtime sends the value as
+  `session.audio.input.turn_detection.silence_duration_ms` in `server_vad`
+  mode. Jarvis retains `create_response=false`, so the provider commits the
+  input only after the configured silence and Jarvis explicitly requests the
+  response after the final transcript.
+- Gemini Live sends the value as
+  `realtime_input_config.automatic_activity_detection.silence_duration_ms`.
+  Gemini therefore does not commit the automatic activity boundary or begin
+  its automatic response during a shorter mid-thought pause.
+
+The classic VAD still accepts an in-process live update. Jarvis configures the
+Realtime VAD during session setup, so a newly selected value governs the next
+Realtime connection; no application restart is required.
+
 ## Architecture
 
 The feature is a single value threaded through a five-link chain. Two links

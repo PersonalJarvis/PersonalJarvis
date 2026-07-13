@@ -76,6 +76,20 @@ def _session_payload(cfg: Any) -> dict[str, Any]:
     if voice:
         output["voice"] = voice
 
+    turn_detection_config: dict[str, Any] = {
+        "type": turn_detection,
+        # Jarvis requests the response only after the final input transcript
+        # has passed the single turn-language resolver.
+        "create_response": False,
+        # Jarvis also owns barge-in explicitly. Keeping both flags false is
+        # OpenAI's documented manual-response VAD mode.
+        "interrupt_response": False,
+    }
+    if turn_detection == "server_vad":
+        turn_detection_config["silence_duration_ms"] = int(
+            getattr(cfg, "silence_duration_ms", 1_500) or 1_500
+        )
+
     payload: dict[str, Any] = {
         "type": "realtime",
         "instructions": str(getattr(cfg, "instructions", "") or ""),
@@ -84,15 +98,7 @@ def _session_payload(cfg: Any) -> dict[str, Any]:
             "input": {
                 "format": {"type": "audio/pcm", "rate": _INPUT_RATE},
                 "transcription": transcription,
-                "turn_detection": {
-                    "type": turn_detection,
-                    # Jarvis requests the response only after the final input
-                    # transcript has passed the single turn-language resolver.
-                    "create_response": False,
-                    # Jarvis also owns barge-in explicitly. Keeping both flags
-                    # false is OpenAI's documented manual-response VAD mode.
-                    "interrupt_response": False,
-                },
+                "turn_detection": turn_detection_config,
             },
             "output": output,
         },
