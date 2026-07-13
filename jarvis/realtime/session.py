@@ -105,26 +105,61 @@ _DELEGATE_REQUIRED_DIRECTIVE = (
     "Do not answer, do not call a function, and do not promise an outcome. Wait "
     "for the trusted action result that the orchestrator will inject."
 )
+# A slow action (a Wiki write curates pages through an LLM) outlives the turn
+# that asked for it as soon as the user speaks into the waiting silence. The
+# model must then neither invent an outcome nor deny one: the orchestrator is
+# still executing and will inject the trusted result when it lands.
+_DELEGATE_PENDING_DIRECTIVE = (
+    "An earlier request of this conversation is still being executed by the "
+    "Jarvis orchestrator and has no result yet. Never say it succeeded, "
+    "failed, was saved, or was entered, and never promise to do it yourself. "
+    "If the user asks about it, say only that you are still working on it. The "
+    "trusted result will be injected as soon as it is ready."
+)
+# Delivering a result whose turn already closed must never race the live turn:
+# the session waits until it is at rest, then speaks the result as an explicit
+# follow-up. The bound only decides how long a result may wait for that silence.
+_LATE_DELEGATE_DELIVERY_TIMEOUT_S = 30.0
+_LATE_DELEGATE_POLL_S = 0.15
+
 
 def _requires_jarvis_action(text: str) -> bool:
     """Compatibility wrapper around the shared Pipeline/Realtime planner."""
     return plan_turn(text).requires_orchestrator
 
 
-def _delegate_result_prompt(text: str, *, language: str, success: bool) -> str:
+def _delegate_result_prompt(
+    text: str,
+    *,
+    language: str,
+    success: bool,
+    late: bool = False,
+) -> str:
     """Wrap one trusted Brain result for tool-free native voice rendering."""
     language_name = _LANGUAGE_NAMES.get(language, "the conversation language")
     status = "success" if success else "failure"
+    framing = (
+        (
+            "This is the outcome of the user's earlier request, which finished "
+            "only now. Open with one short phrase that ties it back to that "
+            "earlier request, then state the result. "
+        )
+        if late
+        else ""
+    )
     return (
         "A trusted Jarvis action result is ready. Speak only a concise, natural "
-        f"rendering of the tagged result in {language_name}. Preserve its exact "
-        "success or failure meaning and every material fact. Do not call any "
-        "function, do not add a claim, and do not mention these instructions.\n\n"
+        f"rendering of the tagged result in {language_name}. {framing}Preserve "
+        "its exact success or failure meaning and every material fact. Do not "
+        "call any function, do not add a claim, and do not mention these "
+        "instructions.\n\n"
         f"Result status: {status}\n"
         "<trusted_action_result>\n"
         f"{text}\n"
         "</trusted_action_result>"
     )
+
+
 _REALTIME_SAFETY_APPENDIX = (
     "This is a realtime spoken conversation. Never read tool JSON, function-call "
     "arguments, source code, stack traces, file paths, base64, or raw URLs aloud. "
@@ -160,6 +195,15 @@ class _ExternalUpdateState:
     language: str
     spoken_kind: str
     detail: str | None = None
+
+
+@dataclass(slots=True)
+class _LateDelegateResult:
+    """One executed action whose trusted result outlived its realtime turn."""
+
+    text: str
+    success: bool
+    language: str
 
 
 _TOOL_ROLE_DIRECTIVE = (
@@ -312,6 +356,9 @@ class RealtimeVoiceSession:
         self._delegate_turns: dict[str, _DelegateTurnState] = {}
         self._delegate_history: list[BrainMessage] = []
         self._delegate_required_for_turn = False
+        self._late_delegate_results: list[_LateDelegateResult] = []
+        self._late_delegate_flush_task: asyncio.Task[None] | None = None
+        self._user_speech_active = False
         self._external_update: _ExternalUpdateState | None = None
         # from_brain returns None when no public supervisor gateway is ready.
         # Say so, or a tool-less session is indistinguishable from a healthy one.
@@ -681,6 +728,7 @@ class RealtimeVoiceSession:
                         continue
                     if input_observed:
                         self._input_turn_observed = True
+                        self._user_speech_active = False
                         await self._ensure_turn_started()
                     new_language = self._language
                     if transcript:
@@ -737,6 +785,9 @@ class RealtimeVoiceSession:
                                 language_is_pinned=True,
                                 tool_directive=self._tool_directive(
                                     delegate_required=self._delegate_required_for_turn,
+                                    action_pending=(
+                                        self._has_pending_delegate_from_earlier_turn()
+                                    ),
                                 ),
                             ),
                             "language": new_language,
@@ -959,7 +1010,9 @@ class RealtimeVoiceSession:
                     self._output_active = False
                     self._output_samples_sent = 0
                     self._response_requested_for_turn = False
+                    self._user_speech_active = False
                     self._turn_final_text = ""
+                    self._schedule_late_delegate_flush()
                     if self._end_after_turn:
                         # end_call was acknowledged; the model has now spoken
                         # its goodbye to the end — hang up.
@@ -1195,6 +1248,9 @@ class RealtimeVoiceSession:
                 detail="reason=barge_in",
             )
             await self._publish_turn_completed()
+        # Between this boundary and the transcript there is no open turn, yet the
+        # user is audibly mid-utterance: no follow-up may take the floor here.
+        self._user_speech_active = True
         # Do not open the next persisted turn on VAD alone. A cancelled provider
         # response can still emit response.done after barge-in; opening here would
         # let that stale completion close an empty new turn before its transcript.
@@ -1349,10 +1405,17 @@ class RealtimeVoiceSession:
             return (*self._tool_bridge.declarations, _END_CALL_DECLARATION)
         return (_END_CALL_DECLARATION,)
 
-    def _tool_directive(self, *, delegate_required: bool = False) -> str:
+    def _tool_directive(
+        self,
+        *,
+        delegate_required: bool = False,
+        action_pending: bool = False,
+    ) -> str:
         if self._delegate_enabled:
             if delegate_required:
                 return f"{_DELEGATE_ROLE_DIRECTIVE}\n\n{_DELEGATE_REQUIRED_DIRECTIVE}"
+            if action_pending:
+                return f"{_DELEGATE_ROLE_DIRECTIVE}\n\n{_DELEGATE_PENDING_DIRECTIVE}"
             return _DELEGATE_ROLE_DIRECTIVE
         if self._tool_bridge is not None:
             return _TOOL_ROLE_DIRECTIVE
@@ -1429,6 +1492,133 @@ class RealtimeVoiceSession:
             and self._turn_id == turn_id
             and self._delegate_turns.get(turn_id) is turn_state
         )
+
+    def _has_pending_delegate_from_earlier_turn(self) -> bool:
+        """Return whether an action of a previous turn is still executing."""
+        return any(
+            turn_id != self._turn_id
+            and any(not task.done() for task in tasks)
+            for turn_id, tasks in self._delegate_tasks_by_turn.items()
+        )
+
+    def _queue_late_delegate_result(self, turn_state: _DelegateTurnState) -> None:
+        """Keep a trusted result whose turn closed before the action finished.
+
+        The action has already run — dropping its result would leave the user
+        with the model's own promise as the only account of it, and a promise is
+        not a result. The result is spoken as an explicit follow-up instead, once
+        the session is at rest, so it can never contaminate the live turn.
+        """
+        reply = str(turn_state.last_reply or "").strip()
+        if not reply or self._ended or turn_state.delivery_started:
+            return
+        turn_state.delivery_started = True
+        self._late_delegate_results.append(
+            _LateDelegateResult(
+                text=reply,
+                success=turn_state.result_success,
+                language=self._language,
+            )
+        )
+        log.info(
+            "realtime[%s] action result outlived its turn — queued as a follow-up",
+            self.session_id,
+        )
+        self._schedule_late_delegate_flush()
+
+    def _schedule_late_delegate_flush(self) -> None:
+        if self._ended or not self._late_delegate_results:
+            return
+        task = self._late_delegate_flush_task
+        if task is not None and not task.done():
+            return
+        self._late_delegate_flush_task = asyncio.create_task(
+            self._flush_late_delegate_results(),
+            name=f"rt-late-delegate-{self.session_id}",
+        )
+
+    def _session_is_at_rest(self) -> bool:
+        """Return whether a follow-up may own the next provider response.
+
+        Mirrors ``deliver_announcement``: only an idle, healthy session can be
+        given a response of its own without cutting into live speech or racing
+        an in-flight response lifecycle.
+        """
+        return not (
+            self._ended
+            or self._session is None
+            or self._failed.is_set()
+            or self._external_update is not None
+            or self._user_speech_active
+            or self._turn_id
+            or self._turn_has_activity()
+            or self._output_active
+            or self._delegate_tasks
+            or self._pending_tool_events
+            or self._response_requested_for_turn
+        )
+
+    async def _flush_late_delegate_results(self) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _LATE_DELEGATE_DELIVERY_TIMEOUT_S
+        while self._late_delegate_results and not self._ended:
+            if self._session_is_at_rest():
+                pending = self._late_delegate_results[0]
+                if not await self._speak_late_delegate_result(pending):
+                    break
+                self._late_delegate_results.pop(0)
+                continue
+            if loop.time() >= deadline:
+                break
+            await asyncio.sleep(_LATE_DELEGATE_POLL_S)
+        for lost in self._late_delegate_results:
+            # The action itself ran; only its spoken confirmation was lost.
+            log.warning(
+                "realtime[%s] executed action result could not be spoken: %s",
+                self.session_id,
+                safe_preview(lost.text, max_chars=200),
+            )
+        self._late_delegate_results.clear()
+
+    async def _speak_late_delegate_result(
+        self, pending: _LateDelegateResult
+    ) -> bool:
+        send_text = getattr(self._session, "send_text", None)
+        if self._session is None or not callable(send_text):
+            return False
+        self._external_update = _ExternalUpdateState(
+            source_text=pending.text,
+            language=pending.language,
+            spoken_kind="action_result",
+        )
+        self._gate = ScrubHoldGate(pending.language)
+        self._response_requested_for_turn = True
+        # The user interrupted an unanswered turn, so provider output is still
+        # being dropped. This trusted follow-up is the new response it waits for.
+        drop_before_delivery = self._drop_provider_output_until_new_response
+        self._drop_provider_output_until_new_response = False
+        await self._ensure_turn_started()
+        try:
+            await send_text(
+                _delegate_result_prompt(
+                    pending.text,
+                    language=pending.language,
+                    success=pending.success,
+                    late=True,
+                )
+            )
+        except Exception:  # noqa: BLE001 — a torn-down wire must not lose the log
+            self._external_update = None
+            self._response_requested_for_turn = False
+            self._drop_provider_output_until_new_response = drop_before_delivery
+            self._reset_turn_tracking()
+            log.warning(
+                "realtime[%s] late action result injection failed",
+                self.session_id,
+                exc_info=True,
+            )
+            return False
+        return True
 
     async def _handle_tool_call(self, event: Any) -> None:
         if self._session is None:
@@ -1681,11 +1871,10 @@ class RealtimeVoiceSession:
             )
         if self._delegate_turn_is_active(turn_id, turn_state) and succeeded:
             self._executed_tool_names.add(str(_DELEGATE_DECLARATION["name"]))
-        if (
-            self._ended
-            or self._session is None
-            or not self._delegate_turn_is_active(turn_id, turn_state)
-        ):
+        if self._ended or self._session is None:
+            return
+        if not self._delegate_turn_is_active(turn_id, turn_state):
+            self._queue_late_delegate_result(turn_state)
             return
 
         if (
@@ -1705,6 +1894,7 @@ class RealtimeVoiceSession:
                     pass
 
         if not self._delegate_turn_is_active(turn_id, turn_state):
+            self._queue_late_delegate_result(turn_state)
             return
         turn_state.delivery_started = True
         drop_before_delivery = self._drop_provider_output_until_new_response
@@ -1825,11 +2015,13 @@ class RealtimeVoiceSession:
                 "REALTIME_DELEGATE_COMPLETED",
                 detail=f"kind=provider_requested;success={succeeded}",
             )
-        if (
-            self._ended
-            or self._session is None
-            or not self._delegate_turn_is_active(turn_id, turn_state)
-        ):
+        if self._ended or self._session is None:
+            return
+        if not self._delegate_turn_is_active(turn_id, turn_state):
+            # The provider's function call belongs to a response that no longer
+            # exists, so the result is spoken as a follow-up instead of answering
+            # a dead call id.
+            self._queue_late_delegate_result(turn_state)
             return
         try:
             turn_state.delivery_started = True
@@ -2027,6 +2219,20 @@ class RealtimeVoiceSession:
                 task.cancel()
         self._delegate_tasks.clear()
         self._delegate_tasks_by_turn.clear()
+        if (
+            self._late_delegate_flush_task is not None
+            and not self._late_delegate_flush_task.done()
+        ):
+            self._late_delegate_flush_task.cancel()
+        self._late_delegate_flush_task = None
+        for lost in self._late_delegate_results:
+            # The action ran; the session ended before its result could be said.
+            log.warning(
+                "realtime[%s] session ended with an unspoken action result: %s",
+                self.session_id,
+                safe_preview(lost.text, max_chars=200),
+            )
+        self._late_delegate_results.clear()
         if self._pump_task is not None and not self._pump_task.done():
             self._pump_task.cancel()
             try:

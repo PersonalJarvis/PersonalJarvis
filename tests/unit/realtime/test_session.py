@@ -1947,6 +1947,145 @@ async def test_barge_in_detaches_late_delegate_result_from_new_turn():
     await sess.end(reason="test")
 
 
+class _InterjectionSession(FakeSession):
+    """Interrupt a running delegate, finish the interjection, stay connected."""
+
+    def __init__(self, events, *, dispatch_started, interjection_done, delivered):
+        super().__init__(events)
+        self._dispatch_started = dispatch_started
+        self._interjection_done = interjection_done
+        self._delivered = delivered
+
+    async def receive(self):
+        yield RealtimeEvent(
+            type="input_transcript",
+            text="Write this to my wiki.",
+            is_final=True,
+        )
+        await self._dispatch_started.wait()
+        # The action is slow, so the user speaks into the silence.
+        yield RealtimeEvent(type="speech_started")
+        yield RealtimeEvent(
+            type="input_transcript",
+            text="Hello?",
+            is_final=True,
+        )
+        yield RealtimeEvent(type="turn_complete")
+        # Resuming past the yield proves the pump has handled turn_complete.
+        self._interjection_done.set()
+        await self._delivered.wait()
+
+    async def send_text(self, text):
+        await super().send_text(text)
+        self._delivered.set()
+
+
+class _InterjectionProvider(FakeProvider):
+    def __init__(self, *, dispatch_started, interjection_done, delivered):
+        super().__init__([])
+        self._dispatch_started = dispatch_started
+        self._interjection_done = interjection_done
+        self._delivered = delivered
+
+    async def open_session(self, cfg):
+        self.opened_with = cfg
+        self.session = _InterjectionSession(
+            [],
+            dispatch_started=self._dispatch_started,
+            interjection_done=self._interjection_done,
+            delivered=self._delivered,
+        )
+        return self.session
+
+
+@pytest.mark.asyncio
+async def test_action_result_that_outlived_its_turn_is_still_spoken():
+    """An executed action must never be reported only by the model's promise."""
+    gate = asyncio.Event()
+    dispatch_started = asyncio.Event()
+    interjection_done = asyncio.Event()
+    delivered = asyncio.Event()
+
+    class _SignallingBrain(FakeBrain):
+        async def generate(self, text, **kwargs):
+            dispatch_started.set()
+            return await super().generate(text, **kwargs)
+
+    brain = _SignallingBrain(
+        replies=("Stored on your page: flight to San Francisco tomorrow.",),
+        gate=gate,
+    )
+    provider = _InterjectionProvider(
+        dispatch_started=dispatch_started,
+        interjection_done=interjection_done,
+        delivered=delivered,
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(interjection_done.wait(), timeout=2)
+    assert provider.session.text_inputs == []  # never inside the live turn
+
+    gate.set()
+    await asyncio.wait_for(delivered.wait(), timeout=2)
+    await sess.wait_finished()
+
+    spoken = provider.session.text_inputs[-1]
+    assert "Stored on your page: flight to San Francisco tomorrow." in spoken
+    assert "<trusted_action_result>" in spoken
+    assert "earlier request" in spoken
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_turn_after_a_pending_action_may_not_claim_an_outcome():
+    gate = asyncio.Event()
+    dispatch_started = asyncio.Event()
+    instructions_seen = asyncio.Event()
+
+    class _SignallingBrain(FakeBrain):
+        async def generate(self, text, **kwargs):
+            dispatch_started.set()
+            return await super().generate(text, **kwargs)
+
+    brain = _SignallingBrain(replies=("Stored.",), gate=gate)
+
+    class _PendingSession(FakeSession):
+        async def receive(self):
+            yield RealtimeEvent(
+                type="input_transcript",
+                text="Write this to my wiki.",
+                is_final=True,
+            )
+            await dispatch_started.wait()
+            yield RealtimeEvent(type="speech_started")
+            yield RealtimeEvent(
+                type="input_transcript",
+                text="Hello?",
+                is_final=True,
+            )
+            instructions_seen.set()
+            await gate.wait()
+
+    class _PendingProvider(FakeProvider):
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = _PendingSession([])
+            return self.session
+
+    provider = _PendingProvider([])
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(instructions_seen.wait(), timeout=2)
+
+    update = provider.session.session_updates[-1]["instructions"]
+    assert "still being executed" in update
+    gate.set()
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+
 @pytest.mark.asyncio
 async def test_direct_mode_builds_bridge_from_brain(wire_supervisor_gateway):
     brain = FakeBrain()
