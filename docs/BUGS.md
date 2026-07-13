@@ -3439,3 +3439,160 @@ exit before the destroy call returns.
 **Class rule.** A shutdown watchdog must run independently of every operation
 it is intended to bound. Code placed after a possibly blocking call is a
 fallback, not a watchdog.
+
+## BUG-047: Realtime promises an action, starts nothing, and never returns (HIGH, 2026-07-13)
+
+**Symptom.** This incident happened in an OpenAI Realtime voice session, not in
+the classic STT -> Brain -> TTS pipeline. Turn 4 was transcribed as
+`Was steht im Mainim drin?` <!-- i18n-allow: exact German forensic STT output -->
+after the prior turn had established the user's Wiki as the subject. Jarvis
+then spoke:
+`Das kann ich gerne für dich nachschauen. Einen Moment, ich werfe einen Blick in dein Wiki und sage dir gleich, was bei dir drinsteht.` <!-- i18n-allow: exact German forensic runtime output -->
+It never supplied the promised result.
+
+**Forensic proof.** The recorder identifies the tier as `realtime` and the
+provider as `openai-realtime`. The routing record for the failed turn is
+`REALTIME_ROUTING_DECISION path=native_realtime;reasons=none`. The terminal
+`VoiceTurnCompleted` record has `tool_calls=[]`. There is no later Wiki result,
+tool result, mission update, or completion announcement. The provider response
+ended normally, so there was no hidden asynchronous continuation waiting to
+finish. Jarvis said that it was about to act while the execution state proved
+that no action had started.
+
+**Root cause.** Three independent gaps aligned:
+
+1. The deterministic Realtime planner classified only the current transcript.
+   ASR had garbled the domain/ownership wording into `Mainim`; the surviving
+   word `drin` was an elliptical reference to the preceding Wiki turn. Without
+   bounded conversation context, the planner saw neither private data nor a
+   local capability and left the response on the native provider path.
+2. The former delegate-mode instruction said that the orchestrator handled Wiki
+   and private-memory turns automatically and told the provider not to call its
+   action function for them. That assumption was false on a planner miss: the
+   planner did not dispatch, while the provider had been told not to dispatch.
+3. Prompt rules were the only final protection. No runtime invariant compared a
+   model's future-action wording with the turn's actual tool/delegate state.
+   Once the provider violated the prompt, speculative speech could become the
+   terminal user-visible answer.
+
+**Fix.** The repair is deliberately layered because provider compliance alone
+cannot be a correctness boundary:
+
+- The shared `turn_planner` now accepts a bounded context window. An explicit
+  follow-up reference such as `drin`, `there`, or `what does it say` inherits a
+  prior local/private/connected/current evidence domain and routes through the
+  orchestrator. Generic unrelated questions, including `What time is it?`, do
+  not inherit old Wiki context.
+- Delegate-mode instructions now make `jarvis_action` the provider fallback for
+  the user's Wiki, private memory, apps, settings, files, connectors, and other
+  personal state. They prohibit ending on an action announcement without the
+  function call that starts it.
+- `RealtimeVoiceSession` maintains a per-turn output probe and per-turn execution
+  evidence. If a native provider emits a high-confidence deferred-action claim
+  with no tool call, delegate result, or trusted external event, its speculative
+  text/audio is drained before delivery. Delegate mode interrupts that response,
+  starts the real orchestrator turn, waits for the provider boundary, and injects
+  only the trusted result. Direct-tool mode, where no supervisor recovery exists,
+  fails closed with a localized statement that no action was started.
+- The classic `BrainManager` applies the same execution-state backstop after
+  leaked-tool recovery and mandated-evidence enforcement. Potential action turns
+  buffer provider chunks until the authoritative final response, preventing TTS
+  from speaking a promise that the final guard later replaces.
+- The packaged persona no longer asks for a pre-tool "let me check" line. It
+  requires the tool call first and treats only selected/running execution as a
+  valid basis for interim speech.
+- The opt-in speculative Flash-Brain preamble now drops deferred-action claims.
+  This is defense in depth: the preamble remains off by default after the earlier
+  forensic sample found that it was the only spoken output on 22 percent of its
+  turns.
+
+The detector is regex-only, runs off the voice hot path without another model
+call, and carries German, English, and Spanish runtime wording. Its fallback
+uses the already resolved turn language instead of re-detecting a de/en subset.
+
+**Related output audit.** Every user-facing surface that can plausibly say
+"working on it" or otherwise imply future work was checked against actual
+execution state:
+
+| Surface | Evidence behind an interim/action claim | Result |
+|---|---|---|
+| Native Realtime (delegate mode) | Provider function call, deterministic delegate task, or trusted injected result | Recovered at runtime if the provider promises without evidence |
+| Native Realtime (direct tools) | A recorded direct tool execution | Fails closed honestly when no execution exists |
+| Classic Brain/provider response | Per-turn executed-tool set or successfully recovered leaked tool call | Final response is replaced; streaming action turns are buffered |
+| Speculative Flash-Brain preamble | None by design | Off by default and now suppresses action promises when opted in |
+| Grounded tool acknowledgement | Emitted only after the router selected a concrete tool call | Kept; the subsequent call still runs through `ToolExecutor` |
+| Deterministic local actions | `ToolExecutor` result | Kept; success and failure both receive an immediate readback |
+| Computer Use | Background task is armed before progress speech | Kept; completion/failure publishes a terminal announcement |
+| Wiki background writes | Tracked ingest task exists before the saving acknowledgement | Kept; every terminal branch publishes success, failure, or timeout |
+| Jarvis-Agent missions | Mission task and signed mission state exist before spawn speech | Kept; live heartbeats and terminal mission events ground later updates |
+| `dispatch_with_review` | Inputs are validated and the review pipeline exists before its holding phrase | Kept; the phrase cannot be emitted for a rejected/no-op request |
+| Realtime out-of-band updates | Typed event from a running action/mission | Kept and explicitly excluded from model-promise detection |
+| Canned clarify/error/provider-down/timeout output | Reports current state; does not claim future execution | No action-promise path found |
+
+**Guards.** `tests/unit/brain/test_turn_planner.py` pins the exact garbled
+follow-up plus unrelated-question negatives. `tests/unit/realtime/test_session.py`
+pins deterministic contextual delegation, provider-promise recovery with no
+speculative audio leak, and the honest direct-mode fallback.
+`tests/unit/brain/test_action_honesty.py` covers multilingual detection,
+negative explanatory/result text, the generic Brain final guard, and the
+packaged persona contract. `tests/unit/brain/test_manager_streaming.py` proves
+that a contextual action turn cannot leak pre-final chunks, and
+`tests/unit/brain/test_ack_brain/test_run_stream.py` pins speculative-preamble
+suppression.
+
+**Class rule.** Future tense is not execution state. Any user-facing sentence
+that says Jarvis will check, open, save, start, research, or report back must be
+backed in the same turn by a tool call, a tracked background task, or a typed
+event from work that is already running. If no such evidence exists, Jarvis
+must start the real action or say immediately that it did not start one; it may
+never end the turn on a promise of an invisible continuation.
+
+## BUG-048: Realtime delegation misses turns the planner cannot see (HIGH, 2026-07-13)
+
+**Symptom.** In realtime delegate mode, three everyday turn shapes silently
+stayed on the native provider path, so whether the user's action ever reached
+the Jarvis action system (ToolExecutor, MCP/plugin/CLI tools, Wiki, missions)
+depended entirely on the realtime model voluntarily calling `jarvis_action` —
+prompt compliance as the correctness boundary, the exact BUG-047 class:
+
+1. **The answer to a pending two-turn voice confirmation.** A delegated
+   router-brain turn arms an ask-tier confirmation (an MCP/plugin write,
+   `call-contact`, a dangerous app command) and asks the user. The bare
+   "yes"/"no" answer matches no planner action vocabulary, so nothing forced
+   it back to the brain's `_resume_voice_confirm` — a confirmed action could
+   simply never execute.
+2. **Every German umlaut verb.** `turn_planner._normalize` stripped combining
+   marks (NFKD), yielding one ascii form, while the entire German vocabulary
+   is written in the transliterated digraph form ("loesch", "aender",
+   "fuehr", "pruef", "koennte", "kuerzlich", "faehigkeit"). The two forms
+   never meet: no German utterance containing an umlaut verb has ever matched
+   the action/lookup/instructional vocabularies.
+3. **The short answer to a delegated clarify question.** When the delegated
+   brain reply ended in a question ("Which file do you mean?"), the user's
+   elliptical answer ("the readme one") carried no planner-visible category
+   and stayed native.
+
+**Fix.** (a) `RealtimeVoiceSession` probes `brain.has_pending_voice_confirm()`
+during final-transcript handling and forces the deterministic delegate;
+(b) `_normalize` transliterates umlauts to their digraph form before the NFKD
+strip, and the action-verb fallback gained the missing everyday assistant
+verbs in all three languages (switch/turn/play/remember/remind/schedule;
+wechseln/schalten/stellen/spielen/merken/notieren/legen; recordar/anotar/
+poner/reproducir/apagar/agendar) with stem guards for frequent non-action
+words; (c) the session remembers a delegate reply that ended in a question
+and pulls the next short (<= 6 token) final transcript back to the
+orchestrator, while a longer follow-up stays native as a topic change.
+
+**Guards.** `tests/unit/realtime/test_session.py` (pending-confirm
+delegation, clarify-answer delegation, short/long negative cases),
+`tests/unit/brain/test_turn_planner.py` (umlaut verbs, new action verbs,
+guarded non-action words).
+
+**Class rule.** The deterministic planner is the correctness boundary for
+realtime delegation; the provider prompt is only an optimization. Whenever a
+multi-turn state machine (confirmation, clarify question) leaves the brain
+waiting for the user's next utterance, the session must route that utterance
+back deterministically — never rely on the model to do it. And every
+vocabulary that matches normalized text must be written in the SAME
+normalized form that `_normalize` actually produces; a mismatch is silent
+and total, not partial.
