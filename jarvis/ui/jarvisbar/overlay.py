@@ -151,6 +151,20 @@ def _primary_work_area() -> tuple[int, int, int, int] | None:
         return None
 
 
+def _create_hidden_tk_root(tk: Any) -> Any:
+    """Create a Tk root without mapping its platform-default backing window.
+
+    ``tk.Tk()`` starts with a default geometry (roughly 400x300 physical pixels
+    on a 150% Windows desktop). Configuring geometry and a color key afterwards
+    can leave that original DWM surface eligible for a flash during a later
+    layered-window style mutation. Withdraw synchronously so only the fully
+    configured Jarvis Bar can ever be mapped.
+    """
+    root = tk.Tk()
+    root.withdraw()
+    return root
+
+
 class JarvisBarOverlay:
     def __init__(
         self,
@@ -225,6 +239,17 @@ class JarvisBarOverlay:
         if self._root is None:
             return
         self._enqueue_ui(self._do_hide)
+
+    def reassert_z_order(self) -> None:
+        """Re-pin an already-visible bar without treating it as a reveal.
+
+        Wake/state updates call ``show`` repeatedly while a persistent bar is
+        already mapped. Those updates must not mutate the native layered-window
+        styles. The one deliberate post-boot repair uses this explicit method.
+        """
+        if self._root is None:
+            return
+        self._enqueue_ui(self._do_reassert_z_order)
 
     def set_level(self, level: float) -> None:
         # Direct atomic write (no enqueue) — matches OrbOverlay.set_level.
@@ -330,7 +355,10 @@ class JarvisBarOverlay:
         self._tk_thread_id = threading.get_ident()
         self._renderer = renderer.JarvisBarRenderer(accent=self._accent)
 
-        root = tk.Tk()
+        # Some window managers map Tk's default-size root eagerly. Hide it
+        # before assigning ``self._root`` or applying any styles so that stale
+        # backing surface can never flash at the top-left on a later wake.
+        root = _create_hidden_tk_root(tk)
         self._root = root
         root.title("JarvisBar")
         # Give the bar the Jarvis mascot icon on every OS. Tk otherwise inherits
@@ -397,9 +425,6 @@ class JarvisBarOverlay:
             except Exception:  # noqa: BLE001 — drop is optional; never block bar boot.
                 log.debug("bar drop target registration skipped", exc_info=True)
 
-        if self._should_start_withdrawn():
-            root.withdraw()  # only-when-active variant / boot gate starts hidden
-
         try:
             from jarvis.audio import level_tap
 
@@ -409,10 +434,13 @@ class JarvisBarOverlay:
 
         self._running = True
         self._t0 = time.perf_counter()
-        self._started.set()
-        self._schedule_ui_queue()
+        # Paint a complete first frame while the root is still withdrawn.
         self._schedule_frame()
+        self._schedule_ui_queue()
         self._schedule_frame_watchdog()  # independent anti-freeze revival loop
+        if not self._should_start_withdrawn():
+            self._do_show()
+        self._started.set()
         root.mainloop()
 
     def stop(self) -> None:
@@ -469,10 +497,27 @@ class JarvisBarOverlay:
     def _do_show(self) -> None:
         if self._root is None:
             return
+        # A persistent bar is already mapped when wake/state events arrive.
+        # Re-running deiconify/topmost/transparentcolor is not a harmless no-op
+        # on Windows: it mutates a layered HWND and can resurrect Tk's original
+        # default-size opaque backing surface at the top-left. The renderer reads
+        # ``self._mode`` directly, so a mapped window needs no native operation.
+        try:
+            if bool(self._root.winfo_ismapped()):
+                return
+        except Exception:  # noqa: BLE001
+            # Unusual Tk shims may not expose the query. Prefer an attempted
+            # reveal over leaving a genuinely hidden bar unavailable.
+            log.debug("jarvisbar mapped-state query failed", exc_info=True)
         try:
             self._root.deiconify()
         except Exception:  # noqa: BLE001
             log.debug("jarvisbar deiconify failed", exc_info=True)
+        self._do_reassert_z_order()
+
+    def _do_reassert_z_order(self) -> None:
+        if self._root is None:
+            return
         # Re-assert topmost + lift after every reveal. A withdrawn→deiconified
         # ``overrideredirect`` window comes back on Windows WITHOUT its topmost
         # z-order (it is remapped as an ordinary window), so later-mapped windows

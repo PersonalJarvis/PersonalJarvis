@@ -1,10 +1,10 @@
-"""The reveal path must LIFT + re-pin topmost, not just deiconify.
+"""Native reveal and z-order repairs must be explicit and style-safe.
 
 Forensic (2026-06-27): a withdrawn→deiconified ``overrideredirect`` window can
 lose its topmost z-order on Windows, so later desktop windows map above it until
 the next wake re-shows it. The persistent bar now maps immediately at boot, and
-the voice-ready maintenance pass re-shows its current mode only to re-pin
-topmost. ``_do_show`` re-asserts ``-topmost`` and lifts, matching the mascot orb.
+the voice-ready maintenance pass explicitly re-pins topmost. ``_do_show``
+re-asserts ``-topmost`` and lifts only when it maps a withdrawn window.
 These tests pin that contract without a real Tk window.
 
 Forensic (2026-06-30): re-asserting ``-topmost`` is itself a Win32 style
@@ -12,8 +12,10 @@ mutation on this layered (color-key + alpha) window, and Windows can silently
 drop the layered attributes on such a mutation (BUG-030) — the bar then briefly
 renders its true opaque black backing instead of the keyed-out magenta ("black
 border flashes around the bar, then disappears"). ``_do_show`` now also
-re-applies ``-transparentcolor``/``-alpha`` right after the topmost re-assert,
-so a dropped attribute self-heals on the very next reveal.
+re-applies ``-transparentcolor``/``-alpha`` right after the topmost re-assert.
+Repeated wake updates on an already-mapped persistent bar skip all of those
+native style mutations, preventing the old default-size Tk backing surface from
+flashing at the top-left of the screen.
 """
 from __future__ import annotations
 
@@ -23,12 +25,17 @@ from jarvis.ui.jarvisbar.overlay import COLOR_KEY_HEX, JarvisBarOverlay
 class _FakeRoot:
     """Records the order of the visibility calls ``_do_show`` makes."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, mapped: bool = False) -> None:
         self.calls: list[str] = []
         self.attrs: dict[str, object] = {}
+        self.mapped = mapped
+
+    def winfo_ismapped(self) -> int:
+        return int(self.mapped)
 
     def deiconify(self) -> None:
         self.calls.append("deiconify")
+        self.mapped = True
 
     def lift(self) -> None:
         self.calls.append("lift")
@@ -38,9 +45,9 @@ class _FakeRoot:
         self.attrs[name] = value
 
 
-def _bar_with_fake_root() -> tuple[JarvisBarOverlay, _FakeRoot]:
+def _bar_with_fake_root(*, mapped: bool = False) -> tuple[JarvisBarOverlay, _FakeRoot]:
     bar = JarvisBarOverlay(persistent=True)
-    root = _FakeRoot()
+    root = _FakeRoot(mapped=mapped)
     bar._root = root  # noqa: SLF001 — inject a fake Tk root (no real window)
     return bar, root
 
@@ -56,6 +63,25 @@ def test_do_show_deiconifies_then_lifts_and_repins_topmost() -> None:
     assert root.attrs.get("-topmost") is True
     # The lift happens after the deiconify (Windows remaps without topmost).
     assert root.calls.index("deiconify") < root.calls.index("lift")
+
+
+def test_do_show_mapped_window_skips_all_native_style_mutations() -> None:
+    bar, root = _bar_with_fake_root(mapped=True)
+
+    bar._do_show()  # noqa: SLF001
+
+    assert root.calls == []
+
+
+def test_explicit_z_order_reassert_repins_an_already_mapped_window() -> None:
+    bar, root = _bar_with_fake_root(mapped=True)
+
+    bar._do_reassert_z_order()  # noqa: SLF001
+
+    assert "deiconify" not in root.calls
+    assert "lift" in root.calls
+    assert root.attrs.get("-topmost") is True
+    assert root.attrs.get("-transparentcolor") == COLOR_KEY_HEX
 
 
 def test_do_show_reapplies_transparentcolor_and_alpha_after_topmost() -> None:

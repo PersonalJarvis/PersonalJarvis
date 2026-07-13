@@ -96,6 +96,11 @@ class _FakeOrb:
         self.mute_callback = callback
 
 
+class _FakeBarWithExplicitReassert(_FakeOrb):
+    def reassert_z_order(self) -> None:
+        self.calls.append(("reassert_z_order", None))
+
+
 async def test_orb_is_shown_again_for_thinking_after_external_hide() -> None:
     orb = _FakeOrb()
     bridge = OrbBusBridge(bus=_FakeBus(), orb=orb, idle_animations_enabled=False)  # type: ignore[arg-type]
@@ -603,6 +608,19 @@ async def test_persistent_bar_reasserts_current_mode_once_when_voice_ready() -> 
     await asyncio.wait_for(task, timeout=1.0)
 
     assert orb.calls.count(("show", "listen")) == 1
+
+
+async def test_persistent_bar_uses_explicit_z_order_reassert_when_available() -> None:
+    orb = _FakeBarWithExplicitReassert()
+    bridge = OrbBusBridge(  # type: ignore[arg-type]
+        bus=_FakeBus(), orb=orb, idle_animations_enabled=False, hide_on_idle=False
+    )
+
+    await bridge._on_voice_boot_status(VoiceBootStatus(ready=True))  # noqa: SLF001
+    await bridge.reassert_persistent_bar_when_voice_ready(timeout_s=1.0)
+
+    assert orb.calls.count(("reassert_z_order", None)) == 1
+    assert not any(call[0] == "show" for call in orb.calls)
 
 
 async def test_voice_boot_status_not_ready_does_not_reassert_bar() -> None:

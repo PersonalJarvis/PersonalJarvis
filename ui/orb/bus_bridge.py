@@ -598,7 +598,7 @@ class OrbBusBridge:
         self._reassert_persistent_bar(reason)
 
     def _reassert_persistent_bar(self, reason: str) -> None:
-        """Re-show the persistent bar's current mode exactly once."""
+        """Re-pin the persistent bar's z-order exactly once."""
         if self._boot_reassert_done:
             return
         self._boot_reassert_done = True
@@ -606,8 +606,15 @@ class OrbBusBridge:
             # Non-persistent bar / mascot: stays hidden until a voice session.
             return
         try:
-            mode = str(getattr(self._orb, "_mode", "idle") or "idle")
-            self._orb.show(mode)
+            reassert = getattr(self._orb, "reassert_z_order", None)
+            if callable(reassert):
+                reassert()
+            else:
+                # Compatibility floor for alternate and test surfaces. Only the
+                # Jarvis Bar owns the layered native window and implements the
+                # explicit style-safe z-order operation.
+                mode = str(getattr(self._orb, "_mode", "idle") or "idle")
+                self._orb.show(mode)
             log.info(
                 "Persistent overlay z-order reasserted after boot (%s).", reason
             )
