@@ -102,7 +102,7 @@ async def test_worker_writes_file_and_emits_critic_readable_stream(
     assert kinds[-1] == "ClaudeResult"
     assert "ClaudeAssistantMessage" in kinds and "ClaudeUserMessage" in kinds
     # the worker forwarded the worker tool specs to the brain
-    assert "Write" in fake.seen_tools and "Bash" in fake.seen_tools
+    assert "Write" in fake.seen_tools and "RunCommand" in fake.seen_tools
     # GROUND TRUTH: the file is really on disk
     assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "RESULT"
     # terminal result is success
@@ -111,6 +111,59 @@ async def test_worker_writes_file_and_emits_critic_readable_stream(
     # stream.jsonl is Critic-readable: the write is credited
     stream_text = (log_dir / "stream.jsonl").read_text(encoding="utf-8")
     assert "out.txt" in extract_write_targets(stream_text)
+
+
+@pytest.mark.asyncio
+async def test_worker_run_command_is_async_and_mission_contained(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The provider loop uses direct argv and assigns the process to its job."""
+    (tmp_path / "build.py").write_text("print('build-ok')\n", encoding="utf-8")
+    turns = [
+        [
+            BrainDelta(
+                tool_call={
+                    "id": "run-1",
+                    "name": "RunCommand",
+                    "input": {"program": "python", "args": ["build.py"]},
+                }
+            ),
+            BrainDelta(finish_reason="tool_use"),
+        ],
+        [BrainDelta(content="Build complete."), BrainDelta(finish_reason="end_turn")],
+    ]
+    fake = FakeBrain(turns)
+    _patch_brain(monkeypatch, fake)
+
+    class _Job:
+        def __init__(self) -> None:
+            self.assigned: list[int] = []
+
+        def assign(self, pid: int) -> None:
+            self.assigned.append(pid)
+
+    job = _Job()
+    events = await _drain(
+        ApiAgentWorker("openai"),
+        prompt="run the build",
+        worktree=tmp_path,
+        env={},
+        job=job,
+        worker_id="m::0",
+        log_dir=tmp_path / "_logs",
+        model="gpt-5.5",
+    )
+
+    tool_results = [
+        block
+        for event in events
+        if type(event).__name__ == "ClaudeUserMessage"
+        for block in event.message["content"]
+    ]
+    assert tool_results[0]["content"] == "build-ok"
+    assert tool_results[0]["is_error"] is False
+    assert len(job.assigned) == 1
+    assert events[-1].is_error is False
 
 
 class _RaisingBrain:

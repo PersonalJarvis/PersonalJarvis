@@ -97,6 +97,15 @@ async def test_posix_job_assign_after_close_raises() -> None:
         job.assign(1)
 
 
+async def test_posix_job_can_release_a_reaped_short_lived_group() -> None:
+    killer = _FakeKiller()
+    job = _make_job(killer)
+    job.assign(77)
+    job.release(77)
+    await job.close()
+    assert killer.calls == []
+
+
 async def test_posix_job_async_context_manager_reaps_on_exit() -> None:
     killer = _FakeKiller()
     async with _make_job(killer) as job:

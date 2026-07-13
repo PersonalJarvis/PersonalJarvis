@@ -13,6 +13,7 @@ import time
 
 import pytest
 
+from jarvis.missions.isolation import job_object as job_module
 from jarvis.missions.isolation.job_object import (
     AlwaysOpenJobObject,
     WindowsJobObject,
@@ -68,7 +69,7 @@ async def test_close_kills_assigned_process() -> None:
     psutil = pytest.importorskip("psutil")
 
     # Long-lived sleeper — runs 60s if not killed.
-    proc = subprocess.Popen(  # noqa: S603 — controlled args
+    proc = subprocess.Popen(  # noqa: ASYNC220, S603 — controlled args
         [sys.executable, "-c", "import time; time.sleep(60)"],
         creationflags=(
             _CREATE_BREAKAWAY_FROM_JOB | _CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP
@@ -120,8 +121,8 @@ async def test_close_is_idempotent() -> None:
 
 @pytest.mark.skipif(not _IS_WIN, reason="Job objects are Windows-only")
 async def test_async_context_manager_closes_on_exit() -> None:
-    psutil = pytest.importorskip("psutil")
-    proc = subprocess.Popen(  # noqa: S603
+    pytest.importorskip("psutil")
+    proc = subprocess.Popen(  # noqa: ASYNC220, S603
         [sys.executable, "-c", "import time; time.sleep(60)"],
         creationflags=(
             _CREATE_BREAKAWAY_FROM_JOB | _CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP
@@ -144,3 +145,60 @@ async def test_async_context_manager_closes_on_exit() -> None:
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=2)
+
+
+@pytest.mark.skipif(not _IS_WIN, reason="Job objects are Windows-only")
+async def test_ctypes_fallback_kills_assigned_process_without_pywin32() -> None:
+    """Base Windows installs retain kernel-enforced tree containment."""
+    proc = subprocess.Popen(  # noqa: ASYNC220, S603 - controlled test argv
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        creationflags=(
+            _CREATE_BREAKAWAY_FROM_JOB | _CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP
+        ),
+    )
+    try:
+        job = job_module._Win32CtypesJobObjectImpl(
+            "ctypes-fallback-test", allow_breakaway=False
+        )
+        job.assign(proc.pid)
+        await job.close()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and proc.poll() is None:  # noqa: ASYNC110
+            await asyncio.sleep(0.05)
+        assert proc.poll() is not None
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=2)
+
+
+@pytest.mark.skipif(not _IS_WIN, reason="Job objects are Windows-only")
+async def test_strict_job_disables_descendant_breakaway() -> None:
+    win32job = pytest.importorskip("win32job")
+
+    job = WindowsJobObject("strict-flags-test", allow_breakaway=False)
+    try:
+        info = win32job.QueryInformationJobObject(
+            job.handle, win32job.JobObjectExtendedLimitInformation
+        )
+        flags = info["BasicLimitInformation"]["LimitFlags"]
+        assert flags & win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        assert not flags & win32job.JOB_OBJECT_LIMIT_BREAKAWAY_OK
+    finally:
+        await job.close()
+
+
+@pytest.mark.skipif(not _IS_WIN, reason="Job objects are Windows-only")
+async def test_factory_uses_ctypes_when_pywin32_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _missing_pywin32(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise ImportError("simulated missing pywin32")
+
+    monkeypatch.setattr(job_module, "_Win32JobObjectImpl", _missing_pywin32)
+    job = WindowsJobObject("ctypes-factory-test", allow_breakaway=False)
+    try:
+        assert type(job).__name__ == "_Win32CtypesJobObjectImpl"
+        assert job.handle is not None
+    finally:
+        await job.close()

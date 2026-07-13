@@ -14,11 +14,17 @@ selects the Brain class via a capability-style map; nothing branches on a model
 id. A missing API key degrades to a clean error result so the orchestrator's
 fallback chain takes over instead of crashing.
 
-Isolation note: unlike the subprocess workers this runs IN the app event loop —
-there is no child PID to hand the Job Object, so ``job`` is accepted but unused;
-the only spawned processes are short-lived ``Bash`` tool subprocesses (run off
-the loop via ``run_in_executor`` so the voice pipeline never blocks). Cancel is
-honored cooperatively at each turn boundary.
+Isolation note: unlike the CLI workers the provider loop runs IN the app event
+loop. Its local ``RunCommand`` tool uses structured argv and an asynchronous
+subprocess, assigns that PID to process-tree containment, reduces the child
+environment, and reaps the whole tree on completion, timeout, or cancellation.
+Fixed POSIX and Windows gate launchers ensure no model-selected target starts
+before process-group/Job assignment; argv remains positional data, never shell
+source. File tools are dispatched off the event loop. Cancellation is honored
+while a command is active as well as at turn boundaries. This containment is
+not a filesystem or code-execution sandbox: workspace scripts retain the
+Jarvis user's OS rights and intentionally detached POSIX code can escape a
+userspace process group.
 """
 
 from __future__ import annotations
@@ -35,7 +41,7 @@ from typing import Any, Literal
 
 from jarvis.core.protocols import BrainMessage, BrainRequest
 
-from .api_agent_tools import WORKER_TOOL_SPECS, execute_worker_tool
+from .api_agent_tools import WORKER_TOOL_SPECS, execute_worker_tool_async
 from .capabilities import WorkerCapabilityInventory
 from .stream_consumer import (
     ClaudeAssistantMessage,
@@ -147,7 +153,7 @@ def _resolve_worker_model(provider: str, explicit: str) -> str:
         picked = (getattr(pc, "model", "") or "").strip()
         if picked:
             return picked
-    except Exception:  # noqa: BLE001 — config read must never crash the worker
+    except Exception:  # noqa: BLE001, S110 — config read must never crash the worker
         pass
     return _DEFAULT_MODEL.get(prov, "")
 
@@ -159,7 +165,7 @@ _MAX_TOKENS: int = 8192
 _SYSTEM_PROMPT = (
     "You are an autonomous software worker running inside an isolated git "
     "workspace. Your ONLY way to deliver work is to call the provided tools — "
-    "Write, Edit, Read, Bash, Ls, plus any mission-scoped connected tools — "
+    "Write, Edit, Read, RunCommand, Ls, plus any mission-scoped connected tools — "
     "with file paths relative to the workspace root. Connected tools are "
     "executed by the supervisor and may honestly require human approval. "
     "Actually CREATE and EDIT the files the task needs; never just describe what "
@@ -184,7 +190,7 @@ def _build_brain(provider: str, model: str) -> Any:
 def _tool_incapable_message(model: str, provider: str, *, detail: str = "") -> str:
     """Shared honest-failure text for a worker model that cannot call tools.
 
-    Missions deliver ALL work through tool calls (Write/Edit/Bash/...); a
+    Missions deliver ALL work through tool calls (Write/Edit/RunCommand/...); a
     text-only reply produces an empty diff and the mission dies 3 critic
     loops later with an inscrutable ``critic_loop_exhausted`` (forensics
     Bug 10). Fail fast and actionably instead.
@@ -226,8 +232,8 @@ class ApiAgentWorker:
         prompt: str,
         *,
         worktree: Path,
-        env: dict[str, str],  # noqa: ARG002 — in-process brain reads creds via cfg
-        job: Any,  # noqa: ARG002 — no child PID to assign (in-process)
+        env: dict[str, str],
+        job: Any,
         worker_id: str,
         log_dir: Path,
         model: str = "",
@@ -269,8 +275,8 @@ class ApiAgentWorker:
         prompt: str,
         *,
         worktree: Path,
-        env: dict[str, str],  # noqa: ARG002 - in-process brain reads credentials via config
-        job: Any,  # noqa: ARG002 - no child PID to assign (in-process)
+        env: dict[str, str],
+        job: Any,
         worker_id: str,
         log_dir: Path,
         model: str = "",
@@ -279,6 +285,7 @@ class ApiAgentWorker:
         **_unused: Any,
     ) -> AsyncIterator[Any]:
         session_id = str(uuid.uuid4())
+        self.last_pid = None
         self.last_session_id = session_id
         resolved_model = _resolve_worker_model(self.provider, model)
         log_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240 — trivial sync mkdir (mirrors sibling workers)
@@ -355,7 +362,6 @@ class ApiAgentWorker:
         )
 
         messages: list[BrainMessage] = [BrainMessage(role="user", content=prompt)]
-        loop = asyncio.get_running_loop()
         t0 = time.perf_counter()
         final_text = ""
         turns = 0
@@ -452,7 +458,9 @@ class ApiAgentWorker:
 
                 messages.append(BrainMessage(role="assistant", content=content_blocks))
 
-                # Execute each tool call off the event loop, emit tool_result.
+                # Execute each local tool through its async boundary. File I/O
+                # is sent to a thread; RunCommand remains cancellable and owns
+                # its whole subprocess tree through the mission job.
                 result_blocks: list[dict[str, Any]] = []
                 for block in content_blocks:
                     if block.get("type") != "tool_use":
@@ -460,11 +468,14 @@ class ApiAgentWorker:
                     name = block["name"]
                     tool_input = block["input"] if isinstance(block["input"], dict) else {}
                     if name in local_names:
-                        result_text, is_error = await loop.run_in_executor(
-                            None,
-                            lambda n=name, i=tool_input: execute_worker_tool(
-                                n, i, worktree=worktree
-                            ),
+                        result_text, is_error = await execute_worker_tool_async(
+                            name,
+                            tool_input,
+                            worktree=worktree,
+                            env=env,
+                            job=job,
+                            runtime_dir=log_dir / "command-runtime",
+                            on_spawn=lambda pid: setattr(self, "last_pid", pid),
                         )
                     elif broker_binding is not None:
                         broker_result = await broker_binding.execute(name, tool_input)
