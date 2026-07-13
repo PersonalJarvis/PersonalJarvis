@@ -108,23 +108,52 @@ _MISSION_RE = re.compile(
 _SKILL_RE = re.compile(
     r"\b(?:skill\w*|macro\w*|faehigkeit\w*|makro\w*|habilidad\w*)\b"  # i18n-allow: speech input
 )
+# Over-matching costs only latency (the orchestrator still answers
+# conversationally); under-matching loses the user's action — so common
+# assistant verbs (media, reminders/notes, settings switches, calendar,
+# on/off) are included even where a noun reading exists ("playlist",
+# "agenda", "activity"). Guarded stems exclude the frequent non-action
+# words ("merkwürdig", "tragisch", "legal").  # i18n-allow: names the excluded German tokens
 _ACTION_FALLBACK_RE = re.compile(
     r"\b(?:open|close|start|stop|create|write|save|add|change|set|restart|"
     r"install|connect|delete|move|send|run|build|research|call|click|type|"
-    r"upload|download|book|buy|post|reply|"
+    r"upload|download|book|buy|post|reply|switch\w*|turn\w*|play\w*|"
+    r"paus\w*|resume|remember|notes?|schedule|remind\w*|cancel\w*|"
+    r"update\w*|rename|enable|disable|mute|record|activ\w*|deactiv\w*|"
     r"oeffn\w*|schliess\w*|start\w*|stopp\w*|erstell\w*|schreib\w*|"
     r"speicher\w*|aender\w*|installier\w*|verbind\w*|loesch\w*|"
     r"verschieb\w*|schick\w*|send\w*|fuehr\w*|bau\w*|ruf\w*|klick\w*|"
-    r"tipp\w*|buch\w*|kauf\w*|antwort\w*|"
+    r"tipp\w*|buch\w*|kauf\w*|antwort\w*|wechsel\w*|wechsl\w*|schalt\w*|"
+    r"stell\w*|spiel\w*|merk(?!wuerdig)\w*|notier\w*|trag(?!isch|oedi)\w*|"
+    r"leg(?:e|st|t|en)?\b|setz\w*|pausier\w*|aktivier\w*|deaktivier\w*|"
+    r"erinner\w*|dreh\w*|"
     r"abre\w*|cierra\w*|inicia\w*|crea\w*|escrib\w*|guarda\w*|"
     r"cambia\w*|instala\w*|conecta\w*|elimina\w*|envia\w*|"
-    r"ejecuta\w*|llama\w*|haz\w*)\b"  # i18n-allow: multilingual speech-input matching data
+    r"ejecuta\w*|llama\w*|haz\w*|recuerd\w*|anot\w*|apunt\w*|pon\w*|"
+    r"reproduc\w*|reanud\w*|apag\w*|enciend\w*|agend\w*|"
+    r"reserv\w*)\b"  # i18n-allow: multilingual speech-input matching data
 )
+_FOLLOW_UP_REFERENCE_RE = re.compile(
+    r"\b(?:that|there|those|them|inside|what else|"
+    r"da|darin|drin|dort|dazu|davon|darueber|was noch|"  # i18n-allow
+    r"eso|esto|ahi|alli|dentro|que mas)\b|"  # i18n-allow
+    r"\b(?:what\s+does\s+it|what(?:'s|\s+is)\s+in\s+it|in\s+it)\b"
+)
+_CONTEXT_MAX_CHARS = 2_000
+
+
+# German umlauts must become their transliterated digraphs (ä→ae, ö→oe,  # i18n-allow: names the mapped umlaut characters
+# ü→ue; casefold already yields ß→ss) because every German vocabulary entry  # i18n-allow: names the mapped umlaut characters
+# above is written in that form. A plain NFKD combining-strip would produce
+# the OTHER ascii form ("lösche"→"losche"), which silently disables the  # i18n-allow: quotes the German token under test
+# entire German action/lookup vocabulary against real STT output.
+_UMLAUT_TRANSLITERATION = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue"})  # i18n-allow: speech-input matching data
 
 
 def _normalize(text: str) -> str:
-    folded = unicodedata.normalize("NFKD", str(text or "").casefold())
-    return "".join(ch for ch in folded if not unicodedata.combining(ch))
+    folded = str(text or "").casefold().translate(_UMLAUT_TRANSLITERATION)
+    decomposed = unicodedata.normalize("NFKD", folded)
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
 
 
 def _tokens_from_capability(capability: Any) -> set[str]:

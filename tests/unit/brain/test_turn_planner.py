@@ -94,3 +94,90 @@ def test_evidence_domain_routes_even_without_loaded_tool() -> None:
 
 def test_empty_turn_stays_native() -> None:
     assert plan_turn("   ").path is TurnPath.NATIVE_REALTIME
+
+
+@pytest.mark.parametrize(
+    ("utterance", "context"),
+    [
+        (
+            "Was steht im Mainim drin?",  # i18n-allow: exact German forensic STT
+            ("We were talking about the user's private Wiki.",),
+        ),
+        (
+            "What does it say?",
+            ("The previous turn asked about the connected Gmail inbox.",),
+        ),
+        (
+            "¿Y qué hay ahí?",  # i18n-allow: Spanish speech-input fixture
+            ("The previous turn asked about the user's calendar.",),
+        ),
+    ],
+)
+def test_elliptical_follow_up_inherits_evidence_domain(
+    utterance: str,
+    context: tuple[str, ...],
+) -> None:
+    plan = plan_turn(utterance, context=context)
+
+    assert plan.path is TurnPath.ORCHESTRATOR
+    assert TurnReason.UNCERTAIN in plan.reasons
+    assert plan.requires_evidence is True
+
+
+def test_unrelated_lookup_does_not_inherit_old_evidence_domain() -> None:
+    context = ("The previous turn asked about the user's private Wiki.",)
+
+    assert plan_turn("Who wrote Hamlet?", context=context).path is TurnPath.NATIVE_REALTIME
+    assert plan_turn("What time is it?", context=context).path is TurnPath.NATIVE_REALTIME
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # Umlaut verbs: real STT emits "ö", the vocabulary is written "oe" —  # i18n-allow: names the umlaut under test
+        # these matched NOTHING before the transliterating _normalize fix.
+        "Lösche die Datei vom Desktop.",  # i18n-allow: German speech-input fixture
+        "Ändere die Lautstärke.",  # i18n-allow: German speech-input fixture
+        "Führe den Befehl aus.",  # i18n-allow: German speech-input fixture
+        "Öffne Spotify.",  # i18n-allow: German speech-input fixture
+        "Prüfe meine Mails.",  # i18n-allow: German speech-input fixture
+    ],
+)
+def test_umlaut_action_verbs_route_to_orchestrator(utterance: str) -> None:
+    plan = plan_turn(utterance)
+    assert plan.path is TurnPath.ORCHESTRATOR
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Switch to the Gemini provider.",
+        "Play some music.",
+        "Remind me to buy milk tomorrow.",
+        "Turn off the lights.",
+        "Wechsle den Provider auf Gemini.",  # i18n-allow: German speech-input fixture
+        "Merk dir, dass ich morgen Zahnarzt habe.",  # i18n-allow: German fixture
+        "Notier dir das bitte.",  # i18n-allow: German speech-input fixture
+        "Leg einen Termin für Montag an.",  # i18n-allow: German speech-input fixture
+        "Stell den Wecker auf sieben Uhr.",  # i18n-allow: German speech-input fixture
+        "Pon música relajante.",  # i18n-allow: Spanish speech-input fixture
+        "Recuérdame comprar leche.",  # i18n-allow: Spanish speech-input fixture
+        "Apaga la luz.",  # i18n-allow: Spanish speech-input fixture
+    ],
+)
+def test_common_assistant_action_verbs_route_to_orchestrator(utterance: str) -> None:
+    plan = plan_turn(utterance)
+    assert plan.path is TurnPath.ORCHESTRATOR
+    assert TurnReason.ACTION in plan.reasons
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Das ist wirklich merkwürdig.",  # i18n-allow: German speech-input fixture
+        "Das war eine Tragödie.",  # i18n-allow: German speech-input fixture
+        "Erzähl mir einen Witz.",  # i18n-allow: German speech-input fixture
+    ],
+)
+def test_guarded_non_action_words_stay_native(utterance: str) -> None:
+    assert plan_turn(utterance).path is TurnPath.NATIVE_REALTIME
