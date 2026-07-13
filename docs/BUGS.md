@@ -3391,3 +3391,30 @@ paint-before-heavy-start contract.
 not only a post-success cooldown. The suppressed interval must stop both the
 expensive verifier and the candidate/recognizer producer; rate-limiting only the
 last stage leaves the same resource storm alive one layer earlier.
+
+## BUG-046: Desktop restart closes Jarvis but never brings it back (HIGH, 2026-07-13)
+
+**Symptom.** `POST /api/settings/restart-app` returned success and closed the
+desktop, but the detached relauncher could not reliably acquire the
+single-instance lock because the old process remained alive without a window.
+The restart appeared to be complete while Jarvis was no longer reachable.
+
+**Root cause.** `run_restart_quit_sequence` described its hard exit as a
+watchdog, but armed it only after the synchronous `window.destroy()` call
+returned. A cross-thread WebView destroy is one of the operations that can
+block during teardown. In that exact failure mode, execution never reached the
+hard exit, the old process retained its mutex and port, and fresh launchers
+bounced off the supposedly active instance.
+
+**Fix.** The hard exit is now armed in an independent daemon thread before the
+GUI destroy call. Normal teardown still wins when it completes quickly; a
+blocked Cocoa, GTK, or WebView2 destroy can no longer prevent the old process
+from releasing the cross-platform single-instance and port resources.
+
+**Guard.** `tests/unit/ui/test_relauncher.py` blocks `destroy_window` on an
+event and proves the independent watchdog still reaches the injected process
+exit before the destroy call returns.
+
+**Class rule.** A shutdown watchdog must run independently of every operation
+it is intended to bound. Code placed after a possibly blocking call is a
+fallback, not a watchdog.

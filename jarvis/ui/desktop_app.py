@@ -2128,8 +2128,8 @@ class DesktopApp:
             target=_quit_soon, name="jarvis-restart-quit", daemon=True
         ).start()
         logger.info(
-            "Self-restart scheduled (relauncher spawned; quitting in ~0.3 s, "
-            "hard-exit fallback at ~2 s)."
+            "Self-restart scheduled (relauncher spawned; quitting in ~0.2 s, "
+            "independent hard-exit watchdog at ~0.9 s)."
         )
         return True
 
