@@ -754,7 +754,7 @@ class DesktopApp:
         # WebServer → fastapi + every route schema, etc.) are DELIBERATELY NOT
         # done here. They hold the GIL in long C-level blocks, which would
         # starve the bootstrap loop and delay the UI shell. They are imported
-        # AFTER ``wait_shell_served`` below — i.e. once the window has painted —
+        # AFTER ``wait_shell_painted`` below — i.e. once the window has painted —
         # so the visible boot is never blocked by the import storm.
         if prebound is not None:
             # Fast-boot launcher path: the loop already exists and the bootstrap
@@ -848,7 +848,20 @@ class DesktopApp:
         # as the visible shell paints, while a broken GUI can never deadlock the
         # backend forever.
         if self._bootstrap is not None:
-            loop.run_until_complete(self._bootstrap.wait_shell_painted(timeout=12.0))
+            shell_painted = loop.run_until_complete(
+                self._bootstrap.wait_shell_painted(timeout=12.0)
+            )
+            from loguru import logger as _boot_logger
+
+            if shell_painted:
+                _boot_logger.info(
+                    "Desktop boot shell painted; heavy initialization released."
+                )
+            else:
+                _boot_logger.warning(
+                    "Desktop boot shell paint was not acknowledged within 12s; "
+                    "releasing heavy initialization through the bounded fallback."
+                )
 
         # Fire the heavy OpenWakeWord/onnxruntime import now, in a daemon thread,
         # before the WebServer + brain build + subsystem boot storm grab the
@@ -896,7 +909,7 @@ class DesktopApp:
         from jarvis.mcp.registry import MCPRegistry
         from jarvis.state.chat_store import ChatStore, default_chats_db_path
         from jarvis.state.supervisor import Supervisor
-        from jarvis.ui.web.server import WebServer  # lazy, vermeidet Circular
+        from jarvis.ui.web.server import WebServer  # lazy to avoid a circular import
 
         _db_mark("pre_webserver")
         # Build the FastAPI app + all routes (~1 s, CPU-bound) in a worker thread
@@ -3547,7 +3560,7 @@ class DesktopApp:
                 asyncio.run_coroutine_threadsafe(_pty_cleanup(), loop).result(timeout=2.0)
             except Exception:  # noqa: BLE001
                 pass
-            # Phase 9.8: Overlay-Subprocess stoppen BEVOR server.stop().
+            # Phase 9.8: stop the overlay subprocess BEFORE server.stop().
             try:
                 from jarvis.overlay.integration import stop_overlay
                 asyncio.run_coroutine_threadsafe(stop_overlay(), loop).result(timeout=2.0)
@@ -3566,7 +3579,7 @@ class DesktopApp:
                 try:
                     fut.result(timeout=3.0)
                 except Exception:  # noqa: BLE001
-                    # Server-stop darf haengen — wir stoppen den Loop hart.
+                    # Server shutdown may hang; the event loop still stops forcibly.
                     pass
             except Exception:  # noqa: BLE001
                 pass

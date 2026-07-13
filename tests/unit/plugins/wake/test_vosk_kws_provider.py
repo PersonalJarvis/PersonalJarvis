@@ -15,6 +15,8 @@ up. What is pinned here:
 - The grammar re-score and the free decode run CONCURRENTLY (spawn-latency
   mission 2026-07-10): they are independent passes over the same audio, so
   paying their SUM instead of their MAX is a pure latency regression.
+- Rejected-candidate storms are backpressured so recall-biased grammar cannot
+  starve the desktop UI, microphone, or local server.
 """
 from __future__ import annotations
 
@@ -436,6 +438,52 @@ async def test_cooldown_suppresses_immediate_refire(fake_vosk) -> None:
     fired = await _run_detect(p, [_chunk() for _ in range(24)])
     assert fired == ["nova"]  # second grammar hit lands inside the cooldown
     assert p.stats()["suppressed_cooldown"] >= 1
+
+
+async def test_rejected_candidate_storm_is_backpressured(
+    fake_vosk, monkeypatch
+) -> None:
+    """Room speech can make recall-biased grammar hit continuously.
+
+    One rejection must pause stage-one decoding as well as the expensive
+    verifier.  Rebuilding recognizers on every skipped hit would preserve the
+    process-wide CPU storm even if full verification were rate-limited.
+    """
+    p = VoskKwsProvider(
+        "Hey Nova",
+        model_path="fake",
+        keyword="nova",
+        confirm_tail_s=0.0,
+        rejected_candidate_backoff_s=60.0,
+    )
+    p._ensure_model()
+    fake_vosk["model"].free_text = "unrelated room speech"
+
+    verify_calls = 0
+    fresh_rec_calls = 0
+    original_verify = p._verify_candidate
+    original_fresh_recs = p._fresh_recs
+
+    def _counted_verify(window, model_path=None):  # noqa: ANN001
+        nonlocal verify_calls
+        verify_calls += 1
+        return original_verify(window, model_path)
+
+    def _counted_fresh_recs():
+        nonlocal fresh_rec_calls
+        fresh_rec_calls += 1
+        return original_fresh_recs()
+
+    monkeypatch.setattr(p, "_verify_candidate", _counted_verify)
+    monkeypatch.setattr(p, "_fresh_recs", _counted_fresh_recs)
+
+    fired = await _run_detect(p, [_chunk() for _ in range(200)])
+
+    assert fired == []
+    assert verify_calls == 1
+    assert fresh_rec_calls == 1
+    assert p.stats()["backpressure_windows"] == 1
+    assert p.stats()["backpressure_chunks"] > 100
 
 
 # --- prewarmed verify-recognizer stock ------------------------------------------

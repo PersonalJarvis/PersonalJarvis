@@ -122,6 +122,15 @@ _RING_SECONDS = 3.0
 # Refractory period after a fired wake.
 _COOLDOWN_S = 5.0
 
+# A rejected stage-one candidate is expected occasionally because grammar mode
+# deliberately favours recall.  It must not immediately launch another pair of
+# full-window decoders: production forensics on 2026-07-13 captured 99 verify
+# passes in 140 seconds, enough to starve the WebView, overlay, microphone, and
+# local HTTP listener in the shared desktop process.  A short reject-only
+# backoff bounds that work on every OS while leaving the first candidate (and
+# therefore the normal quiet-room wake path) at full speed.
+_REJECTED_CANDIDATE_BACKOFF_S = 2.0
+
 # How much audio to let land in the ring AFTER a PARTIAL candidate before the
 # confirm pass runs. A partial fires DURING the phrase (that is its virtue),
 # but confirming at that instant hands the free decoder a truncated utterance
@@ -240,6 +249,7 @@ class VoskKwsProvider:
         confirm_ratio: float = _CONFIRM_RATIO,
         match_min_rms: float = _MATCH_MIN_RMS,
         cooldown_s: float = _COOLDOWN_S,
+        rejected_candidate_backoff_s: float = _REJECTED_CANDIDATE_BACKOFF_S,
         confirm_tail_s: float = _CONFIRM_TAIL_S,
         # Production poll-loop parity: peak-normalize the confirm window to
         # -3 dBFS (gain capped at 40 dB) exactly like the other wake paths.
@@ -269,6 +279,9 @@ class VoskKwsProvider:
         self._confirm_ratio = max(float(confirm_ratio), structural_floor)
         self._match_min_rms = float(match_min_rms)
         self._cooldown_s = float(cooldown_s)
+        self._rejected_candidate_backoff_s = max(
+            0.0, float(rejected_candidate_backoff_s)
+        )
         self._confirm_tail_bytes = int(float(confirm_tail_s) * sample_rate) * 2
         self._target_peak = float(target_peak)
         self._max_gain = float(max_gain)
@@ -312,6 +325,8 @@ class VoskKwsProvider:
         self._stat_gated_rms = 0
         self._stat_suppressed_confirm = 0
         self._stat_suppressed_cooldown = 0
+        self._stat_backpressure_windows = 0
+        self._stat_backpressure_chunks = 0
         self._stat_fired = 0
         self._stat_early_shown = 0
         self._stat_early_retracted = 0
@@ -474,6 +489,8 @@ class VoskKwsProvider:
             "gated_rms": self._stat_gated_rms,
             "suppressed_confirm": self._stat_suppressed_confirm,
             "suppressed_cooldown": self._stat_suppressed_cooldown,
+            "backpressure_windows": self._stat_backpressure_windows,
+            "backpressure_chunks": self._stat_backpressure_chunks,
             "fired": self._stat_fired,
             "early_shown": self._stat_early_shown,
             "early_retracted": self._stat_early_retracted,
@@ -678,7 +695,7 @@ class VoskKwsProvider:
                 if w.get("word") in self._grammar_words
             ]
             if self._phrase.lower() not in gres.get("text", "") or not gwords:
-                log.info(
+                log.debug(
                     "vosk-kws: verify SUPPRESSED — re-score did not re-hear "
                     "%r (heard %r)",
                     self._phrase, gres.get("text", "")[:60],
@@ -686,7 +703,7 @@ class VoskKwsProvider:
                 return False
             conf = min(w.get("conf", 0.0) for w in gwords)
             if conf < self._min_final_conf:
-                log.info(
+                log.debug(
                     "vosk-kws: verify SUPPRESSED — re-score conf %.2f < %.2f "
                     "for %r", conf, self._min_final_conf, self._phrase,
                 )
@@ -703,7 +720,7 @@ class VoskKwsProvider:
             rms = float(np.sqrt(np.mean(segment * segment) + 1e-12)) if len(segment) else 0.0
             if rms < self._match_min_rms:
                 self._stat_gated_rms += 1
-                log.info(
+                log.debug(
                     "vosk-kws: verify SUPPRESSED — span rms %.4f < %.4f "
                     "(silence can never fire)", rms, self._match_min_rms,
                 )
@@ -723,7 +740,8 @@ class VoskKwsProvider:
             )
             return fail_open
         ok = sound_confirm(free_local, self._phrase, ratio=self._confirm_ratio)
-        log.info(
+        log_method = log.info if ok else log.debug
+        log_method(
             "vosk-kws: verify %s — free ear heard %r at the candidate span "
             "(conf=%.2f) vs phrase %r",
             "OK" if ok else "SUPPRESSED",
@@ -757,6 +775,7 @@ class VoskKwsProvider:
         # (union recall measured +38% on the fixture corpus, 2026-07-11).
         recs = self._fresh_recs()
         last_fire_t = 0.0
+        verify_not_before = 0.0
         # Pending candidate: a PARTIAL hit waits for ``confirm_tail_s`` more
         # audio before the confirm pass so the free decoder sees the WHOLE
         # phrase, not a truncated one (E2E-measured recall trap). Finals skip
@@ -769,6 +788,18 @@ class VoskKwsProvider:
             self._stat_chunks += 1
             pcm = chunk.pcm
             self._ring_push(pcm)
+            # A clean rejection proves that the recall-biased grammar is
+            # currently mapping unrelated audio onto the wake phrase.  Do not
+            # keep decoding/rebuilding recognizers during the bounded reject
+            # window: that was the process-wide UI starvation loop behind
+            # BUG-045.  Ring audio still advances, so the first candidate after
+            # re-arm is verified against current sound rather than stale bytes.
+            now_mono = time.monotonic()
+            if now_mono < verify_not_before:
+                self._stat_backpressure_chunks += 1
+                continue
+            if not recs:
+                recs = self._fresh_recs()
             if pending is not None:
                 pending_tail += len(pcm)
                 # Keep every model's stream fed during the tail wait so their
@@ -797,7 +828,12 @@ class VoskKwsProvider:
                     continue
                 self._stat_candidates += 1
                 if is_final and conf < self._min_final_conf:
-                    recs = self._fresh_recs()
+                    self._stat_backpressure_windows += 1
+                    verify_not_before = (
+                        time.monotonic() + self._rejected_candidate_backoff_s
+                    )
+                    self._kick_replenish()
+                    recs = {}
                     continue
                 if not is_final and self._confirm_tail_bytes > 0:
                     pending = (is_final, conf, hit_path)
@@ -813,11 +849,15 @@ class VoskKwsProvider:
                                 self._ring_window(), self._pending_gen, hit_path
                             )
                         )
-                        # The early check just consumed prewarmed recognizers;
-                        # top the stock back up before the authoritative
-                        # verify needs its own pair (~0.6s from now).
-                        self._kick_replenish()
                     continue
+            # The early visual check and authoritative decision must not fan
+            # out two decoder pairs at once on a weak CPU.  The 0.6 s tail
+            # normally lets the early check finish already, so this is a
+            # no-cost ordering guard in the common path.
+            if self._early_task is not None:
+                with contextlib.suppress(Exception):
+                    await self._early_task
+                self._early_task = None
             now = time.time()
             window = self._ring_window()
             confirmed = await asyncio.to_thread(
@@ -853,7 +893,27 @@ class VoskKwsProvider:
                     self._early_task = None
                 self._pending_gen += 1
                 await self._notify_early(False)
-                recs = self._fresh_recs()
+                self._stat_backpressure_windows += 1
+                verify_not_before = (
+                    time.monotonic() + self._rejected_candidate_backoff_s
+                )
+                if (
+                    self._stat_backpressure_windows == 1
+                    or self._stat_backpressure_windows % 25 == 0
+                ):
+                    log.warning(
+                        "vosk-kws: rejected-candidate backpressure active "
+                        "(pause %.1fs, windows=%d, skipped_chunks=%d) — "
+                        "protecting desktop responsiveness.",
+                        self._rejected_candidate_backoff_s,
+                        self._stat_backpressure_windows,
+                        self._stat_backpressure_chunks,
+                    )
+                # Do not consume/build another streaming recognizer until the
+                # backoff expires.  Replenishment can finish in the background
+                # while detection is intentionally idle.
+                self._kick_replenish()
+                recs = {}
                 continue
             # Confirmed: let a still-running early check finish first (in
             # production it completed long ago — the tail wait dwarfs it) so

@@ -3338,3 +3338,56 @@ shows a WebView before heavy process initialization must wait for a signal from
 an actually rendered browser frame, never a server-side response, asset-read,
 or fixed sleep. The wait must remain bounded so a broken GUI cannot deadlock a
 headless or degraded backend.
+
+## BUG-045: Rejected Vosk wake candidates starve the desktop process (HIGH, 2026-07-13)
+
+**Symptom.** The desktop client became a featureless dark surface and Windows
+labelled the native window as not responding. Closing and reopening appeared to
+fix it, which made the failure look like a rare WebView startup race. The same
+failure mode can affect the GTK and Cocoa pywebview backends because the native
+window, local HTTP server, overlay, microphone, and wake detector share one
+Python process.
+
+**Forensic timeline.** The affected process started at 08:22:04 and served its
+health endpoint at 08:22:19. The screenshot was created at 08:29:32, so this was
+not the initial paint race from BUG-044. During the 140 seconds surrounding the
+capture, the log recorded 99 full Vosk verification-pass results. The later
+watchdogs independently reported a 2.5-second JarvisBar frame stall, 6.6 seconds
+without a microphone frame, and a local-listener recovery. Those simultaneous
+failures identify process-wide starvation rather than a React-only crash.
+
+**Root cause.** Vosk grammar mode intentionally favours recall and can map room
+speech onto the configured wake phrase. A clean rejection reset every streaming
+recognizer and immediately admitted another candidate. Each candidate could run
+an early visual verify, an authoritative grammar/free-decode pair, sibling-model
+rescue, and recognizer-stock replenishment. The existing five-second cooldown
+applied only after a successful wake, so a stream of rejected candidates had no
+load bound. Detailed rejection messages at INFO level amplified the burst.
+
+**Fix.** A rejected candidate now opens a two-second, monotonic backpressure
+window. Audio continues advancing the ring, but stage-one decode, fresh
+recognizer construction, and full verification pause until re-arm. The first
+candidate after quiet remains immediate; only work proven to be a false
+candidate is throttled. The early visual verify completes before the
+authoritative pair starts, replenishment begins only after the decision, and
+rejection details are DEBUG-level. Session stats expose backpressure windows and
+skipped chunks. The mechanism uses only asyncio and monotonic time, so Windows,
+macOS, Linux desktops, and headless Linux share the same behaviour.
+
+The desktop startup path also logs whether the browser-originated shell-paint
+acknowledgment arrived or whether the bounded 12-second fallback released heavy
+initialization. A future screenshot can therefore distinguish paint failure
+from post-start process starvation without inference.
+
+**Guards.** `tests/unit/plugins/wake/test_vosk_kws_provider.py` proves that 200
+continuous noisy chunks trigger one verification and one recognizer set, not a
+candidate/rebuild storm. The existing wake recall, sibling rescue, early visual
+candidate, cooldown, and AP-24 exclusive-recognizer tests remain green.
+`tests/unit/ui/web/test_fast_bootstrap.py` and
+`tests/unit/ui/test_desktop_backend_start_order.py` retain the cross-platform
+paint-before-heavy-start contract.
+
+**Class rule.** A recall-biased candidate source needs rejection backpressure,
+not only a post-success cooldown. The suppressed interval must stop both the
+expensive verifier and the candidate/recognizer producer; rate-limiting only the
+last stage leaves the same resource storm alive one layer earlier.
