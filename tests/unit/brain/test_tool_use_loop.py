@@ -261,6 +261,42 @@ async def test_unknown_tool_publishes_guard_denied_event() -> None:
     assert "unknown tool name" in executor.denied[0][1]
 
 
+class _SuccessfulAndUnknownBrain:
+    """One valid call plus one stale name must produce a partial result."""
+
+    def __init__(self) -> None:
+        self.requests: list[BrainRequest] = []
+
+    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        self.requests.append(req)
+        if len(self.requests) == 1:
+            yield BrainDelta(tool_call={"id": "ok", "name": "run_shell", "input": {}})
+            yield BrainDelta(tool_call={"id": "stale", "name": "retired_tool", "input": {}})
+            yield BrainDelta(finish_reason="tool_use")
+            return
+        yield BrainDelta(content="The shell action succeeded; the retired action was skipped.")
+        yield BrainDelta(finish_reason="stop")
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_cannot_overwrite_successful_call() -> None:
+    brain = _SuccessfulAndUnknownBrain()
+    executor = _ExecWithDeniedLog()
+    loop = ToolUseLoop(
+        brain,
+        {"run_shell": _RunShellTool()},
+        executor,  # type: ignore[arg-type]
+    )
+
+    result = await loop.run([], user_utterance="Run the check and the optional follow-up.")
+
+    assert executor.calls and executor.calls[0][0].name == "run_shell"
+    assert executor.denied and executor.denied[0][0] == "retired_tool"
+    assert "succeeded" in result.text
+    assert "missing" not in result.text.lower()
+    assert len(brain.requests) == 2
+
+
 @pytest.mark.asyncio
 async def test_howto_guard_publishes_guard_denied_event() -> None:
     brain = _Brain()
