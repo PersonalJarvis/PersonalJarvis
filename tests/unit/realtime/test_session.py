@@ -2256,6 +2256,126 @@ async def test_turn_after_a_pending_action_may_not_claim_an_outcome():
     await sess.end(reason="test")
 
 
+class _SlowDelegateBridgeSession(FakeSession):
+    """Slow delegate: expose the dead-air window between dispatch and result."""
+
+    def __init__(self, events, *, bridge_sent, result_delivered):
+        super().__init__(events)
+        self._bridge_sent = bridge_sent
+        self._result_delivered = result_delivered
+
+    async def receive(self):
+        yield RealtimeEvent(
+            type="input_transcript",
+            text="Write this to my wiki.",
+            is_final=True,
+        )
+        await self._bridge_sent.wait()
+        # The bridge line's own response lifecycle completes long before the
+        # delegated result exists; the turn must survive this completion.
+        yield RealtimeEvent(type="turn_complete")
+        await self._result_delivered.wait()
+        yield RealtimeEvent(type="turn_complete")
+
+    async def send_text(self, text):
+        await super().send_text(text)
+        if "<trusted_action_result>" in text:
+            self._result_delivered.set()
+        else:
+            self._bridge_sent.set()
+
+
+class _SlowDelegateBridgeProvider(FakeProvider):
+    def __init__(self, *, bridge_sent, result_delivered):
+        super().__init__([])
+        self._bridge_sent = bridge_sent
+        self._result_delivered = result_delivered
+
+    async def open_session(self, cfg):
+        self.opened_with = cfg
+        self.session = _SlowDelegateBridgeSession(
+            [],
+            bridge_sent=self._bridge_sent,
+            result_delivered=self._result_delivered,
+        )
+        return self.session
+
+
+@pytest.mark.asyncio
+async def test_slow_deterministic_delegate_speaks_a_bridge_line(monkeypatch):
+    """BUG-051: dead air between dispatch and result gets one interim line."""
+    monkeypatch.setattr("jarvis.realtime.session._DELEGATE_BRIDGE_DELAY_S", 0.05)
+    gate = asyncio.Event()
+    bridge_sent = asyncio.Event()
+    result_delivered = asyncio.Event()
+    brain = FakeBrain(replies=("Stored on your page: note.",), gate=gate)
+    provider = _SlowDelegateBridgeProvider(
+        bridge_sent=bridge_sent, result_delivered=result_delivered
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(bridge_sent.wait(), timeout=2)
+
+    bridge = provider.session.text_inputs[0]
+    assert "<trusted_action_result>" not in bridge
+    assert "interim" in bridge
+    assert "Write this to my wiki." in bridge  # the line may name the topic
+    # While the bridge response is live, provider output must flow.
+    assert sess._must_withhold_provider_output() is False
+
+    gate.set()
+    await asyncio.wait_for(result_delivered.wait(), timeout=2)
+    result = provider.session.text_inputs[-1]
+    assert "<trusted_action_result>" in result
+    assert "Stored on your page: note." in result
+    # The bridge's completed response must not have closed the turn: the
+    # result is delivered into the live turn, not as a late follow-up.
+    assert "finished only now" not in result
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_fast_deterministic_delegate_needs_no_bridge_line(monkeypatch):
+    """A result faster than the bridge delay keeps the turn chatter-free."""
+    monkeypatch.setattr("jarvis.realtime.session._DELEGATE_BRIDGE_DELAY_S", 0.15)
+    result_delivered = asyncio.Event()
+
+    class _FastSession(FakeSession):
+        async def receive(self):
+            yield RealtimeEvent(
+                type="input_transcript",
+                text="Write this to my wiki.",
+                is_final=True,
+            )
+            await result_delivered.wait()
+            yield RealtimeEvent(type="turn_complete")
+
+        async def send_text(self, text):
+            await super().send_text(text)
+            if "<trusted_action_result>" in text:
+                result_delivered.set()
+
+    class _FastProvider(FakeProvider):
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = _FastSession([])
+            return self.session
+
+    provider = _FastProvider([])
+    sess = _session(provider, brain=FakeBrain(replies=("Stored.",)))
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(result_delivered.wait(), timeout=2)
+    await asyncio.sleep(0.3)  # outlive the bridge delay: it must not fire late
+    texts = provider.session.text_inputs
+    assert len(texts) == 1
+    assert "<trusted_action_result>" in texts[0]
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+
 @pytest.mark.asyncio
 async def test_direct_mode_builds_bridge_from_brain(wire_supervisor_gateway):
     brain = FakeBrain()

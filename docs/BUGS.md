@@ -3662,7 +3662,7 @@ own input is worse than a failing tool: the model gets no error signal and
 loops. When wrapping OS process creation, verify on EVERY platform that a
 quoted argument arrives as an argument, not as a literal.
 
-## BUG-051: Realtime interim ack speaks only after the router has already decided (HIGH, 2026-07-13, OPEN)
+## BUG-051: Realtime interim ack speaks only after the router has already decided (HIGH, 2026-07-13)
 
 **Symptom.** Realtime session 18:36 ("Wer ist aktueller Export-Weltmeister?"): <!-- i18n-allow: quoted German user utterance under analysis -->
 the user hears NOTHING for the whole wait and hangs up 17.8 s after finishing
@@ -3696,15 +3696,30 @@ Meanwhile the pending-action guard correctly mutes the realtime model, so
 nothing bridges the silence: three stacked latencies, and their sum is
 user-audible dead air.
 
-**Fix.** OPEN — direction: a dispatch-time ack. Fire a readback at
-`REALTIME_DELEGATE_STARTED` (t+0) with a tight `latency_budget_ms` and the
-canned fallback, so the bridge line lands within ~1–2 s worst case; the
-existing post-round ack (which knows the tool name) can then be dropped or
-demoted to a progress note. Delivery must go through the DELEGATE path into
-the live model (provider announcement/injection) — the classic announcement
-path intentionally drops preambles while the live call is busy (BUG-049).
-Secondary lever: the ~10 s OpenRouter TTFB on the router hop itself.
+**Fix.** A dispatch-time dead-air bridge in the deterministic delegate path
+(`jarvis/realtime/session.py`). When the delegated action is still pending
+`_DELEGATE_BRIDGE_DELAY_S` (2 s) after dispatch, `_run_delegate_bridge`
+injects `_delegate_bridge_prompt` into the LIVE model — one voice per call
+(BUG-049) — ordering exactly one short interim sentence in the conversation
+language, with outcome claims, answer content, and function calls forbidden
+(the line is contextual, never a canned pool). The withhold gate opens only
+for this instruction-bounded response (`bridge_delivery_started`), and the
+held `turn_complete` path flushes the bridge audio tail instead of draining
+it. Necessity-gated: a result faster than the delay (`result_ready`) skips
+the bridge entirely. The bridge task is deliberately NOT a tracked delegate
+task, so a sleeping timer can never hold a turn open, defer a VAD edge, or
+refuse an announcement. Secondary lever (still open): the ~10 s OpenRouter
+TTFB on the router hop itself.
+
+**Guards.** `tests/unit/realtime/test_session.py` —
+`test_slow_deterministic_delegate_speaks_a_bridge_line` (bridge precedes the
+result, output flows, the turn survives the bridge's own turn_complete and
+the result is still delivered live, not as a late follow-up) and
+`test_fast_deterministic_delegate_needs_no_bridge_line` (fast results stay
+chatter-free).
 
 **Class rule.** An interim ack that waits for the completion of the decision
 it is meant to cover is not an ack. The bridge over dead air needs a latency
-budget bounded by user patience (~2–3 s), independent of any model round.
+budget bounded by user patience (~2–3 s), independent of any model round —
+and it must be a bystander: a helper task that merely waits must never feed
+the liveness signals (turn hold, endpoint protection) that real work feeds.

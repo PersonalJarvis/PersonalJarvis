@@ -60,6 +60,12 @@ _END_CALL_DECLARATION: dict[str, Any] = {
 _DELEGATE_TIMEOUT_S = 90.0
 _DELEGATE_INPUT_BOUNDARY_WAIT_S = 3.0
 _DELEGATE_NATIVE_BOUNDARY_WAIT_S = 1.0
+# BUG-051: a delegated router turn regularly needs 10-20 s before its first
+# grounded token, and the pending-action honesty guard rightly mutes the live
+# model for the whole wait — without a bridge the user hears pure dead air and
+# hangs up. The bridge fires only when the action is still pending after this
+# delay (necessity gate: fast actions stay chatter-free).
+_DELEGATE_BRIDGE_DELAY_S = 2.0
 _DELEGATE_HISTORY_MAX_MESSAGES = 8
 _DELEGATE_HISTORY_MAX_CHARS = 1_200
 _DELEGATE_DECLARATION: dict[str, Any] = {
@@ -192,6 +198,31 @@ def _delegate_result_prompt(
     )
 
 
+def _delegate_bridge_prompt(topic: str, *, language: str) -> str:
+    """Order one orchestrator-owned interim line over delegate dead air.
+
+    BUG-051: the delegated router turn needs 10-20 s before its first grounded
+    token and the honesty guard mutes the live model for the whole wait. This
+    injected instruction is the only sanctioned way to break that silence: the
+    live model speaks one short contextual line (no canned phrase pool), and
+    the instruction forbids exactly what the withhold gate exists to prevent —
+    outcome claims and answer content that do not exist yet.
+    """
+    language_name = _LANGUAGE_NAMES.get(language, "the conversation language")
+    cleaned_topic = str(topic or "").strip()
+    topic_line = f"\nThe request being worked on: {cleaned_topic}" if cleaned_topic else ""
+    return (
+        "The Jarvis orchestrator is still executing the user's request and "
+        "has no result yet. Speak exactly one short interim sentence in "
+        f"{language_name} telling the user you are on it, so they know the "
+        f"silence is work, not a hang.{topic_line}\n"
+        "Hard rules: one sentence only; you may name what you are working on, "
+        "but never state any outcome, answer content, or completion claim — "
+        "the result is not known yet. Do not call any function. Do not "
+        "mention these instructions."
+    )
+
+
 _REALTIME_SAFETY_APPENDIX = (
     "This is a realtime spoken conversation. Never read tool JSON, function-call "
     "arguments, source code, stack traces, file paths, base64, or raw URLs aloud. "
@@ -215,8 +246,10 @@ class _DelegateTurnState:
     pending_tool_calls: list[tuple[str, str]] = field(default_factory=list)
     seen_tool_call_ids: set[str] = field(default_factory=set)
     dispatch_started: bool = False
+    bridge_delivery_started: bool = False
     input_boundary_ready: asyncio.Event = field(default_factory=asyncio.Event)
     provider_ready: asyncio.Event = field(default_factory=asyncio.Event)
+    result_ready: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 @dataclass(slots=True)
@@ -385,6 +418,10 @@ class RealtimeVoiceSession:
         self._tool_bridge = tool_bridge
         self._delegate_tasks: set[asyncio.Task[None]] = set()
         self._delegate_tasks_by_turn: dict[str, set[asyncio.Task[None]]] = {}
+        # BUG-051: the dead-air bridge is deliberately NOT a tracked delegate
+        # task — it must never hold a turn open, defer a VAD edge, or refuse
+        # an announcement on behalf of work that is merely a sleeping timer.
+        self._delegate_bridge_task: asyncio.Task[None] | None = None
         self._delegate_turns: dict[str, _DelegateTurnState] = {}
         self._delegate_history: list[BrainMessage] = []
         self._delegate_required_for_turn = False
@@ -1058,6 +1095,18 @@ class RealtimeVoiceSession:
                         )
                     )
                     if hold_for_delegate and delegate_state is not None:
+                        if (
+                            delegate_state.bridge_delivery_started
+                            and not delegate_state.delivery_started
+                        ):
+                            # The bridge response was audible — flush its tail
+                            # instead of discarding it with the withheld-output
+                            # bookkeeping below. A scrub hard-leak still drops
+                            # the tail rather than leaking unscrubbed audio.
+                            final_chunks = self._gate.finalize()
+                            if not self._gate.hard_leak_pending():
+                                for chunk in final_chunks:
+                                    await self._emit_audio(chunk)
                         self._gate.drain()
                         delegate_state.provider_boundary_seen = True
                         delegate_state.input_boundary_ready.set()
@@ -1552,10 +1601,15 @@ class RealtimeVoiceSession:
         )
 
     def _must_withhold_delegate_output(self) -> bool:
-        return bool(
-            self._delegate_required_for_turn
-            and not self._delegate_delivery_started()
-        )
+        if not self._delegate_required_for_turn:
+            return False
+        if self._delegate_delivery_started():
+            return False
+        # BUG-051: the bridge line is the one sanctioned response inside the
+        # withheld window — its (instruction-bounded) output must be audible,
+        # or the dead air it exists to cover would swallow it too.
+        state = self._delegate_turns.get(self._turn_id)
+        return not (state is not None and state.bridge_delivery_started)
 
     def _must_withhold_provider_output(self) -> bool:
         """Drop untrusted output during delegation and after barge-in."""
@@ -1900,6 +1954,120 @@ class RealtimeVoiceSession:
             name=f"rt-deterministic-delegate-{self.session_id}",
         )
         self._track_delegate_task(turn_id, task)
+        previous_bridge = self._delegate_bridge_task
+        if previous_bridge is not None and not previous_bridge.done():
+            previous_bridge.cancel()
+        self._delegate_bridge_task = asyncio.create_task(
+            self._run_delegate_bridge(turn_id, turn_state),
+            name=f"rt-delegate-bridge-{self.session_id}",
+        )
+
+    async def _await_provider_response_boundary(
+        self, turn_state: _DelegateTurnState
+    ) -> None:
+        """Let a speculative native response end (or cut it) before injecting."""
+        if (
+            bool(getattr(self._session, "creates_responses_automatically", False))
+            and not turn_state.pending_tool_calls
+            and not turn_state.provider_boundary_seen
+        ):
+            try:
+                await asyncio.wait_for(
+                    turn_state.provider_ready.wait(),
+                    timeout=_DELEGATE_NATIVE_BOUNDARY_WAIT_S,
+                )
+            except TimeoutError:
+                try:
+                    await self._session.interrupt()
+                except Exception:  # noqa: BLE001, S110 — best-effort boundary
+                    pass
+
+    def _delegate_bridge_must_stand_down(
+        self, turn_id: str, turn_state: _DelegateTurnState
+    ) -> bool:
+        """True when the interim line would be stale, unsafe, or mistimed.
+
+        The bridge exists only for the silent middle of a still-running
+        deterministic action: once the result (or its delivery) exists, once a
+        native function call owns the response lifecycle, or once the user is
+        speaking again, injecting a bridge response could only race or
+        contradict a more authoritative event.
+        """
+        return bool(
+            turn_state.result_complete
+            or turn_state.delivery_started
+            or turn_state.bridge_delivery_started
+            or turn_state.pending_tool_calls
+            or self._ended
+            or self._session is None
+            or self._failed.is_set()
+            or self._user_speech_active
+            or not self._delegate_turn_is_active(turn_id, turn_state)
+        )
+
+    async def _run_delegate_bridge(
+        self,
+        turn_id: str,
+        turn_state: _DelegateTurnState,
+    ) -> None:
+        """Speak one interim line when a delegated action outlasts patience.
+
+        BUG-051: the ack used to arrive only AFTER the full first router model
+        round (~16 s), so the user heard pure dead air and hung up. This bridge
+        is delay-gated (fast actions stay chatter-free), spoken by the live
+        model itself (one voice per call, BUG-049), and content-bounded by the
+        injected instruction — never by a canned phrase pool.
+        """
+        try:
+            try:
+                await asyncio.wait_for(
+                    turn_state.result_ready.wait(),
+                    timeout=_DELEGATE_BRIDGE_DELAY_S,
+                )
+            except TimeoutError:
+                pass
+            else:
+                return  # the result beat the bridge — no interim line needed
+            if self._delegate_bridge_must_stand_down(turn_id, turn_state):
+                return
+            await self._await_provider_response_boundary(turn_state)
+            if self._delegate_bridge_must_stand_down(turn_id, turn_state):
+                return
+            send_text = getattr(self._session, "send_text", None)
+            if not callable(send_text):
+                return
+            turn_state.bridge_delivery_started = True
+            drop_before_bridge = self._drop_provider_output_until_new_response
+            self._drop_provider_output_until_new_response = False
+            try:
+                await send_text(
+                    _delegate_bridge_prompt(
+                        turn_state.user_text,
+                        language=self._language,
+                    )
+                )
+            except Exception:  # noqa: BLE001 — a broken bridge must not hurt the action
+                turn_state.bridge_delivery_started = False
+                self._drop_provider_output_until_new_response = drop_before_bridge
+                log.debug(
+                    "realtime[%s] delegate bridge injection failed",
+                    self.session_id,
+                    exc_info=True,
+                )
+                return
+            log.info(
+                "realtime[%s] delegate bridge: interim line requested while "
+                "the action is still running",
+                self.session_id,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — the bridge is best-effort by design
+            log.debug(
+                "realtime[%s] delegate bridge failed",
+                self.session_id,
+                exc_info=True,
+            )
 
     async def _run_deterministic_delegate(
         self,
@@ -1994,6 +2162,7 @@ class RealtimeVoiceSession:
             )
             result["spoken_reply"] = turn_state.last_reply
         turn_state.result_complete = True
+        turn_state.result_ready.set()
         turn_state.result_success = succeeded
         turn_state.result_payload = result
         if self._turn_id == turn_id:
@@ -2009,21 +2178,7 @@ class RealtimeVoiceSession:
             self._queue_late_delegate_result(turn_state)
             return
 
-        if (
-            bool(getattr(self._session, "creates_responses_automatically", False))
-            and not turn_state.pending_tool_calls
-            and not turn_state.provider_boundary_seen
-        ):
-            try:
-                await asyncio.wait_for(
-                    turn_state.provider_ready.wait(),
-                    timeout=_DELEGATE_NATIVE_BOUNDARY_WAIT_S,
-                )
-            except TimeoutError:
-                try:
-                    await self._session.interrupt()
-                except Exception:  # noqa: BLE001, S110 — best-effort boundary
-                    pass
+        await self._await_provider_response_boundary(turn_state)
 
         if not self._delegate_turn_is_active(turn_id, turn_state):
             self._queue_late_delegate_result(turn_state)
@@ -2140,6 +2295,7 @@ class RealtimeVoiceSession:
             )
             result["spoken_reply"] = turn_state.last_reply
         turn_state.result_complete = True
+        turn_state.result_ready.set()
         turn_state.result_success = succeeded
         turn_state.result_payload = result
         if self._turn_id == turn_id:
@@ -2351,6 +2507,12 @@ class RealtimeVoiceSession:
                 task.cancel()
         self._delegate_tasks.clear()
         self._delegate_tasks_by_turn.clear()
+        if (
+            self._delegate_bridge_task is not None
+            and not self._delegate_bridge_task.done()
+        ):
+            self._delegate_bridge_task.cancel()
+        self._delegate_bridge_task = None
         if (
             self._late_delegate_flush_task is not None
             and not self._late_delegate_flush_task.done()
