@@ -3661,3 +3661,50 @@ works, POSIX path pinned.
 own input is worse than a failing tool: the model gets no error signal and
 loops. When wrapping OS process creation, verify on EVERY platform that a
 quoted argument arrives as an argument, not as a literal.
+
+## BUG-051: Realtime interim ack speaks only after the router has already decided (HIGH, 2026-07-13, OPEN)
+
+**Symptom.** Realtime session 18:36 ("Wer ist aktueller Export-Weltmeister?"): <!-- i18n-allow: quoted German user utterance under analysis -->
+the user hears NOTHING for the whole wait and hangs up 17.8 s after finishing
+the question. The saved transcript shows an interim line ("Ich durchsuche
+gerade die aktuellen Daten …") — but its AUDIO only played ~2.7 s AFTER the <!-- i18n-allow: quoted German interim ack under analysis -->
+hang-up, via classic TTS into an ended session; live there was only dead air.
+A final answer never existed: the web search started ~1 s before the hang-up.
+
+**Timeline** (delegate dispatch 18:37:00.5 = t+0, `data/jarvis_desktop.log`):
+
+- t+0.0 — deterministic delegate dispatches the router-brain turn (OpenRouter).
+- t+3.1 — the realtime model tries to speak; correctly deferred (pending-action
+  honesty guard — it must not invent an outcome).
+- t+10.3 — OpenRouter response HEADERS arrive: ~10 s TTFB for the router hop.
+- t+15.9 — first model round fully streamed → tool calls visible →
+  `ack_emitter` fires → the readback LLM call starts.
+- t+16.6 — interim-ack TEXT ready (readback ~0.7 s); announcement published;
+  web search actually starts (Mojeek + DuckDuckGo).
+- t+17.8 — user hangs up (hotkey).
+- t+20.5 — the ack plays via classic TTS, after the session already ended
+  (consistent with the BUG-049 busy-gate: busy live call → no classic voice;
+  session gone → classic TTS speaks the parked line).
+
+**Root cause.** The interim ack is structurally serialized BEHIND the very
+decision it is meant to cover. `ToolUseLoop.run` awaits `ack_emitter` only on
+"the first iteration that has tool calls scheduled" — i.e. after the FULL
+first router model round has streamed to completion (~15.8 s here,
+`jarvis/brain/tool_use_loop.py`). The ack text is then ANOTHER LLM call
+(`ReadbackComposer.compose`, `jarvis/voice/contextual_readback.py`).
+Meanwhile the pending-action guard correctly mutes the realtime model, so
+nothing bridges the silence: three stacked latencies, and their sum is
+user-audible dead air.
+
+**Fix.** OPEN — direction: a dispatch-time ack. Fire a readback at
+`REALTIME_DELEGATE_STARTED` (t+0) with a tight `latency_budget_ms` and the
+canned fallback, so the bridge line lands within ~1–2 s worst case; the
+existing post-round ack (which knows the tool name) can then be dropped or
+demoted to a progress note. Delivery must go through the DELEGATE path into
+the live model (provider announcement/injection) — the classic announcement
+path intentionally drops preambles while the live call is busy (BUG-049).
+Secondary lever: the ~10 s OpenRouter TTFB on the router hop itself.
+
+**Class rule.** An interim ack that waits for the completion of the decision
+it is meant to cover is not an ack. The bridge over dead air needs a latency
+budget bounded by user patience (~2–3 s), independent of any model round.
