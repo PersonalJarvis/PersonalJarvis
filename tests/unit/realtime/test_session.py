@@ -1285,11 +1285,19 @@ async def test_delegate_mode_declares_single_action_function():
         "Who is my best friend?",
         "Was weißt du über mich?",  # i18n-allow: German speech-input fixture
         "Which MCPs and CLIs are installed?",
+        "What is in my Gmail inbox?",
+        "Read the SAP customer record.",
+        "Which pull requests are open today?",
+        "What did I have open on my computer today?",
+        "Use the morning routine skill.",
+        "Call Anna.",
+        "Click Save in the browser.",
         "¿Qué herramientas están conectadas?",  # i18n-allow: Spanish speech-input fixture
         "Write that to the wiki.",
         "Write the last transcript to the wiki.",
-        "Kannst du bitte mein Wiki-System eintragen, dass ich morgen nach "  # i18n-allow: German speech-input fixture
-        "San Francisco reisen will?",  # i18n-allow: German speech-input fixture
+        "Kannst du bitte mein Wiki-System eintragen, "  # i18n-allow: German speech-input fixture
+        "dass ich morgen nach San Francisco "  # i18n-allow: German speech-input fixture
+        "reisen will?",  # i18n-allow: German speech-input fixture
     ],
 )
 async def test_local_evidence_turns_run_deterministic_jarvis_action(utterance):
@@ -1313,12 +1321,21 @@ async def test_local_evidence_turns_run_deterministic_jarvis_action(utterance):
 
 
 @pytest.mark.asyncio
-async def test_general_knowledge_turn_keeps_native_realtime_answering():
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "What is the capital of France?",
+        "What is SAP?",
+        "How do I open a file in Python?",
+        "I sent you an email yesterday.",
+    ],
+)
+async def test_general_knowledge_turn_keeps_native_realtime_answering(utterance):
     provider = FakeProvider(
         [
             RealtimeEvent(
                 type="input_transcript",
-                text="What is the capital of France?",
+                text=utterance,
                 is_final=True,
             )
         ]
@@ -1433,7 +1450,14 @@ async def test_multi_final_transcript_waits_for_provider_turn_boundary():
 @pytest.mark.asyncio
 async def test_barge_in_detaches_late_delegate_result_from_new_turn():
     gate = asyncio.Event()
-    brain = FakeBrain(replies=("Old Wiki action completed.",), gate=gate)
+    dispatch_started = asyncio.Event()
+
+    class _SignallingBrain(FakeBrain):
+        async def generate(self, text, **kwargs):
+            dispatch_started.set()
+            return await super().generate(text, **kwargs)
+
+    brain = _SignallingBrain(replies=("Old Wiki action completed.",), gate=gate)
 
     class _BargeSession(FakeSession):
         async def receive(self):
@@ -1442,8 +1466,7 @@ async def test_barge_in_detaches_late_delegate_result_from_new_turn():
                 text="Write this to my wiki.",
                 is_final=True,
             )
-            while not brain.calls:
-                await asyncio.sleep(0.005)
+            await dispatch_started.wait()
             yield RealtimeEvent(type="speech_started")
             yield RealtimeEvent(
                 type="input_transcript",
@@ -1752,7 +1775,7 @@ async def test_direct_tool_turn_keeps_the_session_response_event():
 
 
 @pytest.mark.asyncio
-async def test_multiple_delegate_calls_publish_one_response_for_the_turn():
+async def test_multiple_delegate_calls_coalesce_to_one_brain_turn():
     bus = FakeBus()
     brain = FakeBrain(replies=("First result.", "Second result."), bus=bus)
     provider = ToolResultGatedProvider(
@@ -1784,9 +1807,12 @@ async def test_multiple_delegate_calls_publish_one_response_for_the_turn():
 
     responses = [event for event in bus.events if isinstance(event, ResponseGenerated)]
     assert [event.text for event in responses] == ["Both are done."]
-    assert len(brain.calls) == 2
+    assert len(brain.calls) == 1
     assert all(call[1]["publish_response"] is False for call in brain.calls)
     assert len(provider.session.tool_results) == 2
+    assert {
+        result[2]["spoken_reply"] for result in provider.session.tool_results
+    } == {"First result."}
     await sess.end(reason="test")
 
 
@@ -2110,8 +2136,7 @@ async def test_delegate_brain_exception_sends_safe_failure():
 
 @pytest.mark.asyncio
 async def test_delegate_degrades_kwargs_but_keeps_voice_confirm():
-    """An older brain without the prefer_tool_model kwarg must still get
-    allow_voice_confirm=True via the degrade step (exactly one real call)."""
+    """An older Brain receives only its supported confirmation keyword."""
 
     class LegacyBrain:
         def __init__(self):
@@ -2144,4 +2169,44 @@ async def test_delegate_degrades_kwargs_but_keeps_voice_confirm():
 
     assert brain.calls == [("open it", True)]
     assert provider.session.tool_results[0][2]["spoken_reply"] == "done legacy"
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_delegate_does_not_retry_an_internal_type_error():
+    """A TypeError after dispatch may follow a side effect and is terminal."""
+
+    class TypeErrorBrain:
+        def __init__(self):
+            self.calls = 0
+
+        async def generate(self, text, **kwargs):
+            del text, kwargs
+            self.calls += 1
+            raise TypeError("simulated internal failure after dispatch")
+
+        async def __call__(self, text):
+            del text
+            raise AssertionError("fallback call must not retry the turn")
+
+    brain = TypeErrorBrain()
+    provider = FakeProvider(
+        [
+            RealtimeEvent(type="input_transcript", text="open it", is_final=True),
+            RealtimeEvent(
+                type="tool_call",
+                call_id="type-error-once",
+                tool_name="jarvis_action",
+                tool_args={"request": "open it"},
+            ),
+        ]
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.02)
+
+    assert brain.calls == 1
+    assert provider.session.tool_results[0][2]["success"] is False
     await sess.end(reason="test")
