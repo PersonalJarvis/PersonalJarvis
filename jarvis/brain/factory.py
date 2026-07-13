@@ -37,11 +37,13 @@ BrainCallback = Callable[[str], Awaitable[str]]
 # REMOVED 2026-06-28 — ``dispatch-to-harness`` is intentionally NOT a
 # LLM-visible router tool. Its raw ``harness`` parameter let the brain request
 # a sub-agent vehicle by NAME (``harness="openclaw"``), but OpenClaw is not a
-# registered harness (Welle-4 removal, ~92% hang; pyproject.toml registers only
-# open-interpreter / mcp-remote / python-script / screenshot). A "start a
+# registered harness (Wave-4 removal, ~92% hang). The operational harness
+# inventory now contains only python-script and the capability-gated screenshot
+# adapter. A "start a
 # subagent" turn then dispatched to a phantom harness and surfaced the raw
-# "Harness 'openclaw' nicht verfügbar" KeyError to voice. Heavy sub-agent work  # i18n-allow: forensic quote of the actual historical German KeyError text
-# is ``spawn-worker`` (Mission-Manager → ClaudeDirectWorker); live desktop work
+# "Harness 'openclaw' nicht verfügbar" KeyError to voice.  # i18n-allow
+# Heavy Jarvis-Agent work is ``spawn-worker`` (Mission Manager → worker);
+# live desktop work
 # is ``computer-use``. The tool class itself still exists for the INTERNAL,
 # non-LLM local-action fast path (see ``_load_local_action_tools``, called
 # programmatically with harness="screenshot"); it is just not router-selectable.
@@ -152,7 +154,8 @@ ROUTER_TOOLS = frozenset({
     # any GUI). The router previously had no honest desktop path — spawn-worker
     # runs in an isolated worktree (cannot touch the desktop) and the
     # dispatch-to-harness indirection was never described as desktop control, so
-    # the model refused or hallucinated a tool for the German "öffne ein Terminal"  # i18n-allow: quoted German input example
+    # the model refused or hallucinated a tool for the German input
+    # "öffne ein Terminal".  # i18n-allow
     # ("open a terminal"). This tool delegates to the in-process
     # computer-use harness; it is a direct
     # safe-gated action (per-action risk gating inside the loop, ADR-0008),
@@ -557,7 +560,8 @@ def _load_local_action_tools(
             manager=harness_manager,
             max_output_chars=config.harness.max_output_chars,
         ),
-        # ADR-0016 L2: voice-driven orb recovery ("Orb zurück" /  # i18n-allow: quoted German voice-trigger phrase
+        # ADR-0016 L2: voice-driven orb recovery
+        # ("Orb zurück" /  # i18n-allow
         # "wo bist du" / "reset orb"). Publishes OrbResetRequested
         # on the bus; the orb-side bridge handles the Tk-thread dispatch.
         "reset_orb_position": ResetOrbPositionTool(bus=bus),
@@ -634,8 +638,8 @@ _KONTROLLIERER_REF: list[Any] = []
 # Sentinel that distinguishes "bootstrap not yet attempted" (default,
 # transient) from "bootstrap attempted and crashed" (permanent for this
 # process). spawn_worker checks this so the user gets an honest
-# "OpenClaw konnte nicht initialisiert werden" instead of the misleading  # i18n-allow: quoted German runtime voice-output phrase
-# "noch nicht bereit, bitte einen Moment warten" the in-progress path  # i18n-allow: quoted German runtime voice-output phrase
+# "OpenClaw konnte nicht initialisiert werden" instead of the misleading  # i18n-allow
+# "noch nicht bereit, bitte einen Moment warten" returned during boot.  # i18n-allow
 # returns when both the manager and kontrollierer singletons are None
 # but the server is still booting.
 _WORKER_BOOTSTRAP_FAILED: list[bool] = [False]
@@ -1073,8 +1077,8 @@ def _phase2_full_brain(
                 "read-visible-ui-state",
                 "switch-window",
                 # Primary action tools — without these every plan from the
-                # CU loop fails at execute-time with "Tool '<name>' nicht im  # i18n-allow: forensic quote of the actual German error text
-                # Computer-Use-Tool-Set verdrahtet". The ActionRegistry in
+                # CU loop otherwise fails with the historical error below:
+                # "Tool '<name>' nicht im Computer-Use-Tool-Set verdrahtet".  # i18n-allow
                 # action_registry.py:278-368 maps the corresponding action
                 # names (type_text, click, hotkey, move_mouse, open_app) to
                 # the tool.name attribute on these classes, so they must
@@ -1455,7 +1459,8 @@ def build_default_brain(
     # the single authoritative brain entry point, so EVERY runtime (voice, REST,
     # headless) has a populated registry before the first turn. Without this the
     # registry stays empty and BrainManager._check_unsupported_intent rejects
-    # every action utterance with "Das kann ich noch nicht ...", pre-empting the  # i18n-allow: quoted German runtime voice-output phrase
+    # every action utterance with the phrase below, pre-empting the provider:
+    # "Das kann ich noch nicht ..."  # i18n-allow
     # deterministic force-spawn path (live bug 2026-05-25 — "Kannst du einen
     # Subagent spawnen"). seed_registry is idempotent (re-registration replaces
     # by id), so repeated brain builds AND the dynamic MCP registration in

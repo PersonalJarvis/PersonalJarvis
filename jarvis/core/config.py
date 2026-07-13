@@ -1188,7 +1188,7 @@ class HarnessConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     enabled: list[str] = Field(
-        default_factory=lambda: ["python-script", "mcp-remote"]
+        default_factory=lambda: ["python-script"]
     )
     default_timeout_s: int = 600
     default_risk_tier: RiskTier = "monitor"

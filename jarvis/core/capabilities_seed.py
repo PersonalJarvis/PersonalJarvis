@@ -4,9 +4,7 @@ Covers:
   - The ROUTER_TOOLS from ``jarvis/brain/factory.py``
   - 5 local-action-gate patterns (open_app, type_text, hotkey,
     reset_orb_position, terminal_count)
-  - 4 harness adapters (mcp-remote, computer-use, python-script,
-    open-interpreter) — OpenClaw is intentionally NOT seeded (not a
-    registered harness; see the HARNESS ADAPTERS block below)
+  - 2 operational harness adapters (computer-use and python-script)
 
 Action verbs mirror ``BrainRoutingConfig.spawn_verbs`` so that
 ``CapabilityRegistry.has_action_intent`` and the manager's
@@ -256,24 +254,11 @@ _SEED_CAPABILITIES: list[Capability] = [
         requires_evidence=True,
     ),
     # ------------------------------------------------------------------ #
-    # HARNESS ADAPTERS (4)
+    # OPERATIONAL HARNESS ADAPTERS (2)
     # ------------------------------------------------------------------ #
     # NB: ``harness.openclaw`` deliberately removed (2026-06-28). OpenClaw is
-    # not a registered harness (Welle-4 removal; pyproject.toml registers only
-    # open-interpreter / mcp-remote / python-script / screenshot). Advertising a
-    # phantom harness in the capability surface mis-routed "start a subagent"
-    # turns toward a vehicle that cannot run — heavy work is ``tool.spawn-worker``.
-    Capability(
-        id="harness.mcp-remote",
-        source="harness",
-        verbs=_ACTION_VERBS,
-        objects=(
-            "mcp", "server", "remote", "service", "dienst", "integration",
-        ),
-        description="Generic MCP-remote harness adapter for registered MCP servers.",
-        risk_tier="monitor",
-        requires_evidence=True,
-    ),
+    # not a registered harness. Advertising phantom adapters mis-routes actions
+    # away from ``tool.spawn-worker`` and the live MCP capability broker.
     Capability(
         id="harness.computer-use",
         source="harness",
@@ -300,18 +285,6 @@ _SEED_CAPABILITIES: list[Capability] = [
             "python", "script", "skript", "py", "datei", "file",
         ),
         description="Run a Python script in a sandboxed subprocess.",
-        risk_tier="ask",
-        requires_evidence=True,
-    ),
-    Capability(
-        id="harness.open-interpreter",
-        source="harness",
-        verbs=_ACTION_VERBS,
-        objects=(
-            "interpreter", "open-interpreter", "openinterpreter",
-            "code", "programm",
-        ),
-        description="Open Interpreter harness for multi-language code execution.",
         risk_tier="ask",
         requires_evidence=True,
     ),
@@ -342,7 +315,10 @@ _SEED_CAPABILITIES: list[Capability] = [
             "mail", "email", "e-mail", "nummer", "number", "telefonnummer",
             "telefon", "phone", "adresse", "address",
         ),
-        description="Resolve a saved contact by name/alias to their e-mail, phone and address (read-only).",
+        description=(
+            "Resolve a saved contact by name/alias to their e-mail, phone and "
+            "address (read-only)."
+        ),
         risk_tier="safe",
         requires_evidence=False,
     ),

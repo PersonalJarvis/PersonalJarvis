@@ -10,17 +10,41 @@ Pattern adopted from tests/unit/test_router_vision_config.py (Wave-1 B4).
 from __future__ import annotations
 
 import tomllib
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from jarvis.core.config import (
-    DEFAULT_CONFIG_FILE,
     HarnessConfig,
     JarvisAgentHarnessConfig,
     JarvisAgentNotificationConfig,
     load_config,
 )
+
+_LEGACY_HARNESS_CONFIG = """\
+[harness]
+enabled = ["python-script"]
+
+[harness.openclaw]
+enabled = true
+version = "2026.5.7"
+binary_path = "openclaw"
+time_cap_min = 30
+concurrency = 3
+state_dir_root = "data/openclaw_state"
+
+[harness.openclaw.notification]
+via = "announcement_bus"
+toast = true
+voice_when_active = true
+"""
+
+
+def _write_legacy_harness_config(directory: Path) -> Path:
+    config_path = directory / "jarvis.toml"
+    config_path.write_text(_LEGACY_HARNESS_CONFIG, encoding="utf-8")
+    return config_path
 
 
 # ----------------------------------------------------------------------
@@ -63,6 +87,7 @@ def test_harness_config_openclaw_optional_default_none():
     Jarvis-Agents rename; the TOML alias accepts both section names.
     """
     h = HarnessConfig()
+    assert h.enabled == ["python-script"]
     assert h.jarvis_agent is None
 
 
@@ -83,10 +108,9 @@ def test_jarvis_agent_harness_model_can_be_pinned_explicitly():
 # 2. Live-load from jarvis.toml
 # ----------------------------------------------------------------------
 
-def test_openclaw_section_present_in_jarvis_toml():
-    """Raw-TOML: ``[harness.openclaw]`` exists with planned values."""
-    toml_path = DEFAULT_CONFIG_FILE
-    assert toml_path.exists(), f"jarvis.toml not found at {toml_path}"
+def test_legacy_openclaw_section_is_accepted_from_portable_fixture(tmp_path: Path):
+    """The legacy section remains readable without maintainer-local config."""
+    toml_path = _write_legacy_harness_config(tmp_path)
 
     with toml_path.open("rb") as f:
         data = tomllib.load(f)
@@ -116,15 +140,17 @@ def test_openclaw_section_present_in_jarvis_toml():
     assert "cost_cap_eur" not in sec
 
 
-def test_jarvis_agent_harness_config_unmarshalled_via_load_config():
+def test_jarvis_agent_harness_config_unmarshalled_via_load_config(tmp_path: Path):
     """Pydantic auto-unmarshal lands in the correct field (jarvis_agent).
 
     jarvis.toml still uses the old ``[harness.openclaw]`` section name for
     back-compat; the ``validation_alias`` on HarnessConfig.jarvis_agent
     accepts both names, so this field is populated regardless.
     """
-    cfg = load_config(DEFAULT_CONFIG_FILE)
-    assert cfg.harness.jarvis_agent is not None, "[harness.openclaw] / [harness.jarvis_agent] not parsed"
+    cfg = load_config(_write_legacy_harness_config(tmp_path))
+    assert cfg.harness.jarvis_agent is not None, (
+        "[harness.openclaw] / [harness.jarvis_agent] not parsed"
+    )
 
     oc = cfg.harness.jarvis_agent
     assert isinstance(oc, JarvisAgentHarnessConfig)

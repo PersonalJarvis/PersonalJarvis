@@ -1636,51 +1636,14 @@ async def test_heavy_build_still_can_force_spawn() -> None:
 
 
 def test_router_tools_is_pure_dispatcher_set() -> None:
-    """ROUTER_TOOLS deckt sich mit Mandat-Phase-3 + Phase-7/8/Awareness +
-    Welle-4-OpenClaw-Migration.
+    """ROUTER_TOOLS matches the exact model-visible surface in ADR-0011.
 
-    Mandat-Phase-3 / Master-Plan §22 Z. 1617 (Baseline 2026-04-22):
-      The historical baseline had four tools; multi-spawn is now retired.
-
-    Welle-4-Migration: ``spawn-worker`` umbenannt auf ``spawn-worker``
-    (siehe docs/openclaw-bridge.md §11). Heavy-Worker laeuft als externer
-    Subprocess via Mission-Manager.
-
-    Phase-5-Endstand (ADR-0011, 2026-04-25) hat ``dispatch-to-harness``
-    re-introduziert: Hauptjarvis braucht den direkten Harness-Pfad, weil
-    sonst jeder Screen-Observe-+-Sofort-Dispatch-Use-Case einen Spawn
-    forcieren wuerde (Latenz-Killer).
-
-    Phase 8.4 (Plan §6.4 Quality-Gate-Pipeline, 2026-04-26) hat
-    ``dispatch-with-review`` ergaenzt: Hauptjarvis ruft die Review-Pipeline
-    direkt auf.
-
-    Phase 7.3 (Self-Mod, 2026-04-25) registriert drei zusaetzliche Tools
-    direkt im Loader (NICHT via entry_points, NICHT in dieser Frozenset),
-    die ausschliesslich Hauptjarvis-Tier zugaenglich sind (Plan §AD-2).
-
-    Awareness-Plan §5 fuegt ``awareness-snapshot`` hinzu: synchroner
-    State-Read im Critical-Path, kein Brain-/IO-Roundtrip.
-
-    Awareness-Plan §7 (Phase A3) adds ``awareness-recall``: read-only
-    BM25 search over the recent episode log. Originally planned as a
-    sub-tier tool; Welle 4 removed that tier so it lives here. Still
-    read-only, still safe, still no LLM/IO beyond a single SQLite query.
-
-    Skills-Brain-Integration fuegt ``run-skill`` hinzu: Brain-callable
-    executor for installed user skills. Available to BOTH tiers; D9-
-    recursion-protection is structural (SkillRunner is constructed without
-    a tool_registry that would expose run-skill recursively).
-
-    Phase B5 (recall-tool, 2026-05-12) adds ``wiki-recall``: read-only
-    keyword search over the long-term Obsidian wiki vault. Router-tier
-    only (AP-D9); no LLM call, no network, no mutation. The brain calls
-    this when the user asks "what do we know about X" or references a
-    past project, person, or decision by name.
-
-    Bei jeder weiteren Erweiterung: Begruendung in ADR-0011 (Sektion
-    "Subsequent Phase-7/8 Extensions") nachpflegen + diesen Test +
-    ``test_recursive_tools_only_in_router`` updaten.
+    Heavy work has one delegation action: ``spawn-worker``. The retired
+    ``dispatch-to-harness``, ``multi-spawn``, and ``dispatch-with-review``
+    paths must remain absent. Direct external-system actions are admitted only
+    through capability-gated flat loaders, and no worker receives a supervisor
+    spawn action. Every extension requires an ADR-0011 amendment plus updates
+    to this exact-set guard and ``test_recursive_tools_only_in_router``.
     """
     from jarvis.brain.factory import ROUTER_TOOLS
 

@@ -140,6 +140,20 @@ def check_harness_config(config: Any) -> list[DoctorFinding]:
                               f"harness registry unreadable: {exc}")]
 
     harness_config = getattr(config, "harness", None)
+    configured_enabled = {
+        str(name)
+        for name in (getattr(harness_config, "enabled", ()) or ())
+    }
+    inert_enabled = sorted(configured_enabled - registered)
+    if inert_enabled:
+        findings.append(DoctorFinding(
+            "harness-config", "warn",
+            "configured harnesses are not registered: " + ", ".join(inert_enabled),
+            hint=("Remove the stale names from [harness].enabled. Heavy work "
+                  "uses spawn_worker; MCP integrations expose capability-gated "
+                  "tools instead of harness names."),
+        ))
+
     worker_harness = getattr(harness_config, "jarvis_agent", None)
     if worker_harness is None:
         worker_harness = getattr(harness_config, "openclaw", None)

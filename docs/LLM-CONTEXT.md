@@ -256,7 +256,7 @@ Direct launcher: `python -m jarvis.ui.web.launcher [--headless|--dev|--port N|--
 ```
 L7 UI/UX           Tray, Toasts, Admin-API, Desktop-App (FastAPI+React+pywebview), Orb-Overlay
 L6 Orchestrator    State-Machine, Router, BrainManager, Supervisor, Mission-Manager, Kontrollierer
-L5 Harness-Adapter OpenClaw, Codex, Open Interpreter, Python-Script, MCP-Remote
+L5 Harness-Adapter Capability-gated Computer Use and universal Python Script
 L4 Brain           5 providers (Claude-API, OpenRouter, OpenAI, Gemini, Grok) + Ack-Brain sub-second tier
 L3 Intent/Risk     Classifier, Risk-Tier-Policy, Approval, Rate-Limit-Tracker
 L2 Speech          Wake → VAD (Silero) → STT (faster-whisper / Google / Deepgram) → TTS (Gemini Flash / Grok-Voice / SAPI5)
@@ -299,14 +299,14 @@ User context: **No Anthropic API account** (AP-6). Workers use Claude Sonnet via
 
 Four levels: `RiskTier = Literal["safe", "monitor", "ask", "block"]` (`protocols.py:108`). `RiskTierEvaluator.evaluate()` (`jarvis/safety/risk_tier.py:64-100`) applies **blacklist > whitelist > tool default** — blacklist match raises `ActionBlocked`; whitelist match downgrades to `safe` with `approved_by="whitelist"` (the anti-confirmation-fatigue contract). Glob matching via `fnmatch` on `"<tool_name> <serialized_args>"`. **`ToolExecutor.execute()` is the only authorized call path; AP-3 forbids direct `Tool.execute()`.**
 
-**Router discipline (ADR-0011 amended):** the Router-Brain is a **pure dispatcher**. Tool surface is the `ROUTER_TOOLS` frozenset at `jarvis/brain/factory.py:40-77` — 13 tools: `run-shell`, `screen-snapshot`, `dispatch-to-harness`, `multi-spawn`, `spawn-openclaw`, `dispatch-with-review`, `awareness-snapshot`, `awareness-recall`, `run-skill`, `wiki-recall`, `wiki-page-read`, `wiki-ingest`, plus the Self-Mod trio (`list_mutable_settings`, `get_config_value`, `set_config_value`).
+**Router discipline (ADR-0011 amended):** the Router Brain uses the curated `ROUTER_TOOLS` frozenset in `jarvis/brain/factory.py`. Heavy work has exactly one model-visible delegation action: `spawn-worker`. The legacy `dispatch-to-harness`, `multi-spawn`, and `dispatch-with-review` entry points are not in that set. Flat CLI, MCP, marketplace, and app-command loaders expose only capability-gated actions; the Mission Manager owns worker execution and Critic review.
 
 Force-spawn heuristic in `BrainManager._should_force_openclaw`:
 - Smalltalk allowlist wins → never spawn.
 - Action verb (`lies/baue/installiere/öffne/mach/zeig` + repair words) → spawn. <!-- i18n-allow -->
 - External-system marker (PR/Repo/GitHub/Issue) → spawn.
 
-**The Jarvis-Agent tier was deleted in Welle 4** — only `"router"` remains (`factory.py:119-123` raises on unknown tiers). Resurrecting `SUB_TOOLS` or adding `spawn-openclaw`/`dispatch-with-review`/`run-skill` to any worker set breaks the D9 recursion guard (AP-14).
+**The Jarvis-Agent tier was deleted in Wave 4** — only `"router"` remains. Resurrecting `SUB_TOOLS` or adding any supervisor-spawn action to a worker set breaks the D9 recursion guard (AP-14).
 
 ---
 

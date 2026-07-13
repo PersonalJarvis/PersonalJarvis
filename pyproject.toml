@@ -314,11 +314,9 @@ gemini = "jarvis.plugins.brain.gemini:GeminiBrain"
 codex = "jarvis.plugins.brain.codex:CodexBrain"
 antigravity = "jarvis.plugins.brain.antigravity:AntigravityBrain"
 # xAI Grok removed as a brain provider 2026-06-22 (TTS-only — see grok-voice).
-# Ollama-Provider 2026-04-21 entfernt — User-Entscheidung (reine API-Provider-Chain).
+# Ollama provider removed on 2026-04-21; the runtime uses the API provider chain.
 
 [project.entry-points."jarvis.harness"]
-open-interpreter = "jarvis.plugins.harness.open_interpreter:OpenInterpreterHarness"
-mcp-remote = "jarvis.plugins.harness.mcp_remote:MCPRemoteHarness"
 python-script = "jarvis.plugins.harness.python_script:PythonScriptHarness"
 # Phase 5 — in-process screenshot/click/keyboard computer-use loop (ADR-0008).
 screenshot = "jarvis.plugins.harness.computer_use:ComputerUseHarness"
@@ -328,7 +326,7 @@ screenshot = "jarvis.plugins.harness.computer_use:ComputerUseHarness"
 # Web channel is the first; Telegram/WhatsApp follow in Phase 8+.
 web = "jarvis.channels.web:WebChannel"
 # === F-FRIENDS [F1] · feature/friends-section · ruben-2026-04-30 ===
-# Phase F1 — bidirektionaler Telegram-Bot-Channel (long-polling).
+# Phase F1 — bidirectional Telegram bot channel (long polling).
 # Token via Credential Manager (Key "telegram_bot_token" / ENV TELEGRAM_BOT_TOKEN).
 telegram = "jarvis.channels.telegram:TelegramChannel"
 # Bidirectional Discord bot channel (gateway). Mirrors Telegram: a DM/guild
@@ -385,17 +383,18 @@ dispatch-to-harness = "jarvis.plugins.tool.dispatch_to_harness:DispatchToHarness
 # ROUTER_TOOLS); a direct safe-gated action, never a spawn (AP-5/AP-14).
 computer-use = "jarvis.plugins.tool.computer_use_tool:ComputerUseTool"
 whoami = "jarvis.plugins.tool.whoami:WhoAmITool"
-# Phase 5 — privilegierte Ops via Named-Pipe-IPC an den UAC-Helper (ADR-0001).
+# Phase 5 — privileged operations through named-pipe IPC to the UAC helper.
 dispatch-to-admin = "jarvis.plugins.tool.dispatch_to_admin:DispatchToAdminTool"
-# Phase 5.5 — Tiered Routing (Router-Brain -> heavy worker + parallele Harnesses).
+# Phase 5.5 — tiered routing (Router Brain -> heavy worker and parallel harnesses).
 # spawn-worker dispatches a Mission-Manager-backed direct Opus worker
 # (ClaudeDirectWorker). Legacy names: spawn-sub-jarvis -> spawn-openclaw -> spawn-worker.
 multi-spawn = "jarvis.plugins.tool.multi_spawn:MultiSpawnTool"
 spawn-worker = "jarvis.plugins.tool.spawn_worker:SpawnWorkerTool"
-# Phase 8.4 — Quality-Gate-Pipeline-Trigger (siehe Plan §6.4, §AD-6).
+# Legacy Phase-8.4 review entry point. It is intentionally not model-visible;
+# production review belongs to the Mission Manager lifecycle (ADR-0011).
 dispatch-with-review = "jarvis.plugins.tool.dispatch_with_review:DispatchWithReviewTool"
-# CLI-Integration — Virtual-Loader: expandiert zu N CliTool-Instanzen beim
-# Discovery (eins pro verbundener CLI: cli_gcloud, cli_gh, cli_supabase, ...).
+# CLI integration: the virtual loader expands to one CliTool instance per
+# connected CLI (cli_gcloud, cli_gh, cli_supabase, and so on).
 # Router-tier only (in ROUTER_TOOLS); the loader resolves the shared,
 # bus-connected CliToolRegistry so the brain and the safety layer see the
 # same connected CLIs. See ADR-0011 amendment "CLI-Integration".

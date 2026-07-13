@@ -14,18 +14,19 @@ truth; verify against it rather than trusting any table below.
 ## Project
 
 **Personal Jarvis** — voice-driven meta-orchestrator. Not a classical voice
-assistant: the core pattern is **Supervisor-Agent** that dispatches work to
-interchangeable harnesses (the agent-harness subprocess, Codex CLI, Open
-Interpreter, MCP servers). The voice layer is just the interface.
+assistant: the core pattern is a **Supervisor Agent** that routes heavy work
+through the Mission Manager to capability-selected Jarvis-Agent workers. MCP
+servers and marketplace integrations contribute gated tools to that same path;
+they are not alternate worker harnesses. The voice layer is just the interface.
 
 **Master plan:** `~/.claude/plans/also-er-muss-auch-lexical-pond.md` — binding for  <!-- i18n-allow -->
 all design decisions. On conflict between plan and code, the plan wins; code
 deviations must be documented back in the plan.
 
 **Binding architecture contracts:**
-- The agent-harness bridge contract (AD-1..AD-21, AP-OC1..AP-OC14). Welle 1
-  (spike) + Welle 4 (sub-tier deletion) are done; Welle 2 (live bridge in default
-  voice path) + Welle 3 (full live mode) remain.
+- Realtime, chat, and voice delegate heavy work through the same
+  `spawn-worker` → Mission Manager → worker → Critic/Kontrollierer lifecycle.
+  The retired OpenClaw sub-tier and phantom harness paths must not be restored.
 - [`docs/anti-drift-three-layer.md`](anti-drift-three-layer.md) — five-layer enum
   pattern (Python ↔ SQL ↔ Pydantic ↔ TS ↔ UI). Mandatory for any string crossing
   module boundaries.
@@ -46,7 +47,7 @@ subprocess flicker, audio host-API) are catalogued there.
 | **7 — Self-Mod (foundation + writer + tools)** | ✅ | `jarvis/core/self_mod/` (audit, errors, pending, registry, schema, writer). Three router-tier tools: `list_mutable_settings`, `get_config_value`, `set_config_value`. ADR + writeup in `docs/self_mod.md`. **7.5 `spawn-skill-author` IS now registered** (`pyproject.toml` → `jarvis.brain.tools.skill_authoring:SpawnSkillAuthorTool`, router-tier, `ask`; spawns the `SkillAuthoringRunner`). Generated skills land as `state="draft"` and are never auto-activated (AP-15). |
 | **Awareness A0–A5** | ✅ | `jarvis/awareness/` (state, story, salience, verdichter, working_set, episode, recall_store, watchers, probes). Router-tier tools `awareness-snapshot` (A1) + `awareness-recall` (A3). ADR-0009/0010/0012. Hard rule: **never on the voice critical path**. |
 | **Wiki B0/B1/B2/B3/B5/B7/B8/B9** | ✅ | `jarvis/memory/wiki/` (curator, atomic_writer, page_repository, integration, session_rollup, voice_bridge, telemetry, scheduler). Three router-tier tools: `wiki-recall`, `wiki-page-read`, `wiki-ingest`. ADR-0013/0014/0015. B2 = `docs/obsidian-setup.md` + B9-Wizard. B3 = `WikiView.tsx` + 6-endpoint `wiki_routes.py` + `wiki_ws.py` live-reload. **B4 soft-disabled** 2026-05-17 via `[memory.legacy_curator] enabled = false` — legacy Curator package + `data/workspace/` snapshot stay on disk; Hart-Cut (vault migration + reader refactor + package delete) remains open. **B6 not started**. |
-| **Agent-harness bridge** | ⚙ Welle 1+4 done | `jarvis/plugins/harness/`, `jarvis/missions/` harness package. `enabled=true`. Welle 2 (live bridge as default) + Welle 3 (live-mode wrap) open. |
+| **Realtime → Jarvis-Agents bridge** | ✅ canonical path live | Realtime emits the provider-neutral `jarvis_action`; `BrainManager` delegates heavy work through `spawn-worker`; `jarvis/missions/` owns worker selection, isolation, retries, Critic review, and Kontrollierer sign-off. MCP and marketplace tools are granted by capability, not exposed as worker harness names. |
 | **Ack-Brain (pre-thinking)** | ✅ | `jarvis/brain/ack_brain/` — sub-second butler ACK before the deep brain replies. Gemini Flash Lite primary. UI preamble bubble. Suppress-if-fast gate at 2000ms (`[ack_brain].suppress_if_brain_faster_than_ms`). ADR-0014 (flash-brain). |
 | **CLI catalog + terminal view** | ✅ | `jarvis/clis/` (catalog, installer, loader, prober, registry, risk_integration, usage_log) + `jarvis/terminal/` (cross-platform PTY via `terminal.backend.make_pty_backend` — ConPTY/`pywinpty` on Windows, `ptyprocess` on POSIX). Router tool `cli-tools` (virtual loader → one `cli_<name>` tool per connected CLI). UI views: `ClisView`, `TerminalView`. **`spawn-cli-worker` was REMOVED 2026-05-24** (dead entry point; heavy multi-step CLI work goes through `spawn-worker`, single-step through the `cli_<name>` tools — never re-add a CLI spawn tool, it is a D9 recursion vector, AP-5/AP-14). |
 | **Board / Profile ("Knows-you" dashboard)** | ✅ | `jarvis/board/` (aggregator, store, achievements, evaluator, bio prompts, scheduler, `schema.sql`) → `data/board/personal.db`. Parses FlightRecorder JSONL into daily stats / personal records / 10 achievements + an anti-cliché AI-bio. Routes `board_routes.py` (`/api/board/*`) + `profile_routes.py`; views `BoardView.tsx`, `ProfileView.tsx`, `frontend/src/views/profile/`. Deterministic profile writes via the `update-profile` tool. Separate standalone service stub in `board-backend/` (FastAPI + Docker). CHANGELOG `v1.0.0-board`. |
@@ -73,7 +74,7 @@ Still unrowed (verify with `ls jarvis/ui/web/*routes*.py` + `git log`): `chats`/
 ```
 L7 UI/UX           Tray, Toasts, Admin-API, Desktop-App (FastAPI+React+pywebview), Orb-Overlay
 L6 Orchestrator    State-Machine, Router, BrainManager, Supervisor, Mission-Manager
-L5 Harness-Adapter Agent-harness, Codex, Open Interpreter, Python-Script, MCP-Remote
+L5 Harness-Adapter Capability-gated Computer Use and universal Python Script
 L4 Brain           5 providers (Claude-API, OpenRouter, OpenAI, Gemini, NVIDIA) + Ack-Brain sub-second tier
 L3 Intent/Risk     Classifier, Risk-Tier-Policy, Approval, Rate-Limit-Tracker
 L2 Speech          Wake → VAD (Silero) → STT (faster-whisper / Google) → TTS (Gemini Flash / SAPI5)

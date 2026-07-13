@@ -79,7 +79,7 @@ fallback, or split the work.
 ```
 L7 UI/UX           Tray, Toasts, Admin-API, Desktop-App (FastAPI+React+pywebview), Orb-Overlay
 L6 Orchestrator    State-Machine, Router, BrainManager, Supervisor, Mission-Manager
-L5 Harness-Adapter OpenClaw, Codex, Open Interpreter, Python-Script, MCP-Remote
+L5 Harness-Adapter Capability-gated Computer Use and universal Python Script
 L4 Brain           5 providers (Claude-API, OpenRouter, OpenAI, Gemini, Grok) + Ack-Brain sub-second tier
 L3 Intent/Risk     Classifier, Risk-Tier-Policy, Approval, Rate-Limit-Tracker
 L2 Speech          Wake -> VAD (Silero) -> STT (faster-whisper / Google) -> TTS (Gemini Flash / Grok-Voice / SAPI5)
@@ -165,7 +165,7 @@ checks. Bypassing it skips all three.
 
 The router-tier brain is a **pure dispatcher**, not an actor. Its entire tool surface is the
 `ROUTER_TOOLS` frozenset. Anything outside that set is delegated to Jarvis-Agents via
-`spawn_openclaw`.
+`spawn-worker`.
 
 A force-spawn heuristic decides when to dispatch heavy work:
 
@@ -173,9 +173,9 @@ A force-spawn heuristic decides when to dispatch heavy work:
 - **Action verb** (read/build/install/open/do/show + repair words) → spawn.
 - **External-system marker** (PR / repo / GitHub / issue) → spawn.
 
-**The Jarvis-Agent tier was deleted (Welle 4).** Only `"router"` remains. Re-introducing a
-`SUB_TOOLS` set, or putting any spawn tool (`spawn-openclaw`, `dispatch-with-review`,
-`run-skill`) into a *worker* tool set, breaks the recursion guard — a worker would be able to
+**The Jarvis-Agent tier was deleted (Wave 4).** Only `"router"` remains. Re-introducing a
+`SUB_TOOLS` set, or putting any supervisor-spawn action into a *worker* tool set,
+breaks the recursion guard — a worker would be able to
 spawn its own supervisor, causing an infinite loop. This is anti-pattern AP-5/AP-14.
 
 ---

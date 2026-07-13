@@ -904,3 +904,37 @@ it.
 - Preserve the Mission Manager Critic-loop smoke test as the review guarantee.
 - Remove the legacy review implementation once non-router compatibility callers
   have migrated.
+
+## Amendment 2026-07-13 - advertise only operational harness adapters
+
+### Context
+
+The package still registered `mcp-remote` and `open-interpreter` as harnesses.
+The former implemented an obsolete MCP client API and bootstrapped with an empty
+registry; the latter was an explicit stub that always returned failure. Their
+presence in entry-point discovery and the default `[harness].enabled` list made
+unavailable functionality look ready on a fresh installation.
+
+### Decision
+
+The operational harness inventory contains only `python-script` and the
+capability-gated `screenshot` Computer Use adapter. MCP servers contribute flat,
+safety-gated tools through the live MCP loader; they are not worker harnesses.
+Any mission-scoped worker grants must reuse that tool surface rather than revive
+the obsolete harness adapter. Heavy work continues through `spawn-worker` and
+the Mission Manager. Stale configured harness names are reported by the doctor.
+
+### Consequences
+
+- Discovery no longer claims that a stub or obsolete protocol adapter can run.
+- The universal Python harness remains available on a headless base install.
+- Computer Use remains registered but reports unhealthy until its desktop
+  context and dependencies are ready.
+- MCP actions retain the normal ToolExecutor policy instead of bypassing it
+  through the obsolete harness adapter.
+
+### Regression guards
+
+- `tests/contract/test_harness_protocol.py`
+- `tests/unit/diagnostics/test_doctor_diagnostics.py`
+- `tests/unit/core/test_capabilities.py`
