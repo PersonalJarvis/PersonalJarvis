@@ -185,10 +185,22 @@ def test_has_elevation_linux_needs_pkexec_or_sudo(monkeypatch):
 # --- has_pty / has_overlay -------------------------------------------------
 
 
-def test_has_pty_posix_accepts_stdlib_pty(monkeypatch):
-    _force_platform(monkeypatch, "linux")
-    monkeypatch.setattr(probes, "_has_module", lambda n: n == "pty")
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_has_pty_posix_requires_implemented_ptyprocess_backend(
+    monkeypatch, platform
+):
+    _force_platform(monkeypatch, platform)
+    monkeypatch.setattr(probes, "_has_module", lambda n: n == "ptyprocess")
     assert probes.has_pty() is True
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_has_pty_posix_rejects_unimplemented_stdlib_pty_fallback(
+    monkeypatch, platform
+):
+    _force_platform(monkeypatch, platform)
+    monkeypatch.setattr(probes, "_has_module", lambda n: n == "pty")
+    assert probes.has_pty() is False
 
 
 def test_has_overlay_requires_display_and_tkinter(monkeypatch):

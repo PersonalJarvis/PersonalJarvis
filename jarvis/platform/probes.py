@@ -54,8 +54,10 @@ def has_pty() -> bool:
     """Is a pseudo-terminal backend importable (Wave 1.1)?"""
     if detect_platform() == "win32":
         return _has_module("winpty")
-    # POSIX: ptyprocess (added by Wave 1.1) or the stdlib pty fallback.
-    return _has_module("ptyprocess") or _has_module("pty")
+    # UnixPtyBackend has one implemented POSIX backend: ptyprocess.  The stdlib
+    # ``pty`` module alone is not sufficient and must not produce a false
+    # capability claim that later fails at ``UnixPtyBackend.spawn``.
+    return _has_module("ptyprocess")
 
 
 def ax_permission_granted() -> bool | None:

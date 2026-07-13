@@ -10,6 +10,7 @@
 #
 #   docker build -t personal-jarvis .
 #   docker run --rm -p 127.0.0.1:8000:8000 \
+#       -v jarvis-data:/app/data \
 #       -e JARVIS_CONTROL_API_KEY=jctl_change_me \
 #       -e ANTHROPIC_API_KEY=sk-ant-... \
 #       personal-jarvis
@@ -70,8 +71,12 @@ EXPOSE 8000
 # JARVIS_BIND_HOST=0.0.0.0 makes the headless listener reachable through the
 # published port (the control key is the security boundary — see compose).
 # JARVIS_NONINTERACTIVE skips the first-run wizard; keys come from the env.
+# Config and runtime data both live in the sole writable, persisted directory;
+# the application tree remains read-only to the non-root runtime user.
 ENV JARVIS_BIND_HOST=0.0.0.0 \
-    JARVIS_NONINTERACTIVE=1
+    JARVIS_NONINTERACTIVE=1 \
+    JARVIS_CONFIG=/app/data/jarvis.toml \
+    JARVIS_DATA_DIR=/app/data
 
 # Generous start-period: first boot builds the brain in the background.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=6 \
