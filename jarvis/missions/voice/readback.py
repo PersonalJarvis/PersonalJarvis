@@ -198,6 +198,11 @@ FAILURE_REASON_PHRASES: Final[dict[str, dict[str, str]]] = {
             "Jarvis-Agents brauchen einen Git-Checkout, bitte über den "  # i18n-allow
             "Git-Installer installieren, nicht als ZIP."  # i18n-allow
         ),
+        "source_checkout_unavailable": (
+            "Diese Jarvis-Agent-Aufgabe braucht den "  # i18n-allow: German TTS
+            "Quellcode-Checkout, der in dieser "  # i18n-allow: German TTS
+            "Installation nicht verfügbar ist."  # i18n-allow: German TTS
+        ),
         # error_class keys (looked up BEFORE the reason key; see
         # failure_phrase_key). Same table so announcer + direct-TTS listener
         # cannot drift (2026-05-27 finding #7).
@@ -227,20 +232,29 @@ FAILURE_REASON_PHRASES: Final[dict[str, dict[str, str]]] = {
             "Jarvis-Agents require a git checkout (install via the "
             "git-based installer, not a ZIP download)."
         ),
+        "source_checkout_unavailable": (
+            "This Jarvis-Agent task requires the source checkout, which is "
+            "not available in this installation."
+        ),
         "provider_auth": "The AI provider sign-in is invalid or expired.",
         "provider_quota": "The AI provider's quota is exhausted.",
         "provider_unreachable": "The AI provider is currently unreachable.",
         "worker_timeout": "The worker hit its time limit.",
     },
     # Spanish is an equal supported product-surface language (CLAUDE.md §1).
-    # Only the two git-setup reason keys added with this fix carry ``es`` for
-    # now — the rest of the table is de/en pending a broader translation pass;
-    # a missing key here falls back via ``.get(language, {})``.
+    # Only the portable workspace-setup reason keys carry ``es`` for now — the
+    # rest of the table is de/en pending a broader translation pass; a missing
+    # key here falls back via ``.get(language, {})``.
     "es": {
         "git_missing": "Jarvis-Agents necesitan que git esté instalado y en el PATH.",  # i18n-allow: Spanish TTS product-surface phrase
         "git_not_a_repository": (
             "Jarvis-Agents necesitan una copia de git (instala con el "  # i18n-allow: Spanish TTS product-surface phrase
             "instalador de git, no con una descarga ZIP)."  # i18n-allow: Spanish TTS product-surface phrase
+        ),
+        "source_checkout_unavailable": (
+            "Esta tarea de Jarvis-Agent necesita el "  # i18n-allow: Spanish TTS
+            "repositorio del código fuente, que no está "  # i18n-allow: Spanish TTS
+            "disponible en esta instalación."  # i18n-allow: Spanish TTS
         ),
     },
 }

@@ -16,10 +16,11 @@ from __future__ import annotations
 
 from .env import build_worker_env
 from .job_object import WindowsJobObject
-from .worktree import WorktreeManager
+from .worktree import SourceCheckoutUnavailableError, WorktreeManager
 
 __all__ = [
     "WindowsJobObject",
+    "SourceCheckoutUnavailableError",
     "WorktreeManager",
     "build_worker_env",
 ]

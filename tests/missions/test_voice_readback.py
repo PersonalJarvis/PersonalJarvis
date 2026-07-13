@@ -1,14 +1,11 @@
 """Tests for MissionReadback — DE templates + name-neutral tone + 280-cap."""
 from __future__ import annotations
 
-import pytest
-
 from jarvis.missions.voice.readback import (
     MAX_VOICE_CHARS,
-    MissionReadback,
     READBACK_TEMPLATES,
+    MissionReadback,
 )
-
 
 # --- Tone-Anchor: name-neutral mission-status templates ---
 # The mission-status templates carry NO hardcoded owner name so a fresh
@@ -124,10 +121,28 @@ def test_render_failed_maps_git_not_a_repository_to_zip_install_phrase() -> None
     assert "zip" in out_en.lower(), f"expected the ZIP-install hint, got {out_en!r}"
 
 
+def test_render_failed_maps_missing_source_checkout_to_capability_phrase() -> None:
+    """A copied/container install is healthy for standalone missions, so its
+    source-task failure must describe the missing capability rather than tell
+    the user that the installation itself is broken."""
+    rb = MissionReadback()
+    reason = "source_checkout_unavailable"
+
+    out_de = rb.render_failed(reason=reason, language="de")
+    assert reason not in out_de
+    assert "Quellcode" in out_de, f"expected source capability cause, got {out_de!r}"
+
+    out_en = rb.render_failed(reason=reason, language="en")
+    assert reason not in out_en
+    assert "source checkout" in out_en.lower(), (
+        f"expected source capability cause, got {out_en!r}"
+    )
+
+
 def test_git_setup_reasons_carry_spanish() -> None:
     """CLAUDE.md §1: Spanish is an equal supported product-surface language,
-    so the two new git-setup reason keys must carry an ``es`` phrase — the
-    exact lines this fix added must not perpetuate the de/en-only gap."""
+    so every portable workspace-setup reason added here must carry an ``es``
+    phrase rather than perpetuating the de/en-only gap."""
     from jarvis.missions.voice.readback import FAILURE_REASON_PHRASES
 
     es = FAILURE_REASON_PHRASES.get("es", {})
@@ -135,10 +150,14 @@ def test_git_setup_reasons_carry_spanish() -> None:
     assert "git_not_a_repository" in es, (
         "git_not_a_repository missing from the es phrase map"
     )
+    assert "source_checkout_unavailable" in es, (
+        "source_checkout_unavailable missing from the es phrase map"
+    )
     # Natural Spanish, not a snake_case token or a de/en copy.
     assert "git" in es["git_missing"].lower()
     assert "git_missing" not in es["git_missing"]
     assert "zip" in es["git_not_a_repository"].lower()
+    assert "código" in es["source_checkout_unavailable"].lower()
 
 
 def test_render_failed_maps_attempts_timed_out_to_honest_timeout_phrase() -> None:

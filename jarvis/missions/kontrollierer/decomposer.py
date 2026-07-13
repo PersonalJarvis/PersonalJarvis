@@ -19,7 +19,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Awaitable, Callable, Final, Literal
+from collections.abc import Awaitable, Callable
+from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -41,7 +42,7 @@ EXTERNAL_SYSTEM_MARKERS: Final[tuple[str, ...]] = (
 )
 
 
-# Repo-affinity markers — when ANY of these appear in a single-step prompt we
+# Repo-affinity markers — when ANY of these appear in a step prompt we
 # keep the full git worktree (needs_repo=True) even though the step would
 # otherwise qualify for a lean workspace. This is the conservative guard for
 # the lean path: the moment a task smells like it touches THIS repo's code
@@ -50,19 +51,21 @@ EXTERNAL_SYSTEM_MARKERS: Final[tuple[str, ...]] = (
 #
 # Deliberately a SUPERSET-aware companion to EXTERNAL_SYSTEM_MARKERS (which is
 # about *whether* to split into multiple steps); this regex is about *whether*
-# the single step needs the codebase on disk. It never weakens multi-step
-# classification — it is only consulted on the deterministic single-step paths.
+# a step needs the codebase on disk. It never weakens multi-step
+# classification and is the hard guard when an LLM labels source work as lean.
 _REPO_AFFINITY_RE: Final = re.compile(
     r"""
     \b(?:
-        repo | repository | repos
-      | git | github | gitlab | branch | branches
-      | commit | commits | merge | rebase | pull[ -]?request | \bPR\b
+        git | commit | commits | merge | rebase
       | pyproject | requirements\.txt | codebase | code[ -]?base
+      | source[ -]?checkout | source[ -]?tree | working[ -]?tree | worktree
       | refactor | refactors | refactoring
       | bugfix | bug[ -]?fix | hotfix
-      | regression | unit[ -]?test | pytest
     )\b
+    | \b(?:this|our|current|local|personal[ -]?jarvis)\s+
+        (?:repo(?:sitory)?|code[ -]?base|source|project)\b
+    | \b(?:modify|change|edit|fix|refactor|implement|add|remove|update|test)\b
+        [^.]{0,80}\b(?:repo(?:sitory)?|code[ -]?base|source(?:[ -]?code)?|project[ -]?files?)\b
     | \bfix(?:es|ed|ing)?\b[^.]*\bbug\b   # "fix the bug", "fixing a nasty bug"
     | \bjarvis/                           # an in-repo path reference
     | \b[\w./-]+\.(?:py|ts|tsx|js|jsx|toml|cfg|ini|yaml|yml|sql|sh|ps1)\b
@@ -70,10 +73,75 @@ _REPO_AFFINITY_RE: Final = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+# Positive evidence that a task can run without the Personal Jarvis checkout.
+# Connected services are remote capabilities; standalone artifacts are lean
+# only when an artifact action and artifact noun occur near each other. This
+# positive-evidence rule is intentional: an ambiguous prompt such as "improve
+# performance" stays source-dependent and fails early in a copied install
+# instead of launching a worker into an empty repository.
+_STANDALONE_SERVICE_RE: Final = re.compile(
+    r"\b(?:"
+    r"github|gitlab|slack|discord|notion|jira|linear|mcp|"
+    r"browser|https?|url|website|web[ -]?page|scrape|crawl|"
+    r"email|calendar|google[ -]?drive|google[ -]?docs|google[ -]?sheets"
+    r")\b",
+    re.IGNORECASE,
+)
+_STANDALONE_ACTION_RE: Final = re.compile(
+    r"\b(?:"
+    r"create|write|draft|generate|prepare|render|make|produce|"
+    r"research|summari[sz]e|compare|list|find|search|"
+    r"erstelle|erstellen|schreibe|"  # i18n-allow: German input vocabulary
+    r"schreiben|entwirf|generiere|"  # i18n-allow: German input vocabulary
+    r"bereite|rendere|recherchiere|"  # i18n-allow: German input vocabulary
+    r"fasse|vergleiche|liste|finde|suche|"  # i18n-allow: German input vocabulary
+    r"crea|crear|escribe|escribir|redacta|genera|prepara|"
+    r"renderiza|investiga|resume|compara|lista|busca"
+    r")\b",
+    re.IGNORECASE,
+)
+_STANDALONE_ARTIFACT_RE: Final = re.compile(
+    r"\b(?:"
+    r"standalone|report|summary|document|file|artifact|"
+    r"html|markdown|csv|json|spreadsheet|presentation|slides?|"
+    r"image|video|audio|poster|email|table|checklist|news|weather|"
+    r"datei|bericht|zusammenfassung|"  # i18n-allow: German input vocabulary
+    r"dokument|tabelle|nachrichten|wetter|"  # i18n-allow: German input vocabulary
+    r"archivo|informe|resumen|documento|tabla|noticias|clima"
+    r")\b",
+    re.IGNORECASE,
+)
+
 
 def _has_repo_affinity(prompt: str) -> bool:
     """True when the prompt points at THIS repo's code (keep full worktree)."""
     return _REPO_AFFINITY_RE.search(prompt) is not None
+
+
+def _has_standalone_affinity(prompt: str) -> bool:
+    """True when the prompt has positive evidence it needs no source tree."""
+    if _STANDALONE_SERVICE_RE.search(prompt) is not None:
+        return True
+    actions = tuple(_STANDALONE_ACTION_RE.finditer(prompt))
+    artifacts = tuple(_STANDALONE_ARTIFACT_RE.finditer(prompt))
+    return any(
+        abs(action.start() - artifact.start()) <= 120
+        for action in actions
+        for artifact in artifacts
+    )
+
+
+def _workspace_requirement(prompt: str) -> bool | None:
+    """Return True for source, False for lean, or None when ambiguous.
+
+    Source evidence wins over standalone evidence. This makes remote-service
+    tasks portable while keeping ambiguous work fail-closed.
+    """
+    if _has_repo_affinity(prompt):
+        return True
+    if _has_standalone_affinity(prompt):
+        return False
+    return None
 
 
 # Type for a brain caller (compatible with BrainManager.generate).
@@ -101,14 +169,14 @@ class Step(BaseModel):
     # as its workspace. Default True keeps every existing path byte-compatible:
     # old persisted plan payloads (which never carried the field) deserialize
     # fine, and any step the decomposer does NOT explicitly classify as a lean
-    # external-artefact task gets the full, isolated worktree it always had.
+    # external-artifact task gets the full, isolated worktree it always had.
     #
     # When False the orchestrator hands the worker a LEAN workspace — a fresh
     # empty `git init` repo with one initial commit — instead of a checkout of
-    # the whole codebase. This is reserved for single-step tasks that produce a
-    # standalone deliverable ("create an HTML file with today's news") and have
-    # no affinity to this repo's code, where cloning + exploring the repo
-    # otherwise burned 10+ minutes and >1.3M input tokens before a trivial
+    # the whole codebase. This is reserved for steps that use connected services
+    # or produce standalone deliverables ("create an HTML file with today's
+    # news") and have no affinity to this repo's code. Cloning and exploring the
+    # repo otherwise burned 10+ minutes and >1.3M input tokens before a trivial
     # write (live mission 019eb17d, 2026-06-10).
     needs_repo: bool = True
 
@@ -146,12 +214,12 @@ class MissionDecomposer:
         1-Step-Plan, no crash.
         """
         if not mission_prompt or not mission_prompt.strip():
-            raise ValueError("MissionDecomposer: leerer prompt")
+            raise ValueError("MissionDecomposer: empty prompt")
 
-        # A single step qualifies for a LEAN workspace only when it has no
-        # affinity to this repo's code. The default everywhere else is the full
-        # worktree (needs_repo=True) — conservative by design.
-        lean_eligible = not _has_repo_affinity(mission_prompt)
+        # A single step qualifies for a LEAN workspace only with positive
+        # standalone evidence and no source affinity. Ambiguous prompts keep
+        # the full worktree (needs_repo=True) — conservative by design.
+        lean_eligible = _workspace_requirement(mission_prompt) is False
 
         # Heuristic 1: short prompts are never multi-step
         if len(mission_prompt) < SHORT_PROMPT_CHAR_LIMIT:
@@ -168,25 +236,40 @@ class MissionDecomposer:
                 needs_repo=not lean_eligible,
             )
 
-        # LLM-Pfad — Brain not bound -> Fallback Single-Step.
+        # LLM path — Brain not bound -> fallback single-step.
         if self._brain is None:
             logger.info(
                 "MissionDecomposer: brain=None, falling back to single-step plan"
             )
-            return self._single_step_plan(mission_prompt, reason="no_brain_available")
+            return self._single_step_plan(
+                mission_prompt,
+                reason="no_brain_available",
+                needs_repo=not lean_eligible,
+            )
 
         # LLM decomposition
         decomposition_prompt = self._build_decomposition_prompt(mission_prompt)
         try:
             raw = await self._brain(decomposition_prompt)
         except Exception:  # noqa: BLE001
-            logger.warning("MissionDecomposer: brain call raised — fallback single-step", exc_info=True)
-            return self._single_step_plan(mission_prompt, reason="brain_error")
+            logger.warning(
+                "MissionDecomposer: brain call raised — fallback single-step",
+                exc_info=True,
+            )
+            return self._single_step_plan(
+                mission_prompt,
+                reason="brain_error",
+                needs_repo=not lean_eligible,
+            )
 
         plan = self._parse_plan(raw, mission_prompt)
         if plan is None:
             logger.info("MissionDecomposer: parse failed, falling back to single-step")
-            return self._single_step_plan(mission_prompt, reason="parse_failed")
+            return self._single_step_plan(
+                mission_prompt,
+                reason="parse_failed",
+                needs_repo=not lean_eligible,
+            )
 
         return plan
 
@@ -197,11 +280,11 @@ class MissionDecomposer:
     ) -> MissionPlan:
         """Fallback: entire mission as a single step.
 
-        ``needs_repo`` defaults to True so every non-heuristic fallback
-        (no_brain_available, brain_error, parse_failed) stays conservative and
-        keeps the full worktree. Only the deterministic ``short_prompt`` and
-        ``single_external_target`` heuristics pass ``needs_repo=False`` (and
-        only when the prompt has no repo affinity).
+        ``needs_repo`` defaults to True for callers that have not classified a
+        prompt. All built-in paths pass the deterministic repo-affinity result,
+        including no-brain/error/parse fallbacks. This matters in copied or
+        frozen installations: a repository-independent fallback remains
+        runnable in a lean workspace even though no source checkout exists.
         """
         slug = _slugify(mission_prompt)[:40] or "task"
         return MissionPlan(
@@ -241,7 +324,8 @@ class MissionDecomposer:
             '"prompt": "<full instructions for one worker>", '
             '"worker_cli": "claude" | "codex", '
             '"model": "sonnet" | "opus" | "haiku", '
-            '"allowed_tools": "Read,Edit,Write,Bash,Grep,Glob" }\n'
+            '"allowed_tools": "Read,Edit,Write,Bash,Grep,Glob", '
+            '"needs_repo": true | false }\n'
             "  ],\n"
             '  "n_workers": <int 1..5>,\n'
             '  "expected_output": "<one-sentence description of the deliverable>"\n'
@@ -249,6 +333,10 @@ class MissionDecomposer:
             "Rules:\n"
             "- DO NOT split if tasks share files (race conditions).\n"
             "- DO NOT include task_id (auto-generated).\n"
+            "- Set needs_repo=true only when the step must read or modify the "
+            "Personal Jarvis source checkout.\n"
+            "- Set needs_repo=false for research, connected-service actions, "
+            "and standalone artifacts that do not use Personal Jarvis source.\n"
             "- Default worker_cli is 'claude'; only use 'codex' for OpenAI-specific work.\n"
             "- Default model is 'sonnet'; use 'opus' only for reasoning-heavy steps."
         )
@@ -268,6 +356,39 @@ class MissionDecomposer:
         # n_workers default = len(steps) when not provided
         if "n_workers" not in data and "steps" in data:
             data["n_workers"] = len(data["steps"])
+
+        # Older model outputs predate ``needs_repo`` and therefore omit it.
+        # Backfill those outputs from deterministic source-affinity rather than
+        # allowing Step's persistence-safe default (True) to disable every
+        # standalone mission in a copied/container distribution. Conversely,
+        # an explicit model-provided False may never override clear source
+        # affinity in either the original mission or the individual step.
+        mission_requirement = _workspace_requirement(mission_prompt)
+        raw_steps = data.get("steps")
+        if isinstance(raw_steps, list):
+            for raw_step in raw_steps:
+                if not isinstance(raw_step, dict):
+                    continue
+                step_prompt = raw_step.get("prompt")
+                step_requirement = (
+                    _workspace_requirement(step_prompt)
+                    if isinstance(step_prompt, str)
+                    else None
+                )
+                inferred = (
+                    step_requirement
+                    if step_requirement is not None
+                    else mission_requirement
+                )
+                if inferred is not None:
+                    # Deterministic evidence owns the boundary: a model cannot
+                    # downgrade source work or unnecessarily disable a clearly
+                    # remote/standalone task in a source-less installation.
+                    raw_step["needs_repo"] = inferred
+                elif "needs_repo" not in raw_step:
+                    # Neither the step nor mission is classifiable. Preserve
+                    # the fail-closed persistence default.
+                    raw_step["needs_repo"] = True
 
         try:
             return MissionPlan.model_validate(data)

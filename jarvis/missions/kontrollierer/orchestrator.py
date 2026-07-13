@@ -28,9 +28,10 @@ import re
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Final, Literal
+from typing import Any, Final, Literal
 
 from ...core.process_utils import NO_WINDOW_CREATIONFLAGS
 from ..budget import BudgetExceeded, BudgetTracker
@@ -57,7 +58,11 @@ from ..events import (
     WorkerSpawned,
     now_ms,
 )
-from ..isolation.worktree import WorktreeManager, read_worktree_base_sha
+from ..isolation.worktree import (
+    SourceCheckoutUnavailableError,
+    WorktreeManager,
+    read_worktree_base_sha,
+)
 from ..manager import MissionManager
 from ..safety import (
     extract_worker_authored_text,
@@ -259,9 +264,11 @@ def _classify_worktree_setup_failure(exc: BaseException) -> str:
 
     - ``git_missing``: no git executable on PATH at all
       (``FileNotFoundError``/``OSError`` from the subprocess spawn itself).
-    - ``git_not_a_repository``: git IS present but ``repo_root`` has no
-      ``.git`` (the "Download ZIP" install facet) — ``git worktree add``
-      exits 128 with a "not a git repository" stderr.
+    - ``source_checkout_unavailable``: the installed application tree has no
+      usable Git history. This is expected for copied/frozen/container
+      distributions and blocks only source-dependent tasks.
+    - ``git_not_a_repository``: backwards-compatible classification for an
+      older ``git worktree add`` failure carrying "not a git repository".
     - ``worktree_setup_failed``: the pre-existing generic fallback for
       everything else (200-char path-length cap ``ValueError``, an
       index-lock ``CalledProcessError``, etc.) — unchanged behaviour.
@@ -270,6 +277,8 @@ def _classify_worktree_setup_failure(exc: BaseException) -> str:
     above falls through to the generic fallback so this is always safe to
     call from an except clause.
     """
+    if isinstance(exc, SourceCheckoutUnavailableError):
+        return "source_checkout_unavailable"
     if isinstance(exc, FileNotFoundError):
         return "git_missing"
     if isinstance(exc, subprocess.CalledProcessError):
@@ -812,9 +821,9 @@ class Kontrollierer:
         # `_run_task_with_critic_loop` when `WorktreeManager.create()` raises,
         # consumed once (popped) by the `SETUP_FAILED` aggregation branch in
         # `run_mission` so the terminal reason names the real cause
-        # ("git_missing" / "git_not_a_repository") instead of the generic
-        # "worktree_setup_failed" fallback. Last write wins, same convention
-        # as `_mission_failure_context`.
+        # ("git_missing" / "source_checkout_unavailable") instead of the
+        # generic "worktree_setup_failed" fallback. Last write wins, same
+        # convention as `_mission_failure_context`.
         self._setup_failure_reason: dict[str, str] = {}
         # Per-mission worker answers for read-only/informational tasks (empty
         # diff + tool evidence). Surfaced as MissionApproved.summary_de so the
@@ -1067,9 +1076,9 @@ class Kontrollierer:
             # Worktree-create failure (path cap / git index lock / missing git
             # binary / no .git repo) — surface an actionable cause instead of
             # the generic "worker aborted" (#8). AP-23 wave-2 finding 1: the
-            # classified reason (git_missing / git_not_a_repository) set by
-            # `_run_task_with_critic_loop`'s except clause takes priority over
-            # the pre-existing generic fallback.
+            # classified reason (git_missing / source_checkout_unavailable)
+            # set by `_run_task_with_critic_loop`'s except clause takes
+            # priority over the pre-existing generic fallback.
             setup_reason = self._setup_failure_reason.pop(
                 mission_id, "worktree_setup_failed"
             )
@@ -1131,7 +1140,12 @@ class Kontrollierer:
                     task_id=step.task_id,
                     needs_repo=step.needs_repo,
                 )
-            except (subprocess.CalledProcessError, ValueError, OSError) as exc:
+            except (
+                SourceCheckoutUnavailableError,
+                subprocess.CalledProcessError,
+                ValueError,
+                OSError,
+            ) as exc:
                 # OSError added (AP-23 wave-2 finding 1): a missing git binary
                 # raises FileNotFoundError (an OSError subclass), which used
                 # to escape uncaught here and crash every mission — even a

@@ -15,7 +15,6 @@ from jarvis.missions.kontrollierer.decomposer import (
     Step,
 )
 
-
 # --- Pydantic-Schema ---
 
 
@@ -94,7 +93,7 @@ async def test_long_prompt_with_one_marker_single_step() -> None:
 @pytest.mark.asyncio
 async def test_empty_prompt_raises() -> None:
     d = MissionDecomposer(brain=None)
-    with pytest.raises(ValueError, match="leer"):
+    with pytest.raises(ValueError, match="empty"):
         await d.decompose("")
 
 
@@ -159,7 +158,7 @@ async def test_llm_path_returns_multi_step_plan() -> None:
 
 @pytest.mark.asyncio
 async def test_llm_path_handles_json_in_prose() -> None:
-    """The LLM sometimes returns JSON with leading/trailing prose — the decomposer must extract it."""
+    """The decomposer extracts JSON wrapped in model-generated prose."""
 
     async def brain(p: str) -> str:
         return f"Sure, here's the plan:\n```json\n{_valid_plan_json()}\n```\nDone."
@@ -184,7 +183,7 @@ async def test_llm_path_invalid_json_falls_back_single() -> None:
 @pytest.mark.asyncio
 async def test_llm_path_brain_crash_falls_back_single() -> None:
     async def brain(p: str) -> str:
-        raise RuntimeError("BrainManager kaputt")
+        raise RuntimeError("BrainManager failed")
 
     prompt = "x" * 300 + " " + " ".join(EXTERNAL_SYSTEM_MARKERS[:5])
     d = MissionDecomposer(brain=brain)
@@ -289,9 +288,10 @@ async def test_external_artefact_task_is_lean() -> None:
 
 @pytest.mark.asyncio
 async def test_german_html_news_task_is_lean() -> None:
-    """German external-artefact prompt → lean workspace (no repo markers)."""
+    """German external-artifact prompt → lean workspace (no repo markers)."""
     d = MissionDecomposer(brain=None)
-    plan = await d.decompose("Erstelle eine HTML-Datei von den aktuellen Tagesnews")  # i18n-allow: simulated German user utterance verifying bilingual input handling
+    prompt = "Erstelle eine HTML-Datei von den aktuellen Tagesnews"  # i18n-allow: DE input
+    plan = await d.decompose(prompt)
     assert len(plan.steps) == 1
     assert plan.steps[0].needs_repo is False
 
@@ -391,4 +391,182 @@ async def test_no_brain_fallback_keeps_full_worktree() -> None:
     prompt = "x" * 300 + " " + " ".join(EXTERNAL_SYSTEM_MARKERS[:5])
     plan = await d.decompose(prompt)
     assert len(plan.steps) == 1
+    assert plan.steps[0].needs_repo is True
+
+
+@pytest.mark.asyncio
+async def test_remote_github_issue_summary_is_lean() -> None:
+    """A connected GitHub read is not evidence that local source is needed."""
+    d = MissionDecomposer(brain=None)
+    plan = await d.decompose(
+        "Summarize the open issues in the GitHub repository for me"
+    )
+    assert len(plan.steps) == 1
+    assert plan.steps[0].needs_repo is False
+
+
+@pytest.mark.asyncio
+async def test_remote_pull_request_review_is_lean() -> None:
+    """Reviewing remote metadata through a connected service needs no clone."""
+    plan = await MissionDecomposer(brain=None).decompose(
+        "Review the open GitHub pull request and summarize its status"
+    )
+    assert plan.steps[0].needs_repo is False
+
+
+@pytest.mark.asyncio
+async def test_remote_github_test_failure_review_is_lean() -> None:
+    """Generic code nouns do not turn a connected-service read into local work."""
+    plan = await MissionDecomposer(brain=None).decompose(
+        "Review the failing tests in the GitHub repository and summarize them"
+    )
+    assert plan.steps[0].needs_repo is False
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_task_fails_closed_to_source_workspace() -> None:
+    """Absence of a source keyword is not enough to select an empty repo."""
+    plan = await MissionDecomposer(brain=None).decompose(
+        "Improve performance without changing existing behavior"
+    )
+    assert plan.steps[0].needs_repo is True
+
+
+@pytest.mark.asyncio
+async def test_spanish_standalone_report_is_lean() -> None:
+    """Workspace classification is locale-neutral across supported input."""
+    plan = await MissionDecomposer(brain=None).decompose(
+        "Crea un informe independiente con una tabla comparativa"
+    )
+    assert plan.steps[0].needs_repo is False
+
+
+@pytest.mark.asyncio
+async def test_explicit_local_repository_analysis_keeps_full_worktree() -> None:
+    """An explicit reference to the local project remains fail-closed."""
+    d = MissionDecomposer(brain=None)
+    plan = await d.decompose("Analyze this repository's architecture")
+    assert plan.steps[0].needs_repo is True
+
+
+@pytest.mark.asyncio
+async def test_no_brain_fallback_keeps_standalone_task_lean() -> None:
+    """A source-less install can still run a long connected-service task when
+    the decomposition brain is unavailable. Fallback must preserve the
+    deterministic workspace classification instead of defaulting to a source
+    checkout that the distribution does not contain."""
+    d = MissionDecomposer(brain=None)
+    prompt = (
+        "Research the current product announcements in the browser, prepare "
+        "a detailed standalone report with links and a comparison table, and "
+        "post a concise summary to Slack for the project team. " * 3
+    )
+    assert len(prompt) > SHORT_PROMPT_CHAR_LIMIT
+    plan = await d.decompose(prompt)
+    assert len(plan.steps) == 1
+    assert plan.steps[0].needs_repo is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_mode", ["brain_error", "parse_error"])
+async def test_llm_failure_keeps_standalone_task_lean(failure_mode: str) -> None:
+    """Brain and parse failures must not turn independent work into a source
+    task merely because the fallback plan has one step."""
+
+    async def brain(_prompt: str) -> str:
+        if failure_mode == "brain_error":
+            raise RuntimeError("provider unavailable")
+        return "not valid JSON"
+
+    prompt = (
+        "Use the browser to research current accessibility guidance, then "
+        "prepare a standalone report and send its short summary to Slack. " * 3
+    )
+    plan = await MissionDecomposer(brain=brain).decompose(prompt)
+    assert plan.steps[0].needs_repo is False
+
+
+@pytest.mark.asyncio
+async def test_llm_plan_backfills_missing_workspace_requirement() -> None:
+    """Legacy model output without ``needs_repo`` is classified per mission
+    rather than inheriting Step's persistence-safe source default."""
+
+    async def brain(_prompt: str) -> str:
+        return json.dumps(
+            {
+                "steps": [
+                    {
+                        "slug": "research-release",
+                        "prompt": "Research the release and write report.md",
+                    }
+                ],
+                "n_workers": 1,
+            }
+        )
+
+    prompt = (
+        "Research the latest release in the browser and send a summary to "
+        "Slack after creating a standalone report. " * 4
+    )
+    plan = await MissionDecomposer(brain=brain).decompose(prompt)
+    assert plan.steps[0].needs_repo is False
+
+
+@pytest.mark.asyncio
+async def test_llm_cannot_disable_clear_standalone_task() -> None:
+    """A model's over-conservative flag cannot brick a connected-service task
+    on a copied/headless installation."""
+
+    async def brain(_prompt: str) -> str:
+        return json.dumps(
+            {
+                "steps": [
+                    {
+                        "slug": "summarize-issues",
+                        "prompt": "Summarize the open GitHub issues",
+                        "needs_repo": True,
+                    }
+                ],
+                "n_workers": 1,
+            }
+        )
+
+    prompt = (
+        "Summarize open GitHub issues, compare them with the Jira backlog, "
+        "and post a concise status update to Slack. " * 3
+    )
+    plan = await MissionDecomposer(brain=brain).decompose(prompt)
+    assert plan.steps[0].needs_repo is False
+
+
+@pytest.mark.asyncio
+async def test_llm_cannot_mark_source_task_as_lean() -> None:
+    """Deterministic source affinity overrides an unsafe model classification."""
+
+    calls: list[str] = []
+
+    async def brain(model_prompt: str) -> str:
+        calls.append(model_prompt)
+        return json.dumps(
+            {
+                "steps": [
+                    {
+                        "slug": "fix-router",
+                        "prompt": "Fix the bug in jarvis/brain/manager.py",
+                        "needs_repo": False,
+                    }
+                ],
+                "n_workers": 1,
+            }
+        )
+
+    prompt = (
+        "Fix the bug in jarvis/brain/manager.py, commit it on a branch, open "
+        "a GitHub pull request, and link the Jira issue with a Slack update. "
+        "Preserve every existing behavior, add focused regression coverage, "
+        "and explain the verification evidence in the pull request body."
+    )
+    assert len(prompt) > SHORT_PROMPT_CHAR_LIMIT
+    plan = await MissionDecomposer(brain=brain).decompose(prompt)
+    assert len(calls) == 1
     assert plan.steps[0].needs_repo is True
