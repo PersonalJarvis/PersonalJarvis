@@ -3626,3 +3626,38 @@ fallback, deferred readback reaches the idle live model at the boundary.
 **Class rule.** A voice surface has ONE voice at a time. Any fallback from
 the live realtime voice to classic TTS must be gated on the live call being
 GONE, never merely busy — "busy" means wait or drop, not switch voices.
+
+## BUG-050: run_shell on Windows echoes quoted commands instead of executing them (HIGH, 2026-07-13)
+
+**Symptom.** In a realtime session (18:15) the delegated brain turn burned all
+15 tool iterations trying to list the user's wiki files and died with
+`IterationBudget exhausted` — spoken outcome: a generic failure. The user
+experienced it as an endless thinking loop.
+
+**Root cause.** `run_shell` tokenized with `shlex.split(posix=False)` on
+Windows, which KEEPS surrounding quotes inside tokens. Three failure shapes,
+two of them silent:
+
+1. `powershell -Command "Get-ChildItem -Name"` → PowerShell received a string
+   LITERAL and echoed it back — **exit 0, stdout = the command itself**. The
+   tool reported success with garbage output, so the model saw no error to
+   correct and retried variations until the budget died.
+2. `cmd.exe /c "dir /s /b *.md"` → the kept quotes corrupted the payload
+   ("Der Befehl ist entweder falsch geschrieben...").  <!-- i18n-allow: quoted German OS error under test -->
+3. `dir /s /b` → WinError 2: cmd builtins are not programs and cannot be
+   exec'd directly.
+
+**Fix.** On Windows the ORIGINAL command string goes to `cmd.exe` via
+`create_subprocess_shell` — cmd parses its own quoting and provides the
+builtins. POSIX keeps the historical `shlex.split` + exec contract. The
+whitelist/blacklist safety matching runs on the full command string in
+`ToolExecutor` BEFORE execution and is unchanged.
+
+**Guards.** `tests/unit/plugins/tool/test_run_shell.py` — quoted PowerShell
+payload is executed (not echoed), cmd builtin `dir` works, quoted cmd payload
+works, POSIX path pinned.
+
+**Class rule.** A tool that reports success with an output that is merely its
+own input is worse than a failing tool: the model gets no error signal and
+loops. When wrapping OS process creation, verify on EVERY platform that a
+quoted argument arrives as an argument, not as a literal.
