@@ -10,6 +10,7 @@ unclean disconnect is terminal — ``break``, never ``continue``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -24,6 +25,10 @@ from jarvis.sessions.constants import HANGUP_REALTIME_FALLBACK, HANGUP_WS_CLOSED
 log = logging.getLogger("jarvis.browser_voice.route")
 
 router = APIRouter()
+
+_AUDIO_QUEUE_MAX_FRAMES = 32
+_TRANSPORT_SEND_TIMEOUT_S = 2.0
+_AUDIO_DRAIN_TIMEOUT_S = 2.0
 
 # BCP-47 from the canonical per-turn resolver (de/en/es).
 _LANG_MAP = {"de": "de-DE", "en": "en-US", "es": "es-ES"}
@@ -44,6 +49,20 @@ def _resolve_language(cfg: Any) -> str:
     pin = getattr(getattr(cfg, "brain", None), "reply_language", "") or ""
     language = resolve_output_language(pin, "", "", default=DEFAULT_LOCALE)
     return _LANG_MAP.get(language, _LANG_MAP[DEFAULT_LOCALE])
+
+
+def _enqueue_audio_frame(queue: asyncio.Queue[bytes | None], data: bytes) -> bool:
+    """Queue one mic frame without blocking; drop the oldest on overflow."""
+    dropped = False
+    if queue.full():
+        try:
+            queue.get_nowait()
+            queue.task_done()
+            dropped = True
+        except asyncio.QueueEmpty:  # pragma: no cover - another task drained it
+            pass
+    queue.put_nowait(bytes(data))
+    return dropped
 
 
 def _build_browser_session(
@@ -141,10 +160,14 @@ async def browser_voice_ws(ws: WebSocket) -> None:
     session_id = str(uuid4())
 
     async def _send_binary(data: bytes) -> None:
-        await ws.send_bytes(data)
+        await asyncio.wait_for(
+            ws.send_bytes(data), timeout=_TRANSPORT_SEND_TIMEOUT_S
+        )
 
     async def _send_json(msg: dict[str, Any]) -> None:
-        await ws.send_json(msg)
+        await asyncio.wait_for(
+            ws.send_json(msg), timeout=_TRANSPORT_SEND_TIMEOUT_S
+        )
 
     session = _build_browser_session(
         state=state,
@@ -159,6 +182,11 @@ async def browser_voice_ws(ws: WebSocket) -> None:
         return
 
     audio_start_control: dict[str, Any] | None = None
+    audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue(
+        maxsize=_AUDIO_QUEUE_MAX_FRAMES
+    )
+    dropped_audio_frames = 0
+    audio_sender_failed = asyncio.Event()
 
     async def _switch_to_classic(reason: str) -> bool:
         nonlocal session
@@ -190,6 +218,45 @@ async def browser_voice_ws(ws: WebSocket) -> None:
                 return False
         return True
 
+    async def _send_audio_frame(data: bytes) -> None:
+        nonlocal session
+        if bool(getattr(session, "failed", False)):
+            detail = str(getattr(session, "failure_detail", "") or "stream ended")
+            if not await _switch_to_classic(detail):
+                raise RuntimeError(detail)
+        try:
+            await asyncio.wait_for(
+                session.handle_audio_frame(data),
+                timeout=_TRANSPORT_SEND_TIMEOUT_S,
+            )
+        except Exception as exc:  # noqa: BLE001 - cross to classic once
+            if not await _switch_to_classic(str(exc)):
+                raise
+            await asyncio.wait_for(
+                session.handle_audio_frame(data),
+                timeout=_TRANSPORT_SEND_TIMEOUT_S,
+            )
+
+    async def _audio_sender() -> None:
+        while True:
+            data = await audio_queue.get()
+            try:
+                if data is None:
+                    return
+                await _send_audio_frame(data)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - terminal sender failure
+                log.warning("browser_voice: audio sender failed: %s", exc)
+                audio_sender_failed.set()
+                return
+            finally:
+                audio_queue.task_done()
+
+    audio_sender_task = asyncio.create_task(
+        _audio_sender(), name=f"browser-audio-sender-{session_id}"
+    )
+
     try:
         while True:
             try:
@@ -204,24 +271,10 @@ async def browser_voice_ws(ws: WebSocket) -> None:
                 break
             data = msg.get("bytes")
             if data is not None:
-                if bool(getattr(session, "failed", False)):
-                    detail = str(getattr(session, "failure_detail", "") or "stream ended")
-                    if not await _switch_to_classic(detail):
-                        break
-                try:
-                    await session.handle_audio_frame(data)
-                except Exception as exc:  # noqa: BLE001 — terminal or family fallback
-                    if not await _switch_to_classic(str(exc)):
-                        log.warning("browser_voice: audio handling failed: %s", exc)
-                        break
-                    try:
-                        await session.handle_audio_frame(data)
-                    except Exception as fallback_exc:  # noqa: BLE001 — terminal
-                        log.warning(
-                            "browser_voice: classic audio fallback failed: %s",
-                            fallback_exc,
-                        )
-                        break
+                if audio_sender_failed.is_set():
+                    break
+                if _enqueue_audio_frame(audio_queue, data):
+                    dropped_audio_frames += 1
                 continue
             text = msg.get("text")
             if text is not None:
@@ -246,6 +299,31 @@ async def browser_voice_ws(ws: WebSocket) -> None:
                         if not await _switch_to_classic(str(exc)):
                             break
     finally:
+        try:
+            await asyncio.wait_for(
+                audio_queue.join(), timeout=_AUDIO_DRAIN_TIMEOUT_S
+            )
+        except TimeoutError:
+            log.warning(
+                "browser_voice: audio drain timed out; dropping %d queued frames",
+                audio_queue.qsize(),
+            )
+        if not audio_sender_task.done():
+            try:
+                audio_queue.put_nowait(None)
+            except asyncio.QueueFull:
+                audio_sender_task.cancel()
+            try:
+                await asyncio.wait_for(
+                    audio_sender_task, timeout=_TRANSPORT_SEND_TIMEOUT_S
+                )
+            except (TimeoutError, asyncio.CancelledError):
+                audio_sender_task.cancel()
+        if dropped_audio_frames:
+            log.warning(
+                "browser_voice: dropped %d stale mic frames under backpressure",
+                dropped_audio_frames,
+            )
         # A voice hang-up ends the session with its own reason; only a plain
         # socket teardown reports ws_closed.
         end_reason = (

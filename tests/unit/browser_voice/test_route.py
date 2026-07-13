@@ -89,6 +89,16 @@ def test_classic_fallback_language_uses_canonical_default_and_pin() -> None:
     assert route_mod._resolve_language(spanish_cfg) == "es-ES"
 
 
+def test_audio_queue_drops_oldest_without_blocking() -> None:
+    queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=2)
+
+    assert route_mod._enqueue_audio_frame(queue, b"one") is False
+    assert route_mod._enqueue_audio_frame(queue, b"two") is False
+    assert route_mod._enqueue_audio_frame(queue, b"three") is True
+    assert queue.get_nowait() == b"two"
+    assert queue.get_nowait() == b"three"
+
+
 async def test_route_dispatches_binary_and_control_then_ends():
     rec = _RecSession()
     ws = _FakeWS(
@@ -104,6 +114,42 @@ async def test_route_dispatches_binary_and_control_then_ends():
     assert rec.audio == [b"\x01\x00\x02\x00"]
     assert rec.controls == [{"type": "barge_in"}]
     assert rec.ended  # end() ran in the finally
+
+
+async def test_route_drops_stale_frames_when_provider_is_backpressured(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(route_mod, "_AUDIO_QUEUE_MAX_FRAMES", 2)
+    release = asyncio.Event()
+
+    class _SlowSession(_RecSession):
+        async def handle_audio_frame(self, data: bytes) -> None:
+            self.audio.append(bytes(data))
+            if len(self.audio) == 1:
+                await release.wait()
+
+    session = _SlowSession()
+
+    class _ReleaseOnDisconnect(_FakeWS):
+        async def receive(self) -> dict:
+            if self._incoming:
+                return self._incoming.pop(0)
+            release.set()
+            raise WebSocketDisconnect()
+
+    ws = _ReleaseOnDisconnect(
+        [
+            {"type": "websocket.receive", "bytes": bytes([index])}
+            for index in range(10)
+        ],
+        state=_state(session),
+    )
+
+    await browser_voice_ws(ws)
+
+    assert len(session.audio) <= 3
+    assert session.audio[-1] == bytes([9])
+    assert session.ended
 
 
 async def test_route_closes_when_disabled():
