@@ -17,17 +17,11 @@
         "instruction_md": "1. The link below opens GitHub with the right scopes (repo, workflow, read:user) already ticked.\n2. Pick an expiration (90 days is a sensible default), then click 'Generate token'.\n3. Copy the token (shown only once) and paste it below.\n4. If your repos sit behind SAML SSO, click 'Configure SSO' next to the new token after creation."
       },
       "mcp_server": {
-        "transport": "stdio",
-        "install": [
-          "docker", "run", "-i", "--rm",
-          "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
-          "ghcr.io/github/github-mcp-server"
-        ],
-        "env_template": {
-          "GITHUB_PERSONAL_ACCESS_TOKEN": "$plugin_github_access_token"
-        }
+        "transport": "http",
+        "url": "https://api.githubcopilot.com/mcp/",
+        "auth_header_template": "Authorization: Bearer $plugin_github_access_token"
       },
-      "post_install_hint_md": "If you use SAML SSO, you may need to authorize this token at https://github.com/settings/tokens after install."
+      "post_install_hint_md": "Uses GitHub's hosted MCP server, so Docker is not required. If you use SAML SSO, authorize the token at https://github.com/settings/tokens after connecting."
     },
     {
       "id": "vercel",
@@ -61,15 +55,11 @@
         "instruction_md": "1. Click 'Generate new token'\n2. Name: 'Personal Jarvis'\n3. Copy the token (shown once)"
       },
       "mcp_server": {
-        "transport": "stdio",
-        "install": [
-          "npx", "-y", "@supabase/mcp-server-supabase@latest",
-          "--read-only",
-          "--access-token", "$plugin_supabase_access_token"
-        ],
-        "env_template": {}
+        "transport": "http",
+        "url": "https://mcp.supabase.com/mcp?read_only=true",
+        "auth_header_template": "Authorization: Bearer $plugin_supabase_access_token"
       },
-      "post_install_hint_md": "Read-only mode is enabled by default. To allow write operations, toggle in Plugin settings."
+      "post_install_hint_md": "Uses Supabase's hosted MCP server, so Node.js is not required. Read-only mode is enforced in the server URL."
     },
     {
       "id": "notion",
