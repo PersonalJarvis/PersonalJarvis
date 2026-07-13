@@ -158,6 +158,27 @@ _MATCH_MIN_RMS = 0.006
 # genuine calls the corpus labels negative: "ey ruben", "hei ruben").
 _SHAPE_MAX_VOICED_S_PER_TOKEN = 0.65
 _SHAPE_MAX_OTHER_WORD_CONF = 0.98
+
+# The shape bounds above describe a SHORT, ISOLATED utterance — which a bare
+# interjection also is. Live false wake (2026-07-13 11:05, first hour after the
+# shape gate shipped): "hey ho" confirmed for "Hey Ruben". The free ear had
+# heard the prefix plus a 0.12 s grunt: the NAME was never spoken and the
+# grammar had stretched a bare "hey" onto the phrase.
+#
+# Neither spelling nor sound-similarity can catch that — measured on the real
+# captures, room speech scores HIGHER against "ruben" (`den genie ring` 0.50,
+# `simple frage brauchen` 0.62) than genuine calls do (`hey room` 0.25,
+# `hey ho` 0.25). Any similarity floor that rejects the false wake also rejects
+# real ones. <!-- the AP-27 trap, one level down -->
+#
+# The word-agnostic question that DOES separate them: was anything NAME-SIZED
+# uttered where the name belongs? Strip the known wake prefixes from what the
+# free ear heard and measure the voiced duration of what REMAINS — the core
+# body. It never asks how the name is spelled, only that a name was spoken.
+# Real captures: genuine calls carry a 0.48 s median core body (p10 0.30 s);
+# 9/159 carry none at all — that is exactly the false-wake class. A 0.20 s floor
+# (a single syllable) drops those 9 and costs 1.2 points of recall.
+_SHAPE_MIN_CORE_BODY_S = 0.20
 # No slack: the free ear may not hear MORE words at the span than the phrase
 # itself has. Allowing one extra token to absorb an ASR split ("Jarvis" ->
 # "joe avis") measurably let compact room speech through (5 vs 3 false accepts
@@ -304,6 +325,7 @@ def candidate_shape_ok(
     *,
     max_voiced_s_per_token: float = _SHAPE_MAX_VOICED_S_PER_TOKEN,
     max_other_word_conf: float = _SHAPE_MAX_OTHER_WORD_CONF,
+    min_core_body_s: float = _SHAPE_MIN_CORE_BODY_S,
 ) -> bool:
     """Does the free ear's output AT the candidate span look like a wake call?
 
@@ -327,6 +349,12 @@ def candidate_shape_ok(
        positive signal an out-of-vocabulary wake word leaves behind: the free
        decoder does not know the word, so it guesses and its confidence drops.
        Ordinary speech ("engineering", "google") it recognises outright.
+    4. **A name was actually spoken.** Strip the known wake prefixes and the
+       REMAINING voiced duration — the core body — must be at least a syllable.
+       Without this, the three bounds above describe a bare interjection just
+       as well as a wake call, and "hey ho" fires (live 2026-07-13). Note this
+       still never reads the name's SPELLING: it only asks whether a
+       name-sized sound exists where the name belongs.
 
     Empty input rejects: the grammar claimed the phrase where the free ear
     heard no speech at all.
@@ -343,7 +371,21 @@ def candidate_shape_ok(
     if voiced_s > max_voiced_s_per_token * n_tokens:
         return False
     top_conf = max(float(w.get("conf", 0.0)) for w in local_words)
-    return top_conf <= max_other_word_conf
+    if top_conf > max_other_word_conf:
+        return False
+    # The phrase's OWN prefix tokens are not evidence of the name — but a
+    # phrase that IS nothing but prefixes ("Hey", "Hallo") has no core to
+    # demand, so it must not be gated on one.
+    known_prefixes = {sound_fold(p) for p in WAKE_PREFIXES}
+    phrase_tokens = normalize_phrase_for_match(phrase)
+    if all(sound_fold(t) in known_prefixes for t in phrase_tokens):
+        return True
+    core_body_s = sum(
+        max(0.0, float(w.get("end", 0.0)) - float(w.get("start", 0.0)))
+        for w in local_words
+        if sound_fold(str(w.get("word", ""))) not in known_prefixes
+    )
+    return core_body_s >= min_core_body_s
 
 
 class VoskKwsProvider:

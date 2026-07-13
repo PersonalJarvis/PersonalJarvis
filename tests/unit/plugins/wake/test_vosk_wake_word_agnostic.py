@@ -103,6 +103,43 @@ def test_silence_can_never_pass_the_shape_gate() -> None:
     assert candidate_shape_ok([], "Hey Ruben") is False
 
 
+# --- the name must actually have been SPOKEN (live false-wake class) --------
+
+
+def test_a_prefix_with_no_name_after_it_is_not_a_wake() -> None:
+    """LIVE false wake (2026-07-13 11:05): 'hey ho' fired for 'Hey Ruben'.
+
+    The free ear heard the prefix and then a 0.12 s grunt — the NAME was never
+    spoken, so the grammar had stretched a bare interjection onto the phrase.
+    Spelling and sound-similarity cannot catch this (measured: room speech
+    scores HIGHER against "ruben" than genuine calls do). What does catch it,
+    word-agnostically, is that nothing name-sized was uttered where the name
+    belongs.
+    """
+    assert candidate_shape_ok(
+        [_w("hey", 0.40, 0.62), _w("ho", 0.62, 0.74)], "Hey Ruben"
+    ) is False
+
+
+def test_a_bare_prefix_is_not_a_wake() -> None:
+    """The free ear heard only "hey" — there is no core at all."""
+    assert candidate_shape_ok([_w("hey", 0.40, 0.65)], "Hey Ruben") is False
+
+
+def test_a_real_name_body_still_passes_however_it_is_spelled() -> None:
+    """The genuine calls keep firing: a name-sized sound IS there."""
+    assert candidate_shape_ok(
+        [_w("hey", 0.40, 0.60), _w("room", 0.60, 1.03)], "Hey Ruben"
+    ) is True
+    assert candidate_shape_ok([_w("herum", 0.40, 1.02)], "Hey Ruben") is True
+
+
+def test_an_unprefixed_phrase_counts_its_whole_body_as_core() -> None:
+    """"Computer" has no prefix to strip — the word itself is the core."""
+    assert candidate_shape_ok([_w("kompott", 0.40, 0.95)], "Computer") is True
+    assert candidate_shape_ok([_w("kom", 0.40, 0.48)], "Computer") is False
+
+
 def test_the_bound_scales_with_the_configured_phrase() -> None:
     """A three-token phrase legitimately takes longer than a one-token one."""
     three = [
