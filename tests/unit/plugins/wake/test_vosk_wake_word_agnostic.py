@@ -129,9 +129,24 @@ def test_a_bare_prefix_is_not_a_wake() -> None:
 def test_a_real_name_body_still_passes_however_it_is_spelled() -> None:
     """The genuine calls keep firing: a name-sized sound IS there."""
     assert candidate_shape_ok(
-        [_w("hey", 0.40, 0.60), _w("room", 0.60, 1.03)], "Hey Ruben"
+        [
+            _w("hey", 0.40, 0.60, conf=1.0),
+            _w("room", 0.60, 1.03, conf=0.63),
+        ],
+        "Hey Ruben",
     ) is True
     assert candidate_shape_ok([_w("herum", 0.40, 1.02)], "Hey Ruben") is True
+
+
+def test_a_confident_prefix_does_not_hide_a_confident_other_core() -> None:
+    """Only uncertainty in the arbitrary core is positive wake evidence."""
+    assert candidate_shape_ok(
+        [
+            _w("hey", 0.40, 0.60, conf=1.0),
+            _w("google", 0.60, 1.03, conf=1.0),
+        ],
+        "Hey Ruben",
+    ) is False
 
 
 def test_an_unprefixed_phrase_counts_its_whole_body_as_core() -> None:

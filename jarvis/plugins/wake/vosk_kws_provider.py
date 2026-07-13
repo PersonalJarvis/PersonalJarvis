@@ -33,20 +33,23 @@ near-silent candidates before the confirm. The detector never emits
 transcript text — its only output is the fired keyword (design criterion:
 user speech must never double-enter the pipeline through the wake path).
 
-**Early candidate (visual-only, mini-verify gated).** A PARTIAL hit waits
-``confirm_tail_s`` before the authoritative verify, so the bar used to react
-~0.85-1.0 s after the phrase. The early candidate runs the SAME three verify
+**Candidate-prefix verify + early visual.** A PARTIAL hit waits
+``confirm_tail_s`` before the fallback verify, so the bar used to react
+~0.85-1.0 s after the phrase. The early check runs the SAME three verify
 checks immediately over the audio heard so far (truncated ring) in a worker
-thread and, only when ALL pass, tells ``early_candidate_listener`` to show
-the bar — typically ~0.1-0.25 s after the partial, i.e. around phrase end.
+thread. A positive result is authoritative for that candidate and also tells
+``early_candidate_listener`` to show the bar — typically ~0.1-0.25 s after
+the partial, i.e. around phrase end. Later audio is session speech and cannot
+revoke that already-verified prefix. If the truncated check rejects, the
+normal full-window verify still runs after the tail, so early truncation never
+eats a wake.
 Calibrated 2026-07-11 on real captured windows (400 pos / 2500 neg per
 phrase): a conf gate alone leaks 0.84-12 % of room-speech windows (the
 flicker that got the plain candidate reveal reverted, 5fe5c4d2); the full
 mini-verify leaks 0/2500 ("hey jarvis") and 1-2/2500 (worst-case single
-word) while early-revealing ~a third of eventual fires. A rejected or
-superseded candidate retracts; infrastructure errors fail CLOSED here
-(visual-only — the opposite polarity of the authoritative confirm, which
-fails open so it can never eat a real wake).
+word) while early-confirming ~a third of eventual fires. Infrastructure errors
+fail CLOSED in the prefix check — the opposite polarity of the fallback
+full-window confirm, which fails open so it can never eat a real wake.
 """
 from __future__ import annotations
 
@@ -334,7 +337,7 @@ def candidate_shape_ok(
     spelled. ``local_words`` are the free decode's word dicts (``word``,
     ``start``, ``end``, ``conf``) already localised to the phrase span.
 
-    Three word-agnostic questions, all scaled by the configured phrase:
+    Four word-agnostic questions, all scaled by the configured phrase:
 
     1. **Not more words than the phrase has.** A wake call is the phrase; a
        forced grammar hit on conversation carries the surrounding words too.
@@ -345,10 +348,11 @@ def candidate_shape_ok(
     2. **Not spoken for longer than the phrase could be.** The grammar happily
        stretches the phrase across flowing speech; a real call cannot last
        longer than its own tokens do.
-    3. **The free ear is not SURE it heard something else.** This is the
+    3. **The free ear is not SURE it heard another core word.** This is the
        positive signal an out-of-vocabulary wake word leaves behind: the free
-       decoder does not know the word, so it guesses and its confidence drops.
-       Ordinary speech ("engineering", "google") it recognises outright.
+       decoder does not know the core, so it guesses and its confidence drops.
+       Ordinary speech ("engineering", "google") it recognises outright. A
+       known wake prefix is deliberately excluded from this confidence check.
     4. **A name was actually spoken.** Strip the known wake prefixes and the
        REMAINING voiced duration — the core body — must be at least a syllable.
        Without this, the three bounds above describe a bare interjection just
@@ -370,20 +374,33 @@ def candidate_shape_ok(
     )
     if voiced_s > max_voiced_s_per_token * n_tokens:
         return False
-    top_conf = max(float(w.get("conf", 0.0)) for w in local_words)
-    if top_conf > max_other_word_conf:
-        return False
-    # The phrase's OWN prefix tokens are not evidence of the name — but a
-    # phrase that IS nothing but prefixes ("Hey", "Hallo") has no core to
-    # demand, so it must not be gated on one.
+    # A confidently recognised wake prefix is expected evidence, not proof the
+    # decoder heard some OTHER word. Apply the confidence discriminator only
+    # to the unknown core body. Otherwise a perfect ``hey`` confidence rejects
+    # a genuine arbitrary name that the free decoder necessarily guesses.
     known_prefixes = {sound_fold(p) for p in WAKE_PREFIXES}
     phrase_tokens = normalize_phrase_for_match(phrase)
-    if all(sound_fold(t) in known_prefixes for t in phrase_tokens):
+    phrase_is_all_prefix = all(
+        sound_fold(t) in known_prefixes for t in phrase_tokens
+    )
+    core_words = [
+        w
+        for w in local_words
+        if sound_fold(str(w.get("word", ""))) not in known_prefixes
+    ]
+    confidence_words = local_words if phrase_is_all_prefix else core_words
+    if not confidence_words:
+        return False
+    top_conf = max(float(w.get("conf", 0.0)) for w in confidence_words)
+    if top_conf > max_other_word_conf:
+        return False
+    # A phrase that IS nothing but prefixes ("Hey", "Hallo") has no core to
+    # demand, so it must not be gated on a core duration.
+    if phrase_is_all_prefix:
         return True
     core_body_s = sum(
         max(0.0, float(w.get("end", 0.0)) - float(w.get("start", 0.0)))
-        for w in local_words
-        if sound_fold(str(w.get("word", ""))) not in known_prefixes
+        for w in core_words
     )
     return core_body_s >= min_core_body_s
 
@@ -422,10 +439,10 @@ class VoskKwsProvider:
         # -3 dBFS (gain capped at 40 dB) exactly like the other wake paths.
         target_peak: float = 0.7079,
         max_gain: float = 100.0,
-        # Visual-only early candidate: awaited with True when the mini-verify
-        # passes at PARTIAL time, False when a shown candidate is retracted.
-        # Never carries transcript text; never fires unverified (see module
-        # docstring + tests). None = feature off (default).
+        # Early visual side effect for the candidate-prefix verify: awaited
+        # with True when the strict check passes at PARTIAL time, False when a
+        # shown candidate is retracted by lifecycle teardown. Never carries
+        # transcript text; never exposes an unverified hit. None = no visual.
         early_candidate_listener: Callable[[bool], Awaitable[None]] | None = None,
     ) -> None:
         self._phrase = phrase.strip()
@@ -478,13 +495,13 @@ class VoskKwsProvider:
         self._ring: deque[bytes] = deque()
         self._ring_len = 0
         self._ring_max = int(_RING_SECONDS * sample_rate) * 2  # bytes
-        # Early-candidate state: the listener, whether a candidate is shown,
-        # the in-flight mini-verify task, and a generation counter so a LATE
-        # mini-verify completion can never show a candidate the authoritative
-        # verify already resolved.
+        # Candidate-prefix state: the listener, whether a candidate is shown,
+        # the in-flight strict verify task, and a generation counter so a LATE
+        # completion can never show a candidate another lifecycle edge already
+        # resolved.
         self._early_listener = early_candidate_listener
         self._early_active = False
-        self._early_task: asyncio.Task[None] | None = None
+        self._early_task: asyncio.Task[bool] | None = None
         self._pending_gen = 0
         # Instance-local clock hook keeps reject/backpressure state-machine
         # tests deterministic without replacing Python's process-global
@@ -709,20 +726,23 @@ class VoskKwsProvider:
 
     async def _run_early_check(
         self, window: np.ndarray, gen: int, model_path: str | None = None
-    ) -> None:
-        """Mini-verify the truncated ring; show the candidate only if the
-        pending candidate that spawned this check is still unresolved."""
+    ) -> bool:
+        """Strictly verify the candidate prefix and optionally show the bar.
+
+        ``True`` is an authoritative positive for this generation. The later
+        fallback window may contain the first words of the user's command, so
+        it must not overwrite a clean verdict over the candidate audio itself.
+        """
         try:
             ok = await asyncio.to_thread(self._early_check, window, model_path)
-        except Exception as exc:  # noqa: BLE001 — visual-only, never disrupt
+        except Exception as exc:  # noqa: BLE001 — fallback verify remains
             log.debug("early-candidate check errored: %s", exc)
-            return
-        if ok and gen == self._pending_gen:
-            log.info(
-                "vosk-kws: EARLY candidate shown for %r (mini-verify passed)",
-                self._phrase,
-            )
-            await self._notify_early(True)
+            return False
+        if not ok or gen != self._pending_gen:
+            return False
+        log.info("vosk-kws: candidate prefix verified for %r", self._phrase)
+        await self._notify_early(True)
+        return True
 
     # -- internals -----------------------------------------------------------
 
@@ -770,8 +790,11 @@ class VoskKwsProvider:
     def _early_check(
         self, window: np.ndarray, model_path: str | None = None
     ) -> bool:
-        """Visual-only mini-verify on the truncated ring — fails CLOSED
-        (never flash the bar on a broken verifier)."""
+        """Strict prefix verify on the truncated ring — fails CLOSED.
+
+        A positive may confirm the wake; a negative only defers to the later
+        fail-open full-window check and therefore cannot make the path deaf.
+        """
         try:
             return self._verify_window(
                 window, fail_open=False, model_path=model_path
@@ -1035,32 +1058,48 @@ class VoskKwsProvider:
                 if not is_final and self._confirm_tail_bytes > 0:
                     pending = (is_final, conf, hit_path)
                     pending_tail = 0
-                    # Visual-only early candidate: mini-verify the audio heard
-                    # SO FAR in a worker thread while the confirm tail keeps
-                    # accumulating. Typically done ~0.1-0.25 s later — the bar
-                    # reacts around phrase end instead of ~0.85 s after it.
-                    if self._early_listener is not None:
-                        self._pending_gen += 1
-                        self._early_task = asyncio.create_task(
-                            self._run_early_check(
-                                self._ring_window(), self._pending_gen, hit_path
-                            )
+                    # Strictly verify the audio heard SO FAR in a worker thread
+                    # while the confirm tail keeps accumulating. A positive is
+                    # enough to confirm this candidate and may reveal the bar;
+                    # a negative still falls through to the later full window.
+                    self._pending_gen += 1
+                    self._early_task = asyncio.create_task(
+                        self._run_early_check(
+                            self._ring_window(), self._pending_gen, hit_path
                         )
+                    )
                     continue
-            # The early visual check and authoritative decision must not fan
-            # out two decoder pairs at once on a weak CPU.  The 0.6 s tail
-            # normally lets the early check finish already, so this is a
-            # no-cost ordering guard in the common path.
+            # The candidate-prefix check and fallback decision must not fan out
+            # two decoder pairs at once on a weak CPU. The 0.6 s tail normally
+            # lets the prefix check finish already, so this is a no-cost
+            # ordering guard in the common path. Most importantly, a positive
+            # prefix verdict is monotonic: the newly captured tail belongs to
+            # the user's command and cannot turn a verified wake back off.
+            early_confirmed = False
             if self._early_task is not None:
-                with contextlib.suppress(Exception):
-                    await self._early_task
-                self._early_task = None
+                try:
+                    early_confirmed = bool(await self._early_task)
+                except Exception as exc:  # noqa: BLE001 — fallback verify remains
+                    log.debug(
+                        "candidate-prefix task failed; using full-window fallback: %s",
+                        exc,
+                    )
+                finally:
+                    self._early_task = None
             now = time.time()
             window = self._ring_window()
-            confirmed = await asyncio.to_thread(
-                self._verify_candidate, window, hit_path
-            )
             fired_path = hit_path
+            if early_confirmed:
+                confirmed = True
+                log.info(
+                    "vosk-kws: retaining verified candidate prefix for %r; "
+                    "following audio belongs to the voice session",
+                    self._phrase,
+                )
+            else:
+                confirmed = await asyncio.to_thread(
+                    self._verify_candidate, window, hit_path
+                )
             if not confirmed:
                 # Sibling rescue: the model that HEARD the candidate could not
                 # verify it, but the ring still holds the phrase — let every
@@ -1078,16 +1117,9 @@ class VoskKwsProvider:
                         break
             if not confirmed:
                 self._stat_suppressed_confirm += 1
-                # Resolve the pending candidate: let an in-flight early check
-                # finish FIRST (its show is still legitimate — the retract
-                # right below keeps the bar honest either way), THEN
-                # invalidate the generation and retract. Bumping before the
-                # await races a slow early check into dropping its show while
-                # the retract below no-ops — bar states must be deterministic.
-                if self._early_task is not None:
-                    with contextlib.suppress(Exception):
-                        await self._early_task
-                    self._early_task = None
+                # Invalidate this generation and defensively retract any stale
+                # visual state. A positive prefix task cannot reach this branch;
+                # it was consumed as the monotonic verdict above.
                 self._pending_gen += 1
                 await self._notify_early(False)
                 self._stat_backpressure_windows += 1
@@ -1111,15 +1143,9 @@ class VoskKwsProvider:
                 # run before the deadline above.
                 recs = self._fresh_recs()
                 continue
-            # Confirmed: let a still-running early check finish first (in
-            # production it completed long ago — the tail wait dwarfs it) so
-            # show-then-wake ordering is deterministic. The shown flag stays
-            # set for the pipeline to CONSUME: it must know the bar is visible
-            # when it silently drops this wake (echo lock) and retract it.
-            if self._early_task is not None:
-                with contextlib.suppress(Exception):
-                    await self._early_task
-                self._early_task = None
+            # The shown flag stays set for the pipeline to CONSUME: it must know
+            # the bar is visible when it silently drops this wake (echo lock)
+            # and retract it.
             self._pending_gen += 1
             self._stat_fired += 1
             last_fire_t = now

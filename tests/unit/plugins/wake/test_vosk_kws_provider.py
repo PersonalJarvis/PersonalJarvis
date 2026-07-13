@@ -318,8 +318,8 @@ async def test_early_candidate_fires_after_mini_verify_then_wake(fake_vosk) -> N
     # conf-gate alone leaks 0.84-0.92% of room-speech windows to the bar, the
     # mini-verify (re-score conf + span RMS + localized sound confirm on the
     # TRUNCATED ring) leaks 0 of 2500. The early candidate therefore runs the
-    # full mini-verify, and a passing one shows the bar BEFORE the 0.6s
-    # confirm tail + authoritative verify complete.
+    # full strict verify. A passing candidate prefix shows the bar before the
+    # 0.6 s tail and remains authoritative when that tail completes.
     events: list[bool] = []
 
     async def _listener(active: bool) -> None:
@@ -341,34 +341,76 @@ async def test_early_candidate_fires_after_mini_verify_then_wake(fake_vosk) -> N
     assert p.consume_early_candidate() is False
 
 
-async def test_early_candidate_retracts_when_confirm_rejects(
+async def test_verified_candidate_prefix_cannot_be_revoked_by_following_speech(
     fake_vosk, monkeypatch
 ) -> None:
-    # The bar must never stay stuck on a candidate the authoritative verify
-    # rejects: shown -> retracted, in that order.
+    """Saying the command without a pause must not close the listening bar.
+
+    Live 2026-07-13: the strict prefix check accepted a genuine call as
+    ``"hey room"`` and showed the bar. During the 0.6 s tail, the free decoder
+    absorbed the first command word and revised that to ``"hey room kodex"``;
+    a second check rejected the longer transcript and retracted the bar before
+    a session could start. Once the candidate-only window passed every strict
+    gate, later session audio must not revoke it or trigger duplicate decoding.
+    """
     events: list[bool] = []
+    fallback_calls = 0
 
     async def _listener(active: bool) -> None:
         events.append(active)
+
+    def _fallback_would_reject(window, model_path=None):  # noqa: ANN001, ARG001
+        nonlocal fallback_calls
+        fallback_calls += 1
+        return False
 
     p = VoskKwsProvider(
         "Hey Nova", model_path="fake", keyword="nova",
         early_candidate_listener=_listener,
     )
     monkeypatch.setattr(p, "_early_check", lambda window, model_path=None: True)
-    p._ensure_model()
-    fake_vosk["model"].free_text = "das ist etwas ganz anderes"  # i18n-allow: utterance under test
+    monkeypatch.setattr(p, "_verify_candidate", _fallback_would_reject)
     fired = await _run_detect(p, [_chunk() for _ in range(12)])
-    assert fired == []
-    assert events == [True, False]
+    assert fired == ["nova"]
+    assert events == [True]
+    assert fallback_calls == 0
     assert p.stats()["early_shown"] == 1
-    assert p.stats()["early_retracted"] == 1
+    assert p.stats()["early_retracted"] == 0
+
+
+async def test_rejected_truncated_prefix_still_uses_full_window_fallback(
+    fake_vosk, monkeypatch
+) -> None:
+    """A too-early negative never eats a wake completed during the tail."""
+    events: list[bool] = []
+    fallback_calls = 0
+
+    async def _listener(active: bool) -> None:
+        events.append(active)
+
+    def _fallback_accepts(window, model_path=None):  # noqa: ANN001, ARG001
+        nonlocal fallback_calls
+        fallback_calls += 1
+        return True
+
+    p = VoskKwsProvider(
+        "Hey Nova", model_path="fake", keyword="nova",
+        early_candidate_listener=_listener,
+    )
+    monkeypatch.setattr(p, "_early_check", lambda window, model_path=None: False)
+    monkeypatch.setattr(p, "_verify_candidate", _fallback_accepts)
+
+    fired = await _run_detect(p, [_chunk() for _ in range(12)])
+
+    assert fired == ["nova"]
+    assert events == []
+    assert fallback_calls == 1
 
 
 def test_early_check_fails_closed_on_infra_error(fake_vosk, monkeypatch) -> None:
-    # Polarity contract: the AUTHORITATIVE confirm fails OPEN (never eat a
-    # real wake), the VISUAL-ONLY early check fails CLOSED (never flash the
-    # bar on a broken verifier).
+    # Polarity contract: the fallback full-window confirm fails OPEN (never eat
+    # a real wake), while the candidate-prefix check fails CLOSED and simply
+    # defers to that fallback.
     p = VoskKwsProvider("Hey Nova", model_path="fake", keyword="nova")
 
     def _boom():
