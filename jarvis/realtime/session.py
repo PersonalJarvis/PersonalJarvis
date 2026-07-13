@@ -1133,16 +1133,28 @@ class RealtimeVoiceSession:
         self._turn_trace_id = trace_id
         self._turn_id = str(trace_id)
         self._turn_index += 1
-        from jarvis.telemetry.latency import LatencyTracker
-
-        latency_config = getattr(self._config, "latency", None)
-        self._latency_tracker = LatencyTracker(
-            self._bus,
-            trace_id,
-            enabled=bool(getattr(latency_config, "enabled", True)),
-        )
+        self._latency_tracker = self._create_latency_tracker(trace_id)
         if self._external_update is None:
             await self._publish_turn_started()
+
+    def _create_latency_tracker(self, trace_id: Any) -> Any | None:
+        """Build optional telemetry without making it a voice dependency."""
+        try:
+            from jarvis.telemetry.latency import LatencyTracker
+
+            latency_config = getattr(self._config, "latency", None)
+            return LatencyTracker(
+                self._bus,
+                trace_id,
+                enabled=bool(getattr(latency_config, "enabled", True)),
+            )
+        except Exception:  # noqa: BLE001 -- telemetry never breaks the hot path
+            log.debug(
+                "realtime[%s] latency tracker unavailable",
+                self.session_id,
+                exc_info=True,
+            )
+            return None
 
     def _latency_detail(self, detail: str = "") -> str:
         fields = [

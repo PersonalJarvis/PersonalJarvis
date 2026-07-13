@@ -1008,6 +1008,47 @@ async def test_missing_turn_complete_latency_phase_cannot_fail_voice_turn(monkey
 
 
 @pytest.mark.asyncio
+async def test_broken_latency_tracker_cannot_fail_voice_turn(monkeypatch):
+    """Optional tracker initialization must fail open for the voice session."""
+    import jarvis.telemetry.latency as latency_module
+
+    class BrokenLatencyTracker:
+        def __init__(self, *_args, **_kwargs):
+            raise RuntimeError("simulated telemetry version skew")
+
+    monkeypatch.setattr(latency_module, "LatencyTracker", BrokenLatencyTracker)
+    bus = FakeBus()
+    sess = RealtimeVoiceSession(
+        session_id="broken-latency-tracker",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=FakeProvider(
+            [
+                RealtimeEvent(
+                    type="input_transcript",
+                    text="Keep listening after this turn",
+                    is_final=True,
+                ),
+                RealtimeEvent(
+                    type="output_transcript_delta",
+                    text="I am still listening.",
+                ),
+                RealtimeEvent(type="turn_complete"),
+            ]
+        ),
+        config=_cfg(),
+        bus=bus,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+
+    assert sess.failed is False
+    assert any(isinstance(event, VoiceTurnCompleted) for event in bus.events)
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
 async def test_disabled_realtime_latency_emits_no_spans():
     bus = FakeBus()
     provider = FakeProvider(
