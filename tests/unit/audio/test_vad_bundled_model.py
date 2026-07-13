@@ -23,10 +23,13 @@ import tomllib
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
+import numpy as np
+import pytest
 from packaging.requirements import Requirement
 
 from jarvis.assets import bundled_silero_vad_model
 from jarvis.audio.vad import SileroEndpointer
+from jarvis.core.protocols import AudioChunk
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
@@ -155,3 +158,62 @@ def test_ensure_model_loads_from_bundle_without_the_package(monkeypatch) -> None
     ep._ensure_model()  # must NOT raise and must NOT consult the package
 
     assert ep._session is not None
+
+
+def test_missing_onnxruntime_uses_portable_energy_endpointing(monkeypatch) -> None:
+    """An unsupported native runtime must not disable voice capture."""
+    monkeypatch.setitem(sys.modules, "onnxruntime", None)
+
+    ep = SileroEndpointer(min_speech_rms=0.002)
+    ep._ensure_model()
+
+    assert ep._session is None
+    assert ep._energy_only is True
+    assert ep._prob(np.zeros(512, dtype=np.float32)) == 0.0
+    assert ep._prob(np.full(512, 0.01, dtype=np.float32)) == 1.0
+
+
+def test_failed_native_inference_switches_to_energy_endpointing() -> None:
+    """A runtime that loads but fails later must degrade in the same turn."""
+
+    class _BrokenSession:
+        def run(self, *_args, **_kwargs):
+            raise RuntimeError("unsupported execution provider")
+
+    ep = SileroEndpointer(min_speech_rms=0.002)
+    ep._session = _BrokenSession()
+    ep._vad_state = np.zeros((2, 1, 128), dtype=np.float32)
+    ep._vad_context = np.zeros((1, 64), dtype=np.float32)
+
+    assert ep._prob(np.full(512, 0.01, dtype=np.float32)) == 1.0
+    assert ep._energy_only is True
+    assert ep._session is None
+
+
+@pytest.mark.asyncio
+async def test_energy_fallback_captures_and_ends_an_utterance(monkeypatch) -> None:
+    """The fallback must drive the complete endpoint state machine."""
+    monkeypatch.setitem(sys.modules, "onnxruntime", None)
+    ep = SileroEndpointer(
+        silence_ms=96,
+        min_speech_ms=64,
+        min_speech_rms=0.002,
+    )
+
+    loud = (np.full(512, 0.02) * 32767.0).astype(np.int16).tobytes()
+    quiet = np.zeros(512, dtype=np.int16).tobytes()
+
+    async def chunks():
+        for index, pcm in enumerate([loud] * 4 + [quiet] * 4):
+            yield AudioChunk(
+                pcm=pcm,
+                sample_rate=16_000,
+                timestamp_ns=index,
+                channels=1,
+            )
+
+    utterances = [utterance async for utterance in ep.utterances(chunks())]
+
+    assert len(utterances) == 1
+    assert utterances[0]
+    assert ep._energy_only is True
