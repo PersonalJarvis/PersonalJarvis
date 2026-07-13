@@ -1715,7 +1715,7 @@ async def test_delegate_mode_declares_single_action_function():
 
     assert _tool_names(provider.opened_with) == ["jarvis_action", "end_call"]
     assert "jarvis_action" in provider.opened_with.instructions
-    assert "private or personal memory" in provider.opened_with.instructions
+    assert "Wiki or personal memory" in provider.opened_with.instructions
     assert "MCPs" in provider.opened_with.instructions
 
 
@@ -2144,6 +2144,63 @@ async def test_explicit_bridge_wins_over_delegate_mode():
     names = _tool_names(provider.opened_with)
     assert "open_app" in names
     assert "jarvis_action" not in names
+
+
+@pytest.mark.asyncio
+async def test_delegate_directive_orders_a_function_call_for_private_memory():
+    """The model is the fallback whenever the deterministic gate misses."""
+    provider = FakeProvider([RealtimeEvent(type="turn_complete")])
+    sess = _session(provider, brain=FakeBrain())
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    instructions = provider.opened_with.instructions
+    # It must never again be told to sit on its hands for those turns.
+    assert "Do not answer or call a function for those turns" not in instructions
+    assert "Wiki or personal memory" in instructions
+    assert "garbled follow-up" in instructions
+    assert "Never announce that you are going to" in instructions
+
+
+@pytest.mark.asyncio
+async def test_gate_miss_lets_the_model_reach_the_wiki_through_jarvis_action():
+    """A vague follow-up the planner cannot classify must still reach the brain."""
+    from jarvis.brain.turn_planner import plan_turn
+
+    utterance = "Was steht da drin?"  # i18n-allow: German speech-input fixture
+    assert plan_turn(utterance).requires_orchestrator is False
+
+    brain = FakeBrain(replies=("Your wiki holds pages about you and Lukas.",))
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text=utterance,
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="tool_call",
+                call_id="c-1",
+                tool_name="jarvis_action",
+                tool_args={"request": "What is in my wiki?"},
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.02)
+
+    assert brain.calls[0][0] == utterance
+    assert provider.session.tool_results[0][2] == {
+        "success": True,
+        "spoken_reply": "Your wiki holds pages about you and Lukas.",
+    }
+    await sess.end(reason="test")
 
 
 @pytest.mark.asyncio
