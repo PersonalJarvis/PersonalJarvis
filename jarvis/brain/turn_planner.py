@@ -142,12 +142,16 @@ _FOLLOW_UP_REFERENCE_RE = re.compile(
 _CONTEXT_MAX_CHARS = 2_000
 
 
-# German umlauts must become their transliterated digraphs (ä→ae, ö→oe,  # i18n-allow: names the mapped umlaut characters
-# ü→ue; casefold already yields ß→ss) because every German vocabulary entry  # i18n-allow: names the mapped umlaut characters
-# above is written in that form. A plain NFKD combining-strip would produce
-# the OTHER ascii form ("lösche"→"losche"), which silently disables the  # i18n-allow: quotes the German token under test
-# entire German action/lookup vocabulary against real STT output.
-_UMLAUT_TRANSLITERATION = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue"})  # i18n-allow: speech-input matching data
+# German umlaut characters must become their transliterated digraphs
+# (a-umlaut -> ae, o-umlaut -> oe, u-umlaut -> ue; casefold already yields
+# "ss" for the sharp s) because every German vocabulary entry above is
+# written in that form ("loesch", "aender", "fuehr"). A plain NFKD
+# combining-strip would produce the OTHER ascii form ("losche", "andere"),
+# which silently disables the entire German action/lookup vocabulary
+# against real STT output.
+_UMLAUT_TRANSLITERATION = str.maketrans(
+    {"ä": "ae", "ö": "oe", "ü": "ue"}  # i18n-allow: umlaut mapping data
+)
 
 
 def _normalize(text: str) -> str:

@@ -134,7 +134,8 @@ def test_unrelated_lookup_does_not_inherit_old_evidence_domain() -> None:
 @pytest.mark.parametrize(
     "utterance",
     [
-        # Umlaut verbs: real STT emits "ö", the vocabulary is written "oe" —  # i18n-allow: names the umlaut under test
+        # Umlaut verbs: real STT emits umlaut characters while the planner
+        # vocabulary is written in transliterated digraphs (oe/ae/ue) —
         # these matched NOTHING before the transliterating _normalize fix.
         "Lösche die Datei vom Desktop.",  # i18n-allow: German speech-input fixture
         "Ändere die Lautstärke.",  # i18n-allow: German speech-input fixture
