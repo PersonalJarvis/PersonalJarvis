@@ -129,6 +129,43 @@ _MERGED_MAX_LENGTH_RATIO = 1.20
 # energy, never on transcript content).
 _MATCH_MIN_RMS = 0.006
 
+# --- word-agnostic candidate shape (AP-27, forensic 2026-07-13) -------------
+# Everything above asks the free decoder to SPELL the wake word. An offline
+# small model has no arbitrary proper noun in its lexicon, so it CANNOT.
+# Replaying 159 real captured "Hey Ruben" calls (data/wake_debug) through this
+# detector: the free decoder spelled the phrase in only 28 % of genuine calls
+# and otherwise produced sound-alike garbage — "herum", "erhoben", "hey room",
+# "hey oben", "heroes". Rejecting on that garbage ate 38 % of all real wakes
+# (end-to-end recall 32 %; the user had to repeat the phrase four or five
+# times) while false accepts sat at 0/400. And no spelling threshold can close
+# it: the free transcript "herr oben" was produced BOTH by a genuine call and
+# by room chatter. Spelling cannot discriminate an out-of-vocabulary word — and
+# EVERY wake word is out-of-vocabulary for some installed language model. That
+# is precisely AP-27, reappearing in the Vosk path.
+#
+# What DOES discriminate, without ever asking how the wake word is written, is
+# the SHAPE of what the free ear heard AT the candidate span:
+#   * a wake call is short and stands alone    (measured: 0.72 s, 2 words)
+#   * room speech is a longer word stream the  (measured: 1.29 s, 5 words,
+#     decoder confidently recognises            top word confidence ~1.0)
+# Both bounds are derived from the CONFIGURED phrase, never from its spelling,
+# so they hold for any phrase in any supported language. ``sound_confirm``
+# remains a BONUS path that may only ACCEPT (a free ear that did spell the
+# phrase still fires instantly), so this can never make the detector deaf.
+#
+# Calibrated on 250 positive / 1650 negative real captured windows: verify
+# pass-rate on genuine calls 55 % -> 74 %, at 3 false accepts (two of which are
+# genuine calls the corpus labels negative: "ey ruben", "hei ruben").
+_SHAPE_MAX_VOICED_S_PER_TOKEN = 0.65
+_SHAPE_MAX_OTHER_WORD_CONF = 0.98
+# No slack: the free ear may not hear MORE words at the span than the phrase
+# itself has. Allowing one extra token to absorb an ASR split ("Jarvis" ->
+# "joe avis") measurably let compact room speech through (5 vs 3 false accepts
+# on 1650 real negative windows) — and it is not needed: a split core is
+# exactly what ``sound_confirm``'s core_sizes tolerance already accepts, so the
+# split case is covered by the spelling path and must not be paid for twice.
+_SHAPE_TOKEN_SLACK = 0
+
 # Ring buffer length for the confirm pass — long enough to hold the full
 # spoken phrase plus lead-in at the moment the partial trigger fires.
 _RING_SECONDS = 3.0
@@ -259,6 +296,54 @@ def sound_confirm(free_text: str, phrase: str, *, ratio: float = _CONFIRM_RATIO)
             ):
                 return True
     return False
+
+
+def candidate_shape_ok(
+    local_words: Sequence[dict],
+    phrase: str,
+    *,
+    max_voiced_s_per_token: float = _SHAPE_MAX_VOICED_S_PER_TOKEN,
+    max_other_word_conf: float = _SHAPE_MAX_OTHER_WORD_CONF,
+) -> bool:
+    """Does the free ear's output AT the candidate span look like a wake call?
+
+    Word-agnostic by construction (AP-27): it reads only how much was said at
+    the span and how sure the free decoder was — never how the wake word is
+    spelled. ``local_words`` are the free decode's word dicts (``word``,
+    ``start``, ``end``, ``conf``) already localised to the phrase span.
+
+    Three word-agnostic questions, all scaled by the configured phrase:
+
+    1. **Not more words than the phrase has.** A wake call is the phrase; a
+       forced grammar hit on conversation carries the surrounding words too.
+       (A free decoder that SPLITS the name into two tokens — "Jarvis" ->
+       "joe avis" — is already accepted by ``sound_confirm``'s core_sizes
+       tolerance, so this gate does not need to pay for that case with the
+       extra false accepts a token slack costs.)
+    2. **Not spoken for longer than the phrase could be.** The grammar happily
+       stretches the phrase across flowing speech; a real call cannot last
+       longer than its own tokens do.
+    3. **The free ear is not SURE it heard something else.** This is the
+       positive signal an out-of-vocabulary wake word leaves behind: the free
+       decoder does not know the word, so it guesses and its confidence drops.
+       Ordinary speech ("engineering", "google") it recognises outright.
+
+    Empty input rejects: the grammar claimed the phrase where the free ear
+    heard no speech at all.
+    """
+    if not local_words:
+        return False
+    n_tokens = max(1, len(normalize_phrase_for_match(phrase)))
+    if len(local_words) > n_tokens + _SHAPE_TOKEN_SLACK:
+        return False
+    voiced_s = sum(
+        max(0.0, float(w.get("end", 0.0)) - float(w.get("start", 0.0)))
+        for w in local_words
+    )
+    if voiced_s > max_voiced_s_per_token * n_tokens:
+        return False
+    top_conf = max(float(w.get("conf", 0.0)) for w in local_words)
+    return top_conf <= max_other_word_conf
 
 
 class VoskKwsProvider:
@@ -771,11 +856,11 @@ class VoskKwsProvider:
                 return False
 
             # localise the (already-decoded) free words to the phrase span
-            local = [
-                w.get("word", "") for w in fres.get("result", [])
+            local_words = [
+                w for w in fres.get("result", [])
                 if w.get("end", 0.0) >= span_a and w.get("start", 0.0) <= span_b
             ]
-            free_local = " ".join(local)
+            free_local = " ".join(w.get("word", "") for w in local_words)
         except Exception as exc:  # noqa: BLE001 — polarity via fail_open
             log.warning(
                 "vosk-kws: verify failed (%s) — %s.",
@@ -783,12 +868,25 @@ class VoskKwsProvider:
                 "accepting" if fail_open else "rejecting (visual-only)",
             )
             return fail_open
+        # Two INDEPENDENT ways to confirm, either of which is sufficient:
+        #   (a) the free ear spelled the phrase        -> sound_confirm
+        #   (b) it could not spell it (an offline model cannot spell an
+        #       arbitrary proper noun) but what it heard at the span has the
+        #       SHAPE of a wake call -> candidate_shape_ok (word-agnostic)
+        # (a) alone was the AP-27 recall trap: it ate 38 % of real wakes,
+        # because the wake word is out-of-vocabulary for the very decoder being
+        # asked to write it down. (b) can never depend on the phrase's
+        # spelling, so it holds for every wake word in every language.
         ok = sound_confirm(free_local, self._phrase, ratio=self._confirm_ratio)
+        by_shape = False
+        if not ok:
+            ok = by_shape = candidate_shape_ok(local_words, self._phrase)
         log_method = log.info if ok else log.debug
         log_method(
-            "vosk-kws: verify %s — free ear heard %r at the candidate span "
+            "vosk-kws: verify %s (%s) — free ear heard %r at the candidate span "
             "(conf=%.2f) vs phrase %r",
             "OK" if ok else "SUPPRESSED",
+            ("shape" if by_shape else "spelled") if ok else "neither",
             free_local[:60],
             conf,
             self._phrase,
@@ -1038,4 +1136,9 @@ def vosk_model_supports_phrase(model_path: str, phrase: str) -> bool:
     return "missing in vocabulary" not in tmp.read().lower()
 
 
-__all__ = ["VoskKwsProvider", "sound_confirm", "vosk_model_supports_phrase"]
+__all__ = [
+    "VoskKwsProvider",
+    "candidate_shape_ok",
+    "sound_confirm",
+    "vosk_model_supports_phrase",
+]
