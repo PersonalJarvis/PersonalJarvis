@@ -968,8 +968,15 @@ class LatencyPhase(StrEnum):
     # received (pre scrub-hold). AudioOutFirst still marks the first audible,
     # post-hold sample.
     REALTIME_INPUT_COMMITTED = "realtime_input_committed"
+    REALTIME_ROUTING_DECISION = "realtime_routing_decision"
     REALTIME_FIRST_TRANSCRIPT = "realtime_first_transcript"
     REALTIME_FIRST_AUDIO = "realtime_first_audio"
+    REALTIME_DELEGATE_STARTED = "realtime_delegate_started"
+    REALTIME_DELEGATE_COMPLETED = "realtime_delegate_completed"
+    REALTIME_TOOL_COMPLETED = "realtime_tool_completed"
+    REALTIME_SCRUB_CANCEL = "realtime_scrub_cancel"
+    REALTIME_CANCEL = "realtime_cancel"
+    REALTIME_TURN_COMPLETE = "realtime_turn_complete"
 
 
 _LATENCY_PHASE_VALUES: frozenset[str] = frozenset(p.value for p in LatencyPhase)
@@ -1149,13 +1156,16 @@ class BioFeedbackRecorded(Event):
     """The user clicked a reaction button under the AI profile.
 
     Emitted by the ``POST /api/board/bio/feedback`` endpoint. Three kinds:
-    ``trifft`` (bio feels accurate), ``trifft_nicht`` (off the mark),  # i18n-allow: API/DB contract identifiers, matched in logic
-    ``haerter`` (make the next bio more pointed). The signal flows as a
+    ``trifft`` means the bio feels accurate.  # i18n-allow: API contract identifier
+    ``trifft_nicht`` means it is off the mark.  # i18n-allow: API contract identifier
+    ``haerter`` asks for a more pointed bio.  # i18n-allow: API contract identifier
+    The signal flows as a
     ``feedback_vector_block`` into the bio prompt for the next generation;
     no immediate regeneration.
     """
     bio_generated_at: str = ""
-    kind: str = ""        # "trifft" | "trifft_nicht" | "haerter"  # i18n-allow: API/DB contract identifiers, matched in logic
+    # API/DB identifiers matched in logic.  # i18n-allow
+    kind: str = ""  # "trifft" | "trifft_nicht" | "haerter"  # i18n-allow
 
 
 # ----------------------------------------------------------------------
@@ -1314,8 +1324,10 @@ class UserVisibleFeedback(Event):
 class OrbResetRequested(Event):
     """User asked to reset the orb to its default anchor (BUG-027 / L2).
 
-    Triggered by the local_action_gate when the user says "Orb zurück",  # i18n-allow: literal German voice-trigger phrase matched in logic
-    "wo bist du", or "reset orb". ``ui.orb.bus_bridge`` subscribes and
+    Triggered by the local action gate for these literal voice phrases:
+    "Orb zurück",  # i18n-allow: German voice-trigger phrase matched in logic
+    "wo bist du",  # i18n-allow: German voice-trigger phrase matched in logic
+    or "reset orb". ``ui.orb.bus_bridge`` subscribes and
     dispatches the actual reset onto the Tk thread. Decouples the voice
     trigger from the Tk-thread mutation — bus stays sync-friendly.
     """

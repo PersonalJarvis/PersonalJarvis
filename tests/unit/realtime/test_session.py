@@ -2,7 +2,14 @@ import asyncio
 
 import pytest
 
-from jarvis.core.events import ResponseGenerated, SpeechSpoken, VoiceTurnCompleted
+from jarvis.core.events import (
+    LatencyPhase,
+    LatencySpan,
+    ResponseGenerated,
+    SpeechSpoken,
+    VoiceTurnCompleted,
+    VoiceTurnStarted,
+)
 from jarvis.core.protocols import AudioChunk, ToolResult
 from jarvis.realtime.protocol import RealtimeEvent
 from jarvis.realtime.session import RealtimeVoiceSession
@@ -267,7 +274,13 @@ class FakeToolBridge:
         self.closed = True
 
 
-def _cfg(*, providers=None, reply_language="en", stt_language="auto"):
+def _cfg(
+    *,
+    providers=None,
+    reply_language="en",
+    stt_language="auto",
+    latency_enabled=True,
+):
     from types import SimpleNamespace
 
     return SimpleNamespace(
@@ -277,6 +290,7 @@ def _cfg(*, providers=None, reply_language="en", stt_language="auto"):
         ),
         stt=SimpleNamespace(language=stt_language),
         voice=SimpleNamespace(mode="realtime"),
+        latency=SimpleNamespace(enabled=latency_enabled),
     )
 
 
@@ -876,6 +890,104 @@ async def test_desktop_session_publishes_effective_provider_and_completed_turn()
     assert completed.jarvis_text == "Hi there."
     assert "VoiceSessionStarted" not in by_name
     assert "VoiceSessionEnded" not in by_name
+
+
+@pytest.mark.asyncio
+async def test_latency_and_voice_events_share_one_fresh_trace_per_turn():
+    events = []
+    for index in range(2):
+        events.extend(
+            [
+                RealtimeEvent(
+                    type="input_transcript",
+                    text=f"Question {index}",
+                    is_final=True,
+                ),
+                RealtimeEvent(
+                    type="output_transcript_delta",
+                    text=f"Answer {index}.",
+                ),
+                RealtimeEvent(
+                    type="audio_delta",
+                    audio=AudioChunk(
+                        pcm=b"\x01\x02" * 8,
+                        sample_rate=24_000,
+                        timestamp_ns=0,
+                    ),
+                ),
+                RealtimeEvent(type="turn_complete"),
+            ]
+        )
+    bus = FakeBus()
+    sess = RealtimeVoiceSession(
+        session_id="trace-reset",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=FakeProvider(events),
+        config=_cfg(),
+        bus=bus,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+    await asyncio.sleep(0.02)
+
+    started = [event for event in bus.events if isinstance(event, VoiceTurnStarted)]
+    completed = [
+        event for event in bus.events if isinstance(event, VoiceTurnCompleted)
+    ]
+    spans = [event for event in bus.events if isinstance(event, LatencySpan)]
+
+    assert len(started) == len(completed) == 2
+    assert started[0].trace_id != started[1].trace_id
+    assert [item.trace_id for item in completed] == [
+        item.trace_id for item in started
+    ]
+    assert [item.turn_id for item in started] == [
+        str(item.trace_id) for item in started
+    ]
+    expected_phases = {
+        LatencyPhase.REALTIME_INPUT_COMMITTED,
+        LatencyPhase.REALTIME_ROUTING_DECISION,
+        LatencyPhase.REALTIME_FIRST_TRANSCRIPT,
+        LatencyPhase.REALTIME_FIRST_AUDIO,
+        LatencyPhase.REALTIME_TURN_COMPLETE,
+    }
+    for turn in started:
+        turn_spans = [span for span in spans if span.trace_id == turn.trace_id]
+        assert {span.phase for span in turn_spans} == expected_phases
+        assert all("session_id=trace-reset" in span.detail for span in turn_spans)
+
+
+@pytest.mark.asyncio
+async def test_disabled_realtime_latency_emits_no_spans():
+    bus = FakeBus()
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="Hello",
+                is_final=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = RealtimeVoiceSession(
+        session_id="latency-disabled",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(latency_enabled=False),
+        bus=bus,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+    await asyncio.sleep(0)
+
+    assert not any(isinstance(event, LatencySpan) for event in bus.events)
 
 
 @pytest.mark.asyncio

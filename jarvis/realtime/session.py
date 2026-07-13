@@ -290,6 +290,7 @@ class RealtimeVoiceSession:
         ).strip().lower()
         if mode not in {"delegate", "direct"}:
             mode = "delegate"
+        self._tool_mode = mode
         # Delegate mode needs only a callable brain (the boot proxy and the
         # real BrainManager both qualify); an explicitly injected bridge
         # always wins so existing callers/tests keep today's behavior.
@@ -345,6 +346,8 @@ class RealtimeVoiceSession:
         self._failure_detail = ""
         self._active_model = ""
         self._turn_id = ""
+        self._turn_trace_id = None
+        self._latency_tracker: Any = None
         self._turn_index = 0
         self._last_user_text = ""
         self._user_transcript_parts: list[str] = []
@@ -653,7 +656,7 @@ class RealtimeVoiceSession:
         return True
 
     async def _pump(self) -> None:
-        from jarvis.telemetry.latency import LatencyPhase, mark_phase
+        from jarvis.telemetry.latency import LatencyPhase
 
         try:
             async for event in self._session.receive():
@@ -675,6 +678,7 @@ class RealtimeVoiceSession:
                         continue
                     if input_observed:
                         self._input_turn_observed = True
+                        await self._ensure_turn_started()
                     new_language = self._language
                     if transcript:
                         new_language = self._resolve_lang(text=transcript)
@@ -684,7 +688,14 @@ class RealtimeVoiceSession:
                             if self._tool_bridge is not None:
                                 self._tool_bridge.set_language(new_language)
                     if input_observed:
-                        mark_phase(LatencyPhase.REALTIME_INPUT_COMMITTED)
+                        self._mark_latency(
+                            LatencyPhase.REALTIME_INPUT_COMMITTED,
+                            detail=(
+                                "transcription=failed"
+                                if transcription_failed
+                                else "transcription=available"
+                            ),
+                        )
                     if transcript:
                         if event.is_final:
                             self._user_transcript_parts.append(transcript)
@@ -694,12 +705,20 @@ class RealtimeVoiceSession:
                         elif not self._user_transcript_parts:
                             self._last_user_text = transcript
                     if event.is_final and input_observed:
+                        turn_plan = self._plan_turn(self._last_user_text)
+                        reasons = ",".join(
+                            sorted(reason.value for reason in turn_plan.reasons)
+                        ) or "none"
+                        self._mark_latency(
+                            LatencyPhase.REALTIME_ROUTING_DECISION,
+                            detail=(
+                                f"path={turn_plan.path.value};reasons={reasons}"
+                            ),
+                        )
                         if self._delegate_enabled and self._last_user_text:
                             self._delegate_required_for_turn = (
                                 self._delegate_required_for_turn
-                                or self._plan_turn(
-                                    self._last_user_text
-                                ).requires_orchestrator
+                                or turn_plan.requires_orchestrator
                             )
                         refresh_tools = getattr(
                             self._tool_bridge, "refresh_from_source", None
@@ -746,8 +765,6 @@ class RealtimeVoiceSession:
                         await self._tool_bridge.handle_user_transcript(
                             self._last_user_text
                         )
-                    if input_observed:
-                        await self._ensure_turn_started()
                     if transcript:
                         await self._publish_transcription(
                             transcript, bool(event.is_final)
@@ -836,7 +853,7 @@ class RealtimeVoiceSession:
                         self._gate.drain()
                         continue
                     await self._ensure_turn_started()
-                    mark_phase(LatencyPhase.REALTIME_FIRST_TRANSCRIPT)
+                    self._mark_latency(LatencyPhase.REALTIME_FIRST_TRANSCRIPT)
                     display = await self._gate.feed_transcript(event.text)
                     if self._gate.hard_leak_pending():
                         self._cancel_release_task()
@@ -863,7 +880,7 @@ class RealtimeVoiceSession:
                         self._gate.drain()
                         continue
                     await self._ensure_turn_started()
-                    mark_phase(LatencyPhase.REALTIME_FIRST_AUDIO)
+                    self._mark_latency(LatencyPhase.REALTIME_FIRST_AUDIO)
                     self._output_active = True
                     released = await self._gate.push_audio(event.audio)
                     for chunk in released:
@@ -1010,6 +1027,12 @@ class RealtimeVoiceSession:
         if self._scrub_cancelled_for_turn:
             return
         self._scrub_cancelled_for_turn = True
+        from jarvis.telemetry.latency import LatencyPhase
+
+        self._mark_latency(
+            LatencyPhase.REALTIME_SCRUB_CANCEL,
+            detail=f"reason={reason}",
+        )
         log.warning("realtime[%s] scrub gate cancelled output: %s", self.session_id, reason)
         should_interrupt = bool(
             interrupt_provider
@@ -1040,6 +1063,7 @@ class RealtimeVoiceSession:
 
             await self._bus.publish(
                 ErrorOccurred(
+                    **self._event_trace_kwargs(),
                     layer=f"realtime.{self.active_provider or 'provider'}",
                     error_type=error_type,
                     message=message[:800],
@@ -1096,6 +1120,7 @@ class RealtimeVoiceSession:
 
             await self._bus.publish(
                 TranscriptionUpdate(
+                    **self._event_trace_kwargs(),
                     source_layer=f"realtime.{self.active_provider}",
                     text=text,
                     is_final=is_final,
@@ -1108,10 +1133,43 @@ class RealtimeVoiceSession:
         """Open one explicit turn as soon as either side produces turn evidence."""
         if self._turn_id:
             return
-        self._turn_id = str(uuid4())
+        trace_id = uuid4()
+        self._turn_trace_id = trace_id
+        self._turn_id = str(trace_id)
         self._turn_index += 1
+        from jarvis.telemetry.latency import LatencyTracker
+
+        latency_config = getattr(self._config, "latency", None)
+        self._latency_tracker = LatencyTracker(
+            self._bus,
+            trace_id,
+            enabled=bool(getattr(latency_config, "enabled", True)),
+        )
         if self._external_update is None:
             await self._publish_turn_started()
+
+    def _latency_detail(self, detail: str = "") -> str:
+        fields = [
+            f"session_id={self.session_id}",
+            f"provider={self.active_provider or 'unknown'}",
+            f"model={self._active_model or 'default'}",
+            f"tool_mode={self._tool_mode}",
+        ]
+        if detail:
+            fields.append(detail)
+        return ";".join(fields)
+
+    def _mark_latency(self, phase: Any, *, detail: str = "") -> None:
+        tracker = self._latency_tracker
+        if tracker is not None and phase not in tracker.stages_snapshot():
+            tracker.mark(phase, detail=self._latency_detail(detail))
+
+    def _event_trace_kwargs(self) -> dict[str, Any]:
+        return (
+            {"trace_id": self._turn_trace_id}
+            if self._turn_trace_id is not None
+            else {}
+        )
 
     def _turn_has_activity(self) -> bool:
         return bool(
@@ -1124,8 +1182,14 @@ class RealtimeVoiceSession:
 
     async def _begin_user_speech_turn(self) -> None:
         """Close an interrupted reply before the next transcript opens a turn."""
+        from jarvis.telemetry.latency import LatencyPhase
+
         self._drop_provider_output_until_new_response = True
         if self._turn_id and self._turn_has_activity():
+            self._mark_latency(
+                LatencyPhase.REALTIME_CANCEL,
+                detail="reason=barge_in",
+            )
             await self._publish_turn_completed()
         # Do not open the next persisted turn on VAD alone. A cancelled provider
         # response can still emit response.done after barge-in; opening here would
@@ -1140,6 +1204,7 @@ class RealtimeVoiceSession:
 
             await self._bus.publish(
                 VoiceTurnStarted(
+                    **self._event_trace_kwargs(),
                     source_layer=f"realtime.{self.active_provider}",
                     session_id=self.session_id,
                     turn_id=self._turn_id,
@@ -1159,6 +1224,20 @@ class RealtimeVoiceSession:
         response_text = answer or (
             delegate_state.last_reply if delegate_state is not None else ""
         )
+        from jarvis.telemetry.latency import LatencyPhase
+
+        self._mark_latency(
+            LatencyPhase.REALTIME_TURN_COMPLETE,
+            detail=f"hangup_reason={self._hangup_reason or 'none'}",
+        )
+        latency_total_ms = 0
+        if self._latency_tracker is not None:
+            latency_total_ms = int(
+                self._latency_tracker.stages_snapshot().get(
+                    LatencyPhase.REALTIME_TURN_COMPLETE,
+                    0.0,
+                )
+            )
         if self._bus is not None:
             try:
                 from jarvis.core.events import (
@@ -1179,6 +1258,7 @@ class RealtimeVoiceSession:
                     if spoken_text:
                         await self._bus.publish(
                             SpeechSpoken(
+                                **self._event_trace_kwargs(),
                                 source_layer=f"realtime.{self.active_provider}",
                                 text=spoken_text,
                                 language=external_update.language,
@@ -1195,6 +1275,7 @@ class RealtimeVoiceSession:
                     if answer or delegate_state is not None:
                         await self._bus.publish(
                             ResponseGenerated(
+                                **self._event_trace_kwargs(),
                                 source_layer=f"realtime.{self.active_provider}",
                                 text=response_text,
                                 language=self._language,
@@ -1202,6 +1283,7 @@ class RealtimeVoiceSession:
                         )
                     await self._bus.publish(
                         VoiceTurnCompleted(
+                            **self._event_trace_kwargs(),
                             source_layer=f"realtime.{self.active_provider}",
                             session_id=self.session_id,
                             turn_id=self._turn_id,
@@ -1212,6 +1294,7 @@ class RealtimeVoiceSession:
                             tier="realtime",
                             provider=self.active_provider,
                             model=self._active_model,
+                            latency_total_ms=latency_total_ms,
                             tool_calls=tuple(sorted(self._executed_tool_names)),
                         )
                     )
@@ -1246,6 +1329,8 @@ class RealtimeVoiceSession:
 
     def _reset_turn_tracking(self) -> None:
         self._turn_id = ""
+        self._turn_trace_id = None
+        self._latency_tracker = None
         self._last_user_text = ""
         self._user_transcript_parts.clear()
         self._input_turn_observed = False
@@ -1408,10 +1493,22 @@ class RealtimeVoiceSession:
             )
             return
         try:
-            original_name, result = await self._tool_bridge.execute(
-                wire_name=wire_name,
-                arguments=arguments,
-            )
+            execute = self._tool_bridge.execute
+            execute_kwargs: dict[str, Any] = {
+                "wire_name": wire_name,
+                "arguments": arguments,
+            }
+            try:
+                parameters = inspect.signature(execute).parameters.values()
+            except (TypeError, ValueError):
+                parameters = ()
+            if any(
+                parameter.name == "trace_id"
+                or parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters
+            ):
+                execute_kwargs["trace_id"] = self._turn_trace_id
+            original_name, result = await execute(**execute_kwargs)
         except Exception:  # noqa: BLE001 -- a failed tool must not kill duplex audio
             log.warning("realtime tool execution failed: %s", wire_name, exc_info=True)
             await self._publish_error(
@@ -1426,6 +1523,14 @@ class RealtimeVoiceSession:
             }
         if result.get("success"):
             self._executed_tool_names.add(original_name)
+        from jarvis.telemetry.latency import LatencyPhase
+
+        self._mark_latency(
+            LatencyPhase.REALTIME_TOOL_COMPLETED,
+            detail=(
+                f"tool={original_name};success={bool(result.get('success'))}"
+            ),
+        )
         self._drop_provider_output_until_new_response = False
         await self._session.send_tool_result(call_id, wire_name, result)
 
@@ -1460,6 +1565,12 @@ class RealtimeVoiceSession:
         if turn_state.dispatch_started or turn_state.result_complete:
             return
         turn_state.dispatch_started = True
+        from jarvis.telemetry.latency import LatencyPhase
+
+        self._mark_latency(
+            LatencyPhase.REALTIME_DELEGATE_STARTED,
+            detail="kind=deterministic",
+        )
         log.info(
             "realtime[%s] deterministic delegate: dispatching local-evidence turn",
             self.session_id,
@@ -1565,6 +1676,13 @@ class RealtimeVoiceSession:
         turn_state.result_complete = True
         turn_state.result_success = succeeded
         turn_state.result_payload = result
+        if self._turn_id == turn_id:
+            from jarvis.telemetry.latency import LatencyPhase
+
+            self._mark_latency(
+                LatencyPhase.REALTIME_DELEGATE_COMPLETED,
+                detail=f"kind=deterministic;success={succeeded}",
+            )
         if self._delegate_turn_is_active(turn_id, turn_state) and succeeded:
             self._executed_tool_names.add(str(_DELEGATE_DECLARATION["name"]))
         if (
@@ -1633,6 +1751,12 @@ class RealtimeVoiceSession:
         if turn_state.dispatch_started or turn_state.result_complete:
             return
         turn_state.dispatch_started = True
+        from jarvis.telemetry.latency import LatencyPhase
+
+        self._mark_latency(
+            LatencyPhase.REALTIME_DELEGATE_STARTED,
+            detail="kind=provider_requested",
+        )
         log.info(
             "realtime[%s] delegate call: dispatching user turn to the router brain",
             self.session_id,
@@ -1697,6 +1821,13 @@ class RealtimeVoiceSession:
         turn_state.result_complete = True
         turn_state.result_success = succeeded
         turn_state.result_payload = result
+        if self._turn_id == turn_id:
+            from jarvis.telemetry.latency import LatencyPhase
+
+            self._mark_latency(
+                LatencyPhase.REALTIME_DELEGATE_COMPLETED,
+                detail=f"kind=provider_requested;success={succeeded}",
+            )
         if (
             self._ended
             or self._session is None
@@ -1844,7 +1975,9 @@ class RealtimeVoiceSession:
             from jarvis.core.events import AudioOutFirst
 
             try:
-                await self._bus.publish(AudioOutFirst())
+                await self._bus.publish(
+                    AudioOutFirst(**self._event_trace_kwargs())
+                )
             except Exception:  # noqa: BLE001, S110 — best-effort telemetry
                 pass
         self._output_samples_sent += len(pcm) // 2

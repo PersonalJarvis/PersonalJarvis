@@ -181,6 +181,7 @@ class RealtimeToolBridge:
         *,
         wire_name: str,
         arguments: dict[str, Any],
+        trace_id: UUID | None = None,
     ) -> tuple[str, dict[str, Any]]:
         name = self._wire_to_name.get(wire_name, "")
         tool = self._tools.get(name)
@@ -226,7 +227,7 @@ class RealtimeToolBridge:
                 getattr(result, "error", None),
             )
 
-        trace_id = uuid4()
+        trace_id = trace_id or uuid4()
         result = await self._executor.execute(
             tool,
             arguments,
