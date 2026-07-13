@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
@@ -44,8 +45,9 @@ class _FakePlayer:
 
 
 class _FakeRealtimeHandle:
-    def __init__(self, *, accepted: bool) -> None:
+    def __init__(self, *, accepted: bool, is_active: bool = True) -> None:
         self.accepted = accepted
+        self.is_active = is_active
         self.calls: list[dict[str, object]] = []
 
     async def deliver_announcement(self, **kwargs: object) -> bool:
@@ -53,12 +55,12 @@ class _FakeRealtimeHandle:
         return self.accepted
 
 
-def _pipeline(*, accepted: bool) -> tuple[
+def _pipeline(*, accepted: bool, is_active: bool = True) -> tuple[
     SpeechPipeline, _FakeTTS, _FakePlayer, _FakeRealtimeHandle
 ]:
     tts = _FakeTTS()
     player = _FakePlayer()
-    realtime = _FakeRealtimeHandle(accepted=accepted)
+    realtime = _FakeRealtimeHandle(accepted=accepted, is_active=is_active)
     pipeline = SpeechPipeline(tts=tts, enable_whisper_wake=False)
     pipeline._player = player  # type: ignore[assignment]
     pipeline._active_voice_mode = "realtime"
@@ -94,8 +96,9 @@ async def test_subagent_readback_is_handed_to_active_realtime_model() -> None:
 
 
 @pytest.mark.asyncio
-async def test_realtime_rejection_preserves_classic_tts_fallback() -> None:
-    pipeline, tts, player, realtime = _pipeline(accepted=False)
+async def test_dead_session_rejection_preserves_classic_tts_fallback() -> None:
+    """Classic TTS remains the honest surface once the live call ended."""
+    pipeline, tts, player, realtime = _pipeline(accepted=False, is_active=False)
 
     await pipeline._on_announcement(
         AnnouncementRequested(
@@ -108,3 +111,63 @@ async def test_realtime_rejection_preserves_classic_tts_fallback() -> None:
     assert len(realtime.calls) == 1
     assert tts.calls == [("The research report is ready.", "en-US")]
     assert player.plays == 1
+
+
+@pytest.mark.asyncio
+async def test_busy_live_session_defers_owed_readback() -> None:
+    """A healthy busy call parks the readback; no second voice speaks."""
+    pipeline, tts, player, realtime = _pipeline(accepted=False, is_active=True)
+
+    event = AnnouncementRequested(
+        text="The research report is ready.",
+        language="en",
+        kind="completion",
+    )
+    await pipeline._on_announcement(event)
+
+    assert len(realtime.calls) == 1
+    assert tts.calls == []
+    assert player.plays == 0
+    assert pipeline._deferred_announcements == [event]
+
+
+@pytest.mark.asyncio
+async def test_busy_live_session_drops_ephemeral_preamble() -> None:
+    """A stale preamble is dropped, never spoken by the classic voice."""
+    pipeline, tts, player, realtime = _pipeline(accepted=False, is_active=True)
+
+    await pipeline._on_announcement(
+        AnnouncementRequested(
+            text="I am searching your wiki right now.",
+            language="en",
+            kind="preamble",
+        )
+    )
+
+    assert len(realtime.calls) == 1
+    assert tts.calls == []
+    assert player.plays == 0
+    assert pipeline._deferred_announcements == []
+
+
+@pytest.mark.asyncio
+async def test_deferred_readback_is_replayed_to_the_idle_live_model() -> None:
+    """At the turn boundary the parked readback reaches the live voice."""
+    pipeline, tts, player, realtime = _pipeline(accepted=False, is_active=True)
+
+    event = AnnouncementRequested(
+        text="The research report is ready.",
+        language="en",
+        kind="completion",
+    )
+    await pipeline._on_announcement(event)
+    assert pipeline._deferred_announcements == [event]
+
+    realtime.accepted = True
+    await pipeline._set_turn_state(TurnTakingState.LISTENING)
+    await asyncio.sleep(0.05)
+
+    assert len(realtime.calls) == 2
+    assert tts.calls == []
+    assert player.plays == 0
+    assert pipeline._deferred_announcements == []

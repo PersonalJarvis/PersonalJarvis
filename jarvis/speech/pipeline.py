@@ -3236,6 +3236,30 @@ class SpeechPipeline:
             # second, classic-pipeline voice and duplicate the readback.
             self._last_announcement_spoken_monotonic = time.monotonic()
             return
+        if self._realtime_session_owns_voice():
+            # The live call rejected the delivery only because it is BUSY
+            # (its delegate turn is thinking). The classic TTS voice must
+            # never speak into a healthy realtime call — the user hears a
+            # sudden second voice/engine (forensic 2026-07-13 17:39, the
+            # wiki preamble). Ephemeral lines are stale by the time the
+            # live model could speak them → drop; owed readbacks are parked
+            # and replayed at the next turn boundary, where the idle live
+            # model accepts them (or the call has ended and classic TTS is
+            # the honest remaining surface).
+            if is_preamble or is_progress:
+                log.info(
+                    "Announcement dropped — a live realtime call owns the "
+                    "voice: %r",
+                    event.text[:80],
+                )
+                return
+            self._deferred_announcements.append(event)
+            log.info(
+                "Announcement deferred — a live realtime call owns the "
+                "voice: %r",
+                event.text[:80],
+            )
+            return
         # We are now committed to actually speaking this announcement (past every
         # suppression / defer / empty guard). Record it as voice activity so the
         # idle-timeout branch in ``_active_session`` re-arms a fresh window: an
@@ -3305,6 +3329,13 @@ class SpeechPipeline:
             if animate:
                 hungup = hangup is not None and hangup.is_set()
                 await self._transition("IDLE" if hungup else "LISTENING")
+
+    def _realtime_session_owns_voice(self) -> bool:
+        """True while a healthy live realtime call is the only valid voice."""
+        if getattr(self, "_active_voice_mode", None) != "realtime":
+            return False
+        session = getattr(self, "_active_realtime_handle", None)
+        return bool(session is not None and getattr(session, "is_active", False))
 
     async def _deliver_announcement_via_realtime(
         self,

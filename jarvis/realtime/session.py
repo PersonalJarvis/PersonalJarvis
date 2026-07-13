@@ -674,6 +674,22 @@ class RealtimeVoiceSession:
             )
             raise RuntimeError(message) from exc
 
+    @property
+    def is_active(self) -> bool:
+        """True while this live call owns the voice surface.
+
+        The speech pipeline consults this before falling back to classic
+        TTS for an announcement: while a live realtime call is healthy, a
+        different synthetic voice must never speak into it (voice-identity
+        break, forensic 2026-07-13 17:39). Once the call ended or failed,
+        the classic voice is the honest remaining surface.
+        """
+        return (
+            not self._ended
+            and self._session is not None
+            and not self._failed.is_set()
+        )
+
     async def deliver_announcement(
         self,
         *,
