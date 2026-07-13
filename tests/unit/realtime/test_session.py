@@ -199,6 +199,33 @@ class LeakyFailingProvider(FakeProvider):
         raise RuntimeError("api_key=sk-proj-abcdefghijklmnopqrstuvwxyz123456")
 
 
+class UnavailableProvider(FakeProvider):
+    name = "unavailable-family"
+
+    async def can_open_duplex_session(self):
+        return False
+
+
+class SlowOpeningProvider(FakeProvider):
+    name = "slow-family"
+
+    async def open_session(self, cfg):
+        await asyncio.Event().wait()
+
+
+class SlowAudioSession(FakeSession):
+    async def send_audio(self, chunk):
+        del chunk
+        await asyncio.Event().wait()
+
+
+class SlowAudioProvider(FakeProvider):
+    async def open_session(self, cfg):
+        self.opened_with = cfg
+        self.session = SlowAudioSession(self._events)
+        return self.session
+
+
 class FakeBus:
     def __init__(self):
         self.events = []
@@ -330,6 +357,55 @@ async def test_handshake_failure_crosses_to_next_provider_family():
         and message.get("provider") == "working-family"
         for message in jsons
     )
+
+
+@pytest.mark.asyncio
+async def test_capability_probe_failure_crosses_to_next_provider_family():
+    fallback = FakeProvider([])
+    fallback.name = "working-family"
+    sess = RealtimeVoiceSession(
+        session_id="probe-fallback",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        providers=[UnavailableProvider([]), fallback],
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.end(reason="test")
+
+    assert sess.active_provider == "working-family"
+
+
+@pytest.mark.asyncio
+async def test_handshake_timeout_preserves_budget_for_next_family(monkeypatch):
+    import jarvis.realtime.session as session_module
+
+    monkeypatch.setattr(session_module, "_PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S", 0.2)
+    fallback = FakeProvider([])
+    fallback.name = "working-family"
+    messages = []
+    sess = RealtimeVoiceSession(
+        session_id="timeout-fallback",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: messages.append(message) or asyncio.sleep(0),
+        providers=[SlowOpeningProvider([]), fallback],
+        config=_cfg(),
+        bus=None,
+    )
+
+    await asyncio.wait_for(
+        sess.handle_control({"type": "audio_start", "sample_rate": 16_000}),
+        timeout=0.5,
+    )
+    await sess.end(reason="test")
+
+    assert sess.active_provider == "working-family"
+    fallback_status = next(
+        item for item in messages if item.get("type") == "provider_fallback"
+    )
+    assert "handshake exceeded" in fallback_status["error"]
 
 
 @pytest.mark.asyncio
@@ -571,7 +647,7 @@ async def test_duplicate_final_input_item_requests_exactly_one_response():
 
 
 @pytest.mark.asyncio
-async def test_barge_in_calls_provider_interrupt_before_local_cancel():
+async def test_idle_barge_in_does_not_send_invalid_provider_cancel():
     jsons: list[dict[str, object]] = []
     provider = FakeProvider([])
     sess = RealtimeVoiceSession(
@@ -587,8 +663,101 @@ async def test_barge_in_calls_provider_interrupt_before_local_cancel():
     await sess.handle_control({"type": "barge_in"})
     await sess.end(reason="test")
 
-    assert provider.session.interrupts == 1
+    assert provider.session.interrupts == 0
     assert {"type": "tts_cancel"} in jsons
+
+
+@pytest.mark.asyncio
+async def test_repeated_barge_in_interrupts_active_provider_only_once():
+    provider = FakeProvider([])
+    sess = RealtimeVoiceSession(
+        session_id="active-provider-interrupt",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    sess._output_active = True
+    sess._output_samples_sent = 2_400
+
+    await sess.handle_control({"type": "barge_in"})
+    await sess.handle_control({"type": "barge_in"})
+    await sess.end(reason="test")
+
+    assert provider.session.interrupts == 1
+    assert provider.session.truncated == [100]
+
+
+@pytest.mark.asyncio
+async def test_audio_send_timeout_marks_realtime_session_failed(monkeypatch):
+    import jarvis.realtime.session as session_module
+
+    monkeypatch.setattr(session_module, "_AUDIO_SEND_TIMEOUT_S", 0.01)
+    sess = RealtimeVoiceSession(
+        session_id="audio-send-timeout",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=SlowAudioProvider([]),
+        config=_cfg(),
+        bus=None,
+        browser_sample_rate=16_000,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+
+    with pytest.raises(RuntimeError, match="stopped accepting microphone audio"):
+        await sess.handle_audio_frame(b"\x00\x01" * 16)
+
+    assert sess.failed is True
+    assert "2.0s" not in sess.failure_detail
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_audio_without_transcript_is_cancelled_fail_closed(monkeypatch):
+    import jarvis.realtime.session as session_module
+
+    monkeypatch.setattr(session_module, "_TRANSCRIPT_LOOKAHEAD_S", 0.01)
+
+    class _DelayedCompletionSession(FakeSession):
+        async def receive(self):
+            yield RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(
+                    pcm=b"\x01\x02" * 8,
+                    sample_rate=24_000,
+                    timestamp_ns=0,
+                ),
+            )
+            await asyncio.sleep(0.05)
+            yield RealtimeEvent(type="turn_complete")
+
+    class _DelayedCompletionProvider(FakeProvider):
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = _DelayedCompletionSession([])
+            return self.session
+
+    binaries = []
+    messages = []
+    provider = _DelayedCompletionProvider([])
+    sess = RealtimeVoiceSession(
+        session_id="missing-output-transcript",
+        send_binary=lambda data: binaries.append(data) or asyncio.sleep(0),
+        send_json=lambda message: messages.append(message) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert binaries == []
+    assert provider.session.interrupts == 1
+    assert sum(item.get("type") == "error_spoken" for item in messages) == 1
 
 
 @pytest.mark.asyncio

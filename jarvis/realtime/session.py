@@ -28,6 +28,8 @@ from jarvis.speech.hangup import HANGUP_RE
 log = logging.getLogger(__name__)
 
 _TRANSCRIPT_LOOKAHEAD_S = 0.250
+_PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S = 12.0
+_AUDIO_SEND_TIMEOUT_S = 2.0
 _TOOL_TRANSCRIPT_WAIT_S = 3.0
 # Grace window for the model to finish its goodbye after an end_call tool
 # call; if the provider never sends turn_complete, hang up anyway.
@@ -358,6 +360,7 @@ class RealtimeVoiceSession:
         self._turn_final_text = ""
         self._end_after_turn = False
         self._end_call_timer: asyncio.Task[None] | None = None
+        self._scrub_cancelled_for_turn = False
 
     def _resolve_lang(self, *, text: str) -> str:
         brain = getattr(self._config, "brain", None)
@@ -455,7 +458,9 @@ class RealtimeVoiceSession:
         return model, voice
 
     async def _open(self) -> None:
-        for provider in self._providers:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S
+        for index, provider in enumerate(self._providers):
             model, voice = self._active_provider_selection(provider)
             input_rate = int(getattr(provider, "input_sample_rate", 16_000) or 16_000)
             output_rate = int(getattr(provider, "output_sample_rate", 24_000) or 24_000)
@@ -477,7 +482,33 @@ class RealtimeVoiceSession:
                 tools=self._declared_tools(),
             )
             try:
-                session = await provider.open_session(session_config)
+                providers_left = len(self._providers) - index
+                remaining = max(0.0, deadline - loop.time())
+                if remaining <= 0:
+                    raise TimeoutError("realtime handshake budget exhausted")
+                provider_budget = remaining / max(1, providers_left)
+
+                async def _probe_and_open(
+                    candidate: Any = provider,
+                    candidate_config: RealtimeSessionConfig = session_config,
+                ) -> Any:
+                    probe = getattr(candidate, "can_open_duplex_session", None)
+                    if callable(probe) and not bool(await probe()):
+                        raise RuntimeError(
+                            "duplex capability probe reported unavailable"
+                        )
+                    return await candidate.open_session(candidate_config)
+
+                try:
+                    session = await asyncio.wait_for(
+                        _probe_and_open(),
+                        timeout=provider_budget,
+                    )
+                except TimeoutError as exc:
+                    raise TimeoutError(
+                        "realtime handshake exceeded "
+                        f"{provider_budget:.1f}s provider budget"
+                    ) from exc
             except Exception as exc:  # noqa: BLE001 — cross to the next family
                 provider_id = str(getattr(provider, "name", "unknown") or "unknown")
                 detail = f"{type(exc).__name__}: {safe_preview(exc, max_chars=700)}"
@@ -528,13 +559,30 @@ class RealtimeVoiceSession:
             return
         if not pcm16:
             return
-        await self._session.send_audio(
-            AudioChunk(
-                pcm=pcm16,
-                sample_rate=self._input_sample_rate,
-                timestamp_ns=0,
+        try:
+            await asyncio.wait_for(
+                self._session.send_audio(
+                    AudioChunk(
+                        pcm=pcm16,
+                        sample_rate=self._input_sample_rate,
+                        timestamp_ns=0,
+                    )
+                ),
+                timeout=_AUDIO_SEND_TIMEOUT_S,
             )
-        )
+        except TimeoutError as exc:
+            message = (
+                "Realtime provider stopped accepting microphone audio within "
+                f"{_AUDIO_SEND_TIMEOUT_S:.1f}s."
+            )
+            self._failure_detail = message
+            self._failed.set()
+            await self._publish_error(
+                "RealtimeAudioSendTimeout",
+                message,
+                recoverable=True,
+            )
+            raise RuntimeError(message) from exc
 
     async def deliver_announcement(
         self,
@@ -792,9 +840,8 @@ class RealtimeVoiceSession:
                     display = await self._gate.feed_transcript(event.text)
                     if self._gate.hard_leak_pending():
                         self._cancel_release_task()
-                        await self._session.interrupt()
-                        await self._send_json(
-                            {"type": "error_spoken", "text": self._gate.fallback_phrase()}
+                        await self._cancel_unsafe_output(
+                            reason="unsafe output transcript"
                         )
                         self._gate.drain()
                         continue
@@ -828,7 +875,9 @@ class RealtimeVoiceSession:
                         )
                 elif event.type in {"speech_started", "interrupted"}:
                     await self._begin_user_speech_turn()
-                    await self._barge_in()
+                    await self._barge_in(
+                        interrupt_provider=event.type == "speech_started"
+                    )
                 elif event.type == "tool_call":
                     await self._ensure_turn_started()
                     if str(getattr(event, "tool_name", "") or "") == "end_call":
@@ -881,6 +930,11 @@ class RealtimeVoiceSession:
                         await self._coalesce_ready_delegate_result(delegate_state)
                         continue
                     self._cancel_release_task()
+                    if self._gate.fail_closed():
+                        await self._cancel_unsafe_output(
+                            reason="output transcript missing at turn completion",
+                            interrupt_provider=False,
+                        )
                     for chunk in self._gate.release_available():
                         await self._emit_audio(chunk)
                     self._gate.drain()
@@ -931,8 +985,10 @@ class RealtimeVoiceSession:
             if self._must_withhold_provider_output():
                 self._gate.drain()
                 return
-            for chunk in self._gate.release_available():
-                await self._emit_audio(chunk)
+            if self._gate.fail_closed():
+                await self._cancel_unsafe_output(
+                    reason="output transcript missed scrub lookahead"
+                )
         except asyncio.CancelledError:
             raise
         finally:
@@ -943,6 +999,36 @@ class RealtimeVoiceSession:
         if task is not None and not task.done():
             task.cancel()
         self._release_task = None
+
+    async def _cancel_unsafe_output(
+        self,
+        *,
+        reason: str,
+        interrupt_provider: bool = True,
+    ) -> None:
+        """Cancel one unsafe provider response and emit one honest fallback."""
+        if self._scrub_cancelled_for_turn:
+            return
+        self._scrub_cancelled_for_turn = True
+        log.warning("realtime[%s] scrub gate cancelled output: %s", self.session_id, reason)
+        should_interrupt = bool(
+            interrupt_provider
+            and self._session is not None
+            and (self._output_active or self._response_requested_for_turn)
+        )
+        if should_interrupt:
+            try:
+                await self._session.interrupt()
+            except Exception:  # noqa: BLE001, S110 — provider may already be done
+                pass
+        self._output_active = False
+        self._output_samples_sent = 0
+        try:
+            await self._send_json(
+                {"type": "error_spoken", "text": self._gate.fallback_phrase()}
+            )
+        except Exception:  # noqa: BLE001, S110 — surface may already be gone
+            pass
 
     async def _publish_error(
         self, error_type: str, message: str, *, recoverable: bool
@@ -1167,6 +1253,7 @@ class RealtimeVoiceSession:
         self._executed_tool_names.clear()
         self._turn_final_text = ""
         self._delegate_required_for_turn = False
+        self._scrub_cancelled_for_turn = False
 
     def _declared_tools(self) -> tuple[dict[str, Any], ...]:
         if self._delegate_enabled:
@@ -1763,7 +1850,12 @@ class RealtimeVoiceSession:
         self._output_samples_sent += len(pcm) // 2
         await self._send_binary(pcm)
 
-    async def _barge_in(self) -> None:
+    async def _barge_in(self, *, interrupt_provider: bool = True) -> None:
+        should_interrupt = bool(
+            interrupt_provider
+            and self._session is not None
+            and (self._output_active or self._response_requested_for_turn)
+        )
         self._drop_provider_output_until_new_response = True
         self._response_requested_for_turn = False
         self._cancel_release_task()
@@ -1774,7 +1866,7 @@ class RealtimeVoiceSession:
             if self._output_samples_sent
             else 0
         )
-        if self._session is not None:
+        if self._session is not None and should_interrupt:
             try:
                 # Explicit cancellation is part of the shared provider contract.
                 # OpenAI maps it to response.cancel; Gemini is interrupted by the

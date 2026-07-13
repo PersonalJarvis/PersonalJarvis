@@ -21,6 +21,7 @@ _HARD_LEAK_ACTIONS = frozenset(
         "replaced_with_fallback_residue",
     }
 )
+_TRANSCRIPT_TAIL_MAX_CHARS = 4_096
 
 
 class ScrubHoldGate:
@@ -32,6 +33,7 @@ class ScrubHoldGate:
         self._pending: list[AudioChunk] = []
         self._cleared = False
         self._hard_leak = False
+        self._transcript_tail = ""
 
     def hard_leak_pending(self) -> bool:
         return self._hard_leak
@@ -45,12 +47,26 @@ class ScrubHoldGate:
         Sets the clear flag (audio may flow) on clean text; sets the hard-leak
         flag (audio dropped) on a hard leak.
         """
+        if self._hard_leak:
+            return self.fallback_phrase()
+
+        self._transcript_tail = (
+            f"{self._transcript_tail}{text}"[-_TRANSCRIPT_TAIL_MAX_CHARS:]
+        )
+        aggregate = scrub_for_voice(self._transcript_tail, language=self._language)
         result = scrub_for_voice(text, language=self._language)
-        if result.fallback_used or (_HARD_LEAK_ACTIONS & set(result.actions)):
+        aggregate_is_hard = bool(
+            aggregate.fallback_used
+            or (_HARD_LEAK_ACTIONS & set(aggregate.actions))
+        )
+        result_is_hard = bool(
+            result.fallback_used or (_HARD_LEAK_ACTIONS & set(result.actions))
+        )
+        if aggregate_is_hard or result_is_hard:
             self._hard_leak = True
             self._cleared = False
             self._pending.clear()
-            return result.cleaned  # the canned fallback phrase
+            return self.fallback_phrase()
         self._cleared = True
         if not result.actions:
             # Realtime providers stream transcript deltas with meaningful edge
@@ -75,19 +91,34 @@ class ScrubHoldGate:
         return []
 
     def release_available(self) -> list[AudioChunk]:
-        """Availability cap: release whatever is buffered (no transcript came)."""
-        if self._hard_leak:
+        """Release buffered audio only after a transcript cleared the gate."""
+        if self._hard_leak or not self._cleared:
+            return []
+        # Some providers send the transcript delta just before its matching
+        # audio delta. Preserve one clean credit when there is nothing to
+        # release yet; ``push_audio`` consumes it on exactly one later chunk.
+        if not self._pending:
             return []
         out = self._pending
         self._pending = []
         self._cleared = False
         return out
 
+    def fail_closed(self) -> bool:
+        """Drop pending audio when its transcript misses the lookahead budget."""
+        if self._hard_leak or not self._pending:
+            return False
+        self._pending.clear()
+        self._cleared = False
+        self._hard_leak = True
+        return True
+
     def drain(self) -> None:
         """Barge-in / turn-end: discard buffered audio and reset per-turn state."""
         self._pending.clear()
         self._cleared = False
         self._hard_leak = False
+        self._transcript_tail = ""
 
 
 def _restore_edge_whitespace(original: str, cleaned: str) -> str:

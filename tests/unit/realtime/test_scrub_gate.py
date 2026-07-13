@@ -103,3 +103,29 @@ async def test_later_segment_leak_is_caught_after_a_clean_first_segment():
     # Segment 2's audio must never be released.
     out3 = await gate.push_audio(_chunk(4))
     assert out3 == []
+
+
+@pytest.mark.asyncio
+async def test_hard_leak_split_across_transcript_deltas_is_caught():
+    gate = ScrubHoldGate(language="en")
+
+    await gate.feed_transcript("Trace")
+    await gate.push_audio(_chunk(4))
+    display = await gate.feed_transcript(
+        "back (most recent call last):\n  File x\nValueError: y\n\n"
+    )
+
+    assert display == gate.fallback_phrase()
+    assert gate.hard_leak_pending() is True
+    assert gate.release_available() == []
+
+
+@pytest.mark.asyncio
+async def test_missing_transcript_fails_closed_instead_of_releasing_audio():
+    gate = ScrubHoldGate(language="en")
+    await gate.push_audio(_chunk(4))
+
+    assert gate.release_available() == []
+    assert gate.fail_closed() is True
+    assert gate.hard_leak_pending() is True
+    assert gate.release_available() == []

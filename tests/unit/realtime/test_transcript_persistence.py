@@ -513,7 +513,12 @@ async def test_barge_in_finalizes_previous_turn_before_next_user_transcript(
         assert all(turn.tier == "realtime" for turn in turns)
         assert all(turn.ended_ms is not None for turn in turns)
         assert provider.session is not None
-        assert provider.session.interrupts >= 1
+        if boundary_event.type == "interrupted":
+            # The provider already cancelled this response. Sending a second
+            # cancel produces response_cancel_not_active on live Gemini.
+            assert provider.session.interrupts == 0
+        else:
+            assert provider.session.interrupts >= 1
     finally:
         store.close()
 
