@@ -14,10 +14,8 @@
 #   * import-cleanliness gate    -> BLOCKING. Proves `import jarvis` is clean on
 #     Linux/macOS (no module-scope pywin32/winreg/global_hotkeys) - the €5-VPS
 #     contract. A regression here breaks Mac/Linux outright.
-#   * min-passed floor           -> BLOCKING. Catches a mass-skip / broken-
-#     collection regression that would otherwise sail through as green.
-#   * pytest failures            -> reported (the floor script warns; pass
-#     --strict once the suite is fully green to make them blocking).
+#   * pytest + min-passed floor  -> BLOCKING. Any behavioral failure,
+#     collection error, or mass-skip regression fails the relevant OS leg.
 #
 # Cost policy (added 2026-06-23): macOS runners bill at ~10x the Linux rate, so
 # the macOS leg is OFF for ordinary push/PR runs and ON only for a manual
@@ -145,11 +143,11 @@ jobs:
           python -m pytest tests/ -q -p no:cacheprovider \
             -m "not skip_ci and not slow and not openclaw_live and not voice_latency and not eval" \
             --continue-on-collection-errors \
-            --junitxml=report.xml || echo "pytest exited non-zero (pre-existing failures/collection-errors are reported by the floor gate)"
+            --junitxml=report.xml
 
       - name: Minimum-passed floor (BLOCKING, Linux leg is authoritative)
         if: matrix.os == 'ubuntu-latest'
-        run: python scripts/ci/assert_min_passed.py report.xml
+        run: python scripts/ci/assert_min_passed.py --strict report.xml
 
   # jarvisctl control-CLI unit suite across the three supported desktops.
   # jarvisctl is a thin cross-platform HTTP client (paths via platformdirs,
