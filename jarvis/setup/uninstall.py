@@ -207,6 +207,14 @@ def _remove_autostart() -> None:
             _console.print("    [muted]→ login autostart not supported here — skipped.[/]")
     except Exception as exc:  # noqa: BLE001 — never abort the uninstall on this
         _console.print(f"    [bad]⚠ could not remove the autostart entry: {escape(str(exc))}[/]")
+    if sys.platform == "darwin":
+        try:
+            from jarvis.setup.macos_app_bundle import remove_macos_app_bundle
+
+            if remove_macos_app_bundle():
+                _console.print("    [ok]→ ~/Applications app bundle removed.[/]")
+        except Exception as exc:  # noqa: BLE001 — never abort the uninstall on this
+            _console.print(f"    [bad]⚠ could not remove the app bundle: {escape(str(exc))}[/]")
 
 
 def _remove_keys(keys: list[str]) -> int:

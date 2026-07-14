@@ -383,6 +383,34 @@ def step_shortcut(*, dry_run: bool) -> None:
         note("could not create the Start-Menu shortcut - the app will retry on first launch")
 
 
+def step_macos_app(*, dry_run: bool) -> None:
+    """Finish & launch sub-step (macOS): a real .app so Spotlight/Launchpad
+    find Jarvis — without it, closing the app leaves no way back but the
+    terminal (BUG-060)."""
+    if sys.platform != "darwin":
+        return
+    if dry_run:
+        console.print("[muted]      (dry-run) ensure_macos_app_bundle()[/]")
+        return
+    probe = (
+        "from jarvis.setup.macos_app_bundle import ensure_macos_app_bundle\n"
+        "print('ok' if ensure_macos_app_bundle() else 'skipped')\n"
+    )
+    try:
+        result = subprocess.run(
+            [str(venv_python()), "-c", probe], cwd=repo_root(),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=120,
+        )
+        outcome = (result.stdout or "").strip()
+    except (OSError, subprocess.TimeoutExpired):
+        outcome = ""
+    if outcome.endswith("ok"):
+        ok('app installed to ~/Applications - find it via Spotlight ("Personal Jarvis")')
+    else:
+        note("could not create the ~/Applications app - start via the install folder")
+
+
 def step_ui_bundle_check() -> None:
     """Honest packaging check: the shipped UI build must be present + intact.
 
@@ -469,8 +497,16 @@ def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
     console.print(f"    [muted]Installed to[/]  {repo_root()}")
     if sys.platform == "win32":
         console.print("    [muted]Start again[/]   [brand]run.bat[/] [muted](in the install folder)[/]")
+    elif sys.platform == "darwin":
+        console.print(
+            "    [muted]Start again[/]   [brand]Spotlight → \"Personal Jarvis\"[/] "
+            "[muted](app in ~/Applications)[/]"
+        )
     else:
-        console.print("    [muted]Start again[/]   [brand]python -m jarvis.ui.web.launcher[/]")
+        console.print(
+            "    [muted]Start again[/]   [brand].venv/bin/python -m jarvis.ui.web.launcher[/] "
+            "[muted](in the install folder)[/]"
+        )
     console.print(
         "    [muted]Update[/]        [muted]re-run the same install one-liner - "
         "it updates in place[/]"
@@ -555,6 +591,7 @@ def main(argv: list[str] | None = None) -> int:
     phase("6/6", "Finish & launch")
     step_worker_cli(dry_run=args.dry_run)
     step_shortcut(dry_run=args.dry_run)
+    step_macos_app(dry_run=args.dry_run)
     step_ui_bundle_check()
 
     # Summary FIRST, launch LAST: when the app window appears, the terminal
