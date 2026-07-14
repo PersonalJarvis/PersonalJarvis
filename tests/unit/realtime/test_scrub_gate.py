@@ -63,6 +63,31 @@ async def test_leading_streaming_dash_waits_for_meaningful_transcript():
 
 
 @pytest.mark.asyncio
+async def test_streamed_jargon_prefix_can_complete_a_user_facing_compound():
+    """A partial ``MCP-Server`` transcript must not abort a clean reply."""
+    gate = ScrubHoldGate(language="de")
+    first = _chunk(4)
+    jargon = _chunk(8)
+    suffix = _chunk(12)
+
+    opening = "Im Moment sind zwei"  # i18n-allow: German runtime transcript under test
+    assert await gate.feed_transcript(opening) == opening
+    assert await gate.push_audio(first) == [first]
+
+    # Realtime providers may split a hyphenated user concept after ``MCP``.
+    # The whole-utterance scrubber correctly preserves ``MCP-Server``, but the
+    # incomplete delta alone is temporarily reduced to residue.
+    assert await gate.feed_transcript(" MCP") == " MCP"
+    assert gate.hard_leak_pending() is False
+    assert await gate.push_audio(jargon) == [jargon]
+
+    ending = "-Server verbunden."  # i18n-allow: German runtime transcript under test
+    assert await gate.feed_transcript(ending) == ending
+    assert gate.hard_leak_pending() is False
+    assert await gate.push_audio(suffix) == [suffix]
+
+
+@pytest.mark.asyncio
 async def test_scrubbed_delta_keeps_its_original_leading_separator():
     gate = ScrubHoldGate(language="en")
 
