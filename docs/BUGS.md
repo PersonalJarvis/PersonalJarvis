@@ -3802,3 +3802,76 @@ result that is rendered by a working fallback. `turn_complete`, provider
 health, and a zero-error run row are never sufficient evidence by themselves.
 Never recover a silent tool turn by replaying the original request; recover
 from the retained result so a side effect can occur at most once.
+
+## BUG-053: A normal realtime barge-in ends the call when cancellation loses a response-boundary race (HIGH, OPEN, 2026-07-14)
+
+**Symptom.** During a healthy desktop realtime session, the user began a
+follow-up about NotebookLM and its MCP server while the preceding answer was
+finishing. Local voice activity detection accepted the interruption, but the
+follow-up never became a recorded turn. The call returned to idle roughly 2.7
+seconds later. The exported transcript consequently ends after the preceding
+two turns and contains none of the follow-up. The user did not issue a hang-up
+command and did not press the overlay close control or the global hang-up
+hotkey.
+
+**Evidence.** The 09:04 session has a complete causal chain in the desktop log
+and `data/sessions.db`:
+
+- At 09:05:43.729, the desktop path logged `Realtime desktop barge-in confirmed
+  by local CPU VAD`.
+- At that same response boundary, the preceding turn was finalized with
+  `reason=barge_in`; no `request_hangup`, voice-pattern match, hotkey event, or
+  client-stop event occurred.
+- At 09:05:44.229, the provider emitted
+  `response_cancel_not_active: Cancellation failed: no active response found`.
+- The event was recorded as a non-recoverable `RealtimeProviderError`, and at
+  09:05:46.444 the session ended with `hangup_reason=error` and two saved turns.
+- There is no third `VoiceTurnStarted` or final `TranscriptionUpdate`. The exact
+  follow-up wording cannot be reconstructed from the session store because the
+  receive pump stopped before the provider delivered its final input
+  transcription.
+
+This rules out the hang-up phrase matcher and both user controls. It also rules
+out the 30-second idle timeout: speech was detected immediately, and the stored
+reason is `error`, not `idle_timeout`.
+
+**Root cause.** Barge-in and provider response completion run concurrently.
+The desktop microphone task saw local output as active and called
+`RealtimeVoiceSession._barge_in()`, which called the OpenAI adapter's
+`interrupt()`. The provider had already crossed its `response.done` boundary,
+so `response.cancel` correctly reported that there was no active response left
+to cancel. That is an idempotent no-op race, not a broken realtime connection.
+
+The adapter currently recognizes only
+`conversation_already_has_active_response` as a recoverable runtime error.
+It therefore labels `response_cancel_not_active` terminal. The session pump
+sets `_failed`, publishes `provider_error`, and exits. The desktop pipeline
+then correctly refuses to replay already committed audio through classic voice
+because doing so could duplicate a tool action; that safety boundary converts
+the upstream misclassification into `hangup_reason=error`. The unsafe-replay
+guard is not the defect. The cancellation error classification is.
+
+**Required correction.** This incident is diagnosed and recorded; the runtime
+repair has not yet been applied. The fix needs all of the following:
+
+1. Treat `response_cancel_not_active` as an expected benign cancellation race
+   (or at minimum a recoverable provider event), never as a terminal session
+   error.
+2. Avoid sending `response.cancel` when the adapter already knows that no
+   response lifecycle is active. The benign error handling remains necessary
+   because the provider can still finish between a local state check and the
+   wire operation.
+3. Preserve and forward the accepted barge-in audio so its final transcript
+   can start the next turn after the stale cancellation acknowledgement.
+4. Add an adapter test for the exact error code and an end-to-end realtime test
+   that interleaves `response.done`, local `barge_in`, the benign cancellation
+   error, and a second input transcript. The session must remain active and
+   persist the second turn without a `provider_error` message.
+
+**Class rule.** Interrupting an operation that completed concurrently is
+successful idempotence, not a fatal error. Every duplex provider can race a
+barge-in edge against its response-complete edge, so "nothing remained to
+cancel" must keep the call alive. A session should end only for an explicit
+user lifecycle action, configured inactivity, shutdown, or a genuinely
+unrecoverable failure; recoverable control-plane races must never masquerade as
+hang-up.
