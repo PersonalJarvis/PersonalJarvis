@@ -534,6 +534,19 @@ phase '3/6' 'Python environment'
 VENV_PATH="$INSTALL_DIR/.venv"
 VENV_PYTHON="$VENV_PATH/bin/python"
 
+# Rebuild the venv when the selected interpreter's major.minor changed
+# (BUG-059 follow-up): the 3.13-first preference is useless for an EXISTING
+# install whose venv is pinned to 3.14 — a stale venv keeps the local-voice
+# wheel gap forever. Packages are reinstalled by the installer right after,
+# so dropping the env loses nothing.
+if [ -x "$VENV_PYTHON" ]; then
+    _venv_mm=$("$VENV_PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || printf 'unknown')
+    _sel_mm=$("$PYTHON_EXE" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || printf 'selected')
+    if [ "$_venv_mm" != "$_sel_mm" ]; then
+        note "rebuilding the Python environment (Python $_venv_mm -> $_sel_mm)"
+        rm -rf "$VENV_PATH"
+    fi
+fi
 if [ ! -x "$VENV_PYTHON" ]; then
     "$PYTHON_EXE" -m venv "$VENV_PATH"
 fi

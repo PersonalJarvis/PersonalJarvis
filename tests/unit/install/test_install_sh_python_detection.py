@@ -225,3 +225,14 @@ def test_prefers_python_with_full_native_wheel_support() -> None:
     line = next(ln for ln in src.splitlines() if "for candidate in" in ln)
     for older in ("python3.13", "python3.12", "python3.11"):
         assert line.index(older) < line.index("python3.14"), older
+
+
+def test_stale_venv_is_rebuilt_on_interpreter_version_change() -> None:
+    """BUG-059 follow-up: an existing install whose venv is pinned to a
+    Python without local-voice wheels (e.g. 3.14) must be rebuilt when the
+    finder now selects a different major.minor — otherwise the 3.13-first
+    preference never reaches existing installs."""
+    src = INSTALL_SH.read_text(encoding="utf-8")
+    assert "rebuilding the Python environment" in src
+    # The comparison must be version-based, not existence-based only.
+    assert 'if [ "$_venv_mm" != "$_sel_mm" ]' in src
